@@ -106,6 +106,10 @@ and reported `deferred`; regenerate their plan after predecessors land.
 The CLI remains read-only; it does not invoke the executor automatically.
 
 Results distinguish `ready`, `deferred`, `stale`, `conflict` and `failed`.
+Pass the origin repo slug as `repo` to include it in results for
+[revision-pinned triage](FLEET-API.md#merge-queue-age-from-a-snapshot). Results
+then include ordered predecessor PR numbers and head SHAs when the supplied
+plan contains them all; otherwise the list is omitted, not guessed.
 A ready SHA is a local rehearsal, not permission to merge or bypass checks.
 The scheduler must serialize repository fetches, refresh failed/incomplete
 snapshots, and revalidate both base and head before reuse. Rebase diagnostics

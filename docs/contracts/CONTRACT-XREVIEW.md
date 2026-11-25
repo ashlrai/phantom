@@ -32,6 +32,15 @@ Operator guide: [Cross-model review](../CROSS-REVIEW.md).
   The optional `tier1` input (an `assessTier1` result) and `policy.tier1`
   drive the tier1-verify stage; the decision then carries `tier1` and, on a
   reject, `fixJob`.
+  `CrossReviewDecision.evidence` is advisory: it gives the independently
+  verified receipt and verdict for the current head and matching diff (or
+  `unverified` with no receipt), the Tier-1 semantic verdict when verified,
+  exact-head GitHub check-run IDs and commit-status contexts when observed,
+  and outstanding decision codes. `verified` means the verdict is applicable,
+  not that the verdict is approve or the change can merge. An optional request
+  `preview: { headSha, url }` is a caller-supplied immutable preview reference;
+  only a matching, scrub-safe HTTPS URL without credentials, query or fragment
+  is retained. No reference affects the merge decision.
 
 `src/core/fleet/tier1-verify.ts` (pure): `assessTier1(input): Tier1Assessment`,
 `fullCheckSatisfied`, `tier1FixJobId`, `tier1FixJobLine`, `TIER1_STAGE`,

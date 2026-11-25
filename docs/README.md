@@ -100,6 +100,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
 | Exercise signed graph execution and a deliberately lying candidate | [Firm graph fixture](FIRM-DEMO.md) |
 | Connect autonomy research to engineering acceptance | [Autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) |
+| Compare recent factory, merge, and feedback research and pick measurable fleet jobs | [November 2026 frontier scan](https://github.com/ashlrai/phantom/blob/master/docs/research/2026-11-frontier-scan.md) |
 | Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
 | Generate daily frontier direction and track ideation outcomes | [Standing ideation loop](https://github.com/ashlrai/phantom/blob/master/docs/IDEATION.md) |
 | Turn research digests into scored, gated job proposals | [Research loop](https://github.com/ashlrai/phantom/blob/master/docs/RESEARCH-LOOP.md) |

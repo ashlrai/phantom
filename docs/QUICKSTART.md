@@ -103,7 +103,7 @@ installation, desktop installation and fleet activation are separate steps.
 Latest dated changelog release (verify promoted package availability before installing):
 
 ```sh
-npm install -g @ashlr/phantom@3.30.73
+npm install -g @ashlr/phantom@3.30.75
 phm --version
 ```
 <!-- fresh:end -->

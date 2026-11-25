@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { MAX_FILES_PER_PR, planMergeBatches, type MergeBatchPr } from './merge-batch.js';
+import type { QueuePredecessor } from './merge-queue-status.js';
 
 export interface MergeQueuePreparation {
   number: number;
@@ -27,7 +28,7 @@ export function planMergeQueuePreparation(prs: readonly MergeBatchPr[], limit = 
         && pr.files.length > 0 && pr.files.length < MAX_FILES_PER_PR
         && pr.headSha !== null && /^[0-9a-f]{40}$/i.test(pr.headSha)) {
         result.push({ number: pr.number, headSha: pr.headSha,
-          after: member.overlaps.filter(number => earlier.has(number)) });
+          after: [...earlier].filter(number => member.overlaps.includes(number)) });
       }
       earlier.add(member.number);
     }
@@ -40,6 +41,8 @@ export interface PreparationResult {
   state: 'ready' | 'deferred' | 'stale' | 'conflict' | 'failed';
   baseSha: string;
   headSha: string;
+  repo?: string;
+  predecessors?: QueuePredecessor[];
   /** Local rehearsal commit only; never a replacement for required checks. */
   preparedSha?: string;
 }
@@ -63,15 +66,25 @@ export async function prepareMergeQueue(input: {
   cwd: string;
   baseSha: string;
   preparations: readonly MergeQueuePreparation[];
+  repo?: string;
   git?: PreparationGit;
 }): Promise<PreparationResult[]> {
   if (!/^[0-9a-f]{40}$/i.test(input.baseSha) || input.preparations.length > 16
     || input.preparations.some(pr => !Number.isSafeInteger(pr.number) || pr.number < 1
       || !/^[0-9a-f]{40}$/i.test(pr.headSha))) throw new Error('invalid preparation identities');
   const run = input.git ?? git;
+  const heads = new Map(input.preparations.map(pr => [pr.number, pr.headSha]));
   const results: PreparationResult[] = [];
   for (const pr of input.preparations) {
     const result: PreparationResult = { number: pr.number, baseSha: input.baseSha, headSha: pr.headSha, state: 'failed' };
+    if (input.repo !== undefined) {
+      result.repo = input.repo;
+      const predecessors = pr.after.flatMap(number => {
+        const headSha = heads.get(number);
+        return headSha === undefined ? [] : [{ number, headSha }];
+      });
+      if (predecessors.length === pr.after.length) result.predecessors = predecessors;
+    }
     let directory: string | undefined;
     let added = false;
     try {

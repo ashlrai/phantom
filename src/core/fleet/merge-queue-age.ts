@@ -1,5 +1,7 @@
-import { conflicted, mergeAge, type MergeAgeInput, type MergeAgePr } from './merge-age.js';
+import { conflicted, mergeAge, type MergeAgeEntry, type MergeAgeInput, type MergeAgePr } from './merge-age.js';
 import { recutRequest, type MergeRecutRequest } from '../merge-eta.js';
+import type { PreparationResult } from './merge-queue-prep.js';
+import { currentQueueChecks, fullQueueSha, preparationStall, type QueueRevision } from './merge-queue-status.js';
 
 /** After this many recorded recut requests for one PR, a person should look at it. */
 export const MAX_QUEUE_AGE_RECUTS = 3;
@@ -10,6 +12,8 @@ export interface MergeQueueAgePr extends MergeAgePr {
 }
 export interface MergeQueueAgeInput extends MergeAgeInput {
   prs: MergeQueueAgePr[];
+  queue: (MergeAgeEntry & { revision?: QueueRevision; checksRevision?: QueueRevision })[];
+  preparations?: readonly PreparationResult[];
 }
 
 /**
@@ -40,7 +44,46 @@ export interface MergeQueueBlockedConflict {
 export function mergeQueueAge(input: MergeQueueAgeInput, now = Date.now()) {
   const inactive = new Set(input.prs.filter(pr => pr.state === 'MERGED' || pr.state === 'CLOSED').map(pr => pr.number));
   const queue = input.queue.filter(entry => !inactive.has(entry.number));
-  const report = mergeAge({ prs: input.prs, queue, repo: input.repo }, now);
+  const pinnedSnapshot = input.preparations !== undefined
+    || queue.some(entry => entry.revision !== undefined || entry.checksRevision !== undefined);
+  const observations = pinnedSnapshot ? queue.map(entry => {
+    const matches = input.prs.filter(pr => pr.number === entry.number);
+    const pr = matches.length === 1 ? matches[0] : undefined;
+    const revision = entry.revision;
+    const repo = pr?.repo ?? input.repo;
+    const pinned = revision && typeof repo === 'string' && REPO_SLUG.test(repo) && revision.repo === repo
+      && fullQueueSha(revision.headSha) && revision.headSha === pr?.headSha && fullQueueSha(revision.baseSha)
+      && queue.filter(row => row.number === entry.number).length === 1;
+    const preps = Array.isArray(input.preparations) ? input.preparations.filter(p =>
+      p?.repo === repo && p?.number === entry.number && p?.headSha === revision?.headSha) : [];
+    const checkPinned = pinned && currentQueueChecks(revision, entry.checksRevision);
+    const prep = preps.length === 1 ? preps[0] : undefined;
+    const prepStall = pinned ? preparationStall(revision, prep) : 'unknown';
+    return { entry: { ...entry, requiredChecks: checkPinned ? entry.requiredChecks : undefined },
+      stall: prepStall !== 'unknown' ? prepStall
+        : checkPinned && entry.requiredChecks?.some(c => c.status === 'failure') ? 'check_failure' as const : 'unknown' as const,
+      stallEvidence: pinned ? { repo, headSha: revision.headSha, baseSha: revision.baseSha,
+        preparedBaseSha: prepStall === 'unknown' ? undefined : prep?.baseSha,
+        predecessors: (prepStall !== 'unknown' || checkPinned) ? revision.predecessors?.map(p =>
+          ({ number: p.number, headSha: p.headSha })) : undefined,
+        mergeGroupSha: checkPinned ? revision.mergeGroupSha : undefined } : null };
+  }) : null;
+  const evidence = new Map(observations?.map(row => [row.entry.number, row]));
+  const report = mergeAge({ prs: input.prs, queue: observations?.map(row => row.entry) ?? queue, repo: input.repo }, now);
+  const actions = {
+    base_movement: 'Refresh preparation against the current target base.',
+    stack_wait: 'Wait for the pinned predecessors before refreshing preparation.',
+    content_conflict: 'Resolve the content conflict observed in local preparation.',
+  };
+  const entries = report.entries.map(row => {
+    const observation = evidence.get(row.number);
+    if (!observation) return row;
+    const { stall, stallEvidence } = observation;
+    const causes = row.causes.filter(cause => cause.code !== 'stale');
+    if (stall !== 'unknown' && stall !== 'check_failure') causes.unshift({ code: stall, since: null, action: actions[stall] });
+    return { ...row, causes, stall, stallEvidence,
+      missingData: stall === 'unknown' ? [...row.missingData, 'revision-pinned stall reason'] : row.missingData };
+  });
   const byNumber = new Map<number, (typeof report.entries)[number]>();
   for (const row of report.entries) if (!byNumber.has(row.number)) byNumber.set(row.number, row);
   const retryable: MergeQueueRecut[] = [];
@@ -72,7 +115,8 @@ export function mergeQueueAge(input: MergeQueueAgeInput, now = Date.now()) {
         since: row?.causes.find(cause => cause.code === 'conflicts')?.since ?? null, recut: request });
     }
   }
-  return { ...report,
+  return { ...report, entries,
+    oldestActionable: entries.find(row => row.ageSeconds !== null && !row.missingData.includes('unique_queue_entry') && row.causes.length) ?? null,
     schema: 'fleet.merge-queue-age.v1' as const,
     retryable_conflicts: retryable.sort((a, b) => (b.waiting_s ?? -1) - (a.waiting_s ?? -1) || a.number - b.number),
     blocked_conflicts: blocked.sort((a, b) => a.number - b.number) };

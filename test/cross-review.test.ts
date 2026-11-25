@@ -97,6 +97,10 @@ describe('request parsing', () => {
     expect(parseCrossReviewRequest({ ...base, headSha: SHA.toUpperCase() }).ok).toBe(false);
     expect(parseCrossReviewRequest({ ...base, diffFile: 'x.diff' }).ok).toBe(false);
     expect(parseCrossReviewRequest({ ...base, producer: { pool: '$(id)', model: 'codex' } }).ok).toBe(false);
+    const preview = { headSha: SHA, url: 'https://preview.example/builds/123' };
+    expect(parseCrossReviewRequest({ ...base, preview })).toMatchObject({ ok: true, request: { preview } });
+    const stale = parseCrossReviewRequest({ ...base, preview: { ...preview, headSha: SHA2 } });
+    expect(stale.ok && stale.request.preview).toBeUndefined();
   });
 });
 
@@ -249,6 +253,31 @@ describe('deterministic merge decision', () => {
     const d = decide();
     expect(d.action).toBe('enable-auto-merge');
     expect(d.matchHeadCommit).toBe(SHA);
+  });
+
+  it('reports the independent receipt and matching preview while checks are unresolved', () => {
+    const preview = { headSha: SHA, url: 'https://preview.example/builds/123' };
+    expect(decide({ request: { ...request, preview }, checks: undefined })).toMatchObject({
+      action: 'hold',
+      evidence: { state: 'verified', receipt: { at: review.at, headSha: SHA, diffSha256: review.diffSha256,
+        reviewerPool: 'mac-b', reviewerFamily: 'claude', verdict: 'approve', reasons: ['correct-and-scoped'] },
+        previewUrl: preview.url, checks: null, gaps: ['checks-unreadable'] },
+    });
+    for (const invalid of [{ ...preview, headSha: SHA2 }, { ...preview, url: preview.url + '?ticket=untrusted' }]) {
+      expect(decide({ request: { ...request, preview: invalid } }).evidence.previewUrl).toBeNull();
+    }
+  });
+
+  it('does not publish an unverified verdict even with green checks', () => {
+    for (const [input, gap] of [
+      [{ currentHeadSha: SHA2 }, 'head-moved'],
+      [{ diff: diff + '+more\n' }, 'diff-changed'],
+      [{ review: null }, 'no-review'],
+      [{ review: { ...review, reviewerPool: 'MAC-A' } }, 'reviewer-not-independent'],
+      [{ review: { ...review, reviewerFamily: 'openai' as const } }, 'reviewer-not-independent'],
+    ] as const) {
+      expect(decide(input).evidence).toMatchObject({ state: 'unverified', receipt: null, gaps: [gap] });
+    }
   });
 
   it('holds without check evidence or when evidence belongs to another head', () => {

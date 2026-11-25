@@ -28,9 +28,10 @@ A digest is a local Markdown file with two parts.
 
 `## S<n> — <title>` sections, read by the existing harness-digest reader
 ([HARNESS-DIGEST-FORMAT.md](HARNESS-DIGEST-FORMAT.md)). Each carries
-`- Checked: YYYY-MM-DD.`, `- Source: [desc](https://…)` links and optional
-`- Takeaway:` records. Issues (missing/invalid/future checked, missing URLs,
-duplicate ids) surface in the plan; source text is untrusted data.
+`- Checked: YYYY-MM-DD.`, `- Source: [desc](https://…)` links, and optional
+`- Claim:` and `- Takeaway:` records. Issues (missing/invalid/future checked,
+missing URLs, duplicate ids) surface in the plan; source text and claims are
+untrusted data and require external verification.
 
 ### Proposals
 
@@ -54,6 +55,9 @@ A `## Proposals` section holds one bullet per candidate job:
 - `scope` — one line of task text naming at least one concrete file path.
   Control characters, `|`, em dashes and `.github/` are refused.
 - `Acceptance:` — required; the verification a reviewer can check.
+- `Baseline-owner:` (or `Owner:`) — optional; proposed owner of the baseline
+  measurement for this change.
+- `Signal:` — optional; measurable signal and guardrail to evaluate the change.
 
 Example:
 
@@ -93,8 +97,11 @@ A dedup'd proposal is dropped, not queued: the reviewer sees it under
 ## Review gate and queueing
 
 Default output is a plan: `{v, file, generated, candidates, proposals,
-drops}`. Each proposal carries its rendered `- READY` line and its admission
-lint verdict, so review sees exactly what queueing would write.
+drops}`. Each proposal carries its rendered `- READY` line, its admission
+lint verdict, and a review-only `attribution` record (`sources` with each
+source's `id`, `checkedAt`, untrusted `claim`, and `claimVerified: false`,
+plus `baselineOwner` and `signal`) so review sees both provenance and exactly
+what queueing would write.
 
 ```sh
 phm fleet research-digest --file docs/research/fleet-digest-2026-11-08.md --json

@@ -132,7 +132,7 @@ describe('tier1-verify decision', () => {
   const policy = { allowedRepos: [REPO], tier1: { enabled: true, fullChecks: ['CI (Node 22, *'] } };
   const { scan, t1 } = assess(TIER1_DIFF);
   const review = (over: Partial<CrossReviewRecord> = {}): CrossReviewRecord => ({
-    schemaVersion: 1, kind: 'review', at: '', repo: REPO, pr: 7, prUrl: '', reviewedHeadSha: HEAD,
+    schemaVersion: 1, kind: 'review', at: '2026-11-25T00:00:00.000Z', repo: REPO, pr: 7, prUrl: '', reviewedHeadSha: HEAD,
     diffSha256: diffSha256(TIER1_DIFF), producerPool: 'mac-a', producerFamily: 'codex', reviewerPool: 'mac-b',
     reviewerFamily: 'claude', outcome: 'approve', reasons: ['correct-and-scoped'], failure: null, skippedFor: [],
     semantic: { reviewerPool: 'mac-c', reviewerFamily: 'local', outcome: 'approve', reasons: ['correct-and-scoped'], failure: null },
@@ -158,6 +158,14 @@ describe('tier1-verify decision', () => {
   it('holds until the full suite is green on this head', () => {
     expect(decide({ checks: { ...green, succeeded: ['Merge Gate'] } }))
       .toMatchObject({ action: 'hold', codes: ['tier1-full-ci-missing'], checkStatus: 'wait', matchHeadCommit: null });
+  });
+
+  it('publishes both verdicts only after the second seat is verified as independent', () => {
+    expect(decide({ checks: { ...green, succeeded: ['Merge Gate'] } }).evidence)
+      .toMatchObject({ state: 'verified', receipt: { verdict: 'approve' }, semanticVerdict: 'approve', gaps: ['tier1-full-ci-missing'] });
+    const semantic = { ...review().semantic!, reviewerPool: 'mac-b', reviewerFamily: 'claude' as const };
+    expect(decide({ review: review({ semantic }) }).evidence)
+      .toMatchObject({ state: 'unverified', receipt: null, semanticVerdict: null, gaps: ['reviewer-not-independent'] });
   });
 
   it('rejects failures with a report and a fix job instead of parking', () => {
