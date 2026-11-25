@@ -1485,9 +1485,9 @@ To move an agent onto the unified bus:
    `phm bus ack`, then send new traffic with `phm agents bus dm`. The inbox
    read takes the same filter grammar every other bus read shares —
    `--from`/`--exclude-from` through the identity registry, `--priority`,
-   `--job`, `--channel`, `--since`/`--before`, `--contains`, `--in-reply-to`
-   and `--thread` — so a large leftover mailbox filters to one job's or one
-   sender's mail instead of paging raw. `work
+   `--job`, `--channel`, `--since`/`--before`, `--contains`, `--in-reply-to`,
+   `--thread`, `--id` and `--body-kind` — so a large leftover mailbox filters
+   to one job's or one sender's mail instead of paging raw. `work
    mine`'s `mailbox` section lists the pending rows for every label of the
    agent's identity (or the literal ref when none resolves) with the `--to`
    each row needs, so leftover mail is discoverable without knowing which

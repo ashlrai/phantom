@@ -269,6 +269,37 @@ describe('phm bus inbox read filters', () => {
     expect(ids((await json(['inbox', '--to', 'fleet', '--contains', 'nomatch'])).value)).toEqual([]);
   });
 
+  it('keeps only the envelope whose own id is strictly equal', async () => {
+    bus.send(envelope({ id: 'want-me' }));
+    bus.send(envelope({ id: 'want-me-too' }));
+    bus.send(envelope({ id: 'other' }));
+    expect(ids((await json(['inbox', '--to', 'fleet', '--id', 'want-me'])).value)).toEqual(['want-me']);
+    // The match is the whole id, never a substring or prefix.
+    expect(ids((await json(['inbox', '--to', 'fleet', '--id', 'want'])).value)).toEqual([]);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--id', 'missing'])).value)).toEqual([]);
+    // --id scopes inside the --to recipient's pending set, like every other filter.
+    bus.send(envelope({ id: 'shared-id', to: 'other' }));
+    expect(ids((await json(['inbox', '--to', 'other', '--id', 'shared-id'])).value)).toEqual(['shared-id']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--id', 'shared-id'])).value)).toEqual([]);
+  });
+
+  it('keeps only mail whose retained body carries the kind discriminator', async () => {
+    bus.send(envelope({ id: 'v2-note', body: { kind: 'note', thread: 't-1', text: 'hi' } }));
+    bus.send(envelope({ id: 'v2-claim', body: { kind: 'work.claim', claimKey: 'pr:1' } }));
+    bus.send(envelope({ id: 'proto', body: { protocol: { version: 1, kind: 'task' }, text: 'wrapped' } }));
+    bus.send(envelope({ id: 'typed', body: { type: 'handoff', text: 'typed' } }));
+    bus.send(envelope({ id: 'kindless', body: { text: 'no discriminator' } }));
+    expect(ids((await json(['inbox', '--to', 'fleet', '--body-kind', 'note'])).value)).toEqual(['v2-note']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--body-kind', 'work.claim'])).value)).toEqual(['v2-claim']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--body-kind', 'task'])).value)).toEqual(['proto']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--body-kind', 'handoff'])).value)).toEqual(['typed']);
+    // A body with no kind discriminator never matches, and the match is exact
+    // and case-sensitive like every other own-field bus filter.
+    expect(ids((await json(['inbox', '--to', 'fleet', '--body-kind', 'text'])).value)).toEqual([]);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--body-kind', 'Note'])).value)).toEqual([]);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--body-kind', 'missing'])).value)).toEqual([]);
+  });
+
   it('ANDs every supplied filter and keeps hasMore honest about the filtered set', async () => {
     bus.send(envelope({ id: 'hit', from: 'alice', priority: 'P0', body: { kind: 'note', thread: 'job:RQ-9', text: 'needle here' } }));
     bus.send(envelope({ id: 'miss-priority', from: 'alice', priority: 'P2', body: { kind: 'note', thread: 'job:RQ-9', text: 'needle here' } }));
@@ -291,8 +322,13 @@ describe('phm bus inbox read filters', () => {
       ['inbox', '--to', 'fleet', '--job', 'two words'],
       ['inbox', '--to', 'fleet', '--from', ''],
       ['inbox', '--to', 'fleet', '--in-reply-to', 'has space'],
+      ['inbox', '--to', 'fleet', '--id', 'has space'],
+      ['inbox', '--to', 'fleet', '--id='],
+      ['inbox', '--to', 'fleet', '--body-kind', 'two words'],
       ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--priority', 'P0', '--contains', 'x'],
+      ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--body-kind', 'note'],
       ['ack', 'a', '--to', 'fleet', '--since', '1h'],
+      ['ack', 'a', '--to', 'fleet', '--id', 'x'],
     ]) {
       const result = await json(args, load);
       expect(result.code, JSON.stringify(args)).toBe(2);
