@@ -13,6 +13,6 @@ export async function cmdChannelsReplyState(args: string[]): Promise<number> {
   const id = rest[0];
   if (rest.length !== 1 || !id || id.startsWith('-') || !id.trim()) { console.error(USAGE); return 2; }
   const state = readReplyState(id, { root: join(ashlrHome(), 'fleet'), now: Date.now() });
-  console.log(json ? JSON.stringify(state, null, 2) : state.text);
+  console.log(json ? JSON.stringify(state, null, 2) : `${state.text}\nEvidence as of: ${state.asOf}`);
   return 0;
 }

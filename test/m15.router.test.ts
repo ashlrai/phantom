@@ -352,6 +352,26 @@ describe('NO_SILENT_CLOUD invariant', () => {
 // ---------------------------------------------------------------------------
 
 describe('chooseRoute — cloud escalation (all three conditions satisfied)', () => {
+  it('uses Gemini Neon only when Gemini is configured, opted in and keyed', async () => {
+    const opts = { allowCloud: true, attempt: 2, lastReason: 'task-failed' } as const;
+    const cfg = makeConfig({ providerChain: ['ollama', 'anthropic', 'gemini'] });
+    vi.stubEnv('GEMINI_API_KEY', '');
+    try {
+      expect((await chooseRoute('fix tests', cfg, opts)).tier).toBe('local');
+      vi.stubEnv('GEMINI_API_KEY', 'fixture-gemini');
+      expect((await chooseRoute('fix tests', makeConfig(), opts)).tier).toBe('local');
+      expect((await chooseRoute('fix tests', cfg, { ...opts, allowCloud: false })).tier).toBe('local');
+      expect((await chooseRoute('fix tests', cfg, { ...opts, lastReason: 'none' })).tier).toBe('local');
+      expect(await chooseRoute('fix tests', cfg, opts)).toMatchObject({
+        provider: 'gemini', model: 'gemini-4-neon', tier: 'cloud',
+      });
+      setCloudKey('anthropic', 'fixture-anthropic');
+      expect((await chooseRoute('fix tests', cfg, opts)).provider).toBe('anthropic');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('returns tier=cloud when allowCloud=true + lastReason=task-failed + anthropic key set', async () => {
     setCloudKey('anthropic', 'sk-ant-real-key');
     const cfg = makeConfig({ providerChain: ['anthropic', 'ollama'] });

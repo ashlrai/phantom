@@ -5,7 +5,10 @@ import { join } from 'node:path';
 import { jobLatency, mergeQueueLatency, mergeQueueLatencyText } from '../core/fleet/job-latency.js';
 export { jobLatency } from '../core/fleet/job-latency.js';
 
-const USAGE = 'Usage: phm fleet job-latency [--jobs <jobs.jsonl>] [--json]';
+const USAGE = `Usage: phm fleet job-latency [--jobs <jobs.jsonl>] [--json]
+Reads ~/.ashlr-runs/metrics/jobs.jsonl (or --jobs) without running Git.
+git_contention reports explicitly observed checkout and Git operations; missing evidence is null.
+See CONTRACT.md for the local observation format.`;
 
 export async function cmdFleetJobLatency(args: string[]): Promise<number> { return command(args, false); }
 export const cmdPulseMergeLatency = (args: string[]): Promise<number> => command(args, true);
@@ -36,7 +39,7 @@ Outcome MERGED uses mergedAt when supplied, otherwise its event time. Line order
     // every boundary unknown); print it like merge-latency does so --json
     // consumers always get the schema on failure, never empty stdout.
     if (mergeOnly) console.log(json ? JSON.stringify(mergeQueueLatency(null)) : 'Merge queue stages: unknown (jobs ledger unreadable).');
-    else console.log(JSON.stringify(jobLatency(null), null, 2));
+    else console.log(JSON.stringify(jobLatency(null), null, json ? undefined : 2));
     console.error('error: unable to read jobs ledger'); return 1;
   }
 }

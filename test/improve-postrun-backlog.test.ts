@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { discoverBacklog } from '../src/core/improve/discover.js';
 import {
   foldPostrunRows,
@@ -381,21 +381,27 @@ describe('postrunBacklogItems', () => {
   });
 
   it('appends postrun items through discovery and dedupes on refresh', async () => {
-    process.env.ASHLR_RUNS_DIR = path.join(home, 'runs');
-    writeLog(lookupSkipRows());
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog(REPO, { gh: greenGh });
-    const postrun = first.items.filter((i) => i.id.startsWith('postrun-'));
-    expect(postrun.length).toBeGreaterThan(0);
-    expect(postrun.some((i) => i.id.startsWith('postrun-exhausted-'))).toBe(true);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(postrun)).toBe(postrun.length);
-    const second = await discoverBacklog(REPO, { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('postrun-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('postrun-'))).toHaveLength(postrun.length);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      process.env.ASHLR_RUNS_DIR = path.join(home, 'runs');
+      writeLog(lookupSkipRows());
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog(REPO, { gh: greenGh });
+      const postrun = first.items.filter((i) => i.id.startsWith('postrun-'));
+      expect(postrun.length).toBeGreaterThan(0);
+      expect(postrun.some((i) => i.id.startsWith('postrun-exhausted-'))).toBe(true);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(postrun)).toBe(postrun.length);
+      const second = await discoverBacklog(REPO, { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('postrun-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('postrun-'))).toHaveLength(postrun.length);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

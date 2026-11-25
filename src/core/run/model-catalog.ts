@@ -138,8 +138,8 @@ export interface ModelEntry {
   modeTier: ModelModeTier;
   /** Unique catalog id: `<engine>:<model-tag>`. */
   id: string;
-  /** The fleet engine this model runs on. */
-  engine: EngineId;
+  /** The fleet engine or explicit cloud provider this model runs on. */
+  engine: EngineId | 'gemini';
   /**
    * Broad tier used to align model selection with engine tier.
    *  'small'   -- <=7B or dedicated fast/cheap cloud tier (haiku, gpt-mini)
@@ -149,6 +149,8 @@ export interface ModelEntry {
   tier: 'small' | 'mid' | 'large';
   /** USD per million input tokens (0 for local/free). */
   costPerMTokIn: number;
+  /** USD per million cached input tokens when published. */
+  costPerMTokCachedIn?: number;
   /** USD per million output tokens (0 for local/free). */
   costPerMTokOut: number;
   /** What this model is good at. */
@@ -184,6 +186,7 @@ export interface ModelEntry {
   explicitOnly?: true;
   /** Published API limits and tool transport; native seat limits can differ. */
   apiContextWindow?: number;
+  apiMaxOutputTokens?: number;
   toolApi?: 'responses';
   /** Exact historical lookup remains valid; not offered for automatic new work. */
   historical?: true;
@@ -212,8 +215,32 @@ export const CODEX_ASTRA_MODEL_ID = 'gpt-6.2-astra';
 export const DEFAULT_FABLE_MODEL_ID = 'claude-fable-5-1';
 /** Registered for lookup only until its subscription admission safeguards are wired. */
 export const FABLE_52_MODEL_ID = 'claude-fable-5-2';
+export const GEMINI_API_DEFAULT_MODEL = 'gemini-4-neon';
 
 const MODEL_ENTRIES: readonly Omit<ModelEntry, 'modeTier'>[] = [
+  {
+    id: `gemini:${GEMINI_API_DEFAULT_MODEL}`, engine: 'gemini', tier: 'large',
+    costPerMTokIn: 3, costPerMTokCachedIn: 0.15, costPerMTokOut: 15,
+    capabilities: ['fast', 'general', 'coder', 'reasoning', 'long-context'],
+    minEffort: 2, apiModelId: GEMINI_API_DEFAULT_MODEL, explicitOnly: true,
+    apiContextWindow: 1_048_576, contextWindowTokens: 1_048_576, apiMaxOutputTokens: 65_536,
+    reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+  },
+  {
+    id: 'gemini:gemini-4-carbon', engine: 'gemini', tier: 'large',
+    costPerMTokIn: 4, costPerMTokCachedIn: 0.20, costPerMTokOut: 20,
+    capabilities: ['general', 'coder', 'reasoning', 'long-context'],
+    minEffort: 4, apiModelId: 'gemini-4-carbon', explicitOnly: true,
+    apiContextWindow: 1_048_576, contextWindowTokens: 1_048_576, apiMaxOutputTokens: 65_536,
+  },
+  {
+    id: 'gemini:gemini-4-hydrogen', engine: 'gemini', tier: 'small',
+    costPerMTokIn: 1.50, costPerMTokCachedIn: 0.075, costPerMTokOut: 7.50,
+    capabilities: ['fast', 'general', 'coder', 'reasoning', 'long-context'],
+    minEffort: 1, apiModelId: 'gemini-4-hydrogen', explicitOnly: true,
+    apiContextWindow: 1_048_576, contextWindowTokens: 1_048_576, apiMaxOutputTokens: 65_536,
+    reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+  },
   // Concrete current IDs stay distinct from the old aliases used by signed grants.
   // Public API sticker prices are estimates, never native allowance/billing proof:
   // platform.claude.com/docs/en/models/overview; developers.openai.com/api/docs/models/gpt-6.1-sol.

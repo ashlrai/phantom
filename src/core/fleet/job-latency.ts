@@ -55,9 +55,77 @@ function boundaryEvent(row: Record<string, unknown>): string | undefined {
   return typeof raw === 'string' ? raw : undefined;
 }
 
+const gitOperations = ['index.lock', 'worktree_add', 'worktree_remove', 'fetch', 'push'] as const;
+type GitOperation = typeof gitOperations[number];
+type Observation = { machine: string; lane: string; operation: GitOperation; start: number; end: number;
+  elapsed: number | null; failed: number | null; retries: number | null };
+
+function gitObservation(row: Record<string, unknown>): Observation | null {
+  const operation = gitOperations.find(op => op === row.operation);
+  const { machine, lane, elapsed_ms, failed, retries } = row;
+  if (!operation || typeof machine !== 'string' || !machine || typeof lane !== 'string' || !lane) return null;
+  const elapsed = typeof elapsed_ms === 'number' && Number.isSafeInteger(elapsed_ms) && elapsed_ms >= 0 ? elapsed_ms : null;
+  const end = boundaryTs(row, 'git_operation');
+  return { machine, lane, operation, start: elapsed === null ? NaN : end - elapsed, end, elapsed,
+    failed: typeof failed === 'boolean' ? Number(failed) : null,
+    retries: typeof retries === 'number' && Number.isSafeInteger(retries) && retries >= 0 ? retries : null };
+}
+
+function p90(samples: number[]) {
+  return samples.sort((a, b) => a - b)[Math.ceil(samples.length * 0.9) - 1] ?? null;
+}
+
+function sum(samples: (number | null)[]) {
+  const known = samples.filter(n => n !== null);
+  return { samples: known.length || null, total: known.length ? known.reduce((a, b) => a + b, 0) : null };
+}
+
+function summarizeGit(rows: Observation[]) {
+  const machines = new Map<string, Observation[]>();
+  for (const row of rows) {
+    const group = machines.get(row.machine) ?? [];
+    group.push(row);
+    machines.set(row.machine, group);
+  }
+  return [...machines].map(([machine, group]) => {
+    const concurrent = new Set<Observation>();
+    const intervals = group.filter(row => Number.isFinite(row.start) && row.end > row.start).sort((a, b) => a.start - b.start);
+    // Earlier starts overlap if the latest end in another lane is still ahead.
+    let latest: Observation | undefined, other: Observation | undefined;
+    for (const row of intervals) {
+      const candidate = latest?.lane === row.lane ? other : latest;
+      if (candidate && candidate.end > row.start) concurrent.add(row);
+      if (!latest || row.end > latest.end) {
+        if (latest?.lane !== row.lane) other = latest;
+        latest = row;
+      } else if (row.lane !== latest.lane && (!other || row.end > other.end)) other = row;
+    }
+    // Later starts overlap if the nearest start in another lane is before the end.
+    let next: Observation | undefined, nextOther: Observation | undefined;
+    for (const row of intervals.reverse()) {
+      if (next?.lane !== row.lane) nextOther = next;
+      if (nextOther && nextOther.start < row.end) concurrent.add(row);
+      next = row;
+    }
+    return { machine, lanes: [...new Set(group.map(row => row.lane))].sort().map(lane => ({
+      lane, operations: gitOperations.map(operation => {
+        const samples = group.filter(row => row.lane === lane && row.operation === operation);
+        const elapsed = samples.flatMap(row => row.elapsed === null ? [] : [row.elapsed]);
+        return { operation, timed_samples: elapsed.length || null, p90_ms: p90(elapsed),
+          ...(operation === 'index.lock' ? { failures: sum(samples.map(row => row.failed)) } : {}),
+          ...(operation === 'fetch' || operation === 'push' ? { retries: sum(samples.map(row => row.retries)),
+            concurrent_retries: sum(samples.filter(row => concurrent.has(row)).map(row => row.retries)) } : {}),
+        };
+      }),
+    })) };
+  });
+}
+
 /** A job ID must identify one attempt; ambiguous repeated boundaries are never paired. */
 export function jobLatency(text: string | null, phases: readonly (readonly [string, string, string, string])[] = jobPhases) {
   const jobs = new Map<string, Events>();
+  const git: Observation[] = [], recovery = new Map<string, Set<number>>();
+  const checkout: number[] = [], recoverySamples: number[] = [];
   let ignored = 0;
   for (const line of (text ?? '').split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -69,6 +137,14 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
     } catch { ignored++; continue; }
     const id = row.job ?? row.job_id ?? row.jobId ?? row.id;
     const event = boundaryEvent(row);
+    if (event === 'git_operation') {
+      if (phases === jobPhases) {
+        const observation = gitObservation(row);
+        if (observation) git.push(observation);
+        else ignored++;
+      }
+      continue;
+    }
     const at = event === undefined ? NaN : boundaryTs(row, event);
     if (typeof id !== 'string' || !id || event === undefined) { ignored++; continue; }
     const events = jobs.get(id) ?? new Map<string, number[]>();
@@ -76,17 +152,33 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
     if (!Number.isFinite(at)) ignored++;
     if (!times.includes(at)) times.push(at);
     events.set(event, times); jobs.set(id, events);
+    if (phases === jobPhases && event === 'checkout_complete' && typeof row.manual_checkout_recovery === 'boolean') {
+      const values = recovery.get(id) ?? new Set<number>();
+      values.add(Number(row.manual_checkout_recovery));
+      recovery.set(id, values);
+    }
   }
   const results = phases.map(([phase, start, end, fix]) => {
     const samples: number[] = [];
-    for (const events of jobs.values()) {
+    for (const [id, events] of jobs) {
       const a = events.get(start), b = events.get(end);
-      if (a?.length === 1 && b?.length === 1 && Number.isFinite(a[0]) && Number.isFinite(b[0]) && b[0]! >= a[0]!) samples.push((b[0]! - a[0]!) / 1000);
+      if (a?.length !== 1 || b?.length !== 1 || !Number.isFinite(a[0]) || !Number.isFinite(b[0]) || b[0]! < a[0]!) continue;
+      samples.push((b[0]! - a[0]!) / 1000);
+      if (phases === jobPhases && phase === 'checkout') {
+        checkout.push(b[0]! - a[0]!);
+        const values = recovery.get(id);
+        if (values?.size === 1) recoverySamples.push(...values);
+      }
     }
     return { phase, measured_jobs: samples.length, missing_jobs: text === null ? null : jobs.size - samples.length,
       total_seconds: samples.length ? samples.reduce((a, b) => a + b, 0) : null, fix_line: fix };
   });
+  const recoveries = sum(recoverySamples);
   return { schema: 'fleet.job-latency.v1' as const, known: text !== null, jobs: text === null ? null : jobs.size, ignored_events: text === null ? null : ignored, phases: results,
+    ...(phases === jobPhases ? { git_contention: { checkout_p90_ms: p90(checkout), checkout_measured_jobs: checkout.length || null,
+      recovery_measured_jobs: recoveries.samples,
+      manual_recoveries_per_100_observed_jobs: recoveries.total === null ? null : 100 * recoveries.total / recoverySamples.length,
+      machines: git.length ? summarizeGit(git) : null } } : {}),
     top_wastes: results.filter(r => r.total_seconds !== null).sort((a, b) => b.total_seconds! - a.total_seconds!) };
 }
 

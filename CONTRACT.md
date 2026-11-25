@@ -184,6 +184,17 @@ with only a Codex default retain that default for every tier. The issue router
 keeps its separate Luna cheap slot. These defaults grant no provider access,
 subscription allowance or spending authority.
 
+# Gemini model catalog and provider
+
+`ModelEntry` may carry `costPerMTokCachedIn` and `apiMaxOutputTokens`.
+The `gemini:gemini-4-*` entries describe the metered Gemini API, not a
+Foundry engine or subscription seat; they are excluded from implicit
+`pickModel` selection. `chooseRoute` defaults an opted-in Gemini
+escalation to `gemini-4-neon`. `getActiveClient` accepts the same explicit
+cloud permission and owner key required for other metered providers;
+it does not promote Gemini into the default chain. Catalog discovery for the
+separate `agy` seat uses only IDs returned by `agy models`.
+
 # Managed desktop CLI upgrade
 
 `src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`
@@ -2273,6 +2284,30 @@ fence. The owner match is `withdraw`'s, so another scope's job answers
 `resolution-observer-scheduler.ts` now exports `childRuntimeArgs`.
 `TICK_PHASE_NODE_BRIDGE_MS` bounds the `node-bridge` phase. See
 [docs/NODE-ROUTER.md](docs/NODE-ROUTER.md#ready-queue-bridge).
+
+## Fleet job latency Git observations (`fleet.job-latency.v1`)
+
+`phm fleet job-latency --json` reads only the local jobs ledger. The
+`git_contention` section reports nearest-rank p90 for paired checkout
+boundaries and the manual recovery rate per 100 measured checkouts that
+explicitly record `manual_checkout_recovery: true|false` on
+`checkout_complete`. The denominator and measured checkout count are separate.
+
+Optional `event: "git_operation"` records name a `machine` and `lane`
+(operator-chosen non-secret aliases), and an `operation`: `index.lock`,
+`worktree_add`, `worktree_remove`, `fetch` or `push`. Record one row per
+observation. `elapsed_ms` is the measured lock wait or operation latency
+(whole milliseconds); `ts` is the observation's end. For lock outcomes
+record `failed` as a boolean; for fetch/push record `retries` as the count
+of additional attempts. Concurrent retries include only intervals that
+positively overlap another recorded Git interval on the same machine in a
+different lane; this does not imply a retry was caused by the overlap.
+Unknown fields and sample counts are `null`; observed zero is valid.
+
+The report neither instruments Git nor starts an experiment. Existing ledgers
+without fine-grained records leave those measurements unknown. To compare
+current and isolated warmed worktrees prepared from the same pinned base,
+use separate, bounded local exports with `--jobs` for the two arms.
 
 ## Fleet compute observation (`fleet.compute.v1`)
 

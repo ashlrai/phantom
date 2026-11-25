@@ -16,3 +16,10 @@
   border-radius: 6px;
   font: inherit;
 }
+
+.modes { display: flex; flex-wrap: wrap; gap: 12px; border: 0; padding: 0; margin: 0; }
+.modes label { display: inline-flex; align-items: center; gap: 6px; }
+.requests { margin-top: 20px; padding-top: 12px; border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
+.requests h3 { margin: 0 0 8px; font-size: 1rem; }
+.requests ul { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.requests li { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }

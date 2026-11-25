@@ -69,7 +69,9 @@ function line(r: Omit<ReplyState, 'text'>): string {
     case 'ASSIGNED': body = who; break;
     default: body = `${who}${r.missing.length ? ` (missing: ${r.missing.join(', ')})` : ''}`;
   }
-  return `${head}\n${body}${dup}`;
+  const assignment = (r.state === 'BLOCKED' || r.state === 'VERIFIED') && r.owner !== null && r.claim !== null
+    ? `${who}; ` : '';
+  return `${head}\n${assignment}${body}${dup}`;
 }
 
 /** First request of the thread holding `id`, by arrival order; `id` itself when it has no thread. */
@@ -80,7 +82,8 @@ function firstInThread(id: string, receipts: readonly BusInboxReceipt[]): string
   const channel = own.envelope.channel ?? 'bus';
   let first = own;
   for (const row of receipts) {
-    if ((row.envelope.channel ?? 'bus') !== channel || row.envelope.channel_ref !== ref || !isRequest(row)) continue;
+    if ((row.envelope.channel ?? 'bus') !== channel || row.envelope.channel_ref !== ref ||
+        row.envelope.to !== own.envelope.to || !isRequest(row)) continue;
     if (row.cursor < first.cursor) first = row;
   }
   return first.envelope.id;

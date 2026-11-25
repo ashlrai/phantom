@@ -29,6 +29,31 @@ describe('router catalog refresh', () => {
     expect(renderCatalog(data).split('MODEL_CATALOG_UNASSIGNED')[0]).not.toContain('gpt-99-mystery');
     expect(modelModeTier('gpt-99-mystery')).toBeNull();
   });
+  it('uses the Antigravity CLI catalog without inventing an unlisted Neon seat model', async () => {
+    const run = vi.fn(async () => [
+      'gemini-4-hydrogen-medium', 'gemini-4-hydrogen-high', 'gemini-3.8-flash-medium',
+      'claude-sonnet-4-6', 'claude-opus-4-6-thinking', 'gpt-oss-120b-medium',
+    ].join('\n'));
+    const sources = await collectCatalogSources(false, {
+      resolve: bin => bin === 'agy' ? bin : null, run, fetch: async () => new Response('', { status: 503 }),
+    });
+    expect(run).toHaveBeenCalledWith('agy', ['models']);
+    const seat = sources.find(source => source.id === 'agy')!;
+    expect(seat.models).toEqual([
+      'claude-opus-4-6-thinking', 'claude-sonnet-4-6', 'gemini-3.8-flash-medium',
+      'gemini-4-hydrogen-high', 'gemini-4-hydrogen-medium', 'gpt-oss-120b-medium',
+    ]);
+    const current = { ...empty, tiers: { 'gemini-4-neon': 'normal' } } as const;
+    const before = diffCatalog(current, sources, MODEL_CATALOG_PATTERNS, now);
+    expect(before.data.tiers['gemini-4-neon']).toBe('normal');
+    expect(before.data.unseen).toEqual({});
+    expect(before.data.tiers).not.toHaveProperty('gemini-4-neon-high');
+
+    const after = diffCatalog(current, [{ ...seat, models: [...seat.models, 'gemini-4-neon-high'] }], MODEL_CATALOG_PATTERNS, now);
+    expect(after.data.tiers).toMatchObject({
+      'gemini-4-neon-high': 'normal', 'gemini-4-hydrogen-high': 'lite', 'gemini-3.8-flash-medium': 'lite',
+    });
+  });
   it.each(['ultra', 'fusion', 'other'])('rejects %s rules at load', tier => {
     const rules = [{ pattern: '^new', sources: ['codex'], tier }] as unknown as CatalogPattern[];
     const { data, report } = diffCatalog(empty, [{ id: 'codex', status: 'ok', models: ['new-model'] }], rules, now);
