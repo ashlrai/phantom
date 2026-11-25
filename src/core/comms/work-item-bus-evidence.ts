@@ -187,6 +187,8 @@ export function deriveBusWorkItemEvidence(
   let verifiedCursor = -Infinity, blockerCursor = -Infinity;
   for (const row of receipts) {
     if (!request || row.cursor <= request.cursor || row.receivedAt < request.receivedAt) continue;
+    // Routing consistency only: endpoint labels do not authenticate a sender.
+    if (row.envelope.from !== request.envelope.to || row.envelope.to !== request.envelope.from) continue;
     // Match the classifier's private five-minute future-skew boundary; it has
     // no historical TTL. Check Date validity before reply conversion to ISO.
     if (!Number.isFinite(new Date(row.receivedAt).getTime()) ||
