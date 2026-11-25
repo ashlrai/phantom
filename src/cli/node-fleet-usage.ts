@@ -2,7 +2,7 @@
 export const NODE_FLEET_VERBS = ['join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'withdraw', 'status', 'list', 'leave'] as const;
 
 export const NODE_FLEET_USAGE = `Usage: phm node join --node <id> --owner <scope[,scope]> [--caps <cap[,cap]>] [--slots 0-64] [--json]
-       phm node beat --node <id> --session <n> [--usage 0-1000] [--slots 0-64] [--capacity <sample-json>] [--auth ok|missing|unknown | --probe-auth] [--json]
+       phm node beat --node <id> --session <n> [--usage 0-1000] [--slots 0-64] [--capacity <sample-json>] [--auth ok|missing|unknown | --probe-auth] [--watch [--every <seconds>]] [--json]
        phm node enqueue --job <id> --owner <scope> [--requires <cap[,cap]>] [--pack <id>] [--secrets <NAME[,NAME]>] [--json]
        phm node plan [--owner <scope>] [--json]
        phm node pull --node <id> --session <n> [--json]
@@ -16,4 +16,8 @@ see or pull it. The router picks the least-loaded live node that advertises the 
 (\`gh\` also needs a local gh-auth heartbeat). A per-job lease with a fencing token means no
 job runs twice: renew before it expires and pass the token to every effect. State lives in
 ~/.ashlr/nodes (or $ASHLR_HOME/nodes). Each node uses only its own local login; tokens are
-never copied or sent, and jobs carry secret NAMES, never values.`;
+never copied or sent, and jobs carry secret NAMES, never values.
+
+\`beat --watch\` repeats the beat every --every seconds (default 10, at most 25 — sessions
+expire 30 s after the last beat) until Ctrl-C, re-measuring capacity and host stats on this
+machine each pass unless those flags were given explicitly.`;
