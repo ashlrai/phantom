@@ -12,4 +12,6 @@ a node with the keyboard dispatches a bubbling, composed `select` CustomEvent
 whose `detail` contains `{ id, label, type, status }`.
 
 Verify with `npx tsc --noEmit -p desktop/tsconfig.json` and
-`HOME=$(mktemp -d) npx vitest run --config desktop/vitest.config.mts`.
+`HOME=$(mktemp -d) npm run test:web` (the `desktop` project in
+`vitest.config.web.ts` collects this suite; `npx vitest run --config
+desktop/vitest.config.mts` still runs it standalone).

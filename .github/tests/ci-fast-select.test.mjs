@@ -36,7 +36,7 @@ function repo(t, files) {
 
 function freshGraph(dir) {
   const head = sh(dir, 'rev-parse', 'HEAD');
-  const listed = sh(dir, 'ls-files', '-z').split('\0').filter((file) => /^(?:src|test|scripts)\/.+\.[cm]?[jt]sx?$/.test(file));
+  const listed = sh(dir, 'ls-files', '-z').split('\0').filter((file) => /^(?:src|test|scripts|desktop)\/.+\.[cm]?[jt]sx?$/.test(file));
   const entries = listed.map((path) => ({
     path,
     hash: sh(dir, 'rev-parse', `HEAD:${path}`),
@@ -441,6 +441,30 @@ test('colocated and transitively reached web tests are selected for the web runn
   const changed = plan({ cwd: dir, paths: ['src/web-ui/Widget.test.tsx'] });
   assert.equal(changed.mode, 'related');
   assert.deepEqual(changed.web, ['src/web-ui/Widget.test.tsx']);
+});
+
+test('desktop component tests select into the web runner like src/web-ui suites', (t) => {
+  const { dir, commit } = repo(t, {
+    'desktop/fleet-map/map.ts': 'export const map = 1;\n',
+    'desktop/fleet-map/map.test.ts': "import { map } from './map.js';\nimport { shared } from '../../src/core/shared.js';\nexport const seen = [map, shared];\n",
+    'src/core/shared.ts': 'export const shared = 1;\n',
+    'src/web-ui/uses-desktop.ts': "import { map } from '../../desktop/fleet-map/map.js';\nexport const uses = map;\n",
+  });
+  commit('seed');
+  // Without the graph, selection degrades to fallback but still pins the
+  // colocated suite for the web runner.
+  const colocated = plan({ cwd: dir, paths: ['desktop/fleet-map/map.ts'], graph: null });
+  assert.equal(colocated.mode, 'fallback');
+  assert.deepEqual(colocated.web, ['desktop/fleet-map/map.test.ts']);
+  // The import graph reaches the same suite, including through the
+  // src/core module the desktop test imports (the real suite reads
+  // src/core/graph/registry.js the same way).
+  const reached = planned(dir, ['desktop/fleet-map/map.ts']);
+  assert.equal(reached.mode, 'related');
+  assert.deepEqual(reached.web, ['desktop/fleet-map/map.test.ts']);
+  const viaCore = planned(dir, ['src/core/shared.ts']);
+  assert.equal(viaCore.mode, 'related');
+  assert.ok(viaCore.web.includes('desktop/fleet-map/map.test.ts'));
 });
 
 test('a v2 cache file without resolver 2 is rebuilt and then takes the narrow path', (t) => {

@@ -10,7 +10,7 @@
  * Read-only; touches no real config.
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
+import { existsSync, globSync, readFileSync, mkdtempSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -1032,6 +1032,31 @@ echo pending=true; exit 2
     expect(job).toContain('--reports "${{ steps.web.outputs.lane_dir }}"');
     expect(job).toContain('name: ashlr-build-${{ github.run_id }}-${{ github.run_attempt }}');
     expect(job).toContain('if-no-files-found: error');
+  });
+
+  it('collects every desktop component test in the web qualification suite', () => {
+    // desktop/vitest.config.mts is a standalone dev runner that no npm
+    // script, CI job or gate step invokes — the desktop project inside
+    // vitest.config.web.ts is what `npm run test:web` (and so the web
+    // qualification lane on every PR) actually executes. A desktop suite
+    // only the standalone config knew about would never run on a pull
+    // request: fleet-node-map.test.ts sat orphaned and unresolvable until
+    // this project existed.
+    const webConfig = readFileSync(resolve(repoRoot, 'vitest.config.web.ts'), 'utf8');
+    const includes = [...webConfig.matchAll(/include:\s*\[([^\]]*)\]/g)]
+      .flatMap((match) => [...match[1].matchAll(/'([^']+)'/g)].map((entry) => entry[1]));
+    // Only literal include patterns can be replayed; a const-bound pattern
+    // (transcriptTests) names a src/web-ui file and cannot orphan desktop/.
+    const collected = new Set(
+      includes
+        .filter((pattern) => pattern.startsWith('desktop/'))
+        .flatMap((pattern) => globSync(pattern, { cwd: repoRoot })),
+    );
+    const desktopTests = globSync('desktop/**/*.test.{ts,tsx}', { cwd: repoRoot });
+    expect(desktopTests.length).toBeGreaterThan(0);
+    for (const file of desktopTests) {
+      expect(collected.has(file), `${file} matches no include pattern in vitest.config.web.ts`).toBe(true);
+    }
   });
 
   it('keeps advisory impact shadow separate from full qualification and accepted artifacts', () => {

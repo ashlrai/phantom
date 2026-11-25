@@ -49,7 +49,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Backend tests | `npm test` (all), `npx vitest run test/<file>.test.ts` (focused) |
 | Fast unit lane with per-file timing | `npm run test:fast` (report: `.ashlr-gate/test-fast-durations.json`) |
 | Backend tests with isolated homes and a runtime cap | `npm run test:ci -- <files>` |
-| Web console tests | `npm run test:web` |
+| Web console and desktop component tests | `npm run test:web` |
 | Safety invariant suites | `npm run test:invariants` |
 | Documentation links and anchors (offline) | `npm run check:docs` |
 | Duplicate test names across `test/` (describe path + title) | `node scripts/check-test-names.mjs` |

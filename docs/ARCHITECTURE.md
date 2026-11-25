@@ -28,7 +28,7 @@ inventory, not this overview.
 
 Build and test: `npm run build` (version check, `tsc`, asset copy, web console
 build and release inventory), `npm test` (Vitest), `npm run test:web` (console
-tests), `npm run lint`, `npm run typecheck` and `npm run check:docs`.
+and desktop component tests), `npm run lint`, `npm run typecheck` and `npm run check:docs`.
 `npm run gate` runs the local release gate. See
 [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md).
 
