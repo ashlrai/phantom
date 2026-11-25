@@ -9,7 +9,9 @@
  * stays "unknown"; an offline computer is suggested 0 slots, and one whose
  * state is unconfirmed (for example a live heartbeat with reachability the
  * tailnet cannot vouch for) is suggested "unknown" — never slots the plan's
- * own assignment rule would refuse.
+ * own assignment rule would refuse. Queued jobs no computer can take are
+ * counted in `unassigned` and grouped by lane in `unassigned_reasons` with
+ * the plain reason, so a starving lane is visible instead of a bare count.
  */
 import { chooseNodeForLane, readNodesView, type NodeRow, type NodesView, type NodesViewDeps } from './nodes-view.js';
 import { UNKNOWN } from './runtime-identity.js';
@@ -33,6 +35,8 @@ export interface PlanNode {
   why: string;
 }
 export interface PlanAssignment { job: string; node: string; lane?: string; why: string }
+/** Queued jobs that waited because no computer could take their lane, grouped by lane. */
+export interface PlanUnassigned { lane: string; jobs: number; why: string }
 export interface NodesPlan {
   schema: typeof NODES_PLAN_SCHEMA;
   as_of: string;
@@ -40,6 +44,8 @@ export interface NodesPlan {
   assignable: PlanAssignment[];
   /** Queued jobs looked at that no computer can take now. */
   unassigned: number | Unknown;
+  /** The same waiting jobs grouped by lane, each with the plain reason none fit. */
+  unassigned_reasons: PlanUnassigned[];
   /** Gaps in the evidence, in plain words. */
   reasons: string[];
 }
@@ -59,12 +65,27 @@ export function planNode(node: NodeRow): PlanNode {
   return { name: node.name, online: node.reachable, free_mem_pct: node.freeMemoryPercent, load: node.load, lanes: node.lanes, suggested_slots: slots, why };
 }
 
+/** Plain words for why no computer could take a job for `lane` at this point in the plan. */
+function noReadyNodeWhy(pool: NodesView, lane: string): string {
+  const advertisers = pool.nodes.filter(node => node.lanes !== UNKNOWN && node.lanes.includes(lane));
+  if (advertisers.length === 0) return `no computer advertises the ${lane} lane`;
+  const states = new Map<string, number>();
+  for (const node of advertisers) {
+    // A node the live view calls ready can still be full in this plan: earlier
+    // assignments spent its suggested slots.
+    const state = node.stateCode === 'ready' && node.freeSlots === 0 ? 'no free slots left in this plan' : node.state;
+    states.set(state, (states.get(state) ?? 0) + 1);
+  }
+  return `computers advertising ${lane}: ${[...states].map(([state, count]) => (count === 1 ? state : `${count} × ${state}`)).join('; ')}`;
+}
+
 /** Pure: greedy launch-order assignment over the slots the plan suggests. */
 export function buildNodesPlan(view: NodesView, queue: QueueOrderV1 | null, extraReasons: string[] = []): NodesPlan {
   const nodes = view.nodes.map(planNode);
   const reasons = [...extraReasons];
   const remaining = new Map(nodes.map(n => [n.name, n.suggested_slots] as const));
   const assignable: PlanAssignment[] = [];
+  const starved = new Map<string, PlanUnassigned>();
   let unassigned: number | Unknown = UNKNOWN;
   if (!queue) reasons.push('queue unreadable; job assignments unknown');
   else {
@@ -75,13 +96,20 @@ export function buildNodesPlan(view: NodesView, queue: QueueOrderV1 | null, extr
       // Same rule as `phm nodes --can-take`, but over the slots this plan still has left.
       const pool: NodesView = { ...view, nodes: view.nodes.map(n => ({ ...n, freeSlots: remaining.get(n.name) ?? UNKNOWN })) };
       const placement = chooseNodeForLane(pool, job.lane);
-      if (!placement.node) { unassigned += 1; continue; }
+      if (!placement.node) {
+        unassigned += 1;
+        const entry = starved.get(job.lane) ?? { lane: job.lane, jobs: 0, why: '' };
+        entry.jobs += 1;
+        entry.why = noReadyNodeWhy(pool, job.lane);
+        starved.set(job.lane, entry);
+        continue;
+      }
       const left = remaining.get(placement.node);
       if (typeof left === 'number') remaining.set(placement.node, left - 1);
       assignable.push({ job: job.id, node: placement.node, lane: job.lane, why: `${job.lane} lane: ${placement.explanation}` });
     }
   }
-  return { schema: NODES_PLAN_SCHEMA, as_of: view.asOf, nodes, assignable, unassigned, reasons };
+  return { schema: NODES_PLAN_SCHEMA, as_of: view.asOf, nodes, assignable, unassigned, unassigned_reasons: [...starved.values()], reasons };
 }
 
 export interface NodesPlanDeps { view: NodesViewDeps; readQueue(): Promise<QueueOrderV1> }

@@ -329,7 +329,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     usage: 'phm nodes plan [--json]',
     description: 'A plan for spreading queued jobs over your computers: for each one, online or not, free memory, load, lanes and how many more jobs it could take now (0 when offline or held, "unknown" when not measured), plus which queued job fits which computer. Says "Tailscale is not installed here." when the Tailscale CLI is missing. It only plans: it launches, moves and stops nothing. Exit 0, 2 bad usage.',
     safety: 'read',
-    jsonShape: '{schema:"phantom.nodes-plan.v1", as_of, nodes:[{name,online,free_mem_pct,load,lanes,suggested_slots,why}], assignable:[{job,node,why}], unassigned, reasons}',
+    jsonShape: '{schema:"phantom.nodes-plan.v1", as_of, nodes:[{name,online,free_mem_pct,load,lanes,suggested_slots,why}], assignable:[{job,node,why}], unassigned, unassigned_reasons:[{lane,jobs,why}], reasons}',
   },
   {
     usage: 'phm nodes offload [--dry-run] [--json]',

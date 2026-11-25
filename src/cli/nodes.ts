@@ -31,7 +31,9 @@ pool: your Macs as one pool (this Mac first): online, offline or unknown, free s
 running jobs, load, free memory and disk, whether offload is on, when it was last seen,
 and one total line such as "2 Macs, 11 free slots". Offload is known only for this Mac.
 plan: how many more jobs each computer could take now, and which queued job fits
-which computer. It only plans; it launches, moves and stops nothing.
+which computer. Queued jobs no computer can take are grouped by lane with the
+reason ("waiting: 2 gemini jobs (no computer advertises the gemini lane)").
+It only plans; it launches, moves and stops nothing.
 doctor: what each joined computer is missing before it can take jobs: reachable,
 which lane CLIs (claude, codex, devin, gemini, local model) are installed and
 signed in, which ashlrai repo clones exist and free disk, with one fix line per gap.
@@ -60,7 +62,8 @@ const slotWords = (slots: number | 'unknown'): string => (slots === 'unknown' ? 
 function planText(plan: NodesPlan): string {
   const rows = plan.nodes.map(n => `${n.online === true ? '●' : n.online === false ? '○' : '?'} ${n.name}: ${slotWords(n.suggested_slots)} | ${n.why}`);
   const jobs = plan.assignable.length ? plan.assignable.map(a => `${a.job} -> ${a.node}`) : [plan.unassigned === 'unknown' ? 'Queued jobs unknown.' : 'No queued job fits a computer now.'];
-  return [...rows, '', ...jobs, ...plan.reasons.map(reason => `note: ${reason}`)].join('\n');
+  const waiting = plan.unassigned_reasons.map(u => `waiting: ${u.jobs} ${u.lane} ${u.jobs === 1 ? 'job' : 'jobs'} (${u.why})`);
+  return [...rows, '', ...jobs, ...waiting, ...plan.reasons.map(reason => `note: ${reason}`)].join('\n');
 }
 
 /** `phm nodes plan [--json]`: read only; plans and never launches, moves or stops anything. */
