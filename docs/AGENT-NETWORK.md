@@ -349,7 +349,9 @@ are refused. Spending stays with each member; nothing here changes billing.
   each co-founder on their own machine. They sign in to their own provider CLIs there;
   join reads no auth and sends nothing. Contribution is opt-in per lane: a lane not
   named stays at zero, and a share can be lowered but never raised above the declared
-  value. If the machine declares a `host`, join refuses to run anywhere else. The
+  value. If the machine declares a `host`, join refuses to run anywhere else; the
+  refusal names the declared machine this host matches when exactly one does, or
+  the leader fix when the host likely changed. The
   record lands in `~/.ashlr/org/joins/`; copy another machine's record there to count it.
   Re-running join replaces the machine's whole record, so a lane you stop naming drops
   to zero — the output lists each dropped lane (`droppedLanes` under `--json`) and how

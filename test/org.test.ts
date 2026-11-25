@@ -87,6 +87,37 @@ describe('join', () => {
     expect(() => joinOrg(validateOrg(o), { member: 'evan-deloria', machine: 'evan-mac', optIn: [] }, { dir: tmp(), host: 'other' })).toThrow(/not that machine/);
     expect(joinOrg(validateOrg(o), { member: 'evan-deloria', machine: 'evan-mac', optIn: [] }, { dir: tmp(), host: 'Evans-MacBook' }).member).toBe('evan-deloria');
   });
+  it('names the way through a host mismatch: the sibling machine this host matches, else the leader fix', () => {
+    const o = example() as any;
+    o.members[1].machines = [
+      { id: 'evan-mac', host: 'evans-macbook.local' },
+      { id: 'evan-laptop', host: 'evans-laptop.local' },
+    ];
+    const org = validateOrg(o);
+    // On the laptop but asking for the mac: the refusal names the laptop's id.
+    expect(() => joinOrg(org, { member: 'evan-deloria', machine: 'evan-mac', optIn: [] }, { dir: tmp(), host: 'Evans-Laptop' }))
+      .toThrow(/Run join on evans-macbook\.local; this is not that machine\. This computer matches declared machine evan-laptop: run phm org join --member evan-deloria --machine evan-laptop\./);
+    // On a host no declared machine names (renamed or replaced computer): the leader re-points it.
+    expect(() => joinOrg(org, { member: 'evan-deloria', machine: 'evan-mac', optIn: [] }, { dir: tmp(), host: 'stranger' }))
+      .toThrow(/not that machine\. If this computer replaced it or was renamed, ask the leader to update the machine's host in org\.toml\./);
+    // Two siblings matching this host is ambiguous: no machine is guessed.
+    const both = example() as any;
+    both.members[1].machines = [
+      { id: 'evan-mac', host: 'evans-macbook.local' },
+      { id: 'evan-laptop', host: 'EVANS-MACBOOK' },
+      { id: 'evan-tower', host: 'tower.local' },
+    ];
+    expect(() => joinOrg(validateOrg(both), { member: 'evan-deloria', machine: 'evan-tower', optIn: [] }, { dir: tmp(), host: 'evans-macbook' }))
+      .toThrow(/not that machine\. If this computer replaced it or was renamed/);
+    // A sibling without a declared host never counts as a match.
+    const open = example() as any;
+    open.members[1].machines = [
+      { id: 'evan-mac', host: 'evans-macbook.local' },
+      { id: 'evan-laptop' },
+    ];
+    expect(() => joinOrg(validateOrg(open), { member: 'evan-deloria', machine: 'evan-mac', optIn: [] }, { dir: tmp(), host: 'evans-laptop' }))
+      .toThrow(/not that machine\. If this computer replaced it or was renamed/);
+  });
   it('names the declared ids and the leader fix on identity refusals', () => {
     const dir = tmp();
     const o = org();
