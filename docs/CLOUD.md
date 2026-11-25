@@ -1712,7 +1712,11 @@ There are two ways to launch backlog items:
   it launches the next backlog item. Before each launch pick it also registers
   every unclosed backlog PR whose item declares a metric into the outcome
   ledger — the same records `phm improve sync-backlog` writes by hand — so
-  measured outcomes keep feeding the order above. Scheduled launches need
+  measured outcomes keep feeding the order above. The same pass records
+  checkout-free post-merge observations (`syncCloudOutcomeObservations`):
+  merged task outcomes and the revert-outcomes journal become `observed`
+  events, so standing reverts discount the proposals that caused them
+  without anyone running `phm improve observe` by hand. Scheduled launches need
   self-improvement switched on **and** the self-improvement gate open. So with
   the defaults Phantom starts at most 4 sessions a day on its own, and stops
   when the estimate reaches the $40 reserve. The two jobs never overlap
