@@ -12,13 +12,13 @@
  *
  * Phase A (parallel): root build (tsc, then the static-asset copy from `npm run build` — see
  * GATE_BUILD_ASSET_SCRIPTS), the native-compiler typecheck (`npm run typecheck:fast`, tsgo on
- * both projects — cold tsc in a fresh worker tree can take tens of minutes, so tsgo reports the
+ * all three projects — cold tsc in a fresh worker tree can take tens of minutes, so tsgo reports the
  * same diagnostics in seconds), eslint (cached), the real-io lane guard, the
  * Verse route sync-I/O guard (scripts/check-verse-sync-io.mjs), the quarantine-ledger verifier
  * (scripts/check-quarantine-ledger.mjs: every added test skip needs a live ledger row),
- * the docs check. Both tsconfig projects are typechecked inside typecheck-fast — the same
+ * the docs check. All tsconfig projects are typechecked inside typecheck-fast — the same
  * check `npm run typecheck` and hosted fast-gate run — so there is no separate web step.
- * `--check` typechecks the same two projects with the native compiler directly. Then the
+ * `--check` typechecks the same projects with the native compiler directly. Then the
  * web build + first-paint budget. Phase B runs the
  * focused backend and web suites in parallel; a full gate runs them serially
  * so load-sensitive UI timing assertions measure the UI rather than backend work.
@@ -562,6 +562,7 @@ export function checkTypeSpecs({ nodeBin, tsgoBin }) {
   return [
     { name: 'typecheck', cmd: nodeBin, args: [tsgoBin, '--noEmit', '-p', 'tsconfig.json'] },
     { name: 'typecheck-web', cmd: nodeBin, args: [tsgoBin, '--noEmit', '-p', 'src/web-ui/tsconfig.json'] },
+    { name: 'typecheck-desktop', cmd: nodeBin, args: [tsgoBin, '--noEmit', '-p', 'desktop/tsconfig.json'] },
   ];
 }
 
@@ -686,7 +687,7 @@ async function main() {
 
   if (args.check) {
     // Development feedback only: full release checks remain in gate. The native
-    // compiler covers both projects at `npm run typecheck` parity, and tests
+    // compiler covers every project at `npm run typecheck` parity, and tests
     // have isolated homes just as in the gate.
     const checkSteps = [
       ...checkTypeSpecs({ nodeBin: node, tsgoBin: bin.tsgo }),

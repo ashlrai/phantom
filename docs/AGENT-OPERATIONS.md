@@ -43,7 +43,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
 | Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and a syntax check of each changed file by type (Python, shell, Perl, shebang scripts, JSON, XML, Rust, Swift, YAML, TOML, CSS, Vitest snapshots, patch diffs, embedded payloads in HTML files, and scripts in the independently-owned `src/raycast/` and `examples/universe-site/` trees), plus the `contrib/router` program type check when its inputs change (the tree runs under `tsx` and no `tsconfig` project covers it); reference in [verify-changed.md](verify-changed.md) |
-| Type check (backend + web) | `npm run typecheck` |
+| Type check (backend + web + desktop) | `npm run typecheck` |
 | Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
 | Backend tests | `npm test` (all), `npx vitest run test/<file>.test.ts` (focused) |
