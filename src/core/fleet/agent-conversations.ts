@@ -144,9 +144,10 @@ export function buildAgentConversations(scan: { source: AgentConversations['sour
 /** The one read behind the CLI, the API and the map. */
 export function readAgentConversations(query: ConversationQuery = {}, options: BusInboxOptions = {}): AgentConversations {
   // The registry backs `agent`, `waitingOn`, `with` and the
-  // `from`/`excludeFrom` sender filters' identity matching; `channel`,
-  // `priority` and `inReplyTo` decide on member-message fields alone and
-  // need no read.
+  // `from`/`excludeFrom` sender filters' identity matching; every other
+  // filter — `channel`, `priority`, `inReplyTo`, `thread`, `bodyKind`,
+  // `kind` included — decides on member-message fields alone
+  // and needs no read.
   const needsRegistry = query.agent !== undefined || query.waitingOn !== undefined ||
     query.from !== undefined || query.excludeFrom !== undefined || query.with !== undefined;
   const registryRead = needsRegistry ? readAgentRegistry({ root: options.root }) : undefined;

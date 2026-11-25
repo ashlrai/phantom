@@ -219,6 +219,13 @@ export interface ConversationQuery {
    * whose body carries no discriminator names no provable kind and never
    * matches. Whole threads, never partial message lists. */
   bodyKind?: string;
+  /** Keep only threads where at least one member message's classified kind
+   * is this — the same `AgentMessageKind` vocabulary and member-level rule
+   * `phm messages --kind` applies to the flat timeline (ask, reply,
+   * handoff, status or blocker), decided on each member message's `kind`
+   * so "which threads carry a blocker" is one filtered read of whole
+   * threads. Whole threads, never partial message lists. */
+  kind?: AgentMessageKind;
   /** Cap the returned threads, newest order kept (longest-waiting first,
    * then newest); absent means every matched thread. `matched` still
    * reports the full filtered count. */
@@ -352,6 +359,10 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * member message's body carries that exact kind discriminator — the
  * same `busBodyKind` own-field exact match every bus read's body-kind
  * filter applies — so "which threads carry work.post traffic" is one
+ * filtered read. `kind` keeps only the threads where at least one member
+ * message's classified kind is the value — the same `AgentMessageKind`
+ * vocabulary `phm messages --kind` filters the flat timeline on, decided
+ * on each member's `kind`, so "which threads carry a blocker" is one
  * filtered read. Every one of
  * these is a member-level test: whole threads survive, never partial
  * message lists, and the matched member stays in `messages[]`.
@@ -402,6 +413,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     && (query.id === undefined || c.messages.some(m => m.id === query.id))
     && (query.thread === undefined || c.messages.some(m => m.thread === query.thread))
     && (query.bodyKind === undefined || c.messages.some(m => m.bodyKind === query.bodyKind))
+    && (query.kind === undefined || c.messages.some(m => m.kind === query.kind))
     && (channelPrefix === undefined || c.messages.some(m => m.to.startsWith(channelPrefix)))
     && (query.priority === undefined || c.messages.some(m => m.priority === query.priority))
     && (fromMatch === undefined || c.messages.some(m => fromMatch(m.from)))

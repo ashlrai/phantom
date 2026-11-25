@@ -28,7 +28,9 @@
  * `--waiting`/`--blocked`/`?waiting=1`/`?blocked=1` shortcuts (`false` is
  * the same as absent), `state` one of waiting/answered/blocked/done — the
  * general form of the two booleans, which stay conjunctive with it so a
- * contradictory pair is an honest empty list — `since` the shared
+ * contradictory pair is an honest empty list — `kind` one of
+ * ask/reply/handoff/status/blocker, the member-level filter
+ * `--kind` shares — `since` the shared
  * 15m/2h/1d/epoch-ms/ISO grammar resolved to a safe non-negative
  * epoch-ms integer (threads whose last activity reaches the cutoff, whole
  * threads never partial message lists), `before` the same grammar as the
@@ -59,14 +61,15 @@ import {
   CONVERSATION_STATES, readAgentConversations,
   type AgentConversations, type ConversationQuery, type ConversationState,
 } from '../core/fleet/agent-conversations.js';
-import { parseSince } from '../core/fleet/agent-messages.js';
+import { AGENT_MESSAGE_KINDS, parseSince, type AgentMessageKind } from '../core/fleet/agent-messages.js';
 
 /** The printable-label rule `agent`, `job`, `waitingOn`, `inReplyTo`, `id`, `from`, `excludeFrom` and `with` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CONVERSATION_KEYS = new Set([
   'agent', 'waiting', 'blocked', 'state', 'job', 'waitingOn', 'since', 'before', 'contains',
-  'inReplyTo', 'id', 'channel', 'priority', 'from', 'excludeFrom', 'with', 'thread', 'bodyKind', 'limit',
+  'inReplyTo', 'id', 'channel', 'priority', 'from', 'excludeFrom', 'with', 'thread', 'bodyKind',
+  'kind', 'limit',
 ]);
 const LABEL_KEYS = ['agent', 'job', 'waitingOn', 'inReplyTo', 'id', 'from', 'excludeFrom', 'with', 'thread', 'bodyKind'] as const;
 /** The same page cap `phm agents conversations --limit` and the API param share. */
@@ -109,6 +112,8 @@ export interface FleetAgentConversationsArgs {
   thread?: string;
   /** Keep only threads where at least one member message's body carries this exact kind discriminator — the shared `--body-kind` rule. */
   bodyKind?: string;
+  /** Keep only threads where at least one member message's classified kind is this — the shared `--kind` rule. */
+  kind?: AgentMessageKind;
   /** Cap the returned threads, longest-waiting order kept; `matched` still reports the full filtered count. */
   limit?: number;
 }
@@ -151,6 +156,11 @@ export function parseFleetAgentConversationsArgs(args: Record<string, unknown>):
   if (state !== undefined) {
     if (typeof state !== 'string' || !(CONVERSATION_STATES as readonly string[]).includes(state)) return null;
     parsed.state = state as ConversationState;
+  }
+  const kind = args.kind;
+  if (kind !== undefined) {
+    if (typeof kind !== 'string' || !(AGENT_MESSAGE_KINDS as readonly string[]).includes(kind)) return null;
+    parsed.kind = kind as AgentMessageKind;
   }
   const contains = busReadContains(args.contains);
   if (contains === null) return null;
@@ -234,6 +244,7 @@ export async function readFleetAgentConversations(
     ...(args.with === undefined ? {} : { with: args.with }),
     ...(args.thread === undefined ? {} : { thread: args.thread }),
     ...(args.bodyKind === undefined ? {} : { bodyKind: args.bodyKind }),
+    ...(args.kind === undefined ? {} : { kind: args.kind }),
     ...(args.limit === undefined ? {} : { limit: args.limit }),
   };
   const result: AgentConversations = read(query);
