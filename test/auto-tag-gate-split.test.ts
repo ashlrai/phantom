@@ -24,6 +24,7 @@ const workflow = parse(readFileSync(resolve(repoRoot, '.github/workflows/auto-ta
 };
 const step = workflow.jobs.tag.steps.find((entry) => entry.id === 'checks')!;
 const validateShaStep = workflow.jobs.tag.steps.find((entry) => entry.id === 'validate-dispatch-sha')!;
+const versionStep = workflow.jobs.tag.steps.find((entry) => entry.id === 'version')!;
 const GEN = 'Check generated files';
 const DRIFT = 'Check authority drift (hermetic)';
 
@@ -63,6 +64,58 @@ esac
   }
 }
 
+function runVersionStep(newVersion: string, oldVersion: string, subject: string) {
+  const dir = mkdtempSync(join(tmpdir(), 'auto-tag-version-'));
+  try {
+    writeFileSync(join(dir, 'gh'), `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *"parents[0].sha"* ]]; then
+  printf 'parent\\n'
+elif [[ "$*" == *"commit.message"* ]]; then
+  printf '%s\\n' "$SUBJECT"
+elif [[ "$*" == *"contents/package.json?ref=$SHA"* ]]; then
+  printf '{"version":"%s"}\\n' "$NEW_VERSION"
+elif [[ "$*" == *"contents/package.json?ref=parent"* ]]; then
+  printf '{"version":"%s"}\\n' "$OLD_VERSION"
+else
+  echo "unexpected gh $*" >&2
+  exit 9
+fi
+`);
+    writeFileSync(join(dir, 'jq'), `#!/usr/bin/env node
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => { input += chunk; });
+process.stdin.on('end', () => { console.log(JSON.parse(input).version); });
+`);
+    writeFileSync(join(dir, 'git'), '#!/usr/bin/env bash\nexit 2\n');
+    for (const name of ['gh', 'jq', 'git']) chmodSync(join(dir, name), 0o755);
+    const output = join(dir, 'output');
+    writeFileSync(output, '');
+    const env = { ...process.env };
+    const pathName = Object.keys(env).find((key) => key.toLowerCase() === 'path') ?? 'PATH';
+    const sep = process.platform === 'win32' ? ';' : ':';
+    env[pathName] = `${dir}${sep}${env[pathName] ?? ''}`;
+    Object.assign(env, {
+      GITHUB_OUTPUT: output,
+      REPO: 'ashlrai/phantom',
+      SHA: 'a'.repeat(40),
+      VERSION_FILE: 'package.json',
+      NEW_VERSION: newVersion,
+      OLD_VERSION: oldVersion,
+      SUBJECT: subject,
+    });
+    const result = spawnSync('bash', ['-c', versionStep.run!], { encoding: 'utf8', env });
+    return {
+      status: result.status ?? 1,
+      output: readFileSync(output, 'utf8'),
+      log: (result.stdout ?? '') + (result.stderr ?? ''),
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function runShaValidation(sha: string, status: string) {
   const dir = mkdtempSync(join(tmpdir(), 'auto-tag-sha-'));
   try {
@@ -88,6 +141,32 @@ printf '%s\\n' "$GH_STATUS"
 
 const ok = (name: string): Run => ({ name, conclusion: 'success' });
 const allGreen = [ok('Merge Gate'), ok(GEN), ok(DRIFT)];
+
+describe('Auto-tag version healing', () => {
+  it('does not tag an unchanged version from a non-release commit', () => {
+    const result = runVersionStep('3.30.74', '3.30.74', 'bridge(RQ-DVL): (#8762)');
+    expect(result.status, result.log).toBe(0);
+    expect(result.output).toContain('changed=false');
+    expect(result.output).not.toContain('changed=true');
+    expect(result.log).toContain('::notice::v3.30.74 is owed by its release-please commit; not tagging non-release commit');
+  });
+
+  it('preserves unchanged-version healing for release-please commits', () => {
+    const result = runVersionStep('3.30.74', '3.30.74', 'chore(phantom): release 3.30.74 (#8767)');
+    expect(result.status, result.log).toBe(0);
+    expect(result.output).toContain('version=3.30.74');
+    expect(result.output).toContain('changed=true');
+    expect(result.log).toContain('Version unchanged (3.30.74) but tag v3.30.74 is missing; tagging this commit.');
+  });
+
+  it('preserves version-bump behavior for release commits', () => {
+    const result = runVersionStep('3.30.74', '3.30.73', 'chore(phantom): release 3.30.74');
+    expect(result.status, result.log).toBe(0);
+    expect(result.output).toContain('version=3.30.74');
+    expect(result.output).toContain('changed=true');
+    expect(result.log).toContain('Version bumped 3.30.73 -> 3.30.74; tagging this commit.');
+  });
+});
 
 describe('Auto-tag requires both split checks on the exact sha', { timeout: 60_000 }, () => {
   it('validates an explicit dispatch SHA before minting write authority', () => {
