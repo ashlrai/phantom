@@ -353,6 +353,12 @@ are refused. Spending stays with each member; nothing here changes billing.
   telemetry is planned with a conservative 25 points of headroom. Leftover work is
   returned in `unassigned` with a reason.
 
+With `--json`, a failed `phm org` call prints
+`{"schema":"org.error.v1","command","error":{"code","message"}}` on stdout —
+`code` is `usage` (exit 2), `rejected` (the org file, join or queue was refused,
+exit 1) or `error` (operational failure, exit 1). Without `--json` the same
+failure is `phm org: <message>` on stderr.
+
 The leader reads `phm org plan --json` each planning pass and applies it within each
 member's contributed limits. Private data, mail and messages are never pooled.
 

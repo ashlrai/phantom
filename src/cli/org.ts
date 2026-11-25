@@ -21,7 +21,10 @@ export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
                                 Run on your own machine. Opts in only the lanes you name (share can only be lowered).
                                 Nothing is sent and no provider auth is read; sign in to your own CLIs here.
   plan [--queue <jobs.json>]    Propose queue assignments and agent roles within each member's contributed limits
-Default file: ~/.ashlr/org.toml (example: docs/examples/org.toml). Guide: docs/AGENT-NETWORK.md#team-org`;
+Default file: ~/.ashlr/org.toml (example: docs/examples/org.toml). Guide: docs/AGENT-NETWORK.md#team-org
+
+  With --json every failure prints {"schema":"org.error.v1","command","error":{"code","message"}}
+  on stdout (code: usage | rejected | error) instead of "phm org: ..." on stderr; exit codes are unchanged.`;
 
 function take(args: string[], name: string): string[] {
   const out: string[] = [];
@@ -48,11 +51,37 @@ function noLeftovers(args: string[]): void {
   if (args.length) throw new OrgError(`Unexpected argument${args.length === 1 ? '' : 's'} ${args.map((a) => `'${a}'`).join(' ')}. Run: phm org --help`);
 }
 
+/** Argument-shape failures: exit 2. Under --json the caller gets the parseable
+ * envelope on stdout; text mode keeps the full usage on stderr. */
+function orgUsage(json: boolean, command: string, message = 'Invalid org arguments'): number {
+  if (json) {
+    console.log(JSON.stringify({ schema: 'org.error.v1', command, error: { code: 'usage', message: `${message}. Run: phm org --help` } }));
+    return 2;
+  }
+  console.error(ORG_USAGE);
+  return 2;
+}
+
+/** Operational and validation failures: exit 1. OrgError is the org model
+ * refusing the request (bad member, machine, lane, share, file or queue);
+ * anything else is an operational failure. Messages are fixed operator-facing
+ * strings — no argument values or file contents are echoed. */
+function orgFailure(json: boolean, command: string, err: unknown): number {
+  const message = err instanceof Error ? err.message : String(err);
+  if (json) {
+    console.log(JSON.stringify({ schema: 'org.error.v1', command,
+      error: { code: err instanceof OrgError ? 'rejected' : 'error', message } }));
+    return 1;
+  }
+  console.error(`phm org: ${message}`);
+  return 1;
+}
+
 /** Bare `phm org`: the live tree the Fleet map draws. Reads only; the builder is src/core/fleet/org-tree.ts. */
 async function liveOrg(args: string[]): Promise<number> {
-  const asText = args.includes('--text'), at = args.indexOf('--minutes');
+  const asText = args.includes('--text'), asJson = args.includes('--json'), at = args.indexOf('--minutes');
   const rest = args.filter((arg, i) => arg !== '--text' && arg !== '--json' && i !== at && (at < 0 || i !== at + 1));
-  if (rest.length || (at >= 0 && args[at + 1] === undefined)) { console.error(ORG_USAGE); return 2; }
+  if (rest.length || (at >= 0 && args[at + 1] === undefined)) return orgUsage(asJson, 'org');
   const [{ readFleetOrgMap }, { mapWindowMinutes }, { renderOrgTreeText }, { sanitizePublicJson }] = await Promise.all([
     import('../core/verse/fleet-org-map-api.js'), import('../core/fleet/org-map.js'), import('../core/fleet/org-tree.js'), import('../core/util/public-json.js')]);
   // Sanitizing keeps the shape; it only rewrites home paths and secret-shaped strings.
@@ -69,15 +98,23 @@ async function liveOrg(args: string[]): Promise<number> {
 export async function cmdOrg(argv: string[]): Promise<number> {
   const args = [...argv];
   if (args.includes('--help') || args.includes('-h')) { console.log(ORG_USAGE); return 0; }
+  // `--json` is a boolean flag and a standalone `--json` token can never be a
+  // flag value (values starting with `--` are refused), so argv alone proves
+  // the caller asked for JSON even when parsing fails first.
+  const json = args.includes('--json');
   if (!args.some((arg, i) => !arg.startsWith('-') && args[i - 1] !== '--minutes' && args[i - 1] !== '--file')) {
-    try { return await liveOrg(args); } catch (err) { console.error(`phm org: ${err instanceof Error ? err.message : String(err)}`); return 1; }
+    try { return await liveOrg(args); } catch (err) { return orgFailure(json, 'org', err); }
   }
-  const json = args.includes('--json'); if (json) args.splice(args.indexOf('--json'), 1);
+  if (json) args.splice(args.indexOf('--json'), 1);
   const print = (v: unknown, text: string) => { console.log(json ? JSON.stringify(v, null, 2) : text); return 0; };
+  let command = 'org';
   try {
     const file = one(args, '--file') ?? orgFile();
     const [sub, ...rest] = args;
-    if (sub !== 'show' && sub !== 'join' && sub !== 'plan') { console.error(ORG_USAGE); return 2; }
+    if (sub !== 'show' && sub !== 'join' && sub !== 'plan') {
+      return orgUsage(json, 'org', typeof sub === 'string' && !sub.startsWith('-') ? `Unknown org command '${sub}'` : undefined);
+    }
+    command = sub;
     const org = loadOrg(file);
     if (sub === 'show') {
       noLeftovers(rest);
@@ -127,7 +164,6 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       ...plan.assignments.map((a) => `  ${a.job} -> ${a.agent} (${a.member}/${a.lane}, ~${a.costPct}%)`),
       ...plan.unassigned.map((u) => `  ! ${u.job}: ${u.reason}`)].join('\n'));
   } catch (err) {
-    console.error(`phm org: ${err instanceof Error ? err.message : String(err)}`);
-    return 1;
+    return orgFailure(json, command, err);
   }
 }
