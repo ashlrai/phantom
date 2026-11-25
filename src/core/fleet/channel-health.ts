@@ -302,6 +302,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   if (base.processAlive === true) base.runtimeHost = host;
   let inbound: number[], replies: number[], evidence: InboundEvidence | null = null;
   let outboundFailure: { at: string } | null = null;
+  let invalidReplyTime = false;
   try {
     if (src.inboundEvidence) {
       evidence = await src.inboundEvidence();
@@ -309,7 +310,9 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
     } else {
       inbound = (await src.inbound()).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
     }
-    replies = (await src.replies()).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
+    const replyTimes = (await src.replies()).map(ms);
+    invalidReplyTime = replyTimes.some((t) => !Number.isFinite(t));
+    replies = replyTimes.filter(Number.isFinite).sort((a, b) => a - b);
     outboundFailure = await src.outboundFailure?.() ?? null;
   } catch {
     return { ...base, state: 'UNKNOWN', missing: [`${channel} receipt source unreadable`] };
@@ -383,6 +386,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   const reasons: string[] = [];
   if (!binding && pending.length && observedReplies) reasons.push(`${channel} reply correlation unavailable`);
   if (futureDated) reasons.push(`${channel} future-dated receipt ignored`);
+  if (invalidReplyTime) reasons.push(`${channel} reply evidence time invalid`);
   const failureTime = outboundFailure ? ms(outboundFailure.at) : null;
   const invalidFailureTime = failureTime !== null && (!Number.isFinite(failureTime) || failureTime > nowMs);
   const recentFailure = failureTime !== null && inWindow(failureTime);
