@@ -348,6 +348,13 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   // Future-dated observations are rejected as evidence either way.
   const inWindow = (t: number): boolean => Number.isFinite(t) && t <= nowMs && nowMs - t <= INBOUND_WINDOW_MS;
   const windowInbound = validInbound.filter(inWindow);
+  let bindingPartitionMismatch = false;
+  if (binding) {
+    const partition = [...binding.answeredAt, ...binding.unansweredAt].map(ms).filter(inWindow).sort((a, b) => a - b);
+    bindingPartitionMismatch = partition.length !== windowInbound.length
+      || partition.some((t, i) => t !== windowInbound[i]);
+    if (bindingPartitionMismatch) binding = null;
+  }
   const pending = binding ? binding.unansweredAt.map(ms).filter(inWindow) : windowInbound;
   const answeredCount = binding ? binding.answeredAt.map(ms).filter(inWindow).length : 0;
   const observedReplies = validReplies.length;
@@ -397,6 +404,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   if (futureDated) reasons.push(`${channel} future-dated receipt ignored`);
   if (invalidReplyTime) reasons.push(`${channel} reply evidence time invalid`);
   if (invalidBindingTime) reasons.push(`${channel} reply binding time invalid`);
+  if (bindingPartitionMismatch) reasons.push(`${channel} reply binding partition mismatch`);
   const failureTime = outboundFailure ? ms(outboundFailure.at) : null;
   const invalidFailureTime = failureTime !== null && (!Number.isFinite(failureTime) || failureTime > nowMs);
   const recentFailure = failureTime !== null && inWindow(failureTime);
