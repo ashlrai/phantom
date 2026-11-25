@@ -23,6 +23,17 @@ function countSelectedRows(rows: readonly SlackTraceEvidenceRow[]) {
   return counts;
 }
 
+function sameSlackTimestamp(left: unknown, right: string): boolean {
+  if (!isSlackTs(left) || !isSlackTs(right)) return false;
+  const normalize = (value: string) => {
+    const [seconds, fraction] = value.split('.');
+    return [seconds!.replace(/^0+/, ''), fraction!.replace(/0+$/, '')];
+  };
+  const [leftSeconds, leftFraction] = normalize(left);
+  const [rightSeconds, rightFraction] = normalize(right);
+  return leftSeconds === rightSeconds && leftFraction === rightFraction;
+}
+
 /**
  * The CLI `--message` post-filter on a collected bundle: keep only the rows
  * for the selected channel+message, recompute counts, echo the selection and
@@ -31,7 +42,7 @@ function countSelectedRows(rows: readonly SlackTraceEvidenceRow[]) {
  * siblings). Runs before the SLACK_TRACE_ROWS presentation cap.
  */
 function selectSlackTraceMessage(bundle: EvidenceBundle, channelId: string, messageTs: string, maxAgeSeconds: number | undefined): EvidenceBundle {
-  const rows = bundle.rows.filter((row) => row.channelId === channelId && row.messageTs === messageTs);
+  const rows = bundle.rows.filter((row) => row.channelId === channelId && sameSlackTimestamp(row.messageTs, messageTs));
   const asOfMs = Date.parse(bundle.asOf);
   return {
     ...bundle,
