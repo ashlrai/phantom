@@ -115,14 +115,14 @@ export interface ChannelSource {
   configMissing(): Promise<string[]> | string[];
   processAlive(): Promise<boolean | 'unknown'> | boolean | 'unknown';
   /** Inbound receive times (ISO), any order. */
-  inbound(): Promise<string[]> | string[];
+  inbound(now?: Date): Promise<string[]> | string[];
   /**
    * Optional richer inbound read; when present it supersedes inbound(). Rows
    * carry durable-admission outcomes and `store` reports observation-store
    * coverage. Sources without it keep honest unknown coverage: no
    * durableIngress counts are invented for them.
    */
-  inboundEvidence?(): Promise<InboundEvidence> | InboundEvidence;
+  inboundEvidence?(now?: Date): Promise<InboundEvidence> | InboundEvidence;
   /** Reply receipt times (ISO), any order. Activity observations only; binding comes from replyBinding(). */
   replies(): Promise<string[]> | string[];
   /**
@@ -212,6 +212,17 @@ function slackReplyBinding({ journal, sends }: SlackSnapshot, now: Date): ReplyB
   return { store: 'ok', answeredAt, unansweredAt, futureDated: binding.futureDated };
 }
 
+function imessageObservationTimes(rows: Awaited<ReturnType<typeof readImessageAckEvidence>>['rows'], now: Date): string[] {
+  const latest = new Map<number, string>();
+  const future: string[] = [];
+  for (const row of rows) {
+    if (Date.parse(row.timestamp) > now.getTime()) { future.push(row.timestamp); continue; }
+    const previous = latest.get(row.rowid);
+    if (!previous || row.timestamp > previous) latest.set(row.rowid, row.timestamp);
+  }
+  return [...latest.values(), ...future];
+}
+
 export function defaultChannelSources(runsDir?: string): Record<ChannelName, ChannelSource> {
   let captured: SlackSnapshot | undefined;
   const snapshot = (): SlackSnapshot => captured ??= {
@@ -245,16 +256,16 @@ export function defaultChannelSources(runsDir?: string): Record<ChannelName, Cha
     imessage: {
       configMissing: () => (commsEnabled(loadConfigReadOnlyStrict()) ? [] : ['imessage comms configuration']),
       processAlive: () => pgrep('imessage (poll|watch|run)|ashlr-imessage|imsg|textbot'),
-      inbound: async () => {
+      inbound: async (now = new Date()) => {
         const ev = await readImessageAckEvidence(4096, runsDir);
         if (ev.sourceState !== 'ok' || ev.malformedRows) throw new Error('imessage-acks-unreadable');
-        return ev.rows.filter((r) => r.status === 'accepted').map((r) => r.timestamp);
+        return imessageObservationTimes(ev.rows, now);
       },
-      inboundEvidence: async () => {
+      inboundEvidence: async (now = new Date()) => {
         const ev = await readImessageAckEvidence(4096, runsDir);
         return {
           store: ev.malformedRows ? 'unreadable' : ev.sourceState,
-          rows: ev.rows.filter((r) => r.status === 'accepted').map((r) => ({ at: r.timestamp })),
+          rows: imessageObservationTimes(ev.rows, now).map((at) => ({ at })),
         };
       },
       replies: () => {
@@ -291,10 +302,10 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   let inbound: number[], replies: number[], evidence: InboundEvidence | null = null;
   try {
     if (src.inboundEvidence) {
-      evidence = await src.inboundEvidence();
+      evidence = await src.inboundEvidence(now);
       inbound = evidence.rows.map((r) => ms(r.at)).filter(Number.isFinite).sort((a, b) => a - b);
     } else {
-      inbound = (await src.inbound()).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
+      inbound = (await src.inbound(now)).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
     }
     replies = (await src.replies()).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
   } catch {
