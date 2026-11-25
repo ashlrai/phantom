@@ -300,6 +300,21 @@ describe('phm bus inbox read filters', () => {
     expect(ids((await json(['inbox', '--to', 'fleet', '--body-kind', 'missing'])).value)).toEqual([]);
   });
 
+  it('keeps only work.result mail reporting the requested outcome', async () => {
+    bus.send(envelope({ id: 'result-failed', body: { kind: 'work.result', outcome: 'failed' } }));
+    bus.send(envelope({ id: 'result-complete', body: { kind: 'work.result', outcome: 'complete' } }));
+    bus.send(envelope({ id: 'result-no-outcome', body: { kind: 'work.result' } }));
+    bus.send(envelope({ id: 'release', body: { kind: 'work.release', outcome: 'released' } }));
+    bus.send(envelope({ id: 'note', body: { kind: 'note', text: 'failed but not a result' } }));
+    expect(ids((await json(['inbox', '--to', 'fleet', '--result', 'failed'])).value)).toEqual(['result-failed']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--result', 'complete'])).value)).toEqual(['result-complete']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--result', 'reserved'])).value)).toEqual([]);
+    // The match is kind-scoped and exact: a work.release body's own outcome,
+    // a work.result carrying no outcome and every other body kind never
+    // match, so "which leftover mail reports failed" is one filtered read.
+    expect(ids((await json(['inbox', '--to', 'fleet', '--result', 'admitted'])).value)).toEqual([]);
+  });
+
   it('ANDs every supplied filter and keeps hasMore honest about the filtered set', async () => {
     bus.send(envelope({ id: 'hit', from: 'alice', priority: 'P0', body: { kind: 'note', thread: 'job:RQ-9', text: 'needle here' } }));
     bus.send(envelope({ id: 'miss-priority', from: 'alice', priority: 'P2', body: { kind: 'note', thread: 'job:RQ-9', text: 'needle here' } }));
@@ -325,6 +340,8 @@ describe('phm bus inbox read filters', () => {
       ['inbox', '--to', 'fleet', '--id', 'has space'],
       ['inbox', '--to', 'fleet', '--id='],
       ['inbox', '--to', 'fleet', '--body-kind', 'two words'],
+      ['inbox', '--to', 'fleet', '--result', 'bogus'],
+      ['inbox', '--to', 'fleet', '--result', 'Failed'],
       ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--priority', 'P0', '--contains', 'x'],
       ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--body-kind', 'note'],
       ['ack', 'a', '--to', 'fleet', '--since', '1h'],

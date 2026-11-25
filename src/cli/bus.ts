@@ -5,7 +5,7 @@ import { BusMailboxError, createBusMailbox, validateBusAddress, type BusMailbox,
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry, type AgentRegistry } from '../core/agents/bus-identity.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch, BUS_READ_CONTAINS_MAX } from '../core/agents/bus-unified.js';
-import { busBodyKind, busBodyThread } from '../core/agents/bus-v2-schema.js';
+import { busBodyKind, busBodyResultOutcome, busBodyThread, WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 
 export const BUS_USAGE = `Usage: phm bus <send|inbox|ack> [--json]
   send --from <label> --to <label> --body <json> [--id <id>] [--priority P0|P1|P2|P3] [--ttl <ms>]
@@ -13,6 +13,7 @@ export const BUS_USAGE = `Usage: phm bus <send|inbox|ack> [--json]
         [--priority P0|P1|P2|P3] [--job <id>] [--channel <name>]
         [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
         [--in-reply-to <id>] [--thread <t>] [--id <id>] [--body-kind <kind>]
+        [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
   ack <id> --to <label>
 
 Local durable mailboxes under $ASHLR_HOME/bus-mailbox (default ~/.ashlr/bus-mailbox).
@@ -40,7 +41,12 @@ inReplyTo field cites that envelope id; --thread keeps only note/context
 bodies carrying that conversation label; --id keeps only the envelope whose
 own id is strictly equal; --body-kind keeps only mail whose retained body
 carries that kind discriminator — the same busBodyKind read agents bus
-inbox --body-kind applies, so a kindless body never matches.
+inbox --body-kind applies, so a kindless body never matches; --result keeps
+only mail whose body is a work.result receipt reporting that one outcome —
+the same WORK_RESULT_OUTCOMES vocabulary the work feed's --result filter
+validates, read through the same busBodyResultOutcome own-field match every
+other bus read's --result applies, so every other body kind and a result
+carrying no outcome never matches.
 Use --name=value for flag-shaped values, and ack --to <label> [--json] -- <id>
 for a flag-shaped message ID.
 No remote dispatch or agent execution. Use Phantom Secrets phm_<name> references.
@@ -53,7 +59,7 @@ class UsageError extends Error {}
 const OPTIONS: Record<string, readonly string[]> = {
   send: ['--from', '--to', '--body', '--id', '--priority', '--ttl'],
   inbox: ['--to', '--limit', '--from', '--exclude-from', '--priority', '--job', '--channel',
-    '--since', '--before', '--contains', '--in-reply-to', '--thread', '--id', '--body-kind'],
+    '--since', '--before', '--contains', '--in-reply-to', '--thread', '--id', '--body-kind', '--result'],
   ack: ['--to'],
 };
 
@@ -82,10 +88,13 @@ function filterLabel(values: Map<string, string>, flag: string): string | undefi
  * `busBodyJobMatch`/`busBodyInReplyToMatch`/`busReadContainsMatch`/`busBodyThread`/`busBodyKind`
  * body citations plus the strict `envelope.id` equality `--id` applies, the
  * `group:<channel>:` `to` prefix, the P0..P3 band, the
- * `[since, before)` acceptance-time window, and `agentRefAddressMatcher`
+ * `[since, before)` acceptance-time window, `agentRefAddressMatcher`
  * sender matching that resolves each ref through the agent identity registry
  * (exact-label fallback on an unresolvable ref or unreadable registry, so
- * unknown identity state never widens the filter). All flags AND together.
+ * unknown identity state never widens the filter), and the kind-scoped
+ * `busBodyResultOutcome` own-field match `--result` applies — the same
+ * `work.result` outcome vocabulary the work feed's `--result` filter
+ * validates. All flags AND together.
  */
 function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMessage) => boolean) | undefined {
   const from = filterLabel(values, '--from');
@@ -95,6 +104,11 @@ function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMe
   const inReplyTo = filterLabel(values, '--in-reply-to');
   const id = filterLabel(values, '--id');
   const bodyKind = filterLabel(values, '--body-kind');
+  const resultRaw = values.get('--result');
+  if (resultRaw !== undefined && !(WORK_RESULT_OUTCOMES as readonly string[]).includes(resultRaw)) {
+    throw new UsageError(`--result takes one of ${WORK_RESULT_OUTCOMES.join(', ')}.`);
+  }
+  const result = resultRaw as WorkResultOutcome | undefined;
   const priorityRaw = values.get('--priority');
   if (priorityRaw !== undefined && !(BUS_PRIORITIES as readonly string[]).includes(priorityRaw)) {
     throw new UsageError('--priority takes P0, P1, P2 or P3.');
@@ -119,7 +133,8 @@ function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMe
     throw new UsageError(`--contains takes a non-empty search text of at most ${BUS_READ_CONTAINS_MAX} characters.`);
   }
   if (from === undefined && excludeFrom === undefined && job === undefined && thread === undefined &&
-    inReplyTo === undefined && id === undefined && bodyKind === undefined && priority === undefined &&
+    inReplyTo === undefined && id === undefined && bodyKind === undefined && result === undefined &&
+    priority === undefined &&
     channelPrefix === undefined && sinceMs === undefined && beforeMs === undefined && containsNeedle === undefined) return undefined;
   // The registry read runs only when a sender filter needs it; an unreadable
   // or missing registry resolves nothing, so both matchers keep exact-label
@@ -144,7 +159,8 @@ function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMe
       (inReplyTo === undefined || busBodyInReplyToMatch(envelope.body, inReplyTo)) &&
       (thread === undefined || busBodyThread(envelope.body) === thread) &&
       (id === undefined || envelope.id === id) &&
-      (bodyKind === undefined || busBodyKind(envelope.body) === bodyKind);
+      (bodyKind === undefined || busBodyKind(envelope.body) === bodyKind) &&
+      (result === undefined || busBodyResultOutcome(envelope.body) === result);
   };
 }
 

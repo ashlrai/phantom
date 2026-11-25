@@ -1651,8 +1651,12 @@ To move an agent onto the unified bus:
    read takes the same filter grammar every other bus read shares —
    `--from`/`--exclude-from` through the identity registry, `--priority`,
    `--job`, `--channel`, `--since`/`--before`, `--contains`, `--in-reply-to`,
-   `--thread`, `--id` and `--body-kind` — so a large leftover mailbox filters
-   to one job's or one sender's mail instead of paging raw. `work
+   `--thread`, `--id`, `--body-kind` and `--result` — so a large leftover
+   mailbox filters to one job's, one sender's or one outcome's mail instead
+   of paging raw. `--result` keeps only `work.result` bodies reporting that
+   outcome, the same `WORK_RESULT_OUTCOMES` vocabulary and
+   `busBodyResultOutcome` own-field match every other bus read's `--result`
+   applies. `work
    mine`'s `mailbox` section lists the pending rows for every label of the
    agent's identity (or the literal ref when none resolves) with the `--to`
    each row needs, so leftover mail is discoverable without knowing which
