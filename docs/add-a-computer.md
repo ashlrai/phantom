@@ -47,8 +47,9 @@ Check that `laptop` appears live with the intended caps and, for GitHub jobs,
 that its auth is `ok`. A join does not start a worker or recurring heartbeat.
 Repeat the heartbeat comfortably within 30 seconds to keep the session live;
 if it expires, join again and use the new session number — `beat` and `pull`
-both answer `session-expired` once it lapses. Omit `--probe-auth` if this node
-does not need GitHub authentication.
+both answer `session-expired` once it lapses, and the error's `fix` prints the
+rejoin command with this node's last advertised owner and caps. Omit
+`--probe-auth` if this node does not need GitHub authentication.
 
 ## Leave
 

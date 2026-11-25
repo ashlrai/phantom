@@ -95,7 +95,10 @@ Every error ends with a fix. A job with no taker is shown by `phm node plan`
 with the reason: no live node in that owner (join one), no node advertising the
 caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,
 then `phm node beat --probe-auth`). A `session-expired` error — from `beat` or
-`pull` — means the node's heartbeat lapsed: rejoin and use the new session.
+`pull` — means the node's heartbeat lapsed: its `fix` prints the rejoin command,
+carrying the node's last advertised owner scopes, caps and slots while the
+registry still holds the record (placeholders when it does not). Rejoin and use
+the new session.
 `pull` answers `{"pulled":false}` only while the session is live, so "no job"
 never masks a dead session. A `lease-lost` error means stop work on that job
 and pull again.

@@ -339,3 +339,41 @@ describe('pull session honesty', () => {
     expect(executeNodeFleet('pull', pullArgs('worker', again.session), f.a)).toEqual({ pulled: false });
   });
 });
+
+describe('session-expired rejoin hint', () => {
+  const args = (nodeId: string, session: number) => ['--node', nodeId, '--session', String(session)];
+  function failure(fn: () => unknown): { code?: string; message?: string; fix?: string } {
+    try { fn(); } catch (e) { return e as { code?: string; message?: string; fix?: string }; }
+    throw new Error('expected the verb to refuse');
+  }
+  it('prints the last advertised join command for an expired session', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', { owners: ['acme', 'ops'], caps: ['build', 'gh'], slots: 2 })!;
+    f.advance(100);
+    const err = failure(() => executeNodeFleet('pull', args('laptop', worker.session), f.a));
+    expect(err.code).toBe('session-expired');
+    expect(err.message).toContain('laptop');
+    expect(err.fix).toBe('Rejoin with: phm node join --node laptop --owner acme,ops --caps build,gh --slots 2; then use the new session.');
+  });
+  it('keeps the node id but placeholders for owner and caps once the record is gone', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', { owners: ['acme'], caps: ['build'] })!;
+    expect(f.a.leave(worker)).toBe(true);
+    const err = failure(() => executeNodeFleet('pull', args('laptop', worker.session), f.a));
+    expect(err.fix).toBe('Rejoin with: phm node join --node laptop --owner <scope>; then use the new session.');
+  });
+  it('never inlines an id-invalid node id into the suggested command', () => {
+    const f = fixture();
+    const err = failure(() => executeNodeFleet('pull', args('bad;id', 1), f.a));
+    expect(err.fix).toBe('Rejoin with: phm node join --node <id> --owner <scope>; then use the new session.');
+    expect(err.fix).not.toContain('bad;id');
+  });
+  it('beat reports the same rejoin hint', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', { owners: ['acme'], caps: ['build'] })!;
+    f.advance(100);
+    const err = failure(() => executeNodeFleet('beat', args('laptop', worker.session), f.a));
+    expect(err.code).toBe('session-expired');
+    expect(err.fix).toContain('phm node join --node laptop --owner acme --caps build');
+  });
+});
