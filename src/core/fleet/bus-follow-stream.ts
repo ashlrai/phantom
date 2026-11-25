@@ -6,7 +6,8 @@ import { BUS_PRIORITIES, BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMa
   type BusEnvelope, type BusPriority, type BusProtocolKind } from './bus-envelope.js';
 import { agentChannelNameSchema, agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
-import { busBodyKind, busBodyThread } from '../agents/bus-v2-schema.js';
+import { busBodyKind, busBodyResultOutcome, busBodyThread, WORK_RESULT_OUTCOMES,
+  type WorkResultOutcome } from '../agents/bus-v2-schema.js';
 
 export const BUS_FOLLOW_MAX_DURATION_MS = 3_600_000;
 export const BUS_FOLLOW_MIN_INTERVAL_MS = 100;
@@ -138,6 +139,18 @@ export interface BusFollowRequest {
    * checkpoints still advance past filtered rows exactly like every other
    * filter. */
   bodyKind?: string;
+  /** Optional work-result outcome filter: only `work.result` bodies whose
+   * own `outcome` strictly equals this code emit — the same
+   * `busBodyResultOutcome` own-field match and `WORK_RESULT_OUTCOMES`
+   * vocabulary `phm messages --result`, `agents messages --result`,
+   * `fleet messages`, `bus recent`, `fleet_agent_messages`'s `result` and
+   * the work feed's `--result` share. Every other body kind — including a
+   * `work.release` body's own `released`/`completed` outcome, a different
+   * vocabulary — and a `work.result` carrying no outcome never match, so
+   * "stream only the failed result receipts" is one filtered follow;
+   * checkpoints still advance past filtered rows exactly like every other
+   * filter. */
+  result?: WorkResultOutcome;
   intervalMs?: number;
   /** Selects an existing local store; never creates or mutates inbox files. */
   root?: string;
@@ -161,6 +174,8 @@ export function validBusFollowRequest(request: BusFollowRequest): boolean {
     (request.kind === undefined || (BUS_PROTOCOL_KINDS as readonly string[]).includes(request.kind)) &&
     (request.topic === undefined || isTopicPattern(request.topic)) &&
     (request.bodyKind === undefined || label(request.bodyKind)) &&
+    (request.result === undefined ||
+      (WORK_RESULT_OUTCOMES as readonly string[]).includes(request.result)) &&
     (request.intervalMs === undefined || (Number.isSafeInteger(request.intervalMs) &&
       request.intervalMs >= BUS_FOLLOW_MIN_INTERVAL_MS && request.intervalMs <= BUS_FOLLOW_MAX_INTERVAL_MS)) &&
     (request.root === undefined || (isAbsolute(request.root) && !request.root.includes('\0')));
@@ -264,6 +279,7 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
         if (request.kind !== undefined && protocolOf(row.envelope.body)?.kind !== request.kind) continue;
         if (request.topic !== undefined && !topicMatches(request.topic, protocolOf(row.envelope.body)?.topic ?? '')) continue;
         if (request.bodyKind !== undefined && busBodyKind(row.envelope.body) !== request.bodyKind) continue;
+        if (request.result !== undefined && busBodyResultOutcome(row.envelope.body) !== request.result) continue;
         if (request.thread !== undefined && busBodyThread(row.envelope.body) !== request.thread) continue;
         if (request.since !== undefined && row.receivedAt < request.since) continue;
         if (request.before !== undefined && row.receivedAt >= request.before) continue;

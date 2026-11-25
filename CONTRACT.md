@@ -3885,7 +3885,15 @@ the protocol-v1 `protocolOf(body)?.kind` and `topicMatches` rules —
 `bodyKind`, the `busBodyKind` own-field discriminator match the addressed
 inbox/channel/wakes/conversations reads and `phm messages` share (the v2
 `kind`, else `protocol.kind`, else the `type`/`schema` a kindless notice
-keys on; exact and case-sensitive, a kindless body never matching) — and
+keys on; exact and case-sensitive, a kindless body never matching) —
+`result`, the `busBodyResultOutcome` own-field outcome match the
+`WORK_RESULT_OUTCOMES` vocabulary `phm messages --result`, `agents
+messages --result`, `fleet messages`, `bus recent`,
+`fleet_agent_messages`'s `result` and the work feed's `--result` share
+(only `work.result` bodies whose own `outcome` strictly equals the code
+emit; a `work.release` body's own `released`/`completed` outcome, every
+other body kind and a result carrying no outcome never match, and a value
+outside the vocabulary is an invalid request) — and
 `channel`, the raw `group:<channel>:` `to`-prefix the unaddressed bus reads
 share (`comms bus read|watch --channel`, `fleet bus-follow --channel`,
 `fleet_bus_inbox`'s `channel`, `wakes --channel`, `phm messages --channel`,
