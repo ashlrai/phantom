@@ -165,12 +165,14 @@ beat or join is recorded.
 
 ## Version drift
 
-A worker advertises its build as a `phm-<version>` capability when it joins (a cap,
-so a primary on an older build still accepts the join). `phm node self-update
---owner <scope> --json` compares every node against this machine's version (or
-`--target x.y.z`) and prints a plan. It is plan only: it never updates or
-restarts a node. A node showing `unreported` predates this or has not rejoined.
-Update primary and backup first, then workers.
+A node advertises its build as a `phm-<version>` capability when it joins — a
+pool worker sends it explicitly and a standalone `phm node join` adds it
+automatically (a cap, so a primary on an older build still accepts the join, and
+the node's own build replaces any stale `phm-*` cap copied into `--caps`).
+`phm node self-update --owner <scope> --json` compares every node against this
+machine's version (or `--target x.y.z`) and prints a plan. It is plan only: it
+never updates or restarts a node. A node showing `unreported` predates this or
+has not rejoined. Update primary and backup first, then workers.
 
 ## Live pool awareness
 

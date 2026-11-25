@@ -7,6 +7,8 @@ export interface NodeFleetDeps {
   store?: NodesStore;
   now?: () => number;
   probeAuth?: () => NodeAuth;
+  /** This build's version for the join `phm-<version>` cap; defaults to localPhmVersion. */
+  phmVersion?: () => string | null;
 }
 
 
@@ -117,10 +119,27 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       if (hasNodePool()) return cmdNodePool(verb, args);
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
-    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join }] = await Promise.all([
+    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join }, { localPhmVersion, versionCap, versionFromCaps }] = await Promise.all([
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
-      import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path')]);
+      import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
+      import('../core/drive/nodes/phm-version.js')]);
     const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
+    // A standalone join advertises this build as a `phm-<version>` cap, the same
+    // report a pool worker sends, so `phm node self-update` reads a real version
+    // instead of `unreported`. The node's own build is authoritative: any
+    // version-report cap already in --caps (say, copied from an older join hint)
+    // is dropped and replaced, never left to report a stale build. This stays in
+    // the CLI layer: runNodeFleet is shared with the SSH endpoint, where the
+    // joining worker — not this host — owns the version it reports.
+    if (verb === 'join') {
+      const reported = versionCap((deps.phmVersion ?? localPhmVersion)());
+      if (reported !== null) {
+        const caps = (flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean)
+          .filter(c => versionFromCaps([c]) === null);
+        caps.push(reported);
+        flags.set('--caps', caps.join(','));
+      }
+    }
     const out = runNodeFleet(verb, flags, new DriveNodes(store, deps.now ? { now: deps.now } : {}), deps.probeAuth ?? probeLocalAuth);
     // Standalone join names its keep-alive beat. This stays out of runNodeFleet:
     // pool replies already carry their own `next` (the worker command) and a

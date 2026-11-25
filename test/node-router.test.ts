@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DriveNodes, LocalNodesStore, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { probeLocalAuth } from '../src/core/drive/nodes/auth-probe.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
+import { localPhmVersion, versionCap } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNode } from '../src/cli/node.js';
 
 class MemoryStore implements NodesStore {
@@ -192,7 +193,9 @@ describe('phm node CLI', () => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
     vi.stubEnv('ASHLR_HOME', dir);
     const joined = JSON.parse((await cli('join', '--node', 'box', '--owner', 'acme', '--caps', 'build', '--json')).out);
-    expect(joined).toMatchObject({ schemaVersion: 1, command: 'join', nodeId: 'box', owners: ['acme'], caps: ['build'] });
+    expect(joined).toMatchObject({ schemaVersion: 1, command: 'join', nodeId: 'box', owners: ['acme'] });
+    // A standalone join also advertises this build as a phm-<version> cap.
+    expect(joined.caps).toEqual(['build', versionCap(localPhmVersion())!]);
     const s = String(joined.session);
     expect((await cli('enqueue', '--job', 'j1', '--owner', 'acme', '--requires', 'build', '--pack', 'pack-1', '--secrets', 'DEPLOY_KEY', '--json')).code).toBe(0);
     expect(JSON.parse((await cli('plan', '--json')).out).routes).toEqual([{ jobId: 'j1', owner: 'acme', nodeId: 'box' }]);
@@ -274,7 +277,8 @@ describe('phm node CLI', () => {
     vi.stubEnv('ASHLR_HOME', join(link, '.ashlr'));
     try {
       const joined = JSON.parse((await cli('join', '--node', 'scratch', '--owner', 'acme', '--caps', 'build', '--json')).out);
-      expect(joined).toMatchObject({ schemaVersion: 1, command: 'join', nodeId: 'scratch', owners: ['acme'], caps: ['build'] });
+      expect(joined).toMatchObject({ schemaVersion: 1, command: 'join', nodeId: 'scratch', owners: ['acme'] });
+      expect(joined.caps).toEqual(['build', versionCap(localPhmVersion())!]);
       const s = String(joined.session);
       expect((await cli('beat', '--node', 'scratch', '--session', s, '--json')).code).toBe(0);
       const status = JSON.parse((await cli('status', '--owner', 'acme', '--json')).out);
