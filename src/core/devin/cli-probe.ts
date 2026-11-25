@@ -22,7 +22,7 @@
  */
 import { access, constants as fsConstants } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 /** The fixing command for a logged-out CLI (`devin auth --help` on 3000.11.3: login | logout | status). */
 export const DEVIN_CLI_LOGIN_COMMAND = 'devin auth login';
@@ -88,7 +88,7 @@ async function accessible(path: string, mode: number): Promise<boolean> {
 async function runProbe(candidates: readonly string[], credentials: string, now: () => number): Promise<DevinCliProbe> {
   let cliPath: string | null = null;
   for (const candidate of candidates) {
-    if (candidate.startsWith('/') && await accessible(candidate, fsConstants.X_OK)) {
+    if (isAbsolute(candidate) && await accessible(candidate, fsConstants.X_OK)) {
       cliPath = candidate;
       break;
     }
