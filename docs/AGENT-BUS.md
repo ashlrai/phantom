@@ -477,7 +477,7 @@ no announced job and reads no feed before posting. Like every send it is
 untrusted data: a wake is a hint to read the inbox and grants no authority.
 
 **Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]
-[--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
+[--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>]
 [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]`
@@ -504,6 +504,16 @@ identity — the same sender-exclusion rule `comms bus read|watch`'s
 exact-label matching — so a flooding sender never reaches the page while
 every other sender still does; it composes with `--from` so a sender both
 included and excluded matches nothing, and with every other inbox filter.
+`--with` keeps only the two-way exchange the addressed agent and one peer
+name — the same pairwise rule `phm messages --with` and `agents
+conversations --with` apply: the peer's labels on the sender side against
+the agent's own labels on the addressed side, so channel posts and
+channel-addressed handoffs — whose `to` is a room address, never the
+peer — stay out while every `dm`, `legacy` and label-addressed `handoff`
+the peer sent remains. It answers "our private pending thread", distinct
+from `--from` which also keeps the peer's room traffic; the peer ref
+resolves through the registry exactly like `--from`, with an unresolvable
+ref keeping exact-label matching.
 `--priority` keeps only mail stamped with that exact P0..P3 band — the same
 match `comms bus read --priority` applies — so urgent mail is one filtered
 read, not a page through the backlog. `--kind` keeps only one delivery kind —

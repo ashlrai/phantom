@@ -1202,6 +1202,17 @@ export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean
  * case-sensitively, so "which of my pending mail are work results" or
  * "which are wake requests" is one filtered read; a body carrying no
  * discriminator never matches.
+ * `with` narrows the page to the two-way exchange the addressed agent and
+ * one peer name — the same pairwise rule `phm messages --with` and
+ * `agents conversations --with` apply. Every inbox row is already
+ * addressed to the agent, so the agent→peer direction never appears and
+ * the peer→agent direction keeps only rows the peer's identity labels
+ * sent to the agent's own labels: channel posts and channel-addressed
+ * handoffs carry a room address, not the peer, and never match — "our
+ * private pending thread", not "everything the peer said in the rooms we
+ * share". The peer ref resolves through the registry exactly like
+ * `from`/`excludeFrom`, so an unresolvable ref keeps exact-label matching
+ * and unknown identity state never widens the filter.
  * Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
  * it only after handling the page. Claimable work and worker-handoff items
@@ -1220,7 +1231,7 @@ export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean
  * `messages` still returns only the first `limit` of them.
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
-    excludeFrom?: string; matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number;
+    excludeFrom?: string; with?: string; matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number;
     before?: number; channel?: string; contains?: string; inReplyTo?: string; id?: string; bodyKind?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
@@ -1239,6 +1250,10 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   if (page.excludeFrom !== undefined &&
       (typeof page.excludeFrom !== 'string' || page.excludeFrom.length === 0 || page.excludeFrom.length > 128)) {
     return { status: 'invalid', reason: 'Invalid sender-exclusion filter.' };
+  }
+  if (page.with !== undefined &&
+      (typeof page.with !== 'string' || page.with.length === 0 || page.with.length > 128)) {
+    return { status: 'invalid', reason: 'Invalid peer filter.' };
   }
   if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
     return { status: 'invalid', reason: 'Invalid priority.' };
@@ -1280,6 +1295,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   const fromMatch = page.from === undefined ? undefined : agentRefAddressMatcher(page.from, read.registry, identityOf);
   const excludeFromMatch = page.excludeFrom === undefined ? undefined
     : agentRefAddressMatcher(page.excludeFrom, read.registry, identityOf);
+  const withMatch = page.with === undefined ? undefined : agentRefAddressMatcher(page.with, read.registry, identityOf);
   const messages: InboxMessage[] = [];
   let matched = 0;
   let cursor = after;
@@ -1325,6 +1341,14 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         (inReplyTo === undefined || busBodyInReplyToMatch(envelope.body, inReplyTo)) &&
         (fromMatch === undefined || fromMatch(envelope.from)) &&
         (excludeFromMatch === undefined || !excludeFromMatch(envelope.from)) &&
+        // --with keeps the pairwise exchange the addressed agent and one
+        // peer name: the peer's labels on `from` against the agent's own
+        // labels on `to`. `toLabel` is exactly that addressed-to-identity
+        // test — channel posts and channel-addressed handoffs carry a
+        // group:<channel>:* room address, never the peer, so they cannot
+        // match; the reverse direction (agent→peer) cannot appear because
+        // the inbox only holds mail addressed to the agent.
+        (withMatch === undefined || (toLabel && withMatch(envelope.from))) &&
         (priority === undefined || envelope.priority === priority) &&
         (since === undefined || row.receivedAt >= since) &&
         (before === undefined || row.receivedAt < before) &&

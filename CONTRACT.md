@@ -3511,13 +3511,21 @@ carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
 check `thread` gets, and `kind` — `note` or `context`, the v2 conversational
 body kind `postLabelMessage` already exposed, now shared by all three so a
-DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?, bodyKind?}, options?)`
+DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?, bodyKind?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every
 registered spelling of one identity through the same matcher — an
 unresolvable ref keeping exact-label matching — composing with `from` so a
-sender both included and excluded matches nothing, `priority` keeps only envelopes stamped
+sender both included and excluded matches nothing, `with` keeps only the
+two-way exchange the addressed agent and one peer name — the peer's labels
+on the sender side against the agent's own labels on the addressed side,
+the same pairwise rule `phm messages --with` and `agents conversations
+--with` apply, so channel posts and channel-addressed handoffs whose `to`
+is a room address never match while every `dm`, `legacy` and
+label-addressed `handoff` the peer sent remains — the ref resolving through
+the same `agentRefAddressMatcher` with an unresolvable ref keeping
+exact-label matching, `priority` keeps only envelopes stamped
 with that exact P0..P3 band — the same match `comms bus read --priority`
 applies, `kind` keeps only one delivery kind — `dm`, `channel`,
 `handoff` or `legacy`, the same kind each inbox row reports, and `channel`
