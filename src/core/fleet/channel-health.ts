@@ -310,14 +310,13 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   if (base.processAlive === true) base.runtimeHost = host;
   let inbound: number[], replies: number[], evidence: InboundEvidence | null = null;
   let outboundFailure: { at: string } | null = null;
-  let invalidReplyTime = false;
+  let invalidInboundTime = false, invalidReplyTime = false;
   try {
-    if (src.inboundEvidence) {
-      evidence = await src.inboundEvidence();
-      inbound = evidence.rows.map((r) => ms(r.at)).filter(Number.isFinite).sort((a, b) => a - b);
-    } else {
-      inbound = (await src.inbound()).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
-    }
+    const inboundTimes = src.inboundEvidence
+      ? (evidence = await src.inboundEvidence()).rows.map((r) => ms(r.at))
+      : (await src.inbound()).map(ms);
+    invalidInboundTime = inboundTimes.some((t) => !Number.isFinite(t));
+    inbound = inboundTimes.filter(Number.isFinite).sort((a, b) => a - b);
     const replyTimes = (await src.replies()).map(ms);
     invalidReplyTime = replyTimes.some((t) => !Number.isFinite(t));
     replies = replyTimes.filter(Number.isFinite).sort((a, b) => a - b);
@@ -406,6 +405,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   if (evidence?.projectionOmitted) reasons.push(`${channel} inbound journal projection incomplete`);
   if (!binding && pending.length && observedReplies) reasons.push(`${channel} reply correlation unavailable`);
   if (futureDated) reasons.push(`${channel} future-dated receipt ignored`);
+  if (invalidInboundTime) reasons.push(`${channel} inbound evidence time invalid`);
   if (invalidReplyTime) reasons.push(`${channel} reply evidence time invalid`);
   if (invalidBindingTime) reasons.push(`${channel} reply binding time invalid`);
   if (bindingPartitionMismatch) reasons.push(`${channel} reply binding partition mismatch`);
