@@ -97,6 +97,31 @@ const HTML_FILE = /\.html?$/i;
  */
 const POWERSHELL_FILE = /\.ps[dm]?1$/i;
 
+/**
+ * scripts/check-realio-lane-membership.mjs reads every .test.ts file under
+ * test/ (contents decide the spawn-marker verdict) plus its lane manifests,
+ * the known-fast-spawn allowlist, the inventory helpers and itself. A diff
+ * that touches none of those cannot move the verdict — a src/ or docs/ edit
+ * adds no spawn marker — so the ~60 MB scan is skipped unless an input
+ * changed. Deletions count: removing a member file stales the manifest.
+ */
+const REALIO_LANE_TEST_FILE = /^test\/.*\.test\.ts$/;
+const REALIO_LANE_INPUTS = new Set([
+  'test/config/realio-lane-membership.mjs',
+  'test/config/serial-cpu-lane-membership.mjs',
+  'scripts/check-realio-lane-membership.mjs',
+  'scripts/realio-lane-inventory.mjs',
+  'scripts/realio-lane-known-fast-spawns.mjs',
+]);
+
+/**
+ * scripts/check-verse-sync-io.mjs scans every *-api.ts under
+ * src/core/verse/ plus its own regexes and allow rules, so only a route
+ * file or the checker itself can move its verdict.
+ */
+const VERSE_ROUTE_FILE = /^src\/core\/verse\/.*-api\.ts$/;
+const VERSE_SYNC_IO_CHECKER = 'scripts/check-verse-sync-io.mjs';
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -127,6 +152,8 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     contribRouterTypecheck: changed.some((path) =>
       (path.startsWith(`${CONTRIB_ROUTER_DIR}/`) && ROUTER_PROGRAM_FILE.test(path)) ||
       path === ROUTER_SRC_BOUNDARY || SHARED_MANIFEST_FILE.test(path)),
+    realioLaneCheck: changed.some((path) => REALIO_LANE_TEST_FILE.test(path) || REALIO_LANE_INPUTS.has(path)),
+    verseSyncIoCheck: changed.some((path) => VERSE_ROUTE_FILE.test(path) || path === VERSE_SYNC_IO_CHECKER),
   };
 }
 
@@ -1918,8 +1945,16 @@ function main() {
   } else {
     console.log('PASS quarantine ledger skipped: no test file or quarantine ledger change');
   }
-  if (!runRealioCheck(root, changed)) process.exitCode = 1;
-  run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
+  if (!selection.realioLaneCheck) {
+    console.log('PASS realio lane lint skipped: no test file or lane input change');
+  } else if (!runRealioCheck(root, changed)) {
+    process.exitCode = 1;
+  }
+  if (!selection.verseSyncIoCheck) {
+    console.log('PASS verse sync-I/O lint skipped: no verse route or checker change');
+  } else {
+    run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
+  }
   if (projects.backend || projects.web || projects.desktop || selection.contribRouterTypecheck) try {
     const timeout = Number(process.env.PHANTOM_TSC_TIMEOUT_SECONDS ?? 900);
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
