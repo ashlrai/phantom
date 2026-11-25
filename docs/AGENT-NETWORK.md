@@ -438,6 +438,7 @@ bus and approved Slack broker:
 ```sh
 phm agentnet peers list --json
 phm agentnet peers read --after 0 --json
+phm agentnet peers read --since 2h --before 1h --contains "parser" --json
 phm agentnet peers send reviewer review "Review pr:123" --json
 phm agentnet peers send builder handoff "Review complete" --reply-to peer-00000000-0000-0000-0000-000000000000 --json
 phm agentnet channels propose parser-review --json
@@ -445,6 +446,10 @@ phm agentnet channels propose parser-review --apply --json
 phm agentnet identity register reviewer --json
 ```
 
+`peers read` pages the verified session inbox with `--after`; `--since` and
+`--before` bound `receivedAt` into one `[since, before)` window, `--contains`
+matches the scrubbed summary, `--priority` the exact P0..P3 band and `--job`
+the shared job-citation rule — the same filters every bus read applies.
 Channel proposals preview by default; `--apply` and identity registration record
 local drafts. Actual bot/channel provisioning needs a reviewed provisioner and
 outbound approval. Session bindings come from the trusted host, never a callsign

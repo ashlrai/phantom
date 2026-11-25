@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { workPostBodySchema, workStatusBodySchema } from '../agents/bus-v2-schema.js';
+import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
 import { readBusWorkFeed, runtimeProvider } from '../agents/bus-work-feed-read.js';
 import { readAgentRegistry, resolveAgent } from '../agents/bus-identity.js';
 import { localWriteGate } from '../agents/send-gate.js';
@@ -12,6 +13,7 @@ import { evaluateSlackAudience } from '../agents/slack-audience.js';
 import { deliverSlackEnvelope, observeSlackAudience, type SlackCall } from '../agents/slack-transport.js';
 import { parseSlackThreadRef } from '../agents/slack-network.js';
 import { appendBusInbox, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
+import { BUS_PRIORITIES, type BusPriority } from '../fleet/bus-envelope.js';
 import { appendNeedsMasonLine } from '../fleet/needs-mason-append.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
@@ -40,6 +42,78 @@ export interface PeerBusOptions {
   call?: SlackCall; readPolicy?: typeof readSlackDeliveryPolicy;
 }
 export interface PeerResult { status: string; reason?: string; id?: string; origin?: string; hopCount?: number; slack?: string }
+
+/**
+ * The shared bus read-filter grammar `peers read` applies to admitted peer
+ * envelopes — the same rules `agents bus inbox`, `agents bus channel read`,
+ * `comms bus read` and `fleet bus-follow` share, minus the sender/thread
+ * filters a callsign cannot express. Every field narrows the admitted page;
+ * none widens it, and an envelope that cannot prove the predicate stays out
+ * of the match rather than being counted as a hit.
+ */
+export interface PeerInboxFilter {
+  /**
+   * Time filter: only messages received at or after this epoch-ms cutoff —
+   * the same inclusive `receivedAt >= since` match `agents bus inbox
+   * --since` applies.
+   */
+  since?: number;
+  /**
+   * Exclusive time ceiling: only messages received strictly before this
+   * epoch-ms cutoff — the same `< before` upper bound every bus read
+   * `--before` applies, composing with `since` into one `[since, before)`
+   * window. A message exactly on the cutoff stays out.
+   */
+  before?: number;
+  /**
+   * Text filter: only messages whose scrubbed one-line summary — the same
+   * text the bus inbox frame renders per row — carries the needle as a
+   * case-insensitive substring, the same `busReadContainsMatch` rule
+   * `inbox --contains` applies. Matching runs over the rendered summary,
+   * never the raw body, so a secret-shaped value stays unfindable.
+   */
+  contains?: string;
+  /**
+   * Priority filter: only envelopes stamped with this exact P0..P3 band —
+   * the same match `comms bus read --priority` applies.
+   */
+  priority?: BusPriority;
+  /**
+   * Job filter: only messages that name this one job — the same
+   * `busBodyJobMatch` rule `agents bus inbox --job` applies: a feed-citing
+   * body (`work.post`, `work.status`, `work.result` or `wake`) declaring
+   * that `jobId`, a `worker-handoff` assigning that fleet job id through
+   * `taskId`, or a `note`/`context` body carrying the `job:<id>` v2 thread
+   * label. A `peer.message` body cites no job and never matches.
+   */
+  job?: string;
+}
+
+type ParsedPeerInboxFilter = { ok: true; since?: number; before?: number; containsNeedle?: string;
+  priority?: BusPriority; job?: string } | { ok: false; reason: string };
+
+/** Validate the peer read filter set before the bus store is scanned. */
+function parsePeerInboxFilter(filter: PeerInboxFilter): ParsedPeerInboxFilter {
+  const { since, before, contains, priority, job } = filter;
+  if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
+    return { ok: false, reason: 'Invalid since.' };
+  }
+  if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) {
+    return { ok: false, reason: 'Invalid before.' };
+  }
+  if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
+    return { ok: false, reason: 'Invalid priority.' };
+  }
+  if (job !== undefined && (typeof job !== 'string' || !/^[\x21-\x7e]{1,128}$/.test(job))) {
+    return { ok: false, reason: 'Invalid job id.' };
+  }
+  const containsNeedle = busReadContains(contains);
+  if (containsNeedle === null) return { ok: false, reason: 'Invalid contains filter.' };
+  return { ok: true,
+    ...(since === undefined ? {} : { since }), ...(before === undefined ? {} : { before }),
+    ...(priority === undefined ? {} : { priority }), ...(job === undefined ? {} : { job }),
+    ...(containsNeedle === undefined ? {} : { containsNeedle }) };
+}
 
 /** The owner rule the shared work-feed projection applies: the job owner's own
  * label, or any label resolving to the same registered identity. An unreadable
@@ -194,23 +268,35 @@ function admittedWorkResult(original: NonNullable<BusInboxReceipt['originalEnvel
   return JSON.stringify(original.body) === JSON.stringify(workDispatchResultBody(receipt));
 }
 
-/** Raw bus labels are never identities. Only matching private admission receipts are peers. */
-export function readPeerInbox(session: PeerSession, after = 0, options: PeerBusOptions = {}) {
+/** Raw bus labels are never identities. Only matching private admission receipts are peers.
+ * `filter` narrows the admitted page with the shared bus read grammar; it never
+ * widens admission and the `after`/`nextCursor` paging contract is unchanged —
+ * a filtered page may be sparse while `nextCursor` still resumes past every
+ * scanned row, so callers keep paging exactly as an unfiltered read does. */
+export function readPeerInbox(session: PeerSession, after = 0, options: PeerBusOptions = {}, filter: PeerInboxFilter = {}) {
   const paths = { ...agentnetPaths(), ...options }, now = (options.now ?? Date.now)();
+  const parsed = parsePeerInboxFilter(filter);
   const peer = authenticatePeer(readPeerBindings(paths.bindings), session, now);
   const file = join(paths.busRoot, 'agentnet', 'coordination.json');
   const rows = existsSync(file) ? z.array(rowSchema).max(1024).parse(readPeerJson(file, paths.busRoot)) : [];
   const journal = readWorkDispatchJournal(paths.busRoot);
+  if (!parsed.ok) return { status: 'invalid' as const, reason: parsed.reason, workResults: journal.status };
   const dispatched = new Map(journal.receipts.map(receipt => [receipt.receiptId, receipt]));
   const page = listBusInboxAfter(after, 100, { root: paths.busRoot, now: () => now, includeOriginalEnvelope: true });
   if (page.status !== 'ok') return { ...page, workResults: journal.status };
+  const { since, before, containsNeedle, priority, job } = parsed;
   const messages = page.messages.filter(receipt => {
     const original = receipt.originalEnvelope;
     return original !== undefined && (rows.some(row => row.id === original.id &&
       row.target === peer.callsign && row.at <= now && now - row.at < 86_400_000 &&
       receipt.receivedAt === row.at &&
       row.digest === createHash('sha256').update(JSON.stringify(original)).digest('hex')) ||
-      admittedWorkResult(original, peer.callsign, dispatched));
+      admittedWorkResult(original, peer.callsign, dispatched)) &&
+      (since === undefined || receipt.receivedAt >= since) &&
+      (before === undefined || receipt.receivedAt < before) &&
+      (priority === undefined || original.priority === priority) &&
+      (job === undefined || busBodyJobMatch(original.body, job)) &&
+      (containsNeedle === undefined || busReadContainsMatch(original.body, containsNeedle));
   }).map(({ cursor, receivedAt, envelope }) => ({ cursor, receivedAt, envelope }));
   return { ...page, messages, workResults: journal.status };
 }
