@@ -84,6 +84,32 @@ describe('phm agents bus (unified)', () => {
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);
   });
 
+  it('narrows the inbox to the two-way exchange with one peer', async () => {
+    await run(['id', 'register', 'atlas']);
+    await run(['id', 'register', 'nova']);
+    await run(['id', 'register', 'relay', '--alias', 'lane-relay']);
+    await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova', '--member', 'relay']);
+    await run(['dm', '--from', 'relay', '--to', 'nova', '--text', 'relay dm', '--id', 'w-dm']);
+    await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'atlas dm', '--id', 'w-dm-a']);
+    await run(['channel', 'post', 'release', '--from', 'relay', '--text', 'relay post', '--id', 'w-ch']);
+
+    // --with keeps only the peer's direct mail: the dm stays, the room post drops.
+    const mine = await run(['inbox', 'nova', '--with', 'relay']);
+    expect(mine.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['w-dm']);
+    // Every ref of the peer identity resolves the same exchange.
+    for (const ref of ['lane-relay', 'agent:relay']) {
+      const page = await run(['inbox', 'nova', '--with', ref]);
+      expect(page.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['w-dm']);
+    }
+    // --from keeps the peer's room traffic too — the two filters differ.
+    const fromRelay = await run(['inbox', 'nova', '--from', 'relay']);
+    expect(fromRelay.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id).sort())
+      .toEqual(['w-ch', 'w-dm']);
+    // An unresolvable peer keeps exact-label matching and finds nothing.
+    expect((await run(['inbox', 'nova', '--with', 'ghost'])).json.messages).toEqual([]);
+    expect(await run(['inbox', 'nova', '--with='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('resolves one agent ref through id show — self, aliases and honest misses', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude', '--alias', 'lane-atlas', '--display', 'Atlas One'])).json)
       .toMatchObject({ status: 'created' });

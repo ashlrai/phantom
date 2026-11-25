@@ -38,15 +38,16 @@ const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const INBOX_KEYS = new Set([
   'agent', 'after', 'limit', 'matched',
-  'thread', 'from', 'excludeFrom', 'priority', 'kind', 'job', 'since', 'before', 'channel', 'contains', 'inReplyTo', 'id', 'bodyKind',
+  'thread', 'from', 'excludeFrom', 'with', 'priority', 'kind', 'job', 'since', 'before', 'channel', 'contains', 'inReplyTo', 'id', 'bodyKind',
 ]);
-const LABEL_KEYS = ['thread', 'from', 'excludeFrom', 'job', 'inReplyTo', 'id', 'bodyKind'] as const;
+const LABEL_KEYS = ['thread', 'from', 'excludeFrom', 'with', 'job', 'inReplyTo', 'id', 'bodyKind'] as const;
 
 /** The `readAgentInbox` page fields the MCP arguments fill — `after`, `limit` and `matched` ride beside them. */
 export interface FleetAgentInboxFilters {
   thread?: string;
   from?: string;
   excludeFrom?: string;
+  with?: string;
   priority?: BusPriority;
   kind?: InboxKind;
   job?: string;

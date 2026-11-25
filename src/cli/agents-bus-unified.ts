@@ -39,7 +39,7 @@ ashlr agents bus channel list [--agent <agent>]
 ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--matched] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--matched] [--frame <cli>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--matched] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
@@ -86,7 +86,17 @@ comms bus read|watch --exclude-from, fleet bus-follow --exclude-from and
 fleet_bus_inbox apply — so a room's noisy member or a flooding sender
 never reaches the page while every other sender still does; it composes
 with --from (a sender both included and excluded matches nothing) and
-every other filter. --priority
+every other filter. --with on inbox keeps only the two-way exchange the
+addressed agent and one peer name — the same pairwise rule phm messages
+--with and agents conversations --with apply: the peer's labels on the
+sender side against the agent's own labels on the addressed side, so
+channel posts and channel-addressed handoffs — whose to is a room
+address, never the peer — stay out while every dm, legacy and
+label-addressed handoff the peer sent remains; "our private pending
+thread" is one filtered read, distinct from --from which also keeps the
+peer's room traffic, and the peer ref resolves through the registry
+exactly like --from with an unresolvable ref keeping exact-label
+matching. --priority
 on inbox and channel read keeps only one exact P0..P3 band — the same match
 comms bus read --priority applies — so urgent mail is one filtered read, not
 a page through the backlog. --kind on inbox keeps only one delivery kind —
@@ -425,7 +435,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--before', '--root', '--key', '--owner', '--origin', '--lease-ms', '--token', '--outcome', '--reason',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
-  '--result',
+  '--result', '--with',
   '--kind', '--channel', '--contains', '--exclude-from', '--exclude-owner', '--reply-to', '--in-reply-to', '--body-kind']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched', '--all']);
@@ -818,7 +828,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const agent = sub ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
-        thread: one('--thread'), from: one('--from'), excludeFrom: one('--exclude-from'), priority: priorityArg(),
+        thread: one('--thread'), from: one('--from'), excludeFrom: one('--exclude-from'), with: one('--with'), priority: priorityArg(),
         kind: kindArg(), job: one('--job'), since: sinceArg(), before: beforeArg(), channel: one('--channel'),
         contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'), bodyKind: one('--body-kind'),
         matched: p.bools.has('--matched') }, options);
