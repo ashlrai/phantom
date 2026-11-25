@@ -56,8 +56,16 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     const out = runNodeFleet(verb, flags, new DriveNodes(store, deps.now ? { now: deps.now } : {}), deps.probeAuth ?? probeLocalAuth);
     // Standalone join names its keep-alive beat. This stays out of runNodeFleet:
     // pool replies already carry their own `next` (the worker command) and a
-    // `next` inside result.result would override it in the spread below.
-    if (verb === 'join') out['next'] = `phm node beat --node ${String(out['nodeId'])} --session ${String(out['session'])}`;
+    // `next` inside result.result would override it in the spread below. The
+    // hint is the --watch loop, the only beat form that keeps the session
+    // live past the 30 s expiry; a node that advertised `gh` also gets
+    // --probe-auth, because routing refuses gh jobs until a heartbeat reports
+    // a working local gh login.
+    if (verb === 'join') {
+      const caps = out['caps'];
+      const probe = Array.isArray(caps) && caps.includes('gh') ? ' --probe-auth' : '';
+      out['next'] = `phm node beat --node ${String(out['nodeId'])} --session ${String(out['session'])}${probe} --watch`;
+    }
     console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out));
     return 0;
   } catch (error) {

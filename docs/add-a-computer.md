@@ -15,8 +15,10 @@ phm node join --node laptop --owner acme --caps build,gh --json
 
 Replace `laptop` and `acme` with your own node ID and owner scope. Save the
 `session` number from the output; use that number in the commands below. The
-output's `next` field prints the exact `beat` command that keeps this session
-live.
+output's `next` field prints the keep-alive `beat --watch` command — the only
+beat form that keeps this session live — and adds `--probe-auth` when `gh` was
+advertised, so GitHub jobs can actually route to this node once `gh auth login`
+has run here.
 
 To keep the exercise fully separate from real Phantom state, point
 `ASHLR_HOME` at a scratch directory first (`export ASHLR_HOME=$(mktemp -d)`);
