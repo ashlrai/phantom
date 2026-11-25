@@ -128,7 +128,6 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'signals': '`signals` accepts only --json (src/cli/signals.ts); anything else prints the usage line and exits 2 before signals are read',
   'channels add': `rejectUnknownOptions in src/cli/args.ts: ${STRICT_VERB_PARSER}`,
   'channels status': `rejectUnknownOptions in src/cli/args.ts: ${STRICT_VERB_PARSER}`,
-  'route': '`route` only has the `explain` verb and accepts only --json (src/cli/route.ts); anything else prints the usage line and exits 2',
   'radar list': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before sources load',
   'radar run': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before any fetch',
   'radar diff': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before snapshots are read',

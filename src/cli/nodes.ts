@@ -126,7 +126,7 @@ export async function cmdNodes(args: string[], deps: NodesViewDeps = defaultNode
   if (args[0] === 'offload') return cmdNodesOffload(args.slice(1), deps, readQueue, probe, offload);
   if (args[0] === 'pool') return cmdNodesPool(args.slice(1), deps);
   if (args[0] === 'doctor') return cmdNodesDoctor(args.slice(1), deps, probe);
-  if (args[0] === 'plan') return args.slice(1).includes('--help') ? (console.log(USAGE), 0) : cmdNodesPlan(args.slice(1), deps, readQueue);
+  if (args[0] === 'plan') return args.slice(1).some(a => a === '--help' || a === '-h') ? (console.log(USAGE), 0) : cmdNodesPlan(args.slice(1), deps, readQueue);
   let json = false, discover = false;
   let lane: string | null = null;
   for (let i = 0; i < args.length; i++) {

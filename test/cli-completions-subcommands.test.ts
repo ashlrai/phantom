@@ -68,6 +68,10 @@ describe('completions offer every dispatched verb', () => {
     mcp: ['ecosystem', 'run'],
     models: ['list'],
     notify: ['session'],
+    node: ['self-update', 'light'],
+    nodes: ['offload'],
+    org: ['init', 'show', 'join', 'plan'],
+    route: ['explain', 'decide', 'failover', 'fit'],
   };
 
   it.each(Object.entries(expected))('bash completes `phm %s` verbs', async (cmd, verbs) => {
