@@ -1,6 +1,6 @@
 /** Desktop read of the newest release's stages (published, update feed). Read-only: it
  * never publishes, uploads, edits or retags. Answers only the local dispatch session. */
-import { updateWhy } from '../desktop/update-why.js';
+import { updateDoctor } from '../desktop/update-doctor.js';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fetchLatestRelease, observeMilestones, type MilestoneReader, type ReleaseRunner } from '../fleet/release-live-notice.js';
@@ -48,7 +48,7 @@ export function createReleaseStagesApi(deps: ReleaseStagesApiDeps = {}): ApiModu
     if (path === VERSE_UPDATE_WHY_PATH) {
       if (method !== 'GET') sendJson(res, 405, { error: 'method not allowed' });
       else if (!ctx.allowDispatch) sendJson(res, 404, { error: 'not found' });
-      else sendJson(res, 200, await updateWhy());
+      else { const doctor = await updateDoctor(); sendJson(res, 200, { ...doctor, message: `${doctor.verdict.replaceAll('_', ' ')}: ${doctor.next_step}` }); }
       return true;
     }
     if (path !== VERSE_RELEASE_STAGES_PATH) return false;

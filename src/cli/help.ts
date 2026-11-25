@@ -1361,6 +1361,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'friction [--json]', desc: 'Mine the runs dir for recurring dispatch→merge friction; ledger keeps before/after metrics.', topic: 'observability' },
   { cmd: 'memory add|list|search|forget [--json]', desc: 'Durable markdown memory under ~/.phantom/memory; secret-shaped text refused.', topic: 'memory' },
   { cmd: 'app update status [--json]', desc: 'Read the local signed desktop-update stage and deferral counts; never downloads or installs.', topic: 'core' },
+  { cmd: 'app update-doctor [--json]', desc: 'Say whether the installed app is current and why not: installed version, latest release, updater feed. Read-only. Verdict is current, update_available, feed_broken, release_missing_assets or unknown.', topic: 'core' },
   { cmd: 'app steer --text <msg> [--json]', desc: 'Send one message to the leader agents through the shared inbox receiver.', topic: 'core' },
   { cmd: 'pulse [--window 1d|7d|30d]',   desc: 'Local observability dashboard: tokens, cost, sessions, commits.', topic: 'observability' },
   { cmd: 'pulse --json',                 desc: 'Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).', topic: 'observability' },
