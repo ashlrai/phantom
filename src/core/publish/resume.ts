@@ -6,7 +6,9 @@
  * Everything goes through the autopilot `Gh` wrapper, so tests inject a fake
  * and there is no new credential, scope or bypass path. The only writes are
  * "open a PR" and "turn on auto-merge through the merge queue" (`gh pr merge
- * --auto --squash --match-head-commit`, never `--admin`). Branches must live
+ * --auto --squash --match-head-commit`, never `--admin`); callers that cannot
+ * prove a branch is safe to arm pass `armAutoMerge: false` and the merge
+ * queue's own gated path decides instead. Branches must live
  * under `codex-bridge/` on the signed-in user's own fork.
  *
  * Reads retry transient GitHub failures a bounded number of times (see
@@ -98,9 +100,10 @@ export function prTitle(branch: string, commitSubjects: string[]): string {
   return scrubSecrets(`bridge(${job}): ${subject || job}`).slice(0, 200);
 }
 
-/** Open the PR for a pushed fork branch; a persistent GitHub outage returns `deferred` and keeps the branch. */
+/** Open the PR for a pushed fork branch; a persistent GitHub outage returns `deferred` and keeps the branch.
+ * `armAutoMerge: false` opens the PR without queueing auto-merge, leaving arming to the merge queue's gated path. */
 export async function resumePublish(
-  opts: { branch: string; repo?: string; retry?: RetryOptions },
+  opts: { branch: string; repo?: string; retry?: RetryOptions; armAutoMerge?: boolean },
   rawGh: Gh = defaultGh,
 ): Promise<PublishResumeResult> {
   const gh = retryReads(rawGh, opts.retry);
@@ -111,7 +114,7 @@ export async function resumePublish(
     ({ schema: PUBLISH_RESUME_SCHEMA, status: result, pr_url, branch, repo: upstream });
   try {
     const owner = await readViewer(gh);
-    return await resumeChecked(gh, { owner, fork: assertRepo(`${owner}/${name}`), upstream, branch, base });
+    return await resumeChecked(gh, { owner, fork: assertRepo(`${owner}/${name}`), upstream, branch, armAutoMerge: opts.armAutoMerge !== false, base });
   } catch (error) {
     if (!(error instanceof FetchDeferredError)) throw error;
     const result = base('deferred', null);
@@ -122,9 +125,9 @@ export async function resumePublish(
 
 async function resumeChecked(
   gh: Gh,
-  c: { owner: string; fork: string; upstream: string; branch: string; base: (s: PublishResumeStatus, url: string | null) => PublishResumeResult },
+  c: { owner: string; fork: string; upstream: string; branch: string; armAutoMerge: boolean; base: (s: PublishResumeStatus, url: string | null) => PublishResumeResult },
 ): Promise<PublishResumeResult> {
-  const { owner, fork, upstream, branch, base } = c;
+  const { owner, fork, upstream, branch, armAutoMerge, base } = c;
 
   // 1. The branch must still be on the fork, and must not already have a live PR.
   const headSha = await forkRef(gh, fork, branch);
@@ -151,6 +154,10 @@ async function resumeChecked(
   ].join('\n').trim()).slice(0, 60_000);
   const number = await createPr(upstream, { title: prTitle(branch, subjects), head: `${owner}:${branch}`, base: defaultBranch, body }, gh);
   const result = base('opened', `https://github.com/${upstream}/pull/${number}`);
+  if (!armAutoMerge) {
+    result.auto_merge = { on: false, detail: 'Auto-merge not armed; the merge queue evaluates the PR.' };
+    return result;
+  }
   try {
     await queuePrMerge(upstream, number, headSha, gh);
     result.auto_merge = { on: true, detail: 'Queued for auto-merge; required checks still decide.' };

@@ -78,6 +78,13 @@ describe('phm publish resume', () => {
     expect(r.status).toBe('opened');
     expect(r.auto_merge?.on).toBe(false);
   });
+  it('opened with armAutoMerge false: the PR opens and no merge call is made', async () => {
+    const { gh, calls } = fakeGh({ ...onFork, compare: ahead });
+    const r = await resumePublish({ branch: BRANCH, armAutoMerge: false }, gh);
+    expect(r).toMatchObject({ status: 'opened', pr_url: 'https://github.com/ashlrai/phantom/pull/42', auto_merge: { on: false } });
+    expect(calls.some((c) => c.includes('POST'))).toBe(true);
+    expect(calls.some((c) => c[0] === 'pr')).toBe(false);
+  });
   it('a closed, unmerged PR does not block a fresh one', async () => {
     const { gh } = fakeGh({ ...onFork, prs: [pr({ state: 'closed' })], compare: ahead });
     expect((await resumePublish({ branch: BRANCH }, gh)).status).toBe('opened');
