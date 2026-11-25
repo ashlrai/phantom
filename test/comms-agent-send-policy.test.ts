@@ -12,7 +12,7 @@ import { readLocalSendPolicy } from '../src/core/agents/send-gate.js';
 import { COMMS_TRANSPORTS, decideSend, readKillState, type CommsTransport, type SendAttempt } from '../src/core/comms-agent/policy.js';
 import { COMMS_AGENT_ROLE } from '../src/core/comms-agent/role.js';
 import { selectCommsLane } from '../src/core/comms-agent/route.js';
-import { commsDrafts, envelopeExternal, executeSend, preservedIds, runCommsAgent } from '../src/core/comms-agent/run.js';
+import { commsDrafts, commsStatus, envelopeExternal, executeSend, preservedIds, runCommsAgent } from '../src/core/comms-agent/run.js';
 import { appendSendLog, listDrafts, ownerApprovalsPath, privateOwnerFile, readApprovalsFile, readInbox, readOwnerApprovals, readSendLog, writeInbox } from '../src/core/comms-agent/store.js';
 import { triageInbox, type InboxMessage } from '../src/core/comms-agent/triage.js';
 import { isPaused } from '../src/core/comms/pause.js';
@@ -591,5 +591,49 @@ describe('Comms draft lifecycle', () => {
     expect(drafts).toHaveLength(1);
     expect(drafts[0]?.status).toBe('pending');
     expect((await commsDrafts(runsDir)).drafts).toHaveLength(1);
+  });
+});
+
+describe('comms status standing approvals', () => {
+  it('reports the trust verdict and entry counts, never the lists', async () => {
+    const runsDir = temp();
+    const status = await commsStatus(runsDir, {
+      readApprovals: async () => ({
+        accepted: true,
+        reason: 'ok',
+        approvals: [{ transport: 'email', recipient: 'ada@example.com' }],
+        owners: ['owner@example.com'],
+      }),
+    });
+    expect(status.standingApprovals).toEqual({
+      accepted: true,
+      reason: 'ok',
+      approvalCount: 1,
+      ownerCount: 1,
+    });
+    // Recipients and owners are handles: they never appear in the status JSON.
+    expect(JSON.stringify(status.standingApprovals)).not.toContain('ada@example.com');
+    expect(JSON.stringify(status.standingApprovals)).not.toContain('owner@example.com');
+  });
+
+  it('reports a refused file by reason and a missing file as granting nothing', async () => {
+    const runsDir = temp();
+    const refused = await commsStatus(runsDir, {
+      readApprovals: async () => ({ accepted: false, reason: 'mode', approvals: [], owners: [] }),
+    });
+    expect(refused.standingApprovals).toEqual({ accepted: false, reason: 'mode', approvalCount: 0, ownerCount: 0 });
+    const missing = await commsStatus(runsDir, {
+      readApprovals: async () => ({ accepted: true, reason: 'missing', approvals: [], owners: [] }),
+    });
+    expect(missing.standingApprovals).toEqual({ accepted: true, reason: 'missing', approvalCount: 0, ownerCount: 0 });
+  });
+
+  it('reports null when the owner file cannot be read at all', async () => {
+    const runsDir = temp();
+    const status = await commsStatus(runsDir, {
+      readApprovals: async () => { throw new Error('Account home is unavailable.'); },
+    });
+    // An unreadable verdict is unknown, never a guessed accept or refuse.
+    expect(status.standingApprovals).toBeNull();
   });
 });

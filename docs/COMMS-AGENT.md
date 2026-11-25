@@ -59,7 +59,13 @@ reply resolves its message into the archive — or `null` when the inbox file
 cannot be read — an unreadable store is unknown, never reported as an empty
 inbox. `drafts`, `sendsLogged` and `adapters` follow the same rule: a real
 count or list, or `null` when the drafts log, send log or channel registry
-cannot be read.
+cannot be read. `standingApprovals` reports the trust verdict `run` applies
+before any send — `accepted`, the fixed `reason` (`ok`, `missing`,
+`malformed`, `symlink`, `mode`, `owner`, `not-file`) and the counts of
+granted approvals and owner identities. The approval and owner lists
+themselves never leave the file: recipients and owners are handles.
+`standingApprovals` is `null` when the owner file cannot be read at all —
+the verdict is unknown, never guessed.
 
 MCP tools: `ashlr_comms_agent_status`, `ashlr_comms_agent_drafts`, and
 `ashlr_comms_agent_run`.

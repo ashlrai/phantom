@@ -48,10 +48,13 @@ describe('phm comms-agent', () => {
 
     const status = capture();
     expect(await cmdCommsAgent(['status', '--dir', runsDir, '--json'])).toBe(0);
-    const snapshot = JSON.parse(status.lines.at(-1) ?? '{}') as { role: { id: string; lane: null; grokRequired: boolean }; inbox: number | null; sendsLogged: number | null };
+    const snapshot = JSON.parse(status.lines.at(-1) ?? '{}') as { role: { id: string; lane: null; grokRequired: boolean }; inbox: number | null; sendsLogged: number | null; standingApprovals: unknown };
     expect(snapshot.role.id).toBe('comms');
     expect(snapshot.role.lane).toBeNull();
     expect(snapshot.role.grokRequired).toBe(false);
+    // The standing-approvals verdict is part of the status contract: an object
+    // or null (unreadable), never absent.
+    expect(snapshot).toHaveProperty('standingApprovals');
     // The kept 'person' message still awaits a sent reply's resolution pass, so
     // one pending inbox row remains; status reports the real depth, not a guess.
     expect(snapshot.inbox).toBe(1);

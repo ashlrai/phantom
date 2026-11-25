@@ -1606,7 +1606,7 @@ const TOOLS: NativeToolImpl[] = [
   ...desktopOperatorTools,
   {
     name: 'ashlr_comms_agent_status',
-    description: 'Comms role status: parent Leader role, unset lane, KILL, pause, pending inbox depth, draft count and registered channel adapters. Read-only. No send.',
+    description: 'Comms role status: parent Leader role, unset lane, KILL, pause, pending inbox depth, draft count, registered channel adapters and the standing-approvals file verdict (accepted/reason plus entry counts, never the approval or owner lists). Read-only. No send.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     safety: 'read',
     handler: async () => {
