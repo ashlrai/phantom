@@ -1525,7 +1525,7 @@ def reap_worktrees():
                     "exit_code": _rc(j), **usage, "cost": None,
                     "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
                     "empty_class": classify_empty(empty, _rc(j), perr),
-                    "failure_reason": classify_empty_failure(empty, _rc(j), perr),
+                    "failure_reason": classify_empty_failure(empty, _rc(j), perr, tl),
                     "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
                     "pool_error": perr})
         except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
@@ -1673,7 +1673,7 @@ def ratelimited(lane, since):
 # ---- precheck: returns (code, reason) to skip, None to launch. Timeout/error/usage -> launch.
 PC_MAX = 8
 from launch_precheck import (precheck as shared_precheck, dupcheck as shared_dupcheck, add_check_line, DUPCHECK_CODE, park_key, parked, park,
-                             attempt_identity, empty_reason, read_attempts, with_prompt)
+                             attempt_identity, empty_reason, empty_retry_blocks, read_attempts, with_prompt)
 PARK_PATH = Q + "/precheck-parked.json"
 park_state = jload(PARK_PATH, {})
 if not isinstance(park_state, dict): park_state = {}
@@ -2173,6 +2173,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     def member_ok(f, lead=False):   # every check the loop below would apply to the job on its own, plus batch limits
         m = f[0]
         return (m not in recuts.identities and launch_hold(launch_state, m, launch_retry_key(m, f[4]), NOW) is None
+                and not empty_retry_blocks(claim_identity(m, f[1], f[4]), empty_attempts, NOW)
                 and not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
                 and not market_specs[m].get("min_tier") and not market_specs[m].get("max_cost_class")
                 and not market_specs[m].get("max_tier") and not market_specs[m].get("data_class")
@@ -2278,7 +2279,13 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         view.update(work_market.lane_view(["devin"], slots, running, {"devin": tgt("devin")}, hold,
                                          market_models, BUS["quota"], JOBS_RAW, now=NOW,
                                          allowance=market_allowance, tier=tier))
+        retry_blocks = empty_retry_blocks(claim_identity(j, repo, pf), empty_attempts, NOW)
         for dest in LANES:
+            if dest in retry_blocks:
+                view[dest]['unavailable'] = retry_blocks[dest]
+                if retry_blocks[dest] == 'provider_authentication': view[dest]['auth_failed'] = True
+            if retry_blocks and view[dest]['cost_class'] != 'included':
+                view[dest]['unavailable'] = 'empty_retry_requires_included_capacity'
             if parent and (dest in ('claude', 'claude-api') or view[dest]['cost_class'] == 'metered'):
                 view[dest]['unavailable'] = 'claude_recovery_lane_excluded'
             if dest == "devin":
@@ -2433,7 +2440,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         for route_job in ([c["job"] for c in batch[0]] if batch else [j]):
             prior = route_state.get(route_job)
             if prior and not prior.get("assigned", True): prior = None
-            rec, why = route_decision(prior, lane, NOW, work_market.hard_down(slots.get(prior["pool"], {}), prior["pool"] in hold) if prior else False)
+            hard_down = bool(prior and (work_market.hard_down(slots.get(prior["pool"], {}), prior["pool"] in hold)
+                             or (not batch and retry_blocks.get(prior['pool']) == 'provider_authentication')))
+            rec, why = route_decision(prior, lane, NOW, hard_down)
             if why and rec["pool"] != lane: raise RuntimeError("batch route violated hysteresis")
             rec.update(assigned=True, launched=True)
             route_state[route_job] = rec
