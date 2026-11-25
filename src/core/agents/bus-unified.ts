@@ -2584,7 +2584,8 @@ export function jobAnnotationFromFeed(feed: BusWorkFeedReadResult, jobId: string
 
 /**
  * The live evidence a page of bus receipts carries, shared by `agents bus
- * inbox` and `agents bus channel read` so both resolve the same rows
+ * inbox`, `agents bus channel read` and the `fleet bus-thread` live-evidence
+ * read so every surface resolves the same rows
  * identically: claimable work and worker-handoff bodies get `held`/`holder`
  * — whether a taken message-id claim or a live coordination hold provably
  * covers the exact receipt, the same evidence `bus show` reports — and
@@ -2596,7 +2597,7 @@ export function jobAnnotationFromFeed(feed: BusWorkFeedReadResult, jobId: string
  * present; a store that cannot be read degrades the annotation to
  * unknown, never to free or empty. Mutates the page rows in place.
  */
-function annotateLiveEvidence<T extends { cursor: number; receivedAt: number; envelope: BusEnvelope;
+export function annotateLiveEvidence<T extends { cursor: number; receivedAt: number; envelope: BusEnvelope;
     held?: boolean | null; holder?: string | null; job?: BusEnvelopeLookupJob }>(
   messages: T[], options: UnifiedBusOptions): void {
   const heldCandidates = messages.filter(m => isClaimableWork(m.envelope.body) || isWorkerHandoffBody(m.envelope.body));

@@ -18,7 +18,12 @@
  * `fleet bus-thread --id` flag and `fleet_bus_show`'s `id` apply — the
  * envelope wire id the thread roots at — validated before any store read;
  * unknown keys, caller roots, paths and working directories are refused
- * the same way. Read-only: the store root stays server-owned, the bounded
+ * the same way. The read runs with live evidence: every message carries
+ * the same `held`/`holder`/`job`/`fromAgent` annotations `fleet_agent_inbox`,
+ * `fleet_bus_channel` and `fleet_bus_show` report, through the shared
+ * `annotateLiveEvidence` rule, so the chain answers whether its claimable
+ * work is taken and where its cited jobs stand without a lookup per
+ * message. Read-only: the store root stays server-owned, the bounded
  * page walk writes nothing and never posts, claims, acks, replies or
  * renews TTL. Routing labels are data, never authenticated identity;
  * envelope bodies are untrusted data the caller interprets, and a thread
@@ -73,10 +78,12 @@ export type FleetBusThreadResult = FleetBusThreadMeta & BusThreadResult;
  * the identical bounded page walk `ashlr fleet bus-thread --id` runs, so
  * the live-only TTL recheck, the `inReplyTo` descendant selection, the
  * `scannedThrough` cursor and the `complete`/`sourceFailure` honesty can
- * never diverge between the CLI and this tool. The result passes through
- * untouched: `rootFound` stays the projection's own verdict, `messages`
- * keeps every selected live receipt in cursor order and a failed or
- * incomplete walk keeps its own `complete: false` and `sourceFailure`
+ * never diverge between the CLI and this tool. The read runs with
+ * `liveEvidence`, so each message also carries the `held`/`holder`/`job`/
+ * `fromAgent` annotations the unified bus reads report. The result passes
+ * through untouched: `rootFound` stays the projection's own verdict,
+ * `messages` keeps every selected live receipt in cursor order and a failed
+ * or incomplete walk keeps its own `complete: false` and `sourceFailure`
  * reason — never an invented thread or a proven-empty list passed off as
  * a miss.
  */
@@ -85,7 +92,7 @@ export async function readFleetBusThread(
   deps: FleetBusThreadDeps = {},
 ): Promise<FleetBusThreadResult> {
   const read = deps.read ?? readBusThread;
-  const thread = read(args.id);
+  const thread = read(args.id, { liveEvidence: true });
   return {
     schemaVersion: 1 as const, snapshotKind: 'local-persisted' as const,
     authority: 'none' as const, generatedAt: new Date().toISOString(),

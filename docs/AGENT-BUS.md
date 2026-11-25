@@ -848,7 +848,13 @@ cursor order, including the kindless `{inReplyTo, text}` replies the
 classified projections never group — under the identical printable
 `id` rule, with `rootFound`/`complete`/`sourceFailure` keeping a proven
 miss distinct from an unreadable walk and no caller root or path
-accepted.
+accepted. Both surfaces read with live evidence: every message carries
+the same `held`/`holder`/`job`/`fromAgent` annotations `agents bus
+inbox`, `agents bus channel read` and `agents bus show` report — whether
+a claimable work or worker-handoff body in the chain is already taken,
+the live feed state of any job a body cites, and the registered handle
+behind each sender label — so the thread answers "is this work claimed"
+and "where does the cited job stand" without a `show` per message.
 
 **Work announcements.** `phm agents bus work post --job <id> --title <text>
 --repo <owner/name> [--claim <key>]... [--provider <p>] [--tier <fast|mid|work|frontier>

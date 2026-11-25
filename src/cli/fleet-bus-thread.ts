@@ -15,7 +15,7 @@ export async function cmdFleetBusThread(args: string[], options: BusInboxOptions
   const error = deps.error ?? (text => console.error(text));
   const invalid = (): number => { error(`Invalid arguments. ${usage}`); return 2; };
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    output(`${usage}\nReads retained live local context only; routing labels are not authenticated identities.`);
+    output(`${usage}\nReads retained live local context only; --json rows carry the same held/holder/job/fromAgent live evidence the unified bus reads annotate. Routing labels are not authenticated identities.`);
     return 0;
   }
   let id: string | undefined, json = false;
@@ -28,7 +28,7 @@ export async function cmdFleetBusThread(args: string[], options: BusInboxOptions
     } else return invalid();
   }
   if (!id || !validateBusEnvelope({ id, from: 'x', to: 'x', priority: 'P3', ttl: 1, body: null }).ok) return invalid();
-  const result = readBusThread(id, options, deps.list);
+  const result = readBusThread(id, { ...options, liveEvidence: true }, deps.list);
   if (json) output(JSON.stringify(result));
   else {
     const safe = (value: unknown): string => JSON.stringify(sanitizePublicJson(value)).replace(/[\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
