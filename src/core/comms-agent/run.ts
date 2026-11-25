@@ -19,7 +19,7 @@ import {
 import { routeCommsLane } from './route.js';
 import {
   appendArchive, appendDraft, appendOwnerNotice, appendSendLog, listDrafts, readInbox, readOwnerApprovals, readSendLog, writeInbox,
-  type CommsDraft, type OwnerApprovals,
+  type ApprovalsReason, type CommsDraft, type OwnerApprovals,
 } from './store.js';
 import { triageInbox, type InboxMessage } from './triage.js';
 
@@ -329,7 +329,10 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
   };
 }
 
-export async function commsStatus(runsDir: string): Promise<{
+export async function commsStatus(runsDir: string, deps: {
+  /** Standing-approvals reader seam; default reads the fixed owner file. */
+  readApprovals?: () => Promise<OwnerApprovals>;
+} = {}): Promise<{
   ok: true;
   schema: 'comms-agent.status.v1';
   role: typeof COMMS_AGENT_ROLE;
@@ -344,11 +347,27 @@ export async function commsStatus(runsDir: string): Promise<{
   sendsLogged: number | null;
   /** Registered channel adapters; null when the registry cannot be read. */
   adapters: string[] | null;
+  /** Standing-approvals file trust verdict — the same read `run` applies
+   * before any send. `approvalCount`/`ownerCount` count config entries only;
+   * recipients and owners are handles and never leave the file. Null when the
+   * owner file cannot be read at all — the verdict is unknown, never guessed. */
+  standingApprovals: {
+    accepted: boolean;
+    reason: ApprovalsReason;
+    approvalCount: number;
+    ownerCount: number;
+  } | null;
 }> {
-  const [inbox, drafts, sends] = await Promise.all([
+  const [inbox, drafts, sends, approvals] = await Promise.all([
     readInbox(runsDir).then(read => read.messages.length).catch(() => null),
     listDrafts(runsDir).then(rows => rows.filter(draft => draft.status === 'pending').length).catch(() => null),
     readSendLog(runsDir).then(rows => rows.length).catch(() => null),
+    (deps.readApprovals ?? readOwnerApprovals)().then(found => ({
+      accepted: found.accepted,
+      reason: found.reason,
+      approvalCount: found.approvals.length,
+      ownerCount: found.owners.length,
+    })).catch(() => null),
   ]);
   let adapters: string[] | null = null;
   try { adapters = listChannelRegistry().filter(row => row.adapterRegistered).map(row => row.id); }
@@ -363,6 +382,7 @@ export async function commsStatus(runsDir: string): Promise<{
     drafts,
     sendsLogged: sends,
     adapters,
+    standingApprovals: approvals,
   };
 }
 
