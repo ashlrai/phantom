@@ -191,7 +191,8 @@ describe('getDevinModelCatalog', () => {
     // Fresh: no second listing.
     await getDevinModelCatalog({ cliPath: '/fake/devin', runList, cachePath, wait: true, now: () => 1_000_000 + 60_000 });
     expect(calls).toBe(1);
-    expect(statSync(cachePath).mode & 0o777).toBe(0o600);
+    // Windows does not expose POSIX permission bits through Node's stat mode.
+    if (process.platform !== 'win32') expect(statSync(cachePath).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(cachePath, 'utf8'))).toMatchObject({ v: 1, fetchedAt: new Date(1_000_000).toISOString() });
   });
 
