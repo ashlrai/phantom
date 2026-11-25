@@ -360,6 +360,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'precheck-repeats': () => import('./fleet-precheck-repeats.js'),
   'precheck-waste': () => import('./fleet-precheck-waste.js'),
   'procs': () => import('./fleet-procs.js'),
+  'profile': () => import('./fleet-profile.js'),
   'proof': () => import('./fleet-proof.js'),
   'publication-evidence': () => import('./fleet-publication-evidence.js'),
   'pulse': () => import('./fleet-pulse.js'),

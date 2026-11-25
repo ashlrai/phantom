@@ -165,6 +165,7 @@ const DOCS = [
   'docs/BRIEF-SEND.md',
   'docs/DISK-MAINT.md',
   'docs/FLEET-EMPTIES.md',
+  'docs/FLEET-PROFILE.md',
   'docs/FLEET-MERGE-LATENCY.md',
   'docs/FLEET-MERGE-PLAN.md',
   'docs/FLEET-REBASE-PLAN.md',

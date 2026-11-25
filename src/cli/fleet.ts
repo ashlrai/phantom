@@ -2777,6 +2777,7 @@ function printFleetHelp(): void {
   console.log(`    phm fleet job <id> [--json] [--changes] ${cyan('# host worker evidence')}`);
   console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
   console.log(`    phm fleet deploy-plan --since <sha> [--json]  ${cyan('# find fleet scripts awaiting deployment; read-only')}`);
+  console.log(`    phm fleet profile [--json] [--host <alias>]  ${cyan('# report Mac setup drift; repeat --host for a matrix')}`);
   console.log(`    phm fleet supply --lane <lane> --n <N> [--json]  ${cyan('# suggest queue work from open sources')}`);
   console.log(`    phm fleet board --leader [--json]      ${cyan('# last Leader tick board: lanes, tier depth, merges, conflicts, needs-Mason')}`);
   console.log(`    phm fleet parked [--json]     ${cyan('# ready/parked host work; unmetDeps lists PARKED-DEP gates')}`);
