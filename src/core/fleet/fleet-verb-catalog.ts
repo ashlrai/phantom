@@ -96,8 +96,12 @@ export function extractVerbSummary(source: string, verb: string): { usage: strin
     }
   }
   const comment = source.match(/^\s*\/\*\*([\s\S]*?)\*\//);
+  // Path stripping removes only a path's leading segments (src/cli/x.ts -> x.ts).
+  // A candidate segment right after '/' is a middle segment, not the head, so
+  // '<runs>/coordination/leader-board.json' keeps its real directory instead of
+  // collapsing to '<runs>/leader-board.json'.
   const cleaned = comment?.[1].replace(/^\s*\*\s?/gm, '').replace(/`/g, '')
-    .replace(/\b(?:\.\.\/|\.\/|[\w.-]+\/)+(?=[\w.-])/g, '').replace(/\s+/g, ' ').trim();
+    .replace(/(?<!\/)\b(?:\.\.\/|\.\/|[\w.-]+\/)+(?=[\w.-])/g, '').replace(/\s+/g, ' ').trim();
   const sentence = cleaned?.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? cleaned;
   return { usage, summary: sentence ? sentence.slice(0, 160) : usageHelp?.slice(0, 160) ?? null };
 }
