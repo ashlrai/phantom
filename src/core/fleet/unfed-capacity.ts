@@ -368,7 +368,7 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     if (isRecord(entry) && count(entry.waiting_elsewhere) &&
         (waiting === null || entry.waiting_elsewhere <= waiting)) {
       waitingElsewhere = entry.waiting_elsewhere;
-      blocked = codes(entry.blocked);
+      blocked = codes(entry.blocked, waitingElsewhere);
     } else if (!published && hints !== null && readyHinted !== null && canBeUnfed) {
       waitingElsewhere = hints.waiting - readyHinted;
       // A fleet stop outranks every per-lane code: the dispatcher never ran

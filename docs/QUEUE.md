@@ -432,6 +432,9 @@ estimating waiting work and blockers without a dispatcher summary. If
 admission stopped before the market ran, the fallback uses the first row per
 job with a valid ID and tier and takes its hint from the raw lane column.
 Published waiting and blocker counts come directly from the dispatcher tick.
+The live report and journal readers discard individual blocker counts above
+the lane's waiting-elsewhere count. A job may contribute to several distinct
+reasons, so the sum across reasons can exceed the number of waiting jobs.
 
 The separate `resourcePlan` comparison uses the same advisory lane targets as
 `phm resources plan` and shows how many additional slots lack waiting rows

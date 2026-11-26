@@ -29,13 +29,13 @@ export const MAX_MARKET_CODES = 32;
 const count = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
-/** Keep only well-formed reason codes with nonnegative counts. */
-export function marketBlockedCodes(value: unknown): Record<string, number> {
+/** Each waiting job can contribute at most once to a given reason. */
+export function marketBlockedCodes(value: unknown, waitingElsewhere: number): Record<string, number> {
   const out: Record<string, number> = {};
   if (!isRecord(value)) return out;
   for (const [code, n] of Object.entries(value)) {
     if (Object.keys(out).length >= MAX_MARKET_CODES) break;
-    if (MARKET_REASON_CODE.test(code) && count(n) && n > 0) out[code] = n;
+    if (MARKET_REASON_CODE.test(code) && count(n) && n > 0 && n <= waitingElsewhere) out[code] = n;
   }
   return out;
 }
@@ -52,7 +52,11 @@ export function unfedTickLanes(row: Record<string, unknown>): { lane: string; sl
     if (waiting !== null && value.waiting_elsewhere > waiting) continue;
     if (count(value.running) && count(value.target) &&
         value.headroom !== Math.max(0, value.target - value.running)) continue;
-    snapshot.push({ lane, slots: Math.min(value.headroom, value.waiting_elsewhere), blocked: marketBlockedCodes(value.blocked) });
+    snapshot.push({
+      lane,
+      slots: Math.min(value.headroom, value.waiting_elsewhere),
+      blocked: marketBlockedCodes(value.blocked, value.waiting_elsewhere),
+    });
   }
   return snapshot;
 }
