@@ -1211,6 +1211,13 @@ An unreadable revert ledger marks every verdict `unknown`, never "not
 reverted"; a missing `gh` reports `sourceState: 'missing'`. Read-only — `gh pr
 list` and the local ledger only; see
 [core/fleet/outside-pr-outcomes.ts](../src/core/fleet/outside-pr-outcomes.ts).
+The cloud scheduler's hourly improve tick also journals each read into
+`metrics/outside-pr-outcomes.jsonl` (`fleet.outside-pr-outcome.v1` /
+`fleet.outside-pr-scan.v1` rows via
+[core/fleet/outside-outcome-sync.ts](../src/core/fleet/outside-outcome-sync.ts)),
+and `phm improve discover` folds repos whose outside merges keep carrying
+standing revert verdicts into self-targeted backlog items — see
+[core/improve/outside-pr-backlog.ts](../src/core/improve/outside-pr-backlog.ts).
 
 `phm fleet pr-hygiene [--repo <owner/name>] [--stale-days <n>] [--limit <n>] [--json]`
 audits one repo's open PRs and emits the `fleet.pr-hygiene.v1` triage report

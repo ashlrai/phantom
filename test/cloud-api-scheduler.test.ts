@@ -37,6 +37,13 @@ const observations = vi.hoisted(() => ({
   })),
 }));
 vi.mock('../src/core/improve/observe-sync.js', () => ({ syncCloudOutcomeObservations: observations.syncCloudOutcomeObservations }));
+const outsideOutcomes = vi.hoisted(() => ({
+  syncOutsidePrOutcomes: vi.fn(async () => ({
+    state: 'missing' as const, journalPath: '/x', sourceState: 'missing' as const,
+    appended: 0, scanAppended: false, seen: 0, truncated: false,
+  })),
+}));
+vi.mock('../src/core/fleet/outside-outcome-sync.js', () => ({ syncOutsidePrOutcomes: outsideOutcomes.syncOutsidePrOutcomes }));
 const stop = vi.hoisted(() => ({ kill: false, paused: false }));
 vi.mock('../src/core/sandbox/policy.js', () => ({ killSwitchOn: () => stop.kill }));
 vi.mock('../src/core/comms/pause.js', () => ({ isPaused: () => stop.paused }));
@@ -66,6 +73,7 @@ beforeEach(() => {
   observations.syncCloudOutcomeObservations.mockReturnValue({
     intact: true, reasons: [], proposals: 0, matched: 0, appended: 0, merged: 0, reverted: 0, revertLedger: 'missing',
   });
+  outsideOutcomes.syncOutsidePrOutcomes.mockClear();
   vi.useFakeTimers();
 });
 
@@ -150,6 +158,11 @@ describe('cadence', () => {
     expect(outcomes.syncCloudBacklogOutcomes).toHaveBeenCalledTimes(1);
     expect(observations.syncCloudOutcomeObservations).toHaveBeenCalledTimes(1);
     expect(core.runSelfImprove).toHaveBeenCalledWith({ count: 1, auto: true });
+    // The outside-PR outcome journal runs before discovery so this same
+    // tick's autoDiscover folds fresh revert evidence into the backlog.
+    expect(outsideOutcomes.syncOutsidePrOutcomes).toHaveBeenCalledTimes(1);
+    expect(outsideOutcomes.syncOutsidePrOutcomes.mock.invocationCallOrder[0])
+      .toBeLessThan(discover.autoDiscover.mock.invocationCallOrder[0]);
     expect(outcomes.syncCloudBacklogOutcomes.mock.invocationCallOrder[0])
       .toBeLessThan(core.runSelfImprove.mock.invocationCallOrder[0]);
     expect(observations.syncCloudOutcomeObservations.mock.invocationCallOrder[0])
