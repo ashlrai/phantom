@@ -2242,11 +2242,15 @@ burn_rate_per_hour, sessions, source, observed_at, state, reason }`. Unknown fie
 
 `assessNodeCapacity(ramBytes, memory, freeDiskBytes, light?, options?)` and
 `readNodeCapacity(light?, options?)` accept optional `CapacityOptions` with a
-trusted pack name/resource hint (`memory-bound` or `cpu-bound`) and injected CPU
-reader. CPU-bound packs require finite nonnegative load averages and a positive
+trusted pack name/resource hint (`memory-bound` or `cpu-bound`) and injected CPU,
+memory-headroom (`readMemory`) and free-disk (`readDisk`) readers.
+CPU-bound packs require finite nonnegative load averages and a positive
 integer `availableParallelism`; one-minute load plus one must fit parallelism.
 `omlx-chat` opts in; API/probe packs and unspecified hints retain memory-only
 admission. Existing RAM, pressure, disk and light-profile limits are unchanged.
+`readNodeCapacity` samples headroom through `readPlatformHostHeadroom`: macOS
+kernel telemetry or Linux /proc (meminfo plus PSI); other platforms read nothing
+and hold `memory-unmeasured`.
 
 `readNodeCapacity` applies `shareNodeCapacity(capacity, options?)`, with optional
 injected `HostSlots` registry/owned `HostSlotLease`. The physical host's existing
@@ -2259,7 +2263,9 @@ runner close. Full occupancy never revokes an existing lease.
 New `NodeCapacity.held` values are `host-slots-exhausted`,
 `host-slots-unmeasured`, `cpu-pressure`, and `cpu-unmeasured`, always with zero
 slots. Pool `status` includes local `capacity`; worker results report holds.
-The private registry uses native hardware digest/boot identity; missing identity,
+The private registry uses native hardware digest/boot identity (macOS
+IOPlatformUUID and boot-session UUID, or Linux machine-id and kernel boot_id
+under a separate digest domain); missing identity,
 unsafe paths or corrupt state hold admission. Leases have no time-based expiry:
 a crashed worker's reservation remains until verified offline cleanup or reboot.
 See [node admission](docs/NODES.md#small-mac-enrollment-and-admission).

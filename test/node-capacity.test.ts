@@ -1,10 +1,10 @@
 import { execFile } from 'node:child_process';
 import { chmodSync, linkSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { assessNodeCapacity, nodeRamSlots, packRamBytes, shareNodeCapacity } from '../src/core/drive/nodes/capacity.js';
+import { assessNodeCapacity, nodeRamSlots, packRamBytes, readNodeCapacity, shareNodeCapacity } from '../src/core/drive/nodes/capacity.js';
 import { HostSlots } from '../src/core/drive/nodes/host-slots.js';
 import { readMacHostHeadroom, type HostHeadroom } from '../src/core/run/host-headroom.js';
 const GIB = 1024 ** 3;
@@ -173,5 +173,25 @@ describe('physical host slot leases', () => {
     symlinkSync(root, path);
     expect(() => new HostSlots(path)).toThrow();
     expect(shareNodeCapacity(base(), { registry }).held).toBe('host-slots-unmeasured');
+  });
+});
+
+describe('readNodeCapacity injected telemetry', () => {
+  let root: string;
+  beforeEach(() => { root = realpathSync(mkdtempSync(join(tmpdir(), 'node-read-capacity-'))); });
+  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+  it('advertises measured slots for a Linux-shaped headroom reading', () => {
+    const registry = new HostSlots(root);
+    const capacity = readNodeCapacity(false, { registry, readDisk: () => 100e9,
+      readMemory: () => ({ freePercent: 50, swapGb: 1, pressureLevel: 1 }) });
+    expect(capacity.held).toBeNull();
+    expect(capacity.slots).toBe(nodeRamSlots(totalmem()));
+  });
+
+  it('holds memory-unmeasured when the platform reader has no telemetry', () => {
+    const registry = new HostSlots(root);
+    expect(readNodeCapacity(false, { registry, readDisk: () => 100e9, readMemory: () => null }))
+      .toMatchObject({ slots: 0, held: 'memory-unmeasured' });
   });
 });

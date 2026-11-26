@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
-import { collectChangedPaths, docsCheckPreflight, masterMovedAuthorityDrift, selectChangedFiles } from '../scripts/verify-changed.mjs';
+import { collectChangedPaths, docsCheckPreflight, healedMergeBase, masterMovedAuthorityDrift, selectChangedFiles, verificationBase } from '../scripts/verify-changed.mjs';
 
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn(), spawnSync: vi.fn() }));
 
@@ -130,5 +130,159 @@ describe('Git changed-path discovery', () => {
       ['diff', '--name-only', '--no-renames', '-z', '--'],
       ['ls-files', '--others', '--exclude-standard', '-z'],
     ]);
+  });
+});
+
+describe('verificationBase merge-base heal', () => {
+  const SHA = 'a'.repeat(40);
+  const BOUNDARY = 'b'.repeat(40);
+
+  interface HealScript {
+    shallow?: boolean;
+    hasMaster?: boolean;
+    upstream?: string | null;
+    boundary?: string[];
+    contains?: Record<string, string>;
+    headCount?: number;
+    masterCount?: number;
+    fetch?: 'ok' | 'fail' | 'timeout';
+    mergeBase?: Array<string | Error>;
+    head?: string;
+  }
+
+  /** Dispatching git mock for the heal probes; records fetch invocations separately. */
+  function healExec(script: HealScript) {
+    let mergeCalls = 0;
+    const fetches: string[][] = [];
+    const exec = vi.fn((_file: string, args: string[]) => {
+      const cmd = args.join(' ');
+      if (cmd === 'merge-base HEAD origin/master') {
+        const next = script.mergeBase?.[mergeCalls++] ?? new Error('no merge base');
+        if (next instanceof Error) throw next;
+        return `${next}\n`;
+      }
+      if (cmd === 'rev-parse --is-shallow-repository') {
+        if (script.shallow === undefined) throw new Error('not a git repository');
+        return `${script.shallow}\n`;
+      }
+      if (cmd === 'rev-parse --verify --quiet origin/master^{commit}') {
+        if (!script.hasMaster) throw new Error('unknown revision');
+        return `${SHA}\n`;
+      }
+      if (cmd === 'rev-parse --abbrev-ref --symbolic-full-name @{upstream}') {
+        if (script.upstream == null) throw new Error('no upstream configured');
+        return `${script.upstream}\n`;
+      }
+      if (cmd === 'rev-list --max-parents=0 HEAD') return `${(script.boundary ?? []).join('\n')}\n`;
+      if (cmd.startsWith('branch -r --contains ')) {
+        const sha = cmd.slice('branch -r --contains '.length).trim();
+        const out = script.contains?.[sha];
+        if (out === undefined) throw new Error('bad revision');
+        return out;
+      }
+      if (cmd === 'rev-list --count HEAD') return `${script.headCount ?? 0}\n`;
+      if (cmd === 'rev-list --count origin/master') return `${script.masterCount ?? 0}\n`;
+      if (cmd === 'rev-parse --verify HEAD^{commit}') return `${script.head ?? 'c'.repeat(40)}\n`;
+      if (cmd.startsWith('fetch ')) {
+        fetches.push([...args]);
+        if (script.fetch === 'timeout') {
+          const err = new Error('spawnSync git ETIMEDOUT') as Error & { killed?: boolean };
+          err.killed = true;
+          throw err;
+        }
+        if (script.fetch === 'fail') throw new Error('could not read from remote repository');
+        return '';
+      }
+      throw new Error(`unexpected git call: ${cmd}`);
+    });
+    return { exec: exec as never, fetches };
+  }
+
+  it('does not fetch when a complete clone has master but truly shares no history', () => {
+    const { exec, fetches } = healExec({ shallow: false, hasMaster: true, mergeBase: [new Error('no merge base')] });
+    const base = verificationBase('/repo', exec);
+    expect(base).toEqual({ base: 'c'.repeat(40), mode: 'status' });
+    expect(fetches).toEqual([]);
+  });
+
+  it('fetches the master tracking ref for a complete single-branch clone missing origin/master', () => {
+    const { exec, fetches } = healExec({ shallow: false, hasMaster: false, fetch: 'ok', mergeBase: [new Error('no merge base'), SHA] });
+    const base = verificationBase('/repo', exec);
+    expect(base).toEqual({ base: SHA, mode: 'merge-base' });
+    expect(fetches).toHaveLength(1);
+    expect(fetches[0]).toEqual(['fetch', '--no-tags', 'origin', '+refs/heads/master:refs/remotes/origin/master']);
+  });
+
+  it('deepens master and HEAD-side branches in stages until a shallow clone reaches the fork point', () => {
+    const { exec, fetches } = healExec({
+      shallow: true,
+      hasMaster: false,
+      upstream: null,
+      boundary: [BOUNDARY],
+      contains: { [BOUNDARY]: '  origin/feature\n  origin/HEAD -> origin/master\n  origin/master\n' },
+      headCount: 0,
+      fetch: 'ok',
+      mergeBase: [new Error('no merge base'), new Error('no merge base'), SHA],
+    });
+    const base = verificationBase('/repo', exec);
+    expect(base).toEqual({ base: SHA, mode: 'merge-base' });
+    expect(fetches).toHaveLength(2);
+    expect(fetches[0]?.[2]).toBe('--deepen=400');
+    expect(fetches[1]?.[2]).toBe('--deepen=2000');
+    // master always leads; the boundary's containing branch follows; the symref line is skipped.
+    expect(fetches[0]?.slice(3)).toEqual([
+      'origin',
+      '+refs/heads/master:refs/remotes/origin/master',
+      '+refs/heads/feature:refs/remotes/origin/feature',
+    ]);
+  });
+
+  it('uses HEAD upstream for the deepen refspec set when it points at origin', () => {
+    const { exec, fetches } = healExec({
+      shallow: true,
+      hasMaster: true,
+      upstream: 'origin/topic-work',
+      boundary: [],
+      fetch: 'ok',
+      mergeBase: [SHA],
+    });
+    expect(healedMergeBase('/repo', exec)).toBe(SHA);
+    expect(fetches[0]?.slice(3)).toEqual([
+      'origin',
+      '+refs/heads/master:refs/remotes/origin/master',
+      '+refs/heads/topic-work:refs/remotes/origin/topic-work',
+    ]);
+  });
+
+  it('starts the deepen ladder above the deepest known side so it never shortens a ref', () => {
+    const { exec, fetches } = healExec({
+      shallow: true, hasMaster: true, upstream: null, boundary: [],
+      headCount: 10, masterCount: 900, fetch: 'ok',
+      mergeBase: [new Error('no merge base'), SHA],
+    });
+    expect(healedMergeBase('/repo', exec)).toBe(SHA);
+    expect(fetches[0]?.[2]).toBe('--deepen=1300');
+  });
+
+  it('falls back to status mode after the deepen stages are exhausted', () => {
+    const { exec, fetches } = healExec({
+      shallow: true, hasMaster: true, upstream: null, boundary: [], headCount: 0,
+      fetch: 'ok', mergeBase: [new Error('no merge base'), new Error('no merge base'), new Error('no merge base'), new Error('no merge base')],
+    });
+    const base = verificationBase('/repo', exec);
+    expect(base.mode).toBe('status');
+    expect(fetches.map((f) => f[2])).toEqual(['--deepen=400', '--deepen=2000', '--deepen=10000']);
+  });
+
+  it('stops after the first timed-out deepen instead of retrying deeper', () => {
+    const { exec, fetches } = healExec({ shallow: true, hasMaster: true, fetch: 'timeout' });
+    expect(healedMergeBase('/repo', exec)).toBeNull();
+    expect(fetches).toHaveLength(1);
+  });
+
+  it('returns null for a complete clone when the master fetch times out', () => {
+    const { exec, fetches } = healExec({ shallow: false, hasMaster: false, fetch: 'timeout' });
+    expect(healedMergeBase('/repo', exec)).toBeNull();
+    expect(fetches).toHaveLength(1);
   });
 });
