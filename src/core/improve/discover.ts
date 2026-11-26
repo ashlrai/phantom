@@ -105,6 +105,17 @@
  *     a -CR1 child (claudeRecoveryBacklogItems below) — the one
  *     jobs.jsonl lifecycle event no reader folded, so a claude lane
  *     that keeps churning empty exit-1 finishes never became work;
+ *   - the jobs ledger's backoff-skip receipts: the autobackoff_skip
+ *     and authbackoff_skip rows dispatchd appends when its wall
+ *     scanners match a provider usage-limit or auth-failure pattern
+ *     but ab_run() cannot prove the run's outcome because the pinned
+ *     git-safe helper fails ab_gs_ok()'s checks — src
+ *     'helper_unavailable', no lane hold placed
+ *     (backoffSkipBacklogItems below). The friction fold counts them
+ *     only as silent totals, the router outcome fold excludes them
+ *     by design and the incident gate borrows them for signatures, so
+ *     a fleet whose wall protection stays disarmed looked like
+ *     ordinary provider churn;
  *   - the swapout-rate ledger's recurring memory evidence: the per-sample
  *     free_pct/swap_gb/swapouts_per_min rows the daemon's swapout-sync
  *     job folds from memstat.json into metrics/swapout-rate.jsonl —
@@ -1458,6 +1469,7 @@ import { needsYouAutoBacklogItems } from './needs-you-auto-backlog.js';
 import { commsRequestsBacklogItems } from './comms-requests-backlog.js';
 import { seatShadowEvidenceBacklogItems } from './seat-shadow-evidence-backlog.js';
 import { queueRerouteBacklogItems } from './queue-reroute-backlog.js';
+import { backoffSkipBacklogItems } from './backoff-skip-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -3128,6 +3140,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // describes this install's seat routing and carries no repository
   // column.
   items.push(...await seatShadowEvidenceBacklogItems({ repo }));
+
+  // Backoff-skip receipts: the jobs ledger's autobackoff_skip and
+  // authbackoff_skip rows — dispatchd's wall scanners matched a
+  // provider usage-limit or auth-failure pattern in a finished job's
+  // log, then ab_run() could not prove the outcome because the pinned
+  // git-safe helper failed ab_gs_ok()'s checks, so no lane hold was
+  // placed (src 'helper_unavailable'). Until now the friction fold
+  // counted them only as silent totals with no named evidence, the
+  // router outcome fold excluded them by design and the incident gate
+  // borrowed them for lane-error signatures — so a fleet whose wall
+  // protection stayed disarmed looked like ordinary provider churn. A
+  // cell emits only at the recurring bars of distinct jobs across
+  // distinct UTC days inside the window, rows validate under the
+  // producer's closed per-family pattern vocabularies, truncated tails
+  // are stated as lower bounds, and only the fleet's own repository
+  // inherits the items since jobs.jsonl describes this install's
+  // dispatch machinery.
+  items.push(...await backoffSkipBacklogItems({ repo }));
   return { items, errors };
 }
 
