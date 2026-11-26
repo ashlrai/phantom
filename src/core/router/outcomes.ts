@@ -2941,8 +2941,8 @@ const launchCostCount = (v: unknown): v is number => typeof v === 'number' && Nu
 
 /**
  * Folds launch-cost.jsonl text into per-launchId evidence, last appended
- * row winning a repeat (the ledger is append-only, one row per launch
- * attempt). A row counts only as fleet.launch-cost.v1 evidence under the
+ * row winning a repeat and determining its iteration position.
+ * A row counts only as fleet.launch-cost.v1 evidence under the
  * same closed validation src/core/fleet/launch-cost.ts applies: the exact
  * schema, bounded lane and launchId identifiers, a null-or-parseable
  * startedAt, windowSeconds 60, bounded sampledSeconds/samples, an
@@ -2987,6 +2987,8 @@ export function foldLaunchCosts(text: string): Map<string, LaunchCostEvidence> {
         (status === 'measured' && (sampledSeconds < 59 || (samples as number) < 12)) ||
         (launchCostCount(r['meanCpuPercentOneCore']) && launchCostCount(r['peakCpuPercentOneCore']) &&
           (r['meanCpuPercentOneCore'] as number) > (r['peakCpuPercentOneCore'] as number))) continue;
+    // Preserve append order for the subsequent per-job join across launch IDs.
+    costs.delete(launchId);
     costs.set(launchId, {
       status: status as LaunchCostEvidence['status'],
       peakProcesses: r['peakProcesses'] === null ? null : r['peakProcesses'] as number,

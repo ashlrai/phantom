@@ -2640,6 +2640,20 @@ describe('router outcome launch-cost join', () => {
     });
   });
 
+  it('joins a repeated launch receipt appended after another attempt for the same job', async () => {
+    const root = runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
+    writeLaunchCosts(root, [
+      launchCostRow('J1-aaaabbbbcccc', 'partial'),
+      launchCostRow('J1-ddddeeeeffff', 'unknown'),
+      launchCostRow('J1-aaaabbbbcccc', 'measured', { peakProcesses: 6 }),
+    ]);
+
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result.outcomes[0]).toMatchObject({
+      launch_cost_status: 'measured', launch_peak_processes: 6,
+    });
+  });
+
   it('keeps launch_cost fields null and reports launch_cost_state when the ledger is absent, refused or the jobs read failed', async () => {
     const missing = await readRouterOutcomes({ runsDir: runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n') });
     expect(missing).toMatchObject({ state: 'read', launch_cost_state: 'missing', launch_cost_truncated: false });
