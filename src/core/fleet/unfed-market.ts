@@ -70,6 +70,19 @@ const MARKET_CAP = /^(?:[a-z][a-z0-9-]*|secrets:[A-Za-z0-9_.-]+)$/;
 const MARKET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 /** work_market preferred_lane spelling: lowercase lane ids only. */
 export const MARKET_LANE_ID = /^[a-z][a-z0-9-]*$/;
+/** Market lanes that execute only on this host (`local_execution_required` in
+ * the market): a node never takes their ready rows. */
+export const LOCAL_LANES: ReadonlySet<string> = MARKET_LOCAL;
+/** The node cap a ready lane needs on a remote computer, or null when the lane
+ * only runs on this host or on an API key. The claim bridge and the read-only
+ * planners (`phm nodes plan`/`offload`, the fleet resource plan) share this
+ * map so advice matches what a node can actually be offered. */
+export function remoteLaneCap(lane: string): string | null {
+  if (LOCAL_LANES.has(lane)) return null;
+  if (lane === 'codex' || lane.startsWith('codex-')) return 'codex';
+  if (lane === 'claude' || (lane.startsWith('claude-') && lane !== 'claude-api')) return 'claude';
+  return null;
+}
 const MAX_REQUIREMENTS = 8192;
 
 const rank = (table: Readonly<Record<string, number>>, key: string): number | undefined =>

@@ -18,8 +18,12 @@ import { NODE_TASK_LIMIT, validNodeTask, nodeTaskArgs, type EmbeddedNodeTask } f
 import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
 import { NODE_HEARTBEAT_MS, validCap } from './state.js';
 import type { RouteAssignment } from './router.js';
-import { MARKET_LANE_ID, readyEnvelopeSpec } from '../../fleet/unfed-market.js';
+import { LOCAL_LANES, MARKET_LANE_ID, readyEnvelopeSpec, remoteLaneCap } from '../../fleet/unfed-market.js';
 import { scrubSecrets } from '../../util/scrub.js';
+
+// The lane-to-cap map lives with the market semantics in unfed-market; the
+// contract surface keeps it exported here for existing readers.
+export { remoteLaneCap };
 
 export const NODE_BRIDGE_SCHEMA = 'phantom.node-bridge.v1';
 /** dispatchd keeps a lease only when its owner starts with RQ-BATCH- and has a manifest. */
@@ -42,7 +46,6 @@ export const NODE_BRIDGE_CALL_MS = 12_000;
 export const NODE_BRIDGE_PASS_BUDGET_MS = 25_000;
 
 const JID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const LOCAL_LANES = new Set(['codex-local', 'omlx']);
 const HOST_BOUND = ['RQ-FIX-MAIN-', 'RQ-REL-', 'RQ-DESK-', 'RQ-BATCH-'];
 const DATA_CLASSES: Record<string, number> = { public: 0, internal: 1, confidential: 2, restricted: 3 };
 /** work_market.py's clearance for a remote built-in executor. */
@@ -96,14 +99,6 @@ const batchesDir = (h: NodeBridgeHost) => join(queueDir(h), 'batches');
 
 export function bridgeLeaseOwner(job: string): string {
   return NODE_BRIDGE_LEASE_PREFIX + createHash('sha256').update(job).digest('hex').slice(0, 20);
-}
-
-/** The node cap a ready lane needs, or null when the lane only runs on this host or on an API key. */
-export function remoteLaneCap(lane: string): string | null {
-  if (LOCAL_LANES.has(lane)) return null;
-  if (lane === 'codex' || lane.startsWith('codex-')) return 'codex';
-  if (lane === 'claude' || (lane.startsWith('claude-') && lane !== 'claude-api')) return 'claude';
-  return null;
 }
 
 export function parseReadyRow(text: string, routerQueue?: string | null): ReadyRow | null {
