@@ -110,6 +110,7 @@ describe('fleet resource plan', () => {
       action: 'use-reset-now', requires_explicit_request: true, grant, window: 'weekly', queued_jobs: 3,
     });
     expect(plan({ ...bank, queued: 0 }).reset_proposal).toBeNull();
+    expect(buildFleetResourcePlan(weekly, [node], status(), ledger, now, [], bank, new Map()).reset_proposal).toBeNull();
   });
 
   it('reroutes eligible rows once toward the earliest included deadline and shares the plan with readers', async () => {
@@ -141,6 +142,26 @@ describe('fleet resource plan', () => {
         readings: readings.map(row => row.id === 'antigravity' ? { ...row, reset_at: sooner } : row),
         history: { ...live.history, antigravity: live.history.antigravity!.map(row => ({ ...row, reset_at: sooner })) },
       }));
+      const queuedDispatch = { ...dispatch, lanes: status().lanes };
+      await write('queue/status.json', { ...queuedDispatch, admission: { admit: false, decision: 'stop' } });
+      const stopped = await readFleetResourcePlan(dir, now);
+      expect(stopped.lanes.find(lane => lane.lane === 'codex-personal')).toMatchObject({
+        running: 1, queued_jobs: null, target_concurrency: null, additional_slots: null,
+      });
+
+      await write('queue/status.json', queuedDispatch);
+      const incomplete = await readFleetResourcePlan(dir, now);
+      expect(incomplete.lanes.find(lane => lane.lane === 'codex-personal')).toMatchObject({
+        queued_jobs: null, additional_slots: null,
+      });
+
+      await write('queue/status.json', dispatch);
+      await writeFile(join(dir, 'queue/ready.tsv'), ineligible);
+      const empty = await readFleetResourcePlan(dir, now);
+      expect(empty.lanes.find(lane => lane.lane === 'codex-personal')).toMatchObject({
+        queued_jobs: 0, additional_slots: 0,
+      });
+      await writeFile(join(dir, 'queue/ready.tsv'), ready);
       const plan = await readFleetResourcePlan(dir, now);
       expect(plan.lanes.filter(lane => lanes.includes(lane.lane)).map(lane => [lane.queued_jobs, lane.additional_slots])).toEqual([[2, 1], [2, 1]]);
       const readCapacity = async () => plan;

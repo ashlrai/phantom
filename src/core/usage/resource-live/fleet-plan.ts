@@ -61,13 +61,15 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
   const age = now - time(dispatch['last_tick']);
   const statusLanes = dispatch['schema'] === 'dispatchd.status.v1' && age >= 0 && age < 5 * MINUTE ? object(dispatch['lanes']) : {};
   const antigravity = antigravityQuota(measured.get('antigravity'), now);
+  const queuedJobs = (lane: string, fallback: number | null) => demand === undefined
+    ? fallback : demand.get(lane)?.length ?? null;
   const laneNames = [...new Set([...plan.allowances.flatMap(row => row.lane ? [row.lane] : []), ...Object.keys(statusLanes)])];
   const lanes = laneNames.map(lane => {
     const row = object(statusLanes[lane]);
     const running = count(row['running']), ceiling = count(row['ceiling']), hard = count(row['hard_cap']);
     const cap = ceiling === null || hard === null ? null : Math.min(ceiling, hard);
     const held = typeof row['held'] === 'boolean' ? row['held'] || Boolean(dispatch['paused']) : null;
-    const queued = demand?.get(lane)?.length ?? count(row['queued']);
+    const queued = queuedJobs(lane, count(row['queued']));
     const recent = jobs.filter(job => job.lane === lane);
     const tokenJobs = recent.filter(job => job.tokens !== null);
     const exhaustedUntil = (lane === 'agy' || lane === 'agy-neon') ? antigravity.reset_at : null;
@@ -104,7 +106,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
       projected_jobs: null as number | null, projected_waste_at_deadline: null as number | null,
       action: row.action };
   });
-  const resetProposal = resets ? planBankedReset({ ...resets, queued: demand?.get('codex-personal')?.length ?? resets.queued },
+  const resetProposal = resets ? planBankedReset({ ...resets, queued: queuedJobs('codex-personal', resets.queued) },
     plan.allowances, new Map([...readings].map(([id, row]) => [id, row.source])), now).proposal : null;
   const deadlines = new Map<string, number>();
   for (const row of allowances) {
@@ -192,7 +194,8 @@ export async function readFleetResourcePlan(runsDir: string, now = Date.now()) {
     lane, queue.rows.filter(({ row, spec }) => (row.hint === lane || spec !== null) && queue.eligible(row, lane, false))
       .sort((a, b) => Number(b.row.hint === lane) - Number(a.row.hint === lane)).map(({ row }) => row.id),
   ] as const).filter(([lane]) => queue.lanes.get(lane)?.costClass === 'included'));
-  return buildFleetResourcePlan(live, readNodesView(defaultNodesViewDeps()).nodes, status, ledger, now, custom, resets, demand ?? undefined);
+  // An unavailable eligible queue supplies no demand evidence. Dispatcher totals can include parked work.
+  return buildFleetResourcePlan(live, readNodesView(defaultNodesViewDeps()).nodes, status, ledger, now, custom, resets, demand ?? new Map());
 }
 
 export function writeFleetResourceAdvice(runsDir: string, plan: Awaited<ReturnType<typeof readFleetResourcePlan>>): void {
