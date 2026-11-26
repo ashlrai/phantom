@@ -816,6 +816,109 @@ describe('worker-handoff assignments in the bus source', () => {
   });
 });
 
+describe('dead-letter reports in the bus source', () => {
+  /** The sink's wire body (bus-transport-file `createFileDeadLetterSink`): a
+   * protocol status whose payload carries the deadLetter summary, the
+   * payloadDropped flag and the kept original transport envelope or null. */
+  const deadLetterBody = (over: { reason?: string; priority?: string; attempts?: number; payloadDropped?: boolean; withPayload?: boolean } = {}) => ({
+    protocol: { version: 1, kind: 'status' },
+    correlation_id: 'corr-dead-1',
+    payload: {
+      deadLetter: {
+        id: 'orig-env-1', from: 'agent:sender', to: 'agent:gone', kind: 'task',
+        priority: over.priority ?? 'P1', correlationId: 'corr-dead-1',
+        reason: over.reason ?? 'exhausted', deadLetteredAt: now,
+        attempts: Array.from({ length: over.attempts ?? 2 }, (_, i) => ({
+          attempt: i + 1, transport: 'fake-transport', outcome: 'retryable', at: now - i * 1000,
+        })),
+      },
+      payloadDropped: over.payloadDropped ?? false,
+      envelope: over.withPayload === false ? null : {
+        id: 'orig-env-1', from: 'agent:sender', to: 'agent:gone', kind: 'task',
+        priority: over.priority ?? 'P1', body: { kind: 'work', text: 'fake lost work' },
+        correlationId: 'corr-dead-1', ttlMs: 3_600_000,
+      },
+    },
+  });
+  const postLetter = (body: unknown, extra: { priority?: 'P0' | 'P1' | 'P2' | 'P3'; ttl?: number; at?: number } = {}) =>
+    postV2Body(body as BusJsonValue, { from: 'bus-router', to: 'bus.dead-letter', ...extra });
+
+  it('lists a dead letter with its failure facts and inspect acts', async () => {
+    const id = postLetter(deadLetterBody());
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id)).toEqual([`bus-dead-letter:${id}`]);
+    expect(items[0]).toMatchObject({
+      kind: 'bus-dead-letter', severity: 'warn', blocking: false,
+      title: 'dead letter exhausted: agent:sender → agent:gone',
+      detail: 'reason exhausted · 2 attempts · kind task · original orig-env-1 · correlation corr-dead-1 · cursor 1',
+      since: new Date(now).toISOString(),
+      expiresAt: new Date(now + 7 * 24 * 3_600_000).toISOString(),
+      act: [`phm agents bus show ${id}`, 'phm comms bus read --to bus.dead-letter'],
+    });
+    expect(items[0]!.jobIds).toBeUndefined();
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('reports the reason and parties the letter kept, high on an original P0', async () => {
+    const noRoute = postLetter(deadLetterBody({ reason: 'no-route', priority: 'P0', attempts: 0 }), { priority: 'P0' });
+    const dropped = postLetter(deadLetterBody({ reason: 'expired', payloadDropped: true, withPayload: false }));
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items).toHaveLength(2);
+    const first = items.find(i => i.id === `bus-dead-letter:${noRoute}`)!;
+    const second = items.find(i => i.id === `bus-dead-letter:${dropped}`)!;
+    expect(first).toMatchObject({
+      kind: 'bus-dead-letter', severity: 'high',
+      title: 'dead letter no-route: agent:sender → agent:gone',
+    });
+    expect(first.detail).toContain('0 attempts');
+    expect(second).toMatchObject({ severity: 'warn', title: 'dead letter expired: agent:sender → agent:gone' });
+    expect(second.detail).toContain('original payload dropped');
+    // The correlation id lives on the letter's own protocol body, so it
+    // survives the original payload being dropped.
+    expect(second.detail).toContain('correlation corr-dead-1');
+  });
+
+  it('lists an addressed envelope whose payload never parsed, honestly thin', async () => {
+    // Anything on the reserved sink address is a delivery report; a body
+    // without the deadLetter summary keeps unknowns out of the text.
+    const id = postLetter({ kind: 'note', text: 'fake unparsed report' });
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === `bus-dead-letter:${id}`)!;
+    expect(item).toMatchObject({
+      kind: 'bus-dead-letter', severity: 'warn',
+      title: 'dead letter: delivery failure',
+      detail: 'cursor 1',
+    });
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('drops an expired letter and never mistakes one for claimable work', async () => {
+    postLetter(deadLetterBody(), { ttl: 1, at: now - 10_000 });
+    const live = postLetter(deadLetterBody());
+    postWork('still-work');
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id).sort()).toEqual([`bus-dead-letter:${live}`, 'bus:still-work']);
+    expect(items.find(i => i.id === `bus-dead-letter:${live}`)).toMatchObject({ kind: 'bus-dead-letter' });
+    expect(items.find(i => i.id === 'bus:still-work')).toMatchObject({ kind: 'bus-work' });
+  });
+
+  it('filters by its own kind without joining --job or the work kinds', async () => {
+    const id = postLetter(deadLetterBody());
+    postWork('kind-work-neighbor');
+    const letters = await read({ filter: { kind: 'bus-dead-letter' } });
+    expect(letters.items.map(i => i.id)).toEqual([`bus-dead-letter:${id}`]);
+    expect(letters.items[0]!.source).toBe('bus');
+    // A dead letter names no job citation, so --job never claims one.
+    const byJob = await read({ filter: { kind: 'bus-dead-letter', job: 'RQ-NOTHING' } });
+    expect(byJob.total).toBe(0);
+    const work = await read({ filter: { kind: 'bus-work' } });
+    expect(work.items.map(i => i.id)).toEqual(['bus:kind-work-neighbor']);
+  });
+});
+
 describe('agent conversation threads in the unified inbox', () => {
   const ask = (text: string, thread: string, extra: { from?: string; to?: string; at?: number } = {}) =>
     postV2Body({ kind: 'note', text, thread }, { from: extra.from ?? 'agent:asker', to: extra.to ?? 'agent:reviewer', at: extra.at });
