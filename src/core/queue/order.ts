@@ -152,7 +152,7 @@ export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionReque
 }
 
 /** Replace a file in the queue directory by temp + rename: never partial, never through a link. */
-async function replaceFile(path: string, text: string): Promise<void> {
+export async function replaceLockedQueueFile(path: string, text: string): Promise<void> {
   const temp = `${path}.${randomUUID()}.tmp`;
   const handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
   try {
@@ -208,13 +208,13 @@ export async function steerQueue(req: QueueActionRequest, opts: QueueOrderOption
       if (dryRun) break;
       if (pass >= attempts) { verified = false; break; }
       if (!writes) {
-        await replaceFile(join(queueDir, READY_BACKUP), text);
+        await replaceLockedQueueFile(join(queueDir, READY_BACKUP), text);
         if (req.action === 'drop') {
           archive = DROP_ARCHIVE;
           await appendGuarded(join(queueDir, archive), live.filter(row => row.id === req.id).map(row => `${row.raw.replace(/\r$/, '')}\n`).join(''));
         }
       }
-      await replaceFile(path, next.map(row => `${row.raw}\n`).join(''));
+      await replaceLockedQueueFile(path, next.map(row => `${row.raw}\n`).join(''));
       writes++;
       if (lock.quiet) { verified = true; break; }
     } finally { await lock.release(); }
