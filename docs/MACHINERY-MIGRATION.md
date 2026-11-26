@@ -15,6 +15,9 @@ one-off, rollback is manual, and there is no single inventory of which live
 files are repo-managed, mirrored, or ops-only. `fleet/manifest.json` is that
 inventory; `fleet/sync.py` is the recipe.
 
+The [Security re-pin queue](SECURITY-REPIN-QUEUE.md) records merged review
+blobs, known live digests, and the supported rollout paths.
+
 ## Current state
 
 | Family | Where the source lives | Install path |
