@@ -374,7 +374,11 @@ The document (`phantom.node-capacity.v1`) carries `node`, `measured_at`, `cpu`,
 `mem_free`, `swap`, `per_harness_footprint`, `agents_runnable_now` and `basis`.
 A harness session is the vendor CLI plus every child it spawns (MCP servers,
 tool runners), measured with `ps`, or with `pgrep` and `footprint` where `ps` is
-denied. Memory headroom is the memory above memguard's raise line (30% free).
+denied. macOS reads `vm_stat`, `memory_pressure` and `sysctl`; Linux reads
+`/proc/meminfo` (MemAvailable and swap), `/proc/pressure/memory` PSI `some
+avg10` — the same bands host admission applies — and `/proc/vmstat` `pswpout`.
+A platform or file with no reader reports unknown, never normal. Memory
+headroom is the memory above memguard's raise line (30% free).
 CPU headroom is 85% of cores minus busy cores. Measured zero CPU headroom
 blocks placements even when CPU cost per session is unknown or recorded as zero.
 The runnable count and placement planner allow for arithmetic roundoff at

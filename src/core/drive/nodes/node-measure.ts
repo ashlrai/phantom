@@ -2,19 +2,26 @@
  * Node self-measurement (RQ-NODE-AUTOSCALE-1, unit 1A).
  *
  * Reads CPU, memory, swap and per-harness session footprints from fixed
- * absolute macOS/Linux executables with bounded time and output. Never reads
- * process arguments, environment, credentials or app databases, never uses a
- * shell and makes no network calls. Every command failure becomes null.
+ * absolute macOS/Linux executables and Linux /proc virtual files, all with
+ * bounded time and output. Never reads process arguments, environment,
+ * credentials or app databases, never uses a shell and makes no network
+ * calls. Every command or file failure becomes null.
  *
  * Process table: `/bin/ps` first (pid, ppid, rss, %cpu, short name). Some
  * sandboxed lanes are denied ps; on macOS they fall back to `pgrep -l .` for
  * short names, `pgrep -P` for each harness tree and `footprint` for physical
  * footprint per process (no CPU column there, see capacity-model.ts).
+ *
+ * Memory telemetry: macOS reads vm_stat, memory_pressure and sysctl; Linux
+ * reads /proc/meminfo (MemAvailable, swap), /proc/pressure/memory PSI `some
+ * avg10` — the same bands host admission applies — and /proc/vmstat
+ * `pswpout`. A platform or file with no reader stays unknown, never normal.
  */
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import * as os from 'node:os';
-import { parseMemoryPressure, parseVmStat } from '../../resources/telemetry-parsers.js';
-import { parseSwapUsage } from '../../run/host-headroom.js';
+import { parseLinuxMemory, parseMemoryPressure, parseVmStat } from '../../resources/telemetry-parsers.js';
+import { parseLinuxPressureLevel, parseSwapUsage } from '../../run/host-headroom.js';
 import { childrenFromRows, harnessFor, harnessSessions, type ProcessRow } from './harness-adapters.js';
 import type { NodeSnapshot, ProcessSource } from './capacity-model.js';
 
@@ -29,10 +36,14 @@ export interface MeasureHost {
   totalmem: () => number;
   freemem: () => number;
   run: CommandRunner;
+  /** Bounded read of a Linux /proc virtual file; absent or failing reads stay unknown. */
+  readFile?: (path: string) => Promise<string | null>;
   sleep: (ms: number) => Promise<void>;
 }
 
 const MAX_OUTPUT = 4 * 1024 * 1024;
+/** /proc files are small; anything larger is not the telemetry this reads. */
+const MAX_PROC_BYTES = 256 * 1024;
 
 export const defaultMeasureHost: MeasureHost = {
   platform: process.platform, now: Date.now, hostname: os.hostname, cpus: os.cpus, loadavg: os.loadavg,
@@ -44,6 +55,12 @@ export const defaultMeasureHost: MeasureHost = {
         env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LC_ALL: 'C' } }, (error, stdout) => resolve(error ? null : stdout));
     } catch { resolve(null); }
   }),
+  readFile: async path => {
+    try {
+      const text = await readFile(path, 'utf8');
+      return text.length <= MAX_PROC_BYTES ? text : null;
+    } catch { return null; }
+  },
   sleep: ms => new Promise(r => setTimeout(r, ms)),
 };
 
@@ -96,6 +113,12 @@ export function parseFootprint(text: string | null): number | null {
 /** `vm_stat` cumulative swapouts counter (memguard's growth signal). */
 export function parseSwapouts(text: string | null): number | null {
   const n = Number(text?.match(/^Swapouts:\s+(\d+)\./m)?.[1]);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
+/** `/proc/vmstat` `pswpout` cumulative swap-out counter — the Linux counterpart of vm_stat swapouts. */
+export function parseLinuxSwapouts(text: string | null): number | null {
+  const n = Number(text?.match(/^pswpout\s+(\d+)\s*$/m)?.[1]);
   return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
 
@@ -164,13 +187,22 @@ async function pgrepFootprintRows(io: MeasureHost, concurrency: number): Promise
 export async function measureNode(options: MeasureOptions = {}): Promise<NodeSnapshot> {
   const io = options.host ?? defaultMeasureHost;
   const mac = io.platform === 'darwin';
+  const linux = io.platform === 'linux';
+  // /proc only exists on Linux; a host without readFile keeps every Linux reading unknown.
+  const readProc = async (path: string): Promise<string | null> => {
+    if (!linux || !io.readFile) return null;
+    try { return await io.readFile(path); } catch { return null; }
+  };
   const before = io.cpus();
-  const [ps, vm, pressure, level, swap] = await Promise.all([
+  const [ps, vm, pressure, level, swap, meminfo, psi, vmstat] = await Promise.all([
     io.run('/bin/ps', ['-axo', 'pid=,ppid=,rss=,%cpu=,ucomm='], 5_000),
     mac ? io.run('/usr/bin/vm_stat', [], 5_000) : Promise.resolve(null),
     mac ? io.run('/usr/bin/memory_pressure', ['-Q'], 5_000) : Promise.resolve(null),
     mac ? io.run('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], 5_000) : Promise.resolve(null),
     mac ? io.run('/usr/sbin/sysctl', ['vm.swapusage'], 5_000) : Promise.resolve(null),
+    readProc('/proc/meminfo'),
+    readProc('/proc/pressure/memory'),
+    readProc('/proc/vmstat'),
   ]);
   let source: ProcessSource = 'unavailable';
   let sessions: NodeSnapshot['sessions'] = null;
@@ -189,6 +221,8 @@ export async function measureNode(options: MeasureOptions = {}): Promise<NodeSna
   const pctRaw = Number(pressure?.match(/System-wide memory free percentage:\s*(\d+)%/i)?.[1]);
   const lvl = parseMemoryPressure(`level: ${level?.trim() ?? ''}`);
   const swapGb = swap ? parseSwapUsage(swap) : null;
+  const linuxMem = linux ? parseLinuxMemory(meminfo) : null;
+  const linuxLevel = linux ? parseLinuxPressureLevel(psi) : null;
   const load = io.loadavg();
   return {
     node: options.node ?? io.hostname().replace(/\.local$/, ''),
@@ -198,12 +232,18 @@ export async function measureNode(options: MeasureOptions = {}): Promise<NodeSna
       busyPercent: cpuBusyPercent(before, after) },
     mem: {
       totalBytes,
-      freeBytes: mac ? vmFree : io.freemem(),
-      freePercent: Number.isFinite(pctRaw) && pctRaw >= 0 && pctRaw <= 100 ? pctRaw : null,
-      // Linux has no kernel level here; unknown keeps every harness at null (fail closed).
-      pressureLevel: lvl === 'normal' ? 1 : lvl === 'warning' ? 2 : lvl === 'critical' ? 4 : null,
+      freeBytes: mac ? vmFree : linuxMem?.freeBytes ?? io.freemem(),
+      freePercent: mac
+        ? Number.isFinite(pctRaw) && pctRaw >= 0 && pctRaw <= 100 ? pctRaw : null
+        : linuxMem ? linuxMem.freeBytes / linuxMem.totalBytes * 100 : null,
+      // Linux reads PSI some avg10 (host admission's bands); a kernel without PSI stays unknown.
+      pressureLevel: mac ? lvl === 'normal' ? 1 : lvl === 'warning' ? 2 : lvl === 'critical' ? 4 : null : linuxLevel,
     },
-    swap: { usedBytes: swapGb === null ? null : Math.round(swapGb * 1024 ** 3), totalBytes: parseSwapTotal(swap), swapoutsTotal: parseSwapouts(vm) },
+    swap: {
+      usedBytes: mac ? swapGb === null ? null : Math.round(swapGb * 1024 ** 3) : linuxMem?.swapUsedBytes ?? null,
+      totalBytes: mac ? parseSwapTotal(swap) : linuxMem?.swapTotalBytes ?? null,
+      swapoutsTotal: mac ? parseSwapouts(vm) : linux ? parseLinuxSwapouts(vmstat) : null,
+    },
     processSource: source,
     sessions,
   };
