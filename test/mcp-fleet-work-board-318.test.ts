@@ -92,6 +92,9 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     expect(tool?.inputSchema.properties?.['thread']).toMatchObject({ type: 'string', maxLength: 512 });
     expect(tool?.inputSchema.properties?.['state'])
       .toMatchObject({ type: 'string', enum: ['RECEIVED', 'ASSIGNED', 'RUNNING', 'BLOCKED', 'VERIFIED'] });
+    expect(tool?.inputSchema.properties?.['id']).toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['priority'])
+      .toMatchObject({ type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] });
     expect(tool?.inputSchema.properties?.['since']).toMatchObject({ type: 'string' });
     expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
   });
@@ -104,6 +107,8 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     [{ since: 5 }], [{ since: 'bogus' }], [{ since: '' }], [{ since: null }],
     [{ before: 5 }], [{ before: 'not-a-time' }], [{ before: null }],
     [{ since: '15m', before: 'bogus' }],
+    [{ id: 5 }], [{ id: '' }], [{ id: 'x'.repeat(129) }], [{ id: 'bad id' }], [{ id: null }],
+    [{ priority: 'bogus' }], [{ priority: 'p1' }], [{ priority: 5 }], [{ priority: null }],
     [{ extra: 1 }], [{ limit: 1, root: '/tmp/fake-root' }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const workBoard = vi.fn();
@@ -131,6 +136,11 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     await callBoard(client, { since: iso(now - 1_000) });
     expect(workBoard).toHaveBeenLastCalledWith({ limit: 20, thread: undefined, state: undefined,
       since: now - 1_000, before: undefined });
+    // id/priority are the shared envelope filters: validated spellings reach
+    // the reader verbatim, never re-validated or widened downstream.
+    await callBoard(client, { id: 'req-1', priority: 'P0' });
+    expect(workBoard).toHaveBeenLastCalledWith({ limit: 20, thread: undefined, state: undefined,
+      id: 'req-1', priority: 'P0' });
   });
 
   it('filters real board items by classified state with a true matched total', async () => {
@@ -163,6 +173,27 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     expect(tail.parsed['matched']).toBe(2);
     expect((tail.parsed['items'] as Array<Record<string, unknown>>).map(item => item['id']))
       .toEqual(['bus-request-c', 'bus-request-b']);
+  });
+
+  it('filters real board items by envelope id and priority band with a true matched total', async () => {
+    post(slackRequest('slack-request-a', REF_A));
+    post(busRequest('bus-request-b'));
+    post(busRequest('bus-request-c'));
+    const client = await connect();
+    // slackRequest is P2, busRequest is P1: the band keeps its own stamps.
+    const urgent = await callBoard(client, { priority: 'P1' });
+    expect(urgent.parsed['matched']).toBe(2);
+    const urgentItems = urgent.parsed['items'] as Array<Record<string, unknown>>;
+    expect(urgentItems.map(item => item['id'])).toEqual(['bus-request-c', 'bus-request-b']);
+    expect(urgentItems.every(item => item['priority'] === 'P1')).toBe(true);
+    const one = await callBoard(client, { id: 'slack-request-a' });
+    expect(one.parsed['matched']).toBe(1);
+    const oneItems = one.parsed['items'] as Array<Record<string, unknown>>;
+    expect(oneItems.map(item => item['id'])).toEqual(['slack-request-a']);
+    expect(oneItems[0]!['priority']).toBe('P2');
+    const none = await callBoard(client, { priority: 'P3' });
+    expect(none.parsed['matched']).toBe(0);
+    expect(none.parsed['items']).toEqual([]);
   });
 
   it('reports an empty board on an empty store, never inventing items', async () => {

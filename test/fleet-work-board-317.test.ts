@@ -193,6 +193,45 @@ describe('listWorkBoard on real durable stores', { timeout: 60_000 }, () => {
     // A channelRef-only read keeps the unfiltered shape: no matched token.
     expect(listWorkBoard({ root, now, channelRef: REF_A }).matched).toBeUndefined();
   });
+
+  it('filters by exact envelope id and P0..P3 band, reporting the true matched total', () => {
+    seed();
+    // Every item carries its own envelope stamp: P1 for the bus request,
+    // P2 for both slack requests — never a guessed default.
+    const all = listWorkBoard({ root, now });
+    expect(all.items.map(item => [item.id, item.priority]))
+      .toEqual([['bus-request-c', 'P1'], ['slack-request-b', 'P2'], ['slack-request-a', 'P2']]);
+    // --id is the same exact-envelope match every bus read applies: one
+    // request survives, replies and every other id drop out.
+    const one = listWorkBoard({ root, now, id: 'slack-request-a' });
+    expect(one.items.map(item => item.id)).toEqual(['slack-request-a']);
+    expect(one.matched).toBe(1);
+    expect(one.truncated).toBe(false);
+    const missing = listWorkBoard({ root, now, id: 'no-such-envelope' });
+    expect(missing.items).toEqual([]);
+    expect(missing.matched).toBe(0);
+    // --priority keeps only requests stamped with that band; the pair
+    // composes into one filtered total before the display cap.
+    const urgent = listWorkBoard({ root, now, priority: 'P1' });
+    expect(urgent.items.map(item => item.id)).toEqual(['bus-request-c']);
+    expect(urgent.matched).toBe(1);
+    const slack = listWorkBoard({ root, now, priority: 'P2', limit: 1 });
+    expect(slack.items.map(item => item.id)).toEqual(['slack-request-b']);
+    expect(slack.matched).toBe(2);
+    expect(slack.truncated).toBe(true);
+    const running = listWorkBoard({ root, now, priority: 'P2', state: 'RUNNING' });
+    expect(running.items.map(item => item.id)).toEqual(['slack-request-a']);
+    expect(running.matched).toBe(1);
+    expect(running.state).toBe('RUNNING');
+    // An unmatched band is an honest zero, never an error or a pad.
+    const none = listWorkBoard({ root, now, priority: 'P3' });
+    expect(none.items).toEqual([]);
+    expect(none.matched).toBe(0);
+    // The envelope match composes with the receivedAt window too.
+    const windowed = listWorkBoard({ root, now, priority: 'P2', before: now - 1_500 });
+    expect(windowed.items.map(item => item.id)).toEqual(['slack-request-b', 'slack-request-a']);
+    expect(windowed.matched).toBe(2);
+  });
 });
 
 describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
@@ -209,12 +248,12 @@ describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
     const lines = log.mock.calls.map(call => String(call[0]));
     expect(lines).toHaveLength(4);
     expect(lines[0]).toBe(`bus-request-c RECEIVED as-of=${iso(now - 1_000)} source=receivedAt `
-      + 'owner-missing=yes owner=unknown claim=unknown channel=bus ref=none');
+      + 'owner-missing=yes owner=unknown claim=unknown channel=bus ref=none priority=P1');
     expect(lines[1]).toBe(`slack-request-b RECEIVED as-of=${iso(now - 2_000)} source=receivedAt `
-      + `owner-missing=yes owner=unknown claim=unknown channel=slack ref=${REF_B}`);
+      + `owner-missing=yes owner=unknown claim=unknown channel=slack ref=${REF_B} priority=P2`);
     expect(lines[2]).toBe(`slack-request-a RUNNING as-of=${asOf} `
       + `source=bus-work-claims lease-until ${iso(now + 600_000)} owner-missing=no `
-      + `owner=fake-owner claim=bus-claim:slack-request-a:1:${now - 3_000} channel=slack ref=${REF_A}`);
+      + `owner=fake-owner claim=bus-claim:slack-request-a:1:${now - 3_000} channel=slack ref=${REF_A} priority=P2`);
     expect(lines[3]).toBe(`items=3 truncated=no inbox=ok as-of=${asOf}`);
     expect(await cmdFleetWorkBoard(['--root', root, '--json'])).toBe(0);
     const parsed = JSON.parse(String(log.mock.calls.at(-1)![0]));
@@ -280,6 +319,32 @@ describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
     expect(parsed.items.map((i: { id: string }) => i.id)).toEqual(['slack-request-a']);
   });
 
+  it('--id and --priority keep the matching request and the footer reports matched', async () => {
+    seed();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdFleetWorkBoard(['--root', root, '--id', 'slack-request-b'])).toBe(0);
+    let lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('slack-request-b RECEIVED');
+    expect(lines[0]).toContain('priority=P2');
+    expect(lines[1]).toBe(`items=1 matched=1 truncated=no inbox=ok as-of=${iso(now)}`);
+    // The band filter composes with --state and --limit like every bus read.
+    expect(await cmdFleetWorkBoard(['--root', root, '--priority', 'P2', '--state', 'RUNNING', '--json'])).toBe(0);
+    const parsed = JSON.parse(String(log.mock.calls.at(-1)![0]));
+    expect(parsed).toMatchObject({ state: 'RUNNING', matched: 1, inbox: 'ok' });
+    expect(parsed.items.map((i: { id: string }) => i.id)).toEqual(['slack-request-a']);
+    expect(await cmdFleetWorkBoard(['--root', root, '--priority', 'P1'])).toBe(0);
+    lines = log.mock.calls.slice(-2).map(call => String(call[0]));
+    expect(lines[0]).toContain('bus-request-c RECEIVED');
+    expect(lines[0]).toContain('priority=P1');
+    expect(lines[1]).toBe(`items=1 matched=1 truncated=no inbox=ok as-of=${iso(now)}`);
+    // An unmatched id or band is an honest empty board with matched=0.
+    expect(await cmdFleetWorkBoard(['--root', root, '--id', 'no-such-envelope'])).toBe(0);
+    expect(String(log.mock.calls.at(-1)![0])).toMatch(/^items=0 matched=0 truncated=no inbox=ok as-of=/);
+    expect(await cmdFleetWorkBoard(['--root', root, '--priority', 'P3'])).toBe(0);
+    expect(String(log.mock.calls.at(-1)![0])).toMatch(/^items=0 matched=0 truncated=no inbox=ok as-of=/);
+  });
+
   it('exits 2 on bad or duplicate flags and prints nothing on stdout', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -302,6 +367,14 @@ describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
     expect(await cmdFleetWorkBoard(['--before'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--since', '1h', '--since', '2h'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--before', '1h', '--before', '2h'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--id', 'bad id'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--id', ''])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--id'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--id', 'a', '--id', 'b'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--priority', 'bogus'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--priority', 'p1'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--priority'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--priority', 'P1', '--priority', 'P2'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--json', '--json'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--root', root, '--root', root])).toBe(2);
     expect(log).not.toHaveBeenCalled();

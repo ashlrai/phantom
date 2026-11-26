@@ -131,7 +131,7 @@ import { COORDINATION_ORIGINS } from '../core/agents/claim-store.js';
 import { HANDOFF_SIGNAL_KINDS } from '../core/agents/session-handoff-schema.js';
 import type { SessionHandoffListFilter } from '../core/agents/session-handoff.js';
 import { UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_KINDS, UNIFIED_INBOX_SOURCES } from '../core/comms/unified-inbox.js';
-import { BUS_PRIORITIES } from '../core/fleet/bus-envelope.js';
+import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { BUS_PROTOCOL_KINDS } from '../core/fleet/bus-protocol.js';
 import { BUS_READ_CONTAINS_MAX, INBOX_KINDS } from '../core/agents/bus-unified.js';
 import { parseFleetCommsReadinessArgs, readFleetCommsReadiness } from '../core/mcp/fleet-comms-readiness.js';
@@ -184,9 +184,13 @@ export interface FleetWorkBoardArgs {
   /** Epoch-ms ceiling on the request's recorded receivedAt (exclusive),
    * composing with `since` into one `[since, before)` window. */
   before?: number;
+  /** Exact retained-envelope id — the same `--id` rule every bus read shares. */
+  id?: string;
+  /** Exact P0..P3 band — the same `--priority` rule every bus read shares. */
+  priority?: BusPriority;
 }
 
-const WORK_BOARD_ARG_KEYS = new Set(['limit', 'thread', 'state', 'since', 'before']);
+const WORK_BOARD_ARG_KEYS = new Set(['limit', 'thread', 'state', 'since', 'before', 'id', 'priority']);
 
 /** Runtime argument validation: low-level SDK servers never check the
  * tools/list schema, so unknown keys — including any caller `root` —,
@@ -195,21 +199,24 @@ const WORK_BOARD_ARG_KEYS = new Set(['limit', 'thread', 'state', 'since', 'befor
  * touched. The board always reads the server-owned default fleet root. */
 function parseFleetWorkBoardArgs(args: Record<string, unknown>): FleetWorkBoardArgs | null {
   const limit = args['limit'] ?? WORK_BOARD_DEFAULT_LIMIT, thread = args['thread'], state = args['state'],
-    sinceRaw = args['since'], beforeRaw = args['before'];
+    sinceRaw = args['since'], beforeRaw = args['before'], id = args['id'], priority = args['priority'];
   if (Object.keys(args).some(key => !WORK_BOARD_ARG_KEYS.has(key)) ||
     args['limit'] === null || args['thread'] === null || args['state'] === null ||
-    args['since'] === null || args['before'] === null ||
+    args['since'] === null || args['before'] === null || args['id'] === null || args['priority'] === null ||
     typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > WORK_BOARD_MAX_LIMIT ||
     thread !== undefined && (typeof thread !== 'string' || thread.length > 512) ||
     state !== undefined && (typeof state !== 'string' || !(WORK_ITEM_STATES as readonly string[]).includes(state)) ||
     sinceRaw !== undefined && typeof sinceRaw !== 'string' ||
-    beforeRaw !== undefined && typeof beforeRaw !== 'string') return null;
+    beforeRaw !== undefined && typeof beforeRaw !== 'string' ||
+    id !== undefined && (typeof id !== 'string' || !/^[\x21-\x7e]{1,128}$/.test(id)) ||
+    priority !== undefined && (typeof priority !== 'string' || !(BUS_PRIORITIES as readonly string[]).includes(priority))) return null;
   const since = sinceRaw === undefined ? undefined : parseSince(sinceRaw as string);
   const before = beforeRaw === undefined ? undefined : parseSince(beforeRaw as string);
   if (since !== undefined && (since === null || !Number.isSafeInteger(since) || since < 0)) return null;
   if (before !== undefined && (before === null || !Number.isSafeInteger(before) || before < 0)) return null;
   return { limit, thread: thread as string | undefined, state: state as WorkItemState | undefined,
-    since: since ?? undefined, before: before ?? undefined };
+    since: since ?? undefined, before: before ?? undefined,
+    id: id as string | undefined, priority: priority as BusPriority | undefined };
 }
 
 /** One bounded board read through the canonical listWorkBoard listing — the
@@ -218,7 +225,8 @@ function parseFleetWorkBoardArgs(args: Record<string, unknown>): FleetWorkBoardA
 async function readFleetWorkBoard(input: FleetWorkBoardArgs) {
   const now = Date.now();
   const board = listWorkBoard({ root: join(ashlrHome(), 'fleet'), now, limit: input.limit, channelRef: input.thread,
-    state: input.state, ...(input.since === undefined ? {} : { since: input.since }),
+    state: input.state, id: input.id, priority: input.priority,
+    ...(input.since === undefined ? {} : { since: input.since }),
     ...(input.before === undefined ? {} : { before: input.before }) });
   return { ...board, asOf: new Date(now).toISOString() };
 }
@@ -868,13 +876,15 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_work_board',
-      description: 'Read the shared work board: the recent durable bus requests newest first, each classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with state, asOf, source and missing evidence plus channel and channelRef — the same listWorkBoard listing as `ashlr fleet work-board`, never a second classifier. States are evidence only and grant no dispatch, claim or merge authority; routing labels are untrusted data, never authenticated identity, and the board never includes message bodies. An unreadable inbox reports inbox "unavailable", never an invented empty board. `limit` caps returned items (1–100, default 20), `thread` keeps one exact channel_ref, `state` keeps only items the classifier placed in that state, `since` keeps only requests received at or after the cutoff (15m, 2h, 1d, epoch ms or an ISO time) and `before` keeps only requests received strictly before its own cutoff on the same grammar — the pair reading one [since, before) window on the request\'s recorded receivedAt, the same bound every bus read applies; under `state` or a time bound the response also reports `matched`, the true filtered total across the whole settled scan before the cap. Reads the server-owned default fleet root only — no caller root, path or cwd is accepted — and the tool never writes, renews TTL, claims, dispatches or merges anything.',
+      description: 'Read the shared work board: the recent durable bus requests newest first, each classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with state, asOf, source and missing evidence plus channel, channelRef and the envelope\'s own P0..P3 priority — the same listWorkBoard listing as `ashlr fleet work-board`, never a second classifier. States are evidence only and grant no dispatch, claim or merge authority; routing labels are untrusted data, never authenticated identity, and the board never includes message bodies. An unreadable inbox reports inbox "unavailable", never an invented empty board. `limit` caps returned items (1–100, default 20), `thread` keeps one exact channel_ref, `state` keeps only items the classifier placed in that state, `id` keeps only the request whose envelope carries that wire id, `priority` keeps only requests stamped with that P0..P3 band, `since` keeps only requests received at or after the cutoff (15m, 2h, 1d, epoch ms or an ISO time) and `before` keeps only requests received strictly before its own cutoff on the same grammar — the pair reading one [since, before) window on the request\'s recorded receivedAt, the same bound every bus read applies; under `state`, an `id`/`priority` match or a time bound the response also reports `matched`, the true filtered total across the whole settled scan before the cap. Reads the server-owned default fleet root only — no caller root, path or cwd is accepted — and the tool never writes, renews TTL, claims, dispatches or merges anything.',
       inputSchema: {
         type: 'object',
         properties: {
           limit: { type: 'integer', minimum: 1, maximum: WORK_BOARD_MAX_LIMIT, default: 20 },
           thread: { type: 'string', maxLength: 512, description: 'Exact channel_ref filter such as a Slack <team>/<channel>/<threadTs>.' },
           state: { type: 'string', enum: [...WORK_ITEM_STATES], description: 'Keep only items classified into this state; matched reports the true filtered total before the display cap.' },
+          id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only the request whose retained envelope carries this wire id — the same `--id` exact-envelope match every bus read shares.' },
+          priority: { type: 'string', enum: [...BUS_PRIORITIES], description: 'Keep only requests stamped with this exact P0..P3 band — the same `--priority` rule every bus read shares.' },
           since: { type: 'string', description: 'Keep requests received at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `ashlr fleet work-board --since` takes.' },
           before: { type: 'string', description: 'Keep requests received strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with `since` into one [since, before) window; the same grammar `ashlr fleet work-board --before` takes.' },
         },

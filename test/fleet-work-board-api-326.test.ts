@@ -23,7 +23,8 @@ const NOW = new Date('2026-11-13T18:00:00.000Z');
 function item(i: number, over: Partial<WorkBoardItem> = {}): WorkBoardItem {
   return {
     id: `wi-fake-${String(i).padStart(4, '0')}`, channel: 'slack',
-    channelRef: 'fake-team/fake-chan/111.2', receivedAt: '2026-11-13T17:00:00.000Z',
+    channelRef: 'fake-team/fake-chan/111.2', priority: 'P1',
+    receivedAt: '2026-11-13T17:00:00.000Z',
     state: 'RUNNING', asOf: NOW.toISOString(), source: 'bus', missing: [],
     owner: 'devin', claimReceipt: `bus-claim:wi-fake-${i}:7:x`, ...over,
   };
@@ -131,6 +132,25 @@ describe('fleet work-board api', () => {
     await call(api, 'GET', `${PATH}?since=${encodeURIComponent('2026-11-13T17:30:00.000Z')}`);
     expect(seen.since).toBe(Date.parse('2026-11-13T17:30:00.000Z'));
     expect(seen.before).toBeUndefined();
+  });
+
+  it('passes id and priority envelope filters through and rejects bad values with 400', async () => {
+    const seen: { id?: string; priority?: string } = {};
+    const api = createFleetWorkBoardApi({
+      read: (opts) => { seen.id = opts.id; seen.priority = opts.priority; return board([]); },
+      now: () => NOW,
+    });
+    const r = await call(api, 'GET', `${PATH}?id=wi-fake-0001&priority=P0`);
+    expect(r.status).toBe(200);
+    expect(seen.id).toBe('wi-fake-0001');
+    expect(seen.priority).toBe('P0');
+    for (const bad of ['bogus', 'p0', 'P5', '']) {
+      const res = await call(api, 'GET', `${PATH}?priority=${bad}`);
+      expect(res.status, `priority=${bad}`).toBe(400);
+      expect(res.body).toEqual({ error: 'priority must be one of P0, P1, P2, P3.' });
+    }
+    const long = await call(api, 'GET', `${PATH}?id=${'x'.repeat(201)}`);
+    expect(long.status).toBe(400);
   });
 
   it('rejects unparseable or negative since/before with 400', async () => {
