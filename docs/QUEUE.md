@@ -395,7 +395,9 @@ lane with no waiting evidence has an unknown unfed verdict. A readable empty
 queue supplies measured zero counts in the derived report. When the dispatcher
 publishes a partial block, a missing tick total stays unknown. Missing lane
 counts also stay unknown for lanes with spare capacity unless the tick recorded
-zero waiting rows. A separate ready-file read still supplies current hint counts.
+zero waiting rows. A lane count above the tick's total is invalid, so it follows
+the same fallback and its blocker counts are omitted. A separate ready-file read
+still supplies current hint counts.
 Actual placement depends on eligibility
 and admission. The command then folds the unfed ticks of the last `--window` hours (default 24, at
 most 168): ticks unfed and slot-ticks lost per lane, with the leading reasons.
