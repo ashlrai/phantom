@@ -1890,7 +1890,12 @@ describe('Trajectory records', () => {
     expect(summary.skillObservation).not.toHaveProperty('conflicting');
   });
 
-  it('attributes shadow skill selections to per-skill trajectory outcomes', () => {
+  it.each([
+    { observedAt: TS4, observed: true },
+    { observedAt: new Date(TEST_NOW_MS).toISOString(), observed: true },
+    { observedAt: new Date(TEST_NOW_MS + 1).toISOString(), observed: false },
+    { observedAt: 'invalid', observed: false },
+  ])('attributes post-merge evidence observed at $observedAt only when available', ({ observedAt, observed }) => {
     const outcomeFor = (
       id: string,
       action: 'merged' | 'rejected',
@@ -1923,7 +1928,7 @@ describe('Trajectory records', () => {
     const revertedObservation: NonNullable<OutcomeRecord['postMergeObservations']>[number] = {
       schemaVersion: 1,
       eventId: 'e'.repeat(64),
-      observedAt: TS4,
+      observedAt,
       authority: 'observation-only',
       outcome: 'reverted',
       basis: 'git-revert-reference',
@@ -1968,6 +1973,8 @@ describe('Trajectory records', () => {
     });
 
     expect(records).toHaveLength(4);
+    const recovery = records.find((record) => record.trajectoryId === 'traj-d');
+    expect(recovery?.timeline.filter((event) => event.kind === 'post-merge')).toHaveLength(observed ? 1 : 0);
     const summary = summarizeTrajectoryLearning(records);
     expect(summary.skillObservation.sampleState).toBe('observed');
     expect(summary.skillOutcomes).toEqual({
@@ -1991,7 +1998,7 @@ describe('Trajectory records', () => {
           skillRevision: 2,
           selections: 1,
           outcomes: { merged: 1 },
-          realized: { reverted: 1 },
+          ...(observed ? { realized: { reverted: 1 } } : {}),
         },
       ],
     });

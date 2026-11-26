@@ -130,6 +130,8 @@ outcome tallies — for example how many selections ended `merged`, `rejected`
 or `failed`, and how many merged selections were later `reverted` or
 `regressed`. Lifecycle stages of one use collapse into a single selection,
 and unjoined or conflicting skill rows never enter the tally.
+Post-merge observations need a valid timestamp at or before the report's
+snapshot time to enter the timeline, join diagnostics, or realized outcome tally.
 
 `phm skills list --outcomes` joins the same projection onto the learned-skill
 list: each entry gains an `outcomes` object when its exact revision was
