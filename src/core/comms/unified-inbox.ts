@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirty-one local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates thirty-two local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -527,6 +527,30 @@
  *               status`, `phm fleet resume` (the kill item's release —
  *               the pause flag clears through the owner 'resume' comms
  *               command or `setPause(false)`, which no CLI verb wraps).
+ *   router-queue  READY jobs in the dispatch router queue
+ *               (`<runsDir>/queue/router-queue.md`) that no recorded
+ *               LAUNCH in `dispatch-events.log` proves ever started —
+ *               the same `readStuckQueue` read `phm queue stuck` and the
+ *               desktop Queue view serve. Until now the dispatch queue's
+ *               stuck backlog had no inbox surface: work an agent could
+ *               claim through every bus, board, feed and coordination
+ *               read still sat READY forever while the unified view —
+ *               the one place an agent looks for work — never named it.
+ *               Each unlaunched READY row lists as a warn
+ *               `router-queue-job` naming the job id — the same label
+ *               `phm queue` verbs take — `since` the enqueue epoch or
+ *               first dispatch-event time the wait is measured from
+ *               (null when neither exists — age unknown stays unknown)
+ *               and `expiresAt` null: a queued job waits for a lane,
+ *               never a guessed deadline. When the events log cannot be
+ *               read the source degrades — every READY row still lists
+ *               but its launch state is unproven, and the detail says
+ *               so — an absent queue file is 'missing' (verified-empty:
+ *               no READY rows can exist) and an unreadable one
+ *               'unavailable', never an empty queue passed off as fact.
+ *               The job id is the item's own citation, so `--job` matches.
+ *               Act: `phm queue stuck`, `phm fleet unfed --json`,
+ *               `phm queue`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -600,6 +624,7 @@ import { ashlrHome } from '../cloud/store.js';
 import { listWorkBoard, WORK_BOARD_MAX_LIMIT, type WorkBoardResult } from './work-board.js';
 import type { WorkItemState } from './work-item-state.js';
 import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js';
+import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -614,7 +639,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
-  'send-gate',
+  'send-gate', 'router-queue',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -642,7 +667,7 @@ export const UNIFIED_INBOX_KINDS = [
   'leader-reply-failed', 'leader-reply-orphaned',
   'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
   'claim-drift-bus', 'claim-drift-coordination', 'claim-drift-owner',
-  'send-gate-kill', 'send-gate-pause',
+  'send-gate-kill', 'send-gate-pause', 'router-queue-job',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -669,8 +694,8 @@ export interface UnifiedInboxItem extends AttentionItem {
    * `itemId` (a delivery carries the itemIds of the tasks on its thread,
    * the job-carrying-thread rule `BusBoard.pendingFor` applies), a
    * conversation thread's `jobs`, a teammate task's `jobId`, a seat handoff's
-   * node-job refs, a peer-dispatch receipt's peer-announced `jobId`, or a
-   * session-handoff journal's job id.
+   * node-job refs, a peer-dispatch receipt's peer-announced `jobId`, a
+   * session-handoff journal's job id, or a router-queue row's own READY id.
    * Absent when the item names no job — unknown stays out of a
    * `--job` match rather than being guessed in.
    */
@@ -784,6 +809,18 @@ export interface MailboxPendingRead {
   matched: number | null;
 }
 
+/** The resolved router-queue stuck read: `readStuckQueue`'s READY-without-
+ * launch rows mapped onto the unified source states — 'missing' a
+ * verified-absent queue file (no READY rows can exist), 'unavailable' an
+ * unreadable one, 'degraded' a missing dispatch-events log (every READY row
+ * then lists with its launch state unproven — the read may over-report),
+ * 'healthy' the full read. `jobs` stays empty whenever the state is not
+ * 'healthy'/'degraded'. */
+export interface RouterQueueStuckRead {
+  state: UnifiedInboxSourceState;
+  jobs: readonly StuckJob[];
+}
+
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
  * when the store could be read — 'missing' is a verified-empty board (no
  * `state.json` ever written), 'unavailable' an unreadable one, never an
@@ -882,6 +919,10 @@ export interface UnifiedInboxOptions {
   readKillSwitch?: typeof readKillSwitch;
   /** Comms-pause seam; default reads `probePauseState` — the same inspection the sendGate pause verdict serves. */
   probePause?: typeof probePauseState;
+  /** Router-queue seam; default reads `<runsDir>/queue/router-queue.md` and
+   * `dispatch-events.log` through `readStuckQueue` — the same bounded read
+   * `phm queue stuck` and the desktop Queue view serve. */
+  readRouterQueue?: (options: { runsDir?: string; now?: () => number }) => Promise<RouterQueueStuckRead>;
   /** Optional narrowing of the returned item list by stored source, severity,
    * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
@@ -3343,6 +3384,84 @@ function sendGateItems(readKill: NonNullable<UnifiedInboxOptions['readKillSwitch
   return { report: { state, pending: pendingCount(state, items.length) }, items };
 }
 
+/** Compact wait label for a queue job's recorded age: `42s`, `18m`, `5h12m`, `3d4h`. */
+const queueWaitLabel = (ageS: number): string => {
+  if (ageS < 90) return `${ageS}s`;
+  const minutes = Math.floor(ageS / 60);
+  if (minutes < 90) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return minutes % 60 === 0 ? `${hours}h` : `${hours}h${minutes % 60}m`;
+  const days = Math.floor(hours / 24);
+  return hours % 24 === 0 ? `${days}d` : `${days}d${hours % 24}h`;
+};
+
+/**
+ * READY jobs in the dispatch router queue (`<runsDir>/queue/router-queue.md`)
+ * that no recorded LAUNCH in `dispatch-events.log` proves ever started — the
+ * same `readStuckQueue` read `phm queue stuck` and the desktop Queue view
+ * serve, so this source and those surfaces can never disagree. Until now the
+ * dispatch queue's stuck backlog had no inbox surface: work sitting READY
+ * while every bus, board, feed and coordination read shows nothing was
+ * invisible to the one view an agent checks for work. Each unlaunched READY
+ * row lists as a warn `router-queue-job` — agent coordination work, never
+ * Mason-blocking — naming the job id (the same label `phm queue` verbs
+ * take), `since` the enqueue epoch or first dispatch-event time the wait is
+ * measured from and `expiresAt` null: a queued job waits for a lane, never
+ * a guessed deadline. `age_s` is whole seconds, so `since` reconstructs the
+ * recorded start within a second of rounding; `age: 'unknown'` — neither an
+ * enqueue epoch nor a dispatch event — leaves `since` null rather than
+ * guessing. The job id is the item's own citation, so `--job` matches. A
+ * missing events log degrades the source — every READY row still lists but
+ * its launch state is unproven and the detail says so; a missing queue file
+ * is 'missing' (verified-empty) and an unreadable one 'unavailable', never
+ * an empty queue passed off as fact.
+ */
+async function routerQueueItems(read: NonNullable<UnifiedInboxOptions['readRouterQueue']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: RouterQueueStuckRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const nowMs = (options.now ?? Date.now)();
+  const degraded = result.state === 'degraded';
+  const items = result.jobs.map((job): Omit<UnifiedInboxItem, 'priority'> => {
+    const ageMs = typeof job.age_s === 'number' && Number.isSafeInteger(job.age_s) && job.age_s >= 0
+      ? job.age_s * 1000 : null;
+    return {
+      id: `router-queue:${job.id}`,
+      source: 'router-queue',
+      kind: 'router-queue-job',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Router job ${job.id} has no recorded launch`, TITLE_MAX),
+      detail: oneLine(`READY in queue/router-queue.md · ${ageMs === null ? 'wait age unknown' : `waiting ${queueWaitLabel(job.age_s!)}`}${degraded ? ' · launch evidence unavailable — may already have launched' : ''}`, DETAIL_MAX) || null,
+      since: ageMs === null ? null : iso(nowMs - ageMs),
+      expiresAt: null,
+      jobIds: [job.id],
+      act: ['phm queue stuck', 'phm fleet unfed --json', 'phm queue'],
+    };
+  });
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real router-queue read: `readStuckQueue` on the shared runs dir. An
+ * absent `queue/router-queue.md` is 'missing' — verified-empty, no READY rows
+ * can exist — while any other read failure is 'unavailable', never an empty
+ * queue passed off as fact. A missing `dispatch-events.log` is not a throw:
+ * the read reports `eventsAvailable: false` and the source degrades, since
+ * every listed job's launch state is then unproven. */
+async function readRouterQueueSource(options: { runsDir?: string; now?: () => number }): Promise<RouterQueueStuckRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  try {
+    const { jobs, eventsAvailable } = await readStuckQueue(dir, options.now?.() ?? Date.now());
+    return { state: eventsAvailable ? 'healthy' : 'degraded', jobs };
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'missing' : 'unavailable', jobs: [] };
+  }
+}
+
 /**
  * The same drop inbox `runEmailDropOnce` scans, resolved at the shared runs
  * dir: saved email-drop config → `inboxDir` → `readEmailDropInbox`. A missing
@@ -3515,6 +3634,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const coordination = coordinationItems(options.readFleetCoordination ?? readFleetCoordinationPending);
   const claimDrift = claimDriftItems(options.readClaimDrift ?? readClaimStoreDrift, options);
   const sendGate = sendGateItems(options.readKillSwitch ?? readKillSwitch, options.probePause ?? probePauseState);
+  const routerQueue = await routerQueueItems(options.readRouterQueue ?? readRouterQueueSource, options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -3549,8 +3669,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     coordination: coordination.report,
     'claim-drift': claimDrift.report,
     'send-gate': sendGate.report,
+    'router-queue': routerQueue.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

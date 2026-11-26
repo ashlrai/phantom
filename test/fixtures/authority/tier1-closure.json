@@ -1326,6 +1326,7 @@
     "src/core/queue/stacksync.ts",
     "src/core/queue/stats.ts",
     "src/core/queue/store.ts",
+    "src/core/queue/stuck.ts",
     "src/core/queue/supersede.ts",
     "src/core/queue/visit-sync.ts",
     "src/core/readiness.ts",
