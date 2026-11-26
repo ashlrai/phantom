@@ -11,9 +11,21 @@
  */
 import { createHash } from 'node:crypto';
 import { defaultGitRunner, type GitRunner } from '../verse/git-ops.js';
-import { scrubSecrets } from '../util/scrub.js';
+import {
+  artifactNameField as field,
+  asRecord as record,
+  assertRunnerResultOk,
+  CI_HEX_REV_RE as REV,
+  CI_REPO_RE as REPO,
+  CI_RUNNER_TIMEOUT_MS as TIMEOUT_MS,
+  CI_SHA40_RE as SHA40,
+  CiResumeInputsError,
+  failCiResume as fail,
+  isPositiveId,
+} from './ci-receipt-shared.js';
 
-const TIMEOUT_MS = 30_000;
+export { CiResumeInputsError } from './ci-receipt-shared.js';
+
 const LS_TREE_MAX_BYTES = 16 * 1024 * 1024;
 const DIFF_MAX_BYTES = 8 * 1024 * 1024;
 const REV_PARSE_MAX_BYTES = 64 * 1024;
@@ -22,15 +34,8 @@ const MAX_PATHS_PER_JOB = 128;
 const MAX_SHARED_PATHS = 128;
 const MAX_COVERED_PATHS = 256;
 const MAX_RECEIPTS = 512;
-const MAX_FIELD = 200;
 const MAX_PATH = 400;
-const REV = /^[0-9a-f]{4,64}$/i;
-const SHA40 = /^[0-9a-f]{40}$/i;
-const REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
-
-export class CiResumeInputsError extends Error {}
-const fail = (message: string): never => { throw new CiResumeInputsError(message); };
 
 export interface CiResumeManifestJob { id: string; command: string; os: string; arch: string; toolchain: string; paths: string[] }
 export interface CiResumeManifest { version: 1; repo: string; shared: string[]; jobs: CiResumeManifestJob[] }
@@ -49,13 +54,7 @@ export interface CiResumePlan {
   jobs: CiResumeJobPlan[]; summary: { reuse: number; rerun: number };
 }
 
-const record = (v: unknown): Record<string, unknown> | null =>
-  v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
-const field = (v: unknown): string | null =>
-  // eslint-disable-next-line no-control-regex
-  typeof v === 'string' && v.length > 0 && v.length <= MAX_FIELD && !/[\x00-\x1f\x7f]/.test(v) ? v : null;
-const idNum = (v: unknown): number | null =>
-  typeof v === 'number' && Number.isSafeInteger(v) && v >= 1 ? v : null;
+const idNum = (v: unknown): number | null => (isPositiveId(v) ? v : null);
 
 /** Literal, repo-relative, slash-separated paths; rejects pathspec magic and traversal. */
 function repoPath(v: unknown): string | null {
@@ -128,14 +127,11 @@ export function parseCiResumePrior(value: unknown): CiResumePrior {
 }
 
 async function runGit(run: GitRunner, cwd: string, args: string[], maxStdoutBytes: number): Promise<string> {
+  const label = `git ${args[0]}`;
   let r;
   try { r = await run('git', args, { cwd, timeoutMs: TIMEOUT_MS, maxStdoutBytes }); }
-  catch { throw new CiResumeInputsError(`git ${args[0]} could not run`); }
-  if (r.missing) fail('git is not installed');
-  if (r.timedOut) fail(`git ${args[0]} timed out`);
-  if (r.truncated) fail(`git ${args[0]} output exceeded its bound`);
-  if (r.code !== 0) fail(`git ${args[0]} failed: ${scrubSecrets((r.stderr.split('\n')[0] ?? '').trim()).slice(0, 160)}`);
-  return r.stdout;
+  catch { throw new CiResumeInputsError(`${label} could not run`); }
+  return assertRunnerResultOk(r, 'git', label).stdout;
 }
 
 function parseLsTree(stdout: string): TreeEntry[] {

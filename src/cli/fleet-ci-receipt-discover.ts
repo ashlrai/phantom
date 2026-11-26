@@ -1,5 +1,10 @@
 import { CiResumeInputsError } from '../core/fleet/ci-resume-inputs.js';
-import { artifactNameField, discoverCiReceiptPrior } from '../core/fleet/ci-receipt-discovery.js';
+import { discoverCiReceiptPrior } from '../core/fleet/ci-receipt-discovery.js';
+import {
+  isValidArtifactNameFlag,
+  isValidCiRepo,
+  parsePositiveIdFlag,
+} from '../core/fleet/ci-receipt-shared.js';
 import type { GitRunner } from '../core/verse/git-ops.js';
 
 const USAGE = 'usage: ashlr fleet ci-receipt-discover --repo owner/name --run ID --attempt N --artifact-name NAME [--json]';
@@ -25,10 +30,6 @@ ambiguity or mismatch, and failures exit nonzero with empty stdout.
 Read-only: every call is a GET listing/metadata read plus a bounded archive
 download; there are no POSTs, no workflow dispatch and no check mutation.`;
 
-const REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
-const idNum = (v: string | undefined): number | null =>
-  v !== undefined && /^\d+$/.test(v) && Number.isSafeInteger(Number(v)) && Number(v) >= 1 ? Number(v) : null;
-
 /** Receipt discovery for resume-from-failure; stdout is the prior document only. */
 export async function cmdFleetCiReceiptDiscover(args: string[], deps: { gh?: GitRunner } = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return 0; }
@@ -43,13 +44,11 @@ export async function cmdFleetCiReceiptDiscover(args: string[], deps: { gh?: Git
     }
     values.set(arg, args[++i]!);
   }
-  const repo = values.get('--repo') ?? '';
-  const run = idNum(values.get('--run'));
-  const attempt = idNum(values.get('--attempt'));
-  const artifactName = artifactNameField(values.get('--artifact-name'));
-  if (!REPO.test(repo) || repo.split('/')[0]!.endsWith('-') || repo.split('/')[0]!.includes('--')
-    || repo.endsWith('/.') || repo.endsWith('/..') || run === null || attempt === null
-    || artifactName === null || artifactName.startsWith('-')) {
+  const repo = values.get('--repo');
+  const run = parsePositiveIdFlag(values.get('--run'));
+  const attempt = parsePositiveIdFlag(values.get('--attempt'));
+  const artifactName = values.get('--artifact-name');
+  if (!isValidCiRepo(repo) || run === null || attempt === null || !isValidArtifactNameFlag(artifactName)) {
     process.stderr.write(`Invalid arguments. ${USAGE}\n`); return 2;
   }
   try {

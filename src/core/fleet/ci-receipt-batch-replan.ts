@@ -30,21 +30,14 @@ import {
   parseCiReceiptAwaitBatchInput,
   type CiReceiptAwaitBatchTarget,
 } from './ci-receipt-await-batch.js';
-
-const OUTCOMES = new Set(['bound', 'failed', 'not-started']);
-const REPORT_KEYS = ['version', 'total', 'bound', 'failed', 'notStarted', 'timedOut', 'aborted', 'entries'];
-const ENTRY_KEYS = ['repo', 'run', 'attempt', 'artifactName', 'outcome', 'prior', 'reason'];
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
-const isCount = (value: unknown): value is number =>
-  Number.isSafeInteger(value) && (value as number) >= 0;
-
-const hasKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean => {
-  const actual = Object.keys(value);
-  return actual.length === keys.length && keys.every((k) => actual.includes(k));
-};
+import {
+  CI_RECEIPT_ENTRY_KEYS,
+  CI_RECEIPT_OUTCOMES,
+  CI_RECEIPT_REPORT_KEYS,
+  hasExactKeys,
+  isNonNegativeInt,
+  isPlainRecord,
+} from './ci-receipt-shared.js';
 
 export type CiReceiptBatchReplanParse =
   | { ok: true; targets: CiReceiptAwaitBatchTarget[]; total: number }
@@ -62,10 +55,11 @@ export type CiReceiptBatchReplanParse =
 export function parseCiReceiptBatchReplanInput(text: string): CiReceiptBatchReplanParse {
   let doc: unknown;
   try { doc = JSON.parse(text); } catch { return { ok: false, reason: 'not_json' }; }
-  if (!isRecord(doc)) return { ok: false, reason: 'not_object' };
-  if (!hasKeys(doc, REPORT_KEYS)) return { ok: false, reason: 'unknown_or_missing_fields' };
+  if (!isPlainRecord(doc)) return { ok: false, reason: 'not_object' };
+  if (!hasExactKeys(doc, CI_RECEIPT_REPORT_KEYS)) return { ok: false, reason: 'unknown_or_missing_fields' };
   if (doc.version !== 1) return { ok: false, reason: 'unsupported_version' };
-  if (!isCount(doc.total) || !isCount(doc.bound) || !isCount(doc.failed) || !isCount(doc.notStarted)
+  if (!isNonNegativeInt(doc.total) || !isNonNegativeInt(doc.bound) || !isNonNegativeInt(doc.failed)
+    || !isNonNegativeInt(doc.notStarted)
     || typeof doc.timedOut !== 'boolean' || typeof doc.aborted !== 'boolean') {
     return { ok: false, reason: 'counts_invalid' };
   }
@@ -80,8 +74,8 @@ export function parseCiReceiptBatchReplanInput(text: string): CiReceiptBatchRepl
   let bound = 0; let notStarted = 0;
   const valid: Record<string, unknown>[] = [];
   for (const entry of entries) {
-    if (!isRecord(entry) || !hasKeys(entry, ENTRY_KEYS)
-      || typeof entry.outcome !== 'string' || !OUTCOMES.has(entry.outcome)) {
+    if (!isPlainRecord(entry) || !hasExactKeys(entry, CI_RECEIPT_ENTRY_KEYS)
+      || typeof entry.outcome !== 'string' || !CI_RECEIPT_OUTCOMES.has(entry.outcome)) {
       return { ok: false, reason: 'entry_invalid' };
     }
     valid.push(entry);
