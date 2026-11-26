@@ -14,7 +14,7 @@
  * metrics/loop, slot-yield and dispatchd `_vc_pick`/`_vc_event` accept.
  */
 import { parseLedgerTs } from '../metrics/loop.js';
-import { ledgerEventName } from './empty-cause.js';
+import { ledgerEventName, ledgerPhase } from './empty-cause.js';
 
 /** job|job_id|jobId|id — the same set empty-cause.ledgerRows folds on. */
 const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
@@ -131,4 +131,14 @@ export function ledgerOutcomeState(row: Record<string, unknown>, event: string |
   if (event !== null && OUTCOME_EVENTS.has(event)) return ph !== '' ? ph : null;
   if (event === 'publish' && row['source'] === RECONCILER_SOURCE && TERMINAL_PHASES.has(ph)) return ph;
   return null;
+}
+
+/** Resolve a whole row's outcome, preferring a reconciler's verdict over copied publish state. */
+export function ledgerRowOutcome(row: Record<string, unknown>): string | null {
+  const reconciled = row['source'] === RECONCILER_SOURCE
+    ? pickString(row, ['outcome', 'status'])?.toUpperCase() ?? null
+    : null;
+  if (reconciled !== null && TERMINAL_PHASES.has(reconciled)) return reconciled;
+  const phase = ledgerPhase(row);
+  return ledgerOutcomeState(row, ledgerLifecycleEvent(row, phase), phase);
 }

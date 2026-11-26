@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cmdFleetLaneYield, fleetLaneYield } from '../src/cli/fleet-lane-yield.js';
+import { ledgerRowOutcome } from '../src/core/fleet/jobs-ledger-dialect.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 
 const now = Date.parse('2026-11-03T12:00:00Z');
@@ -81,4 +82,33 @@ it('lane-yield prints json, exits 1 on red and 0 otherwise, and rejects bad flag
 
 it('lane-yield is registered as a fleet verb', async () => {
   expect((await FLEET_SUBCOMMAND_LOADERS['lane-yield']!()).cmdFleetLaneYield).toBe(cmdFleetLaneYield);
+});
+
+it('counts merges from metrics-outcomes reconciler rows across the job-id dialects', async () => {
+  const iso = (h: number) => new Date(now - h * 3_600_000).toISOString();
+  // The reconciler copies PUBLISHED rows into terminal rows with no
+  // event:"outcome" marker: jobId/prUrl dialects, or the publish row's own
+  // event/job/url fields, plus the reconciler source.
+  const report = await fleetLaneYield(read(
+    JSON.stringify({ event: 'launch', job: 'A1', lane: 'codex', ts: iso(1) }),
+    JSON.stringify({ event: 'launch', job: 'A2', lane: 'codex', ts: iso(1) }),
+    JSON.stringify({ outcome: 'MERGED', jobId: 'A1', prUrl: 'https://github.com/o/r/pull/1', source: 'metrics-outcomes-reconciler', ts: iso(0.5) }),
+    JSON.stringify({ event: 'publish', job: 'A2', url: 'https://github.com/o/r/pull/2', outcome: 'MERGED', source: 'metrics-outcomes-reconciler', ts: iso(0.5) }),
+    JSON.stringify({ outcome: 'CLOSED', jobId: 'A3', prUrl: 'https://github.com/o/r/pull/3', source: 'metrics-outcomes-reconciler', ts: iso(0.5) }),
+  ), 2, now);
+  expect(report.lanes).toEqual([
+    { lane: 'codex', launches: 2, skips_by_code: {}, skips: 0, empty_finishes: 0, merged: 2, rows: 4, yield: 1, red: false },
+    { lane: 'unknown', launches: 0, skips_by_code: {}, skips: 0, empty_finishes: 0, merged: 0, rows: 1, yield: null, red: false },
+  ]);
+});
+
+it.each([
+  [{ event: 'publish', state: 'PUBLISHED', outcome: 'MERGED', source: 'metrics-outcomes-reconciler' }, 'MERGED'],
+  [{ event: 'publish', state: 'MERGED', status: 'CLOSED', source: 'metrics-outcomes-reconciler' }, 'CLOSED'],
+  [{ event: 'publish', outcome: 'MERGED' }, null],
+  [{ outcome: 'MERGED' }, 'MERGED'],
+  [{ type: 'outcome', result: 'merged' }, 'MERGED'],
+  [{ event: 'publish', outcome: 'PUBLISHED', source: 'metrics-outcomes-reconciler' }, null],
+] as const)('resolves outcome evidence for %j', (row, expected) => {
+  expect(ledgerRowOutcome(row)).toBe(expected);
 });
