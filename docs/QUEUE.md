@@ -879,8 +879,10 @@ phm fleet launchable --json
 ```
 
 `lane-starve` lists lanes below their launch target with queued work. Its
-`ready` count splits into `filler` and `real` rows. Parked rows are excluded
-whether the `PARKED` marker is in the first column or the lane column.
+`ready` count splits into `filler` and `real` rows. It counts bare job rows
+and rows explicitly marked `READY` in the first column. Other recognized
+statuses such as `CLAIMED`, `RUNNING`, and `DONE` are excluded, as are rows
+with a `PARKED` marker in either the first column or the lane column.
 `queued` comes from the status snapshot, so it can differ from `ready`.
 Lanes with `held: true` in the dispatcher snapshot are excluded.
 

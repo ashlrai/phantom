@@ -97,6 +97,18 @@ describe('findStarvedLanes', () => {
       { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 1, real: 0 },
     ]);
   });
+  it('counts only bare and ready rows when the snapshot includes other statuses', () => {
+    const ready = [
+      'RQ-BARE\tp1\tclaude-api\twork\tprompt',
+      'ready\tRQ-SF-A123456Q8\tclaude-api\twork\tphantom\t/prompt',
+      'CLAIMED\tRQ-CLAIMED-A123456Q8\tclaude-api\twork\tphantom\t/prompt',
+      'running\tRQ-RUNNING\tclaude-api\twork\tphantom\t/prompt',
+      'DONE\tRQ-DONE\tclaude-api\twork\tphantom\t/prompt',
+    ].join('\n');
+    expect(findStarvedLanes(STATUS, ready)).toEqual([
+      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 2, filler: 1, real: 1 },
+    ]);
+  });
   it('rejects malformed status', () => {
     expect(() => findStarvedLanes('{"lanes":{"a":{"running":"1"}}}', '')).toThrow();
   });
