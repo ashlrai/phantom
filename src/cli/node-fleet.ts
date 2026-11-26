@@ -56,10 +56,31 @@ function expiredRejoinHints(nodes: DriveNodes, out: Record<string, unknown>): Ma
   return hints.size ? hints : undefined;
 }
 
+/** Text-only note for an empty `phm node plan`: an empty routes array cannot
+ * say whether the scope holds no jobs or jobs that are all claimed or
+ * complete, so the note counts them from one snapshot — the same read the
+ * status empty-scope hint makes. Scope matching mirrors planRoutes exactly:
+ * ownerless legacy jobs never route and are not counted, and plan's --owner
+ * is a single scope. The counts are point-in-time facts: a job enqueued
+ * between the plan and this read still reports honestly. */
+function planEmptyNote(nodes: DriveNodes, owner: string | undefined): string {
+  try {
+    const jobs = nodes.snapshot().jobs.filter(j => j.owner && (owner === undefined || j.owner === owner));
+    const scope = owner === undefined ? 'any owner scope' : `owner '${owner}'`;
+    if (!jobs.length) {
+      return `No jobs queued in ${scope}. Enqueue one: phm node enqueue --job <id> --owner ${owner ?? '<scope>'}`;
+    }
+    const counts = { pending: 0, running: 0, completed: 0 };
+    for (const j of jobs) counts[j.state] += 1;
+    return `No routable jobs. ${jobs.length} job(s) in ${scope}: ${counts.pending} pending, ${counts.running} running, ${counts.completed} completed.`;
+  } catch { return 'No routable jobs.'; }
+}
+
 function text(verb: string, out: Record<string, unknown>, notes?: {
   rejoin?: ReadonlyMap<string, string>;
   drift?: SelfUpdatePlan;
   knownScopes?: readonly string[];
+  planEmpty?: string;
 }): string {
   if (verb === 'join') {
     // Join is the first command every new node runs; its text answer is a
@@ -78,7 +99,7 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
   }
   if (verb === 'plan') {
     const routes = out['routes'] as { jobId: string; nodeId: string | null; fix?: string }[];
-    return routes.length ? routes.map(r => `${r.jobId} -> ${r.nodeId ?? `nobody. ${r.fix}`}`).join('\n') : 'No routable jobs.';
+    return routes.length ? routes.map(r => `${r.jobId} -> ${r.nodeId ?? `nobody. ${r.fix}`}`).join('\n') : notes?.planEmpty ?? 'No routable jobs.';
   }
   if (verb === 'status' || verb === 'list') {
     const nodes = out['nodes'] as { nodeId: string; live: boolean; usage: number | null; auth: string; caps: string[];
@@ -314,7 +335,14 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       (out['nodes'] as unknown[]).length === 0 && (out['jobs'] as unknown[]).length === 0
       ? (knownOwnerScopes(drive) ?? []).filter(s => !(out['owners'] as string[]).includes(s))
       : undefined;
-    console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out, { rejoin, drift, knownScopes }));
+    // plan on an empty route set cannot tell an empty queue from jobs that
+    // are all claimed or complete; the text-only note counts the scope's
+    // jobs from one snapshot, like the status empty-scope hint. --json keeps
+    // {routes} alone.
+    const planEmpty = !json && verb === 'plan' && Array.isArray(out['routes']) && (out['routes'] as unknown[]).length === 0
+      ? planEmptyNote(drive, flags.get('--owner'))
+      : undefined;
+    console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out, { rejoin, drift, knownScopes, planEmpty }));
     return 0;
   } catch (error) {
     const known = error instanceof UsageError;
