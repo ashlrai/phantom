@@ -987,19 +987,20 @@ describe('text output names outcomes in plain words', () => {
       executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], nodes());
       expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
       expect(last(lines)).toContain("job j1 pending — No live node belongs to owner 'acme'. Run: phm node join --owner acme");
-      // A live node that lacks the job's cap gets the caps fix; jobs the node
-      // can take stay bare — their node will pull them.
+      // A live node that lacks the job's cap and has no probed gh auth gets
+      // the combined fix naming both fences; jobs the node can take stay
+      // bare — their node will pull them.
       executeNodeFleet('join', ['--node', 'box', '--owner', 'acme', '--caps', 'build'], nodes());
       executeNodeFleet('enqueue', ['--job', 'j2', '--owner', 'acme', '--requires', 'gh'], nodes());
       executeNodeFleet('enqueue', ['--job', 'j3', '--owner', 'acme', '--requires', 'build'], nodes());
       expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
       const jobLines = last(lines).split('\n').filter(l => l.startsWith('job '));
       expect(jobLines).toContain('job j1 pending');
-      expect(jobLines).toContain("job j2 pending — No node owned by 'acme' advertises gh. Rejoin a node with --caps including them.");
+      expect(jobLines).toContain("job j2 pending — No node owned by 'acme' can take it now: missing required caps (gh) on some nodes; missing local gh auth on some nodes. Rejoin a node with --caps including them. Run 'gh auth login' on one, then: phm node beat --probe-auth");
       expect(jobLines).toContain('job j3 pending');
       // list renders the same annotations.
       expect(await cmdNodeFleet('list', ['--owner', 'acme'], deps)).toBe(0);
-      expect(last(lines)).toContain("job j2 pending — No node owned by 'acme' advertises gh");
+      expect(last(lines)).toContain("job j2 pending — No node owned by 'acme' can take it now:");
     } finally { vi.restoreAllMocks(); }
   });
   it('status names each node\'s advertised slots and last measured hold', async () => {

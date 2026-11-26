@@ -101,6 +101,60 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
   return hosts;
 }
 
+/** Every blocker kind one live node presents for a job: the execution fences
+ * (declined session, missing caps, absent gh auth — `jobBlockers` entries,
+ * reduced to their kind) plus the advertised slot bound and pool host
+ * capacity, which the plan loop checks after the fences. */
+function nodeBlockerKinds(node: NodeRecord, job: QueueJobV1, claims: ReadonlyMap<string, number>,
+  poolFull: (node: NodeRecord) => boolean): Set<string> {
+  const kinds = new Set<string>();
+  for (const blocker of jobBlockers(node, job)) kinds.add(blocker.split(':')[0]!);
+  if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) kinds.add('capacity');
+  if (poolFull(node)) kinds.add('capacity');
+  return kinds;
+}
+
+/** The unrouted fix, worded from every owner node's full blocker set. A node
+ * can fail several fences at once and different nodes fail different ones, so
+ * a first-blocker cascade could name a remedy that cannot unblock — "no node
+ * advertises gh" while a node advertises gh but lacks local auth, or "wait
+ * for a free slot" while another node sits idle missing one cap. A single
+ * blocker kind keeps the original sentence; mixed kinds get an honest
+ * per-kind list with each applicable fix. */
+function unroutedFix(job: QueueJobV1, ownerNodes: NodeRecord[], claims: ReadonlyMap<string, number>,
+  poolFull: (node: NodeRecord) => boolean): string {
+  const owner = job.owner!;
+  const requires = job.requires ?? [];
+  const kinds = new Set<string>();
+  const missingCaps = new Set<string>();
+  for (const node of ownerNodes) {
+    for (const kind of nodeBlockerKinds(node, job, claims, poolFull)) {
+      kinds.add(kind);
+      if (kind === 'caps') for (const cap of requires) if (!(node.caps ?? []).includes(cap)) missingCaps.add(cap);
+    }
+  }
+  if (kinds.size === 1) {
+    if (kinds.has('capacity')) return `Nodes owned by '${owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`;
+    if (kinds.has('declined')) return `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`;
+    if (kinds.has('caps')) return `No node owned by '${owner}' advertises ${requires.join(',')}. Rejoin a node with --caps including them.`;
+    return `Nodes owned by '${owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
+  }
+  if (kinds.size === 0) return `No node owned by '${owner}' can take it now.`;
+  const missing = requires.filter(c => missingCaps.has(c));
+  const parts: string[] = [];
+  if (kinds.has('caps')) parts.push(`missing required caps (${missing.join(', ')}) on some nodes`);
+  if (kinds.has('auth')) parts.push('missing local gh auth on some nodes');
+  if (kinds.has('capacity')) parts.push('no free job slots on some nodes');
+  if (kinds.has('declined')) parts.push('released unrun by some sessions');
+  const fixes = [
+    kinds.has('caps') ? 'Rejoin a node with --caps including them.' : '',
+    kinds.has('auth') ? `Run 'gh auth login' on one, then: phm node beat --probe-auth` : '',
+    kinds.has('capacity') ? 'Wait for work to finish or memory headroom to recover.' : '',
+    kinds.has('declined') ? 'Re-enqueue it with --requires naming a lane a node advertises.' : '',
+  ].filter(Boolean);
+  return `No node owned by '${owner}' can take it now: ${parts.join('; ')}. ${fixes.join(' ')}`;
+}
+
 /** Deterministic plan: pools rank measured free host slots per observed execution millisecond;
  * standalone legacy queues retain their load policy. Ties break by node ID.
  * Pure: the same state and clock always produce the same plan. Jobs without an
@@ -115,18 +169,23 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
   const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
+  // A node is pool-full when its host has no eligible free slot left after the
+  // reservations earlier jobs in this plan already made — the same check the
+  // assignment loop applies, shared with the unrouted fix's blocker read.
+  const poolFull = (node: NodeRecord): boolean => {
+    if (!state.pool) return false;
+    const host = hosts.get(node.nodeId);
+    return !host || !host.eligibleNodeIds.includes(node.nodeId) ||
+      (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0);
+  };
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
-    const reasons = new Map<string, number>();
     let best: NodeRecord | null = null;
     for (const node of nodes) {
-      const why = shortfall(node, job);
-      if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
-      if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) { reasons.set('capacity', 1); continue; }
-      const host = hosts.get(node.nodeId);
-      if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
-          (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) { reasons.set('capacity', 1); continue; }
+      if (shortfall(node, job) !== null) continue;
+      if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) continue;
+      if (poolFull(node)) continue;
       const score = (n: NodeRecord) => {
         const h = hosts.get(n.nodeId)!;
         return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
@@ -142,15 +201,10 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       continue;
     }
     const requires = job.requires ?? [];
-    const fix = !nodes.some(n => n.owners?.includes(job.owner!))
+    const ownerNodes = nodes.filter(n => n.owners?.includes(job.owner!));
+    const fix = ownerNodes.length === 0
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
-      : reasons.has('capacity')
-        ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
-      : reasons.has('declined') && !reasons.has('caps')
-        ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
-      : reasons.has('caps')
-        ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
-        : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
+      : unroutedFix(job, ownerNodes, claims, poolFull);
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
   return plan;
