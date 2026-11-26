@@ -42,6 +42,7 @@ const digest = (
   board: { status: 'ok', peers: [], claims: 'readable', threads: [],
     deliveries: { matched: 0, items: [], truncated: false },
     tasks: { matched: 0, items: [], truncated: false } },
+  workBoard: { status: 'ok', matched: 0, items: [], truncated: false },
   coordination: { status: 'ok', source: 'missing',
     messages: { matched: 0, items: [], truncated: false },
     proposals: { matched: 0, items: [], truncated: false },

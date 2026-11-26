@@ -17,7 +17,11 @@
  * it, the next page of mail in its inbox, the pending mail the legacy
  * `phm bus` mailbox still holds for any of its labels, the shared task
  * board's pending digest (`phm bus board pending`) under the same labels,
- * the fleet's open session-handoff checkpoints
+ * the coordination work board's (`phm fleet work-board`, the
+ * `listWorkBoard`/`classifyWorkItem` projection the unified inbox's
+ * work-board source and `fleet_work_board` serve) requests still needing
+ * a decision that involve the agent — addressed to it, sent by it or
+ * naming it claim owner — the fleet's open session-handoff checkpoints
  * (`listSessionHandoffs`, the read `phm checkpoint handoff list`,
  * `fleet_session_handoffs` and the bus status probe serve), the advisory
  * fleet coordination ledger's (`fleet.coordination.v1`) pending surface
@@ -70,6 +74,8 @@ import { scrubSecrets } from '../util/scrub.js';
 import { listSessionHandoffs, type SessionHandoffList, type SessionHandoffListEntry } from './session-handoff.js';
 import { handoffPressure } from './session-handoff-schema.js';
 import { readFleetCoordinationPending, type FleetAssignment, type FleetCoordinationPending, type FleetMessage, type FleetPendingReturn } from '../fleet/coordination.js';
+import { listWorkBoard, WORK_BOARD_MAX_LIMIT, type WorkBoardItem, type WorkBoardResult } from '../comms/work-board.js';
+import type { WorkItemState } from '../comms/work-item-state.js';
 import type { SeatOptions, SeatState } from '../bots/seats.js';
 
 /** Overrides for the shared task board (`phm bus board pending`) the board
@@ -121,7 +127,10 @@ export interface BusWorkMineOptions {
    * keeps only the open
    * checkpoint whose journal job id equals it; `coordination` ledger
    * records carry no job citation the digest could prove, so the section
-   * comes back honestly empty the same way; every section's count stays
+   * comes back honestly empty the same way; `workBoard` request
+   * envelopes keep no job citation the board projection exposes, so the
+   * section comes back honestly empty under it the same way; every
+   * section's count stays
    * the filtered total, never the unfiltered one. */
   job?: string;
   /** Keep only pending items whose displayed descriptive text carries this
@@ -130,7 +139,9 @@ export interface BusWorkMineOptions {
    * one-line display text (feed job title/detail/dispatch, body and thread
    * summaries, board post text and titles, claim-blocked job titles and
    * leased-message summaries, seat handoff work refs, session
-   * checkpoint lane/model/repo/signal/tier/needs and dead-letter report
+   * checkpoint lane/model/repo/signal/tier/needs and work-board request
+   * state/channel/missing-evidence/dependency facts and dead-letter
+   * report
    * facts) and never over ids,
    * claim keys as keys, statuses or routing labels, which keep their own
    * filters. `channels` is registry context, not pending work, and stays
@@ -150,7 +161,8 @@ export interface BusWorkMineOptions {
    * `started`, feed jobs on `updatedAt`, pending work and mail on the
    * envelope receipt, mailbox rows on acceptance, conversation threads on
    * the latest message, wake hints on their queue time, board deliveries on
-   * `createdAt`, dead-letter reports on the letter receipt, session
+   * `createdAt`, dead-letter reports on the letter receipt, work-board
+   * requests on the envelope's recorded `receivedAt`, session
    * checkpoints on the journal's latest revision
    * `at` and coordination ledger records on their own `at` stamp. An item
    * whose store keeps no timestamp — a claim with `started:null`, a board
@@ -174,7 +186,8 @@ export interface BusWorkMineOptions {
    * mail on the envelope receipt, mailbox rows on acceptance, the three
    * thread sections on the shared conversations read's `lastAt` bound,
    * board deliveries on `createdAt`, dead-letter reports on the letter
-   * receipt, session checkpoints on the journal's
+   * receipt, work-board requests on the envelope's recorded `receivedAt`,
+   * session checkpoints on the journal's
    * latest revision `at` and coordination ledger records on their own
    * `at` stamp. An item stamped exactly at the
    * cutoff never matches — the bound is exclusive — and an item whose
@@ -200,7 +213,8 @@ export interface BusWorkMineOptions {
    * a claim with no resolved message (a scope-key claim, an unresolvable or
    * unreadable-message lease) names no provable band and never lists, the
    * same "unknown stays out" rule the job filter applies. `jobs`,
-   * `announced`, the three thread sections, `board`, `channels`,
+   * `announced`, the three thread sections, `board`, `workBoard`,
+   * `channels`,
    * `sessions`, `seats` and `coordination`
    * carry no per-item band in their projections and stay unfiltered, like
    * `channels` does under every filter. Every section's count stays the
@@ -219,7 +233,10 @@ export interface BusWorkMineOptions {
    * room and never lists, the same "unknown stays out" rule `priority`
    * applies), the three thread sections keep threads whose latest message —
    * the wait's own evidence for waiting threads, the block report for
-   * blocked ones — is addressed to the room, `wakes` and `inbox` pass the
+   * blocked ones — is addressed to the room, `workBoard` keeps requests
+   * whose `to` carries the prefix — a board item naming no provable `to`
+   * never lists, the same "unknown stays out" rule `priority` applies —
+   * `wakes` and `inbox` pass the
    * name to their own reads' channel filters (the wakes read's raw `to`
    * prefix and the inbox read's member-channel rule), and `board`,
    * `channels`, `sessions`, `seats` and `coordination` carry no per-item
@@ -254,7 +271,10 @@ export interface BusWorkMineOptions {
    * filters, and `board` deliveries keep only posts whose `sender` peer
    * label matches while board tasks — which record no author — never
    * match under `from` and thread rollups keep only while a surviving
-   * delivery or task remains. `coordination` keeps only ledger records
+   * delivery or task remains. `workBoard` keeps requests whose `from`
+   * label the same matcher accepts — a board item naming no provable
+   * `from` never lists, the same "unknown stays out" rule `claims`
+   * follows. `coordination` keeps only ledger records
    * whose recorded sender label equals the value exactly — message `from`
    * fields and return `agent` labels, proposals carrying no sender never
    * matching — the same exact-label rule `phm fleet coordination inbox
@@ -289,7 +309,11 @@ export interface BusWorkMineOptions {
    * deliveries drop posts whose `sender` resolves to the excluded ref
    * while board tasks stay listed — nothing proves a task came from the
    * excluded sender — with thread rollups keeping the same
-   * surviving-item rule. `coordination` drops only ledger records whose
+   * surviving-item rule. `workBoard` drops requests whose `from` label
+   * resolves to the excluded ref — a board item naming no provable
+   * `from` never lists under either sender filter, the same "unknown
+   * stays out" rule `from` applies. `coordination` drops only ledger
+   * records whose
    * recorded sender label equals the excluded value — message `from`
    * fields and return `agent` labels, proposals carrying no sender stay
    * listed — the same exact-label twin of its `from` rule.
@@ -317,7 +341,9 @@ export interface BusWorkMineOptions {
    * `inbox`, `wakes` and the three thread sections pass the value to
    * their own reads' id filters (the inbox and conversations reads keep
    * the item envelope `id` belongs to, the wakes read the hint id — the
-   * triggering envelope's wire id on a bus.send hint), while `board`
+   * triggering envelope's wire id on a bus.send hint), `workBoard` keeps
+   * requests whose envelope id equals the value — the same exact match
+   * `agents bus show <id>` resolves — while `board`
    * reports the shared `phm bus board pending` digest whole — that
    * projection's own filter grammar (job, contains, since, before,
    * sender) takes no envelope citation, so the section stays unfiltered,
@@ -343,9 +369,11 @@ export interface BusWorkMineOptions {
    * three thread sections pass the value to their own reads' in-reply-to
    * filters (the inbox read matches the envelope body, the wakes read
    * the resolved referent body, the conversations read any member
-   * message's citation), `deadLetters` comes back honestly empty — the
-   * dead-lettered mail is a transport envelope whose protocol-v1 bus
-   * body carries no `inReplyTo` field — while feed jobs, announced jobs, `board` rows,
+   * message's citation), `deadLetters` and `workBoard` come back
+   * honestly empty — the dead-lettered mail is a transport envelope
+   * whose protocol-v1 bus body carries no `inReplyTo` field, and every
+   * board item is a request envelope that by definition cites no
+   * in-reply-to — while feed jobs, announced jobs, `board` rows,
    * `channels`, `sessions`, `seats` and `coordination` carry no retained
    * body citation in
    * their
@@ -386,7 +414,8 @@ export interface BusWorkMineOptions {
    * `work.post` announcement so `work.post` keeps them all,
    * `work.status` keeps jobs a status receipt has moved, `work.result`
    * keeps jobs a result receipt cites, and any other kind is an honest
-   * empty match — and `board`, `channels`, `sessions`, `seats` and
+   * empty match — and `board`, `workBoard`, `channels`, `sessions`,
+   * `seats` and
    * `coordination` carry no
    * per-item
    * retained body in their projections — board post bodies are
@@ -423,11 +452,15 @@ export interface BusWorkMineOptions {
    * receipt reporting that outcome, the same whole-thread member match
    * `agents conversations --result` applies — `deadLetters` comes back
    * honestly empty, a transport envelope's protocol-v1 bus body never
-   * being a `work.result`. `board`, `channels`, `sessions`, `seats` and `coordination`
+   * being a `work.result`. `board`, `workBoard`, `channels`, `sessions`,
+   * `seats` and `coordination`
    * carry no per-item
    * result
    * evidence the digest can prove — board post bodies are
-   * `{threadId, text}` records, session checkpoints keep no retained
+   * `{threadId, text}` records, work-board `result` fields are the
+   * classifier's verified-proof or blocked-dependency evidence, never a
+   * wire `work.result` outcome citation, session checkpoints keep no
+   * retained
    * envelope body, seat handoff records keep no
    * per-record body and coordination ledger records keep no bus-envelope
    * result receipt — and stay unfiltered, the same rule
@@ -464,8 +497,10 @@ export interface BusWorkMineOptions {
    * `work.result` bodies that carry no `thread` field — `board` post
    * bodies are `{threadId, text}` records whose `threadId` is the shared
    * board's own thread namespace, never a bus thread label — and
-   * `channels`/`sessions`/`seats`/`coordination` carry no per-item thread
-   * either, so
+   * `channels`/`workBoard`/`sessions`/`seats`/`coordination` carry no
+   * per-item thread
+   * either — work-board request bodies keep no thread label the board
+   * projection exposes — so
    * those
    * sections stay unfiltered, the same rule `priority`/`channel` apply
    * to sections with no per-item band or room. The value takes the same
@@ -1118,6 +1153,95 @@ export type BusWorkMineCoordination =
       returns: BusWorkMineCoordinationClass<BusWorkMineCoordinationReturn> }
   | { status: 'unavailable'; reason: string };
 
+/** How one work-board request involves the agent — every role that matched, in canonical order. */
+export type BusWorkMineWorkBoardRole = 'addressed' | 'sent' | 'owner';
+
+/**
+ * One coordination work-board request still needing a decision that
+ * involves the agent — the same `listWorkBoard`/`classifyWorkItem`
+ * projection `phm fleet work-board`, `fleet_work_board` and the unified
+ * inbox's work-board source serve, narrowed to the agent's involvement
+ * instead of the fleet-wide listing. `state` is the board's own
+ * classification: RECEIVED (no named owner or durable claim receipt yet),
+ * ASSIGNED (owned but its running evidence is stale or absent) and
+ * BLOCKED (a reply named what it waits on); RUNNING and VERIFIED never
+ * list — done or provably progressing is not pending. `roles` names why
+ * the item involves the agent: `addressed` — the request's `to` satisfies
+ * the shared `agentPendingAddressMatcher` rule `bus next` claims by (any
+ * label of the resolved identity or a member channel's `group:<name>:`
+ * address, minus the agent's own channel posts); `sent` — the request's
+ * `from` is the agent under the same identity scope the thread sections
+ * use; `owner` — the claim owner bound to the receipt denotes the agent.
+ * `from`/`to` are the request envelope's raw routing labels — untrusted
+ * data, never authenticated identity — and are null only when a
+ * hand-built board item carried none (`listWorkBoard` always sets them).
+ * `missing` is the classifier's missing-evidence list and `blockedOn`
+ * the dependency a BLOCKED reply named — the board's own `result`
+ * projection, never message prose. An item may also appear under `next`,
+ * `handoffs`, `inbox` or the thread sections with its raw envelope view —
+ * this section adds the ownership/verification classification those
+ * projections do not compute, the same split the unified inbox keeps
+ * between its `bus` and `work-board` sources.
+ */
+export interface BusWorkMineWorkBoardItem {
+  /** Envelope wire id — `agents bus show <id>` and `phm fleet work-trace --id <id>` read it. */
+  id: string;
+  state: 'RECEIVED' | 'ASSIGNED' | 'BLOCKED';
+  /** ISO of the request envelope's recorded `receivedAt` — the timestamp `since`/`before` bound. */
+  receivedAt: string;
+  /** Envelope channel label ('bus' when the envelope carries none) and exact channel_ref when present. */
+  channel: string;
+  channelRef: string | null;
+  from: string | null;
+  to: string | null;
+  /** Named claim owner bound to the receipt, or null when no claim row matches its coordinates. */
+  owner: string | null;
+  /** `bus-claim:<id>:<cursor>:<receivedAt>` claim receipt citation, or null. Never a fencing token. */
+  claimReceipt: string | null;
+  /** The classifier's missing-evidence list — what the state still lacks. */
+  missing: string[];
+  /** BLOCKED items only: the dependency the reply named; null otherwise. */
+  blockedOn: string | null;
+  roles: BusWorkMineWorkBoardRole[];
+}
+
+/**
+ * The `workBoard` digest section: the coordination work board's requests
+ * still needing a decision (RECEIVED/ASSIGNED/BLOCKED — the same pending
+ * states the unified inbox's work-board source lists) that involve the
+ * agent under any of its labels — addressed to it, sent by it or naming
+ * it claim owner — through the same `listWorkBoard` read `phm fleet
+ * work-board`, `fleet_work_board` and the unified inbox serve, so the
+ * digest, those surfaces and `fleet_agent_work` can never disagree on an
+ * item's state, owner, claim receipt or missing evidence. The board read
+ * is the shared bounded newest-`WORK_BOARD_MAX_LIMIT` request scan, so
+ * `matched` counts involving pending items inside that read before the
+ * display cap and `truncated` marks the board's own cap or the display
+ * cap cutting more — never an invented total. `claims`/`coordination`
+ * echo the board's own sub-read states: `unavailable` means claim or
+ * lease evidence is unknown — owners may be null — never an empty
+ * verified set. An unreadable inbox scan reports `unavailable`, never
+ * an empty board passed off as fact. `job` and `inReplyTo` come back
+ * honestly empty — a board item is a request envelope that carries no
+ * job citation the projection exposes and, by the board's own request
+ * rule, no in-reply-to citation — while `contains` matches the item's
+ * scrubbed state/channel/missing-evidence/dependency text, `since`/
+ * `before` bound `receivedAt` on the `[since, before)` window,
+ * `channel` keeps requests whose `to` carries `group:<name>:`,
+ * `from`/`excludeFrom` match the request's `from` label (an item naming
+ * no provable `from` never lists under either), `id` keeps the request
+ * whose envelope id equals the value, and `priority`/`bodyKind`/`result`/
+ * `thread` leave the section whole — the board projection carries no
+ * per-item band, body kind, wire result outcome or thread label.
+ */
+export type BusWorkMineWorkBoard =
+  | { status: 'ok'; matched: number; items: BusWorkMineWorkBoardItem[]; truncated: boolean;
+      /** The claims table state behind owner evidence, echoed from the board read. */
+      claims?: 'missing' | 'available' | 'unavailable';
+      /** The coordination lease table state behind the claim veto, echoed from the board read. */
+      coordination?: 'missing' | 'available' | 'unavailable' }
+  | { status: 'unavailable'; reason: string };
+
 export type BusWorkMineResult =
   | { status: 'ok'; agent: BusWorkMineAgent; asOf: string;
       /** The job filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
@@ -1152,7 +1276,7 @@ export type BusWorkMineResult =
       threads: BusWorkMineThreads; awaiting: BusWorkMineAwaiting;
       blocked: BusWorkMineBlocked;
       wakes: BusWorkMineWakes; inbox: BusWorkMineInbox; mailbox: BusWorkMineMailbox;
-      board: BusWorkMineBoard;
+      board: BusWorkMineBoard; workBoard: BusWorkMineWorkBoard;
       sessions: BusWorkMineSessions;
       coordination: BusWorkMineCoordination;
       channels: BusWorkMineChannels;
@@ -1173,6 +1297,8 @@ const WORK_MINE_MAILBOX_MAX = 20;
 const WORK_MINE_SESSIONS_MAX = 20;
 /** Pending coordination-ledger records a digest shows per class, newest first; each class's `matched` keeps the true total. */
 const WORK_MINE_COORDINATION_MAX = 20;
+/** Involving work-board requests a digest shows, newest received first; `matched` keeps the true total inside the bounded board read. */
+const WORK_MINE_WORK_BOARD_MAX = 20;
 /** Claimable envelopes, handoffs and dead-letter reports a digest shows in claim order; `matched` keeps the true total. */
 const WORK_MINE_NEXT_MAX = 10;
 const WORK_MINE_HANDOFFS_MAX = 20;
@@ -2327,7 +2453,9 @@ function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
  * read's own contains rule, the board matches delivery post text and
  * task/thread titles inside `BusBoard.pendingFor`, seats match the
  * handoff's held-work ref and citations — the only text a seat record
- * carries — and sessions match the checkpoint's lane, model, repo,
+ * carries — work-board items match the classifier's state, channel,
+ * missing-evidence and blocked-dependency text, and sessions match the
+ * checkpoint's lane, model, repo,
  * signal kind, tier and needs. `options.since` applies the time rule every bus read's `--since`
  * shares across the same sections: claims match the lease's recorded
  * `started` (a null start never matches), feed jobs and announced jobs
@@ -2336,7 +2464,8 @@ function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
  * thread sections and wakes inherit their own reads' `since`/`sinceAt`
  * rules on the latest activity, board deliveries match `createdAt` while
  * board tasks — which keep no timestamp — never match, session
- * checkpoints match the journal's latest revision `at`, and seats stay
+ * checkpoints match the journal's latest revision `at`, work-board
+ * requests match the envelope's recorded `receivedAt`, and seats stay
  * unfiltered — a pending handoff record's `createdAt` stamps the plan
  * read instant, not the held work's age, so no per-record recency exists
  * to filter on; a since-filtered handoff still sees its
@@ -2377,7 +2506,8 @@ function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
  * it (unresolved or unknown referents never match), and claims keep only
  * message claims whose resolved leased envelope reports that band — a
  * claim naming no provable band never lists. Feed jobs, announced jobs,
- * the three thread sections, board rows, channels, sessions and seats
+ * the three thread sections, board rows, work-board items, channels,
+ * sessions and seats
  * carry no
  * per-item band and stay unfiltered. `options.channel` applies the room
  * rule every bus read's `--channel` shares across the sections whose items
@@ -2389,7 +2519,9 @@ function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
  * never lists — the three thread sections keep threads whose latest
  * message is addressed to the room, and wakes/inbox delegate to their own
  * reads' channel filters (the wakes read's raw `to` prefix, the inbox
- * read's member-channel rule). `board`, `channels`, `sessions` and `seats`
+ * read's member-channel rule), and work-board requests keep those whose
+ * `to` carries the prefix — a board item naming no provable `to` never
+ * lists. `board`, `channels`, `sessions` and `seats`
  * carry no
  * per-item room and stay unfiltered. `channels` is registry context, not
  * pending work, and stays unfiltered under any filter. `options.thread`
@@ -2404,10 +2536,13 @@ function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
  * shared `readAgentConversations` query's `thread` (a thread survives on
  * any member message whose declared bucket equals it), and
  * wakes/inbox delegate to their own reads' thread filters. `jobs`,
- * `announced`, `board`, `channels`, `sessions` and `seats` carry no
+ * `announced`, `board`, `channels`, `workBoard`, `sessions` and `seats`
+ * carry no
  * per-item thread
  * label — the feed's citing receipts keep no `thread` field, board post
- * `threadId`s are the shared board's own namespace, session checkpoints
+ * `threadId`s are the shared board's own namespace, work-board request
+ * bodies keep no thread label the board projection exposes, session
+ * checkpoints
  * keep no retained envelope body and seat handoff
  * records keep no per-record body — and stay unfiltered. Counts
  * stay filtered totals; a section that cannot prove the relation reports
@@ -2699,6 +2834,10 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   const inbox = inboxSection(agent, options, nowMs, contains);
   const mailbox = mailboxSection(agent, identity, options, nowMs, contains, registry);
   const board = boardSection(agent, identity, options, nowMs, contains, registry);
+  // The coordination work board is per-agent like mailbox/board — its
+  // requests involve the agent as addressee, sender or claim owner — so
+  // it scopes through the same identity label set those sections use.
+  const workBoard = workBoardSection(agent, identity, options, nowMs, contains, sinceMs, beforeMs, registry);
   // Session checkpoints are fleet-wide pending work like the feed jobs —
   // any agent may plan a resume or failover — so the section needs no
   // agent scoping, only the shared job/contains/since/before filters.
@@ -2735,7 +2874,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
     ...(options.result === undefined ? {} : { result: options.result }),
     ...(options.thread === undefined ? {} : { thread: options.thread }),
     claims, jobs, announced, next, handoffs, deadLetters, threads, awaiting, blocked, wakes, inbox, mailbox, board,
-    sessions, coordination, channels };
+    workBoard, sessions, coordination, channels };
 }
 
 /** The resume bound `planSessionResume` enforces — a checkpoint older than 24h refuses resume. */
@@ -2924,6 +3063,105 @@ function coordinationSection(agent: string, identity: AgentIdentity | undefined,
     proposals: cap(proposals),
     returns: cap(returns),
   };
+}
+
+/** The board states that still need a coordination decision — the same pending set the unified inbox's work-board source lists. */
+const WORK_BOARD_PENDING_STATES: ReadonlySet<WorkItemState> = new Set(['RECEIVED', 'ASSIGNED', 'BLOCKED']);
+
+/** The `--contains` haystack for one board item — the classifier's descriptive facts only: state, channel, missing evidence and the blocked dependency. The envelope id, routing labels, owner and claim receipt stay out — those have their own fields and filters, the same rule `deadLetterContainsText` follows. */
+function workBoardContainsText(item: WorkBoardItem): string {
+  return scrubSecrets([item.state, item.channel, item.channelRef ?? '',
+    item.missing.join(' '),
+    item.result?.kind === 'blocked' ? item.result.dependency : ''].join(' '))
+    .toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The `workBoard` digest section: the coordination work board's requests
+ * still needing a decision that involve the agent, through the same
+ * `listWorkBoard` read `phm fleet work-board`, `fleet_work_board` and the
+ * unified inbox's work-board source serve. Involvement is any of three
+ * roles: `addressed` — the request's `to` satisfies the shared
+ * `agentPendingAddressMatcher` rule `bus next` claims by; `sent` — the
+ * request's `from` is the agent under the `conversationScope` identity
+ * scope the thread sections use; `owner` — the claim owner bound to the
+ * receipt denotes the agent under the same scope. An item matching no
+ * role never lists, so the section answers "which board requests involve
+ * me" without a fleet-wide read. The board read is one bounded
+ * newest-`WORK_BOARD_MAX_LIMIT` request scan — `matched` counts
+ * involving pending items inside that read before the display cap and
+ * `truncated` marks the board's own cap or the display cap cutting more.
+ * `job`/`inReplyTo` come back honestly empty (a request envelope carries
+ * no provable job citation the board exposes and, by the board's own
+ * request rule, no in-reply-to citation); `contains` matches the
+ * scrubbed state/channel/missing-evidence/dependency text; `since`/
+ * `before` bound `receivedAt` on `[since, before)`; `channel` keeps
+ * requests whose `to` carries `group:<name>:`; `from`/`excludeFrom` match
+ * the request's `from` label with an unprovable `from` never listing;
+ * `id` keeps the request whose envelope id equals the value;
+ * `priority`/`bodyKind`/`result`/`thread` leave the section whole. An
+ * unreadable inbox scan reports `unavailable`, never an empty board.
+ */
+function workBoardSection(agent: string, identity: AgentIdentity | undefined,
+  options: BusWorkMineOptions, nowMs: number, contains: string | undefined,
+  sinceMs: number | undefined, beforeMs: number | undefined,
+  registry: AgentRegistry | undefined): BusWorkMineWorkBoard {
+  const unavailable: BusWorkMineWorkBoard = { status: 'unavailable', reason: 'work-board-unreadable' };
+  let board: WorkBoardResult;
+  try {
+    board = listWorkBoard({ root: options.root ?? join(ashlrHome(), 'fleet'), now: nowMs, limit: WORK_BOARD_MAX_LIMIT });
+  } catch { return unavailable; }
+  if (board.inbox !== 'ok') return unavailable;
+  const honesty = {
+    ...(board.claims === undefined ? {} : { claims: board.claims }),
+    ...(board.coordination === undefined ? {} : { coordination: board.coordination }),
+  };
+  // `job` and `inReplyTo` can never match a board item: the projection
+  // exposes no job citation and every listed envelope is a request, which
+  // by definition cites no in-reply-to — the same "unknown stays out"
+  // honest-empty rule `coordination`/`deadLetters` follow.
+  if (options.job !== undefined || options.inReplyTo !== undefined) {
+    return { status: 'ok', matched: 0, items: [], truncated: board.truncated, ...honesty };
+  }
+  const scope = conversationScope(agent, registry, identity);
+  const pendingAddress = agentPendingAddressMatcher(agent, registry);
+  const channelPrefix = options.channel === undefined ? undefined : `group:${options.channel}:`;
+  const fromMatch = options.from === undefined ? undefined : agentRefAddressMatcher(options.from, registry);
+  const excludeFromMatch = options.excludeFrom === undefined ? undefined : agentRefAddressMatcher(options.excludeFrom, registry);
+  const candidates = board.items.flatMap((item): { item: WorkBoardItem; roles: BusWorkMineWorkBoardRole[] }[] => {
+    if (!WORK_BOARD_PENDING_STATES.has(item.state)) return [];
+    const from = item.from ?? null, to = item.to ?? null;
+    const roles: BusWorkMineWorkBoardRole[] = [];
+    if (from !== null && to !== null && pendingAddress(to, from)) roles.push('addressed');
+    if (from !== null && scope.isSelf(from)) roles.push('sent');
+    if (item.owner !== null && scope.denotes(item.owner)) roles.push('owner');
+    if (roles.length === 0) return [];
+    if (sinceMs !== undefined || beforeMs !== undefined) {
+      const at = Date.parse(item.receivedAt);
+      if (!Number.isFinite(at)) return [];
+      if (sinceMs !== undefined && at < sinceMs) return [];
+      if (beforeMs !== undefined && at >= beforeMs) return [];
+    }
+    if (channelPrefix !== undefined && (to === null || !to.startsWith(channelPrefix))) return [];
+    if (fromMatch !== undefined || excludeFromMatch !== undefined) {
+      if (from === null) return [];
+      if (fromMatch !== undefined && !fromMatch(from)) return [];
+      if (excludeFromMatch !== undefined && excludeFromMatch(from)) return [];
+    }
+    if (options.id !== undefined && item.id !== options.id) return [];
+    if (contains !== undefined && !workBoardContainsText(item).includes(contains)) return [];
+    return [{ item, roles }];
+  });
+  const kept = candidates.slice(0, WORK_MINE_WORK_BOARD_MAX);
+  return { status: 'ok', matched: candidates.length,
+    truncated: board.truncated || candidates.length > kept.length, ...honesty,
+    items: kept.map(({ item, roles }) => ({
+      id: item.id, state: item.state as BusWorkMineWorkBoardItem['state'],
+      receivedAt: item.receivedAt, channel: item.channel, channelRef: item.channelRef,
+      from: item.from ?? null, to: item.to ?? null,
+      owner: item.owner, claimReceipt: item.claimReceipt, missing: [...item.missing],
+      blockedOn: item.result?.kind === 'blocked' ? item.result.dependency : null, roles,
+    })) };
 }
 
 /** Human suffix naming the message an `origin:'message'` claim leases; '' on every other claim. */
@@ -3176,6 +3414,24 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
         ` owner=${task.owner.peerId} until=${new Date(task.owner.leaseUntil).toISOString()}`;
       lines.push(`  [task id=${task.id} thread=${task.threadId} item=${task.itemId} hold=${task.hold}` +
         `${task.claimed ? ' claimed' : ''}${owner}] ${task.title}`);
+    }
+  }
+
+  const workBoard = result.workBoard;
+  if (workBoard.status !== 'ok') {
+    lines.push(`work-board=unknown ${workBoard.status}`);
+  } else {
+    lines.push(`work-board=${workBoard.matched} shown=${workBoard.items.length}` +
+      `${workBoard.truncated ? '+truncated' : ''}` +
+      `${workBoard.claims === undefined ? '' : ` claims=${workBoard.claims}`}` +
+      `${workBoard.coordination === undefined ? '' : ` coordination=${workBoard.coordination}`}`);
+    for (const item of workBoard.items) {
+      const owner = item.owner ?? 'unowned';
+      const blocked = item.blockedOn === null ? '' : ` blocked-on=${mineField(item.blockedOn, 120)}`;
+      const missing = item.missing.length === 0 ? '' : ` missing=${mineField(item.missing.join(','), 200)}`;
+      lines.push(`  [${item.state} id=${item.id} ${item.roles.join('+')} owner=${owner} ` +
+        `claim=${item.claimReceipt ?? 'none'} ${item.channel}${item.channelRef === null ? '' : ` ref=${item.channelRef}`}] ` +
+        `received=${item.receivedAt}${blocked}${missing}`);
     }
   }
 
