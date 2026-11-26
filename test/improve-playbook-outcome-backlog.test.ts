@@ -243,6 +243,47 @@ describe('playbookOutcomeBacklogItems', () => {
     expect(items).toEqual([]);
   });
 
+  it('skips retros stamped past the evaluation-time future skew', async () => {
+    // Three adverse rows all stamped beyond now + skew: corrupt or replayed
+    // evidence, never reaches a cell.
+    const future = await playbookOutcomeBacklogItems({
+      repo: REPO,
+      retros: [
+        retro('i1', 'reverted', new Date(NOW + 2 * 60_000).toISOString(), ref(PB_A)),
+        retro('i2', 'failed', new Date(NOW + 60 * 60_000).toISOString(), ref(PB_A)),
+        retro('i3', 'expired', new Date(NOW + DAY).toISOString(), ref(PB_A)),
+      ],
+      playbooks: LIVE,
+      now: NOW,
+    });
+    expect(future).toEqual([]);
+    // A future stamp cannot push a below-bar cell over it either.
+    const mixed = await playbookOutcomeBacklogItems({
+      repo: REPO,
+      retros: [
+        retro('i4', 'reverted', iso(1 * DAY), ref(PB_A)),
+        retro('i5', 'failed', iso(2 * DAY), ref(PB_A)),
+        retro('i6', 'expired', new Date(NOW + DAY).toISOString(), ref(PB_A)),
+      ],
+      playbooks: LIVE,
+      now: NOW,
+    });
+    expect(mixed).toEqual([]);
+    // Inside the one-minute skew the stamp still counts as same-host drift.
+    const within = await playbookOutcomeBacklogItems({
+      repo: REPO,
+      retros: [
+        retro('i7', 'reverted', iso(1 * DAY), ref(PB_A)),
+        retro('i8', 'failed', iso(2 * DAY), ref(PB_A)),
+        retro('i9', 'expired', new Date(NOW + 30_000).toISOString(), ref(PB_A)),
+      ],
+      playbooks: LIVE,
+      now: NOW,
+    });
+    expect(within).toHaveLength(1);
+    expect(within[0]!.prompt).toContain('3 adverse across 3 distinct UTC day(s)');
+  });
+
   it('states the retro bound as a lower bound when the window may be truncated', async () => {
     // MAX_RETROS rows all inside the window: the 500-cap can hide older
     // in-window runs, so the prompt must say the tallies are lower bounds.

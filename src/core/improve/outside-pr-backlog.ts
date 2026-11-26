@@ -93,6 +93,13 @@ export const OUTSIDE_PR_REVERTED_RECURRING = 3;
  * feeds' seven-day recurrence window would almost never reach the bar.
  */
 export const OUTSIDE_PR_WINDOW_HOURS = 24 * 30;
+/**
+ * Future-skew ceiling on mergedAt stamps, the sibling feeds' one-minute
+ * tolerance for clock drift between the recording host and the merge
+ * timestamp's source: a merge stamped further ahead than the evaluation
+ * time is corrupt or replayed evidence and never reaches a cell.
+ */
+export const OUTSIDE_PR_FUTURE_SKEW_MS = 60_000;
 /** Journal tail cap — the same 8 MiB bound the sync's dedup read applies. */
 const OUTSIDE_PR_JOURNAL_MAX_BYTES = 8 * 1024 * 1024;
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
@@ -138,7 +145,9 @@ const mergedMs = (row: OutsidePrOutcomeJournalRow): number => Date.parse(row.mer
 
 /**
  * Pure: fold the journal's newest-per-PR outcome rows into per-repo
- * cells. Only merges inside the window count; cells below the
+ * cells. Only merges inside the window count — before its start or past
+ * the evaluation time plus the sibling feeds' future skew, which is
+ * corrupt evidence that never reaches a cell; cells below the
  * recurring bar are dropped here so callers see only emittable
  * evidence. `unknown` verdicts tally as context and never toward the
  * bar.
@@ -148,10 +157,11 @@ export function foldOutsidePrCells(
   opts: { nowMs: number; windowHours: number },
 ): OutsidePrBacklogCell[] {
   const sinceMs = opts.nowMs - opts.windowHours * 60 * 60 * 1000;
+  const untilMs = opts.nowMs + OUTSIDE_PR_FUTURE_SKEW_MS;
   const byRepo = new Map<string, OutsidePrOutcomeJournalRow[]>();
   for (const row of rows) {
     const mergedAtMs = mergedMs(row);
-    if (!Number.isFinite(mergedAtMs) || mergedAtMs < sinceMs) continue;
+    if (!Number.isFinite(mergedAtMs) || mergedAtMs < sinceMs || mergedAtMs > untilMs) continue;
     const list = byRepo.get(row.repo) ?? [];
     list.push(row);
     byRepo.set(row.repo, list);

@@ -132,6 +132,31 @@ describe('foldOutsidePrCells', () => {
     expect(cells).toHaveLength(1);
     expect(cells[0]!.merged).toBe(3);
   });
+
+  it('never counts merges stamped past the evaluation-time future skew', () => {
+    const future = new Date(NOW + 2 * 3_600_000).toISOString();
+    // All three reverted merges carry a future mergedAt: corrupt or
+    // replayed evidence, no cell.
+    expect(foldOutsidePrCells([
+      row('acme/widgets', 1, 'yes', future),
+      row('acme/widgets', 2, 'yes', future),
+      row('acme/widgets', 3, 'yes', future),
+    ], opts)).toEqual([]);
+    // A future stamp cannot push a below-bar cell over it either.
+    expect(foldOutsidePrCells([
+      row('acme/widgets', 4, 'yes', daysAgo(2)),
+      row('acme/widgets', 5, 'yes', daysAgo(3)),
+      row('acme/widgets', 6, 'yes', future),
+    ], opts)).toEqual([]);
+    // Inside the one-minute skew the stamp still counts as clock drift.
+    const cells = foldOutsidePrCells([
+      row('acme/widgets', 7, 'yes', daysAgo(2)),
+      row('acme/widgets', 8, 'yes', daysAgo(3)),
+      row('acme/widgets', 9, 'yes', new Date(NOW + 30_000).toISOString()),
+    ], opts);
+    expect(cells).toHaveLength(1);
+    expect(cells[0]!.reverted).toBe(3);
+  });
 });
 
 describe('outsidePrBacklogItems', () => {

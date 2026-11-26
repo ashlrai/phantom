@@ -82,6 +82,29 @@ describe('foldBetOutcomeCells', () => {
     expect(cells).toEqual([]);
   });
 
+  it('never counts decisions stamped past the evaluation-time future skew', () => {
+    // All three kills decided beyond now + skew: corrupt or replayed
+    // evidence, no cell.
+    expect(foldBetOutcomeCells([
+      scorerKilled('RQ-BET-F1', 'merges_per_hour.6h', -120),
+      scorerKilled('RQ-BET-F2', 'merges_per_hour.6h', -90),
+      scorerKilled('RQ-BET-F3', 'merges_per_hour.6h', -30),
+    ], opts)).toEqual([]);
+    // A future stamp cannot push a below-bar cell over it either.
+    expect(foldBetOutcomeCells([
+      scorerKilled('RQ-BET-F4', 'merges_per_hour.6h', 60),
+      scorerKilled('RQ-BET-F5', 'merges_per_hour.6h', 120),
+      scorerKilled('RQ-BET-F6', 'merges_per_hour.6h', -120),
+    ], opts)).toEqual([]);
+    // Inside the one-minute skew the stamp still counts as same-host drift.
+    const cells = foldBetOutcomeCells([
+      scorerKilled('RQ-BET-F7', 'merges_per_hour.6h', -0.4), // decidedAt = now + 24s
+      scorerKilled('RQ-BET-F8', 'merges_per_hour.6h', 60),
+      scorerKilled('RQ-BET-F9', 'merges_per_hour.6h', 120),
+    ], opts);
+    expect(cells.map((c) => [c.metric, c.killed])).toEqual([['merges_per_hour.6h', 3]]);
+  });
+
   it('drops cells below the recurring bar and sorts strongest first', () => {
     expect(BET_OUTCOME_KILLED_RECURRING).toBe(3);
     const cells = foldBetOutcomeCells([

@@ -179,6 +179,44 @@ describe('gatewayShadowBacklogItems', () => {
     expect(items[0]!.prompt).not.toContain('4 safety-relevant');
   });
 
+  it('never counts rows or day-files stamped past the evaluation-time future skew', async () => {
+    // Each scenario gets its own fabric dir — fabricDir() is one shared path.
+    const freshDir = (): string => fs.mkdtempSync(path.join(home, 'fabric-'));
+    // Two real safety rows plus one stamped hours ahead on the same UTC
+    // day: the file opens (today's name) but the future row is refused,
+    // leaving the count below the recurring bar.
+    const dir = freshDir();
+    const futureRow: Row = { ...shadow(1, { safety: true, legacyDispatched: false }), ts: new Date(NOW_MS + 2 * 3_600_000).toISOString() };
+    const rows = [...safetyRows(2, 1), futureRow];
+    fs.writeFileSync(
+      path.join(dir, `gateway-shadow-${dayOf(rows[0]!.ts)}.jsonl`),
+      rows.map((r) => JSON.stringify(r)).join('\n') + '\n',
+    );
+    expect(await gatewayShadowBacklogItems({ repo: REPO, fabricDir: dir, now: NOW_MS })).toEqual([]);
+
+    // Inside the one-minute skew the stamp still counts as same-host drift.
+    const skewed: Row = { ...shadow(1, { safety: true, legacyDispatched: false }), ts: new Date(NOW_MS + 30_000).toISOString() };
+    const withinDir = freshDir();
+    const withinRows = [...safetyRows(2, 1), skewed];
+    fs.writeFileSync(
+      path.join(withinDir, `gateway-shadow-${dayOf(withinRows[0]!.ts)}.jsonl`),
+      withinRows.map((r) => JSON.stringify(r)).join('\n') + '\n',
+    );
+    const within = await gatewayShadowBacklogItems({ repo: REPO, fabricDir: withinDir, now: NOW_MS });
+    expect(within).toHaveLength(1);
+    expect(within[0]!.prompt).toContain('3 safety-relevant divergence(s)');
+
+    // A day-file named past the evaluation day is never opened — even a
+    // row inside carrying an in-window ts cannot reach the fold.
+    const futureDir = freshDir();
+    const futureDay = dayOf(new Date(NOW_MS + 86_400_000).toISOString());
+    fs.writeFileSync(
+      path.join(futureDir, `gateway-shadow-${futureDay}.jsonl`),
+      safetyRows(3, 1).map((r) => JSON.stringify(r)).join('\n') + '\n',
+    );
+    expect(await gatewayShadowBacklogItems({ repo: REPO, fabricDir: futureDir, now: NOW_MS })).toEqual([]);
+  });
+
   it('skips malformed lines and rows missing the record contract', async () => {
     const dir = fabricDir();
     const day = daysAgo(1).slice(0, 10);

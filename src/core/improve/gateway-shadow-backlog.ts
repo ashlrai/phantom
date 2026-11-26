@@ -43,7 +43,11 @@
  *    missing those fields are skipped, never guessed — unknown stays
  *    unknown.
  *  - Recency-windowed and recurring means recorded. Only rows whose ts
- *    lands inside the 7-day window count. The safety item emits only at
+ *    lands inside the 7-day window count, with the sibling feeds'
+ *    one-minute future skew as the ceiling — a ts stamped further ahead
+ *    than the evaluation time is corrupt or replayed evidence and never
+ *    reaches a tally, and a day-file named past the evaluation day is
+ *    never opened. The safety item emits only at
  *    GATEWAY_SHADOW_SAFETY_MIN recorded safety-relevant rows — the
  *    contract tolerates zero for the flip, but one transient comparison
  *    is not recurring evidence. The divergence item emits only when the
@@ -99,6 +103,14 @@ export const GATEWAY_SHADOW_MIN_DECISIONS = 50;
 export const GATEWAY_SHADOW_DIVERGENCE_RATE = 0.02;
 /** Evidence window: seven days, the same convention the sibling feeds anchor on. */
 export const GATEWAY_SHADOW_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Future-skew ceiling on row ts stamps, the sibling feeds' one-minute
+ * tolerance for same-host clock drift: a row stamped further ahead than
+ * the evaluation time is corrupt or replayed evidence and never reaches
+ * a tally — the same bound every other windowed backlog fold applies to
+ * its journal timestamps.
+ */
+export const GATEWAY_SHADOW_FUTURE_SKEW_MS = 60_000;
 /** Per-day file tail bound; a day of shadow rows is far smaller, the cap only guards a runaway file. */
 const SHADOW_FILE_TAIL_BYTES = 4 * 1024 * 1024;
 /** Day-file name the writer derives from the record's own UTC ts. */
@@ -187,10 +199,12 @@ interface DayFileRead {
 
 /**
  * Bounded read of the in-window day files, newest first. Only files whose
- * name-day can hold in-window rows are opened; each is tail-read so a
- * runaway file contributes its newest bytes and reports `truncated`.
+ * name-day can hold in-window rows are opened — a day-file named past the
+ * evaluation day can only hold future-dated rows, which are corrupt
+ * evidence the fold refuses anyway — and each is tail-read so a runaway
+ * file contributes its newest bytes and reports `truncated`.
  */
-async function readShadowDays(fabricDir: string, windowStartDay: string): Promise<DayFileRead> {
+async function readShadowDays(fabricDir: string, windowStartDay: string, untilDay: string): Promise<DayFileRead> {
   let names: string[];
   try {
     names = await readdir(fabricDir);
@@ -199,7 +213,7 @@ async function readShadowDays(fabricDir: string, windowStartDay: string): Promis
   }
   const files = names
     .map((name) => ({ name, day: SHADOW_FILE_PATTERN.exec(name)?.[1] }))
-    .filter((entry): entry is { name: string; day: string } => entry.day !== undefined && entry.day >= windowStartDay)
+    .filter((entry): entry is { name: string; day: string } => entry.day !== undefined && entry.day >= windowStartDay && entry.day <= untilDay)
     .sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : a.name < b.name ? 1 : -1));
   const rows: ShadowRow[] = [];
   let truncated = false;
@@ -317,10 +331,12 @@ export async function gatewayShadowBacklogItems(opts: GatewayShadowItemsOptions)
       : GATEWAY_SHADOW_WINDOW_MS;
     const fabricDir = opts.fabricDir ?? gatewayShadowDir();
     const windowStartDay = new Date(now - windowMs).toISOString().slice(0, 10);
-    const { rows, truncated } = await readShadowDays(fabricDir, windowStartDay);
+    const untilDay = new Date(now + GATEWAY_SHADOW_FUTURE_SKEW_MS).toISOString().slice(0, 10);
+    const { rows, truncated } = await readShadowDays(fabricDir, windowStartDay, untilDay);
 
     const windowStartMs = now - windowMs;
-    const inWindow = rows.filter((row) => row.atMs >= windowStartMs);
+    const untilMs = now + GATEWAY_SHADOW_FUTURE_SKEW_MS;
+    const inWindow = rows.filter((row) => row.atMs >= windowStartMs && row.atMs <= untilMs);
     if (inWindow.length === 0) return [];
 
     let safetyCount = 0;

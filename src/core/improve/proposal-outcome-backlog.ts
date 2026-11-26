@@ -55,7 +55,10 @@
  *    PROPOSAL_OUTCOME_UNKNOWN_MIN_PROPOSALS proposals inside the window.
  *  - Event-recency signals window on the establishing event's own `at`
  *    timestamp inside PROPOSAL_OUTCOME_WINDOW_MS (7 days, the sibling
- *    recurrence window). The stall count is a current-state tally instead —
+ *    recurrence window), with the sibling feeds' one-minute future skew
+ *    as the ceiling — a record stamped further ahead than the evaluation
+ *    time is corrupt or replayed evidence and never reaches a tally. The
+ *    stall count is a current-state tally instead —
  *    a proposal that never got measured is stalled however old its
  *    registration — gated by PROPOSAL_OUTCOME_UNMEASURED_GRACE_MS so a
  *    freshly registered proposal is never called stalled.
@@ -96,6 +99,13 @@ const PROPOSAL_OUTCOME_ITEM_HARD_MAX = 25;
 export const PROPOSAL_OUTCOME_RECURRING = 3;
 /** Event-recency window for the verdict and unknown-measurement signals (7 days). */
 export const PROPOSAL_OUTCOME_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Future-skew ceiling on ledger `at` stamps, the sibling feeds' one-minute
+ * tolerance for same-host clock drift: a record stamped further ahead than
+ * the evaluation time is corrupt or replayed evidence and never reaches a
+ * fold or a window tally.
+ */
+export const PROPOSAL_OUTCOME_FUTURE_SKEW_MS = 60_000;
 /**
  * A registered proposal must be this old before 'never measured' counts as a
  * stall — measurement is a manual verb and a fresh registration has not had
@@ -150,12 +160,12 @@ interface ProposalFold {
 
 const emptyFold = (): ProposalFold => ({ registeredAtMs: null, hasPr: false, measured: [], lastObservedAtMs: null, lastObservedKind: null });
 
-/** Per-proposal event fold: registration time, PR presence, measurements and the last observation. */
-function foldProposalEvents(records: readonly LedgerRecord[]): Map<string, ProposalFold> {
+/** Per-proposal event fold: registration time, PR presence, measurements and the last observation. Records stamped past notAfterMs are corrupt or replayed evidence and never fold. */
+function foldProposalEvents(records: readonly LedgerRecord[], notAfterMs: number): Map<string, ProposalFold> {
   const folds = new Map<string, ProposalFold>();
   for (const r of records) {
     const atMs = Date.parse(r.at);
-    if (Number.isNaN(atMs)) continue;
+    if (Number.isNaN(atMs) || atMs > notAfterMs) continue;
     let f = folds.get(r.proposalId);
     if (f === undefined) { f = emptyFold(); folds.set(r.proposalId, f); }
     switch (r.type) {
@@ -169,7 +179,8 @@ function foldProposalEvents(records: readonly LedgerRecord[]): Map<string, Propo
   return folds;
 }
 
-const inWindow = (atMs: number, nowMs: number): boolean => atMs >= nowMs - PROPOSAL_OUTCOME_WINDOW_MS;
+const inWindow = (atMs: number, nowMs: number): boolean =>
+  atMs >= nowMs - PROPOSAL_OUTCOME_WINDOW_MS && atMs <= nowMs + PROPOSAL_OUTCOME_FUTURE_SKEW_MS;
 
 interface StallTally { stalled: number; withPr: number; oldestRegisteredAtMs: number | null }
 
@@ -310,7 +321,7 @@ export async function proposalOutcomeBacklogItems(opts: ProposalOutcomeItemsOpti
     // broken chain or unreadable file is unknown — never a guessed tally.
     if (!read.intact) return [];
     const nowMs = (opts.now ?? new Date()).getTime();
-    const folds = foldProposalEvents(read.records);
+    const folds = foldProposalEvents(read.records, nowMs + PROPOSAL_OUTCOME_FUTURE_SKEW_MS);
     if (folds.size === 0) return [];
     const windowStartMs = nowMs - PROPOSAL_OUTCOME_WINDOW_MS;
 

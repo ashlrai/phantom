@@ -149,6 +149,31 @@ describe('foldHarnessRows', () => {
     const rolled = [...fold.values()].find((c) => c.kind === 'adoption-rolled-back');
     expect(rolled?.target).toBe('routing');
   });
+
+  it('never counts rows stamped past the evaluation-time future skew', () => {
+    const state = stateWith({ h1: 'routing', h2: 'routing', hf1: 'routing', hf2: 'routing', hs1: 'routing' });
+    // Rows stamped beyond now + skew never fold — two real rows stay a
+    // two-row cell instead of being inflated to four.
+    const fold = foldHarnessRows([
+      classifyHarnessEntry(experiment('h1', 'failed', null, 1))!,
+      classifyHarnessEntry(experiment('h2', 'failed', null, 2))!,
+      classifyHarnessEntry(experiment('hf1', 'failed', null, -1))!,
+      classifyHarnessEntry(experiment('hf2', 'failed', null, -3))!,
+    ], state, NOW.getTime());
+    const cell = [...fold.values()].find((c) => c.kind === 'experiment-failed');
+    expect(cell?.track.rows).toBe(2);
+    expect(cell?.track.days.size).toBe(2);
+    // All-future evidence folds nothing at all.
+    const only = foldHarnessRows([
+      classifyHarnessEntry(experiment('hf3', 'failed', null, -1))!,
+      classifyHarnessEntry(experiment('hf4', 'failed', null, -2))!,
+    ], state, NOW.getTime());
+    expect(only.size).toBe(0);
+    // Inside the one-minute skew the stamp still counts as same-host drift.
+    const skewed = { ...experiment('hs1', 'failed', null, 0), at: new Date(NOW.getTime() + 30_000).toISOString() };
+    const within = foldHarnessRows([classifyHarnessEntry(skewed)!], state, NOW.getTime());
+    expect(within.size).toBe(1);
+  });
 });
 
 describe('harnessBacklogItems', () => {
