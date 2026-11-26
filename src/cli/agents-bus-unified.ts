@@ -13,8 +13,9 @@ import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TI
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, claimNextBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
+  waitClaimNextBusWorkJob,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope,
-  type BusWorkJobNextResult } from '../core/agents/bus-claims.js';
+  type BusWorkJobNextWaitResult } from '../core/agents/bus-claims.js';
 import { COORDINATION_ORIGINS, type CoordinationOrigin } from '../core/agents/claim-store.js';
 import { formatBusWorkMine } from '../core/agents/bus-work-mine.js';
 import { readBusWorkMineWithSeats } from '../core/agents/bus-work-mine-seats.js';
@@ -25,6 +26,8 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 import { redactFields as redactFollowFields } from './fleet-bus-follow.js';
 import type { BusThreadResult } from '../core/fleet/bus-thread-context.js';
 import { claimNextBusWork, type BusNextResult } from '../core/fleet/bus-next-claim.js';
+import { waitClaimBusWork } from '../core/fleet/bus-wait-claim.js';
+import { wireAwaitCancel } from '../core/util/await-support.js';
 import { mutateBusWorkClaim, type BusClaimRequest, type BusClaimResult as BusMessageClaimResult } from '../core/fleet/bus-work-claims.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
@@ -64,9 +67,9 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work claim-next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>] [--exclude-announcer <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
+ashlr agents bus work claim-next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>] [--exclude-announcer <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--wait-ms <1..300000>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>]
-ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]
+ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>] [--wait-ms <1..300000>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
@@ -654,7 +657,14 @@ token feeds the message-claim verbs claim message renew|release|complete
 on this surface (the same journal comms bus claim spends) — while empty
 reports
 the observed {candidates, held} scan totals so a dry well reads
-differently from held work. Claims coordinate scope only; bodies are
+differently from held work. --wait-ms <1..300000> turns the one-shot claim
+into the same bounded wait fleet bus-wait-claim runs: the claim scan
+repeats every interval until a receipt becomes claimable, the deadline
+answers timeout, and SIGINT/SIGTERM answer cancelled — work announced
+mid-wait claims the moment it lands, under every filter above applied to
+each poll. work claim-next --wait-ms is the job-level counterpart, the
+same bounded wait over the claimable work-feed jobs. Claims coordinate
+scope only; bodies are
 never executed. status is a read-only probe of the store, registry, wake queue, bus hop log, coordination
 table, message-id claim journal, work feed, owner-chat share receipts, the
 dead-letter sink's retained delivery-failure reports, the
@@ -679,7 +689,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
   '--result', '--with', '--duration-ms', '--interval-ms',
   '--kind', '--channel', '--contains', '--exclude-from', '--exclude-owner', '--reply-to', '--in-reply-to', '--body-kind',
-  '--announcer', '--exclude-announcer']);
+  '--announcer', '--exclude-announcer', '--wait-ms']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched', '--all']);
 const MESSAGE_CLAIM_ACTIONS = ['acquire', 'renew', 'release', 'complete'] as const;
@@ -779,14 +789,15 @@ function workJobClaimExitCode(result: BusWorkJobClaimResult): number {
   return result.status === 'acquired' ? 0 : result.status === 'invalid' ? 2 : 1;
 }
 
-/** `work claim-next` human lines: the acquired claim reads like `work claim`'s, then the attempt count; empty and failures report the observed totals. */
-function workJobNextHuman(result: BusWorkJobNextResult): string {
+/** `work claim-next` human lines: the acquired claim reads like `work claim`'s, then the attempt count; empty and failures report the observed totals, a wait's own end states print bare. */
+function workJobNextHuman(result: BusWorkJobNextWaitResult): string {
   if (result.status === 'acquired') {
     return `acquired ${result.claim.claimKey} for ${claimJobLabel(result.job)} owner=${result.claim.owner} ` +
       `leaseUntil=${new Date(result.claim.leaseUntil).toISOString()} token=${result.claim.token}` +
       `${claimScopeSuffix(result.scope)} attempted=${result.attempted}`;
   }
   if (result.status === 'empty') return `empty candidates=${result.candidates} held=${result.held} attempted=${result.attempted}`;
+  if (!('attempted' in result)) return result.status;
   return `${result.status}: ${result.reason} attempted=${result.attempted}`;
 }
 
@@ -1367,10 +1378,21 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (contains !== undefined && (contains.trim() === '' || contains.length > BUS_WORK_FEED_CONTAINS_MAX)) {
         throw new UsageError(`--contains takes a non-empty search text of at most ${BUS_WORK_FEED_CONTAINS_MAX} characters.`);
       }
-      const result = claimNextBusWorkJob({ owner, leaseMs, root: options.root,
+      const waitMs = integer(one('--wait-ms'), '--wait-ms');
+      const claim = { owner, leaseMs, root: options.root,
         jobId, repo, provider: providerRaw as WorkJob['provider'] | undefined, tier,
         channel, topic, result: resultOutcome, id: envelopeId, contains,
-        since: sinceArg(), before: beforeArg(), to: agent, announcer, excludeAnnouncer });
+        since: sinceArg(), before: beforeArg(), to: agent, announcer, excludeAnnouncer };
+      let result: BusWorkJobNextWaitResult;
+      if (waitMs === undefined) {
+        result = claimNextBusWorkJob(claim);
+      } else {
+        const controller = new AbortController();
+        const detach = wireAwaitCancel(controller);
+        try {
+          result = await waitClaimNextBusWorkJob({ ...claim, waitMs }, controller.signal);
+        } finally { detach(); }
+      }
       out(json ? JSON.stringify(result) : workJobNextHuman(result));
       return result.status === 'acquired' || result.status === 'empty' ? 0 :
         result.status === 'invalid' ? 2 : 1;
@@ -1449,9 +1471,20 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (envelopeId !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(envelopeId)) {
         throw new UsageError('--id must be a printable routing label of 1-128 characters.');
       }
-      const result = claimNextBusWork({ to: agent, owner, leaseMs, root: options.root,
+      const waitMs = integer(one('--wait-ms'), '--wait-ms');
+      const claim = { to: agent, owner, leaseMs, root: options.root,
         contains: one('--contains'), since: sinceArg(), before: beforeArg(), priority: priorityArg(), id: envelopeId,
-        channel, topic, from: senderArg('--from'), excludeFrom: senderArg('--exclude-from') });
+        channel, topic, from: senderArg('--from'), excludeFrom: senderArg('--exclude-from') };
+      let result: BusNextResult;
+      if (waitMs === undefined) {
+        result = claimNextBusWork(claim);
+      } else {
+        const controller = new AbortController();
+        const detach = wireAwaitCancel(controller);
+        try {
+          result = await waitClaimBusWork({ ...claim, waitMs }, controller.signal);
+        } finally { detach(); }
+      }
       out(json ? JSON.stringify(result) : workNextHuman(result, owner));
       return result.status === 'acquired' || result.status === 'empty' ? 0 :
         result.status === 'invalid' ? 2 : 1;

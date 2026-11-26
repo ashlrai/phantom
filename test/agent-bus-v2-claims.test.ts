@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { claimBusWorkJob, claimNextBusWorkJob, executeBusClaimBody, listBusClaims, type BusClaimResult } from '../src/core/agents/bus-claims.js';
+import { claimBusWorkJob, claimNextBusWorkJob, executeBusClaimBody, listBusClaims, waitClaimNextBusWorkJob, type BusClaimResult } from '../src/core/agents/bus-claims.js';
 import { acquireCoordination, listCoordination, teamClaimKey } from '../src/core/agents/claim-store.js';
 import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
@@ -874,6 +874,72 @@ describe('claimNextBusWorkJob', () => {
     writeFileSync(join(root, 'bus-inbox', 'messages.json'), 'corrupt');
     expect(claimNextBusWorkJob({ root, now: NOW, owner: 'w', leaseMs: 1_000 }))
       .toEqual({ status: 'unavailable', reason: 'work-feed-unavailable', attempted: 0 });
+    expect(listCoordination(root, NOW).claims).toHaveLength(0);
+  });
+});
+
+describe('waitClaimNextBusWorkJob', () => {
+  const postWork = (root: string, jobId: string, claimKeys: string[], at = NOW) => {
+    const body = { kind: 'work.post', jobId, title: `Job ${jobId}`, repo: 'a/b', claimKeys, provider: 'devin' };
+    const posted = appendBusInbox({ id: `ww-post-${jobId}`, from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body }, { root, now: () => at });
+    expect(posted.status).toBe('posted');
+  };
+
+  it('claims a job announced while the wait is pending', async () => {
+    const root = tempDir('v2jobwait-');
+    const waiting = waitClaimNextBusWorkJob({ root, now: NOW, owner: 'worker-1', leaseMs: 600_000, waitMs: 10_000 });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    postWork(root, 'RQ-WAIT', ['queue:RQ-WAIT']);
+    const result = await waiting;
+    expect(result).toMatchObject({ status: 'acquired', attempted: expect.any(Number),
+      job: { id: 'RQ-WAIT', status: 'queued' },
+      claim: { claimKey: 'queue:RQ-WAIT', owner: 'worker-1' } });
+    if (result.status !== 'acquired') throw new Error('expected acquired');
+    expect(result.claim.token).toMatch(TOKEN_RE);
+    expect(listCoordination(root, NOW).claims).toEqual([expect.objectContaining({ key: 'queue:RQ-WAIT',
+      owner: 'worker-1', live: true })]);
+  });
+
+  it('times out on a dry well and reports cancelled on abort', async () => {
+    const root = tempDir('v2jobwait-');
+    // A non-open job is never a candidate, so the well stays dry.
+    postWork(root, 'RQ-WAIT-DONE', ['queue:RQ-WAIT-DONE']);
+    appendBusInbox({ id: 'ww-status-done', from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: { kind: 'work.status', jobId: 'RQ-WAIT-DONE', status: 'done' } },
+      { root, now: () => NOW });
+    expect(await waitClaimNextBusWorkJob({ root, now: NOW, owner: 'w', leaseMs: 1_000, waitMs: 30 }))
+      .toEqual({ status: 'timeout' });
+    const controller = new AbortController();
+    const waiting = waitClaimNextBusWorkJob({ root, now: NOW, owner: 'w', leaseMs: 1_000, waitMs: 10_000 },
+      controller.signal);
+    controller.abort();
+    expect(await waiting).toEqual({ status: 'cancelled' });
+    expect(listCoordination(root, NOW).claims).toHaveLength(0);
+  });
+
+  it('applies the filters on every poll rather than claiming what they hide', async () => {
+    const root = tempDir('v2jobwait-');
+    const waiting = waitClaimNextBusWorkJob({ root, now: NOW, owner: 'w', leaseMs: 1_000,
+      waitMs: 400, jobId: 'RQ-WAIT-FILTER' });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    // A job the filter excludes lands mid-wait and still never becomes a
+    // candidate — the wait times out honestly instead of widening the claim.
+    postWork(root, 'RQ-WAIT-OTHER', ['queue:RQ-WAIT-OTHER']);
+    expect(await waiting).toEqual({ status: 'timeout' });
+    expect(listCoordination(root, NOW).claims).toHaveLength(0);
+  });
+
+  it('rejects a malformed wait before polling and passes claim-invalid through', async () => {
+    const root = tempDir('v2jobwait-');
+    postWork(root, 'RQ-WAIT-I', ['queue:RQ-WAIT-I']);
+    for (const waitMs of [0, -1, 1.5, 300_001, Number.NaN]) {
+      expect(await waitClaimNextBusWorkJob({ root, now: NOW, owner: 'w', leaseMs: 1_000, waitMs }))
+        .toEqual({ status: 'invalid', reason: 'invalid-wait', attempted: 0 });
+    }
+    // A bad claim argument fails on the first poll, never after the deadline.
+    expect(await waitClaimNextBusWorkJob({ root, now: NOW, owner: 'bad owner', leaseMs: 1_000, waitMs: 10_000 }))
+      .toMatchObject({ status: 'invalid', reason: 'invalid-owner', attempted: 0 });
     expect(listCoordination(root, NOW).claims).toHaveLength(0);
   });
 });

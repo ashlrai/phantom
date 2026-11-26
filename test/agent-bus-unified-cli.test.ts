@@ -1738,6 +1738,55 @@ describe('phm agents bus (unified)', () => {
     expect(emptyText.join('\n')).toContain('empty candidates=2 held=2');
   });
 
+  it('waits for claimable work on work next and work claim-next', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    const env = { PHM_AGENT_ID: 'atlas' };
+
+    // A dry well waits honestly to timeout on both claim surfaces — the
+    // unified spelling of fleet bus-wait-claim, exit 1 like every refusal.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--wait-ms', '30'], env))
+      .toMatchObject({ code: 1, json: { status: 'timeout' } });
+    expect(await run(['work', 'claim-next', '--lease-ms', '60000', '--wait-ms', '30'], env))
+      .toMatchObject({ code: 1, json: { status: 'timeout' } });
+
+    // Work landing mid-wait claims on the next poll, under the same filters.
+    const envelopeWait = run(['work', 'next', '--lease-ms', '60000', '--wait-ms', '5000',
+      '--contains', 'waited-for'], env);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(appendBusInbox({ id: 'ww-env', from: 'agent:nova', to: 'agent:atlas', priority: 'P2',
+      ttl: 3_600_000, body: { kind: 'work', text: 'the waited-for fix' } }, { root }).status).toBe('posted');
+    expect((await envelopeWait).json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'ww-env' } } });
+
+    const jobWait = run(['work', 'claim-next', '--lease-ms', '60000', '--wait-ms', '5000'], env);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-WAIT-CLI', '--title', 'Waited job',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-WAIT-CLI', '--to', 'agent:atlas', '--id', 'ww-job'], env)).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await jobWait).json).toMatchObject({ status: 'acquired', job: { id: 'RQ-WAIT-CLI' },
+      claim: { claimKey: 'queue:RQ-WAIT-CLI' } });
+
+    // A filtered wait never widens: the job above is held, and a wait scoped
+    // to a different job id still times out rather than claiming it.
+    expect(await run(['work', 'claim-next', '--lease-ms', '60000', '--wait-ms', '30',
+      '--job', 'RQ-NEVER'], env)).toMatchObject({ code: 1, json: { status: 'timeout' } });
+
+    // Malformed waits are usage errors before any poll; the core bound is
+    // 1..300000 like fleet bus-wait-claim.
+    for (const bad of ['0', '300001', '1.5', 'abc']) {
+      expect(await run(['work', 'next', '--lease-ms', '60000', '--wait-ms', bad], env))
+        .toMatchObject({ code: 2 });
+      expect(await run(['work', 'claim-next', '--lease-ms', '60000', '--wait-ms', bad], env))
+        .toMatchObject({ code: 2 });
+    }
+
+    // Human output names the wait's own end state.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'claim-next', '--lease-ms', '60000', '--wait-ms', '30',
+      '--job', 'RQ-NEVER', '--root', root], t => text.push(t), () => {}, env)).toBe(1);
+    expect(text.join('\n')).toContain('timeout');
+  });
+
   it('filters the next-work claim by contains, since and priority', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     const post = (id: string, priority: BusEnvelope['priority'], body: unknown): void => {
