@@ -222,7 +222,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]`
+`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -568,7 +568,8 @@ coordination board`, `phm fleet coordination inbox --agent`, `phm fleet
 claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
-items with the remainder counted in `omitted`. The bare view also narrows:
+items with the remainder counted in `omitted` (`--limit` narrows the page
+below that bound). The bare view also narrows:
 `--source <name>` keeps one source's items, `--kind <name>` one item kind —
 the item's own classification, finer than `--source` where one source emits
 several kinds (the `bus` source's `bus-work`/`bus-handoff`/`bus-dead-letter`
@@ -593,7 +594,12 @@ as new or old; and `--contains <text>` only items whose scrubbed `title` or
 `detail` carries the text as a case-insensitive substring with whitespace
 collapsed — the same text the row shows, so a match is always visible in
 the row it selects, while the `act` deep links (commands, never item
-content) stay out of the match. The dimensions AND together. `total`, `omitted` and `items` then
+content) stay out of the match. The dimensions AND together. `--limit
+<n>` keeps only the newest n ranked items — 1..200, default the store's
+own 200-item page, the same bound `fleet_comms_inbox`'s `limit` arg and the
+endpoint's `limit` param take — through the shared `pageUnifiedInbox`
+slice, recounting `omitted` over the shown page: it narrows what is
+shown, never what matched or what each source reports. `total`, `omitted` and `items` then
 describe
 the matched view and the report echoes the applied `filter`, while `sources`
 keeps every store's real unfiltered pending count — `null` when a source
@@ -602,7 +608,8 @@ reports a busy or degraded source as empty. `GET /api/verse/comms/inbox` —
 the desktop and agent read of the same report — accepts the same dimensions
 as query parameters (`source`, `kind`, `severity`, `blocking=true|false`,
 `job`, `since`, `before`, `contains`, each at most once, plus `limit` 1–200 default
-50), validated by `parseUnifiedInboxQuery` — the same value rules `phm
+50 — the same `pageUnifiedInbox` slice the CLI `--limit` flag applies),
+validated by `parseUnifiedInboxQuery` — the same value rules `phm
 comms inbox` and `fleet_comms_inbox` apply — and echoes the applied
 `filter` on the response exactly like
 `fleet_comms_inbox` does; an unknown, repeated or malformed parameter is a

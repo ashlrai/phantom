@@ -1,6 +1,6 @@
 import { fixedOwnerRunsDir } from '../core/comms/owner-channel.js';
 import {
-  isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, readUnifiedInbox,
+  isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, pageUnifiedInbox, readUnifiedInbox,
   UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_MAX_ITEMS,
   type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxOptions,
 } from '../core/comms/unified-inbox.js';
@@ -65,7 +65,12 @@ export function parseFleetCommsInboxArgs(args: Record<string, unknown>): FleetCo
   return { limit, ...(Object.keys(filter).length === 0 ? {} : { filter }) };
 }
 
-/** Read the same ranked, private inbox as the local HTTP endpoint. */
+/**
+ * Read the same ranked, private inbox as the local HTTP endpoint and
+ * `phm comms inbox --limit`: the `limit` page runs through the shared
+ * `pageUnifiedInbox` slice, so the shown items and the recounted `omitted`
+ * can never disagree with the CLI or HTTP read about what a page means.
+ */
 export async function readFleetCommsInbox(args: FleetCommsInboxArgs, deps: FleetCommsInboxDeps = {}) {
   const schema = 'comms.unified-inbox.v1' as const;
   try {
@@ -73,9 +78,9 @@ export async function readFleetCommsInbox(args: FleetCommsInboxArgs, deps: Fleet
       runsDir: deps.runsDir ?? fixedOwnerRunsDir(),
       ...(args.filter === undefined ? {} : { filter: args.filter }),
     });
-    const items = inbox.items.slice(0, args.limit);
+    const page = pageUnifiedInbox(inbox, args.limit);
     return { schema, generatedAt: inbox.generatedAt, sources: inbox.sources, total: inbox.total,
-      omitted: Math.max(0, inbox.total - items.length), items,
+      omitted: page.omitted, items: page.items,
       ...(inbox.filter === undefined ? {} : { filter: inbox.filter }) };
   } catch {
     return { schema, unavailable: true as const, items: [] };

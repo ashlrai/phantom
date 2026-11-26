@@ -1,7 +1,8 @@
 import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
-import { readUnifiedInbox, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, UNIFIED_INBOX_CONTAINS_MAX,
+import { readUnifiedInbox, pageUnifiedInbox, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource,
+  UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_MAX_ITEMS,
   type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxKind, type UnifiedInboxSeverity, type UnifiedInboxSource } from '../core/comms/unified-inbox.js';
 import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -9,7 +10,7 @@ import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js'
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { entryInstant, parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]
+const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines
@@ -48,7 +49,12 @@ dimensions AND together, and the
 per-source counts still report every
 store's real pending total — null when a source could not be read, never a
 fabricated 0 — so a filtered view never hides a busy or degraded
-source. --json prints the same view as JSON.
+source. --limit <n> keeps only the newest n ranked items — 1..200,
+default the store's own 200-item page, the same bound fleet_comms_inbox's
+limit arg and GET /api/verse/comms/inbox?limit= take — through the shared
+pageUnifiedInbox slice, recounting omitted over the shown page: it narrows
+what is shown, never what matched or what each source reports. --json
+prints the same view as JSON.
 read and post read and write the owner's local inbox file. Output is JSON; post returns the receiver acknowledgement.
 --receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.
 Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
@@ -152,7 +158,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       let json = false, blocking = false;
       let source: UnifiedInboxSource | undefined, kind: UnifiedInboxKind | undefined,
         severity: UnifiedInboxSeverity | undefined, job: string | undefined, contains: string | undefined;
-      let sinceMs: number | undefined, beforeMs: number | undefined;
+      let sinceMs: number | undefined, beforeMs: number | undefined, limit: number | undefined;
       const seen = new Set<string>();
       for (let i = 0; i < args.length; i++) {
         const arg = args[i]!;
@@ -209,6 +215,17 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
             value.length > UNIFIED_INBOX_CONTAINS_MAX) return invalid();
           seen.add(arg); contains = value; continue;
         }
+        if (arg === '--limit' && !seen.has(arg)) {
+          const value = args[++i];
+          // The same page grammar the HTTP `limit` param and the MCP `limit`
+          // arg share: digits only, 1..UNIFIED_INBOX_MAX_ITEMS — a
+          // flag-looking, non-numeric or out-of-range value is a usage
+          // error, never a silently ignored page.
+          if (value === undefined || !/^[0-9]+$/.test(value)) return invalid();
+          const page = Number(value);
+          if (!Number.isSafeInteger(page) || page < 1 || page > UNIFIED_INBOX_MAX_ITEMS) return invalid();
+          seen.add(arg); limit = page; continue;
+        }
         return invalid();
       }
       const filter: UnifiedInboxFilter | undefined =
@@ -222,8 +239,8 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
               ...(beforeMs === undefined ? {} : { before: beforeMs }),
               ...(contains === undefined ? {} : { contains }),
               ...(blocking ? { blocking: true } : {}) };
-      const report = await readUnifiedInbox({ runsDir: options.runsDir, busRoot: options.busRoot,
-        ...(filter === undefined ? {} : { filter }) });
+      const report = pageUnifiedInbox(await readUnifiedInbox({ runsDir: options.runsDir, busRoot: options.busRoot,
+        ...(filter === undefined ? {} : { filter }) }), limit ?? UNIFIED_INBOX_MAX_ITEMS);
       if (json) console.log(JSON.stringify(report)); else printUnified(report);
       return 0;
     }
