@@ -18,8 +18,8 @@ import {
 } from './policy.js';
 import { routeCommsLane } from './route.js';
 import {
-  appendArchive, appendDraft, appendOwnerNotice, appendSendLog, listDrafts, readInbox, readOwnerApprovals, readSendLog, writeInbox,
-  type ApprovalsReason, type CommsDraft, type OwnerApprovals,
+  appendArchive, appendDraft, appendOwnerNotice, appendRunRecord, appendSendLog, listDrafts, readInbox, readOwnerApprovals, readRunJournal, readSendLog, writeInbox,
+  type ApprovalsReason, type CommsDraft, type CommsRunRecord, type OwnerApprovals,
 } from './store.js';
 import { triageInbox, type InboxMessage } from './triage.js';
 
@@ -317,7 +317,7 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
     }
     await writeInbox(options.runsDir, triage.kept.filter(message => !resolved.has(message.id)), inbox.rows);
   }
-  return {
+  const report: CommsRunReport = {
     ok: true,
     schema: 'comms-agent.run.v1',
     role: COMMS_AGENT_ROLE.id,
@@ -333,6 +333,21 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
     },
     sends,
   };
+  // The run journal is the pass's own audit record: `status` reads it to say
+  // when the role last completed a pass. Like the send log, a bookkeeping
+  // failure cannot rewrite a completed pass — the work already happened —
+  // so the append is best-effort and the report still returns.
+  const record: CommsRunRecord = {
+    at: (options.now ?? (() => new Date().toISOString()))(),
+    schema: report.schema,
+    lane: report.lane,
+    laneReason: report.laneReason,
+    triage: report.triage,
+    sends: report.sends,
+  };
+  try { await appendRunRecord(options.runsDir, record); }
+  catch { /* See above: bookkeeping never rewrites a completed pass. */ }
+  return report;
 }
 
 export async function commsStatus(runsDir: string, deps: {
@@ -363,8 +378,27 @@ export async function commsStatus(runsDir: string, deps: {
     approvalCount: number;
     ownerCount: number;
   } | null;
+  /** The last pass that completed, from the run journal `run` appends to.
+   * `source` is 'missing' when no pass ever completed (a verified-empty
+   * journal), 'available' when a record was read, and 'unavailable' when the
+   * journal cannot be read or holds no readable record — a pass may have run,
+   * the answer is unknown, never reported as never-ran. `run` is null unless
+   * source is 'available'. A pass that failed mid-flight appends nothing, so
+   * a stale `at` is itself the signal that passes are not completing. */
+  lastRun: {
+    source: 'missing' | 'available' | 'unavailable';
+    run: {
+      at: string;
+      lane: string | null;
+      laneReason: string;
+      kept: number;
+      archived: number;
+      drafted: number;
+      sendOutcomes: { sent: number; drafted: number; refused: number };
+    } | null;
+  };
 }> {
-  const [inbox, drafts, sends, approvals] = await Promise.all([
+  const [inbox, drafts, sends, approvals, journal] = await Promise.all([
     readInbox(runsDir).then(read => read.messages.length).catch(() => null),
     listDrafts(runsDir).then(rows => rows.filter(draft => draft.status === 'pending').length).catch(() => null),
     readSendLog(runsDir).then(rows => rows.length).catch(() => null),
@@ -374,6 +408,22 @@ export async function commsStatus(runsDir: string, deps: {
       approvalCount: found.approvals.length,
       ownerCount: found.owners.length,
     })).catch(() => null),
+    readRunJournal(runsDir).then(read => {
+      if (read.status === 'missing') return { source: 'missing' as const, run: null };
+      if (read.record === null) return { source: 'unavailable' as const, run: null };
+      const record = read.record;
+      const sendOutcomes = { sent: 0, drafted: 0, refused: 0 };
+      for (const send of record.sends) sendOutcomes[send.status] += 1;
+      return { source: 'available' as const, run: {
+        at: record.at,
+        lane: record.lane,
+        laneReason: record.laneReason,
+        kept: record.triage.kept,
+        archived: record.triage.archived,
+        drafted: record.triage.drafted,
+        sendOutcomes,
+      } };
+    }).catch(() => ({ source: 'unavailable' as const, run: null })),
   ]);
   let adapters: string[] | null = null;
   try { adapters = listChannelRegistry().filter(row => row.adapterRegistered).map(row => row.id); }
@@ -389,6 +439,7 @@ export async function commsStatus(runsDir: string, deps: {
     sendsLogged: sends,
     adapters,
     standingApprovals: approvals,
+    lastRun: journal,
   };
 }
 
