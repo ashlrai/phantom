@@ -543,7 +543,9 @@ stop-others SIGTERM cascade, so they can never be runner identities.
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit test pass on master's current run produces
-`rerun-failed`. Other evidence stays `unknown`. Relative imports are followed
+`rerun-failed`. A green Vitest module summary with skipped or todo cases
+proves the suite loaded but leaves individual case outcomes unknown without
+an explicit pass line for the case. Relative imports are followed
 transitively from master (100-file cap) with bundler resolution: `.js`/`.jsx`
 specifiers map to `.ts`/`.tsx` sources, extensionless specifiers try file then
 directory `index`, `?raw`/`?url`/`?inline` queries and non-code files (`.css`,
