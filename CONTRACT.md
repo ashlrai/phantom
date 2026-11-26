@@ -4616,8 +4616,11 @@ human-required decision is HTTP 403 `human-presence-required`.
 `phantom.repos.v1` lists the union of the ecosystem catalog, local enrollment,
 and effective signed repository scope. Effective stage and local enrollment
 are separate fields. `canManageGrant` is false on configured workers.
-`prioritySync: "local-only"` applies to list and priority mutation results
-until leader replication is available.
+`prioritySync` is `leader`, `synced`, or `unavailable`. A worker reports
+`prioritySource` from its node-RPC replica (including machine and age); missing
+or expired priority data leaves priority and allocation null. A priority
+request on the leader returns HTTP 202 with `status: "pending-scheduler"`
+until the scheduler applies it. Workers receive 403 `priority-leader-only`.
 
 `allocateRepos(evidence, freshness?, now?)` takes an optional
 `repo-freshness.v1` snapshot and an epoch-millisecond evaluation time. The

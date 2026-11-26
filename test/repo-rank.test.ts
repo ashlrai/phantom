@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { computeRank, SEEDS, updateRank, readRank, validRank, localMerges } from '../src/core/fleet/repo-rank.js';
-import { allocateRepos, readRepoPriority, setRepoPriority, type RepoMarketEvidence } from '../src/core/fleet/repo-market.js';
+import { allocateRepos, readAppliedRepoPriorities, writeRepoPriorityRequest, type RepoMarketEvidence } from '../src/core/fleet/repo-market.js';
 import { managedRepoCatalog, parseRepoMarketFacts, planRepoChange } from '../src/core/fleet/repos-manager.js';
 const now = new Date('2026-11-04T12:00:00Z');
 
@@ -36,9 +36,9 @@ test('allocation responds to evidence, and boost and pause are bounded', () => {
   expect(rows[3]?.reasonCodes).toContain('owner_pause');
   const directory = mkdtempSync(join(tmpdir(), 'repo-nudge-'));
   try {
-    setRepoPriority('locus', 'pause', directory);
-    expect(readRepoPriority('ashlrai/locus', directory)).toBe('pause');
-    expect(readRepoPriority('ashlrai/lexicon', directory)).toBe('normal');
+    writeRepoPriorityRequest('locus', 'pause', join(directory, 'requests'));
+    expect(readFileSync(join(directory, 'requests', 'ashlrai@locus'), 'utf8')).toBe('pause\n');
+    expect(readAppliedRepoPriorities(join(directory, 'applied'))).toEqual({});
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
