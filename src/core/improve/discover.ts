@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Seventy-seven sources, all of which Phantom
+ * evidence instead of a hand-kept list. Seventy-eight sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -1116,6 +1116,28 @@
  *     only the fleet's own repository inherits the items since the
  *     insights describe this install's agent behavior and the fix
  *     surface lives in this repository;
+ *   - the fleet gap fold's recurring stall, admission-blocked and
+ *     unattributed evidence: the fleet.gaps.v1 report buildFleetGaps
+ *     in src/core/fleet/sleep-gaps.ts computes — every stretch of
+ *     GAP_MIN_MINUTES+ minutes with no PLANNER_TICK in
+ *     queue/dispatch-events.log (falling back to dispatch-events.log)
+ *     or on-time ticks that all skipped launch while jobs sat queued
+ *     per metrics/jobs.jsonl, each cause-attributed through the
+ *     queue/clock-samples.json wall-versus-monotonic pairs a self-tick
+ *     records (fleetGapBacklogItems below). Until now the gaps only
+ *     ever reached `phm fleet gaps` itself, the hourly digest's
+ *     first-line blocker and its gapLine summaries — reports someone
+ *     had to open — so a dispatcher that kept stalling or admission
+ *     that kept refusing launches never became work even though each
+ *     gap is fleet capacity the queue could not use. A cell emits only
+ *     at the recurring bars of GAP_MIN_EPISODES separate episodes
+ *     across GAP_MIN_DAYS distinct UTC days inside the 7-day window,
+ *     provably-empty-queue and host-asleep episodes never count,
+ *     unreadable tick evidence yields nothing while unproven launch
+ *     coverage degrades to no-tick gaps only, truncated tails are
+ *     stated as lower bounds or proven coverage edges, and items emit
+ *     only for the fleet's own repository since the evidence describes
+ *     this install's dispatcher and carries no repository column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1231,6 +1253,7 @@ import { feedbackSubmissionsBacklogItems } from './feedback-submissions-backlog.
 import { outsidePrBacklogItems } from './outside-pr-backlog.js';
 import { repoShareBacklogItems } from './repo-share-backlog.js';
 import { reasoningInsightBacklogItems } from './reasoning-insight-backlog.js';
+import { fleetGapBacklogItems } from './fleet-gap-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2650,6 +2673,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // insights describe this install's agent behavior and the fix
   // surface (extractors, adapters, prompts, harness) lives here.
   items.push(...await reasoningInsightBacklogItems({ repo }));
+
+  // Fleet gap fold: the fleet.gaps.v1 report `phm fleet gaps` prints —
+  // every stretch of GAP_MIN_MINUTES+ minutes with no PLANNER_TICK or
+  // on-time ticks that all skipped launch while jobs sat queued,
+  // cause-attributed through the clock samples — becomes backlog items
+  // too. Until now the gaps only ever reached that report, the hourly
+  // digest's first-line blocker and its gapLine summaries, so a
+  // dispatcher that kept stalling or admission that kept refusing
+  // launches never became work. Same bounded tail reads and the
+  // production buildFleetGaps fold; a cell emits only at the recurring
+  // bars of separate episodes across distinct UTC days inside the
+  // window, provably-empty-queue and host-asleep episodes never count,
+  // unreadable tick evidence yields nothing while unproven launch
+  // coverage degrades to no-tick gaps only, and only the fleet's own
+  // repository inherits the items since the evidence describes this
+  // install's dispatcher and carries no repository column.
+  items.push(...await fleetGapBacklogItems({ repo }));
   return { items, errors };
 }
 
