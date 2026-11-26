@@ -104,9 +104,9 @@ describe('fleet runs api', () => {
     const all = await request(api, { path: '/api/verse/fleet/runs/tools/parity' });
     expect(all.status).toBe(200);
     const wire = all.wire as unknown as import('../src/core/fleet/tool-parity.js').LaneParityMatrix;
-    expect(wire).toMatchObject({ schema: 'tools.parity.v2', version: 2, parity: 'gaps', counts: { present: 2, missing: 2, unknown: 84 } });
+    expect(wire).toMatchObject({ schema: 'tools.parity.v2', version: 2, parity: 'gaps', counts: { present: 2, missing: 2, unknown: 76 } });
     expect(wire.families.map(f => f.id)).toEqual(['mcp', 'cli', 'skills', 'plugins', 'web-search', 'browser', 'computer-use', 'gh']);
-    expect(wire.lanes.map(l => l.lane)).toEqual(['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor']);
+    expect(wire.lanes.map(l => l.lane)).toEqual(['codex-personal', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor']);
     const one = (await request(api, { path: '/api/verse/fleet/runs/tools/parity?lane=codex-local' })).wire as unknown as typeof wire;
     expect(one.lanes.map(l => l.lane)).toEqual(['codex-local']);
     expect(one.lanes[0]!.cells.mcp).toEqual({

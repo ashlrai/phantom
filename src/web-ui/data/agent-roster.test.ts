@@ -56,12 +56,12 @@ describe('readFleetRoster', () => {
     const fleet = readFleetRoster({
       ...FLEET_V1_FIXTURE,
       agents: [7, { agent: '' }, { agent: '../etc/passwd' }, { agent: 'x'.repeat(200) }, { agent: 'devin', repo: 'not a repo', task: 42, claim_id: 'c', expires_at: '2026-10-26T12:30:00Z' }],
-      pools: [{ id: 'codex-cmp' }, { id: 'codex-cmp' }, { id: 'gpt-9' }, { id: 'cursor', shared_with: 'nowhere' }],
+      pools: [{ id: 'codex-personal' }, { id: 'codex-personal' }, { id: 'codex-cmp' }, { id: 'gpt-9' }, { id: 'cursor', shared_with: 'nowhere' }],
     }, now);
     expect([...(fleet.agents?.keys() ?? [])]).toEqual(['devin']);
     expect(fleet.agents?.get('devin')).toEqual([{ repo: null, task: null, expiresAt: '2026-10-26T12:30:00.000Z' }]);
     expect(fleet.pools).toEqual([
-      { id: 'codex-cmp', label: 'Codex (primary)', sharedWith: null },
+      { id: 'codex-personal', label: 'Codex personal', sharedWith: null },
       { id: 'cursor', label: 'Cursor', sharedWith: null },
     ]);
   });
@@ -76,8 +76,8 @@ describe('readFleetRoster', () => {
 
 describe('resolvePool', () => {
   it('maps canonical ids and the scheduler aliases fleet.v1 documents', () => {
-    expect(resolvePool('codex-cmp')).toBe('codex-cmp');
-    expect(resolvePool('codex-primary')).toBe('codex-cmp');
+    expect(resolvePool('codex-cmp')).toBeNull();
+    expect(resolvePool('codex-primary')).toBeNull();
     expect(resolvePool('codex-secondary')).toBe('codex-personal');
     expect(resolvePool('claude')).toBe('claude-max');
     expect(resolvePool('local')).toBe('omlx');
@@ -150,7 +150,7 @@ describe('buildAgentRoster', () => {
       ['ag_k3m9x2p7q4', 'Docs sweeper'],
       ['local', 'oMLX (local)'],
     ]);
-    expect(roster.pools.map((p) => p.id)).toEqual(['grok-ultra-weekly', 'codex-cmp', 'codex-personal', 'claude-max', 'devin', 'grok-build', 'cursor', 'omlx']);
+    expect(roster.pools.map((p) => p.id)).toEqual(['grok-ultra-weekly', 'codex-personal', 'claude-max', 'devin', 'grok-build', 'cursor', 'omlx']);
     expect(roster.pools.find((p) => p.id === 'cursor')?.sharedWith).toBe('grok-ultra-weekly');
   });
 
@@ -163,8 +163,8 @@ describe('buildAgentRoster', () => {
       pinned: true,
       hidden: false,
       notify: true,
-      pool: 'codex-cmp',
-      poolLabel: 'Codex (primary)',
+      pool: null,
+      poolLabel: null,
     });
     expect(cmp.claims).toHaveLength(2);
     expect(byId(roster.agents, 'cursor')).toMatchObject({ team: 'Design', notify: false, pool: 'cursor', seat: null });

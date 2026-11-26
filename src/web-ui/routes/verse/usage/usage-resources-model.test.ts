@@ -1,7 +1,7 @@
 /**
  * usage-resources-model.test.ts — the wire narrowing and row projection for
  * the "Every resource" panel (RQ-NIGHT-USAGE-1). The rules under test:
- * twelve rows always, empty states say so in words, and a measured value
+ * eleven rows always, empty states say so in words, and a measured value
  * never appears for a resource that was not measured.
  */
 import { describe, expect, it } from 'vitest';
@@ -26,7 +26,7 @@ describe('narrowUsageResources', () => {
   it('accepts the contract body', () => {
     const narrowed = narrowUsageResources(wire());
     expect(narrowed).not.toBeNull();
-    expect(narrowed!.resources).toHaveLength(12);
+    expect(narrowed!.resources).toHaveLength(11);
     expect(narrowed!.resources.map((row) => row.id)).toEqual(USAGE_RESOURCES.map((r) => r.id));
   });
 
@@ -47,17 +47,17 @@ describe('narrowUsageResources', () => {
 describe('resourceRows', () => {
   it('projects a measured row: amount, meter, reset, source, as-of', () => {
     const rows = resourceRows(narrowUsageResources(wire({
-      'codex-cmp': { state: 'ok', used: 62, limit: 100, unit: 'percent',
+      'codex-personal': { state: 'ok', used: 62, limit: 100, unit: 'percent',
         resetsAt: '2026-11-05T12:00:00.000Z', source: 'codex-session-logs', asOf: '2026-11-02T11:00:00.000Z' },
       devin: { state: 'ok', used: 1240, limit: 2000, unit: 'acu',
         resetsAt: '2026-12-01T00:00:00.000Z', source: 'devin-api-v3-org-cycle', asOf: '2026-11-02T11:59:00.000Z' },
     })), NOW);
-    const cmp = rows.find((row) => row.id === 'codex-cmp')!;
-    expect(cmp.amountText).toBe('62% used');
-    expect(cmp.percent).toBe(62);
-    expect(cmp.resetText).toBe('resets in 3 d');
-    expect(cmp.sourceText).toBe('codex-session-logs');
-    expect(cmp.asOfText).toBe('as of 1h ago');
+    const personal = rows.find((row) => row.id === 'codex-personal')!;
+    expect(personal.amountText).toBe('62% used');
+    expect(personal.percent).toBe(62);
+    expect(personal.resetText).toBe('resets in 3 d');
+    expect(personal.sourceText).toBe('codex-session-logs');
+    expect(personal.asOfText).toBe('as of 1h ago');
     const devin = rows.find((row) => row.id === 'devin')!;
     expect(devin.amountText).toBe('1,240 of 2,000 ACU');
     expect(devin.percent).toBe(62);
@@ -76,13 +76,13 @@ describe('resourceRows', () => {
 
   it('keeps a reading with unmeasured windows honest (null used, not 0%)', () => {
     const rows = resourceRows(narrowUsageResources(wire({
-      'codex-cmp': { state: 'ok', used: null, limit: 100, unit: 'percent',
+      'codex-personal': { state: 'ok', used: null, limit: 100, unit: 'percent',
         resetsAt: null, source: 'codex-session-logs', asOf: '2026-11-02T11:00:00.000Z' },
     })), NOW);
-    const cmp = rows.find((r) => r.id === 'codex-cmp')!;
-    expect(cmp.state).toBe('ok');
-    expect(cmp.amountText).toBeNull();
-    expect(cmp.percent).toBeNull();
+    const personal = rows.find((r) => r.id === 'codex-personal')!;
+    expect(personal.state).toBe('ok');
+    expect(personal.amountText).toBeNull();
+    expect(personal.percent).toBeNull();
   });
 
   it('renders usd and points amounts in their own units', () => {
@@ -99,7 +99,7 @@ describe('resourceRows', () => {
 
   it('degrades to honest no-reading rows when no wire body exists', () => {
     const rows = resourceRows(null, NOW);
-    expect(rows).toHaveLength(12);
+    expect(rows).toHaveLength(11);
     for (const row of rows) {
       expect(row.state).toBe('no-reading');
       expect(row.amountText).toBeNull();

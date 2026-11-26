@@ -11,9 +11,9 @@ const status = { schema: 'dispatchd.status.v1', last_tick: '2026-11-09T16:00:00Z
 describe('usage pace across all budgeted pools', () => {
   it('lists core pools first, then other valid budgeted lanes by name', () => {
     const { pools } = projectUsagePace(status, now);
-    expect(pools.map(r => r.pool)).toEqual(['zai', 'gemini', 'claude', 'codex-personal', 'codex-cmp', 'devin']);
+    expect(pools.map(r => r.pool)).toEqual(['zai', 'gemini', 'claude', 'codex-personal', 'devin']);
     expect(pools.find(r => r.pool === 'devin')).toMatchObject({ projectedPercent: 62, hoursLeft: 50, unusedPercent: 38 });
-    expect(pools.find(r => r.pool === 'codex-cmp')).toMatchObject({ projectedPercent: 97, unusedPercent: 3 });
+    expect(pools.find(r => r.pool === 'codex-cmp')).toBeUndefined();
     expect(pools.find(r => r.pool === 'zai')).toMatchObject({ projectedPercent: null, unusedPercent: null });
   });
   it('caps the list at 24 pools', () => {

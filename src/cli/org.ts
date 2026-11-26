@@ -209,7 +209,12 @@ export async function cmdOrg(argv: string[]): Promise<number> {
     const queue = queueFile ? parseQueue(readFileSync(queueFile, 'utf8')) : [];
     let view = null;
     try { view = await (await import('../core/fabric/resource-view-store.js')).readResourceView(); } catch { /* unknown usage is planned conservatively */ }
-    const plan = planOrg(org, readJoins(), view, queue);
+    const [{ readFleetResourcePlan }, { runsRoot }] = await Promise.all([
+      import('../core/usage/resource-live/fleet-plan.js'), import('../core/metrics/loop-collect.js'),
+    ]);
+    const now = new Date();
+    const capacity = await readFleetResourcePlan(runsRoot(), now.getTime()).catch(() => null);
+    const plan = planOrg(org, readJoins(), view, queue, now, capacity?.lanes);
     // Text mode names each held lane and the join that opts it in; the JSON plan
     // already carries the same held rows, so --json consumers lose nothing.
     const heldLines = plan.held.map((h) => {

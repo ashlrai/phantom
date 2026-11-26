@@ -36,6 +36,7 @@
  * refreshed OFF the caller's stack, so C1's activity route never waits on I/O.
  */
 import { setWebsiteMode, websiteStatus } from '../website/host-release.js';
+import { canWriteStandingGrantHere } from '../drive/nodes/pool-host.js';
 import { lstatSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -872,6 +873,9 @@ export async function applyAuthorityAction(body: Record<string, unknown>): Promi
   const allowed = ACTION_KEYS[action]!;
   for (const key of Object.keys(body)) {
     if (!allowed.includes(key)) return { ok: false, status: 400, code: 'VERSE_INVALID', error: `unknown key for ${action}: ${key}` };
+  }
+  if ((action === 'grant' || action === 're-approve' || action === 'revoke') && !canWriteStandingGrantHere()) {
+    return { ok: false, status: 403, code: 'grant-leader-only', error: 'Manage signed grants on the leader, not a worker.' };
   }
   switch (action) {
     case 'website-mode': {

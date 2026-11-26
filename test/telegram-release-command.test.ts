@@ -5,7 +5,7 @@ describe('Telegram release command', () => {
   it('accepts only known, well-formed lanes', () => {
     expect(parseReleaseCommand('/release codex-personal')).toEqual({ lane: 'codex-personal' });
     expect(parseReleaseCommand('/release@phantombot devin')).toEqual({ lane: 'devin' });
-    for (const lane of ['claude', 'codex-local', 'codex-cmp', 'claude-api']) expect(parseReleaseCommand(`/release ${lane}`)).toEqual({ lane });
+    for (const lane of ['claude', 'codex-local', 'codex-personal', 'claude-api']) expect(parseReleaseCommand(`/release ${lane}`)).toEqual({ lane });
     for (const text of ['/release', '/release ../x', '/release unknown-lane', '/release Devin', '/release devin extra', '/release devin\nextra']) expect(parseReleaseCommand(text)).toBeNull();
   });
 

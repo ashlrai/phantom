@@ -103,7 +103,7 @@ describe('phm resources personal', () => {
       weekly: { usedPct: 46, resetsAt: '2036-06-21T12:00:00.000Z', burnPctPerHour: null } });
     const json = JSON.stringify(result);
     for (const secret of [root, '/private/path', 'private-session-id', 'private prompt', 'private-credential', '99']) expect(json).not.toContain(secret);
-    expect(calls.collector).toEqual([{ env: { CODEX_HOME: personal, CODEX_HOME_ALT: personal }, homeDir: root }]);
+    expect(calls.collector).toEqual([{ env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: personal }, homeDir: root }]);
     expect(calls.paths.some((path) => (path === join(root, '.codex') || path.startsWith(join(root, '.codex') + '/')) || /auth\.json|fleet\.json/.test(path))).toBe(false);
     expect(calls.legacy).toBe(0);
   });
@@ -138,7 +138,7 @@ describe('phm resources personal', () => {
     rollout(custom, limits(null, window(46, 10080, '2036-06-21T12:00:00Z')));
     expect(await cmdResources(['personal', '--home', custom, '--json'])).toBe(0);
     expect(report().resources[0]).toMatchObject({ id: 'codex-personal', weekly: { usedPct: 46 } });
-    expect(calls.collector[0]).toEqual({ env: { CODEX_HOME: custom, CODEX_HOME_ALT: custom }, homeDir: root });
+    expect(calls.collector[0]).toEqual({ env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: custom }, homeDir: root });
   });
 
 

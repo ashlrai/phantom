@@ -100,7 +100,7 @@ describe('teammate fleet dispatch', () => {
 
   it.each([
     ['Review phantom-secrets fixture tests on claude', 'phantom-secrets', 'claude'],
-    ['Run analysis on fixture results in locus lane=codex-cmp', 'locus', 'codex-cmp'],
+    ['Run analysis on fixture results in locus lane=codex-personal', 'locus', 'codex-personal'],
     ['Draft spec for lexicon fixture reports lane:omlx', 'lexicon', 'omlx'],
   ])('honors explicit routing in %s', async (text, repo, lane) => {
     seed(text);

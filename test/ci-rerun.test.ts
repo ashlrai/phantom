@@ -129,6 +129,40 @@ describe('resident CI reruns', () => {
     expect(read.recurringFlakes[0]).toMatchObject({ repo: 'org/repo', attempts: 3 });
     expect(read.recurringFlakes[0]!.heads).toEqual([...heads].sort());
   });
+  it('retains every eligible test on a shared rerun without attributing the workflow verdict to a case', async () => {
+    const { opts, report, gh } = setup();
+    const first = report.groups[0]!;
+    const second = { ...first, testId: 'test/b.test.ts > b' };
+    report.groups.push(second, { ...second }, { ...first, testId: 'test/c.test.ts > c', classification: 'pr-caused' });
+    opts.maxPerHour = 3;
+    const heads = ['a'.repeat(40), 'b'.repeat(40), 'c'.repeat(40)];
+    for (const [i, head] of heads.entries()) {
+      first.runs[0]!.head = head;
+      first.runs[0]!.runId = 123 + i;
+      await runCiRerunMaintenance(opts);
+    }
+    expect(gh).toHaveBeenCalledTimes(3);
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    gh.mockImplementation(async args => {
+      const index = Number(args[1]!.split('/').at(-1)) - 123;
+      const stdout = JSON.stringify({
+        id: 123 + index, status: 'completed', conclusion: 'failure',
+        head_sha: heads[index], updated_at: '2026-01-01T12:09:00Z',
+      });
+      return { ok: true, stdout, stderr: '' };
+    });
+    await runCiRerunMaintenance(opts);
+    const read = readCiReruns(opts.journalPath, opts.now());
+    expect(read.counts).toEqual({ attempted: 3, ok: 3, failed: 0 });
+    expect(read.verdicts).toMatchObject({ fail: 3, pending: 0 });
+    expect(read.recurringFlakes).toEqual([first, second].map(group => ({
+      repo: 'org/repo', test: group.testId, heads, attempts: 3,
+      verdicts: { pass: 0, fail: 0, inconclusive: 0 },
+    })));
+    const queue = readFileSync(opts.queueFile!, 'utf8');
+    expect(queue).toContain(first.testId);
+    expect(queue).toContain(second.testId);
+  });
   it('reports recurring flakes without queueing them while authority or KILL blocks writes', async () => {
     const { opts, report } = setup();
     opts.autonomyEffective = () => false;
