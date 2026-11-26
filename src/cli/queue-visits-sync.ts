@@ -6,7 +6,7 @@ import { compactQueueVisits, queueJournalPath, readQueueVisits, recordQueueVisit
 import { isQueueVisit, queueVisitKey } from '../core/queue/stats.js';
 import { planVisitSync, queueReadyVisits, queueVisitsFromJobs, VISIT_SYNC_SCHEMA } from '../core/queue/visit-sync.js';
 
-export const QUEUE_VISITS_SYNC_USAGE = `Usage: phm queue visits-sync [--jobs <path>] [--queue <path>] [--journal <path>] [--apply] [--json]
+const QUEUE_VISITS_SYNC_USAGE = `Usage: phm queue visits-sync [--jobs <path>] [--queue <path>] [--journal <path>] [--apply] [--json]
 Folds the jobs ledger (default <runs>/metrics/jobs.jsonl) and the live router
 queue (default <runs>/queue/router-queue.md) into station visits and appends new
 or progressed snapshots to the visit journal (default ~/.ashlr/queue/visits.jsonl)

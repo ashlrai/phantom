@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { isNodePoolLedgerRow } from '../fleet/jobs-ledger-dialect.js';
+import { isNodePoolLedgerRow, ledgerJobId } from '../fleet/jobs-ledger-dialect.js';
+import { isQueueRecord, nonNegativeFinite, pickQueueString, trimNonEmpty } from './schema.js';
 
 export interface GenerationDecision {
   job: string; src: string; event: 'drafted' | 'rejected';
@@ -17,25 +18,15 @@ export interface GeneratorYieldReport {
 }
 type Job = { generator: string | null; explicit: boolean; empty: boolean | null; pr: boolean; merged: boolean; diff: number | null; tokens: number | null;
   launched: boolean };
-const string = (v: unknown): string | null => typeof v === 'string' && v.trim() ? v.trim() : null;
-const count = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 /** jobs.jsonl field dialects, the same sets dispatchd `_vc_pick` accepts:
  * ids job|job_id|jobId|id, events event|type|kind, phases
  * state|outcome|status plus producer aliases, timestamps
  * ts|timestamp|at|startedAt|time|mergedAt|closedAt|recordedAt|updatedAt, and
  * PR links pr|pr_url|prUrl|url|html_url. */
-const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
 const TS_KEYS = ['ts', 'timestamp', 'at', 'startedAt', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const PR_KEYS = ['pr', 'pr_url', 'prUrl', 'url', 'html_url'] as const;
-const pickString = (r: Record<string, unknown>, keys: readonly string[]): string | null => {
-  for (const key of keys) {
-    const value = string(r[key]);
-    if (value !== null) return value;
-  }
-  return null;
-};
 function generator(id: string): string {
   if (/^FIXUP-/i.test(id)) return 'fixup';
   if (/^RQ-DRAIN-/i.test(id)) return 'drain';
@@ -56,16 +47,16 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     if (!line.trim()) continue;
     let value: unknown;
     try { value = JSON.parse(line); } catch { malformedLines++; continue; }
-    if (!value || typeof value !== 'object' || Array.isArray(value)) { malformedLines++; continue; }
-    const r = value as Record<string, unknown>;
+    if (!isQueueRecord(value)) { malformedLines++; continue; }
+    const r = value;
     if (isNodePoolLedgerRow(r)) continue;
-    const id = pickString(r, JOB_ID_KEYS);
-    const phase = pickString(r, PHASE_KEYS)?.toUpperCase();
-    const event = pickString(r, EVENT_KEYS)?.toLowerCase();
+    const id = ledgerJobId(r);
+    const phase = pickQueueString(r, PHASE_KEYS)?.toUpperCase();
+    const event = pickQueueString(r, EVENT_KEYS)?.toLowerCase();
     // Reconciled outcomes can retain the original publish timestamp.
-    const terminalAt = phase === 'MERGED' || event === 'merged' ? string(r.mergedAt)
-      : phase === 'CLOSED' || event === 'closed' ? string(r.closedAt) : null;
-    const timestamp = pickString(r, TS_KEYS);
+    const terminalAt = phase === 'MERGED' || event === 'merged' ? trimNonEmpty(r.mergedAt)
+      : phase === 'CLOSED' || event === 'closed' ? trimNonEmpty(r.closedAt) : null;
+    const timestamp = pickQueueString(r, TS_KEYS);
     const terminalMs = terminalAt === null ? NaN : Date.parse(terminalAt);
     const at = Number.isFinite(terminalMs) ? terminalMs : Date.parse(timestamp ?? '');
     if (!id || !Number.isFinite(at)) { malformedLines++; continue; }
@@ -75,14 +66,14 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   // Late receipts can be appended out of order. Stable sorting preserves
   // ledger order when receipts share a timestamp.
   for (const { id, at, row: r } of rows.sort((a, b) => a.at - b.at)) {
-    const event = pickString(r, EVENT_KEYS)?.toLowerCase();
+    const event = pickQueueString(r, EVENT_KEYS)?.toLowerCase();
     const launch = event === 'launch' || event === 'launched';
     if (id.startsWith('RQ-BATCH-')) {
       if (launch) launchedBatches.set(id, at);
       continue;
     }
     if (event === 'drafted' || event === 'rejected') {
-      const source = string(r.src) ?? 'unknown', group = generation.get(source) ?? new Map<string, { drafted: boolean; reasons: Set<string> }>();
+      const source = trimNonEmpty(r.src) ?? 'unknown', group = generation.get(source) ?? new Map<string, { drafted: boolean; reasons: Set<string> }>();
       const decision = group.get(id) ?? { drafted: false, reasons: new Set<string>() };
       if (event === 'drafted') {
         decision.drafted = true;
@@ -90,17 +81,17 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
         sources.add(source);
         drafts.set(id, sources);
       }
-      else decision.reasons.add(string(r.reason) ?? 'unknown');
+      else decision.reasons.add(trimNonEmpty(r.reason) ?? 'unknown');
       group.set(id, decision); generation.set(source, group); continue;
     }
     const job = jobs.get(id) ?? { generator: null, explicit: false, empty: null, pr: false, merged: false, diff: null, tokens: null, launched: false };
-    const src = string(r.src);
+    const src = trimNonEmpty(r.src);
     if (src) { job.generator = src; job.explicit = true; }
     else if (!job.explicit) job.generator = generator(id);
-    const phase = pickString(r, PHASE_KEYS);
+    const phase = pickQueueString(r, PHASE_KEYS);
     if (launch) job.launched = true;
     if (event === 'batch_claim') {
-      const batch = pickString(r, ['batch', 'batch_id', 'batchId']);
+      const batch = pickQueueString(r, ['batch', 'batch_id', 'batchId']);
       if (batch?.startsWith('RQ-BATCH-')) {
         const batches = memberBatches.get(id) ?? new Map<string, number>();
         if (!batches.has(batch)) batches.set(batch, at);
@@ -109,10 +100,10 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     }
     if (typeof r.empty === 'boolean') job.empty = r.empty;
     if (phase?.toLowerCase() === 'empty') job.empty = true;
-    if (pickString(r, PR_KEYS) !== null) job.pr = true;
+    if (pickQueueString(r, PR_KEYS) !== null) job.pr = true;
     if (phase?.toUpperCase() === 'MERGED' || event?.toLowerCase() === 'merged') { job.merged = true; job.pr = true; }
-    job.diff = count(r.diff_lines) ?? job.diff;
-    job.tokens = count(r.tokens_total ?? r.tokens) ?? job.tokens;
+    job.diff = nonNegativeFinite(r.diff_lines) ?? job.diff;
+    job.tokens = nonNegativeFinite(r.tokens_total ?? r.tokens) ?? job.tokens;
     jobs.set(id, job);
   }
   const groups = new Map<string, Job[]>();

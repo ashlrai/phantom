@@ -3,6 +3,8 @@
  * Shared by `phm queue`, GET/POST /api/verse/fleet/queue/order and the desktop
  * Queue pane. No Node imports: the web UI loads this file.
  */
+import { isQueueRecord } from './schema.js';
+
 export const VERSE_FLEET_QUEUE_ORDER_PATH = '/api/verse/fleet/queue/order';
 export const QUEUE_ORDER_ACTIONS = ['top', 'lane', 'drop'] as const;
 export type QueueOrderAction = (typeof QUEUE_ORDER_ACTIONS)[number];
@@ -45,13 +47,12 @@ export interface QueueActionV1 {
 }
 export type QueueSteerCode = 'job-not-found' | 'lane-closed' | 'queue-missing' | 'queue-busy';
 
-const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 export function isQueueOrder(value: unknown): value is QueueOrderV1 {
-  return record(value) && value.schema === 'queue.order.v1' && value.version === 1 && Array.isArray(value.jobs) && Array.isArray(value.lanes)
-    && value.jobs.every(job => record(job) && typeof job.id === 'string' && typeof job.lane === 'string' && typeof job.position === 'number');
+  return isQueueRecord(value) && value.schema === 'queue.order.v1' && value.version === 1 && Array.isArray(value.jobs) && Array.isArray(value.lanes)
+    && value.jobs.every(job => isQueueRecord(job) && typeof job.id === 'string' && typeof job.lane === 'string' && typeof job.position === 'number');
 }
 export function isQueueAction(value: unknown): value is QueueActionV1 {
-  return record(value) && value.schema === 'queue.action.v1' && value.version === 1 && typeof value.message === 'string' && typeof value.changed === 'boolean';
+  return isQueueRecord(value) && value.schema === 'queue.action.v1' && value.version === 1 && typeof value.message === 'string' && typeof value.changed === 'boolean';
 }
 /** A short age: 45s, 10m, 3h, 2d. */
 export const queueAgeText = (s: number | null): string => s === null ? 'age unknown' : s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : s < 129600 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`;

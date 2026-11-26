@@ -14,7 +14,8 @@
  * missing ids and unparseable or out-of-window timestamps are skipped, never
  * thrown: an unreadable row must not take down generation.
  */
-import { parseLedgerTs } from '../metrics/loop.js';
+import { ledgerEventTs, ledgerJobId } from '../fleet/jobs-ledger-dialect.js';
+import { isQueueRecord, pickQueueString } from './schema.js';
 
 export interface JobOutcome {
   /** Queue job id, e.g. RQ-FIXUP-phantom-1-aaaaaaa. */
@@ -38,19 +39,8 @@ export interface JobOutcome {
 // (empties.ts SKIP_EVENTS applies the same guard).
 const TERMINAL_EMPTY = new Set(['EMPTY', 'DONE-NOOP', 'EMPTY_DONE', 'SKIPPED-EMPTY', 'NOOP', 'SKIPPED']);
 const SKIP_EMPTY_EVENTS: ReadonlySet<string> = new Set(['skipped_empty', 'precheck_skip']);
-const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
-const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-const record = (x: unknown): x is Record<string, unknown> =>
-  typeof x === 'object' && x !== null && !Array.isArray(x);
-const firstString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
-  for (const key of keys) {
-    const value = row[key];
-    if (typeof value === 'string' && value.trim()) return value;
-  }
-  return null;
-};
 
 /**
  * Latest-known outcome per job id. `empty`/`merged` keep their verdicts even
@@ -98,19 +88,13 @@ export function parseJobOutcomeRows(raw: string, now: number, windowMs: number):
     if (!line.trim()) continue;
     let value: unknown;
     try { value = JSON.parse(line); } catch { continue; }
-    if (!record(value)) continue;
-    const job = firstString(value, JOB_KEYS);
-    const eventRaw = firstString(value, EVENT_KEYS);
+    if (!isQueueRecord(value)) continue;
+    const job = ledgerJobId(value);
+    const eventRaw = pickQueueString(value, EVENT_KEYS);
     if (eventRaw === 'wiki_slice') continue;
-    const phase = (firstString(value, PHASE_KEYS) ?? eventRaw ?? '').toUpperCase();
-    const preferredTs = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
-    const stampFields = preferredTs === null ? TS_KEYS : [preferredTs, ...TS_KEYS.filter((key) => key !== preferredTs)];
-    let at = NaN;
-    for (const key of stampFields) {
-      const parsed = parseLedgerTs(value[key]);
-      if (parsed !== null) { at = parsed; break; }
-    }
-    if (job === null || !Number.isFinite(at)) continue;
+    const phase = (pickQueueString(value, PHASE_KEYS) ?? eventRaw ?? '').toUpperCase();
+    const at = ledgerEventTs(value, phase);
+    if (job === null || at === null) continue;
     if (at < now - windowMs || at > now) continue;
     const eventName = eventRaw?.toLowerCase() ?? null;
     const merged = phase === 'MERGED' || eventName === 'merged';

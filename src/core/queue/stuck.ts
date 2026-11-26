@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { parseReadyLineEnq } from './schema.js';
 
 export interface StuckJob { id: string; age_s?: number; age?: 'unknown' }
 export interface StuckQueue { jobs: StuckJob[]; eventsAvailable: boolean }
@@ -46,14 +47,12 @@ export function stuckEventTally(now: number): {
 function waitingJobs(queue: string, first: ReadonlyMap<string, number>, launched: ReadonlyMap<string, number>, now: number): StuckJob[] {
   const jobs: StuckJob[] = [];
   for (const line of queue.split('\n')) {
-    const match = /^- READY\s+([A-Za-z0-9][A-Za-z0-9._-]*)(?=\s|$)/.exec(line);
-    if (!match) continue;
-    const token = /(?:^|[\s,(])enq=(\d+)(?=$|[\s,)])/.exec(line);
-    const enq = token ? Number(token[1]) * 1000 : undefined;
-    const start = enq !== undefined && Number.isSafeInteger(enq) && enq <= now ? enq : first.get(match[1]!);
-    const launchAt = launched.get(match[1]!);
+    const parsed = parseReadyLineEnq(line);
+    if (!parsed) continue;
+    const start = parsed.enqMs !== null && Number.isSafeInteger(parsed.enqMs) && parsed.enqMs <= now ? parsed.enqMs : first.get(parsed.id);
+    const launchAt = launched.get(parsed.id);
     if (launchAt !== undefined && (start === undefined || launchAt >= start)) continue;
-    jobs.push(start === undefined ? { id: match[1]!, age: 'unknown' } : { id: match[1]!, age_s: Math.floor((now - start) / 1000) });
+    jobs.push(start === undefined ? { id: parsed.id, age: 'unknown' } : { id: parsed.id, age_s: Math.floor((now - start) / 1000) });
   }
   return jobs;
 }

@@ -26,8 +26,9 @@ import { join } from 'node:path';
 import { defaultRunsDir } from '../fleet/landed-closes-read.js';
 import { parseReadyRows, readReadyText, rewriteReadyRows, type RewriteReadyRowsOptions } from '../fleet/ready-row-edit.js';
 import { replaceQueueText } from './dedupe.js';
+import { isMissingFileError } from './schema.js';
 
-export const SUPERSEDE_ARCHIVE = 'superseded.tsv';
+const SUPERSEDE_ARCHIVE = 'superseded.tsv';
 export interface QueueJob {
   id: string; repo: string;
   /** False for a claimed or running job: it can supersede older cycles but is never superseded itself. */
@@ -103,7 +104,7 @@ export interface SupersedeOptions extends RewriteReadyRowsOptions { runsDir?: st
 /** Plan over ready.tsv and router-queue.md; with apply, archive and mark the older cycles. Dry run by default. */
 export async function supersedeQueue(opts: SupersedeOptions = {}): Promise<SupersedeReport> {
   const queueDir = join(opts.runsDir ?? defaultRunsDir(), 'queue');
-  const absent = (error: unknown): null => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; };
+  const absent = (error: unknown): null => { if (isMissingFileError(error)) return null; throw error; };
   const routerPath = join(queueDir, 'router-queue.md');
   const [readyText, routerText] = await Promise.all([readReadyText(join(queueDir, 'ready.tsv')).catch(absent), readFile(routerPath, 'utf8').catch(absent)]);
   if (readyText === null && routerText === null) throw new Error('Queue unavailable');
