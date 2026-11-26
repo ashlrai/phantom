@@ -3,6 +3,9 @@ import { join } from 'node:path';
 import { parseReadyTsv, type FleetLaneQueueRow } from './lane-console.js';
 import { readSource } from './runs-parked-queue.js';
 
+/** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
+
 export interface ReadySupplyLane {
   lane: string;
   phxReady: number;
@@ -67,7 +70,7 @@ export async function readReadySupply(opts: { runsDir?: string; now?: () => Date
     const root = opts.runsDir ?? (process.env['ASHLR_RUNS_DIR'] || join(homedir(), '.ashlr-runs'));
     const [source, router] = await Promise.all([
       readSource(join(root, 'queue', 'ready.tsv'), 2 * 1024 * 1024, false),
-      readSource(join(root, 'queue', 'router-queue.md'), 2 * 1024 * 1024, false),
+      readSource(join(root, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
     ]);
     // parseReadyTsv recognizes the dispatcher's job/repo/lane/tier/prompt
     // dialect natively, including its PARKED-<reason>[.<lane>] encodings, and

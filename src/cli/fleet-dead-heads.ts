@@ -9,6 +9,9 @@ import { parseReadyTsv } from '../core/fleet/lane-console.js';
 const usage = `ashlr fleet dead-heads [--json] [--root PATH] [--cap N]
 Read-only skip evidence; positions are one-based per lane. Default cap: 4 launchable lines.`;
 
+/** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
+
 async function readText(path: string, limit: number): Promise<string> {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -42,7 +45,7 @@ export async function cmdFleetDeadHeads(args: string[]): Promise<number> {
     }
     const [ready, routerQueue] = await Promise.all([
       readText(join(root, 'queue/ready.tsv'), 2 * 1024 * 1024),
-      readText(join(root, 'queue/router-queue.md'), 2 * 1024 * 1024).catch(() => ''),
+      readText(join(root, 'queue/router-queue.md'), ROUTER_QUEUE_MAX_BYTES).catch(() => ''),
     ]);
     const reasons = new Map<string, string>();
     for (const row of parseReadyTsv(ready, routerQueue).rows) {

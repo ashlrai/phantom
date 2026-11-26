@@ -8,6 +8,8 @@ export { queueShape };
 export type { QueueShapeLane, QueueShapeReport, QueueShapeRepo } from '../core/fleet/queue-shape.js';
 
 const MAX_BYTES = 4 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 const usage = 'Usage: phm fleet queue-shape [--queue-dir <abs>] [--factor <n>] [--json]\nPer-lane ready-queue depth against slot targets, the repos filling it, and how old each lane\'s oldest READY row is (from its at timestamp; rows without one are counted, not aged). READY rows the work market leaves lane-open (no lane hint) are reported as open supply — any capable lane may claim them — never as a lane\'s depth. Reads <queue-dir>/ready.tsv plus the queue\'s slots.json lane targets (default ~/.ashlr-runs/queue). A lane is OVER-DEEP when ready > factor x target (default 3) or the target is 0 with ready rows. Read-only: no writes, no child processes, no network.';
 
 export async function cmdFleetQueueShape(args: string[]): Promise<number> {
@@ -31,7 +33,7 @@ export async function cmdFleetQueueShape(args: string[]): Promise<number> {
     text = await readFile(path, 'utf8');
     try {
       const router = await stat(join(dir, 'router-queue.md'));
-      if (router.isFile() && router.size <= MAX_BYTES) routerQueue = await readFile(join(dir, 'router-queue.md'), 'utf8');
+      if (router.isFile() && router.size <= ROUTER_QUEUE_MAX_BYTES) routerQueue = await readFile(join(dir, 'router-queue.md'), 'utf8');
     } catch { /* absent or unreadable envelopes leave the lane column */ }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') { console.log('queue: missing (ready.tsv)'); return 0; }

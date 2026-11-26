@@ -9,6 +9,8 @@ import { parseReadyTsv } from './lane-console.js';
 import { readSource, type Source } from './runs-parked-queue.js';
 
 const MAX_READY = 2 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 export interface QueuedLanes {
   state: Source;
@@ -49,7 +51,7 @@ export async function readQueuedLanes(root: string): Promise<QueuedLanes> {
     const queue = join(root, 'queue');
     const [source, router] = await Promise.all([
       readSource(join(queue, 'ready.tsv'), MAX_READY, false),
-      readSource(join(queue, 'router-queue.md'), MAX_READY, false),
+      readSource(join(queue, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
     ]);
     return { state: source.state, lanes: queuedLanesFromText(source.text, router.state === 'healthy' ? router.text : null) };
   } catch {

@@ -239,6 +239,8 @@ async function lanesSection(queueDir: string | undefined): Promise<WorkbenchLane
 // ---------------------------------------------------------------------------
 
 const MAX_QUEUE_FILE_BYTES = 4 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 interface QueueFileRead {
   state: FileReadState;
@@ -246,14 +248,14 @@ interface QueueFileRead {
   mtimeMs: number | null;
 }
 
-async function readQueueFile(path: string): Promise<QueueFileRead> {
+async function readQueueFile(path: string, maxBytes = MAX_QUEUE_FILE_BYTES): Promise<QueueFileRead> {
   let info;
   try {
     info = await stat(path);
   } catch (error) {
     return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid', text: null, mtimeMs: null };
   }
-  if (!info.isFile() || info.size > MAX_QUEUE_FILE_BYTES) {
+  if (!info.isFile() || info.size > maxBytes) {
     return { state: 'invalid', text: null, mtimeMs: info.mtimeMs };
   }
   try {
@@ -300,7 +302,7 @@ async function jobsSection(queueDir: string): Promise<WorkbenchJobsSection> {
   const [queueV1, readyTsv, routerQueue] = await Promise.all([
     readQueueFile(join(queueDir, 'queue.v1.json')),
     readQueueFile(join(queueDir, 'ready.tsv')),
-    readQueueFile(join(queueDir, 'router-queue.md')),
+    readQueueFile(join(queueDir, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES),
   ]);
 
   const sources: WorkbenchJobsSection['sources'] = {

@@ -85,6 +85,20 @@ describe('ready supply', () => {
     expect(result.totals.phxReady).toBe(1);
   });
 
+  it('resolves envelopes when router-queue.md outgrows the old read bound', async () => {
+    const dir = await fixture();
+    await writeFile(join(dir, 'queue', 'ready.tsv'), 'RQ-PHX-DEEP\tphantom\tcodex\twork\t/abs/deep.md\n');
+    // router-queue.md is append-mostly history; past the old 2 MiB window the
+    // market still resolves the envelope, so this reader must too.
+    const pad = `# ${'y'.repeat(1024)}\n`.repeat(2200);
+    await writeFile(join(dir, 'queue', 'router-queue.md'), pad +
+      '- READY phantom RQ-PHX-DEEP (preferred_lane=claude): hinted work\n');
+    const result = await readReadySupply({ runsDir: dir, now });
+    expect(result.lanes).toEqual([
+      { lane: 'claude', phxReady: 1, phxParked: 0, fillerReady: 0, fillerParked: 0, oldestPhxId: 'RQ-PHX-DEEP' },
+    ]);
+  });
+
   it('reports missing and degraded sources without throwing', async () => {
     const dir = await fixture();
     expect((await readReadySupply({ runsDir: dir, now })).sourceState).toBe('missing');
