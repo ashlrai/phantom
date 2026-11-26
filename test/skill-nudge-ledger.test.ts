@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SkillCard } from '../src/core/types.js';
 import {
-  skillNudgeJobsFromLedger, syncSkillNudgesFromJobsLedger,
+  draftSkillNudges, skillNudgeJobsFromLedger, syncSkillNudgesFromJobsLedger,
 } from '../src/core/fleet/skill-nudge.js';
 import { readSkillCardCorpus, recordSkillCard } from '../src/core/fleet/skill-records.js';
 
@@ -269,6 +269,21 @@ describe('skillNudgeJobsFromLedger', () => {
       { id: 'RQ-N1', lane: 'devin', outcome: 'merged' },
       { id: 'RQ-N2', lane: 'codex', outcome: 'merged' },
       { id: 'RQ-N3', lane: 'unknown', outcome: 'merged' },
+    ]);
+  });
+
+  it('uses observed lane aliases to join failed jobs to a recovery draft', () => {
+    const failures = ['RQ-FAIL1', 'RQ-FAIL2', 'RQ-FAIL3'];
+    const jobs = skillNudgeJobsFromLedger([
+      ...failures.flatMap(job => [
+        finish(job, { lane: 'UNKNOWN', pool: 'codex', arm: 'devin', failure_class: 'quota' }),
+        outcome(job, 'CLOSED', { lane: 'unknown' }),
+      ]),
+      finish('RQ-RECOVERY', { lane: 'unknown', failure_class: 'quota' }),
+      line({ job: 'RQ-RECOVERY', state: 'MERGED', lane: 'UNKNOWN', pool: 'invalid lane', arm: 'codex' }),
+    ].join('\n'));
+    expect(draftSkillNudges(jobs, '2026-10-29T00:00:00.000Z')).toMatchObject([
+      { trigger: 'codex: recover from quota', sourceJobIds: [...failures, 'RQ-RECOVERY'] },
     ]);
   });
 
