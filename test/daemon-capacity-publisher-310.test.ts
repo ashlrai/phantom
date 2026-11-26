@@ -102,7 +102,10 @@ describe('daemon capacity publisher (c8)', () => {
   });
 
   it('default wiring builds the configured bounded tick and refuses tests/non-daemons', async () => {
-    const tick = vi.spyOn(liveEngine, 'runResourceLiveTick').mockResolvedValue({} as liveEngine.ResourceLiveTickResult);
+    const next = '2026-12-01T23:15:35.000Z';
+    const sidecar = { readings: [{ id: 'antigravity', execution_context: 'gui-resident' }],
+      poll: { antigravity: { next_poll_at: next } } } as liveEngine.ResourceLiveTickResult['sidecar'];
+    const tick = vi.spyOn(liveEngine, 'runResourceLiveTick').mockResolvedValue({ sidecar } as liveEngine.ResourceLiveTickResult);
     const deps = defaultDaemonCapacityPublisherDeps();
     expect(deps.refreshResourceLive).toBeTypeOf('function');
     await deps.refreshResourceLive!(cfg);
@@ -110,9 +113,14 @@ describe('daemon capacity publisher (c8)', () => {
     try {
       vi.stubEnv('ASHLR_IN_DAEMON', '1'); vi.stubEnv('VITEST', ''); vi.stubEnv('NODE_ENV', '');
       vi.stubEnv('ASHLR_DAEMON_CAPACITY_PUBLISHER', '1');
-      await deps.refreshResourceLive!({ ...cfg, usage: { liveSources: { operatorPageFallback: true } } });
+      expect(await deps.refreshResourceLive!({ ...cfg, usage: { liveSources: { operatorPageFallback: true } } })).toBe(Date.parse(next));
       expect(tick).toHaveBeenCalledWith(expect.objectContaining({ deadlineMs: 20_000,
         sources: expect.objectContaining({ 'claude-weekly': expect.arrayContaining([expect.objectContaining({ tier: 'visible-window' })]) }) }));
+      sidecar.readings[0]!.execution_context = 'ssh';
+      expect(await deps.refreshResourceLive!(cfg)).toBeUndefined();
+      delete sidecar.readings[0]!.execution_context;
+      sidecar.poll.antigravity!.reset_checks = [next];
+      expect(await deps.refreshResourceLive!(cfg)).toBe(Date.parse(next));
     } finally { vi.unstubAllEnvs(); vi.restoreAllMocks(); }
   });
   it.each(['failure', 'lease'] as const)('idles repeated cycles after %s until the retry deadline', async (condition) => {
@@ -388,6 +396,30 @@ describe('publishCapacitySnapshotFrom (c8)', () => {
 
 
 describe('capacity background scheduling and safe failures', () => {
+  it('wakes Resource Live between capacity ticks and cancels future wakes on stop', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    vi.setSystemTime(h.clock.now);
+    h.deps.nowMs = Date.now;
+    h.snapshot.current = foreign(h, 0);
+    const refresh = vi.fn().mockImplementation(async () => Date.now() + 12_345);
+    h.deps.refreshResourceLive = refresh;
+    const pub = createDaemonCapacityPublisher(cfg, h.deps);
+    try {
+      pub.start();
+      await pub.cycle();
+      expect(refresh).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(12_344);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(refresh).toHaveBeenCalledTimes(2);
+      expect(h.started).toBe(0);
+      pub.stop();
+      await vi.advanceTimersByTimeAsync(CHECK_EVERY_MS);
+      expect(refresh).toHaveBeenCalledTimes(2);
+    } finally { pub.stop(); vi.useRealTimers(); }
+  });
+
   it('samples at startup and on its own timer without overlapping cycles', async () => {
     vi.useFakeTimers();
     const h = harness();
