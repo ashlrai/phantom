@@ -322,8 +322,11 @@ work_market gives remote built-ins), `requirement_unverifiable` (`min_tier`,
 `no_live_node`, `lane_mismatch`, `pack_inert`, `node_pack_unsupported`,
 `caps_missing`, `slots_unknown` (a node sent no slot telemetry, which is
 unknown, not zero), `pass_limit` or `no_free_slot`. Free slots are a node's
-`slots` minus its running claims, after router jobs that are still waiting have
-been placed. Nodes that report a capacity sample share one physical host's
+`slots` minus its running claims and the reservations in the router's placement
+plan. A waiting router job with no assignment, for example because it needs
+local GitHub auth, uses no slot. Older router views without a placement plan
+use capability matching to estimate reservations. Nodes with a capacity sample
+share one physical host's
 measured slots, so their free capacity is counted once per host — the smallest
 advertisement minus every claim on it — the same grouping the router's
 `nodeCapacityView` uses; a node without a sample is its own host.
