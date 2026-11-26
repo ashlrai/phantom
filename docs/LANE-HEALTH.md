@@ -44,7 +44,9 @@ output goes through the public-JSON scrubber.
 A run that stays in one phase past its timeout gets a **stuck** badge with the
 phase and how long it has been there, instead of silently hanging. Timeouts:
 queued 30m, producing 45m, verifying 20m, judging 10m, landing 10m, reverting
-10m. `parked` and `watching` wait on the world by design and are never stuck.
+10m. `parked`, `watching`, and runs handed off to the owner lane wait by
+design and are never flagged as stuck. An owner-lane handoff still counts as a
+call when its start is inside the window.
 A stuck verdict requires a readable timestamp for the current phase. That
 timestamp must be at or before report time and at or after the run start when
 one is recorded and readable. Queued runs can qualify using their phase

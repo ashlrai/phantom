@@ -75,7 +75,7 @@ function ms(iso: string | null): number | null {
 /** The run's stuck verdict, or null when phase age cannot be established. */
 export function stuckRun(run: FleetLiveRun, nowMs: number): StuckRun | null {
   const timeoutMs = PHASE_TIMEOUT_MS[run.phase];
-  if (run.endedAt || timeoutMs === null) return null;
+  if (run.endedAt || run.outcome === 'owner-lane' || timeoutMs === null) return null;
   const since = ms(run.phaseStartedAt);
   const started = ms(run.startedAt);
   if (since === null || since > nowMs || (started !== null && since < started)) return null;
