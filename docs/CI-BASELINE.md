@@ -25,6 +25,10 @@ default reporter's green-module pass lines are expected from checkout jobs
 that never bound a receipt, so they neither verify nor poison a run; any
 other consumable evidence in an unverifiable log keeps the run unknown.
 Unreadable, incomplete, capped, or unverified logs are unknown, never clean.
+Workflow-run and job lists must contain exactly the reported number of entries,
+with distinct IDs, within the 100-entry limit. The analyzer checks the run list
+before selecting the latest run for each workflow. A list that fails these
+checks cannot establish PR freshness or supply master pass evidence.
 A job whose conclusion is not a verdict — `cancelled`, `timed_out`,
 `action_required`, `startup_failure` or `stale` — is incomplete evidence
 even when its log is absent or empty: the run cannot prove the ref's

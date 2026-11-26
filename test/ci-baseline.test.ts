@@ -149,6 +149,36 @@ describe('CI baseline evidence', () => {
       expect(report.freshness.every(p => p.state === (options.stale ? 'stale' : 'unknown'))).toBe(true);
     }
   });
+  it.each([
+    ['workflow runs', (endpoint: string) => endpoint.includes('/actions/runs?'), 'missing-or-capped-runs'],
+    ['jobs', (endpoint: string) => endpoint.includes('/jobs?'), 'unreadable-log-or-unverified-checkout'],
+  ] as const)('withholds evidence from incomplete or inconsistent %s pages', async (_label, matches, reason) => {
+    for (const defect of ['short', 'missing-count', 'duplicate'] as const) {
+      const { gh, calls } = github({ count: 1, pass: true });
+      const analyze = (target: 'master' | 'pr') => analyzeCiBaseline('owner/repo', async args => {
+        const result = await gh(args);
+        const endpoint = args[1] ?? '';
+        const isMaster = endpoint.includes('head_sha=') || endpoint.includes('/runs/1/');
+        if (!matches(endpoint) || isMaster !== (target === 'master')) return result;
+        const page = JSON.parse(result.stdout);
+        const rows = page.workflow_runs ?? page.jobs;
+        if (defect === 'missing-count') delete page.total_count;
+        else page.total_count++;
+        if (defect === 'duplicate') rows.push(rows[0]);
+        return { ...result, stdout: JSON.stringify(page) };
+      });
+
+      const masterReport = await analyze('master');
+      expect(masterReport.master.known).toBe(false);
+      expect(masterReport.groups[0]).toMatchObject({ action: 'unknown', master: 'unknown' });
+      expect(calls.some(args => args[1]?.endsWith('/jobs/10/logs'))).toBe(false);
+
+      const prReport = await analyze('pr');
+      expect(prReport.master.known).toBe(true);
+      expect(prReport.freshness).toMatchObject([{ state: 'unknown', reason }]);
+      expect(prReport.groups).toEqual([]);
+    }
+  });
   it('reads jobs that never reached a verdict as unknown, never fresh', async () => {
     // A cancelled, timed-out, action-required, startup-failed or stale job
     // produced no verdict even when its log verifies: the run cannot prove
