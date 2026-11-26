@@ -61,7 +61,7 @@ export interface PoolsWasteV1 {
 export interface PoolsWasteInput {
   view: Pick<PoolsViewV1, 'pools' | 'generatedAt'>;
   /** Null when the queue could not be read: the fix then reads as "queue more work". */
-  supply: Pick<QueueSupplyV1, 'pools'> | null;
+  supply: Pick<QueueSupplyV1, 'pools' | 'open_rows'> | null;
   /** Why each held lane is held, from the dispatcher status; absent or null when not given. */
   heldReasons?: Readonly<Record<string, string | null>>;
 }
@@ -89,8 +89,10 @@ function fixFor(row: PoolRow, label: string, input: PoolsWasteInput): { kind: Wa
   if (signIn !== null) return { kind: 'sign-in', fix: signIn };
   if (row.held === true) return { kind: 'lane-held', fix: `lane held: ${reason || 'no reason recorded'}` };
   const queued = input.supply?.pools.find(p => p.id === row.id);
-  if (queued && queued.ready !== null && queued.ready > 0 && queued.state === 'healthy') {
-    return { kind: 'check-lane', fix: `${label} has ${queued.ready} ${queued.ready === 1 ? 'job' : 'jobs'} queued but is not spending it: check the lane` };
+  // Lane-open rows are shared supply the market may place on this pool too.
+  const available = queued !== undefined && queued.ready !== null ? queued.ready + (input.supply?.open_rows ?? 0) : null;
+  if (queued !== undefined && available !== null && available > 0 && queued.state === 'healthy') {
+    return { kind: 'check-lane', fix: `${label} has ${available} ${available === 1 ? 'job' : 'jobs'} queued but is not spending it: check the lane` };
   }
   return { kind: 'add-work', fix: `queue more work for ${label}` };
 }
