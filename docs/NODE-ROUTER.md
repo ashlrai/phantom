@@ -223,6 +223,10 @@ before the lease lapses.
 
 ## When something is refused
 
+`phm node plan --owner <owner>` filters the displayed routes to that owner.
+Earlier jobs from other owners still reserve capacity on shared nodes in the
+preview, using the same queue order as `phm node pull`.
+
 Every error ends with a fix. A job with no taker is shown by `phm node plan`
 with the reason: no live node in that owner (join one), no node advertising the
 caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,
