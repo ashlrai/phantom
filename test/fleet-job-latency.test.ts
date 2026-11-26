@@ -205,6 +205,22 @@ it('measures phases whose boundaries both follow the last launch', () => {
     .toMatchObject({ total_seconds: 30, measured_jobs: 1, missing_jobs: 0 });
 });
 
+it('withholds phase timings when a retry launch ties a non-launch start boundary', () => {
+  const text = [
+    event('launch', start),
+    event('checkout_complete', end),
+    event('publish', end),
+    event('launch', end),
+    event('finish', '2026-01-01T00:01:30Z'),
+    event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(jobLatency(text).phases.find(phase => phase.phase === 'model'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+  expect(mergeQueueLatency(text).phases.find(phase => phase.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+});
+
 it.each([start, end, null])('withholds latency across a batch member claim at %s', timestamp => {
   const text = [
     event('publish', start),
