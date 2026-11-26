@@ -384,6 +384,29 @@ describe('readFleetAutopilotState', () => {
     },
   );
 
+  it.each([
+    ['2026-11-07T00:00:00Z', 'healthy', 'enqueue'],
+    ['2026-11-06T23:59:30Z', 'degraded', 'no-op'],
+    [null, 'degraded', 'no-op'],
+  ])('checks embedded admission tick %s against fresh dispatcher status', async (ts, source, action) => {
+    const lastTick = '2026-11-07T00:00:00Z';
+    const assembled = await readFleetAutopilotState({
+      now: () => new Date(lastTick),
+      statusText: async () => JSON.stringify({
+        last_tick: lastTick,
+        admission: { ts, cap: 4, running: 1, load1: 1 },
+        lanes: { devin: { running: 0, target: 2, queued: 0, held: false } },
+      }),
+      queue: async () => queueView(),
+      slots: async () => slotsView([slotLane('devin', 2)]),
+    });
+    const report = planFleetAutopilot(assembled);
+    expect(report.sources.status).toBe(source);
+    expect(report.global.cap).toBe(source === 'healthy' ? 4 : null);
+    expect(report.lanes[0]).toMatchObject({ ready: 0, target: 2 });
+    expect(report.action.kind).toBe(action);
+  });
+
   it('reports missing status and skips rebase reads without --repo', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fleet-autopilot-'));
     dirs.push(dir);

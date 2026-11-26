@@ -339,6 +339,9 @@ old and no later than report time. A missing, invalid, future or older tick
 degrades the dispatcher source. Dispatcher counts and lane headroom stay
 unknown, suppressing starvation and restock proposals. Ready supply, configured
 slots and independent dependency or rebase evidence remain available.
+When the embedded admission record includes `ts`, it must match the
+dispatcher snapshot's `last_tick`. A mismatch degrades the dispatcher
+source even when `last_tick` is fresh.
 Autopilot honors holds from dispatcher status, configured slots and the
 operator's `HOLD` file at the runs root. The file lists whitespace-separated
 lane names. A newly held lane is excluded from starvation, restock and
