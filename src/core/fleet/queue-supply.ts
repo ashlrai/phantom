@@ -97,8 +97,8 @@ const atRisk = (row: PoolRow): boolean => row.wasteRisk === 'high' || row.wasteR
 function rowFor(pool: PoolRow, input: QueueSupplyInput, nowMs: number, windowH: number): SupplyRow {
   const label = poolLabel(pool.id);
   const ready = input.readyByLane === null ? null : input.readyByLane[pool.id] ?? 0;
-  const starts = input.startsByLane === null ? null : round1((input.startsByLane[pool.id] ?? 0) / windowH);
-  const hoursQueued = ready === null ? null : ready === 0 ? 0 : starts !== null && starts > 0 ? round1(ready / starts) : null;
+  const starts = input.startsByLane === null ? null : (input.startsByLane[pool.id] ?? 0) / windowH;
+  const hoursQueued = ready === null ? null : ready === 0 ? 0 : starts !== null && starts > 0 ? ready / starts : null;
   const resetMs = pool.resetAt === null ? NaN : Date.parse(pool.resetAt);
   const resetsIn = Number.isFinite(resetMs) && resetMs > nowMs ? round1((resetMs - nowMs) / 3_600_000) : null;
   const used = pool.usedPct;
@@ -115,7 +115,9 @@ function rowFor(pool: PoolRow, input: QueueSupplyInput, nowMs: number, windowH: 
   else if (ready !== null && ready > 0 && starts === 0) reasons.push(`no launches in the last ${windowH} h to size the queue`);
   if (!known) reasons.push(pool.reason ?? 'no usage reading');
 
-  const base = { id: pool.id, label, used_pct: used, left_pct: left, resets_in_h: resetsIn, reset_at: pool.resetAt, ready, starts_per_hour: starts, hours_queued: hoursQueued, idle_hours: idle, at_risk: risk };
+  const base = { id: pool.id, label, used_pct: used, left_pct: left, resets_in_h: resetsIn, reset_at: pool.resetAt, ready,
+    starts_per_hour: starts === null ? null : round1(starts), hours_queued: hoursQueued === null ? null : round1(hoursQueued),
+    idle_hours: idle, at_risk: risk };
   const out = (state: SupplyState, verdict: string, supplyLow = false): SupplyRow =>
     ({ ...base, state, supply_low: supplyLow, verdict, reason: reasons.length ? reasons.join('; ') : null });
 
