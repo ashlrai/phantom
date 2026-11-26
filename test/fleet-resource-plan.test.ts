@@ -13,10 +13,14 @@ import { readFleetBoard } from '../src/core/fleet/leader-journal.js';
 const now = Date.parse('2030-01-01T00:00:00Z');
 const hr = 3_600_000, iso = (ms: number) => new Date(ms).toISOString();
 const lanes = ['codex-personal', 'agy'];
+// A computer advertises provider caps, not market lanes: `codex` is what a
+// codex-personal job needs on a node (remoteLaneCap in unfed-market), and the
+// literal `agy` stands in for a cap this computer advertises for its own lane.
+const caps = ['codex', 'agy'];
 const deadline = iso(now + 2 * hr);
 const node: nodesView.NodeRow = { name: 'fixture', isSelf: true, reachable: true, lastSeen: iso(now), heartbeatAgeSeconds: 0,
   phantom: 'running', freeMemoryBytes: 8_000_000_000, freeMemoryPercent: 60, load: 1, cpuHeadroomPercent: 75,
-  lanes, jobsRunning: ['current'], freeSlots: 2, stateCode: 'ready', state: 'ready', joined: true, joinCommand: null };
+  lanes: caps, jobsRunning: ['current'], freeSlots: 2, stateCode: 'ready', state: 'ready', joined: true, joinCommand: null };
 const status = (last_tick = iso(now)) => ({ schema: 'dispatchd.status.v1', last_tick, lanes: Object.fromEntries(lanes.map(lane =>
   [lane, { running: 1, ceiling: 3, hard_cap: 2, held: false, queued: 10 }])) });
 const readings = [{ id: 'codex-personal', used: 18 }, { id: 'antigravity', used: 20 }].map(row =>
@@ -40,7 +44,7 @@ describe('fleet resource plan', () => {
 
   it('joins measured quota and job throughput with each lane cap and shared machine slots', async () => {
     const plan = buildFleetResourcePlan(live, [node], status(), ledger, now);
-    expect(plan.machines).toEqual([{ name: 'fixture', lanes, cpu_headroom_pct: 75, memory_headroom_pct: 60,
+    expect(plan.machines).toEqual([{ name: 'fixture', lanes: caps, cpu_headroom_pct: 75, memory_headroom_pct: 60,
       max_concurrency: 3, available_slots: 2 }]);
     for (const lane of lanes) expect(plan.lanes.find(row => row.lane === lane)).toMatchObject({
       running: 1, max_concurrency: 2, target_concurrency: 2, minutes_per_job: 20, tokens_per_job: 6000, additional_slots: 1,
@@ -55,6 +59,17 @@ describe('fleet resource plan', () => {
       expect(JSON.parse(await readFile(join(dir, 'queue/resource-capacity-advice.json'), 'utf8')))
         .toEqual({ schema: 'phantom.fleet-resource-plan.v1', generated_at: iso(now), targets: { 'codex-personal': 2, agy: 2 } });
     } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('counts machine slots only for the cap a market lane resolves to', () => {
+    // codex-personal resolves to the codex cap, so a remote codex computer backs
+    // its scale-up; agy is host-bound and no pool computer can take it.
+    const codexNode: nodesView.NodeRow = { ...node, name: 'codex-mac', isSelf: false, lanes: ['codex'], freeSlots: 4 };
+    const plan = buildFleetResourcePlan(live, [codexNode], status(), ledger, now);
+    const codex = plan.lanes.find(row => row.lane === 'codex-personal')!;
+    expect(codex.additional_slots).toBe(1);
+    expect(codex.target_concurrency).toBe(2);
+    expect(plan.lanes.find(row => row.lane === 'agy')!.additional_slots).toBeNull();
   });
 
   it('does not double count shared slots and distinguishes unknown from known zero', () => {

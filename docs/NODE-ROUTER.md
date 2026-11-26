@@ -454,6 +454,14 @@ primary's publisher. Until that pack is reviewed and a node advertises
 `pack:codex-worktree`, `NODE_BRIDGE_WORKTREE_PACK_ENABLED` stays false and
 code-writing rows stay local.
 
+The read-only planners resolve a queued job's market lane through the same
+`remoteLaneCap` map: `phm nodes plan`, `phm nodes offload` and the fleet
+resource plan's machine eligibility count a `codex-personal` job against
+`codex`-capable computers and a `claude-*` job against `claude` ones, while a
+lane that only runs on this host or on an API key (`codex-local`, `omlx`,
+`claude-api`, `devin`, …) never counts a remote node — this computer alone can
+take it when it advertises a serving cap.
+
 ## Measured capacity and (node, provider, model) routing
 
 Nodes have no per-node lane configuration. Each node measures itself and reports

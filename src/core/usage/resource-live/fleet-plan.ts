@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { capServesLane, defaultNodesViewDeps, readNodesView, type NodeRow } from '../../fleet/nodes-view.js';
+import { remoteLaneCap } from '../../fleet/unfed-market.js';
 import { readJobsTail, type JobsTailRead } from '../../fleet/report-ledger.js';
 import { readResourceQueue } from '../../fleet/resource-queue.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
@@ -122,7 +123,17 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const candidates = allowances.filter(row => row.lane === name);
     const active = candidates.filter(row => row.action === 'burn' && row.remaining !== null && row.jobs_per_slot !== null &&
       row.jobs_per_slot > 0 && row.estimated_quota_per_job !== null);
-    const eligible = machines.flatMap((row, index) => row.lanes?.some(cap => capServesLane(cap, name)) ? [index] : []);
+    // Plan lanes are market lanes; machines advertise provider caps. The claim
+    // bridge resolves the lane to the cap a node needs (remoteLaneCap): a lane
+    // it can send remote counts every machine advertising that cap; a lane that
+    // only runs on this host or on an API key counts this computer alone, and
+    // only when its own caps serve the lane.
+    const remoteCap = remoteLaneCap(name);
+    const eligible = machines.flatMap((row, index) => {
+      const serves = remoteCap !== null ? row.lanes?.includes(remoteCap)
+        : nodes[index]?.isSelf === true && (row.lanes?.some(cap => capServesLane(cap, name)) ?? false);
+      return serves ? [index] : [];
+    });
     if (lane.running === null || lane.max_concurrency === null || lane.queued_jobs === null || lane.held === null) continue;
     if (lane.held || lane.queued_jobs === 0 || lane.running >= lane.max_concurrency || candidates.some(row => row.action === 'hold')) {
       lane.target_concurrency = lane.running;

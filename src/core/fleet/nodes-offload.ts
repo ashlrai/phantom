@@ -20,6 +20,7 @@ import type { QueueOrderJob, QueueOrderV1 } from '../queue/order-types.js';
 import { hostLoadTone, type HostLoad } from './host-load.js';
 import type { LoadAdmission } from './load-owners.js';
 import type { EngineAdmissionView } from './engine-admission-view.js';
+import { remoteLaneCap } from './unfed-market.js';
 import { readNodesDoctor, type DoctorNode, type NodesDoctor, type NodesDoctorDeps } from './nodes-doctor.js';
 import { PLAN_JOB_LIMIT } from './nodes-plan.js';
 import { UNKNOWN } from './runtime-identity.js';
@@ -147,8 +148,16 @@ export function planOffload(input: OffloadInputs): { moves: OffloadMove[]; stays
     if (recorded.has(job.id)) { stay('already chosen for another computer'); continue; }
     if (host.state === 'fine') { stay('this computer would launch it'); continue; }
     if (host.state === 'unknown') { stay('this computer\'s guard is unknown; waiting here'); continue; }
-    const open = pool.filter(c => c.slots > 0 && c.lanes.has(job.lane)).sort((a, b) => b.slots - a.slots || (a.row.name < b.row.name ? -1 : 1))[0];
-    if (!open) { stay(`no ready computer has a free ${job.lane} slot; waiting here`); continue; }
+    // job.lane is a market lane; candidates hold provider caps. The claim
+    // bridge resolves the lane to the cap a remote node needs (remoteLaneCap);
+    // a lane that only runs on this host or on an API key never moves.
+    const remoteCap = remoteLaneCap(job.lane);
+    const open = remoteCap === null ? undefined
+      : pool.filter(c => c.slots > 0 && c.lanes.has(remoteCap)).sort((a, b) => b.slots - a.slots || (a.row.name < b.row.name ? -1 : 1))[0];
+    if (!open) {
+      stay(remoteCap === null ? `the ${job.lane} lane cannot run on another computer; waiting here` : `no ready computer has a free ${job.lane} slot; waiting here`);
+      continue;
+    }
     open.slots -= 1;
     moves.push({ job: job.id, lane: job.lane, node: open.row.name, reasons: host.reasons, why: `${host.reasons.join(' and ')} on this computer; ${open.row.name} passes the doctor with a free ${job.lane} slot` });
   }
