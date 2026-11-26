@@ -42,7 +42,7 @@ describe('skillNudgeJobsFromLedger', () => {
   it('keeps the standing merge evidence when an unknown event follows it', () => {
     const job = 'RQ-RECOVERY';
     const text = [
-      launch(job), launch(job), outcome(job, 'MERGED'),
+      launch(job), launch(job, 'codex', '2026-10-28T10:30:00-0400'), outcome(job, 'MERGED'),
       line({ event: 'constructor', job, lane: 'claude' }),
       line({ event: '__proto__', job: 'RQ-UNRESOLVED', lane: 'codex' }),
     ].join('\n');
@@ -360,10 +360,26 @@ describe('skillNudgeJobsFromLedger', () => {
 describe('syncSkillNudgesFromJobsLedger', () => {
   const NOW = () => new Date('2026-10-28T20:00:00.000Z');
 
+  it.each(['launch', 'claim', 'batch_claim'])('ignores a replayed %s after recut admission', async event => {
+    const job = 'RQ-REPLAY';
+    const receipt = line({ event, job, lane: 'codex', ts: '2026-10-28T14:00:00Z' });
+    const text = [
+      receipt,
+      line({ event: 'recut_admission', job, action: 'ready' }),
+      receipt,
+      outcome(job, 'MERGED'),
+    ].join('\n');
+
+    expect(skillNudgeJobsFromLedger(text)).toEqual([{ id: job, lane: 'codex', outcome: 'merged' }]);
+    const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(result.candidates).toBe(0);
+    expect(cards).toHaveLength(0);
+  });
+
   it.each(['ts', 'mergedAt'])('waits for a merge with a future %s', async field => {
     const job = 'RQ-REC';
     const future = '2026-10-28T21:00:00.000Z';
-    const text = [launch(job), launch(job), outcome(job, 'MERGED', { [field]: future })].join('\n');
+    const text = [launch(job), launch(job, 'codex', '2026-10-28T10:30:00-0400'), outcome(job, 'MERGED', { [field]: future })].join('\n');
 
     const early = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
     expect(early.candidates).toBe(0);
@@ -410,7 +426,7 @@ describe('syncSkillNudgesFromJobsLedger', () => {
   });
 
   it('is idempotent across repeated syncs', async () => {
-    const text = [launch('RQ-A'), launch('RQ-A'), outcome('RQ-A', 'MERGED')].join('\n');
+    const text = [launch('RQ-A'), launch('RQ-A', 'codex', '2026-10-28T10:30:00-0400'), outcome('RQ-A', 'MERGED')].join('\n');
     const first = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
     const second = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
     expect(first.candidates).toBe(1);
@@ -436,7 +452,7 @@ describe('syncSkillNudgesFromJobsLedger', () => {
   it('reports degraded corpus as zero candidates without throwing', async () => {
     vi.mocked(readSkillCardCorpus).mockReturnValue({ cards: [], sourceState: 'degraded', sourcePresent: true,
       filesScanned: 0, unreadableFiles: 0, invalidRows: 0, bytesScanned: 0, limitExceeded: false });
-    const text = [launch('RQ-A'), launch('RQ-A'), outcome('RQ-A', 'MERGED')].join('\n');
+    const text = [launch('RQ-A'), launch('RQ-A', 'codex', '2026-10-28T10:30:00-0400'), outcome('RQ-A', 'MERGED')].join('\n');
     const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
     expect(result).toMatchObject({ state: 'read', folded: 1, candidates: 0 });
     expect(cards).toHaveLength(0);

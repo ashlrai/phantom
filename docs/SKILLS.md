@@ -48,6 +48,9 @@ resolves the job.
 The fold excludes receipts dated after the sync time, including terminal
 receipts whose merge or close timestamp is still in the future. Receipts
 without a parseable timestamp retain their ledger order.
+Exact replays of timestamped dispatch receipts count once and cannot consume
+a later recut admission. Dispatch receipts without a parseable timestamp
+retain their ledger order.
 A recut requires a `ready` recut admission followed by a dispatch attempt
 for the same job before its terminal outcome. Repeated readiness checks
 count once per dispatch. A later defer or skip clears pending readiness.
