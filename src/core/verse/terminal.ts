@@ -47,6 +47,7 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, join } from 'node:path';
 
 import { killSwitchPath } from '../sandbox/policy.js';
+import { DESKTOP_UPDATE_INTERLOCK } from '../desktop/update-interlock.js';
 import { childProcessEnv, pickLoginShell } from './login-path.js';
 import { createProcessRegistry, type VerseProcessRegistry } from './process-registry.js';
 import {
@@ -278,13 +279,17 @@ export const TERMINAL_KILL_CHECK_INTERVAL_MS = 3_000;
  * clear — an unreadable one counts as engaged.
  */
 export async function killSwitchEngagedAsync(): Promise<boolean> {
-  try {
-    await lstat(killSwitchPath());
-    return true;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException | undefined)?.code;
-    return !(code === 'ENOENT' || code === 'ENOTDIR');
+  const kill = killSwitchPath();
+  for (const path of [kill, join(kill, '..', DESKTOP_UPDATE_INTERLOCK)]) {
+    try {
+      await lstat(path);
+      return true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code !== 'ENOENT' && (code !== 'ENOTDIR' || path !== kill)) return true;
+    }
   }
+  return false;
 }
 
 export class TerminalError extends Error {

@@ -3,6 +3,10 @@ import {applyConsumerDesktopInstall, createConsumerInstallDependencies, inspectC
 import {cmdDesktopOperator, type DesktopOperatorCliDeps} from './desktop-operator.js';
 import {applyConsumerDesktopUpgrade, createConsumerUpgradeDependencies, inspectConsumerDesktopUpgrade,
   type ConsumerUpgradeDependencies, type ConsumerUpgradeOptions, type ConsumerUpgradeResult} from '../core/desktop/consumer-upgrade.js';
+import { desktopUpdateInterlockPresent } from '../core/desktop/update-interlock.js';
+import { readDesktopHostInterlockCensus } from '../core/desktop/host-update-interlock.js';
+import { readHostedReleaseTrainPause } from '../core/release/train.js';
+import { realHome } from '../core/real-home.js';
 
 const USAGE = `usage: phm desktop install [--apply]
        phm desktop update status --json
@@ -39,9 +43,24 @@ export async function cmdDesktop(args: string[], dependencies?: ConsumerInstallD
   operatorDeps?: DesktopOperatorCliDeps, upgradeDeps?:ConsumerUpgradeDependencies): Promise<number> {
   const head = args[0];
   if (head === 'update') {
+    if (args.length === 2 && ['--help', '-h', 'help'].includes(args[1]!)) {console.log(USAGE);return 0;}
     if (args.length !== 3 || args[1] !== 'status' || args[2] !== '--json') {console.error(USAGE);return 2;}
     const {readNativeUpdateStatus}=await import('../core/desktop/native-update-status.js');
-    console.log(JSON.stringify(readNativeUpdateStatus()));return 0;
+    const home = realHome();
+    console.log(JSON.stringify({
+      ...readNativeUpdateStatus(),
+      drain: {
+        automaticDrain: false,
+        reason: 'drain-interlock-unsupported',
+        localInterlock: desktopUpdateInterlockPresent() ? 'held-or-unreadable' : 'clear',
+        ...(process.platform === 'darwin' && {
+          hostCensus: home ? readDesktopHostInterlockCensus(home) : {state: 'unsupported', activeJobs: 0, unknown: 1},
+        }),
+        remedy: 'Engage operator Stop and let local work drain before installing.',
+      },
+      hostedReleaseTrain: readHostedReleaseTrainPause(),
+    }));
+    return 0;
   }
   if (head && !['install', 'help', '--help', '-h'].includes(head)) return cmdDesktopOperator(args, operatorDeps);
   let options: ReturnType<typeof parseDesktopInstallArgs>;

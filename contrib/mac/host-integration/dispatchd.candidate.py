@@ -1,12 +1,19 @@
 #!/usr/bin/python3
 # dispatchd core (one tick). Run only via dispatchd.sh (lockf). No LLM calls, no network of its own.
 import os, re, json, time, fcntl, subprocess, glob
+import sys
+import desktop_update_interlock
+# phantom.desktop-update-interlock.v1
+# phantom.desktop-update-dispatch-reconcile.v1
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
+if sys.argv[1:] == ["--desktop-update-census"]:
+    from process_snapshot import capture
+    print(json.dumps(desktop_update_interlock.census(H, Q, capture)))
+    raise SystemExit(0)
 # A kernel-held claim serializes the complete tick, including liveness sampling and
 # queue reconciliation. It is released automatically if the dispatcher crashes.
-_tick_claim = open(Q + "/dispatchd.tick.lock", "a")
-try: fcntl.flock(_tick_claim, fcntl.LOCK_EX | fcntl.LOCK_NB)
+try: _tick_claim = desktop_update_interlock.tick_claim(Q)
 except BlockingIOError: raise SystemExit(0)
 NOW = time.time(); TS = time.strftime("%F %T")
 # One operator-requested standard profile; private timing/call metadata only.
@@ -401,8 +408,8 @@ free, swap = mem()
 alive, publishing, cwdjobs = set(), set(), set()
 pat_wt = re.compile(re.escape(WTROOT) + r"/([A-Za-z0-9._-]+)")
 pat_pr = re.compile(re.escape(R) + r"/([A-Za-z0-9._-]+?)\.prompt\b")
-pat_ln = re.compile(r"launch\.sh ([A-Za-z0-9._-]+) ")
-pat_pb = re.compile(r"(?:publish|reap-one)\.sh ([A-Za-z0-9._-]+)")
+pat_ln = re.compile(r"(?:launch\.sh|local_job\.py) ([A-Za-z0-9._-]+) ")
+pat_pb = re.compile(r"(?:(?:publish|reap-one)\.sh|postrun_pr\.py) ([A-Za-z0-9._-]+)")
 from process_snapshot import capture as capture_process_snapshot
 ps_result = capture_process_snapshot(timeout=5)
 jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "known": ps_result.returncode == 0, "reason": ps_result.stderr if ps_result.returncode else None})
@@ -433,6 +440,10 @@ for j in cwdjobs:
     b = rd("%s/%s.base" % (R, j)).split()
     if len(b) >= 4: alive.add(j)
 reaping = {os.path.basename(p)[:-8] for p in glob.glob(RUN + "/*.reaping")}
+_receipt_owners = alive | publishing | cwdjobs
+_reconcile_only = desktop_update_interlock.held(H)
+if _reconcile_only:
+    desktop_update_interlock.retire_completed_reaps(R, RUN, _receipt_owners, NOW, GRACE)
 publishing = {j for j in publishing if os.path.exists("%s/%s.base" % (R, j))}
 alive -= (reaping | publishing)   # publish.sh children run inside the worktree
 for p in glob.glob(RUN + "/*.dispatched"):   # launch grace (fetch/worktree add before agent starts)
@@ -457,10 +468,12 @@ def base(j):
 
 # ---- per-job launch outcome (requeue PAUSED/HELD launches)
 requeue = []
+_reconcile_only = _reconcile_only or desktop_update_interlock.held(H)
 for p in glob.glob(RUN + "/*.dispatched"):
     j = os.path.basename(p)[:-11]
-    if j in alive: continue
+    if j in alive or (_reconcile_only and j in _receipt_owners): continue
     out = rd("%s/%s.launch" % (R, j))
+    requeue_start = len(requeue)
     if "launched " in out: os.remove(p); continue
     if re.search(r"^(PAUSED|HELD)", out, re.M):
         ln = rd(RUN + "/" + j + ".line").strip()
@@ -474,7 +487,12 @@ for p in glob.glob(RUN + "/*.dispatched"):
         ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
     else:
         ev("LAUNCH_FAILED %s (see %s.launch)" % (j, j))
+    if _reconcile_only:
+        desktop_update_interlock.persist_requeue(Q + "/" + desktop_update_interlock.DEFERRED, requeue[requeue_start:])
     os.remove(p)
+
+if _reconcile_only:
+    raise SystemExit(0)
 
 # REV1G: a launch that ended PAUSED/HELD/REFUSED (gate said no, e.g. cursor cooldown) leaves a fresh .base and no .log; it was
 # counted as a running slot for up to 6h. Not alive + a deferred .launch outcome = no slot.
@@ -548,6 +566,7 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
             ev(("PUBLISH_ABORT_SECRET_SHAPE %s worktree kept for supervisor" if res and "PUBLISH-ABORT" in res
                 else "KEPT %s worktree kept for supervisor") % j)
         continue
+    if desktop_update_interlock.held(H): continue
     # GATES v3 (Mason t1282u, Nov 1): PUBLISH_HOLD gate removed; was: if os.path.exists(R + "/PUBLISH_HOLD"): continue   # Actions backlog: keep finished worktrees local, publish later
     if os.path.exists(R + "/PUBLISH_LANDONLY") and _prio(bp)[0] > 2 and not _landonly_ok(j) and not os.path.exists(R + "/g1-pass/" + j + ".pass"): continue   # Masbot 23:45 Oct 26: merge-rate first; only REL/LAND/FIXUP/RECUT, G1-passed and listed jobs publish
     if nreap >= MAX_REAPS or over_budget(): continue   # RQ-TICK-BUDGET: later reaps wait one tick
@@ -731,6 +750,8 @@ def release_keep(job):
 
 lk = qlock("dispatchd-read")
 if lk is None: log("ready.lock busy; tick skipped"); raise SystemExit(0)
+if not desktop_update_interlock.held(H):
+    desktop_update_interlock.restore_requeue(Q)
 _raw = rd(Q + "/ready.tsv").splitlines()
 lk.close()   # Existing canonical owner scopes the lock to I/O, not the tick.
 lines = [l for l in _raw if l.strip() and not l.startswith("#")] + requeue
@@ -859,7 +880,7 @@ elif not _now_reason and _prev: ev("LOADGATE clear")
 _pw = jload(Q + "/admission.json", {}).get("warnings") or []
 if GATE["warnings"] and _pw != GATE["warnings"]: ev("LOADGATE warn (non-tripping): " + "; ".join(GATE["warnings"]))
 if disk_hard_stop: ev("DISKGUARD hard_stop %.0fG < %.0fG, no launches" % (disk_free_gb, DISK_HARD_STOP_GB))
-if not pause and not disk_hard_stop and not GATE["tripped"]:
+if not pause and not desktop_update_interlock.held(H) and not disk_hard_stop and not GATE["tripped"]:
     # interleave lanes so neither starves: take candidates round-robin, cmp first
     cand = {l: [] for l in LANES}
     for l in lines:
@@ -904,6 +925,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     ROUTER_ON = not os.path.exists(Q + "/ROUTER_OFF")
     for f in order:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
+        if desktop_update_interlock.held(H):
+            rest.append(line)
+            continue
         s = slots[lane]; res = result(j)
         if j in seen: continue  # duplicate line
         why = retired(j)
@@ -1055,6 +1079,7 @@ jsave(Q + "/slots.json", slots)
 
 # ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
 for lane in ("codex-personal", "devin", "claude-api", "codex-local"):
+    if desktop_update_interlock.held(H): break
     sl = slots[lane]
     if sl.get("held") or lane in hold: continue
     qn = sum(1 for l in rest if l.split("\t")[2:3] == [lane])
@@ -1167,7 +1192,7 @@ def roll(key):
     return g
 st["rollup_24h"] = {"by_lane": roll("lane"), "by_tier": roll("tier")}
 stamp = MD + "/.outcomes.stamp"
-if not os.path.exists(stamp) or NOW - os.path.getmtime(stamp) > 600:
+if not desktop_update_interlock.held(H) and (not os.path.exists(stamp) or NOW - os.path.getmtime(stamp) > 600):
     open(stamp, "w").close()
     subprocess.Popen(["/bin/bash", R + "/bin/metrics-outcomes.sh"], stdin=subprocess.DEVNULL, stdout=open(MD + "/outcomes.log", "a"),
                      stderr=subprocess.STDOUT, start_new_session=True)

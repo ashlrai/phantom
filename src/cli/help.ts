@@ -1099,6 +1099,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'init [--yes]',                 desc: 'Idempotent onboarding: ensure config, detect phantom + models, set editor.', topic: 'core' },
   { cmd: 'install <url|owner/repo|name>', desc: 'Install a pinned Node tool and its project MCP registration; --dry-run previews, --json reports.', topic: 'core' },
   { cmd: 'desktop install [--upgrade [--require-app] [--to x.y.z] | --rollback] [--apply]', desc: 'Inspect signed macOS arm64 artifacts; explicitly install on an empty system or upgrade/roll back a managed CLI after Stop/drain. Never resumes authority.', topic: 'core' },
+  { cmd: 'desktop update status --json', desc: 'Read local update-drain compatibility and hosted release-train pause status.', topic: 'core' },
   { cmd: 'desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]', desc: 'Operate macOS desktop apps through the desktop-operator helper. Reads are free. focus, scroll, type and click post a bus intent first. KILL and comms pause block writes.', topic: 'core' },
   { cmd: 'apps log [--limit <n>] [--json]', desc: 'Every app open, focus, quit and restart on record in the feed, newest first, with its outcome. Read-only.', topic: 'core' },
   { cmd: 'apps list|open|quit|restart|focus|status [<app>] [--json] [--dry-run] | apps request open|quit|focus <app> [--json]', desc: 'Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Per-app action policy; logged to the feed. Requests and unsafe quits go to needs-you.', topic: 'core' },
