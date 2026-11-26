@@ -4538,7 +4538,7 @@ and bound, each bracket naming `#<channel>:<topic>`. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the seventeen dependencies the unified verbs touch — the
+read-only probe over the eighteen dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -4614,7 +4614,18 @@ read's id/target/instant/24h-window/digest proof or the journal proves the
 work.result outcome to the addressed callsign — `source` plus `pending`
 and a `truncated` flag for a partial scan; 0 on a verified-empty peer
 plane or bus store, null when any admission input cannot be read, never
-callsigns, digests, threads or bodies), the
+callsigns, digests, threads or bodies), the transport dead-letter sink's
+retained delivery-failure reports (`probeDeadLetters` — a bounded
+`listBusInboxAfter` scan of the same bus store `options.root` selects,
+counting live envelopes addressed to `bus.dead-letter`, the reserved
+address the router's `createFileDeadLetterSink` files `status` letters
+under when delivery provably never landed; `source` plus a `pending`
+count, a `reasons` tally by the recorded `body.payload.deadLetter.reason`
+— `exhausted`, `expired`, `no-route`, or `other` for a letter whose
+stored body the defensive read cannot parse, the buckets always summing
+to `pending` — and a `truncated` flag for a partial scan; 0 on a
+verified-missing or verified-empty store, null when unreadable, never
+envelope ids, original parties or bodies), the
 session-handoff journal store (`listSessionHandoffs` over
 `<runsRoot>/handoffs` under the same runs root the wake probe resolves —
 `options.runsRoot`, else `ASHLR_RUNS_DIR` or `~/.ashlr-runs` — the read
