@@ -1415,7 +1415,32 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   rows rather than claimed, truncated tails are stated as lower
   bounds, and items emit only for the fleet's own repository since
   the ledger is this install's rescue record and carries no
-  repository column.
+  repository column —
+  and the route shadow journal's recurring adverse divergence
+  cells, the advisory route.shadow.v1 records `phm route shadow
+  eval --record` appends to metrics/route.shadow.jsonl under the
+  fleet runs directory through recordShadowPolicyDecision
+  (src/core/router/shadow-policy.ts) — the live router's pick next
+  to the class-failure-avoidance policy's pick per evaluation,
+  always dispatched:false. Until now the journal's only readers
+  were `phm route shadow report` and the shadow_comparison inside
+  `phm route explain` — reports someone had to run — so a
+  (repo, task_class) cell where the two routers kept disagreeing
+  and the live lane's resolved picks kept failing never became
+  work. A cell emits only at the recurring bars of supported
+  disagreements across distinct UTC days inside the 7-day window
+  with resolved live failures at the adverse bar — at least two
+  failures and at least half of the cell's resolved disagreed
+  outcomes — where disagreement is recomputed
+  live_lane !== shadow_lane like the report (the stored flag is
+  never trusted), insufficient_support and no_candidates rows
+  never count, the outcome join reads the canonical
+  readRouterOutcomes projection only once a cell is already
+  recurring on disagreements and days, the shadow pick's own
+  outcome stays counterfactual and unobserved, truncated tails
+  are stated as lower bounds, and items emit only for the fleet's
+  own repository since the journal describes this install's
+  routing.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   claude-recovery, memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1426,7 +1451,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts, postrun, git-contention and job-reissue items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts, postrun, git-contention, job-reissue and route-shadow items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
