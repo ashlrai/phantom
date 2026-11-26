@@ -149,6 +149,28 @@ describe('CI baseline evidence', () => {
       expect(report.freshness.every(p => p.state === (options.stale ? 'stale' : 'unknown'))).toBe(true);
     }
   });
+  it.each([
+    ['/actions/runs?head_sha=', true, undefined],
+    ['/actions/runs?branch=', false, 'missing-or-capped-runs'],
+    ['/actions/runs/1/jobs?', true, undefined],
+    ['/actions/runs/2/jobs?', false, 'unreadable-log-or-unverified-checkout'],
+  ] as const)('withholds classification evidence from a partial %s page', async (endpoint, isMaster, reason) => {
+    const { gh } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      if (!args[1]?.includes(endpoint)) return result;
+      return { ...result, stdout: JSON.stringify({ ...JSON.parse(result.stdout), total_count: 2 }) };
+    });
+
+    expect(report.master.known).toBe(!isMaster);
+    if (isMaster) {
+      expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
+      expect(report.groups).toMatchObject([{ classification: 'unknown', master: 'unknown' }]);
+    } else {
+      expect(report.freshness).toMatchObject([{ state: 'unknown', reason }]);
+      expect(report.groups).toEqual([]);
+    }
+  });
   it('reads jobs that never reached a verdict as unknown, never fresh', async () => {
     // A cancelled, timed-out, action-required, startup-failed or stale job
     // produced no verdict even when its log verifies: the run cannot prove
