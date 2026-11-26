@@ -57,9 +57,21 @@ export function ledgerFinishes(ledger: string, now: number, hours: number): { fi
 
 /** Windowed finishes from the latest observed dispatch attempt for each job. */
 export function currentAttemptFinishes(text: string, nowMs: number, hours: number) {
-  const { rows } = ledgerRows(text, nowMs, hours);
+  const { rows: receipts } = ledgerRows(text, nowMs, hours);
   // Use receipt time, with ledger order breaking ties between same-time rows.
-  rows.sort((a, b) => a.at - b.at);
+  receipts.sort((a, b) => a.at - b.at);
+  const seen = new Set<string>();
+  let timestamp: number | undefined;
+  const rows = receipts.filter(({ row, at }) => {
+    if (at !== timestamp) {
+      seen.clear();
+      timestamp = at;
+    }
+    const receipt = JSON.stringify(row);
+    if (seen.has(receipt)) return false;
+    seen.add(receipt);
+    return true;
+  });
   const latestDispatch = new Map<string, number>();
   for (const [index, { id, row }] of rows.entries()) {
     const event = ledgerEventName(row);

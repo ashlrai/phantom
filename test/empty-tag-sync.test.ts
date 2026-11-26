@@ -118,7 +118,8 @@ describe('syncEmptyTagsFromJobsLedger', () => {
     expect(existsSync(join(runsDir, TAGS_FILE))).toBe(false);
 
     // A finish at the dispatch timestamp belongs to the retry when appended after it.
-    writeJobs([dispatch, previousFinish, finish(job, true)].join('\n') + '\n');
+    // Replaying that dispatch after the finish does not start another attempt.
+    writeJobs([dispatch, previousFinish, finish(job, true), dispatch].join('\n') + '\n');
     const completed = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
     expect(completed).toMatchObject({ state: 'read', candidates: 1, classified: 1, recorded: 1, dupcheckOutcomes: 1 });
     expect(readTags(runsDir)).toEqual([expect.objectContaining({ job, tag: 'already_done' })]);
