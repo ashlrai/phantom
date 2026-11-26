@@ -106,7 +106,7 @@ async function tailOrInjected(injected: string | undefined, path: string): Promi
   return readLedgerTail(path);
 }
 
-/** Collect recorded tags for the current candidates only. */
+/** Keep the first valid recorded tag for each current candidate. */
 function collectRecordedTag(line: string, candidates: ReadonlySet<string>, tags: Map<string, EmptyTag>): void {
   if (!line.includes('job.empty-tag.v1')) return;
   let row: Record<string, unknown>;
@@ -118,7 +118,7 @@ function collectRecordedTag(line: string, candidates: ReadonlySet<string>, tags:
   if (row['schema'] !== 'job.empty-tag.v1') return;
   const job = row['job'];
   const tag = row['tag'];
-  if (typeof job !== 'string' || !candidates.has(job) || typeof tag !== 'string') return;
+  if (typeof job !== 'string' || !candidates.has(job) || tags.has(job) || typeof tag !== 'string') return;
   if ((EMPTY_TAGS as readonly string[]).includes(tag)) tags.set(job, tag as EmptyTag);
 }
 
