@@ -10,7 +10,7 @@ set -u; umask 077
 R="$HOME/.ashlr-runs"; Q="$R/queue"; WTR="$HOME/Projects/ashlrai/wt"; SV="$R/salvage"; EV="$R/dispatch-events.log"; RULES="$R/ENGINEER-RULES.md"
 GS="$R/bin/git-safe-env.sh"; GS_SHA=01e1e5ab72016a5b6fbd96c76cb903eb7c61849084b20ae04374219dcd077331
 SCRUB="$R/bin/scrub.pl"; SCRUB_SHA=5aa902abedbb3bf7fa8d893b93969e247c82ff62ac26cd082215caabfb740265
-REAPONE="$R/bin/reap-one.sh"; REAPONE_SHA=97e380e2702d393105b490fa4e9bc18c78703acd73e72229198554575747c7e9
+REAPONE="$R/bin/reap-one.sh"; REAPONE_SHA=e45b88f98144e87693b27ca8b0b4d72a071e886e407cfda9541a810384087c0c
 SKIPLIST="RQ-DISC-SITE-ASHLR RQ-FRESH-SITE-ASHLR RQ-MEASURABLY-OSS-AUDIT-LOCAL RQ-SEO-ASHLR"
 MAXF=1048576; NOW=$(date +%s)
 # rev1.4 ARCHIVE_IDLE_H: no-PR / ARCHIVED idle threshold, default 12 (whole hours, at most 4 digits). Below 2 clamps up to 2
@@ -52,6 +52,12 @@ APPLY=0; NOREAP=0; case "${1:-}" in --apply) APPLY=1;; --archive-only) APPLY=1; 
 [ "$APPLY" = 1 ] && { [[ "${REAP_MAX:-}" =~ ^[0-9]{1,4}$ ]] || { echo "REFUSE: --apply needs REAP_MAX=<dry-run candidates>"; exit 2; }; RMAX=$((10#$REAP_MAX)); }   # rev1.7
 sha(){ { /usr/bin/shasum -a 256 "$1" 2>/dev/null || sha256sum "$1" 2>/dev/null; } | awk 'NR==1{print $1}'; }
 pinned(){ [ -f "$1" ] && [ ! -L "$1" ] && [ "$(sha "$1")" = "$2" ]; }
+PLAN="$R/bin/reaper-plan.py"
+if [ "$NOREAP" = 0 ]; then
+  pinned "$PLAN" "95c1c9111db21cf4ca13ba2e8eb6dd2a04a651017ca127505a0cdc91e1a687b0" || { echo "REFUSE: reaper-plan.py missing or sha mismatch"; exit 3; }
+  REAPABLE=$(/usr/bin/python3 -I -B "$PLAN" plan "$HOME") || { echo "REFUSE: disk-maint plan unavailable"; exit 3; }
+fi
+candidate(){ case $'\n'"${REAPABLE:-}"$'\n' in *$'\n'"$1"$'\n'*) return 0;; *) return 1;; esac; }
 ev(){ echo "$(date '+%F %T') $*" >> "$EV"; }
 clean(){ printf '%s' "$1" | tr -cd 'A-Za-z0-9._/@+=,:-' | cut -c1-200; }
 inlist(){ local x; for x in $2; do [ "$x" = "$1" ] && return 0; done; return 1; }
@@ -104,8 +110,8 @@ excluded(){ # $1 wt-relative path, $2 binary flag from numstat (1 = binary) -> 0
   return 1
 }
 archive(){ # $1 job; 0 = archived and ready to reap
-  local j=$1 BASE BR P T rec f a d inc=() psha sz
-  read BASE BR W _ < "$R/$j.base" || return 1
+  local j=$1 BASE BR P T rec f a d inc=() psha sz base_w
+  [ ! -L "$R/$j.base" ] && read -r BASE BR base_w _ < "$R/$j.base" && [ "$base_w" = "$W" ] || return 1
   [[ "$BASE" =~ ^[0-9a-f]{40}$ ]] || { ev "ARCHIVE_SKIP $j bad_base"; return 1; }
   (umask 077; mkdir -p "$SV") && chmod 700 "$SV" && [ ! -L "$SV" ] || return 1
   P="$SV/$j.patch"; [ -e "$P" ] || [ -L "$P" ] && { ev "ARCHIVE_SKIP $j salvage_exists"; return 1; }
@@ -130,17 +136,29 @@ archive(){ # $1 job; 0 = archived and ready to reap
 }
 n=0; kb=0; skips=""; C=""
 for W0 in "$WTR"/*; do [ -e "$W0" ] || continue
-  J=${W0##*/}; r=$(why "$J" "$W0")
+  J=${W0##*/}
+  [ "$NOREAP" = 1 ] || candidate "$J" || continue
+  r=$(why "$J" "$W0")
   if [ -n "$r" ]; then skips="$skips $r"; continue; fi
   n=$((n+1)); C="$C $J"; k=$(du -sk "$W0" 2>/dev/null | awk '{print $1}'); kb=$((kb + ${k:-0})); echo "CANDIDATE $J ${k:-0}KB"
 done
 # rev1.7 (Security 19:28): count first; over REAP_MAX aborts before any worktree is touched. Each job re-checked right before apply.
 [ "$APPLY" = 1 ] && [ "$n" -gt "$RMAX" ] && { echo "REFUSE: candidates=$n > REAP_MAX=$RMAX, nothing touched"; ev "ARCHIVE_REAP_MAX_EXCEEDED $n>$RMAX"; exit 4; }
 [ "$APPLY" = 1 ] && for J in $C; do W0="$WTR/$J"; r=$(why "$J" "$W0"); [ -z "$r" ] || { ev "ARCHIVE_SKIP $J changed_$r"; continue; }
-  W=$W0; archive "$J" || continue
-  [ "$NOREAP" = 1 ] && continue
+  W=$W0
+  if [ "$NOREAP" = 1 ]; then archive "$J"; continue; fi
+  [ "$(/usr/bin/python3 -I -B "$PLAN" plan "$HOME" "$J")" = "$J" ] || { ev "ARCHIVE_SKIP $J classifier_changed"; continue; }
+  bp="$R/$J.base"; base_sha=$(sha "$bp")
+  [ -n "$base_sha" ] || continue
+  archive "$J" || continue
+  [ "$(/usr/bin/python3 -I -B "$PLAN" plan "$HOME" "$J")" = "$J" ] || { ev "ARCHIVE_SKIP $J classifier_changed"; continue; }
   mkdir "$Q/run/$J.reaping" 2>/dev/null || { ev "ARCHIVE_REAP_SKIP $J reaping_claimed"; continue; }
-  REAP_APPLY=1 REAP_NO_PUBLISH=1 /bin/bash "$REAPONE" "$J"
+  if [ ! -L "$bp" ] && [ "$(sha "$bp")" = "$base_sha" ] &&
+    REAP_CLASSIFIED_ONLY=1 REAP_APPLY=1 REAP_NO_PUBLISH=1 /bin/bash "$REAPONE" "$J" && [ ! -e "$W0" ] && [ ! -L "$W0" ]; then
+    [ ! -L "$bp" ] && [ "$(sha "$bp")" = "$base_sha" ] &&
+      [ ! -e "$bp.reaped" ] && [ ! -L "$bp.reaped" ] && mv -n "$bp" "$bp.reaped"
+  fi
+  rmdir "$Q/run/$J.reaping" 2>/dev/null
 done
 echo "candidates=$n gib=$(awk -v k=$kb 'BEGIN{printf "%.2f", k/1048576}') mode=$([ "$NOREAP" = 1 ] && echo archive-only || { [ "$APPLY" = 1 ] && echo apply || echo dry-run; })"
 printf '%s\n' $skips | grep . | sort | uniq -c | awk '{print "skip " $2 "=" $1}'

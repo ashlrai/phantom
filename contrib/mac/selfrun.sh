@@ -117,16 +117,10 @@ s_close(){ local c="$R/queue/run/close-dup.candidates" o
   if [ -e "$R/CLOSE_DUP_APPLY" ]; then o=$(/bin/bash "$B/close-dup-run.sh" --apply < "$c" 2>&1); m=apply; else o=$(/bin/bash "$B/close-dup-run.sh" < "$c" 2>&1); m=dry; fi
   rc=$?; printf '%s\n' "$o" >> "$S/close.out"; /bin/chmod 600 "$S/close.out"
   echo "mode=$m,eligible=$(printf '%s\n' "$o" | /usr/bin/grep -c '^ELIGIBLE'),ineligible=$(printf '%s\n' "$o" | /usr/bin/grep -c '^INELIGIBLE'),closed=$(printf '%s\n' "$o" | /usr/bin/grep -c '^CLOSED')"; exit $rc; }
-s_gitlink(){ local ok=0 bad=0 f wt j
+s_gitlink(){
   shaok "$B/git-safe-env.sh" "$PIN_GITSAFE" || exit 9
-  : > "$S/gitlink-unsafe.tmp"
-  for f in "$R"/*.base; do [ -f "$f" ] || continue
-    j=$(/usr/bin/basename "$f" .base); wt=$(/usr/bin/awk 'NR==1{print $3}' "$f")
-    [ -d "$wt" ] || continue
-    if /bin/bash "$B/git-safe-env.sh" check "$wt" >/dev/null 2>&1; then ok=$((ok+1)); else bad=$((bad+1)); printf '%s\n' "$j" | /usr/bin/grep -E "$JID" >> "$S/gitlink-unsafe.tmp"; fi
-  done
-  /bin/chmod 600 "$S/gitlink-unsafe.tmp"; /bin/mv "$S/gitlink-unsafe.tmp" "$S/gitlink-unsafe.txt"
-  echo "ok=$ok,unsafe=$bad"; [ "$bad" = 0 ]; }
+  shaok "$B/reaper-plan.py" "95c1c9111db21cf4ca13ba2e8eb6dd2a04a651017ca127505a0cdc91e1a687b0" || exit 9
+  HOME="$RH" /usr/bin/python3 -I -B "$B/reaper-plan.py" audit "$RH" "$S" "$B/git-safe-env.sh"; }
 
 MSYNC_PY='
 import json, re, sys

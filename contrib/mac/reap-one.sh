@@ -10,7 +10,12 @@ GS="$R/bin/git-safe-env.sh"; GS_SHA=01e1e5ab72016a5b6fbd96c76cb903eb7c61849084b2
 ev(){ echo "$(date '+%F %T') $*" >> "$EV"; }
 case "$J" in ""|*[!A-Za-z0-9._-]*) exit 2;; esac
 read BASE BR WT POOL < "$R/$J.base" || exit 2
-trap 'rmdir "$M" 2>/dev/null' EXIT
+if [ "${REAP_CLASSIFIED_ONLY:-}" = 1 ]; then
+  [ "${REAP_NO_PUBLISH:-}" = 1 ] && [ ! -L "$R/$J.base" ] &&
+    [ "$WT" = "$HOME/Projects/ashlrai/wt/$J" ] && [ -d "$M" ] && [ ! -L "$M" ] || exit 2
+else
+  trap 'rmdir "$M" 2>/dev/null' EXIT
+fi
 # rev1.4 ARCHIVE_IDLE_H: no-PR / ARCHIVED idle threshold, default 12 (whole hours, at most 4 digits). Below 2 clamps up to 2
 # (ARCHIVE_IDLE_H_CLAMPED); non-numeric falls back to 12 (ARCHIVE_IDLE_H_REJECTED). A value under 12 applies only when
 # dispatchd's record shows the job finished: the last "launch"/"finish" event for it in $R/metrics/jobs.jsonl is "finish"
@@ -62,6 +67,7 @@ remove_wt(){
   RP=$(g rev-parse --path-format=absolute --git-common-dir 2>/dev/null); RP=${RP%/.git}
   [ -n "$RP" ] && [ -d "$RP/.git" ] || { ev "WT_KEPT_GIT_UNSAFE $J no_common_dir"; return 1; }
   if gs_git "$RP" worktree remove "$WT" 2>/dev/null; then ev "WT_REMOVED $J"; return 0; fi
+  [ "${REAP_CLASSIFIED_ONLY:-}" != 1 ] || { ev "WT_KEPT_REMOVE_REFUSED $J"; return 1; }
   QD="$R/quarantine/$J"; (umask 077; mkdir -p "$QD"); chmod 700 "$R/quarantine" "$QD"
   g rev-parse HEAD > "$QD/head.txt" 2>/dev/null
   g status --porcelain -uall > "$QD/status.txt" 2>/dev/null

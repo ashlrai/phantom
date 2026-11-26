@@ -18,7 +18,7 @@ EVL="$MET/reap-events.log"
 GH=/opt/homebrew/bin/gh; [ -x "$GH" ] || GH=/usr/local/bin/gh
 LSOF=/usr/sbin/lsof; REAPONE="$R/bin/reap-one.sh"
 GIT=/opt/homebrew/bin/git; [ -x "$GIT" ] || GIT=/usr/bin/git
-REAPONE_SHA=97e380e2702d393105b490fa4e9bc18c78703acd73e72229198554575747c7e9   # reap-one.sh RQ-FIXFWD-REQ rev1 (was RQ-FINISH-SIGNAL rev1 9c45d8e9)
+REAPONE_SHA=e45b88f98144e87693b27ca8b0b4d72a071e886e407cfda9541a810384087c0c   # classifier-only removal mode
 GITSAFE="$R/bin/git-safe-env.sh"; GITSAFE_SHA=01e1e5ab72016a5b6fbd96c76cb903eb7c61849084b20ae04374219dcd077331   # RQ-GIT-SAFE rev4.1 (B1 B2 A-1 A-2; was rev4 50f38b25)
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_EXTERNAL_DIFF GIT_OBJECT_DIRECTORY   # rev4.1: GIT_CONFIG_* are unset on the line after next (no env_injection refusal any more)
 export GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1
@@ -51,6 +51,16 @@ mtime(){ stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
 ev(){ echo "$(date '+%F %T') $*" >> "$EVL"; }
 rp(){ ( cd -P -- "$1" 2>/dev/null && pwd -P ); }
 sha256(){ if [ -x /usr/bin/shasum ]; then /usr/bin/shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'; else sha256sum "$1" 2>/dev/null | awk '{print $1}'; fi; }
+PLAN="$R/bin/reaper-plan.py"
+[ -f "$PLAN" ] && [ ! -L "$PLAN" ] && [ "$(sha256 "$PLAN")" = "95c1c9111db21cf4ca13ba2e8eb6dd2a04a651017ca127505a0cdc91e1a687b0" ] ||
+  { echo "REFUSE: reaper-plan.py missing or sha mismatch"; exit 3; }
+REAPABLE=$(/usr/bin/python3 -I -B "$PLAN" plan "$HOME") || { echo "REFUSE: disk-maint plan unavailable"; exit 3; }
+candidate(){ case $'\n'"$REAPABLE"$'\n' in *$'\n'"$1"$'\n'*) return 0;; *) return 1;; esac; }
+recheck(){ [ "$(/usr/bin/python3 -I -B "$PLAN" plan "$HOME" "$1")" = "$1" ]; }
+retire_base(){
+  [ ! -L "$1" ] && [ "$(sha256 "$1")" = "$2" ] &&
+    [ ! -e "$1.reaped" ] && [ ! -L "$1.reaped" ] && mv -n "$1" "$1.reaped"
+}
 
 # ---- lock: mkdir; reclaim only by atomic rename, then re-check (R5)
 LK="$RUN/reap-merged.lock"
@@ -226,11 +236,14 @@ IGN
     return 0
   }
   for bp in "$R"/*.base; do
-    [ -f "$bp" ] || continue
+    [ -f "$bp" ] && [ ! -L "$bp" ] || continue
+    base_sha=$(sha256 "$bp"); [ -n "$base_sha" ] || continue
     J=$(basename "$bp" .base)
     case "$J" in ""|*[!A-Za-z0-9._-]*) cat_ other:bad_job "?" 0; continue;; esac
+    candidate "$J" || continue
     BASE=""; BR=""; WT=""; POOL=""
     read -r BASE BR WT POOL < "$bp" || { cat_ other:bad_base "$J" 0; continue; }
+    [ "$WT" = "$WT_ROOT/$J" ] || { cat_ other:base_mismatch "$J" 0; continue; }
     [ -n "${WT:-}" ] && [ -d "$WT" ] || continue          # not a kept worktree
     cand=$((cand+1))
     why=$(contained "$WT" "$J") || { cat_ "other:containment_$why" "$J" 0; continue; }   # no du outside the wt root
@@ -269,6 +282,7 @@ IGN
     wm=$((wm+1)); est_kb=$((est_kb + (KB > 0 ? KB : 0)))
     if [ "$APPLY" != 1 ]; then cat_ "$OK" "$J" "$KB"; echo "WOULD_REAP_EMPTY $J $DS ${KB}K $WT"; continue; fi
     [ "$R1OK" = 1 ] || { cat_ "$SK":reap_one_sha_mismatch "$J" "$KB"; continue; }
+    recheck "$J" || { cat_ "$SK":classifier_changed "$J" "$KB"; continue; }
     mkdir "$RUN/$J.reaping" 2>/dev/null || { cat_ "$SK":live_lock "$J" "$KB"; continue; }
     # re-validate right before the call: containment, clean at base, DONE status, not live
     ok=1; contained "$WT" "$J" >/dev/null || ok=0
@@ -284,6 +298,7 @@ IGN
       [ $ok = 1 ] && { done_status "$J" >/dev/null || ok=0; }
     fi
     [ $ok = 1 ] && { [ -e "$RUN/$J.dispatched" ] || [ -e "$RUN/$J.lock" ] || [ -e "$R/$J.lock" ]; } && ok=0
+    [ $ok = 1 ] && { [ ! -L "$bp" ] && [ "$(sha256 "$bp")" = "$base_sha" ] || ok=0; }
     if [ $ok = 0 ]; then rmdir "$RUN/$J.reaping" 2>/dev/null; cat_ "$SK":revalidate_failed "$J" "$KB"; continue; fi
     # DONE-NOOP jobs have no .publish; reap-one (10b, REAP_NO_PUBLISH=1) removes only on RESULT EMPTY/PR, so record
     # the same RESULT EMPTY line reap-one itself writes for a clean run at base. noclobber; undone if the reap fails.
@@ -294,11 +309,11 @@ IGN
         || { rmdir "$RUN/$J.reaping" 2>/dev/null; cat_ "$SK":publish_race "$J" "$KB"; continue; }
     fi
     [ -d "$R/quarantine" ] && chmod 700 "$R/quarantine" 2>/dev/null
-    REAP_NO_PUBLISH=1 /bin/bash "$REAPONE" "$J" >> "$RUN/$J.reap.log" 2>&1; rc=$?
-    rmdir "$RUN/$J.reaping" 2>/dev/null
+    REAP_CLASSIFIED_ONLY=1 REAP_NO_PUBLISH=1 /bin/bash "$REAPONE" "$J" >> "$RUN/$J.reap.log" 2>&1; rc=$?
     [ -d "$R/quarantine" ] && chmod 700 "$R/quarantine" 2>/dev/null
-    if [ "$rc" = 0 ] && [ ! -d "$WT" ]; then
-      mv -n "$bp" "$bp.reaped"; reaped=$((reaped+1)); freed_kb=$((freed_kb + (KB > 0 ? KB : 0)))
+    if [ "$rc" = 0 ] && [ ! -e "$WT" ] && [ ! -L "$WT" ]; then
+      retire_base "$bp" "$base_sha" || cat_ "$SK":base_retained "$J" "$KB"
+      reaped=$((reaped+1)); freed_kb=$((freed_kb + (KB > 0 ? KB : 0)))
       printf '{"event":"reap_empty","job":"%s","status":"%s","path":"%s","bytes_freed":%s,"ts":"%s","ts_epoch":%s}\n' \
         "$(jstr "$J")" "$DS$([ "$INF" = 1 ] && echo ' inferred=12.1')" "$(jstr "$WT")" $(( (KB > 0 ? KB : 0) * 1024)) "$(date +%Y-%m-%dT%H:%M:%S%z)" "$(date +%s)" >> "$LOG"
       [ "$INF" = 1 ] && cat_ empty_inferred_reaped "$J" "$KB" || cat_ empty_reaped "$J" "$KB"
@@ -306,6 +321,7 @@ IGN
       [ "$WROTE" = 1 ] && grep -qxF "$PLINE" "$R/$J.publish" 2>/dev/null && rm -f "$R/$J.publish"
       cat_ "$SK":reap_one_failed "$J" "$KB"
     fi
+    rmdir "$RUN/$J.reaping" 2>/dev/null
   done
   rm -f "$OPEN"
   echo "SUMMARY mode=empty-$([ "$APPLY" = 1 ] && echo apply || echo dry) candidates=$cand du_measured=$dun du_max=$DU_MAX hold_entries=$(echo $HOLD | wc -w | tr -d ' ') reap_one_sha_ok=$R1OK"
@@ -320,10 +336,13 @@ IGN
 fi
 
 for bp in "$R"/*.base; do
-  [ -f "$bp" ] || continue
+  [ -f "$bp" ] && [ ! -L "$bp" ] || continue
+  base_sha=$(sha256 "$bp"); [ -n "$base_sha" ] || continue
   J=$(basename "$bp" .base)
   case "$J" in ""|*[!A-Za-z0-9._-]*) skip bad_job "$J"; continue;; esac
+  candidate "$J" || continue
   read -r BASE BR WT POOL < "$bp" || { skip bad_base "$J"; continue; }
+  [ "$WT" = "$WT_ROOT/$J" ] || { skip base_mismatch "$J"; continue; }
   [ -n "${WT:-}" ] && [ -d "$WT" ] || continue          # not a kept worktree
   cand=$((cand+1))
   if [ $(( $(date +%s) - T0 )) -ge "$WALL" ]; then skip wall_budget; continue; fi
@@ -351,18 +370,19 @@ for bp in "$R"/*.base; do
   if [ "$STATE" = MERGED ]; then wm=$((wm+1)); else wc=$((wc+1)); fi; est_kb=$((est_kb + KB))
   if [ "$APPLY" != 1 ]; then echo "WOULD_REAP $J $REPO#$PR $STATE ${KB}K $WT"; continue; fi
   [ "$R1OK" = 1 ] || { skip reap_one_unpatched "$J"; continue; }
+  recheck "$J" || { skip classifier_changed "$J"; continue; }
   mkdir "$RUN/$J.reaping" 2>/dev/null || { skip live_lock "$J"; continue; }
   # (b) re-validate right before the call: .publish still a RESULT PR for the same PR, WT still contained
   P0="$REPO#$PR"
-  if ! result_ok "$J" || [ "$REPO#$PR" != "$P0" ] || ! contained "$WT" "$J" >/dev/null; then
+  if ! result_ok "$J" || [ "$REPO#$PR" != "$P0" ] || ! contained "$WT" "$J" >/dev/null ||
+    [ -L "$bp" ] || [ "$(sha256 "$bp")" != "$base_sha" ]; then
     rmdir "$RUN/$J.reaping" 2>/dev/null; skip revalidate_failed "$J"; continue
   fi
   [ -d "$R/quarantine" ] && chmod 700 "$R/quarantine" 2>/dev/null
-  REAP_NO_PUBLISH=1 /bin/bash "$REAPONE" "$J" >> "$RUN/$J.reap.log" 2>&1; rc=$?
-  rmdir "$RUN/$J.reaping" 2>/dev/null
+  REAP_CLASSIFIED_ONLY=1 REAP_NO_PUBLISH=1 /bin/bash "$REAPONE" "$J" >> "$RUN/$J.reap.log" 2>&1; rc=$?
   [ -d "$R/quarantine" ] && chmod 700 "$R/quarantine" 2>/dev/null
-  if [ "$rc" = 0 ] && [ ! -d "$WT" ]; then
-    mv -n "$bp" "$bp.reaped"
+  if [ "$rc" = 0 ] && [ ! -e "$WT" ] && [ ! -L "$WT" ]; then
+    retire_base "$bp" "$base_sha" || skip base_retained "$J"
     reaped=$((reaped+1)); freed_kb=$((freed_kb + KB))
     printf '{"event":"reap","job":"%s","repo":"%s","pr":%s,"state":"%s","path":"%s","bytes_freed":%s,"ts":"%s","ts_epoch":%s}\n' \
       "$(jstr "$J")" "$REPO" "$PR" "$STATE" "$(jstr "$WT")" $((KB*1024)) "$(date +%Y-%m-%dT%H:%M:%S%z)" "$(date +%s)" >> "$LOG"
@@ -370,6 +390,7 @@ for bp in "$R"/*.base; do
   else
     skip reap_one_failed "$J rc=$rc"
   fi
+  rmdir "$RUN/$J.reaping" 2>/dev/null
 done
 rm -f "$OPEN"
 
