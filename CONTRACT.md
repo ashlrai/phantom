@@ -286,6 +286,14 @@ standing authority grant.
 app and the original CLI archive before Stop, including the app inventory and
 the candidate authority surface. It caches only the verified original package
 in the stage and does not change installed files, fleet state, or authority.
+`phm desktop update status --json` adds local interlock details under `drain`
+and the hosted release train's read-only `hostedReleaseTrain` state
+(`paused`, `enabled`, or `unknown`) to the native observation.
+Where interlock compatibility is unproven it reports
+`drain-interlock-unsupported`; native installation still requires operator Stop.
+`~/.ashlr/KILL` remains operator-owned and separate from
+`~/.ashlr/DESKTOP_UPDATE_STOP`. The hosted status query never pauses or resumes
+publishing.
 The install module also exports `ConsumerInstallHeld` for shared error
 classification and the `directory`, `parents`, `owned`, `regular`, `write`,
 `sha`, `ioRead` and `packageReady` guards.

@@ -9,7 +9,7 @@
 # rc 0, 5 and 16 stay final. Any other rc is retried up to 3 times, then rc 14 writes NEEDS-MASON.
 # v3.30.34 is superseded by the next version: this pass skips it and never edits, publishes, deletes, or moves that draft or tag.
 # Until ~/.ashlr-runs/release-sign/keychain-allowed exists (Masbot creates it after Mason clicks Always Allow once), it only writes
-# NEEDS-MASON-<tag> with the exact command and starts nothing. Kill switches: ~/.ashlr/KILL (fleet) and ~/.ashlr-runs/RELEASE_AUTORUN_OFF. Either stops before any network.
+# NEEDS-MASON-<tag> with the exact command and starts nothing. Local holds: KILL, DESKTOP_UPDATE_STOP and RELEASE_AUTORUN_OFF.
 # rev2: after selection, each completed successful signing outcome gets a bounded GET-only published-state proof  -
 # the tag's public release must carry exactly the seven signed desktop assets, its latest.json must bind GitHub's
 # recorded asset digests to the signed manifest fields and detached signatures, and while that release is latest
@@ -45,6 +45,9 @@ log(){ echo "$(date '+%F %T') $*" | /usr/bin/perl "$SCRUB" >> "$L"; }
 KILL=${RA_KILL_SELFTEST:-$HOME/.ashlr/KILL}
 if [ -L "$KILL" ] || [ -e "$KILL" ]; then log "fleet KILL present; release train stopped"; exit 0; fi
 KILL_DIR=$(dirname "$KILL")
+UPDATE_STOP=$KILL_DIR/DESKTOP_UPDATE_STOP
+update_held(){ [ -L "$UPDATE_STOP" ] || [ -e "$UPDATE_STOP" ] || { [ -e "$KILL_DIR" ] && [ ! -x "$KILL_DIR" ]; }; }
+if update_held; then log "desktop update interlock present or unreadable; release train stopped"; exit 0; fi
 if [ -e "$KILL_DIR" ] && [ ! -r "$KILL_DIR" ]; then log "fleet KILL directory unreadable; fail closed"; exit 0; fi
 mkdir "$D/lock" 2>/dev/null || exit 0; trap 'rmdir "$D/lock" 2>/dev/null' EXIT
 [ -d "$ST/lock" ] && { log "release-sign running, skip"; exit 0; }
@@ -242,6 +245,7 @@ if [ -f "$LAST" ] && [ ! -L "$LAST" ]; then
   fi
 fi
 [ -f "$ST/standing-authority" ] && [ ! -L "$ST/standing-authority" ] && grep -q 'STANDING-RELEASE-AUTHORITY rev1' "$ST/standing-authority" || { log "standing-authority marker absent; skip"; exit 0; }
+if update_held; then log "desktop update interlock present or unreadable; release train stopped"; exit 0; fi
 CMD=("$RS" --tag "$TAG" --head-sha "$HEAD" --ci-run "$CI" --ci-attempt "$CA" --artifact-id "$CART" --bundle-artifact-id "$BART" \
   --attestor-run "$AR" --attestor-attempt "$AA" --attestor-sha "$AS" --audit-run "$AU" --audit-attempt "$UA")
 if [ ! -f "$ST/keychain-allowed" ]; then

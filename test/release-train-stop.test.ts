@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   autorunOffPath,
   pauseReleaseTrainForStop,
+  readHostedReleaseTrainPause,
   releaseTrainStopRecordPath,
   resumeReleaseTrainAfterStop,
   RELEASE_TRAIN_STOP_SCHEMA,
@@ -36,6 +37,13 @@ function fakeGh(initial: 'on' | 'off') {
 }
 
 describe('release train stop/resume', () => {
+  it('reports hosted pause with only a bounded read', () => {
+    const fake = fakeGh('off');
+    expect(readHostedReleaseTrainPause(fake.gh)).toBe('paused');
+    expect(fake.calls).toEqual([{args: ['variable', 'get', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom'], timeout: 3000}]);
+    expect(fake.value()).toBe('off');
+    expect(readHostedReleaseTrainPause(() => ({status: 1, stdout: 'off'}))).toBe('unknown');
+  });
   it('restores the hosted variable when pause found it on', () => {
     const home = newHome();
     const fake = fakeGh('on');

@@ -94,6 +94,16 @@ class AutorunTest(unittest.TestCase):
  def test_tag_ref_audit_is_accepted(self):
   self.data['repos/ashlrai/phantom/actions/runs/33']['head_branch']=TAG
   self.execute(); self.assertEqual(len(self.calls()),1)
+ def test_desktop_update_interlock_holds_local_release_without_touching_operator_stop(self):
+  marker=self.kill.with_name('DESKTOP_UPDATE_STOP')
+  marker.write_text('local desktop update\n')
+  self.execute()
+  self.assertEqual(self.gh_calls(),[])
+  self.assertEqual(self.calls(),[])
+  self.assertFalse(self.kill.exists())
+  marker.unlink()
+  self.execute()
+  self.assertEqual(len(self.calls()),1)
  def test_foreign_branch_audit_is_held(self):
   self.data['repos/ashlrai/phantom/actions/runs/33']['head_branch']='feature'
   self.execute(); self.assertEqual(self.calls(),[])

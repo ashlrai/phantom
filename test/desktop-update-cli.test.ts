@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Writable } from 'node:stream';
 import { cmdDesktopUpdate, parseDesktopUpdateArgs, desktopUpdateJsonWriter } from '../src/cli/desktop-update.js';
+import { cmdDesktop } from '../src/cli/desktop.js';
+import * as releaseTrain from '../src/core/release/train.js';
 import type { DesktopUpdateDependencies } from '../src/core/desktop/qualified-update.js';
 
 afterEach(()=>vi.restoreAllMocks());
@@ -8,6 +10,17 @@ const dependencies:DesktopUpdateDependencies={home:'/private/owned',platform:'da
   admission:()=>{throw new Error('unexpected admission');},currentPackageRoot:()=>null,captureParent:()=>null,verifyParent:async()=>false,parentState:()=> 'unknown',now:Date.now,sleep:async()=>{},
   download:async()=>{throw new Error('network forbidden');}};
 describe('installed desktop-update CLI contract',()=>{
+  it('reports manual-only update drain and read-only hosted pause status', async () => {
+    const hosted = vi.spyOn(releaseTrain, 'readHostedReleaseTrainPause').mockReturnValue('paused');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdDesktop(['update', 'status', '--json'])).toBe(0);
+    expect(hosted).toHaveBeenCalledOnce();
+    expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
+      schema: 'desktop.native-update-status.v1',
+      drain: {automaticDrain: false, reason: 'drain-interlock-unsupported'},
+      hostedReleaseTrain: 'paused',
+    });
+  });
   it.each(['inspect','prepare','apply'] as const)('accepts the fixed %s opaque-ID JSON request',verb=>{
     expect(parseDesktopUpdateArgs([verb,'--stage','a'.repeat(32),'--json'])).toEqual({verb,stage:'a'.repeat(32)});
   });
