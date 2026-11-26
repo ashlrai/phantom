@@ -49,6 +49,7 @@ import { readdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { observeGit } from '../fleet/git-observations.js';
 
 import { isHubRepositoryLabel } from '../authority/repository-binding.js';
 import { detectTestTampering, protectedPathHits } from '../authority/protected-paths.js';
@@ -535,7 +536,12 @@ interface WorktreeOutcome {
 async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Plan, { action: 'merge-base' | 'fix-ci' | 'address-review' | 'recut' }>, run: Run): Promise<WorktreeOutcome> {
   const { pr } = obs;
   const detail: string[] = [];
-  const git = async (cwd: string, args: string[], timeoutMs = 120_000) => run('git', [...SAFE_GIT, ...args], { cwd, timeoutMs });
+  const git = async (cwd: string, args: string[], timeoutMs = 120_000) => {
+    const observe = observeGit('autopilot', args);
+    const result = await run('git', [...SAFE_GIT, ...args], { cwd, timeoutMs });
+    observe(result.code === 0 ? undefined : result.stderr);
+    return result;
+  };
   const must = async (cwd: string, args: string[]) => {
     const r = await git(cwd, args);
     if (r.code !== 0) throw new Error(`git ${args[0]} failed: ${(r.stderr.trim().split('\n').pop() ?? '').slice(0, 200)}`);

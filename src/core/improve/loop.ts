@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, lstatSync, realpathSync, rmdirSy
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
+import { observeGitSync } from '../fleet/git-observations.js';
 import { listContext, teamState } from '../teams/index.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { StewardReport } from '../steward/disk.js';
@@ -99,7 +100,10 @@ function publicBody(p: Proposal, publicRepositories: ReadonlySet<string>): strin
 }
 
 export type Exec = (cmd: string, args: string[], cwd: string) => string;
-const realExec: Exec = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const realExec: Exec = (cmd, args, cwd) => {
+  const run = () => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return cmd === 'git' ? observeGitSync('improve', args, run) : run();
+};
 
 /** Drafts only. This loop has no standing-policy/protected-merge admission. */
 export interface OpenPrOptions { /** Refused before any effect; use the existing protected merge process. */ autoMerge?: boolean }

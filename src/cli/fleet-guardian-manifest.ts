@@ -1,5 +1,6 @@
-import { isAbsolute, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { guardianManifestEntries, readFirstParentCommits, writeGuardianManifest } from '../core/fleet/guardian-manifest.js';
+import { GUARDIAN_MANIFEST_MAX_ENTRIES, isValidGuardianBranch, isValidGuardianRepoPath } from '../core/fleet/guardian-schema.js';
 
 export const usage = 'Usage: ashlr fleet guardian-manifest --repo <abs> --out <abs> [--branch <name>] [--limit <1..100>] [--json]';
 
@@ -20,16 +21,14 @@ export async function cmdFleetGuardianManifest(args: string[]): Promise<number> 
   const branch = values['--branch'] ?? 'master';
   const out = values['--out'];
   const limit = values['--limit'] === undefined ? 20 : /^[1-9]\d*$/.test(values['--limit']!) ? Number(values['--limit']) : NaN;
-  // eslint-disable-next-line no-control-regex -- repo strings must not contain control bytes
-  if (repo === undefined || !isAbsolute(repo) || repo.length > 4096 || /[\x00-\x1f\x7f]/.test(repo)) {
+  if (!isValidGuardianRepoPath(repo)) {
     process.stderr.write('error: --repo must be an absolute repository path\n'); return 2;
   }
   if (out === undefined) { process.stderr.write('error: --out is required\n'); return 2; }
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > GUARDIAN_MANIFEST_MAX_ENTRIES) {
     process.stderr.write('error: --limit must be an integer from 1 to 100\n'); return 2;
   }
-  // eslint-disable-next-line no-control-regex -- branch names must not contain control bytes
-  if (branch.length < 1 || branch.length > 256 || branch.startsWith('-') || /[\s\x00-\x1f\x7f]/.test(branch)) {
+  if (!isValidGuardianBranch(branch)) {
     process.stderr.write('error: --branch must not start with - or contain whitespace or control characters\n'); return 2;
   }
   try {

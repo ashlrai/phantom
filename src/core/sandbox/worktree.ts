@@ -46,6 +46,7 @@ import { availableParallelism, homedir, totalmem } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { dirname, join, resolve, sep } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
+import { observeGitSync, recordGitOperation } from '../fleet/git-observations.js';
 import type {
   Sandbox,
   SandboxCleanupEvidence,
@@ -467,14 +468,14 @@ function gitRun(cwd: string, args: string[]): string {
   delete env.GIT_WORK_TREE;
   delete env.GIT_COMMON_DIR;
   const filters = repoFilterOverrides('git', [], cwd, env);
-  return execFileSync('git', args, {
+  return observeGitSync('sandbox-worktree', args, () => execFileSync('git', args, {
     // hooks / fsmonitor / pager / credential helpers / repo filter drivers off (see withDaemonGitHardening).
     cwd,
     env: withDaemonGitHardening(env, filters),
     timeout: GIT_TIMEOUT,
     stdio: 'pipe',
     encoding: 'utf8',
-  }).trim();
+  })).trim();
 }
 
 /** Run a git command, returning null on any error (never throws). */
@@ -1035,6 +1036,7 @@ async function drainSupervisors() {
   await Promise.all(idle.map((handle) => joinOwnedTree(handle.child, handle.closed)));
 }
 
+const gitObservations = [];
 function run(cwd, args, options = {}) {
   return new Promise((resolve) => {
     const commandEnv = {};
@@ -1085,6 +1087,7 @@ function run(cwd, args, options = {}) {
       return;
     }
     const supervisor = handle.child;
+    const start = performance.now();
 
     let finishing = false;
     const closed = handle.closed;
@@ -1092,6 +1095,11 @@ function run(cwd, args, options = {}) {
       if (finishing) return;
       finishing = true;
       clearTimeout(timer);
+      const operation = args[0] === 'worktree' && (args[1] === 'add' || args[1] === 'remove')
+        ? 'worktree_' + args[1] : undefined;
+      const locked = result.status !== 0 && /\bindex\.lock\b/.test(result.stderr || '');
+      if (operation || locked) gitObservations.push({ operation, locked,
+        elapsed: Math.round(performance.now() - start), ts: new Date().toISOString() });
       await joinOwnedTree(supervisor, closed);
       resolve(result);
     };
@@ -1583,7 +1591,7 @@ const PREWARMED_SUPERVISORS = { register: [4, 2], populate: [2, 1], rollback: [5
     result.timing = stepTiming.steps;
     result.supervisors = supervisorCounts;
   }
-  process.stdout.write(JSON.stringify(result));
+  process.stdout.write(JSON.stringify({ ...result, gitObservations }));
 })().catch(async (error) => {
   try { await drainSupervisors(); } catch { /* idle supervisors exit when this runner's channel closes */ }
   process.stdout.write(JSON.stringify({
@@ -1754,7 +1762,9 @@ function parsePinnedWorktreeResult(
     return { ok: false, cleanupComplete: false, error: `pinned worktree runner failed (${failure ?? 'no output'})` };
   }
   try {
-    const parsed = JSON.parse(stdout) as Partial<PinnedWorktreeCreationResult>;
+    const parsed = JSON.parse(stdout) as Partial<PinnedWorktreeCreationResult> & {
+      gitObservations?: { operation?: 'worktree_add' | 'worktree_remove'; elapsed: number; ts: string; locked: boolean }[];
+    };
     if (typeof parsed.ok !== 'boolean' || typeof parsed.cleanupComplete !== 'boolean') {
       throw new Error('invalid pinned worktree result');
     }
@@ -1769,6 +1779,11 @@ function parsePinnedWorktreeResult(
     const supervisors = parsed.supervisors !== null && typeof parsed.supervisors === 'object'
       ? parsed.supervisors
       : undefined;
+    try {
+      for (const { operation, elapsed, ts, locked } of parsed.gitObservations ?? []) {
+        recordGitOperation('sandbox-worktree', operation, elapsed, ts, locked);
+      }
+    } catch { /* telemetry must not affect the worktree result */ }
     return {
       ok: parsed.ok,
       cleanupComplete: parsed.cleanupComplete,

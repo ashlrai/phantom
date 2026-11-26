@@ -9,6 +9,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { observeGit } from './git-observations.js';
 import {
   lstatSync,
   mkdtempSync,
@@ -169,6 +170,7 @@ function nowIso(now: () => Date): string | null {
 
 function git(cwd: string, args: readonly string[]): GitResult {
   try {
+    const observe = observeGit('detached-post-merge', args);
     const run = spawnSync('git', ['-C', cwd, ...args], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -177,6 +179,7 @@ function git(cwd: string, args: readonly string[]): GitResult {
       shell: false,
       windowsHide: true,
     });
+    observe(run.status === 0 ? undefined : run.stderr);
     return {
       ok: run.status === 0 && run.error === undefined,
       status: run.status ?? -1,

@@ -1,4 +1,3 @@
-import { lstat } from 'node:fs/promises';
 import { readGuardianDrainCheckpoint } from './guardian-drain-checkpoint.js';
 import { createGuardianDrainSession, guardianDrainStopStatus } from './guardian-drain-session.js';
 import { drainGuardianInfraRetries, type GuardianDrainDeps, type GuardianDrainSummary, type GuardianDrainTermination } from './guardian-retry-drain.js';
@@ -78,12 +77,6 @@ const defaultSleep = (ms: number, signal?: AbortSignal): Promise<void> => new Pr
   signal?.addEventListener('abort', done, { once: true });
 });
 
-async function stopFileExists(path?: string): Promise<'stopped' | 'unsafe' | null> {
-  if (path === undefined) return null;
-  try { await lstat(path); return 'stopped'; }
-  catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unsafe'; }
-}
-
 export async function repeatGuardianDrains(
   options: GuardianRepeatOptions,
   deps: GuardianRepeatDeps = {},
@@ -111,7 +104,7 @@ export async function repeatGuardianDrains(
   let cleanIdle = 0;
   let consecutiveIdle = 0, nextDelayMs = options.intervalMs;
   for (;;) {
-    const halted = options.signal?.aborted ? 'cancelled' as const : await stopFileExists(options.stopFile);
+    const halted = options.signal?.aborted ? 'cancelled' as const : await guardianDrainStopStatus(options.stopFile);
     if (halted) { summary.termination = halted; return summary; }
     const remaining = Math.floor(options.durationMs - (now() - startedAt));
     if (remaining < 1) { summary.termination = 'duration'; return summary; }
@@ -154,14 +147,14 @@ export async function repeatGuardianDrains(
       return summary;
     }
     if (options.maxIdlePasses !== undefined && cleanIdle >= options.maxIdlePasses) {
-      const halted = options.signal?.aborted ? 'cancelled' as const : await stopFileExists(options.stopFile);
+      const halted = options.signal?.aborted ? 'cancelled' as const : await guardianDrainStopStatus(options.stopFile);
       if (halted) { summary.termination = halted; return summary; }
       summary.termination = now() - startedAt >= options.durationMs ? 'duration' : 'idle-limit';
       return summary;
     }
     const left = Math.floor(options.durationMs - (now() - startedAt));
     if (left < 1) { summary.termination = 'duration'; return summary; }
-    const stopped = options.signal?.aborted ? 'cancelled' as const : await stopFileExists(options.stopFile);
+    const stopped = options.signal?.aborted ? 'cancelled' as const : await guardianDrainStopStatus(options.stopFile);
     if (stopped) { summary.termination = stopped; return summary; }
     if (options.maxPasses !== undefined && summary.passes >= options.maxPasses) {
       summary.termination = 'max-passes'; return summary;
@@ -175,7 +168,7 @@ export async function repeatGuardianDrains(
       await sleep(slice, options.signal);
       waited += slice;
       if (options.signal?.aborted) { summary.termination = 'cancelled'; return summary; }
-      const stopped = await stopFileExists(options.stopFile);
+      const stopped = await guardianDrainStopStatus(options.stopFile);
       if (stopped) { summary.termination = stopped; return summary; }
       if (Math.floor(options.durationMs - (now() - startedAt)) < 1) { summary.termination = 'duration'; return summary; }
     }

@@ -17,11 +17,16 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { rename, unlink, writeFile } from 'node:fs/promises';
+import { unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import type { DetachedPostMergeRunnerInput } from './detached-post-merge-runner.js';
+import {
+  GUARDIAN_SHA_RE,
+  isValidGuardianRepoPath,
+  writePrivateAtomic,
+} from './guardian-schema.js';
 import {
   runGuardianVerifyLoop,
   type GuardianOptions,
@@ -30,16 +35,7 @@ import {
 
 const GIT_TIMEOUT_MS = 15_000;
 const MAX_GIT_OUTPUT_BYTES = 1024 * 1024;
-const SHA = /^[a-f0-9]{40}$/;
-const MAX_REPO_PATH = 4_096;
 const MAX_BRANCH_BYTES = 1_024;
-
-function noControls(value: string): boolean {
-  return [...value].every((char) => {
-    const code = char.codePointAt(0)!;
-    return code >= 32 && code !== 127;
-  });
-}
 
 /** A refused `--head-of`/`--branch` input: bad shape, missing ref or non-repo. */
 export class GuardianHeadError extends Error {}
@@ -84,7 +80,7 @@ function validBranchName(value: string): boolean {
 }
 
 async function repoRoot(repo: string): Promise<string> {
-  if (typeof repo !== 'string' || !isAbsolute(repo) || repo.length > MAX_REPO_PATH || !noControls(repo)) {
+  if (!isValidGuardianRepoPath(repo)) {
     throw new GuardianHeadError('--head-of requires an absolute repository path');
   }
   const root = resolve(repo);
@@ -123,12 +119,12 @@ export async function buildGuardianHeadEntry(repo: string, branch?: string): Pro
   try {
     head = await git(root, ['rev-parse', '--verify', `refs/remotes/origin/${name}^{commit}`]);
   } catch { /* reported below */ }
-  if (!SHA.test(head)) throw new GuardianHeadError(`origin/${name} does not resolve to a commit`);
+  if (!GUARDIAN_SHA_RE.test(head)) throw new GuardianHeadError(`origin/${name} does not resolve to a commit`);
   let fields: string[] = [];
   try {
     fields = (await git(root, ['rev-list', '--parents', '-n', '1', head])).split(/\s+/).filter(Boolean);
   } catch { /* reported below */ }
-  const parent = fields[0] === head && SHA.test(fields[1] ?? '') ? fields[1]! : '';
+  const parent = fields[0] === head && GUARDIAN_SHA_RE.test(fields[1] ?? '') ? fields[1]! : '';
   if (!parent) throw new GuardianHeadError(`origin/${name} head has no first parent`);
   const id = `guardian-${head.slice(0, 12)}`;
   return {
@@ -158,13 +154,7 @@ export interface GuardianHeadOptions extends Omit<GuardianOptions, 'manifest'> {
 export async function runGuardianHeadVerification(options: GuardianHeadOptions): Promise<GuardianSummary> {
   const entry = await buildGuardianHeadEntry(options.repo, options.branch);
   const manifest = join(tmpdir(), `ashlr-guardian-head-${randomUUID()}.json`);
-  const temp = `${manifest}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temp, JSON.stringify([entry]), { mode: 0o600, flag: 'wx' });
-    await rename(temp, manifest);
-  } finally {
-    await unlink(temp).catch(() => {});
-  }
+  await writePrivateAtomic(manifest, JSON.stringify([entry]));
   try {
     return await (options.loop ?? runGuardianVerifyLoop)({
       manifest,

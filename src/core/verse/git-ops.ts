@@ -67,6 +67,7 @@ import {
   type VerseGitStatusDetail,
 } from './workbench-types.js';
 import { folderAccessPendingMessage, probeFolderAccess } from './folder-io.js';
+import { observeGit, recordGitOperation } from '../fleet/git-observations.js';
 
 // ===========================================================================
 // Wire additions — contract now (workbench-types.ts §7 VerseGitStatusDetail):
@@ -163,6 +164,7 @@ export const defaultGitRunner: GitRunner = async (bin, args, opts) => {
 
 const spawnGitChild: GitRunner = (bin, args, opts) =>
   new Promise<GitRunResult>((resolveRun) => {
+    const observe = bin === 'git' ? observeGit('verse-git', args) : undefined;
     const timeoutMs = opts.timeoutMs ?? VERSE_GIT_TIMEOUT_MS;
     const maxStdout = opts.maxStdoutBytes ?? DEFAULT_MAX_STDOUT;
     const out: Buffer[] = [];
@@ -175,6 +177,7 @@ const spawnGitChild: GitRunner = (bin, args, opts) =>
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      observe?.(result.code === 0 ? undefined : err);
       resolveRun({
         ...result,
         stdout: Buffer.concat(out).toString('utf8'),
@@ -1080,6 +1083,7 @@ export async function withRepoLock<T>(gitRoot: string, fn: () => Promise<T>, opt
     const lockPath = await git(ctx, gitRoot, ['rev-parse', '--git-path', 'index.lock']);
     const rel = lockPath.stdout.trim();
     if (lockPath.code === 0 && rel && ctx.exists(isAbsolute(rel) ? rel : join(gitRoot, rel))) {
+      recordGitOperation('verse-git', undefined, 0, new Date().toISOString(), true);
       throw new GitBusyError('Another git process is working in this repository (its index is locked). Try again when it finishes.');
     }
     return await fn();

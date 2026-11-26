@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { observeGitAsync } from './git-observations.js';
 import { MAX_FILES_PER_PR, planMergeBatches, type MergeBatchPr } from './merge-batch.js';
 import type { QueuePredecessor } from './merge-queue-status.js';
 
@@ -49,10 +50,10 @@ export interface PreparationResult {
 
 export type PreparationGit = (args: string[], cwd: string) => Promise<string>;
 const exec = promisify(execFile);
-const git: PreparationGit = async (args, cwd) => {
+const git: PreparationGit = (args, cwd) => observeGitAsync('merge-queue-prep', args, async () => {
   const { stdout } = await exec('git', args, { cwd, timeout: 60_000, maxBuffer: 1024 * 1024 });
   return stdout.trim();
-};
+});
 
 /**
  * Fetch immutable PR heads into FETCH_HEAD, then rehearse against an explicit

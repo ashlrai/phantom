@@ -6,6 +6,12 @@ import { acquireLocalStoreLock, releaseLocalStoreLock } from './local-store-lock
 import { countQueuedDropJobPrompts, DROP_JOB_QUEUE_LIMIT, dropJobExists, resolveDropJobRoot, validateDropJob, writeDropJob } from './drop-job-writer.js';
 import { ingestFeedback, type FeedbackSnapshot } from './feedback-ingest.js';
 import { feedbackJobId, triageFeedback, type FeedbackCoverage } from './feedback-triage.js';
+import {
+  readFeedbackQueued,
+  recordFeedbackQueued,
+  type FeedbackQueuedEntry,
+} from './feedback-queue-record.js';
+import { isPrecheckSkipRow } from './jobs-ledger-dialect.js';
 
 export const FEEDBACK_CYCLE_LIMIT = 5;
 /**
@@ -41,8 +47,57 @@ const defaults: FeedbackCycleDeps = {
   },
 };
 
+/** Drop-queue job ids the feedback scan mints: RQ-PHX-FB<24-hex dedupe key>. */
+const FB_JOB = /^RQ-PHX-FB[A-Z0-9]{3,40}$/;
+const MAX_SUBMISSIONS = 50;
+const normalizePrRef = (ref: string): string => ref.trim().toLowerCase().replace(/\/+$/, '');
+
+/** Per-submission outcome states; 'queued' is admitted-but-unresolved, never a guess at progress. */
+export type FeedbackSubmissionState = 'queued' | 'under-review' | 'action-required' | 'merged' | 'shipped';
+export interface FeedbackSubmission {
+  job: string;
+  /** Request ref the scan journaled (first signal ref — issue/PR URL or comms receipt), null when none was carried. */
+  request: string | null;
+  source: string | null;
+  kind: string | null;
+  state: FeedbackSubmissionState;
+  /** PR url the ledger recorded for the job, when one exists. */
+  pr: string | null;
+  /** Latest recorded activity across journal and ledger rows, ISO; null when undated. */
+  at: string | null;
+}
+
+interface FbCell {
+  at: number;
+  gaveUp: boolean; skipped: boolean;
+  pr: string | null;
+  outcome: string | null; outcomeAt: number;
+  finishAt: number | null;
+}
+
+/**
+ * Fold one FB job's ledger rows into a submission state. Evidence order:
+ * a resolved outcome beats a bare publish claim; a recorded PR beats a
+ * failed/empty finish; a declined or failed run is action-required; an
+ * admitted job with no verdict yet is queued. 'shipped' additionally
+ * requires the PR ref inside the ingest's gh-verified merged set — a
+ * ledger MERGED claim alone stays 'merged' until gh confirms it.
+ */
+function submissionState(cell: FbCell, shippedRefs: ReadonlySet<string>): FeedbackSubmissionState {
+  if (cell.outcome === 'MERGED') {
+    const pr = cell.pr === null ? null : normalizePrRef(cell.pr);
+    return pr !== null && shippedRefs.has(pr) ? 'shipped' : 'merged';
+  }
+  if (cell.outcome === 'CLOSED') return 'action-required';
+  if (cell.pr !== null || cell.outcome === 'OPEN') return 'under-review';
+  if (cell.gaveUp || cell.skipped) return 'action-required';
+  if (cell.finishAt !== null) return 'action-required';
+  return 'queued';
+}
+
 /** Latest measured job state; a finish is reviewable, never evidence of shipment. */
-export function feedbackDigest(snapshot: FeedbackSnapshot, ledger: string, now: number) {
+export function feedbackDigest(snapshot: FeedbackSnapshot, ledger: string, now: number,
+    queuedEntries: readonly FeedbackQueuedEntry[] | null = null) {
   const latest = new Map<string, { at: number; event: string; state: string; failed: boolean }>();
   const records: Record<string, unknown>[] = [], repos = new Map<string, string>(), jobsByPR = new Map<string, string>();
   let invalidRows = 0;
@@ -79,8 +134,52 @@ export function feedbackDigest(snapshot: FeedbackSnapshot, ledger: string, now: 
     if (['launch', 'start'].includes(r.event)) stillRunning.push(id);
     else if (r.at >= now - 12 * 3600000 && r.state !== 'MERGED' && r.event !== 'merged') (r.failed ? failures : needsReview).push(id);
   }
+  // Per-submission fold: FB job ids are minted only by this pipeline, so the
+  // id itself is the repo attribution — no repo field is required. Rows
+  // resolve their job the same way the digest does (job key, else the PR
+  // url a publish row already tied to a job).
+  const fb = new Map<string, FbCell>();
+  const cellFor = (id: string): FbCell => {
+    let cell = fb.get(id);
+    if (cell === undefined) {
+      cell = { at: 0, gaveUp: false, skipped: false, pr: null, outcome: null, outcomeAt: -1, finishAt: null };
+      fb.set(id, cell);
+    }
+    return cell;
+  };
+  for (const r of records) {
+    try {
+      const prValue = first(r, PR_KEYS);
+      const id = first(r, JOB_KEYS) ?? (typeof prValue === 'string' ? jobsByPR.get(prValue) : undefined);
+      if (typeof id !== 'string' || !FB_JOB.test(id) || scrubSecrets(id) !== id) continue;
+      const raw = first(r, TS_KEYS), at = typeof raw === 'number' ? (raw < 1e12 ? raw * 1000 : raw) : typeof raw === 'string' ? Date.parse(raw) : NaN;
+      if (!Number.isFinite(at) || at > now) continue;
+      const event = String(first(r, EVENT_KEYS) ?? '').toLowerCase(), state = String(first(r, PHASE_KEYS) ?? '').toUpperCase();
+      const cell = cellFor(id);
+      if (at > cell.at) cell.at = at;
+      if (typeof prValue === 'string' && prValue.trim() !== '' && cell.pr === null) cell.pr = prValue.trim();
+      if (['MERGED', 'CLOSED', 'OPEN'].includes(state) && at >= cell.outcomeAt) { cell.outcome = state; cell.outcomeAt = at; }
+      if (['finish', 'complete'].includes(event) && at >= (cell.finishAt ?? -1)) cell.finishAt = at;
+      if (event === 'launch_failed' && String(r.action ?? '') === 'give_up') cell.gaveUp = true;
+      if (isPrecheckSkipRow(r)) cell.skipped = true;
+    } catch { /* a malformed row never guesses a submission state */ }
+  }
+  const journal = new Map<string, FeedbackQueuedEntry>();
+  for (const entry of queuedEntries ?? []) if (FB_JOB.test(entry.job)) journal.set(entry.job, entry);
+  const shippedRefs = new Set(snapshot.shipped.map(r => normalizePrRef(r.ref)));
+  const submissions: FeedbackSubmission[] = [];
+  for (const job of journal.keys()) if (!fb.has(job)) cellFor(job);
+  for (const [job, cell] of fb) {
+    const entry = journal.get(job);
+    const journalAt = entry === undefined ? NaN : Date.parse(entry.at);
+    const at = Math.max(cell.at, Number.isFinite(journalAt) ? journalAt : 0);
+    submissions.push({ job, request: entry?.ref ?? null, source: entry?.source ?? null, kind: entry?.kind ?? null,
+      state: submissionState(cell, shippedRefs), pr: cell.pr, at: at > 0 ? new Date(at).toISOString() : null });
+  }
+  submissions.sort((a, b) => (b.at ?? '').localeCompare(a.at ?? '') || a.job.localeCompare(b.job));
   return { windowHours: 12, shipped: snapshot.shipped.filter(r => r.at >= now - 12 * 3600000 && r.at <= now).map(r => r.ref),
-    needsReview, failures, stillRunning, invalidRows, runningEvidence: 'last recorded launch; liveness unverified' };
+    needsReview, failures, stillRunning, invalidRows, submissions: submissions.slice(0, MAX_SUBMISSIONS),
+    runningEvidence: 'last recorded launch; liveness unverified' };
 }
 
 export async function runFeedback(options: FeedbackOptions, overrides: Partial<FeedbackCycleDeps> = {}) {
@@ -96,9 +195,12 @@ export async function runFeedback(options: FeedbackOptions, overrides: Partial<F
     let ledger = '';
     try { ledger = await deps.read(root, 'metrics/jobs.jsonl'); report.sources.jobs = 'ok'; }
     catch { report.sources.jobs = 'unavailable'; }
-    const digest = feedbackDigest(snapshot, ledger, now);
+    const queuedRead = await readFeedbackQueued(root);
+    report.sources['feedback-queued'] = queuedRead.state === 'unavailable' ? 'unavailable' : 'ok';
+    const digest = feedbackDigest(snapshot, ledger, now, queuedRead.state === 'ok' ? queuedRead.entries : null);
     if (digest.invalidRows) report.sources.jobs = 'unavailable';
-    return { ...report, digest: { ...digest, ...(report.sources.merges === 'unavailable' ? { shipped: null } : {}), ...(report.sources.jobs === 'unavailable' ? { needsReview: null, failures: null, stillRunning: null } : {}) } };
+    return { ...report, digest: { ...digest, ...(report.sources.merges === 'unavailable' ? { shipped: null } : {}),
+      ...(report.sources.jobs === 'unavailable' ? { needsReview: null, failures: null, stillRunning: null, submissions: null } : {}) } };
   }
   // A shared lock covers coverage refresh, depth checks and atomic publication.
   const lock = options.apply ? acquireLocalStoreLock(join(root, 'feedback', 'scan.lock'), 0) : null;
@@ -141,6 +243,10 @@ export async function runFeedback(options: FeedbackOptions, overrides: Partial<F
       if (cooling || !snapshot.coverageComplete || report.sources.queue !== 'ok' || report.queued.length >= FEEDBACK_CYCLE_LIMIT ||
           await countQueuedDropJobPrompts(root) >= DROP_JOB_QUEUE_LIMIT) { report.deferred.push(id); continue; }
       await writeDropJob(root, input); report.queued.push(`RQ-PHX-${id}`);
+      try {
+        await recordFeedbackQueued(root, [{ at: new Date(now).toISOString(), job: `RQ-PHX-${id}`,
+          source: signal.source, ref: signal.refs[0] ?? null, kind: result.kind }]);
+      } catch { if (!report.errors.includes('queue-record-failed')) report.errors.push('queue-record-failed'); }
     }
   } catch { report.errors.push('queue-unavailable-or-write-failed'); }
   finally { releaseLocalStoreLock(lock); }

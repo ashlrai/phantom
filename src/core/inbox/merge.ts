@@ -114,6 +114,7 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { observeGitSync } from '../fleet/git-observations.js';
 
 import type {
   AshlrConfig,
@@ -316,13 +317,13 @@ function gitRun(cwd: string, args: string[], env?: NodeJS.ProcessEnv): string {
   // --no-replace-objects: a refs/replace/<oid> planted in the shared object
   // store would otherwise make every object read here (the staged tree, the
   // merge parent) resolve to content no gate ever saw.
-  return execFileSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], {
+  return observeGitSync('inbox-merge', args, () => execFileSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], {
     cwd,
     timeout: GIT_TIMEOUT,
     stdio: 'pipe',
     encoding: 'utf8',
     ...(env ? { env: { ...process.env, ...env } } : {}),
-  }).trim();
+  })).trim();
 }
 
 /** Run a git command, returning null on any error (never throws). */
