@@ -3048,6 +3048,9 @@ export function foldLaunchCosts(text: string): Map<string, LaunchCostEvidence> {
 function* launchCostReceipts(text: string): Generator<{
   launchId: string;
   startedAtMs: number | null;
+  lane: string;
+  sampledSeconds: number;
+  samples: number;
   evidence: LaunchCostEvidence;
 }> {
   for (const line of text.split('\n')) {
@@ -3083,6 +3086,9 @@ function* launchCostReceipts(text: string): Generator<{
     yield {
       launchId,
       startedAtMs: typeof startedAt === 'string' ? Date.parse(startedAt) : null,
+      lane,
+      sampledSeconds,
+      samples: samples as number,
       evidence: {
         status: status as LaunchCostEvidence['status'],
         peakProcesses: r['peakProcesses'] === null ? null : r['peakProcesses'] as number,
@@ -3585,8 +3591,15 @@ export async function readRouterOutcomes(opts: {
   }
   if (launchCostRead.state === 'read') {
     const byJob = new Map<string, LaunchCostEvidence>();
-    for (const { launchId, startedAtMs, evidence } of launchCostReceipts(launchCostRead.text)) {
-      if (startedAtMs !== null && startedAtMs > reportStartedAt) continue;
+    const seen = new Set<string>();
+    for (const receipt of launchCostReceipts(launchCostRead.text)) {
+      const { launchId, startedAtMs, evidence } = receipt;
+      if (startedAtMs !== null) {
+        if (startedAtMs > reportStartedAt) continue;
+        const key = JSON.stringify(receipt);
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
       // The producer sets startedAt and appends the claim hash together.
       // Resolve before folding so a bare job ID and a claim ID can coexist.
       const job = startedAtMs !== null ? launchId.replace(LAUNCH_ATTEMPT_SUFFIX, '') : launchId;

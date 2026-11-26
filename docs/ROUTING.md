@@ -892,8 +892,11 @@ another job's claim ID of the same spelling. The join fills
 but recorded nothing on `unknown`), `launch_peak_processes`,
 `launch_mean_cpu_pct` and `launch_peak_cpu_pct`, the only per-attempt
 resource-cost evidence subscription lanes record since their finish
-rows carry no `cost_usd`. The last valid receipt appended for a resolved
-job stands, including when its launch ID appeared earlier. The join skips
+rows carry no `cost_usd`. A replay of a dated receipt keeps its original
+position in the retained journal, so it cannot overwrite a later probe
+for the same job. Timestamp spellings for the same instant are equivalent.
+Distinct valid receipts and receipts without a recorded start retain their
+append order. The join skips
 receipts whose recorded start is after the report began. Starts exactly at
 report time and receipts with no recorded start remain eligible. Rows resolving
 outside the jobs window join nothing and
