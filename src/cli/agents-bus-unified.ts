@@ -64,7 +64,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work claim-next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
+ashlr agents bus work claim-next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>] [--exclude-announcer <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus status
@@ -626,7 +626,8 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--frame', '--since', '--before', '--root', '--key', '--owner', '--origin', '--lease-ms', '--token', '--outcome', '--reason',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
   '--result', '--with', '--duration-ms', '--interval-ms',
-  '--kind', '--channel', '--contains', '--exclude-from', '--exclude-owner', '--reply-to', '--in-reply-to', '--body-kind']);
+  '--kind', '--channel', '--contains', '--exclude-from', '--exclude-owner', '--reply-to', '--in-reply-to', '--body-kind',
+  '--announcer', '--exclude-announcer']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched', '--all']);
 const MESSAGE_CLAIM_ACTIONS = ['acquire', 'renew', 'release', 'complete'] as const;
@@ -1283,7 +1284,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         }
         return value;
       };
-      const jobId = labelArg('--job'), announcer = labelArg('--announcer'), envelopeId = labelArg('--id');
+      const jobId = labelArg('--job'), announcer = labelArg('--announcer'),
+        excludeAnnouncer = labelArg('--exclude-announcer'), envelopeId = labelArg('--id');
       const repoRaw = one('--repo');
       const repo = repoRaw === undefined ? undefined : busWorkFeedRepoKey(repoRaw);
       if (repoRaw !== undefined && repo === undefined) {
@@ -1314,7 +1316,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const result = claimNextBusWorkJob({ owner, leaseMs, root: options.root,
         jobId, repo, provider: providerRaw as WorkJob['provider'] | undefined, tier,
         channel, topic, result: resultOutcome, id: envelopeId, contains,
-        since: sinceArg(), before: beforeArg(), to: agent, announcer });
+        since: sinceArg(), before: beforeArg(), to: agent, announcer, excludeAnnouncer });
       out(json ? JSON.stringify(result) : workJobNextHuman(result));
       return result.status === 'acquired' || result.status === 'empty' ? 0 :
         result.status === 'invalid' ? 2 : 1;

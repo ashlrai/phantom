@@ -1070,6 +1070,7 @@ never permits a merge, a push, or spending.
 **Next-job claim.** `phm agents bus work claim-next [<agent>] --lease-ms
 <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>]
 [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>]
+[--exclude-announcer <agent>]
 [--channel <name>] [--topic <topic>] [--result <reserved|admitted|complete|failed>]
 [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>]
 [--contains <text>]` is the job-level companion to `work next`: where `work
@@ -1082,9 +1083,15 @@ same filters `work feed` accepts — `--job`, `--repo`, `--provider`,
 `--tier`, `--channel`, `--topic`, `--result`, `--id` (the retained-envelope
 citation, never an operation id: each call mints its own), `--since`,
 `--before` and `--contains` — plus the pending-work address rule the
-positional `<agent>` applies (default `PHM_AGENT_ID`) and `--announcer`,
+positional `<agent>` applies (default `PHM_AGENT_ID`), `--announcer`,
 the feed `--owner` job-announcer filter under a name that cannot collide
-with the lease `--owner`. Candidates are the filtered open jobs
+with the lease `--owner`, and `--exclude-announcer`, its negative
+counterpart: every job the named ref announced drops out under the same
+identity-label rule `--announcer` resolves through, so "claim the next job
+X did not announce" is one step the way `--exclude-from` narrows every
+envelope-level bus read — composing with `--announcer` (a job both
+matching and excluded drops out) and never widening on an unresolvable ref
+or unreadable registry. Candidates are the filtered open jobs
 (`queued`/`rescheduled`) with declared claim keys in the feed view's
 newest-first `updatedAt` order — the `--open` rule minus its
 complete-coverage exclusion, so a job whose every key is provably held
