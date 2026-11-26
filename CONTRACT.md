@@ -2220,6 +2220,11 @@ cohorts, observation coverage, unknowns, thresholds and exit codes.
 [CONTRACT-AGENTNET-PEERBUS](docs/contracts/CONTRACT-AGENTNET-PEERBUS.md) pins
 session-bound callsigns, team-only peer messages, Slack provisioning drafts,
 the approval-gated broker and bounded chief-of-staff delegation.
+`phm agentnet peers read` additionally accepts post-admission filters
+(`--from`, `--exclude-from`, `--to`, `--since`, `--before`, `--contains`,
+`--id`, `--kind`, `--peer-kind`, `--thread`, `--job`, `--result`) owned by
+`agentnet/peer-inbox.ts`; they narrow the admitted page only and never affect
+admission or cursor semantics.
 ## Persistent specialist identities (RQ-GROK-SPECIALISTS-1)
 
 `src/core/fleet/roster.ts` owns `fleet-specialist-roster.v1`: named identities,
