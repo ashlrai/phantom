@@ -156,6 +156,30 @@ describe('generator yield', () => {
       ]);
     }
   });
+  it('takes lifecycle and generation evidence only from their respective journals', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'generator-yield-'));
+    try {
+      const metrics = join(dir, 'metrics');
+      await mkdir(metrics);
+      await Promise.all([
+        writeFile(join(metrics, 'jobs.jsonl'), [
+          row({ job: 'FIXUP-X', event: 'launch' }),
+          row({ job: 'FIXUP-X', event: 'drafted', src: 'bets' }),
+        ].join('\n')),
+        writeFile(join(metrics, 'generation.jsonl'), [
+          row({ job: 'FIXUP-X', event: 'drafted', src: 'ideas', state: 'MERGED',
+            mergedAt: '2026-11-09T12:01:00Z' }),
+          row({ job: 'FIXUP-X', event: 'merged' }),
+          row({ job: 'FIXUP-Y', event: 'launch' }),
+        ].join('\n')),
+      ]);
+      expect(await readGeneratorYield(dir, 24, now)).toMatchObject({
+        jobsKnown: true,
+        generationKnown: true,
+        generators: [{ generator: 'ideas', jobs: 1, drafted: 1, launched: 1, prs: 0, merged: 0 }],
+      });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
   it.each([
     { unreadable: 'jobs.jsonl', readable: 'generation.jsonl', event: 'drafted', jobsKnown: false, generationKnown: true },
     { unreadable: 'generation.jsonl', readable: 'jobs.jsonl', event: 'launch', jobsKnown: true, generationKnown: false },

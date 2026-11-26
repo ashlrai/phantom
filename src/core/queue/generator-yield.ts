@@ -60,21 +60,25 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   const memberBatches = new Map<string, Map<string, number>>();
   const rows: { id: string; at: number; event: string | undefined; terminal: ReturnType<typeof terminalVerdict>; row: Record<string, unknown> }[] = [];
   const since = now - hours * 3600000;
-  for (const line of `${raw}\n${decisions}`.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    let value: unknown;
-    try { value = JSON.parse(line); } catch { malformedLines++; continue; }
-    if (!value || typeof value !== 'object' || Array.isArray(value)) { malformedLines++; continue; }
-    const r = value as Record<string, unknown>;
-    if (isNodePoolLedgerRow(r)) continue;
-    const id = pickString(r, JOB_ID_KEYS);
-    const event = pickString(r, EVENT_KEYS)?.toLowerCase();
-    const terminal = terminalVerdict(r, event);
-    // Reconciled outcomes can retain the original publish timestamp.
-    const at = ledgerEventTs(r, terminal);
-    if (!id || at === null) { malformedLines++; continue; }
-    if (at < since || at > now) continue;
-    rows.push({ id, at, event, terminal, row: r });
+  for (const [text, isGenerationJournal] of [[raw, false], [decisions, true]] as const) {
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      let value: unknown;
+      try { value = JSON.parse(line); } catch { malformedLines++; continue; }
+      if (!value || typeof value !== 'object' || Array.isArray(value)) { malformedLines++; continue; }
+      const r = value as Record<string, unknown>;
+      if (isNodePoolLedgerRow(r)) continue;
+      const event = pickString(r, EVENT_KEYS)?.toLowerCase();
+      const isDecision = event === 'drafted' || event === 'rejected';
+      if (isGenerationJournal !== isDecision) continue;
+      const id = pickString(r, JOB_ID_KEYS);
+      const terminal = isDecision ? null : terminalVerdict(r, event);
+      // Reconciled outcomes can retain the original publish timestamp.
+      const at = ledgerEventTs(r, terminal);
+      if (!id || at === null) { malformedLines++; continue; }
+      if (at < since || at > now) continue;
+      rows.push({ id, at, event, terminal, row: r });
+    }
   }
   // Late receipts can be appended out of order. Stable sorting preserves
   // ledger order when receipts share a timestamp.
