@@ -379,6 +379,9 @@ records gain `recurringFlakes`, `flakeFixesQueued`, `verdictsPending` and
 `verdictsResolved` counts.
 Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
 Resident off-tick ticks launch it only with repositories and an elapsed interval.
+Attempt entries use `test` for a singleton or `tests` for multiple eligible
+test IDs in the same workflow run. Each ID contributes to recurrence.
+A multi-test rerun verdict contributes only to the workflow totals.
 The CLI `ci reruns [--json]` reads recent journal entries, counts,
 recurringFlakes and verdicts without mutation.
 
