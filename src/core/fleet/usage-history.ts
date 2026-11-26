@@ -194,8 +194,8 @@ const pts = (n: number): string => `${Math.round(n * 100) / 100}`;
  * Pure. Pace from consecutive readings of one pool, then whether it runs dry
  * before `resetAt` or leaves usage unspent. Readings before the window start
  * (`resetAt` minus `windowMs`) are ignored; a used share that goes down means
- * the pool was reset, so the series restarts there. A single reading, a stale
- * newest reading, identical values or no reset time is "unknown", never a guess.
+ * the pool was reset, so the series restarts there. A single reading, stale
+ * evidence of a reading or change, identical values or no reset time yields "unknown".
  */
 export function usageRunway(pool: string, readings: readonly UsagePoint[], resetAt: string | null, nowMs: number, windowMs = USAGE_WINDOW_MS): PoolRunwayRead {
   const name = poolLabel(pool);
@@ -214,10 +214,11 @@ export function usageRunway(pool: string, readings: readonly UsagePoint[], reset
   if (hoursToReset <= 0) return unknown('reset passed; waiting for a new reading');
   if (series.length < 2) return unknown('only one reading');
   if (nowMs - ms(latest.at) > USAGE_RUNWAY_STALE_MS) return unknown('latest reading is stale');
-  // Newest reading of a flat run is not the change; the first reading at the newest value is.
+  // The first reading at the newest value timestamps the measured change.
   let first = series.length - 1;
   while (first > 0 && series[first - 1]!.used_pct === latest.used_pct) first--;
   if (first === 0) return unknown('readings are identical; no pace yet');
+  if (nowMs - ms(series[first]!.at) > USAGE_RUNWAY_STALE_MS) return unknown('latest usage change is stale');
   const hours = (a: UsagePoint, b: UsagePoint): number => (ms(b.at) - ms(a.at)) / 3_600_000;
   const pace = (series[first]!.used_pct - series[first - 1]!.used_pct) / hours(series[first - 1]!, series[first]!);
   const recent = series.filter(r => ms(r.at) >= ms(latest.at) - USAGE_RUNWAY_LONG_MS);
