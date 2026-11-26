@@ -729,7 +729,10 @@ daemon's reward-sync feed and supervising bridges append one `v:1` row
 per terminal job (`jobId`, resolved `merged` verdict,
 `dispatchedAt`/`mergedAt`/`recordedAt` stamps, derived
 `timeToMergeMs`, `ciWallMs`, and a `cost` block carrying the metered
-pool readings). The daemon records `ciWallMs` when the rewarded dispatch
+pool readings). The daemon excludes batch session wrappers (`RQ-BATCH-*`)
+and node-pool attempt telemetry from the reward fold. Batch members still
+use their own `batch_claim` rows and PR verdicts. The daemon records
+`ciWallMs` when the rewarded dispatch
 and resolution window contains exactly one distinct CI start and one distinct
 completion in order. CI receipts outside that window are ignored when
 checking for ambiguity, so earlier attempts can coexist with a measured

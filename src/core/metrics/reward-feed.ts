@@ -85,7 +85,7 @@ const JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 const PR_URL_PATTERN = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/\d+\/?$/;
 const POOL_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,63}$/;
-/** Batch session ids are infrastructure and never claim a PR — the rule the sibling outcome folds apply. */
+/** Batch session wrappers carry aggregate telemetry. Members have their own job ids. */
 const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
 /** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
 const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)\/?$/i;
@@ -260,7 +260,8 @@ export function foldJobsLedgerRewards(
       row = parsed as Record<string, unknown>;
     } catch { continue; }
     const id = firstString(row, JOB_ID_KEYS);
-    if (claims !== null && id !== null && !id.startsWith(BATCH_SESSION_PREFIX) && !isNodePoolLedgerRow(row)) {
+    if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
+    if (claims !== null) {
       const url = firstString(row, URL_KEYS);
       if (url !== null) {
         const set = claims.get(url) ?? new Set<string>();
@@ -268,7 +269,7 @@ export function foldJobsLedgerRewards(
         claims.set(url, set);
       }
     }
-    if (!id || !JOB_ID_PATTERN.test(id)) continue;
+    if (!JOB_ID_PATTERN.test(id)) continue;
     const at = ledgerTs(row);
     if (at === null || at > nowMs) continue;
     let acc = jobs.get(id);
