@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { FEED_SCHEMA, FEED_VERSION, FEED_SOURCES } from '../../../../core/feed-schema.js';
 import { CompactNavStrip } from './CompactNavStrip.js';
@@ -16,6 +16,8 @@ vi.mock('../feed/feed-seen-store.js', async importOriginal => ({
   useFeedSeen: () => ({ seenAt: '2026-11-10T12:00:00Z' }),
 }));
 vi.mock('../feed/feed-dismiss-store.js', () => ({ useFeedDismissals: () => ({ map: {} }), isDismissed: () => false }));
+// The Feed badge is lazy; load it once so a cold CI import cannot outlast findBy's wait.
+beforeAll(async () => { await import('../feed/FeedNavBadge.js'); });
 beforeEach(() => { feed.count = 0; });
 
 describe('CompactNavStrip unread chips', () => {
@@ -34,7 +36,7 @@ describe('CompactNavStrip unread chips', () => {
   it('caps the shared Feed badge at 99+ independently of legacy unread props', async () => {
     feed.count = 100;
     render(<CompactNavStrip active="leader" needsYouCount={null} unread={{ leader: 0, feed: 150 }} onSelect={() => {}} />);
-    expect((await screen.findByLabelText('Feed, 100 unseen')).textContent).toBe('99+');
+    expect((await screen.findByLabelText('Feed, 100 unseen', undefined, { timeout: 5_000 })).textContent).toBe('99+');
     expect(screen.queryByLabelText('150 new')).toBeNull();
   });
 
@@ -44,6 +46,6 @@ describe('CompactNavStrip unread chips', () => {
     expect(screen.getByLabelText('1 waiting')).toBeTruthy();
     expect(screen.getAllByLabelText(/ new$/)).toHaveLength(1);
     expect(screen.getByLabelText('3 new')).toHaveTextContent('3');
-    expect(await screen.findByLabelText('Feed, 2 unseen')).toHaveTextContent('2');
+    expect(await screen.findByLabelText('Feed, 2 unseen', undefined, { timeout: 5_000 })).toHaveTextContent('2');
   });
 });
