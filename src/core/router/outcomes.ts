@@ -2737,7 +2737,8 @@ const MERGE_UNTIMED_TYPES: ReadonlySet<string> = new Set([
  * needs a recorded in-vocabulary `reason`, a `check_observed` row a
  * recorded `conclusion` (and a boolean `required` when present), every
  * non-state/terminal type a parseable `at`, and `repo`/`pr`/`type` the
- * recorded shapes — anything else is skipped, never guessed. `blocked`
+ * recorded shapes — anything else is skipped, never guessed. Exact copies
+ * of timestamped receipts count once, at their first position. `blocked`
  * reasons join distinct in first-seen order; retry rows dedupe by
  * `at`+`head_sha` like the sibling's retry verdict; `auto_merge` is the
  * last recorded toggle in append order. `checks_passed` counts the
@@ -2777,8 +2778,10 @@ function parseMergeEvents(text: string): { evidence: Map<string, MergeQueueEvide
   }
   const prs = new Map<string, Acc>();
   const coverage: MergeEventCoverage = { unattributed: false, incompletePrs: new Set() };
+  const seenTimedReceipts = new Set<string>();
   for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
+    const receipt = line.trim();
+    if (!receipt) continue;
     let value: unknown;
     try {
       value = JSON.parse(line);
@@ -2826,6 +2829,10 @@ function parseMergeEvents(text: string): { evidence: Map<string, MergeQueueEvide
     if (!atOk && !MERGE_UNTIMED_TYPES.has(type)) {
       if (affectsCiCoverage) coverage.incompletePrs.add(key);
       continue;
+    }
+    if (atOk) {
+      if (seenTimedReceipts.has(receipt)) continue;
+      seenTimedReceipts.add(receipt);
     }
     const acc = prs.get(key) ?? {
       events: 0, blocked: [], blockedSeen: new Set<string>(), conflicts: 0,

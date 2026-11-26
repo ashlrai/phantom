@@ -852,8 +852,10 @@ recorded in-vocabulary `reason` (`queue`/`required_checks`/`conflict`/
 (`success`/`failure`/`pending`, with `required` only as a boolean when
 present), and every type outside the state/terminal set
 (`auto_merge_*`/`merged`/`closed`) a parseable `at`; anything else is
-skipped, never guessed. The evidence records `events` (qualifying row
-count), `blocked_reasons` (distinct recorded blockers, first-seen
+skipped, never guessed. Identical timestamped JSONL lines (ignoring
+surrounding whitespace) count once at their first position in the retained
+ledger. Untimed rows keep their append order and count. The evidence
+records `events` (qualifying row count), `blocked_reasons` (distinct recorded blockers, first-seen
 order), `conflicts`, `check_failures` and `required_check_failures`
 (failed `check_observed` rows, split on recorded `required: true`),
 `checks_passed` (recorded all-required-green boundary rows) and
