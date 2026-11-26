@@ -14,7 +14,7 @@ interface Dependencies {
   clock?: () => number;
 }
 
-function redactFields(value: unknown): unknown {
+export function redactFields(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactFields);
   if (value === null || typeof value !== 'object') return value;
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,

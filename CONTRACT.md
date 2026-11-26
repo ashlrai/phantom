@@ -4128,6 +4128,33 @@ a `to` that resolves to a registered identity — any of its labels, exact
 first then lowercase — lands in its inbox as
 legacy mail.
 
+`src/core/agents/bus-follow.ts`: `followAgentBus(request, options?, deps)`
+is the bounded streaming watch over one identity's addressed inbox —
+`agents bus follow`'s core. Each poll runs the same `readAgentInbox`
+projection `agents bus inbox` serves (every inbox filter applies
+unchanged, minus the paging fields) and emits one
+`AgentBusFollowRecord` per accepted row: `{type:'message'}` carries the
+`InboxMessage` fields plus `summary`, the same scrubbed one-line text
+`busBodySummary`/`busBodyFallbackSummary` render for the `--frame` read,
+and `{type:'checkpoint', cursor}` marks every advance of the scan
+position, offered only after every preceding message record was
+accepted — so the returned cursor is always a safe at-least-once resume
+point for `--after`. `AgentBusFollowRequest` requires `agent` and a
+mandatory bounded `durationMs` (1..`BUS_FOLLOW_MAX_DURATION_MS`), takes
+optional `after`/`intervalMs` (the shared `fleet bus-follow` bounds) and
+the full inbox filter set; `validAgentBusFollowRequest` is the shared
+validator. A page that fills its row cap re-polls without sleeping so a
+retained backlog drains inside the same deadline; a short page waits one
+interval, and `retryable` pages pause and re-read rather than ending the
+stream. The result is `expired`/`cancelled` on deadline or abort,
+`invalid` on a malformed request, `unknown-agent` for an unregistered
+ref, `source-unavailable` when the store cannot be read and
+`output-unavailable` when the output stream rejects a record — an output
+failure ends the stream rather than skipping rows, and an expired stream
+emits one final checkpoint so the last accepted cursor is always on the
+wire. Read-only local observation: routing labels are data, never
+authenticated identity.
+
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
 `busAgentView(ref?, env, options?)` (the `agents bus id show [<ref>]` read — the
