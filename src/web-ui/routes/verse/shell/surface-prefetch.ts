@@ -23,6 +23,7 @@ import { budgetPreviewQuery, budgetQuery } from '../budget/budget-queries.js';
 import { cloudQuery } from '../cloud/cloud-queries.js';
 import {
   authorityQuery,
+  burnQuery,
   fleetHistoryQuery,
   fleetLiveQuery,
   leaderQuery,
@@ -37,7 +38,10 @@ import { growthSeriesDayQuery } from '../growth/growth-data.js';
 import { lessonsQuery } from '../growth/lessons-data.js';
 import { mergeGraphQuery } from '../growth/MergeGraph.js';
 import { runsNowQuery } from '../command/runs-now-queries.js';
+import { releasesQuery } from '../fleet-metrics/releases-query.js';
+import { supplyQuery } from '../home/SupplyCard.js';
 import { operatorGlanceQuery } from '../mobile/operator-glance-query.js';
+import { buildStaleLimitsQuery } from '../sections/build-stale-limits-queries.js';
 import { verseBootstrapQuery, verseSessionsQuery, verseWorkspacesQuery } from '../verse-queries.js';
 import type { VerseSectionId } from '../verse-ui-store.js';
 
@@ -51,7 +55,7 @@ export const SURFACE_PREFETCH: Readonly<Partial<Record<VerseSectionId, readonly 
   // paints "Reading the cloud lane…" under the seat strip.
   // leaderThreadQuery: the Leader card's latest-message line (leader/LeaderLine).
   // fleetControlQuery (3.15): Command's one line about the fleet (fleet/FleetStatusLink).
-  command: [authorityQuery, fleetLiveQuery, leaderQuery, learningQuery, fleetHistoryQuery, budgetQuery, cloudQuery, leaderThreadQuery, fleetControlQuery, operatorGlanceQuery, runsNowQuery],
+  command: [authorityQuery, fleetLiveQuery, leaderQuery, burnQuery, learningQuery, fleetHistoryQuery, budgetQuery, cloudQuery, leaderThreadQuery, fleetControlQuery, operatorGlanceQuery, runsNowQuery, supplyQuery, buildStaleLimitsQuery, releasesQuery],
   // authorityQuery + fleetLiveQuery on Fleet, Growth and Mind: the shared
   // "Autonomy is off" state (autonomy/AutonomyOffState) reads both.
   // fleetControlQuery + fleetQueueQuery (3.15): the control surface and the steer panel.

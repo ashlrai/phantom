@@ -129,8 +129,8 @@ describe('pace verdict under each row (fleet.pace.v1)', () => {
     render(<SpendDownChart data={FIXTURE} pace={pace} />);
     const lines = screen.getAllByTestId('pace-sentence');
     expect(lines.map(el => el.getAttribute('data-pace'))).toEqual(['ahead', 'on-pace', 'behind', 'unknown']);
-    expect(lines.map(el => el.querySelector('strong')!.textContent)).toEqual(['over', 'over', 'ok', 'unknown']);
-    expect(lines[0]).toHaveTextContent('Claude: 64% used, 100 h left, spending 2/h, safe is 0.31/h. Over pace, empty in about 18 h.');
+    expect(lines.map(el => el.querySelector('strong')!.textContent)).toEqual(['over', 'ok', 'ok', 'unknown']);
+    expect(lines[0]).toHaveTextContent('Claude: 64% used, 100 h left, spending 2/h, safe is 0.36/h. Over pace, empty in about 18 h.');
     expect(lines[0]).toHaveAttribute('data-over', 'true');
     expect(lines[3]!.textContent).toBe('unknown Grok: unknown% used, unknown h left, spending unknown/h, safe is unknown/h. Pace unknown, empty time unknown.');
   });

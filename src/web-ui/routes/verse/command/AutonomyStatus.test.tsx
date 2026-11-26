@@ -46,7 +46,11 @@ afterEach(() => {
 });
 
 async function panel(): Promise<HTMLElement> {
-  return screen.findByRole('region', { name: 'Autonomy' }, { timeout: 3_000 });
+  return waitFor(() => {
+    const host = document.getElementById(anchorId('autonomy'));
+    if (!host) throw new Error('Autonomy rollout ladder anchor not mounted yet');
+    return within(host).getByRole('region', { name: 'Autonomy' });
+  }, { timeout: 3_000 });
 }
 
 describe('Autonomy status (on Fleet since 3.15)', () => {

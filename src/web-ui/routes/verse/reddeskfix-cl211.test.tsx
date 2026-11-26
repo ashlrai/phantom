@@ -1,16 +1,12 @@
 /**
- * RQ-PHX-REDDESKFIXCL211 — regression pin for PR #5272's red Quick typecheck.
+ * RQ-PHX-REDDESKFIXCL211 — regression pin for PR #5272's /api/ideas module
+ * and its Tier-1 authority closure status.
  *
- * The PR added src/core/fleet/ideas.ts — the reader behind GET /api/ideas,
- * which feeds the new NextIdeas card in the Ideas pane — but did not
- * regenerate the Tier-1 authority closure snapshot. src/core/web/api.ts is
- * already inside the closure, so its literal dynamic import made ideas.ts a
- * new authority member and test/authority-tier1-closure-310b.test.ts failed
- * with "These files joined the Tier-1 authority import closure:
- * src/core/fleet/ideas.ts".
- *
- * Fails on the PR's original code (snapshot lacks the module); passes once
- * the reviewed snapshot update travels with the feature.
+ * PR #5272 added src/core/fleet/ideas.ts (the reader behind GET /api/ideas)
+ * while src/core/web/api.ts was still in the Tier-1 closure. PR #6737 later
+ * decoupled HTTP API handlers from Tier-1 roots, removing src/core/web/api.ts
+ * and src/core/fleet/ideas.ts from test/fixtures/authority/tier1-closure.json.
+ * Pin that ideas.ts exists and stays out of the Tier-1 closure alongside api.ts.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -18,10 +14,12 @@ import { expect, it } from 'vitest';
 
 const SNAPSHOT = 'test/fixtures/authority/tier1-closure.json';
 const MODULE = 'src/core/fleet/ideas.ts';
+const WEB_API = 'src/core/web/api.ts';
 
-it('ships the Tier-1 closure snapshot update for the /api/ideas module', () => {
+it('keeps /api/ideas and the HTTP API module out of the Tier-1 closure snapshot', () => {
   const root = process.cwd();
   expect(existsSync(resolve(root, MODULE))).toBe(true);
   const snapshot = JSON.parse(readFileSync(resolve(root, SNAPSHOT), 'utf8')) as { closure: string[] };
-  expect(snapshot.closure).toContain(MODULE);
+  expect(snapshot.closure).not.toContain(WEB_API);
+  expect(snapshot.closure).not.toContain(MODULE);
 });
