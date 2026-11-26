@@ -50,6 +50,16 @@ vi.mock('../src/core/run/sandboxed-engine.js', () => ({
   },
 }));
 
+// Hermetic HOME has no fleet.json, so real local memory fit is 'unknown' and
+// routeTask would reroute every local pick to cloud. Pin a fitting machine.
+vi.mock('../src/core/resources/local-memory-fit.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/core/resources/local-memory-fit.js')>(),
+  localModelFit: vi.fn((model: string | null) => ({
+    model: model ?? 'unknown', residentBytes: 1, contextBytes: 1, requiredBytes: 2,
+    freeBytes: 1024 ** 3, verdict: 'fits', reason: 'mock: fits',
+  })),
+}));
+
 vi.mock('../src/core/fleet/quota.js', () => ({
   withinLimit: vi.fn(() => true),
   evalQuota: vi.fn(() => 'ok'),
