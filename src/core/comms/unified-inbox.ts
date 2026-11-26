@@ -358,6 +358,32 @@
  *               source. `missing` is a verified-absent store,
  *               `unavailable` any refusal — never an empty backlog passed
  *               off as fact. Act: `phm leader inbox`, `phm comms thread`.
+ *   coordination  the advisory coordination ledger's (`fleet.coordination.v1`,
+ *               `~/.ashlr/fleet/coordination.jsonl`) whole pending surface
+ *               through `readFleetCoordinationPending` — the same replay
+ *               `readFleetBoard` runs, projected fleet-wide in one read:
+ *               live ledger messages (`post` events, addressed to one
+ *               coordination label or `all`, live until their TTL) list as
+ *               `coordination-message` info items — coordination mail no
+ *               bus, mailbox or board source can see, since the ledger is a
+ *               separate store `phm fleet coordination inbox --agent` and
+ *               `board` read; live assignment proposals (`assign` events,
+ *               `executionAuthorized:false` — they propose work and never
+ *               spawn anything) list as `coordination-assignment` info items;
+ *               and durable RESULT intents whose receipt publish never
+ *               landed — the `released-unposted` class `returnFleetClaim`
+ *               reports once and nothing else surfaces, since the claim is
+ *               already released and the intent is invisible on the board
+ *               read until its expiry deletes it — list as warn
+ *               `coordination-return-unposted` items naming claim id,
+ *               returning agent and receipt expiry, with the owner-held
+ *               lease-verified retry as the detail (lease material never
+ *               leaves the store). Items carry coordination labels,
+ *               timestamps and scrubbed body/task/receipt text only.
+ *               `missing` is a verified-absent ledger, `unknown` any
+ *               refusal — never an empty backlog passed off as fact.
+ *               Act: `phm fleet coordination board`,
+ *               `phm fleet coordination inbox --agent`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -421,6 +447,7 @@ import { listTeammateTasks } from './imessage-teammate-tasks.js';
 import { imessageStateDir } from '../integrations/imessage.js';
 import { readLeaderThreadUndelivered, type LeaderThreadUndeliveredRead } from '../vision/leader-thread.js';
 import { readLeaderNetworkState, type LeaderNetworkStateRead } from '../agents/leader-network-read.js';
+import { readFleetCoordinationPending, type FleetCoordinationPending } from '../fleet/coordination.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -434,7 +461,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
-  'slack-sends', 'leader-delivery', 'leader-network',
+  'slack-sends', 'leader-delivery', 'leader-network', 'coordination',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -456,6 +483,7 @@ export const UNIFIED_INBOX_KINDS = [
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
   'inbox-proposal', 'slack-request', 'slack-send-unconfirmed', 'leader-message-undelivered',
   'leader-request', 'leader-request-incomplete', 'leader-reply-unconfirmed', 'leader-digest-unconfirmed',
+  'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -679,6 +707,8 @@ export interface UnifiedInboxOptions {
   readLeaderUndelivered?: typeof readLeaderThreadUndelivered;
   /** Leader-network seam; default reads `<runsDir>/leader/network-state.json` through the same bounded anchored read `readRouteReplyFacts` applies — never the locking `pending()` recovery pass. */
   readLeaderNetwork?: (options: { runsDir?: string }) => LeaderNetworkStateRead;
+  /** Coordination-ledger seam; default reads the advisory `fleet.coordination.v1` ledger through `readFleetCoordinationPending` — the same replay `readFleetBoard` runs, never its reaping mutation path. */
+  readFleetCoordination?: typeof readFleetCoordinationPending;
   /** Optional narrowing of the returned item list by stored source, severity,
    * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
@@ -2683,6 +2713,90 @@ function leaderNetworkItems(read: NonNullable<UnifiedInboxOptions['readLeaderNet
 }
 
 /**
+ * The advisory coordination ledger's (`fleet.coordination.v1`) whole pending
+ * surface — a store no other source reads: bus, mailbox and board cover the
+ * agent bus and shared board, while coordination mail, assignments and
+ * return intents live only in `~/.ashlr/fleet/coordination.jsonl`, reachable
+ * today solely through `phm fleet coordination inbox|board|returns` and the
+ * fleet_coordination_* MCP tools. `readFleetCoordinationPending` replays the
+ * ledger exactly like `readFleetBoard` but projects all three pending
+ * classes atomically and never takes the reaping mutation path, so the read
+ * cannot append an expiry row. Live messages list as info
+ * `coordination-message` — the body is the mail content, `since`/`expiresAt`
+ * the record's own stamps, and the act is the addressed agent's inbox (or
+ * the board for `all` broadcasts, which every agent inbox carries). Live
+ * assignment proposals list as info `coordination-assignment` — advisory
+ * offers (`executionAuthorized:false`) that never spawn work, so they never
+ * block; the assignee's inbox is the act. Unpublished RESULT intents — a
+ * claim concluded `intended` whose receipt `postFleetMessage` never landed,
+ * the `released-unposted` class `returnFleetClaim` reports once — list as
+ * warn `coordination-return-unposted`: the claim is already released, so no
+ * board, claims or returns read names it, and the intent dies silently at
+ * expiry unless the owner-held lease retries `phm fleet coordination
+ * return`. The item names claim id, returning agent, receipt stamps and a
+ * scrubbed receipt snippet; lease material never enters the projection.
+ * `missing` is a verified-absent ledger, `unknown`/a throwing read
+ * `unavailable` — never an empty backlog passed off as fact.
+ */
+function coordinationItems(read: NonNullable<UnifiedInboxOptions['readFleetCoordination']>): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let pending: FleetCoordinationPending;
+  try { pending = read(); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (pending.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (pending.state !== 'known') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const message of pending.messages) {
+    items.push({
+      id: `coordination:message-${message.id}`,
+      source: 'coordination',
+      kind: 'coordination-message',
+      severity: 'info',
+      blocking: false,
+      title: oneLine(message.body, TITLE_MAX) || `Coordination mail to ${message.to}`,
+      detail: oneLine(`from ${message.from} · to ${message.to}`, DETAIL_MAX) || null,
+      since: iso(message.at),
+      expiresAt: iso(message.expiresAt),
+      act: message.to === 'all'
+        ? ['phm fleet coordination board --json']
+        : [`phm fleet coordination inbox --agent ${message.to} --json`],
+    });
+  }
+  for (const proposal of pending.proposals) {
+    items.push({
+      id: `coordination:assignment-${proposal.id}`,
+      source: 'coordination',
+      kind: 'coordination-assignment',
+      severity: 'info',
+      blocking: false,
+      title: oneLine(proposal.task, TITLE_MAX) || `Coordination assignment ${proposal.id}`,
+      detail: oneLine(`advisory — no execution authority · ${proposal.repo} · to ${proposal.to}`, DETAIL_MAX) || null,
+      since: iso(proposal.at),
+      expiresAt: iso(proposal.expiresAt),
+      act: [`phm fleet coordination inbox --agent ${proposal.to} --json`],
+    });
+  }
+  for (const ret of pending.returns) {
+    items.push({
+      id: `coordination:return-${ret.id}`,
+      source: 'coordination',
+      kind: 'coordination-return-unposted',
+      // A recorded RESULT receipt whose publish never landed — agent work to
+      // reconcile before the intent expires, never Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Unposted coordination RESULT · claim ${ret.id}`, TITLE_MAX),
+      detail: oneLine(
+        `returning agent ${ret.agent} · recorded ${iso(ret.at)} · receipt publish never landed — ` +
+        `the claim owner retries \`phm fleet coordination return ${ret.id} --agent ${ret.agent} --lease <lease>\``,
+        DETAIL_MAX) || null,
+      since: iso(ret.at),
+      expiresAt: iso(ret.message.expiresAt),
+      act: ['phm fleet coordination board --json'],
+    });
+  }
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+/**
  * The same drop inbox `runEmailDropOnce` scans, resolved at the shared runs
  * dir: saved email-drop config → `inboxDir` → `readEmailDropInbox`. A missing
  * config or inbox dir is 'missing' (the pass treats an absent inbox as an
@@ -2847,6 +2961,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const slackSends = slackSendItems(options.readSlackSends ?? readSlackSendReceipts);
   const leaderDelivery = leaderDeliveryItems(options.readLeaderUndelivered ?? readLeaderThreadUndelivered, now);
   const leaderNetwork = leaderNetworkItems(options.readLeaderNetwork ?? readLeaderNetworkState, options.runsDir);
+  const coordination = coordinationItems(options.readFleetCoordination ?? readFleetCoordinationPending);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -2875,8 +2990,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'slack-sends': slackSends.report,
     'leader-delivery': leaderDelivery.report,
     'leader-network': leaderNetwork.report,
+    coordination: coordination.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...coordination.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

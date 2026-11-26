@@ -37,6 +37,7 @@ import type { SlackSendReceiptRead } from '../src/core/agents/slack-send-receipt
 import type { SentReceipt } from '../src/core/agents/slack-reply-binding.js';
 import type { LeaderThreadUndeliveredItem, LeaderThreadUndeliveredRead } from '../src/core/vision/leader-thread.js';
 import type { LeaderNetworkDigestFact, LeaderNetworkRequestFact, LeaderNetworkStateRead } from '../src/core/agents/leader-network-read.js';
+import type { FleetAssignment, FleetCoordinationPending, FleetMessage, FleetPendingReturn } from '../src/core/fleet/coordination.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
@@ -3931,5 +3932,104 @@ describe('phm comms inbox cli', () => {
       expect(await command(args), args.join(' ')).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
     }
+  });
+});
+
+describe('readUnifiedInbox coordination', () => {
+  const coordMessage = (over: Partial<FleetMessage> = {}): FleetMessage => ({
+    id: 'm-1', from: 'agent-a', to: 'agent-b', body: 'fake coordination mail',
+    at: now - 60_000, expiresAt: now + 3_600_000, ...over,
+  });
+  const coordProposal = (over: Partial<FleetAssignment> = {}): FleetAssignment => ({
+    id: 'p-1', repo: 'ashlrai/phantom', task: 'fake assignment', to: 'agent-c',
+    at: now - 120_000, expiresAt: now + 3_600_000, executionAuthorized: false, ...over,
+  });
+  const coordReturn = (over: Partial<FleetPendingReturn> = {}): FleetPendingReturn => ({
+    id: 'claim-1', agent: 'agent-d', at: now - 180_000,
+    message: {
+      id: 'return-claim-1', from: 'agent-d', to: 'all',
+      body: 'RESULT VERIFIED ashlrai/phantom claim claim-1 task "fake": tests passed',
+      at: now - 180_000, expiresAt: now + 86_400_000,
+    },
+    ...over,
+  });
+  const coordPending = (over: Partial<FleetCoordinationPending> = {}): FleetCoordinationPending => ({
+    schema: 'fleet.coordination.v1', state: 'known', messages: [], proposals: [], returns: [], ...over,
+  });
+  const readCoord = (pending: FleetCoordinationPending, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readFleetCoordination: () => pending, ...extra });
+
+  it('lists live messages, assignments and unposted returns with their own stamps and acts', async () => {
+    const inbox = await readCoord(coordPending({
+      messages: [coordMessage(), coordMessage({ id: 'm-2', to: 'all', body: 'fake broadcast' })],
+      proposals: [coordProposal()],
+      returns: [coordReturn()],
+    }));
+    expect(inbox.sources.coordination).toEqual({ state: 'healthy', pending: 4 });
+    const items = inbox.items.filter(i => i.source === 'coordination');
+    expect(items).toHaveLength(4);
+
+    const dm = items.find(i => i.id === 'coordination:message-m-1')!;
+    expect(dm).toMatchObject({
+      kind: 'coordination-message', severity: 'info', blocking: false,
+      title: 'fake coordination mail',
+      since: new Date(now - 60_000).toISOString(),
+      expiresAt: new Date(now + 3_600_000).toISOString(),
+    });
+    expect(dm.detail).toContain('from agent-a');
+    expect(dm.detail).toContain('to agent-b');
+    expect(dm.act).toEqual(['phm fleet coordination inbox --agent agent-b --json']);
+
+    const bcast = items.find(i => i.id === 'coordination:message-m-2')!;
+    expect(bcast.title).toBe('fake broadcast');
+    expect(bcast.act).toEqual(['phm fleet coordination board --json']);
+
+    const asg = items.find(i => i.id === 'coordination:assignment-p-1')!;
+    expect(asg).toMatchObject({
+      kind: 'coordination-assignment', severity: 'info', blocking: false, title: 'fake assignment',
+      since: new Date(now - 120_000).toISOString(),
+      expiresAt: new Date(now + 3_600_000).toISOString(),
+    });
+    expect(asg.detail).toContain('advisory');
+    expect(asg.detail).toContain('ashlrai/phantom');
+    expect(asg.detail).toContain('to agent-c');
+    expect(asg.act).toEqual(['phm fleet coordination inbox --agent agent-c --json']);
+
+    const ret = items.find(i => i.id === 'coordination:return-claim-1')!;
+    expect(ret).toMatchObject({
+      kind: 'coordination-return-unposted', severity: 'warn', blocking: false,
+      title: 'Unposted coordination RESULT · claim claim-1',
+      since: new Date(now - 180_000).toISOString(),
+      expiresAt: new Date(now + 86_400_000).toISOString(),
+    });
+    expect(ret.detail).toContain('agent-d');
+    expect(ret.detail).toContain('receipt publish never landed');
+    expect(ret.detail).toContain('coordination return claim-1');
+    expect(ret.act).toEqual(['phm fleet coordination board --json']);
+  });
+
+  it('reports missing, unknown and throwing reads honestly — never an invented backlog', async () => {
+    const missing = await readCoord(coordPending({ state: 'missing' }));
+    expect(missing.sources.coordination).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'coordination')).toHaveLength(0);
+
+    const unknown = await readCoord(coordPending({ state: 'unknown' }));
+    expect(unknown.sources.coordination).toEqual({ state: 'unavailable', pending: null });
+    expect(unknown.items.filter(i => i.source === 'coordination')).toHaveLength(0);
+
+    const throwing = await read({
+      readFleetCoordination: () => { throw new Error('ledger boom'); },
+    });
+    expect(throwing.sources.coordination).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = coordPending({ messages: [coordMessage()], returns: [coordReturn()] });
+    const bySource = await readCoord(pending, { filter: { source: 'coordination' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'coordination')).toBe(true);
+    const byKind = await readCoord(pending, { filter: { kind: 'coordination-return-unposted' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['coordination:return-claim-1']);
+    expect(byKind.sources.coordination).toEqual({ state: 'healthy', pending: 2 });
   });
 });
