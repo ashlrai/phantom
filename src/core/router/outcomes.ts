@@ -1812,7 +1812,7 @@ function foldRouterOutcomesWithCiCoverage(
   // wall seconds, identical repeated stamps dedupe so a replayed append
   // cannot fake ambiguity, and a missing, reversed or repeated boundary
   // set leaves the job absent so its outcome keeps null.
-  const ciMarks = new Map<string, { starts: Set<number>; completes: Set<number> }>();
+  const ciMarks = new Map<string, { starts: Set<number>; completes: Set<number>; prKeys: Set<string> }>();
   for (const r of rows) {
     const j = attributedJobId(r);
     if (!j || j.startsWith(BATCH_SESSION_PREFIX)) continue;
@@ -1825,12 +1825,17 @@ function foldRouterOutcomesWithCiCoverage(
       ambiguousCiJobs.add(j);
       continue;
     }
-    const marks = ciMarks.get(j) ?? { starts: new Set<number>(), completes: new Set<number>() };
+    const marks = ciMarks.get(j) ?? { starts: new Set<number>(), completes: new Set<number>(), prKeys: new Set<string>() };
     (name === 'ci_start' ? marks.starts : marks.completes).add(at);
+    for (const url of [r.url, r.pr_url, r.prUrl, r.pr, r.html_url]) {
+      const key = typeof url === 'string' ? pullRequestKey(url.trim()) : null;
+      if (key !== null) marks.prKeys.add(key);
+    }
     ciMarks.set(j, marks);
   }
   const ciWallS = new Map<string, number>();
   for (const [j, marks] of ciMarks) {
+    if (marks.prKeys.size > 1) ambiguousCiJobs.add(j);
     if (ambiguousCiJobs.has(j) || marks.starts.size !== 1 || marks.completes.size !== 1) continue;
     const start = [...marks.starts][0]!;
     const complete = [...marks.completes][0]!;

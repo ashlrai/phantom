@@ -1142,7 +1142,9 @@ recorded `ci_start`/`ci_complete` boundary pair. The reward feed reads
 the same boundary events within the rewarded dispatch's window. A missing,
 reversed or repeated pair stays unrecorded. An undated CI boundary makes
 the job's timing ambiguous in both readers and prevents the router from
-filling the value from an older reward row), mean
+filling the value from an older reward row. Conflicting PR identities on
+CI boundary receipts also make the duration ambiguous and block reward
+fallback, even when the receipts share a timestamp), mean
 recorded `publish_wait_s` (the job's publish-station wait from its
 single recorded `finish`/`publish` boundary pair — the same pair
 job-latency's publish_wait phase and visit-sync's publish station
