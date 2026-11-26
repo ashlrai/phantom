@@ -1,7 +1,7 @@
 import { fixedOwnerRunsDir } from '../core/comms/owner-channel.js';
 import {
   isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, readUnifiedInbox,
-  UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_MAX_ITEMS,
+  UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_ITEM_ID, UNIFIED_INBOX_MAX_ITEMS,
   type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxOptions,
 } from '../core/comms/unified-inbox.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -18,7 +18,7 @@ export interface FleetCommsInboxDeps {
 
 /** The job-id rule every bus read surface shares: a printable label, 1-128 chars. */
 const JOB_ID = /^[\x21-\x7e]{1,128}$/;
-const INBOX_KEYS = new Set(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains']);
+const INBOX_KEYS = new Set(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains', 'id']);
 
 export function parseFleetCommsInboxArgs(args: Record<string, unknown>): FleetCommsInboxArgs | null {
   if (Object.keys(args).some(key => !INBOX_KEYS.has(key))) return null;
@@ -61,6 +61,10 @@ export function parseFleetCommsInboxArgs(args: Record<string, unknown>): FleetCo
   if (args.contains !== undefined) {
     if (typeof args.contains !== 'string' || args.contains.trim() === '' || args.contains.length > UNIFIED_INBOX_CONTAINS_MAX) return null;
     filter.contains = args.contains;
+  }
+  if (args.id !== undefined) {
+    if (typeof args.id !== 'string' || !UNIFIED_INBOX_ITEM_ID.test(args.id)) return null;
+    filter.id = args.id;
   }
   return { limit, ...(Object.keys(filter).length === 0 ? {} : { filter }) };
 }

@@ -1359,7 +1359,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_comms_inbox',
-      description: 'Read the ranked unified comms inbox — the same readUnifiedInbox projection `phm comms inbox` serves. Optional source, kind, severity, blocking, job, since, before and contains narrow the item list with the same rules as the CLI flags; the per-source pending reports stay the unfiltered store truth and an applied filter is echoed on the result. limit caps returned items (1–200, default 50). Read-only; items quote private text.',
+      description: 'Read the ranked unified comms inbox — the same readUnifiedInbox projection `phm comms inbox` serves. Optional source, kind, severity, blocking, job, since, before, contains and id narrow the item list with the same rules as the CLI flags — id keeps only the item whose stable <source>:<ref> id strictly equals the value, the same exact-match rule every bus read --id applies, never a substring; the per-source pending reports stay the unfiltered store truth and an applied filter is echoed on the result. limit caps returned items (1–200, default 50). Read-only; items quote private text.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1372,6 +1372,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           since: { type: 'string', description: 'Keep items whose recorded appearance time reaches the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the same grammar `phm comms inbox --since` takes.' },
           before: { type: 'string', description: 'Keep items whose recorded appearance time is strictly before the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the exclusive upper bound composing with since into one [since, before) window, the same grammar `phm comms inbox --before` takes.' },
           contains: { type: 'string', minLength: 1, maxLength: UNIFIED_INBOX_CONTAINS_MAX, description: 'Case-insensitive substring over each item\'s scrubbed title and detail.' },
+          id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,256}$', description: 'Keep only the item whose stable <source>:<ref> id strictly equals this value — the same exact-match rule `phm comms inbox --id` and every bus read `--id` applies, never a substring or prefix.' },
         },
         additionalProperties: false,
       },

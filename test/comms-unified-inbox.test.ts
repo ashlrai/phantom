@@ -3366,6 +3366,58 @@ describe('readUnifiedInbox contains filter', () => {
   });
 });
 
+describe('readUnifiedInbox id filter', () => {
+  it('keeps only the item whose stable <source>:<ref> id strictly equals the value', async () => {
+    postWork('flt-i1');
+    postWork('flt-i12');
+    postJob('RQ-I1');
+    recordTeammateText({ rowid: 95, handle: '+1555fake', text: 'status?' }, runsDir, new Date(now - 60_000));
+
+    const all = await read();
+    expect(all.total).toBe(4);
+    expect(all.filter).toBeUndefined();
+
+    const exact = await read({ filter: { id: 'bus:flt-i1' } });
+    expect(exact.filter).toEqual({ id: 'bus:flt-i1' });
+    expect(exact.total).toBe(1);
+    expect(exact.items.map(i => i.id)).toEqual(['bus:flt-i1']);
+    // Per-source reports stay the unfiltered store truth.
+    expect(exact.sources.bus.pending).toBe(3);
+    expect(exact.sources.imessage.pending).toBe(1);
+
+    // The match crosses sources: a feed job and a teammate text select the
+    // same way a bus envelope does.
+    expect((await read({ filter: { id: 'bus-feed:RQ-I1' } })).items.map(i => i.id))
+      .toEqual(['bus-feed:RQ-I1']);
+    expect((await read({ filter: { id: 'imessage:teammate-95' } })).items.map(i => i.id))
+      .toEqual(['imessage:teammate-95']);
+
+    // Exact match only — a prefix, a bare ref without its namespace, a
+    // case-folded spelling or an unknown id never selects.
+    for (const id of ['bus:flt-i', 'flt-i1', 'BUS:flt-i1', 'bus:nope']) {
+      const miss = await read({ filter: { id } });
+      expect(miss.total, id).toBe(0);
+      expect(miss.items).toEqual([]);
+    }
+  });
+
+  it('ANDs the id with the other view dimensions', async () => {
+    postWork('flt-i2');
+    postJob('RQ-I2');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    const agreeing = await read({ filter: { id: 'bus:flt-i2', source: 'bus' } });
+    expect(agreeing.filter).toEqual({ id: 'bus:flt-i2', source: 'bus' });
+    expect(agreeing.items.map(i => i.id)).toEqual(['bus:flt-i2']);
+
+    const disagreeing = await read({ filter: { id: 'bus:flt-i2', source: 'needs-you' } });
+    expect(disagreeing.total).toBe(0);
+    expect(disagreeing.items).toEqual([]);
+    expect(disagreeing.sources.bus.pending).toBe(2);
+    expect(disagreeing.sources['needs-you'].pending).toBe(1);
+  });
+});
+
 describe('phm comms inbox cli', () => {
   const setupCli = () => {
     const command = createCommsInboxCommand({ runsDir, busRoot });
@@ -3402,7 +3454,7 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--id <item-id>] [--json]');
     for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
@@ -3616,6 +3668,38 @@ describe('phm comms inbox cli', () => {
     expect(report.items.map(i => i.kind)).toEqual(['needs-you']);
   });
 
+  it('filters the unified JSON view by --id', async () => {
+    const { command, json } = setupCli();
+    postWork('cli-id-1');
+    postWork('cli-id-2');
+    postJob('RQ-CLI-ID');
+    recordTeammateText({ rowid: 96, handle: '+1555fake', text: 'ping' }, runsDir, new Date(now - 60_000));
+
+    expect(await command(['--id', 'bus:cli-id-1', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ id: 'bus:cli-id-1' });
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-id-1']);
+    // The per-source counts stay the unfiltered store truth.
+    expect(report.sources.bus.pending).toBe(3);
+    expect(report.sources.imessage.pending).toBe(1);
+
+    // Exact match only — a prefix or bare ref never selects.
+    expect(await command(['--id', 'bus:cli-id', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+
+    // --id ANDs with the other view filters across sources.
+    expect(await command(['--id', 'imessage:teammate-96', '--source', 'imessage', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ id: 'imessage:teammate-96', source: 'imessage' });
+    expect(report.items.map(i => i.id)).toEqual(['imessage:teammate-96']);
+    expect(await command(['--id', 'bus:cli-id-1', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+  });
+
   it('labels the human footer with the applied filter and unfiltered counts', async () => {
     const { command, lines } = setupCli();
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
@@ -3644,6 +3728,11 @@ describe('phm comms inbox cli', () => {
     expect(lines().join('\n')).toContain('1 pending matching contains=RQ-CLI-H');
     expect(await command(['--contains', 'no-such-text'])).toBe(0);
     expect(lines().at(-1)).toBe('Nothing pending matching contains=no-such-text.');
+    // --id labels the item id verbatim in the same footer slot.
+    expect(await command(['--id', 'bus:cli-human'])).toBe(0);
+    expect(lines().join('\n')).toContain('1 pending matching id=bus:cli-human');
+    expect(await command(['--id', 'bus:no-such-item'])).toBe(0);
+    expect(lines().at(-1)).toBe('Nothing pending matching id=bus:no-such-item.');
     // --since labels the resolved cutoff, not the relative spelling; the
     // undated needs-you line stays out of the match.
     expect(await command(['--since', '15m'])).toBe(0);
@@ -3679,6 +3768,9 @@ describe('phm comms inbox cli', () => {
       ['--contains'], ['--contains', ''], ['--contains', '   '], ['--contains', '--json'],
       ['--contains', 'x'.repeat(513)], ['--contains', 'a', '--contains', 'b'],
       ['--contains', 'deploy', '--job'], ['--json', '--contains'],
+      ['--id'], ['--id', ''], ['--id', '--json'], ['--id', 'bad id'],
+      ['--id', 'x'.repeat(257)], ['--id', 'a', '--id', 'b'],
+      ['--id', 'bus:ok', '--job'], ['--json', '--id'],
     ]) {
       expect(await command(args), args.join(' ')).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });

@@ -4315,13 +4315,19 @@ queueId/receiptId never appear in a summary.
 shared validation `GET /api/verse/comms/inbox`
 (`src/core/verse/comms-inbox-api.ts`) applies to its query — `limit`
 (1–200, default 50) plus the `UnifiedInboxFilter` dimensions `source`,
-`kind`, `severity`, `blocking` (`true`/`false`), `job`, `since`, `before`
-and `contains`, each at most once — `since` the inclusive appearance-time
+`kind`, `severity`, `blocking` (`true`/`false`), `job`, `since`, `before`,
+`contains` and `id`, each at most once — `since` the inclusive appearance-time
 lower bound, `before` (`UnifiedInboxFilter.before`, `comms inbox --before`)
 the exclusive `<` upper bound composing with it into one
 `[since, before)` window under the same `parseSince` grammar every bus
 read applies, an item exactly on a boundary or unable to prove its time
-staying out of the match — so the HTTP read narrows by exactly the
+staying out of the match, and `id` (`UnifiedInboxFilter.id`, `comms
+inbox --id`, `fleet_comms_inbox`'s `id`) the item's stable
+`<source>:<ref>` id under `UNIFIED_INBOX_ITEM_ID` (printable ASCII,
+1–256 chars — the composite outgrows the 128-char envelope bound every
+other bus read's `--id` takes), matched strictly equal, never a
+substring, prefix or case-folded match — so the HTTP read narrows by
+exactly the
 rules `phm comms inbox` and `fleet_comms_inbox` apply and passes the
 resulting `filter` to `readUnifiedInbox`, echoing the report's applied
 `filter` on the response; an unknown, repeated or malformed parameter or

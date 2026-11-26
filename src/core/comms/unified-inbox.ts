@@ -375,6 +375,8 @@ import { imessageStateDir } from '../integrations/imessage.js';
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
 export const UNIFIED_INBOX_CONTAINS_MAX = 512;
+/** The `--id` item-id rule the unified view shares across the CLI flag, the query parser and the MCP arg: a printable label of 1-256 chars. Item ids are `<source>:<ref>` composites that outgrow the 128-char envelope bound every other bus read's `--id` takes — `bus-dead-letter:` plus a 128-char envelope id is already 144. */
+export const UNIFIED_INBOX_ITEM_ID = /^[\x21-\x7e]{1,256}$/;
 const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
@@ -497,6 +499,13 @@ export interface UnifiedInboxFilter {
    * stay out of the match; source/kind labels have their own dimensions.
    * Callers bound the raw value to UNIFIED_INBOX_CONTAINS_MAX. */
   contains?: string;
+  /** Keep only the item whose stable `<source>:<ref>` id strictly equals
+   * this value — the same exact-match rule every bus read `--id` applies
+   * (`agents bus inbox`, `comms bus read|watch`, `fleet bus-follow`,
+   * `fleet_bus_inbox`, `agents conversations`, `agentnet peers read`,
+   * `work mine`), never a substring, prefix or case-folded match. Callers
+   * bound the raw value to UNIFIED_INBOX_ITEM_ID. */
+  id?: string;
 }
 
 export interface UnifiedInbox {
@@ -2645,7 +2654,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
       requested.severity !== undefined ||
       requested.blocking !== undefined || requested.job !== undefined ||
       requested.since !== undefined || requested.before !== undefined ||
-      requested.contains !== undefined)
+      requested.contains !== undefined || requested.id !== undefined)
     ? requested : undefined;
   // --contains is a case-insensitive substring over the item's scrubbed
   // title/detail — the text the row actually shows, so a match is always
@@ -2675,7 +2684,10 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     (filter.before === undefined ||
       (item.since !== null && Date.parse(item.since) < filter.before)) &&
     (containsNeedle === undefined || containsNeedle === '' ||
-      `${item.title} ${item.detail ?? ''}`.toLowerCase().replace(/\s+/g, ' ').includes(containsNeedle)));
+      `${item.title} ${item.detail ?? ''}`.toLowerCase().replace(/\s+/g, ' ').includes(containsNeedle)) &&
+    // An id filter keeps only the one item whose stable <source>:<ref> id
+    // strictly equals the value — never a substring or prefix.
+    (filter.id === undefined || item.id === filter.id));
   const total = matched.length;
   return {
     v: 1,

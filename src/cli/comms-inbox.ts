@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
-import { readUnifiedInbox, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, UNIFIED_INBOX_CONTAINS_MAX,
+import { readUnifiedInbox, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_ITEM_ID,
   type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxKind, type UnifiedInboxSeverity, type UnifiedInboxSource } from '../core/comms/unified-inbox.js';
 import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -9,7 +9,7 @@ import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js'
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { entryInstant, parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]
+const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--id <item-id>] [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines
@@ -43,7 +43,9 @@ items whose recorded appearance time is strictly before its cutoff — the
 two compose into one [since, before) window and an item exactly on either
 boundary stays out of the excluded side; --contains keeps only items whose scrubbed title or
 detail carries the text as a case-insensitive substring — the same text
-the row shows, never the deep-link commands — and the
+the row shows, never the deep-link commands — --id keeps only the item
+whose stable <source>:<ref> id strictly equals the value, the same
+exact-match rule every bus read --id applies — and the
 dimensions AND together, and the
 per-source counts still report every
 store's real pending total — null when a source could not be read, never a
@@ -116,6 +118,7 @@ function describeUnifiedFilter(filter: UnifiedInboxFilter): string {
     ...(filter.since === undefined ? [] : [`since=${new Date(filter.since).toISOString()}`]),
     ...(filter.before === undefined ? [] : [`before=${new Date(filter.before).toISOString()}`]),
     ...(filter.contains === undefined ? [] : [`contains=${filter.contains}`]),
+    ...(filter.id === undefined ? [] : [`id=${filter.id}`]),
   ].join(' ');
 }
 
@@ -151,7 +154,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
     if (args.length === 0 || args[0] !== 'read' && args[0] !== 'post') {
       let json = false, blocking = false;
       let source: UnifiedInboxSource | undefined, kind: UnifiedInboxKind | undefined,
-        severity: UnifiedInboxSeverity | undefined, job: string | undefined, contains: string | undefined;
+        severity: UnifiedInboxSeverity | undefined, job: string | undefined, contains: string | undefined, id: string | undefined;
       let sinceMs: number | undefined, beforeMs: number | undefined;
       const seen = new Set<string>();
       for (let i = 0; i < args.length; i++) {
@@ -209,11 +212,20 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
             value.length > UNIFIED_INBOX_CONTAINS_MAX) return invalid();
           seen.add(arg); contains = value; continue;
         }
+        if (arg === '--id' && !seen.has(arg)) {
+          const value = args[++i];
+          // A flag-looking value is a missing value, not an item id — the
+          // same rule `--job` applies; the id itself is a printable
+          // <source>:<ref> label bounded wider than an envelope id.
+          if (value === undefined || value.startsWith('--') || !UNIFIED_INBOX_ITEM_ID.test(value)) return invalid();
+          seen.add(arg); id = value; continue;
+        }
         return invalid();
       }
       const filter: UnifiedInboxFilter | undefined =
         source === undefined && kind === undefined && severity === undefined && !blocking &&
-          job === undefined && sinceMs === undefined && beforeMs === undefined && contains === undefined ? undefined
+          job === undefined && sinceMs === undefined && beforeMs === undefined && contains === undefined &&
+          id === undefined ? undefined
           : { ...(source === undefined ? {} : { source }),
               ...(kind === undefined ? {} : { kind }),
               ...(severity === undefined ? {} : { severity }),
@@ -221,6 +233,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
               ...(sinceMs === undefined ? {} : { since: sinceMs }),
               ...(beforeMs === undefined ? {} : { before: beforeMs }),
               ...(contains === undefined ? {} : { contains }),
+              ...(id === undefined ? {} : { id }),
               ...(blocking ? { blocking: true } : {}) };
       const report = await readUnifiedInbox({ runsDir: options.runsDir, busRoot: options.busRoot,
         ...(filter === undefined ? {} : { filter }) });

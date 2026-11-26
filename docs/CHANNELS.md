@@ -222,7 +222,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]`
+`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--id <item-id>] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -494,7 +494,14 @@ as new or old; and `--contains <text>` only items whose scrubbed `title` or
 `detail` carries the text as a case-insensitive substring with whitespace
 collapsed — the same text the row shows, so a match is always visible in
 the row it selects, while the `act` deep links (commands, never item
-content) stay out of the match. The dimensions AND together. `total`, `omitted` and `items` then
+content) stay out of the match; and `--id <item-id>` only the item whose
+stable `<source>:<ref>` id strictly equals the value — the same
+exact-match rule every bus read `--id` applies (`agents bus inbox`,
+`comms bus read|watch`, `fleet bus-follow`, `fleet_bus_inbox`,
+`agents conversations`, `agentnet peers read`, `work mine`), never a
+substring, prefix or case-folded match, the id bounded to printable
+1–256 chars since `<source>:<ref>` composites outgrow the 128-char
+envelope bound. The dimensions AND together. `total`, `omitted` and `items` then
 describe
 the matched view and the report echoes the applied `filter`, while `sources`
 keeps every store's real unfiltered pending count — `null` when a source
@@ -502,7 +509,7 @@ could not be read, never a fabricated 0 — a filtered view never
 reports a busy or degraded source as empty. `GET /api/verse/comms/inbox` —
 the desktop and agent read of the same report — accepts the same dimensions
 as query parameters (`source`, `kind`, `severity`, `blocking=true|false`,
-`job`, `since`, `before`, `contains`, each at most once, plus `limit` 1–200 default
+`job`, `since`, `before`, `contains`, `id`, each at most once, plus `limit` 1–200 default
 50), validated by `parseUnifiedInboxQuery` — the same value rules `phm
 comms inbox` and `fleet_comms_inbox` apply — and echoes the applied
 `filter` on the response exactly like
