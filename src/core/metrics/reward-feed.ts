@@ -82,7 +82,7 @@ const MERGED_AT_KEYS = ['mergedAt', 'merged_at', 'closedAt', 'closed_at'] as con
 const CLOSED_AT_KEYS = ['closedAt', 'closed_at'] as const;
 const REVERTED_AT_KEYS = ['revertedAt', 'reverted_at'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
-const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
+const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 
 /** Same id alphabet the reward writer accepts (JOB_ID in reward-signal.ts). */
@@ -316,7 +316,10 @@ export function foldJobsLedgerRewards(
       if (revertedAtMs <= nowMs) {
         const url = firstString(row, URL_KEYS);
         const key = url === null ? null : pullRequestKey(url);
-        acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
+        // Only a receipt without a PR reference can apply job-wide.
+        if (url === null || key !== null) {
+          acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
+        }
       }
     }
     const state = outcomeStateOf(row);

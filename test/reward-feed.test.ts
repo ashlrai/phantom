@@ -286,9 +286,12 @@ describe('foldJobsLedgerRewards', () => {
   });
 
   it.each([
-    ['https://github.com/ashlrai/phantom/pull/101', true],
-    ['https://github.com/AshlrAI/Phantom/pull/102/', false],
-  ] as const)('scopes a delayed revert to its PR (%s)', (url, held) => {
+    ['pr_url', 'https://github.com/ashlrai/phantom/pull/101', true],
+    ['pr_url', 'https://github.com/AshlrAI/Phantom/pull/102/', false],
+    ['html_url', 'https://github.com/ashlrai/phantom/pull/101', true],
+    ['html_url', 'https://github.com/AshlrAI/Phantom/pull/102/', false],
+    ['pr_url', 'https://github.com/ashlrai/phantom/issues/101', true],
+  ] as const)('scopes a delayed revert with %s=%s to its PR', (alias, url, held) => {
     const job = 'RQ-REUSED-PR';
     const dispatchAt = '2026-10-28T16:00:00.000Z';
     const mergeAt = '2026-10-28T17:00:00.000Z';
@@ -297,7 +300,7 @@ describe('foldJobsLedgerRewards', () => {
       line({ job, state: 'MERGED', mergedAt: MERGED_ISO, url: 'https://github.com/ashlrai/phantom/pull/101' }),
       launch(job, 'devin', dispatchAt),
       line({ job, state: 'MERGED', mergedAt: mergeAt, url: 'https://github.com/ashlrai/phantom/pull/102' }),
-      line({ job, event: 'reverted', pr_url: url, ts: '2026-10-28T18:00:00.000Z' }),
+      line({ job, event: 'reverted', [alias]: url, ts: '2026-10-28T18:00:00.000Z' }),
     ];
     expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toMatchObject([
       { jobId: job, pool: 'devin', dispatchedAt: dispatchAt, merged: held, mergedAt: held ? mergeAt : null },
