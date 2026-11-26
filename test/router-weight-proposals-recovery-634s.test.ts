@@ -8,7 +8,7 @@ import { cmdFleetRouterWeights, FLEET_ROUTER_WEIGHTS_USAGE } from '../src/cli/fl
 import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
-import { foldRouterOutcomes, ROUTER_OUTCOME_LEDGER_LIMIT, type RouterOutcome } from '../src/core/router/outcomes.js';
+import { foldRouterOutcomes, readRouterOutcomes, ROUTER_OUTCOME_LEDGER_LIMIT, type RouterOutcome } from '../src/core/router/outcomes.js';
 import { proposeRouterWeights } from '../src/core/router/weight-proposals.js';
 
 // Recovery test for the pure proposal slice of PR #6794 (head f9e484e87ec2d01f155cc280e818d2e98519dbe7).
@@ -2006,6 +2006,30 @@ describe('merge-queue evidence', () => {
 });
 
 describe('reward-signal evidence', () => {
+  it('withholds a reward from another repository and accepts compatible legacy labels', async () => {
+    const labels = ['another-owner/phantom', 'ashlrai/lexicon', 'AshlrAI/Phantom', 'phantom', null];
+    writeLedger(labels.map((repo, index) => event(`reward-repo-${index}`, 'alpha', 'code', 'VERIFIED', { repo })));
+    writeRewardSignals(labels.map((_, index) => ({
+      ...rewardRow(`reward-repo-${index}`, true, 2),
+      cost: { pctUsedDelta: 2, costUsd: 3 },
+    })));
+
+    const read = await readRouterOutcomes({ runsDir: runs, ashlarDir: join(root, 'ashlr'), authorityEvidence: null });
+    expect(read.reward_state).toBe('read');
+    expect(read.outcomes).toHaveLength(labels.length);
+    const outcomes = new Map(read.outcomes.map(outcome => [outcome.job_id, outcome]));
+    for (const index of [0, 1]) {
+      expect(outcomes.get(`reward-repo-${index}`)).toMatchObject({
+        repo: labels[index], merged: null, ttm_s: null, ci_wall_s: null, cost_usd: null, pool_pct_used: null,
+      });
+    }
+    for (const index of [2, 3, 4]) {
+      expect(outcomes.get(`reward-repo-${index}`)).toMatchObject({
+        repo: labels[index] ?? 'ashlrai/phantom', merged: true, ttm_s: 3600, ci_wall_s: 600, cost_usd: 3, pool_pct_used: 2,
+      });
+    }
+  });
+
   it('lets reward rows resolve merge verdicts the jobs window dropped and supplies pool_pct_used', async () => {
     // 15 jobs-ledger merges plus 5 jobs whose terminal verdicts only the
     // reward substrate still records — the retained jobs tail dropped

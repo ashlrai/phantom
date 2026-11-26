@@ -2232,7 +2232,7 @@ function foldRouterOutcomesWithCiCoverage(
       const solePrClaim = soleClaimByJob.get(o.job_id) === `pr:${prKey}`;
       if (verdictClaim === undefined && o.merged !== null && !solePrClaim) continue;
       // Reward rows resolve the job but carry no PR identity of their own.
-      const rewardMerge = o.merged === null && solePrClaim && rewards?.get(o.job_id)?.merged === true;
+      const rewardMerge = o.merged === null && solePrClaim && matchingReward(o, rewards)?.merged === true;
       if ((o.merged === true || rewardMerge) && opts.revertedPrKeys?.has(prKey)) o.reverted = true;
       if (opts.mergeEvents !== undefined) {
         const evidence = opts.mergeEvents.get(prKey);
@@ -2922,6 +2922,21 @@ export interface RewardOutcomeEvidence {
   pool_pct_used: number | null;
 }
 
+function matchingReward(
+  outcome: RouterOutcome,
+  rewards: ReadonlyMap<string, RewardOutcomeEvidence> | undefined,
+): RewardOutcomeEvidence | undefined {
+  const reward = rewards?.get(outcome.job_id);
+  if (reward === undefined || reward.repo === null || outcome.repo === null) return reward;
+
+  const jobsRepo = outcome.repo.toLowerCase();
+  const rewardRepo = reward.repo.toLowerCase();
+  if (jobsRepo.includes('/') && rewardRepo.includes('/')) {
+    return jobsRepo === rewardRepo ? reward : undefined;
+  }
+  return jobsRepo.split('/').at(-1) === rewardRepo.split('/').at(-1) ? reward : undefined;
+}
+
 /** Same job-id alphabet the reward writer accepts (JOB_ID in metrics/reward-signal.ts). */
 const REWARD_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 /** Percentage points consumed can never exceed the [0, 100] pool reading range. */
@@ -3399,7 +3414,8 @@ function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: Reado
  * the row's recorded subscription-pool percentage points consumed —
  * so persisted reward evidence recovers verdicts and cost figures the
  * bounded jobs tail dropped without ever overriding a recorded
- * jobs-ledger value. Reward rows naming jobs outside the jobs window
+ * jobs-ledger value. Conflicting recorded repository labels prevent
+ * the reward join. Reward rows naming jobs outside the jobs window
  * never create outcomes. `reward_state` reports the ledger's health
  * and `reward_truncated` marks a cut tail; anything but 'read' leaves
  * every joined field at its jobs-ledger value.
@@ -3529,7 +3545,7 @@ export async function readRouterOutcomes(opts: {
   }
   if (rewards !== undefined) {
     for (const o of folded.outcomes) {
-      const reward = rewards.get(o.job_id);
+      const reward = matchingReward(o, rewards);
       if (reward === undefined) continue;
       // Fill-only join: a recorded jobs-ledger verdict or measurement
       // always wins; the reward row's resolved evidence fills what the

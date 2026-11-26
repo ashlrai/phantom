@@ -827,6 +827,10 @@ reverted resolutions alike (the v1 schema has no revert dimension —
 `reverted` still joins independently). When the reward row fills a missing
 merge verdict, recorded PR-level revert evidence applies only if the
 retained jobs ledger links the job to a single, uncontested PR.
+When both ledgers name a repository, their labels must agree
+case-insensitively for any reward evidence to join. Two qualified
+labels must agree on both owner and repository. A bare label matches
+the repository name. Missing labels still allow the job-ID fallback.
 `pool_pct_used` is the row's
 recorded subscription-pool percentage points consumed
 (`cost.pctUsedDelta`) — the only per-job subscription-quota cost
