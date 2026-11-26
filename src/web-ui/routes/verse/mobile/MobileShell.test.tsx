@@ -91,7 +91,7 @@ afterEach(() => {
 });
 
 async function glanceLoaded() {
-  await screen.findByText(/main red: phantom/, undefined, { timeout: 4000 });
+  await screen.findByText(/main red: phantom/);
 }
 
 async function openFleet() {
@@ -118,6 +118,7 @@ describe('the shell', () => {
 
   it('switches screens through the hash (so Back works), and a re-tap pops to the tab root', async () => {
     mac();
+    await import('./screens/HomeGlance.js');
     render(<MobileShell />);
     await glanceLoaded();
     const tabs = screen.getByRole('navigation', { name: 'Phantom' });
