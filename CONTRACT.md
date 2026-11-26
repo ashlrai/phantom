@@ -24,6 +24,19 @@ for validated lane-open dispatcher jobs. `readyRowsForDepth`
 (`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
 `tier` for the tier tally, including lane-open jobs as `READY`.
 
+## Wiki context and ecosystem
+
+`cloudBrainContext(githubRepo, checkout, taskText)` and
+`fleetBrainContext(repoName, taskText)` return `{ text, nodeIds }`; text is
+bounded to 3,072 UTF-8 bytes. Fleet drop jobs only append context that fits the
+drop contract. `phm wiki brain stats --json` reports separate Fleet and Cloud
+merge rates for explicitly measured jobs with resolved PRs.
+
+`phm wiki ecosystem --json`, `phm_wiki_ecosystem`, and the local
+`GET /api/verse/wiki/ecosystem` return `phantom.wiki.ecosystem.v1`. The graph
+uses the active signed scope, local Git objects, and commit-pinned anchors;
+repositories without an available local index remain visible as unindexed.
+
 ## Desktop appearance
 
 `UiAppearance` (`src/core/verse/ui-appearance-file.ts`) includes

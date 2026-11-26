@@ -1032,7 +1032,9 @@ Missing fleet summaries are marked explicitly; flags hidden behind `[opts]` or u
 | <code>phm website status&#124;auto&#124;pause&#124;off</code> | Inspect or pause automatic phm.dev publication; Auto resumes within its existing signed website scope. | - | - |
 | <code>phm wiki ask "&lt;question&gt;"</code> | Answer from the wiki + index + genome with verified file:line citations, or say "not found". | - | - |
 | <code>phm wiki brain [repo] [--focus &lt;node-id&gt;] [--json]</code> | Commit-aware evidence links for an enrolled repo. | <code>--focus</code>, <code>--json</code> | <code>phm wiki brain [repo] [--focus &lt;node-id&gt;] --json</code> |
+| <code>phm wiki brain stats --json</code> | Fleet and Cloud merge rates with and without Wiki slices. | <code>--json</code> | <code>phm wiki brain stats --json</code> |
 | <code>phm wiki build [repo] [--all]</code> | Private architecture wiki per repo (local models; cited, verified file:line). Only stale pages rebuild. | <code>--all</code> | - |
+| <code>phm wiki ecosystem --json</code> | Commit-pinned relationships across the signed repository scope. | <code>--json</code> | <code>phm wiki ecosystem --json</code> |
 | <code>phm wiki map [repo] [--focus &lt;node-or-file&gt;] [--json]</code> | Commit-pinned modules, declarations and source relationships for an enrolled repo. | <code>--focus</code>, <code>--json</code> | <code>phm wiki map [repo] [--focus &lt;node-or-file&gt;] --json</code> |
 | <code>phm wiki status [repo]</code> | Wiki freshness: generated at &lt;commit&gt;, N pages stale. | - | - |
 | <code>phm wire --claude-md</code> | Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only). | <code>--claude-md</code> | - |

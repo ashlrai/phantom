@@ -101,6 +101,7 @@ export function parseJobOutcomeRows(raw: string, now: number, windowMs: number):
     if (!record(value)) continue;
     const job = firstString(value, JOB_KEYS);
     const eventRaw = firstString(value, EVENT_KEYS);
+    if (eventRaw === 'wiki_slice') continue;
     const phase = (firstString(value, PHASE_KEYS) ?? eventRaw ?? '').toUpperCase();
     const preferredTs = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
     const stampFields = preferredTs === null ? TS_KEYS : [preferredTs, ...TS_KEYS.filter((key) => key !== preferredTs)];
