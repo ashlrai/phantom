@@ -236,7 +236,7 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   // including pending undelivered updates — are not silently discarded.
   const saved = writeBoardNotifySnapshot(dir, snapshotAfterSend(prev, next, pending, { preserveUnseen: board.truncated })).ok;
   return emit({
-    status: saved ? 'completed' : 'snapshot-persistence-failed',
+    status: !saved ? 'snapshot-persistence-failed' : pending.size > 0 ? 'notifications-pending' : 'completed',
     ...(!saved ? { reason: 'snapshot-write-failed' } : {}), transitions: transitions.length, planned: plan.notices.length,
     // `sent` is the legacy count of durable sender receipts (incl. dedupes). It
     // is NOT a count of Slack deliveries: see `queued`, `busPosted`, `deliveries`.
@@ -248,5 +248,5 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
       ...results.map(r => `${describeResult(r.status, evidence.get(r.notice))} [${r.notice.sourceChannel}${r.notice.sourceThread ? ` ${r.notice.sourceThread}` : ''}] ${r.notice.text}${r.reason ? ` (${r.reason})` : ''}`),
       ...plan.dropped.map(d => `dropped ${d.itemId}: ${d.reason}`),
     ],
-  }, saved ? 0 : 1);
+  }, saved && pending.size === 0 ? 0 : 1);
 }
