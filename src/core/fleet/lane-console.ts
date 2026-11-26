@@ -215,6 +215,7 @@ export interface FleetLaneConsoleOptions {
 // ---------------------------------------------------------------------------
 
 const MAX_QUEUE_FILE_BYTES = 4 * 1024 * 1024;
+const MAX_HOLD_FILE_BYTES = 64 * 1024;
 const MAX_LEDGER_FILE_BYTES = 8 * 1024 * 1024;
 /** router-queue.md is append-mostly Markdown history; give it the same wider bound the other market readers use (unfed-read, runs-parked-queue). */
 const MAX_ROUTER_QUEUE_BYTES = 32 * 1024 * 1024;
@@ -969,6 +970,15 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   }
   const notes = holdSource === 'healthy' ? [] : [`holds: ${holdSource}`];
   const holds = new Map(holdRows.map(row => [row.lane, row]));
+  const operatorHolds = new Set<string>();
+  try {
+    const text = await readBounded(join(dirname(queueDir), 'HOLD'), MAX_HOLD_FILE_BYTES);
+    for (const lane of text?.trim().split(/\s+/u) ?? []) {
+      if (lane) operatorHolds.add(lane);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') notes.push('operator holds: degraded');
+  }
 
   // ── 7. fold into lanes ────────────────────────────────────────────────────
   const lanes = new Set<string>([
@@ -1088,13 +1098,15 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
       : Math.round((mergeCount / (mergeWindowMs / 3_600_000)) * 100) / 100;
     const row = holds.get(lane);
     // Either source can observe a hold before the other catches up.
-    const hold: FleetLaneView['hold'] = row && (row.held || dispatch?.held !== true) ? {
+    const operatorHeld = operatorHolds.has(lane);
+    const hold: FleetLaneView['hold'] = row && (row.held || (!operatorHeld && dispatch?.held !== true)) ? {
       held: row.held,
       reason: row.heldReason,
       until: row.heldUntil,
       by: !row.held ? null : row.heldReason?.startsWith('autobackoff') ? 'autobackoff' : 'manual',
       since: row.lastChange,
-    } : typeof dispatch?.held === 'boolean' ? { held: dispatch.held, reason: null, until: null, by: null, since: null } : null;
+    } : operatorHeld ? { held: true, reason: 'operator HOLD file', until: null, by: 'manual', since: null }
+      : typeof dispatch?.held === 'boolean' ? { held: dispatch.held, reason: null, until: null, by: null, since: null } : null;
     const budget = record(record(status?.budget)?.[lane]);
     const observedAt = budgetTimestamp(budget?.observed_at) ?? budgetTimestamp(budget?.as_of);
     const resetAt = budgetTimestamp(budget?.reset_at);
