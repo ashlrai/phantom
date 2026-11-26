@@ -20,6 +20,9 @@ import { readFleetMainHealth, type FleetMainHealthV1 } from './main-health.js';
 import { isIncludedLane } from '../usage/sensor-reading.js';
 import { metricsSeriesTally, type FleetMetricsSeries } from './metrics-series.js';
 import { readSource } from './runs-parked-queue.js';
+import { TREND_MARK, type TrendDirection } from './goal-trend.js';
+
+export { TREND_MARK, type TrendDirection } from './goal-trend.js';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -54,7 +57,6 @@ export const LAUNCH_SETTLE_MS = DAY;
 export const GOAL_SCORECARD_VERSION = 3;
 
 export type GoalStatus = 'on-track' | 'behind' | 'unknown';
-export type TrendDirection = 'up' | 'down' | 'flat' | 'unknown';
 export interface GoalTrend {
   /** Oldest first; null is a bucket without data. Empty when the source keeps no history. */
   points: (number | null)[];
@@ -519,8 +521,6 @@ export async function readGoalScorecard(opts: ReadGoalScorecardOptions = {}): Pr
   return buildGoalScorecard({ now, jobs: tally.report(known), status, mains, releaseLines, vision, ...(opts.targets ? { targets: opts.targets } : {}), ...(opts.nextSteps ? { nextSteps: opts.nextSteps } : {}) });
 }
 
-/** The trend mark people see; agents read `trend`. */
-export const TREND_MARK: Record<TrendDirection, string> = { up: '↑', down: '↓', flat: '→', unknown: '?' };
 const TREND_WORDS: Record<TrendDirection, string> = { up: 'rising', down: 'falling', flat: 'steady', unknown: 'no trend yet' };
 
 /** Plain text for people: one block per goal, behind first. */

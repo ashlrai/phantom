@@ -71,7 +71,7 @@ export interface AskBatch {
   fleetHandled?: FleetHandled[];
 }
 
-export const SHORT_VALUE_MAX = 80;
+export { SHORT_VALUE_MAX } from './ask-display.js';
 const LIMIT_LINE: Record<HardLimit, string> = {
   secrets: 'The fleet gets the access it asked for.',
   money: 'The fleet may spend it.',

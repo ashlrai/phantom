@@ -7,8 +7,8 @@
  * Data is asks.batch.v1; answers go to the same route as `phm asks answer`.
  */
 import { useState, useSyncExternalStore } from 'react';
-import { SHORT_VALUE_MAX, type BatchAsk } from '../../../../core/fleet/asks-batch.js';
-import { formatAge } from '../../../../core/fleet/asks.js';
+import { formatAge, SHORT_VALUE_MAX } from '../../../../core/fleet/ask-display.js';
+import type { BatchAsk } from '../../../../core/fleet/asks-batch.js';
 import { hasMutationHold, subscribeAuth } from '../../../data/auth-store.js';
 import { readFailureReason } from '../../../data/client.js';
 import { useQuery } from '../../../data/hooks.js';

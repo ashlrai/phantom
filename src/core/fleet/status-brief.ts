@@ -10,25 +10,9 @@ import { defaultRunsDir } from './landed-closes-read.js';
 import { readPoolRunway, runwayStatusPath } from '../usage/runway-read.js';
 import { runwayHours, type RunwaySnapshot } from '../usage/runway.js';
 import { readWhyIdle } from './why-idle-read.js';
+import { FLEET_BRIEF_SCHEMA, type FleetBrief } from './status-brief-types.js';
 
-export const FLEET_BRIEF_SCHEMA = 'fleet.brief.v1' as const;
-
-export interface FleetBrief {
-  whyIdle?: string[];
-  schema: typeof FLEET_BRIEF_SCHEMA;
-  v: 1;
-  asOf: string;
-  merged: { lastHour: number | null; last24h: number | null };
-  /** Minutes from PR opened to merged, median over the last 24 hours. */
-  medianMergeMinutes: number | null;
-  /** Main branches that are green out of all repos the guardian watches. */
-  main: { green: number | null; total: number | null; red: string[] };
-  /**
-   * The plan that runs out soonest. `known`: pool and hoursLeft are set. `steady`: plans are read
-   * and none is running down. `unknown`: no plan could be read.
-   */
-  runway: { state: 'known' | 'steady' | 'unknown'; pool: string | null; hoursLeft: number | null; beforeReset: boolean | null };
-}
+export { FLEET_BRIEF_SCHEMA, type FleetBrief } from './status-brief-types.js';
 
 export interface FleetBriefInputs {
   metrics: Pick<MetricsReport, 'merged' | 'merged_per_hour' | 'median_publish_to_merge_s'> | null;

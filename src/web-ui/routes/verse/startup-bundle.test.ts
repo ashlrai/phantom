@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { it } from 'vitest';
 
-it('loads the production Home pane and Command warm-up without Node storage globals', () => {
-  const root = mkdtempSync(join(tmpdir(), 'phantom-home-bundle-'));
+it('loads production Verse panes without Node storage globals', () => {
+  const root = mkdtempSync(join(tmpdir(), 'phantom-verse-bundle-'));
   const home = join(root, 'home');
   const ashlrHome = join(root, 'ashlr');
   const out = join(root, 'web');
@@ -28,6 +28,13 @@ it('loads the production Home pane and Command warm-up without Node storage glob
       for (const [source, name] of [
         ['routes/verse/home/HomePane.tsx', 'HomePane'],
         ['routes/verse/sections/CommandSection.tsx', 'CommandSection'],
+        ['routes/verse/fleet-metrics/MetricsPane.tsx', 'MetricsPane'],
+        ['routes/verse/goals-pane/GoalsPane.tsx', 'GoalsPane'],
+        ['routes/verse/leader-thread/LeaderSurface.tsx', 'LeaderSurface'],
+        ['routes/verse/mobile/screens/GoalsScreen.tsx', 'GoalsScreen'],
+        ['routes/verse/mobile/screens/HomeGlance.tsx', 'HomeGlance'],
+        ['routes/verse/mobile/screens/LeaderScreen.tsx', 'LeaderScreen'],
+        ['routes/verse/mobile/screens/NeedsYouScreen.tsx', 'NeedsYouScreen'],
       ]) {
         const chunk = manifest[source];
         const pane = await import(pathToFileURL(join(out, chunk.file)).href);

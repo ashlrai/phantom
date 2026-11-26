@@ -363,24 +363,28 @@ function buildReport(engine: string, perTask: BenchTaskResult[]): BenchReport {
 // Report persistence
 // ---------------------------------------------------------------------------
 
-const EVAL_DIR = path.join(os.homedir(), '.ashlr', 'eval');
+function evalReportDir(): string {
+  return path.join(os.homedir(), '.ashlr', 'eval');
+}
 
 /** Persist a BenchReport to ~/.ashlr/eval/<id>.json. */
 export function saveReport(report: BenchReport): string {
-  fs.mkdirSync(EVAL_DIR, { recursive: true });
-  const file = path.join(EVAL_DIR, `${report.id}.json`);
+  const dir = evalReportDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${report.id}.json`);
   fs.writeFileSync(file, JSON.stringify(report, null, 2), 'utf8');
   return file;
 }
 
 /** Load all persisted reports sorted by ts ascending. */
 export function loadReports(): BenchReport[] {
-  if (!fs.existsSync(EVAL_DIR)) return [];
-  const files = fs.readdirSync(EVAL_DIR).filter((f) => f.endsWith('.json'));
+  const dir = evalReportDir();
+  if (!fs.existsSync(dir)) return [];
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
   const reports: BenchReport[] = [];
   for (const f of files) {
     try {
-      const raw = fs.readFileSync(path.join(EVAL_DIR, f), 'utf8');
+      const raw = fs.readFileSync(path.join(dir, f), 'utf8');
       reports.push(JSON.parse(raw) as BenchReport);
     } catch {
       // skip malformed files
