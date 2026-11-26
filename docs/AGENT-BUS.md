@@ -1750,7 +1750,11 @@ no transport serves the role. `createFileDeadLetterSink()` records a `status`
 envelope addressed to `bus.dead-letter` in the same store, holding the
 original envelope (or only its routing metadata when it would not fit) and the
 attempt log; read it with a file transport whose addresses include
-`bus.dead-letter`. The report says `recorded: false` if the sink failed, in
+`bus.dead-letter`, or with `phm comms bus read --to bus.dead-letter`. The
+unified comms inbox (`phm comms inbox`, kind `bus-dead-letter`) lists each
+live letter as pending attention — the mail provably never arrived — naming
+the reason, attempt count and original routing metadata the letter kept. The
+report says `recorded: false` if the sink failed, in
 which case the caller still holds the message.
 
 **Egress is off by default.** Outbound to any human or external service needs

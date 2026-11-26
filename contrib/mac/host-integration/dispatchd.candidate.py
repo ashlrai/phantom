@@ -22,12 +22,11 @@ if os.path.exists(Q + "/PROFILE_CONTROL_ONCE"):
         _prof.dump_stats(_prof_path)
     atexit.register(_profile_finish)
 MAX_LAUNCH_PER_TICK = 8; MAX_REAPS = 12; GRACE = 120; RAISE_GAP = 120
-LANES = ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local", "gemini", "zai", "agy", "grok", "cursor"]   # tie-break order: cmp first
+LANES = ["codex-personal", "claude", "devin", "claude-api", "codex-local", "gemini", "zai", "agy", "grok", "cursor"]
 # hard_cap (RQ-LOADGATE-1): per-pool absolute bound, seeded to the ceiling so nothing changes until an operator lowers it in
 # slots.json. Neither the floor, the autopilot overrides, the +2 ramp nor a stored target may exceed it. GLOBAL_HARD_CAP is the
 # top-level slots.json "hard_cap" bound on the whole fleet (seeded to the 18-core Mac this was sized for).
-DEFAULT = {"codex-cmp": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 32},
-           "codex-personal": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 32},
+DEFAULT = {"codex-personal": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 32},
            "claude": {"target": 0, "floor": 0, "ceiling": 8, "hard_cap": 8},
            "devin": {"target": 6, "floor": 3, "ceiling": 10, "hard_cap": 10},
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
@@ -125,6 +124,7 @@ def jsave(p, obj):
 
 os.makedirs(RUN, exist_ok=True); os.makedirs(Q + "/prompts", exist_ok=True)
 slots = jload(Q + "/slots.json", {})
+slots.pop("codex-cmp", None)
 for k, v in DEFAULT.items():
     s = slots.setdefault(k, dict(v)); [s.setdefault(a, b) for a, b in v.items()]; s.setdefault("last_change", 0)
 def _cap(v, d):   # a hard_cap is a non-negative int; anything else (missing, bool, garbage) falls back to the default
@@ -138,8 +138,8 @@ def clamp_lane(lane):   # hard_cap wins over floor, ceiling and target, whoever 
     s_["ceiling"] = min(s_["ceiling"], hc); s_["floor"] = min(s_["floor"], s_["ceiling"]); s_["target"] = min(s_["target"], hc)
 for _l in LANES: clamp_lane(_l)
 # ---- usage backoff (RQ-USAGE-BACKOFF-11 rev2): auto-hold a pool on a provider CLI usage/quota error line.
-# Only exact CLI error lines (anchored, CLI prefix) count, and only on a failed or EMPTY run (codex-cmp: only a run
-# with no work). Only held_by == "autobackoff" entries are ever auto-unheld or extended; manual holds are never touched.
+# Only exact CLI error lines (anchored, CLI prefix) count, and only on a failed or EMPTY run.
+# Only held_by == "autobackoff" entries are ever auto-unheld or extended; manual holds are never touched.
 # Nothing from the log is stored or logged: only a fixed pattern id, lane, job, until and src.
 AB_BY = "autobackoff"; AB_TAIL = 16384; AB_CAP = 86400   # rev5: 7d max removed (Security: log merges model stdout, any line is forgeable)
 AB_MAX = AB_CAP; AB_DEF = 6 * 3600
@@ -167,7 +167,7 @@ AB_RX = {"codex": [("codex_usage_limit", re.compile(r"(?im)" + _CX + r"you" + _Q
          # grok-pace.py / cursor-pace.py record print this fixed line only from the CLI's own top-level error fields or a nonzero rc
          "xai_grok": [("grok_error_hold", re.compile(r"(?m)^grok-pace: error_hold$"))],
          "cursor_cli": [("cursor_error_hold", re.compile(r"(?m)^cursor-pace: error_hold$"))]}
-AB_PROV = {"codex-cmp": "codex", "codex-personal": "codex", "claude": "anthropic", "claude-api": "anthropic", "devin": "devin", "gemini": "google", "zai": "zai", "agy": "google_agy", "grok": "xai_grok", "cursor": "cursor_cli"}
+AB_PROV = {"codex-personal": "codex", "claude": "anthropic", "claude-api": "anthropic", "devin": "devin", "gemini": "google", "zai": "zai", "agy": "google_agy", "grok": "xai_grok", "cursor": "cursor_cli"}
 _MON = {m: i + 1 for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
 def _et():
     try:
@@ -289,7 +289,7 @@ def ab_scan(lane, alive_):
             ev("USAGE_LIMIT_SEEN %s %s %s: worktree path refused (containment), no hold" % (lane, j, pid)); continue
         if osrc == "helper_unavailable":
             ev("USAGE_LIMIT_SEEN %s %s %s: helper_unavailable, no hold" % (lane, j, pid)); metric({"event": "autobackoff_skip", "lane": lane, "job": j, "pattern": pid, "src": "helper_unavailable"}); continue
-        if work if lane == "codex-cmp" else (work and not failed):   # cmp: work never holds; others: failed or EMPTY only
+        if work and not failed:
             ev("USAGE_LIMIT_SEEN %s %s %s: run produced work, no hold" % (lane, j, pid)); continue
         ln = re.sub(r"^\[[0-9T:.\-]+Z?\]\s*", "", m.group(0))[:600]   # log timestamp prefix dropped
         rs = ab_reset(ln, NOW); src = "cli_line"
@@ -809,8 +809,6 @@ for lane in LANES:
         ev("LANE_HOLD %s credits exhausted (%s); supervisor clears held in slots.json" % (lane, hit[0])); continue
     if hit and hit[1] == "model_capacity":
         ev("MODEL_CAPACITY_SEEN %s %s (no slot change)" % (lane, hit[0])); hit = None
-    if hit and hit[1] in ("usage_limit",) and lane == "codex-cmp":
-        s["last_change"] = NOW; ev("USAGE_LIMIT_SEEN %s %s: continuing on credits" % (lane, hit[0])); hit = None
     if hit:
         nt = max(s["floor"], s["target"] // 2)
         s["last_change"] = NOW
@@ -1056,7 +1054,7 @@ lk.close()
 jsave(Q + "/slots.json", slots)
 
 # ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
-for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"):
+for lane in ("codex-personal", "devin", "claude-api", "codex-local"):
     sl = slots[lane]
     if sl.get("held") or lane in hold: continue
     qn = sum(1 for l in rest if l.split("\t")[2:3] == [lane])

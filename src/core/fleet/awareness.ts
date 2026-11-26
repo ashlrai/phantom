@@ -15,12 +15,19 @@ export function projectFleetAwareness(state: NodesState | null, now: number, dis
   // Dispatchd ticks every 30 seconds; old targets are never reported as free capacity.
   const dispatcherFresh = fresh(at, now, 30_000);
   const unpaused = d.paused === false || (d.schema === 'dispatchd.status.v1' && d.paused === null);
+  const admission = obj(d.admission);
+  const stopped = d.paused === true || (typeof d.paused === 'string' && d.paused.trim().length > 0) ||
+    admission.admit === false || admission.decision === 'stop';
   const lanes = Object.entries(obj(d.lanes)).slice(0, 128).filter(([id]) => /^[a-z][a-z0-9-]{1,30}$/.test(id) && safe(id)).map(([lane, value]) => {
     const row = obj(value), running = dispatcherFresh ? count(row.running) : null, target = count(row.target),
       effectiveTarget = count(row.effective_target);
+    let available: number | null = null;
+    if (dispatcherFresh && stopped) available = 0;
+    else if (unpaused && typeof row.held === 'boolean' && running !== null && target !== null) {
+      available = row.held ? 0 : Math.max(0, laneLaunchTarget(target, effectiveTarget) - running);
+    }
     return { lane, running, target, effectiveTarget, floor: count(row.floor), queued: dispatcherFresh ? count(row.queued) : null,
-      available: dispatcherFresh && unpaused && typeof row.held === 'boolean' && running !== null && target !== null
-        ? row.held ? 0 : Math.max(0, laneLaunchTarget(target, effectiveTarget) - running) : null };
+      available };
   });
   return { schema: 'fleet.awareness.v1' as const, generatedAt: new Date(now).toISOString(), heartbeatMs: NODE_HEARTBEAT_MS,
     hosts, lanes, queue: { nodePending: state ? state.jobs.filter(j => j.state === 'pending' ||

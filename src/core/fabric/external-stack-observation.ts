@@ -9,25 +9,36 @@
  * could reverse with a low-entropy dictionary.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import {
+  SEMVER_RE,
+  SHA256_PREFIXED_DIGEST_RE as DIGEST_RE,
+  canonicalJsonBytes,
+  decodeStrictUtf8JsonBytes,
+  deepFreeze as immutable,
+  exactKeys,
+  isCanonicalIsoTimestamp as canonicalIso,
+  isEnumValue as enumValue,
+  isSafeIntegerInRange as integer,
+  isUnsupportedStackSourceVersionV1 as unsupportedSourceVersion,
+  isValidStackSourceV1 as validSource,
+  sha256Prefixed as sha,
+  strictPlainRecord as record,
+  timingSafeUtf8Equal as sameText,
+  type StackSourceMetadataV1,
+} from './external-contract-codec.js';
 
 export const STACK_OBSERVATION_MANIFEST_PROTOCOL = 'ashlr-stack-observation-manifest-v1' as const;
-export const STACK_OBSERVATION_PROTOCOL = 'ashlr-stack-observation-v1' as const;
+const STACK_OBSERVATION_PROTOCOL = 'ashlr-stack-observation-v1' as const;
 export const STACK_OBSERVATION_MAX_BYTES = 128 * 1024;
-export const STACK_OBSERVATION_MAX_LIFETIME_MS = 10 * 60_000;
-export const STACK_OBSERVATION_MAX_FUTURE_SKEW_MS = 60_000;
+const STACK_OBSERVATION_MAX_LIFETIME_MS = 10 * 60_000;
+const STACK_OBSERVATION_MAX_FUTURE_SKEW_MS = 60_000;
 
 const MAX_COMPONENTS = 4_096;
 const MAX_CONNECTIONS = 64;
 const MAX_RESOURCES = 1_000_000;
 const MAX_RESOURCE_CLASSES = 64;
 const MAX_KEY_PRESENCE_COUNT = 1_000_000;
-const MAX_CANONICAL_DEPTH = 16;
-const MAX_CANONICAL_NODES = 20_000;
-const SEMVER_RE = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-const STACK_SOURCE_VERSION_RE = /^0\.2\.(?:0|[1-9][0-9]*)$/;
-const COMMIT_RE = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
-const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
+const CANONICAL_BOUNDS = { maxDepth: 16, maxNodes: 20_000, maxBytes: STACK_OBSERVATION_MAX_BYTES };
 
 const COMPONENT_KINDS = [
   'control-plane',
@@ -47,11 +58,7 @@ type StackResourceStateV1 = typeof RESOURCE_STATES[number];
 export interface StackObservationManifestV1 {
   schemaVersion: 1;
   protocol: typeof STACK_OBSERVATION_MANIFEST_PROTOCOL;
-  source: {
-    product: 'stack';
-    version: string;
-    commit: string;
-  };
+  source: StackSourceMetadataV1;
   generatedAt: string;
   expiresAt: string;
   topology: {
@@ -88,7 +95,7 @@ export interface StackObservationManifestV1 {
 
 export interface ExternalStackObservationV1 {
   schemaVersion: 1;
-  protocol: typeof STACK_OBSERVATION_PROTOCOL;
+  protocol: 'ashlr-stack-observation-v1';
   recordType: 'external-stack-observation';
   authority: 'observation-only';
   effectAuthority: false;
@@ -173,7 +180,6 @@ const MANIFEST_KEYS = [
   'expiresAt', 'generatedAt', 'manifestDigest', 'phantom', 'protocol', 'resources', 'schemaVersion', 'source', 'topology',
 ] as const;
 const UNSIGNED_MANIFEST_KEYS = MANIFEST_KEYS.filter((key) => key !== 'manifestDigest');
-const SOURCE_KEYS = ['commit', 'product', 'version'] as const;
 const TOPOLOGY_KEYS = ['componentCount', 'components', 'connectionCount', 'connections'] as const;
 const COMPONENT_KEYS = ['count', 'kind'] as const;
 const CONNECTION_KEYS = ['count', 'from', 'to'] as const;
@@ -181,122 +187,12 @@ const RESOURCES_KEYS = ['classes', 'resourceCount'] as const;
 const RESOURCE_CLASS_KEYS = ['classDigest', 'count', 'kind', 'state'] as const;
 const PHANTOM_KEYS = ['installed', 'keyPresenceCount', 'vaultStatus', 'version'] as const;
 
-type Canonical = null | boolean | number | string | Canonical[] | { [key: string]: Canonical };
-
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const keys = Reflect.ownKeys(value);
-    if (keys.some((key) => typeof key !== 'string' || !descriptors[String(key)]?.enumerable ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const sorted = [...expected].sort();
-  return actual.length === sorted.length && actual.every((key, index) => key === sorted[index]);
-}
-
-function canonicalize(
-  value: unknown,
-  state = { depth: 0, nodes: 0, ancestors: new Set<object>() },
-): Canonical {
-  state.nodes += 1;
-  if (state.nodes > MAX_CANONICAL_NODES || state.depth > MAX_CANONICAL_DEPTH) throw new TypeError('value exceeds bounds');
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new TypeError('non-finite number');
-    return Object.is(value, -0) ? 0 : value;
-  }
-  if (typeof value !== 'object' || state.ancestors.has(value)) throw new TypeError('non-json value');
-  state.ancestors.add(value);
-  state.depth += 1;
-  try {
-    if (Array.isArray(value)) {
-      if (Reflect.ownKeys(value).some((key) => typeof key === 'symbol' ||
-        (key !== 'length' && !/^(?:0|[1-9][0-9]*)$/.test(key)))) throw new TypeError('invalid array');
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse array');
-        return canonicalize(entry, state);
-      });
-    }
-    const row = record(value);
-    if (!row) throw new TypeError('non-plain object');
-    const output: { [key: string]: Canonical } = Object.create(null) as { [key: string]: Canonical };
-    for (const key of Object.keys(row).sort()) output[key] = canonicalize(row[key], state);
-    return output;
-  } finally {
-    state.depth -= 1;
-    state.ancestors.delete(value);
-  }
-}
-
 function canonicalBytes(value: unknown): Buffer | null {
-  try {
-    const bytes = Buffer.from(JSON.stringify(canonicalize(value)), 'utf8');
-    return bytes.length <= STACK_OBSERVATION_MAX_BYTES ? bytes : null;
-  } catch {
-    return null;
-  }
-}
-
-function sha(domain: string, value: Uint8Array): string {
-  return `sha256:${createHash('sha256').update(domain, 'utf8').update('\0').update(value).digest('hex')}`;
-}
-
-function sameText(left: unknown, right: unknown): boolean {
-  if (typeof left !== 'string' || typeof right !== 'string') return false;
-  const leftBytes = Buffer.from(left, 'utf8');
-  const rightBytes = Buffer.from(right, 'utf8');
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
-}
-
-function immutable<T>(value: T, seen = new WeakSet<object>()): T {
-  if (value === null || typeof value !== 'object' || seen.has(value)) return value;
-  seen.add(value);
-  for (const nested of Object.values(value as Record<string, unknown>)) immutable(nested, seen);
-  return Object.freeze(value);
-}
-
-function canonicalIso(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > 40) return false;
-  const milliseconds = Date.parse(value);
-  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
-}
-
-function integer(value: unknown, minimum: number, maximum: number): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
-}
-
-function enumValue(value: unknown, values: readonly string[]): value is string {
-  return typeof value === 'string' && values.includes(value);
+  return canonicalJsonBytes(value, CANONICAL_BOUNDS);
 }
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function validSource(value: unknown): value is StackObservationManifestV1['source'] {
-  const source = record(value);
-  return Boolean(source && exactKeys(source, SOURCE_KEYS) && source['product'] === 'stack' &&
-    typeof source['version'] === 'string' && source['version'].length <= 80 &&
-    STACK_SOURCE_VERSION_RE.test(source['version']) &&
-    typeof source['commit'] === 'string' && COMMIT_RE.test(source['commit']));
-}
-
-function unsupportedSourceVersion(value: unknown): boolean {
-  const source = record(value);
-  return Boolean(source && exactKeys(source, SOURCE_KEYS) && source['product'] === 'stack' &&
-    typeof source['version'] === 'string' && source['version'].length <= 80 &&
-    SEMVER_RE.test(source['version']) && !STACK_SOURCE_VERSION_RE.test(source['version']) &&
-    typeof source['commit'] === 'string' && COMMIT_RE.test(source['commit']));
 }
 
 function validTopology(value: unknown): value is StackObservationManifestV1['topology'] {
@@ -488,14 +384,11 @@ export function compileExternalStackObservationV1(
   now: Date = new Date(),
 ): ExternalStackObservationResultV1 {
   try {
-    if (!(bytes instanceof Uint8Array)) return fail('invalid-bytes');
-    if (bytes.byteLength > STACK_OBSERVATION_MAX_BYTES) return fail('oversized-manifest');
-    if (bytes.byteLength < 2 || !(now instanceof Date) || !Number.isFinite(now.getTime())) return fail('invalid-bytes');
-    const copied = Buffer.from(bytes);
-    const text = copied.toString('utf8');
-    if (!copied.equals(Buffer.from(text, 'utf8'))) return fail('invalid-bytes');
-    let parsed: unknown;
-    try { parsed = JSON.parse(text) as unknown; } catch { return fail('non-canonical-json'); }
+    const decoded = decodeStrictUtf8JsonBytes(bytes, STACK_OBSERVATION_MAX_BYTES, now);
+    if (!decoded.ok) {
+      return fail(decoded.reason === 'oversized' ? 'oversized-manifest' : decoded.reason);
+    }
+    const { copied, parsed } = decoded;
     const canonical = canonicalStackObservationManifestBytesV1(parsed);
     if (!canonical) {
       const row = record(parsed);

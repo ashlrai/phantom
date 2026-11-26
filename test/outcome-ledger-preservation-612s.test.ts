@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -2130,6 +2130,33 @@ describe('router outcome merge-events join', () => {
     const result = await readRouterOutcomes({ runsDir: root });
     expect(result).toMatchObject({ state: 'read', merge_events_state: 'read', merge_events_truncated: true });
     expect(result.outcomes[0]?.merge_queue).toBeNull();
+  });
+
+  it('keeps queue evidence without inferring first-pass success from a cut merge-events tail', async () => {
+    const root = runsDir([
+      '{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}',
+      '{"job":"J2","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/43"}',
+      '{"job":"J3","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/44","ci_first_pass":true}',
+    ].join('\n'));
+    writeMergeEvents(root, [mergeEvent(42, 'check_observed', { conclusion: 'failure' })]);
+    truncateSync(mergeEventsPath(root), ROUTER_OUTCOME_LEDGER_LIMIT + 1);
+    appendFileSync(mergeEventsPath(root), '\n' + [
+      mergeEvent(42, 'checks_passed'),
+      mergeEvent(43, 'check_observed', { conclusion: 'failure' }),
+      mergeEvent(43, 'checks_passed'),
+      mergeEvent(44, 'checks_passed'),
+    ].map(row => JSON.stringify(row)).join('\n') + '\n');
+
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', merge_events_state: 'read', merge_events_truncated: true });
+    expect(result.outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        job_id: 'J1', ci_first_pass: null,
+        merge_queue: expect.objectContaining({ checks_passed: 1, check_failures: 0 }),
+      }),
+      expect.objectContaining({ job_id: 'J2', ci_first_pass: false }),
+      expect.objectContaining({ job_id: 'J3', ci_first_pass: true }),
+    ]));
   });
 });
 

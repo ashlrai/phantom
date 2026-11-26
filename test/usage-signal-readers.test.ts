@@ -75,8 +75,8 @@ describe('bridge usage CLI', () => {
   });
   it('passes the requested event and pools to a one-shot writer and prints only its result', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runUsageSignal(['--directory', root, '--event', '429', '--pool', 'terra', '--pool', 'codex-cmp']);
-    expect(stubs.write).toHaveBeenCalledWith({ directory: root, event: '429', pools: ['terra', 'codex-cmp'], readers: {} });
+    await runUsageSignal(['--directory', root, '--event', '429', '--pool', 'terra', '--pool', 'codex-personal']);
+    expect(stubs.write).toHaveBeenCalledWith({ directory: root, event: '429', pools: ['terra', 'codex-personal'], readers: {} });
     expect(log).toHaveBeenCalledWith(JSON.stringify({ written: ['terra'], debounced: [], signals: [] }));
     expect(stubs.execFile).not.toHaveBeenCalled();
   });

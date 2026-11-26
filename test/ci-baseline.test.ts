@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; noJobs?: boolean } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -100,7 +100,8 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
       }
     } else if (endpoint.includes('/actions/runs?')) {
       const isMaster = endpoint.includes(master);
-      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : head, ...(options.runConclusion !== undefined ? { conclusion: options.runConclusion } : {}) }] };
+      const conclusion = (isMaster ? options.masterRunConclusion : undefined) ?? options.runConclusion;
+      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : head, ...(conclusion !== undefined ? { conclusion } : {}) }] };
     } else throw new Error(`unexpected call ${args.join(' ')}`);
     return success(JSON.stringify(value));
   };
@@ -200,6 +201,27 @@ describe('CI baseline evidence', () => {
       { state: 'unknown', reason: 'incomplete-check' },
     ]);
     expect(report.groups).toEqual([]);
+  });
+  it.each(['startup_failure', 'cancelled', 'timed_out', 'action_required', 'stale'])(
+    'withholds PR freshness when the workflow concluded %s after a job finished',
+    async conclusion => {
+      const report = await analyzeCiBaseline('owner/repo', github({ count: 1, runConclusion: conclusion }).gh);
+      expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
+      expect(report.groups).toEqual([]);
+      expect(report.master.known).toBe(false);
+    },
+  );
+  it('retains a verified master failure from an incomplete workflow', async () => {
+    const { gh } = github({ runConclusion: 'failure', masterRunConclusion: 'timed_out' });
+    const report = await analyzeCiBaseline('owner/repo', gh);
+    expect(report.master.known).toBe(false);
+    expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', master: 'fail' });
+  });
+  it('withholds master pass evidence when the workflow was cancelled after a green job', async () => {
+    const { gh } = github({ count: 1, pass: true, runConclusion: 'failure', masterRunConclusion: 'cancelled' });
+    const report = await analyzeCiBaseline('owner/repo', gh);
+    expect(report.master.known).toBe(false);
+    expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
   });
   it('reads a jobless run that did not succeed as incomplete evidence', async () => {
     for (const conclusion of ['startup_failure', 'cancelled', 'timed_out', 'action_required', 'stale', 'failure']) {

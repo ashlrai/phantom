@@ -1,6 +1,9 @@
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { displaySurfaceTarget, evaluateStandingAuthority } from '../authority/effective-config.js';
+import type { EffectiveRepoPolicy } from '../authority/types.js';
+import { ecosystemBrand } from '../brand/ecosystem.js';
+import { canWriteStandingGrantHere } from '../drive/nodes/pool-host.js';
 import { readEnrollmentRegistry } from '../sandbox/policy.js';
 import { defaultGitRunner, type GitRunner } from '../verse/git-ops.js';
 import { parseReadyTsv } from './lane-console.js';
@@ -88,19 +91,26 @@ function scope() {
     : []);
   const evaluation = evaluateStandingAuthority({ mode: 'cached', surface: displaySurfaceTarget() });
   const grant = evaluation.grant;
-  const stage = grant && evaluation.position ? grant.rollout.stages[evaluation.position.stageIndex] : null;
-  return { enrollment, enrolled, grant, stage };
+  return { enrollment, enrolled, grant, effectiveRepos: evaluation.policy?.repos ?? [] };
+}
+
+export function managedRepoCatalog(enrolled: ReadonlySet<string>, effectiveRepos: readonly Pick<EffectiveRepoPolicy, 'nameWithOwner' | 'stage'>[]) {
+  const stages = new Map(effectiveRepos.map(({ nameWithOwner, stage }) => [nameWithOwner.toLowerCase(), stage]));
+  const ecosystem = new Map<string, { label: string; logo: string }>(
+    ECOSYSTEM_REPOS.map(({ name, label, logo }) => [`ashlrai/${name}`, { label, logo }]),
+  );
+  return new Map([...new Set([...ecosystem.keys(), ...enrolled, ...stages.keys()])].flatMap(repo => {
+    if (!canonicalMarketRepo(repo)) return [];
+    const [owner, name] = repo.split('/') as [string, string];
+    const brand = ecosystem.get(repo) ?? (owner === 'ashlrai' ? ecosystemBrand(name) : undefined);
+    return [[repo, { label: brand?.label ?? name, logo: brand?.logo ?? null, grantStage: stages.get(repo) ?? null }]] as const;
+  }));
 }
 
 export async function listManagedRepos(opts: { runsDir?: string; now?: number; run?: GitRunner } = {}) {
   const now = opts.now ?? Date.now();
-  const { enrollment, enrolled, grant, stage } = scope();
-  const catalog = new Map<string, { label: string; logo: string | null }>(
-    ECOSYSTEM_REPOS.map(({ name, label, logo }) => [`ashlrai/${name}`, { label, logo }]),
-  );
-  for (const repo of [...enrolled, ...(grant?.repos.map(entry => entry.nameWithOwner.toLowerCase()) ?? [])]) {
-    if (!catalog.has(repo) && canonicalMarketRepo(repo)) catalog.set(repo, { label: repo.split('/')[1]!, logo: null });
-  }
+  const { enrollment, enrolled, effectiveRepos } = scope();
+  const catalog = managedRepoCatalog(enrolled, effectiveRepos);
   const names = [...catalog.keys()];
   const key = names.join(',');
   const read = () => fetchRepoFacts(names, now, opts.run ?? defaultGitRunner);
@@ -108,9 +118,10 @@ export async function listManagedRepos(opts: { runsDir?: string; now?: number; r
     factsCache = { key, at: now, facts: read() };
   }
   const runsDir = opts.runsDir ?? root();
-  const [depth, facts, published] = await Promise.all([
+  const [depth, facts, published, freshnessSource] = await Promise.all([
     readyDepth(runsDir), opts.run ? read() : factsCache!.facts,
     readSource(join(runsDir, 'queue', 'repo-shares.json'), 256 * 1024, false),
+    readSource(join(runsDir, 'queue', 'repo-freshness.json'), 256 * 1024, false),
   ]);
   let receipt: Record<string, unknown> = {};
   if (published.state === 'healthy') {
@@ -121,16 +132,22 @@ export async function listManagedRepos(opts: { runsDir?: string; now?: number; r
     } catch { /* An unreadable queue receipt is not an allocation decision. */ }
   }
   const evidence = names.map(repo => ({
-    repo, priority: readRepoPriority(repo), eligible: enrolled.has(repo),
+    repo, priority: readRepoPriority(repo), eligible: enrolled.has(repo) || catalog.get(repo)?.grantStage != null,
     queueDepth: depth ? depth.get(repo) ?? 0 : null, ...(facts.get(repo) ?? UNKNOWN),
   }));
-  const allocation = allocateRepos(evidence);
+  let freshness: unknown = null;
+  if (freshnessSource.state === 'healthy') {
+    try { freshness = JSON.parse(freshnessSource.text); } catch { /* Invalid evidence is not a finding. */ }
+  }
+  const allocation = allocateRepos(evidence, freshness, now);
   const byName = new Map(allocation.map(row => [row.repo, row]));
   return {
     schema: 'phantom.repos.v1' as const,
     asOf: new Date(now).toISOString(),
     enrollmentStatus: enrollment.state,
-    repos: evidence.map(({ eligible, ...row }) => {
+    prioritySync: 'local-only' as const,
+    canManageGrant: canWriteStandingGrantHere(),
+    repos: evidence.map(({ eligible: _eligible, ...row }) => {
       const observed = object(receipt[row.repo]);
       const recorded = observed.schema === 'work-market.v1' && observed.event === 'repo_share'
         && observed.repo === row.repo && observed.priority === row.priority
@@ -141,8 +158,7 @@ export async function listManagedRepos(opts: { runsDir?: string; now?: number; r
         : null;
       return {
         ...row, ...catalog.get(row.repo)!,
-        enrolled: enrollment.state === 'degraded' ? null : eligible,
-        grantStage: stage?.repos.find(entry => entry.nameWithOwner.toLowerCase() === row.repo)?.stage ?? null,
+        enrolled: enrollment.state === 'degraded' ? null : enrolled.has(row.repo),
         allocation: {
           schema: 'work-market.v1' as const, event: 'repo_share' as const,
           source: recorded ? 'queue' as const : 'estimate' as const,
