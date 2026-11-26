@@ -111,7 +111,8 @@ function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string
   let cpuFromHost = false;
   for (const adapter of HARNESS_ADAPTERS) {
     const sessions = live.filter(x => x.harness === adapter.id);
-    const mems = sessions.map(x => x.memBytes).filter(finite);
+    // A zero RSS total supplies no usable session cost.
+    const mems = sessions.map(x => x.memBytes).filter((bytes): bytes is number => finite(bytes) && bytes > 0);
     if (sessions.length && mems.length === sessions.length) {
       const cpus = sessions.map(x => x.cpuPercent).filter(finite);
       let cpu: number | null = cpus.length === sessions.length ? round(cpus.reduce((a, b) => a + b, 0) / cpus.length / 100, 3) : null;
