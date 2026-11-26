@@ -2138,7 +2138,14 @@ so the envelope-level audit trail a job-scoped follow already narrows by
 filtered read; every other body kind, including a `work.release` body's
 own `released`/`completed` outcome, and a `work.result` carrying no
 outcome never match, and a value outside the vocabulary is an invalid
-request, never a widened stream. As with `--to` and `--job`, filtered rows
+request, never a widened stream. `--body-kind <kind>` and `--result
+<reserved|admitted|complete|failed>` narrow `comms bus read|watch` by the
+same two own-field body matches — `busBodyKind`'s exact discriminator and
+the kind-scoped `busBodyResultOutcome` outcome equality — so the raw page
+answers "which retained envelopes are `work.result` receipts reporting
+`failed`" in one filtered read, with a `comms bus --checkpoint` consumer
+binding both raw values into its filter identity the same way every other
+filter binds. As with `--to` and `--job`, filtered rows
 still advance checkpoints, so a narrowed stream resumes on the same cursor
 an unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
 `comms bus read|watch` to rows received at or after the cutoff — the same
