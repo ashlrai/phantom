@@ -98,7 +98,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   check: ['--base', '--json', '--help'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
-  nodes: ['plan', 'doctor', 'pool', '--json', '--can-take', '--node', '--help'],
+  nodes: ['plan', 'doctor', 'pool', 'offload', '--json', '--discover', '--can-take', '--node', '--help'],
   map: ['--json', '--help'],
   'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
   autofix: ['--apply', '--dry-run', '--json', '--only', '--older-than', '--stuck-minutes', 'release-stuck-draft', 'launchd-crashloop', 'stuck-lane', 'outside-load', '--help'],

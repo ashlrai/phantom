@@ -350,8 +350,32 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'schemaVersion 1; dryRun=true, executable=false, registry.status=stub, steps',
   },
   {
-    usage: 'phm node join|beat|enqueue|plan|pull|renew|complete|release|list|status|leave|pool|watch|worker|rpc|light [flags] [--json]',
-    description: 'Node router: nodes advertise caps and live usage, jobs carry an owner scope and a fenced lease so no job runs twice. A node only sees and pulls jobs of its own owner scopes; auth stays local to each node. Exit 0 ok, 1 lease/session lost or store unavailable, 2 bad usage; errors include a Fix.',
+    usage: 'phm node join|beat|enqueue|plan|pull|renew|complete|release|withdraw|result|status|list|leave [flags] [--json]',
+    description: 'Node router: nodes advertise caps and live usage, jobs carry an owner scope and a fenced lease so no job runs twice. A node only sees and pulls jobs of its own owner scopes; auth stays local to each node. withdraw retires a pending job for its owner; result reads one job\'s outcome back inside its owner scope. Exit 0 ok, 1 lease/session lost or store unavailable, 2 bad usage; errors include a Fix.',
+    safety: 'append',
+    jsonShape: '{schemaVersion:1, command, ...result} | {schemaVersion:1, command, error:{code,message,fix}}',
+  },
+  {
+    usage: 'phm node measure [--json]',
+    description: 'Print the measured capacity sample to paste as `phm node beat --capacity`: RAM headroom, disk floor and host slots, every number measured on this machine and nothing sent anywhere. Bare output is the sample itself so --capacity "$(phm node measure)" works; --json wraps it in the standard envelope. A hold the sample schema cannot express exits 1 — omit --capacity on that beat. Read-only.',
+    safety: 'read',
+    jsonShape: '{held,hostId,ramBytes,sampledAtMs,slots}; --json: {schemaVersion:1, command:"measure", capacity:{held,hostId,ramBytes,sampledAtMs,slots}}',
+  },
+  {
+    usage: 'phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json]',
+    description: 'Measure this node — CPU, memory, swap and per-harness session footprint — and print agents runnable now per harness with the limiting basis and notes; unknown stays unknown. --out writes the phantom.node-capacity.v1 document atomically (mode 0600); --previous supplies swap growth and learned footprints. Read-only apart from --out.',
+    safety: 'append',
+    jsonShape: 'phantom.node-capacity.v1 {schema,node,measured_at,platform,cpu,mem_free,swap,per_harness_footprint,agents_runnable_now,basis:{process_source,limiting,notes}}',
+  },
+  {
+    usage: 'phm node route --capacity <file>... --costs <file> --jobs <file> [--outcomes <file>] [--outcomes-ledger] [--runs-dir <dir>] [--nodes <file>] [--exhausted <p,p>] [--json]',
+    description: 'Score (node, provider, model) per queued job from capacity documents, a cost/latency file and lane merge outcomes; --outcomes-ledger derives tallies from metrics/jobs.jsonl and explicit --outcomes entries win per provider. Local files only: no network, no launches.',
+    safety: 'read',
+    jsonShape: '{schema:"phantom.node-route.v1", plan:[{jobId,nodeId?,provider?,model?,score,mergeRate,mergesPerMTok,mergesPerHour,rejected?}], outcomes_ledger?}',
+  },
+  {
+    usage: 'phm node pool|watch|worker|run-once|rpc|lanes|light|self-update|bridge [flags] [--json]',
+    description: 'Multi-Mac pool and node ops: pool enrolls this Mac as primary or backup over explicit team SSH aliases (it prints the approval steps first), watch/worker/run-once/rpc are the pool session and runner stdin endpoints, lanes plans the local oMLX lane, light runs the bounded muse slice, self-update plans per-node phm version drift, and bridge previews ready rows that would offload to nodes (dry run unless --apply).',
     safety: 'append',
     jsonShape: '{schemaVersion:1, command, ...result} | {schemaVersion:1, command, error:{code,message,fix}}',
   },
@@ -890,6 +914,10 @@ export function agentDocsText(): string {
   lines.push('phantom_leader_status, phantom_leader_org, phantom_leader_inbox, phantom_leader_ask,');
   lines.push('phantom_leader_assign, ashlr_comms_agent_status, ashlr_comms_agent_drafts,');
   lines.push('ashlr_comms_agent_run. Unknown evidence stays unknown and grants no send or spend.');
+  lines.push('Wiki tools (commit-pinned repo knowledge, read-only): phm_wiki_map reads a');
+  lines.push('source map for one enrolled repo, phm_wiki_ecosystem reads relationships across');
+  lines.push('the signed repository scope, and phm_wiki_brain reads system-map evidence and');
+  lines.push('staleness for one enrolled repo.');
   lines.push('Desktop operator tools: desktop_list_apps, desktop_windows, desktop_read,');
   lines.push('desktop_screenshot, desktop_doctor, desktop_focus, desktop_scroll, desktop_type,');
   lines.push('desktop_click. Reads do not post to the bus. Focus, scroll, type and click post');
@@ -1513,7 +1541,9 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'nodes pool [--json]', desc: 'Your Macs as one pool, this Mac first: online or not, free slots, running jobs, load, free memory and disk, offload on or off, last seen, and a total such as "2 Macs, 11 free slots". Read only.', topic: 'safety' },
   { cmd: 'nodes plan [--json]', desc: 'Plan which queued job fits which computer, with suggested free slots per computer. Read only: it launches and moves nothing.', topic: 'safety' },
   { cmd: 'nodes offload [--dry-run] [--json]', desc: 'Opt-in: when this computer would hold a launch and another passes doctor, choose that computer for a ready job and record why. --dry-run shows what would move; `nodes offload on|off` flips the setting.', topic: 'safety' },
-  { cmd: 'node join|beat|enqueue|plan|pull|complete|status [--json]', desc: 'Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.', topic: 'safety' },
+  { cmd: 'node join|beat|enqueue|plan|pull|renew|complete|release|withdraw|result|status|list|leave [--json]', desc: 'Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases; withdraw retires a pending job and result reads its outcome back.', topic: 'safety' },
+  { cmd: 'node measure|capacity|route [--json]', desc: 'Measured node capacity: the beat --capacity sample, agents runnable now per harness, and (node, provider, model) scoring from capacity documents and lane outcomes.', topic: 'safety' },
+  { cmd: 'node pool|watch|worker|run-once|rpc|lanes|light|self-update|bridge [--json]', desc: 'Multi-Mac pool enrollment over team SSH aliases plus node ops: session and runner endpoints, the local oMLX lane plan, the bounded muse slice, version-drift planning and the ready-row offload preview.', topic: 'safety' },
   { cmd: 'node bootstrap --dry-run [--json]', desc: 'Plan a persistent Linux node; registry integration is a stub, no provisioning.', topic: 'safety' },
   { cmd: 'sandbox list',                 desc: 'List active git-worktree sandboxes (M21 safety foundation).', topic: 'safety' },
   { cmd: 'sandbox diff <id>',            desc: 'Show diff of a sandbox vs its base HEAD.', topic: 'safety' },
