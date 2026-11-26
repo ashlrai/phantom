@@ -133,6 +133,9 @@ Shadow skill selections are observe-only, but their outcomes are recorded:
 `phm fleet status --json` exposes `trajectoryLearning.skillOutcomes`, which
 attributes each trajectory's resolved terminal outcome (and deterministic
 post-merge realized outcome) back to the skill revisions selected on it.
+The trajectory timeline, join diagnostics and outcome tallies use only
+post-merge receipts whose observation timestamps fall within the reporting
+window, including its start and report time.
 Per-skill rows count distinct trajectories per skill revision with sparse
 outcome tallies — for example how many selections ended `merged`, `rejected`
 or `failed`, and how many merged selections were later `reverted` or

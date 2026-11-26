@@ -491,6 +491,11 @@ function eventMs(ts: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function postMergeObservedInWindow(observedAt: string, sinceMs: number, asOfMs: number): boolean {
+  const observedMs = Date.parse(observedAt);
+  return observedMs >= sinceMs && observedMs <= asOfMs;
+}
+
 function activityTime(...values: Array<string | undefined>): string {
   let newestMs = Number.NEGATIVE_INFINITY;
   let newest = '';
@@ -1548,6 +1553,7 @@ function listTrajectoryRecordsAt(
     }
 
     for (const observation of outcome.postMergeObservations ?? []) {
+      if (!postMergeObservedInWindow(observation.observedAt, sinceMs, asOfMs)) continue;
       if (observation.confidence === 'deterministic') {
         record.realizedOutcome = betterRealizedOutcome(record.realizedOutcome, observation.outcome);
       }
@@ -2127,7 +2133,9 @@ export function listTrajectoryJoinQuality(
 
   const realizedMergeToPostMerge = emptyJoinEdge();
   for (const outcome of protectedRealizedOutcomes) {
-    const outcomes = new Set((outcome.postMergeObservations ?? []).map((row) => row.outcome));
+    const outcomes = new Set((outcome.postMergeObservations ?? [])
+      .filter((row) => postMergeObservedInWindow(row.observedAt, sinceMs, asOfMs))
+      .map((row) => row.outcome));
     noteJoin(
       realizedMergeToPostMerge,
       outcomes.size,
