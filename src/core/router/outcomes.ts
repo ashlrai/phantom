@@ -2278,6 +2278,10 @@ function foldRouterOutcomesWithCiCoverage(
  * Estimated costs (cost_estimated) report a USD figure and count toward the sum.
  */
 export function foldSpendCosts(text: string): Map<string, number> {
+  return foldSpendCostsThrough(text, Infinity);
+}
+
+function foldSpendCostsThrough(text: string, asOfMs: number): Map<string, number> {
   const costs = new Map<string, number>();
   const incomplete = new Set<string>();
   for (const line of text.split('\n')) {
@@ -2290,6 +2294,8 @@ export function foldSpendCosts(text: string): Map<string, number> {
     }
     if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
     const r = value as Row;
+    const at = parseLedgerTs(r['ts']) ?? parseLedgerTs(r['at']) ?? parseLedgerTs(r['timestamp']);
+    if (at !== null && at > asOfMs) continue;
     const j = str(r, 'job', 'job_id', 'id');
     if (!j || incomplete.has(j)) continue;
     const cost = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']);
@@ -3542,7 +3548,7 @@ export async function readRouterOutcomes(opts: {
       : undefined,
   }, ambiguousCiJobs, mergeEvents?.coverage, rewards);
   if (spendRead.state === 'read' && !spendTruncated) {
-    const costs = foldSpendCosts(spendRead.text);
+    const costs = foldSpendCostsThrough(spendRead.text, reportStartedAt);
     for (const o of folded.outcomes) {
       if (o.cost_usd !== null) continue;
       const sum = costs.get(o.job_id);

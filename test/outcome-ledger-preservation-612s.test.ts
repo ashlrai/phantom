@@ -1519,6 +1519,30 @@ describe('router outcome spend join', () => {
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3', 'J4']);
   });
 
+  it('excludes future spend receipts before summing or evaluating price coverage', async () => {
+    const asOfMs = Date.parse('2026-11-25T12:00:00.000Z');
+    const boundary = new Date(asOfMs).toISOString();
+    const future = new Date(asOfMs + 1).toISOString();
+    const root = runsDir(['J1', 'J2', 'J3'].map(job => JSON.stringify({ job, phase: 'MERGED' })).join('\n'));
+    writeSpend(root, [
+      { job: 'J1', ts: boundary, cost_usd: 0.5 },
+      { job: 'J1', cost_usd: 0.25 },
+      { job: 'J1', at: future, cost_usd: 4 },
+      { job: 'J2', timestamp: boundary, cost_usd: 1 },
+      { job: 'J2', ts: 'invalid', timestamp: future },
+      { job: 'J3', ts: future, cost_usd: 2 },
+    ].map(row => JSON.stringify(row)).join('\n'));
+
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(asOfMs);
+    try {
+      const result = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null });
+      expect(Object.fromEntries(result.outcomes.map(o => [o.job_id, o.cost_usd])))
+        .toEqual({ J1: 0.75, J2: 1, J3: null });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('accepts usd/cost aliases on jobs rows as explicit cost evidence', async () => {
     const root = runsDir('{"job":"J1","phase":"MERGED","cost":0.4}\n{"job":"J2","phase":"MERGED","usd":0.6}\n');
     writeSpend(root, '{"job":"J1","cost_usd":5}\n');
