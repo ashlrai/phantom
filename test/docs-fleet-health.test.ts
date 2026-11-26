@@ -21,13 +21,13 @@ describe('fleet health guide', () => {
     expect(examples).toEqual([
       'fleet doctor --json', 'fleet status --json', 'fleet lanes --json',
       'fleet idle-lanes --json', 'fleet api-pools --json', 'fleet load --json',
-      'fleet admission --json', 'fleet lane-share --json', 'fleet leader-health --json',
+      'fleet admission --json', 'fleet admission --details --json', 'fleet lane-share --json', 'fleet leader-health --json',
       'fleet heartbeat --json', 'fleet main-health --json', 'fleet health-age --json',
       'fleet login-health --json', 'fleet stuck-prs --json', 'fleet pr-hygiene --json', 'fleet waste --json',
       'fleet worktree-stale --json', 'fleet brains --json', 'fleet disk --json',
       'fleet memory --json', 'fleet judge-health --json', 'fleet evidence doctor decisions --json',
     ]);
-    const admission = page.split('\n').find(line => line.includes('fleet admission --json'));
+    const admission = page.split('\n').find(line => line.includes('fleet admission --details --json'));
     expect(admission).toContain('Ok:');
     expect(admission).toContain('Red:');
     expect(admission).toContain('5 or more');
@@ -38,10 +38,12 @@ describe('fleet health guide', () => {
   it('explains the three capacity checks without inventing shared color thresholds', () => {
     const rows = page.split('\n').filter(line => /`ashlr fleet (idle-lanes|api-pools|load) --json`/.test(line));
     expect(rows).toHaveLength(3);
-    for (const row of rows) {
+    for (const row of rows.slice(1)) {
       for (const label of ['Ok:', 'Warn:', 'Red:']) expect(row).toContain(label);
     }
+    for (const label of ['**Ok**', '**Warn**', '**Red**']) expect(rows[0]).toContain(label);
     expect(rows[0]).toContain('running < target');
+    expect(rows[0]).toContain('suppress red when the snapshot records a dispatcher pause, an admission stop, or a full shared fleet cap');
     expect(rows[1]).toContain('No color status or health thresholds');
     expect(rows[1]).toContain('null');
     for (const threshold of ['load_max', 'twice', '40', '1800']) expect(rows[2]).toContain(threshold);
@@ -55,6 +57,11 @@ describe('fleet health guide', () => {
       mkdirSync(join(home, 'Projects/ashlrai/wt'), { recursive: true });
       // Give observation-only commands valid evidence so their JSON success path is exercised.
       mkdirSync(join(home, '.ashlr-runs/queue'), { recursive: true });
+      const guardPath = join(home, '.ashlr-runs/queue/admission-ctl.json');
+      const ts = Math.floor(Date.now() / 1000);
+      writeFileSync(guardPath, JSON.stringify({
+        ts, last_admit: ts - 10, settle_s: 5, total_running: 0, max_total_running: 4, why: 'open',
+      }));
       writeFileSync(join(home, '.ashlr-runs/queue/status.json'), JSON.stringify({
         lanes: {}, budget: { 'claude-api': { pools: [] } },
         admission: { load1: 1, ncpu: 4, load_max: 4, procs: 10, worktrees: 1,
@@ -62,7 +69,7 @@ describe('fleet health guide', () => {
       }));
       const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli/index.ts', ...command.split(' ')], {
         cwd: root,
-        env: { ...process.env, HOME: home, ASHLR_RUNS_DIR: join(home, '.ashlr-runs') },
+        env: { ...process.env, HOME: home, ASHLR_RUNS_DIR: join(home, '.ashlr-runs'), ASHLR_ADMISSION_CTL_PATH: guardPath },
         encoding: 'utf8', timeout: 30_000,
       });
       expect(result.error).toBeUndefined();

@@ -38,6 +38,32 @@ it('warns without failing for held work and prints plain words', async () => {
   expect(await cmdFleetIdleLanes([], reader)).toBe(0);
   expect(output).toHaveBeenCalledWith('warn: held: 0/2 running, 3 queued');
 });
+it.each([
+  { paused: 'disk guard' },
+  { admission: { decision: 'stop' } },
+  { admission: { cap: 4, running: 4 } },
+])('suppresses red and preserves held warnings during a fleet-wide block (%j)', async block => {
+  const tick = '2026-11-02T12:00:00Z';
+  const lanes = {
+    codex: { running: 1, target: 3, queued: 4, held: false },
+    local: { running: 0, target: 2, queued: 3, held: true },
+  };
+  const reader = await fixture({ last_tick: tick, lanes, paused: block.paused,
+    admission: block.admission && { ts: tick, ...block.admission } });
+  const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  expect(await cmdFleetIdleLanes(['--json'], reader)).toBe(0);
+  expect(JSON.parse(output.mock.calls[0]![0]).lanes).toEqual([
+    { lane: 'local', status: 'warn', running: 0, target: 2, queued: 3 },
+  ]);
+});
+
+it('keeps the lane-local verdict when a stop belongs to another tick', async () => {
+  const reader = await fixture({ last_tick: '2026-11-02T12:00:30Z',
+    admission: { ts: '2026-11-02T12:00:00Z', decision: 'stop' },
+    lanes: { codex: { running: 1, target: 3, queued: 4, held: false } } });
+  vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  expect(await cmdFleetIdleLanes(['--json'], reader)).toBe(1);
+});
 it('accepts an empty fleet and rejects invalid input without echoing its contents', async () => {
   const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   expect(await cmdFleetIdleLanes([], await fixture({ lanes: {} }))).toBe(0);
