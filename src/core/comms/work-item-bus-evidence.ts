@@ -13,6 +13,7 @@
 import { listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
+import { isGroupPresenceBody } from '../fleet/bus-group.js';
 import { listCoordination } from '../agents/claim-store.js';
 import { RUNNING_FRESH_MS, type WorkItemEvidence } from './work-item-state.js';
 
@@ -187,6 +188,7 @@ export function deriveBusWorkItemEvidence(
   let verifiedCursor = -Infinity, blockerCursor = -Infinity;
   for (const row of receipts) {
     if (!request || row.cursor <= request.cursor || row.receivedAt < request.receivedAt) continue;
+    if (isGroupPresenceBody(row.envelope.body)) continue;
     // Match the classifier's private five-minute future-skew boundary; it has
     // no historical TTL. Check Date validity before reply conversion to ISO.
     if (!Number.isFinite(new Date(row.receivedAt).getTime()) ||

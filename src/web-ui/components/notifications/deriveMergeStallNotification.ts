@@ -1,3 +1,4 @@
+import { ageInSeconds } from '../../lib/relative-time.js';
 import { mergeStallFacts } from '../../routes/verse/shell/merge-stall-facts.js';
 import { paneLinkUrl } from '../../routes/verse/dock/pane-link.js';
 import type { AppNotification } from './types.js';
@@ -12,7 +13,7 @@ export function deriveMergeStallNotification(data: unknown, nowMs: number): AppN
   const detail = data.publishesLastHour.slice(0, 3).map((publish: unknown) => {
     const job = record(publish) && typeof publish.job === 'string' ? publish.job : 'Unknown job';
     const at = record(publish) && typeof publish.at === 'string' ? Date.parse(publish.at) : NaN;
-    const age = Number.isFinite(at) ? `${Math.max(0, Math.floor((nowMs - at) / 60_000))}m ago` : 'age unknown';
+    const age = Number.isFinite(at) ? ageInSeconds((nowMs - at) / 1000) : 'age unknown';
     return `${job} (${age})`;
   }).join(' · ');
   const base = typeof window === 'undefined' ? undefined : new URL('/verse/', window.location.href).toString();

@@ -70,7 +70,7 @@ it('describes the snapshot age', () => {
   expect(snapshotAge(at, Date.parse('2026-10-31T12:00:05Z'))).toBe('read just now');
   expect(snapshotAge(at, Date.parse('2026-10-31T12:00:40Z'))).toBe('read 40s ago');
   expect(snapshotAge(at, Date.parse('2026-10-31T12:02:00Z'))).toBe('read 2 minutes ago');
-  expect(snapshotAge(at, Date.parse('2026-10-31T11:59:59Z'))).toBe('read just now');
+  expect(snapshotAge(at, Date.parse('2026-10-31T11:59:59Z'))).toBe('reading not timed');
   expect(snapshotAge(null, Date.parse('2026-10-31T12:00:05Z'))).toBe('reading not timed');
   expect(snapshotAge('not a date', Date.parse('2026-10-31T12:00:05Z'))).toBe('reading not timed');
 });

@@ -138,7 +138,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   run: ['show'],
   router: ['rank', 'serve', 'models', 'pick', 'config', 'catalog', 'outcomes'],
   spec: ['new', 'list', 'show', 'refine'],
-  swarm: ['show', 'verify', 'approve', 'rollback'],
+  swarm: ['show', 'verify', 'approve', 'rollback', 'pilot', 'pilot-report'],
   verify: ['change', 'done', '--worktree', '--checks', '--contract', '--plan', '--help'],
   models: ['list', 'check', 'radar', 'pull', 'start', 'inventory', 'routing', 'verify'],
   gh: ['pr', 'issue', 'ci'],

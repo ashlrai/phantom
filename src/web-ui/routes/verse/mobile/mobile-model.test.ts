@@ -135,7 +135,7 @@ describe('reachability', () => {
     expect(sinceText(now - 10_000, now)).toBe('Updated just now');
     expect(sinceText(now - 5 * 60_000, now)).toBe('Updated 5 min ago');
     expect(sinceText(now - 3 * 3_600_000, now)).toBe('Updated 3 h ago');
-    expect(sinceText(now - 50 * 3_600_000, now)).toBe('Updated 2 d ago');
+    expect(sinceText(now - 50 * 3_600_000, now)).toBe('Updated 2 d 2 h ago');
   });
 });
 

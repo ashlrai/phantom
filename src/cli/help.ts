@@ -1141,6 +1141,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'swarm "<goal>" [opts]',        desc: 'Decompose goal into a contracts-first DAG; run a fleet of agents.', topic: 'swarm' },
   { cmd: 'swarm <specId> [opts]',        desc: 'Run a swarm against an existing spec artifact.', topic: 'swarm' },
   { cmd: 'swarm show <id>',              desc: 'Print a past swarm run in detail.', topic: 'swarm' },
+  { cmd: 'swarm pilot <spec.json> --runtime <file> [--root <dir>] [--apply] [--json]', desc: 'Preview or run an enrolled resource-pool swarm.', topic: 'swarm' },
+  { cmd: 'swarm pilot-report <id> [--root <dir>] [--pr <number>] [--json]', desc: 'Read swarm evidence and optionally verify a merged PR.', topic: 'swarm' },
   { cmd: 'swarms [--json]',              desc: 'List past swarm runs (newest first).', topic: 'swarm' },
 
   { cmd: 'memory add|list|search|forget [--json]', desc: 'Persistent agent memory: add, list, search, and forget entries (preference|doctrine|fact). Refuses secret-shaped text. See docs/MEMORY.md.', topic: 'memory' },

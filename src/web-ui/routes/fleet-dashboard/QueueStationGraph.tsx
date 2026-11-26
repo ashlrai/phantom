@@ -7,6 +7,7 @@
  * fixed cadence (plus on tab refocus) since no SSE event covers it yet.
  * Renders nothing unless the `agentWorkspace` flag is on.
  */
+import { RelativeTime } from '../../components/primitives/RelativeTime.js';
 import { useEffect, useMemo } from 'react';
 import { useQuery, useRefetch } from '../../data/hooks.js';
 import { queueStatsQuery } from '../../data/queries.js';
@@ -63,7 +64,7 @@ export function QueueStationGraph({ windowSec = 3600, refreshMs = 15_000, enable
         <span className={panel.panelTitle}>Queue stations</span>
         <span className={styles.meta}>
           {status === 'refreshing' ? <RefreshIndicator /> : null}
-          {updatedAt ? `updated ${formatRelative(updatedAt)}` : null}
+          {updatedAt ? <RelativeTime value={updatedAt} prefix="updated " /> : null}
         </span>
       </summary>
       <div className={panel.panelBody}>
@@ -196,10 +197,4 @@ function perHour(perSecond: number): string {
 
 function formatDuration(seconds: number): string {
   return seconds >= 120 ? `${Math.round(seconds / 60)}m` : `${Math.round(seconds)}s`;
-}
-
-function formatRelative(ts: number): string {
-  const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  return `${Math.round(seconds / 60)}m ago`;
 }

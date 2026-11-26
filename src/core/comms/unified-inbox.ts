@@ -1563,7 +1563,11 @@ const WAKE_DETAIL_REFS = 3;
  * under any spelling merge) and by the literal label otherwise, so unknown
  * identity state never merges distinct addressees. An unreadable queue,
  * registry, bus store or hold table reports 'unavailable', never an empty
- * page passed off as "no wakes".
+ * page passed off as "no wakes". A bounded-tail read that cut older hints
+ * or capped matched rows beyond the shown slice reports 'degraded' — the
+ * same `matched`/`truncated` honesty `agents bus wakes --all` and
+ * `fleet_agent_wakes` surface — while still listing the addressee groups
+ * it proved, never a healthy under-count passed off as the whole queue.
  */
 function wakeItems(read: NonNullable<UnifiedInboxOptions['readWakes']>,
   options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
@@ -1618,7 +1622,8 @@ function wakeItems(read: NonNullable<UnifiedInboxOptions['readWakes']>,
     };
   });
   items.sort((a, b) => (b.since ?? '').localeCompare(a.since ?? ''));
-  return { report: { state: 'healthy', pending: items.length }, items };
+  const truncated = page.truncated || page.matched > page.wakes.length;
+  return { report: { state: truncated ? 'degraded' : 'healthy', pending: items.length }, items };
 }
 
 /** Work refs named inside one seat item's detail line before the overflow count takes over. */

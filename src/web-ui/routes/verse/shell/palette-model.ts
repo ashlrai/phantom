@@ -13,6 +13,7 @@
  * catalog's order breaks ties — so "stop" puts "Stop running chats…" above a
  * chat that merely contains an s, t, o and p.
  */
+import { relativeTime } from '../../../lib/relative-time.js';
 import { backlogItemKeywords, backlogItemTitle, type PaletteBacklogItem } from './palette-backlog.js';
 import { phoneItemTitle, phoneItemSubtitle, type PalettePhone } from './palette-phone.js';
 import { laneItemTitle, releaseItemTitle, type PaletteLane } from './palette-lanes.js';
@@ -222,14 +223,8 @@ function workerAge(seconds: number | null): string {
 }
 
 function relative(iso: string, now: number): string {
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return '';
-  const m = Math.round((now - t) / 60_000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 36) return `${h}h ago`;
-  return `${Math.round(h / 24)}d ago`;
+  const reading = relativeTime(iso, now);
+  return reading ? reading.seconds < 60 ? 'just now' : reading.text : '';
 }
 
 function projectName(path: string): string {

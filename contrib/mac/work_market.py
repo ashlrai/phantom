@@ -181,6 +181,23 @@ def _scope_names(reading):
             if isinstance(reading.get(k), str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", reading[k])}
 
 
+def deadline_priority(projection, now, short_window=False, promotional=False):
+    if not isinstance(projection, dict) or projection.get("known") is not True or projection.get("stale") is not False:
+        return None
+    reset = _epoch(projection.get("reset_at"))
+    expiry = _epoch(projection.get("expires_at")) if promotional else None
+    ends = [end for end in (reset, expiry) if end is not None]
+    used = number(projection.get("used_pct"))
+    unused = number(projection.get("projected_unused_pct"))
+    if not ends or min(ends) <= now or used is None or not 0 <= used < 100:
+        return None
+    if unused is not None and not 0 <= unused <= 100 - used + 0.1:
+        return None
+    if (unused or 0) > 0 or unused is None and (short_window or promotional and expiry is not None):
+        return min(ends)
+    return None
+
+
 def _iso_instant(value):
     import datetime
     epoch = _epoch(value)
@@ -504,6 +521,8 @@ def choose(job, spec, tier, view, record, now, decide):
     # Resource fit precedes the hint: a preserved window is not spent on bulk work while a
     # burnable one has room. Within one fit class the declared lane still wins.
     eligible.sort(key=lambda lane: (
+        view[lane]["deadline_priority"] if view[lane].get("deadline_priority") is not None else math.inf,
+        bool(view[lane].get("is_metered_api")),
         fit[lane],
         lane != pref,
         view[lane]["running"] / max(1, view[lane]["target"]),
@@ -519,7 +538,8 @@ def choose(job, spec, tier, view, record, now, decide):
               "ranking_inputs": {lane: dict({key: v[key] for key in ("running", "target", "quota", "empty_rate", "yield_rate", "cost_class", "latency_s", "latency_source")},
                                             posture=v.get("posture", "balanced"), posture_reason=v.get("posture_reason"),
                                             **{k: v[k] for k in ("cost_class_reason", "zero_cost", "allowance") if k in v},
-                                            spend_down=v.get("spend_down"), fit=fit[lane]) for lane, v in view.items()}}
+                                            spend_down=v.get("spend_down"), fit=fit[lane],
+                                            deadline_priority=v.get("deadline_priority")) for lane, v in view.items()}}
     # Hint-only records preserve old external-proposal diagnostics without making
     # the preference a routing commitment before the first runnable assignment.
     prior = record if record and record.get("assigned", True) else None

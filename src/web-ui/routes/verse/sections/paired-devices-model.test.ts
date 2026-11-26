@@ -13,7 +13,7 @@ it('formats relative use and never', () => {
   expect(lastUsedText(new Date(now - 180000).toISOString(), now)).toBe('last used 3 m ago');
   expect(lastUsedText(new Date(now - 7200000).toISOString(), now)).toBe('last used 2 h ago');
   expect(lastUsedText(new Date(now - 172800000).toISOString(), now)).toBe('last used 2 d ago');
-  expect(lastUsedText(new Date(now + 60000).toISOString(), now)).toBe('last used 0 m ago');
+  expect(lastUsedText(new Date(now + 60000).toISOString(), now)).toBe('last used at an unknown time');
 });
 it('only produces commands for CLI-valid UUIDs', () => {
   expect(revokeCommand(base.id)).toBe(`phm console remote revoke ${base.id}`);

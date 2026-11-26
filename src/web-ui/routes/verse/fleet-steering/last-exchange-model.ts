@@ -1,3 +1,4 @@
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import { nextPassEta } from '../fleet/next-pass-eta.js';
 import { newestLeaderPassMs, parseInboxAt } from '../fleet/interject-ack-model.js';
 import { passSummary, type LeaderJournalV1 } from '../leader-journal/leader-journal-model.js';
@@ -44,7 +45,7 @@ export function lastExchange(entries: SteeringEntry[], journal: LeaderJournalV1 
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
   const atMs = newestPass ? Date.parse(newestPass.at) : null;
   const pass = newestPass && atMs !== null ? {
-    atMs, agoText: `${Math.max(0, Math.floor((nowMs - atMs) / 60_000))} min ago`, summary: passSummary(newestPass),
+    atMs, agoText: ageInSeconds((nowMs - atMs) / 1000, 'spaced'), summary: passSummary(newestPass),
   } : null;
   const eta = pass ? nextPassEta(pass.atMs, nowMs) : null;
   const tone: 'neutral' | 'ok' | 'warning' | 'danger' = eta?.kind === 'overdue'

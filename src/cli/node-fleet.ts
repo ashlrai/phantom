@@ -39,13 +39,16 @@ function text(verb: string, out: Record<string, unknown>): string {
   if (verb === 'join') {
     // Join is the first command every new node runs; its text answer is a
     // sentence, not the key:value dump, and it states the 30-second session
-    // expiry the keep-alive exists to beat (docs/add-a-computer.md).
+    // expiry the keep-alive exists to beat (docs/add-a-computer.md). The
+    // last line names the standalone registry's boundary: this store is
+    // private to this machine, so the node only ever sees jobs enqueued here.
     const owners = out['owners'] as string[];
     const caps = out['caps'] as string[];
     return [
       `Joined ${String(out['nodeId'])} as session ${String(out['session'])} for ${owners.length === 1 ? 'owner' : 'owners'} ${owners.join(', ')} (caps: ${caps.join(', ') || 'none'}).`,
       'The session expires 30 seconds after the last beat. Keep it live:',
       `  ${String(out['next'])}`,
+      'This registry is local to this machine — the node sees only jobs enqueued on this computer; other machines cannot see it. A shared queue needs a pool or team (docs/NODES.md).',
     ].join('\n');
   }
   if (verb === 'plan') {
@@ -216,6 +219,11 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       const caps = out['caps'];
       const probe = Array.isArray(caps) && caps.includes('gh') ? ' --probe-auth' : '';
       out['next'] = `phm node beat --node ${String(out['nodeId'])} --session ${String(out['session'])}${probe} --watch`;
+      // This path only runs with no pool config (cmdNodePool owns pooled
+      // joins), so the store is this machine's private ~/.ashlr/nodes: name
+      // that boundary in the reply instead of letting a first-time node
+      // assume it joined a shared fleet.
+      out['registry'] = 'local';
     }
     console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out));
     return 0;

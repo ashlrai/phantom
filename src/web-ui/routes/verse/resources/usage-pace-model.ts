@@ -8,6 +8,7 @@
  * the further share its burn uses by the reset, and what is left. A report older than two minutes, a row the
  * read does not hold, or a number that is missing reads "unknown" with the reason, never zero.
  */
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import { POOL_SHARE_STATES, poolLabel, type PoolShareState } from '../../../../core/usage/runway.js';
 import { paceForecastText } from './usage-pace-text.js';
 
@@ -70,12 +71,7 @@ export function hoursWords(hours: number): string {
 
 /** "40 seconds ago", "3 minutes ago": how old the scheduler's report is. */
 export function agoWords(ms: number): string {
-  const seconds = Math.max(0, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds} ${seconds === 1 ? 'second' : 'seconds'} ago`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `${hours} ${hours === 1 ? 'hour' : 'hours'} ago` : `${Math.round(hours / 24)} days ago`;
+  return ageInSeconds(ms / 1000, 'words');
 }
 
 function slotsFact(row: Bag | undefined, fresh: boolean): string {

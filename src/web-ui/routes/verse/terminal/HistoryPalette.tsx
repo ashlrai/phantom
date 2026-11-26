@@ -12,6 +12,7 @@
  *   assist   a request in plain words → the configured model → ONE command, shown
  *            for review. ↩ inserts it for editing; nothing runs.
  */
+import { relativeTime } from '../../../lib/relative-time.js';
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import type { VerseTerminalAssistMode, VerseTerminalAssistResponse, VerseTerminalHistoryEntry } from '../../../data/api-types.js';
@@ -46,15 +47,8 @@ export interface HistoryPaletteProps {
 const QUERY_DEBOUNCE_MS = 70;
 
 function ago(iso: string, now = Date.now()): string {
-  const ms = now - Date.parse(iso);
-  if (!Number.isFinite(ms) || ms < 0) return '';
-  const min = Math.round(ms / 60_000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min} min ago`;
-  const h = Math.round(min / 60);
-  if (h < 24) return `${h} h ago`;
-  const d = Math.round(h / 24);
-  return d < 30 ? `${d} d ago` : new Date(iso).toLocaleDateString();
+  const reading = relativeTime(iso, now);
+  return reading ? reading.seconds < 60 ? 'just now' : reading.text : '';
 }
 
 function historySubtitle(e: VerseTerminalHistoryEntry): string {
