@@ -106,6 +106,16 @@ fails to allow scratch workspace writes or to block the outside write, or
 if cancellation does not drain all three dummy process IDs. It does not
 exercise a provider, the live state tree, or real protected host paths.
 Linux fixture results are synthetic; only the Mac run verifies Seatbelt.
+
+Operator verification on the Mac Pro (macOS, `master` at `9d913b804c`):
+
+```json
+{"schema":"mac-pool-bridge-verify.v1","mode":"macos","ok":true,"profileSha256s":{"zai":"068451e7a89d48a74797ed38fde4a0cdc193a5105113a8c18178ed3b15ba9065","agent":"799209843852cf28a7945383645740f6f01126137b3f9d081d3af13de368bc0a"},"checks":{"zaiInside":true,"zaiOutsideBlocked":true,"agentInside":true,"agentOutsideBlocked":true,"groupCancelled":true}}
+```
+
+This verdict records scratch confinement and cancellation, not approval to
+re-pin, install, or dispatch.
+
 Review and pin the supplied `agent.sb` and `devin-overage-stop.py` before
 adoption. AGY remains held until Security supplies redacted
 `/help` and `/usage` fixtures from the pinned binary, profile and isolated HOME.

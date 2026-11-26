@@ -1,0 +1,44 @@
+name: Mac Python tests
+
+on:
+  pull_request:
+    paths:
+      - "contrib/mac/**"
+      - ".github/workflows/mac-python.yml"
+  push:
+    branches: [master]
+    paths:
+      - "contrib/mac/**"
+      - ".github/workflows/mac-python.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-python-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unittest:
+    name: Mac Python unittests
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: "3.12"
+      - name: Run contrib/mac unittest discovery
+        id: suites
+        working-directory: contrib/mac/tests
+        run: |
+          scratch="$(mktemp -d "${RUNNER_TEMP}/mac-python.XXXXXXXX")"
+          trap 'rm -rf -- "$scratch"' EXIT
+          mkdir "$scratch/home" "$scratch/tmp"
+          env -i HOME="$scratch/home" TMPDIR="$scratch/tmp" PATH="$PATH" LC_ALL=C python3 -B -m unittest discover -v
+      - name: Verify Seatbelt and process-group cancellation offline
+        if: ${{ !cancelled() && (steps.suites.outcome == 'success' || steps.suites.outcome == 'failure') }}
+        run: /bin/bash contrib/mac/host-integration/verify-pool-bridge.sh
