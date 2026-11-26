@@ -15,7 +15,7 @@
  */
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { PRODUCT_NAME } from '../../app/product-brand.js';
-import { adoptInjectedTokens, establishReadSession, setMutationToken } from '../../data/auth-store.js';
+import { adoptInjectedTokens, establishReadSession, isDesktopSession, reconnectDesktopSession, setMutationToken } from '../../data/auth-store.js';
 import styles from './SessionGate.module.css';
 
 const TOKEN_RE = /^[a-f0-9]{64}$/;
@@ -35,7 +35,44 @@ export interface SessionGateProps {
   mutationField?: boolean;
 }
 
-export function SessionGate({ onAuthenticated, heading = `Connect to ${PRODUCT_NAME}`, command = 'phm serve', subject = 'This dashboard', mutationField = false }: SessionGateProps) {
+export function DesktopSessionRecovery({ onAuthenticated }: Pick<SessionGateProps, 'onAuthenticated'>) {
+  const [busy, setBusy] = useState(false);
+  const authenticatedRef = useRef(onAuthenticated);
+  authenticatedRef.current = onAuthenticated;
+  useEffect(() => {
+    let live = true;
+    void adoptInjectedTokens().then((adopted) => {
+      if (live && adopted) authenticatedRef.current?.();
+    });
+    return () => { live = false; };
+  }, []);
+  async function retry() {
+    setBusy(true);
+    try {
+      if (await reconnectDesktopSession()) onAuthenticated?.();
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className={styles.wrap}>
+      <main className={styles.card}>
+        <h1 className={styles.heading}>Connect to the local {PRODUCT_NAME} server</h1>
+        <p className={styles.body}>If the server is restarting, try again in a moment. If you started a server separately, stop it and reopen {PRODUCT_NAME} so the app can start its own.</p>
+        <button type="button" className={styles.submit} disabled={busy} onClick={() => void retry()}>
+          {busy ? 'Connecting…' : 'Reconnect'}
+        </button>
+      </main>
+    </div>
+  );
+}
+
+export function SessionGate(props: SessionGateProps) {
+  if (isDesktopSession()) return <DesktopSessionRecovery {...props} />;
+  return <BrowserSessionGate {...props} />;
+}
+
+function BrowserSessionGate({ onAuthenticated, heading = `Connect to ${PRODUCT_NAME}`, command = 'phm serve', subject = 'This dashboard', mutationField = false }: SessionGateProps) {
   const [token, setToken] = useState('');
   const [mutation, setMutation] = useState('');
   const [error, setError] = useState<string | null>(null);

@@ -11,6 +11,7 @@
  */
 import { useId, useRef, useState, type FormEvent } from 'react';
 import { Dialog } from '../primitives/Dialog.js';
+import { hasMutationHold, isDesktopSession, refreshDesktopSession } from '../../data/auth-store.js';
 import { useMutationHold } from '../../data/hooks.js';
 import styles from './MutationTokenDialog.module.css';
 
@@ -33,6 +34,7 @@ export function MutationTokenDialog({ open, onClose, onUnlocked, reason, tokenLa
   const [value, setValue] = useState('');
   const [reveal, setReveal] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
   const inputId = useId();
@@ -49,6 +51,36 @@ export function MutationTokenDialog({ open, onClose, onUnlocked, reason, tokenLa
     setError(null);
     onClose();
     onUnlocked?.();
+  }
+
+  async function reconnect() {
+    setBusy(true);
+    setError(null);
+    try {
+      if (!await refreshDesktopSession() || !hasMutationHold()) {
+        setError('Actions are unavailable. The local server may be restarting or running in read-only mode.');
+        return;
+      }
+      onClose();
+      onUnlocked?.();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (isDesktopSession()) {
+    return (
+      <Dialog open={open} onClose={busy ? () => undefined : onClose} titleId={titleId} title="Unlock actions">
+        <p className={styles.body}>{reason ?? 'Reconnect to the local server to unlock actions.'}</p>
+        {error && <p className={styles.error} role="alert">{error}</p>}
+        <div className={styles.actions}>
+          <button type="button" className={styles.cancel} onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" className={styles.submit} onClick={() => void reconnect()} disabled={busy}>
+            {busy ? 'Connecting…' : 'Reconnect and unlock'}
+          </button>
+        </div>
+      </Dialog>
+    );
   }
 
   return (
