@@ -165,6 +165,11 @@ before the lease lapses.
 
 ## When something is refused
 
+`phm node plan --owner <scope>` shows that owner's routes from the same
+queue-wide plan used by `pull` and `status`. Earlier queued jobs from other
+owners still reserve planned capacity on shared nodes and hosts. The preview
+only lists jobs in the requested scope.
+
 Every error ends with a fix. A job with no taker is shown by `phm node plan`
 with the reason: no live node in that owner (join one), no node advertising the
 caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,

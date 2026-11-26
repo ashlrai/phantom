@@ -63,6 +63,18 @@ describe('node slot admission', () => {
     expect(nodes.pull(session)?.job.id).toBe('job');
   });
 
+  it('accounts for earlier reservations on shared nodes in an owner-scoped plan', () => {
+    const { nodes } = fixture();
+    const shared = nodes.join('shared', { owners: ['acme', 'ops'], slots: 1 })!;
+    nodes.enqueue('ops-first', { owner: 'ops' });
+    nodes.enqueue('acme-next', { owner: 'acme' });
+
+    const scoped = nodes.plan('acme');
+    expect(scoped).toEqual(nodes.view(['acme']).routes);
+    expect(scoped).toEqual([expect.objectContaining({ jobId: 'acme-next', nodeId: null })]);
+    expect(nodes.pull(shared)?.job.id).toBe('ops-first');
+  });
+
   it('also enforces slots on the direct queue claim API', () => {
     const { nodes } = fixture();
     const session = nodes.join('pro', { owners: ['mason'], slots: 0 })!;
