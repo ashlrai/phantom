@@ -1,9 +1,11 @@
 /** Typed digest references preserve public redaction without exempting arbitrary hex secrets. */
+import { isSha256Hex } from './validation.js';
+
 const DIGEST_FIELDS = new Set(['packetDigest', 'resultDigest', 'reportDigest', 'checkedResultDigest',
   'id', 'attemptId', 'reportId', 'eventId', 'inputDigest', 'snapshotDigest', 'taskDigest',
   'evaluationId', 'proposalId', 'artifactDigest', 'previousSignedInstallerDigest']);
 export function companionDigestToReference(value: string): string {
-  return /^[a-f0-9]{64}$/.test(value) ? `sha256:${value.match(/.{8}/g)!.join('.')}` : value;
+  return isSha256Hex(value) ? `sha256:${value.match(/.{8}/g)!.join('.')}` : value;
 }
 export function companionDigestFromReference(value: string): string {
   return /^sha256:[a-f0-9]{8}(?:\.[a-f0-9]{8}){7}$/.test(value) ? value.slice(7).replaceAll('.', '') : value;

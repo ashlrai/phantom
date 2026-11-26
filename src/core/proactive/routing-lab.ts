@@ -4,12 +4,13 @@
 import { performance } from 'node:perf_hooks';
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
-import { companionDigest } from './coordination-types.js';
-import { companionHash, companionObject, companionSafeText, companionTime, companionToken, validCompanionIdentity } from './coordination-store.js';
+import { companionDigest, companionIdentityEqual } from './coordination-types.js';
+import { companionSafeText, companionToken, validCompanionIdentity } from './coordination-store.js';
 import { RoutingLabStore, ROUTING_LAB_LIMITS, routingLabEvaluationId, routingLabId, routingLabReference } from './routing-lab-store.js';
 import type { ProactiveResourceEvidenceResponse, ProactiveResourceEvidenceRow } from './resource-evidence-types.js';
 import type { OfflineChoiceAdapter, OfflineChoicePayload, RoutingLab, RoutingLabCandidate, RoutingLabCaseReceipt,
   RoutingLabCommand, RoutingLabEvaluation, RoutingLabOptions, RoutingLabTask } from './routing-lab-types.js';
+import { hasPlainDataKeys, isCanonicalIsoTimestamp, isPlainDataObject, isSha256Hex } from './validation.js';
 export type * from './routing-lab-types.js';
 
 const POLICY = 'companion-routing-lab-v1' as const;
@@ -17,18 +18,18 @@ const MODEL = 'jev-1.13.0' as const;
 const THRESHOLD = 0.8;
 const MAX_AGE_MS = 5 * 60_000;
 function validTask(task: unknown): task is RoutingLabTask {
-  if (!companionObject(task, ['taskId', 'tenantId', 'projectBindingId', 'packetDigest', 'capabilityIds', 'accountRefs', 'deadline', 'maxCostUsd'], ['allowedDestination'])) return false;
-  const input = task as RoutingLabTask;
-  return companionToken(input.taskId) && companionToken(input.tenantId) && companionToken(input.projectBindingId) && companionHash(input.packetDigest) &&
+  if (!hasPlainDataKeys(task, ['taskId', 'tenantId', 'projectBindingId', 'packetDigest', 'capabilityIds', 'accountRefs', 'deadline', 'maxCostUsd'], ['allowedDestination'])) return false;
+  const input = task as unknown as RoutingLabTask;
+  return companionToken(input.taskId) && companionToken(input.tenantId) && companionToken(input.projectBindingId) && isSha256Hex(input.packetDigest) &&
     Array.isArray(input.capabilityIds) && input.capabilityIds.length <= 64 && input.capabilityIds.every(companionToken) &&
     new Set(input.capabilityIds).size === input.capabilityIds.length && Array.isArray(input.accountRefs) && input.accountRefs.length <= 64 &&
     input.accountRefs.every(routingLabReference) && new Set(input.accountRefs).size === input.accountRefs.length &&
-    (input.allowedDestination === undefined || validCompanionIdentity(input.allowedDestination)) && (input.deadline === null || companionTime(input.deadline)) &&
+    (input.allowedDestination === undefined || validCompanionIdentity(input.allowedDestination)) && (input.deadline === null || isCanonicalIsoTimestamp(input.deadline)) &&
     (input.maxCostUsd === null || typeof input.maxCostUsd === 'number' && Number.isFinite(input.maxCostUsd) && input.maxCostUsd >= 0 && input.maxCostUsd <= 1_000_000);
 }
 function validCommand(command: unknown): command is RoutingLabCommand {
-  if (!companionObject(command, ['kind', 'requestId', 'expectedRevision'], ['task', 'taskId', 'evaluationId', 'resourceId', 'reason', 'proposalId'])) return false;
-  const input = command as RoutingLabCommand; const exact = (keys: string[]) => companionObject(command, ['kind', 'requestId', 'expectedRevision', ...keys]);
+  if (!hasPlainDataKeys(command, ['kind', 'requestId', 'expectedRevision'], ['task', 'taskId', 'evaluationId', 'resourceId', 'reason', 'proposalId'])) return false;
+  const input = command as unknown as RoutingLabCommand; const exact = (keys: string[]) => hasPlainDataKeys(command, ['kind', 'requestId', 'expectedRevision', ...keys]);
   if (!companionToken(input.requestId) || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) return false;
   switch (input.kind) {
     case 'benchmark': return exact([]);
@@ -43,7 +44,7 @@ function missingSnapshot(at: string): ProactiveResourceEvidenceResponse {
   return { schemaVersion: 1, sampledAt: at, sourceState: 'missing', resources: [], executionAuthorized: false, notes: ['Read-only source snapshot is unavailable.'] };
 }
 function validSnapshot(snapshot: ProactiveResourceEvidenceResponse): boolean {
-  if (!snapshot || snapshot.schemaVersion !== 1 || snapshot.executionAuthorized !== false || !companionTime(snapshot.sampledAt) ||
+  if (!snapshot || snapshot.schemaVersion !== 1 || snapshot.executionAuthorized !== false || !isCanonicalIsoTimestamp(snapshot.sampledAt) ||
     !['snapshot', 'missing', 'invalid'].includes(snapshot.sourceState) || !Array.isArray(snapshot.resources) || snapshot.resources.length > ROUTING_LAB_LIMITS.rows) return false;
   const ids = new Set<string>();
   return snapshot.resources.every(row => {
@@ -57,14 +58,14 @@ function validSnapshot(snapshot: ProactiveResourceEvidenceResponse): boolean {
       !['declared-unverified', 'adapter-reported', 'unknown'].includes(row.capabilityState) ||
       !['adapter-reported', 'blocked', 'unverified', 'unknown'].includes(row.readinessState) ||
       !['current', 'stale', 'missing', 'invalid', 'conflict'].includes(row.evidenceState) ||
-      !(row.asOf === null || companionTime(row.asOf)) || !Array.isArray(row.capabilityIds) || row.capabilityIds.length > 64 ||
+      !(row.asOf === null || isCanonicalIsoTimestamp(row.asOf)) || !Array.isArray(row.capabilityIds) || row.capabilityIds.length > 64 ||
       !row.capabilityIds.every(companionToken) || !Array.isArray(row.usageWindows) || row.usageWindows.length > 64 ||
       row.usageWindows.some(window => !window || typeof window.limitReached !== 'boolean' ||
         window.usedPercent !== null && (!Number.isFinite(window.usedPercent) || window.usedPercent < 0 || window.usedPercent > 100)) ||
       !Array.isArray(row.credits) || row.credits.length > 64 || !row.cost ||
       !['actual', 'estimated', 'unknown'].includes(row.cost.state) ||
       !(row.cost.value === null || Number.isFinite(row.cost.value) && row.cost.value >= 0) ||
-      !(row.cost.asOf === null || companionTime(row.cost.asOf))) return false;
+      !(row.cost.asOf === null || isCanonicalIsoTimestamp(row.cost.asOf))) return false;
     ids.add(row.resourceId); return true;
   });
 }
@@ -86,8 +87,7 @@ function candidates(task: RoutingLabTask, snapshot: ProactiveResourceEvidenceRes
       // Internal synthetic accountRefs form a fixture allowlist, never real destination admission.
       if (row.identity.accountId === null || !task.accountRefs.includes(row.identity.accountId)) holds.push('fixture-account-scope-mismatch');
     } else if (!task.allowedDestination) holds.push('destination-scope-unknown');
-    else if (row.identity.provider !== task.allowedDestination.provider || row.identity.accountId !== task.allowedDestination.accountId ||
-      row.identity.agentId !== task.allowedDestination.agentId) holds.push('destination-scope-mismatch');
+    else if (!companionIdentityEqual(row.identity, task.allowedDestination)) holds.push('destination-scope-mismatch');
     // A task's allowlist is planning scope only. The real snapshot contains no signed project grant.
     if (mode === 'shadow-readonly') holds.push('project-authority-unqualified');
     if (row.connectionState !== 'observed') holds.push('connection-unqualified');
@@ -176,19 +176,18 @@ async function boundedChoice(adapter: OfflineChoiceAdapter | undefined, payload:
 function parseFixtureChoice(response: unknown, criteria: Record<string, string>): { index: number | null; reason: string | null } {
   const malformed = { index: null, reason: 'out-of-vocabulary-or-malformed' };
   try {
-    if (!companionObject(response, ['ok'], ['reason', 'answers'])) return malformed;
+    if (!hasPlainDataKeys(response, ['ok'], ['reason', 'answers'])) return malformed;
     const raw = response as { ok: unknown; reason?: unknown; answers?: unknown };
-    if (raw.ok !== true) return companionObject(response, ['ok', 'reason']) && typeof raw.reason === 'string' && ['timeout', '429', '529'].includes(raw.reason)
+    if (raw.ok !== true) return hasPlainDataKeys(response, ['ok', 'reason']) && typeof raw.reason === 'string' && ['timeout', '429', '529'].includes(raw.reason)
       ? { index: null, reason: raw.reason } : { index: null, reason: 'malformed-response' };
-    if (!companionObject(response, ['ok', 'answers']) || !companionObject(raw.answers, ['resource_choice'])) return malformed;
+    if (!hasPlainDataKeys(response, ['ok', 'answers']) || !hasPlainDataKeys(raw.answers, ['resource_choice'])) return malformed;
     const answers = raw.answers as { resource_choice: unknown };
-    if (!companionObject(answers.resource_choice, ['type', 'choice', 'confidence', 'probabilities'])) return malformed;
+    if (!hasPlainDataKeys(answers.resource_choice, ['type', 'choice', 'confidence', 'probabilities'])) return malformed;
     const choice = answers.resource_choice as { type: unknown; choice: unknown; confidence: unknown; probabilities: unknown };
     if (choice.type !== 'choice' || typeof choice.choice !== 'string' || !Object.hasOwn(criteria, choice.choice) ||
       typeof choice.confidence !== 'number' || !Number.isFinite(choice.confidence) || choice.confidence < 0 || choice.confidence > 1 ||
-      !choice.probabilities || typeof choice.probabilities !== 'object' || Array.isArray(choice.probabilities) ||
-      !companionObject(choice.probabilities, [], Object.keys(choice.probabilities))) return malformed;
-    const probabilities = choice.probabilities as Record<string, unknown>;
+      !isPlainDataObject(choice.probabilities, { requireEnumerable: true })) return malformed;
+    const probabilities = choice.probabilities;
     if (Object.keys(probabilities).length === 0 || Object.keys(probabilities).length > Object.keys(criteria).length ||
       !Object.hasOwn(probabilities, choice.choice) || Object.entries(probabilities).some(([key, probability]) => !Object.hasOwn(criteria, key) ||
         typeof probability !== 'number' || !Number.isFinite(probability) || probability < 0 || probability > 1) || Number(probabilities[choice.choice]) <= 0) return malformed;
@@ -241,7 +240,7 @@ export function createRoutingLab(options: RoutingLabOptions = {}): RoutingLab {
         const budget = controls.timeBudgetMs ?? 5000;
         if (!Number.isFinite(budget) || budget < 1 || budget > 5000) return store.fail('invalid');
         const current = store.read().view; if (current.revision !== command.expectedRevision) return store.fail('conflict');
-        const at = now(); if (!companionTime(at)) return store.fail('invalid');
+        const at = now(); if (!isCanonicalIsoTimestamp(at)) return store.fail('invalid');
         if (command.kind === 'propose-preference') {
           const id = `rp_${companionDigest([command.evaluationId, command.resourceId, command.reason]).slice(0, 32)}`;
           return store.append(snapshotCommand, 'proposal', id, state => {

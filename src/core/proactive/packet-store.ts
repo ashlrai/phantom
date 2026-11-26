@@ -2,13 +2,13 @@
 import { join } from 'node:path';
 import { readImmutablePrivateRecordPoint, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
-import { companionCanonical } from './coordination-types.js';
 import { companionPacketDigest, parseScopedCompanionPacket } from './packets.js';
 import type { CompanionPacketV1 } from './packet-types.js';
+import { canonicalJson, isSha256Hex } from './validation.js';
 
 const codec: ImmutablePrivateRecordCodec<CompanionPacketV1> = {
   parse: parseScopedCompanionPacket,
-  serialize: packet => `${companionCanonical(packet)}\n`,
+  serialize: packet => `${canonicalJson(packet)}\n`,
   recordId: packet => `cp_${companionPacketDigest(packet)}`,
   recordFileName: packet => `cp_${companionPacketDigest(packet)}.json`,
   isRecordFileName: name => /^cp_[a-f0-9]{64}\.json$/.test(name),
@@ -25,7 +25,7 @@ export function savePreparedCompanionPacket(root: string, packet: CompanionPacke
   return writeImmutablePrivateRecord(config(root), packet, { prepublish: stillAuthorized });
 }
 export function readPreparedCompanionPacket(root: string, digest: string) {
-  if (!/^[a-f0-9]{64}$/.test(digest)) return null;
+  if (!isSha256Hex(digest)) return null;
   const read = readImmutablePrivateRecordPoint(config(root), `cp_${digest}`, `cp_${digest}.json`);
   return read.sourceState === 'healthy' && read.exactReadComplete ? read.record : null;
 }

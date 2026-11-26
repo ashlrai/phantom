@@ -3,27 +3,27 @@ import { join, resolve } from 'node:path';
 import { inspectPrivateDirectory, privateDirectory } from '../universe/artifacts.js';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { readImmutablePrivateRecords, recoverImmutablePrivateRecordStore, writeImmutablePrivateRecord,
-  type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
-import { companionCanonical, companionDigest } from './coordination-types.js';
-import { companionHash, companionObject, companionSafeText, companionTime, companionToken } from './coordination-store.js';
-import { readReplayWatermark, reserveReplayWatermark } from './replay-watermark.js';
+  type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
+import { companionDigest } from './coordination-types.js';
+import { companionSafeText, companionToken } from './coordination-store.js';
+import { createRevisionRecordCodec, readReplayWatermark, reserveReplayWatermark } from './replay-watermark.js';
 import type { RoutingLabCommand, RoutingLabEvaluation, RoutingLabPreferenceProposal, RoutingLabRecord, RoutingLabState, RoutingLabView, RoutingLabWrite } from './routing-lab-types.js';
+import { canonicalJson, hasNoControlChars, hasPlainDataKeys, isCanonicalIsoTimestamp, isSha256Hex } from './validation.js';
 
 export const ROUTING_LAB_LIMITS = Object.freeze({ evaluations: 64, proposals: 64, cases: 32, rows: 512, choices: 255,
   records: 1024, recordBytes: 1024 * 1024, aggregateBytes: 64 * 1024 * 1024 });
 export function routingLabEvaluationId(requestId: string): string { return `rl_${companionDigest(['routing-lab', requestId]).slice(0, 32)}`; }
 export const routingLabId = (value: unknown): value is string => typeof value === 'string' && /^r[lp]_[a-f0-9]{32}$/.test(value);
-export const routingLabReference = (value: unknown): value is string => companionSafeText(value, 1024) && value === value.trim() &&
-  ![...value].some(character => character.charCodeAt(0) < 32);
+export const routingLabReference = (value: unknown): value is string => companionSafeText(value, 1024) && value === value.trim() && hasNoControlChars(value);
 function validEvaluation(evaluation: RoutingLabEvaluation): boolean {
-  if (!companionObject(evaluation, ['id', 'requestId', 'kind', 'mode', 'status', 'inputDigest', 'snapshotDigest', 'policyId', 'modelId', 'adapterMode',
+  if (!hasPlainDataKeys(evaluation, ['id', 'requestId', 'kind', 'mode', 'status', 'inputDigest', 'snapshotDigest', 'policyId', 'modelId', 'adapterMode',
     'createdAt', 'completedAt', 'localDurationMs', 'providerLatencyMs', 'cases', 'summary', 'executionAuthorized', 'notes']) ||
     evaluation.id !== routingLabEvaluationId(evaluation.requestId) || !companionToken(evaluation.requestId) ||
     !['preview', 'benchmark'].includes(evaluation.kind) || evaluation.mode !== (evaluation.kind === 'preview' ? 'shadow-readonly' : 'fixture') ||
-    !['uncertain', 'completed', 'aborted'].includes(evaluation.status) || !companionHash(evaluation.inputDigest) || !companionHash(evaluation.snapshotDigest) ||
+    !['uncertain', 'completed', 'aborted'].includes(evaluation.status) || !isSha256Hex(evaluation.inputDigest) || !isSha256Hex(evaluation.snapshotDigest) ||
     evaluation.policyId !== 'companion-routing-lab-v1' || evaluation.modelId !== 'jev-1.13.0' ||
     evaluation.adapterMode !== (evaluation.mode === 'fixture' ? 'offline-fixture' : 'deterministic-only') ||
-    !companionTime(evaluation.createdAt) || !(evaluation.completedAt === null || companionTime(evaluation.completedAt)) ||
+    !isCanonicalIsoTimestamp(evaluation.createdAt) || !(evaluation.completedAt === null || isCanonicalIsoTimestamp(evaluation.completedAt)) ||
     evaluation.providerLatencyMs !== null || evaluation.executionAuthorized !== false ||
     !(evaluation.localDurationMs === null || Number.isFinite(evaluation.localDurationMs) && evaluation.localDurationMs >= 0) ||
     !Array.isArray(evaluation.cases) || evaluation.cases.length > ROUTING_LAB_LIMITS.cases ||
@@ -31,9 +31,9 @@ function validEvaluation(evaluation: RoutingLabEvaluation): boolean {
   if (evaluation.status === 'uncertain' && (evaluation.cases.length > 0 || evaluation.completedAt !== null || evaluation.localDurationMs !== null) ||
     evaluation.status !== 'uncertain' && (evaluation.completedAt === null || evaluation.localDurationMs === null)) return false;
   for (const item of evaluation.cases) {
-    if (!companionObject(item, ['caseId', 'taskDigest', 'snapshotDigest', 'candidates', 'selectedResourceId', 'path', 'fallbackReason', 'expectedResourceId',
+    if (!hasPlainDataKeys(item, ['caseId', 'taskDigest', 'snapshotDigest', 'candidates', 'selectedResourceId', 'path', 'fallbackReason', 'expectedResourceId',
       'passed', 'notes', 'localDurationMs', 'providerLatencyMs', 'executionAuthorized']) || !companionToken(item.caseId) ||
-      !companionHash(item.taskDigest) || !companionHash(item.snapshotDigest) || item.executionAuthorized !== false || item.providerLatencyMs !== null ||
+      !isSha256Hex(item.taskDigest) || !isSha256Hex(item.snapshotDigest) || item.executionAuthorized !== false || item.providerLatencyMs !== null ||
       !Number.isFinite(item.localDurationMs) || item.localDurationMs < 0 || !['deterministic', 'fixture-advice', 'held', 'aborted'].includes(item.path) ||
       !(item.fallbackReason === null || companionToken(item.fallbackReason)) ||
       !(item.selectedResourceId === null || routingLabReference(item.selectedResourceId)) ||
@@ -42,7 +42,7 @@ function validEvaluation(evaluation: RoutingLabEvaluation): boolean {
       !Array.isArray(item.notes) || item.notes.length > 16 || !item.notes.every(note => companionSafeText(note, 1000))) return false;
     const ids = new Set<string>();
     for (const candidate of item.candidates) {
-      if (!companionObject(candidate, ['resourceId', 'label', 'qualification', 'holds', 'matchedCapabilityIds', 'sourceMode', 'executionAuthorized']) ||
+      if (!hasPlainDataKeys(candidate, ['resourceId', 'label', 'qualification', 'holds', 'matchedCapabilityIds', 'sourceMode', 'executionAuthorized']) ||
         !routingLabReference(candidate.resourceId) || ids.has(candidate.resourceId) || !companionSafeText(candidate.label, 200) ||
         !['planning-candidate', 'qualified-shadow-fixture', 'held'].includes(candidate.qualification) || candidate.sourceMode !== evaluation.mode ||
         candidate.executionAuthorized !== false || !Array.isArray(candidate.holds) || candidate.holds.length > 32 || !candidate.holds.every(companionToken) ||
@@ -55,7 +55,7 @@ function validEvaluation(evaluation: RoutingLabEvaluation): boolean {
       ['held', 'aborted'].includes(item.path) && item.selectedResourceId !== null) return false;
   }
   const summary = evaluation.summary;
-  if (!companionObject(summary, ['total', 'evaluated', 'expected', 'passed', 'failed', 'coverage']) ||
+  if (!hasPlainDataKeys(summary, ['total', 'evaluated', 'expected', 'passed', 'failed', 'coverage']) ||
     ![summary.total, summary.evaluated, summary.expected, summary.passed, summary.failed].every(value => Number.isSafeInteger(value) && value >= 0) ||
     summary.total > ROUTING_LAB_LIMITS.cases || summary.evaluated !== evaluation.cases.length || summary.evaluated > summary.total ||
     summary.expected !== evaluation.cases.filter(item => item.passed !== null).length || summary.passed !== evaluation.cases.filter(item => item.passed === true).length ||
@@ -63,35 +63,31 @@ function validEvaluation(evaluation: RoutingLabEvaluation): boolean {
   return true;
 }
 function validProposal(proposal: RoutingLabPreferenceProposal, state: RoutingLabState): boolean {
-  return companionObject(proposal, ['id', 'evaluationId', 'resourceId', 'reason', 'state', 'createdAt', 'withdrawnAt', 'executionAuthorized']) &&
+  return hasPlainDataKeys(proposal, ['id', 'evaluationId', 'resourceId', 'reason', 'state', 'createdAt', 'withdrawnAt', 'executionAuthorized']) &&
     routingLabId(proposal.id) && state.evaluations.some(value => value.id === proposal.evaluationId && value.status === 'completed' &&
       value.cases.some(item => item.candidates.some(candidate => candidate.resourceId === proposal.resourceId && candidate.qualification !== 'held'))) &&
     routingLabReference(proposal.resourceId) && companionSafeText(proposal.reason, 1000) && ['proposed', 'withdrawn'].includes(proposal.state) &&
-    companionTime(proposal.createdAt) && (proposal.state === 'proposed' ? proposal.withdrawnAt === null : companionTime(proposal.withdrawnAt)) && proposal.executionAuthorized === false;
+    isCanonicalIsoTimestamp(proposal.createdAt) && (proposal.state === 'proposed' ? proposal.withdrawnAt === null : isCanonicalIsoTimestamp(proposal.withdrawnAt)) && proposal.executionAuthorized === false;
 }
 function parse(value: unknown): RoutingLabRecord | null {
   try {
-    if (!companionObject(value, ['schemaVersion', 'revision', 'previousDigest', 'requestId', 'requestDigest', 'phase', 'subjectId', 'state', 'digest'])) return null;
-    const record = value as RoutingLabRecord; const state = record.state;
+    if (!hasPlainDataKeys(value, ['schemaVersion', 'revision', 'previousDigest', 'requestId', 'requestDigest', 'phase', 'subjectId', 'state', 'digest'])) return null;
+    const record = value as unknown as RoutingLabRecord; const state = record.state;
     if (record.schemaVersion !== 1 || !Number.isSafeInteger(record.revision) || record.revision < 1 || !companionToken(record.requestId) ||
-      !companionHash(record.requestDigest) || !(record.previousDigest === null || companionHash(record.previousDigest)) ||
+      !isSha256Hex(record.requestDigest) || !(record.previousDigest === null || isSha256Hex(record.previousDigest)) ||
       !['intent', 'settled', 'proposal'].includes(record.phase) || !routingLabId(record.subjectId) ||
-      !companionObject(state, ['schemaVersion', 'revision', 'evaluations', 'proposals']) || state.schemaVersion !== 1 || state.revision !== record.revision ||
+      !hasPlainDataKeys(state, ['schemaVersion', 'revision', 'evaluations', 'proposals']) || state.schemaVersion !== 1 || state.revision !== record.revision ||
       !Array.isArray(state.evaluations) || state.evaluations.length > ROUTING_LAB_LIMITS.evaluations || !state.evaluations.every(validEvaluation) ||
       new Set(state.evaluations.map(item => item.id)).size !== state.evaluations.length ||
       !Array.isArray(state.proposals) || state.proposals.length > ROUTING_LAB_LIMITS.proposals || !state.proposals.every(proposal => validProposal(proposal, state)) ||
-      new Set(state.proposals.map(item => item.id)).size !== state.proposals.length || !companionHash(record.digest)) return null;
+      new Set(state.proposals.map(item => item.id)).size !== state.proposals.length || !isSha256Hex(record.digest)) return null;
     if (record.phase === 'proposal' ? !state.proposals.some(item => item.id === record.subjectId)
       : !state.evaluations.some(item => item.id === record.subjectId && (record.phase === 'intent' ? item.status === 'uncertain' : item.status !== 'uncertain'))) return null;
     const { digest, ...payload } = record;
     return digest === companionDigest(payload) ? record : null;
   } catch { return null; }
 }
-const codec: ImmutablePrivateRecordCodec<RoutingLabRecord> = {
-  parse, serialize: value => `${companionCanonical(value)}\n`, recordId: value => String(value.revision),
-  recordFileName: value => `${String(value.revision).padStart(16, '0')}.json`, isRecordFileName: name => /^\d{16}\.json$/.test(name),
-  stageToken: value => value.digest, equivalent: (a, b) => a.digest === b.digest, compare: (a, b) => a.revision - b.revision,
-};
+const codec = createRevisionRecordCodec(parse);
 export class RoutingLabStore {
   readonly directory: string;
   constructor(directory: string) { this.directory = resolve(directory); }
@@ -126,16 +122,16 @@ export class RoutingLabStore {
         if (prior && prior.state.evaluations.some(evaluation => {
           const next = record.state.evaluations.find(item => item.id === evaluation.id);
           if (!next) return true;
-          if (evaluation.status !== 'uncertain') return companionCanonical(next) !== companionCanonical(evaluation);
+          if (evaluation.status !== 'uncertain') return canonicalJson(next) !== canonicalJson(evaluation);
           const fixed = (item: RoutingLabEvaluation) => { const { status: _status, completedAt: _at, localDurationMs: _duration,
             cases: _cases, summary: _summary, notes: _notes, ...rest } = item; return rest; };
-          return companionCanonical(fixed(next)) !== companionCanonical(fixed(evaluation));
+          return canonicalJson(fixed(next)) !== canonicalJson(fixed(evaluation));
         })) return empty('degraded');
         if (prior && prior.state.proposals.some(proposal => {
           const next = record.state.proposals.find(item => item.id === proposal.id); if (!next) return true;
           const fixed = (item: RoutingLabPreferenceProposal) => { const { state: _state, withdrawnAt: _at, ...rest } = item; return rest; };
-          return companionCanonical(fixed(proposal)) !== companionCanonical(fixed(next)) ||
-            proposal.state === 'withdrawn' && companionCanonical(proposal) !== companionCanonical(next);
+          return canonicalJson(fixed(proposal)) !== canonicalJson(fixed(next)) ||
+            proposal.state === 'withdrawn' && canonicalJson(proposal) !== canonicalJson(next);
         })) return empty('degraded');
       }
       const state = read.records.at(-1)?.state;

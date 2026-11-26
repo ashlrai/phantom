@@ -1,6 +1,7 @@
 /** Local companion coordination evidence. No record authorizes provider contact. */
 import { createHash } from 'node:crypto';
 import type { ProactiveIdentity } from './types.js';
+import { canonicalJson } from './validation.js';
 
 export type CompanionIdentity = ProactiveIdentity;
 export type CompanionTaskState = 'draft' | 'assigned' | 'handoff-intent' | 'cancel-requested' | 'reported' | 'verified' | 'needs-attention';
@@ -85,17 +86,12 @@ export interface CompanionCoordinator {
 export const COMPANION_LIMITS = Object.freeze({ tasks: 64, attempts: 32, reports: 64, verifications: 128, events: 512,
   goalBytes: 8000, resultBytes: 16000, reportBytes: 8000, recordBytes: 1024 * 1024, records: 2048,
   ledgerBytes: 64 * 1024 * 1024, leaseMaxMs: 24 * 60 * 60 * 1000 });
-export function companionCanonical(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(companionCanonical).join(',')}]`;
-  return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-    .map(([key, item]) => `${JSON.stringify(key)}:${companionCanonical(item)}`).join(',')}}`;
-}
-export function companionDigest(value: unknown): string { return createHash('sha256').update(companionCanonical(value)).digest('hex'); }
+export function companionDigest(value: unknown): string { return createHash('sha256').update(canonicalJson(value)).digest('hex'); }
 export function companionTextDigest(text: string): string { return createHash('sha256').update(text, 'utf8').digest('hex'); }
 export function companionTaskId(input: Pick<CompanionTaskInput, 'tenantId' | 'projectBindingId' | 'taskKey'>): string {
   return `ct_${companionDigest([input.tenantId, input.projectBindingId, input.taskKey]).slice(0, 32)}`;
 }
-export function companionIdentityEqual(left: CompanionIdentity, right: CompanionIdentity): boolean {
+export interface ProactiveIdentityLike { provider: string; accountId: string | null; agentId: string | null }
+export function companionIdentityEqual(left: ProactiveIdentityLike, right: ProactiveIdentityLike): boolean {
   return left.provider === right.provider && left.accountId === right.accountId && left.agentId === right.agentId;
 }
