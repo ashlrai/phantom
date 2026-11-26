@@ -2282,6 +2282,28 @@ describe('router outcome merge-events join', () => {
     expect(byId.get('J7')?.ci_first_pass).toBe(true);
   });
 
+  it('joins only merge-queue receipts dated through the report time', async () => {
+    const root = runsDir([58, 59, 60].map(pr => JSON.stringify({
+      job: `J${pr}`, pr_url: `https://github.com/ashlrai/phantom/pull/${pr}`,
+    })).join('\n'));
+    const future = { at: new Date(Date.now() + 60 * 60 * 1000).toISOString() };
+    const present = { at: new Date().toISOString() };
+    writeMergeEvents(root, [
+      mergeEvent(58, 'checks_passed', present),
+      mergeEvent(58, 'check_observed', { ...future, conclusion: 'failure', required: true }),
+      mergeEvent(59, 'checks_passed', future),
+      mergeEvent(60, 'checks_passed', present),
+      mergeEvent(60, 'check_observed', { ...future, conclusion: 'invalid' }),
+    ]);
+
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null });
+    expect(result.outcomes).toMatchObject([
+      { job_id: 'J58', ci_first_pass: true, merge_queue: { events: 1, check_failures: 0 } },
+      { job_id: 'J59', ci_first_pass: null, merge_queue: null },
+      { job_id: 'J60', ci_first_pass: true, merge_queue: { events: 1 } },
+    ]);
+  });
+
   it('keeps CI unknown when a reward-resolved merge has only an individual passing check', async () => {
     const root = runsDir('{"job":"J1","lane":"alpha","phase":"VERIFIED","pr_url":"https://github.com/ashlrai/phantom/pull/61","ts":"2026-11-01T00:00:00Z"}\n');
     writeMergeEvents(root, [

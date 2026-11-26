@@ -717,7 +717,9 @@ replayed append counts once), `recuts` and `auto_merge` (the last
 recorded toggle in append order). A timestamped receipt replayed as an
 identical JSONL line counts once at its first position in the retained
 ledger, so a replay cannot change the standing toggle. Untimed receipts
-keep their append order and count. The evidence is post-publish
+keep their append order and count. The router outcome report excludes
+receipts dated after the report began, including from first-pass CI
+coverage. The evidence is post-publish
 queue-side context — it never replaces the jobs ledger's merge
 verdict and never feeds routing by itself. The same joined check
 record also resolves `ci_first_pass`
