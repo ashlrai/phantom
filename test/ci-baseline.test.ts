@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; noJobs?: boolean } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; osLane?: boolean; install?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/') || endpoint.includes('/jobs/30/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.osLane ? 'script-os' : options.install ? 'install-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       let prefix: string;
       if (options.checkoutRef !== undefined) {
@@ -1163,6 +1163,36 @@ describe('CI baseline evidence', () => {
     ].join('\n');
     expect(parseBaselineFailures(leaky)[0]?.excerpt).not.toContain(secret);
   });
+  it('parses OS-lane classifier step failures', () => {
+    const failures = parseBaselineFailures(fixture('script-os'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/scripts/ci-os-paths.mjs > (os-paths)',
+      '.github/scripts/ci-os-typecheck.mjs > (os-typecheck)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: '.github/scripts/ci-os-paths.mjs', names: '(os-paths)' });
+    expect(failures[0]?.excerpt).toContain('checkout does not match head');
+    expect(failures[1]).toMatchObject({ file: '.github/scripts/ci-os-typecheck.mjs', names: '(os-typecheck)' });
+    expect(failures[1]?.excerpt).toContain('unknown typecheck project set');
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('script-os').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+  });
+  it('suppresses the os-typecheck gate group when the step owns tsc diagnostics', () => {
+    // ci-os-typecheck shells out to the no-emit check: a real typecheck
+    // failure prints tsc diagnostics that already group per file under
+    // (typecheck), so the step marker must not also emit (os-typecheck).
+    const step = [
+      '##[group]Run node .github/scripts/ci-os-typecheck.mjs',
+      'node .github/scripts/ci-os-typecheck.mjs',
+      'shell: /usr/bin/bash -e {0}',
+      'env:',
+      '  PROJECTS: both',
+      '##[endgroup]',
+      'src/core/foo.ts(41,9): error TS2322: Type \'string\' is not assignable to type \'number\'.',
+      '##[error]Process completed with exit code 1.',
+    ].join('\n');
+    expect(parseBaselineFailures(step, 'owner/repo').map(f => f.testId)).toEqual(['src/core/foo.ts > (typecheck)']);
+  });
   it('attributes ci-fast-select script crashes its companion test does not own', () => {
     // The fast-gate "Select affected tests" step pairs the script with its
     // node --test companion: a passing companion leaves the script's own
@@ -1185,6 +1215,8 @@ describe('CI baseline evidence', () => {
       step(['set -euo pipefail', 'npm run build'], ['build failed']),
       step(['actions/setup-node@820762786026740c76f36085b0efc47a31fe5020'], ['with:', '  node-version: \'22\'']),
       step(['node .github/scripts/ci-fast-run.mjs'], ['spawn failed']),
+      step(['node .github/scripts/ci-os-gate.mjs'], ['fast-gate concluded failure']),
+      step(['node .github/scripts/ci-install-smoke.mjs commit'], ['installed phm not found']),
       step(['node .github/scripts/ci-pack-smoke.mjs capture "$RUNNER_TEMP"'], ['Error: Cannot find module']),
       step(['node .github/scripts/ci-fetch-range.mjs', 'node .github/scripts/ci-dep-graph.mjs update'], ['boom']),
       step(['node ./.github/scripts/ci-fetch-range.mjs'], ['boom']),
@@ -1267,6 +1299,58 @@ describe('CI baseline evidence', () => {
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ script: true, count: 1, pass: true, contents }).gh);
     for (const group of singleton.groups.slice(0, 3)) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('groups OS-lane classifier failures and attributes workflow and producer inputs', async () => {
+    const contents = {
+      '.github/scripts/ci-os-paths.mjs': "import { changedPaths } from './ci-changed-paths.mjs';",
+      '.github/scripts/ci-changed-paths.mjs': "import { execFileSync } from 'node:child_process';",
+      '.github/scripts/ci-os-typecheck.mjs': "import { spawnSync } from 'node:child_process';\nimport { fileURLToPath } from 'node:url';",
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ osLane: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      '.github/scripts/ci-os-paths.mjs > (os-paths)',
+      '.github/scripts/ci-os-typecheck.mjs > (os-typecheck)',
+    ]);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // The workflow step/env wiring, each script itself, the os-paths import
+    // closure and the os-typecheck PROJECTS producers are inputs.
+    for (const [touched, id] of [
+      ['.github/workflows/ci.yml', '.github/scripts/ci-os-paths.mjs > (os-paths)'],
+      ['.github/scripts/ci-os-paths.mjs', '.github/scripts/ci-os-paths.mjs > (os-paths)'],
+      ['.github/scripts/ci-changed-paths.mjs', '.github/scripts/ci-os-paths.mjs > (os-paths)'],
+      ['.github/workflows/ci.yml', '.github/scripts/ci-os-typecheck.mjs > (os-typecheck)'],
+      ['package.json', '.github/scripts/ci-os-typecheck.mjs > (os-typecheck)'],
+      ['.github/scripts/ci-fast-inputs.mjs', '.github/scripts/ci-os-typecheck.mjs > (os-typecheck)'],
+      ['.github/scripts/ci-dep-graph.mjs', '.github/scripts/ci-os-typecheck.mjs > (os-typecheck)'],
+    ] as const) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ osLane: true, touched, contents }).gh);
+      const byId = new Map(caused.groups.map(g => [g.testId, g.action]));
+      expect(byId.get(id), touched).toBe('pr-caused');
+    }
+    // Each gate's inputs stay scoped to its own group.
+    const cross = await analyzeCiBaseline('owner/repo', github({ osLane: true, touched: '.github/scripts/ci-changed-paths.mjs', contents }).gh);
+    const crossById = new Map(cross.groups.map(g => [g.testId, g.action]));
+    expect(crossById.get('.github/scripts/ci-os-typecheck.mjs > (os-typecheck)')).toBe('queue-master-fix');
+    const reverse = await analyzeCiBaseline('owner/repo', github({ osLane: true, touched: '.github/scripts/ci-dep-graph.mjs', contents }).gh);
+    const reverseById = new Map(reverse.groups.map(g => [g.testId, g.action]));
+    expect(reverseById.get('.github/scripts/ci-os-paths.mjs > (os-paths)')).toBe('queue-master-fix');
+    // The vitest harness ambient set cannot reach these gates, and unrelated
+    // changes share the baseline.
+    for (const touched of ['tsconfig.json', 'vitest.config.ts', 'src/core/status.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ osLane: true, touched, contents }).gh);
+      for (const group of shared.groups) expect(group.classification, `${touched} -> ${group.testId}`).toBe('shared-baseline');
+    }
+    // Without the gate scripts' contents their dependency closures cannot be
+    // proved, so both groups stay unknown rather than guessing at inputs.
+    const partial = await analyzeCiBaseline('owner/repo', github({ osLane: true, contents: {} }).gh);
+    for (const group of partial.groups) expect(group.classification, group.testId).toBe('unknown');
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ osLane: true, count: 1, pass: true, contents }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('groups ci-fast-select crashes and attributes workflow, script and import inputs', async () => {
     const contents = {

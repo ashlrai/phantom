@@ -438,24 +438,32 @@ classify `shared-baseline`, `pr-caused` or `unknown` -- never
 The ci.yml helper gates under `.github/scripts/` fail with only the
 script's `console.error` line plus the runner's
 `##[error]Process completed with exit code` step marker -- no vitest,
-TAP, typecheck or report shape names them. GitHub wraps each `run:`
+TAP, typecheck or report shape names the script itself. GitHub wraps
+each `run:`
 step in a `##[group]Run <script>` block, so the analyzer attributes the
 marker to the step's script when every script line is a `node --test`
 invocation or one whitelisted gate script, all gate lines naming the
 same file: `ci-fetch-range`, `ci-source-binding`, `ci-site-lane`,
 `ci-mac-rotation`, `ci-dep-graph`, `ci-fast-select`, `ci-fast-inputs`,
-`ci-green-reuse` and `ci-mcp-selection` group under
+`ci-green-reuse`, `ci-mcp-selection`, `ci-os-paths` and
+`ci-os-typecheck` group under
 `.github/scripts/<script> > (<gate>)`. Mixed bash, `uses:` actions,
 non-whitelisted scripts and ambiguous multi-script steps stay
-unattributed, and a `not ok` or vitest `FAIL` line in the step's own
-output means the companion test runner owns the failure -- the gate
-group is suppressed. Each gate's inputs are the script, its import
-closure and `.github/workflows/ci.yml` (the step definition), with no
-vitest harness ambient set; like the other non-test identities these
-groups classify `shared-baseline`, `pr-caused` or `unknown` -- never
-`probable-flake`. Scripts whose pure steps only appear in jobs the
-analyzer's evidence never sees (macOS/Windows lanes, release
-pipelines, merge-group-only attribution) are not listed.
+unattributed, and a `not ok`, vitest `FAIL` or tsc diagnostic line in
+the step's own output means the companion runner owns the failure --
+the gate group is suppressed (ci-os-typecheck shells out to the
+no-emit check, whose diagnostics already group per file under
+`(typecheck)`). Each gate's inputs are the script, its import
+closure and `.github/workflows/ci.yml` (the step definition) --
+ci-os-typecheck adds `package.json` and the `PROJECTS` producers
+(`ci-fast-inputs` delegating to `ci-dep-graph`'s `affectedProjects`) --
+with no vitest harness ambient set; like the other non-test
+identities these groups classify `shared-baseline`, `pr-caused` or
+`unknown` -- never `probable-flake`. Scripts whose pure steps only
+appear in jobs the analyzer's evidence never sees (schedule- and
+dispatch-only macOS/Windows lanes, release pipelines,
+merge-group-only attribution, and the `ci-os-gate` aggregators whose
+unpinned checkouts leave their logs unverifiable) are not listed.
 
 The `Install dependencies` steps run a bare `npm ci` (with or without
 `--ignore-scripts`/`--no-audit`/`--no-fund`), so a broken manifest or
