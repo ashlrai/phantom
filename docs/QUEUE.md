@@ -474,6 +474,10 @@ including rows with an empty lane column or an explicit
 `"preferred_lane": null` in the requirements. These open jobs have no
 per-lane attribution.
 
+The Leader board's `conflictingPrs` proxy counts distinct PRs from rebase job
+IDs in `ready.tsv`, including parked rows and every member of a rebase batch.
+Rebase references in prompt paths, titles or other fields do not affect the count.
+
 `phm queue` owns the separate `queue.v1` coordination snapshot at
 `~/.ashlr-runs/queue/queue.v1.json`. `--dir <directory>` selects an isolated store.
 The CLI accepts and round-trips the same requirements. Adding to this snapshot
