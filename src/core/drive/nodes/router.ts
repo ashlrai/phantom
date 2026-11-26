@@ -101,6 +101,62 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
   return hosts;
 }
 
+interface NodeDiagnosis {
+  node: NodeRecord;
+  /** Distinct blocker kinds: the declined/caps/auth fence reasons, or 'capacity' for a fence-clean node. */
+  kinds: string[];
+  /** Required caps this node does not advertise. */
+  missing: string[];
+}
+
+/** Why one in-scope node cannot take the job: every fence blocker jobBlockers
+ * reports, or 'capacity' when it passed every fence — the same first-failure
+ * order the assignment loop applied, so a fence-blocked node never reads as
+ * merely slot-bound. */
+function diagnoseNode(node: NodeRecord, job: QueueJobV1, requires: string[]): NodeDiagnosis {
+  const blockers = jobBlockers(node, job);
+  return {
+    node,
+    kinds: blockers.length ? [...new Set(blockers.map(b => b.split(':')[0]!))] : ['capacity'],
+    missing: requires.filter(c => !(node.caps ?? []).includes(c)),
+  };
+}
+
+/** Plain-words blocker list for one diagnosed node, e.g. "mini does not
+ * advertise gh and lacks local gh auth". Node ids already appear in plan/status. */
+function blockerPhrase(d: NodeDiagnosis): string {
+  const parts: string[] = [];
+  if (d.kinds.includes('declined')) parts.push('released it unrun');
+  if (d.kinds.includes('caps')) parts.push(`does not advertise ${d.missing.join(',') || 'the required caps'}`);
+  if (d.kinds.includes('auth')) parts.push('lacks local gh auth');
+  if (d.kinds.includes('capacity')) parts.push('has no free job slots');
+  return `${d.node.nodeId} ${parts.join(' and ')}`;
+}
+
+/** The fix text for a job no live node could take. First-failure reason
+ * counts cannot tell "no node advertises the caps" from "a node advertises
+ * them but fails another fence", so each in-scope node is diagnosed on its
+ * full blocker set and a message is printed only when it is literally true. */
+function unroutedFix(job: QueueJobV1, scoped: NodeRecord[]): string {
+  const requires = job.requires ?? [];
+  if (scoped.length === 0)
+    return `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`;
+  const diagnosed = scoped.map(n => diagnoseNode(n, job, requires));
+  const only = (d: NodeDiagnosis, kind: string) => d.kinds.length === 1 && d.kinds[0] === kind;
+  if (diagnosed.some(d => only(d, 'capacity')))
+    return `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`;
+  if (diagnosed.some(d => only(d, 'auth')))
+    return `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
+  if (diagnosed.some(d => only(d, 'caps')) && !diagnosed.some(d => d.missing.length === 0))
+    return `No node owned by '${job.owner}' advertises ${requires.join(',')}. Rejoin a node with --caps including them.`;
+  if (diagnosed.some(d => only(d, 'declined')))
+    return `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`;
+  const shown = diagnosed.slice(0, 4).map(blockerPhrase);
+  const more = diagnosed.length - shown.length;
+  return `Nodes owned by '${job.owner}' cannot take '${job.id}': ${shown.join('; ')}${more > 0 ? `; and ${more} more` : ''}. ` +
+    `Fix each node's blockers — rejoin with --caps, gh auth login then phm node beat --probe-auth, or re-enqueue the job.`;
+}
+
 /** Deterministic plan: pools rank measured free host slots per observed execution millisecond;
  * standalone legacy queues retain their load policy. Ties break by node ID.
  * Pure: the same state and clock always produce the same plan. Jobs without an
@@ -118,15 +174,13 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
-    const reasons = new Map<string, number>();
     let best: NodeRecord | null = null;
     for (const node of nodes) {
-      const why = shortfall(node, job);
-      if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
-      if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) { reasons.set('capacity', 1); continue; }
+      if (shortfall(node, job)) continue;
+      if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) continue;
       const host = hosts.get(node.nodeId);
       if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
-          (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) { reasons.set('capacity', 1); continue; }
+          (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) continue;
       const score = (n: NodeRecord) => {
         const h = hosts.get(n.nodeId)!;
         return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
@@ -141,17 +195,8 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
       continue;
     }
-    const requires = job.requires ?? [];
-    const fix = !nodes.some(n => n.owners?.includes(job.owner!))
-      ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
-      : reasons.has('capacity')
-        ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
-      : reasons.has('declined') && !reasons.has('caps')
-        ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
-      : reasons.has('caps')
-        ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
-        : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
-    plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
+    const scoped = nodes.filter(n => n.owners?.includes(job.owner!));
+    plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix: unroutedFix(job, scoped) });
   }
   return plan;
 }

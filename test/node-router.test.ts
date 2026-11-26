@@ -85,6 +85,65 @@ describe('node router', () => {
   });
 });
 
+describe('unrouted-job fix names the real blocker mix', () => {
+  const fixOf = (f: ReturnType<typeof fixture>, jobId: string) =>
+    f.box.plan().find(r => r.jobId === jobId)!.fix!;
+
+  it('a gh job split between a cap-less node and an unauthenticated gh node names gh auth, not missing caps', () => {
+    const f = fixture();
+    f.box.join('no-gh', { owners: ['o'], caps: ['build'] });
+    const s = f.mac.join('gh-noauth', { owners: ['o'], caps: ['gh'] })!;
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    const fix = fixOf(f, 'j');
+    expect(fix).toContain('gh auth login');
+    expect(fix).not.toContain('advertises');
+    f.mac.heartbeat(s, { auth: 'ok' });
+    expect(f.box.plan()[0]!.nodeId).toBe('gh-noauth');
+  });
+
+  it('a gh job declined by the only gh-capable node plans the declined fix, not missing caps', () => {
+    const f = fixture();
+    f.box.join('no-gh', { owners: ['o'], caps: ['build'] });
+    const s = f.mac.join('gh-node', { owners: ['o'], caps: ['gh'] })!;
+    f.mac.heartbeat(s, { auth: 'ok' });
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    const claim = f.mac.pull(s)!.claim;
+    expect(f.mac.release(claim, true)).toBe(true);
+    const fix = fixOf(f, 'j');
+    expect(fix).toContain('unrun');
+    expect(fix).not.toContain('No node owned');
+  });
+
+  it('nodes each needing several fixes are named per node instead of one wrong cause', () => {
+    const f = fixture();
+    f.box.join('axe', { owners: ['o'], caps: ['build'] }); // lacks gh and never authed
+    const bee = f.mac.join('bee', { owners: ['o'], caps: ['gh'] })!;
+    f.mac.heartbeat(bee, { auth: 'ok' });
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    const claim = f.mac.pull(bee)!.claim;
+    f.mac.release(claim, true);
+    f.mac.heartbeat(bee, { auth: 'missing' }); // declined and unauthenticated
+    const fix = fixOf(f, 'j');
+    expect(fix).toContain('axe does not advertise gh and lacks local gh auth');
+    expect(fix).toContain('bee released it unrun and lacks local gh auth');
+    expect(fix).toContain('gh auth login');
+    expect(fix).not.toContain('No node owned');
+  });
+
+  it('a capacity-only node still wins the fix over persistent blockers elsewhere', () => {
+    const f = fixture();
+    const busy = f.box.join('busy', { owners: ['o'], caps: ['gh'], slots: 1 })!;
+    f.box.heartbeat(busy, { auth: 'ok' });
+    f.mac.join('gh-noauth', { owners: ['o'], caps: ['gh'] });
+    f.box.enqueue('held', { owner: 'o' });
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    expect(f.box.pull(busy)).not.toBeNull(); // busy's one slot is now claimed
+    const fix = fixOf(f, 'j');
+    expect(fix).toContain('no free job slots');
+    expect(fix).not.toContain('gh auth login');
+  });
+});
+
 describe('job leases: no job runs twice', () => {
   it('two nodes racing the same job get exactly one claim', () => {
     const f = fixture();
