@@ -560,6 +560,16 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   '.github/scripts/ci-fast-inputs.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-green-reuse.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mcp-selection.mjs': ['.github/workflows/ci.yml'],
+  // The OS-lane gates run on PR-visible jobs with verifiable checkouts:
+  // ci-os-paths classifies every pull_request/merge_group in the classify
+  // job, and ci-os-typecheck runs the no-emit check in fast-windows and
+  // fast-macos when the classifier marks the diff OS-sensitive. Their
+  // remaining inputs are the workflow step/env wiring, the npm scripts
+  // ci-os-typecheck shells to, and the PROJECTS producers upstream of
+  // that env (ci-fast-inputs plan delegating to ci-dep-graph's
+  // affectedProjects, whose output domain the script validates).
+  '.github/scripts/ci-os-paths.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-os-typecheck.mjs': ['.github/workflows/ci.yml', 'package.json', '.github/scripts/ci-fast-inputs.mjs', '.github/scripts/ci-dep-graph.mjs'],
   // The memory benchmark gate runs `tsx scripts/benchmark-memory.ts`
   // (npm run bench:memory -- --check): its import closure covers the
   // benchmark, its floors file and the whole src/core/memory
@@ -1293,11 +1303,11 @@ const SECRET_GATE_INPUTS: Record<string, readonly string[]> = {
 };
 
 // The ci.yml helper gates under .github/scripts/ are single-purpose node
-// invocations whose only failure output is the script's console.error
+// invocations whose own failure output is the script's console.error
 // line plus the runner's `##[error]Process completed with exit code`
 // step marker: no vitest FAIL, TAP `not ok`, tsc diagnostic or report
-// shape names them, so without step attribution a broken gate leaves
-// every open PR unknown and queues no fix. GitHub wraps each `run:`
+// shape names the script itself, so without step attribution a broken
+// gate leaves every open PR unknown and queues no fix. GitHub wraps each `run:`
 // step in a `##[group]Run <script>` block -- the Run tail and the
 // echoed script lines, then `shell:`/`env:` metadata, then
 // `##[endgroup]` -- and a step qualifies only when every script line
@@ -1306,16 +1316,19 @@ const SECRET_GATE_INPUTS: Record<string, readonly string[]> = {
 // non-whitelisted scripts (ci-pack-smoke and release-version-provenance
 // already have dedicated parsers) and other commands stay
 // unattributed. When the step then fails, a
-// `not ok` or vitest FAIL line in its own output means the companion
-// test runner owns the failure and the gate group is suppressed;
+// `not ok`, vitest FAIL or tsc diagnostic line in its own output means
+// the companion runner owns the failure and the gate group is
+// suppressed;
 // otherwise the gate script is the identity -- the file, its import
 // closure and the workflow step that invokes it are the unit a master
 // fix restores. Like the other non-test identities these groups can
 // never resolve through a vitest pass line: shared-baseline, pr-caused
 // or unknown -- never probable-flake. Scripts whose pure steps only
-// appear in jobs the analyzer's evidence never sees (macOS/Windows
-// lanes, release pipelines, merge-group-only attribution) are
-// deliberately not listed.
+// appear in jobs the analyzer's evidence never sees (schedule- and
+// dispatch-only macOS/Windows lanes, release pipelines,
+// merge-group-only attribution, and the ci-os-gate aggregators whose
+// unpinned checkouts make their logs unverifiable) are deliberately
+// not listed.
 const CI_SCRIPT_GATE_MAX = 8;
 const CI_SCRIPT_GATES: Record<string, string> = {
   'ci-fetch-range.mjs': '(fetch-range)',
@@ -1332,6 +1345,15 @@ const CI_SCRIPT_GATES: Record<string, string> = {
   'ci-fast-inputs.mjs': '(fast-inputs)',
   'ci-green-reuse.mjs': '(green-reuse)',
   'ci-mcp-selection.mjs': '(mcp-selection)',
+  // The OS-lane classifiers fail with only their console.error line
+  // and the step marker: ci-os-paths decides os_sensitive for every
+  // pull_request/merge_group in the classify job, and ci-os-typecheck
+  // runs the no-emit check in fast-windows/fast-macos on
+  // OS-sensitive diffs. Without the groups a classifier crash leaves
+  // the affected PRs unknown; a real typecheck failure still parses
+  // its tsc diagnostics and suppresses the os-typecheck group.
+  'ci-os-paths.mjs': '(os-paths)',
+  'ci-os-typecheck.mjs': '(os-typecheck)',
 };
 const CI_SCRIPT_GATE_FILES = new Set(Object.keys(CI_SCRIPT_GATES).map(base => `.github/scripts/${base}`));
 const CI_STEP_GROUP = /^##\[group\]Run(?:\s+(.*))?$/;
@@ -1408,7 +1430,11 @@ function parseCiScriptGateFailures(log: string): Failure[] {
         phase = 'idle'; gate = null; suppressed = false; recent = [];
         continue;
       }
-      if (FAIL_LINE.test(line) || SUITE_FAIL_LINE.test(line) || /^not ok\b/.test(line)) suppressed = true;
+      // A `not ok`, vitest FAIL or tsc diagnostic in the step's own
+      // output means the companion runner owns the failure -- ci-os-typecheck
+      // shells out to the no-emit check, whose diagnostics group per file
+      // under (typecheck) -- so the gate group is suppressed.
+      if (FAIL_LINE.test(line) || SUITE_FAIL_LINE.test(line) || TSC_ERROR_LINE.test(line) || /^not ok\b/.test(line)) suppressed = true;
       if (line !== '') { recent.push(line); if (recent.length > 4) recent.shift(); }
     }
   }

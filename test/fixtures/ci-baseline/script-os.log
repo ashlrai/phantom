@@ -1,0 +1,32 @@
+##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+with:
+  fetch-depth: 1
+  ref: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  persist-credentials: false
+##[endgroup]
+##[group]Run node .github/scripts/ci-os-paths.mjs
+node .github/scripts/ci-os-paths.mjs
+shell: /usr/bin/bash -e {0}
+env:
+  EVENT_NAME: pull_request
+  ASHLR_CI_BASE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  ASHLR_CI_HEAD_SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+##[endgroup]
+checkout does not match head
+##[error]Process completed with exit code 1.
+##[group]Run node .github/scripts/ci-os-typecheck.mjs
+node .github/scripts/ci-os-typecheck.mjs
+shell: /usr/bin/bash -e {0}
+env:
+  PROJECTS: bogus
+##[endgroup]
+file:///home/runner/work/repo/repo/.github/scripts/ci-os-typecheck.mjs:13
+  throw new Error(`unknown typecheck project set: ${projects}`);
+        ^
+
+Error: unknown typecheck project set: bogus
+    at typecheckArgs (file:///home/runner/work/repo/repo/.github/scripts/ci-os-typecheck.mjs:11:9)
+    at file:///home/runner/work/repo/repo/.github/scripts/ci-os-typecheck.mjs:19:5
+
+Node.js v22.22.3
+##[error]Process completed with exit code 1.
