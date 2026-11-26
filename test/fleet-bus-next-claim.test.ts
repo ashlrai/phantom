@@ -407,12 +407,63 @@ it('keeps sender filters on exact-label matching when the registry is unreadable
   expect(take({ excludeFrom: 'coord' })).toBe('alias-sent');
 });
 
-it('rejects malformed channel, from and exclude-from filters before scanning', () => {
+it('applies the topic filter to the claimable scan and its empty totals', () => {
+  expect(registerAgentIdentity({ handle: 'worker-a' }, { root }).status).toBe('created');
+  // worker-a belongs to both rooms, so every group:<room>:* post is pending for it.
+  expect(createAgentChannel({ name: 'eng', createdBy: 'worker-a' }, { root }).status).toBe('created');
+  expect(createAgentChannel({ name: 'ops', createdBy: 'worker-a' }, { root }).status).toBe('created');
+  post('eng-deploy', { to: 'group:eng:deploy', priority: 'P0' });
+  post('eng-general', { to: 'group:eng:general', priority: 'P1' });
+  post('ops-deploy', { to: 'group:ops:deploy', priority: 'P2' });
+  post('direct', { to: 'worker-a', priority: 'P3' });
+  // Addressed through the eng: prefix but not well-formed two-component
+  // group addresses — their topic component fails the channel grammar, so
+  // --topic never resolves them even though --channel eng would keep them.
+  post('deep-label', { to: 'group:eng:deploy:extra', priority: 'P0' });
+  post('empty-topic', { to: 'group:eng:', priority: 'P0' });
+  const take = (filters: Partial<BusNextRequest> = {}) => {
+    const result = claimNextBusWork({ ...request(), ...filters });
+    if (result.status !== 'acquired' || !('token' in result)) throw new Error(`expected a claim, got ${result.status}`);
+    expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
+    return result.receipt.envelope.id;
+  };
+
+  // --topic keeps the exact topic component across every member room: the
+  // P0 eng deploy claims ahead of the P2 ops deploy; the general post, the
+  // direct mail and the malformed group labels stay out.
+  expect(take({ topic: 'deploy' })).toBe('eng-deploy');
+  expect(take({ topic: 'deploy' })).toBe('ops-deploy');
+  expect(claimNextBusWork({ ...request(), topic: 'deploy' }))
+    .toEqual({ status: 'empty', candidates: 2, held: 0 });
+  // --channel composes into one room AND one topic.
+  expect(claimNextBusWork({ ...request(), channel: 'eng', topic: 'deploy' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+  expect(claimNextBusWork({ ...request(), channel: 'ops', topic: 'deploy' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+  // A well-formed topic nothing addresses is an honest empty match, never a
+  // widened claim; the general topic still claims its live receipt.
+  expect(claimNextBusWork({ ...request(), topic: 'absent' }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+  expect(take({ topic: 'general' })).toBe('eng-general');
+  // Unfiltered, all six addressed receipts count — completed ones stay
+  // candidates — and claim order still prefers the P0 malformed labels
+  // ahead of the P3 direct mail.
+  expect(take()).toBe('deep-label');
+  expect(take()).toBe('empty-topic');
+  expect(take()).toBe('direct');
+  expect(claimNextBusWork(request())).toEqual({ status: 'empty', candidates: 6, held: 0 });
+});
+
+it('rejects malformed channel, topic, from and exclude-from filters before scanning', () => {
   post('work');
   const bad: Partial<BusNextRequest>[] = [
     { channel: 'Bad Channel' },
     { channel: 'x'.repeat(33) },
     { channel: '' },
+    { topic: 'Bad Name' },
+    { topic: 'deploy:extra' },
+    { topic: 'x'.repeat(33) },
+    { topic: '' },
     { from: 'has space' },
     { from: '' },
     { from: 'x'.repeat(129) },

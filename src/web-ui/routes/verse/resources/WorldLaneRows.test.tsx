@@ -15,6 +15,25 @@ function field(value: unknown, freshness: 'fresh' | 'stale' | 'unknown' = 'fresh
 afterEach(() => { cleanup(); });
 
 describe('WorldLaneRows', () => {
+  it('shows fresh lane targets, deadline waste and a non-interactive Codex reset proposal', () => {
+    const deadline = new Date(NOW + 3_600_000).toISOString();
+    const snapshot = { resourceCapacity: {
+      generated_at: RECENT,
+      lanes: [{ lane: 'agy', target_concurrency: 2 }, { lane: 'codex-personal', target_concurrency: null }],
+      allowances: [{ id: 'antigravity', lane: 'agy', label: 'Antigravity five-hour', unit: 'percent', deadline_at: deadline, projected_waste_at_deadline: 23 }],
+      reset_proposal: { window: '5h', projected_exhaustion_at: deadline, queued_jobs: 3, grant: { expires_at: deadline } },
+    } };
+    const view = render(<WorldLaneRows expanded now={NOW} snapshot={snapshot} />);
+    const advice = screen.getByRole('group', { name: 'Fleet capacity advice' });
+    expect(advice).toHaveTextContent('Antigravity · Target 2 agents');
+    expect(advice).toHaveTextContent(/23% projected unused by/);
+    expect(advice).toHaveTextContent('Use reset now · explicit request required');
+    expect(within(advice).queryByRole('button')).toBeNull();
+    view.rerender(<WorldLaneRows expanded={false} now={NOW} snapshot={snapshot} />);
+    expect(advice).toHaveTextContent('Reset proposal');
+    view.rerender(<WorldLaneRows expanded now={NOW + 5 * 60_000} snapshot={snapshot} />);
+    expect(screen.queryByRole('group', { name: 'Fleet capacity advice' })).toBeNull();
+  });
   it('renders one compact row: usage, a reset countdown and a live chip; burn and source stay in the tooltip', () => {
     const resetAt = new Date(NOW + 3_600_000).toISOString();
     render(<WorldLaneRows expanded now={NOW} snapshot={{
