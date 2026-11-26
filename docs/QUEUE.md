@@ -1210,6 +1210,12 @@ same job, source, event, reason and recorded instant count once in both the
 recurrence threshold and the refusal share. Later observations for the
 same job still count.
 
+Run `phm fleet lane-reward --json` to see reward and measured token usage by
+lane. The report attributes a PR outcome that carries only a URL when exactly
+one distinct job in the retained jobs ledger records that URL. If several jobs
+record it, the outcome remains unattributed. Rows that identify a job directly
+still apply to that job.
+
 ## Fleet resource capacity advice
 
 `phm resources plan --json` joins verified allowance deadlines and remaining
