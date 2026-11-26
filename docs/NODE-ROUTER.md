@@ -264,7 +264,10 @@ reported as zero. Owner, capability, local-auth and fencing checks still apply.
 and queued counts from dispatcher status. Lane `available` counts slots against
 the launch target — the configured target tightened by the controller's
 `effective_target` load-shed ceiling (`effectiveTarget`, null when unpublished)
-— so a shed lane never reports phantom room. A fresh dispatcher pause or
+— and is bounded by the shared remaining fleet slots when the same tick
+reports valid admission `cap` and `running` counts. Each lane shares this
+ceiling, so adding lane availability can overstate fleet capacity. Without
+usable fleet counts, availability describes lane-local headroom. A fresh dispatcher pause or
 explicit fleet admission stop sets every lane's `available` to zero, including
 when the fleet-wide cap is reached. Four local reads run concurrently,
 each capped at 2 MiB and 250 ms, with phase status; no SSH probes or writes.
