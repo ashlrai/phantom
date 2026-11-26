@@ -811,6 +811,27 @@ describe('foldJobsLedgerRewards', () => {
     for (const input of inputs) expect(input).not.toHaveProperty('ciWallMs');
   });
 
+  it.each([
+    { reverts: [9], ciWallMs: 900_000 },
+    { reverts: [10], ciWallMs: undefined },
+    { reverts: [9, 10], ciWallMs: undefined },
+  ])('binds standalone revert CI timing to its PR evidence (%o)', ({ reverts, ciWallMs }) => {
+    const job = 'RQ-CI-REVERT';
+    const url = 'https://github.com/ashlrai/phantom/pull/9';
+    const rows = [
+      launch(job),
+      line({ event: 'ci_start', job, ts: '2026-10-28T15:10:00.000Z', url }),
+      line({ event: 'ci_complete', job, ts: '2026-10-28T15:25:00.000Z', url }),
+      ...reverts.map((pr) => line({
+        event: 'reverted', job, ts: MERGED_ISO, url: `https://github.com/ashlrai/phantom/pull/${pr}`,
+      })),
+    ];
+    const inputs = foldJobsLedgerRewards(rows.join('\n'), NOW_MS);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({ jobId: job, merged: false });
+    expect(inputs[0]?.ciWallMs).toBe(ciWallMs);
+  });
+
   it('keeps the reward verdict but withholds CI timing when a batch claim coincides with CI start', () => {
     const start = '2026-10-28T15:10:00.000Z';
     const complete = '2026-10-28T15:25:00.000Z';
