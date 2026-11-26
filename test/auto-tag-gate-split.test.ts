@@ -64,13 +64,21 @@ esac
   }
 }
 
-function runVersionStep(newVersion: string, oldVersion: string, subject: string) {
+function runVersionStep(newVersion: string, oldVersion: string, subject: string, {
+  ancestry = 'ahead', releaseAncestors = '', tagStatus = 2, repo = 'ashlrai/phantom',
+} = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'auto-tag-version-'));
   try {
     writeFileSync(join(dir, 'gh'), `#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == *"parents[0].sha"* ]]; then
   printf 'parent\\n'
+elif [[ "$*" == *"repos/ashlrai/phantom/compare/$SHA...master"* ]]; then
+  printf '%s\\n' "$ANCESTRY"
+elif [[ "$*" == *"repos/ashlrai/phantom/commits?sha=$SHA&path=.release-please-manifest.json&per_page=100"* ]]; then
+  printf '%s\\n' "$RELEASE_ANCESTORS"
+elif [[ "$*" == *"/releases/tags/v$NEW_VERSION"* ]]; then
+  exit 1
 elif [[ "$*" == *"commit.message"* ]]; then
   printf '%s\\n' "$SUBJECT"
 elif [[ "$*" == *"contents/package.json?ref=$SHA"* ]]; then
@@ -88,7 +96,7 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', () => { console.log(JSON.parse(input).version); });
 `);
-    writeFileSync(join(dir, 'git'), '#!/usr/bin/env bash\nexit 2\n');
+    writeFileSync(join(dir, 'git'), '#!/usr/bin/env bash\nexit "$TAG_STATUS"\n');
     for (const name of ['gh', 'jq', 'git']) chmodSync(join(dir, name), 0o755);
     const output = join(dir, 'output');
     writeFileSync(output, '');
@@ -98,12 +106,15 @@ process.stdin.on('end', () => { console.log(JSON.parse(input).version); });
     env[pathName] = `${dir}${sep}${env[pathName] ?? ''}`;
     Object.assign(env, {
       GITHUB_OUTPUT: output,
-      REPO: 'ashlrai/phantom',
+      REPO: repo,
       SHA: 'a'.repeat(40),
       VERSION_FILE: 'package.json',
       NEW_VERSION: newVersion,
       OLD_VERSION: oldVersion,
       SUBJECT: subject,
+      ANCESTRY: ancestry,
+      RELEASE_ANCESTORS: releaseAncestors,
+      TAG_STATUS: String(tagStatus),
     });
     const result = spawnSync('bash', ['-c', versionStep.run!], { encoding: 'utf8', env });
     return {
@@ -149,6 +160,27 @@ describe('Auto-tag version healing', () => {
     expect(result.output).toContain('changed=false');
     expect(result.output).not.toContain('changed=true');
     expect(result.log).toContain('::notice::v3.30.74 is owed by its release-please commit; not tagging non-release commit');
+  });
+
+  const releaseAncestors = 'chore(master): release 3.30.74 (#8767)\nchore(master): release 3.30.73';
+
+  it.each(['ahead', 'identical'])('evaluates a canonical successor with an owed release and master compare %s', (ancestry) => {
+    const result = runVersionStep('3.30.74', '3.30.74', 'fix: desktop startup', { ancestry, releaseAncestors });
+    expect(result.status, result.log).toBe(0);
+    expect(result.output).toContain('version=3.30.74');
+    expect(result.output).toContain('changed=true');
+  });
+
+  it.each([
+    { ancestry: 'diverged' },
+    { repo: 'masonwyatt23/phantom' },
+    { releaseAncestors: 'chore(master): release 3.30.740\nchore(master): release 3x30x74' },
+    { tagStatus: 0 },
+    { tagStatus: 128 },
+  ])('refuses an unchanged-version successor with unproven eligibility: %j', (overrides) => {
+    const result = runVersionStep('3.30.74', '3.30.74', 'fix: desktop startup', { releaseAncestors, ...overrides });
+    expect(result.status, result.log).toBe(0);
+    expect(result.output).toBe('changed=false\n');
   });
 
   it('preserves unchanged-version healing for release-please commits', () => {
