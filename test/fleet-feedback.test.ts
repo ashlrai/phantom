@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readdir, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, realpath, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { triageFeedback, type FeedbackSignal } from '../src/core/fleet/feedback-triage.js';
@@ -134,6 +134,9 @@ describe('feedback scan and digest', () => {
     const d = { ingest: async () => s };
     const out = await runFeedback({ ...options(), apply: true }, d);
     expect(out.sources.queue).toBe('ok'); expect(out.candidates[0]?.kind).toBe('regression'); expect(out.queued).toHaveLength(5);
+    const withHistory = await runFeedback({ ...options(), command: 'digest' }, d);
+    expect(withHistory.sources.jobs).toBe('ok');
+    await unlink(join(root, 'metrics/jobs.jsonl'));
     const digest = await runFeedback({ ...options(), command: 'digest' }, d);
     expect(digest.sources.jobs).toBe('unavailable');
     expect('digest' in digest && digest.digest).toMatchObject({ needsReview: null, failures: null, stillRunning: null });
