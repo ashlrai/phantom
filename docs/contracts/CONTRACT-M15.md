@@ -140,14 +140,22 @@ export async function cmdModels(args: string[]): Promise<number>;
   `models.docs.v1` list plus bundled targeted notices (which do not imply
   full provider coverage), and `selectVerifiedModel(models, registry, docs?)`
   skips a model the docs call retired or do not name.
-- `ashlr models radar [--json] [--from <folder>] [--fetch]`: `runModelRadar` in
+- `ashlr models radar [--json] [--from <folder>] [--fetch [--propose]]`: `runModelRadar` in
   `src/core/fleet/model-radar.ts`, returning `ModelRadarReport` (`models.radar.v1`,
   `version: 1`). `scanModelReleaseNotes(docs, registry)` is the pure scan
   (`new_models`, `retired_models`, `renamed`, `unchanged_count`, `providers`) and
   `proposeRegistryPatch(scan)` builds the `models.registry-patch.v1` proposal,
-  which nothing applies. `MODEL_RADAR_SOURCES` and `fetchModelRadarDocs(folder)`
+  which nothing applies. Live findings carry `source_url` and `retrieved_on`;
+  `router_choices` and `lane_notices` join configured models to check verdicts
+  or scan mentions. `MODEL_RADAR_SOURCES` and
+  `fetchModelRadarDocs(folder, fetchPage?, onSaved?, now?)`
   in `src/core/fleet/model-radar-fetch.ts` are the page table and the fetch
-  behind `--fetch`. Exit 0 only when `ok`.
+  behind `--fetch`. Without `--propose`, exit 0 only when `ok`.
+  `--propose` requires a live fetch and uses the existing inbox to file
+  evidence and an unapplied patch as pending notes, deduplicated by candidate.
+  It returns `proposals: { filed, existing, failed }` and exits 1 only on a run
+  or write failure. `ashlr models radar schedule [--install] [--hour <hour>]`
+  previews daily user units unless explicitly installed.
 - `ashlr models verify <id> --source <url>`: `markModelVerified`; see
   [the router gateway guide](../ROUTER-GATEWAY.md#model-verification).
 - `ashlr models pull <name>`: EXPLICIT management. Confirm (large download),

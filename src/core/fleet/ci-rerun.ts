@@ -44,15 +44,13 @@ function pendingVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
 }
 
 /** Map a workflow-run API payload to a verdict; null means not yet resolvable. */
-function verdictFromRun(data: unknown, head: string, firedAtMs: number): Entry['verdict'] | null {
+function verdictFromRun(data: unknown, entry: Entry): Entry['verdict'] | null {
   if (typeof data !== 'object' || data === null) return null;
-  const run = data as { status?: unknown; conclusion?: unknown; head_sha?: unknown; updated_at?: unknown };
-  if (run.status !== 'completed') return null;
-  if (typeof run.head_sha === 'string' && run.head_sha !== head) return null;
-  if (typeof run.updated_at === 'string') {
-    const updated = Date.parse(run.updated_at);
-    if (Number.isFinite(updated) && updated < firedAtMs - VERDICT_SKEW_MS) return null;
-  }
+  const run = data as { id?: unknown; status?: unknown; conclusion?: unknown; head_sha?: unknown; updated_at?: unknown };
+  if (run.id !== entry.runId || run.head_sha !== entry.head || run.status !== 'completed') return null;
+  if (typeof run.conclusion !== 'string' || !run.conclusion.trim() || typeof run.updated_at !== 'string') return null;
+  const updated = Date.parse(run.updated_at);
+  if (!Number.isFinite(updated) || updated < Date.parse(entry.at) - VERDICT_SKEW_MS) return null;
   if (run.conclusion === 'success') return 'pass';
   if (run.conclusion === 'failure' || run.conclusion === 'timed_out') return 'fail';
   return 'inconclusive';
@@ -187,7 +185,7 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
           try {
             const r = await gh(['api', `repos/${repo}/actions/runs/${p.runId}`]);
             if (r.ok) {
-              try { verdict = verdictFromRun(JSON.parse(r.stdout), p.head, Date.parse(p.at)); }
+              try { verdict = verdictFromRun(JSON.parse(r.stdout), p); }
               catch { /* malformed run payload: stays pending for a later pass */ }
             }
           } catch (error) { if (opts.signal.aborted) throw error; }

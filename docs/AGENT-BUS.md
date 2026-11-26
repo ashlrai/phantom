@@ -1524,20 +1524,22 @@ passes a refused or degraded section through untouched.
 **Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
 <1..3600000> [--owner <label>] [--contains <text>] [--since
 <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel
-<name>] [--from <agent>] [--exclude-from <agent>]` is the claim half of the loop `work
+<name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]` is the claim half of the loop `work
 mine`
 opens: it takes the next claimable work envelope addressed to the agent —
 the same live `kind:'work'`/protocol-`task` receipts the digest's `next`
 section lists — and leases it through the same message-id claim path
 `fleet bus-next`/`comms bus next` run, so the find → claim step never
 leaves this surface. `--contains`, `--since`, `--before`, `--priority`,
-`--channel`, `--from` and `--exclude-from`
+`--channel`, `--topic`, `--from` and `--exclude-from`
 narrow the
 claimable set under the same rules every bus read applies — the scrubbed
 one-line summary substring, the inclusive `receivedAt` cutoff, the
 exclusive `receivedAt` ceiling composing with `--since` into one
 `[since, before)` window, the
-exact P0..P3 band, the `group:<name>:*` room prefix, and the sender
+exact P0..P3 band, the `group:<name>:*` room prefix, the exact topic
+component of a well-formed `group:<room>:<topic>` address — composing
+with `--channel` into one room and one topic — and the sender
 identity-label match —
 so "claim the next work about X" or "claim the next
 urgent one" is one atomic step rather than a filtered list followed by a
@@ -1979,14 +1981,18 @@ keeps exact-label matching and never widens. All four claim surfaces —
 `agents bus work next`, `fleet bus-next`, `fleet bus-wait-claim` and
 `comms bus next` — take the same `--contains <text>`, `--since
 <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--priority <P0|P1|P2|P3>`,
-`--channel <name>`, `--from <agent>` and `--exclude-from <agent>`
+`--channel <name>`, `--topic <topic>`, `--from <agent>` and `--exclude-from <agent>`
 read filters, applied inside
 the claim scan under the identical rules the reads use (the scrubbed
 one-line summary substring, the inclusive `receivedAt` cutoff, the
 exclusive `receivedAt` ceiling composing with `--since` into one
 `[since, before)` window, the exact
-priority band, the `group:<name>:*` room prefix decided on the raw `to`
-label, and the sender identity-label match `agentRefAddressMatcher`
+priority band, the `group:<name>:*` room prefix and the exact topic
+component of a well-formed `group:<room>:<topic>` address — each decided
+on the raw `to` label under the channel-name grammar, so `--channel` and
+`--topic` compose into one room and one topic while a bare `group:<room>`,
+a deeper label or a non-group address never resolves a topic — and the
+sender identity-label match `agentRefAddressMatcher`
 shares — a sender ref resolving through the registry matches every label
 of that identity while an unresolvable ref or unreadable registry keeps
 exact-label matching, so unknown identity state never widens a claim),

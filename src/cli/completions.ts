@@ -88,6 +88,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
+  resources: ['plan', 'evidence', 'stale', 'sample', 'ledger', 'personal', 'claude-promotion', 'profile', 'launcher', 'autopilot', 'pool',
+    '--json', '--watch', '--write-advice', '--runs-dir', '--resource', '--resets', '--expires', '--source', '--kind', '--observed-at', '--help'],
   docs: ['cli', '--agent', '--check', '--json', '--help'],
   approvals: ['ask', 'answer', '--team', '--question', '--options', '--expires', '--by', '--json', '--help'],
   subagent: ['spawn', 'list', 'result'],

@@ -49,6 +49,7 @@ const report = (over: Partial<UnfedReport> = {}): UnfedReport => ({
   schema: 'fleet.unfed.v1', readOnly: true, source: 'derived', derivedReasons: false,
   statusAsOf: new Date(NOW).toISOString(), statusFresh: true, fleetStop: null,
   waiting: 0, invalidRows: 0, unfedLanes: [], unfedSlots: 0, resources: [],
+  marketTruncated: false,
   history: { windowHours: 24, available: false, ticks: 0, lanes: [] },
   overrides: { available: false, decided: 0, overridden: 0, byReason: {}, lanes: [] },
   claims: { available: false, truncated: false, claimed: 0, overridden: 0, byReason: {}, lanes: [] },
@@ -160,6 +161,7 @@ describe('readFleetUnfed', () => {
     expect(resources.find(r => r.lane === 'codex-personal')).toMatchObject({
       utilization: 1, headroom: 0, unfed: false,
     });
+    expect((result as UnfedReport).marketTruncated).toBe(false);
     const history = (result as UnfedReport).history;
     expect(history).toMatchObject({ windowHours: 1, available: false, ticks: 0 });
     expect(JSON.stringify(result)).not.toContain(runsDir);

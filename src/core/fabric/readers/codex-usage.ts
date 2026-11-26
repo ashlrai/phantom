@@ -10,7 +10,10 @@ export interface CodexUsageReading {
   terraResetAt: string | null;
   source: 'codex-reader';
   fetchedAt: string;
+  windows?: { '5h': CodexWindow | null; weekly: CodexWindow | null };
 }
+
+interface CodexWindow { pctUsed: number; resetAt: string }
 
 export interface CodexUsageOptions {
   /** Explicit CMP pool HOME, never the operator's HOME or a copied profile. */
@@ -39,7 +42,7 @@ export function parseCodexUsage(payload: unknown, nowMs: number): Pick<CodexUsag
   catch { return { pctUsed: null, resetAt: null, terraResetAt: null }; }
 }
 
-function parseNativeUsage(payload: unknown, nowMs: number): Pick<CodexUsageReading, 'pctUsed' | 'resetAt' | 'terraResetAt'> {
+function parseNativeUsage(payload: unknown, nowMs: number, minutes?: number): Pick<CodexUsageReading, 'pctUsed' | 'resetAt' | 'terraResetAt'> {
   const unknown = { pctUsed: null, resetAt: null, terraResetAt: null };
   if (!object(payload) || !Number.isFinite(nowMs)) return unknown;
   const hasMap = Object.hasOwn(payload, 'rateLimitsByLimitId');
@@ -47,7 +50,7 @@ function parseNativeUsage(payload: unknown, nowMs: number): Pick<CodexUsageReadi
     ? object(payload.rateLimitsByLimitId) && Object.hasOwn(payload.rateLimitsByLimitId, 'codex') && payload.rateLimitsByLimitId.codex
     : payload.rateLimits;
   if (!object(bucket) || (hasMap ? bucket.limitId != null && bucket.limitId !== 'codex' : bucket.limitId !== 'codex')) return unknown;
-  const windows: { pctUsed: number; resetAt: string }[] = [];
+  const windows: Array<CodexWindow & { minutes: unknown }> = [];
   for (const key of ['primary', 'secondary']) {
     const window = bucket[key];
     if (window === undefined || window === null) continue;
@@ -55,14 +58,17 @@ function parseNativeUsage(payload: unknown, nowMs: number): Pick<CodexUsageReadi
         window.usedPercent < 0 || window.usedPercent > 100 || typeof window.resetsAt !== 'number' ||
         !Number.isSafeInteger(window.resetsAt) || window.resetsAt <= nowMs / 1000 ||
         window.resetsAt > 253_402_300_799) return unknown;
-    windows.push({ pctUsed: window.usedPercent, resetAt: new Date(window.resetsAt * 1000).toISOString() });
+    windows.push({ pctUsed: window.usedPercent, resetAt: new Date(window.resetsAt * 1000).toISOString(), minutes: window.windowDurationMins });
   }
   const selected = windows.sort((a, b) => b.pctUsed - a.pctUsed || Date.parse(b.resetAt) - Date.parse(a.resetAt))[0];
   // A provider denial without a measured full window is not a percentage.
   if (!selected || bucket.rateLimitReachedType != null && selected.pctUsed !== 100) return unknown;
   // Terra uses this CMP account's shared Codex quota, not another account or
   // an inferred model-specific allowance. Both aliases retain identical evidence.
-  return { ...selected, terraResetAt: selected.resetAt };
+  const matching = minutes === undefined ? [selected] : windows.filter(window => window.minutes === minutes);
+  if (matching.length !== 1) return unknown;
+  const { pctUsed, resetAt } = matching[0]!;
+  return { pctUsed, resetAt, terraResetAt: resetAt };
 }
 
 async function cmpHome(home: string | undefined): Promise<string | null> {
@@ -164,8 +170,13 @@ export async function readCodexUsage(options: CodexUsageOptions = {}): Promise<C
     if (home) payload = await readNativeStatus(home);
   } catch { /* Suppress native errors and private diagnostics. */ }
   const fetchedAt = new Date().toISOString();
+  const window = (minutes: number): CodexWindow | null => {
+    const row = parseNativeUsage(payload, Date.parse(fetchedAt), minutes);
+    return row.pctUsed === null || row.resetAt === null ? null : { pctUsed: row.pctUsed, resetAt: row.resetAt };
+  };
   const reading: CodexUsageReading = {
     pool: 'codex-cmp', ...parseCodexUsage(payload, Date.parse(fetchedAt)), source: 'codex-reader', fetchedAt,
+    windows: { '5h': window(300), weekly: window(10_080) },
   };
   if (options.logPath) {
     const rows = [reading, { ...reading, pool: 'terra@cmp', resetAt: reading.terraResetAt }];

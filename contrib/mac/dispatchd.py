@@ -1774,6 +1774,7 @@ if "agy" in LANES and "agy" not in UIA:
     if agy is not None: UIA["agy"] = agy
 _API_LANES = {"claude-api", "openai-api"}.intersection(LANES)
 _PROMOS = {lane: promo_window(_RESOURCE_LIVE, lane, NOW) for lane in _API_LANES}
+_RESOURCE_TARGETS = work_market.advisory_targets(jload(Q + "/resource-capacity-advice.json", {}), NOW)
 
 def dispatch_deadline(lane, executor):
     cost = executor.get("cost_class")
@@ -2331,6 +2332,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                                          allowance=market_allowance, tier=tier))
         for dest in LANES:
             view[dest]["deadline_priority"] = dispatch_deadline(dest, view[dest])
+            if dest in _RESOURCE_TARGETS:
+                advisory = min(_RESOURCE_TARGETS[dest], tgt(dest))
+                view[dest]["advisory_target"] = advisory
+                view[dest]["below_advisory_target"] = running[dest] < advisory
             if dest in _API_LANES and _PROMOS[dest] is None and view[dest]["cost_class"] == "included":
                 view[dest]["cost_class"] = "metered"
             view[dest]["is_metered_api"] = dest in _API_LANES and view[dest]["cost_class"] == "metered"
