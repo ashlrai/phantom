@@ -243,6 +243,9 @@ describe('emptyTagBacklogItems', () => {
     const tags = [tagRow('RQ-H1', 'blocked'), tagRow('RQ-H2', 'blocked'), tagRow('RQ-H3', 'blocked')].join('\n');
     const runsDir = writeRuns('runs-h', jobs, tags);
     expect(await emptyTagBacklogItems({ repo: 'ashlrai/other', runsDir, now: NOW })).toEqual([]);
+    expect(await emptyTagBacklogItems({ repo: 'other-owner/phantom', runsDir, now: NOW })).toEqual([]);
+    expect(await emptyTagBacklogItems({ repo: 'AshlrAI/Phantom', runsDir, now: NOW }))
+      .toEqual([expect.objectContaining({ id: 'fleet-empty-tag-blocked', repo: 'AshlrAI/Phantom' })]);
     expect(await emptyTagBacklogItems({ repo: 'phantom', runsDir, now: NOW })).not.toEqual([]);
   });
 

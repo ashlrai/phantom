@@ -91,7 +91,7 @@ export const EMPTY_TAG_WINDOW_HOURS = EMPTY_TAG_SYNC_HOURS;
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
 const MAX_TITLE_CHARS = 200;
 /** The fleet's own repository label: tag evidence is this repo's machinery, never another target's. */
-const FLEET_REPO_NAME = 'phantom';
+const FLEET_REPO = 'ashlrai/phantom';
 /** Example job ids quoted per bucket inside one prompt. */
 const MAX_EXAMPLES = 3;
 /** The buckets that can become work; the other recorded tags are explained outcomes. */
@@ -125,11 +125,6 @@ export interface EmptyTagWindowFold {
   counts: Record<string, number>;
   /** Up to MAX_EXAMPLES job ids per actionable bucket, in finish order. */
   examples: Record<ActionableBucket, string[]>;
-}
-
-/** The repository name both vocabularies record: the last path segment, lowercased. */
-function fleetRepoName(repo: string): string {
-  return (repo.split('/').pop() ?? repo).trim().toLowerCase();
 }
 
 const isTag = (value: string): boolean => (EMPTY_TAGS as readonly string[]).includes(value);
@@ -231,7 +226,8 @@ function emptyTagItem(bucket: ActionableBucket, fold: EmptyTagWindowFold, repo: 
 export async function emptyTagBacklogItems(opts: EmptyTagItemsOptions): Promise<CloudBacklogItem[]> {
   try {
     const repo = opts.repo.trim();
-    if (repo === '' || fleetRepoName(repo) !== FLEET_REPO_NAME) return [];
+    const repoKey = repo.toLowerCase();
+    if (repoKey !== FLEET_REPO && repoKey !== 'phantom') return [];
     const home = opts.homeDir ?? homedir();
     const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(home, '.ashlr-runs');
     const [jobs, tags] = await Promise.all([
