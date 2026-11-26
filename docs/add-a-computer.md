@@ -41,6 +41,12 @@ all their required capabilities and share their owner scope. For `gh` jobs,
 sign in locally with `gh auth login` and report that login with `--probe-auth`;
 credentials stay on this computer.
 
+A computer serving a local model through oMLX needs no `--caps` entry: opt in
+with `~/.ashlr/local-lanes.json` (`{"schemaVersion":1,"enabled":true}`), check
+the plan with `phm node lanes`, and `phm node join` advertises the resulting
+`omlx` caps automatically — the same merge a pool join or worker performs.
+See [OMLX-SMALL-MACS.md](OMLX-SMALL-MACS.md).
+
 ## Verify and stay live
 
 Replace `<nodeId>` with the `nodeId` join returned and `1` with its `session`:

@@ -12,8 +12,10 @@ import { DriveNodes } from '../src/core/drive/nodes/index.js';
 import { emptyState, parseState, type NodesState, type NodesStore } from '../src/core/drive/nodes/state.js';
 import {
   localLanePlan, probeLocalModelCaps, readLocalLaneConfig,
+  type LocalLaneProbeDeps,
 } from '../src/core/drive/nodes/local-model-caps.js';
 import { probeNodeLanes } from '../src/core/drive/nodes/worker.js';
+import { cmdNodeFleet } from '../src/cli/node-fleet.js';
 
 const GiB = 1024 ** 3;
 class MemoryStore implements NodesStore {
@@ -181,5 +183,44 @@ describe('unified pool routing over omlx caps', () => {
     const pulled = nodes.pull(big);
     expect(pulled?.job.id).toBe('draft-docs');
     expect(nodes.pull(small)).toBeNull(); // nothing left that a plain-omlx node can take
+  });
+});
+
+describe('standalone join advertises the planned local lane caps', () => {
+  const joinOnce = async (nodeId: string, localLanes: LocalLaneProbeDeps, capsArg?: string, phmVersion: () => string | null = () => null) => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join',
+        ['--node', nodeId, '--owner', 'mason', '--json', ...(capsArg === undefined ? [] : ['--caps', capsArg])],
+        { store, phmVersion, localLanes });
+      return { code, store, out: JSON.parse(lines.at(-1)!) as Record<string, unknown> };
+    } finally { vi.restoreAllMocks(); }
+  };
+
+  it('merges the probe caps into --caps so a local-model node is routable standalone', async () => {
+    writeFileSync(configPath, JSON.stringify(enable));
+    const { code, store, out } = await joinOnce('mini-16gb', deps({ headroom: headroom() }), 'build');
+    expect(code).toBe(0);
+    expect(store.state.nodes[0]!.caps).toEqual(['build', 'omlx', 'omlx-work']);
+    expect(out['caps']).toEqual(['build', 'omlx', 'omlx-work']);
+  });
+
+  it('dedupes caps the operator already passed and keeps the version cap', async () => {
+    writeFileSync(configPath, JSON.stringify(enable));
+    const { store } = await joinOnce('mini-16gb', deps({ headroom: headroom() }), 'omlx,build', () => '9.9.9');
+    expect(store.state.nodes[0]!.caps).toEqual(['build', 'omlx', 'omlx-work', 'phm-9.9.9']);
+  });
+
+  it('advertises nothing extra when the lane is absent, disabled or backed off', async () => {
+    let r = await joinOnce('n-absent', deps({ headroom: headroom() }), 'build');
+    expect(r.store.state.nodes[0]!.caps).toEqual(['build']);
+    writeFileSync(configPath, JSON.stringify({ schemaVersion: 1, enabled: false }));
+    r = await joinOnce('n-disabled', deps({ headroom: headroom() }), 'build');
+    expect(r.store.state.nodes[0]!.caps).toEqual(['build']);
+    writeFileSync(configPath, JSON.stringify(enable));
+    r = await joinOnce('n-pressured', deps({ headroom: headroom(60, 0, 4) }), 'build');
+    expect(r.store.state.nodes[0]!.caps).toEqual(['build']);
   });
 });
