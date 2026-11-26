@@ -85,6 +85,28 @@ it('reads the production ledger dialects: enqueue arrival, PUBLISHED/published p
   expect(merge.phases.find(p => p.phase === 'open_to_merge')).toMatchObject({ total_seconds: 150, measured_jobs: 1, missing_jobs: 1 });
 });
 
+it('counts batch member boundaries without counting wrapper or node-pool telemetry', () => {
+  const launch = '2026-01-01T00:00:00Z';
+  const finish = '2026-01-01T00:01:00Z';
+  const rows = [
+    { job: 'RQ-MEMBER-1', event: 'launch', ts: launch },
+    { job: 'RQ-MEMBER-1', event: 'finish', ts: finish },
+    { job: 'RQ-MEMBER-1', event: 'publish', ts: finish },
+    { job: 'RQ-MEMBER-1', outcome: 'MERGED', mergedAt: '2026-01-01T00:03:00Z' },
+    { job: 'RQ-BATCH-1', event: 'launch', ts: launch },
+    { job: 'RQ-BATCH-1', event: 'finish', ts: finish },
+    { schema: 'fleet.session-pool.v1', job: 'session:1', event: 'launch', ts: launch },
+    { schema: 'phm-node-runner.v1', job: 'node:1', event: 'finish', ts: finish },
+  ];
+  const text = rows.map(row => JSON.stringify(row)).join('\n');
+  const fleet = jobLatency(text);
+  const pulse = mergeQueueLatency(text);
+  expect(fleet).toMatchObject({ jobs: 1, ignored_events: 0 });
+  expect(pulse).toMatchObject({ jobs: 1, ignored_events: 0 });
+  expect(fleet.phases.find(p => p.phase === 'worker')).toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 0 });
+  expect(pulse.phases.find(p => p.phase === 'open_to_merge')).toMatchObject({ total_seconds: 120, measured_jobs: 1, missing_jobs: 0 });
+});
+
 it('keeps conflicting publish dialects ambiguous rather than picking one', () => {
   const text = [
     { job: 'RQ-C', event: 'enqueue', ts: '2026-01-01T00:00:00Z' },

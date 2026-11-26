@@ -14,7 +14,7 @@ A friction signal is any point where delegated work had to stop for Mason, or wh
 
 - **Needs-you items.** Every row in the needs-you drawer ([NEEDS-YOU.md](../NEEDS-YOU.md)) is a residual human step; each recurring row class is a candidate.
 - **Holds and gates.** The hold list, lane holds, dispatch switches, parked dependency gates (`phm fleet parked --json`), and stuck-PR quarantine rows are all places work waits on a person or a pin.
-- **Stalls in the job ledger.** `metrics/jobs.jsonl` shows queue wait, checkout, model, worker, publish wait, CI and merge time per attempt (`phm fleet job-latency --jobs jobs.jsonl --json`); a phase that consistently outruns the others is friction with a number on it.
+- **Stalls in the job ledger.** `metrics/jobs.jsonl` shows queue wait, checkout, model, worker, publish wait, CI and merge time per attempt (`phm fleet job-latency --jobs jobs.jsonl --json`). Both this report and `phm pulse merge-latency` count batch members through their own job rows and exclude batch wrappers and node-pool execution telemetry from job counts and phase measurements.
 - **Direct reports.** The desktop *Improve this screen* action's *Just flag it* choice appends to `~/.ashlr/router/feedback.jsonl` (see the router README's desktop friction queue); Mason naming a repeated annoyance in chat is the same class of evidence.
 - **Hard-limit escalations.** Passwords, 2FA, device approvals, payments and outside sends are the four kept human steps. Each recurring *kind* of escalation is a signal to make the safe path easier, never to remove the limit.
 - **Red-main streaks and silent red tests.** A main branch that is red, or a check that has been failing so long nobody reads it, is delegation breaking on verification.

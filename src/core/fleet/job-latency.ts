@@ -1,3 +1,5 @@
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
+
 const jobPhases = [
   ['queue_wait', 'queued', 'launch', 'Measure admission delays and remove the largest queue bottleneck.'],
   ['checkout', 'launch', 'checkout_complete', 'Profile checkout and reuse safe local worktree preparation.'],
@@ -136,6 +138,9 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
       row = value as Record<string, unknown>;
     } catch { ignored++; continue; }
     const id = row.job ?? row.job_id ?? row.jobId ?? row.id;
+    // Batch members carry their own boundaries. Session telemetry is outside
+    // the job population and does not count as malformed evidence.
+    if (isNodePoolLedgerRow(row) || (typeof id === 'string' && id.startsWith('RQ-BATCH-'))) continue;
     const event = boundaryEvent(row);
     if (event === 'git_operation') {
       if (phases === jobPhases) {
