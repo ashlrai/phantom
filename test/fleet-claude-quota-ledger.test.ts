@@ -80,6 +80,22 @@ describe('claude native quota in the resource ledger', () => {
       expect(lane.source).toBe('claude-native-usage');
     }
   });
+  it.each(['2026-11-02T11:59:30Z', '2026-11-02T12:00:00Z'])(
+    'prefers active native usage when a newer dispatcher sample resets at %s',
+    async resetAt => {
+      const root = await setup();
+      await writeFile(join(root, 'queue/status.json'), JSON.stringify({
+        last_tick: '2026-11-02T12:00:00Z', lanes: { claude: { held: true } },
+        budget: { claude: { weekly_used_pct: 100, observed_at: '2026-11-02T11:59:00Z', reset_at: resetAt, source: 'dispatcher' } },
+      }));
+      await put(root, reading());
+      const { lane } = await claudeLane(root);
+      expect(lane).toMatchObject({
+        usedPct: 61, resetAt: '2026-11-07T16:02:00Z', held: true, source: 'claude-native-usage',
+        quotaEvidence: { state: 'observed-headroom', statusQuota: { usedPct: 100, resetAt } },
+      });
+    },
+  );
   it('keeps the active weekly reading and omits only model scopes whose reset has arrived', async () => {
     const root = await setup();
     await put(root, reading({ windows: [

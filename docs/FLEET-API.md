@@ -133,9 +133,11 @@ receipt proves coordination, not job execution.
 | POST | `/api/verse/leader/actions/` (APPROVE_PATH_RE) + {actionId} + /approve | none | [ApproveLeaderActionResult](../src/core/vision/leader-thread-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:7777/api/verse/leader/actions/example-action/approve'` |
 
 The Leader resource ledger keeps the Claude dispatcher quota when its recorded
-capture time is later than the usable native weekly reading and no later than
-report time. Native usage wins ties and takes precedence over dispatcher values
-with unknown capture times. The controller tick is independent of quota capture.
+capture time is later than the usable native weekly reading, no later than
+report time, and any recorded weekly reset is still in the future. Native usage
+wins ties and takes precedence over dispatcher values with unknown capture
+times or a reset at or before report time. The controller tick is independent
+of quota capture.
 
 Computed route constants: `VERSE_FLEET_CONTROL_QUEUE_PATH` defines
 `/api/verse/fleet/control/queue`; `VERSE_FLEET_CONTROL_RUNS_PREFIX` defines the

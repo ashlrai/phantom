@@ -16,7 +16,7 @@ export interface ResourceLaneRow {
   usedPct: number | null; creditsRemaining: number | null; resetAt: string | null;
   /** Set when `creditsRemaining` is a gift credit in US dollars (status `budget.<lane>.gift` or `.pools.gift`). */
   creditUnit?: 'usd';
-  /** Gift credit only: when the balance was last read (null when never dated) and whether the lane's grant is closed. */
+  /** For gift credit, the last balance reading time (null when never dated) and whether the lane's grant is closed. */
   creditAsOf?: string | null;
   creditClosed?: boolean;
   burnPctPerHour: number | null; tokensPerHour6h: number | null; projectedExhaustion: string | null;
@@ -245,12 +245,12 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
       lane.observation = { source: 'codex-personal-sessions', asOf: personal.observedAt! };
     }
   }
-  // Prefer native Claude usage over an unmeasured status value. A newer
-  // timestamped status quota wins, independent of the controller tick.
+  // A newer dispatcher capture wins only while its weekly window is current.
   const claude = usableClaudeWeekly(await readClaudeQuotaReading(root), now);
   const claudeStatus = statusMeasurements.get('claude');
   const claudeStatusAt = Date.parse(claudeStatus?.observedAt ?? '');
-  const newerClaudeStatus = claude && claudeStatus?.usedPct != null && claudeStatus.usedPct >= 0 &&
+  const newerClaudeStatus = claude && claudeStatus?.usedPct != null &&
+    (claudeStatus.resetAt === null || Date.parse(claudeStatus.resetAt) > now) &&
     claudeStatusAt <= now && claudeStatusAt > Date.parse(claude.observedAt);
   if (claude && !newerClaudeStatus) {
     let lane = result.lanes.find(row => row.lane === 'claude');
