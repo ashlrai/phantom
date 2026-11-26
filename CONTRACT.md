@@ -373,6 +373,13 @@ a read-only `resourceCapacity` projection with lane targets, waste by
 allowance deadline, and the proposal. Recording evidence or reading the
 proposal never consumes a reset.
 
+The Antigravity Resource Live row can carry `execution_context` and validated
+quota `groups` with per-bucket 0–1 `remaining` and UTC `reset_at`. Both
+resource JSON commands expose the `antigravity` projection; untrusted or
+unavailable quota has null groups and a reason. Only current, identity-matched
+GUI quota can set an Antigravity plan target to zero with
+`quota_exhausted_until_reset`; this is advisory, not a dispatcher hold.
+
 `postureEvidence(root)` is exported from `src/core/queue/route-explain.ts` for
 the shared bounded journal parser. It preserves receipt `ts` (epoch seconds or
 ISO timestamp) as optional `observedAt`, plus lane `lane`, `account_id`, `model`,
@@ -444,7 +451,10 @@ tallies, `pending` unresolved fired reruns inside 24 hours, and
 `resolutionRate` = pass/(pass+fail) or null when none resolved);
 `readCiRerunStatus(path?)` returns the persisted status or null, whose per-repo
 records gain `recurringFlakes`, `flakeFixesQueued`, `verdictsPending` and
-`verdictsResolved` counts.
+`verdictsResolved` counts. An optional `verdictCursor` records the last
+checked rerun (`at` from the successful call row, `repo`, `head`, and
+`runId`). Polling resumes after that position in timestamp and identity
+order and wraps to the oldest eligible rerun.
 Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
 Resident off-tick ticks launch it only with repositories and an elapsed interval.
 Attempt entries use `test` for a singleton or `tests` for multiple eligible
@@ -2436,6 +2446,16 @@ report unusable evidence. `phm node route --outcomes-ledger [--runs-dir <dir>]`
 merges these tallies under any explicit `--outcomes` file (file wins per
 provider) and reports `outcomes_ledger` state in its JSON plan. See
 [measured capacity and routing](docs/NODE-ROUTER.md#measured-capacity-and-node-provider-model-routing).
+
+## Router calibration
+
+`src/core/routing/calibration.ts` returns schema-version-1 calibration reports.
+Each `CalibrationArm` includes `observedMergeRate: number | null`, the number
+of recorded positive merge outcomes divided by `resolved`. The field is null
+when the arm has no resolved outcomes. `mergeRate` and `brier` use the
+prediction-paired population. Baseline comparisons expose
+`delta.observedMergeRate` as current minus baseline, or null when either
+rate is unavailable.
 
 ## Router queue generation
 

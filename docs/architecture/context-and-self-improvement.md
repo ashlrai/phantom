@@ -125,18 +125,25 @@ with a randomized holdout, not with hit counts:
 * When the task's PR merges or closes, the cloud tracker records the exact
   head and merge commit, the CI rollup on that head and the review verdict
   (`CloudTaskV1.outcome`). A failed read leaves it absent, which is unknown,
-  never green.
+  never green. A task superseded by a fleet App PR records the fleet PR's
+  verdict the same way — that PR is the one that landed.
 * `phm improve observe --repo <dir>` also checks merged cloud tasks for a
-  later default-branch revert and records it (`outcome.revertedBy`).
+  later default-branch revert and records it (`outcome.revertedBy`); for a
+  superseded task the revert is matched against the fleet PR number.
 * Post-merge observation does not only wait for that verb:
   `syncCloudOutcomeObservations` (the cloud scheduler's improve tick and
   `phm improve sync-backlog`) appends `observed` events to the outcome
   ledger from checkout-free evidence — a merged task's recorded
-  `outcome.mergeSha`/`revertedBy` and the newest record per PR in
-  `improve/revert-outcomes.jsonl` (the git-verified `phm fleet reverts
-  --record` journal, whose `relandedBy` is positive re-land evidence). A
-  standing revert clears only on re-land evidence; an unreadable revert
-  journal contributes nothing rather than a stale prefix.
+  `outcome.mergeSha`/`revertedBy`, the fleet merge-state landing record for
+  a superseded task's intake proposal (the merge machinery's own merge SHA,
+  covering landings whose tracker read failed or predates it), and the
+  newest record per PR in `improve/revert-outcomes.jsonl` (the
+  git-verified `phm fleet reverts --record` journal, whose `relandedBy` is
+  positive re-land evidence). Evidence keys on the carrier PR: a proposal
+  whose ledger `pr` event still names the closed cloud PR is re-pointed at
+  the fleet PR that superseded it. A standing revert clears only on re-land
+  evidence; an unreadable revert journal contributes nothing rather than a
+  stale prefix.
 * Cloud retros cite that evidence: a PR closed with failing checks becomes a
   lesson candidate naming the checks and `owner/repo#n @sha`; a review that
   asked for changes or a revert is cited as the cause. Candidates still need
