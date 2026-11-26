@@ -10,6 +10,8 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 /** Only the end of the event log is read: it grows without bound. About 50,000 lines. */
 const EVENTS_TAIL_BYTES = 4 * 1024 * 1024;
 const READY_MAX_BYTES = 8 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 export interface StuckJobsRead extends StuckJobsReport {
   /** State of each file read. A ready list that is not healthy leaves lanes to the refusing lane or unknown. */
@@ -25,7 +27,7 @@ export async function readStuckJobs(paths: StuckJobsPaths = {}, now = Date.now()
   const [events, ready, router] = await Promise.all([
     readSource(paths.events ?? await defaultDispatchEventsPath(runs), EVENTS_TAIL_BYTES, true),
     readSource(readyPath, READY_MAX_BYTES, false),
-    readSource(join(dirname(readyPath), 'router-queue.md'), READY_MAX_BYTES, false),
+    readSource(join(dirname(readyPath), 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
   ]);
   const sources = { events: events.state, ready: ready.state };
   if (events.state !== 'healthy') return { schema: 'fleet.stuck.v1', count: null, oldestAgeSeconds: null, jobs: [], sources };

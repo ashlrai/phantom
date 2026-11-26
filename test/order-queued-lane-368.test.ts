@@ -20,7 +20,7 @@ import { cmdFleetOrderState } from '../src/cli/fleet-order-state.js';
 import { heldLaneBlocker } from '../src/core/fleet/order-lane-blocker.js';
 import { classifyOrder } from '../src/core/fleet/order-work-state.js';
 import { readOrderTrace } from '../src/core/fleet/order-trace.js';
-import { queuedLanesFromText } from '../src/core/fleet/order-queued-lanes.js';
+import { queuedLanesFromText, readQueuedLanes } from '../src/core/fleet/order-queued-lanes.js';
 import { readLaneTargets } from '../src/core/fleet/runs-lane-targets.js';
 import { listLiveWorkers } from '../src/core/fleet/runs-live-workers.js';
 
@@ -168,6 +168,22 @@ describe('queued jobs carry their routed lane through the real order trace', () 
       expect(text).toContain(`blocked-on=lane ${HELD_LANE} held until ${HELD_UNTIL}`);
       expect(text).not.toContain('fake-account');
       expect(text).not.toContain('fake-operator');
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('f: readQueuedLanes resolves envelopes when router-queue.md outgrows the old read bound', async () => {
+    const { parent, root } = await makeRoot({ ready: null });
+    try {
+      await writeFile(join(root, 'queue', 'ready.tsv'),
+        `${JOB_A}\tphantom\t${HELD_LANE}\twork\t${join(root, 'queue', 'prompts', `${JOB_A}.md`)}\n`);
+      const pad = `# ${'y'.repeat(1024)}\n`.repeat(2200);
+      await writeFile(join(root, 'queue', 'router-queue.md'), pad +
+        `- READY phantom ${JOB_A} (preferred_lane=claude): hinted work\n`);
+      const lanes = await readQueuedLanes(root);
+      expect(lanes.state).toBe('healthy');
+      expect(lanes.lanes.get(JOB_A)).toBe('claude');
     } finally {
       await rm(parent, { recursive: true, force: true });
     }

@@ -85,6 +85,26 @@ describe('readLaunchStallFacts', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+  it('resolves envelopes when router-queue.md outgrows the old read bound', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'launch-stall-deep-'));
+    try {
+      mkdirSync(join(dir, 'queue'));
+      writeFileSync(join(dir, 'queue', 'status.json'),
+        '{"lanes":{"claude":{"running":0,"target":4,"queued":1,"held":false},"codex-local":{"running":0,"target":4,"queued":0,"held":false}}}');
+      writeFileSync(join(dir, 'queue', 'ready.tsv'), 'RQ-ENV-DEEP\tphantom\tcodex-local\twork\t/abs/deep.md\n');
+      // router-queue.md is append-mostly history; past the old 8 MiB window
+      // the market still resolves the envelope, so this reader must too.
+      const pad = `# ${'y'.repeat(1024)}\n`.repeat(8400);
+      writeFileSync(join(dir, 'queue', 'router-queue.md'), pad +
+        '- READY phantom RQ-ENV-DEEP (preferred_lane=claude): hinted work\n');
+      const facts = await readLaunchStallFacts(dir);
+      const by = Object.fromEntries(facts.map(f => [f.lane, f]));
+      expect(by['claude']!.headLines).toEqual([{ id: 'RQ-ENV-DEEP' }]);
+      expect(by['codex-local']!.headLines).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it('returns no lanes for an empty runs dir', async () => {
     expect(await readLaunchStallFacts(join(import.meta.dirname, 'fixtures', 'launch-stall', 'nope'))).toEqual([]);
   });

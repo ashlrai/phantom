@@ -147,6 +147,19 @@ it('counts lane-open ready rows as open supply, never a lane depth', async () =>
   expect(out).toContain('open  ready 2  lane-open, any capable lane may claim  top: ashlrai/phantom 50%, ashlrai/stack 50%');
 });
 
+it('resolves spec-less envelopes when router-queue.md outgrows the old read bound', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), 'RQ-OPEN-DEEP\tashlrai/phantom\tcodex\twork\tprompts/deep.md\n');
+  const pad = `# ${'y'.repeat(1024)}\n`.repeat(4300);
+  await writeFile(join(queueDir, 'router-queue.md'), pad +
+    '- READY phantom RQ-OPEN-DEEP (preferred_lane=claude): hinted work\n');
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  expect(await cmdFleetQueueShape(['--queue-dir', queueDir, '--json'])).toBe(0);
+  const report = JSON.parse(String(log.mock.calls.at(-1)![0]));
+  expect(report.lanes).toEqual([
+    expect.objectContaining({ lane: 'claude', ready: 1 }),
+  ]);
+});
+
 it('never calls a queue holding only lane-open rows empty', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), 'RQ-OPEN-1\tashlrai/phantom\t\twork\tprompts/b.md\n');
   const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);

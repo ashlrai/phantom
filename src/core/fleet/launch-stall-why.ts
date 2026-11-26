@@ -14,6 +14,8 @@ export const FLEET_LAUNCH_STALL_SCHEMA = 'fleet.launch-stall.v1';
 export const STALL_AFTER_MS = 20 * 60_000;
 const HEAD_LINES = 3;
 const MAX_BYTES = 8 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 export interface LaunchStallFacts {
   lane: string;
@@ -94,10 +96,10 @@ export function explainLaunchStall(facts: LaunchStallFacts, now: Date | number):
   return { lane, stalled, reasons, firstAction: action };
 }
 
-async function readText(path: string): Promise<string | null> {
+async function readText(path: string, maxBytes = MAX_BYTES): Promise<string | null> {
   try {
     const info = await stat(path);
-    if (!info.isFile() || info.size > MAX_BYTES) return null;
+    if (!info.isFile() || info.size > maxBytes) return null;
     return await readFile(path, 'utf8');
   } catch { return null; }
 }
@@ -126,7 +128,7 @@ export async function readLaunchStallFacts(runsDir = process.env.ASHLR_RUNS_DIR 
   const queue = join(runsDir, 'queue');
   const [status, resources, ready, routerQueue, ledger, launchLog] = await Promise.all([
     readText(join(queue, 'status.json')), readText(join(queue, 'resources.json')),
-    readText(join(queue, 'ready.tsv')), readText(join(queue, 'router-queue.md')),
+    readText(join(queue, 'ready.tsv')), readText(join(queue, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES),
     readText(join(queue, 'jobs.jsonl')),
     readText(join(runsDir, 'metrics', 'jobs.jsonl')),
   ]);

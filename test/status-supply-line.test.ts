@@ -80,6 +80,16 @@ describe('status supply projection', () => {
     ]);
   });
 
+  it('resolves envelopes when router-queue.md outgrows the old read bound', async () => {
+    const dir = tempDir(); mkdirSync(join(dir, 'queue'));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), 'RQ-PHX-DEEP\tphantom\tcodex-local\twork\t/abs/deep.md\n');
+    const pad = `# ${'y'.repeat(1024)}\n`.repeat(2200);
+    writeFileSync(join(dir, 'queue', 'router-queue.md'), pad +
+      '- READY phantom RQ-PHX-DEEP (preferred_lane=claude): hinted work\n');
+    const result = await readStatusSupply(dir, () => new Date(at));
+    expect(result.lanes).toEqual([{ lane: 'claude', phxReady: 1, fillerReady: 0 }]);
+  });
+
   it('reads queue and failure streak timestamps from the existing readers', async () => {
     const dir = tempDir(); mkdirSync(join(dir, 'queue'));
     writeFileSync(join(dir, 'queue', 'ready.tsv'), 'READY\tRQ-PHX-ONE\tdevin\nREADY\tFILL\tdevin\n');
