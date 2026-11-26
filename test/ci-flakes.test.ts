@@ -77,6 +77,22 @@ describe('recurringFlakes', () => {
     expect(recurringFlakes([fresh, boundary, third], { nowMs: NOW })).toHaveLength(1);
   });
 
+  it('counts attempts and verdicts only once their recorded time is reached', () => {
+    const at = new Date(NOW + 1).toISOString();
+    const rows = [
+      attempt({ head: HEADS[0] }),
+      attempt({ head: HEADS[1] }),
+      attempt({ head: HEADS[2], at }),
+      verdict({ verdict: 'fail', at }),
+    ];
+    expect(recurringFlakes(rows, { nowMs: NOW })).toEqual([]);
+    expect(recurringFlakes(rows, { nowMs: NOW, minHeads: 2 })[0]?.verdicts.fail).toBe(0);
+    expect(recurringFlakes(rows, { nowMs: NOW + 1 })[0]).toMatchObject({
+      attempts: 3,
+      verdicts: { fail: 1 },
+    });
+  });
+
   it('honors custom window and threshold bounds', () => {
     const rows = [attempt({ head: HEADS[0] }), attempt({ head: HEADS[1] }), attempt({ head: HEADS[2] })];
     expect(recurringFlakes(rows, { nowMs: NOW, minHeads: 4 })).toEqual([]);

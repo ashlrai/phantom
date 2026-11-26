@@ -142,6 +142,20 @@ describe('ciRerunBacklogItems', () => {
     expect(clean).toEqual([]);
   });
 
+  it('waits for future-dated verdicts and call failures to enter the window', async () => {
+    const journalPath = writeJournal([
+      ...rerun(REPO, TEST_A, sha(1), 11, 'fail', 1),
+      ...rerun(REPO, TEST_A, sha(2), 12, 'fail', 2),
+      ...rerun(REPO, TEST_A, sha(3), 13, 'fail', -1),
+      ...Array.from({ length: 4 }, (_, i): Row => ({
+        at: daysAgo(-1), repo: REPO, head: sha(40 + i), runId: 40 + i, pr: 40 + i, outcome: 'failed',
+      })),
+    ]);
+    expect(await ciRerunBacklogItems({ repo: REPO, journalPath, now: NOW })).toEqual([]);
+    const items = await ciRerunBacklogItems({ repo: REPO, journalPath, now: new Date(daysAgo(-1)) });
+    expect(items.map(({ id }) => id.slice(0, -17)).sort()).toEqual(['ci-rerun-calls', 'ci-rerun-verdict']);
+  });
+
   it('ignores verdict rows without a test id and rows for other repositories', async () => {
     const untaged: Row[] = [
       { at: daysAgo(1), repo: REPO, head: sha(31), runId: 31, pr: 31, outcome: 'verdict', verdict: 'fail' },

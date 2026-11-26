@@ -621,6 +621,9 @@ most three attempts per test) — a fix that did not hold becomes fresh work
 instead of a permanently deduplicated row. The window keeps the signal honest — a fixed
 flake stops producing attempts and ages out instead of being re-queued on stale
 evidence, and journal rows written before the test field existed never count.
+Both stabilization and `phm improve discover` use a seven-day recurrence
+window that ends at the evaluation time. Future-dated rows contribute only
+once their recorded time falls inside that window.
 The repository, head SHA and run ID prevent repeated attempts even after a
 crash or failed call; a new head is eligible. Reads tolerate malformed rows and
 are bounded to the last 4 MiB, so deduplication, counts and recurrence cover
