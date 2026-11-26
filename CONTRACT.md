@@ -2490,7 +2490,10 @@ only the local jobs ledger. Per-job phase totals and job counts exclude
 `RQ-BATCH-*` session wrappers and node-pool telemetry
 (`fleet.session-pool.v1` and `phm-node-runner.v1`). Batch member rows
 still contribute their own recorded boundaries. Excluded rows do not
-count as ignored events. A phase is unmeasured when a recorded launch falls
+count as ignored events. Merge and close verdicts across
+`outcome|state|status|phase|result|conclusion` take precedence over a publish
+claim, even when that claim is carried in an earlier field. A phase is
+unmeasured when a recorded launch falls
 after its start and at or before its end, or when a launch has no usable
 timestamp. A phase that ends at launch instead requires a unique, dated
 launch boundary. This keeps retries that reuse a job ID from
