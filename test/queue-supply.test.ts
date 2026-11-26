@@ -46,6 +46,22 @@ describe('buildQueueSupply', () => {
       verdict: 'Claude: 12 jobs queued, about 4 hours of work, 60% left' });
   });
 
+  it('sizes sparse queues using the full launch rate', () => {
+    const data = supply([lane('claude')], { claude: 1 }, { claude: 1 });
+    expect(row(data, 'claude')).toMatchObject({ starts_per_hour: 0.2, hours_queued: 6 });
+  });
+
+  it('flags at-risk supply just below an hour even when the displayed duration rounds to one hour', () => {
+    const pools = [lane('claude', { usedPct: 72, resetAt: at(31), burnPctPerHour: 0.3 })];
+    const below = supply(pools, { claude: 10 }, { claude: 61 });
+    expect(row(below, 'claude')).toMatchObject({ hours_queued: 1, state: 'low', supply_low: true });
+    expect(supplyLowLine(below)).toContain('supply_low: Claude');
+
+    const exact = supply(pools, { claude: 10 }, { claude: 60 });
+    expect(row(exact, 'claude')).toMatchObject({ hours_queued: 1, state: 'healthy', supply_low: false });
+    expect(supplyLowLine(exact)).toBeNull();
+  });
+
   it('unknown usage stays unknown and is never read as zero or as full', () => {
     const data = supply([lane('zai', { usedPct: null })], { zai: 3 }, { zai: 6 });
     expect(row(data, 'zai')).toMatchObject({ state: 'unknown', used_pct: null, left_pct: null, idle_hours: null, supply_low: false, ready: 3 });

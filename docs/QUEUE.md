@@ -1158,7 +1158,9 @@ ready queue and the dispatch events. A figure that cannot be read is `null` and 
 are counted by the lane on their queue row, so a job not yet placed on a lane is not counted.
 
 The hourly digest adds a `supply_low` line, naming the pool, when a pool that is behind (or has waste risk high or
-medium) has under an hour of work queued.
+medium) has under an hour of work queued. The calculation uses the full launch rate, and the alert compares the
+unrounded duration against one hour. JSON rounds both figures to one decimal place, so `hours_queued` can display
+as `1` alongside `supply_low: true` just below the threshold.
 
 ## Which producer earns its slots?
 
