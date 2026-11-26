@@ -406,6 +406,34 @@ describe('trajectory join quality', () => {
     }
   });
 
+  it('withholds future post-merge observations from join coverage', () => {
+    const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
+    const result = listTrajectoryJoinQuality({
+      windowHours: 24 * 30,
+      deps: {
+        readDispatchProductionEventsDetailed: () => dispatchRead(),
+        listOutcomeRecordsDetailed: () => ({
+          ...outcomes,
+          records: outcomes.records.map((record) => ({
+            ...record,
+            postMergeObservations: record.postMergeObservations?.map((observation) => ({
+              ...observation,
+              observedAt: new Date(Date.parse(NOW) + 1).toISOString(),
+            })),
+          })),
+        }),
+        readAgentActionsDetailed: () => actionRead(),
+      },
+    });
+
+    expect(result.edges.realizedMergeToPostMerge).toMatchObject({
+      denominator: 1,
+      joined: 0,
+      unjoined: 1,
+      conflicting: 0,
+    });
+  });
+
   it('excludes historical outcomes from join indices and every outcome edge denominator', () => {
     const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
     const current = outcomes.records[0];
