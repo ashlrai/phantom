@@ -1304,6 +1304,31 @@
  *     ladder — so seat evidence that stayed broken, or routing
  *     requests that kept finding no eligible seat, on the paths nobody
  *     routes by never became work;
+ *   - the work market's expiring-capacity re-hint receipts: the
+ *     `queue_reroute` rows routeExpiringCapacity (the Leader's board
+ *     hook driving src/core/fleet/resource-queue-route.ts) appends to
+ *     metrics/work-market.jsonl for every READY row it moves toward an
+ *     under-target included lane ahead of that lane's quota deadline —
+ *     each row recording the job id, the preferred_lane hint it left,
+ *     the target lane, the quota deadline, the lane's running/target
+ *     counts and the resource_plan_under_target plus expiring_* reason
+ *     codes (queueRerouteBacklogItems below). Until now the event had
+ *     no reader at all — the sibling market folds cover route_decision,
+ *     unfed_capacity, repo_share and posture, and docs/QUEUE.md records
+ *     that these receipts are not claim or route-decision events — so
+ *     a job the Leader kept re-hinting tick after tick churned the
+ *     shared queue's lane column with no trace anywhere, and re-hinted
+ *     work that then closed unmerged or was reverted looked like
+ *     ordinary fleet outcomes. The fold joins the reward substrate's
+ *     own verdicts (foldRewardSignals over
+ *     <ashlr>/metrics/reward-signals.jsonl) so outcome cells count only
+ *     resolved merged:false resolutions; a per-job churn cell emits at
+ *     three receipts across two distinct UTC days and a per-target-lane
+ *     not-held cell at three distinct resolved-not-held jobs across two
+ *     days, truncated tails are stated as lower bounds, items emit only
+ *     for the fleet's own repository since the receipts carry no repo
+ *     column, and the prompts frame the join as association, not
+ *     causation;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1432,6 +1457,7 @@ import { fleetGapBacklogItems } from './fleet-gap-backlog.js';
 import { needsYouAutoBacklogItems } from './needs-you-auto-backlog.js';
 import { commsRequestsBacklogItems } from './comms-requests-backlog.js';
 import { seatShadowEvidenceBacklogItems } from './seat-shadow-evidence-backlog.js';
+import { queueRerouteBacklogItems } from './queue-reroute-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2958,20 +2984,32 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   items.push(...await outsidePrBacklogItems());
 
   // Work-market share journal: the same journal's change-triggered
-  // `repo_share` rows — the last unfolded work-market.v1 event — folded
-  // per (repo, code) cell for the three adverse repo-freshness verdict
-  // codes only: docs_freshness_drift, site_freshness_unhealthy and
-  // site_freshness_stale, each recording that a repo's weekly
-  // freshness job reported drift/unhealthy/stale and the market kept
-  // weighting its share up while nothing queued the investigation.
-  // Until now the rows' only reader was `phm repos`' allocation
-  // display, a report someone had to run. Same bounded tail read the
-  // sibling market feeds use; a cell emits only at the recurring bars
-  // of recorded share rows across distinct UTC days, designed and
-  // owner-state codes never emit, truncated tails are stated as lower
-  // bounds, and items self-target the repository the verdict belongs
-  // to — the fix lands where the drift lives.
+  // `repo_share` rows folded per (repo, code) cell for the three adverse
+  // repo-freshness verdict codes only: docs_freshness_drift,
+  // site_freshness_unhealthy and site_freshness_stale, each recording
+  // that a repo's weekly freshness job reported drift/unhealthy/stale
+  // and the market kept weighting its share up while nothing queued the
+  // investigation. Until now the rows' only reader was `phm repos`'
+  // allocation display, a report someone had to run. Same bounded tail
+  // read the sibling market feeds use; a cell emits only at the
+  // recurring bars of recorded share rows across distinct UTC days,
+  // designed and owner-state codes never emit, truncated tails are
+  // stated as lower bounds, and items self-target the repository the
+  // verdict belongs to — the fix lands where the drift lives.
   items.push(...await repoShareBacklogItems());
+
+  // Work-market reroute journal: the same journal's `queue_reroute`
+  // receipts — routeExpiringCapacity's READY-row re-hints toward
+  // under-target included lanes — folded per job for churn (a job
+  // re-hinted across days) and per target lane joined to the reward
+  // ledger's resolved verdicts (rerouted work that then did not hold).
+  // Until now the event had no reader: the docs note these receipts are
+  // not claim or route-decision events, so every sibling market fold
+  // skipped them. Same bounded tail read the sibling feeds use; cells
+  // emit only at the recurring bars across distinct UTC days, truncated
+  // tails are stated as lower bounds, and items emit only for the
+  // fleet's own repository since the receipts carry no repo column.
+  items.push(...await queueRerouteBacklogItems({ repo }));
 
   // Reasoning-insight digest: the per-(kind, repo, engine, signature)
   // insight clusters DigestBuilder folds the reasoning store's
