@@ -73,6 +73,34 @@ const state = (patch: Partial<FleetAutopilotState> = {}): FleetAutopilotState =>
 // ---------------------------------------------------------------------------
 
 describe('planFleetAutopilot', () => {
+  it.each([
+    { workers: 1, cap: 10, target: 3, freeSlots: 1, restock: 1 },
+    { workers: 0, cap: 10, target: 2, freeSlots: 0, restock: null },
+    { workers: 8, cap: 10, target: 5, freeSlots: 3, restock: 3 },
+    { workers: 8, cap: 3, target: 5, freeSlots: 3, restock: 1 },
+    { workers: null, cap: 10, target: 5, freeSlots: 3, restock: 3 },
+  ])('bounds local restock with $workers additional workers and fleet cap $cap', ({ workers, cap, target, freeSlots, restock }) => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('codex-local', 2, 6, 0)], cap, 2),
+      slots: slotsView([slotLane('codex-local', 5)]),
+      localWorkers: workers,
+    }));
+    expect(report.lanes).toMatchObject([{ lane: 'codex-local', running: 2, target, freeSlots }]);
+    if (restock === null) expect(report.action).toMatchObject({ kind: 'no-op' });
+    else expect(report.action).toMatchObject({ kind: 'enqueue', type: 'restock', lane: 'codex-local', count: restock });
+  });
+
+  it('keeps local running and headroom unknown when only configuration and memory are available', () => {
+    const report = planFleetAutopilot(state({
+      admission: null,
+      sources: { status: 'degraded', queue: 'healthy', slots: 'healthy', rebase: 'unconfigured' },
+      slots: slotsView([slotLane('codex-local', 5)]),
+      localWorkers: 1,
+    }));
+    expect(report.lanes).toMatchObject([{ lane: 'codex-local', target: 5, running: null, freeSlots: null }]);
+    expect(report.action).toMatchObject({ kind: 'no-op' });
+  });
+
   it('reports fleet-healthy when every lane is at target', () => {
     const report = planFleetAutopilot(state({
       admission: admission([admissionLane('devin', 2, 2, 3), admissionLane('codex-local', 1, 1, 0)]),

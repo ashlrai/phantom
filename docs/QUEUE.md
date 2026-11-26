@@ -346,6 +346,10 @@ For utilization, starvation and restock, autopilot uses the lower of the
 configured lane target and the last fresh tick's launch target (which includes
 any controller shed). A target decrease can suppress a recommendation before
 the next tick. A higher target needs dispatcher confirmation.
+For `codex-local`, measured free memory bounds additional starts. Autopilot
+adds the workers that fit in free memory to the dispatcher’s running count
+before applying that bound to the lane target. If either count is unknown,
+autopilot uses the available dispatcher and configuration evidence alone.
 
 Autopilot reports empty ready queues against lane-local headroom. A restock
 proposal is limited to the smaller of that headroom and the remaining shared

@@ -62,6 +62,7 @@ export interface FleetAutopilotState {
   queue: FleetQueueV1 | null;
   slots: LaneTargetsV1 | null;
   /** Local workers memory allows right now (phm local capacity); null/absent when unknown, which leaves the lane target alone. */
+  /** Additional local workers that fit in currently free memory. */
   localWorkers?: number | null;
   /** Null when no --repo was passed. */
   rebase: AutopilotRebaseRepo[] | null;
@@ -72,7 +73,7 @@ export interface AutopilotReadDeps {
   statusText?: (path: string) => Promise<string>;
   queue?: (opts: { runsDir: string; depDetail: boolean }) => Promise<FleetQueueV1>;
   slots?: (opts: { runsDir: string }) => Promise<LaneTargetsV1>;
-  /** Local workers that fit in free memory; when given, it is the codex-local lane's ceiling. */
+  /** Additional local workers that fit in free memory. */
   localWorkers?: () => Promise<number | null>;
   rebase?: typeof readRebaseStatus;
   now?: () => Date;
@@ -230,7 +231,11 @@ export function autopilotLanes(state: FleetAutopilotState): AutopilotLane[] {
     // Config decreases tighten the projection immediately. Increases need
     // a dispatcher tick that confirms the higher launch ceiling.
     const rawTarget = admit === null ? slot?.target ?? null : laneLaunchTarget(admit.target, slot?.target);
-    const target = lane === LOCAL_LANE ? clampLocalTarget(rawTarget, { workers: state.localWorkers ?? null }) : rawTarget;
+    // Free memory measures room for new workers. Running workers already
+    // occupy memory, so include them when deriving a total lane target.
+    const memoryTarget = lane === LOCAL_LANE && running !== null && state.localWorkers != null
+      ? running + state.localWorkers : null;
+    const target = clampLocalTarget(rawTarget, { workers: memoryTarget });
     // A configured hold can arrive before the next dispatcher tick. The
     // tick can also observe runtime holds absent from slots.json.
     const held = admit?.held === true || slot?.held === true || (admit === null && slot?.heldReason != null);
