@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { cmdFleet } from '../src/cli/fleet-entry.js';
-import queue from '../src/cli/security-repin-queue.json' with { type: 'json' };
+import { securityRepinQueue as queue } from '../src/cli/security-repin-queue.js';
 
 describe('fleet re-pin queue', () => {
   it('reads the bundled snapshot through the executable fleet dispatcher', async () => {

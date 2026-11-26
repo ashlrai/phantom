@@ -1,4 +1,4 @@
-{
+export const securityRepinQueue = {
   "schema": "fleet.repin-queue.v1",
   "snapshotCommit": "8d7262ec38e55a67537e0ae3bc1940860f8bc9d2",
   "entries": [
@@ -362,4 +362,4 @@
       "mergeCommit": "8bad169e75984d3b9fd2c32a9ab0e9a371f4e269"
     }
   ]
-}
+};
