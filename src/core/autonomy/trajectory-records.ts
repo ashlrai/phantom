@@ -71,6 +71,11 @@ const MAX_TRACE_EVENTS = 8;
 export const MIN_SKILL_OBSERVED_TRAJECTORIES = 3;
 const MAX_SKILL_OUTCOME_ROWS = 64;
 
+/** Budget for daily UTC journals, including boundary days and one day of clock skew. */
+export function trajectoryJournalFileBudget(windowHours: number): number {
+  return Math.min(31, Math.ceil(windowHours / 24) + 2);
+}
+
 export type TrajectoryTimelineKind = 'dispatch' | 'proposal' | 'evidence' | 'decision' | 'post-merge' | 'agent-action';
 export type TrajectoryTerminalOutcome =
   | 'merged'
@@ -1239,12 +1244,13 @@ function listTrajectoryRecordsAt(
   const windowHours = opts?.windowHours && opts.windowHours > 0 ? opts.windowHours : DEFAULT_WINDOW_HOURS;
   const limit = opts?.limit && opts.limit > 0 ? Math.floor(opts.limit) : DEFAULT_LIMIT;
   const sinceMs = asOfMs - windowHours * 60 * 60 * 1000;
+  const maxFiles = trajectoryJournalFileBudget(windowHours);
   const deps = opts?.deps ?? {};
 
   const dispatchReadOptions = {
     sinceMs,
     limit: Math.max(limit * 6, 200),
-    maxFiles: 3,
+    maxFiles,
   };
   let dispatchReadQuality: TrajectoryTraceReadQuality | undefined;
   let dispatchEvents: DispatchProductionEvent[];
@@ -1299,12 +1305,12 @@ function listTrajectoryRecordsAt(
       ? deps.readAgentActions({
         sinceMs,
         limit: Math.max(limit * 4, 200),
-        maxFiles: 3,
+        maxFiles,
       })
       : readAgentActions({
         sinceMs,
         limit: Math.max(limit * 4, 200),
-        maxFiles: 3,
+        maxFiles,
         requireComplete: true,
       });
     actions = Array.isArray(read) ? read : [];
@@ -1325,7 +1331,7 @@ function listTrajectoryRecordsAt(
     (deps.readSkillUseEvents ?? readSkillUseEvents)({
       sinceMs,
       limit: Math.max(limit * 8, 400),
-      maxFiles: 3,
+      maxFiles,
     }),
   );
 
@@ -2006,6 +2012,7 @@ export function listTrajectoryJoinQuality(
     ? Math.min(16, Math.floor(opts.sampleLimit))
     : 8;
   const sinceMs = asOfMs - windowHours * 60 * 60 * 1000;
+  const maxFiles = trajectoryJournalFileBudget(windowHours);
   const deps = opts.deps ?? {};
 
   let dispatchRead: DispatchProductionEventsReadResult;
@@ -2013,7 +2020,7 @@ export function listTrajectoryJoinQuality(
     dispatchRead = (deps.readDispatchProductionEventsDetailed ?? readDispatchProductionEventsDetailed)({
       sinceMs,
       limit: Math.max(limit * 6, 200),
-      maxFiles: 3,
+      maxFiles,
     });
   } catch {
     dispatchRead = failedDispatchJoinRead();
@@ -2033,7 +2040,7 @@ export function listTrajectoryJoinQuality(
     actionRead = (deps.readAgentActionsDetailed ?? readAgentActionsDetailed)({
       sinceMs,
       limit: Math.max(limit * 4, 200),
-      maxFiles: 3,
+      maxFiles,
       inspectionOnly: true,
     });
   } catch {
