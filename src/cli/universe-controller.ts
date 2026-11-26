@@ -1,9 +1,9 @@
-import { isAbsolute, parse as parsePath, resolve } from 'node:path';
 import { readControllerRecoveryDiagnostic } from '../core/universe/controller-recovery-error.js';
 import {
   readUniversePortfolioController, runUniversePortfolioController, requestUniversePortfolioControllerControl, validateUniversePortfolioDefinition,
   type UniverseCampaignDeliveryPlan,
 } from '../core/universe/index.js';
+import { containsControlChars as containsControls, isCanonicalAbsolutePath as canonicalAbsolutePath } from '../core/universe/input-guards.js';
 
 const USAGE = `usage: ashlr universe controller run --manifest <private absolute JSON>
        [--root <absolute private directory>] [--resource-runtime <private absolute JSON>]
@@ -85,18 +85,6 @@ interface Options {
   deliveryPlanPath?: string;
   drainSequence?: number;
   json: boolean;
-}
-
-function containsControls(value: string): boolean {
-  return [...value].some((character) => {
-    const code = character.charCodeAt(0);
-    return code < 32 || (code >= 127 && code <= 159);
-  });
-}
-
-function canonicalAbsolutePath(value: string): boolean {
-  return isAbsolute(value) && resolve(value) === value && parsePath(value).root !== value &&
-    Buffer.byteLength(value, 'utf8') <= 4_096 && !containsControls(value);
 }
 
 function parse(args: string[]): Options {

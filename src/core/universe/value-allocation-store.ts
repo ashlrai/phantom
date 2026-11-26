@@ -1,7 +1,7 @@
 /** Private durable allocation evidence; neither an allocation ID nor a signature is a lease. */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { lstatSync, readdirSync } from 'node:fs';
-import { isAbsolute, join, parse, resolve } from 'node:path';
+import { join } from 'node:path';
 import { loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord,
@@ -11,6 +11,7 @@ import {
   UNIVERSE_ID_RE as ID, UNIVERSE_SHA256_RE as HASH,
 } from './artifacts.js';
 import type { DecisionTraceKeyOptions, DecisionTraceV1 } from './decision-trace.js';
+import { isCanonicalAbsolutePath, snapshotBoundedJson } from './input-guards.js';
 import { verifyValueAllocationReceipt, type ValueAllocationReceiptV1 } from './value-allocation.js';
 
 const DOMAIN = 'ashlr:universe:value-allocation-store:v1\n';
@@ -38,37 +39,13 @@ function exact(value: unknown, required: string[], optional: string[] = []): val
   return isDataObject(value, required, optional, true);
 }
 function rootPath(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= 4096 && isAbsolute(value) && resolve(value) === value && parse(value).root !== value &&
-    ![...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) >= 127 && character.charCodeAt(0) <= 159);
+  return isCanonicalAbsolutePath(value, { maxLength: 4_096 });
 }
 function exists(path: string): boolean {
   try { lstatSync(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
 }
 function snapshot(value: unknown): unknown {
-  let nodes = 0;
-  const copy = (item: unknown, depth: number): unknown => {
-    if (++nodes > 30_000 || depth > 32) throw new Error('Allocation record exceeds bounds');
-    if (item === null || typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item)) return item;
-    if (typeof item === 'string' && Buffer.byteLength(item) <= MAX_RECORD_BYTES) return item;
-    if (!item || typeof item !== 'object') throw new Error('Allocation data invalid');
-    if (Array.isArray(item)) {
-      if (Object.getPrototypeOf(item) !== Array.prototype || item.length > 4096 || Reflect.ownKeys(item).length !== item.length + 1) throw new Error('Allocation array invalid');
-      return Array.from({ length: item.length }, (_, index) => {
-        const descriptor = Object.getOwnPropertyDescriptor(item, index);
-        if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) throw new Error('Allocation data invalid');
-        return copy(descriptor.value, depth + 1);
-      });
-    }
-    if (![Object.prototype, null].includes(Object.getPrototypeOf(item))) throw new Error('Allocation data invalid');
-    const output: Record<string, unknown> = Object.create(null);
-    for (const key of Reflect.ownKeys(item)) {
-      const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
-      if (typeof key !== 'string' || key.length > 256 || !descriptor.enumerable || !('value' in descriptor)) throw new Error('Allocation data invalid');
-      output[key] = copy(descriptor.value, depth + 1);
-    }
-    return output;
-  };
-  const result = copy(value, 0);
+  const result = snapshotBoundedJson(value, { maxStringBytes: MAX_RECORD_BYTES, errorMessage: 'Allocation data invalid' });
   if (Buffer.byteLength(canonical(result)) > MAX_RECORD_BYTES) throw new Error('Allocation record exceeds bounds');
   return result;
 }

@@ -1,6 +1,6 @@
 /** Private hypothesis memory. Supplied outcomes never authorize promotion or execution. */
 import { lstatSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
@@ -8,6 +8,7 @@ import {
   canonical, digest, hasExactDataKeys, inspectPrivateDirectory, isPlainObject,
   isSha256Hex as hash, isUniverseId as id, readArtifactSnapshot,
 } from './artifacts.js';
+import { containsControlChars, isCanonicalAbsolutePath as absolute } from './input-guards.js';
 
 const MAX_BYTES = 256 * 1024;
 const MAX_FILES = 256;
@@ -49,14 +50,9 @@ function array(value: unknown, maximum: number): value is unknown[] {
   return Array.isArray(value) && value.length <= maximum && Reflect.ownKeys(value).length === value.length + 1 &&
     Array.from({ length: value.length }, (_, index) => Object.getOwnPropertyDescriptor(value, index)).every((item) => item && 'value' in item);
 }
-function controls(value: string, allowWhitespace = false): boolean {
-  return [...value].some((character) => {
-    const code = character.charCodeAt(0);
-    return (code < 32 || code >= 127 && code <= 159) && !(allowWhitespace && [9, 10, 13].includes(code));
-  });
-}
 function text(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= 2_000 && !controls(value, true);
+  return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= 2_000 &&
+    !containsControlChars(value, { allowWhitespace: true });
 }
 function filePath(value: unknown): value is string {
   return typeof value === 'string' && value.length <= 240 && /^[A-Za-z0-9_./-]+$/.test(value) && !isAbsolute(value) &&
@@ -69,10 +65,6 @@ function protectedPath(path: string): boolean {
     lower.includes('safety') || /(?:eval|evaluation)[-_]?fixtures?/.test(lower) ||
     parts.includes('fixtures') && parts.some((part) => part.includes('eval')) ||
     name === 'merge.ts' || name === 'fixed-evaluator.ts' || /^(?:h\d+)[.-].*\.test\.[cm]?[jt]sx?$/.test(name);
-}
-function absolute(value: unknown): value is string {
-  return typeof value === 'string' && Buffer.byteLength(value) <= 4_096 && isAbsolute(value) && resolve(value) === value &&
-    parse(value).root !== value && !controls(value);
 }
 function overlaps(left: string, right: string): boolean {
   const nested = relative(left, right);

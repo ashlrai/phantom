@@ -1,15 +1,14 @@
 import { lstatSync } from 'node:fs';
-import { dirname, isAbsolute, join, parse as parsePath, resolve, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
-import { canonical, digest, inspectPrivateDirectory, privateDirectory } from './artifacts.js';
+import { canonical, digest, hasExactDataKeys, inspectPrivateDirectory, isPlainObject, isSha256Hex, isUniverseId, privateDirectory } from './artifacts.js';
+import { containsAsciiControlChars, isCanonicalAbsolutePath } from './input-guards.js';
 
 const MAX_ENTRIES = 256;
 const MAX_BYTES = 4 * 1024 * 1024;
 const MAX_CONTENT_BYTES = 16 * 1024;
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
 export interface DailyMemoryEntry {
   schemaVersion: 1; kind: 'daily'; date: string; id: string; content: string; inputTraceDigest: string;
 }
@@ -30,28 +29,23 @@ export interface FirmMemoryConsolidationInput {
 
 function invalid(): never { throw new Error('Invalid explicit firm memory request'); }
 function object(value: unknown, keys: string[]): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(value)) ||
-      Reflect.ownKeys(value).length !== keys.length || Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-        !keys.includes(key) || !Object.hasOwn(Object.getOwnPropertyDescriptor(value, key)!, 'value'))) invalid();
-  return value as Record<string, unknown>;
+  if (!isPlainObject(value) || !hasExactDataKeys(value, keys)) invalid();
+  return value;
 }
 function day(value: unknown): string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
       !Number.isFinite(Date.parse(`${value}T00:00:00Z`)) || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) invalid();
   return value;
 }
-function id(value: unknown): string { if (typeof value !== 'string' || !ID.test(value)) invalid(); return value; }
-function hash(value: unknown): string { if (typeof value !== 'string' || !HASH.test(value)) invalid(); return value; }
+function id(value: unknown): string { if (!isUniverseId(value)) invalid(); return value; }
+function hash(value: unknown): string { if (!isSha256Hex(value)) invalid(); return value; }
 function content(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value, 'utf8') > MAX_CONTENT_BYTES ||
-      Buffer.from(value, 'utf8').toString('utf8') !== value || [...value].some((character) => {
-        const code = character.charCodeAt(0); return code < 32 && ![9, 10, 13].includes(code) || code === 127;
-      })) invalid();
+      Buffer.from(value, 'utf8').toString('utf8') !== value || containsAsciiControlChars(value, { allowWhitespace: true })) invalid();
   return value;
 }
 function rootPath(value: unknown): string {
-  if (typeof value !== 'string' || !isAbsolute(value) || resolve(value) !== value || parsePath(value).root === value ||
-      Buffer.byteLength(value) > 4_096 || [...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) invalid();
+  if (!isCanonicalAbsolutePath(value, { asciiControlsOnly: true })) invalid();
   return value;
 }
 function sources(value: unknown): FirmMemoryVersion['sourceDailyDigests'] {

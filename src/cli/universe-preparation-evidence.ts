@@ -1,4 +1,4 @@
-import { isAbsolute, parse, resolve } from 'node:path';
+import { containsControlChars, isCanonicalAbsolutePath } from '../core/universe/input-guards.js';
 
 export interface PreparationEvidenceOptions {
   universeId: string;
@@ -9,12 +9,11 @@ export interface PreparationEvidenceOptions {
   json: boolean;
 }
 const id = (value: string | undefined): value is string => typeof value === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value);
-const path = (value: string | undefined): value is string => typeof value === 'string' && isAbsolute(value) && resolve(value) === value && parse(value).root !== value;
 
 /** Closed options are validated before either private-store or file access. */
 export function parsePreparationEvidenceOptions(args: string[], mode: 'calibrate' | 'compare'): PreparationEvidenceOptions {
   if (args.length > 12 || args.some(arg => typeof arg !== 'string' || Buffer.byteLength(arg) > 4096 ||
-    [...arg].some(character => { const code = character.charCodeAt(0); return code < 32 || code >= 127 && code <= 159; }))) throw new Error();
+    containsControlChars(arg))) throw new Error();
   const universeId = args[0];
   if (!id(universeId)) throw new Error();
   let root: string | undefined, sourceDigest: string | undefined, calibration: string | undefined, json = false;
@@ -22,14 +21,14 @@ export function parsePreparationEvidenceOptions(args: string[], mode: 'calibrate
   for (let index = 1; index < args.length; index++) {
     const flag = args[index];
     if (flag === '--root' && root === undefined) {
-      root = args[++index]; if (!path(root)) throw new Error();
+      root = args[++index]; if (!isCanonicalAbsolutePath(root)) throw new Error();
     } else if (flag === '--capture') {
       const value = args[++index]; if (!id(value) || captures.includes(value)) throw new Error();
       captures.push(value);
     } else if (flag === '--expected-source-digest' && mode === 'calibrate' && sourceDigest === undefined) {
       sourceDigest = args[++index]; if (!sourceDigest || !/^[a-f0-9]{64}$/.test(sourceDigest)) throw new Error();
     } else if (flag === '--calibration' && mode === 'compare' && calibration === undefined) {
-      calibration = args[++index]; if (!path(calibration)) throw new Error();
+      calibration = args[++index]; if (!isCanonicalAbsolutePath(calibration)) throw new Error();
     } else if (flag === '--json' && !json) json = true;
     else throw new Error();
   }

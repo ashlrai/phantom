@@ -1,6 +1,8 @@
 import { resolve } from 'node:path';
+import { isUniverseId } from '../core/universe/artifacts.js';
 import { readUniverseGraph, traverseUniverseGraph, type UniverseGraph } from '../core/universe/index.js';
 import { MAX_UNIVERSE_GRAPH_DEPTH } from '../core/universe/graph-query.js';
+import { containsControlChars as containsControls } from '../core/universe/input-guards.js';
 
 const USAGE = `usage: ashlr universe graph <id>
        [--node <node-id>] [--direction ancestors|descendants] [--depth N]
@@ -28,13 +30,6 @@ interface Options {
   help: boolean;
 }
 
-function containsControls(value: string): boolean {
-  return [...value].some((character) => {
-    const code = character.charCodeAt(0);
-    return code < 32 || (code >= 127 && code <= 159);
-  });
-}
-
 function parse(args: string[]): Options {
   const positional: string[] = [];
   const values = new Map<string, string>();
@@ -59,7 +54,7 @@ function parse(args: string[]): Options {
   }
   if (positional.length > 1) throw new UsageError('graph accepts exactly one universe id');
   const id = positional[0];
-  if (id !== undefined && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)) throw new UsageError('Invalid universe id');
+  if (id !== undefined && !isUniverseId(id)) throw new UsageError('Invalid universe id');
   const nodeId = values.get('--node');
   if (nodeId !== undefined && (nodeId.length > 4_096 || nodeId !== nodeId.trim())) throw new UsageError('Invalid graph node id');
   if (nodeId === undefined && (values.has('--direction') || values.has('--depth'))) {
