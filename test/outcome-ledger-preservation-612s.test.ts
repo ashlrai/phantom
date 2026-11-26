@@ -2394,6 +2394,21 @@ describe('router outcome reward-signals join', () => {
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3', 'J4']);
   });
 
+  it('withholds CI timing when an undated boundary could belong to the dated pair', async () => {
+    const rows = [
+      { job: 'J1', event: 'ci_start', ts: '2026-11-01T00:00:00Z' },
+      { job: 'J1', event: 'ci_complete', ts: '2026-11-01T00:05:00Z' },
+      { job: 'J1', event: 'ci_start' },
+    ].map(row => JSON.stringify(row)).join('\n');
+    expect(foldRouterOutcomes(rows).outcomes[0]?.ci_wall_s).toBeNull();
+
+    const result = await readRouterOutcomes({
+      runsDir: runsDir(rows),
+      ashlarDir: rewardLedger([rewardRow('J1', true)]),
+    });
+    expect(result.outcomes[0]).toMatchObject({ merged: true, ci_wall_s: null });
+  });
+
   it('lets api-spend cost evidence win over the reward row, reward cost only as last resort', async () => {
     const root = runsDir('{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
     writeSpend(root, '{"job":"J1","cost_usd":1.5,"ts":"2026-11-01T00:30:00Z"}\n');

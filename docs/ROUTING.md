@@ -1084,7 +1084,9 @@ the same boundaries job-latency's queue_wait phase pairs), mean
 recorded `ci_wall_s` (the job's CI wall seconds from its single
 recorded `ci_start`/`ci_complete` boundary pair. The reward feed reads
 the same boundary events within the rewarded dispatch's window. A missing,
-reversed or repeated pair stays unrecorded, never estimated), mean
+reversed or repeated pair stays unrecorded. An undated CI boundary makes
+the job's timing ambiguous in both readers and prevents the router from
+filling the value from an older reward row), mean
 recorded `publish_wait_s` (the job's publish-station wait from its
 single recorded `finish`/`publish` boundary pair — the same pair
 job-latency's publish_wait phase and visit-sync's publish station
