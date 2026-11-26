@@ -2246,6 +2246,29 @@ describe('router outcome merge-events join', () => {
     expect(result.outcomes[0]?.merge_queue).toBeNull();
   });
 
+  it.each(['{"type":', 'null'])('withholds first-pass success when the merge-events journal contains %s', async (malformed) => {
+    const root = runsDir([
+      { job: 'J1', pr_url: 'https://github.com/ashlrai/phantom/pull/42' },
+      { job: 'J2', pr_url: 'https://github.com/ashlrai/phantom/pull/43' },
+      { job: 'J3', pr_url: 'https://github.com/ashlrai/phantom/pull/44', ci_first_pass: true },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    writeMergeEvents(root, [
+      mergeEvent(43, 'check_observed', { conclusion: 'failure' }),
+      mergeEvent(42, 'checks_passed'),
+      mergeEvent(43, 'checks_passed'),
+      mergeEvent(44, 'checks_passed'),
+    ]);
+    appendFileSync(mergeEventsPath(root), '\n' + malformed + '\n');
+
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ merge_events_state: 'read', merge_events_truncated: false });
+    expect(result.outcomes).toMatchObject([
+      { job_id: 'J1', ci_first_pass: null, merge_queue: { checks_passed: 1 } },
+      { job_id: 'J2', ci_first_pass: false, merge_queue: { check_failures: 1 } },
+      { job_id: 'J3', ci_first_pass: true, merge_queue: { checks_passed: 1 } },
+    ]);
+  });
+
   it('keeps queue evidence without inferring first-pass success from a cut merge-events tail', async () => {
     const root = runsDir([
       '{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}',
