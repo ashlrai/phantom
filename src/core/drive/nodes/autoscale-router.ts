@@ -180,7 +180,7 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
         const fp = own ?? fleet[cost.harness];
         if (!fp) { reject('footprint-unmeasured'); continue; }
         if (fp.mem_bytes_max + load > state.bytes) { reject('memory'); continue; }
-        if (state.cores !== null && fp.cpu_cores_per_session !== null && fp.cpu_cores_per_session > state.cores) { reject('cpu'); continue; }
+        if (state.cores === 0 || (state.cores !== null && fp.cpu_cores_per_session !== null && fp.cpu_cores_per_session > state.cores)) { reject('cpu'); continue; }
         const p = mergeRate(input.outcomes[cost.provider]);
         cands.push({ state, cost, fp, fpSource: own ? 'node' : 'fleet', load, p,
           perMTok: p / cost.tokensPerJob * 1e6, perHour: p / (cost.minutesPerJob + Math.max(0, state.node.overheadMinutes ?? 0)) * 60 });
@@ -229,7 +229,7 @@ export function fleetRunnable(docs: NodeCapacityDoc[], nowMs: number, maxAgeMs =
     let sum: number | null = null;
     for (const { item: doc } of current) {
       const n = doc.agents_runnable_now[adapter.id];
-      if (Number.isSafeInteger(n)) sum = (sum ?? 0) + (n as number);
+      if (Number.isSafeInteger(n)) sum = (sum ?? 0) + (doc.cpu.headroom_cores === 0 ? 0 : (n as number));
     }
     out[adapter.id] = sum;
   }

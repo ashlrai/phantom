@@ -74,7 +74,7 @@ This does not enroll a worker, authorize overage, or reserve spend.
 
 For an agent check, give the operator or a designated agent one read-only task:
 inspect only the named, already signed-in usage surface (or use the
-[desktop operator's read action](DESKTOP-OPERATOR.md)), then record only the
+[desktop operator's read action](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-OPERATOR.md)), then record only the
 measured allowance and UTC observation time. Don't sign in, switch the active
 dispatch account, send messages, capture credentials or make purchases. Stop if
 the account, model group or numbers cannot be established. A quota shown as
@@ -95,7 +95,7 @@ There is no automatic desktop or browser session launch.
 
 ### Scheduled desktop evidence
 
-On a Mac with the [desktop operator](DESKTOP-OPERATOR.md) set up, create
+On a Mac with the [desktop operator](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-OPERATOR.md) set up, create
 a private targets file and run `phm usage resource-evidence --targets /absolute/path/to/resource-evidence-targets.json --watch`.
 Omit `--watch` for a single pass. Only configured targets are checked; the
 collector does not start automatically. Leave the exact, already signed-in,

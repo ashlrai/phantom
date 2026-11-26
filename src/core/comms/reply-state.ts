@@ -95,7 +95,7 @@ function firstInThread(id: string, receipts: readonly BusInboxReceipt[]): string
   let first = own;
   for (const row of receipts) {
     if ((row.envelope.channel ?? 'bus') !== channel || row.envelope.channel_ref !== ref ||
-        row.envelope.to !== own.envelope.to || !isRequest(row)) continue;
+        row.envelope.to !== own.envelope.to || row.envelope.from !== own.envelope.from || !isRequest(row)) continue;
     if (row.cursor < first.cursor) first = row;
   }
   return first.envelope.id;

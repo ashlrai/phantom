@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AshlrConfig, WorkItem } from '../src/core/types.js';
 import {
-  CODEX_ASTRA_MODEL_ID, CODEX_TERRA_MODEL_ID, DEFAULT_CODEX_MODEL_ID,
+  CODEX_ASTRA_MODEL_ID, CODEX_LUNA_MODEL_ID, CODEX_TERRA_MODEL_ID, DEFAULT_CODEX_MODEL_ID,
   KNOWN_MODELS, canonicalModelTag, costOf, pickModel,
   type ModelRoutingTier,
 } from '../src/core/run/model-catalog.js';
@@ -30,7 +30,7 @@ function config(model?: string): AshlrConfig {
 }
 const context = { availableEngines: ['codex', 'builtin'] };
 const defaults: [ModelRoutingTier, string][] = [
-  ['fast', DEFAULT_CODEX_MODEL_ID], ['mid', DEFAULT_CODEX_MODEL_ID],
+  ['fast', CODEX_LUNA_MODEL_ID], ['mid', DEFAULT_CODEX_MODEL_ID],
   ['computer', DEFAULT_CODEX_MODEL_ID], ['work', DEFAULT_CODEX_MODEL_ID],
   ['frontier', CODEX_ASTRA_MODEL_ID],
 ];
@@ -83,7 +83,7 @@ describe('Codex model tiers through production enrichment and legacy routing', (
     task({ title: 'Triage pending jobs' }), task({ tags: ['verify'] }),
   ])('classifies routine work as fast: $title ($source)', item => {
     expect(modelTierForTask(item)).toBe('fast');
-    expect(modelForSelectedEngine(item, 'codex', config()).model).toBe(DEFAULT_CODEX_MODEL_ID);
+    expect(modelForSelectedEngine(item, 'codex', config()).model).toBe(CODEX_LUNA_MODEL_ID);
   });
 
   it.each([
@@ -153,14 +153,14 @@ describe('Codex model tiers through production enrichment and legacy routing', (
       score: 1, samples: 100,
     }]]));
     const item = task({ tags: [`tier=${tier}`] });
-    const expected = tier === 'frontier' ? CODEX_ASTRA_MODEL_ID : DEFAULT_CODEX_MODEL_ID;
+    const expected = defaults.find(([name]) => tier === name)?.[1];
     expect(modelForSelectedEngine(item, 'codex', cfg).model).toBe(expected);
     expect(routeTask(item, cfg, context).model).toBe(expected);
   });
 
   it('retains autonomous fail-closed subscription admission', () => {
     const item = task({ tags: ['tier=fast'] });
-    expect(routeTask(item, config(), context).model).toBe(DEFAULT_CODEX_MODEL_ID);
+    expect(routeTask(item, config(), context).model).toBe(CODEX_LUNA_MODEL_ID);
     expect(routeTask(item, config(), { ...context, autonomous: true }).engine).toBe('builtin');
   });
 });
