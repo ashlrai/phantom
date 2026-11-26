@@ -13,7 +13,7 @@ import { parseTickCost } from './tick-cost.js';
 import { compactMergeLatency, dispatchTick, objectRow } from './compact-brief-evidence.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 import { LIVE_JOBS_FILE, type LiveJobsSnapshot } from './live-jobs.js';
-import { parseReadyRows } from './ready-row-edit.js';
+import { parseReadyMarketRows } from './unfed-market.js';
 import { parseStopFile, stopFilePath, stoppedFamilies } from './stop-file.js';
 import { readSource } from './runs-parked-queue.js';
 import { ioWaitLine, readHostFamilies } from './host-families.js';
@@ -25,6 +25,8 @@ import { whyIdle } from './why-idle.js';
 import { fleetGhosts } from './ghosts.js';
 
 export const LEADER_COMPACT_FILE = 'queue/leader-brief.json';
+/** router-queue.md is append-mostly Markdown history; same bound the unfed read uses. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 const clean = (s: string) => scrubSecrets(s).replace(/\s+/g, ' ').slice(0, 80);
 
 /** The brief's two-hour family rollup, shared with self-tick before display truncation. */
@@ -70,9 +72,9 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   const cache = new Map<string, Promise<string>>();
   const sources: Record<string, { state: string; why: string }> = {};
   const sourceState = (name: string, state: string, why: string) => { sources[name] = { state, why }; };
-  const read = (file: string): Promise<string> => {
+  const read = (file: string, maxBytes = 1024 * 1024): Promise<string> => {
     if (!cache.has(file)) cache.set(file, (async () => {
-      const source = await readSource(file, 1024 * 1024, file.endsWith('/metrics/jobs.jsonl'));
+      const source = await readSource(file, maxBytes, file.endsWith('/metrics/jobs.jsonl'));
       sourceState(file.startsWith(runsDir + '/') ? file.slice(runsDir.length + 1) : 'stopFile', source.state,
         source.state === 'healthy' ? 'bounded local read' : source.state === 'missing' ? 'file does not exist' : 'unreadable, oversized or unsafe file');
       if (source.state !== 'healthy') throw new Error('Unavailable source');
@@ -81,7 +83,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     return cache.get(file)!;
   };
   const quiet = async <T>(p: Promise<T>): Promise<T | null> => p.catch(() => null);
-  const [snapshot, tail, pace, guardian, liveText, stopText, ready, hostLoad, log, slotsText, prsText, familyStopText] = await Promise.all([
+  const [snapshot, tail, pace, guardian, liveText, stopText, ready, hostLoad, log, slotsText, prsText, familyStopText, routerQueue] = await Promise.all([
     quiet(readChiefOfStaffSnapshot('auto', { runsDir, now: () => new Date(now), read })),
     readTail(join(runsDir, 'metrics/jobs.jsonl'), 8 * 1024 * 1024),
     quiet(readFleetPace({ runsDir, now: () => now })), quiet(readGuardianGlance(runsDir, now)),
@@ -91,6 +93,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     readTail(join(runsDir, 'dispatchd.log'), 256 * 1024),
     quiet(read(join(runsDir, 'queue/slots.json'))), quiet(read(join(runsDir, 'fleet/open-prs.json'))),
     quiet(read(join(runsDir, 'queue/family-stop.tsv'))),
+    quiet(read(join(runsDir, 'queue/router-queue.md'), ROUTER_QUEUE_MAX_BYTES)),
   ]);
   for (const [name, state] of Object.entries(snapshot?.sources ?? {})) if (state !== 'unavailable') sourceState(name, state,
     state === 'healthy' ? 'parsed local snapshot' : name === 'queue/status.json' ? 'last_tick missing, invalid or older than 60s'
@@ -126,7 +129,21 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     });
   }
   const mergedPrs = [...merges.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 5);
-  const readyRows = ready === null ? null : parseReadyRows(ready);
+  // Ready supply counts the way the market resolves it: a row's requirements
+  // preferred_lane — or its router-queue.md envelope for a spec-less row —
+  // wins over the lane column, an explicit null or empty lane cell is
+  // lane-open shared supply, and a row the market would reject is dead work,
+  // never queued. An unreadable ready.tsv leaves every count unknown.
+  const marketReady = ready === null ? null : parseReadyMarketRows(ready, routerQueue);
+  const queuedByLane = new Map<string, number>();
+  let openRows: number | null = null;
+  if (marketReady !== null) {
+    openRows = 0;
+    for (const row of marketReady.rows) {
+      if (row.hint === null) openRows += 1;
+      else queuedByLane.set(row.hint, (queuedByLane.get(row.hint) ?? 0) + 1);
+    }
+  }
   const ghosts = await fleetGhosts({ runsDir, now: () => now });
   const lanes = (snapshot?.snapshot.lanes ?? []).map(l => {
     const finished = [...new Map(rows.filter(r => r.lane === l.lane && ledgerEventName(r.row) === 'finish').map(r => [`${r.id}:${r.at}`, r])).values()].slice(-20);
@@ -134,13 +151,15 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     const pause_new_until = typeof pause === 'number' && Number.isFinite(pause) ? pause : (parseLedgerTs(pause) ?? 0) / 1000 || null;
     const held = slot.held === true || (pause_new_until !== null && pause_new_until > now / 1000) ? true
       : slot.held === false || slot.held === undefined && Object.keys(slot).length ? false : l.held;
-    const queuedReady = readyRows?.filter(r => r.lane === l.lane && !r.id.startsWith('PARKED-') && r.id !== 'id').length ?? null;
+    const queuedReady = marketReady === null ? null : (queuedByLane.get(l.lane) ?? 0);
     return { lane: clean(l.lane), ghosts: ghosts.known ? ghosts.jobs.filter(j => j.lane === l.lane && j.state === 'ghost').length : null, running: tick.running[l.lane] ?? l.running, queued: queuedReady, queuedReady,
       target: l.target, held, pause_new_until, emptyRate: finished.length ? finished.filter(r => r.row.empty === true).length / finished.length : null };
   });
-  const hungry = lanes.filter(l => l.held === false && l.running !== null && l.target !== null && l.queuedReady !== null
-    && l.running < l.target / 2 && l.queuedReady < l.target - l.running).sort((a, b) => (b.target! - b.running!) - (a.target! - a.running!))[0];
-  const headline = hungry ? `${hungry.lane} ${hungry.running}/${hungry.target} running, ${hungry.queuedReady} queued: supply-starved` : 'No measured supply-starved lane';
+  // Lane-open rows are shared supply any lane may take, so a lane is
+  // supply-starved only when even all of them could not fill its free slots.
+  const hungry = lanes.filter(l => l.held === false && l.running !== null && l.target !== null && l.queuedReady !== null && openRows !== null
+    && l.running < l.target / 2 && l.queuedReady + openRows < l.target - l.running).sort((a, b) => (b.target! - b.running!) - (a.target! - a.running!))[0];
+  const headline = hungry ? `${hungry.lane} ${hungry.running}/${hungry.target} running, ${hungry.queuedReady} queued${openRows ? ` +${openRows} lane-open` : ''}: supply-starved` : 'No measured supply-starved lane';
   const status = objectRow(json(await quiet(read(join(runsDir, 'queue/status.json'))), 'queue/status.json'));
   const admission = objectRow(status.admission), load = admission.load1, limit = admission.load_max;
   const fleetLoad = typeof load === 'number' && hostLoad.totalCpuPercent > 0 ? load * hostLoad.fleetCpuPercent / hostLoad.totalCpuPercent : null;
@@ -161,13 +180,13 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   const release = await readReleaseBacklog({ now, cacheOnly: true });
   // Keep only facts that contribute to the first three explanations, before display rows are trimmed.
   const idleLanes: typeof lanes = [];
-  const idleReasons = whyIdle({ at: new Date(now).toISOString(), lanes, attention, pools: [] });
+  const idleReasons = whyIdle({ at: new Date(now).toISOString(), lanes, attention, pools: [], openRows });
   if (idleReasons.length) {
     const candidates = [...lanes.filter(l => l.held === true || (l.pause_new_until !== null && l.pause_new_until > now / 1000)),
       ...lanes.filter(l => l.held === false && !(l.pause_new_until !== null && l.pause_new_until > now / 1000) && l.queuedReady === 0)];
     for (const lane of candidates) {
-      const before = whyIdle({ at: new Date(now).toISOString(), lanes: idleLanes, pools: [] });
-      const after = whyIdle({ at: new Date(now).toISOString(), lanes: [...idleLanes, lane], pools: [] });
+      const before = whyIdle({ at: new Date(now).toISOString(), lanes: idleLanes, pools: [], openRows });
+      const after = whyIdle({ at: new Date(now).toISOString(), lanes: [...idleLanes, lane], pools: [], openRows });
       if (JSON.stringify(before) !== JSON.stringify(after)) idleLanes.push(lane);
       if (idleLanes.length === 3) break;
     }
@@ -183,7 +202,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
       commitsSinceTag: r.mergedCommits, state: r.verdict, reason: r.git?.reason ?? null, source: r.git?.source ?? (r.git ? 'local git' : 'GitHub cache') })),
     schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(), headline, hostLoadWarning,
     state: openPrs !== null || lanes.length || tail || hasPace || guardian?.length ? 'ready' : 'no data', sources,
-    windowHours: 2, emptyWindowHours: 24, lanes,
+    windowHours: 2, emptyWindowHours: 24, lanes, openRows,
     tickWallP95: parseTickCost(log?.text ?? null, now, 2, log?.truncated ?? false).tickWallP95,
     pools: (pace?.pools ?? []).map(p => ({ pool: clean(p.pool), usedPct: p.usedPct, hoursToReset: p.hoursToReset,
       burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict === 'stale' || p.verdict === 'spent' || p.verdict === 'free' ? p.line ?? p.verdict : p.verdict ?? 'unknown',
@@ -210,8 +229,8 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   return brief;
 }
 type GeneratedBrief = Awaited<ReturnType<typeof readCompactBrief>>;
-/** Stored briefs written before merge projection recovery remain readable. */
-export type CompactLeaderBrief = Omit<GeneratedBrief, 'mergedPrs' | 'tickWallP95' | 'idleEvidence'> & Partial<Pick<GeneratedBrief, 'mergedPrs' | 'tickWallP95' | 'idleEvidence'>>;
+/** Stored briefs written before merge projection recovery or lane-open supply counting remain readable. */
+export type CompactLeaderBrief = Omit<GeneratedBrief, 'mergedPrs' | 'tickWallP95' | 'idleEvidence' | 'openRows'> & Partial<Pick<GeneratedBrief, 'mergedPrs' | 'tickWallP95' | 'idleEvidence' | 'openRows'>>;
 export async function writeCompactBrief(runsDir: string, now = Date.now(), file = join(runsDir, LEADER_COMPACT_FILE)) {
   const brief = await readCompactBrief(runsDir, now);
   await mkdir(join(file, '..'), { recursive: true, mode: 0o700 });
@@ -219,7 +238,7 @@ export async function writeCompactBrief(runsDir: string, now = Date.now(), file 
   return brief;
 }
 export function compactBriefLines(b: CompactLeaderBrief): string[] {
-  const lines = [b.headline, ...(b.hostLoadWarning ? [b.hostLoadWarning] : []), `Leader: ${b.state} (${b.at}); lanes: ${b.lanes.length}; pools: ${b.pools.length}`,
+  const lines = [b.headline, ...(b.hostLoadWarning ? [b.hostLoadWarning] : []), `Leader: ${b.state} (${b.at}); lanes: ${b.lanes.length}; pools: ${b.pools.length}; lane-open ready: ${b.openRows ?? '?'}`,
     ...b.whyIdle,
     ...b.lanes.slice(0, 3 - b.whyIdle.length).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.ghosts ?? '?'} ghosts, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
     ...b.pools.slice(0, 2).map(p => `${p.pool}: ${p.usedPct ?? '?'}%, reset ${p.hoursToReset ?? '?'}h, burn ${p.burnPerHour ?? '?'}/h, safe ${p.safeBurn ?? '?'}/h, ${p.verdict}`),

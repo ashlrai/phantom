@@ -5,6 +5,8 @@ export interface WhyIdleBrief {
   pools?: readonly { pool: string; usedPct: number | null; verdict: string }[];
   attention?: readonly { lane: string; status: string }[];
   admission?: { lastWhy?: string | null; settleSeconds?: number | null; startsPerHour?: number | null } | null;
+  /** Lane-open ready rows the market may place on any lane; a positive count means "0 ready jobs" is unproven. */
+  openRows?: number | null;
 }
 const known = (n: number | null | undefined): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 const name = (id: string): string => /local/.test(id) ? 'Local models' : /codex|personal/.test(id) ? 'Codex'
@@ -36,7 +38,8 @@ export function whyIdle(brief: WhyIdleBrief): string[] {
   for (const p of pools) if (p.verdict === 'over' && known(p.usedPct) && !blocked.has(name(p.pool))) {
     reasons.push(`${name(p.pool)}: ${spending(p)}`); blocked.add(name(p.pool));
   }
-  for (const l of lanes) if (l.held === false && !blocked.has(name(l.lane)) && l.queuedReady === 0 && known(l.running) && known(l.target) && l.running < l.target) {
+  const openSupply = known(brief.openRows) && brief.openRows > 0;
+  for (const l of lanes) if (l.held === false && !blocked.has(name(l.lane)) && l.queuedReady === 0 && !openSupply && known(l.running) && known(l.target) && l.running < l.target) {
     reasons.push(`${name(l.lane)}: ${l.target - l.running} free spots, 0 ready jobs`);
   }
   const stuck = new Map<string, number>();

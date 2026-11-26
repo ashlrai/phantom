@@ -68,6 +68,61 @@ it('bounds 500 jobs, ranks zero PRs in six launches first, and reads status and 
   expect(b.stopped[0]).toMatchObject({ until: now / 1000 + 60 }); expect(b.omitted).toBeGreaterThan(0);
   expect(compactBriefLines(b).length).toBeGreaterThanOrEqual(10); expect(compactBriefLines(b).length).toBeLessThanOrEqual(19);
 });
+it('counts queued supply by the market-resolved lane hint and reports lane-open rows', async () => {
+  await writeFile(join(dir, 'queue/slots.json'), JSON.stringify({
+    personal: { target: 20, held: false }, gemini: { target: 4, held: false }, local: { target: 2, held: false },
+  }));
+  await writeFile(join(dir, 'queue/status.json'), JSON.stringify({
+    last_tick: at, paused: false,
+    lanes: { personal: { running: 1 }, gemini: { running: 0 }, local: { running: 0 } },
+  }));
+  await writeFile(join(dir, 'queue/router-queue.md'), [
+    '- READY phantom RQ-ENV (preferred_lane=gemini): hinted work',
+    '- READY phantom RQ-ENVALPHA (preferred_lane=personal): back on the column lane anyway',
+    '- READY phantom RQ-ENVBAD (preferred_lane=CLAUDE!): rejected spec',
+  ].join('\n'));
+  await writeFile(join(dir, 'queue/ready.tsv'), [
+    // requirements preferred_lane beats the lane column
+    'RQ-HINTED\tphantom\tpersonal\twork\tplain\t{"preferred_lane":"gemini"}',
+    // spec-less rows resolve their router-queue.md envelope the same way
+    'RQ-ENV\tphantom\tpersonal\twork\tplain',
+    'RQ-ENVALPHA\tphantom\tpersonal\twork\tplain',
+    'RQ-ENVLONE\tphantom\tpersonal\twork\tplain',
+    // explicit null and empty lane cells are lane-open shared supply
+    'RQ-OPEN1\tphantom\t\twork\tplain',
+    'RQ-OPEN2\tphantom\tpersonal\twork\tplain\t{"preferred_lane":null}',
+    // a hint naming no snapshot lane is unattributed, never open supply
+    'RQ-GHOST\tphantom\tpersonal\twork\tplain\t{"preferred_lane":"ghost"}',
+    // market-rejected rows and parked rows are dead work, never queued
+    'RQ-ENVBAD\tphantom\tpersonal\twork\tplain',
+    'RQ-BADTIER\tphantom\tpersonal\tbogus\tplain',
+    'PARKED-DEP.personal\tparked\tpersonal\twork\tplain',
+  ].join('\n'));
+  const b = await readCompactBrief(dir, now);
+  expect(b.openRows).toBe(2);
+  expect(b.lanes).toEqual(expect.arrayContaining([
+    expect.objectContaining({ lane: 'personal', queued: 2, queuedReady: 2 }),
+    expect.objectContaining({ lane: 'gemini', queued: 2, queuedReady: 2 }),
+    expect.objectContaining({ lane: 'local', queued: 0, queuedReady: 0 }),
+  ]));
+  // personal still starves (2 hinted + 2 open cannot fill 19 free slots),
+  // gemini and local do not (open supply could fill their free slots).
+  expect(b.headline).toBe('personal 1/20 running, 2 queued +2 lane-open: supply-starved');
+  // Open supply means "0 ready jobs" is unproven for the empty local lane.
+  expect(b.whyIdle).toEqual([]);
+  expect(compactBriefLines(b)).toContain(`Leader: ready (${b.at}); lanes: 3; pools: ${b.pools.length}; lane-open ready: 2`);
+  // Without lane-open rows the same empty lane is explained as out of work.
+  await writeFile(join(dir, 'queue/ready.tsv'), [
+    'RQ-HINTED\tphantom\tpersonal\twork\tplain\t{"preferred_lane":"gemini"}',
+    'RQ-ENV\tphantom\tpersonal\twork\tplain',
+    'RQ-ENVALPHA\tphantom\tpersonal\twork\tplain',
+    'RQ-ENVLONE\tphantom\tpersonal\twork\tplain',
+  ].join('\n'));
+  const dry = await readCompactBrief(dir, now);
+  expect(dry.openRows).toBe(0);
+  expect(dry.headline).toBe('personal 1/20 running, 2 queued: supply-starved');
+  expect(dry.whyIdle).toContain('Local models: 2 free spots, 0 ready jobs');
+});
 it('returns no data on an empty directory and writes a private snapshot each tick', async () => {
   expect(await readCompactBrief(dir, now)).toMatchObject({ state: 'no data', lanes: [], medianOpenToMergeSeconds: null });
   const steps = Object.fromEntries(SELF_TICK_STEP_ORDER.map(s => [s, async () => ({ exitCode: 0, output: '{}' })])) as SelfTickSteps;

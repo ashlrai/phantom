@@ -901,6 +901,11 @@ set `ASHLR_RUNS_DIR` to inspect another runs directory.
 `launchable` reports zero free slots for a lane with `held: true`, while
 keeping its published occupancy, launch target and ready supply visible.
 
+The leader's compact brief (`leader.compact-brief.v1`) counts each lane's
+`queued`/`queuedReady` by the same market-resolved hint, reports lane-open
+rows once as `openRows`, and credits that shared supply before calling a
+lane supply-starved; `null` stays unknown when `ready.tsv` cannot be read.
+
 `lane-starve` exits 1 when it finds a starved lane; `launchable` exits 1 when
 any lane has more free slots than launchable rows plus lane-open supply — a
 lane is under-supplied only when even all open rows could not fill it. Both
