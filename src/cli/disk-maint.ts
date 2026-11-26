@@ -25,11 +25,13 @@ import {
 } from '../core/disk-maint/plan.js';
 import { applyDiskMaint, type ApplyDeps } from '../core/disk-maint/apply.js';
 import { diskMaintSchedule } from '../core/disk-maint/schedule.js';
+import { buildDiskInventory, formatDiskInventory } from '../core/disk-maint/inventory.js';
 import { installScheduleUnits } from './steward.js';
 
 const USAGE =
-  'usage: phm disk-maint [--apply] [--json] [--only <class>]... [--allow <class>]... ' +
+  'usage: phm disk-maint [--apply] [--json] [--inventory] [--only <class>]... [--allow <class>]... ' +
   '[--compress-days N] [--prune-days N]\n' +
+  '       phm disk-maint --inventory [--json] [--only <class>]... [--allow <class>]...\n' +
   '       phm disk-maint schedule [--install] [--apply] [--hour 0-23]\n' +
   `classes: ${ALL_CLASSES.join(', ')}  (gated: ${[...GATED_CLASSES].join(', ')})`;
 
@@ -127,7 +129,11 @@ export async function cmdDiskMaint(args: string[], deps: DiskMaintCliDeps = {}):
       'staging and recovery dirs, and removes merged worktrees via git.\n' +
       'Never touches ~/.codex*, model weights, Docker, client trees,\n' +
       '~/Documents, git internals, auth or secrets - no flag unprotects them.\n' +
-      '`schedule` prints or installs the daily launchd/systemd timer.');
+      '`schedule` prints or installs the daily launchd/systemd timer.\n' +
+      '--inventory is the read-only view: every reclaimable artifact with its\n' +
+      'age, its owner (job, lane, project or fleet) and its size, plus the\n' +
+      'active worktrees and protected paths that were excluded. It deletes\n' +
+      'nothing and refuses --apply.');
     return 0;
   }
   const [sub, ...rest] = args;
@@ -135,6 +141,7 @@ export async function cmdDiskMaint(args: string[], deps: DiskMaintCliDeps = {}):
   const argv = args;
   let apply = false;
   let json = false;
+  let inventory = false;
   const only = new Set<MaintClassId>();
   const allow = new Set<string>();
   const policy: Partial<MaintPolicy> = {};
@@ -149,6 +156,7 @@ export async function cmdDiskMaint(args: string[], deps: DiskMaintCliDeps = {}):
     if (seen.has(arg)) { out.error(`error: duplicate option: ${arg}\n${USAGE}`); return 2; }
     seen.add(arg);
     if (arg === '--apply') apply = true;
+    else if (arg === '--inventory') inventory = true;
     else if (arg === '--json') json = true;
     else if (arg === '--only' || arg === '--allow') {
       const value = argv[++i];
@@ -180,11 +188,22 @@ export async function cmdDiskMaint(args: string[], deps: DiskMaintCliDeps = {}):
     out.error('error: --compress-days must be below --prune-days');
     return 2;
   }
+  if (inventory && apply) {
+    out.error('error: --inventory is read-only; drop --apply\n' + USAGE);
+    return 2;
+  }
   const roots = deps.roots ?? resolveMaintRoots(rootOverrides);
-  const plan = await planDiskMaint({
+  const maintDeps = {
     ...deps.plan, roots, only: only.size ? only : undefined, allow, policy, now: deps.now,
     deadlineMs: deps.deadlineMs,
-  });
+  };
+  if (inventory) {
+    const report = await buildDiskInventory(maintDeps);
+    if (json) out.log(JSON.stringify(sanitizePublicJson(report), null, 2));
+    else for (const line of formatDiskInventory(report)) out.log(line);
+    return 0;
+  }
+  const plan = await planDiskMaint(maintDeps);
   const applied = apply ? await applyDiskMaint(plan, { roots, runner: deps.runner, now: deps.now, readJobs: deps.readJobs, freeBytes: deps.freeBytes }) : undefined;
   if (json) {
     out.log(JSON.stringify(sanitizePublicJson({ ...plan, apply, ...(applied ? { reclaimAdvice: null, freeGb: applied.freeGb, results: applied.classes, totals: { ...plan.totals, freedBytes: applied.totals.freedBytes, failures: applied.totals.failures } } : {}) }), null, 2));

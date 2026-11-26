@@ -343,7 +343,8 @@ function aged(ctx: ScanCtx, row: FileRow, compressDays: number, deleteDays: numb
   return null;
 }
 
-const JOB_SIDECAR = /^([A-Za-z0-9][\w.-]*?)\.(log|launch|out|err|reap\.log)$/;
+/** Per-job sidecar names: `JOB.log`, `JOB.launch`, `JOB.out`, `JOB.err`, `JOB.reap.log`. */
+export const JOB_SIDECAR = /^([A-Za-z0-9][\w.-]*?)\.(log|launch|out|err|reap\.log)$/;
 const ROTATED = /\.(gz|[0-9]+|rotate-\d+(\.gz)?)$/;
 /** Only log-ish names are ever touched; queue *.tsv and .base/.publish live. */
 const LOG_LIKE = /\.(log|launch|out|err|reap\.log)(\.[0-9]+|\.rotate-\d+(\.gz)?|\.gz)?$/i;
