@@ -23,17 +23,22 @@ export async function cmdFleetQueueShape(args: string[]): Promise<number> {
   }
   const dir = queueDir ?? join(homedir(), '.ashlr-runs', 'queue');
   let text: string;
+  let routerQueue: string | null = null;
   try {
     const path = join(dir, 'ready.tsv');
     const info = await stat(path);
     if (!info.isFile() || info.size > MAX_BYTES) throw new Error('not a readable ready.tsv');
     text = await readFile(path, 'utf8');
+    try {
+      const router = await stat(join(dir, 'router-queue.md'));
+      if (router.isFile() && router.size <= MAX_BYTES) routerQueue = await readFile(join(dir, 'router-queue.md'), 'utf8');
+    } catch { /* absent or unreadable envelopes leave the lane column */ }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') { console.log('queue: missing (ready.tsv)'); return 0; }
     console.error('queue: unreadable (ready.tsv)');
     return 1;
   }
-  const parsed = parseReadyTsv(text);
+  const parsed = parseReadyTsv(text, routerQueue);
   const targets = await readLaneTargets({ runsDir: dirname(dir) });
   const report = queueShape(
     parsed.rows,

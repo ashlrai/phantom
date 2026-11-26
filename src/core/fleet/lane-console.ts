@@ -77,7 +77,7 @@ import { readLaneTargets } from './runs-lane-targets.js';
 import { laneHealthFor, type LaneHealth } from './lane-badge.js';
 import { laneLaunchTarget } from './lane-launch-target.js';
 import { parseStarvedState, readStarved, STARVED_STATE_FILE, type StarvedRead } from './lane-starved.js';
-import { readySpecCell, resolveReadyMarketRow } from './unfed-market.js';
+import { MARKET_LANE_ID, readyEnvelopeSpec, readySpecCell, resolveReadyMarketRow } from './unfed-market.js';
 import { readLedgerTail } from '../router/outcomes.js';
 import { readTelemetryFile } from '../resources/telemetry.js';
 import { budgetTimestamp } from './resource-reset-evidence.js';
@@ -345,7 +345,7 @@ type DispatcherRow =
  * the lane cell is the fallback only when the spec names none, and a row the
  * market would reject is 'drop' — dead work, counted, never supply.
  */
-function dispatcherQueueRow(cells: string[]): DispatcherRow {
+function dispatcherQueueRow(cells: string[], routerQueue?: string | null): DispatcherRow {
   const first = cells[0] ?? '';
   if (PARKED_MARKER.test(first)) {
     // Status-first parked: marker, job, lane, tier, repo, prompt[, requirements].
@@ -375,8 +375,21 @@ function dispatcherQueueRow(cells: string[]): DispatcherRow {
   const [id, repo, laneCell, tier, prompt] = [cells[0]!, cells[1]!, cells[2]!, cells[3]!, cells[4]!];
   if (!REPO_ID.test(repo) || isQueueTier(laneCell) || !isQueueTier(tier) || !promptCell(prompt)) return null;
   if (extra !== undefined && !extra.startsWith('{')) return { kind: 'drop' };
-  const spec = readySpecCell(extra);
-  if (spec === 'invalid') return { kind: 'drop' };
+  let spec: Record<string, unknown> | 'invalid' | null;
+  if (extra === undefined) {
+    // A five-column row carries no requirements cell: like the market's routed
+    // pass, its spec comes from the matching router-queue.md `(attrs)`
+    // envelope, whose preferred_lane (or explicit open) decides the hint. A
+    // non-empty lane cell that is not a lane id rejects the row before the
+    // envelope is read — invalid_requirements, never supply.
+    if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) return { kind: 'drop' };
+    const env = readyEnvelopeSpec(routerQueue, id);
+    if (env === 'invalid') return { kind: 'drop' };
+    spec = env;
+  } else {
+    spec = readySpecCell(extra);
+    if (spec === 'invalid') return { kind: 'drop' };
+  }
   const resolved = resolveReadyMarketRow(cells, spec ?? {});
   if (resolved === null) return { kind: 'drop' };
   if (resolved.hint === null) return { kind: 'open', id, repo, tier };
@@ -386,9 +399,11 @@ function dispatcherQueueRow(cells: string[]): DispatcherRow {
 /**
  * Tolerant reader for the router's queue TSV. A row yields whatever fields it
  * honestly carries; a row that cannot name its pool is dropped (counted),
- * never attributed to a lane by guessing.
+ * never attributed to a lane by guessing. `routerQueue` is optional
+ * queue/router-queue.md text: given it, a spec-less dispatcher row resolves
+ * its lane through the same `(attrs)` envelope the work market reads.
  */
-export function parseReadyTsv(text: string): ParsedTsv {
+export function parseReadyTsv(text: string, routerQueue?: string | null): ParsedTsv {
   const rows: FleetLaneQueueRow[] = [];
   let dropped = 0;
   let invalid = 0;
@@ -416,7 +431,7 @@ export function parseReadyTsv(text: string): ParsedTsv {
     // a different column order than the generic positional export; recognize
     // them before the generic reader can misattribute repo names as lanes.
     if (header === null) {
-      const dialect = dispatcherQueueRow(cells);
+      const dialect = dispatcherQueueRow(cells, routerQueue);
       if (dialect !== null) {
         if (dialect.kind === 'open') {
           unhinted++;

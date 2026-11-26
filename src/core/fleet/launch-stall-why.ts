@@ -124,13 +124,14 @@ const lanesOf = (text: string | null): Record<string, Record<string, unknown>> =
 /** Build facts for every lane in queue/status.json. Absent files leave facts undefined. */
 export async function readLaunchStallFacts(runsDir = process.env.ASHLR_RUNS_DIR || join(homedir(), '.ashlr-runs')): Promise<LaunchStallFacts[]> {
   const queue = join(runsDir, 'queue');
-  const [status, resources, ready, ledger, launchLog] = await Promise.all([
+  const [status, resources, ready, routerQueue, ledger, launchLog] = await Promise.all([
     readText(join(queue, 'status.json')), readText(join(queue, 'resources.json')),
-    readText(join(queue, 'ready.tsv')), readText(join(queue, 'jobs.jsonl')),
+    readText(join(queue, 'ready.tsv')), readText(join(queue, 'router-queue.md')),
+    readText(join(queue, 'jobs.jsonl')),
     readText(join(runsDir, 'metrics', 'jobs.jsonl')),
   ]);
   const used = lanesOf(resources);
-  const rows = ready === null ? [] : parseReadyTsv(ready).rows;
+  const rows = ready === null ? [] : parseReadyTsv(ready, routerQueue).rows;
   const launches = launchLog === null ? null : parseJobLaunches(launchLog).latest;
   const merges = new Map<string, number>();
   for (const e of ledger === null ? [] : parseJobsJsonl(ledger).events) {

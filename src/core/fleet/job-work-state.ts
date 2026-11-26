@@ -85,7 +85,7 @@ export function workStateOf(e: WorkStateEvidence): JobWorkState {
   if (e.launches) {
     return make('RUNNING', e.launches, `queue/run/${e.job}.launches`, { evidence: ['launched, no exit code yet'] });
   }
-  const ready = e.readyTsv ? parseReadyTsv(e.readyTsv.text).rows.find(r => r.id === e.job) : undefined;
+  const ready = e.readyTsv ? parseReadyTsv(e.readyTsv.text, e.routerQueue?.text).rows.find(r => r.id === e.job) : undefined;
   if (e.readyTsv && ready?.pool) {
     const detail = `queued for lane ${ready.pool}; lane is a queue destination, not an assigned owner`;
     return make('RECEIVED', e.readyTsv, 'queue/ready.tsv', { detail, evidence: [detail] });

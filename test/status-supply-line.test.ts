@@ -62,6 +62,24 @@ describe('status supply projection', () => {
     });
   });
 
+  it('attributes spec-less rows through their router-queue envelope', async () => {
+    const dir = tempDir(); mkdirSync(join(dir, 'queue'));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), [
+      'RQ-PHX-ENV\tphantom\tcodex-local\twork\t/abs/env.md',
+      'RQ-PHX-OPEN\tphantom\tcodex-local\twork\t/abs/open.md',
+      'FILL-COL\tother-repo\tcodex-local\twork\t/abs/col.md',
+    ].join('\n'));
+    writeFileSync(join(dir, 'queue', 'router-queue.md'), [
+      '- READY phantom RQ-PHX-ENV (preferred_lane=claude): hinted work',
+      '- READY phantom RQ-PHX-OPEN (P2): open supply',
+    ].join('\n'));
+    const result = await readStatusSupply(dir, () => new Date(at));
+    expect(result.lanes).toEqual([
+      { lane: 'claude', phxReady: 1, fillerReady: 0 },
+      { lane: 'codex-local', phxReady: 0, fillerReady: 1 },
+    ]);
+  });
+
   it('reads queue and failure streak timestamps from the existing readers', async () => {
     const dir = tempDir(); mkdirSync(join(dir, 'queue'));
     writeFileSync(join(dir, 'queue', 'ready.tsv'), 'READY\tRQ-PHX-ONE\tdevin\nREADY\tFILL\tdevin\n');

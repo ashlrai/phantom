@@ -20,7 +20,13 @@ with a timezone. The lane snapshot uses it for the merge window and falls
 back to `at` when absent. `at` continues to carry the event timestamp.
 
 `parseReadyTsv` returns `unhintedRows` entries with `id`, `repo` and `tier`
-for validated lane-open dispatcher jobs. `readyRowsForDepth`
+for validated lane-open dispatcher jobs. Its optional `routerQueue` argument
+carries `queue/router-queue.md` text so a spec-less (five-column) dispatcher
+row resolves its lane through the same `(attrs)` envelope the work market
+reads — `preferred_lane` (or `lane`/`pool`) wins over the lane column, an
+envelope naming no lane stays lane-open, and a malformed envelope or lane
+cell is `invalid_requirements`, never supply. Without it the lane column
+alone decides, exactly as before. `readyRowsForDepth`
 (`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
 `tier` for the tier tally, including lane-open jobs as `READY`.
 `readyTsvHeader(cells)` returns the canonical column map for a recognized
