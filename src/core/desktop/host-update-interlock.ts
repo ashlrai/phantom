@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { regular } from './consumer-install.js';
 
 const capability = 'phantom.desktop-update-interlock.v1';
+const dispatcherReconciliation = 'phantom.desktop-update-dispatch-reconcile.v1';
 const components = ['launch.sh', 'batch-launch.sh', 'local_job.py', 'release-autorun.sh',
   'dispatchd.py', 'desktop_update_interlock.py'] as const;
 
@@ -14,7 +15,7 @@ export type DesktopHostInterlockCensus =
   | { state: 'supported'; activeJobs: number; unknown: number };
 
 const sources = {
-  'desktop_update_interlock.py': '9ab71c0f224edb2e7d16364f0a942e7b49cc94da90e2c6627e13ad6e4e4f75bc',
+  'desktop_update_interlock.py': 'ebac2917a4bc10ba9cbfe7b8754b53239eb8b4d2184f58ee2df24ed947dd690b',
   'process_snapshot.py': 'bf1b46fdf6e766a7e310ab92a1ef3521350888a5504c389385246e80e16a68a1',
 };
 type CensusRunner = (home: string, probe: string, processSnapshot: string) => unknown;
@@ -49,7 +50,9 @@ export function readDesktopHostInterlockCensus(home: string, run: CensusRunner =
     }
     for (const name of components) {
       const { data, identity } = regular(join(bin, name), 2 * 1024 * 1024);
-      if (identity.uid !== uid || !data.toString('utf8').split('\n').includes(`# ${capability}`)) return unsupported;
+      const lines = data.toString('utf8').split('\n');
+      if (identity.uid !== uid || !lines.includes(`# ${capability}`) ||
+          (name === 'dispatchd.py' && !lines.includes(`# ${dispatcherReconciliation}`))) return unsupported;
     }
     for (const [name, sha] of Object.entries(sources)) {
       const { data, identity } = regular(join(bin, name), 128 * 1024);

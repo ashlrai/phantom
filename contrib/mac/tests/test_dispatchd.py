@@ -178,6 +178,51 @@ def auth_mark(home, job):
 
 
 class DispatchClaimTests(unittest.TestCase):
+    def test_desktop_update_reconciles_exited_launches_and_proven_reaps_without_starting_work(self):
+        candidate = SCRIPT.parent / 'host-integration/dispatchd.candidate.py'
+        spec = importlib.util.spec_from_file_location('desktop_update_interlock', SCRIPT.parent / 'desktop_update_interlock.py')
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        snapshot = lambda **_: subprocess.CompletedProcess([], 0, '123 reap-one.sh RQ-LIVE\n', '')
+        for script in (SCRIPT, candidate):
+            with self.subTest(script=script.name):
+                tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+                env = launch_stubs(home); root = home / '.ashlr-runs'; queue = root / 'queue'
+                ready = queue / 'ready.tsv'; job = 'RQ-UPDATE-DEFERRED'
+                queue_job(home, job, lane='devin')
+                row = ready.read_text()
+                ready.write_text('')
+                (queue / 'run' / (job + '.line')).write_text(row)
+                held = home / '.ashlr' / 'DESKTOP_UPDATE_STOP'; held.parent.mkdir(exist_ok=True); held.touch()
+                old = time.time() - 300
+                for name in (job + '.dispatched', 'RQ-RECONCILED.reaping', 'RQ-UNKNOWN.reaping', 'RQ-LIVE.reaping'):
+                    receipt = queue / 'run' / name
+                    receipt.mkdir() if name.endswith('.reaping') else receipt.touch()
+                    os.utime(receipt, (old, old))
+                (root / (job + '.launch')).write_text('HELD: desktop update interlock\n')
+                for name in ('RQ-RECONCILED', 'RQ-LIVE'):
+                    (root / (name + '.publish')).write_text('RESULT EMPTY\n')
+                (home / 'stubbin/router_queue.py').write_text('def load(path): return ({}, set())\ndef read_metadata(path): return open(path).read()\n')
+                (root / 'bin/router.py').write_text('def load(path): return ({}, {})\n')
+                (home / 'stubbin' / 'ps').write_text('#!/bin/sh\necho "123 reap-one.sh RQ-LIVE"\n')
+                os.close(helper.tick_claim(queue))
+                self.assertEqual(helper.census(home, queue, snapshot), dict(schema=helper.CAPABILITY, activeJobs=4, unknown=0))
+                result = tick(home, env, script)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(dispatched(home, job))
+                self.assertEqual((queue / helper.DEFERRED).read_text(), row)
+                self.assertEqual(ready.read_text(), '')
+                self.assertFalse((queue / 'run' / 'RQ-RECONCILED.reaping').exists())
+                self.assertTrue((queue / 'run' / 'RQ-UNKNOWN.reaping').exists())
+                self.assertTrue((queue / 'run' / 'RQ-LIVE.reaping').exists())
+                self.assertEqual(helper.census(home, queue, snapshot), dict(schema=helper.CAPABILITY, activeJobs=2, unknown=0))
+                if script == SCRIPT:
+                    held.unlink()
+                    result = tick(home, env, script)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertFalse((queue / helper.DEFERRED).exists())
+                    self.assertTrue(dispatched(home, job))
+
     def test_desktop_update_interlock_hold_preserves_ready_work(self):
         tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
         env = launch_stubs(home); job = 'RQ-UPDATE-HELD'

@@ -36,6 +36,9 @@ describe('installed desktop-update CLI contract',()=>{
       writeFileSync(join(bin, 'dispatchd.py'), '#!/usr/bin/python3\n');
       expect(readDesktopHostInterlockCensus(home, run)).toEqual({state:'unsupported',activeJobs:0,unknown:1});
       expect(run).not.toHaveBeenCalled();
+      writeFileSync(join(bin, 'dispatchd.py'), '# phantom.desktop-update-interlock.v1\n');
+      expect(readDesktopHostInterlockCensus(home, run)).toEqual({state:'unsupported',activeJobs:0,unknown:1});
+      expect(run).not.toHaveBeenCalled();
       copyFileSync(join('contrib', 'mac', 'dispatchd.py'), join(bin, 'dispatchd.py'));
       writeFileSync(join(bin, 'desktop_update_interlock.py'), '# phantom.desktop-update-interlock.v1\n');
       expect(readDesktopHostInterlockCensus(home, run).state).toBe('unsupported');
