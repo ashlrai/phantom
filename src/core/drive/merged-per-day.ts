@@ -17,7 +17,7 @@
  * checks named, so an unverified number is never mistaken for a measured one.
  */
 
-export const MERGED_PER_DAY_SCHEMA = 'fleet.merged-per-day.v1' as const;
+const MERGED_PER_DAY_SCHEMA = 'fleet.merged-per-day.v1' as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -30,7 +30,7 @@ export interface FirstParentCommit {
 
 export interface MergedPerDayRow {
   v: 1;
-  schema: typeof MERGED_PER_DAY_SCHEMA;
+  schema: 'fleet.merged-per-day.v1';
   repo: string;
   /** UTC calendar day, YYYY-MM-DD. */
   day: string;

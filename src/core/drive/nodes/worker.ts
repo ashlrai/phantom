@@ -3,12 +3,13 @@ import { spawn, spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { CODEX_FILE_PACK, isPlainRecord, NODE_RUNNER_PROTOCOL } from '../drive-helpers.js';
 import { checkDriveExecutable } from '../script-bridge.js';
-import type { JobClaim } from './index.js';
+import type { JobClaim, JobView } from './index.js';
 import { probeLocalModelCaps, type LocalLaneProbeDeps } from './local-model-caps.js';
 import { callPool, type PoolConfig } from './pool-host.js';
 import { NODE_HEARTBEAT_MS, isHostStats, validId } from './state.js';
-import { nodeRamSlots, readNodeCapacity, type NodeCapacity } from './capacity.js';
+import { nodeRamSlots, readNodeCapacity, sampleHostStats, type NodeCapacity } from './capacity.js';
 import { nodeBeatCapacity } from './capacity-sample.js';
 import { hostSlots, type HostSlotLease } from './host-slots.js';
 import { localPhmVersion, versionCap } from './phm-version.js';
@@ -16,8 +17,6 @@ import { lightRecipe, restockLight } from './light.js';
 import { probeLocalAuth } from './auth-probe.js';
 import { NODE_PROVIDERS, isNodeProvider, resolveProviderBinary, type NodeProvider, type ProviderBinaries, type ProviderBinaryDeps } from './provider-binary.js';
 import { probeRunnerPacks } from './runner-packs.js';
-import type { JobView } from './index.js';
-import { sampleHostStats } from './capacity.js';
 
 /** Exit-code-only sign-in check of each provider's one resolved absolute binary. No PATH lookup or auth-file reads. */
 export function probeProviderBinaries(run: typeof spawnSync = spawnSync, binaryDeps: ProviderBinaryDeps = {}): ProviderBinaries {
@@ -50,7 +49,7 @@ export function classifyRunnerReply(code: number | null, fenced: boolean, stdout
   let reply: Record<string, unknown> | null = null;
   try {
     const parsed = JSON.parse(stdout) as unknown;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) reply = parsed as Record<string, unknown>;
+    if (isPlainRecord(parsed)) reply = parsed;
   } catch { /* unstructured output is not a result */ }
   if (reply && reply['packError'] !== undefined && reply['packError'] !== null && reply['packError'] !== false) return { kind: 'error', reason: 'pack-error' };
   if (reply && reply['codex'] === 'error') return { kind: 'error', reason: 'codex-error' };
@@ -136,7 +135,7 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       try { released = callPool(config, 'release', decline ? [...lease, '--decline'] : lease).result['released'] === true; } catch { /* expiry fences it */ }
       return { held, ...extra, released };
     };
-    if (job?.task !== undefined && (job.pack !== 'codex-file' || !validNodeTask(job.task))) return refuse('invalid-task', true);
+    if (job?.task !== undefined && (job.pack !== CODEX_FILE_PACK || !validNodeTask(job.task))) return refuse('invalid-task', true);
     if (!validId(job?.id) || !Array.isArray(job.requires) || !job.requires.some(c => lanes.includes(c)) ||
         job.requires.some(c => !capabilities.includes(c)) || job.secrets.length || (light && !lightRecipe(job))) return refuse('unsupported-job', true);
     // A stopping node cannot run anything right now, but another session or a restart can: retryable.
@@ -192,7 +191,7 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
         process.off('SIGINT', stop); process.off('SIGTERM', stop);
         resolve(classifyRunnerReply(code, fenced, Buffer.concat(output).toString('utf8')));
       });
-      try { child.stdin.end(JSON.stringify({ protocol: 'phm-node-worker/v1', job: pulled.result['job'], claim,
+      try { child.stdin.end(JSON.stringify({ protocol: NODE_RUNNER_PROTOCOL, job: pulled.result['job'], claim,
         ...(Object.keys(providerBinaries).length ? { providerBinaries } : {}) })); }
       catch { stop(); } // Retain the host slot until close even if writing stdin fails synchronously.
     });

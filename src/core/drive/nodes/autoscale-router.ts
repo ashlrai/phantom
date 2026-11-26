@@ -15,6 +15,7 @@
  * only their local CLI plus MCP footprint, never a whole-host memory backoff.
  * Node-wide integrity gates (kernel pressure, swap growth) still block a node.
  */
+import { isFiniteNumber } from '../drive-helpers.js';
 import { HARNESS_ADAPTERS } from './harness-adapters.js';
 import type { HarnessFootprint, NodeCapacityDoc } from './capacity-model.js';
 
@@ -86,9 +87,7 @@ export interface Placement {
   rejected?: Record<string, number>;
 }
 
-export const ROUTER_DEFAULTS = Object.freeze({ maxAgeMs: 120_000, tokenWeight: 0.5 });
-
-const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+const ROUTER_DEFAULTS = Object.freeze({ maxAgeMs: 120_000, tokenWeight: 0.5 });
 
 export function mergeRate(o: LaneOutcomes | undefined): number {
   const attempts = o && Number.isSafeInteger(o.attempts) && o.attempts >= 0 ? o.attempts : 0;
@@ -123,7 +122,7 @@ function nodeStates(input: RouterInput): NodeState[] {
   return [...input.nodes].sort((a, b) => a.doc.node.localeCompare(b.doc.node)).map(node => {
     const age = input.nowMs - Date.parse(node.doc.measured_at);
     const limits = Object.values(node.doc.basis?.limiting ?? {});
-    const blocked = !finite(age) || age < -60_000 || age > maxAge ? 'stale'
+    const blocked = !isFiniteNumber(age) || age < -60_000 || age > maxAge ? 'stale'
       : limits.includes('pressure') ? 'pressure'
       : limits.includes('swap-growth') ? 'swap-growth'
       : node.doc.mem_free.headroom_bytes === null ? 'unmeasured' : null;
@@ -137,8 +136,8 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
   const fleet = fleetFootprints(input.nodes.map(n => n.doc));
   const exhausted = new Set(input.exhausted ?? []);
   const known = new Set(HARNESS_ADAPTERS.map(a => a.id));
-  const costs = input.costs.filter(c => known.has(c.harness) && finite(c.tokensPerJob) && c.tokensPerJob > 0 &&
-    finite(c.minutesPerJob) && c.minutesPerJob > 0)
+  const costs = input.costs.filter(c => known.has(c.harness) && isFiniteNumber(c.tokensPerJob) && c.tokensPerJob > 0 &&
+    isFiniteNumber(c.minutesPerJob) && c.minutesPerJob > 0)
     .sort((a, b) => a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model));
   const plan: Placement[] = [];
   for (const job of input.jobs) {
@@ -155,7 +154,7 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
         if (state.node.providers && !state.node.providers.includes(cost.provider)) { reject('provider-not-on-node'); continue; }
         // An unserved local model needs room for its weights; without a size it cannot be placed.
         const load = cost.local && !state.loaded.has(cost.model) ? cost.modelBytes : 0;
-        if (!finite(load) || load < 0) { reject('model-not-served'); continue; }
+        if (!isFiniteNumber(load) || load < 0) { reject('model-not-served'); continue; }
         const own = state.node.doc.per_harness_footprint[cost.harness];
         const fp = own ?? fleet[cost.harness];
         if (!fp) { reject('footprint-unmeasured'); continue; }
@@ -176,7 +175,7 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
         mergesPerMTok: null, mergesPerHour: null, footprint: null, rejected });
       continue;
     }
-    const w = finite(job.tokenWeight) ? Math.max(0, Math.min(1, job.tokenWeight)) : ROUTER_DEFAULTS.tokenWeight;
+    const w = isFiniteNumber(job.tokenWeight) ? Math.max(0, Math.min(1, job.tokenWeight)) : ROUTER_DEFAULTS.tokenWeight;
     const bestTok = Math.max(...cands.map(c => c.perMTok)), bestHour = Math.max(...cands.map(c => c.perHour));
     let best: Cand | null = null, bestScore = -1;
     for (const c of cands) {
@@ -205,7 +204,7 @@ export function fleetRunnable(docs: NodeCapacityDoc[], nowMs: number, maxAgeMs =
     let sum: number | null = null;
     for (const doc of docs) {
       const age = nowMs - Date.parse(doc.measured_at);
-      if (!finite(age) || age < -60_000 || age > maxAgeMs) continue;
+      if (!isFiniteNumber(age) || age < -60_000 || age > maxAgeMs) continue;
       const n = doc.agents_runnable_now[adapter.id];
       if (Number.isSafeInteger(n)) sum = (sum ?? 0) + (n as number);
     }

@@ -34,7 +34,7 @@ export interface MeasureHost {
 
 const MAX_OUTPUT = 4 * 1024 * 1024;
 
-export const defaultMeasureHost: MeasureHost = {
+const defaultMeasureHost: MeasureHost = {
   platform: process.platform, now: Date.now, hostname: os.hostname, cpus: os.cpus, loadavg: os.loadavg,
   totalmem: os.totalmem, freemem: os.freemem,
   run: (file, args, timeoutMs) => new Promise(resolve => {
@@ -82,7 +82,7 @@ export function parsePgrepList(text: string | null): Array<{ pid: number; name: 
   return out;
 }
 
-export function parsePids(text: string | null): number[] {
+function parsePids(text: string | null): number[] {
   return (text ?? '').split('\n').map(s => Number(s.trim())).filter(n => Number.isSafeInteger(n) && n > 0);
 }
 

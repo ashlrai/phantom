@@ -8,7 +8,7 @@ import { measureNode } from '../core/drive/nodes/node-measure.js';
 import { planAutoscaleRoutes, type HarnessModelCost, type LaneOutcomes, type RouteJob, type RouteNode } from '../core/drive/nodes/autoscale-router.js';
 import { readRouteLaneOutcomes, type RouteLaneOutcomes } from '../core/drive/nodes/route-outcomes.js';
 
-export const NODE_CAPACITY_USAGE = `Usage: phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json]
+const NODE_CAPACITY_USAGE = `Usage: phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json]
        phm node route --capacity <file> [--capacity <file>...] --costs <file> --jobs <file> [--outcomes <file>] [--outcomes-ledger] [--runs-dir <dir>] [--nodes <file>] [--exhausted <provider[,provider]>] [--json]
 
 capacity measures this node (CPU, memory, swap, swap growth, per-harness session footprint)

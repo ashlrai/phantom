@@ -10,6 +10,7 @@
  * (not zero, not permission).
  */
 import { MEMORY_GUARD } from '../../resources/lane-autopilot.js';
+import { isFiniteNumber, isPlainRecord } from '../drive-helpers.js';
 import { HARNESS_ADAPTERS, type HarnessSession } from './harness-adapters.js';
 
 export const NODE_CAPACITY_SCHEMA = 'phantom.node-capacity.v1';
@@ -79,7 +80,6 @@ export interface NodeCapacityDoc {
   };
 }
 
-const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 const round = (n: number, places = 2) => Math.round(n * 10 ** places) / 10 ** places;
 
 function median(values: number[]): number {
@@ -91,28 +91,28 @@ function median(values: number[]): number {
 function rates(s: NodeSnapshot, prev: NodeCapacityDoc | null): { swapoutsPerMin: number | null; growthPerMin: number | null } {
   const prevAt = prev ? Date.parse(prev.measured_at) : NaN;
   const elapsed = s.measuredAtMs - prevAt;
-  if (!prev || prev.node !== s.node || !finite(elapsed) || elapsed <= 0 || elapsed > CAPACITY_POLICY.maxDeltaMs) {
+  if (!prev || prev.node !== s.node || !isFiniteNumber(elapsed) || elapsed <= 0 || elapsed > CAPACITY_POLICY.maxDeltaMs) {
     return { swapoutsPerMin: null, growthPerMin: null };
   }
   const minutes = elapsed / 60_000;
   const outs = s.swap.swapoutsTotal, prevOuts = prev.swap.swapouts_total;
   // A counter that went backwards means a reboot: no rate rather than a negative one.
-  const swapoutsPerMin = finite(outs) && finite(prevOuts) && outs >= prevOuts ? round((outs - prevOuts) / minutes) : null;
+  const swapoutsPerMin = isFiniteNumber(outs) && isFiniteNumber(prevOuts) && outs >= prevOuts ? round((outs - prevOuts) / minutes) : null;
   const used = s.swap.usedBytes, prevUsed = prev.swap.used_bytes;
-  const growthPerMin = finite(used) && finite(prevUsed) ? Math.round((used - prevUsed) / minutes) : null;
+  const growthPerMin = isFiniteNumber(used) && isFiniteNumber(prevUsed) ? Math.round((used - prevUsed) / minutes) : null;
   return { swapoutsPerMin, growthPerMin };
 }
 
 function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string[]): Record<string, HarnessFootprint> {
   const out: Record<string, HarnessFootprint> = {};
-  const busyCores = finite(s.cpu.busyPercent) ? s.cpu.cores * s.cpu.busyPercent / 100 : null;
+  const busyCores = isFiniteNumber(s.cpu.busyPercent) ? s.cpu.cores * s.cpu.busyPercent / 100 : null;
   const live = s.sessions ?? [];
   let cpuFromHost = false;
   for (const adapter of HARNESS_ADAPTERS) {
     const sessions = live.filter(x => x.harness === adapter.id);
-    const mems = sessions.map(x => x.memBytes).filter(finite);
+    const mems = sessions.map(x => x.memBytes).filter(isFiniteNumber);
     if (sessions.length && mems.length === sessions.length) {
-      const cpus = sessions.map(x => x.cpuPercent).filter(finite);
+      const cpus = sessions.map(x => x.cpuPercent).filter(isFiniteNumber);
       let cpu: number | null = cpus.length === sessions.length ? round(cpus.reduce((a, b) => a + b, 0) / cpus.length / 100, 3) : null;
       // Without per-process CPU, charge every live session an equal share of all busy cores:
       // an upper bound per session, so the CPU rule errs toward fewer launches.
@@ -123,7 +123,7 @@ function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string
     }
     const old = prev?.node === s.node ? prev.per_harness_footprint?.[adapter.id] : undefined;
     const learnedAt = old ? Date.parse(old.learned_at ?? prev!.measured_at) : NaN;
-    if (old && finite(old.mem_bytes_max) && old.mem_bytes_max > 0 && finite(learnedAt) &&
+    if (old && isFiniteNumber(old.mem_bytes_max) && old.mem_bytes_max > 0 && isFiniteNumber(learnedAt) &&
         s.measuredAtMs - learnedAt >= 0 && s.measuredAtMs - learnedAt <= CAPACITY_POLICY.learnedFootprintTtlMs) {
       out[adapter.id] = { ...old, sessions: 0, source: 'learned', learned_at: new Date(learnedAt).toISOString() };
     }
@@ -140,13 +140,13 @@ export function computeNodeCapacity(s: NodeSnapshot, prev: NodeCapacityDoc | nul
   if (swapoutsPerMin === null) notes.push('swap growth unknown: no previous sample of this node within 15 minutes');
 
   const total = s.mem.totalBytes;
-  const freePct = finite(s.mem.freePercent) ? s.mem.freePercent
-    : finite(s.mem.freeBytes) && total > 0 ? s.mem.freeBytes / total * 100 : null;
+  const freePct = isFiniteNumber(s.mem.freePercent) ? s.mem.freePercent
+    : isFiniteNumber(s.mem.freeBytes) && total > 0 ? s.mem.freeBytes / total * 100 : null;
   const headroomBytes = freePct === null || !(total > 0) ? null
     : Math.max(0, Math.floor(total * (freePct - CAPACITY_POLICY.memReserveFreePct) / 100));
 
   const busy = s.cpu.busyPercent;
-  const headroomCores = finite(busy) && s.cpu.cores > 0
+  const headroomCores = isFiniteNumber(busy) && s.cpu.cores > 0
     ? round(Math.max(0, s.cpu.cores * CAPACITY_POLICY.cpuTargetFraction - s.cpu.cores * busy / 100)) : null;
 
   const per = footprints(s, prev, notes);
@@ -176,8 +176,8 @@ export function computeNodeCapacity(s: NodeSnapshot, prev: NodeCapacityDoc | nul
   const [l1, l5, l15] = s.cpu.load ?? [null, null, null];
   return {
     schema: NODE_CAPACITY_SCHEMA, node: s.node, measured_at: new Date(s.measuredAtMs).toISOString(), platform: s.platform,
-    cpu: { cores: s.cpu.cores, load_1m: l1, load_5m: l5, load_15m: l15, busy_percent: finite(busy) ? round(busy, 1) : null,
-      run_queue_per_core: finite(l1) && s.cpu.cores > 0 ? round(l1 / s.cpu.cores) : null, headroom_cores: headroomCores },
+    cpu: { cores: s.cpu.cores, load_1m: l1, load_5m: l5, load_15m: l15, busy_percent: isFiniteNumber(busy) ? round(busy, 1) : null,
+      run_queue_per_core: isFiniteNumber(l1) && s.cpu.cores > 0 ? round(l1 / s.cpu.cores) : null, headroom_cores: headroomCores },
     mem_free: { total_bytes: total, free_bytes: s.mem.freeBytes, free_percent: freePct === null ? null : round(freePct, 1),
       pressure_level: s.mem.pressureLevel, headroom_bytes: headroomBytes },
     swap: { used_bytes: s.swap.usedBytes, total_bytes: s.swap.totalBytes, swapouts_total: s.swap.swapoutsTotal,
@@ -190,16 +190,15 @@ export function computeNodeCapacity(s: NodeSnapshot, prev: NodeCapacityDoc | nul
 
 /** Strict-enough reader for a previous or remote document; anything malformed is ignored, never trusted. */
 export function parseNodeCapacityDoc(value: unknown): NodeCapacityDoc | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (!isPlainRecord(value)) return null;
   const d = value as Partial<NodeCapacityDoc>;
   if (d.schema !== NODE_CAPACITY_SCHEMA || typeof d.node !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$/.test(d.node) ||
-      typeof d.measured_at !== 'string' || !finite(Date.parse(d.measured_at)) ||
+      typeof d.measured_at !== 'string' || !isFiniteNumber(Date.parse(d.measured_at)) ||
       !d.mem_free || typeof d.mem_free !== 'object' || !d.swap || typeof d.swap !== 'object' || !d.cpu || typeof d.cpu !== 'object' ||
-      !d.per_harness_footprint || typeof d.per_harness_footprint !== 'object' || Array.isArray(d.per_harness_footprint) ||
-      !d.agents_runnable_now || typeof d.agents_runnable_now !== 'object' || Array.isArray(d.agents_runnable_now)) return null;
+      !isPlainRecord(d.per_harness_footprint) || !isPlainRecord(d.agents_runnable_now)) return null;
   for (const fp of Object.values(d.per_harness_footprint)) {
-    if (!fp || typeof fp !== 'object' || !finite(fp.mem_bytes_max) || fp.mem_bytes_max <= 0 ||
-        !(fp.cpu_cores_per_session === null || (finite(fp.cpu_cores_per_session) && fp.cpu_cores_per_session >= 0))) return null;
+    if (!fp || typeof fp !== 'object' || !isFiniteNumber(fp.mem_bytes_max) || fp.mem_bytes_max <= 0 ||
+        !(fp.cpu_cores_per_session === null || (isFiniteNumber(fp.cpu_cores_per_session) && fp.cpu_cores_per_session >= 0))) return null;
   }
   for (const n of Object.values(d.agents_runnable_now)) {
     if (!(n === null || (Number.isSafeInteger(n) && n >= 0))) return null;

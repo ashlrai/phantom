@@ -7,7 +7,7 @@ import { validCap } from './state.js';
  * flags: a worker upgraded before its primary must keep joining. Caps never gate routing
  * unless a job requires them, so this is observation only.
  */
-export const VERSION_CAP_PREFIX = 'phm-';
+const VERSION_CAP_PREFIX = 'phm-';
 const SEMVER = /^(\d{1,9})\.(\d{1,9})\.(\d{1,9})(?:[-+][0-9a-z.-]*)?$/;
 
 /** ASHLR_VERSION is set by the SEA shim, where package.json is not resolvable. */

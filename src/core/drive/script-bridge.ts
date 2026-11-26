@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { lstat, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute } from 'node:path';
 import { promisify } from 'node:util';
+import { isPlainRecord } from './drive-helpers.js';
 import { parseDriveSnapshot, type DriveBridge, type DriveReport, type DriveSnapshot, type DrivePressureLevel } from './supervisor.js';
 
 const execFileAsync = promisify(execFile);
@@ -37,7 +38,7 @@ export async function checkDrivePublisher(path: string): Promise<void> {
 export type DriveCommand = (executable: string, args: string[]) => Promise<string>;
 
 /** Bounded output; child diagnostics can contain credentials and never reach the console. */
-export const runDriveCommand: DriveCommand = async (executable, args) => {
+const runDriveCommand: DriveCommand = async (executable, args) => {
   try {
     const result = await execFileAsync(executable, args, {
       encoding: 'utf8', timeout: 120_000, maxBuffer: 4 * 1024 * 1024,
@@ -48,10 +49,6 @@ export const runDriveCommand: DriveCommand = async (executable, args) => {
     throw new Error('Drive command failed; inspect the private host logs');
   }
 };
-
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 /** Versioned subprocess seam; no native schema or semaphore path is guessed. */
 export class ScriptDriveBridge implements DriveBridge {
@@ -69,7 +66,7 @@ export class ScriptDriveBridge implements DriveBridge {
     try {
       response = JSON.parse(await this.command(this.executable, [operation, JSON.stringify({ protocol, ...request })]));
     } catch { throw new Error(`Drive bridge ${operation} failed`); }
-    if (!record(response) || response.protocol !== protocol || !Object.hasOwn(response, 'result')) {
+    if (!isPlainRecord(response) || response.protocol !== protocol || !Object.hasOwn(response, 'result')) {
       throw new Error('Invalid drive bridge reply');
     }
     return response.result;
@@ -99,7 +96,7 @@ export class ScriptDriveBridge implements DriveBridge {
   async reservePublish(lease: string, job: string): Promise<boolean> {
     const result = await this.call('reserve-publish', { lease, job });
     if (result === null) return false;
-    if (!record(result) || !Array.isArray(result.argv) || result.argv.length > 32 ||
+    if (!isPlainRecord(result) || !Array.isArray(result.argv) || result.argv.length > 32 ||
         !result.argv.every(arg => typeof arg === 'string' && arg.length <= 4096 && !arg.includes('\0'))) {
       throw new Error('Invalid drive publication reservation');
     }

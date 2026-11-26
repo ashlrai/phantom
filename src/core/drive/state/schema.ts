@@ -1,4 +1,6 @@
 /** Value-free local queue.v1 stub until the drive queue owns this contract. */
+import { isPlainRecord } from '../drive-helpers.js';
+
 export interface QueueRecord {
   kind: 'queue.v1';
   id: string;
@@ -43,14 +45,14 @@ const fields = {
 };
 function invalid(): never { throw new Error('Invalid value-free drive state'); }
 function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
+  if (!isPlainRecord(value)) invalid();
   const proto: unknown = Object.getPrototypeOf(value);
   if (proto !== Object.prototype && proto !== null) invalid();
   // Reject accessors and serialization hooks without executing them.
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key !== 'string' || !('value' in Object.getOwnPropertyDescriptor(value, key)!)) invalid();
   }
-  return value as Record<string, unknown>;
+  return value;
 }
 function exact(value: Record<string, unknown>, keys: readonly string[]): void {
   if (Reflect.ownKeys(value).length !== keys.length || keys.some(k => !Object.hasOwn(value, k))) invalid();
