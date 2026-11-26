@@ -108,7 +108,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   mason: ['thread', 'digest', '--since', '--post', '--json', '--help'],
   'comms-agent': ['status', 'run', 'drafts', '--json', '--dir', '--lanes', '--help'],
   claim: ['acquire', 'release', '--lane', '--reason', '--json', '--help'],
-  usage: ['sensors', 'spend', 'limits', 'live', 'resource-live', 'history', 'validate', '--lane', '--json', '--refresh', '--file', '--watch', '--force', '--show', '--browser', '--headed', '--interval', '--queue-dir', '--bus-dir', '--runs-dir', '--help'],
+  usage: ['sensors', 'spend', 'limits', 'live', 'resource-live', 'resource-evidence', 'history', 'validate', '--lane', '--json', '--refresh', '--file', '--watch', '--force', '--show', '--browser', '--headed', '--interval', '--queue-dir', '--bus-dir', '--runs-dir', '--targets', '--help'],
   observe: ['session', '--json', '--human-steps', '--bottlenecks', '--prs', '--days', '--claim-minutes', '--help'],
   budget: ['show', 'add', 'get', 'set', '--json', '--provider', '--period', '--usd', '--bucket', '--remaining', '--reset-at', '--at', '--source', '--input', '--help'],
   world: ['get', '--json', '--refresh', '--help'],
