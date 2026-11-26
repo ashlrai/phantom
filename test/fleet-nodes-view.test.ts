@@ -138,8 +138,19 @@ describe('readNodesView', () => {
       version: 'drive.nodes.v1', sequence: 3, observedAt: NOW - 1_000,
       nodes: [node('laptop', { expiresAt: NOW - 1, owners: ['acme'] })], leader: null, jobs: [] } }));
     expect(view.nodes).toHaveLength(1);
+    // The hint restores the last advertised profile — owners, caps and slots —
+    // the same command a session-expired fix prints, so the suggested rejoin
+    // never silently downgrades the node's capabilities.
     expect(view.nodes[0]).toMatchObject({ isSelf: true, phantom: 'not-running', stateCode: 'not-running',
-      state: 'reachable but Phantom not running: run `phm node join --node laptop --owner acme` here' });
+      state: 'reachable but Phantom not running: run `phm node join --node laptop --owner acme --caps claude,codex --slots 2` here' });
+  });
+
+  it('standalone registry: a record with no advertised profile gets placeholders, not invented flags', () => {
+    const view = readNodesView(deps(tailnet([]), { source: 'local', selfNode: null, pool: null, state: {
+      version: 'drive.nodes.v1', sequence: 3, observedAt: NOW - 1_000,
+      nodes: [node('laptop', { expiresAt: NOW - 1, owners: undefined, caps: undefined, slots: undefined })], leader: null, jobs: [] } }));
+    expect(view.nodes[0]).toMatchObject({ isSelf: true, stateCode: 'not-running',
+      state: 'reachable but Phantom not running: run `phm node join --node laptop --owner <scope>` here' });
   });
 
   it('missing tailscale: reachability is unknown with the reason, registry facts still shown', () => {
