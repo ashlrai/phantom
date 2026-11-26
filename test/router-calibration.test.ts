@@ -134,6 +134,26 @@ describe('router calibration', () => {
       row({ event: 'publish', id: 'TEST-a', status: 'published' }) + row({ event: 'outcome', id: 'TEST-a', outcome: 'pending' }));
     expect(report.arms[0]).toMatchObject({ resolved: 0, observedMergeRate: null, brier: null });
   });
+  it.each([
+    ['2026-01-01T00:00:00Z', undefined, 2000],
+    ['2026-01-01T00:00:01Z', undefined, null],
+    ['2026-01-01T00:00:02Z', undefined, null],
+    ['2026-01-01T00:00:03Z', undefined, null],
+    ['2026-01-01T00:00:04Z', undefined, 2000],
+    [undefined, undefined, null],
+    ['invalid', undefined, null],
+    ['2026-01-01T00:00:02Z', 1500, 1500],
+  ])('calibrates wall time with claim time %s and explicit duration %s', (claimTime, duration, actual) => {
+    const report = calibrateRouting(
+      row({ event: 'launch', job: 'RQ-MEMBER', lane: 'codex',
+        ts: '2026-01-01T00:00:01Z', predicted_wall_time_ms: 2000 }) +
+      row({ event: 'finish', job: 'RQ-MEMBER', ts: '2026-01-01T00:00:03Z', wall_time_ms: duration }) +
+      row({ job: 'RQ-MEMBER', outcome: 'MERGED' }) +
+      row({ event: 'batch_claim', job: 'RQ-MEMBER', ts: claimTime }),
+    );
+    expect(report.arms).toMatchObject([{ arm: 'codex', resolved: 1,
+      wallTimeMs: { actual, paired: actual === null ? 0 : 1 } }]);
+  });
   it.each([false, true])('keeps an unlabeled standalone launch out of the batch arm (claim last: %s)', (claimLast) => {
     const claim = row({ event: 'batch_claim', job: 'RQ-FALLBACK', lane: 'codex', ts: '2026-01-01T00:00:00Z' });
     const launch = row({ event: 'launch', job: 'RQ-FALLBACK', lane: 'unknown',

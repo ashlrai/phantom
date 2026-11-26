@@ -35,6 +35,7 @@ interface Job {
   launched: boolean;
   launchReceipt?: Row;
   batchLanes?: Set<string>;
+  batchClaimTimes?: Set<number | null>;
   /** Reward signals can account for reversions after the PR merged. */
   rewardMerged?: boolean;
 }
@@ -64,8 +65,11 @@ function numberField(row: Row, names: string[], max = Infinity): number | undefi
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > max) throw new Error(`Invalid ${names[0]}`);
   return value;
 }
+function timestampField(row: Row): unknown {
+  return field(row, 'timestamp', 'at', 'time', 'ts');
+}
 function timestamp(row: Row): number | undefined {
-  const value = field(row, 'timestamp', 'at', 'time', 'ts');
+  const value = timestampField(row);
   if (value === undefined) return undefined;
   const parsed = parseLedgerTs(value);
   if (parsed === null) throw new Error('Invalid event timestamp');
@@ -158,6 +162,8 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       const lane = observedArm(row['lane'], row['pool'], row['arm']);
       job.batchLanes ??= new Set();
       if (lane) job.batchLanes.add(lane);
+      job.batchClaimTimes ??= new Set();
+      job.batchClaimTimes.add(parseLedgerTs(timestampField(row)));
     }
     if (event === 'launch') {
       if (job.launched) {
@@ -195,10 +201,14 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       job.arm = !job.launched && job.batchLanes?.size === 1 ? [...job.batchLanes][0]! : 'unknown';
     }
     job.merged = job.rewardMerged ?? job.merged;
-    if (job.started !== undefined && job.finished !== undefined) {
-      if (job.finished < job.started) throw new Error('Finish precedes launch');
-      const duration = job.finished - job.started;
-      if (job.wallTimeMs === undefined) job.wallTimeMs = duration;
+    const started = job.started;
+    const finished = job.finished;
+    if (started !== undefined && finished !== undefined) {
+      if (finished < started) throw new Error('Finish precedes launch');
+      const ambiguous = [...(job.batchClaimTimes ?? [])].some(
+        (claim) => claim === null || (claim >= started && claim <= finished),
+      );
+      if (job.wallTimeMs === undefined && !ambiguous) job.wallTimeMs = finished - started;
     }
     const group = groups.get(job.arm) ?? [];
     group.push(job); groups.set(job.arm, group);
