@@ -2618,6 +2618,29 @@ describe('router outcome cross-review join', () => {
     expect(reviews.get('ashlrai/phantom#9')).toEqual({ outcome: 'approve', at: later });
   });
 
+  it.each([false, true])('withholds reviews tied across different heads (reverse: %s)', (reverse) => {
+    const at = '2026-11-21T02:00:00Z';
+    const later = '2026-11-21T03:00:00Z';
+    const tied = (pr: number) => [
+      crossReview(pr, 'approve', { at, reviewedHeadSha: null }),
+      crossReview(pr, 'approve', { at }),
+      crossReview(pr, 'approve', { at, reviewedHeadSha: 'c'.repeat(40) }),
+      crossReview(pr, 'approve', { at }),
+    ];
+    const rows = [
+      ...tied(7),
+      ...tied(8),
+      crossReview(8, 'reject', { at: later }),
+      crossReview(9, 'approve', { at, reviewedHeadSha: 'unknown' }),
+      crossReview(9, 'approve', { at }),
+    ];
+    if (reverse) rows.reverse();
+    const reviews = foldCrossReviews(rows.map(row => JSON.stringify(row)).join('\n'));
+    expect(reviews.has('ashlrai/phantom#7')).toBe(false);
+    expect(reviews.get('ashlrai/phantom#8')).toEqual({ outcome: 'reject', at: later });
+    expect(reviews.get('ashlrai/phantom#9')).toEqual({ outcome: 'approve', at });
+  });
+
   it('joins cross_review through each job\'s newest unambiguous canonical PR claim only', () => {
     const reviews = new Map<string, CrossReviewEvidence>([
       ['ashlrai/phantom#42', { outcome: 'reject', at: '2026-11-21T00:00:00Z' }],

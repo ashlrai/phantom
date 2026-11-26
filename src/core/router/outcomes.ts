@@ -3116,6 +3116,7 @@ export type CrossReviewVerdict = 'approve' | 'reject' | 'failed' | 'skipped';
 const CROSS_REVIEW_VERDICTS: ReadonlySet<string> = new Set(['approve', 'reject', 'failed', 'skipped']);
 /** The cross-review ledger's schema version — a local copy of CROSS_REVIEW_SCHEMA_VERSION. */
 const CROSS_REVIEW_SCHEMA = 1;
+const CROSS_REVIEW_HEAD_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 /**
  * The per-PR cross-model review evidence one outcome's `cross_review`
@@ -3145,7 +3146,7 @@ export interface CrossReviewEvidence {
  * rows are skipped. A row counts only with a bounded `owner/repo` repo
  * label, a safe-integer `pr` >= 1 and an in-vocabulary `outcome`;
  * anything else is skipped. The latest recorded timestamp wins. Conflicting
- * verdicts at that time withhold the PR's evidence. With only undated
+ * verdicts or reviewed heads at that time withhold the PR's evidence. With only undated
  * receipts, the last appended review stands with a null timestamp. Rows
  * for PRs no jobs outcome claims unambiguously join nothing — the map
  * itself never creates outcomes.
@@ -3158,6 +3159,7 @@ function foldCrossReviewsThrough(text: string, asOfMs: number): Map<string, Cros
   const latest = new Map<string, {
     evidence: CrossReviewEvidence;
     timestamp: number;
+    head: string | null;
     conflicting: boolean;
   }>();
   for (const line of text.split('\n')) {
@@ -3181,16 +3183,23 @@ function foldCrossReviewsThrough(text: string, asOfMs: number): Map<string, Cros
     const parsedAt = at === null ? NaN : Date.parse(at);
     const timestamp = Number.isFinite(parsedAt) ? parsedAt : -Infinity;
     if (timestamp > asOfMs) continue;
+    const rawHead = row['reviewedHeadSha'];
+    const head = typeof rawHead === 'string' && CROSS_REVIEW_HEAD_SHA.test(rawHead) ? rawHead : null;
     const key = `${repo.toLowerCase()}#${pr}`;
     const previous = latest.get(key);
     if (!previous || timestamp > previous.timestamp || (timestamp === -Infinity && previous.timestamp === -Infinity)) {
       latest.set(key, {
         evidence: { outcome: outcome as CrossReviewVerdict, at: timestamp === -Infinity ? null : at },
         timestamp,
+        head,
         conflicting: false,
       });
-    } else if (timestamp === previous.timestamp && outcome !== previous.evidence.outcome) {
-      previous.conflicting = true;
+    } else if (timestamp === previous.timestamp) {
+      if (outcome !== previous.evidence.outcome ||
+          (head !== null && previous.head !== null && head !== previous.head)) {
+        previous.conflicting = true;
+      }
+      previous.head ??= head;
     }
   }
   const reviews = new Map<string, CrossReviewEvidence>();
