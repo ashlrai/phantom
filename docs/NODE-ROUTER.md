@@ -87,8 +87,9 @@ job's outcome: `pending`, `running` (naming the node whose live claim can act),
 
 A text `pull` (no `--json`) prints the same claim for a person: the job's
 owner, requirements, pack and secret names, the embedded task text when the
-job carries one, the lease token pair and expiry, and paste-ready `renew` and
-`complete` commands.
+job carries one, the lease token pair and expiry, and paste-ready `renew`,
+`complete` and `release` commands — the last names `--decline` for a job this
+node can never run.
 
 The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
@@ -423,6 +424,10 @@ rate per token and per minute, using one or more capacity documents, a
 cost/latency file (`[{provider, model, harness, tokensPerJob, minutesPerJob}]`)
 and lane outcomes (`{provider: {attempts, merged}}`). It prints a plan only; it
 never launches work. Providers passed with `--exhausted` are never routed.
+Capacity files must record CPU and memory headroom, kernel pressure, and
+swap growth using the snapshot schema's types. Use `null` for an unknown
+reading. Missing or malformed values in these fields make the file invalid;
+the command returns an input error before planning.
 Input can contain several snapshots for one node ID. Routing and fleet-wide
 runnable totals use the newest timestamp per node, so copying a snapshot
 cannot increase capacity and a newer hold takes precedence. Conflicting

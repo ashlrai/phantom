@@ -216,6 +216,22 @@ describe('capacity model', () => {
     expect(parseNodeCapacityDoc({ ...doc, per_harness_footprint: { codex: { mem_bytes_max: 0, cpu_cores_per_session: null } } })).toBeNull();
     expect(parseNodeCapacityDoc(null)).toBeNull();
   });
+
+  it('requires valid routing measurements and accepts explicit unknowns', () => {
+    const doc = computeNodeCapacity(snap());
+    expect(parseNodeCapacityDoc({ ...doc, cpu: {} })).toBeNull();
+    expect(parseNodeCapacityDoc({ ...doc, cpu: { ...doc.cpu, headroom_cores: '0' } })).toBeNull();
+    expect(parseNodeCapacityDoc({ ...doc, mem_free: { ...doc.mem_free, headroom_bytes: -1 } })).toBeNull();
+    expect(parseNodeCapacityDoc({ ...doc, mem_free: { ...doc.mem_free, pressure_level: '2' } })).toBeNull();
+    expect(parseNodeCapacityDoc({ ...doc, swap: { ...doc.swap, growing: 'true' } })).toBeNull();
+    const unknown = {
+      ...doc,
+      cpu: { ...doc.cpu, headroom_cores: null },
+      mem_free: { ...doc.mem_free, headroom_bytes: null, pressure_level: null },
+      swap: { ...doc.swap, growing: null },
+    };
+    expect(parseNodeCapacityDoc(unknown)).toEqual(unknown);
+  });
 });
 
 describe('phm node capacity / route CLI', () => {
@@ -240,7 +256,9 @@ describe('phm node capacity / route CLI', () => {
     const { cmdNodeRoute } = await import('../src/cli/node-capacity.js');
     const dir = mkdtempSync(join(tmpdir(), 'node-route-'));
     const file = (name: string, value: unknown) => { writeFileSync(join(dir, name), JSON.stringify(value)); return join(dir, name); };
-    const cap = file('cap.json', computeNodeCapacity(snap({ measuredAtMs: Date.now() })));
+    const doc = computeNodeCapacity(snap({ measuredAtMs: Date.now() }));
+    const cap = file('cap.json', doc);
+    const malformed = file('malformed.json', { ...doc, cpu: { ...doc.cpu, headroom_cores: '0' } });
     const costs = file('costs.json', [{ provider: 'grok', model: 'grok-5', harness: 'grok', tokensPerJob: 1e6, minutesPerJob: 20 }]);
     const jobs = file('jobs.json', [{ id: 'j1' }]);
     const lines: string[] = [];
@@ -249,9 +267,11 @@ describe('phm node capacity / route CLI', () => {
     try {
       expect(await cmdNodeRoute(['--capacity', cap, '--costs', costs, '--jobs', jobs, '--json'])).toBe(0);
       expect(await cmdNodeRoute(['--capacity', costs, '--costs', costs, '--jobs', jobs, '--json'])).toBe(2);
+      expect(await cmdNodeRoute(['--capacity', malformed, '--costs', costs, '--jobs', jobs, '--json'])).toBe(2);
       expect(await cmdNodeRoute(['--bogus', '--json'])).toBe(2);
     } finally { console.log = log; }
     expect(JSON.parse(lines[0]!)).toMatchObject({ schema: 'phantom.node-route.v1', plan: [{ jobId: 'j1', nodeId: 'mbp', provider: 'grok' }] });
     expect(JSON.parse(lines[1]!).error.message).toMatch(/node-capacity\.v1/);
+    expect(JSON.parse(lines[2]!).error.message).toMatch(/node-capacity\.v1/);
   });
 });

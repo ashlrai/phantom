@@ -654,6 +654,9 @@ describe('result: read-only owner-scoped outcome', () => {
       const lease = `--job task-job --node worker --session ${session} --token ${claim.token} --leader-token ${claim.leaderToken}`;
       expect(out).toContain(`Run: phm node renew ${lease}`);
       expect(out).toContain(`Done? Run: phm node complete ${lease} --result <text>`);
+      // The hand-back verb is named too: a runner that cannot do the job must
+      // not have to discover `release` in the guide while the lease ticks down.
+      expect(out).toContain(`Cannot run it? Run: phm node release ${lease} (add --decline if this node can never run it)`);
       // A second pull finds the job already running and keeps the short no-job text.
       lines.length = 0;
       expect(await cmdNodeFleet('pull', ['--node', 'worker', '--session', session], { store })).toBe(0);
