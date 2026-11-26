@@ -150,7 +150,7 @@ function verdictPrompt(group: VerdictGroup, repo: string): string {
   const headList = shown.map((head) => head.slice(0, 12)).join(', ')
     + (heads.length > shown.length ? `, and ${heads.length - shown.length} more` : '');
   const verdicts = `Recorded rerun verdicts inside the ${Math.round(CI_RERUN_WINDOW_MS / 86_400_000)}-day window: ${group.fails} failed, ${group.passes} passed, ${group.inconclusive} inconclusive.`
-    + (group.attempts > 0 ? ` ${group.attempts} rerun attempt rows were recorded for the same test.` : '');
+    + (group.attempts > 0 ? ` ${group.attempts} distinct rerun attempts were recorded for the same test.` : '');
   return [
     `Phantom's CI rerun journal shows test '${test}' on ${repo} keeps failing its reruns — the probable-flake classification is not holding, the self-improvement work this backlog exists for.`,
     '',
@@ -219,12 +219,13 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
     // alone keys a verdict group and the call tally is a single pair.
     const verdicts = new Map<string, VerdictGroup>();
     const runVerdicts = new Map<number, RerunEntry | null>();
+    const attemptsByRun = new Map<string, RerunEntry>();
     const attempts = new Map<string, number>();
     const callResults = new Map<string, RerunEntry | null>();
     for (const entry of entries) {
       if (typeof entry.repo !== 'string' || entry.repo.toLowerCase() !== repoKey) continue;
+      if (Date.parse(entry.at) > nowMs) continue;
       if (entry.outcome === 'ok' || entry.outcome === 'failed') {
-        if (Date.parse(entry.at) > nowMs) continue;
         const key = `${entry.runId}:${entry.head}`;
         const prior = callResults.get(key);
         if (prior === null) continue;
@@ -232,24 +233,31 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
         else if (!prior || Date.parse(entry.at) < Date.parse(prior.at)) callResults.set(key, entry);
         continue;
       }
-      if (!inWindow(entry, nowMs, windowMs)) continue;
       if (entry.outcome === 'attempt') {
-        const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
-        for (const test of new Set(tests)) {
-          if (typeof test !== 'string' || !test || test.length > JOURNAL_TEST_MAX) continue;
-          attempts.set(test, (attempts.get(test) ?? 0) + 1);
-        }
+        const key = `${entry.runId}:${entry.head}`;
+        const prior = attemptsByRun.get(key);
+        if (!prior || Date.parse(entry.at) < Date.parse(prior.at)) attemptsByRun.set(key, entry);
         continue;
       }
       if (entry.outcome !== 'verdict') continue;
       const prior = runVerdicts.get(entry.runId);
-      if (prior === undefined) runVerdicts.set(entry.runId, entry);
-      else if (prior && (prior.head !== entry.head || prior.test !== entry.test || prior.verdict !== entry.verdict)) {
+      if (prior === null) continue;
+      if (prior && (prior.head !== entry.head || prior.test !== entry.test || prior.verdict !== entry.verdict)) {
         runVerdicts.set(entry.runId, null);
+      } else if (!prior || Date.parse(entry.at) < Date.parse(prior.at)) {
+        runVerdicts.set(entry.runId, entry);
+      }
+    }
+    for (const entry of attemptsByRun.values()) {
+      if (!inWindow(entry, nowMs, windowMs)) continue;
+      const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
+      for (const test of new Set(tests)) {
+        if (typeof test !== 'string' || !test || test.length > JOURNAL_TEST_MAX) continue;
+        attempts.set(test, (attempts.get(test) ?? 0) + 1);
       }
     }
     for (const entry of runVerdicts.values()) {
-      if (!entry || typeof entry.test !== 'string' || !entry.test) continue;
+      if (!entry || !inWindow(entry, nowMs, windowMs) || typeof entry.test !== 'string' || !entry.test) continue;
       const group = verdicts.get(entry.test) ?? { test: entry.test, fails: 0, passes: 0, inconclusive: 0, failHeads: new Set<string>(), attempts: 0 };
       if (entry.verdict === 'fail') {
         group.fails += 1;

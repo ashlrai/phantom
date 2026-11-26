@@ -684,9 +684,12 @@ rerun firing rules are unchanged. In recurring-failure briefs from
 `phm improve discover`, a shared attempt counts once for each recorded
 triggering test. The shared workflow verdict does not count toward any
 test's recurring-failure threshold.
-Discovery counts at most one verdict per repository and workflow run ID
-within the recurrence window. If records for a run disagree on its head,
-test attribution, or verdict, that run provides no per-test evidence.
+Discovery counts one attempt per repository, head SHA and workflow run ID,
+and at most one verdict per repository and workflow run ID. The earliest
+observed receipt sets each attempt or verdict's time in the recurrence
+window, so a replay cannot bring expired evidence back into the window.
+If observed verdict receipts for a run disagree on its head, test
+attribution, or verdict, that run provides no per-test verdict evidence.
 For recurring call failures, discovery counts one call result per
 repository, head SHA and workflow run ID. The earliest observed receipt
 sets its time in the recurrence window. If observed receipts disagree on
