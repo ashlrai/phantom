@@ -4,6 +4,7 @@ import type { DriveNodes, NodesStore } from '../core/drive/nodes/index.js';
 import { UsageError, joinHintCommand, knownOwnerScopes, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
 import { validId, type NodeAuth } from '../core/drive/nodes/state.js';
 import type { SelfUpdatePlan } from '../core/drive/nodes/phm-version.js';
+import type { LocalLaneProbeDeps } from '../core/drive/nodes/local-model-caps.js';
 import { parseNodeWatchFlags, type NodeWatchFlags } from './node-watch.js';
 import type { NodeBeatWatchDeps } from './node-beat-watch.js';
 
@@ -16,6 +17,10 @@ export interface NodeFleetDeps {
   phmVersion?: () => string | null;
   /** This computer's hostname for the join `--node` default; defaults to os.hostname. */
   hostname?: () => string;
+  /** Test seam for the standalone join's local-model lane probe
+   * (`local-lanes.json` + live headroom → advertised caps); defaults to this
+   * machine's real probe. */
+  localLanes?: LocalLaneProbeDeps;
   /** Test seam for `join --watch`: forwarded to the beat watch loop (run, sleep,
    * signal, capacity/host-stats measurement). */
   watch?: NodeBeatWatchDeps;
@@ -299,10 +304,11 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       }
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
-    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join }, { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }] = await Promise.all([
+    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join },
+      { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalModelCaps }] = await Promise.all([
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
-      import('../core/drive/nodes/phm-version.js')]);
+      import('../core/drive/nodes/phm-version.js'), import('../core/drive/nodes/local-model-caps.js')]);
     const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
     const drive = new DriveNodes(store, deps.now ? { now: deps.now } : {});
     if (verb === 'join') {
@@ -328,6 +334,19 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
         const caps = (flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean)
           .filter(c => versionFromCaps([c]) === null);
         caps.push(reported);
+        flags.set('--caps', caps.join(','));
+      }
+      // A standalone join also advertises this machine's planned local-model
+      // lanes — the same caps a pool join or worker sends through
+      // probeNodeLanes — so a node with local-lanes.json enabled is not
+      // invisible to --requires omlx jobs. Like the version cap this stays in
+      // the CLI layer: runNodeFleet is shared with the SSH endpoint, where the
+      // joining worker's own machine — not this host — owns the lanes it
+      // reports. An absent, disabled or backed-off lane contributes nothing;
+      // explicit --caps entries are kept and deduped against the probe.
+      const localCaps = probeLocalModelCaps(deps.localLanes);
+      if (localCaps.length > 0) {
+        const caps = [...new Set([...(flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean), ...localCaps])];
         flags.set('--caps', caps.join(','));
       }
     }
