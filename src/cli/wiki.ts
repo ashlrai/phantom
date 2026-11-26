@@ -71,8 +71,9 @@ const WIKI_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> =
   },
   brain: {
     allowed: { flags: ['--json'], values: ['--focus', '--link', '--source-kind', '--source-id', '--source-digest'] },
-    usage: 'Usage: ashlr wiki brain [repo] [--focus <node-id>] [--json]\n       ashlr wiki brain [repo] --link <node-id> --source-kind <kind> --source-id <id> --source-digest <sha256> [--json]',
+    usage: 'Usage: ashlr wiki brain [repo] [--focus <node-id>] [--json]\n       ashlr wiki brain [repo] --link <node-id> --source-kind <kind> --source-id <id> --source-digest <sha256> [--json]\n       ashlr wiki brain stats --json',
   },
+  ecosystem: { allowed: { flags: ['--json'] }, usage: 'Usage: ashlr wiki ecosystem --json' },
   ask: {
     allowed: { flags: ['--no-model', '--json'], values: ['--repo'] },
     usage: 'Usage: ashlr wiki ask "<question>" [--repo <path|name>] [--no-model] [--json]',
@@ -139,6 +140,8 @@ function printHelp(): void {
   out(`    ${cyan('show <repo> [page]')}           Print a page (default: overview).`);
   out(`    ${cyan('map [repo] [--focus id]')}      Read the commit-pinned system map.`);
   out(`    ${cyan('brain [repo] [--focus id]')}    Read commit-aware system map evidence (or explicitly attach a source with --link).`);
+  out(`    ${cyan('brain stats --json')}           Compare Fleet and Cloud merge rates by Wiki slice usage.`);
+  out(`    ${cyan('ecosystem --json')}             Map repositories in the signed grant scope.`);
   out(`    ${cyan('ask "<question>" [--repo r]')}  Answer from the wiki, index and genome with file:line citations.`);
   out('');
   out(`    ${dim('--force        regenerate every page')}`);
@@ -329,6 +332,11 @@ async function cmdMap(wiki: WikiModule, p: Parsed): Promise<number> {
 }
 
 async function cmdBrain(wiki: WikiModule, p: Parsed): Promise<number> {
+  if (p.positional.length === 1 && p.positional[0] === 'stats' && !p.values.size && p.flags.has('--json')) {
+    const { wikiSliceStats } = await import('../core/knowledge/wiki/slice-stats.js');
+    process.stdout.write(`${JSON.stringify(await wikiSliceStats())}\n`);
+    return 0;
+  }
   const focus = p.values.get('--focus');
   const node = p.values.get('--link');
   const { brainSourceSchema, linkBrainEvidence, queryBrain } = await import('../core/knowledge/wiki/brain.js');
@@ -395,6 +403,16 @@ export async function cmdWiki(args: string[]): Promise<number> {
       return cmdMap(wiki, p);
     case 'brain':
       return cmdBrain(wiki, p);
+    case 'ecosystem': {
+      if (p.positional.length || !p.flags.has('--json')) {
+        process.stderr.write(`${WIKI_OPTIONS.ecosystem!.usage}\n`);
+        return 2;
+      }
+      const { queryWikiEcosystem } = await import('../core/knowledge/wiki/ecosystem.js');
+      const result = await queryWikiEcosystem();
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      return result.status === 'current' ? 0 : 1;
+    }
     case 'ask':
       return cmdAsk(wiki, p);
     default:

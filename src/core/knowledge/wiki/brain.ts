@@ -44,9 +44,10 @@ type Target = z.infer<typeof targetSchema>;
 const recordSchema = z.object({
   observedCommit: sha,
   source: brainSourceSchema,
-  origin: z.enum(['curated', 'cloud-merge']),
+  origin: z.enum(['curated', 'cloud-merge', 'cloud-rejection']),
   targets: z.array(targetSchema).min(1).max(MAX_TARGETS),
   truncated: z.boolean(),
+  lesson: z.string().max(2048).refine(text => scrubSecrets(text) === text).optional(),
 }).strict();
 type Record = z.infer<typeof recordSchema>;
 
@@ -144,6 +145,24 @@ export async function recordBrainMerge(repo: string, githubRepo: string, pr: num
   return save(repo, { observedCommit, source, origin: 'cloud-merge', targets, truncated: paths.length > MAX_TARGETS });
 }
 
+export async function recordBrainRejection(repo: string, githubRepo: string, pr: number, observedCommit: string, baseBranch: string, failedChecks: string[]) {
+  if (!objectId.test(observedCommit) || !Number.isSafeInteger(pr) || pr < 1) return 'invalid';
+  const base = (await mapGit(repo, ['merge-base', observedCommit, 'refs/remotes/origin/' + baseBranch])).toString('utf8').trim();
+  if (!objectId.test(base)) return 'invalid';
+  const paths = (await mapDiff(repo, base, observedCommit))
+    .filter(([file, blob]) => blob !== null && eligible(file)).map(([file]) => file).sort();
+  const ids = paths.slice(0, MAX_TARGETS).map(file => 'file:' + file);
+  if (!ids.length) return 'empty';
+  const targets = [...(await readTargets(repo, observedCommit, ids)).values()];
+  if (!targets.length) return 'empty';
+  const id = 'github:' + githubRepo.toLowerCase() + '/pull/' + pr + '/closed';
+  const checks = [...new Set(failedChecks.map(check =>
+    scrubSecrets(check).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').trim().slice(0, 120)).filter(Boolean))].sort().slice(0, 12);
+  const lesson = 'Closed without merge.' + (checks.length ? ' Failed checks: ' + checks.join(', ') + '.' : '');
+  const source = brainSourceSchema.parse({ kind: 'lesson', id, digest: digest(JSON.stringify([id, observedCommit, lesson])) });
+  return save(repo, { observedCommit, source, origin: 'cloud-rejection', targets, truncated: paths.length > MAX_TARGETS, lesson });
+}
+
 type Staleness = 'valid' | 'target-changed' | 'target-removed' | 'unknown-ancestry';
 
 export async function queryBrain(
@@ -152,7 +171,7 @@ export async function queryBrain(
   const { focus, revision, cloudFiles } = options;
   const commit = revision === undefined ? await brainHead(repo) : objectId.test(revision) ? revision : null;
   const result = { schema: 'phantom.wiki.brain.v1', status: 'current', commit, truncated: false,
-    links: [] as Array<Omit<Target, 'blob'> & Pick<Record, 'source' | 'observedCommit'> & { staleness: Staleness }> };
+    links: [] as Array<Omit<Target, 'blob'> & Pick<Record, 'source' | 'observedCommit' | 'lesson'> & { staleness: Staleness }> };
   if (!commit) return { ...result, status: 'unavailable' };
   const records = readImmutablePrivateRecords(store(repo));
   if (records.sourceState === 'degraded' && !records.limitExceeded) return { ...result, status: 'unavailable' };
@@ -177,7 +196,8 @@ export async function queryBrain(
     const staleness: Staleness = !targets || !await descends(record.observedCommit) ? 'unknown-ancestry' :
       !current ? 'target-removed' : current.blob === target.blob ? 'valid' : 'target-changed';
     const { nodeId, file, line } = target;
-    const link = { nodeId, file, line, source: record.source, observedCommit: record.observedCommit, staleness };
+    const link = { nodeId, file, line, source: record.source, observedCommit: record.observedCommit, staleness,
+      ...(record.lesson ? { lesson: record.lesson } : {}) };
     remaining -= Buffer.byteLength(JSON.stringify(link)) + 1;
     if (remaining < 0) {
       result.truncated = true;
