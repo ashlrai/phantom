@@ -24,6 +24,19 @@ for validated lane-open dispatcher jobs. `readyRowsForDepth`
 (`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
 `tier` for the tier tally, including lane-open jobs as `READY`.
 
+## Wiki context and ecosystem
+
+`cloudBrainContext(githubRepo, checkout, taskText)` and
+`fleetBrainContext(repoName, taskText)` return `{ text, nodeIds }`; text is
+bounded to 3,072 UTF-8 bytes. Fleet drop jobs only append context that fits the
+drop contract. `phm wiki brain stats --json` reports separate Fleet and Cloud
+merge rates for explicitly measured jobs with resolved PRs.
+
+`phm wiki ecosystem --json`, `phm_wiki_ecosystem`, and the local
+`GET /api/verse/wiki/ecosystem` return `phantom.wiki.ecosystem.v1`. The graph
+uses the active signed scope, local Git objects, and commit-pinned anchors;
+repositories without an available local index remain visible as unindexed.
+
 ## Desktop appearance
 
 `UiAppearance` (`src/core/verse/ui-appearance-file.ts`) includes
@@ -2368,6 +2381,15 @@ optional `providerBinaries`; `NodeRunnerDeps` gains `resolveBinary`.
 `codex-pack.ts` exports `CODEX_OUTPUT_LIMIT` (48 KiB), `nodeWorkDir`, `codexFileArgv`
 and `runCodexFilePack`, which writes a mode-0600 `node-results/<jobId>.json` artifact on success only.
 See [node runner](docs/NODES.md#reference-runner-security-review-before-installation).
+
+## Node route fleet footprint costs
+
+`src/core/drive/nodes/autoscale-router.ts` exports `fleetFootprints(docs)`.
+For each harness it returns the maximum `mem_bytes_max` and maximum measured
+`cpu_cores_per_session` across the supplied documents. The maxima can come
+from different nodes. CPU stays `null` when all supplied costs are unknown.
+`planAutoscaleRoutes` supplies only fresh, non-conflicting snapshots and uses
+the aggregate when the candidate node has no footprint for that harness.
 
 ## Node route lane outcomes (`phantom.node-route-outcomes.v1`)
 

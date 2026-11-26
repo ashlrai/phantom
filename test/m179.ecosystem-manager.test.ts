@@ -15,7 +15,7 @@
  * Conventions mirror m162.elite-strategist.test.ts.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -28,6 +28,10 @@ import type { AshlrConfig } from '../src/core/types.js';
 
 const origHome = process.env.HOME;
 let tmpHome: string;
+
+beforeAll(async () => {
+  await import('../src/core/vision/strategist.js');
+}, 30_000);
 
 beforeEach(() => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m179-home-'));
