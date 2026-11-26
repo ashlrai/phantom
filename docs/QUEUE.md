@@ -1427,8 +1427,16 @@ Run `phm fleet parked --json` for the read-only `health` summary
 repeated precheck skips, including `RESTOCK`, by job, code and reason over the
 last 24 hours. A READY row's lane hint resolves like `work_market.requirements`:
 the requirements JSON's `preferred_lane` wins over the lane cell and explicit
-`null` is lane-open, while an absent key falls back to the lane cell. Rows with
-no honest lane — empty lane cell and no spec preference — are the market's open
+`null` is lane-open, while an absent key falls back to the lane cell. A row
+carrying no requirements cell resolves its spec from the matching
+`queue/router-queue.md` `(attrs)` envelope instead: the envelope's
+`preferred_lane`, `lane` or `pool` attr is the hint and the lane cell is
+never consulted, an envelope naming no lane attr is lane-open, and a
+malformed envelope — like a lane cell the market rejects, which fails the
+row before the envelope is read — is `invalid_requirements`. With no
+matching envelope the lane cell stands. Rows the market resolves to no lane —
+explicit `preferred_lane: null`, an envelope naming no lane attr, or no
+spec preference with an empty lane cell — are the market's open
 hint: they count in `ready`/`total`/`unhinted` and in the health ready count,
 but stay unattributed in `byLane` and `nextUp`. A row the market rejects
 (`invalid_requirements`: malformed spec, invalid `preferred_lane` or lane cell)
