@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 
 import { MAX_READ_BYTES } from './scan.js';
+import { wikiIgnorePaths } from './steering.js';
 
 export const objectId = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 export type MapFreshness = {
@@ -96,4 +97,19 @@ export async function mapBlobs(
       offset = end + 1;
     }
   }
+}
+
+export async function resolveMapCommit(repo: string, revision = 'HEAD'): Promise<string | null> {
+  const output = await mapGit(repo, ['rev-parse', '--show-prefix', '--verify', `${revision}^{commit}`]).catch(() => null);
+  const [prefix, commit] = output?.toString('utf8').split('\n') ?? [];
+  return prefix === '' && commit && objectId.test(commit) ? commit : null;
+}
+
+export async function readPinnedSteeringIgnore(repo: string, steeringOid: string): Promise<string[]> {
+  let ignore: string[] = [];
+  await mapBlobs(repo, [steeringOid], (oid, source) => {
+    if (source === null || oid !== steeringOid) throw new Error('Invalid pinned wiki steering.');
+    ignore = wikiIgnorePaths(JSON.parse(source));
+  });
+  return ignore;
 }

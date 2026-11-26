@@ -12,7 +12,8 @@ import { queryBrain, recordBrainRejection } from '../src/core/knowledge/wiki/bra
 import { projectWikiEcosystem } from '../src/core/knowledge/wiki/ecosystem.js';
 import { wikiSliceStats } from '../src/core/knowledge/wiki/slice-stats.js';
 import { querySystemMap, rankSystemMap } from '../src/core/knowledge/wiki/system-map.js';
-import { mapFreshness } from '../src/core/knowledge/wiki/system-map-git.js';
+import { WIKI_STEERING_FILE } from '../src/core/knowledge/wiki/system-map-facts.js';
+import { mapFreshness, mapTree, readPinnedSteeringIgnore, resolveMapCommit } from '../src/core/knowledge/wiki/system-map-git.js';
 import { wikiKey, wikiRoot } from '../src/core/knowledge/wiki/store.js';
 import { callNativeTool, nativeToolSafety } from '../src/core/mcp-native.js';
 import { makeFixture, type DisposableRepo, type H1Fixture } from './helpers/h1-fixture.js';
@@ -423,5 +424,15 @@ describe('commit-pinned wiki map', () => {
     } finally {
       output.mockRestore();
     }
+  });
+
+  it('resolves committed root revisions and reads pinned steering ignore paths consistently', async () => {
+    repo.writeFile(WIKI_STEERING_FILE, JSON.stringify({ ignorePaths: ['fixtures/', '../outside', './legacy/'] }));
+    const head = commit();
+    expect(await resolveMapCommit(repo.dir)).toBe(head);
+    expect(await resolveMapCommit(repo.dir, head)).toBe(head);
+    expect(await resolveMapCommit(join(repo.dir, 'src'))).toBeNull();
+    const tree = new Map(await mapTree(repo.dir, head, [WIKI_STEERING_FILE]));
+    expect(await readPinnedSteeringIgnore(repo.dir, tree.get(WIKI_STEERING_FILE)!)).toEqual(['fixtures/', 'legacy/']);
   });
 });

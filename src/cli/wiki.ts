@@ -18,6 +18,7 @@ import { statSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfigReadOnly } from '../core/config.js';
+import { stripWikiLinks } from '../core/knowledge/wiki/citations.js';
 import type { AshlrConfig } from '../core/types.js';
 import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
@@ -122,11 +123,6 @@ function resolveRepo(wiki: WikiModule, arg: string | undefined): { repo: string 
     return { error: `${abs} is not enrolled. Enroll it with \`ashlr enroll add ${shown}\`.` };
   }
   return { error: `${arg} is not an enrolled repo name or a directory (see \`ashlr enroll list\`).` };
-}
-
-/** Citations render as plain `file:line` in a terminal. */
-function plainCitations(md: string): string {
-  return md.replace(/\[([^\]]+)\]\(#(?:cite|page):[^)]+\)/g, '$1');
 }
 
 function printHelp(): void {
@@ -271,7 +267,7 @@ async function cmdShow(wiki: WikiModule, p: Parsed): Promise<number> {
     process.stderr.write(m ? `No page "${page}". Pages: ${m.pages.map((x) => x.id).join(', ')}\n` : `No wiki yet — run \`ashlr wiki build ${path.basename(r.repo)}\`.\n`);
     return 1;
   }
-  process.stdout.write(`${plainCitations(md)}\n`);
+  process.stdout.write(`${stripWikiLinks(md)}\n`);
   return 0;
 }
 
@@ -300,7 +296,7 @@ async function cmdAsk(wiki: WikiModule, p: Parsed): Promise<number> {
   }
   const label = res.status === 'answered' ? green('answer') : res.status === 'extractive' ? yellow('passages') : yellow('not found');
   process.stdout.write(`\n${bold(label)}${res.repoName ? dim(` · ${res.repoName}`) : ''}${res.engine !== 'none' ? dim(` · ${res.engine}${res.local ? ' (local)' : ''}`) : ''}\n\n`);
-  process.stdout.write(`${plainCitations(res.answer)}\n`);
+  process.stdout.write(`${stripWikiLinks(res.answer)}\n`);
   if (res.sources.length > 0) {
     process.stdout.write(`\n${dim('sources')}\n`);
     for (const s of res.sources.slice(0, 8)) process.stdout.write(`  ${s.file}:${s.line}${s.endLine ? `-${s.endLine}` : ''} ${dim(`(${s.via}${s.title ? `: ${s.title}` : ''})`)}\n`);

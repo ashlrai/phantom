@@ -17,7 +17,7 @@
 
 import type { WikiCitation } from './types.js';
 
-export const CITE_PREFIX = '#cite:';
+const CITE_PREFIX = '#cite:';
 
 /** Returns the line count of a repo file, or null when it is not a known file. */
 export type LineCounter = (rel: string) => number | null | Promise<number | null>;
@@ -221,4 +221,9 @@ export function collectCitations(markdown: string): WikiCitation[] {
     if (c) out.push(c);
   }
   return out;
+}
+
+/** Strip canonical `#cite:` and `#page:` link targets, leaving visible labels. */
+export function stripWikiLinks(markdown: string): string {
+  return markdown.replace(/\[([^\]]+)\]\(#(?:cite|page):[^)]+\)/g, '$1');
 }

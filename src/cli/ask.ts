@@ -22,25 +22,14 @@ import { pad, makeColors, isTty } from './ui.js';
 import { isEnrolled } from '../core/sandbox/policy.js';
 import { deriveAskStatusEvents, type AskStatusEvent } from '../core/ask/status-stream.js';
 
-// ─── Lazy imports (graceful degradation if M25 modules not yet built) ────────
+// ─── Lazy import (graceful degradation if M25 module is unavailable) ──────────
 
-type AskFn = (
-  question: string,
-  opts: { repo?: string; allowCloud: boolean },
-) => Promise<import('../core/types.js').AskResult>;
-
-let _ask: AskFn | null | undefined = undefined;
-
-async function importAsk(): Promise<AskFn | null> {
-  if (_ask === undefined) {
-    try {
-      const mod = (await import('../core/knowledge/ask.js')) as { ask: AskFn };
-      _ask = mod.ask;
-    } catch {
-      _ask = null;
-    }
+async function loadAsk(): Promise<typeof import('../core/knowledge/ask.js')['ask'] | null> {
+  try {
+    return (await import('../core/knowledge/ask.js')).ask;
+  } catch {
+    return null;
   }
-  return _ask ?? null;
 }
 
 // ─── Arg parsing ─────────────────────────────────────────────────────────────
@@ -329,7 +318,7 @@ export async function cmdAsk(args: string[]): Promise<number> {
   }
 
   // ── Load the ask module ───────────────────────────────────────────────────
-  const askFn = await importAsk();
+  const askFn = await loadAsk();
   if (!askFn) {
     process.stderr.write(
       red('error: ') +
