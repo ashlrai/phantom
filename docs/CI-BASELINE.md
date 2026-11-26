@@ -566,8 +566,10 @@ test, while the default reporter's green-module line (`✓ file (N tests)`)
 resolves any failure identity in that file because every test the module
 contains passed on that run. Other pass output does not establish a test
 pass. The scan caps open PRs, runs, and jobs
-at 100 each and reports unknown rather than drawing conclusions from truncated
-run/job listings. Master reproduction remains an explicit step in the fix brief.
+at 100 each. A run or job listing supplies evidence only when its item count
+matches `total_count` and each item has a distinct, valid ID. Incomplete or
+capped listings leave that evidence unknown. Master reproduction remains an
+explicit step in the fix brief.
 
 `phm ci baseline --queue --json` appends only master-fix briefs to
 `~/.ashlr-runs/queue/router-queue.md`, at tier `work`, deduplicated by queue
