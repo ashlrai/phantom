@@ -217,6 +217,16 @@ export async function checkOwnerPair(deps: PairDeps): Promise<PairCheckResult> {
   if (!pending) return { status: 'none' };
   if (pending.expiresAt <= now) { writePairState(deps.configDir, { ...state, pending: null }); return { status: 'expired' }; }
   const inbound = await deps.bridge.replies(pending.afterRowId, pending.handles);
+  const replyTime = clock(deps);
+  if (pending.expiresAt <= replyTime) {
+    const current = readPairState(deps.configDir);
+    const p = current.pending;
+    if (p && p.startedAt === pending.startedAt && p.expiresAt === pending.expiresAt && p.afterRowId === pending.afterRowId
+      && p.handles.length === pending.handles.length && p.handles.every((h, i) => h === pending.handles[i])) {
+      writePairState(deps.configDir, { ...current, pending: null });
+    }
+    return { status: 'expired' };
+  }
   if (inbound === null) return { status: 'unreadable' };
   const own = new Set(pending.handles.map(h => h.toLowerCase()));
   // Rows at or before the send are older than the pairing; only the chats with pending own handles count.
@@ -228,7 +238,7 @@ export async function checkOwnerPair(deps: PairDeps): Promise<PairCheckResult> {
     return { status: 'waiting' };
   }
   const handle = pending.handles.find(h => h.toLowerCase() === yes.handle.toLowerCase())!;
-  return bindOwnerHandle(deps.configDir, handle, state, () => new Date(now));
+  return bindOwnerHandle(deps.configDir, handle, state, () => new Date(replyTime));
 }
 
 async function bindOwnerHandle(configDir: string, handle: string, state: PairState, at: () => Date): Promise<PairCheckResult> {
