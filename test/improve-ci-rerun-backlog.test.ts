@@ -156,6 +156,25 @@ describe('ciRerunBacklogItems', () => {
     expect(items.map(({ id }) => id.slice(0, -17)).sort()).toEqual(['ci-rerun-calls', 'ci-rerun-verdict']);
   });
 
+  it('requires distinct runs and withholds conflicting per-test verdicts', async () => {
+    const rows = [
+      ...rerun(REPO, TEST_A, sha(1), 11, 'fail', 1),
+      ...rerun(REPO, TEST_A, sha(2), 12, 'fail', 2),
+    ];
+    const replay = { ...rows[2]!, at: daysAgo(0.5), repo: 'AshlrAI/Phantom' };
+    const third = rerun(REPO, TEST_A, sha(1), 13, 'fail', 3);
+    const discover = (evidence: Row[]) => ciRerunBacklogItems({
+      repo: REPO, journalPath: writeJournal(evidence), now: NOW,
+    });
+
+    expect(await discover([...rows, replay])).toEqual([]);
+    const items = await discover([...rows, replay, ...third]);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('3 recorded rerun verdicts concluded failure');
+    expect(await discover([...rows, ...third, { ...replay, verdict: 'pass' }, replay])).toEqual([]);
+    expect(await discover([...rows, ...third, { ...replay, test: undefined }])).toEqual([]);
+  });
+
   it('ignores verdict rows without a test id and rows for other repositories', async () => {
     const untaged: Row[] = [
       { at: daysAgo(1), repo: REPO, head: sha(31), runId: 31, pr: 31, outcome: 'verdict', verdict: 'fail' },
