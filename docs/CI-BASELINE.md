@@ -638,6 +638,10 @@ Attempt totals, the hourly cap, and flake recurrence use the earliest
 observed attempt receipt for each repository, head SHA and run ID within
 the retained journal. Ties use journal order. Replays leave the original
 attempt time in effect, and recent entries still show each observed receipt.
+Successful and failed call totals likewise count one result per repository,
+head SHA and run ID. When visible receipts disagree on whether the call
+succeeded, the result is unknown and excluded from both call totals and
+verdict polling. Recent entries retain the conflicting receipts.
 
 ## Rerun verdicts
 
@@ -662,7 +666,8 @@ to the oldest eligible rerun when it reaches the end. The polling position
 persists across restarts, so transient read failures leave reruns pending
 for retry while later reruns still get checked.
 For each repository, head SHA and run ID, polling and the pending count
-use the earliest visible successful-call receipt in the retained journal.
+use the earliest visible successful-call receipt in the retained journal
+for runs with a consistent call result.
 Later receipts cannot reset the settle or expiry clock. When these receipts
 disagree on the triggering test, the workflow verdict still counts in the
 overall tally and its per-test attribution is withheld.
