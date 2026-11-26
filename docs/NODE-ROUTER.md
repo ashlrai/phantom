@@ -439,6 +439,8 @@ rate per token and per minute, using one or more capacity documents, a
 cost/latency file (`[{provider, model, harness, tokensPerJob, minutesPerJob}]`)
 and lane outcomes (`{provider: {attempts, merged}}`). It prints a plan only; it
 never launches work. Providers passed with `--exhausted` are never routed.
+When a placement reserves memory to load a local model, later placements on
+that node reuse the reservation only for the same provider, model and harness.
 Capacity files must record CPU and memory headroom, kernel pressure, and
 swap growth using the snapshot schema's types. Use `null` for an unknown
 reading. Missing or malformed values in these fields make the file invalid;

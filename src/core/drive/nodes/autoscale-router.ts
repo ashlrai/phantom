@@ -138,7 +138,7 @@ export function fleetFootprints(docs: NodeCapacityDoc[]): Record<string, Footpri
 
 interface NodeState {
   node: RouteNode;
-  /** Local models served now or loaded by an earlier placement in this plan. */
+  /** Provider/model/harness combinations loaded by earlier placements in this plan. */
   loaded: Set<string>;
   bytes: number;
   cores: number | null;
@@ -168,7 +168,7 @@ function nodeStates(input: RouterInput): NodeState[] {
         : !finite(age) || age > maxAge ? 'stale'
         : capacityHold(node.doc) ?? (hasMeasuredMemory(node.doc) ? null : 'unmeasured');
       const cores = node.doc.cpu.headroom_cores;
-      return { node, loaded: new Set(node.localModels ?? []), bytes: node.doc.mem_free.headroom_bytes ?? 0,
+      return { node, loaded: new Set(), bytes: node.doc.mem_free.headroom_bytes ?? 0,
         cores, cpuRoundoff: (cores ?? 0) * Number.EPSILON, blocked };
     });
 }
@@ -188,17 +188,19 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
   for (const job of input.jobs) {
     const rejected: Record<string, number> = {};
     const reject = (why: string) => { rejected[why] = (rejected[why] ?? 0) + 1; };
-    type Cand = { state: NodeState; cost: HarnessModelCost; fp: FootprintCost; fpSource: 'node' | 'fleet'; load: number; p: number; perMTok: number; perHour: number };
+    type Cand = { state: NodeState; cost: HarnessModelCost; fp: FootprintCost; fpSource: 'node' | 'fleet'; load: number; localModelKey: string | null; p: number; perMTok: number; perHour: number };
     const cands: Cand[] = [];
     for (const cost of costs) {
       if (job.providers && !job.providers.includes(cost.provider)) { reject('provider-not-in-job'); continue; }
       if (job.models && !job.models.includes(cost.model)) { reject('model-not-in-job'); continue; }
       if (exhausted.has(cost.provider)) { reject('provider-exhausted'); continue; }
+      const localModelKey = cost.local ? JSON.stringify([cost.provider, cost.model, cost.harness]) : null;
       for (const state of states) {
         if (state.blocked) { reject(`node-${state.blocked}`); continue; }
         if (state.node.providers && !state.node.providers.includes(cost.provider)) { reject('provider-not-on-node'); continue; }
         // An unserved local model needs room for its weights; without a size it cannot be placed.
-        const load = cost.local && !state.loaded.has(cost.model) ? cost.modelBytes : 0;
+        const load = localModelKey !== null && !state.node.localModels?.includes(cost.model) &&
+          !state.loaded.has(localModelKey) ? cost.modelBytes : 0;
         if (!finite(load) || load < 0) { reject('model-not-served'); continue; }
         const own = state.node.doc.per_harness_footprint[cost.harness];
         const borrowed = fleet[cost.harness];
@@ -212,7 +214,7 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
         if (state.cores === 0 || (state.cores !== null && fp.cpu_cores_per_session !== null &&
           fp.cpu_cores_per_session - state.cores > state.cpuRoundoff)) { reject('cpu'); continue; }
         const p = mergeRate(input.outcomes[cost.provider]);
-        cands.push({ state, cost, fp, fpSource: own ? 'node' : 'fleet', load, p,
+        cands.push({ state, cost, fp, fpSource: own ? 'node' : 'fleet', load, localModelKey, p,
           perMTok: p / cost.tokensPerJob * 1e6, perHour: p / (cost.minutesPerJob + Math.max(0, state.node.overheadMinutes ?? 0)) * 60 });
       }
     }
@@ -235,7 +237,7 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
       if (score > bestScore + 1e-12) { best = c; bestScore = score; }
     }
     best!.state.bytes -= best!.fp.mem_bytes_max + best!.load;
-    if (best!.cost.local) best!.state.loaded.add(best!.cost.model);
+    if (best!.localModelKey !== null) best!.state.loaded.add(best!.localModelKey);
     if (best!.state.cores !== null && best!.fp.cpu_cores_per_session !== null) {
       const remaining = best!.state.cores - best!.fp.cpu_cores_per_session;
       best!.state.cores = remaining <= best!.state.cpuRoundoff ? 0 : remaining;
