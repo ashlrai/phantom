@@ -667,6 +667,7 @@
 /test/improve-precheck-skip-backlog.test.ts @masonwyatt23
 /test/improve-promote-redteam.test.ts @masonwyatt23
 /test/improve-proposal-outcome-backlog.test.ts @masonwyatt23
+/test/improve-queue-reroute-backlog.test.ts @masonwyatt23
 /test/improve-queue-visit-backlog.test.ts @masonwyatt23
 /test/improve-rate-limit-backlog.test.ts @masonwyatt23
 /test/improve-reasoning-insight-backlog.test.ts @masonwyatt23
