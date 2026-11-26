@@ -314,6 +314,15 @@ label it saw in a message row, claim owner or channel member list to the
 canonical id, `agent:<handle>` address, aliases, runtimes and member
 channels without shelling out to `phm`; it accepts no caller root or path
 and never registers, aliases, joins channels or writes.
+`fleet_agent_identities` (the isolated fleet MCP tool) serves the
+`phm agents bus id list` roster join instead — every registered identity
+with its `agt_` id, handle, display name, aliases, runtimes and creation
+time, the registry channels with member handles, and the bot-seat
+participant projection — under the identical `readAgentRegistry` +
+`seatParticipants` read, so an MCP-connected agent learns which identities
+exist and which labels they answer to before it addresses anyone; it takes
+no arguments, keeps `source` missing-vs-unreadable honest and never
+registers, aliases, joins channels or writes.
 
 **Addresses.** The envelope keeps its fields; the unified API fills in the
 channel metadata group (`sender.agent_id` is the `agt_` id, `sender.vendor` the
