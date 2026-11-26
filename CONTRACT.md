@@ -2605,7 +2605,9 @@ store location; `localBridgeRouter(nodes, storeDirectory)` and
 The `BridgeRouter.view(owner)` result and `planNodeBridge(input)` input may
 include `routes: RouteAssignment[]` alongside the scoped node and job lists.
 The planner takes `now` in epoch milliseconds to check capacity samples against
-the two-heartbeat freshness window.
+the two-heartbeat freshness window. Each `BridgeNodeView` reports the node's
+full advertised `caps` — the set offload `requires` (lane cap, `pack:*`,
+`needs`) tests — beside `lanes`, the codex/claude/omlx model-lane subset.
 Assigned routes reserve slots on their destination node and host. Older views
 that omit routes use capability-based reservation estimates.
 Bridge manifests bind `owner` and
