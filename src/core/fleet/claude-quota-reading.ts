@@ -86,8 +86,14 @@ export function usableClaudeWeekly(reading: ClaudeQuotaReadingV1 | null, now: nu
   if (!reading?.fresh) return null;
   const at = Date.parse(reading.observedAt);
   if (!Number.isFinite(at) || at > now || now - at > MAX_AGE_MS) return null;
+  const currentWindow = (w: ClaudeQuotaReadingV1['windows'][number]): boolean => {
+    if (w.resetAt === null) return true;
+    const reset = Date.parse(w.resetAt);
+    // A reading captured after a reset can prove that the allowance renewed.
+    return reset <= at || reset > now;
+  };
   const weekly = reading.windows.find(w => w.id === 'seven_day');
-  if (!weekly) return null;
-  return { weekly, observedAt: reading.observedAt, scopes: reading.windows.filter(w => SCOPES.has(w.id)),
+  if (!weekly || !currentWindow(weekly)) return null;
+  return { weekly, observedAt: reading.observedAt, scopes: reading.windows.filter(w => SCOPES.has(w.id) && currentWindow(w)),
     ...(reading.accountId ? { accountId: reading.accountId } : {}) };
 }

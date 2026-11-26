@@ -27,7 +27,15 @@ export function AboutPanel() {
   const poll = useRefetch(updateStatusQuery);
   usePollWhileVisible(poll, 60_000);
   const observation = query.status === 'error' ? null : query.data ?? null;
-  const status = aboutUpdateLines(observation, Date.now());
+  const reading = !observation && query.status !== 'error';
+  const status = reading
+    ? { tone: 'unknown' as const, headline: 'Reading self-update status…', rows: [] }
+    : aboutUpdateLines(observation, Date.now());
+  const why = query.status === 'error'
+    ? 'The console could not read the update route. Try again, or open the Releases pane.'
+    : !reading && status.headline === 'Self-update status unavailable.'
+      ? 'This install has no source checkout the console can compare, so there is no fetch or fast-forward to report.'
+      : null;
   const serverVersion = observation && !('kind' in observation) ? observation.installedVersion : null;
   const skew = versionSkewNote({ desktop: desktopVersion, iface: APP_VERSION, server: serverVersion });
   const [notice, setNotice] = useState('');
@@ -66,8 +74,10 @@ export function AboutPanel() {
           {serverVersion ? <p className={styles.aboutLine}><span>Installed Phantom</span><Tag mono>v{serverVersion}</Tag></p> : null}
           {skew ? <p className={styles.aboutLine} data-tone={skew.tone}><Tag size="sm" className={styles[skew.tone === 'warning' ? 'aboutStatus_behind' : 'aboutStatus_unknown']}>{skew.text}</Tag></p> : null}
           <p className={styles.aboutLine} aria-live="polite">
-            <Tag size="sm" className={styles[`aboutStatus_${status.tone}`]}>{status.headline}</Tag>
+            <Tag size="sm" className={styles[`aboutStatus_${status.tone}`]} aria-busy={reading || undefined}>{status.headline}</Tag>
+            {query.status === 'error' ? <Button size="sm" onClick={() => void poll()}>Retry</Button> : null}
           </p>
+          {why ? <p className={styles.panelNote} data-testid="about-update-why">{why}</p> : null}
           {status.rows.map((row) => (
             <p className={styles.aboutLine} key={row.label}>
               <span>{row.label}</span>{row.mono ? <Tag mono>{row.value}</Tag> : <span>{row.value}</span>}

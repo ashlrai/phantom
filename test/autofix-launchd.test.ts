@@ -2,11 +2,14 @@
  * launchd-crashloop gates. A disable needs a fresh climbing runs delta,
  * and an admitted resident service is never disabled.
  */
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { createMemoryHost } from '../src/core/autofix/host.js';
-import { fixLaunchdCrashloop, type FixContext } from '../src/core/autofix/launchd.js';
-import type { LaunchdJob, RunsSample } from '../src/core/autofix/types.js';
+import { incidentDir } from '../src/core/autofix/incidents.js';
+import { fixLaunchdCrashloop, launchAgentsDir, newestRollbackMtime, type FixContext } from '../src/core/autofix/launchd.js';
+import { runAutofix } from '../src/core/autofix/run.js';
+import { emptySnapshot, type LaunchdJob, type RunsSample } from '../src/core/autofix/types.js';
 
 const NOW = Date.parse('2026-11-16T18:00:00.000Z');
 
@@ -103,6 +106,31 @@ describe('launchd crash loop', () => {
       plistMtimeMs: NOW - 2 * 60_000,
     }), ctx(host));
     expect(line?.result === 'applied').toBe(false);
+    expect(host.calls.some((argv) => argv.includes('disable') || argv.includes('bootout'))).toBe(false);
+  });
+
+  it('selects the newest matching rollback sibling and refuses recent operator rollbacks in runAutofix', async () => {
+    const host = hostWith(CLIMBING);
+    const agents = launchAgentsDir(host);
+    host.dirs.set(incidentDir(host.runsDir()), ['INCIDENT-b_runs_ai.ashlr.example.md']);
+    host.dirs.set(agents, [
+      'ai.ashlr.example.plist',
+      'ai.ashlr.example.plist.rollback.old',
+      'ai.ashlr.example.plist.rollback.recent',
+      'ai.ashlr.other.plist.rollback.newer',
+    ]);
+    host.mtimes.set(join(agents, 'ai.ashlr.example.plist'), NOW - 60 * 60_000);
+    host.mtimes.set(join(agents, 'ai.ashlr.example.plist.rollback.old'), NOW - 30 * 60_000);
+    host.mtimes.set(join(agents, 'ai.ashlr.example.plist.rollback.recent'), NOW - 3 * 60_000);
+    host.mtimes.set(join(agents, 'ai.ashlr.other.plist.rollback.newer'), NOW - 10_000);
+
+    expect(newestRollbackMtime(host, 'ai.ashlr.example')).toBe(NOW - 3 * 60_000);
+    expect(newestRollbackMtime(host, 'ai.ashlr.missing')).toBeNull();
+
+    const snapshot = emptySnapshot();
+    const result = await runAutofix({ host, snapshot, dryRun: false });
+    expect(result.lines[0]?.result).toBe('refused_stale');
+    expect((result.lines[0]?.before as { rollbackMtimeMs?: number | null }).rollbackMtimeMs).toBe(NOW - 3 * 60_000);
     expect(host.calls.some((argv) => argv.includes('disable') || argv.includes('bootout'))).toBe(false);
   });
 });

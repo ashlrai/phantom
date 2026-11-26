@@ -194,6 +194,26 @@ describe('ready.tsv -> node router bridge', () => {
     expect(r2.rows[0]!.reasons).toEqual(['slots_unknown']);
   });
 
+  it('accounts free slots once per physical host for capacity-reporting nodes', async () => {
+    // Two sessions on one host each advertise the host's measured slots; the
+    // pair offers the host's 2 slots once, not 4 — matching nodeCapacityView.
+    const f = fixture(['A', 'B', 'C'].map(j => row(`RQ-REVIEW-${j}`)),
+      [{ id: 'node-a', caps: READ, slots: 2 }, { id: 'node-b', caps: READ, slots: 2 }]);
+    const capacity = { hostId: 'shared-host', ramBytes: 8 * 1024 ** 3, slots: 2, held: null, sampledAtMs: 1_000_000 };
+    for (const id of ['node-a', 'node-b']) f.nodes.heartbeat(f.sessions.get(id)!, { capacity });
+    const report = await f.pass(false);
+    expect(report.rows.map(r => r.offload)).toEqual([true, true, false]);
+    expect(report.rows[2]!.reasons).toEqual(['no_free_slot']);
+    // A second host with its own measured slots still takes the third row.
+    const g = fixture(['A', 'B', 'C', 'D'].map(j => row(`RQ-REVIEW-${j}`)),
+      [{ id: 'node-a', caps: READ, slots: 2 }, { id: 'node-b', caps: READ, slots: 2 }, { id: 'node-c', caps: READ, slots: 2 }]);
+    for (const id of ['node-a', 'node-b']) g.nodes.heartbeat(g.sessions.get(id)!, { capacity });
+    g.nodes.heartbeat(g.sessions.get('node-c')!, { capacity: { ...capacity, hostId: 'other-host' } });
+    const second = await g.pass(false);
+    expect(second.rows.map(r => r.offload)).toEqual([true, true, true, true]);
+    expect(new Set(second.rows.map(r => r.nodeId))).toEqual(new Set(['node-a', 'node-c']));
+  });
+
   it('never offers a job to a node whose local capability probe failed', async () => {
     // air-w4 has no codex binary: the local probe drops the cap, whatever its config says.
     const run = (() => ({ status: null, error: Object.assign(new Error('missing'), { code: 'ENOENT' }) })) as unknown as typeof spawnSync;
