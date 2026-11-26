@@ -166,6 +166,17 @@ describe('fleet resource plan', () => {
       await writeFile(join(dir, 'PAUSE'), '');
       expect(await routeExpiringCapacity(dir, plan, () => now, quiet)).toEqual([]);
       await rm(join(dir, 'PAUSE'));
+      // The controller ceiling can tighten the configured target. Neither a
+      // higher ceiling nor a missing configured target supplies launch room.
+      for (const limits of [{ target: 1, effective_target: 2 }, { target: undefined, effective_target: 2 },
+        { target: 2, effective_target: 1 }]) {
+        const snapshot = { ...dispatch, lanes: Object.fromEntries(Object.entries(dispatch.lanes)
+          .map(([lane, state]) => [lane, { ...state, ...limits }])) };
+        await write('queue/status.json', snapshot);
+        expect(await routeExpiringCapacity(dir, plan, () => now, quiet)).toEqual([]);
+        expect(await readFile(join(dir, 'queue/ready.tsv'), 'utf8')).toBe(ready);
+      }
+      await write('queue/status.json', dispatch);
       const receipts = await routeExpiringCapacity(dir, plan, () => now, quiet);
       expect(receipts.map(r => [r.job, r.target_lane])).toEqual([['first', 'agy'], ['second', 'codex-personal']]);
       expect(receipts[0]).toMatchObject({ schema: 'work-market.v1', event: 'queue_reroute',

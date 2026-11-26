@@ -1386,6 +1386,11 @@ otherwise eligible lanes at the same deadline, cost posture and fit, favoring
 lanes below their advised concurrency. It cannot raise actual targets or
 bypass holds, spend policy, quota, job constraints, or machine admission.
 
+The expiring-quota rerouter requires a valid configured target for a lane.
+A valid lower `effective_target` from the same dispatcher snapshot tightens
+the launch limit. An absent, invalid or higher ceiling leaves the configured
+target in effect.
+
 ## Is each pool fed?
 
 Run `phm queue supply` for one plain line per pool: usage left, hours to reset, jobs queued for the pool, its starts
