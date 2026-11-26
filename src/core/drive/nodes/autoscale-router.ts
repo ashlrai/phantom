@@ -152,6 +152,10 @@ function capacityHold(doc: NodeCapacityDoc): 'pressure' | 'swap-growth' | null {
   return null;
 }
 
+function hasMeasuredMemory(doc: NodeCapacityDoc): boolean {
+  return doc.mem_free.pressure_level === 1 && doc.mem_free.headroom_bytes !== null;
+}
+
 function nodeStates(input: RouterInput): NodeState[] {
   const maxAge = input.maxAgeMs ?? ROUTER_DEFAULTS.maxAgeMs;
   return latestByNode(input.nodes, node => node.doc)
@@ -159,7 +163,7 @@ function nodeStates(input: RouterInput): NodeState[] {
       const age = input.nowMs - at;
       const blocked = conflict ? 'capacity-conflict'
         : !finite(age) || age < -60_000 || age > maxAge ? 'stale'
-        : capacityHold(node.doc) ?? (node.doc.mem_free.headroom_bytes === null ? 'unmeasured' : null);
+        : capacityHold(node.doc) ?? (hasMeasuredMemory(node.doc) ? null : 'unmeasured');
       const cores = node.doc.cpu.headroom_cores;
       return { node, loaded: new Set(node.localModels ?? []), bytes: node.doc.mem_free.headroom_bytes ?? 0,
         cores, cpuRoundoff: (cores ?? 0) * Number.EPSILON, blocked };
@@ -254,6 +258,7 @@ export function fleetRunnable(docs: NodeCapacityDoc[], nowMs: number, maxAgeMs =
   for (const adapter of HARNESS_ADAPTERS) {
     let sum: number | null = null;
     for (const { doc, stopped } of current) {
+      if (!stopped && !hasMeasuredMemory(doc)) continue;
       const n = doc.agents_runnable_now[adapter.id];
       if (Number.isSafeInteger(n)) sum = (sum ?? 0) + (stopped ? 0 : (n as number));
     }

@@ -70,6 +70,24 @@ describe('autoscale router scoring', () => {
     expect(fleetRunnable([doc], T0)).toMatchObject({ codex: 0, devin: null });
   });
 
+  it('excludes a node with unknown pressure from placement and runnable totals while using its footprint', () => {
+    const donor = node(mbp({ mem: { ...mbp().mem, pressureLevel: null } }));
+    const target = node(mbp8());
+    expect(donor.doc.agents_runnable_now.codex).toBeNull();
+    // A legacy count is insufficient without the current pressure reading.
+    donor.doc.agents_runnable_now.codex = 10;
+    const input = { costs: [COSTS[0]!], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }] };
+    expect(planAutoscaleRoutes({ ...input, nodes: [donor] })[0]).toMatchObject({
+      nodeId: null, rejected: { 'node-unmeasured': 1 },
+    });
+    expect(planAutoscaleRoutes({ ...input, nodes: [donor, target] })[0]).toMatchObject({
+      nodeId: target.doc.node, footprint: 'fleet',
+    });
+    expect(fleetRunnable([donor.doc], T0).codex).toBeNull();
+    const measured = node(mbp({ node: 'measured' })).doc;
+    expect(fleetRunnable([donor.doc, measured], T0).codex).toBe(measured.agents_runnable_now.codex);
+  });
+
   it('uses a Laplace-smoothed learned merge rate', () => {
     expect(mergeRate(undefined)).toBe(0.5);
     expect(mergeRate({ attempts: 8, merged: 6 })).toBe(0.7);
