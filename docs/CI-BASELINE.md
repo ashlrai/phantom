@@ -638,7 +638,10 @@ are bounded to the last 4 MiB, so deduplication, counts and recurrence cover
 that retained read window. Rerun identity compares repository names
 case-insensitively, so a configuration casing change preserves duplicate
 protection, pending verdicts and the polling cursor. Raw journal entries
-retain their recorded spelling. `phm ci reruns --json` shows the latest 100 entries,
+retain their recorded spelling. Recurring-flake groups combine attempt and
+verdict evidence across repository casing changes, and stabilization job IDs
+use the lowercase repository name. Test IDs retain their case.
+`phm ci reruns --json` shows the latest 100 entries,
 counts in that window, the last-hour attempt count, the recurring flakes and
 the rerun verdicts. Reports and the hourly cap count rows through the
 evaluation time, inclusive. Future-dated receipts still prevent duplicate
