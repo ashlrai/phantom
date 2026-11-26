@@ -2396,7 +2396,7 @@ describe('router outcome cross-review join', () => {
       JSON.stringify({ ...crossReview(1.5, 'approve') }),
       JSON.stringify(crossReview(5, 'sideways')),
       // The qualifying rows for PR 7 — repo case canonicalizes to the
-      // prKey pullRequestKey produces, and the last appended review wins.
+      // prKey pullRequestKey produces, and the newest recorded review wins.
       JSON.stringify(crossReview(7, 'reject', { repo: 'AshlrAI/Phantom', at: '2026-11-21T01:00:00Z' })),
       JSON.stringify(crossReview(7, 'approve', { at: '2026-11-21T02:00:00Z' })),
       // An unparseable `at` keeps the verdict but nulls the timestamp.
@@ -2407,6 +2407,28 @@ describe('router outcome cross-review join', () => {
     expect(reviews.get('ashlrai/phantom#7')).toEqual({ outcome: 'approve', at: '2026-11-21T02:00:00Z' } satisfies CrossReviewEvidence);
     expect(reviews.get('ashlrai/phantom#8')).toEqual({ outcome: 'failed', at: null });
     expect(reviews.size).toBe(3);
+  });
+
+  it('uses recorded review times and withholds conflicting verdicts at the latest time', () => {
+    const older = '2026-11-21T01:00:00Z';
+    const newer = '2026-11-21T02:00:00Z';
+    const later = '2026-11-21T03:00:00Z';
+    const replay = crossReview(7, 'reject', { at: older });
+    const reviews = foldCrossReviews([
+      replay,
+      crossReview(7, 'approve', { at: newer }),
+      replay,
+      crossReview(7, 'skipped', { at: null }),
+      crossReview(8, 'approve', { at: newer }),
+      crossReview(8, 'reject', { at: '2026-11-21T03:00:00+01:00' }),
+      crossReview(8, 'approve', { at: newer }),
+      crossReview(9, 'approve', { at: newer }),
+      crossReview(9, 'reject', { at: newer }),
+      crossReview(9, 'approve', { at: later }),
+    ].map(row => JSON.stringify(row)).join('\n'));
+    expect(reviews.get('ashlrai/phantom#7')).toEqual({ outcome: 'approve', at: newer });
+    expect(reviews.has('ashlrai/phantom#8')).toBe(false);
+    expect(reviews.get('ashlrai/phantom#9')).toEqual({ outcome: 'approve', at: later });
   });
 
   it('joins cross_review through each job\'s newest unambiguous canonical PR claim only', () => {
