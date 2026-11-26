@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; noJobs?: boolean } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; masterPassLog?: string; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -84,7 +84,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
           ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
           : `/usr/bin/git log -1 --format=%H\n${sha}\n`;
       }
-      return success(`${prefix}${fixture(name)}`);
+      return success(`${prefix}${(isMaster ? options.masterPassLog : undefined) ?? fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
       const conclusion = isMaster && options.pass ? 'success' : 'failure';
@@ -141,6 +141,30 @@ describe('CI baseline evidence', () => {
     const suite = await analyzeCiBaseline('owner/repo', github({ suite: true, pass: true, filePass: true, count: 1 }).gh);
     expect(suite.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
   });
+  it('keeps named cases unknown when a module pass includes skipped or todo cases', async () => {
+    for (const summary of ['4 tests | 1 skipped', '4 tests | 1 todo', '4 tests | 1 skipped | 1 todo', '0 tests']) {
+      const masterPassLog = `✓ |unit| test/example.test.ts (${summary}) 4ms`;
+      const singleton = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, masterPassLog }).gh);
+      expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+
+      const shared = await analyzeCiBaseline('owner/repo', github({ pass: true, masterPassLog }).gh);
+      expect(shared.groups[0]).toMatchObject({ classification: 'shared-baseline', master: 'unknown' });
+      expect(shared.updates).toHaveLength(2);
+      expect(shared.updates.every(update => !update.ready)).toBe(true);
+    }
+  });
+
+  it('accepts a partly skipped module for a suite-load failure when a case ran', async () => {
+    for (const [summary, verdict] of [
+      ['4 tests | 1 skipped | 1 todo', 'pass'],
+      ['4 tests | 3 skipped | 1 todo', 'unknown'],
+    ]) {
+      const masterPassLog = `✓ |unit| test/example.test.ts (${summary}) 4ms`;
+      const report = await analyzeCiBaseline('owner/repo', github({ suite: true, pass: true, masterPassLog }).gh);
+      expect(report.groups[0]).toMatchObject({ names: '(suite)', master: verdict });
+    }
+  });
+
   it('excludes stale and unreadable or unrecognized logs', async () => {
     for (const options of [{ stale: true }, { unknown: true }, { unreadable: true }]) {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);
