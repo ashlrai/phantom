@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.75 |
-| Latest dated changelog release (2026-11-25) | 3.30.75 |
+| Source package | 3.30.76 |
+| Latest dated changelog release (2026-11-26) | 3.30.76 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -15,13 +15,6 @@ Versions map to milestone series: **2.1.0** = v2.1 "Harden & Prove" (H1–H8),
 hub (M1–M20). Entries below detail each milestone; dates are merge dates into `master`.
 
 ---
-
-## [3.30.76](https://github.com/ashlrai/phantom/compare/v3.30.75...v3.30.76) (2026-11-26)
-
-
-### Fixes
-
-* **release:** qualify successors for owed Auto-tag versions ([#9003](https://github.com/ashlrai/phantom/issues/9003)) ([84a0c4d](https://github.com/ashlrai/phantom/commit/84a0c4d0a584addaee894f02780cd78d7b53e77c))
 
 ## [Unreleased]
 
@@ -175,6 +168,13 @@ Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.76] - 2026-11-26
+
+
+### Fixes
+
+* **release:** qualify successors for owed Auto-tag versions ([#9003](https://github.com/ashlrai/phantom/issues/9003)) ([84a0c4d](https://github.com/ashlrai/phantom/commit/84a0c4d0a584addaee894f02780cd78d7b53e77c))
 
 ## [3.30.75] - 2026-11-25
 
