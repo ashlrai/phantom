@@ -205,6 +205,24 @@ describe('foldMarketOverrides', () => {
       ...extra,
     });
 
+  it('lets a dispatcher requirements failure supersede an earlier route without guessing a preference', () => {
+    const invalid = (job: string) => JSON.stringify({
+      schema: 'work-market.v1', event: 'route_decision', job, ts: t - 30,
+      chosen_lane: null, rejected_lanes: [], reason_codes: ['invalid_requirements'],
+    });
+    const text = [
+      invalid('RQ-A'),
+      decision('RQ-A', t - 90, { rejected_lanes: [{ lane: 'devin', reason_codes: ['saturated'] }] }),
+      invalid('RQ-B'),
+    ].join('\n');
+
+    expect(foldMarketOverrides(text, now, 24)).toMatchObject({ decided: 2, overridden: 0 });
+    expect(foldRouteRejections(text, now, 24)).toMatchObject({ decided: 2, unrouted: 2, lanes: [], byReason: {} });
+    expect(foldDecisionOutcomes(text, null, now, 24)).toMatchObject({
+      decided: 2, overridden: { decided: 0 }, open: { decided: 0 }, unrouted: { decided: 2 },
+    });
+  });
+
   it("collapses route decisions to each job's latest in-window decision", () => {
     const journal = [
       // Same job decided twice: only the latest counts, and it ran on-hint.
