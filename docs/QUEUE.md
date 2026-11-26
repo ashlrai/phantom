@@ -1195,6 +1195,9 @@ slots, dispatcher lane caps and ready counts, and recent finishes in
 occupy slots but are not credited with future quota spend. Headroom must be
 observed and positive for a machine to offer extra slots; a shared slot can
 only be allocated once. Unhinted work and future arrivals are not counted.
+When the dispatcher publishes an effective target below a lane's configured
+target, the plan caps additional work at that reduced limit and leaves unused
+slots available to other lanes.
 
 Waste is in the allowance's own units. Where there is a quota change and
 matching finishes inside the observation interval, the estimate uses the
