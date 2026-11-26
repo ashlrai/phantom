@@ -51,9 +51,11 @@ function clock(asOf: string): string {
   return Number.isNaN(t) ? 'unknown' : new Date(t).toISOString().slice(11, 16);
 }
 
-/** `STATE (as of HH:MM UTC, source: <file or route>)` then one line of evidence. */
+/** State, UTC evidence time and source, then one line of evidence. */
 function line(r: Omit<ReplyState, 'text'>): string {
-  const head = `${r.state} (as of ${clock(r.asOf)}${clock(r.asOf) === 'unknown' ? '' : ' UTC'}, source: ${r.source})`;
+  const time = clock(r.asOf);
+  const date = time === 'unknown' ? '' : `, evidence timestamp: ${new Date(r.asOf).toISOString()}`;
+  const head = `${r.state} (as of ${time}${time === 'unknown' ? '' : ' UTC'}, source: ${r.source}${date})`;
   const who = r.owner !== null && r.claim !== null ? `owner ${r.owner}, claim ${r.claim}` : 'no owner yet';
   const dup = r.duplicateOf !== null ? `; repeat of ${r.duplicateOf}` : '';
   const e = r.evidence;
@@ -82,7 +84,8 @@ function firstInThread(id: string, receipts: readonly BusInboxReceipt[]): string
   const channel = own.envelope.channel ?? 'bus';
   let first = own;
   for (const row of receipts) {
-    if ((row.envelope.channel ?? 'bus') !== channel || row.envelope.channel_ref !== ref || !isRequest(row)) continue;
+    if ((row.envelope.channel ?? 'bus') !== channel || row.envelope.channel_ref !== ref ||
+        row.envelope.to !== own.envelope.to || !isRequest(row)) continue;
     if (row.cursor < first.cursor) first = row;
   }
   return first.envelope.id;

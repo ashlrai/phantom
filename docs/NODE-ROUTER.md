@@ -97,8 +97,9 @@ the node holding each running claim (`claimed by`, or `no live claim` once the
 claim lapsed or was fenced), show each node's advertised slot bound (`slots=N`,
 or `slots=unbounded` when no bound was ever reported — an absent bound is
 legacy routing, not a measured zero) and its last measured hold as
-`held=<reason>` while one is reported, mark producer withdrawals, and an empty
-scope says so with the join command; `enqueue` says when the job id already
+`held=<reason>` while one is reported, mark producer withdrawals, carry the
+same fix `phm node plan` prints on a job that still has no taker, and an
+empty scope says so with the join command; `enqueue` says when the job id already
 exists;
 `withdraw` names `held` (a live claim still owns it — retry after it lapses),
 `completed` and `absent`; `renew` prints the lease expiry as a time;

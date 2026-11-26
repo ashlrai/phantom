@@ -396,32 +396,38 @@ describe('agentDiagnosticsBacklogItems', () => {
   });
 
   it('appends agentdiag items through discovery and dedupes on refresh', async () => {
-    // discoverBacklog anchors its window at the real clock, so rows are
-    // stamped relative to Date.now() and files keep their real mtimes.
-    // UTC noons two and one days back guarantee distinct UTC days at any
-    // wall-clock time the suite runs.
-    const d = new Date();
-    const day2 = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - 2, 12);
-    const day1 = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - 1, 12);
-    const dir = agentDiagnosticsDir();
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, refName(9)), [
-      fail('aider', day2, { errorClass: 'rate-limit' }),
-      fail('aider', day2 + HOUR, { errorClass: 'rate-limit' }),
-      fail('aider', day1, { errorClass: 'rate-limit' }),
-    ].join('\n') + '\n');
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    const diagItems = first.items.filter((i) => i.id.startsWith('fleet-agentdiag-'));
-    expect(diagItems).toHaveLength(1);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(diagItems)).toBe(1);
-    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('fleet-agentdiag-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('fleet-agentdiag-'))).toHaveLength(1);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      // discoverBacklog anchors its window at the real clock, so rows are
+      // stamped relative to Date.now() and files keep their real mtimes.
+      // UTC noons two and one days back guarantee distinct UTC days at any
+      // wall-clock time the suite runs.
+      const d = new Date();
+      const day2 = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - 2, 12);
+      const day1 = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - 1, 12);
+      const dir = agentDiagnosticsDir();
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, refName(9)), [
+        fail('aider', day2, { errorClass: 'rate-limit' }),
+        fail('aider', day2 + HOUR, { errorClass: 'rate-limit' }),
+        fail('aider', day1, { errorClass: 'rate-limit' }),
+      ].join('\n') + '\n');
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      const diagItems = first.items.filter((i) => i.id.startsWith('fleet-agentdiag-'));
+      expect(diagItems).toHaveLength(1);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(diagItems)).toBe(1);
+      const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('fleet-agentdiag-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('fleet-agentdiag-'))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

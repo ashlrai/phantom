@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUTO_DISCOVER_EMPTY_EVERY_MS, AUTO_DISCOVER_EVERY_MS, autoDiscover, discoverBacklog, fleetLearningBacklogItems, resetAutoDiscoverForTests } from '../src/core/improve/discover.js';
 import { nightlyLearningBacklogItems } from '../src/core/improve/nightly-backlog.js';
 import { fleetPolicyBacklogItems } from '../src/core/improve/policy-backlog.js';
@@ -550,20 +550,26 @@ describe('fleet policy suggestions', () => {
   });
 
   it('appends policy items through discovery and dedupes on refresh', async () => {
-    ledgerFile('.ashlr-runs/metrics/jobs.jsonl', policyLedger());
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    const policy = first.items.filter((i) => i.id.startsWith('fleet-policy-'));
-    expect(policy).toHaveLength(2);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(policy)).toBe(2);
-    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('fleet-policy-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('fleet-policy-'))).toHaveLength(2);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      ledgerFile('.ashlr-runs/metrics/jobs.jsonl', policyLedger());
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      const policy = first.items.filter((i) => i.id.startsWith('fleet-policy-'));
+      expect(policy).toHaveLength(2);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(policy)).toBe(2);
+      const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('fleet-policy-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('fleet-policy-'))).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -876,24 +882,30 @@ describe('pass^k eval alert items', () => {
   });
 
   it('appends pass^k items through discovery and dedupes on refresh', async () => {
-    writeEvalStore({
-      alerts: [alertRow(5, 'passk-r1', TASK_REGRESSED)],
-      reports: [{ id: 'passk-r1', generatedAt: iso(5), lanes: [evalLane()] }],
-      latestId: 'passk-r1',
-    });
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    const passk = first.items.filter((i) => i.id.startsWith('passk-alert-'));
-    expect(passk).toHaveLength(1);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(passk)).toBe(1);
-    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('passk-alert-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('passk-alert-'))).toHaveLength(1);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      writeEvalStore({
+        alerts: [alertRow(5, 'passk-r1', TASK_REGRESSED)],
+        reports: [{ id: 'passk-r1', generatedAt: iso(5), lanes: [evalLane()] }],
+        latestId: 'passk-r1',
+      });
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      const passk = first.items.filter((i) => i.id.startsWith('passk-alert-'));
+      expect(passk).toHaveLength(1);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(passk)).toBe(1);
+      const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('passk-alert-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('passk-alert-'))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -1255,19 +1267,25 @@ describe('cross-review findings', () => {
   });
 
   it('appends cross-review items through discovery and dedupes on refresh', async () => {
-    writeJournal(rejectFindings());
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    const xreview = first.items.filter((i) => i.id.startsWith('xreview-'));
-    expect(xreview).toHaveLength(1);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(xreview)).toBe(1);
-    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('xreview-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('xreview-'))).toHaveLength(1);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      writeJournal(rejectFindings());
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      const xreview = first.items.filter((i) => i.id.startsWith('xreview-'));
+      expect(xreview).toHaveLength(1);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(xreview)).toBe(1);
+      const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('xreview-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('xreview-'))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

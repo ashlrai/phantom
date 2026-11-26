@@ -19,7 +19,10 @@ vi.mock('../src/core/agents/slack-transport.js', () => ({
 vi.mock('../src/core/agents/slack-leader.js', () => ({
   createSlackLeaderAdapter: vi.fn(), flushSlackLeaderReplies: mocks.flush, readSlackDeliveryPolicy: vi.fn(),
 }));
-vi.mock('../src/core/fleet/bus-inbox.js', () => ({ listBusInboxAfter: mocks.inbox }));
+vi.mock('../src/core/fleet/bus-inbox.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/core/fleet/bus-inbox.js')>(),
+  listBusInboxAfter: mocks.inbox,
+}));
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); Object.values(mocks).forEach(mock => mock.mockReset()); });
 
 it.each(['refused', 'uncertain', 'sent', 'stop-before-delivery'] as const)(

@@ -113,8 +113,10 @@ describe('claim notice durable owner restart (RQ-PHX-CLAIMNOTICEDURABLERESTART48
       { repo: REPO_B, task: 'fake durable task B', agent: 'agent-c' }, f.options()));
     f.bind({ claimId: claimA.claim.id, repo: REPO_A, threadKey: THREAD_A, pr: 7, head: HEAD_A });
     f.bind({ claimId: claimB.claim.id, repo: REPO_B, threadKey: THREAD_B, pr: 9, head: HEAD_B });
-    const keyAssignA = JSON.stringify(['ASSIGNED', claimA.claim.id, HEAD_A]);
-    const keyAssignB = JSON.stringify(['ASSIGNED', claimB.claim.id, HEAD_B]);
+    const keyAssignA = JSON.stringify(
+      ['ASSIGNED', REPO_A, claimA.claim.id, 'agent-a', claimA.claim.claimedAt, HEAD_A]);
+    const keyAssignB = JSON.stringify(
+      ['ASSIGNED', REPO_B, claimB.claim.id, 'agent-c', claimB.claim.claimedAt, HEAD_B]);
 
     const assigned = await f.pass();
     expect(assigned).toMatchObject({ status: 'completed', planned: 2, sent: 2, failed: 0 });

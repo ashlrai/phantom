@@ -65,6 +65,7 @@ export const REAL_IO_TEST_FILES = [
   'test/auto-tag-gate-split.test.ts', // Executes the auto-tag workflow step in real Bash children.
   'test/channel-health-slack-binding-338.test.ts', // Spawns real Slack process fixtures and reads private durable stores.
   'test/lane-placement-recut509.test.ts', // Runs Python lane-placement and process-snapshot regression suites.
+  'test/fleet-profile.test.ts', // Runs Python against fake package and login binaries.
   'test/m30.ci.test.ts', // Runs real Bash workflow checks and native tsgo compiler children.
   'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // Creates real Git history for MCP snapshot replay reads.
   'test/no-stray-source-artifacts-373.test.ts', // Runs git ls-files to inspect tracked source artifacts.
@@ -531,6 +532,7 @@ export const REAL_IO_TEST_FILES = [
   'test/universe-controller-not-started-integration.test.ts', // post-intent cancellation, verified no-call settlement and restart without replay
   'test/universe-campaign-owned.test.ts', // exact private execution leases and campaign admission authority
   'test/universe-integration-evaluate.test.ts', // real private candidate artifacts with injected evaluation and ledger faults
+  'test/universe-sealed-integration-scenario.test.ts', // real Git composition, acceptance receipts, and local publication
   'test/universe-delivery-review.test.ts', // independent Git provenance and historical receipt review
   'test/universe-graph-reader.test.ts', // targeted real Git/private-ledger graph observation
   'test/local-pack-universe-smoke.test.ts', // installed SDK/CLI contract with real Git fixtures

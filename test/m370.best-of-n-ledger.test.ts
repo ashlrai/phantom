@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   bestOfNDir,
+  pairRepeatedVerifiedFailures,
   readBestOfNRecords,
   readBestOfNRecordsDetailed,
   recordBestOfN,
@@ -549,5 +550,28 @@ describe('M370 bounded best-of-N ledger', () => {
     expect(statSync(home).mode & 0o777).toBe(0o700);
     expect(statSync(bestOfNDir()).mode & 0o777).toBe(0o700);
     expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it('pairs scrubbed failing attempts with verified successes per task and skips incomplete artifacts', () => {
+    const secret = 'github_pat_1234567890abcdefghijklmnop';
+    const pairRow = (workItemId: string, error: string, testsPassed: boolean | undefined) => record({
+      workItemId,
+      candidates: [
+        { ...record().candidates[0]!, error },
+        { ...record().candidates[1]!, testsPassed, proposalId: `prop-${workItemId}` },
+      ],
+    });
+    const groups = pairRepeatedVerifiedFailures([
+      pairRow('task-1', `Typecheck failed at line 12 ${secret}`, true),
+      pairRow('task-2', `Typecheck failed at line 48 ${secret}`, true),
+      pairRow('task-unverified', 'Typecheck failed at line 99', false),
+      pairRow('task-no-error', '', true),
+      record({ workItemId: 'task-single', candidates: [{ ...record().candidates[0]!, error: 'unique error' }, record().candidates[1]!] }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.failureClass).toBe('typecheck failed at line <n> [redacted]');
+    expect(groups[0]!.pairs.map((p) => p.workItemId)).toEqual(['task-1', 'task-2']);
+    expect(groups[0]!.pairs[0]!.failureSummary).not.toContain(secret);
+    expect(groups[0]!.pairs[0]!.verifiedProposalId).toBe('prop-task-1');
   });
 });

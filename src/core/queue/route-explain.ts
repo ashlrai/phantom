@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { decidePairing, type PairingLane } from '../routing/pairing.js';
 import { readTypedDecisions } from '../router/typed-decisions.js';
+import { buildShadowPolicyReport } from '../router/shadow-policy.js';
 import { validResetCalendarPool } from '../routing/reset-pressure.js';
 import { loadRouteSources } from '../routing/decision-candidates.js';
 import { withRunwayYield } from './route-yield.js';
@@ -77,6 +78,8 @@ export async function explainRoutes(root = process.env.ASHLR_RUNS_DIR ?? join(ho
   let decision: Awaited<ReturnType<typeof decideRoute>> | null = null;
   const posture = await postureEvidence(root);
   const typed_decisions = await readTypedDecisions({ runsDir: root });
+  const shadowRead = await buildShadowPolicyReport({ runsDir: root });
+  const shadow_comparison = shadowRead.state === 'read' ? shadowRead : null;
   const sources = await withRunwayYield(root, await loadRouteSources(root), now * 1000);
   const request = routeRequestSchema.safeParse(sources.request);
   if (request.success) decision = await decideRoute(request.data, sources, { backends: [], nowMs: now * 1000 });
@@ -109,8 +112,8 @@ export async function explainRoutes(root = process.env.ASHLR_RUNS_DIR ?? join(ho
       return { job, pool: receipt.pool, decidedAt: receipt.decided_at, wasteReason: typeof receipt.waste_reason === 'string' ? receipt.waste_reason : null,
         'route-moves-per-hour': receipt.moves.filter(t => t > now - 3600 && t <= now).length };
     });
-    return { available: true, 'route-moves-per-hour': lines.reduce((sum, line) => sum + line['route-moves-per-hour'], 0), lines, laneQuality, pairing, decision, posture, typed_decisions, fallback_chain, fallback_used };
+    return { available: true, 'route-moves-per-hour': lines.reduce((sum, line) => sum + line['route-moves-per-hour'], 0), lines, laneQuality, pairing, decision, posture, typed_decisions, fallback_chain, fallback_used, shadow_comparison };
   } catch {
-    return { available: false, 'route-moves-per-hour': null, lines: [], laneQuality, pairing, decision, posture, typed_decisions, fallback_chain, fallback_used };
+    return { available: false, 'route-moves-per-hour': null, lines: [], laneQuality, pairing, decision, posture, typed_decisions, fallback_chain, fallback_used, shadow_comparison };
   }
 }

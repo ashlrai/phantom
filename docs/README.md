@@ -62,6 +62,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 |-----------|-----------------|
 | Read provider-neutral bot metadata, dry-run plans and route explanations | [Phantom Bots](https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md) |
 | Manage external bot seats: unified roster, quota-driven draining and write-ahead handoffs | [External bot seats](https://github.com/ashlrai/phantom/blob/master/docs/BOT-SEATS.md) |
+| See which subscriptions give included model capacity and which Google seat reaches Gemini 4 Neon | [Subscription capacity](https://github.com/ashlrai/phantom/blob/master/docs/SUBSCRIPTION-CAPACITY.md) |
 | Refresh the router catalog with discovery, review-only patches and weekly scheduling | [Router catalog refresh](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-CATALOG.md) |
 | Resolve append-union PR conflicts with dry-run proof, verified merge bundles and sanctioned publish plans | [Append-union PR conflict resolver](https://github.com/ashlrai/phantom/blob/master/docs/PR-CONFLICT-RESOLVER.md) |
 | Group CI failures read-only and plan guarded fixes or updates | [CI baseline analyzer](https://github.com/ashlrai/phantom/blob/master/docs/CI-BASELINE.md) |
@@ -80,6 +81,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Inspect iMessage intake, teammate tasks and acknowledgement evidence | [iMessage](https://github.com/ashlrai/phantom/blob/master/docs/IMESSAGE.md#fleet-teammate-tasks-and-evidence) |
 | Drive and watch the fleet from any agent or script | [Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md) |
 | Move ops-side fleet machinery into the repo deploy pipeline | [Machinery-as-code migration](https://github.com/ashlrai/phantom/blob/master/docs/MACHINERY-MIGRATION.md) |
+| Set up or compare machines with a shared software and agent profile | [Fleet profile](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-PROFILE.md) |
 | Trace fleet state, ownership, failure modes and cleanup evidence | [Fleet state map](https://github.com/ashlrai/phantom/blob/master/STATE-MAP.md) |
 | Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
 | Read roster, sensor headroom, pull headlines, bottlenecks, and human steps | [Human observe](https://github.com/ashlrai/phantom/blob/master/docs/OBSERVE.md) (`phm observe --json`) |

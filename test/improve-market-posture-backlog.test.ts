@@ -285,24 +285,30 @@ describe('marketPostureBacklogItems', () => {
   });
 
   it('appends market-posture items through discovery and dedupes on refresh', async () => {
-    const runs = join(home, '.ashlr-runs');
-    await mkdir(join(runs, 'metrics'), { recursive: true });
-    await writeFile(join(runs, 'metrics', 'work-market.jsonl'),
-      reasonSeries('claude', 'spend_down_unknown', 3, 3).join('\n') + '\n');
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    const postureItems = first.items.filter((i) => i.id.startsWith('market-posture-'));
-    expect(postureItems).toHaveLength(1);
-    expect(postureItems[0]!.area).toBe('posture-evidence');
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(postureItems)).toBe(1);
-    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('market-posture-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('market-posture-'))).toHaveLength(1);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW_MS);
+    try {
+      const runs = join(home, '.ashlr-runs');
+      await mkdir(join(runs, 'metrics'), { recursive: true });
+      await writeFile(join(runs, 'metrics', 'work-market.jsonl'),
+        reasonSeries('claude', 'spend_down_unknown', 3, 3).join('\n') + '\n');
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      const postureItems = first.items.filter((i) => i.id.startsWith('market-posture-'));
+      expect(postureItems).toHaveLength(1);
+      expect(postureItems[0]!.area).toBe('posture-evidence');
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(postureItems)).toBe(1);
+      const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('market-posture-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('market-posture-'))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -1496,14 +1496,14 @@ router_prepare_worktree() {
   if [[ ! -d "$clone/.git" ]]; then
     gh repo clone "$repo" "$clone"
   fi
-  git -C "$clone" fetch origin
+  router_git_observed fetch -C "$clone" fetch origin
   base=$(gh repo view "$repo" --json defaultBranchRef | node "$ROUTER_IO" default-branch | tr -d '\n')
   if [[ -d "$wt" ]]; then
     router_log "reusing worktree $wt"
   elif git -C "$clone" show-ref --verify --quiet "refs/heads/$branch"; then
-    git -C "$clone" worktree add "$wt" "$branch"
+    router_git_observed worktree_add -C "$clone" worktree add "$wt" "$branch"
   else
-    git -C "$clone" worktree add -b "$branch" "$wt" "origin/$base"
+    router_git_observed worktree_add -C "$clone" worktree add -b "$branch" "$wt" "origin/$base"
   fi
   ROUTER_CLONE=$clone
   ROUTER_BASE=$base
@@ -2062,7 +2062,7 @@ router_commit_and_push() {
   gh repo fork "$repo" --clone=false >/dev/null 2>&1 \
     || router_log "fork ensure returned non-zero; the push target stays the fork"
   url="https://github.com/${login}/${name}.git"
-  if ! git -C "$wt" -c core.hooksPath=/dev/null -c "credential.helper=!gh auth git-credential" \
+  if ! router_git_observed push -C "$wt" -c core.hooksPath=/dev/null -c "credential.helper=!gh auth git-credential" \
     push --no-verify "$url" "${checked}:refs/heads/${branch}"; then
     router_log "fork push failed for ${branch}; the base repository was not pushed"
     return 1

@@ -4,8 +4,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   LESSON_TRIAL_MAX_ITEMS,
+  failureLessonBacklogItems,
   lessonTrialBacklogItems,
 } from '../src/core/improve/lesson-trial-backlog.js';
+import type { BestOfNRecord } from '../src/core/fleet/best-of-n-ledger.js';
 import { discoverBacklog } from '../src/core/improve/discover.js';
 import {
   appendUserBacklogItems,
@@ -261,5 +263,44 @@ describe('discoverBacklog wiring', () => {
     const second = await discoverBacklog(REPO, { gh: greenGh });
     expect(appendUserBacklogItems(second.items.filter((item) => item.id === sentinel.id))).toBe(0);
     expect(readUserBacklogItems().filter((item) => item.id === sentinel.id)).toHaveLength(1);
+  });
+});
+
+describe('failureLessonBacklogItems', () => {
+  const bon = (workItemId: string, error?: string, testsPassed = true): BestOfNRecord => ({
+    ts: '2026-11-20T12:00:00.000Z', source: 'fleet', repo: REPO, workItemId, n: 2,
+    winnerIndex: 1, winnerProposalId: `prop-${workItemId}`, totalCostUsd: 0.05,
+    candidates: [
+      { index: 0, engine: 'claude', model: 'sonnet', score: 0.2, ...(error ? { error } : {}), proposalId: null, won: false },
+      { index: 1, engine: 'codex', model: 'gpt-5', score: 0.9, testsPassed, proposalId: `prop-${workItemId}`, won: true },
+    ],
+  });
+
+  it('proposes one unserved lesson for a repeated verified failure class and scrubs secrets', async () => {
+    const secret = `ghp_${'b'.repeat(36)}`;
+    const records = [
+      bon('t1', `Lint failed on rule 10 ${secret}`),
+      bon('t2', `Lint failed on rule 22 ${secret}`),
+      bon('t3', 'Other failure 1'),
+      bon('t4', 'Other failure 2'),
+    ];
+    const items = failureLessonBacklogItems({ repo: REPO, records, holdout: 0.2 });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.id).toMatch(/^lesson-failure-[0-9a-f]{16}$/);
+    expect(validBacklogItem(items[0]!)).not.toBeNull();
+    expect(items[0]!.prompt).toContain('unserved until owner review');
+    expect(items[0]!.prompt).toContain('20% randomized holdout');
+    expect(items[0]!.title + items[0]!.prompt).not.toContain(secret);
+    expect(failureLessonBacklogItems({ repo: 'ashlrai/other', records })).toEqual([]);
+    const viaTrial = await lessonTrialBacklogItems({
+      repo: REPO, trial: report({ overall: effect({ verdict: 'no-difference', delta: 0, ci95: [-0.2, 0.2] }) }), bestOfNRecords: records,
+    });
+    expect(viaTrial.map((i) => i.id)).toEqual([items[0]!.id]);
+  });
+
+  it('stays quiet when either failing or verified-success artifact is missing', () => {
+    expect(failureLessonBacklogItems({ repo: REPO, records: [bon('t1', 'Lint failed', false), bon('t2', 'Lint failed', false)] })).toEqual([]);
+    expect(failureLessonBacklogItems({ repo: REPO, records: [bon('t1', undefined, true), bon('t2', undefined, true)] })).toEqual([]);
+    expect(failureLessonBacklogItems({ repo: REPO })).toEqual([]);
   });
 });

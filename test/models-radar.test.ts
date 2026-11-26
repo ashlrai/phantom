@@ -63,7 +63,7 @@ describe('scanModelReleaseNotes', () => {
     expect(row('qwen')!.note).toBe('Could not read the saved release notes.');
     expect(row('mistral')!.note).toBe('No id shapes are known for this provider, so nothing was read.');
     // Google has no registry entry: the id is still found, and the unknown doc site is said, not guessed.
-    expect(row('google')).toEqual({ provider: 'google', doc: 'read', in_registry: false, doc_site: null, note: 'No model from this provider is in the registry yet, so every id here is new.' });
+    expect(row('google')).toEqual({ provider: 'google', doc: 'read', in_registry: false, doc_site: 'ai.google.dev', note: 'No model from this provider is in the registry yet, so every id here is new.' });
     expect(ids(new_models.filter(item => item.provider === 'google'))).toEqual(['gemini-4-pro high']);
     // No exact id shape is known for Devin, so nothing from it is ever high.
     expect(ids(new_models.filter(item => item.provider === 'devin'))).toEqual(['Devin 3 low', 'swe-2 low']);

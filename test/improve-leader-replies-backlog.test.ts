@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm, truncate } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   foldLeaderReplyRows,
   leaderRepliesBacklogItems,
@@ -244,20 +244,26 @@ describe('leaderRepliesBacklogItems', () => {
   });
 
   it('appends leader-replies items through discovery and dedupes on refresh', async () => {
-    process.env.ASHLR_RUNS_DIR = join(home, 'runs');
-    writeLedger(failedRows());
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog(REPO, { gh: greenGh });
-    const landed = first.items.filter((i) => i.id.startsWith('leader-replies-'));
-    expect(landed.length).toBeGreaterThanOrEqual(1);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(landed)).toBe(landed.length);
-    const second = await discoverBacklog(REPO, { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('leader-replies-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('leader-replies-'))).toHaveLength(landed.length);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      process.env.ASHLR_RUNS_DIR = join(home, 'runs');
+      writeLedger(failedRows());
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog(REPO, { gh: greenGh });
+      const landed = first.items.filter((i) => i.id.startsWith('leader-replies-'));
+      expect(landed.length).toBeGreaterThanOrEqual(1);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(landed)).toBe(landed.length);
+      const second = await discoverBacklog(REPO, { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('leader-replies-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('leader-replies-'))).toHaveLength(landed.length);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

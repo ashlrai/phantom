@@ -202,6 +202,17 @@ with only a Codex default retain that default for every tier. The issue router
 keeps its separate Luna cheap slot. These defaults grant no provider access,
 subscription allowance or spending authority.
 
+# Gemini model catalog and provider
+
+`ModelEntry` may carry `costPerMTokCachedIn` and `apiMaxOutputTokens`.
+The `gemini:gemini-4-*` entries describe the metered Gemini API, not a
+Foundry engine or subscription seat; they are excluded from implicit
+`pickModel` selection. `chooseRoute` defaults an opted-in Gemini
+escalation to `gemini-4-neon`. `getActiveClient` accepts the same explicit
+cloud permission and owner key required for other metered providers;
+it does not promote Gemini into the default chain. Catalog discovery for the
+separate `agy` seat uses only IDs returned by `agy models`.
+
 # Managed desktop CLI upgrade
 
 `src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`
@@ -1271,6 +1282,14 @@ subscription sticker price. Reset-calendar lanes now sort by reset before pace.
 drops `starve` lanes for non-frontier work unless the job kind's merged-per-launch
 in `RouteSources.familyYield` is at least `JOB_KEEP_RATE`. It ranks `spend` lanes
 first for non-frontier work. `routeCandidateRejections` adds `runway_starve`.
+`src/core/routing/subscription-capacity.ts` (pure) exports `SUBSCRIPTION_CAPACITY`
+(`SubscriptionSeatCapacity` rows: provider, lane, product, account_kind, plan,
+cost_class, opt_in, models, refresh, daily_requests, weekly_cap, neon, label,
+source; unknown caps null), `parseDeclaredSeats`, `seatCapacity`, `seatLabel`
+and `googleSeatReadout` (`route.subscription-capacity.v1`, `phm route seats --json`).
+`RouteSources.seats?` holds `queue/subscription-seats.json`; a Workspace `agy`
+seat sets `RouteCandidate.seat_label` and `RouteReport.seat_label` to
+`starter-quota`, and `rankRouteCandidates` ranks it after every other seat.
 `readPoolRunway()` (`runway-read.ts`) returns `pool.runway.v1` for
 `phm pool runway --json` and `GET /api/usage/runway`.
 `planPoolShares(inputs)` (same file, pure) maps each pool's used percent, burn

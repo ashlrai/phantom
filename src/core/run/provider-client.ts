@@ -42,6 +42,7 @@ import {
 } from '../local-runtime/llama/config.js';
 import { resolveProviderKey } from '../integrations/secrets.js';
 import { resolveModelProfile, adaptivePromptsEnabled } from './model-profile.js';
+import { GEMINI_API_DEFAULT_MODEL, KNOWN_MODELS } from './model-catalog.js';
 import { normalizeNumericLoopbackOllamaBaseUrl } from './ollama-identity.js';
 import { redactKnownValues, scrubSecrets } from '../util/scrub.js';
 import { ENFORCED_PROVIDER_AUTHORITY } from './model-call-authority.js';
@@ -104,6 +105,7 @@ const CLOUD_PROVIDER_ENV: Record<string, string> = {
 
 // Base URLs for OpenAI-compatible cloud providers (override via *_BASE_URL env).
 const CLOUD_PROVIDER_BASE_URL: Record<string, string> = {
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
   nvidia_nim: 'https://integrate.api.nvidia.com/v1',
   // M195: NIM base URL — verified live 2026-06 (POST /v1/chat/completions).
   nvidia_nim_kimi: 'https://integrate.api.nvidia.com/v1',
@@ -146,6 +148,7 @@ function authoritativeTokenCount(value: unknown): number | undefined {
 
 // Default models for OpenAI-compatible cloud providers.
 const CLOUD_PROVIDER_DEFAULT_MODEL: Record<string, string> = {
+  gemini: GEMINI_API_DEFAULT_MODEL,
   nvidia_nim: 'meta/llama-3.1-70b-instruct',
   // M195: Kimi K2 instruct — verified live on the NIM model catalog 2026-06.
   nvidia_nim_kimi: 'moonshotai/kimi-k2.6',
@@ -156,6 +159,7 @@ const CLOUD_PROVIDER_DEFAULT_MODEL: Record<string, string> = {
 
 /** Provider ids that speak the OpenAI /v1/chat/completions protocol. */
 const OPENAI_COMPAT_CLOUD_PROVIDERS = new Set([
+  'gemini',
   'nvidia_nim',
   'nvidia_nim_kimi',
   'moonshot',
@@ -1550,7 +1554,7 @@ export async function getActiveClient(
       }
     }
     // Cloud provider with key — route OpenAI-compatible providers through the
-    // generic client. Unknown cloud providers (e.g. anthropic/gemini) still
+    // generic client. Unknown cloud providers (e.g. anthropic) still
     // throw a clear error since they need their own SDK.
     const id = activeId.toLowerCase();
     if (OPENAI_COMPAT_CLOUD_PROVIDERS.has(id)) {
@@ -1564,6 +1568,12 @@ export async function getActiveClient(
       const defaultModel = CLOUD_PROVIDER_DEFAULT_MODEL[id] ?? id;
       const model = opts.model?.trim() || defaultModel;
       const supportsTools = true;
+      if (id === 'gemini') {
+        const entry = KNOWN_MODELS.find(m => m.engine === id && m.apiModelId === model);
+        const client = buildOpenAICompatibleClient(baseUrl, apiKey, model, supportsTools, undefined, undefined,
+          { cfg, redirect: 'error', maxOutputTokens: entry?.apiMaxOutputTokens });
+        return { ...client, id, getContextWindowTokens: async () => entry?.apiContextWindow };
+      }
       const client = buildOpenAICompatibleClient(baseUrl, apiKey, model, supportsTools);
       return { ...client, id };
     }

@@ -16,7 +16,7 @@ yet** only show status or are held; Phantom does not send them jobs.
 | `gemini` | Google Gemini CLI | **Not a job lane yet.** Phantom only reads its MCP status with `phm wire status gemini`. |
 | `grok` | xAI Grok API key, plus Grok Bot agents on the bus | **Not a job lane yet.** The API key is only checked. Grok Build is not an enrollable pool provider. |
 | `cursor` | Cursor's hosted cloud agents (bus participant `cursor-cloud`) | Overflow capacity, planned for when local lanes are full. No job lane runs it now. |
-| `agy` | Not described in this repo | **Unknown.** It appears only as a usage meter named `agy`. |
+| `agy` | Google Antigravity CLI on a Google AI subscription | The Mac launcher candidate uses subscription quota only. See [Gemini 4 and Antigravity](ROUTING.md#gemini-4-and-antigravity) for model availability and fallbacks. |
 
 ## Check a lane from the command line
 

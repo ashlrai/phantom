@@ -2,15 +2,40 @@ import { randomUUID } from 'node:crypto';
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, mkdirSync, rmdirSync, unlinkSync, type Stats } from 'node:fs';
 import { lstat, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { privateDirectory } from '../universe/artifacts.js';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { canonicalPath, privateDirectory } from '../universe/artifacts.js';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { readDevinUsage, withDevinUsage, type DevinUsageResult } from './readers/devin-usage.js';
 import { buildResourceView, MACHINE_MAX_AGE_MS, resourceObject, type ResourceView } from './resource-view.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
-export function resourceViewDirectory(): string { return join(homedir(), '.ashlr'); }
+export function resourceViewDirectory(): string {
+  const configured = process.env['ASHLR_HOME'];
+  return typeof configured === 'string' && configured.trim() !== '' && isAbsolute(configured)
+    ? configured
+    : join(homedir(), '.ashlr');
+}
+
+/**
+ * Resolve OS ancestor symlinks (such as macOS /var -> /private/var on
+ * `mktemp -d` scratch homes) without ever following a symlinked leaf.
+ */
+function resolveResourceDirectory(directory: string): string {
+  const trimmed = directory.trim();
+  if (!trimmed || trimmed.includes('\0')) throw new Error('Invalid resource directory');
+  const absolute = resolve(trimmed);
+  const parent = dirname(absolute);
+  if (parent === absolute) throw new Error('Resource directory cannot be filesystem root');
+  try {
+    if (lstatSync(absolute).isSymbolicLink()) {
+      throw new Error('Resource directory must not be a symbolic link');
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  return join(canonicalPath(parent), basename(absolute));
+}
 function parseFleet(raw: string): Record<string, unknown> {
   const parsed: unknown = JSON.parse(raw);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid fleet snapshot');
@@ -63,21 +88,25 @@ async function readFleetView(directory: string, nowMs: number,
   readDevin: () => Promise<DevinUsageResult> = readDevinUsage): Promise<ResourceView> {
   let fleet: Record<string, unknown> = {};
   try {
-    const handle = await open(join(directory, 'fleet.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try {
-      const stat = await handle.stat();
-      if (safeFile(stat)) {
-        const buffer = Buffer.alloc(stat.size + 1); let offset = 0;
-        while (offset < buffer.length) {
-          const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
-          if (bytesRead === 0) break;
-          offset += bytesRead;
+    const resolvedDir = resolve(directory);
+    const dirStat = await lstat(resolvedDir);
+    if (!dirStat.isSymbolicLink() && dirStat.isDirectory()) {
+      const handle = await open(join(resolvedDir, 'fleet.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const stat = await handle.stat();
+        if (safeFile(stat)) {
+          const buffer = Buffer.alloc(stat.size + 1); let offset = 0;
+          while (offset < buffer.length) {
+            const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+            if (bytesRead === 0) break;
+            offset += bytesRead;
+          }
+          if (offset === stat.size && sameFile(stat, await handle.stat())) {
+            fleet = parseFleet(buffer.subarray(0, offset).toString('utf8'));
+          }
         }
-        if (offset === stat.size && sameFile(stat, await handle.stat())) {
-          fleet = parseFleet(buffer.subarray(0, offset).toString('utf8'));
-        }
-      }
-    } finally { await handle.close(); }
+      } finally { await handle.close(); }
+    }
   } catch { /* Missing, unsafe or corrupt snapshot is unknown input; the live read still runs. */ }
   // The independent Devin reader is consulted on every path, after the snapshot
   // fallback converges; it never revives refused file contents or other pools.
@@ -142,7 +171,7 @@ export async function readResourceView(directory = resourceViewDirectory(), nowM
 
 /** Atomically add the view without replacing sibling readings or inventory. No provider calls. */
 export function writeResourceView(directory = resourceViewDirectory(), nowMs = Date.now()): ResourceView {
-  const root = privateDirectory(directory);
+  const root = privateDirectory(resolveResourceDirectory(directory));
   const acquired = acquireLocalStoreLockWithOutcome(join(root, 'usage-writer.lock'), 0,
     { anchorPath: root, exactPrivateStorage: true });
   if (acquired.state !== 'acquired') throw new Error('Resource inputs are busy or unavailable');
