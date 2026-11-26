@@ -327,7 +327,9 @@ settled: attempts younger than five minutes are not trusted yet, unresolved
 attempts older than 24 hours stop being polled, and each pass checks at most
 eight pending reruns per repository. `success` maps to `pass`, `failure` and
 `timed_out` to `fail`, other completed conclusions to `inconclusive`; runs
-still in progress or reads predating the rerun call stay pending.
+still in progress stay pending, as do reads without a matching run ID and
+head SHA, a nonempty conclusion, or a parseable update time within the
+rerun's freshness guard.
 `src/core/fleet/ci-flakes.ts` exports `recurringFlakes(rows, opts?)`,
 `flakeJobId(repo, test)` and `enqueueFlakeFixes(flakes, absoluteQueuePath)`:
 a test probable-flaking on at least three distinct heads within seven days
