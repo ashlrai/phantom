@@ -1427,8 +1427,154 @@ describe('readBusWorkMine', () => {
     if (result.status !== 'ok') throw new Error('unreachable');
     expect(result.next).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
     expect(result.handoffs).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
+    expect(result.deadLetters).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
     expect(result.threads).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
     expect(result.blocked).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
+  });
+
+  /** The sink's wire body (bus-transport-file `createFileDeadLetterSink`): a
+   * protocol status whose payload carries the deadLetter summary, the
+   * payloadDropped flag and the kept original transport envelope or null. */
+  const deadLetterBody = (over: { id?: string; from?: string; to?: string; kind?: string;
+      reason?: string; priority?: string; attempts?: number; payloadDropped?: boolean;
+      withPayload?: boolean; bare?: boolean } = {}) => ({
+    protocol: { version: 1, kind: 'status' },
+    correlation_id: 'corr-dead-1',
+    payload: {
+      ...(over.bare === true ? {} : {
+        deadLetter: {
+          id: over.id ?? 'orig-env-1', from: over.from ?? 'agent:nova', to: over.to ?? 'agent:atlas',
+          kind: over.kind ?? 'task', priority: over.priority ?? 'P1', correlationId: 'corr-dead-1',
+          reason: over.reason ?? 'exhausted', deadLetteredAt: 1_000,
+          attempts: Array.from({ length: over.attempts ?? 2 }, (_, i) => ({
+            attempt: i + 1, transport: 'fake-transport', outcome: 'retryable', at: 900 - i,
+          })),
+        },
+      }),
+      payloadDropped: over.payloadDropped ?? false,
+      envelope: over.withPayload === false || over.bare === true ? null : {
+        id: over.id ?? 'orig-env-1', from: over.from ?? 'agent:nova', to: over.to ?? 'agent:atlas',
+        kind: over.kind ?? 'task', priority: over.priority ?? 'P1',
+        body: { kind: 'work', text: 'fake lost work' },
+        correlationId: 'corr-dead-1', ttlMs: 3_600_000,
+      },
+    },
+  });
+  const postLetter = (options: BusWorkMineOptions, id: string, body: unknown,
+    extra: Partial<BusEnvelope> = {}) => {
+    const posted = appendBusInbox({ id, from: 'bus-router', to: 'bus.dead-letter',
+      priority: 'P1', ttl: 120_000, body: body as BusEnvelope['body'], ...extra },
+      { root: options.root, now: options.now });
+    expect(posted.status).toBe('posted');
+  };
+
+  it('lists dead-letter reports whose original mail was addressed to the agent', () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova', 'ghost');
+    registerAgentIdentity({ handle: 'atlas', aliases: ['atlas-alias'],
+      runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    // Two reports for atlas (one alias-addressed), one for someone else, one
+    // unparseable, one the agent sent itself to its own channel.
+    postLetter(options, 'dl-p0', deadLetterBody({ to: 'agent:atlas', reason: 'no-route', priority: 'P0', attempts: 0 }), { priority: 'P0' });
+    postLetter(options, 'dl-alias', deadLetterBody({ id: 'orig-2', to: 'atlas-alias', kind: 'review' }));
+    postLetter(options, 'dl-other', deadLetterBody({ id: 'orig-3', to: 'agent:ghost' }));
+    postLetter(options, 'dl-bare', deadLetterBody({ bare: true }));
+    postLetter(options, 'dl-self', deadLetterBody({ id: 'orig-5', from: 'agent:atlas', to: 'group:eng:general' }));
+    createAgentChannel({ name: 'eng', members: ['atlas'] }, options);
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.deadLetters.status !== 'ok') throw new Error('unreachable');
+    expect(result.deadLetters).toMatchObject({ matched: 2, truncated: false });
+    // Claim order: the P0 letter first, then cursor order.
+    expect(result.deadLetters.items.map(item => item.id)).toEqual(['dl-p0', 'dl-alias']);
+    expect(result.deadLetters.items[0]).toMatchObject({
+      originalId: 'orig-env-1', to: 'agent:atlas', from: 'agent:nova', fromAgent: 'nova',
+      kind: 'task', reason: 'no-route', attempts: 0, priority: 'P0', payloadDropped: false });
+    expect(result.deadLetters.items[0]!.summary).toContain('dead letter no-route');
+    expect(result.deadLetters.items[0]!.summary).toContain('agent:nova → agent:atlas');
+    expect(result.deadLetters.items[0]!.summary).toContain('original orig-env-1');
+    expect(result.deadLetters.items[1]).toMatchObject({ id: 'dl-alias', originalId: 'orig-2',
+      to: 'atlas-alias', kind: 'review', attempts: 2 });
+    for (const item of result.deadLetters.items) {
+      expect(Date.parse(item.expiresAt)).toBeGreaterThan(Date.parse(item.ts));
+    }
+    const rendered = formatBusWorkMine(result);
+    expect(rendered.some(line => line.startsWith('dead-letters=2 shown=2'))).toBe(true);
+    expect(rendered.some(line => line.includes('[P0 dead-letter id=dl-p0 from agent:nova to agent:atlas]')
+      && line.includes('dead letter no-route') && line.includes('expires='))).toBe(true);
+    // The alias ref sees the same reports under its own labels.
+    const aliased = readBusWorkMine('atlas-alias', options);
+    expect(aliased.status).toBe('ok');
+    if (aliased.status !== 'ok' || aliased.deadLetters.status !== 'ok') throw new Error('unreachable');
+    expect(aliased.deadLetters.matched).toBe(2);
+    // ghost's own digest never sees atlas's lost mail.
+    const other = readBusWorkMine('ghost', options);
+    expect(other.status).toBe('ok');
+    if (other.status !== 'ok' || other.deadLetters.status !== 'ok') throw new Error('unreachable');
+    expect(other.deadLetters.matched).toBe(1);
+    expect(other.deadLetters.items[0]).toMatchObject({ id: 'dl-other', to: 'agent:ghost' });
+  });
+
+  it('keeps a payload-dropped letter on its summary facts and filters honestly', () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    postLetter(options, 'dl-drop', deadLetterBody({ payloadDropped: true, withPayload: false }));
+    postLetter(options, 'dl-keep', deadLetterBody({ id: 'orig-keep' }));
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.deadLetters.status !== 'ok') throw new Error('unreachable');
+    expect(result.deadLetters.matched).toBe(2);
+    const dropped = result.deadLetters.items.find(item => item.id === 'dl-drop')!;
+    expect(dropped).toMatchObject({ payloadDropped: true, originalId: 'orig-env-1',
+      to: 'agent:atlas', kind: 'task', attempts: 2 });
+    expect(dropped.summary).toContain('payload dropped');
+
+    // --id matches the letter's own wire id or the original's.
+    for (const [id, expected] of [['dl-keep', ['dl-keep']], ['orig-env-1', ['dl-drop']]] as const) {
+      const filtered = readBusWorkMine('atlas', { ...options, id });
+      expect(filtered.status).toBe('ok');
+      if (filtered.status !== 'ok' || filtered.deadLetters.status !== 'ok') throw new Error('unreachable');
+      expect(filtered.deadLetters.items.map(item => item.id)).toEqual(expected);
+    }
+    // --body-kind keeps the original transport kind; --priority the letter's band.
+    const byKind = readBusWorkMine('atlas', { ...options, bodyKind: 'task' });
+    expect(byKind.status).toBe('ok');
+    if (byKind.status !== 'ok' || byKind.deadLetters.status !== 'ok') throw new Error('unreachable');
+    expect(byKind.deadLetters.matched).toBe(2);
+    const byPriority = readBusWorkMine('atlas', { ...options, priority: 'P0' });
+    expect(byPriority.status).toBe('ok');
+    if (byPriority.status !== 'ok' || byPriority.deadLetters.status !== 'ok') throw new Error('unreachable');
+    expect(byPriority.deadLetters.matched).toBe(0);
+    // --from/--exclude-from match the ORIGINAL sender; --contains the report text.
+    const byFrom = readBusWorkMine('atlas', { ...options, from: 'nova' });
+    expect(byFrom.status).toBe('ok');
+    if (byFrom.status !== 'ok' || byFrom.deadLetters.status !== 'ok') throw new Error('unreachable');
+    expect(byFrom.deadLetters.matched).toBe(2);
+    const byExclude = readBusWorkMine('atlas', { ...options, excludeFrom: 'nova' });
+    expect(byExclude.status).toBe('ok');
+    if (byExclude.status !== 'ok' || byExclude.deadLetters.status !== 'ok') throw new Error('unreachable');
+    expect(byExclude.deadLetters.matched).toBe(0);
+    // --contains matches the report facts — never the parties or original
+    // id, which keep their own filters.
+    const byContains = readBusWorkMine('atlas', { ...options, contains: 'payload dropped' });
+    expect(byContains.status).toBe('ok');
+    if (byContains.status !== 'ok' || byContains.deadLetters.status !== 'ok') throw new Error('unreachable');
+    expect(byContains.deadLetters.items.map(item => item.id)).toEqual(['dl-drop']);
+    const byLabel = readBusWorkMine('atlas', { ...options, contains: 'nova' });
+    expect(byLabel.status).toBe('ok');
+    if (byLabel.status !== 'ok' || byLabel.deadLetters.status !== 'ok') throw new Error('unreachable');
+    expect(byLabel.deadLetters.matched).toBe(0);
+    // The citation filters a transport envelope can never satisfy empty the
+    // section honestly, like `next` under --job.
+    for (const extra of [{ job: 'RQ-X' }, { thread: 't-1' }, { result: 'failed' as const },
+        { inReplyTo: 'env-1' }] as const) {
+      const filtered = readBusWorkMine('atlas', { ...options, ...extra });
+      expect(filtered.status).toBe('ok');
+      if (filtered.status !== 'ok' || filtered.deadLetters.status !== 'ok') throw new Error('unreachable');
+      expect(filtered.deadLetters).toMatchObject({ matched: 0, items: [] });
+    }
   });
 
   it('lists conversation threads waiting on the agent and clears them once answered', async () => {
