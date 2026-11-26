@@ -81,6 +81,38 @@ describe('resident CI reruns', () => {
       pass: 1, pending: 0, resolutionRate: 1,
     });
   });
+  it('reconciles replayed and conflicting workflow verdicts in reports and stabilization briefs', async () => {
+    const { opts, gh, report } = setup();
+    const test = report.groups[0]!.testId;
+    const repo = report.repo;
+    const at = '2026-01-01T11:00:00Z';
+    const attempts = ['a', 'b', 'c', 'd'].map((letter, index) => ({
+      at, repo, test, outcome: 'attempt', head: letter.repeat(40), runId: 123 + index, pr: 1 + index,
+    }));
+    const [first, second, third, fourth] = attempts;
+    const verdicts = [
+      { ...first, verdict: 'pass' },
+      { ...first, verdict: 'pass', at: '2026-01-01T11:59:00Z' },
+      { ...second, verdict: 'fail' },
+      { ...second, verdict: 'fail', test: 'test/b.test.ts > b' },
+      { ...third, verdict: 'fail' },
+      { ...third, verdict: 'pass' },
+      { ...fourth, verdict: 'fail' },
+      { ...fourth, verdict: 'fail', head: 'e'.repeat(40) },
+    ].map(row => ({ ...row, outcome: 'verdict' }));
+    appendFileSync(opts.journalPath!, [...attempts, ...verdicts].map(row => JSON.stringify(row)).join('\n') + '\n');
+
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.verdicts).toEqual({ pass: 1, fail: 1, inconclusive: 0, pending: 0, resolutionRate: 0.5 });
+    expect(read.recurringFlakes).toEqual([expect.objectContaining({
+      test, attempts: 4, verdicts: { pass: 1, fail: 0, inconclusive: 0 },
+    })]);
+    expect(read.recent.filter(row => row.outcome === 'verdict')).toHaveLength(8);
+
+    await runCiRerunMaintenance(opts);
+    expect(gh).not.toHaveBeenCalled();
+    expect(readFileSync(opts.queueFile!, 'utf8')).toContain('1 passed, 0 failed, 0 inconclusive');
+  });
   it.each(['pr-caused', 'shared-baseline', 'unknown'])('never reruns %s', async kind => {
     const { opts, gh } = setup(kind);
     await runCiRerunMaintenance(opts);

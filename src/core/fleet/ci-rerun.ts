@@ -32,13 +32,33 @@ function compareVerdictPosition(a: VerdictCursor, b: VerdictCursor): number {
   return Date.parse(a.at) - Date.parse(b.at) || rerunKey(a).localeCompare(rerunKey(b));
 }
 
-/** Expand attempt evidence for recurrence while keeping workflow counters per run. */
-function summarizeFlakes(entries: readonly Entry[], nowMs: number) {
-  return recurringFlakes(entries.flatMap(entry => {
-    if (entry.outcome !== 'attempt' || !Array.isArray(entry.tests)) return [entry];
+/** Keep one verdict per workflow run as of the observation time. */
+function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
+  const runs = new Map<string, { first: Entry; verdictConflict: boolean; testConflict: boolean }>();
+  for (const entry of entries) {
+    if (entry.outcome !== 'verdict' || Date.parse(entry.at) > nowMs) continue;
+    const key = JSON.stringify([entry.repo, entry.runId]);
+    const run = runs.get(key);
+    if (!run) {
+      runs.set(key, { first: entry, verdictConflict: false, testConflict: false });
+      continue;
+    }
+    run.verdictConflict ||= run.first.head !== entry.head || run.first.verdict !== entry.verdict;
+    run.testConflict ||= run.first.test !== entry.test;
+    if (Date.parse(entry.at) < Date.parse(run.first.at)) run.first = entry;
+  }
+  return [...runs.values()].filter(run => !run.verdictConflict)
+    .map(({ first, testConflict }) => testConflict ? { ...first, test: undefined } : first);
+}
+
+/** Expand attempt evidence for recurrence and use reconciled verdicts for attribution. */
+function summarizeFlakes(entries: readonly Entry[], nowMs: number, verdicts = observedVerdicts(entries, nowMs)) {
+  const attempts = entries.filter(entry => entry.outcome === 'attempt').flatMap(entry => {
+    if (!Array.isArray(entry.tests)) return [entry];
     const tests = new Set(entry.tests.filter(test => typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX));
     return [...tests].map(test => ({ ...entry, test }));
-  }), { nowMs });
+  });
+  return recurringFlakes([...attempts, ...verdicts], { nowMs });
 }
 
 /** Fired reruns (ok call rows) still awaiting a run verdict, oldest first. */
@@ -124,8 +144,9 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
   } catch { /* absent journal */ }
   const observed = entries.filter(e => Date.parse(e.at) <= now);
   const attempts = observed.filter(e => e.outcome === 'attempt');
+  const verdicts = observedVerdicts(observed, now);
   const verdictTally = { pass: 0, fail: 0, inconclusive: 0 };
-  for (const e of observed) if (e.outcome === 'verdict' && e.verdict) verdictTally[e.verdict]++;
+  for (const e of verdicts) if (e.verdict) verdictTally[e.verdict]++;
   const resolved = verdictTally.pass + verdictTally.fail;
   return {
     entries,
@@ -136,7 +157,7 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
       failed: observed.filter(e => e.outcome === 'failed').length,
     },
     lastHour: hourlyAttempts(attempts, now),
-    recurringFlakes: summarizeFlakes(observed, now),
+    recurringFlakes: summarizeFlakes(observed, now, verdicts),
     verdicts: {
       ...verdictTally,
       pending: pendingVerdicts(observed, now).length,
