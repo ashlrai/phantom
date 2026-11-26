@@ -1239,6 +1239,7 @@
     "src/core/release/cadence.ts",
     "src/core/release/git-backlog.ts",
     "src/core/release/remote-git-backlog.ts",
+    "src/core/release/train.ts",
     "src/core/resources/account-identity-witness.ts",
     "src/core/resources/capacity-wait.ts",
     "src/core/resources/claude-account-status.ts",

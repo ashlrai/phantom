@@ -318,10 +318,15 @@ What runs without a per-release approval:
 KILL fails closed. On a hosted runner the train proceeds only when the
 repository variable `PHANTOM_RELEASE_TRAIN` is `on`. Unset and `off` both
 stop it. `ashlr authority stop` and `ashlr fleet pause` arm `~/.ashlr/KILL`,
-create `~/.ashlr-runs/RELEASE_AUTORUN_OFF`, and best-effort set that variable
-to `off`. A failed variable write is logged and does not block the local stop.
-The Mac signer still stops when the OFF file exists. The npm publish job
-uses the same variable.
+create `~/.ashlr-runs/RELEASE_AUTORUN_OFF` with the `fleet-stop` marker, record
+the variable's previous state in `RELEASE_TRAIN_PAUSED_BY_STOP`, and
+best-effort set it to `off`. After a successful `ashlr authority clear-stop`
+or `ashlr fleet resume`, the helper removes only that exact marked OFF file and
+restores the variable to `on` only if it was `on` before the stop. A legacy or
+manually written OFF file is preserved; delete it manually if the hold is not
+intentional. GitHub failures are logged and never block clearing Stop. The Mac
+signer still stops when the OFF file exists. The npm publish job uses the same
+variable.
 
 Signing and notarization stay in `contrib/mac/release-autorun.sh` and the
 stock `release-sign.sh` wrapper. CI does not codesign and does not notarize.
