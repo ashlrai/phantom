@@ -313,6 +313,37 @@ export function selectConflictScanFiles(changedPaths, existingPaths) {
 }
 
 /**
+ * Editor and patch leftovers whose trailing token claims no grammar: the
+ * file's real extension already named its type, so ESLint, every syntax
+ * bucket and the test collectors all skip the name — a committed
+ * `foo.test.ts-E` sits beside the live suite vitest never sees, and
+ * `docs/CLI-REFERENCE.md.backup` beside the doc it copies. The class:
+ * `.orig`/`.rej` from patch(1) and merge tools, `.bak`/`.backup`/`.save`
+ * editor copies, vim `.swp`/`.swo`/`.swn` swaps, `.tmp`/`.temp`/`.old`
+ * scratch renames, a trailing `~`, and the `<ext>-<letter><digits>` tag
+ * (`foo.ts-E`, `foo.md-W2`). `git ls-files` shows the class is otherwise
+ * empty in this repo, and .gitignore's lone `*.bak` rule cannot stop a
+ * force-added or bridge-committed file. `test/fixtures/` payloads are
+ * exempt — a fixture may legitimately carry a `.orig`/`.rej` name as tool
+ * input — and deletions pass: removing a stray is the fix, not the
+ * offense. The `-[a-z]` clause requires a dotted extension before it, so
+ * extensionless names like `plan-E` stay untouched.
+ */
+const STRAY_BACKUP_FILE = /(?:\.(?:orig|rej|bak|backup|save|swp|swo|swn|tmp|temp|old)|~|\.[^/.]+-[a-z]\d*)$/i;
+const STRAY_BACKUP_EXEMPT = /^test\/fixtures\//;
+
+/**
+ * Bucket changed, existing files whose names are editor/patch leftovers.
+ * Name-scoped like selectConflictScanFiles: every changed path still on
+ * disk is a candidate, deduped and sorted.
+ */
+export function strayBackupFiles(changedPaths, existingPaths) {
+  const existing = new Set(existingPaths);
+  return [...new Set(changedPaths)].filter(Boolean).sort()
+    .filter((path) => existing.has(path) && !STRAY_BACKUP_EXEMPT.test(path) && STRAY_BACKUP_FILE.test(path));
+}
+
+/**
  * Git writes unresolved-conflict markers at column 0 only: `<<<<<<<` and
  * `>>>>>>>` (each optionally carrying a label) plus the diff3 `|||||||`
  * base marker. `=======` is deliberately absent — a seven-equals line is a
@@ -2112,6 +2143,14 @@ function main() {
       return;
     }
     console.log('PASS empty test check');
+    const strayBackups = strayBackupFiles(changed, existing);
+    if (strayBackups.length) {
+      for (const path of strayBackups) console.error(`FAIL stray backup file check: ${path}`);
+      console.error('Editor and patch leftovers name no grammar — lint, typecheck and every syntax check skip them, so the file would ship silently. Delete or rename it; test/fixtures/ payloads are exempt and deletions pass.');
+      process.exitCode = 1;
+      return;
+    }
+    console.log('PASS stray backup file check');
   } catch (error) {
     console.error(`FAIL file selection: ${error.message}`);
     process.exitCode = 1;
