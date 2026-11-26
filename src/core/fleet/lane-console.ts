@@ -1010,7 +1010,8 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     const mergesPerHour = mergeCount === 0 && sources.ledger.state !== 'healthy' ? null
       : Math.round((mergeCount / (mergeWindowMs / 3_600_000)) * 100) / 100;
     const row = holds.get(lane);
-    const hold: FleetLaneView['hold'] = row ? {
+    // Either source can observe a hold before the other catches up.
+    const hold: FleetLaneView['hold'] = row && (row.held || dispatch?.held !== true) ? {
       held: row.held,
       reason: row.heldReason,
       until: row.heldUntil,
