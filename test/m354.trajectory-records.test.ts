@@ -1940,6 +1940,15 @@ describe('Trajectory records', () => {
       labelBasis: 'post-merge-regression',
       attestation: 'd'.repeat(64),
     };
+    const futureObservation = {
+      ...revertedObservation,
+      eventId: 'f'.repeat(64),
+      observedAt: new Date(TEST_NOW_MS + 1).toISOString(),
+      proposalId: 'prop-a',
+      runId: 'run-a',
+      trajectoryId: 'traj-a',
+      workItemId: 'item-a',
+    };
     const records = listTrajectoryRecords({
       windowHours: 1000,
       deps: deps({
@@ -1950,7 +1959,7 @@ describe('Trajectory records', () => {
           dispatch({ ts: TS3, itemId: 'item-d', proposalId: 'prop-d', runId: 'run-d', trajectoryId: 'traj-d' }),
         ],
         listOutcomeRecords: () => [
-          outcomeFor('a', 'merged', TS2),
+          outcomeFor('a', 'merged', TS2, [futureObservation]),
           outcomeFor('b', 'rejected', TS2),
           outcomeFor('c', 'merged', TS2),
           outcomeFor('d', 'merged', TS2, [revertedObservation]),
@@ -1968,6 +1977,10 @@ describe('Trajectory records', () => {
     });
 
     expect(records).toHaveLength(4);
+    expect(records[0]).toMatchObject({ trajectoryId: 'traj-d', latestAt: TS4 });
+    const recordA = records.find((record) => record.trajectoryId === 'traj-a');
+    expect(recordA).toMatchObject({ terminalOutcome: 'merged', latestAt: TS2 });
+    expect(recordA?.timeline.some((event) => event.kind === 'post-merge')).toBe(false);
     const summary = summarizeTrajectoryLearning(records);
     expect(summary.skillObservation.sampleState).toBe('observed');
     expect(summary.skillOutcomes).toEqual({
