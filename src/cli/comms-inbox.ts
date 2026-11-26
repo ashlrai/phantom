@@ -13,7 +13,7 @@ const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <inf
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines
-(hard-limit items block Mason; auto items are fleet work cleared by
+(hard-limit items block the owner; auto items are fleet work cleared by
 phm needs-you resolve --auto), needs-you
 answers not confirmed in the planner inbox or with unreadable delivery receipts,
 unanswered iMessage
@@ -49,7 +49,7 @@ per-source counts still report every
 store's real pending total — null when a source could not be read, never a
 fabricated 0 — so a filtered view never hides a busy or degraded
 source. --json prints the same view as JSON.
-read and post read and write Mason's local inbox file. Output is JSON; post returns the receiver acknowledgement.
+read and post read and write the owner's local inbox file. Output is JSON; post returns the receiver acknowledgement.
 --receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.
 Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
 --contains <text> is a literal case-insensitive substring match on message text (not regex) over the same bounded inbox tail, applied before the limit.

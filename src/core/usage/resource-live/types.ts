@@ -108,9 +108,13 @@ export type ResourceLiveReason =
   | 'source-timeout'
   | 'invalid-reading'
   | 'needs-signin'
+  | 'non_gui_context'
+  | 'identity_mismatch'
   | 'window-reset';
 
 export interface ResourceLiveReading {
+  groups?: AntigravityUsageGroup[];
+  execution_context?: AntigravityExecutionContext;
   account_id?: string;
   model?: string;
   window_start?: string;
@@ -133,6 +137,13 @@ export interface ResourceLiveReading {
   observed_at: string | null;
   stale_after: string | null;
   reason: ResourceLiveReason | null;
+}
+
+export type AntigravityExecutionContext = 'gui-resident' | 'ssh' | 'unknown';
+
+export interface AntigravityUsageGroup {
+  name: string;
+  buckets: { id: string; window: string; remaining: number; reset_at: string }[];
 }
 
 export type BurnDownAction = 'burn' | 'steady' | 'hold' | 'reserve';
@@ -219,6 +230,7 @@ export interface PollState {
   /** Whether the lane was active when the interval was chosen. */
   active: boolean;
   fingerprint: string | null;
+  reset_checks?: string[];
 }
 
 export interface HistorySample {

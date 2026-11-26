@@ -56,11 +56,12 @@ describe('router calibration baseline comparison', () => {
     expect(shared.population).toBe('both');
     expect(shared.delta.mergeRate.predicted).toBeCloseTo((0.5 + 0.9 + 0.3) / 3 - 0.6);
     expect(shared.delta.mergeRate.actual).toBeCloseTo(2 / 3 - 0.5);
+    expect(shared.delta.observedMergeRate).toBeCloseTo(2 / 3 - 0.5);
     expect(shared.delta.brier).toBeCloseTo((0.25 + 0.01 + 0.09) / 3 - 0.1);
     expect(shared.delta.tokens).toEqual({ predicted: 100, actual: 100 });
     expect(shared.delta.wallTimeMs).toEqual({ predicted: null, actual: null });
     expect(result.comparisons.find((a: { arm: string }) => a.arm === 'retired')).toMatchObject({
-      population: 'baseline-only', delta: { brier: null, tokens: { actual: null, predicted: null } },
+      population: 'baseline-only', delta: { observedMergeRate: null, brier: null, tokens: { actual: null, predicted: null } },
     });
     expect(result.comparisons.find((a: { arm: string }) => a.arm === 'new|arm').population).toBe('current-only');
   });

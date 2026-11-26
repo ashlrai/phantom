@@ -1870,6 +1870,39 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['work', 'feed', '--owner', 'bad owner'])).toMatchObject({ code: 2 });
   });
 
+  it('filters the work feed by cited envelope id', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-ID-1', '--title', 'First',
+      '--repo', 'ashlrai/phantom', '--provider', 'claude', '--id', 'feed-id1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-ID-2', '--title', 'Second',
+      '--repo', 'ashlrai/phantom', '--provider', 'claude', '--id', 'feed-id2'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-ID-1', '--status', 'running',
+      '--id', 'feed-id1s'])).json).toMatchObject({ status: 'posted' });
+
+    // Every citation slot resolves to its job: --id on post and status stamps
+    // the envelope wire id the feed cites as postId/statusId.
+    for (const id of ['feed-id1', 'feed-id1s']) {
+      expect((await run(['work', 'feed', '--id', id])).json.jobs)
+        .toEqual([expect.objectContaining({ id: 'RQ-ID-1', status: 'running' })]);
+    }
+    expect((await run(['work', 'feed', '--id', 'feed-id2'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-ID-2', status: 'queued' })]);
+    // An id nothing on the feed cites — a job id, a near-miss or a ghost — is
+    // an honest empty view, never a fabricated job.
+    for (const id of ['RQ-ID-1', 'feed-id1x', 'missing-envelope']) {
+      expect((await run(['work', 'feed', '--id', id])).json).toMatchObject({ status: 'ok', jobs: [] });
+    }
+    // The filter composes with the others.
+    expect((await run(['work', 'feed', '--id', 'feed-id1s', '--status', 'queued'])).json.jobs).toEqual([]);
+    expect((await run(['work', 'feed', '--id', 'feed-id1s', '--status', 'running'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-ID-1' })]);
+    // Bad values are usage errors, never silent empty views.
+    expect(await run(['work', 'feed', '--id', 'bad id'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'feed', '--id', 'a', '--id', 'b'])).toMatchObject({ code: 2 });
+  });
+
   it('filters the work feed by repo, provider and claimable', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-REPO-A', '--title', 'Repo job',

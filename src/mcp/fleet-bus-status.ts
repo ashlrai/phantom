@@ -10,7 +10,9 @@
  * table, message-id claim journal, claim-drift verdict, work-feed
  * projection, legacy mailbox, owner-chat receipts ledger, shared task
  * board and fleet queue, bot-seat store, peer work-dispatch journal, peer
- * coordination ledger, and the outbound send gate (`sendGate.state`
+ * coordination ledger, the session-handoff journal store behind
+ * `phm checkpoint handoff list|show` and `fleet_session_handoffs`, and the
+ * outbound send gate (`sendGate.state`
  * open/blocked/unknown with the kill-switch and comms-pause verdicts
  * kept separate) an agent can check before assuming a write would land.
  *

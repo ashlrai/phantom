@@ -83,6 +83,26 @@ describe('backlog to ledger sync', () => {
     expect(scoreOutcomes(readLedger().records)[0]).toMatchObject({ status: 'unknown', pr: { number: 9 } });
   });
 
+  it('registers a superseded task against its fleet carrier PR and skips dead carriers', () => {
+    const items = [user('m1', 'Perf Gate', 2, { metric })];
+    const base = { repo: 'ashlrai/phantom', title: 'x', backlogItemId: 'm1', pr: pr(9, 'closed') };
+    const tasks = [
+      { ...base, id: 'ct_sup_open', state: 'pr-open' as const, supersededBy: { repo: 'ashlrai/phantom', number: 77 } },
+      { ...base, id: 'ct_sup_merged', state: 'merged' as const, supersededBy: { repo: 'ashlrai/phantom', number: 78 } },
+      { ...base, id: 'ct_sup_closed', state: 'closed' as const, supersededBy: { repo: 'ashlrai/phantom', number: 79 } },
+      { ...base, id: 'ct_sup_failed', state: 'failed' as const, supersededBy: { repo: 'ashlrai/phantom', number: 80 } },
+      { ...base, id: 'ct_plain', state: 'closed' as const },
+    ];
+    const prs = backlogRegistrations(tasks, items, []).filter((e) => e.type === 'pr');
+    // The closed cloud PR's own state is expected after a supersede; the fleet
+    // PR number is what measure/observe/reverts must follow. A carrier the
+    // tracker closed or failed is dead work and registers nothing.
+    expect(prs).toEqual([
+      { type: 'pr', proposalId: backlogProposalId('ct_sup_open'), repository: 'ashlrai/phantom', number: 77 },
+      { type: 'pr', proposalId: backlogProposalId('ct_sup_merged'), repository: 'ashlrai/phantom', number: 78 },
+    ]);
+  });
+
   it('phm improve sync-backlog registers stored cloud tasks', async () => {
     appendUserBacklogItems([user('m1', 'Perf Gate', 1, { metric })]);
     const now = new Date().toISOString();

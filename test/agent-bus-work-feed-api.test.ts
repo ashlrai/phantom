@@ -59,7 +59,7 @@ describe('GET /api/verse/agent-bus/work-feed', () => {
     for (const query of ['?after=0', '?limit=0', '?limit=201', '?limit=abc', '?limit=', '?limit=1.5', '?limit=-1',
       '?claims=1', '?claims=false', '?claims', '?claims=true&claims=true',
       '?status=bogus', '?status=QUEUED', '?job=', '?repo=not-a-repo', '?provider=bogus', '?provider=DEVIN',
-      '?tier=bogus', '?tier=FAST', '?to=', '?owner=', '?since=not-a-time', '?before=not-a-time', '?before=', '?contains=', '?channel=', '?channel=Bad%20Name', '?channel=UPPER', '?result=', '?result=bogus', '?result=COMPLETE', '?open=false', '?claimable=1',
+      '?tier=bogus', '?tier=FAST', '?to=', '?owner=', '?since=not-a-time', '?before=not-a-time', '?before=', '?contains=', '?channel=', '?channel=Bad%20Name', '?channel=UPPER', '?result=', '?result=bogus', '?result=COMPLETE', '?id=', '?id=has%20space', '?open=false', '?claimable=1',
       '?status=queued&status=done', '?bogus=1']) {
       expect((await request(`${FEED}${query}`)).status, query).toBe(400);
     }
@@ -162,7 +162,7 @@ describe('GET /api/verse/agent-bus/work-feed filters', () => {
       result: { id: 'res-1', from: 'agent:worker', outcome: 'complete', receivedAt: 1_500 } }),
     job({ id: 'job-b', owner: 'other-agent', to: 'group:release:deploy', provider: 'codex-cmp',
       repo: 'other/repo', title: 'Fix the flake', status: 'done', updatedAt: 2_000,
-      detail: 'retry budget exhausted', statusId: 'status-9' }),
+      detail: 'retry budget exhausted', postId: 'post-2', statusId: 'status-9' }),
   ];
   const feedResult: BusWorkFeedReadResult = { status: 'ok', jobs, receipts: 2, asOf };
 
@@ -203,6 +203,12 @@ describe('GET /api/verse/agent-bus/work-feed filters', () => {
     // job-b has no retained result and never matches.
     expect(ids((await feedRequest('?result=complete')).wire)).toEqual(['job-a']);
     expect(ids((await feedRequest('?result=failed')).wire)).toEqual([]);
+    // id keeps jobs whose retained envelope citations include the wire id —
+    // the post announcement, newest status receipt or newest result receipt.
+    expect(ids((await feedRequest('?id=post-1')).wire)).toEqual(['job-a']);
+    expect(ids((await feedRequest('?id=status-9')).wire)).toEqual(['job-b']);
+    expect(ids((await feedRequest('?id=res-1')).wire)).toEqual(['job-a']);
+    expect(ids((await feedRequest('?id=missing')).wire)).toEqual([]);
     expect(ids((await feedRequest('?status=queued&provider=devin&contains=docs')).wire)).toEqual(['job-a']);
   });
 

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { devinCliLaneVerdict, type DevinCliLaneInput } from '../devin/cli-engine.js';
 import { defaultDevinCliCandidates, probeDevinCli } from '../devin/cli-probe.js';
 import { resolveExecutable } from '../run/tool-path.js';
-import { defaultResourceLiveSources } from '../usage/resource-live/sources.js';
+import { antigravityAgentCheck } from '../usage/resource-live/sources.js';
 import { RESOURCE_LIVE_STALE_MS } from '../usage/resource-live/types.js';
 import { readZaiUsage } from '../usage/zai-usage.js';
 
@@ -36,7 +36,7 @@ async function readLane(lane: Lane, deps: ProbeDeps): Promise<Reading> {
     }
     const runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
     const read = await (deps.readAgy ?? (async time => {
-      const row = await defaultResourceLiveSources({ runsDir }).antigravity?.[0]?.read(time);
+      const row = await antigravityAgentCheck(runsDir).read(time);
       return row && 'used' in row ? row : null;
     }))(now);
     const resetAt = future(read?.reset_at ?? null, now);

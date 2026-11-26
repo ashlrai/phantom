@@ -121,7 +121,7 @@ describe('a pending pure status ask is answered once from local state (original 
     const posted = posts(call)[0]![1] as { channel: string; thread_ts: string; text: string };
     expect(posted).toMatchObject({ channel: CHANNEL, thread_ts: THREAD });
     expect(posted.text).toMatch(/^Leader: Status collected:/);
-    expect(posted.text).toContain('\nMerged PRs in the last 24h: 12.');
+    expect(posted.text).toContain('Merged PRs in the last 24h: 12');
     expect(posted.text).toContain('By lane: claude 9 (median 25 min), codex-personal 3 (median 40 min)');
     expect(posted.text).toContain('Mains green: 2 of 3. Red: lexicon.');
     expect(posted.text).not.toContain('stale');

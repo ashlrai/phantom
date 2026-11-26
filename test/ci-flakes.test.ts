@@ -178,10 +178,13 @@ describe('enqueueFlakeFixes', () => {
     const flakes = Array.from({ length: MAX_FLAKE_FIX_ROWS + 2 }, (_, i) =>
       flake({ test: `test/f${i}.test.ts > case ${i}`, heads: HEADS.slice(0, 3) }));
     const queued = enqueueFlakeFixes(flakes, queue);
-    expect(queued).toHaveLength(MAX_FLAKE_FIX_ROWS);
+    const ids = flakes.map(({ repo, test }) => flakeJobId(repo, test));
+    expect(queued).toEqual(ids.slice(0, MAX_FLAKE_FIX_ROWS));
     const lines = readFileSync(queue, 'utf8').split('\n').filter(l => l.includes('RQ-CIFLAKE-'));
     expect(lines).toHaveLength(MAX_FLAKE_FIX_ROWS);
     for (const line of lines) expect(line).not.toContain('\n');
+    expect(enqueueFlakeFixes(flakes, queue)).toEqual(ids.slice(MAX_FLAKE_FIX_ROWS));
+    expect(enqueueFlakeFixes(flakes, queue)).toEqual([]);
   });
 
   it('refuses a relative queue path', () => {

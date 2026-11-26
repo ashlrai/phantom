@@ -86,15 +86,28 @@ function line(r: Omit<ReplyState, 'text'>): string {
   return `${head}\n${assignment}${body}${dup}`;
 }
 
+/** Normalize only fully valid Slack thread references; leave opaque refs untouched. */
+function slackThreadIdentity(ref: string): string | undefined {
+  const canonical = /^slack:([TE][A-Z0-9]{2,32}):([CDG][A-Z0-9]{2,32}):(\d{1,20})\.(\d{1,10})$/.exec(ref);
+  const slash = /^([TE][A-Z0-9]{2,32})\/([CDG][A-Z0-9]{2,32})\/(\d{1,20})\.(\d{1,10})$/.exec(ref);
+  const parts = canonical ?? slash;
+  if (!parts || (canonical && ref.length > 128)) return undefined;
+  return `${parts[1]}:${parts[2]}:${parts[3]!.replace(/^0+/, '') || '0'}.${parts[4]!.replace(/0+$/, '')}`;
+}
+
 /** First request of the thread holding `id`, by arrival order; `id` itself when it has no thread. */
 function firstInThread(id: string, receipts: readonly BusInboxReceipt[]): string {
   const own = receipts.find(row => row.envelope.id === id);
   const ref = own?.envelope.channel_ref;
   if (!own || ref === undefined || ref.trim() === '' || !isRequest(own)) return id;
   const channel = own.envelope.channel ?? 'bus';
+  const slackIdentity = channel === 'slack' ? slackThreadIdentity(ref) : undefined;
   let first = own;
   for (const row of receipts) {
-    if ((row.envelope.channel ?? 'bus') !== channel || row.envelope.channel_ref !== ref ||
+    const otherRef = row.envelope.channel_ref;
+    const sameRef = otherRef === ref || (slackIdentity !== undefined && otherRef !== undefined &&
+      slackThreadIdentity(otherRef) === slackIdentity);
+    if ((row.envelope.channel ?? 'bus') !== channel || !sameRef ||
         row.envelope.to !== own.envelope.to || row.envelope.from !== own.envelope.from || !isRequest(row)) continue;
     if (row.cursor < first.cursor) first = row;
   }
