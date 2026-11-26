@@ -6,6 +6,7 @@
  */
 import { parseLedgerTs } from '../metrics/loop.js';
 import { foldRouterOutcomes } from '../router/outcomes.js';
+import { laneLaunchTarget } from './lane-launch-target.js';
 import { derivedRowCodes, marketContext, marketLaneView, parseReadyMarketRows, stoppedReadyHints, type ReadyMarketRow, type UnfedMarketInputs } from './unfed-market.js';
 
 export const FLEET_UNFED_SCHEMA = 'fleet.unfed.v1';
@@ -360,9 +361,8 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
   const resources: UnfedResource[] = [];
   for (const [lane, value] of Object.entries(data.lanes)) {
     if (!LANE.test(lane) || !isRecord(value) || !count(value.running)) throw new Error('invalid lane');
-    // The effective target is what the lane may launch against after load shedding.
-    const target = count(value.effective_target) ? value.effective_target : value.target;
-    if (!count(target)) throw new Error('invalid lane');
+    if (!count(value.target)) throw new Error('invalid lane');
+    const target = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
     const statusHeld = value.held === true;
     const view = ctx === null ? null : marketLaneView(lane, value.running, target, statusHeld, ctx);
     const held = view?.held ?? (statusHeld || operatorHolds?.has(lane) === true);
