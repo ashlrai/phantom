@@ -48,6 +48,7 @@ import { resetLedgerCachesForTest } from '../src/core/authority/ledger.js';
 import * as authoritySurface from '../src/core/authority/surface.js';
 import { invalidateStandingPolicyCache } from '../src/core/authority/effective-config.js';
 import { resetAuthorityApiCachesForTest } from '../src/core/verse/authority-api.js';
+import '../src/core/verse/seats.js';
 import { keyIdForPublicKeyPem } from '../src/core/authority/custody-client.js';
 import { killSwitchOn } from '../src/core/sandbox/policy.js';
 import { writeCapacitySnapshot } from '../src/core/routing/budget-store.js';
