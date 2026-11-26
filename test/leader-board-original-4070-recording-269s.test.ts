@@ -92,6 +92,35 @@ it('counts lane-open work by tier without attributing it to a lane', async () =>
   expect(board?.lanes.find((lane) => lane.lane === 'codex')?.ready).toBe(1);
 });
 
+it('uses distinct earlier conflict samples in timestamp order', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'RQ-REBASE-PHANTOM-1234-abc1234', 'devin', 'work'));
+  const earlier = { at: minutesAgo(30), count: 0 };
+  const previous = { at: minutesAgo(15), count: 3 };
+  await mkdir(join(root, 'coordination'));
+  await writeFile(join(root, 'coordination', 'leader-board.json'), JSON.stringify({
+    schema: 'fleet.leader-board.v1',
+    generatedAt: minutesAgo(-5),
+    conflictingPrs: { history: [
+      { at: previous.at, count: 7 }, earlier, previous,
+      { at: minutesAgo(0), count: 9 }, { at: minutesAgo(-5), count: 10 },
+    ] },
+  }));
+  const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  expect(result.wrote && result.board.conflictingPrs).toEqual({
+    count: 1, delta: -2, trend: 'rising',
+    history: [earlier, previous, { at: minutesAgo(0), count: 1 }],
+  });
+});
+
+it('keeps the trend unknown when a retried tick has no earlier observation', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), '');
+  expect((await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS })).wrote).toBe(true);
+  const retry = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  expect(retry.wrote && retry.board.conflictingPrs).toEqual({
+    count: 0, delta: null, trend: 'unknown', history: [{ at: minutesAgo(0), count: 0 }],
+  });
+});
+
 it('reports honest failures for hostile paths and the reader stays truthful', async () => {
   expect(await recordLeaderBoard({ runsDir: 'relative/path', nowMs: NOW_MS })).toMatchObject({ wrote: false });
   expect(await recordLeaderBoard({ runsDir: '/dev/null/impossible', nowMs: NOW_MS })).toMatchObject({ wrote: false });
