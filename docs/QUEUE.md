@@ -1105,6 +1105,8 @@ merge ledger rows when available. Older rows and rows with an unreadable
 records a readable `mergedAt` for the same PR, or the same job for a row without
 a PR identity. This applies even when the explicit merge time is outside the
 reporting window. Matching job-only `LAND` queue rows also defer to that time.
+When a timed merge borrows a lane from another merge receipt, that receipt
+must have a readable merge or event timestamp at or before report time.
 When the merge ledger is missing or degraded, a lane with no observed merges
 reports `null`. Observed counts remain visible and may be incomplete. The
 fleet-wide total, including the Leader board total, requires a healthy ledger.
