@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, scanBusInbox, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxOptions, type BusInboxPost, type BusInboxReceipt, type BusInboxScan } from '../fleet/bus-inbox.js';
 import { BUS_PRIORITIES, isClaimableWork, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
-import { groupAddress, isGroupPresenceBody } from '../fleet/bus-group.js';
+import { groupAddress, GROUP_PRESENCE_TTL_MS, isGroupMemberLabel, isGroupPresenceBody } from '../fleet/bus-group.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { createBusWakeHook, type BusWakeResult } from '../fleet/bus-wake.js';
@@ -2383,6 +2383,91 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   annotateLiveEvidence(messages, options);
   return { status: 'ok', channel: name, messages, nextCursor: cursor,
     ...(countMatched ? { matched } : {}) };
+}
+
+export interface ChannelPresenceMember {
+  /** The heartbeat's `from` routing label — a member label, never an identity or authority. */
+  member: string;
+  /** Registered handle the member label resolves to, or null when it names no identity. */
+  handle: string | null;
+  /** `receivedAt` of the member's latest live presence observation in this topic. */
+  receivedAt: number;
+}
+export interface ChannelPresenceTopic {
+  /** Room-topic component of the `group:<channel>:<topic>` addresses observed. */
+  topic: string;
+  /** Members whose latest live observation in this topic reports `online`. */
+  members: ChannelPresenceMember[];
+}
+export type ChannelPresenceResult =
+  | { status: 'ok'; channel: string; topics: ChannelPresenceTopic[] }
+  | { status: 'invalid' | 'unknown-channel' | 'unavailable' | 'retryable'; reason: string };
+
+/**
+ * Live presence observations across a channel's room-topics — the curated
+ * read `channel read`'s transcript exclusion points at: `group.presence`
+ * heartbeats are expiring observations, never mail, so the message page
+ * drops them while this read folds them. Every live `group.presence` body
+ * addressed to `group:<name>:*` — or to one `topic` — folds per
+ * (topic, member) in cursor order, the last write winning, exactly the
+ * `groupPresence` rule `comms bus group presence` applies inside one
+ * room-topic; only members whose latest observation reports `online`
+ * list, so an `offline` or never-observed member is absent rather than
+ * shown as present. Reading needs no identity and no membership, needs
+ * the channel to exist in the registry (a missing registry or an unknown
+ * name is `unknown-channel`, never an invented empty roster), and an
+ * unreadable registry or store is reported, never an empty page passed
+ * off as "nobody is here". Presence is an observation, not proof of
+ * identity, attention or authority.
+ */
+export function readAgentChannelPresence(name: string, page: { topic?: string } = {},
+    options: UnifiedBusOptions = {}): ChannelPresenceResult {
+  if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
+    return { status: 'invalid', reason: 'Invalid channel name.' };
+  }
+  let exact: string | undefined;
+  if (page.topic !== undefined) {
+    if (typeof page.topic !== 'string') return { status: 'invalid', reason: 'Invalid channel topic.' };
+    try { exact = groupAddress(name, page.topic); }
+    catch { return { status: 'invalid', reason: 'Invalid channel topic.' }; }
+  }
+  const read = readAgentRegistry(options);
+  if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
+  if (!findAgentChannel(read.registry, name)) return { status: 'unknown-channel', reason: 'Channel does not exist.' };
+  const prefix = `group:${name}:`;
+  const latest = new Map<string, { topic: string; member: string; state: string; receivedAt: number }>();
+  let cursor = 0;
+  for (let index = 0; index < MAX_PAGES; index += 1) {
+    const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: options.now });
+    if (result.status !== 'ok') {
+      return { status: result.status === 'retryable' ? 'retryable' : result.status === 'invalid' ? 'invalid' : 'unavailable',
+        reason: 'Bus store is not readable.' };
+    }
+    for (const row of result.messages) {
+      const envelope = row.envelope, body = envelope.body;
+      if (!isGroupPresenceBody(body) || !envelope.to.startsWith(prefix)) continue;
+      if (exact !== undefined && envelope.to !== exact) continue;
+      if (envelope.ttl > GROUP_PRESENCE_TTL_MS || !isGroupMemberLabel(envelope.from)) continue;
+      const state = (body as Record<string, unknown>).state;
+      if (state !== 'online' && state !== 'offline') continue;
+      const topic = envelope.to.slice(prefix.length);
+      latest.set(`${topic}${envelope.from}`, { topic, member: envelope.from, state, receivedAt: row.receivedAt });
+    }
+    if (result.nextCursor <= cursor) break;
+    cursor = result.nextCursor;
+  }
+  const byTopic = new Map<string, ChannelPresenceMember[]>();
+  for (const entry of latest.values()) {
+    if (entry.state !== 'online') continue;
+    const members = byTopic.get(entry.topic) ?? [];
+    members.push({ member: entry.member, handle: resolveAgent(read.registry, entry.member)?.handle ?? null,
+      receivedAt: entry.receivedAt });
+    byTopic.set(entry.topic, members);
+  }
+  const topics = [...byTopic.entries()].map(([topic, members]) => ({
+    topic, members: members.sort((a, b) => a.member.localeCompare(b.member)),
+  })).sort((a, b) => a.topic.localeCompare(b.topic));
+  return { status: 'ok', channel: name, topics };
 }
 
 export interface BusEnvelopeLookupMessage {

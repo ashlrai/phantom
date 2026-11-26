@@ -4055,6 +4055,22 @@ the cited job resolved through the same one-read-per-page annotation
 registry answers
 `unknown-channel`, and an unreadable registry or store answers
 `unavailable`/`retryable`, never an empty page passed off as history),
+`readAgentChannelPresence(name, {topic}, options?)` (the curated presence
+read `channel read`'s `group.presence` exclusion points at: every live
+presence observation addressed to `group:<name>:*` — or to one `topic`
+room — folds per (topic, member) in cursor order, the last write winning,
+the same rule `groupPresence` applies inside one room-topic; `topics`
+groups the members whose latest live observation reports `online` —
+`offline` or never-observed members are absent rather than shown as
+present — each `member` the raw sender label with `handle` the resolved
+identity or null and `receivedAt` the observation's receipt time,
+topics name-sorted and members label-sorted; reading needs no identity
+or membership, a missing registry or unknown channel answers
+`unknown-channel` — never an invented empty roster — a malformed name or
+topic `invalid`, and an unreadable registry or store
+`unavailable`/`retryable`, never an empty list passed off as "nobody is
+here"; presence is an observation, not proof of identity, attention or
+authority),
 `readBusEnvelopeById(id, options?)` (one retained envelope by its wire id —
 the key wake hints, claim operations and `work mine` items cite — via the
 same bounded page walk; live rows only so an expired or never-posted id

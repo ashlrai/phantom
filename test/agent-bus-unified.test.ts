@@ -8,7 +8,7 @@ import {
 } from '../src/core/agents/bus-identity.js';
 import {
   agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodySummary, busPageResumeCursor, listBusChannels, postChannelMessage, postLabelMessage,
-  readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
+  readAgentChannel, readAgentChannelPresence, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
   sendWakeRequest, shouldWake, updateWorkStatus, type AgentWakeRow, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
@@ -297,6 +297,81 @@ describe('channel reads', () => {
     if (resumed.status !== 'ok') throw new Error(`unexpected ${resumed.status}`);
     expect(resumed.matched).toBe(0);
     expect(resumed.messages).toEqual([]);
+  });
+});
+
+describe('channel presence', () => {
+  it('folds live presence observations per topic and member, online only', () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    registerAgentIdentity({ handle: 'relay', aliases: ['lane-relay'] }, options);
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova', 'relay'] }, options);
+    createAgentChannel({ name: 'other', createdBy: 'atlas' }, options);
+
+    // Presence on the channel's own topics plus noise that must not leak:
+    // another channel's heartbeat, a plain channel post and a DM.
+    expect(publishGroupPresence({ room: 'release', topic: 'general', id: 'p1', member: 'agent:nova', state: 'online' }, options).status).toBe('posted');
+    expect(publishGroupPresence({ room: 'release', topic: 'deploy', id: 'p2', member: 'relay', state: 'online' }, options).status).toBe('posted');
+    expect(publishGroupPresence({ room: 'release', topic: 'deploy', id: 'p3', member: 'orion', state: 'offline' }, options).status).toBe('posted');
+    expect(publishGroupPresence({ room: 'other', topic: 'general', id: 'p4', member: 'atlas', state: 'online' }, options).status).toBe('posted');
+    expect(publishGroupPresence({ room: 'release', topic: 'general', id: 'p5', member: 'agent:ghost', state: 'online' }, options).status).toBe('posted');
+    void postChannelMessage({ from: 'atlas', channel: 'release', text: 'a post, not presence', id: 'ch-1' }, options);
+
+    const all = readAgentChannelPresence('release', {}, options);
+    if (all.status !== 'ok') throw new Error(`unexpected ${all.status}`);
+    expect(all.channel).toBe('release');
+    // Topics sort by name; members sort by label inside each topic. Offline
+    // orion is absent — not proven offline, just not observed online.
+    expect(all.topics.map(t => t.topic)).toEqual(['deploy', 'general']);
+    const deploy = all.topics.find(t => t.topic === 'deploy')!;
+    expect(deploy.members.map(m => m.member)).toEqual(['relay']);
+    expect(deploy.members[0]!.handle).toBe('relay');
+    const general = all.topics.find(t => t.topic === 'general')!;
+    expect(general.members.map(m => `${m.member}:${m.handle}`)).toEqual(['agent:ghost:null', 'agent:nova:nova']);
+
+    // --topic narrows to the one room-topic.
+    const deployOnly = readAgentChannelPresence('release', { topic: 'deploy' }, options);
+    if (deployOnly.status !== 'ok') throw new Error(`unexpected ${deployOnly.status}`);
+    expect(deployOnly.topics.map(t => t.topic)).toEqual(['deploy']);
+    expect(deployOnly.topics[0]!.members.map(m => m.member)).toEqual(['relay']);
+    // A topic filter still reports that topic's own online members.
+    const generalOnly = readAgentChannelPresence('release', { topic: 'general' }, options);
+    if (generalOnly.status !== 'ok') throw new Error(`unexpected ${generalOnly.status}`);
+    expect(generalOnly.topics.map(t => t.topic)).toEqual(['general']);
+    expect(generalOnly.topics[0]!.members.map(m => m.member)).toEqual(['agent:ghost', 'agent:nova']);
+  });
+
+  it('keeps only the latest observation per member and topic', () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+
+    // nova goes offline after being online — the latest write wins, so she
+    // drops out of the online list rather than showing a stale presence.
+    expect(publishGroupPresence({ room: 'release', topic: 'general', id: 'p1', member: 'nova', state: 'online' }, options).status).toBe('posted');
+    expect(publishGroupPresence({ room: 'release', topic: 'general', id: 'p2', member: 'nova', state: 'offline' }, options).status).toBe('posted');
+    // atlas comes online only in deploy — per-topic state stays independent.
+    expect(publishGroupPresence({ room: 'release', topic: 'deploy', id: 'p3', member: 'atlas', state: 'online' }, options).status).toBe('posted');
+    expect(publishGroupPresence({ room: 'release', topic: 'deploy', id: 'p4', member: 'atlas', state: 'online' }, options).status).toBe('posted');
+
+    const page = readAgentChannelPresence('release', {}, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    expect(page.topics.map(t => `${t.topic}:${t.members.map(m => m.member).join(',')}`)).toEqual(['deploy:atlas']);
+  });
+
+  it('reports unknown channels and unreadable state instead of an empty roster', () => {
+    const options = setup();
+    // A missing registry means no channel exists — verified empty is not a roster.
+    expect(readAgentChannelPresence('release', {}, options)).toMatchObject({ status: 'unknown-channel' });
+    register(options, 'atlas');
+    createAgentChannel({ name: 'release', createdBy: 'atlas' }, options);
+    expect(readAgentChannelPresence('release', {}, options)).toMatchObject({ status: 'ok', topics: [] });
+    expect(readAgentChannelPresence('missing', {}, options)).toMatchObject({ status: 'unknown-channel' });
+    expect(readAgentChannelPresence('Bad Name', {}, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannelPresence('release', { topic: 'Bad Topic' }, options)).toMatchObject({ status: 'invalid' });
+    // An unreadable registry is unavailable, never an invented empty roster.
+    writeFileSync(join(options.root!, 'agent-identities', 'registry.json'), '{broken');
+    expect(readAgentChannelPresence('release', {}, options)).toMatchObject({ status: 'unavailable' });
   });
 });
 
