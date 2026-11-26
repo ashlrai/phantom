@@ -1,3 +1,4 @@
+import { actionableClaim } from '../drive/nodes/router.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
@@ -79,13 +80,12 @@ export function buildNodesSnapshot(deps: { dir?: string; nowMs?: number; profile
   }
   const lease = state.leader;
   const leaderId = lease && lease.expiresAt > now && state.nodes.some(n => n.nodeId === lease.nodeId && n.session === lease.session && n.expiresAt > now) ? lease.nodeId : null;
+  const activeClaims = state.jobs.filter(j => actionableClaim(state, j, now));
   const nodes = state.nodes.map((n): NodeRow => {
     const age = n.heartbeatAt > 0 ? Math.max(0, now - n.heartbeatAt) : null;
     const status = age === null || n.heartbeatAt > now ? 'unknown' : n.expiresAt <= now || age >= NODE_DOWN_MS ? 'down' : age > NODE_STALE_MS ? 'stale' : 'ready';
     const role = n.nodeId === leaderId ? 'leader' : n.nodeId === state.pool?.backup || n.nodeId === lease?.nodeId ? 'standby' : 'worker';
-    // A claim counts only while this record is unexpired — the router's
-    // actionableClaim rule — so a fenced claim frees a dead node's slots.
-    const liveJobs = n.expiresAt <= now ? [] : state.jobs.filter(j => j.state === 'running' && j.claim?.nodeId === n.nodeId && j.claim.session === n.session && j.claim.expiresAt > now).map(j => j.id).sort();
+    const liveJobs = activeClaims.filter(j => j.claim!.nodeId === n.nodeId).map(j => j.id).sort();
     const profile = profiles.find(p => p.id === n.nodeId);
     const offline = !!profile && (status === 'down' || status === 'unknown');
     return { id: n.nodeId, role, owners: [...(n.owners ?? [])].sort(), caps: [...(n.caps ?? [])].sort(), status: offline ? 'offline' : status, heartbeatAt: n.heartbeatAt ? new Date(n.heartbeatAt).toISOString() : null, heartbeatAgeMs: age, liveJobs, ghAuth: n.auth ?? 'unknown', leader: n.nodeId === leaderId, source: 'registry', ...(profile ? { profile: profileView(profile) } : {}) };

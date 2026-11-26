@@ -2551,6 +2551,10 @@ with a fresh token (`WITHDRAWN_RESULT`) and persists `producerWithdrawn: true`;
 that marker, not the result or node ID, distinguishes a producer withdrawal
 from an accepted completion. `JobView.producerWithdrawn` exposes the marker,
 and `JobView.claimedBy` names the node whose live session can still act on a running claim.
+Actionable claims require an unexpired claim, live worker session and matching
+live leader lease. The router uses these claims for node and host capacity
+accounting. Pull continues to wait for the claim's expiry before offering
+the same job again.
 `DriveNodes.jobOutcome(jobId, owner)` is the read-only counterpart `phm node
 result` serves: a `JobOutcome` (`pending | running | completed | absent`) with
 `result`, `completedBy` and `completedAt` for an accepted completion,

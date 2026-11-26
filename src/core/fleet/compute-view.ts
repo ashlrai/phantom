@@ -1,3 +1,4 @@
+import { actionableClaim } from '../drive/nodes/router.js';
 import { readFleetAwareness } from './awareness-read.js';
 /** Read-only compute projection. Registry mirrors remain evidence, never authority. */
 import { readLaunchVitals, type LaunchVitals } from './launch-vitals.js';
@@ -61,16 +62,14 @@ export async function readFleetCompute(options: {
     if (value === null) continue;
     try {
       const state = parseState(value);
+      const activeClaims = state.jobs.filter(j => actionableClaim(state, j, now));
       if (state.nodes.length > 512) truncated = true;
       for (const n of state.nodes.slice(0, 512)) {
         if ((nodes.get(n.nodeId)?.heartbeatAt ?? -1) > n.heartbeatAt) continue;
         if (nodes.get(n.nodeId)?.heartbeatAt === n.heartbeatAt && (versions.get(n.nodeId) ?? 0) > state.observedAt) continue;
         versions.set(n.nodeId, state.observedAt);
         const age = now - n.heartbeatAt;
-        // Claims count only while this record is unexpired — the router's
-        // actionableClaim rule — so a fenced claim frees a dead node's slots.
-        const claims = n.expiresAt <= now ? [] : state.jobs.filter(j => j.state === 'running' && j.claim?.nodeId === n.nodeId &&
-          j.claim.session === n.session && j.claim.expiresAt > now);
+        const claims = activeClaims.filter(j => j.claim!.nodeId === n.nodeId);
         if (claims.length > 512) truncated = true;
         nodes.set(n.nodeId, { id: clean(n.nodeId), local: false, owners: (n.owners ?? []).map(clean),
           heartbeatAt: n.heartbeatAt || null, state: age < 0 || !n.heartbeatAt ? 'unknown' : n.expiresAt <= now || age >= 300_000 ? 'offline' : age > 90_000 ? 'stale' : 'ready',

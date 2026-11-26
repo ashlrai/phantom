@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DriveNodes, LocalNodesStore, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
+import { nodeCapacityView } from '../src/core/drive/nodes/router.js';
 import { probeLocalAuth } from '../src/core/drive/nodes/auth-probe.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { localPhmVersion, versionCap } from '../src/core/drive/nodes/phm-version.js';
@@ -119,6 +120,33 @@ describe('job leases: no job runs twice', () => {
     expect(f.mac.complete(second.claim, 'ok')).toBe(false);
     expect(f.box.pull(a)).toBeNull(); // completed jobs never run again
     expect(f.mac.pull(b)).toBeNull();
+  });
+
+  it('frees worker and host slots when the leader epoch fences a claim', () => {
+    const f = fixture();
+    const coordinator = f.box.join('box', { owners: ['o'], slots: 0 })!;
+    const worker = f.mac.join('mac', { owners: ['o'], slots: 1 })!;
+    f.box.heartbeat(coordinator);
+    f.mac.heartbeat(worker, { capacity: { hostId: 'mac-host', sampledAtMs: 1_000, slots: 1, ramBytes: 1024, held: null } });
+    f.box.enqueue('first', { owner: 'o' });
+    const first = f.mac.pull(worker)!.claim;
+    f.box.enqueue('next', { owner: 'o' });
+    f.advance(19);
+    expect(f.box.plan()[0]?.nodeId).toBeNull();
+    expect(f.box.jobOutcome('first', 'o').claimedBy).toBe('mac');
+    expect(nodeCapacityView(f.box.snapshot(), 1_019).find(h => h.hostId === 'mac-host')).toMatchObject({ running: 1, freeSlots: 0 });
+
+    f.advance(1);
+    expect(f.box.jobOutcome('first', 'o')).toEqual({ state: 'running' });
+    expect(f.box.view(['o']).jobs[0]?.claimedBy).toBeUndefined();
+    expect(nodeCapacityView(f.box.snapshot(), 1_020).find(h => h.hostId === 'mac-host')).toMatchObject({ running: 0, freeSlots: 1 });
+
+    const leader = f.box.heartbeat(coordinator)!.leader!;
+    expect(leader.token).toBeGreaterThan(first.leaderToken);
+    expect(f.box.plan()).toEqual([{ jobId: 'next', owner: 'o', nodeId: 'mac' }]);
+    expect(f.box.claim(leader, worker, 'next')).toMatchObject({ leaderToken: leader.token });
+    expect(f.mac.renewClaim(first)).toBeNull();
+    expect(f.mac.complete(first, 'late')).toBe(false);
   });
 
   it('works across real store instances sharing a directory', () => {
