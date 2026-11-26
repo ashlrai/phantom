@@ -376,6 +376,8 @@ Both lane fields must contain a valid lane or an explicit null. Null
 `preferred_lane` records open work and null `chosen_lane` records an unrouted
 decision. Rows with missing or malformed lane fields are skipped before
 selecting the latest decision.
+Decision and claim windows include both endpoints and exclude events
+timestamped after the report time.
 The same collapsed decisions also fold their
 `rejected_lanes` into `rejections`: every lane the market refused each job,
 with the reason codes that say why (`missing_capability`, `quota_exhausted`,
