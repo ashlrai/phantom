@@ -646,6 +646,30 @@ describe('M355 skill records', () => {
     expectReadDenied(unreadable);
   });
 
+  it('marks a skill-use sample degraded when a partition exceeds the byte cap', () => {
+    const older = useEvent({ eventId: 'older-use' });
+    const newer = useEvent({ eventId: 'newer-use' });
+    recordSkillUseEvent([older, newer]);
+    const partition = join(skillUseEventsDir(), `${newer.ts.slice(0, 10)}.jsonl`);
+    const bytes = 4 * 1024 * 1024;
+    const rows = `${JSON.stringify(older)}\n${JSON.stringify(newer)}\n`;
+    const padding = ' '.repeat(bytes - Buffer.byteLength(rows));
+    writeFileSync(partition, padding + rows);
+
+    expect(readSkillUseEventsWithDiagnostics()).toMatchObject({
+      sourceState: 'healthy',
+      eventState: 'present',
+      events: [{ eventId: newer.eventId }, { eventId: older.eventId }],
+    });
+
+    writeFileSync(partition, ' ' + padding + rows);
+    expect(readSkillUseEventsWithDiagnostics()).toMatchObject({
+      sourceState: 'degraded',
+      eventState: 'degraded',
+      events: [{ eventId: newer.eventId }],
+    });
+  });
+
   it('marks a skill-use sample degraded when distinct events exceed the requested limit', () => {
     const older = useEvent({ eventId: 'older-use' });
     const newer = useEvent({ eventId: 'newer-use' });

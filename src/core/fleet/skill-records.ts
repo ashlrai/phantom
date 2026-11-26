@@ -527,7 +527,7 @@ function boundedOption(value: number | undefined, fallback: number, max: number)
     : fallback;
 }
 
-function readFileTail(filePath: string): string | null {
+function readFileTail(filePath: string): { text: string; truncated: boolean } | null {
   let fd: number | undefined;
   try {
     const before = lstatSync(filePath);
@@ -538,7 +538,7 @@ function readFileTail(filePath: string): string | null {
       !permissionsArePrivate(before.mode)
     ) return null;
     const size = before.size;
-    if (size <= 0) return '';
+    if (size <= 0) return { text: '', truncated: false };
     const bytes = Math.min(size, MAX_FILE_BYTES);
     const start = Math.max(0, size - bytes);
     const buffer = Buffer.alloc(bytes);
@@ -551,7 +551,7 @@ function readFileTail(filePath: string): string | null {
       const firstNewline = text.indexOf('\n');
       text = firstNewline >= 0 ? text.slice(firstNewline + 1) : '';
     }
-    return text;
+    return { text, truncated: start > 0 || read < bytes };
   } catch {
     return null;
   } finally {
@@ -735,6 +735,7 @@ function readRecordsWithDiagnostics<T>(
   let invalidRows = 0;
   let bytesScanned = 0;
   let limitExceeded = false;
+  let partialTail = false;
   let rowsScanned = 0;
   const result = (records: T[], sourceState: RecordsReadResult<T>['sourceState']): RecordsReadResult<T> => ({
     records,
@@ -817,7 +818,9 @@ function readRecordsWithDiagnostics<T>(
         completeSnapshots.push({ filePath, snapshot: completeRead.snapshot });
         raw = completeRead.text;
       } else {
-        raw = readFileTail(filePath);
+        const tail = readFileTail(filePath);
+        raw = tail?.text ?? null;
+        partialTail ||= checkRowLimit && tail?.truncated === true;
       }
       // A complete lifecycle read fails closed rather than selecting from a
       // corpus that may have lost a revocation or deprecation row.
@@ -887,7 +890,7 @@ function readRecordsWithDiagnostics<T>(
       const current = lstatSync(entry.path);
       if (!sameDirectorySnapshot(entry.snapshot, current)) return result([], 'degraded');
     }
-    const degraded = unreadableFiles > 0 || invalidRows > 0 || limitExceeded;
+    const degraded = unreadableFiles > 0 || invalidRows > 0 || limitExceeded || partialTail;
     return result(complete && degraded ? [] : out, degraded ? 'degraded' : 'healthy');
   } catch {
     return result([], 'degraded');
