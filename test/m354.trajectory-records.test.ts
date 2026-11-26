@@ -1971,6 +1971,28 @@ describe('Trajectory records', () => {
         },
       ],
     });
+
+    const suppressed = suppressDegradedSkillObservation(summary, 'present');
+    expect(suppressed.skillObservation).toEqual({ eventState: 'present', sampleState: 'unavailable' });
+    expect(suppressed.skillOutcomes).toBeUndefined();
+    expect(suppressed.coverage).not.toHaveProperty('skillUse');
+    expect(suppressed.recent.every((record) => !('skillUse' in record.coverage))).toBe(true);
+    expect(JSON.stringify(suppressed)).not.toContain('modeCounts');
+    expect(JSON.stringify(suppressed)).not.toContain('stageCounts');
+    expect(JSON.stringify(suppressed)).not.toContain('perSkill');
+
+    // Preserve all four joined skill observations while excluding two
+    // trajectories from the learning-eligible population.
+    for (const record of records.filter((record) => record.trajectoryId === 'traj-c' || record.trajectoryId === 'traj-d')) {
+      record.coverage.proposal = false;
+    }
+    const mixed = summarizeTrajectoryLearning(records);
+    expect(mixed.population).toMatchObject({ observed: 4, learningEligible: 2, incomplete: 2 });
+    expect(mixed.skillObservation).toMatchObject({
+      sampleState: 'observed',
+      observedTrajectoryCoverage: { count: 4, rate: 1 },
+    });
+    expect(mixed.skillOutcomes).toBeUndefined();
   });
 
   it('withholds per-skill outcomes below the observed sample gate', () => {
@@ -2430,7 +2452,7 @@ describe('Trajectory records', () => {
     expect(JSON.stringify(summary.routeDiagnostics)).not.toContain('private-arbitrary-reason');
   });
 
-  it('suppresses every exact skill metric when the observation source is degraded', () => {
+  it('withholds skill outcomes when every observed trajectory is incomplete', () => {
     const records = listTrajectoryRecords({
       windowHours: 1000,
       deps: deps({
@@ -2450,16 +2472,8 @@ describe('Trajectory records', () => {
     });
     const published = summarizeTrajectoryLearning(records);
     expect(published.skillObservation.sampleState).toBe('observed');
-    expect(published.skillOutcomes).toBeDefined();
-
-    const suppressed = suppressDegradedSkillObservation(published, 'present');
-    expect(suppressed.skillObservation).toEqual({ eventState: 'present', sampleState: 'unavailable' });
-    expect(suppressed.skillOutcomes).toBeUndefined();
-    expect(suppressed.coverage).not.toHaveProperty('skillUse');
-    expect(suppressed.recent.every((record) => !('skillUse' in record.coverage))).toBe(true);
-    expect(JSON.stringify(suppressed)).not.toContain('modeCounts');
-    expect(JSON.stringify(suppressed)).not.toContain('stageCounts');
-    expect(JSON.stringify(suppressed)).not.toContain('perSkill');
+    expect(published.population).toMatchObject({ learningEligible: 0, incomplete: 3 });
+    expect(published.skillOutcomes).toBeUndefined();
   });
 
   it('projects semantic decision events onto the existing decision timeline row', () => {

@@ -116,11 +116,11 @@ observed on joined trajectories, and the report carries `outcomeState`
 (`"observed"` or `"withheld"`) so a missing tally is never mistaken for a
 zero. Plain-text output prints the tallies under each skill.
 
-The projection is sample-gated exactly like `skillObservation`: per-skill
-counts publish only after at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)
-production trajectories carry skill-use coverage, and the whole section is
-withheld when the skill-use ledger is degraded. Below the gate the field is
-absent — unknown stays unknown, never a zero.
+Per-skill outcome counts publish only when at least three learning-eligible
+production trajectories have joined skill selections. The broader
+`skillObservation` sample also includes incomplete production trajectories.
+The outcome field is absent when its sample falls below the threshold or
+the skill-use ledger is degraded.
 
 Recurring adverse tallies do not stay report-only:
 `phm improve discover` reads the same projection and queues a priority-3
