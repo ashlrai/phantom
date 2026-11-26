@@ -154,6 +154,19 @@ describe('the conflict proxy and tier counts are pure', () => {
     ].join('\n');
     expect(queueDepthByTier(readyRowsForDepth(text))).toEqual({ work: 1, fast: 1, unknown: 1 });
   });
+
+  it('counts the first valid READY row for each job across hinted and open rows', () => {
+    const text = [
+      'RQ-OPEN\tphantom\t\tfrontier\tprompt.md',
+      row('READY', 'RQ-OPEN', 'devin', 'fast'),
+      row('READY', 'RQ-HINTED', 'devin', 'work'),
+      'RQ-HINTED\tphantom\t\tfast\tprompt.md',
+      'RQ-INVALID-FIRST\tphantom\tdevin\tfast\tprompt.md\tbad-json',
+      row('READY', 'RQ-INVALID-FIRST', 'devin', 'mid'),
+      row('READY', 'RQ-HINTED', 'codex', 'fast'),
+    ].join('\n');
+    expect(queueDepthByTier(readyRowsForDepth(text))).toEqual({ frontier: 1, work: 1, mid: 1 });
+  });
 });
 
 describe('phm fleet board --leader', () => {

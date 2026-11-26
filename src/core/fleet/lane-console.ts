@@ -404,13 +404,21 @@ function dispatcherQueueRow(cells: string[], routerQueue?: string | null): Dispa
  * never attributed to a lane by guessing. `routerQueue` is optional
  * queue/router-queue.md text: given it, a spec-less dispatcher row resolves
  * its lane through the same `(attrs)` envelope the work market reads.
+ * `uniqueReady` keeps the first valid READY occurrence of each job ID.
  */
-export function parseReadyTsv(text: string, routerQueue?: string | null): ParsedTsv {
+export function parseReadyTsv(text: string, routerQueue?: string | null, uniqueReady = false): ParsedTsv {
   const rows: FleetLaneQueueRow[] = [];
   let dropped = 0;
   let invalid = 0;
   let unhinted = 0;
   const unhintedRows: ParsedTsv['unhintedRows'] = [];
+  const seenReady = new Set<string>();
+  const keepReady = (id: string | null): boolean => {
+    if (!uniqueReady || id === null) return true;
+    if (seenReady.has(id)) return false;
+    seenReady.add(id);
+    return true;
+  };
   let header: (keyof FleetLaneQueueRow)[] | null = null;
 
   const lines = text.split('\n');
@@ -436,11 +444,12 @@ export function parseReadyTsv(text: string, routerQueue?: string | null): Parsed
       const dialect = dispatcherQueueRow(cells, routerQueue);
       if (dialect !== null) {
         if (dialect.kind === 'open') {
+          if (!keepReady(dialect.id)) continue;
           unhinted++;
           unhintedRows.push({ id: dialect.id, repo: dialect.repo, tier: dialect.tier });
         }
         else if (dialect.kind === 'drop') { dropped++; invalid++; }
-        else rows.push(dialect.row);
+        else if (dialect.row.status !== 'READY' || keepReady(dialect.row.id)) rows.push(dialect.row);
         continue;
       }
     }
@@ -496,7 +505,7 @@ export function parseReadyTsv(text: string, routerQueue?: string | null): Parsed
       dropped++;
       continue;
     }
-    rows.push(row);
+    if (row.status !== 'READY' || keepReady(row.id)) rows.push(row);
   }
   return { rows, dropped, invalid, unhinted, unhintedRows };
 }

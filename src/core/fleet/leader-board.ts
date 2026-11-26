@@ -75,7 +75,7 @@ export interface LeaderBoardV1 {
   generatedAt: string;
   lanes: LeaderBoardLane[];
   resourcePlan?: FleetBoardV1['resourcePlan'];
-  /** READY rows by queue tier; 'unknown' covers rows naming no/invalid tier. null when ready.tsv was unreadable. */
+  /** READY jobs by queue tier; 'unknown' covers rows naming no/invalid tier. null when ready.tsv was unreadable. */
   queueDepthByTier: Record<string, number> | null;
   /** Unique merged jobs/PRs in the trailing hour across lanes; null without a healthy merge ledger. */
   mergesLastHour: number | null;
@@ -156,7 +156,7 @@ export function readyRowsForDepth(text: string): { status: string; tier?: string
     const cells = line.split('\t');
     return !parkedCell(cells[0]) && !parkedCell(cells[2]);
   });
-  const { rows, unhintedRows } = parseReadyTsv(kept.join('\n'));
+  const { rows, unhintedRows } = parseReadyTsv(kept.join('\n'), undefined, true);
   return [...rows, ...unhintedRows.map(({ tier }) => ({ status: 'READY', tier }))];
 }
 
