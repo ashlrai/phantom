@@ -2414,7 +2414,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   // `vitest.config.coverage.mjs` and friends all govern suites, so the root
   // listing (one API call) is filtered for the vitest config/workspace shape.
   const VITEST_CONFIG_NAME = /^vitest\.(?:config|workspace)(?:\.[\w-]+)*\.[cm]?[jt]sx?$/;
-  const HARNESS_AMBIENT_BASE = ['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'tsconfig.json', 'jsconfig.json'];
+  const HARNESS_AMBIENT_BASE = ['package.json', 'package-lock.json', 'pnpm-lock.yaml'];
   const HARNESS_QUOTED = /'([^']*)'|"([^"]*)"|`([^`]*)`/g;
   const HARNESS_GLOB_CHARS = /[*?[\]{}]/;
 
@@ -2531,21 +2531,18 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
             for (const p of closure) out.add(p);
           }
         }
-        // Nearest toolchain config walking up from the test file: bundlers read
-        // the closest tsconfig/jsconfig per transformed file.
+        // A PR can add a closer toolchain config that shadows one on master.
+        // Compare every candidate path against the diff, including paths absent on master.
         let dir = posix.dirname(file);
-        for (;;) {
-          for (const name of ['tsconfig.json', 'jsconfig.json']) {
-            const p = dir === '.' ? name : `${dir}/${name}`;
-            const fetched = await contents(p);
-            if (fetched.ok) out.add(p);
-            else if (!fetched.absent) return null;
-          }
-          if (dir === '.') break;
+        while (dir !== '.') {
+          out.add(posix.join(dir, 'tsconfig.json'));
+          out.add(posix.join(dir, 'jsconfig.json'));
           const parent = posix.dirname(dir);
           if (parent === dir) break;
           dir = parent;
         }
+        out.add('tsconfig.json');
+        out.add('jsconfig.json');
         return out;
       })();
       harnessFileCache.set(file, pending);
