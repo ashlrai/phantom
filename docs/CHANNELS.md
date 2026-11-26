@@ -512,7 +512,18 @@ it; the owner-held lease-verified `return` retry is the detail, and lease
 material never leaves the store; `missing` is a verified-absent ledger,
 `unknown` any refusal — never an empty backlog passed off as fact; deep
 links `phm fleet coordination board` and `phm fleet coordination inbox
---agent`) — and each item carries `act` deep-link commands (`phm fleet
+--agent`) — and pending mail in the Comms agent's own inbox
+(`<runsDir>/comms-agent/inbox.json`, the queue `phm comms-agent run`
+triages and `phm comms-agent status` counts — the one comms pending store
+no other source reads: channel sources show the raw inbound and the drafts
+source the replies already drafted, but a message still awaiting triage
+and reply had only a bare count; each lists as info — routine pending work
+the next run clears, never a Mason block — naming transport and scrubbed
+subject only, since `from` is a handle and stays out like the drafts
+source's recipient, with any stored labels in the detail; the store keeps
+no per-message timestamp, so `since`/`expiresAt` stay null; an absent file
+is `missing`, a refused read `unavailable`; deep links `phm comms-agent
+run` and `phm comms-agent status`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -526,7 +537,8 @@ ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 `phm team approve|deny`, `phm inbox approve|reject`,
 `phm fleet slack-trace`, `phm channels slack status`, `phm channels slack
 run`, `phm channels`, `phm comms cycle`, `phm leader inbox`, `phm fleet
-coordination board`, `phm fleet coordination inbox --agent`). It never claims, replies, or mutates; a source
+coordination board`, `phm fleet coordination inbox --agent`, `phm comms-agent
+run`, `phm comms-agent status`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:

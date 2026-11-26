@@ -66,7 +66,11 @@ takes `--status pending|sent|all` (default `pending`) and `--transport`
 messages still awaiting a reply — unanswered mail only, since a delivered
 reply resolves its message into the archive — or `null` when the inbox file
 cannot be read — an unreadable store is unknown, never reported as an empty
-inbox. `drafts`, `sendsLogged` and `adapters` follow the same rule: a real
+inbox. Each pending message also lists as an item in `phm comms inbox`
+(source `comms-inbox`, kind `comms-inbox-message`): transport and scrubbed
+subject only — the sender stays out because it can be a handle — with
+`phm comms-agent run` and `phm comms-agent status` as its acts, and an
+absent inbox file reports `missing`, a refused read `unavailable`. `drafts`, `sendsLogged` and `adapters` follow the same rule: a real
 count or list, or `null` when the drafts log, send log or channel registry
 cannot be read. `standingApprovals` reports the trust verdict `run` applies
 before any send — `accepted`, the fixed `reason` (`ok`, `missing`,

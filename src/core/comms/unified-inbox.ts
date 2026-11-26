@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates twenty-three local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates twenty-eight local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -384,6 +384,21 @@
  *               refusal — never an empty backlog passed off as fact.
  *               Act: `phm fleet coordination board`,
  *               `phm fleet coordination inbox --agent`.
+ *   comms-inbox  pending mail in the Comms agent's own inbox
+ *               (`<runsDir>/comms-agent/inbox.json`, the queue
+ *               `phm comms-agent run` triages and `phm comms-agent status`
+ *               counts) — the one comms pending store no other source
+ *               reads: channel sources show the raw inbound and the drafts
+ *               source the replies already drafted, but a message still
+ *               awaiting triage and reply had only a bare count. Each
+ *               message lists as info — routine pending work the next run
+ *               clears, never a Mason block — naming transport and
+ *               scrubbed subject only (`from` is a handle and stays out,
+ *               the same rule drafts applies to its recipient), with any
+ *               stored labels in the detail. The store keeps no
+ *               per-message timestamp, so `since`/`expiresAt` stay null.
+ *               An absent file is 'missing', a refused read 'unavailable'.
+ *               Act: `phm comms-agent run`, `phm comms-agent status`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -407,7 +422,8 @@ import { busBodyFallbackSummary, busBodyJobIds, busBodySummary, readAllWakes,
 import { coordinationRowBlocks, listCoordination } from '../agents/claim-store.js';
 import { readPendingProposals, readTeamApprovals, type ProposalApprovalItem, type TeamApprovalItem } from '../approvals/surface.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
-import { listDrafts as listCommsAgentDrafts, type CommsDraft } from '../comms-agent/store.js';
+import { commsDir, listDrafts as listCommsAgentDrafts, readInbox as readCommsAgentInbox, type CommsDraft } from '../comms-agent/store.js';
+import type { InboxMessage } from '../comms-agent/triage.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../fleet/bus-mailbox.js';
@@ -461,7 +477,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
-  'slack-sends', 'leader-delivery', 'leader-network', 'coordination',
+  'slack-sends', 'leader-delivery', 'leader-network', 'coordination', 'comms-inbox',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -484,6 +500,7 @@ export const UNIFIED_INBOX_KINDS = [
   'inbox-proposal', 'slack-request', 'slack-send-unconfirmed', 'leader-message-undelivered',
   'leader-request', 'leader-request-incomplete', 'leader-reply-unconfirmed', 'leader-digest-unconfirmed',
   'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
+  'comms-inbox-message',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -651,6 +668,16 @@ export interface OrgOutboxRead {
   events: readonly OrgOutboxEvent[];
 }
 
+/** The resolved Comms-agent inbox read (`<runsDir>/comms-agent/inbox.json`,
+ * the queue `phm comms-agent run` triages and `status` counts): 'missing' a
+ * verified-absent file, 'unavailable' any refusal `readInbox` raises — a
+ * malformed, unsafe or unreadable store is unknown, never an empty queue
+ * passed off as fact. */
+export interface CommsInboxSourceRead {
+  state: 'missing' | 'healthy' | 'unavailable';
+  messages: readonly InboxMessage[];
+}
+
 export interface UnifiedInboxOptions {
   /** Shared runs context (`~/.ashlr-runs`): needs-you, teammate text/task and draft stores. */
   runsDir?: string;
@@ -667,6 +694,8 @@ export interface UnifiedInboxOptions {
   listPendingDrafts?: typeof listDrafts;
   /** Comms-agent draft store seam; default reads `<runsDir>/comms-agent/drafts.jsonl`. */
   listCommsDrafts?: (runsDir: string) => Promise<CommsDraft[]>;
+  /** Comms-agent inbox seam; default reads `<runsDir>/comms-agent/inbox.json` like `phm comms-agent status`. */
+  readCommsInbox?: (runsDir: string) => Promise<CommsInboxSourceRead>;
   listBus?: typeof listBusInboxAfter;
   inspectBus?: typeof inspectBusInbox;
   /** Legacy `phm bus` mailbox seam; default reads `pendingAll` under the fleet root's parent. */
@@ -1055,6 +1084,66 @@ async function draftItems(
   ];
   const merged: UnifiedInboxSourceState = state === 'unavailable' ? 'unavailable' : commsFailed ? 'degraded' : 'healthy';
   return { report: { state: merged, pending: pendingCount(merged, items.length) }, items };
+}
+
+/**
+ * The same `comms-agent/inbox.json` read `phm comms-agent status` counts and
+ * `run` triages. An absent file is 'missing' — a verified-empty queue, the
+ * store the comms agent has never written; a present file `readInbox`
+ * refuses (malformed JSON, a non-document, a symlink or non-regular file)
+ * is 'unavailable', never an empty queue passed off as fact.
+ */
+async function readCommsInboxSource(runsDir: string): Promise<CommsInboxSourceRead> {
+  try {
+    lstatSync(join(commsDir(runsDir), 'inbox.json'));
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? { state: 'missing', messages: [] }
+      : { state: 'unavailable', messages: [] };
+  }
+  try {
+    return { state: 'healthy', messages: (await readCommsAgentInbox(runsDir)).messages };
+  } catch {
+    return { state: 'unavailable', messages: [] };
+  }
+}
+
+/**
+ * Pending mail in the Comms agent's own inbox — the one comms pending store
+ * no other source reads. Channel sources show the raw inbound, the drafts
+ * source the replies already drafted for the owner, but a message still
+ * awaiting the agent's triage and reply had only the bare count
+ * `phm comms-agent status` reports. Each message lists as info — routine
+ * pending work the next `run` pass clears (bulk and bot mail archives,
+ * person and owner mail drafts a gated reply), never a Mason block — naming
+ * transport and scrubbed subject only: `from` is a handle and stays out of
+ * the item, the same rule the drafts source applies to its recipient. The
+ * store keeps no per-message timestamp, so `since`/`expiresAt` stay null —
+ * unknown, never invented. An absent file is 'missing', a refused read
+ * 'unavailable'.
+ */
+async function commsInboxItems(
+  read: (runsDir: string) => Promise<CommsInboxSourceRead>,
+  runsDir: string | undefined,
+): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: CommsInboxSourceRead;
+  try { result = await read(dir); } catch { result = { state: 'unavailable', messages: [] }; }
+  const items = result.messages.map((message): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `comms-inbox:${message.id}`,
+    source: 'comms-inbox',
+    kind: 'comms-inbox-message',
+    severity: 'info',
+    blocking: false,
+    title: oneLine(`Comms inbox ${message.transport}: ${message.subject.trim() || '(no subject)'}`, TITLE_MAX),
+    detail: message.labels !== undefined && message.labels.length > 0
+      ? oneLine(`labels ${message.labels.join(', ')}`, DETAIL_MAX) || null
+      : null,
+    since: null,
+    expiresAt: null,
+    act: ['phm comms-agent run', 'phm comms-agent status'],
+  }));
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
 }
 
 /**
@@ -2962,6 +3051,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const leaderDelivery = leaderDeliveryItems(options.readLeaderUndelivered ?? readLeaderThreadUndelivered, now);
   const leaderNetwork = leaderNetworkItems(options.readLeaderNetwork ?? readLeaderNetworkState, options.runsDir);
   const coordination = coordinationItems(options.readFleetCoordination ?? readFleetCoordinationPending);
+  const commsInbox = await commsInboxItems(options.readCommsInbox ?? readCommsInboxSource, options.runsDir);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -2991,8 +3081,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'leader-delivery': leaderDelivery.report,
     'leader-network': leaderNetwork.report,
     coordination: coordination.report,
+    'comms-inbox': commsInbox.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...coordination.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...coordination.items, ...commsInbox.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
