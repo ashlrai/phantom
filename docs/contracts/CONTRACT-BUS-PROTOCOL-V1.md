@@ -71,7 +71,7 @@ new state:
 - `next --to <address|topic> --owner <label> --lease-ms <1..3600000>
   [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>]
   [--priority <P0|P1|P2|P3>] [--channel <name>] [--topic <topic>] [--from <agent>]
-  [--exclude-from <agent>]`
+  [--exclude-from <agent>] [--wait-ms <1..300000>]`
   claims
   the oldest highest-priority live task addressed to `--to`. When `--to`
   resolves to a registered agent identity, work addressed under any routing
@@ -107,6 +107,13 @@ new state:
   scan. Both are observed counts over the filtered scan, so `empty`
   distinguishes a dry well
   (`candidates: 0`) from work that exists but is held, without a second read.
+  `--wait-ms <1..300000>` turns the one-shot claim into the same bounded wait
+  `agents bus work next --wait-ms` and `fleet bus-wait-claim` run through the
+  shared `waitClaimBusWork`: the claim scan repeats under every filter above
+  until a receipt becomes claimable, the deadline answers `{status:'timeout'}`,
+  SIGINT/SIGTERM answer `{status:'cancelled'}`, and work posted mid-wait
+  claims the moment it lands. A malformed or out-of-range `--wait-ms` is
+  `invalid`, never a widened or unbounded wait.
 - `claim acquire --id <message-id> --owner <label> --lease-ms <n>` claims one
   message by ID. A live lease answers `conflict` to every other claimant.
 - `claim renew|release|complete --id <message-id> --token <token>` act only
@@ -122,7 +129,8 @@ channel. A crashed claimant's lease expires on its own.
 ## Exit codes
 
 `next` exits 0 for `acquired` or `empty`, 2 for `invalid`, and 1 for any other
-status, including `retryable`, `full` and `unavailable`. Claim verbs exit 0 for
+status, including `retryable`, `full`, `unavailable`, and the wait-only
+`timeout` and `cancelled`. Claim verbs exit 0 for
 `acquired`, `renewed`, `released` or `completed`, 2 for `invalid`, and 1
 otherwise. Output is one JSON line.
 

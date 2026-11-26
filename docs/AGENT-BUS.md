@@ -1916,7 +1916,9 @@ an agent never leaves `agents bus` to block for work: the claim scan
 repeats every interval until a receipt becomes claimable, the deadline
 answers `timeout`, SIGINT/SIGTERM answer `cancelled`, and work posted
 mid-wait claims the moment it lands under every filter above applied to
-each poll. `work claim-next --wait-ms` is the job-level counterpart over
+each poll. `comms bus next --wait-ms` is the protocol-bus spelling of this
+same envelope wait — the identical `waitClaimBusWork` poll loop — and
+`work claim-next --wait-ms` is the job-level counterpart over
 the claimable work-feed jobs. Exit 0 on
 `acquired`/`empty`, 2 on invalid arguments, 1 otherwise. The claim
 coordinates scope only — holding one never permits a merge, a push, or
@@ -2426,9 +2428,7 @@ own channel posts: the same membership rule the inbox, wake and `work mine`
 reads apply, through the same identity registry the message filters use; a
 `--to` naming no identity, membership in no channel, or an unreadable registry
 keeps exact-label matching and never widens. All four claim surfaces —
-`agents bus work next` (whose `--wait-ms` flag runs the same bounded wait
-`fleet bus-wait-claim` provides, so the unified surface needs no fleet
-verb to block for work), `fleet bus-next`, `fleet bus-wait-claim` and
+`agents bus work next`, `fleet bus-next`, `fleet bus-wait-claim` and
 `comms bus next` — take the same `--id <envelope-id>`, `--contains <text>`, `--since
 <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--priority <P0|P1|P2|P3>`,
 `--channel <name>`, `--topic <topic>`, `--from <agent>` and `--exclude-from <agent>`
