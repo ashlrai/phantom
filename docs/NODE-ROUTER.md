@@ -119,6 +119,10 @@ the scope's jobs by state (`pending`, `running`, `completed`) — claimed or
 finished work is not routable, and the note says so instead of implying the
 queue is empty.
 
+`--owner` filters the displayed routes. The plan reserves shared slots in
+the same queue order as `pull`, including for earlier jobs outside the selected
+scope. Only the selected owner's routes appear in the output.
+
 The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
 expiry, prints the keep-alive `beat --watch` command (or, with `--watch` on the
