@@ -422,19 +422,50 @@ export async function runGhAsync(cwd: string, args: string[], signal?: AbortSign
   const key = JSON.stringify([cwd, args]);
   const cached = context?.snapshot?.remote.get(key);
   if (cached) return cached;
-  const pending = new Promise<string | null>((resolve) => {
-    try {
-      execFile(GH_BIN, args, {
-        cwd, timeout: TIMEOUT_MS, encoding: 'utf8', signal,
-        env: { ...process.env, GH_HOST: 'github.com', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' },
-      }, (error, stdout) => resolve(error || typeof stdout !== 'string' ? null : stdout.trim()));
-    } catch { resolve(null); }
-  });
+  const pending = runGhAttempt(cwd, args, { signal }).then(result => result.stdout);
   context?.snapshot?.remote.set(key, pending);
   void pending.then((value) => {
     if (value === null && context?.snapshot?.remote.get(key) === pending) context.snapshot.remote.delete(key);
   });
   return pending;
+}
+
+/** Why a `gh` read produced no stdout. 'spawn' means the CLI never ran (the
+ * binary is missing or its launch was refused); 'timeout' means it was killed
+ * at the deadline; 'exit' means it ran and refused — a bad repo, tag, auth or
+ * rate limit, which the caller's own message must name; 'aborted' means the
+ * caller's signal fired first. */
+export type GhRunFailure = 'spawn' | 'timeout' | 'exit' | 'aborted';
+export interface GhRunResult {
+  /** Trimmed stdout on success; null on any failure. */
+  stdout: string | null;
+  failure: GhRunFailure | null;
+}
+
+function ghFailureKind(error: { code?: unknown; killed?: unknown } | null, signal?: AbortSignal): GhRunFailure {
+  if (signal?.aborted || error?.code === 'ABORT_ERR') return 'aborted';
+  if (error?.killed === true) return 'timeout';
+  if (error?.code === 'ENOENT' || error?.code === 'EACCES' || error?.code === 'EPERM') return 'spawn';
+  return 'exit';
+}
+
+/** One bounded `gh` read that preserves why it failed. Unlike runGhAsync this
+ * never joins the backlog scan snapshot cache — callers that must tell a dead
+ * transport from a refused read (release notes) use it directly. */
+export async function runGhAttempt(cwd: string, args: string[], opts: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<GhRunResult> {
+  const signal = opts.signal;
+  if (signal?.aborted) return { stdout: null, failure: 'aborted' };
+  return new Promise(resolve => {
+    try {
+      execFile(GH_BIN, args, {
+        cwd, timeout: opts.timeoutMs ?? TIMEOUT_MS, encoding: 'utf8', signal,
+        env: { ...process.env, GH_HOST: 'github.com', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' },
+      }, (error, stdout) => {
+        if (error === null && typeof stdout === 'string') resolve({ stdout: stdout.trim(), failure: null });
+        else resolve({ stdout: null, failure: ghFailureKind(error, signal) });
+      });
+    } catch { resolve({ stdout: null, failure: 'spawn' }); }
+  });
 }
 
 function safeJson(raw: string | null): unknown {

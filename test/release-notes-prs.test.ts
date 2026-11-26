@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
 import {
-  buildPrNotes, formatPrNotesMarkdown, resolveRepo, PR_NOTES_SCHEMA, NOTHING_TO_RELEASE, UNKNOWN_CHANGE,
-  type MergedPr, type PrSource,
+  buildPrNotes, formatPrNotesMarkdown, ghPrSourceWith, resolveRepo, PR_NOTES_SCHEMA, NOTHING_TO_RELEASE, UNKNOWN_CHANGE,
+  type GhRead, type MergedPr, type PrSource,
 } from '../src/core/release/pr-notes.js';
+import type { GhRunResult } from '../src/core/integrations/github.js';
 
 const pr = (number: number, title: string, body = '', files?: string[]): MergedPr => ({ number, title, body, files });
 const mixed: MergedPr[] = [
@@ -107,5 +108,66 @@ describe('phm release notes --repo', () => {
     const { code, out } = await run(['--since', 'v1', '--repo', 'phantom', '--json'], failing);
     expect(code).toBe(1);
     expect(JSON.parse(out)).toEqual({ ok: false, reason: 'Cannot read merged PRs from GitHub' });
+  });
+});
+
+describe('ghPrSource (the real gh reader, hermetic)', () => {
+  const ok = (stdout: string): GhRunResult => ({ stdout, failure: null });
+  const fail = (failure: 'spawn' | 'timeout' | 'exit' | 'aborted'): GhRunResult => ({ stdout: null, failure });
+  /** A GhRead answering the tag lookup then the PR list, recording every call. */
+  const reader = (tag: GhRunResult, list: GhRunResult) => {
+    const calls: { args: string[]; timeoutMs?: number }[] = [];
+    const read: GhRead = async (_cwd, args, timeoutMs) => {
+      calls.push({ args, timeoutMs });
+      return args[0] === 'api' ? tag : list;
+    };
+    return { read, calls };
+  };
+  const stamp = ok('2026-11-22T17:14:53Z');
+  const prsJson = JSON.stringify([
+    { number: 7, title: 'feat: add thing', body: '', mergedAt: '2026-11-23T00:00:00Z', files: [{ path: 'src/x.ts' }] },
+    { number: 6, title: 'fix: old', body: '', mergedAt: '2026-11-21T00:00:00Z', files: [{ path: 'src/y.ts' }] },
+  ]);
+
+  it('reads the tag stamp then merged PRs after it, with a longer deadline for the list call', async () => {
+    const { read, calls } = reader(stamp, ok(prsJson));
+    const source = ghPrSourceWith(read);
+    const out = await source.mergedSince('ashlrai/phantom', 'v3.30.71');
+    expect(out.prs.map(p => p.number)).toEqual([7]);
+    expect(out.complete).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.args).toEqual(['api', 'repos/ashlrai/phantom/commits/v3.30.71', '--jq', '.commit.committer.date']);
+    expect(calls[0]!.timeoutMs).toBeUndefined();
+    expect(calls[1]!.args.slice(0, 6)).toEqual(['pr', 'list', '--repo', 'ashlrai/phantom', '--state', 'merged']);
+    expect(calls[1]!.args.join(' ')).toContain('merged:>=2026-11-22');
+    expect(calls[1]!.timeoutMs).toBeGreaterThan(8_000);
+  });
+
+  it('rejects an invalid tag before any gh call', async () => {
+    const { read, calls } = reader(stamp, ok(prsJson));
+    await expect(ghPrSourceWith(read).mergedSince('ashlrai/phantom', 'bad tag;')).rejects.toThrow('Invalid release tag');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('keeps the unreadable-tag message when gh ran and refused', async () => {
+    const { read } = reader(fail('exit'), ok(prsJson));
+    await expect(ghPrSourceWith(read).mergedSince('ashlrai/phantom', 'v9')).rejects.toThrow('Cannot read the release tag from GitHub; check the repo and tag');
+  });
+
+  it('names a missing gh instead of blaming the tag or repo', async () => {
+    const { read } = reader(fail('spawn'), ok(prsJson));
+    await expect(ghPrSourceWith(read).mergedSince('ashlrai/phantom', 'v9')).rejects.toThrow('gh could not run');
+  });
+
+  it('names a slow gh instead of blaming the tag or repo', async () => {
+    const { read } = reader(stamp, fail('timeout'));
+    await expect(ghPrSourceWith(read).mergedSince('ashlrai/phantom', 'v9')).rejects.toThrow('gh did not answer in time while reading merged PRs');
+  });
+
+  it('keeps the merged-PR message when gh ran and refused, and on malformed JSON', async () => {
+    const refused = reader(stamp, fail('exit'));
+    await expect(ghPrSourceWith(refused.read).mergedSince('ashlrai/phantom', 'v9')).rejects.toThrow('Cannot read merged PRs from GitHub');
+    const malformed = reader(stamp, ok('not json'));
+    await expect(ghPrSourceWith(malformed.read).mergedSince('ashlrai/phantom', 'v9')).rejects.toThrow('Cannot read merged PRs from GitHub');
   });
 });

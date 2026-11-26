@@ -5,7 +5,8 @@
  * plain-words description lives in each PR's title and body, so this reads those.
  * The GitHub call sits behind `PrSource`; tests pass fixtures, the CLI passes `ghPrSource`.
  */
-import { runGhAsync } from '../integrations/github.js';
+import { runGhAttempt, type GhRunFailure, type GhRunResult } from '../integrations/github.js';
+import { backlogScanContext } from '../portfolio/scan-snapshot.js';
 import { internal } from './notes.js';
 
 export const PR_NOTES_SCHEMA = 'phantom.release-notes-prs.v1';
@@ -144,28 +145,57 @@ export function resolveRepo(name: string): string {
   return name.includes('/') ? name : `${DEFAULT_OWNER}/${name}`;
 }
 
-/** The real reader: the `gh` CLI, which owns its own credentials. Read-only. */
-export const ghPrSource: PrSource = {
-  async mergedSince(repo, since) {
-    if (!TAG.test(since)) throw new Error('Invalid release tag');
-    const cwd = process.cwd();
-    const slug = repo ?? '{owner}/{repo}';
-    const stamp = await runGhAsync(cwd, ['api', `repos/${slug}/commits/${since}`, '--jq', '.commit.committer.date']);
-    if (!stamp || Number.isNaN(Date.parse(stamp))) throw new Error('Cannot read the release tag from GitHub; check the repo and tag');
-    const raw = await runGhAsync(cwd, ['pr', 'list', ...(repo ? ['--repo', repo] : []), '--state', 'merged', '--search', `merged:>=${stamp.slice(0, 10)}`, '--limit', String(PAGE), '--json', 'number,title,body,mergedAt,files']);
-    let list: unknown;
-    try { list = raw === null ? null : JSON.parse(raw); } catch { list = null; }
-    if (!Array.isArray(list)) throw new Error('Cannot read merged PRs from GitHub');
-    const cut = Date.parse(stamp);
-    const prs: MergedPr[] = [];
-    for (const item of list) {
-      if (!item || typeof item !== 'object') continue;
-      const row = item as Record<string, unknown>;
-      if (!Number.isSafeInteger(row.number) || typeof row.title !== 'string') continue;
-      if (typeof row.mergedAt === 'string' && Date.parse(row.mergedAt) <= cut) continue;
-      const files = Array.isArray(row.files) ? row.files.flatMap(file => file && typeof (file as { path?: unknown }).path === 'string' ? [(file as { path: string }).path] : []) : undefined;
-      prs.push({ number: Number(row.number), title: row.title, body: typeof row.body === 'string' ? row.body : '', mergedAt: typeof row.mergedAt === 'string' ? row.mergedAt : undefined, files });
-    }
-    return { prs, complete: list.length < PAGE };
-  },
-};
+/** `gh pr list` fetches titles, bodies and file lists for a full page; on a
+ * busy repository that legitimately exceeds the default 8 s read deadline
+ * (a 200-PR page measured ~9 s on ashlrai/phantom). */
+const PR_LIST_TIMEOUT_MS = 30_000;
+
+/** The gh read seam `ghPrSource` runs through: one bounded call returning
+ * trimmed stdout or the failure kind. Tests inject a fake; production uses
+ * runGhAttempt. */
+export type GhRead = (cwd: string, args: string[], timeoutMs?: number) => Promise<GhRunResult>;
+
+/** A failed gh read in words an operator can act on. 'spawn' means gh never
+ * ran, 'timeout' means it was killed at the deadline — neither says anything
+ * about the repo or tag, so they must not be reported as unreadable refs.
+ * 'exit' means gh ran and refused; the repo/tag/auth check text applies. */
+function ghReadError(what: string, failure: GhRunFailure, check: string): Error {
+  if (failure === 'spawn') return new Error('gh could not run; install the GitHub CLI and ensure gh is on PATH');
+  if (failure === 'timeout') return new Error(`gh did not answer in time while reading ${what}; check the network and retry`);
+  return new Error(`Cannot read ${what} from GitHub; ${check}`);
+}
+
+/** The real reader: the `gh` CLI, which owns its own credentials. Read-only.
+ * `read` is injectable so tests cover the source without a live GitHub. */
+export function ghPrSourceWith(read: GhRead): PrSource {
+  return {
+    async mergedSince(repo, since) {
+      if (!TAG.test(since)) throw new Error('Invalid release tag');
+      const cwd = process.cwd();
+      const slug = repo ?? '{owner}/{repo}';
+      const stampRead = await read(cwd, ['api', `repos/${slug}/commits/${since}`, '--jq', '.commit.committer.date']);
+      if (stampRead.failure !== null) throw ghReadError('the release tag', stampRead.failure, 'check the repo and tag, and that gh is authenticated');
+      const stamp = stampRead.stdout;
+      if (stamp === null || Number.isNaN(Date.parse(stamp))) throw new Error('Cannot read the release tag from GitHub; check the repo and tag');
+      const rawRead = await read(cwd, ['pr', 'list', ...(repo ? ['--repo', repo] : []), '--state', 'merged', '--search', `merged:>=${stamp.slice(0, 10)}`, '--limit', String(PAGE), '--json', 'number,title,body,mergedAt,files'], PR_LIST_TIMEOUT_MS);
+      if (rawRead.failure !== null) throw ghReadError('merged PRs', rawRead.failure, 'check that gh is authenticated and can read the repo');
+      let list: unknown;
+      try { list = rawRead.stdout === null ? null : JSON.parse(rawRead.stdout); } catch { list = null; }
+      if (!Array.isArray(list)) throw new Error('Cannot read merged PRs from GitHub');
+      const cut = Date.parse(stamp);
+      const prs: MergedPr[] = [];
+      for (const item of list) {
+        if (!item || typeof item !== 'object') continue;
+        const row = item as Record<string, unknown>;
+        if (!Number.isSafeInteger(row.number) || typeof row.title !== 'string') continue;
+        if (typeof row.mergedAt === 'string' && Date.parse(row.mergedAt) <= cut) continue;
+        const files = Array.isArray(row.files) ? row.files.flatMap(file => file && typeof (file as { path?: unknown }).path === 'string' ? [(file as { path: string }).path] : []) : undefined;
+        prs.push({ number: Number(row.number), title: row.title, body: typeof row.body === 'string' ? row.body : '', mergedAt: typeof row.mergedAt === 'string' ? row.mergedAt : undefined, files });
+      }
+      return { prs, complete: list.length < PAGE };
+    },
+  };
+}
+
+export const ghPrSource: PrSource = ghPrSourceWith((cwd, args, timeoutMs) =>
+  runGhAttempt(cwd, args, { timeoutMs, signal: backlogScanContext.getStore()?.signal }));
