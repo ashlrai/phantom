@@ -468,6 +468,10 @@ including rows with an empty lane column or an explicit
 `"preferred_lane": null` in the requirements. These open jobs have no
 per-lane attribution.
 
+The board groups reported tiers by the [router tier vocabulary](#tier-values)
+after trimming whitespace and folding case. READY rows with missing or
+unsupported tier labels are counted under `unknown`.
+
 `phm queue` owns the separate `queue.v1` coordination snapshot at
 `~/.ashlr-runs/queue/queue.v1.json`. `--dir <directory>` selects an isolated store.
 The CLI accepts and round-trips the same requirements. Adding to this snapshot
