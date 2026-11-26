@@ -10,6 +10,7 @@
  * age, a field the tick could not measure prints 'unknown', never 0, and a
  * missing/unreadable recording is a designed state, not a fake empty board.
  */
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import { fleetBoardQuery } from '../../../data/queries.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { StatTile } from '../../../components/charts/StatTile.js';
@@ -32,11 +33,7 @@ function num(value: number | null): string {
 
 function formatAge(ageSeconds: number | null): string {
   if (ageSeconds === null) return 'unrecorded';
-  if (ageSeconds < 5) return 'just now';
-  if (ageSeconds < 60) return `${ageSeconds}s ago`;
-  const minutes = Math.floor(ageSeconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  return `${Math.floor(minutes / 60)}h ago`;
+  return ageSeconds < 5 ? 'just now' : ageInSeconds(ageSeconds);
 }
 
 /** Whole seconds to a compact wait ("45s", "3m", "2h", "1d"); unknown stays unknown. */

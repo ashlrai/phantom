@@ -1,3 +1,4 @@
+import { elapsedTime } from '../../../lib/relative-time.js';
 import { apiGet, ApiError, readFailureReason } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 
@@ -43,10 +44,7 @@ const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isF
 
 /** Compact duration for the "… ago" slot: 45s, 5m, 3h, 2d. */
 function agoText(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  return `${Math.floor(seconds / 86400)}d`;
+  return elapsedTime(seconds);
 }
 
 /** Local hh:mm for the "as of" slot; 'unknown' when the timestamp won't parse. */

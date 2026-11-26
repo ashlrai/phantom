@@ -1,14 +1,13 @@
 import type { FleetLaneView, FleetSessionsV1 } from '../../../data/api-types.js';
 import type { QueueStatsView } from '../../../data/queue-stats/model.js';
+import { relativeTime } from '../../../lib/relative-time.js';
 
 export const shown = (value: number | null | undefined): string =>
   typeof value === 'number' && Number.isFinite(value) ? String(value) : 'unknown';
 
 export function recordedAt(value: unknown, now = Date.now()): string {
-  const time = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN;
-  if (!Number.isFinite(time) || time > now) return 'Observation time unknown';
-  const seconds = Math.floor((now - time) / 1000);
-  return `${seconds > 120 ? 'Stale · ' : ''}recorded ${seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`} ago`;
+  const reading = relativeTime(value, now);
+  return reading ? `${reading.seconds > 120 ? 'Stale · ' : ''}recorded ${reading.text}` : 'Observation time unknown';
 }
 
 /** Queue drain is observed READY departures, not service capacity (mu). */

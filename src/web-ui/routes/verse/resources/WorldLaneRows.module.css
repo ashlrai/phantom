@@ -43,6 +43,9 @@
 .provider + .provider { margin-top: var(--space-2); }
 .unmeasured { color: var(--text-link); }
 .providerName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   padding: var(--space-1) var(--space-2) 0;
   font-size: var(--text-2xs-size, 11px);
   font-weight: var(--font-weight-semibold, 600);

@@ -1,3 +1,4 @@
+import { RelativeTime } from '../../../components/primitives/RelativeTime.js';
 import { useEffect, useReducer, useState } from 'react';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -14,14 +15,6 @@ export type VerifyState = { status: 'idle' | 'loading' | 'error' } | { status: '
 function chipState(checked: VerifyChecked | null): string | undefined {
   if (checked?.verdict === 'merged-at-head') return 'VERIFIED';
   return checked?.verdict === 'merged-other-head' || checked?.verdict === 'closed-unmerged' ? 'BLOCKED' : undefined;
-}
-
-function age(at: string, now: number): string {
-  const seconds = Math.max(0, Math.floor((now - Date.parse(at)) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
 }
 
 export function ReturnsBody({ parsed, now, verify = { status: 'idle' }, onVerify }: {
@@ -53,7 +46,7 @@ export function ReturnsBody({ parsed, now, verify = { status: 'idle' }, onVerify
                 </span>
               ) : null}
               <span>{row.from}</span>
-              <span title={row.at}>{age(row.at, now)}</span>
+              <RelativeTime value={row.at} now={now} />
             </li>
             );
           })}
@@ -64,7 +57,7 @@ export function ReturnsBody({ parsed, now, verify = { status: 'idle' }, onVerify
       ) : null}
       {github !== null && githubHeadline !== null ? (
         <p className={githubHeadline.tone === 'danger' ? styles.error : styles.orderNote}>
-          {githubHeadline.text} <span title={github.asOf}>· as of {age(github.asOf, now)}</span>
+          {githubHeadline.text} <RelativeTime value={github.asOf} now={now} prefix="· as of " />
         </p>
       ) : (
         <p className={styles.orderNote}>VERIFIED is the returning agent's evidence; Phantom has not checked the PR.</p>

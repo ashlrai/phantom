@@ -110,9 +110,9 @@ describe('App actions card', () => {
 describe('app actions model', () => {
   it('counts age in the unit that fits a week-long log', () => {
     const at = (seconds: number) => new Date(NOW - seconds * 1000).toISOString();
-    expect([40, 12 * 60, 5 * 3600, 47 * 3600, 3 * 86_400].map(seconds => actionAgo(at(seconds), NOW))).toEqual(['40s ago', '12m ago', '5h ago', '47h ago', '3d ago']);
+    expect([40, 12 * 60, 5 * 3600, 47 * 3600, 3 * 86_400].map(seconds => actionAgo(at(seconds), NOW))).toEqual(['40s ago', '12m ago', '5h ago', '1d 23h ago', '3d ago']);
     expect(actionAgo('not a time', NOW)).toBe('time unknown');
-    expect(actionAgo(at(-30), NOW)).toBe('0s ago');
+    expect(actionAgo(at(-30), NOW)).toBe('time unknown');
   });
 
   it('writes each outcome as a sentence and shows one it does not know as written', () => {

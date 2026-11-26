@@ -26,6 +26,7 @@
  * page spends — the actions open visible Terminal windows or write a config
  * the operator just read.
  */
+import { ageInSeconds, relativeTime } from '../../../lib/relative-time.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { VerseAppRow } from '../../../../core/verse/workbench-types.js';
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
@@ -57,12 +58,8 @@ import styles from '../apps/Apps.module.css';
 export const APPS_POLL_MS = 60_000;
 
 function checkedAgo(iso: string, now: number): string {
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return 'not checked';
-  const minutes = Math.max(0, Math.round((now - t) / 60_000));
-  if (minutes < 1) return 'checked just now';
-  if (minutes < 120) return `checked ${minutes} min ago`;
-  return `checked ${Math.round(minutes / 60)} h ago`;
+  const reading = relativeTime(iso, now);
+  return reading ? `checked ${reading.seconds < 60 ? 'just now' : ageInSeconds(reading.seconds, 'spaced')}` : 'not checked';
 }
 
 export function AppsSection({ focusGroup }: { focusGroup?: 'mcp-servers' } = {}) {
