@@ -127,7 +127,7 @@ const mergeEvidence = (row: Row, event: string | null, phase: string): boolean =
 
 /** Empty evidence: `empty: true` on a finish or outcome-ish row, or a terminal no-work phase on an outcome row. */
 const emptyEvidence = (row: Row, event: string | null, phase: string): boolean =>
-  event !== null && (
+  row.launched !== false && event !== null && (
     (FINISH_EVENTS.has(event) && row['empty'] === true)
     || (OUTCOME_EVENTS.has(event) && (row['empty'] === true || EMPTY_PHASES.has(phase))));
 

@@ -121,7 +121,7 @@ const mergeEvidence = (row: Record<string, unknown>, event: string | null, phase
 
 /** Empty evidence: `empty: true` on a finish or outcome-ish row, or a terminal no-work phase on an outcome row. */
 const emptyEvidence = (row: Record<string, unknown>, event: string | null, phase: string): boolean =>
-  event !== null && (
+  row.launched !== false && event !== null && (
     (FINISH_EVENTS.has(event) && row['empty'] === true)
     || (OUTCOME_EVENTS.has(event) && (row['empty'] === true || EMPTY_PHASES.has(phase))));
 
@@ -148,14 +148,13 @@ export function parseLaneJobs(ledger: string): LaneJob[] {
     }
     if (hasRevertEvidence(row)) reverted.add(id);
     const merged = mergeEvidence(row, event, phase);
-    // A finish row always ends the job; an outcome-ish row ends it only when
-    // it carries empty evidence — resolved non-merge outcomes (CLOSED, OPEN,
-    // RECORDED) stay uncounted, as before.
-    const finished = event !== null && (FINISH_EVENTS.has(event)
-      || (OUTCOME_EVENTS.has(event) && (row['empty'] === true || EMPTY_PHASES.has(phase))));
+    // An outcome row without merge evidence only ends an attempt when it
+    // records empty work. A pre-launch skip cannot finish an earlier attempt.
+    const empty = emptyEvidence(row, event, phase);
+    const finished = empty || (row.launched !== false && event !== null && FINISH_EVENTS.has(event));
     if (!merged && !finished) continue;
     const prev = done.get(id) ?? { at: null, empty: false, merged: false };
-    done.set(id, { at: Math.max(prev.at ?? 0, at ?? 0) || null, empty: prev.empty || emptyEvidence(row, event, phase), merged: prev.merged || merged });
+    done.set(id, { at: Math.max(prev.at ?? 0, at ?? 0) || null, empty: prev.empty || empty, merged: prev.merged || merged });
   }
   const out: LaneJob[] = [];
   for (const [job, d] of done) {

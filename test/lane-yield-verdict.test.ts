@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { laneYield, laneYieldAll, lowYieldReason, parseLaneJobs } from '../src/core/fleet/lane-yield-verdict.js';
 import { routeToEligibleLane } from '../src/core/fleet/lane-route-eligibility.js';
+import { computeLaneYield } from '../src/core/fleet/lane-yield-weight.js';
 import type { LaneTargetRow, LaneTargetsV1 } from '../src/core/fleet/runs-lane-targets.js';
 
 const jobs = (lane: string, n: number, empty: number, at = 1000) =>
@@ -31,6 +32,26 @@ describe('laneYield', () => {
 });
 
 describe('parseLaneJobs', () => {
+  it('keeps pre-launch skips from becoming empty finishes on older attempts', () => {
+    const records = Array.from({ length: 20 }, (_, i) => [
+      { event: 'launch', job: `job-${i}`, lane: 'zai', ts: '2026-11-20T10:00:00Z' },
+      { event: 'outcome', job: `job-${i}`, lane: 'claude', state: 'DONE-NOOP', launched: false, ts: '2026-11-20T11:00:00Z' },
+    ]).flat();
+    const ledger = [
+      ...records,
+      { event: 'finish', job: 'job-0', empty: true, ts: '2026-11-20T10:05:00Z' },
+    ].map(record => JSON.stringify(record)).join('\n');
+
+    const jobs = parseLaneJobs(ledger);
+    expect(jobs).toEqual([
+      { job: 'job-0', lane: 'zai', at: Date.parse('2026-11-20T10:05:00Z'), empty: true, merged: false },
+    ]);
+    expect(laneYield(jobs, 'zai').verdict).toBe('unknown');
+    expect(computeLaneYield(ledger).rows.find(result => result.size === 'all')).toMatchObject({
+      lane: 'zai', launches: 20, empty: 1, emptyRate: 0.05,
+    });
+  });
+
   it('folds ledger rows, skips junk lines and reverted merges', () => {
     const lines = [
       'not json', '[]', JSON.stringify({ event: 'launch', job: 'a', lane: 'zai', ts: '2026-11-20T10:00:00Z' }),
