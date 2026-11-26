@@ -302,6 +302,7 @@ describe('Trajectory records', () => {
           listOutcomeRecords: () => [],
         },
       });
+      expect(readDispatchProductionEvents).toHaveBeenCalledWith(expect.objectContaining({ asOfMs: TEST_NOW_MS }));
       for (const read of [readDispatchProductionEvents, readAgentActions, readSkillUseEvents]) {
         expect(read).toHaveBeenCalledWith(expect.objectContaining({
           sinceMs: TEST_NOW_MS - windowHours * 60 * 60 * 1000,

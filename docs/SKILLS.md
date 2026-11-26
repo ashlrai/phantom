@@ -147,6 +147,9 @@ Within scanned partitions, receipts timestamped after the report time do
 not count toward row limits or cause event-ID conflicts.
 Dispatch receipts dated after report time cannot supply production
 trajectories for that sample or contribute to dispatch join diagnostics.
+Direct trajectory reads also exclude future UTC dispatch partitions from
+the file cap and future dispatches from the event cap. Physical scan limits
+still apply to every selected file.
 The skill-outcome report anchors its ledger read and trajectory join to one
 report time, so time spent reading the ledger cannot shift either boundary.
 The trajectory timeline, join diagnostics and outcome tallies use only
