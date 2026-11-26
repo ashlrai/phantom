@@ -2255,16 +2255,16 @@ const MARKET_WORK_CLASS = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 /**
  * Folds work-market.jsonl route_decision rows into each job's latest recorded
- * work_class. The dispatcher re-decides every waiting job each tick, so rows
+ * decision's work_class. The dispatcher re-decides every waiting job each tick, so rows
  * collapse to the newest timestamp per job — the same latest-decision rule
  * the unfed report applies. Only work-market.v1 route_decision rows with a
- * bounded job id, a finite epoch-seconds ts and a route-identifier-shaped
- * work_class count; every other row is skipped, never guessed. The class is
+ * bounded job id and a finite epoch-seconds ts compete. If the winning row
+ * lacks a route-identifier-shaped work_class, the job stays unclassified. The class is
  * the market's own classification of the job (declared or derived from its
  * requirements), recorded whether or not a lane was chosen.
  */
 export function foldRouteDecisionWorkClasses(text: string): Map<string, string> {
-  const latest = new Map<string, { workClass: string; ts: number }>();
+  const latest = new Map<string, { workClass: string | null; ts: number }>();
   for (const line of text.split('\n')) {
     // Cheap prefilter: route decisions are the bulk of the file.
     if (!line.includes('"route_decision"')) continue;
@@ -2281,13 +2281,19 @@ export function foldRouteDecisionWorkClasses(text: string): Map<string, string> 
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const ts = row['ts'];
     if (typeof ts !== 'number' || !Number.isFinite(ts)) continue;
-    const workClass = row['work_class'];
-    if (typeof workClass !== 'string' || !MARKET_WORK_CLASS.test(workClass)) continue;
     const prev = latest.get(job);
     if (prev !== undefined && prev.ts >= ts) continue;
-    latest.set(job, { workClass, ts });
+    const workClass = row['work_class'];
+    latest.set(job, {
+      workClass: typeof workClass === 'string' && MARKET_WORK_CLASS.test(workClass) ? workClass : null,
+      ts,
+    });
   }
-  return new Map([...latest].map(([job, entry]) => [job, entry.workClass]));
+  const classes = new Map<string, string>();
+  for (const [job, { workClass }] of latest) {
+    if (workClass !== null) classes.set(job, workClass);
+  }
+  return classes;
 }
 
 /**

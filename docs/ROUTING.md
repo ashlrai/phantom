@@ -872,7 +872,9 @@ feed weights, ranking or dispatch by itself.
 group, shifts capped at 0.1 and clamped to [0, 1]. Production jobs rows
 never carry `work_class`, so groups classify through the work-market join:
 each job's newest `route_decision` row supplies the market's recorded class,
-while the lane stays the one the job actually ran on in jobs.jsonl. A merged
+while the lane stays the one the job actually ran on in jobs.jsonl. If the
+newest decision omits the class or records an invalid value, the market
+class is unknown. A merged
 outcome recorded as reverted counts as known evidence (`reverted_n` reports
 the count) but never as a held merge. Groups below the evidence
 floor are refused and keep their baseline; `merged: null` outcomes count as

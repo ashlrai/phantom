@@ -1493,8 +1493,10 @@ describe('router outcome work_class join', () => {
       JSON.stringify(decision('J1', 'standard', 150)),  // older than the newest: ignored
       JSON.stringify(decision('J2', 'standard', 100, { chosen_lane: null, reason_codes: ['no_runnable_lane'] })),
       JSON.stringify({ schema: 'work-market.v1', event: 'posture', ts: 300, lanes: {} }),
-      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'J3', ts: 100 }), // no work_class
-      JSON.stringify(decision('J4', 'bad class!', 100)),
+      JSON.stringify(decision('J3', 'bulk', 100)),
+      JSON.stringify({ ...decision('J3', 'bulk', 200), work_class: undefined }),
+      JSON.stringify(decision('J4', 'bad class!', 200)),
+      JSON.stringify(decision('J4', 'judgment', 100)), // older append cannot revive the class
       JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'J5', work_class: 'bulk', ts: 'not-a-number' }),
       JSON.stringify(decision('J6', 'bulk', 100, { schema: 'other.v9' })),
       'not json',
@@ -1519,6 +1521,7 @@ describe('router outcome work_class join', () => {
       decision('J1', 'bulk', 100),
       decision('J2', 'bulk', 100),   // explicit jobs-row class wins over the market join
       decision('J3', 'judgment', 100),
+      { ...decision('J3', 'judgment', 200), work_class: undefined, chosen_lane: 'beta' },
       decision('J-UNDECIDED', 'bulk', 100), // no jobs outcome: never creates one
     ]);
     const result = await readRouterOutcomes({ runsDir: root });
@@ -1526,7 +1529,7 @@ describe('router outcome work_class join', () => {
     const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
     expect(byId.get('J1')?.work_class).toBe('bulk');
     expect(byId.get('J2')?.work_class).toBe('docs');
-    expect(byId.get('J3')?.work_class).toBe('judgment');
+    expect(byId.get('J3')).toMatchObject({ work_class: null, market_lane: 'beta' });
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
   });
 

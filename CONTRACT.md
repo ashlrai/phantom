@@ -703,13 +703,12 @@ they report a USD figure. The spend read degrades independently:
 bounds). `work_class` joins the same bound of
 `metrics/work-market.jsonl`: `foldRouteDecisionWorkClasses` collapses
 `work-market.v1` `route_decision` rows to each job's newest-timestamp
-recorded class — the market's own classification, written for every
-evaluated job — and the fold's `workClassFor` option fills only
+decision and reads its recorded class. The fold's `workClassFor` option fills only
 outcomes whose jobs rows recorded no class, so an explicit
-jobs-ledger `work_class` always wins and a job with no decision row
-stays null. Rows with a missing or non-finite `ts`, an absent or
-non-route-identifier `work_class`, or a wrong schema/event are
-skipped. The same newest-decision collapse also supplies the market's
+jobs-ledger `work_class` always wins. With no decision row or an absent
+or non-route-identifier class on the newest decision, the class stays null.
+Rows with a missing or non-finite `ts` or a wrong schema/event are skipped.
+The same newest-decision collapse also supplies the market's
 recorded routing verdict: `foldRouteDecisions` returns each job's
 latest `route_decision` row as `{lane, preferred, override, reasons,
 rejected}` and the read joins it under the same `market_state` health as
