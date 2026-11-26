@@ -63,6 +63,13 @@ export async function runAgentsCli(
     }
     rest.push(arg);
   }
+  // A help flag on a verb this dispatcher owns prints usage instead of acting;
+  // `agents bus` alone stays a strict usage error (its contract lives below).
+  if ((args.includes('--help') || args.includes('-h'))
+    && (rest[0] === 'edges' || rest[0] === 'mesh'
+      || (rest[0] === 'bus' && (rest[1] === 'contract' || rest[1] === 'channels')))) {
+    out(HELP); return 0;
+  }
   if (rest.length === 1 && rest[0] === 'edges' && root === undefined) {
     const result = readFleetEdges();
     out(JSON.stringify(sanitizePublicJson(result), null, json ? undefined : 2));
