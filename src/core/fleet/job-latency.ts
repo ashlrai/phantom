@@ -16,11 +16,24 @@ type Events = Map<string, number[]>;
  * the same field set dispatchd `_vc_pick` and metrics/loop accept.
  */
 const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const MERGE_TIME_KEYS = ['mergedAt', 'pr_merged_at', 'merged_at'] as const;
+const MERGED_EVENT_TIME_KEYS = [...MERGE_TIME_KEYS, ...TS_KEYS.filter(key => key !== 'mergedAt')];
+const CLOSED_EVENT_TIME_KEYS = ['closedAt', ...TS_KEYS.filter(key => key !== 'closedAt')];
 
-/** First parseable stamp among the ledger's timestamp fields for one boundary; merged prefers mergedAt, closed closedAt. */
+function rawEvent(row: Record<string, unknown>): unknown {
+  return row.event ?? row.type ?? row.kind;
+}
+
+/** A merge receipt can inherit the publish timestamp or record observation time. */
+function mergeReceipt(row: Record<string, unknown>, event: string): boolean {
+  return event === 'merged' && rawEvent(row) !== 'merged';
+}
+
+/** First parseable stamp among the ledger's timestamp fields for one boundary. */
 function boundaryTs(row: Record<string, unknown>, event: string): number {
-  const preferred = event === 'merged' ? 'mergedAt' : event === 'closed' ? 'closedAt' : null;
-  const fields = preferred === null ? TS_KEYS : [preferred, ...TS_KEYS.filter(f => f !== preferred)];
+  let fields: readonly string[] = TS_KEYS;
+  if (event === 'merged') fields = mergeReceipt(row, event) ? MERGE_TIME_KEYS : MERGED_EVENT_TIME_KEYS;
+  if (event === 'closed') fields = CLOSED_EVENT_TIME_KEYS;
   for (const field of fields) {
     const value = row[field];
     if (typeof value === 'string') {
@@ -49,7 +62,7 @@ function boundaryEvent(row: Record<string, unknown>): string | undefined {
   if (state === 'MERGED') return 'merged';
   if (state === 'CLOSED') return 'closed';
   if (state === 'PUBLISHED') return 'publish';
-  const raw = row.event ?? row.type ?? row.kind;
+  const raw = rawEvent(row);
   if (raw === 'enqueue' || raw === 'enqueued') return 'queued';
   if (raw === 'published') return 'publish';
   return typeof raw === 'string' ? raw : undefined;
@@ -148,10 +161,14 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
     const at = event === undefined ? NaN : boundaryTs(row, event);
     if (typeof id !== 'string' || !id || event === undefined) { ignored++; continue; }
     const events = jobs.get(id) ?? new Map<string, number[]>();
+    jobs.set(id, events);
+    // A receipt without merge time proves the job exists but supplies no
+    // boundary. It cannot invalidate independently measured merge evidence.
+    if (mergeReceipt(row, event) && !Number.isFinite(at)) { ignored++; continue; }
     const times = events.get(event) ?? [];
     if (!Number.isFinite(at)) ignored++;
     if (!times.includes(at)) times.push(at);
-    events.set(event, times); jobs.set(id, events);
+    events.set(event, times);
     if (phases === jobPhases && event === 'checkout_complete' && typeof row.manual_checkout_recovery === 'boolean') {
       const values = recovery.get(id) ?? new Set<number>();
       values.add(Number(row.manual_checkout_recovery));
