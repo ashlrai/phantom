@@ -1,14 +1,14 @@
-import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { collectResourceEvidence } from '../core/usage/resource-live/evidence-collector.js';
+import { defaultResourceLiveRunsDir } from '../core/usage/resource-live/feed.js';
+import { isRefusedCodexPath } from '../core/usage/runway.js';
 
 const USAGE = 'Usage: phm usage resource-evidence --targets <abs> [--watch] [--runs-dir <abs>]';
 
 export async function cmdUsageResourceEvidence(args: string[]): Promise<number> {
   let targets: string | undefined;
-  const envRuns = process.env['ASHLR_RUNS_DIR'];
-  let runsDir = envRuns && isAbsolute(envRuns) ? envRuns : join(homedir(), '.ashlr-runs');
+  let runsDir = defaultResourceLiveRunsDir();
   let watch = false;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
@@ -23,7 +23,7 @@ export async function cmdUsageResourceEvidence(args: string[]): Promise<number> 
     else if (arg === '--runs-dir') runsDir = value;
     else { console.error(USAGE); return 2; }
   }
-  if (!targets || /(?:^|[/\\])\.codex[^/\\]*(?:[/\\]|$)/.test(runsDir)) { console.error(USAGE); return 2; }
+  if (!targets || isRefusedCodexPath(runsDir)) { console.error(USAGE); return 2; }
   try {
     do {
       const { checked, nextAt } = await collectResourceEvidence({ configPath: targets, runsDir });

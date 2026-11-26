@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path';
 import { defaultResourceLiveRunsDir } from '../core/usage/resource-live/feed.js';
 import { readLaneHistory } from '../core/usage/resource-live/history.js';
+import { isRefusedCodexPath } from '../core/usage/runway.js';
 
 const USAGE = 'Usage: phm usage history --lane <id> [--json] [--runs-dir <abs>]';
 export async function cmdUsageHistory(args: string[]): Promise<number> {
@@ -13,7 +14,7 @@ export async function cmdUsageHistory(args: string[]): Promise<number> {
     else if (arg === '--runs-dir') runsDir = args[++i] ?? '';
     else { console.error(USAGE); return 2; }
   }
-  if (!lane || !isAbsolute(runsDir) || /(?:^|\/)\.codex[^/]*(?:\/|$)/.test(runsDir)) { console.error(USAGE); return 2; }
+  if (!lane || !isAbsolute(runsDir) || isRefusedCodexPath(runsDir)) { console.error(USAGE); return 2; }
   const result = await readLaneHistory(lane, runsDir);
   if (!result) { console.error(USAGE); return 2; }
   if (json) console.log(JSON.stringify(result));
