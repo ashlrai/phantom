@@ -84,7 +84,7 @@ export interface WorkBoardResult {
    * display cap: requests passing every applied filter — the channel_ref
    * scope, the `since`/`before` receivedAt window and the `state` match —
    * counted before the newest-first slice, so `items` may be a slice of it.
-   * Present whenever `state` or a `since`/`before` bound narrowed the read;
+   * Present whenever `channel`, `state` or a `since`/`before` bound narrowed the read;
    * a `channelRef`-only read keeps the unfiltered shape. Never a count of
    * just the shown window. */
   matched?: number;
@@ -112,7 +112,7 @@ function limit(opts: { limit?: number }): number {
 }
 
 export function listWorkBoard(opts: {
-  root: string; now: number; limit?: number; channelRef?: string; state?: WorkItemState;
+  root: string; now: number; limit?: number; channel?: string; channelRef?: string; state?: WorkItemState;
   /** Epoch-ms floor on the request's recorded receivedAt — the same
    * inclusive `receivedAt >= since` rule every bus read's `--since` applies.
    * Epoch-ms bounds are self-consistent under plain comparison: a bound at
@@ -161,6 +161,7 @@ export function listWorkBoard(opts: {
     for (const row of read.receipts) {
       if (!isRequest(row)) continue;
       if (opts.channelRef !== undefined && row.envelope.channel_ref !== opts.channelRef) continue;
+      if (opts.channel !== undefined && (row.envelope.channel ?? 'bus') !== opts.channel) continue;
       // The same [since, before) window on receivedAt every bus read applies:
       // `since` keeps rows at or after the cutoff, `before` keeps rows
       // strictly before its own — a request exactly on `before` is outside.
@@ -191,7 +192,7 @@ export function listWorkBoard(opts: {
     // A time bound narrows the read exactly like a state filter does, so it
     // earns the same `matched` total: the count of requests inside the
     // window before the display cap, never just the shown slice.
-    const bounded = opts.since !== undefined || opts.before !== undefined;
+    const bounded = opts.channel !== undefined || opts.since !== undefined || opts.before !== undefined;
     if (opts.state === undefined) {
       const kept = requests.slice(0, limit(opts));
       return { items: kept.map(toItem), inbox: 'ok', truncated: requests.length > kept.length,
