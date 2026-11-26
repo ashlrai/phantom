@@ -22,6 +22,10 @@ and the dates quoted in discovery briefs.
 
 ## Fleet lane ledger
 
+`readyRowsForDepth(text, routerQueue?)` (`src/core/fleet/leader-board.ts`)
+accepts optional `router-queue.md` text to validate inherited requirements
+on five-column dispatcher rows. Omit it or pass `null` to use the TSV alone.
+
 `unfedTickLanes(row)` (`src/core/fleet/unfed-market.ts`) reads a decoded
 `unfed_capacity` snapshot and returns its usable lane observations as
 `{ lane, slots, blocked }`. Each observation requires positive headroom

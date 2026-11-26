@@ -92,6 +92,25 @@ it('counts lane-open work by tier without attributing it to a lane', async () =>
   expect(board?.lanes.find((lane) => lane.lane === 'codex')?.ready).toBe(1);
 });
 
+it('uses inherited market requirements for tier depth and keeps the first valid READY row', async () => {
+  await writeFile(join(queueDir, 'router-queue.md'), [
+    '- READY RQ-INVALID (P1, exclusive=maybe): invalid requirements',
+    '- READY RQ-INHERITED (P1, preferred_lane=codex): inherited hint',
+    '- READY RQ-OPEN (P1): lane-open work',
+    '- READY RQ-INLINE (P1, exclusive=maybe): overridden by inline requirements',
+  ].join('\n'));
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    'RQ-INVALID\tphantom\tcodex\tfast\tprompts/invalid.md',
+    'RQ-INHERITED\tphantom\tBAD_LANE\tfrontier\tprompts/inherited.md',
+    'RQ-INHERITED\tphantom\tdevin\tfast\tprompts/duplicate.md\t{}',
+    'RQ-OPEN\tphantom\tBAD_LANE\twork\tprompts/open.md',
+    'RQ-INLINE\tphantom\tcodex\tmid\tprompts/inline.md\t{}',
+  ].join('\n'));
+  const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  expect(result.wrote && result.board.queueDepthByTier).toEqual({ frontier: 1, work: 1, mid: 1 });
+  expect(result.wrote && result.board.lanes.find((lane) => lane.lane === 'codex')?.ready).toBe(2);
+});
+
 it('reports honest failures for hostile paths and the reader stays truthful', async () => {
   expect(await recordLeaderBoard({ runsDir: 'relative/path', nowMs: NOW_MS })).toMatchObject({ wrote: false });
   expect(await recordLeaderBoard({ runsDir: '/dev/null/impossible', nowMs: NOW_MS })).toMatchObject({ wrote: false });
