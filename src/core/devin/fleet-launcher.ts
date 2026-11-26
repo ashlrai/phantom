@@ -52,9 +52,9 @@
  * and merge only under the two-judge rule (fleet/merge-gates.ts G6).
  *
  * PUBLIC API (stable — the Leader's class-B Devin action and the daemon tick
- * call it): runDevinFleetTick, planDevinFleetLaunch, isDevinFleetWork,
- * devinFleetPrompt. Every launch still goes through service.ts
- * launchDevinTask, which re-checks the grant and the fleet budget gate.
+ * call it): runDevinFleetTick, planDevinFleetLaunch, isDevinFleetWork. Every
+ * launch still goes through service.ts launchDevinTask, which re-checks the
+ * grant and the fleet budget gate.
  */
 import type { EffectivePolicy, LedgerAppendInput, LedgerAppendResult } from '../authority/types.js';
 import type { BacklogClaimTask } from '../cloud/backlog.js';
@@ -63,14 +63,14 @@ import type { BudgetPolicy } from '../routing/types.js';
 import type { AshlrConfig } from '../types.js';
 import type { DevinInternalLaunch } from './service.js';
 import { devinFleetApiBillingGate } from './api-billing.js';
-import type { DevinBudgetV1, DevinBudgetView, DevinLaunchResponse, DevinTaskV1 } from './types.js';
+import { errorMessageText, type DevinBudgetV1, type DevinBudgetView, type DevinLaunchResponse, type DevinTaskV1 } from './types.js';
 
 /**
  * Backlog areas that mean "a bounded fix" — what the fleet may hand Devin.
  * `leader` = the Leader's work.dispatch suggestions (class A/B, already
  * scoped by the Leader to one repo and one change).
  */
-export const DEVIN_FLEET_AREAS: ReadonlySet<string> = new Set([
+const DEVIN_FLEET_AREAS: ReadonlySet<string> = new Set([
   'leader',
   'bug',
   'bugs',
@@ -122,9 +122,9 @@ export interface DevinLaneQuestion {
 export type DevinLaneAdvisor = (question: DevinLaneQuestion) => DevinLaneAdvice | null | Promise<DevinLaneAdvice | null>;
 
 /** A "not Devin" answer below this confidence is ignored (the heuristic stands). */
-export const DEVIN_LANE_ADVICE_MIN_CONFIDENCE = 0.6;
+const DEVIN_LANE_ADVICE_MIN_CONFIDENCE = 0.6;
 /** Candidates the advisor may turn away in one tick before the tick holds. */
-export const DEVIN_LANE_ADVICE_MAX_ASKS = 5;
+const DEVIN_LANE_ADVICE_MAX_ASKS = 5;
 
 export type DevinFleetDecision =
   | { kind: 'launch'; item: CloudBacklogItem; repo: string }
@@ -172,7 +172,7 @@ export function planDevinFleetLaunch(input: DevinFleetPlanInput): DevinFleetDeci
 }
 
 /** The brief the fleet sends: the item's own prompt plus why the fleet chose it. The delivery contract is added by service.ts. */
-export function devinFleetPrompt(item: CloudBacklogItem): string {
+function devinFleetPrompt(item: CloudBacklogItem): string {
   return [
     item.prompt.trim(),
     `This task was chosen by the Phantom fleet from its backlog (item ${item.id}, area ${item.area}). `
@@ -240,7 +240,7 @@ function note(deps: DevinFleetTickDeps, policy: EffectivePolicy | null, repo: st
   try {
     return deps.appendLedger({ kind: 'note', actor: 'daemon', grantId: policy?.grantId ?? null, repo, data: { topic, detail } });
   } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    return { ok: false, reason: errorMessageText(error) };
   }
 }
 
@@ -339,7 +339,7 @@ export async function runDevinFleetTick(depsIn?: Partial<DevinFleetTickDeps>): P
     note(deps, policy, repo, 'devin:fleet-launch-failed', `Devin launch for backlog item ${item.id} on ${repo} did not start: ${why}`);
     return { outcome: 'failed', code: 'launch-failed', reason: why, repo, itemId: item.id, taskId: response.task?.id ?? null };
   } catch (error) {
-    return held(policy, 'budget', `the Devin fleet check failed (${error instanceof Error ? error.message : String(error)})`);
+    return held(policy, 'budget', `the Devin fleet check failed (${errorMessageText(error)})`);
   }
 }
 
@@ -373,7 +373,7 @@ function safeValue<T>(fn: () => T, fallback: T): T {
 }
 
 /** Production wiring, loaded lazily so the daemon's static graph stays light. */
-export async function defaultDevinFleetTickDeps(): Promise<DevinFleetTickDeps> {
+async function defaultDevinFleetTickDeps(): Promise<DevinFleetTickDeps> {
   const [effective, backlog, cloudStore, budgetStore, policyMod, store, budgetMod, service, ledger, sandbox, config] = await Promise.all([
     import('../authority/effective-config.js'),
     import('../cloud/backlog.js'),

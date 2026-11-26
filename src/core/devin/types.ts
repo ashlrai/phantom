@@ -306,6 +306,41 @@ export interface DevinSelfIdentitySummary {
   hasDevinSessionsOrgId: boolean;
 }
 
+const TERMINAL_DEVIN_TASK_STATES: ReadonlySet<DevinTaskState> = new Set(['merged', 'closed', 'failed', 'expired']);
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function isIsoTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+export function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+export function isTerminalDevinTaskState(state: DevinTaskState): boolean {
+  return TERMINAL_DEVIN_TASK_STATES.has(state);
+}
+
+export function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+export function formatAcu(value: number): string {
+  const rounded = round2(value);
+  return `${rounded} ACU${rounded === 1 ? '' : 's'}`;
+}
+
+export function redactDevinKeys(text: string, replacement = '[REDACTED]'): string {
+  return text.replace(/\bcog_[A-Za-z0-9_-]+/g, replacement);
+}
+
+export function errorMessageText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Defensive private storage bound; the provider documents string, not an ID prefix. */
 export function isDevinOpaqueSelfId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 256 &&
@@ -313,8 +348,8 @@ export function isDevinOpaqueSelfId(value: unknown): value is string {
     !/%(?:2f|5c)/i.test(value) && !/^(?:cog_|apk_|sk[-_]|gh[pousr]_|github_pat_|Bearer|eyJ)/i.test(value);
 }
 export function isDevinSelfIdentity(value: unknown): value is DevinSelfIdentity {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
+  if (!isRecord(value)) return false;
+  const row = value;
   const org = (id: unknown) => id === null || typeof id === 'string' && DEVIN_ORG_ID_PATTERN.test(id);
   if (!org(row['orgId']) || !org(row['devinSessionsOrgId'])) return false;
   return row['principal'] === 'service_user'

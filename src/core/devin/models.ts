@@ -48,14 +48,15 @@ import { dirname, join } from 'node:path';
 import type { AshlrConfig } from '../types.js';
 import { probeDevinCli } from './cli-probe.js';
 import { devinHome } from './store.js';
+import { isIsoTimestamp, isRecord } from './types.js';
 
 /** The seat's (and fleet's) default when config names none: SWE-2, free on every Devin plan that lists it. */
 export const DEVIN_DEFAULT_MODEL = 'swe-2-high';
 /** Refresh the listing in the background once it is older than this. */
 export const DEVIN_MODELS_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 /** After a failed listing, wait this long before trying again. */
-export const DEVIN_MODELS_RETRY_MS = 10 * 60 * 1000;
-export const DEVIN_MODELS_CACHE_FILE = 'models-cache.json';
+const DEVIN_MODELS_RETRY_MS = 10 * 60 * 1000;
+const DEVIN_MODELS_CACHE_FILE = 'models-cache.json';
 const LIST_TIMEOUT_MS = 30_000;
 const MAX_LIST_BYTES = 4 * 1024 * 1024;
 const MAX_ROWS = 4_000;
@@ -278,7 +279,7 @@ export function resolveDevinModel(idOrAlias: string | null | undefined, catalog:
 }
 
 /** `devin.defaultModel` from config, else SWE-2 High. Just the configured string — resolve it against a catalog. */
-export function devinDefaultModelOf(section: AshlrConfig['devin'] | undefined): string {
+function devinDefaultModelOf(section: AshlrConfig['devin'] | undefined): string {
   const configured = section?.defaultModel;
   return typeof configured === 'string' && DEVIN_MODEL_ID_RE.test(configured.trim()) ? configured.trim() : DEVIN_DEFAULT_MODEL;
 }
@@ -317,7 +318,7 @@ export function devinContextNote(model: Pick<DevinModel, 'contextTokens'>): stri
 }
 
 /** A family is free when every model in it is. */
-export function devinFamilyIsFree(family: DevinModelFamily): boolean {
+function devinFamilyIsFree(family: DevinModelFamily): boolean {
   return family.models.length > 0 && family.models.every((m) => m.pricing.free);
 }
 
@@ -375,7 +376,7 @@ let diskRead: Promise<void> | null = null;
 let refreshing: Promise<DevinModelCatalog | null> | null = null;
 let lastFailureAt: number | null = null;
 
-export function devinModelsCachePath(): string {
+function devinModelsCachePath(): string {
   return join(devinHome(), DEVIN_MODELS_CACHE_FILE);
 }
 
@@ -404,9 +405,9 @@ async function readDiskCache(path: string): Promise<DevinModelCatalog | null> {
     const raw = await readFile(path, 'utf8');
     if (raw.length > MAX_LIST_BYTES * 2) return null;
     const value = JSON.parse(raw) as unknown;
-    if (value === null || typeof value !== 'object') return null;
-    const { v, fetchedAt, text } = value as Record<string, unknown>;
-    if (v !== 1 || typeof fetchedAt !== 'string' || !Number.isFinite(Date.parse(fetchedAt)) || typeof text !== 'string') return null;
+    if (!isRecord(value)) return null;
+    const { v, fetchedAt, text } = value;
+    if (v !== 1 || !isIsoTimestamp(fetchedAt) || typeof text !== 'string') return null;
     return catalogFrom(text, 'cache', new Date(Date.parse(fetchedAt)).toISOString());
   } catch {
     return null;

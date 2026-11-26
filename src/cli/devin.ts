@@ -23,15 +23,19 @@
  * var — and goes straight to the Keychain. Output is for people; `--json`
  * prints the service's shapes. Exit codes: 0 ok, 1 error / refused, 2 usage.
  */
-import type {
-  DevinBudgetUpdate,
-  DevinBudgetV1,
-  DevinBudgetView,
-  DevinLaunchRequest,
-  DevinLaunchResponse,
-  DevinStatus,
-  DevinTaskState,
-  DevinTaskV1,
+import {
+  errorMessageText,
+  formatAcu,
+  isTerminalDevinTaskState,
+  redactDevinKeys,
+  type DevinBudgetUpdate,
+  type DevinBudgetV1,
+  type DevinBudgetView,
+  type DevinLaunchRequest,
+  type DevinLaunchResponse,
+  type DevinStatus,
+  type DevinTaskState,
+  type DevinTaskV1,
 } from '../core/devin/types.js';
 import type { DevinConnectResult, DevinMessageResult } from '../core/devin/service.js';
 import { localWhen, readOriginRepo } from './cloud.js';
@@ -233,8 +237,6 @@ function json(deps: DevinCliDeps, value: unknown): void {
   deps.out(JSON.stringify(value, null, 2));
 }
 
-const acu = (n: number): string => `${Math.round(n * 100) / 100} ACU${Math.round(n * 100) / 100 === 1 ? '' : 's'}`;
-
 const STATE_WORDS: Readonly<Record<DevinTaskState, string>> = {
   queued: 'queued',
   launching: 'starting',
@@ -248,10 +250,10 @@ const STATE_WORDS: Readonly<Record<DevinTaskState, string>> = {
 };
 
 /** Recent or unfinished tasks unless `all`. */
-export function devinTasksToList(tasks: readonly DevinTaskV1[], now: Date, all: boolean): DevinTaskV1[] {
+function devinTasksToList(tasks: readonly DevinTaskV1[], now: Date, all: boolean): DevinTaskV1[] {
   if (all) return [...tasks];
   const cutoff = now.getTime() - 3 * 24 * 60 * 60 * 1000;
-  return tasks.filter((task) => !['merged', 'closed', 'failed', 'expired'].includes(task.state) || Date.parse(task.updatedAt) >= cutoff);
+  return tasks.filter((task) => !isTerminalDevinTaskState(task.state) || Date.parse(task.updatedAt) >= cutoff);
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +275,7 @@ async function cmdConnect(deps: DevinCliDeps, args: string[]): Promise<number> {
   try {
     key = (await deps.readSecret('Devin API key: ')).trim();
   } catch (err) {
-    deps.err(err instanceof Error && err.message === 'cancelled' ? 'Cancelled.' : `Could not read the key: ${err instanceof Error ? err.message : String(err)}`);
+    deps.err(err instanceof Error && err.message === 'cancelled' ? 'Cancelled.' : `Could not read the key: ${errorMessageText(err)}`);
     return 1;
   }
   if (key === '') {
@@ -352,9 +354,9 @@ async function cmdStatus(deps: DevinCliDeps, args: string[]): Promise<number> {
     deps.out('  Local budget capacity is unknown: task evidence is unavailable.');
     return 0;
   }
-  deps.out(`  ACUs: ${acu(view.acuUsed)} of ${acu(view.acuBudgetTotal)} accounted for · ${acu(view.acuToday)} today, used or held · ${view.running} running`);
+  deps.out(`  ACUs: ${formatAcu(view.acuUsed)} of ${formatAcu(view.acuBudgetTotal)} accounted for · ${formatAcu(view.acuToday)} today, used or held · ${view.running} running`);
   if (view.reportedAcuUsed !== undefined && view.unconfirmedAcuExposure !== undefined) {
-    deps.out(`  ${acu(view.reportedAcuUsed)} reported usage + adjustment · ${acu(view.unconfirmedAcuExposure)} held exposure · ≈ $${view.estimatedUsdUsed} for recorded usage (estimate)`);
+    deps.out(`  ${formatAcu(view.reportedAcuUsed)} reported usage + adjustment · ${formatAcu(view.unconfirmedAcuExposure)} held exposure · ≈ $${view.estimatedUsdUsed} for recorded usage (estimate)`);
   } else deps.out('  Usage and reservations are not separated; recorded cost coverage is unavailable.');
   if (!view.canLaunch.ok) deps.out(`  Launches refused: ${view.canLaunch.reason}`);
   return 0;
@@ -389,7 +391,7 @@ async function cmdLaunch(deps: DevinCliDeps, args: string[]): Promise<number> {
   const task = result.task;
   deps.out(`Launched Devin task: ${task.title}`);
   if (task.sessionUrl) deps.out(`  Open in Devin: ${task.sessionUrl}`);
-  deps.out(`  It delivers a PR from branch ${task.branch} into ${task.baseBranch} on ${task.repo}; capped at ${acu(task.maxAcu)}.`);
+  deps.out(`  It delivers a PR from branch ${task.branch} into ${task.baseBranch} on ${task.repo}; capped at ${formatAcu(task.maxAcu)}.`);
   deps.out('  Track it with: ashlr devin list');
   return 0;
 }
@@ -476,7 +478,7 @@ function cmdList(deps: DevinCliDeps, args: string[]): number {
   for (const task of tasks) {
     const used = task.session?.acusConsumed;
     deps.out(`${task.id}  ${STATE_WORDS[task.state].padEnd(15)} ${task.repo}  ${task.title}`);
-    const bits = [localWhen(task.launchedAt ?? task.createdAt, now), typeof used === 'number' ? `${acu(used)} of ${acu(task.maxAcu)}` : `cap ${acu(task.maxAcu)}`];
+    const bits = [localWhen(task.launchedAt ?? task.createdAt, now), typeof used === 'number' ? `${formatAcu(used)} of ${formatAcu(task.maxAcu)}` : `cap ${formatAcu(task.maxAcu)}`];
     if (task.pr) bits.push(`PR #${task.pr.number} ${task.pr.url}`);
     else if (task.sessionUrl) bits.push(task.sessionUrl);
     deps.out(`    ${bits.join(' · ')}`);
@@ -495,7 +497,7 @@ async function cmdRefresh(deps: DevinCliDeps, args: string[]): Promise<number> {
     const diagnostic = result.diagnostics;
     if (diagnostic && diagnostic.sourceState !== 'ready') deps.out('Task evidence is unavailable; skipped legacy exposure is unknown.');
     else if (diagnostic && typeof diagnostic.legacyUnboundCount === 'number' && diagnostic.legacyUnboundCount > 0 && typeof diagnostic.legacyUnboundAcu === 'number') {
-      deps.out(`Skipped ${diagnostic.legacyUnboundCount} legacy launches: ${acu(diagnostic.legacyUnboundAcu)} held; original account evidence is missing.`);
+      deps.out(`Skipped ${diagnostic.legacyUnboundCount} legacy launches: ${formatAcu(diagnostic.legacyUnboundAcu)} held; original account evidence is missing.`);
     }
   }
   return 0;
@@ -555,12 +557,12 @@ function cmdBudget(deps: DevinCliDeps, args: string[]): number {
     deps.out('Devin local budget capacity is unknown: task evidence is unavailable. Launches refused.');
     return 0;
   }
-  deps.out(`Devin budget: ${acu(view.acuUsed)} of ${acu(view.acuBudgetTotal)} accounted for · ${acu(view.acuRemaining)} left before in-flight reservations${view.paused ? ' · PAUSED' : ''}`);
-  deps.out(`  Today: ${acu(view.acuToday)} of ${acu(budget.maxAcuPerDay)} (used + unresolved exposure) · ${view.sessionsToday} of ${budget.maxSessionsPerDay} sessions`);
-  deps.out(`  Each session capped at ${acu(budget.maxAcuPerSession)} · ${view.running} of ${budget.maxConcurrent} running · reserve ${acu(budget.reserveAcu)} kept for you · pauses at ${Math.round(budget.pauseAtFraction * 100)}%`);
+  deps.out(`Devin budget: ${formatAcu(view.acuUsed)} of ${formatAcu(view.acuBudgetTotal)} accounted for · ${formatAcu(view.acuRemaining)} left before in-flight reservations${view.paused ? ' · PAUSED' : ''}`);
+  deps.out(`  Today: ${formatAcu(view.acuToday)} of ${formatAcu(budget.maxAcuPerDay)} (used + unresolved exposure) · ${view.sessionsToday} of ${budget.maxSessionsPerDay} sessions`);
+  deps.out(`  Each session capped at ${formatAcu(budget.maxAcuPerSession)} · ${view.running} of ${budget.maxConcurrent} running · reserve ${formatAcu(budget.reserveAcu)} kept for you · pauses at ${Math.round(budget.pauseAtFraction * 100)}%`);
   deps.out(`  Fleet: ${view.fleetRunning} of ${budget.fleetMaxConcurrent} running · ${view.fleetSessionsToday} of ${budget.fleetMaxSessionsPerDay} today · ${view.canFleetLaunch.ok ? 'fleet launches allowed' : `fleet launches refused: ${view.canFleetLaunch.reason}`}`);
   if (view.reportedAcuUsed !== undefined && view.unconfirmedAcuExposure !== undefined) {
-    deps.out(`  ${acu(view.reportedAcuUsed)} reported usage + adjustment · ${acu(view.unconfirmedAcuExposure)} held exposure`);
+    deps.out(`  ${formatAcu(view.reportedAcuUsed)} reported usage + adjustment · ${formatAcu(view.unconfirmedAcuExposure)} held exposure`);
     deps.out(`  ≈ $${view.estimatedUsdUsed} for recorded usage at $${budget.usdPerAcu}/ACU (estimate).`);
   } else deps.out('  Usage and reservations are not separated; recorded cost coverage is unavailable.');
   deps.out(`  ${view.canLaunch.ok ? 'Launches allowed.' : `Launches refused: ${view.canLaunch.reason}`}`);
@@ -618,7 +620,7 @@ function isComplete(deps: Partial<DevinCliDeps>): deps is DevinCliDeps {
 function clean(text: string): string {
   const home = process.env['HOME'];
   const noHome = home && home.length > 1 ? text.split(home).join('~') : text;
-  return noHome.replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]');
+  return redactDevinKeys(noHome);
 }
 
 const HELP_VALUE_OPTIONS = new Set([
@@ -709,7 +711,7 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
       deps.err(`${err.message}\n\n${USAGE}`);
       return 2;
     }
-    deps.err(`devin ${sub} failed: ${clean(err instanceof Error ? err.message : String(err))}`);
+    deps.err(`devin ${sub} failed: ${clean(errorMessageText(err))}`);
     return 1;
   }
 }
