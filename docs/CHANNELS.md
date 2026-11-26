@@ -141,14 +141,20 @@ source cannot be read. Pairing stores follow the same rule: a missing
 unpaired/zero, while an unreadable or malformed record reports `"unknown"` —
 never a guessed "not paired". `cli`, `desktop`, and `page` need no setup and
 always report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway
-file ([REMOTE-PHONE.md](REMOTE-PHONE.md)).
+file ([REMOTE-PHONE.md](REMOTE-PHONE.md)). The `imessage` row reads
+`comms.enabled`/`comms.imessageHandle` for `configured`, the
+`imessageAllow`/`imessageHandle` allowlist for `paired`, a chat.db probe for
+`ready`, and the `imessage.teammate-tasks.v1` ledger (queued + sending only)
+for `pendingOutbound` — `phm imessage doctor` is its next step when not
+ready. `phm channels add imessage` refuses: iMessage setup needs macOS Full
+Disk Access and handle detection a config write cannot grant.
 
 ## Where to watch it
 
 - **Desktop console** — the Channels pane (one card per channel), the
   Channel activity pane (inbox traffic per channel) and the Inbox pane.
 - **CLI** — `phm channels [--json]` shows every channel's state;
-  `phm channels status [--json]` rolls the six inbox kinds up;
+  `phm channels status [--json]` rolls the seven inbox kinds up;
   `phm comms bus read` shows every accepted bus envelope;
   `phm comms inbox read` reads the inbox file directly.
 - **API** — the `GET /api/verse/fleet/runs/inbox` route exposes the inbox in JSON.
