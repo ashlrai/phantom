@@ -405,13 +405,18 @@ export interface BusWorkJobKeyHold {
 }
 
 /**
- * The live holds across a claimed job's declared claim keys, minus the key the
- * claim targeted — the scope conflicts a single-key acquire cannot see, so a
- * worker learns at claim time that a sibling `repo:`/`path:`/`pr:` scope is
- * already held instead of discovering it on a later feed or claim-list read.
- * `source` keeps the coordination read honest: `unavailable` means sibling
- * holds are unknown, never an empty free set; `missing` is a verified-empty
- * table. Fencing tokens never leave the store.
+ * The live holds across a claimed job's declared claim keys — the scope
+ * conflicts a single-key acquire cannot see, so a worker learns at claim
+ * time that a sibling `repo:`/`path:`/`pr:` scope is already held instead of
+ * discovering it on a later feed or claim-list read. On `acquired`/`conflict`
+ * the targeted key is excluded because its state is already reported by
+ * `claim`/`holder`; on every other outcome that resolved the job no key's
+ * state is separately reported, so `holds` covers every declared claim key —
+ * the full hold map a claimant needs to see who already works (or is stuck
+ * on) the job. `source` keeps the
+ * coordination read honest: `unavailable` means holds are unknown, never an
+ * empty free set; `missing` is a verified-empty table. Fencing tokens never
+ * leave the store.
  */
 export interface BusWorkJobClaimScope {
   source: 'missing' | 'available' | 'unavailable';
@@ -423,7 +428,8 @@ export type BusWorkJobClaimResult =
       claim: { claimKey: string; owner: string; leaseMs: number; token: string; leaseUntil: number } }
   | { status: 'conflict'; job: BusWorkJobClaimRef; scope: BusWorkJobClaimScope;
       holder: { owner: string; claimKey: string; leaseUntil: number } }
-  | { status: 'invalid' | 'refused' | 'unavailable' | 'retryable' | 'full'; reason: string; job?: BusWorkJobClaimRef };
+  | { status: 'invalid' | 'refused' | 'unavailable' | 'retryable' | 'full'; reason: string;
+      job?: BusWorkJobClaimRef; scope?: BusWorkJobClaimScope };
 
 const JOB_LABEL = /^[\x21-\x7e]{1,128}$/;
 
@@ -445,7 +451,11 @@ function jobClaimRef(job: BusWorkFeedJob): BusWorkJobClaimRef {
  * `acquired` and `conflict` also carry `scope`: the live holds on the job's
  * other declared claim keys, read through the same `coordinationRowBlocks`
  * overlap the feed's `--claims` join applies, so a sibling scope already held
- * by another participant is visible in the claim result itself.
+ * by another participant is visible in the claim result itself. Every other
+ * outcome that resolved the job carries `scope` too — over every declared
+ * claim key, since no key's state is separately reported — so a
+ * `job-not-open` or `undeclared-key` refusal already names who holds the
+ * job's scopes instead of sending the claimant to a second claim-list read.
  */
 export function claimBusWorkJob(options: BusWorkJobClaimOptions): BusWorkJobClaimResult {
   const now = options.now ?? Date.now();
@@ -466,28 +476,34 @@ export function claimBusWorkJob(options: BusWorkJobClaimOptions): BusWorkJobClai
   const job = feed.jobs.find(entry => entry.id === options.job);
   if (job === undefined) return { status: 'invalid', reason: 'unknown-job' };
   const ref = jobClaimRef(job);
-  if (!BUS_FEED_OPEN_STATUSES.has(job.status)) return { status: 'refused', reason: 'job-not-open', job: ref };
-  if (job.claimKeys.length === 0) return { status: 'refused', reason: 'no-claim-keys', job: ref };
-  const queueKey = `queue:${job.id}`;
-  const key = options.key ?? (job.claimKeys.includes(queueKey) ? queueKey : job.claimKeys[0]!);
-  if (!job.claimKeys.includes(key)) return { status: 'refused', reason: 'undeclared-key', job: ref };
   const listed = listCoordination(options.root, now);
-  const scope: BusWorkJobClaimScope = {
-    source: listed.source,
-    holds: listed.source === 'available'
-      ? job.claimKeys.filter(claimKey => claimKey !== key).flatMap(claimKey =>
+  const holdsOn = (keys: string[]): BusWorkJobKeyHold[] =>
+    listed.source === 'available'
+      ? keys.flatMap(claimKey =>
           listed.claims.filter(row => coordinationRowBlocks(row, claimKey))
             .map(row => ({ claimKey, owner: row.owner, leaseUntil: row.leaseUntil })))
-      : [],
+      : [];
+  // Every outcome that is not acquired/conflict targeted no reported key, so
+  // its scope covers all declared claim keys — the full hold map, queue key
+  // included.
+  const fullScope: BusWorkJobClaimScope = { source: listed.source, holds: holdsOn(job.claimKeys) };
+  if (!BUS_FEED_OPEN_STATUSES.has(job.status)) return { status: 'refused', reason: 'job-not-open', job: ref, scope: fullScope };
+  if (job.claimKeys.length === 0) return { status: 'refused', reason: 'no-claim-keys', job: ref, scope: fullScope };
+  const queueKey = `queue:${job.id}`;
+  const key = options.key ?? (job.claimKeys.includes(queueKey) ? queueKey : job.claimKeys[0]!);
+  if (!job.claimKeys.includes(key)) return { status: 'refused', reason: 'undeclared-key', job: ref, scope: fullScope };
+  const scope: BusWorkJobClaimScope = {
+    source: listed.source,
+    holds: holdsOn(job.claimKeys.filter(claimKey => claimKey !== key)),
   };
   const result = executeBusClaimBody(
     { kind: 'work.claim', op: 'acquire', jobId: job.id, claimKey: key, owner: options.owner, leaseMs: options.leaseMs },
     options.id ?? newBusClaimOpId(), { root: options.root, now });
-  if (result === undefined) return { status: 'unavailable', reason: 'claim-unexpected', job: ref };
+  if (result === undefined) return { status: 'unavailable', reason: 'claim-unexpected', job: ref, scope: fullScope };
   if (result.status === 'acquired') return { status: 'acquired', job: ref, scope, claim: result.claim };
   if (result.status === 'conflict') return { status: 'conflict', job: ref, scope, holder: result.holder };
-  if (result.status === 'invalid') return { status: 'invalid', reason: 'claim-invalid', job: ref };
-  if (result.status === 'unavailable') return { status: 'unavailable', reason: 'claim-unavailable', job: ref };
-  if (result.status === 'full') return { status: 'full', reason: 'claim-full', job: ref };
-  return { status: 'unavailable', reason: 'claim-unexpected', job: ref };
+  if (result.status === 'invalid') return { status: 'invalid', reason: 'claim-invalid', job: ref, scope: fullScope };
+  if (result.status === 'unavailable') return { status: 'unavailable', reason: 'claim-unavailable', job: ref, scope: fullScope };
+  if (result.status === 'full') return { status: 'full', reason: 'claim-full', job: ref, scope: fullScope };
+  return { status: 'unavailable', reason: 'claim-unexpected', job: ref, scope: fullScope };
 }

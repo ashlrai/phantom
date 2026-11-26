@@ -3148,14 +3148,18 @@ outcome that found it) on every outcome that found it:
 `invalid`/`refused`/`unavailable`/`retryable`/`full` carry a slug `reason`
 (`invalid-job`/`invalid-owner`/`invalid-lease`/`invalid-key`, `unknown-job`,
 `job-not-open`, `no-claim-keys`, `undeclared-key`, `work-feed-*`,
-`claim-*`). `acquired` and `conflict` also carry `scope`
+`claim-*`). Every outcome that resolved the job also carries `scope`
 (`BusWorkJobClaimScope` `{source, holds}`): the live coordination holds on the
-job's other declared claim keys — the targeted key excluded — each
-`{claimKey, owner, leaseUntil}` found through the same `coordinationRowBlocks`
+job's declared claim keys found through the same `coordinationRowBlocks`
 overlap the feed's `--claims` join applies, so a sibling `repo:`/`path:`/`pr:`
-scope already held is visible in the claim result itself. `source` is
-`missing`, `available` or `unavailable`; an unavailable table means sibling
-holds are unknown, never an empty free set. A feed that cannot be read refuses
+scope already held is visible in the claim result itself. On `acquired` and
+`conflict` the targeted key is excluded — its state is already reported by
+`claim`/`holder` — while every other outcome reports no key's state
+separately, so its `holds` cover every declared claim key, queue key
+included: a `job-not-open` or `undeclared-key` refusal already names who
+holds the job's scopes. Each hold is `{claimKey, owner, leaseUntil}`.
+`source` is `missing`, `available` or `unavailable`; an unavailable table
+means holds are unknown, never an empty free set. A feed that cannot be read refuses
 rather than claiming against a guessed job. `phm agents bus work claim --job <id> --lease-ms <ms> [--key]
 [--owner] [--id]` prints it, exit 0 acquired, 2 invalid, 1 otherwise.
 `phm agents bus claim message acquire|renew|release|complete --id <envelope-id>`

@@ -650,6 +650,50 @@ describe('claimBusWorkJob', () => {
         holds: [{ claimKey: 'repo:a/b', owner: 'worker-1', leaseUntil: NOW + 600_000 }] } });
   });
 
+  it('reports the full hold map on refused outcomes', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-H', ['queue:RQ-H', 'repo:a/b'], 'a/b');
+    postStatus(root, 'RQ-H', 'running');
+    postWork(root, 'RQ-U', ['queue:RQ-U', 'repo:c/d'], 'c/d');
+    postWork(root, 'RQ-E2', []);
+    // Live holds across the running job's declared keys — the queue key a
+    // worker would claim and a sibling repo scope — must surface on the
+    // refusal itself, queue key included.
+    acquire('queue:RQ-H', 'runner-9', 600_000, 'op-hq', root);
+    acquire('repo:a/b', 'holder-1', 600_000, 'op-hr', root);
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-H', owner: 'w', leaseMs: 1_000 }))
+      .toMatchObject({ status: 'refused', reason: 'job-not-open',
+        scope: { source: 'available', holds: [
+          { claimKey: 'queue:RQ-H', owner: 'runner-9', leaseUntil: NOW + 600_000 },
+          { claimKey: 'repo:a/b', owner: 'holder-1', leaseUntil: NOW + 600_000 }] } });
+    // An undeclared --key refuses with the same full map over declared keys.
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-U', owner: 'w', leaseMs: 1_000, key: 'queue:OTHER' }))
+      .toMatchObject({ status: 'refused', reason: 'undeclared-key',
+        scope: { source: 'available', holds: [] } });
+    // A keyless job reports an honest empty hold map, never a missing scope.
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-E2', owner: 'w', leaseMs: 1_000 }))
+      .toMatchObject({ status: 'refused', reason: 'no-claim-keys',
+        scope: { source: 'available', holds: [] } });
+  });
+
+  it('keeps scope honest when the coordination table is unreadable', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-B', ['queue:RQ-B']);
+    postStatus(root, 'RQ-B', 'blocked');
+    postWork(root, 'RQ-O2', ['queue:RQ-O2']);
+    // A live claim creates the store file, then corruption makes every
+    // coordination read unavailable — holds stay unknown, never a free set.
+    acquire('repo:z/z', 'holder-9', 600_000, 'op-z', root);
+    writeFileSync(join(root, 'coordination', 'claims.json'), 'corrupt');
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-B', owner: 'w', leaseMs: 1_000 }))
+      .toMatchObject({ status: 'refused', reason: 'job-not-open',
+        scope: { source: 'unavailable', holds: [] } });
+    // The post-attempt failure path carries the same honest scope.
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-O2', owner: 'w', leaseMs: 1_000 }))
+      .toMatchObject({ status: 'unavailable', reason: 'claim-unavailable',
+        scope: { source: 'unavailable', holds: [] } });
+  });
+
   it('refuses malformed input before touching the feed', () => {
     const root = tempDir('v2jobclaim-');
     postWork(root, 'RQ-I', ['queue:RQ-I']);
