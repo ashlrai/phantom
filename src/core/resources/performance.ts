@@ -64,10 +64,11 @@ const STATUSES: ResourcePerformanceStatus[] = ['completed', 'failed', 'timed-out
 const COUNT_KEYS = ['total', 'reserved', 'completed', 'failed', 'timedOut', 'cancelled', 'uncertain'] as const;
 const TOKEN_KEYS = ['reportedInputTokens', 'reportedOutputTokens', 'totalInputTokens', 'totalOutputTokens'] as const;
 const SCOPES: Array<ResourceUsageScope | null> = [...RESOURCE_USAGE_SCOPES, null];
-const PROVIDER_SCOPE: Record<ResourceWorker['provider'], ResourceUsageScope> = {
+const PROVIDER_SCOPE: Record<ResourceWorker['provider'], ResourceUsageScope | null> = {
   codex: 'codex-turn', claude: 'claude-main-loop', local: 'local-chat-completion',
+  agy: null, 'devin-flash': null, zai: null,
 };
-export function resourceUsageScopeForProvider(provider: ResourceWorker['provider']): ResourceUsageScope {
+export function resourceUsageScopeForProvider(provider: ResourceWorker['provider']): ResourceUsageScope | null {
   return PROVIDER_SCOPE[provider];
 }
 function invalid(): never { throw new Error('Invalid resource performance evidence'); }
