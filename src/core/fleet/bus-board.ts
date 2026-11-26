@@ -595,14 +595,15 @@ export class BusBoard {
    * `BusBoardSenderFilter` `pendingFor`/`pendingAll` take — deliveries
    * keep only posts whose `sender` label the predicates accept while
    * tasks, which record no author, never match under `from` and stay
-   * listed under `excludeFrom`.
+   * listed under `excludeFrom`. `id` is the same exact retained-envelope
+   * match `pendingAll` takes.
    */
   pending(actor: string, now = Date.now(), jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number,
-    sender?: BusBoardSenderFilter): BusBoardPending {
+    sender?: BusBoardSenderFilter, id?: string): BusBoardPending {
     actor = this.peer(actor);
     return this.transaction(false, (state) => ({
       peer: actor,
-      ...this.presentDigest(this.pendingDigest(state, new Set([actor]), now, jobId, contains, sinceMs, beforeMs, sender)),
+      ...this.presentDigest(this.pendingDigest(state, new Set([actor]), now, jobId, contains, sinceMs, beforeMs, sender, id)),
     }));
   }
 
@@ -647,16 +648,17 @@ export class BusBoard {
    * posts recorded strictly before it, composing with `sinceMs` into one
    * `[since, before)` window where a delivery stamped exactly at the upper
    * bound never matches; tasks stay unmatchable under any time bound and
-   * thread rollups keep the same surviving-delivery rule.
+   * thread rollups keep the same surviving-delivery rule. `id`, when
+   * given, is the same exact retained-envelope match `pendingAll` takes.
    */
   pendingFor(peers: readonly string[], now?: number, jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number,
-    sender?: BusBoardSenderFilter): BusBoardPendingPeers {
+    sender?: BusBoardSenderFilter, id?: string): BusBoardPendingPeers {
     const labels = new Set<string>();
     for (const peer of peers) {
       try { labels.add(this.peer(peer)); } catch { /* not a board peer label; it can match nothing */ }
     }
     return this.transaction(false, (state) => {
-      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs, beforeMs, sender);
+      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs, beforeMs, sender, id);
       const known = new Set(digest.members);
       return {
         peers: [...labels].filter((label) => known.has(label)).sort(),
@@ -687,13 +689,18 @@ export class BusBoard {
    * member label the board knows under the applied scope, sorted. Item
    * `content.text` stays the stored untrusted text, exactly like
    * `pendingFor`; reading never acknowledges anything and grants no
-   * authority.
+   * authority. `id`, when given, is the exact retained-envelope match
+   * every bus read's `--id` applies: deliveries keep only the post whose
+   * stored `id` — the envelope id `thread ack` and `hops` report —
+   * strictly equals it, while tasks record no envelope id and never
+   * match, the same "unknown stays out" rule a time bound applies to the
+   * undated rows.
    */
   pendingAll(now?: number, jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number,
-    sender?: BusBoardSenderFilter): BusBoardPendingPeers {
+    sender?: BusBoardSenderFilter, id?: string): BusBoardPendingPeers {
     return this.transaction(false, (state) => {
       const labels = new Set(state.threads.flatMap((thread) => thread.members));
-      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs, beforeMs, sender);
+      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs, beforeMs, sender, id);
       return {
         peers: digest.members,
         claims: digest.claims,
@@ -729,11 +736,16 @@ export class BusBoard {
    * `[since, before)` window — the lower bound stays inclusive, the upper
    * exclusive, and an unparseable `createdAt` never satisfies either bound.
    * Tasks stay unmatchable under either bound and the thread rollup rule is
-   * unchanged.
+   * unchanged. `id`, when given, is the exact retained-envelope match every
+   * bus read's `--id` applies: deliveries keep only the post whose stored
+   * `id` — the envelope id `thread ack` and `hops` report — strictly equals
+   * it, while tasks record no envelope id and never match, the same
+   * "unknown stays out" rule a time bound applies to the undated rows; a
+   * thread rollup then lists only while that surviving delivery remains.
    */
   private pendingDigest(state: BoardState, labels: ReadonlySet<string>, now: number,
     jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number,
-    sender?: BusBoardSenderFilter): BusBoardDigest {
+    sender?: BusBoardSenderFilter, id?: string): BusBoardDigest {
     const index = this.options.fleet.readClaimIndex();
     const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
     const jobThreads = jobId === undefined ? undefined : new Set(
@@ -762,9 +774,11 @@ export class BusBoard {
       !acknowledged.has(delivery.id) &&
       textHit(busBoardDeliveryText(delivery)) &&
       boardTimeWindowHit(delivery.createdAt, sinceMs, beforeMs) &&
-      senderHit(delivery.sender));
+      senderHit(delivery.sender) &&
+      (id === undefined || delivery.id === id));
 
-    const tasks = state.tasks.filter((task) => sinceMs === undefined && beforeMs === undefined &&
+    const tasks = state.tasks.filter((task) => id === undefined &&
+      sinceMs === undefined && beforeMs === undefined &&
       sender?.from === undefined && joinedIds.has(task.threadId) &&
       (jobId === undefined || task.itemId === jobId) && textHit(task.title)).map((task): BusBoardPendingTask => {
       const entry = index.claims[task.itemId];
@@ -795,7 +809,7 @@ export class BusBoard {
       holdCounts.set(task.threadId, counts);
     }
     const threads: BusBoardPendingThread[] = joined
-      .filter((thread) => sinceMs !== undefined || beforeMs !== undefined || sender !== undefined
+      .filter((thread) => id !== undefined || sinceMs !== undefined || beforeMs !== undefined || sender !== undefined
         ? deliveryCounts.has(thread.id) || holdCounts.has(thread.id)
         : textHit(thread.title) || deliveryCounts.has(thread.id) || holdCounts.has(thread.id))
       .map((thread) => ({
@@ -1011,7 +1025,7 @@ export function busBoardPendingSender(
  * board paths derive from — the same seam `phm comms inbox`'s board source
  * and tests use, unset resolving `<ashlrHome>/fleet` — `now` the epoch-ms
  * thunk the digest evaluates holds against, and
- * `jobId`/`contains`/`sinceMs`/`beforeMs`/`from`/`excludeFrom` the same
+ * `jobId`/`contains`/`sinceMs`/`beforeMs`/`from`/`excludeFrom`/`id` the same
  * optional filters `BusBoard.pendingAll` takes.
  */
 export interface BusBoardPendingReadOptions {
@@ -1031,6 +1045,11 @@ export interface BusBoardPendingReadOptions {
    * resolves to under the same identity-label rule; board tasks stay
    * listed — nothing proves a task came from the excluded sender. */
   excludeFrom?: string;
+  /** Keep only the unacknowledged delivery whose stored envelope `id`
+   * strictly equals this value — the same exact retained-envelope match
+   * every bus read's `--id` applies; board tasks record no envelope id and
+   * never match under it. */
+  id?: string;
 }
 
 /**
@@ -1064,7 +1083,7 @@ export function readBusBoardPending(options: BusBoardPendingReadOptions = {}): B
     return {
       source: 'available',
       pending: new BusBoard({ root: paths.boardRoot, fleet, cfg })
-        .pendingAll(options.now?.(), options.jobId, options.contains, options.sinceMs, options.beforeMs, sender),
+        .pendingAll(options.now?.(), options.jobId, options.contains, options.sinceMs, options.beforeMs, sender, options.id),
     };
   } catch {
     return { source: 'unavailable' };
