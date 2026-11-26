@@ -52,6 +52,17 @@ describe('ecosystem wizard', () => {
     expect(screen.getByText('Some capabilities need a next step.')).toBeInTheDocument();
   });
 
+  it('uses distinct official marks for Phantom and its companions without changing accessible labels', async () => {
+    const { container } = render(<EcosystemWizard />);
+    await screen.findByLabelText('Phantom Secrets: locked');
+    const vault = screen.getByLabelText('Phantom Secrets: locked').closest('label');
+    expect(vault?.querySelector('img')).toHaveAttribute('src', expect.stringMatching(/\/logos\/phantom-secrets-logo\.svg$/));
+    expect(vault?.querySelector('img')).toHaveAttribute('alt', '');
+    expect(screen.getByText('Phantom', { selector: 'a' }).querySelector('img'))
+      .toHaveAttribute('src', expect.stringMatching(/\/logos\/phantom-workbench-logo\.svg$/));
+    expect(container.querySelectorAll('details img')).toHaveLength(10);
+  });
+
   it('requires a mutation token and recovers with a new detection after a stale-plan refusal', async () => {
     client.token.mockReturnValueOnce(null);
     render(<EcosystemWizard />);

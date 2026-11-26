@@ -60,7 +60,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
   { usage: 'phm fleet vitals [--runs-dir <directory>] [--json]', description: 'Read first-minute launch process and sampled CPU costs, plus the top three causes of empty jobs in 24 hours. Missing or incomplete evidence stays unknown or partial; no launches or writes.', safety: 'read', jsonShape: 'fleet.vitals.v1 {status,disk,launch,launchCost:{source,state,launches},local_gate:{source,state,reports,passed,failed,steps,last},emptyCauses:{total,top},stuck:{count,oldestAgeSeconds}}' },
   { usage: 'phm app restart --json', description: 'Report held restart: UI-owned sessions, PTYs and computer-use workers require runtime migration. Does not restart or replace the app. Exit 1 held, 2 usage.', safety: 'read', jsonShape: '{schema: phantom-app-restart/v1, state: held, restarted: false, reason, blockers}' },
   { usage: 'phm fleet feedback scan [--apply] [--days 1..30] [--runs-dir <absolute>] [--json]', description: 'Collect and triage feedback; preview by default. Apply stages at most five deduplicated jobs through existing drop admission. Never merges. Exit 1 for incomplete evidence or failure, 2 for usage.', safety: 'append', jsonShape: 'fleet.feedback.v1 {sources,candidates,queued,deferred,errors}' },
-  { usage: 'phm fleet feedback digest [--json]', description: 'Read the trailing twelve hours of merged PRs, jobs needing review, failures and last recorded launches. No sends or writes.', safety: 'read', jsonShape: 'fleet.feedback.v1 {sources,digest}' },
+  { usage: 'phm fleet feedback digest [--json]', description: 'Read the trailing twelve hours of merged PRs, jobs needing review, failures, last recorded launches and per-submission feedback outcomes (queued, under review, action required, merged, shipped). No sends or writes.', safety: 'read', jsonShape: 'fleet.feedback.v1 {sources,digest}' },
   { usage: 'phm amplify status|goal [--json] [--limit 1..100 (goal only)]', description: 'Offline objective snapshot and recent leader decisions. Missing or stale measurements are unknown. Exit 0 report, 1 IO failure, 2 usage.', safety: 'read', jsonShape: 'amplify.status.v1 | amplify.goal.v1' },
   { usage: 'phm amplify tick [--json]', description: 'One advisory iteration: appends ADVISORY actions to metrics/amplify.jsonl; never changes fleet state. Exit 0 recorded, 1 IO failure, 2 usage.', safety: 'append', jsonShape: 'amplify.status.v1; journal amplify.tick.v1' },
   {
@@ -263,10 +263,10 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{ budgets: PoolBudgetSnapshot }',
   },
   {
-    usage: 'phm resource --json [--directory <fleet-directory>]',
-    description: 'Refresh the shared resource projection in fleet.json from recorded usage and machine telemetry; no provider calls or dispatch.',
+    usage: 'phm resource [--cards] [--json] [--directory <fleet-directory>]',
+    description: 'Refresh the shared resource projection in $ASHLR_HOME/fleet.json (default ~/.ashlr) from recorded usage and machine telemetry; --cards groups pools into provider cards. No provider calls or dispatch.',
     safety: 'append',
-    jsonShape: 'resource.v1; missing or stale inputs have null measurements and unknown status',
+    jsonShape: 'resource.v1 (or provider-cards.v1 with --cards); missing or stale inputs have null measurements and unknown status; errors return {ok:false,error:{code,message}}',
   },
   {
     usage: 'ashlr fleet queue merged|read|complete <job-id> [--json]',
@@ -1370,7 +1370,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'pulse merge-latency [--jobs <jobs.jsonl>] [--json]', desc: 'Merge latency diagnosis: observed time waiting for checks, running checks and waiting to merge, with the top wastes. Read-only; unknown stays unknown.', topic: 'observability' },
   { cmd: 'pulse-export',                 desc: 'Fleet→pulse OTLP backfill/manual export.', topic: 'observability' },
   { cmd: 'pulse-test',                   desc: 'Fleet→pulse connectivity + auth probe (read-only).', topic: 'observability' },
-  { cmd: 'resource [--json] [--directory <fleet-directory>]', desc: 'Refresh the shared resource.v1 view in fleet.json from recorded inputs.', topic: 'observability' },
+  { cmd: 'resource [--cards] [--json] [--directory <fleet-directory>]', desc: 'Refresh the shared resource.v1 view in $ASHLR_HOME/fleet.json (or print provider-cards.v1 with --cards).', topic: 'observability' },
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
   { cmd: 'capacity publish [--json]', desc: 'Refresh local subscription usage metadata once with this node’s local authentication.', topic: 'observability' },
   { cmd: 'estates [--json] [--repo <repo-id>]', desc: 'Per-repo estate cards: health, CI, security. Read-only portfolio view.', topic: 'observability' },

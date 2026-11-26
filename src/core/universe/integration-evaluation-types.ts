@@ -30,7 +30,7 @@ export interface UniverseIntegrationEvaluationResult {
   score: number | null;
   metrics: Record<string, number>;
   /** Fixed public classification only; evaluator output and private error text are withheld. */
-  reason: 'rejected-by-fixed-evaluator' | 'composition-changed' | 'evaluator-failed' |
+  reason: 'rejected-by-fixed-evaluator' | 'rejected-by-sealed-scenario' | 'composition-changed' | 'evaluator-failed' |
     'evaluation-timed-out' | 'evaluation-cancelled' | 'candidate-materialization-failed' | null;
 }
 

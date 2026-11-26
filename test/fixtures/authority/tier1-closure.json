@@ -1510,6 +1510,7 @@
     "src/core/universe/resource-generation.ts",
     "src/core/universe/resource-runtime-check.ts",
     "src/core/universe/runner.ts",
+    "src/core/universe/sealed-integration-scenario.ts",
     "src/core/universe/search-context.ts",
     "src/core/universe/seed-context.ts",
     "src/core/universe/store.ts",

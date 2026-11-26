@@ -1,4 +1,6 @@
 import { apiGet } from '../../../data/client.js';
+import { ECOSYSTEM_BRANDS } from '../../../../core/brand/ecosystem.js';
+import { EcosystemMark } from '../../../components/brand/EcosystemMark.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { projectSecrets } from '../../../../core/workbench/secrets-model.js';
 
@@ -13,7 +15,7 @@ export function SecretsView() {
   const query = useQuery(secretsQuery);
   const refresh = useRefetch(secretsQuery);
   return <section aria-label="Phantom Secrets custody">
-    <h1>Phantom Secrets</h1>
+    <h1><EcosystemMark brand={ECOSYSTEM_BRANDS['phantom-secrets']} size={28} />Phantom Secrets</h1>
     <p>Custody metadata: names, scope, age and last rotation.</p>
     <button type="button" onClick={() => { void refresh(); }}>Refresh secrets</button>
     {query.status === 'loading' && <p role="status">Loading custody metadata…</p>}

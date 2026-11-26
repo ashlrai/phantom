@@ -2,20 +2,44 @@ import json
 import os
 from pathlib import Path
 import runpy
+import shlex
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "profile/apply.py"
-FAKE = """import json, os, sys
+FAKE = """import json, os, platform, shlex, subprocess, sys
 from pathlib import Path
 tool, *args = sys.argv
 tool = Path(tool).name
 if tool == 'ssh':
-    os.execv('/bin/sh', ['sh', '-c', args[-1]])
+    platform.system = lambda: os.environ['TEST_SYSTEM']
+    os.environ['TEST_SSH'] = '1'
+    exec(shlex.split(args[-1])[-1])
+    sys.exit(0)
+if tool == 'osascript':
+    command = args[-1]
+    assert all(not line.lstrip().startswith('===') for line in command.splitlines())
+    if os.environ.get('TEST_NO_GUI'):
+        sys.exit(1)
+    with (Path.home() / 'terminal-actions').open('a') as log:
+        log.write(command + '\\n')
+    if 'probe.py' in command:
+        os.environ['TEST_GUI'] = '1'
+        subprocess.run(['/bin/sh', '-c', command], check=True)
+        script, _, result = map(Path, shlex.split(command)[-3:])
+        assert all(not line.lstrip().startswith('===') for line in script.read_text().splitlines())
+        assert result.parent.stat().st_mode & 0o777 == 0o700
+        assert result.stat().st_mode & 0o777 == 0o600
+        assert json.loads(result.read_text()) == {'devin': True, 'agy': False, 'cursor-agent': False}
+    sys.exit(0)
+if tool == 'open':
+    assert args == ['-a', 'Claude']
+    (Path.home() / 'opened-app').write_text(args[-1])
+    sys.exit(0)
 if 'bundle' in args or 'i' in args or tool in ('winget', 'apt-get', 'pipx', 'ollama'):
     if tool in ('winget', 'apt-get', 'pipx', 'ollama'):
         with (Path.home() / (tool + '-commands')).open('a') as log:
@@ -29,9 +53,22 @@ elif tool == 'npm':
 elif tool == 'gh' and 'login' in args:
     print('! First copy your one-time code: ABCD-EFGH', flush=True)
     print('Open this URL to continue in your web browser: https://github.com/login/device', flush=True)
+elif tool == 'claude':
+    if args == ['auth', 'status', '--json']:
+        state = os.environ.get('TEST_CLAUDE_LOGGED_IN', 'true')
+        print('{"loggedIn": ' + state + ', "email": "fixture-private-data"}')
+        sys.exit(0 if state == 'true' else 1)
+    assert args == ['auth', 'login']
+    print('Ignore https://example.com/oauth/authorize?token=fixture-private-data', flush=True)
+    print('Ignore https://claude.ai/oauth/authorize?token=fixture-private-data', flush=True)
+    print('Open https://claude.ai/oauth/authorize?client_id=synthetic&code=true', flush=True)
+elif tool == 'agy' and args == ['models']:
+    print('Please sign in', 'fixture-private-data')
+elif tool == 'devin' and args == ['auth', 'status'] and os.environ.get('TEST_GUI'):
+    print('logged in', 'fixture-private-data')
 else:
-    print('logged in' if tool == 'claude' else 'not logged in', 'fixture-private-data', file=sys.stderr)
-    sys.exit(0 if tool == 'claude' else 1)
+    print('not logged in', 'fixture-private-data', file=sys.stderr)
+    sys.exit(1)
 """
 AUDIT = """
 import os, platform, runpy, sys
@@ -51,10 +88,11 @@ class ProfileTests(unittest.TestCase):
         self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
         bindir = self.home / "bin"
         bindir.mkdir()
-        self.env = {**os.environ, "HOME": str(self.home), "PATH": str(bindir), "TEST_SYSTEM": "Darwin"}
+        self.env = {**os.environ, "HOME": str(self.home), "TMPDIR": str(self.home),
+                    "PATH": str(bindir), "TEST_SYSTEM": "Darwin"}
         (bindir / "python3").symlink_to(sys.executable)
         for tool in ("brew", "npm", "ssh", "devin", "gh", "claude", "codex", "agy", "cursor-agent",
-                     "winget", "apt-get", "pipx", "ollama"):
+                     "winget", "apt-get", "pipx", "ollama", "osascript", "open"):
             fake = bindir / tool
             fake.write_text(f"#!{sys.executable}\n{FAKE}")
             fake.chmod(0o700)
@@ -84,8 +122,12 @@ class ProfileTests(unittest.TestCase):
                            "config:claude.permissions.defaultMode": "missing", "login:claude": "logged-in"}.items():
             self.assertEqual(items[key], state)
         self.assertEqual(set(self.home.rglob("*")), before)
-        row = self.profile("--host", "one", "--host", "two")["items"]["login:codex"]
+        report = self.profile("--host", "one", "--host", "two")["items"]
+        row = report["login:codex"]
         self.assertEqual(row, {"one": "login-needed", "two": "login-needed"})
+        self.assertEqual(report["login:devin"], {"one": "logged-in", "two": "logged-in"})
+        self.assertEqual(report["login:agy"], {"one": "login-needed", "two": "login-needed"})
+        self.assertFalse(list(self.home.glob("fleet-gui-*")))
 
     def test_apply_merges_and_backs_up_only_settings(self):
         before = {path: path.read_bytes() for path in (self.claude, self.codex)}
@@ -106,6 +148,37 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(rows["gh"], {"tool": "gh", "host": "one", "action": "approve",
                                       "url": "https://github.com/login/device", "code": "ABCD-EFGH"})
         self.assertEqual(rows["cursor-agent"]["command"], "cursor-agent login")
+        self.assertNotIn("devin", rows)
+        self.assertEqual(rows["agy"], {"tool": "agy", "host": "one", "action": "approve-in-terminal"})
+        self.assertEqual(rows["claude-desktop"], {"tool": "claude-desktop", "host": "one", "action": "approve-in-app"})
+        self.assertEqual((self.home / "opened-app").read_text(), "Claude")
+
+    def test_sign_in_starts_only_verified_local_flows(self):
+        self.env["TEST_CLAUDE_LOGGED_IN"] = "false"
+        rows = {row["tool"]: row for row in self.profile("--login")}
+        self.assertEqual(rows["claude"], {"tool": "claude", "host": "local", "action": "approve",
+                                         "url": "https://claude.ai/oauth/authorize?client_id=synthetic&code=true"})
+        self.assertEqual(rows["devin"], {"tool": "devin", "host": "local", "action": "approve-in-terminal"})
+        actions = (self.home / "terminal-actions").read_text().splitlines()
+        self.assertEqual([shlex.split(action)[3:] for action in actions], [
+            [str(self.home / "bin/agy")], [str(self.home / "bin/devin"), "auth", "login"],
+        ])
+
+    def test_remote_login_without_gui_does_not_start_keychain_flows(self):
+        self.env.update(TEST_NO_GUI="1", TEST_CLAUDE_LOGGED_IN="false")
+        items = self.profile("--host", "one")["items"]
+        rows = {row["tool"]: row for row in self.profile("--login", "--host", "one")}
+        self.assertEqual(rows["claude"]["action"], "approve")
+        for tool in ("agy", "devin", "cursor-agent"):
+            self.assertEqual(items[f"login:{tool}"], {"one": "unknown-over-ssh"})
+            self.assertEqual(rows[tool]["status"], "unknown-over-ssh")
+            self.assertEqual(rows[tool]["action"], "manual")
+        self.assertFalse((self.home / "terminal-actions").exists())
+
+    def test_gui_probe_timeout_returns_no_states(self):
+        gui_checks = runpy.run_path(str(SCRIPT))["gui_checks"]
+        with patch.dict(gui_checks.__globals__, terminal_launch=Mock(return_value=True), GUI_WAIT=0.01):
+            self.assertEqual(gui_checks({"agy": ["agy", "models"]}, SCRIPT.read_text()), {})
 
     def test_windows_and_linux_installers_and_report_only_models(self):
         self.env["TEST_SYSTEM"] = "Windows"

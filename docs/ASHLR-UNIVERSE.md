@@ -1537,7 +1537,7 @@ from planning.
 `integration evaluate` performs local writes and executes the selected Universe's
 fixed evaluator. It does **not** execute generation variants, contact models,
 change campaign budgets, select an elite, publish Git objects/refs, or deploy.
-Like existing Universe evaluation, it requires macOS with `sandbox-exec`.
+Command evaluators require macOS with `sandbox-exec`, as in ordinary trials.
 
 The evaluation request is separate from the read-only integration definition:
 
@@ -1567,11 +1567,11 @@ node bin/ashlr universe integration evaluate \
 
 The operation holds the acceptance Universe's execution lease, records intent
 before candidate/evaluator work, loads pinned Git blobs without checkout hooks
-or filters, retains a frozen artifact, and invokes the shared confined evaluator.
-The candidate and fixed seed are read-only to the evaluator; only its own scratch
-is writable and network access is denied. Source composition, comparator and
-artifact identity are checked around evaluation. Existing campaign/trial history
-does not gain synthetic runs or selection results.
+or filters, and retains a frozen artifact. Command evaluators run confined:
+the candidate and fixed seed are read-only, only evaluator scratch is writable,
+and network access is denied. Source composition, comparator and artifact
+identity are checked around evaluation. Existing campaign/trial history does
+not gain synthetic runs or selection results.
 
 Results distinguish `passed`, `rejected`, `failed`, `timed-out` and `cancelled`.
 Measured passes and rejections bind the request, acceptance and composition
@@ -1603,6 +1603,43 @@ cancellation, and `2` for invalid arguments or a malformed private manifest.
 The SDK exports `validateUniverseIntegrationEvaluationRequest(request)` and
 `evaluateUniverseIntegration(request, { root, signal })`. Account reserves,
 resource allocation and background fleet activation are unchanged.
+
+#### Sealed downstream checkout acceptance
+
+For the local checkout fixture, the operator can register the acceptance
+Universe with this extra field in its command-style `evaluation` object:
+
+```json
+"integrationScenario": {
+  "id": "checkout-budget-v1",
+  "digest": "e8e7c766b12f668d7044f72791246f70122eb6e6234d3d372c32003ccbadccbd"
+}
+```
+
+This selects the host-owned checkout scenario instead of the command for
+**integration evaluation only**; ordinary trials still use their command.
+The scenario checks the combined fee and budget data as a downstream checkout
+would. It does not execute candidate code, start a subprocess, or use the
+network. Keep the implementing prompt to the task and public branch tests:
+the sealed inputs and expected outcome belong to the evaluator host, not to
+the prompt, candidate tree, or integration request. The checked-in evaluator
+is inspectable in Phantom's source; this is prompt and candidate-artifact
+separation, not secrecy from readers of the evaluator checkout.
+
+The manifest and comparator digests bind the scenario version and its input
+digest to the receipt. A mismatch stops registration, evaluation, replay or
+delivery rather than running different expectations. Rejections record
+`rejected-by-sealed-scenario` and retain the exact frozen artifact. The normal
+local delivery path requires a verified passing receipt from the selected
+acceptance Universe. Changes to the scenario contract or expectations require
+a new scenario version and acceptance Universe.
+
+The hermetic regression in `test/universe-sealed-integration-scenario.test.ts`
+uses two independently green branches, a rejected composition, and a compatible
+composition that can be delivered. This is an opt-in local check, not a fleet-wide
+merge rule. Before expanding it, count combined-change rejections before
+delivery and manual composition repairs per 100 matched deliveries, with
+incumbent false rejections tracked separately. No fleet baseline is claimed.
 
 ### Inspect and deliver an evaluated combination
 

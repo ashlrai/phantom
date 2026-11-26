@@ -1,5 +1,5 @@
 /** Projection of dispatchd's resource ledger and API spend tail. Read-only unless `recordHistory` is set. */
-import { quotaEvidence, type QuotaEvidence, type QuotaMeasurement } from './resource-reset-evidence.js';
+import { budgetTimestamp, quotaEvidence, type QuotaEvidence, type QuotaMeasurement } from './resource-reset-evidence.js';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -151,7 +151,7 @@ export function summarizeApiSpend(lines: string, nowMs: number, tzOffsetMinutes 
  * usage-history.ts). Off by default: most callers only read.
  */
 export async function readResourceLedger(opts: { runsDir?: string; now?: () => number; personalCodexHome?: string; recordHistory?: boolean } = {}): Promise<ResourceLedgerV1> {
-  const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
+  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const now = (opts.now ?? Date.now)();
   const result: ResourceLedgerV1 = { v: 1, generatedAt: new Date(now).toISOString(), sources: { status: 'missing', apiSpend: 'missing', jobs: 'missing' }, asOf: null, lanes: [], apiSpend: null, jobsMalformedRows: null };
   // A controller tick republishes cached quotas; it never recaptures them.
@@ -169,13 +169,13 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
           if (!safeName(lane)) { result.sources.status = 'degraded'; continue; }
           const l = object(data.lanes[lane]) ? data.lanes[lane] : {};
           const b = object(budget[lane]) ? budget[lane] : {};
-          statusQuotaObservedAt.set(lane, timestamp(b.observed_at));
+          statusQuotaObservedAt.set(lane, b.estimated === true || b.stale === true ? null : budgetTimestamp(b.observed_at) ?? budgetTimestamp(b.as_of));
           if ((lane in data.lanes && !object(data.lanes[lane])) || (lane in budget && !object(budget[lane]))) result.sources.status = 'degraded';
           const gift = giftCredit(b, data.last_tick, now);
           const credits = number(b.credits_remaining) ?? gift.usd;
           result.lanes.push({ lane, running: number(l.running), target: number(l.target), held: typeof l.held === 'boolean' ? l.held : null,
             window: lane === 'claude' || lane.startsWith('codex-') ? 'weekly' : credits !== null || gift.present ? 'credits' : 'none',
-            usedPct: number(b.weekly_used_pct), creditsRemaining: credits, resetAt: timestamp(b.reset_at) ?? gift.expires,
+            usedPct: number(b.weekly_used_pct), creditsRemaining: credits, resetAt: budgetTimestamp(b.reset_at) ?? gift.expires,
             ...(gift.present ? { creditUnit: 'usd' as const, creditAsOf: gift.asOf, creditClosed: gift.closed } : {}),
             burnPctPerHour: number(b.burn_pct_per_hour), tokensPerHour6h: number(b.tokens_per_hour_6h), projectedExhaustion: timestamp(b.projected_exhaustion),
             source: typeof b.source === 'string' ? redactHomePaths(scrubPrivateText(b.source, { emails: true })).replace(/\p{Cc}/gu, ' ').slice(0, 160) : null, deadSignal: null });

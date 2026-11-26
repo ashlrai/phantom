@@ -92,7 +92,7 @@ async function writeDisk(model: CachedWorld): Promise<void> {
 }
 
 async function readQueue(): Promise<{ ready: number; claimed: number } | null> {
-  const path = join(homedir(), '.ashlr-runs', 'queue', 'queue.v1.json');
+  const path = join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'queue.v1.json');
   try {
     const stat = await lstat(path);
     if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_BYTES) return null;

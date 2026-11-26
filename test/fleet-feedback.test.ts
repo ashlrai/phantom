@@ -160,6 +160,69 @@ describe('feedback scan and digest', () => {
     ].join('\n');
     expect(feedbackDigest(s, ledger, now)).toMatchObject({ needsReview: ['DONE'], invalidRows: 0 });
   });
+  it('journals each queued submission and reports it queued until the ledger resolves it', async () => {
+    const s = snapshot([signal('Bug: export crashes', [`${url}/issues/7`])]);
+    const d = { ingest: async () => s, read: async () => '' };
+    const applied = await runFeedback({ ...options(), apply: true }, d);
+    expect(applied.queued).toHaveLength(1);
+    const job = applied.queued[0]!;
+    const lines = (await readFile(join(root, 'feedback/feedback-queued.jsonl'), 'utf8')).trim().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toEqual({ at: expect.any(String), job, source: 'self-report',
+      ref: `${url}/issues/7`, kind: 'bug' });
+    const digest = await runFeedback({ ...options(), command: 'digest' }, d);
+    expect('digest' in digest && digest.digest).toMatchObject({ submissions: [{ job, request: `${url}/issues/7`,
+      source: 'self-report', kind: 'bug', state: 'queued', pr: null }] });
+    expect(digest.sources['feedback-queued']).toBe('ok');
+  });
+  it('folds FB ledger rows into action-required, under-review, merged and shipped states', () => {
+    const s = snapshot();
+    s.shipped = [{ ref: `${url}/pull/11`, at: now - 1000 }];
+    const fb = (c: string) => `RQ-PHX-FB${c.repeat(24)}`;
+    const [shipped, merged, review, failed, gaveUp, running, skipped, finished] =
+      ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map(fb);
+    const ledger = [
+      { job: shipped, event: 'publish', url: `${url}/pull/11`, ts: now - 5000 },
+      { job: shipped, event: 'outcome', state: 'MERGED', ts: now - 4000 },
+      { job: merged, event: 'publish', url: `${url}/pull/12`, ts: now - 5000 },
+      { job: merged, event: 'outcome', state: 'MERGED', ts: now - 4000 },
+      { job: review, event: 'publish', url: `${url}/pull/13`, ts: now - 5000 },
+      { job: failed, event: 'finish', ts: now - 3000, exit_code: 1 },
+      { job: gaveUp, event: 'launch_failed', action: 'give_up', ts: now - 3000 },
+      { job: running, event: 'launch', ts: now - 3000 },
+      { job: skipped, event: 'precheck_skip', ts: now - 3000 },
+      { job: finished, event: 'finish', ts: now - 3000, exit_code: 0 },
+      { job: 'RQ-PHX-OTHER1', event: 'finish', ts: now - 3000, exit_code: 1 },
+    ].map(r => JSON.stringify(r)).join('\n');
+    const entries = [shipped, merged, review, failed, gaveUp, running, skipped, finished]
+      .map((job, i) => ({ at: new Date(now - 6000 - i).toISOString(), job, source: 'github-issue',
+        ref: `${url}/issues/${i + 1}`, kind: 'bug' }));
+    const out = feedbackDigest(s, ledger, now, entries);
+    const byJob = new Map(out.submissions.map(x => [x.job, x]));
+    expect(byJob.get(shipped)).toMatchObject({ state: 'shipped', pr: `${url}/pull/11` });
+    expect(byJob.get(merged)).toMatchObject({ state: 'merged', pr: `${url}/pull/12` });
+    expect(byJob.get(review)).toMatchObject({ state: 'under-review', pr: `${url}/pull/13` });
+    expect(byJob.get(failed)?.state).toBe('action-required');
+    expect(byJob.get(gaveUp)?.state).toBe('action-required');
+    expect(byJob.get(skipped)?.state).toBe('action-required');
+    expect(byJob.get(finished)?.state).toBe('action-required');
+    expect(byJob.get(running)?.state).toBe('queued');
+    expect(byJob.has('RQ-PHX-OTHER1')).toBe(false);
+    expect(out.submissions.every(x => x.request !== null)).toBe(true);
+  });
+  it('keeps ledger-only FB jobs visible with unknown provenance and degrades on an unreadable journal', async () => {
+    const s = snapshot();
+    const job = `RQ-PHX-FB${'C'.repeat(24)}`;
+    const ledger = JSON.stringify({ job, event: 'outcome', state: 'CLOSED', ts: now - 1000 });
+    const direct = feedbackDigest(s, ledger, now, null);
+    expect(direct.submissions).toEqual([{ job, request: null, source: null, kind: null,
+      state: 'action-required', pr: null, at: new Date(now - 1000).toISOString() }]);
+    await mkdir(join(root, 'feedback/feedback-queued.jsonl'), { recursive: true });
+    const digest = await runFeedback({ ...options(), command: 'digest' },
+      { ingest: async () => s, read: async (_r, p) => p === 'metrics/jobs.jsonl' ? ledger : '' });
+    expect('digest' in digest && digest.digest).toMatchObject({ submissions: [{ job, state: 'action-required', request: null }] });
+    expect(digest.sources['feedback-queued']).toBe('unavailable');
+  });
   it('CLI validates before calling dependencies and emits bounded operational errors', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {});
     const run = vi.fn(runFeedback);

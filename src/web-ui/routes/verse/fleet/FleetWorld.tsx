@@ -2,7 +2,7 @@
 import { lazy, Suspense, useEffect, useId, useState } from 'react';
 import type { FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js';
 import type { OptionalRead } from '../command/surface-data.js';
-import { VerseMark } from '../rail-icons.js';
+import { AgentGhost } from '../rail-icons.js';
 import { runStatus, runTone } from './live-model.js';
 import { workingRuns } from './SteerPanel.js';
 import styles from './fleet-world.module.css';
@@ -80,7 +80,7 @@ export default function FleetWorld({ read, refreshing = false, readFailed = fals
             {groups.get(repo)!.map(run => <button type="button" key={run.id}
               className={styles.agent} aria-pressed={selectedId === run.id} aria-controls={inspectorId}
               data-tone={runTone(runStatus(run))} onClick={() => setSelectedId(run.id)}>
-              <span className={styles.ghost}><VerseMark size={42} /></span>
+              <span className={styles.ghost}><AgentGhost size={42} /></span>
               <strong>{run.title}</strong><span>{run.engine ?? run.lane ?? 'Resource not reported'}</span>
               <span className={styles.status}>{runStatus(run)}</span>
             </button>)}

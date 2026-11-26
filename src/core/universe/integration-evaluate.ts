@@ -8,6 +8,7 @@ import { artifactDigest, canonical, copyArtifact, defaultUniverseRoot, digest, f
 import { deliveryGit, type GitTreeEntry } from './delivery-git.js';
 import { assertUniverseExecution, withUniverseExecution } from './execution.js';
 import { runFixedUniverseEvaluator } from './fixed-evaluator.js';
+import { runSealedIntegrationScenario } from './sealed-integration-scenario.js';
 import { readUniverseIntegrationPlan, validateUniverseIntegrationDefinition } from './integration-plan.js';
 import type { UniverseIntegrationEvaluationEvidence, UniverseIntegrationEvaluationRequest,
   UniverseIntegrationEvaluationResult } from './integration-evaluation-types.js';
@@ -77,11 +78,11 @@ function validResult(value: unknown): value is UniverseIntegrationEvaluationResu
     typeof acceptance.universeId !== 'string' || !ID.test(acceptance.universeId) ||
     !['manifestDigest', 'comparatorDigest'].every((key) => typeof acceptance[key] === 'string' && HASH.test(acceptance[key] as string)) ||
     typeof value.compositionDigest !== 'string' || !HASH.test(value.compositionDigest) || !validMetrics(value.metrics) ||
-    ![null, 'rejected-by-fixed-evaluator', 'composition-changed', 'evaluator-failed', 'evaluation-timed-out', 'evaluation-cancelled',
+    ![null, 'rejected-by-fixed-evaluator', 'rejected-by-sealed-scenario', 'composition-changed', 'evaluator-failed', 'evaluation-timed-out', 'evaluation-cancelled',
       'candidate-materialization-failed'].includes(value.reason as string | null)) return false;
   const measured = value.status === 'passed' || value.status === 'rejected';
   if (value.status === 'passed' && value.reason !== null) return false;
-  if (value.status === 'rejected' && value.reason !== 'rejected-by-fixed-evaluator') return false;
+  if (value.status === 'rejected' && !['rejected-by-fixed-evaluator', 'rejected-by-sealed-scenario'].includes(String(value.reason))) return false;
   if (value.status === 'failed' && !['composition-changed', 'evaluator-failed', 'candidate-materialization-failed'].includes(String(value.reason))) return false;
   if (value.status === 'timed-out' && value.reason !== 'evaluation-timed-out') return false;
   if (value.status === 'cancelled' && value.reason !== 'evaluation-cancelled') return false;
@@ -311,9 +312,14 @@ export async function evaluateUniverseIntegration(input: unknown,
         if (artifactDigest(artifactPath) !== artifactDigestValue) throw new Error('materialization');
         check(); assertUniverseExecution(directory, lock);
         evaluatorStarted = true;
-        const evaluation = await runFixedUniverseEvaluator(record, root, artifactPath, artifactDigestValue, evaluatorScratch,
-          Math.max(1, Math.min(record.manifest.evaluation.timeoutMs, Math.floor(deadline - performance.now()))), controller.signal,
-          evaluatorEnvironment(record, artifactPath, evaluatorScratch), true);
+        const scenario = record.manifest.evaluation.integrationScenario;
+        const evaluatorDeadline = Math.min(deadline, performance.now() + record.manifest.evaluation.timeoutMs);
+        const evaluation = scenario ? runSealedIntegrationScenario(scenario, artifactPath, artifactDigestValue) :
+          await runFixedUniverseEvaluator(record, root, artifactPath, artifactDigestValue, evaluatorScratch,
+            Math.max(1, Math.min(record.manifest.evaluation.timeoutMs, Math.floor(deadline - performance.now()))), controller.signal,
+            evaluatorEnvironment(record, artifactPath, evaluatorScratch), true);
+        const scenarioTimedOut = scenario !== undefined && performance.now() >= evaluatorDeadline;
+        if (scenario && artifactDigest(artifactPath) !== artifactDigestValue) throw new Error('Scored artifact changed during evaluation');
         // `not-started` is a confirmed non-execution outcome; every other
         // missing or unknown receipt can conceal a still-live evaluator.
         if (evaluation.processGroupSettlement !== 'group-exit-confirmed' && evaluation.processGroupSettlement !== 'not-started') {
@@ -325,14 +331,14 @@ export async function evaluateUniverseIntegration(input: unknown,
         if (!current.compositionReady || current.compositionDigest !== request.expectedCompositionDigest) {
           result = emptyResult(request, requestDigestValue, startedAt, 'failed', 'composition-changed');
         } else if (evaluation.cancelled || options.signal?.aborted) result = emptyResult(request, requestDigestValue, startedAt, 'cancelled', 'evaluation-cancelled');
-        else if (evaluation.timedOut || timedOut) result = emptyResult(request, requestDigestValue, startedAt, 'timed-out', 'evaluation-timed-out');
+        else if (evaluation.timedOut || timedOut || scenarioTimedOut) result = emptyResult(request, requestDigestValue, startedAt, 'timed-out', 'evaluation-timed-out');
         else if (evaluation.error || evaluation.exitCode !== 0 || evaluation.signal !== null) result = emptyResult(request, requestDigestValue, startedAt, 'failed', 'evaluator-failed');
         else {
           const measured = parseEvaluation(evaluation.stdout);
           result = { schemaVersion: 1, id: request.id, requestDigest: requestDigestValue, status: measured.passed ? 'passed' : 'rejected',
             startedAt, finishedAt: new Date().toISOString(), durationMs: 0, acceptance: { ...request.acceptance },
             compositionDigest: request.expectedCompositionDigest, artifactDigest: artifactDigestValue, artifactPath, score: measured.score,
-            metrics: measured.metrics, reason: measured.passed ? null : 'rejected-by-fixed-evaluator' };
+            metrics: measured.metrics, reason: measured.passed ? null : scenario ? 'rejected-by-sealed-scenario' : 'rejected-by-fixed-evaluator' };
         }
       } catch (error) {
         if (error instanceof UnresolvedSettlementError) {

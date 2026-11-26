@@ -15,6 +15,7 @@
  */
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { PRODUCT_NAME } from '../../app/product-brand.js';
+import { PhantomMark } from '../../app/product-brand-mark.js';
 import { adoptInjectedTokens, establishReadSession, isDesktopSession, reconnectDesktopSession, setMutationToken } from '../../data/auth-store.js';
 import styles from './SessionGate.module.css';
 
@@ -121,7 +122,7 @@ function BrowserSessionGate({ onAuthenticated, heading = `Connect to ${PRODUCT_N
     <div className={styles.wrap}>
       <div className={styles.card}>
         <div className={styles.badge} aria-hidden="true">
-          ⛺
+          <PhantomMark size={44} />
         </div>
         <h1 className={styles.heading}>{heading}</h1>
         <p className={styles.body}>

@@ -160,7 +160,7 @@ async function readLaunchRecords(root: string, now: number): Promise<LaunchRecor
   return records;
 }
 export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}): Promise<FleetRunsDirState> {
-  const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
+  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const now = (opts.now ?? Date.now)();
   const state: FleetRunsDirState = {
     v: 1, generatedAt: new Date(now).toISOString(), runsDirPresent: false, sourceState: 'missing',
