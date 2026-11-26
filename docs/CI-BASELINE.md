@@ -629,7 +629,10 @@ once their recorded time falls inside that window.
 The repository, head SHA and run ID prevent repeated attempts even after a
 crash or failed call; a new head is eligible. Reads tolerate malformed rows and
 are bounded to the last 4 MiB, so deduplication, counts and recurrence cover
-that retained read window. `phm ci reruns --json` shows the latest 100 entries,
+that retained read window. Rerun identity compares repository names
+case-insensitively, so a configuration casing change preserves duplicate
+protection, pending verdicts and the polling cursor. Raw journal entries
+retain their recorded spelling. `phm ci reruns --json` shows the latest 100 entries,
 counts in that window, the last-hour attempt count, the recurring flakes and
 the rerun verdicts. Reports and the hourly cap count rows through the
 evaluation time, inclusive. Future-dated receipts still prevent duplicate

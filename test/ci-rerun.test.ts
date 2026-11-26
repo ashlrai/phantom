@@ -43,6 +43,37 @@ describe('resident CI reruns', () => {
     await runCiRerunMaintenance(opts);
     expect(reruns()).toHaveLength(2);
   });
+
+  it('reconciles rerun receipts and polls pending calls across repository casing changes', async () => {
+    const { opts, gh } = setup();
+    await runCiRerunMaintenance(opts);
+    const original = readCiReruns(opts.journalPath, opts.now!()).recent;
+    const repo = 'Org/Repo';
+    appendFileSync(opts.journalPath!, original.map(row => JSON.stringify({ ...row, repo })).join('\n') + '\n');
+    expect(readCiReruns(opts.journalPath, opts.now!())).toMatchObject({
+      counts: { attempted: 1, ok: 1, failed: 0 },
+      lastHour: 1,
+      verdicts: { pending: 1 },
+    });
+
+    opts.repos = [repo];
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    gh.mockClear();
+    gh.mockResolvedValue({ ok: true, stdout: JSON.stringify({
+      id: 123, head_sha: 'a'.repeat(40), status: 'completed', conclusion: 'success',
+      run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z', updated_at: '2026-01-01T12:08:00Z',
+    }), stderr: '' });
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos[repo]).toMatchObject({ attempted: 0, skippedDuplicate: 1, verdictsResolved: 1 });
+    expect(gh.mock.calls).toEqual([[['api', 'repos/Org/Repo/actions/runs/123']]]);
+
+    const verdict = readCiReruns(opts.journalPath, opts.now!()).recent.at(-1)!;
+    appendFileSync(opts.journalPath!, JSON.stringify({ ...verdict, repo }) + '\n');
+    const read = readCiReruns(opts.journalPath, opts.now!());
+    expect(read.verdicts).toMatchObject({ pass: 1, pending: 0 });
+    expect(read.recent.filter(row => row.outcome === 'verdict').map(row => row.repo)).toEqual(['org/repo', repo]);
+  });
+
   it('counts replayed attempts once and preserves the original hourly boundary', async () => {
     const { opts, gh, report } = setup();
     opts.maxPerHour = 2;
@@ -515,8 +546,10 @@ describe('resident CI reruns', () => {
     expect(first.repos['org/repo']?.verdictsResolved).toBe(oldestUnresolved ? 0 : 8);
     expect(gh.mock.calls.filter(call => call[0][0] === 'api')).toHaveLength(8);
     gh.mockClear();
+    const repo = oldestUnresolved ? 'Org/Repo' : 'org/repo';
+    opts.repos = [repo];
     const second = await runCiRerunMaintenance(opts);
-    expect(second.repos['org/repo']?.verdictsResolved).toBe(2);
+    expect(second.repos[repo]?.verdictsResolved).toBe(2);
     expect(gh.mock.calls.map(([args]) => Number(args[1]!.split('/').pop())))
       .toEqual(oldestUnresolved ? [108, 109, 100, 101, 102, 103, 104, 105] : [108, 109]);
     expect(readCiReruns(opts.journalPath!, opts.now!()).verdicts).toMatchObject({
