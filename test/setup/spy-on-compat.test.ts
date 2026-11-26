@@ -48,7 +48,7 @@ describe('worker mock compatibility', () => {
     expect(restored.identity).not.toBe(mockIdentity);
     expect(restored.identity).not.toBe(first.identity);
   });
-  it('preserves original root-relative unmock resolution for a caller elsewhere', async () => {
+  it('resolves unmock paths relative to a caller outside the setup directory', async () => {
     const { mockAndRestoreIdentity } = await import('../worker-mock-compat-caller.js');
     const result = await mockAndRestoreIdentity();
     expect(result.mocked).toBe(result.mockIdentity);
