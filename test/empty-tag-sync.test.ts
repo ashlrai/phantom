@@ -137,6 +137,31 @@ describe('syncEmptyTagsFromJobsLedger', () => {
     expect(readTags(runsDir)).toHaveLength(3);
   });
 
+  it('reserves classification capacity and dupcheck outcomes for worker finishes', async () => {
+    writeJobs([
+      line({ event: 'precheck_skip', job: 'RQ-SKIP', ts: TS }),
+      line({ event: 'skipped_empty', job: 'RQ-TAGGED-SKIP', ts: TS }),
+      finish('RQ-WORKER', true),
+    ].join('\n') + '\n');
+    writeLog('RQ-WORKER', 'This is a duplicate of an earlier job.');
+    writeFileSync(join(runsDir, TAGS_FILE), line({
+      schema: 'job.empty-tag.v1', job: 'RQ-TAGGED-SKIP', tag: 'already_done',
+    }) + '\n');
+    writeFileSync(join(runsDir, DUPCHECK_FILE), ['RQ-TAGGED-SKIP', 'RQ-WORKER'].map(job => line({
+      schema: 'queue.dupcheck-event.v1', at: '2026-10-28T18:00:00.000Z', job, action: 'launch',
+    })).join('\n') + '\n');
+
+    const result = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW, maxClassify: 1 });
+
+    expect(result).toMatchObject({
+      candidates: 1, alreadyTagged: 0, classified: 1, deferred: 0, recorded: 1, dupcheckOutcomes: 1,
+    });
+    expect(readTags(runsDir).map(row => row['job'])).toEqual(['RQ-TAGGED-SKIP', 'RQ-WORKER']);
+    expect(readDupcheck(runsDir).filter(row => row['action'] === 'outcome')).toEqual([
+      expect.objectContaining({ job: 'RQ-WORKER', tag: 'already_done' }),
+    ]);
+  });
+
   it('reports a missing jobs ledger without writing', async () => {
     const out = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
     expect(out).toMatchObject({ state: 'missing', candidates: 0, recorded: 0 });
