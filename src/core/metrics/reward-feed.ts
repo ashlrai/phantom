@@ -106,6 +106,17 @@ function firstString(row: Record<string, unknown>, keys: readonly string[]): str
   return null;
 }
 
+/** The first observed lane in the dispatch receipt's alias order. */
+function dispatchLane(row: Record<string, unknown>): string | null {
+  for (const key of LANE_KEYS) {
+    const value = row[key];
+    if (typeof value !== 'string') continue;
+    const lane = value.trim();
+    if (lane.toLowerCase() !== 'unknown' && POOL_PATTERN.test(lane)) return lane;
+  }
+  return null;
+}
+
 /** jobs.jsonl stamps arrive as ISO (with or without offset colon) or epoch-ms numbers. */
 function ledgerTs(row: Record<string, unknown>): number | null {
   for (const key of TS_KEYS) {
@@ -289,7 +300,7 @@ export function foldJobsLedgerRewards(
       continue;
     }
     if (name !== undefined && DISPATCH_EVENTS.has(name)) {
-      acc.dispatches.push({ ms: at, lane: firstString(row, LANE_KEYS), repo: repoOf(row) });
+      acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row) });
     } else if (ciBoundary) {
       noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at);
     }
@@ -336,9 +347,7 @@ function dispatchBefore(acc: RewardJobAccum, boundMs: number): DispatchMark | nu
       lanes.clear();
       repos.clear();
     }
-    if (dispatch.lane !== null && dispatch.lane !== 'unknown' && POOL_PATTERN.test(dispatch.lane)) {
-      lanes.add(dispatch.lane);
-    }
+    if (dispatch.lane !== null) lanes.add(dispatch.lane);
     if (dispatch.repo !== null) repos.add(dispatch.repo);
   }
   // The dispatcher stamps receipts to the second. Conflicting lanes at the

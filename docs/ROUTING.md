@@ -369,6 +369,11 @@ the feed uses the single distinct repository observed at the latest dispatch
 timestamp at or before the outcome. Repository names are case-insensitive.
 Missing or conflicting dispatch repository evidence leaves the reward's
 repository null when the verdict supplies none.
+For pool attribution, each receipt at that latest dispatch timestamp supplies
+its first valid `lane`, `pool` or `arm`, skipping case-insensitive `unknown`
+placeholders. The reward records a pool when there is exactly one distinct
+observed value at that timestamp. Missing or conflicting values leave the
+pool null.
 
 `phm router outcomes [--json] [--runs-dir <dir>] [--lane <lane>] [--limit <1..1000>]`
 reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
