@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { settleAdvice } from '../src/core/fleet/settle-advice.js';
@@ -355,7 +355,7 @@ describe('settle advice from recorded load', () => {
     ]);
     const before = [...files];
     const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const reader = async (path: string) => files.get(path.split('/').at(-1)!)!;
+    const reader = async (path: string) => files.get(basename(path))!;
     expect(await cmdFleetAdmission(['--details', '--json'], reader, now)).toBe(1);
     const report = JSON.parse(String(output.mock.calls.at(-1)![0]));
     expect(report).toMatchObject({ readOnly: true, global: { cap: 8 }, launchGuard: {
