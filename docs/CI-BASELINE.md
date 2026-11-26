@@ -540,8 +540,10 @@ job-memory, lifecycle (`started`/`exited`), aggregate
 unparsed: `exited` lines fire on ordinary test failures and on the
 stop-others SIGTERM cascade, so they can never be runner identities.
 
-Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
-brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
+A failure reproduced by two unaffected fresh PRs, or by one unaffected fresh
+PR and a checkout-verified failed job on the current master commit, produces
+`queue-master-fix` and a fix brief. Test/import changes produce `pr-caused`; a
+singleton unaffected failure
 with an explicit test pass on master's current run produces
 `rerun-failed`. Other evidence stays `unknown`. Relative imports are followed
 transitively from master (100-file cap) with bundler resolution: `.js`/`.jsx`
