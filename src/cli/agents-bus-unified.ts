@@ -283,6 +283,13 @@ transitively cites it, in cursor order, with rootFound/complete/
 sourceFailure keeping a proven miss distinct from an unreadable walk;
 a wh-… claim-holder hint id is not an envelope id and reports
 not-found rather than resolving through show's wake-hint path.
+thread takes the shared bus-read filters — --to/--from/--exclude-from
+resolved through the registry with exact-label fallback, --channel,
+--job, --priority, --thread, --in-reply-to, --body-kind, --result,
+--since/--before and --contains — which narrow the listed members
+only: the inReplyTo walk, rootFound and the scan honesty fields still
+describe the whole chain, so a root whose every member a filter
+excludes reports rootFound with an empty messages, never a miss.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. Holder labels need not be
 registered identities, so wakes (and the work mine wakes section) keep
@@ -1140,7 +1147,12 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'thread') {
       noExtra(2);
       if (sub === undefined) throw new UsageError('A message id is required.');
-      const result = readAgentBusThread(sub, options);
+      const result = readAgentBusThread(sub, options, {
+        to: one('--to'), from: one('--from'), excludeFrom: one('--exclude-from'),
+        channel: one('--channel'), job: one('--job'), thread: one('--thread'),
+        inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind'), contains: one('--contains'),
+        priority: priorityArg(), since: sinceArg(), before: beforeArg(), result: resultArg(),
+      });
       if (result.status !== 'ok') return finish(result, '');
       const thread = result.thread;
       out(json ? JSON.stringify(thread) : threadHuman(thread, sub).join('\n'));

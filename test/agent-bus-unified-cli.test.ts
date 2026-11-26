@@ -447,6 +447,42 @@ describe('phm agents bus (unified)', () => {
     expect(human).toContain('kindless follow-up');
   });
 
+  it('filters the reply chain members through the shared bus-read flags', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'root question', '--priority', 'P1',
+      '--id', 'f-1'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'the alpha answer',
+      '--reply-to', 'f-1', '--id', 'f-2'])).json).toMatchObject({ status: 'posted' });
+    expect(appendBusInbox({ id: 'f-3', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { inReplyTo: 'f-2', kind: 'context', text: 'kindless follow-up', thread: 'rq-7' } }, { root }).status).toBe('posted');
+
+    const ids = (json: { messages: Array<{ envelope: { id: string } }> }) => json.messages.map(m => m.envelope.id);
+    // The shared filters narrow members; the chain and its honesty fields stay whole.
+    expect(ids((await run(['thread', 'f-1', '--from', 'nova'])).json)).toEqual(['f-2']);
+    expect(ids((await run(['thread', 'f-1', '--exclude-from', 'atlas'])).json)).toEqual(['f-2']);
+    expect(ids((await run(['thread', 'f-1', '--to', 'atlas'])).json)).toEqual(['f-2']);
+    expect(ids((await run(['thread', 'f-1', '--priority', 'P3'])).json)).toEqual(['f-3']);
+    expect(ids((await run(['thread', 'f-1', '--contains', 'ALPHA'])).json)).toEqual(['f-2']);
+    expect(ids((await run(['thread', 'f-1', '--in-reply-to', 'f-1'])).json)).toEqual(['f-2']);
+    expect(ids((await run(['thread', 'f-1', '--in-reply-to', 'f-2'])).json)).toEqual(['f-3']);
+    expect(ids((await run(['thread', 'f-1', '--thread', 'rq-7'])).json)).toEqual(['f-3']);
+    expect(ids((await run(['thread', 'f-1', '--body-kind', 'note'])).json)).toEqual(['f-1', 'f-2']);
+    expect(ids((await run(['thread', 'f-1', '--body-kind', 'context'])).json)).toEqual(['f-3']);
+    expect(ids((await run(['thread', 'f-1', '--from', 'nova', '--priority', 'P2'])).json)).toEqual(['f-2']);
+    // A filter excluding every member keeps rootFound — never a proven miss.
+    const none = await run(['thread', 'f-1', '--priority', 'P0']);
+    expect(none.code).toBe(0);
+    expect(none.json).toMatchObject({ rootFound: true, messages: [], complete: true });
+    // Enum and time grammar errors are usage errors; label and contains
+    // grammar errors are the core invalid read, the inbox convention.
+    expect(await run(['thread', 'f-1', '--priority', 'P9'])).toMatchObject({ code: 2 });
+    expect(await run(['thread', 'f-1', '--since', 'whenever'])).toMatchObject({ code: 2 });
+    expect(await run(['thread', 'f-1', '--channel', 'Bad Name'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['thread', 'f-1', '--from', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['thread', 'f-1', '--contains', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('annotates work envelope lookups with the live feed job', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--job', 'RQ-CLI-SHOW', '--title', 'CLI job', '--repo', 'ashlrai/phantom',
