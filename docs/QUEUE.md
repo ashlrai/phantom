@@ -889,7 +889,10 @@ requirements cell's `preferred_lane` — or the matching `router-queue.md`
 explicit `null` — or an empty lane cell — is lane-open, and a row the market
 would reject (bad job id, repo, tier or spec) is dead work, never launchable.
 Lane-open rows are shared supply any lane may take and are reported once as
-`openRows` (the text output names the count). It also excludes parked rows,
+`openRows` (the text output names the count). The first eligible row for each
+job ID determines its hint in this report. Duplicate copies cannot fill
+additional slots or contribute to both lane-hinted and lane-open supply.
+The report also excludes parked rows,
 jobs marked `drop` or `defer` in `skipped-empty.tsv`, and filler while
 `FILLER_HOLD` exists. Both commands use the launch target described below and
 read `~/.ashlr-runs/queue` (including `router-queue.md` for `launchable`);
