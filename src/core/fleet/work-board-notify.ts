@@ -195,7 +195,8 @@ export interface BoardNotifyDeltaFields {
 
 /** Canonical meaningful-delta material for a postable state: the
  * normalized evidence the thread needs (ASSIGNED owner+claim, BLOCKED
- * dependency, VERIFIED pr/head/tests/artifact) bound to the channel and
+ * dependency, VERIFIED pr/head/tests/artifact, plus complete receipt-backed
+ * ownership for either outcome) bound to the channel and
  * thread it routes to, so a reroute is a new identity. `asOf` and the
  * source label are excluded — they move every pass and would defeat
  * dedupe. Returns null for silent states or missing evidence; the
@@ -215,6 +216,12 @@ export function boardNotifyDeltaMaterial(f: BoardNotifyDeltaFields): string | nu
     if (f.pr === undefined && head === '' && tests === '' && artifact === '') return null;
     core = { pr: f.pr ?? null, head: head === '' ? null : head, tests: tests === '' ? null : tests, artifact: artifact === '' ? null : artifact };
   } else return null;
+  if (f.state === 'BLOCKED' || f.state === 'VERIFIED') {
+    const owner = normDeltaField(f.owner), claim = normDeltaField(f.claimReceipt);
+    // Partial attribution stays byte-for-byte compatible with prior receipts.
+    // Claims identify coordination changes; they grant no execution authority.
+    if (owner !== '' && claim !== '') core = { ...core, owner, claim };
+  }
   return JSON.stringify({ channel: f.channel, thread: f.thread, ...core });
 }
 
