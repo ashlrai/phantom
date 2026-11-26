@@ -216,10 +216,9 @@ export interface UnfedReport {
    * The fleet-wide stop in effect this tick, in the dispatcher's own codes:
    * `admission_stopped` when the launch gate (pause, disk hard stop or a
    * tripped load gate) kept the market from running, `global_admission` when
-   * the per-tick launch budget or fleet-wide cap was spent. Read back from
-   * published blocked codes for a dispatcher report, or from status.json's
-   * own admission verdict for a derived one. Null when the market ran
-   * normally or no verdict exists.
+   * the per-tick launch budget or fleet-wide cap was spent. Read from
+   * status.json's own admission verdict, with published blocked codes as
+   * fallback evidence. Null when no stop is recorded.
    */
   fleetStop: FleetStopCode | null;
   /** Ready rows still waiting (market-evaluated rows; see invalidRows). */
@@ -346,7 +345,7 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
     : data.schema === 'dispatchd.status.v1' && Number.isFinite(tickMs) && nowMs >= tickMs && nowMs - tickMs <= STATUS_FRESH_MS;
   const published = isRecord(data.unfed_capacity) && isRecord(data.unfed_capacity.lanes) ? data.unfed_capacity : null;
   const ctx = published === null ? marketContext(market) : null;
-  const stop = published === null ? fleetStopVerdict(data) : null;
+  const stop = fleetStopVerdict(data);
   // An admission-stopped tick never ran the market: the dispatcher's own
   // _waiting then counts every JID+tier-valid row by its raw lane column.
   const strict = readyHints(readyTsv, market?.routerQueue);

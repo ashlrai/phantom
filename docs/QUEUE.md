@@ -435,10 +435,10 @@ derived report follows that. Independently of `source`, `fleetStop` names the
 tick's fleet-wide stop in the dispatcher's own codes — `admission_stopped`
 when the PAUSE file, disk guard or load gate kept the market from running,
 `global_admission` when the launch budget or fleet cap was spent — or `null`
-when the market ran normally. For a derived report the verdict comes from
-status.json's own `paused` and `admission` fields and replaces the per-lane
-codes, which were never the binding constraint; for a dispatcher report it is
-read back from the published `blocked` codes.
+when no stop is recorded. The verdict comes from status.json's `paused`
+and `admission` fields even when no lanes have blocked rows. Published
+`blocked` codes provide fallback evidence. Derived per-lane reasons use
+the fleet-wide stop when one is recorded.
 `--json` also carries `statusAsOf` (status.json's `last_tick` as ISO-8601, or
 null) and `statusFresh`: the snapshot is fresh only when `last_tick` parses,
 is not in the future, and is within the same two-minute window the spend
