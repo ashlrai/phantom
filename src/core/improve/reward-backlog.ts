@@ -39,7 +39,7 @@
  *    transient burst: a pool's cell emits only when its in-window rows
  *    reach REWARD_MIN_ROWS, its not-held rows reach REWARD_MIN_NOT_HELD,
  *    not-held rows are a strict majority of the pool's resolved rows,
- *    and the evidence spans at least REWARD_MIN_DAYS distinct UTC days.
+ *    and the not-held rows span at least REWARD_MIN_DAYS distinct UTC days.
  *    The bars mirror outcome learning's own low-merge cell (a good-merge
  *    rate under half with enough attempts to mean something).
  *  - 'unknown' is the calibration arm's own label for a row whose pool
@@ -86,7 +86,7 @@ const REWARD_BACKLOG_FUTURE_SKEW_MS = 60_000;
 export const REWARD_MIN_ROWS = 6;
 /** Not-held rows a pool needs inside the window — the recurring floor. */
 export const REWARD_MIN_NOT_HELD = 4;
-/** Distinct UTC days the evidence must span — recurring means recorded across days. */
+/** Distinct UTC days on which not-held outcomes must be recorded. */
 export const REWARD_MIN_DAYS = 2;
 /** The fleet's own repository label: ledger evidence is this install's machinery, never another target's. */
 const FLEET_REPO_NAME = 'phantom';
@@ -137,6 +137,8 @@ export interface RewardPoolTally {
   notHeld: number;
   /** Distinct UTC days the rows span, keyed on recordedAt. */
   days: Set<string>;
+  /** Distinct UTC days with at least one not-held row. */
+  notHeldDays: Set<string>;
   firstMs: number | null;
   lastMs: number | null;
   /** Recorded repo tallies (null repo counts under 'unattributed'). */
@@ -177,12 +179,18 @@ export function foldRewardJournal(text: string, nowMs: number, windowMs: number)
     const key = row.pool ?? UNATTRIBUTED_KEY;
     let tally = fold.pools.get(key);
     if (tally === undefined) {
-      tally = { pool: row.pool, rows: 0, held: 0, notHeld: 0, days: new Set(), firstMs: null, lastMs: null, repos: new Map() };
+      tally = { pool: row.pool, rows: 0, held: 0, notHeld: 0, days: new Set(), notHeldDays: new Set(), firstMs: null, lastMs: null, repos: new Map() };
       fold.pools.set(key, tally);
     }
     tally.rows += 1;
-    if (row.merged) tally.held += 1; else tally.notHeld += 1;
-    tally.days.add(dayOfMs(atMs));
+    const day = dayOfMs(atMs);
+    if (row.merged) {
+      tally.held += 1;
+    } else {
+      tally.notHeld += 1;
+      tally.notHeldDays.add(day);
+    }
+    tally.days.add(day);
     tally.firstMs = tally.firstMs === null ? atMs : Math.min(tally.firstMs, atMs);
     tally.lastMs = tally.lastMs === null ? atMs : Math.max(tally.lastMs, atMs);
     const repoKey = row.repo ?? 'unattributed';
@@ -208,6 +216,8 @@ export interface RewardPoolCell {
   share: number;
   /** Distinct UTC days the evidence spans, sorted. */
   days: string[];
+  /** Distinct UTC days with at least one not-held row, sorted. */
+  notHeldDays: string[];
   firstSeen: string | null;
   lastSeen: string | null;
   /** Top recorded repo tallies for prompt evidence, repo name → row count. */
@@ -218,7 +228,7 @@ export interface RewardPoolCell {
 /**
  * Pure: the recurring pool cells the fold justifies. A cell emits only
  * while its resolved rows reach REWARD_MIN_ROWS, its not-held rows reach
- * REWARD_MIN_NOT_HELD and are a strict majority, and the evidence spans
+ * REWARD_MIN_NOT_HELD and are a strict majority, and the not-held rows span
  * REWARD_MIN_DAYS distinct UTC days. Sorted worst-first by not-held
  * count, then rows, then pool name.
  */
@@ -226,7 +236,7 @@ export function rewardCells(fold: RewardJournalFold, lowerBound = false): Reward
   const cells: RewardPoolCell[] = [];
   for (const tally of fold.pools.values()) {
     if (tally.rows < REWARD_MIN_ROWS || tally.notHeld < REWARD_MIN_NOT_HELD ||
-        tally.notHeld * 2 <= tally.rows || tally.days.size < REWARD_MIN_DAYS) continue;
+        tally.notHeld * 2 <= tally.rows || tally.notHeldDays.size < REWARD_MIN_DAYS) continue;
     cells.push({
       pool: tally.pool,
       rows: tally.rows,
@@ -234,6 +244,7 @@ export function rewardCells(fold: RewardJournalFold, lowerBound = false): Reward
       notHeld: tally.notHeld,
       share: tally.notHeld / tally.rows,
       days: [...tally.days].sort(),
+      notHeldDays: [...tally.notHeldDays].sort(),
       firstSeen: isoOrNull(tally.firstMs),
       lastSeen: isoOrNull(tally.lastMs),
       repos: [...tally.repos.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, MAX_PROMPT_REPOS),
@@ -260,7 +271,7 @@ const daysText = (days: readonly string[]): string => {
 };
 
 const cellDaysText = (cell: RewardPoolCell): string =>
-  `across ${cell.days.length} UTC day(s) (${daysText(cell.days)})`;
+  `across ${cell.notHeldDays.length} UTC day(s) (${daysText(cell.notHeldDays)})`;
 
 const boundNote = (lowerBound: boolean): string =>
   lowerBound ? ' The ledger tail was truncated at the bounded read, so these counts cover only the retained window — a lower bound, not the full window.' : '';

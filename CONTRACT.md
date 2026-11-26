@@ -12,6 +12,14 @@ with master reason codes and posture evidence; no model calls, dispatch or write
 `cli/bots.ts::runBotsCli(argv, out?, home?)` returns 0 on success, 1 on error/refusal.
 Creation requires `--dry-run` and never calls the writer.
 
+## Reward backlog evidence
+
+`foldRewardJournal(text, nowMs, windowMs)` and `rewardCells(fold, lowerBound?)`
+(`src/core/improve/reward-backlog.ts`) expose `days` for all in-window
+reward rows and `notHeldDays` for rows with `merged: false`, both based on
+the UTC date of `recordedAt`. The latter supplies the recurrence day gate
+and the dates quoted in discovery briefs.
+
 ## Fleet lane ledger
 
 `foldLaneRewardAttempts(text, asOfMs?)` (`src/core/fleet/lane-reward.ts`)
