@@ -938,14 +938,13 @@ least one sample and peak process, `measured` rows require
 `sampledSeconds` >= 59 with >= 12 samples, and mean CPU never exceeds
 peak). Entries iterate in the append order of their last valid receipt,
 including when a launch ID repeats. Malformed rows are skipped.
-The producer keys measured rows
-`<job>-<12 lowercase hex claim hash>` — one row per attempt — and
-unknown probes by the bare job id, so the read resolves each
-`launchId` against the folded job window: a launchId that is itself a
-folded job id keys itself (a job id may legitimately end in a 12-hex
-segment), a measured/partial row's suffix strips to the job it
-measured, and an unknown-status row prefers an exact job-id match
-before the stripped prefix. The join fills `launch_cost_status`,
+The producer sets `startedAt` and appends a 12-character lowercase hex
+claim hash to the job ID together. The read strips that suffix on receipts
+with a recorded start, including claim-bound probes that recorded an
+`unknown` verdict. A receipt with null `startedAt` uses its whole ID.
+The join resolves the job before folding receipts in append order, so a
+bare job ID can coexist with another job's claim ID of the same spelling.
+The join fills `launch_cost_status`,
 `launch_peak_processes`, `launch_mean_cpu_pct` and
 `launch_peak_cpu_pct` — fields no jobs-ledger row supplies, the only
 per-attempt resource-cost evidence subscription lanes record — with

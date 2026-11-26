@@ -78,8 +78,11 @@ function writeLaunchCosts(root: string, rows: object[]): void {
 
 /** A fleet.launch-cost.v1 row in the shape contrib/mac/launch_cost.py appends (src/core/fleet/launch-cost.ts). */
 const launchCostRow = (launchId: string, status: 'measured' | 'partial' | 'unknown', extra: Record<string, unknown> = {}): object => ({
-  schema: 'fleet.launch-cost.v1', lane: 'alpha', launchId, startedAt: '2026-11-01T00:00:00Z',
-  windowSeconds: 60, sampledSeconds: status === 'measured' ? 60 : 30, samples: status === 'measured' ? 60 : 6,
+  schema: 'fleet.launch-cost.v1', lane: 'alpha', launchId,
+  startedAt: status === 'unknown' ? null : '2026-11-01T00:00:00Z',
+  windowSeconds: 60,
+  sampledSeconds: status === 'measured' ? 60 : status === 'partial' ? 30 : 0,
+  samples: status === 'measured' ? 60 : status === 'partial' ? 6 : 0,
   peakProcesses: status === 'unknown' ? null : 4,
   meanCpuPercentOneCore: status === 'unknown' ? null : 12.5,
   peakCpuPercentOneCore: status === 'unknown' ? null : 40,
@@ -2827,6 +2830,31 @@ describe('router outcome launch-cost join', () => {
     });
   });
 
+  it.each([false, true])('joins colliding bare and claim-bound probe IDs independently (reverse=%s)', async (reverse) => {
+    const root = runsDir([
+      '{"job":"J1","phase":"MERGED"}',
+      '{"job":"J1-aaaabbbbcccc","phase":"VERIFIED"}',
+      '{"job":"J2","phase":"VERIFIED"}',
+    ].join('\n'));
+    const sharedId = 'J1-aaaabbbbcccc';
+    const receipts = [
+      launchCostRow(sharedId, 'unknown', { startedAt: '2026-11-01T00:00:00Z' }),
+      launchCostRow(sharedId, 'unknown'),
+    ];
+    writeLaunchCosts(root, [
+      launchCostRow('J1-ddddeeeeffff', 'measured'),
+      ...(reverse ? receipts.reverse() : receipts),
+      // A bare probe for a job outside the window cannot join its prefix.
+      launchCostRow('J2-aaaabbbbcccc', 'unknown'),
+    ]);
+
+    const result = await readRouterOutcomes({ runsDir: root });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({ launch_cost_status: 'unknown', launch_peak_processes: null });
+    expect(byId.get(sharedId)).toMatchObject({ launch_cost_status: 'unknown', launch_peak_processes: null });
+    expect(byId.get('J2')).toMatchObject({ launch_cost_status: null, launch_peak_processes: null });
+  });
+
   it('leaves the last appended row standing when several attempts recorded probes for one job', async () => {
     const root = runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
     writeLaunchCosts(root, [
@@ -2844,7 +2872,7 @@ describe('router outcome launch-cost join', () => {
     const root = runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
     writeLaunchCosts(root, [
       launchCostRow('J1-aaaabbbbcccc', 'partial'),
-      launchCostRow('J1-ddddeeeeffff', 'unknown'),
+      launchCostRow('J1-ddddeeeeffff', 'unknown', { startedAt: '2026-11-01T00:00:00Z' }),
       launchCostRow('J1-aaaabbbbcccc', 'measured', { peakProcesses: 6 }),
     ]);
 

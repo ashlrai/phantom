@@ -854,13 +854,12 @@ closed contract (exact schema, bounded lane/launchId identifiers, the
 recorded status vocabulary, metric figures inside their shapes —
 `unknown` rows carry none, `measured` rows require nearly-full
 60-second coverage with at least 12 samples, and mean CPU never
-exceeds peak) and the read resolves each `launchId` to a folded job
-id: the producer keys measured rows `<job>-<12 lowercase hex claim
-hash>` — one row per attempt — and unknown probes by the bare job id,
-so a launchId that is itself a folded job id keys itself (a job id may
-legitimately end in a 12-hex segment), a measured/partial row's suffix
-strips to the job it measured, and an unknown-status row prefers an
-exact job-id match before the stripped prefix. The join fills
+exceeds peak). The producer sets `startedAt` and appends a 12-character
+lowercase hex claim hash to the job ID together. The join strips that suffix
+when a start is recorded, even if the probe verdict is `unknown`. A receipt
+with null `startedAt` keeps its whole ID. The join resolves the job before
+folding receipts in append order, so a bare job ID can coexist with
+another job's claim ID of the same spelling. The join fills
 `launch_cost_status` (`measured`/`partial`/`unknown` — the probe ran
 but recorded nothing on `unknown`), `launch_peak_processes`,
 `launch_mean_cpu_pct` and `launch_peak_cpu_pct`, the only per-attempt

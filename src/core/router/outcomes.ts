@@ -3019,6 +3019,18 @@ const launchCostCount = (v: unknown): v is number => typeof v === 'number' && Nu
  */
 export function foldLaunchCosts(text: string): Map<string, LaunchCostEvidence> {
   const costs = new Map<string, LaunchCostEvidence>();
+  for (const { launchId, evidence } of launchCostReceipts(text)) {
+    costs.delete(launchId);
+    costs.set(launchId, evidence);
+  }
+  return costs;
+}
+
+function* launchCostReceipts(text: string): Generator<{
+  launchId: string;
+  claimBound: boolean;
+  evidence: LaunchCostEvidence;
+}> {
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     let value: unknown;
@@ -3049,16 +3061,17 @@ export function foldLaunchCosts(text: string): Map<string, LaunchCostEvidence> {
         (status === 'measured' && (sampledSeconds < 59 || (samples as number) < 12)) ||
         (launchCostCount(r['meanCpuPercentOneCore']) && launchCostCount(r['peakCpuPercentOneCore']) &&
           (r['meanCpuPercentOneCore'] as number) > (r['peakCpuPercentOneCore'] as number))) continue;
-    // Preserve append order for the subsequent per-job join across launch IDs.
-    costs.delete(launchId);
-    costs.set(launchId, {
-      status: status as LaunchCostEvidence['status'],
-      peakProcesses: r['peakProcesses'] === null ? null : r['peakProcesses'] as number,
-      meanCpuPct: r['meanCpuPercentOneCore'] === null ? null : r['meanCpuPercentOneCore'] as number,
-      peakCpuPct: r['peakCpuPercentOneCore'] === null ? null : r['peakCpuPercentOneCore'] as number,
-    });
+    yield {
+      launchId,
+      claimBound: startedAt !== null,
+      evidence: {
+        status: status as LaunchCostEvidence['status'],
+        peakProcesses: r['peakProcesses'] === null ? null : r['peakProcesses'] as number,
+        meanCpuPct: r['meanCpuPercentOneCore'] === null ? null : r['meanCpuPercentOneCore'] as number,
+        peakCpuPct: r['peakCpuPercentOneCore'] === null ? null : r['peakCpuPercentOneCore'] as number,
+      },
+    };
   }
-  return costs;
 }
 
 /**
@@ -3539,27 +3552,12 @@ export async function readRouterOutcomes(opts: {
     }
   }
   if (launchCostRead.state === 'read') {
-    const costs = foldLaunchCosts(launchCostRead.text);
-    // launchId → job resolution against the folded job window. The
-    // producer keys measured/partial rows `<job>-<12-hex claim hash>`
-    // and unknown probes by the bare job id (its exception path can
-    // leave a suffixed id on an unknown row too). A launchId that is
-    // itself a folded job id keys itself — a job id may legitimately
-    // end in a 12-hex segment — so an unknown-status row prefers the
-    // exact match; a measured/partial row always strips its attempt
-    // suffix to the job it measured. Rows resolving outside the jobs
-    // window key on an id no outcome carries and join nothing.
-    const jobIds = new Set(folded.outcomes.map(o => o.job_id));
     const byJob = new Map<string, LaunchCostEvidence>();
-    for (const [launchId, ev] of costs) {
-      const stripped = launchId.replace(LAUNCH_ATTEMPT_SUFFIX, '');
-      let job = launchId;
-      if (stripped !== launchId) {
-        job = ev.status === 'unknown'
-          ? (jobIds.has(launchId) ? launchId : jobIds.has(stripped) ? stripped : launchId)
-          : stripped;
-      }
-      byJob.set(job, ev);
+    for (const { launchId, claimBound, evidence } of launchCostReceipts(launchCostRead.text)) {
+      // The producer sets startedAt and appends the claim hash together.
+      // Resolve before folding so a bare job ID and a claim ID can coexist.
+      const job = claimBound ? launchId.replace(LAUNCH_ATTEMPT_SUFFIX, '') : launchId;
+      byJob.set(job, evidence);
     }
     for (const o of folded.outcomes) {
       const ev = byJob.get(o.job_id);
