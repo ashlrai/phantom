@@ -216,6 +216,30 @@ describe('ciRerunBacklogItems', () => {
     expect(item.prompt).toContain('no-change');
   });
 
+  it('counts each observed call result once and withholds conflicting receipts', async () => {
+    const failures: Row[] = [41, 42, 43, 44].map((runId) => ({
+      at: daysAgo(1), repo: REPO, head: sha(runId), runId, pr: runId, outcome: 'failed',
+    }));
+    const [first, second, third, fourth] = failures;
+    const success: Row = { ...first!, head: sha(45), outcome: 'ok' };
+    const replay = (row: Row): Row => ({ ...row, at: daysAgo(0.5), repo: 'AshlrAI/Phantom' });
+    const discover = (rows: Row[]) => ciRerunBacklogItems({
+      repo: REPO, now: NOW, journalPath: writeJournal(rows),
+    });
+
+    expect(await discover([first!, second!, replay(first!), replay(second!)])).toEqual([]);
+    const items = await discover([
+      ...failures, success, ...Array.from({ length: 4 }, () => replay(success)),
+      { ...third!, outcome: 'ok' },
+      { ...fourth!, outcome: 'ok', at: daysAgo(-1) },
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('3 failed rerun call(s) against 1 successful');
+    expect(await discover([
+      replay(first!), second!, third!, { ...first!, at: daysAgo(8) },
+    ])).toEqual([]);
+  });
+
   it('keeps call failures quiet below the bar or when ok calls dominate', async () => {
     const few = await ciRerunBacklogItems({
       repo: REPO, now: NOW,

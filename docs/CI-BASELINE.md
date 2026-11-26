@@ -682,6 +682,10 @@ test's recurring-failure threshold.
 Discovery counts at most one verdict per repository and workflow run ID
 within the recurrence window. If records for a run disagree on its head,
 test attribution, or verdict, that run provides no per-test evidence.
+For recurring call failures, discovery counts one call result per
+repository, head SHA and workflow run ID. The earliest observed receipt
+sets its time in the recurrence window. If observed receipts disagree on
+whether the call succeeded, that call contributes to neither tally.
 `ci-reruns/status.json` contains the last
 maintenance time, per-repository counts (including `recurringFlakes` detected,
 `flakeFixesQueued` appended, `verdictsPending` and `verdictsResolved`), errors

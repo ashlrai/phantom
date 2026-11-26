@@ -220,13 +220,19 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
     const verdicts = new Map<string, VerdictGroup>();
     const runVerdicts = new Map<number, RerunEntry | null>();
     const attempts = new Map<string, number>();
-    let callFailed = 0;
-    let callOk = 0;
+    const callResults = new Map<string, RerunEntry | null>();
     for (const entry of entries) {
       if (typeof entry.repo !== 'string' || entry.repo.toLowerCase() !== repoKey) continue;
+      if (entry.outcome === 'ok' || entry.outcome === 'failed') {
+        if (Date.parse(entry.at) > nowMs) continue;
+        const key = `${entry.runId}:${entry.head}`;
+        const prior = callResults.get(key);
+        if (prior === null) continue;
+        if (prior && prior.outcome !== entry.outcome) callResults.set(key, null);
+        else if (!prior || Date.parse(entry.at) < Date.parse(prior.at)) callResults.set(key, entry);
+        continue;
+      }
       if (!inWindow(entry, nowMs, windowMs)) continue;
-      if (entry.outcome === 'ok') { callOk += 1; continue; }
-      if (entry.outcome === 'failed') { callFailed += 1; continue; }
       if (entry.outcome === 'attempt') {
         const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
         for (const test of new Set(tests)) {
@@ -253,6 +259,14 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
       verdicts.set(entry.test, group);
     }
     for (const group of verdicts.values()) group.attempts = attempts.get(group.test) ?? 0;
+
+    let callFailed = 0;
+    let callOk = 0;
+    for (const entry of callResults.values()) {
+      if (!entry || !inWindow(entry, nowMs, windowMs)) continue;
+      if (entry.outcome === 'failed') callFailed += 1;
+      else callOk += 1;
+    }
 
     const candidates: CloudBacklogItem[] = [];
     // The call tally gates the whole loop, so its item survives limit truncation first.
