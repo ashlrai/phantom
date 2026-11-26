@@ -1305,6 +1305,7 @@ describe('router outcome ledger (612S preservation)', () => {
     mkdirSync(join(linkRoot, 'metrics'));
     symlinkSync(target, ledgerPath(linkRoot));
     expect(await readLedgerTail(ledgerPath(linkRoot))).toEqual({ state: 'unreadable' });
+    expect(await readLedgerFile(ledgerPath(linkRoot))).toEqual({ state: 'unreadable' });
   });
 
   it('leaves fixtures byte-identical and unmodified by reads', async () => {
