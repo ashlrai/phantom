@@ -69,8 +69,8 @@ it('requires valid completion evidence for error rate and latency', () => {
 
 it('flags a run past its phase timeout with phase age, not one within it or one that waits by design', () => {
   const h = computeLaneHealth(snap([
-    run({ id: 'hung', phaseStartedAt: at(47) }),
-    run({ id: 'fine', phaseStartedAt: at(44) }),
+    run({ id: 'hung', startedAt: at(47), phaseStartedAt: at(47) }),
+    run({ id: 'fine', startedAt: at(44), phaseStartedAt: at(44) }),
     run({ id: 'watch', phase: 'watching', phaseStartedAt: at(600) }),
     run({ id: 'unknown-age', phaseStartedAt: null, startedAt: null }),
     run({ id: 'done', phaseStartedAt: at(90), endedAt: at(1), outcome: 'merged' }),
@@ -79,6 +79,18 @@ it('flags a run past its phase timeout with phase age, not one within it or one 
   expect(codex.stuck).toEqual([{ runId: 'hung', repo: 'a/b', phase: 'producing', phaseAgeMs: 47 * 60_000, timeoutMs: 45 * 60_000 }]);
   expect(stuckBadge(codex)).toBe('stuck · producing 47m');
   expect(stuckBadge(h.lanes[1]!)).toBeNull();
+});
+
+it('checks phase chronology while allowing queued runs without a run start', () => {
+  const h = computeLaneHealth(snap([
+    run({ id: 'before-start', startedAt: at(5), phaseStartedAt: at(47) }),
+    run({ id: 'future-start', startedAt: at(-1), phaseStartedAt: at(47) }),
+    run({ id: 'future-phase', startedAt: at(5), phaseStartedAt: at(-1) }),
+    run({ id: 'queued', phase: 'queued', startedAt: null, phaseStartedAt: at(31) }),
+  ]));
+  expect(h.lanes[0]).toMatchObject({ calls: 2, stuck: [
+    { runId: 'queued', repo: 'a/b', phase: 'queued', phaseAgeMs: 31 * 60_000, timeoutMs: 30 * 60_000 },
+  ] });
 });
 
 it('requires a readable current-phase start before flagging an old run as stuck', () => {
