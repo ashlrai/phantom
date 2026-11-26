@@ -174,15 +174,19 @@ boundaries.
 
 Fleet IQ: `phm fleet eval-report [--days 7] [--prs prs.json] --json` scores
 merged PRs post-merge: revert, regression and follow-up rates, CI-failure
-correlation, and time-to-merge, rolled up by lane, tier, lane+tier and repo
-(`fleet.eval-report.v1`). Evidence comes from `~/.ashlr-runs/metrics/jobs.jsonl`
+correlation, and time-to-merge, rolled up by lane, tier, lane+tier, repo and
+author (`fleet.eval-report.v1`). Evidence comes from
+`~/.ashlr-runs/metrics/jobs.jsonl`
 (newest bounded tail; `sources.jobs.truncated` marks a cut window),
 repeatable `--prs` files of `gh pr list --state merged --json url,number,title,
-mergedAt,mergeCommit,files,statusCheckRollup,commits,body` output, and the
+mergedAt,mergeCommit,files,statusCheckRollup,commits,body,author` output, and the
 signed post-merge observation ledger. A merge counts `stable` only when the
 72 h window elapsed under a covering evidence channel; uncovered merges are
-`unobserved`, and `ranked` sorts groups on the Wilson lower bound. Read-only;
-nothing merges, routes or releases credit.
+`unobserved`, and `ranked` sorts groups on the Wilson lower bound. The author
+dimension groups every merge by its recorded gh author login — fleet app,
+community agent or human contributor — with unrecorded authors under
+`unknown`, so outside-agent PRs score on the same durability evidence.
+Read-only; nothing merges, routes or releases credit.
 
 Reward signals: on self-improvement ticks the resident daemon's `reward-sync`
 off-tick job folds the jobs-ledger tail into `~/.ashlr/metrics/reward-signals.jsonl`:

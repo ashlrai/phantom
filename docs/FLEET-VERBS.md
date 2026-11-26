@@ -37,7 +37,7 @@
 | ideation-status | `src/cli/fleet-ideation-status.ts` | Read-only report of what the daily ideation loop did on recent UTC days (`--config <absolute.json>`, `--days 1..30`, `--json`); proposal ids only | no |
 | empties | `src/cli/fleet-empties.ts` | Read-only EMPTY finish causes, rates and top five job families; JSON default, `--human` for a short table. See [Empty job reasons](FLEET-EMPTIES.md) | no |
 | metrics | `src/cli/fleet-metrics.ts` | Read-only outcome rollups, bounded advisory suggestions and weekly Markdown from the jobs ledger; missing measurements stay unknown. See [contract](contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) | no |
-| eval-report | `src/cli/fleet-eval-report.ts` | Read-only `fleet.eval-report.v1` weekly "fleet IQ" report: per-merged-PR post-merge durability (reverted / regressed / followed-up / stable / pending / unobserved), revert and follow-up rates, CI-failure correlation and time-to-merge, rolled up by lane, tier, lane+tier and repo. Joins `metrics/jobs.jsonl` (its newest bounded tail; `sources.jobs.truncated` marks a cut window), repeatable `--prs` gh-shaped merged-PR exports and the signed post-merge observation ledger; `stable` requires the 72 h window elapsed under a covering evidence channel and `ranked` sorts on the Wilson lower bound | no |
+| eval-report | `src/cli/fleet-eval-report.ts` | Read-only `fleet.eval-report.v1` weekly "fleet IQ" report: per-merged-PR post-merge durability (reverted / regressed / followed-up / stable / pending / unobserved), revert and follow-up rates, CI-failure correlation and time-to-merge, rolled up by lane, tier, lane+tier, repo and author (the recorded gh `author` login — fleet app, community agent or human contributor — covering the whole merged cohort with unrecorded authors under `unknown`). Joins `metrics/jobs.jsonl` (its newest bounded tail; `sources.jobs.truncated` marks a cut window), repeatable `--prs` gh-shaped merged-PR exports and the signed post-merge observation ledger; `stable` requires the 72 h window elapsed under a covering evidence channel and `ranked` sorts on the Wilson lower bound | no |
 | grok-usage | `src/cli/fleet-grok-usage.ts` | Reads Grok usage metrics from a configured source | no |
 | held | `src/cli/fleet-held.ts` | Read-only list of what counts as launched or staffed but is not actually running: held launches (`<job>.launch` says `HELD:`), idle lanes (launch target above zero — after the controller's `effective_target` shed — with nothing running or queued), launches with no finish after 60 minutes and finishes with no publish record. Each row gives the reason and the one step that unblocks it. `--json` prints `fleet.held.v1` | no |
 | incident-gate | `src/cli/fleet-incident-gate.ts` | Mines job and dispatch evidence for repeated failure classes; dry run by default, `--apply` places bounded lane or repository holds and records decisions | yes (`--apply` only) |
@@ -128,6 +128,12 @@ is excluded from CI correlation; optional checks do not count. Standard `gh pr
 list --json statusCheckRollup` exports do not supply all this evidence, so they
 report unknown until enriched by a trustworthy observer. These observations do
 not establish historical branch protection or grant merge authority.
+
+The optional gh `author` field (`{ login }` object or bare login string) feeds
+the `byAuthor` rollup and each pull request's `authorLogin`: fleet app,
+community agent and human contributor merges compare on the same durability
+evidence, while exports without a usable author group under `unknown`. It is
+never inferred from job ids, branch names or commit text.
 
 ## Open PR snapshot
 

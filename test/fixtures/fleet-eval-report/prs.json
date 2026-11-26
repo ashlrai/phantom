@@ -12,7 +12,8 @@
       { "__typename": "StatusContext", "context": "merge-gate", "state": "SUCCESS" }
     ],
     "commits": [{ "messageHeadline": "Add eval report" }],
-    "body": "build the report"
+    "body": "build the report",
+    "author": { "login": "ashlr-fleet[bot]" }
   },
   {
     "url": "https://github.com/ashlrai/phantom/pull/101",
@@ -26,7 +27,8 @@
       { "name": "typecheck", "status": "COMPLETED", "conclusion": "FAILURE" },
       { "name": "lint", "status": "COMPLETED", "conclusion": "SUCCESS" }
     ],
-    "commits": [{ "messageHeadline": "Router scoring tweak" }]
+    "commits": [{ "messageHeadline": "Router scoring tweak" }],
+    "author": { "login": "ashlr-fleet[bot]" }
   },
   {
     "url": "https://github.com/ashlrai/phantom/pull/102",
@@ -45,7 +47,8 @@
     "files": [{ "path": "docs/README.md" }],
     "statusCheckRollup": [
       { "name": "docs-check", "status": "COMPLETED", "conclusion": "TIMED_OUT" }
-    ]
+    ],
+    "author": { "login": "ashlr-fleet[bot]" }
   },
   {
     "url": "https://github.com/ashlrai/phantom/pull/104",
@@ -58,7 +61,8 @@
     "statusCheckRollup": [
       { "name": "typecheck", "status": "COMPLETED", "conclusion": "SUCCESS" }
     ],
-    "commits": [{ "messageHeadline": "Revert \"Add eval report\"" }]
+    "commits": [{ "messageHeadline": "Revert \"Add eval report\"" }],
+    "author": { "login": "outside-agent[bot]" }
   },
   {
     "url": "https://github.com/ashlrai/phantom/pull/105",
@@ -70,7 +74,8 @@
     "files": [{ "path": "src/core/eval/router-eval.ts" }],
     "statusCheckRollup": [
       { "name": "typecheck", "status": "COMPLETED", "conclusion": "SUCCESS" }
-    ]
+    ],
+    "author": "community-dev"
   },
   {
     "url": "https://github.com/ashlrai/phantom/pull/106",
@@ -92,6 +97,7 @@
     "mergeCommit": { "oid": "11500000000000000000000000000000000000aa" },
     "statusCheckRollup": [
       { "name": "typecheck", "status": "COMPLETED", "conclusion": "SUCCESS" }
-    ]
+    ],
+    "author": { "login": "ashlr-fleet[bot]" }
   }
 ]

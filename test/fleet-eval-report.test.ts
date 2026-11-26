@@ -44,6 +44,7 @@ const pr = (report: FleetEvalReport, url: string) =>
 const lane = (report: FleetEvalReport, name: string) => report.byLane.find((g) => g.name === name);
 const tier = (report: FleetEvalReport, name: string) => report.byTier.find((g) => g.name === name);
 const repo = (report: FleetEvalReport, name: string) => report.byRepo.find((g) => g.name === name);
+const author = (report: FleetEvalReport, name: string) => report.byAuthor.find((g) => g.name === name);
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -92,16 +93,25 @@ describe('parseGhPullRequests', () => {
     const p100 = rows.find((r) => r.number === 100)!;
     expect(p100.mergeCommit).toBe('aa10000000000000000000000000000000000001');
     expect(p100.checks).toBeNull();
+    // gh's { login } object and bare-string author shapes both parse;
+    // #106 carries no author and stays null, never guessed.
+    expect(p100.authorLogin).toBe('ashlr-fleet[bot]');
+    expect(rows.find((r) => r.number === 105)!.authorLogin).toBe('community-dev');
+    expect(rows.find((r) => r.number === 106)!.authorLogin).toBeNull();
     const p103 = rows.find((r) => r.number === 103)!;
     expect(p103.checks).toBeNull();
-    // JSONL plus repository.nameWithOwner fallback.
+    // JSONL plus repository.nameWithOwner fallback; an off-grammar author
+    // is skipped, never recorded raw.
     const jsonl = [
-      JSON.stringify({ number: 7, title: 'x', state: 'MERGED', mergedAt: '2026-11-01T00:00:00Z', repository: { nameWithOwner: 'ashlrai/phantom' } }),
+      JSON.stringify({ number: 7, title: 'x', state: 'MERGED', mergedAt: '2026-11-01T00:00:00Z', repository: { nameWithOwner: 'ashlrai/phantom' }, author: { login: 'ok-login' } }),
+      JSON.stringify({ number: 8, title: 'y', state: 'MERGED', mergedAt: '2026-11-01T00:00:00Z', repository: { nameWithOwner: 'ashlrai/phantom' }, author: { login: 'has space' } }),
       'garbage{',
     ].join('\n');
     const parsed = parseGhPullRequests(jsonl);
-    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.rows).toHaveLength(2);
     expect(parsed.rows[0]!.key).toBe('https://github.com/ashlrai/phantom/pull/7');
+    expect(parsed.rows[0]!.authorLogin).toBe('ok-login');
+    expect(parsed.rows[1]!.authorLogin).toBeNull();
     expect(parsed.ignored).toBe(1);
     expect(parseGhPullRequests('')).toEqual({ rows: [], ignored: 0 });
   });
@@ -129,6 +139,14 @@ describe('buildFleetEvalReport', () => {
     expect(pr(report, '/pull/106')).toMatchObject({ jobId: null, durability: 'stable' });
     expect(pr(report, '/pull/50')).toMatchObject({ jobId: 'RQ-C', durability: 'pending' });
     expect(pr(report, '/pull/9')).toMatchObject({ jobId: 'RQ-F', lane: 'stack', durability: 'unobserved' });
+    // Author attribution rides the gh export: fleet app, community agent
+    // and human contributor logins; a ledger-only merge and an export row
+    // without author stay null — unknown, never inferred.
+    expect(pr(report, '/pull/100')!.authorLogin).toBe('ashlr-fleet[bot]');
+    expect(pr(report, '/pull/104')!.authorLogin).toBe('outside-agent[bot]');
+    expect(pr(report, '/pull/105')!.authorLogin).toBe('community-dev');
+    expect(pr(report, '/pull/106')!.authorLogin).toBeNull();
+    expect(pr(report, '/pull/9')!.authorLogin).toBeNull();
     // Outside the window: PR #90 merged 2026-10-05 never enters the cohort.
     expect(report.pullRequests.some((p) => p.url.endsWith('/pull/90'))).toBe(false);
   });
@@ -154,8 +172,26 @@ describe('buildFleetEvalReport', () => {
     expect(tier(report, 'mid')).toMatchObject({ launched: 1, closed: 1, merged: 0 });
     expect(repo(report, 'ashlrai/phantom')).toMatchObject({ merged: 6, stable: 2, reverted: 2, regressed: 1, followedUp: 1 });
     expect(repo(report, 'ashlrai/phantom')!.durability.rate).toBeCloseTo(2 / 6);
-    // Wilson lower bound ranks the 2/6 repo above every 0/1 lane.
-    expect(report.ranked[0]).toMatchObject({ kind: 'repo', name: 'ashlrai/phantom', resolved: 6 });
+    // The by-author cohort covers every merge — fleet app, community agent,
+    // human contributor and unrecorded authors alike — while activity
+    // counters stay zero because the jobs ledger records no author.
+    expect(author(report, 'ashlr-fleet[bot]')).toMatchObject({
+      launched: 0, merged: 4, stable: 0, reverted: 1, regressed: 1, followedUp: 1, pending: 1,
+    });
+    expect(author(report, 'ashlr-fleet[bot]')!.durability).toMatchObject({ resolved: 3, rate: 0 });
+    expect(author(report, 'outside-agent[bot]')).toMatchObject({ merged: 1, stable: 1 });
+    expect(author(report, 'outside-agent[bot]')!.durability.rate).toBe(1);
+    expect(author(report, 'community-dev')).toMatchObject({ merged: 1, reverted: 1 });
+    expect(author(report, 'community-dev')!.durability.rate).toBe(0);
+    // #106's export row carried no author and ledger-only #9 has no gh row:
+    // both group under 'unknown', never under a guessed identity.
+    expect(author(report, 'unknown')).toMatchObject({ merged: 2, stable: 1, unobserved: 1 });
+    expect(author(report, 'unknown')!.durability.rate).toBe(1);
+    // Wilson lower bound ranks the durable 1/1 community agent first;
+    // the 2/6 repo stays the top repo-kind row.
+    expect(report.ranked[0]).toMatchObject({ kind: 'author', name: 'outside-agent[bot]', resolved: 1 });
+    expect(report.ranked.find((r) => r.kind === 'repo')).toMatchObject({ name: 'ashlrai/phantom', resolved: 6 });
+    expect(report.ranked.some((r) => r.kind === 'author' && r.name === 'ashlr-fleet[bot]')).toBe(true);
   });
 
   it('reports ledger ttm, derived merge lead and raw CI correlation', async () => {
