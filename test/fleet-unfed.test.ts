@@ -141,6 +141,25 @@ describe('foldUnfedHistory', () => {
     expect(foldUnfedHistory(null, now, 24)).toEqual({ windowHours: 24, available: false, ticks: 0, lanes: [] });
     expect(foldUnfedHistory('', now, 24)).toEqual({ windowHours: 24, available: true, ticks: 0, lanes: [] });
   });
+
+  it('counts only lanes with both spare slots and waiting work', () => {
+    const full = { unfed: true, headroom: 0, waiting_elsewhere: 2, blocked: { saturated: 2 } };
+    const idle = { unfed: true, headroom: 2, waiting_elsewhere: 0 };
+    const starved = { unfed: true, headroom: 2, waiting_elsewhere: 1 };
+    const text = [
+      unfedRow(t - 60, { codex: starved }),
+      unfedRow(t - 30, { codex: full, claude: idle }),
+      unfedRow(t, { codex: full, claude: starved }),
+    ].join('\n');
+
+    expect(foldUnfedHistory(text, now, 24)).toMatchObject({
+      ticks: 2,
+      lanes: [
+        { lane: 'claude', unfedTicks: 1, slotTicks: 1, lastUnfedAt: new Date(now).toISOString(), blocked: {} },
+        { lane: 'codex', unfedTicks: 1, slotTicks: 1, lastUnfedAt: new Date(now - 60_000).toISOString(), blocked: {} },
+      ],
+    });
+  });
 });
 
 describe('foldMarketOverrides', () => {
