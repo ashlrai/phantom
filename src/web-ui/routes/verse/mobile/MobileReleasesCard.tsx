@@ -4,7 +4,8 @@
  * "All repos" opens the full list in place, so there is no second screen.
  */
 import { useState } from 'react';
-import { releaseDueLine, type ReleasesReport } from '../../../../core/release/status.js';
+import { releaseDueLine } from '../../../../core/release/releases-lines.js';
+import type { ReleasesReport } from '../../../../core/release/status.js';
 import { useQuery } from '../../../data/hooks.js';
 import { releasesQuery } from '../fleet-metrics/releases-query.js';
 import { ReleaseRepoRows } from '../fleet-metrics/ReleaseRepoRows.js';

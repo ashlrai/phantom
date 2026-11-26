@@ -4,7 +4,8 @@
  * Same typed report as `phm releases --json` (shared query key with the Releases cards); the words come from
  * core/release/status.ts. Tags move slowly, so it reads once and keeps the answer for five minutes.
  */
-import { releasesLeaderLine, type ReleasesReport } from '../../../../core/release/status.js';
+import { releasesLeaderLine } from '../../../../core/release/releases-lines.js';
+import type { ReleasesReport } from '../../../../core/release/status.js';
 import { useQuery } from '../../../data/hooks.js';
 import { releasesQuery } from '../fleet-metrics/releases-query.js';
 

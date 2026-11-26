@@ -7,7 +7,7 @@
  */
 import { useState } from 'react';
 import type { HomeSummary } from '../../../../core/fleet/home.js';
-import type { WorklogKind } from '../../../../core/fleet/worklog.js';
+import type { WorklogKind } from '../../../../core/fleet/worklog-types.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';

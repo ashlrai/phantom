@@ -4,7 +4,7 @@
  * Built only on the `phm nodes pool --json` report (phantom.nodes-pool.v1). Read-only: with `onOpenJob`
  * (the desktop Home) each running job is a button that opens that job's messages; without it the names are plain text.
  */
-import { NODES_POOL_SCHEMA, type NodesPool } from '../../../../core/fleet/nodes-pool.js';
+import { NODES_POOL_SCHEMA, type NodesPool } from '../../../../core/fleet/nodes-pool-types.js';
 import { apiGet, ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';

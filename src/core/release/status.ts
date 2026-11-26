@@ -9,6 +9,9 @@ import { scrubSecrets } from '../util/scrub.js';
 import { AUTONOMY_REPOS } from './autonomy-audit.js';
 import { readBehindReleases, type InstalledBuild } from './drift.js';
 import { readReleaseRepos, type ReleaseRepoStatus } from './release-repos.js';
+import { releaseCount as count } from './releases-lines.js';
+
+export { releaseDueLine, releasesLeaderLine } from './releases-lines.js';
 
 export interface ReleaseStatusRow {
   repo: string;
@@ -162,7 +165,6 @@ export interface ReleasesReport {
   next: (ReleaseCadenceRow & { action: string }) | null;
 }
 
-const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 // Each release the installed build trails adds one full "due" unit, so an overdue Phantom the fleet is not
 // even running yet ranks above repos that are merely due by age or PR count.
 const overdue = (row: ReleaseCadenceRow): number =>
@@ -205,31 +207,6 @@ export function getReleases(deps: ReleaseStatusDeps = {}): ReleasesReport {
   // Only a readable Phantom clone is asked: the boost reads its tags and the installed manifest, never the network.
   const behindReleases = phantom?.path ? readBehindReleases({ repo: phantom.path, installed: deps.installed }) : null;
   return releaseCadence(rows.map(row => row === phantom ? { ...row, behindReleases } : row), deps.now ?? Date.now());
-}
-
-/**
- * The one line on the Leader card (desktop and phone): the most overdue repo, or "all fresh".
- * "Release due: locus (23 PRs since v1.4.0, 9 days)" | "Releases: all fresh" | "Releases: none due (1 unknown)" | "Releases: unknown".
- */
-export function releasesLeaderLine(report: ReleasesReport | null | undefined): string {
-  if (!report || !Array.isArray(report.repos) || !report.repos.length || report.counts.unknown === report.repos.length) return 'Releases: unknown';
-  const next = report.next;
-  if (next) return `Release due: ${next.repo.replace(/^ashlrai\//, '')} (${next.mergedPrsSince === null ? 'unknown PRs' : count(next.mergedPrsSince, 'PR')} since ${next.latestTag ?? 'unknown'}, ${next.ageDays === null ? 'unknown days' : count(next.ageDays, 'day')})`;
-  if (report.counts.fresh === report.repos.length) return 'Releases: all fresh';
-  const other = report.counts.unknown + report.counts['no release yet'];
-  return `Releases: none due${other ? ` (${report.counts.unknown ? `${report.counts.unknown} unknown` : ''}${report.counts.unknown && report.counts['no release yet'] ? ', ' : ''}${report.counts['no release yet'] ? `${report.counts['no release yet']} with no release yet` : ''})` : ''}`;
-}
-
-/**
- * The one digest line: "Release due: <repo>, <N> PRs since <tag>, <D> days" for the most overdue repo,
- * "Release due: none" when nothing is due, and "Release due: unknown" when nothing could be read.
- */
-export function releaseDueLine(report: ReleasesReport | null | undefined): string {
-  if (!report || !report.repos.length) return 'Release due: unknown';
-  const next = report.next;
-  if (next) return `Release due: ${next.repo.replace(/^ashlrai\//, '')}, ${next.mergedPrsSince === null ? 'unknown PRs' : count(next.mergedPrsSince, 'PR')} since ${next.latestTag ?? 'unknown'}, ${next.ageDays === null ? 'unknown days' : count(next.ageDays, 'day')}`;
-  if (report.counts.unknown === report.repos.length) return 'Release due: unknown';
-  return `Release due: none${report.counts.unknown ? ` (${report.counts.unknown} unknown)` : ''}`;
 }
 
 export function formatReleases(report: ReleasesReport): string {

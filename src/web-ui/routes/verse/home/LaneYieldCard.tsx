@@ -6,7 +6,7 @@ import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { LANE_YIELD_SCHEMA, type LaneYieldReport, type LaneYieldRow } from '../../../../core/fleet/lane-yield-board.js';
+import { LANE_YIELD_SCHEMA, type LaneYieldReport, type LaneYieldRow } from '../../../../core/fleet/lane-yield-board-types.js';
 import styles from './home.module.css';
 import bar from './lane-yield-card.module.css';
 
