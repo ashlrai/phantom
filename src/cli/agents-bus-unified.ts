@@ -47,7 +47,7 @@ ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <a
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
 ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
-ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
+ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
 ashlr agents bus show <id>
 ashlr agents bus thread <id>
 ashlr agents bus adapters
@@ -169,7 +169,16 @@ wakes drops the addressee scope entirely — every hint in the bounded
 queue tail, registered identities' and bare coordination labels' alike,
 each row's own to naming its addressee — so a leader or comms pass sees
 who has pending hints in one read instead of one wakes call per
-identity; it takes no agent and the same filters apply. --channel on inbox
+identity; it takes no agent and the same filters apply. --to on wakes
+keeps only hints addressed to one ref — the same agentRefAddressMatcher
+identity-label rule --from applies on the sender side, so a handle,
+agent:<handle>, stable id or alias matches every label of that identity
+and an unresolvable ref keeps exact-label matching — decided on the
+hint's own to label inside the queue-tail match, so "which hints is
+agent X being paged with" is one filtered fleet read under --all and
+composes with every other filter; on the addressed read it intersects
+the agent's own addressing, so a different addressee is an honest empty
+page. --channel on inbox
 keeps only mail addressed to one registry
 channel's group:<name>:* addresses — channel posts and channel-addressed
 handoffs alike — so an agent in several rooms reads one room's pending
@@ -1207,7 +1216,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'wakes') {
       noExtra(2);
       const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'),
-        channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
+        to: one('--to'), channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
         thread: one('--thread'), inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind'), result: resultArg() };
       const since = sinceArg();
       let page: WakePage | AllWakesPage;

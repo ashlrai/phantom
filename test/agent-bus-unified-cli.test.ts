@@ -235,6 +235,14 @@ describe('phm agents bus (unified)', () => {
       .map((w: { id: string }) => w.id)).toEqual(['wa-nova', 'wa-orion', 'wa-mesh']);
     expect((await run(['wakes', '--all', '--exclude-from', 'atlas'])).json.wakes
       .map((w: { id: string }) => w.id)).toEqual(['wa-nova-2']);
+    // --to keeps only hints addressed to one ref under the identity-label
+    // rule — the fleet read's answer to "who is agent X being paged with".
+    expect((await run(['wakes', '--all', '--to', 'nova'])).json.wakes
+      .map((w: { id: string }) => w.id)).toEqual(['wa-nova', 'wa-nova-2']);
+    expect((await run(['wakes', '--all', '--to', 'fleet.mesh'])).json.wakes
+      .map((w: { id: string }) => w.id)).toEqual(['wa-mesh']);
+    expect((await run(['wakes', '--all', '--to', 'ghost'])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
     expect((await run(['wakes', '--all', '--priority', 'P0'])).json.wakes
       .map((w: { id: string }) => w.id)).toEqual(['wa-nova', 'wa-nova-2', 'wa-orion']);
     expect((await run(['wakes', '--all', '--job', 'RQ-ABSENT'])).json)
@@ -242,6 +250,7 @@ describe('phm agents bus (unified)', () => {
     // --all takes no agent operand; the per-agent read is unchanged.
     expect(await run(['wakes', '--all', 'nova'])).toMatchObject({ code: 2 });
     expect(await run(['wakes', '--all', '--from='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['wakes', '--all', '--to='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
     expect((await run(['wakes', 'nova'])).json).toMatchObject({ matched: 2 });
   });
 
