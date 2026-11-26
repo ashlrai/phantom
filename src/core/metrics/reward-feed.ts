@@ -175,10 +175,10 @@ function standingReverted(
   keys: ReadonlySet<string> | null | undefined,
 ): boolean {
   if (claims === null || keys === null || keys === undefined || mergeUrl === null) return false;
-  const claimants = claims.get(mergeUrl);
-  if (claimants === undefined || claimants.size !== 1 || !claimants.has(id)) return false;
   const key = pullRequestKey(mergeUrl);
-  return key !== null && keys.has(key);
+  if (key === null || !keys.has(key)) return false;
+  const claimants = claims.get(key);
+  return claimants?.size === 1 && claimants.has(id);
 }
 
 interface DispatchMark { ms: number; lane: string | null; repo: string | null }
@@ -248,7 +248,7 @@ export function foldJobsLedgerRewards(
   revertedPrKeys?: ReadonlySet<string> | null,
 ): RewardSignalInput[] {
   const jobs = new Map<string, RewardJobAccum>();
-  // PR URL -> claiming job ids, collected only when the caller supplied
+  // Canonical PR key -> claiming job ids, collected only when the caller supplied
   // standing revert keys — the same unambiguous-claim evidence pass
   // skill-nudge and outcome-learning run, so a contested or foreign URL
   // never resolves. Node-pool producer rows are a different dialect and
@@ -267,10 +267,11 @@ export function foldJobsLedgerRewards(
     if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
     if (claims !== null) {
       const url = firstString(row, URL_KEYS);
-      if (url !== null) {
-        const set = claims.get(url) ?? new Set<string>();
+      const key = url === null ? null : pullRequestKey(url);
+      if (key !== null) {
+        const set = claims.get(key) ?? new Set<string>();
         set.add(id);
-        claims.set(url, set);
+        claims.set(key, set);
       }
     }
     if (!JOB_ID_PATTERN.test(id)) continue;
