@@ -175,7 +175,11 @@ describe('autonomous routing fails closed and applies the budget', () => {
     expect(d.engine).not.toBe('claude');
   });
 
-  it('balanced: above the 70% five-hour ceiling holds claude back', () => {
+  it('honors a configured 70% five-hour ceiling for autonomous Claude routing', () => {
+    updateBudgetPolicy({ seatId: 'claude', policy: { maxSessionWindowPercent: 70 } });
+    writeCapacitySnapshot([claudeSeat(69, 10)]);
+    expect(routeTask(hardItem(), cfg(), ctx(['claude', 'builtin'], true)).engine).toBe('claude');
+
     writeCapacitySnapshot([claudeSeat(80, 10)]);
     const d = routeTask(hardItem(), cfg(), ctx(['claude', 'builtin'], true));
     expect(d.engine).not.toBe('claude');
