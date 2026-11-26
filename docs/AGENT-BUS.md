@@ -2122,7 +2122,35 @@ opaque to it. The value is bounded free text, up to 512 characters. On
 `bus-follow` filtered rows still advance checkpoints exactly like every
 other filter, and a `comms bus --checkpoint` consumer binds the raw
 `--contains` spelling into its filter identity, so a changed needle fails
-closed.
+closed. `--body-kind <kind>` narrows `comms bus read|watch` to envelopes
+whose body carries that exact kind discriminator — the same
+`busBodyKind` own-field exact match `agents bus inbox --body-kind`,
+`channel read --body-kind`, `agents bus wakes --body-kind`, `agents
+conversations --body-kind`, `phm messages --body-kind` and `fleet
+bus-follow --body-kind` apply: the v2 `kind` field (`note`, `context`,
+`work.post`, `work.claim`, `work.status`, `work.result`, `work.release`,
+`wake`), a `worker-handoff` or notice kind, a bus-transport v1
+`protocol.kind`, else the `type`/`schema` a kindless notice keys on —
+matched exactly and case-sensitively, so "which retained envelopes are
+work results" is one filtered read of the raw store; a body carrying no
+discriminator never matches, and an unrecognized but printable value is
+an honest empty page, never an error. `--kind` stays the protocol-v1
+kind filter; `--body-kind` is the wider discriminator every other bus
+read already shares. `--result <reserved|admitted|complete|failed>`
+narrows `comms bus read|watch` to `work.result` bodies whose own
+`outcome` strictly equals the code — the same `busBodyResultOutcome`
+own-field match and `WORK_RESULT_OUTCOMES` vocabulary `phm messages
+--result`, `agents messages --result`, `agents bus inbox`/`channel
+read`/`wakes --result`, `agents conversations --result`, `fleet
+bus-follow --result` and the work feed's `--result` share — so a
+`work.release` body's own `released`/`completed` outcome, every other
+body kind and a `work.result` carrying no outcome never match, and a
+value outside the vocabulary is invalid, never a widened read. Both
+compose with every other read filter, filtered rows still advance
+`bus-follow`-style watch checkpoints and `comms bus` page cursors
+exactly like every other filter, and a `comms bus --checkpoint`
+consumer binds the raw `--body-kind`/`--result` spellings into its
+filter identity the same way.
 
 ### 4. Work feed
 
