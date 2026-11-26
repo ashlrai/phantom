@@ -90,6 +90,30 @@ describe('repeatable Mac enrollment', () => {
     expect(await cmdNodePool('join', ['--role', 'primary', '--json'])).toBe(2);
     expect(deps.call).not.toHaveBeenCalled();
   });
+  it('names which pool identity flag failed instead of one generic refusal', async () => {
+    deps.read.mockReturnValue(null);
+    const lastError = () => (JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]) as { error: { message: string } }).error.message;
+    // First enrollment missing --owner names the flag and what it is for.
+    expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--json'])).toBe(2);
+    expect(lastError()).toContain('--owner');
+    // One SSH alias for both pool hosts is its own refusal.
+    expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'primary-mac', '--owner', 'mason', '--json'])).toBe(2);
+    expect(lastError()).toContain('--primary and --backup');
+    // A malformed --node on join names the flag.
+    expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--owner', 'mason', '--node', 'bad node!', '--json'])).toBe(2);
+    expect(lastError()).toContain('--node');
+    // Pool setup has no hostname default: a missing --node is named as missing.
+    expect(await cmdNodePool('pool', ['--role', 'primary', '--owner', 'mason', '--primary', 'primary-mac', '--backup', 'backup-mac', '--json'])).toBe(2);
+    expect(lastError()).toContain('--node');
+    expect(deps.call).not.toHaveBeenCalled();
+    expect(deps.configure).not.toHaveBeenCalled();
+  });
+  it('names the flag a repeat join tried to change', async () => {
+    expect(await cmdNodePool('join', ['--owner', 'other', '--json'])).toBe(2);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]) as { error: { message: string } };
+    expect(out.error.message).toContain('--owner');
+    expect(deps.call).not.toHaveBeenCalled();
+  });
   it('never configures a failed registration', async () => {
     deps.read.mockReturnValue(null);
     deps.call.mockImplementation(() => { throw new Error('offline'); });
