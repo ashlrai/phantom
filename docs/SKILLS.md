@@ -145,6 +145,8 @@ both endpoints, contribute to the join or its coverage threshold.
 Skill-use partitions dated after the report day do not occupy file slots.
 Within scanned partitions, receipts timestamped after the report time do
 not count toward row limits or cause event-ID conflicts.
+Improvement discovery uses the same upper time bound when checking skill-use
+ledger health, so future partitions and receipts cannot queue a ledger repair.
 Dispatch receipts dated after report time cannot supply production
 trajectories for that sample or contribute to dispatch join diagnostics.
 Direct trajectory reads also exclude future UTC dispatch partitions from

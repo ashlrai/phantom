@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SkillCard, SkillUseEvent } from '../src/core/types.js';
 import { attestSkillCard } from '../src/core/fleet/skill-attestation.js';
-import type { SkillCardCorpusReadResult, SkillUseEventReadResult } from '../src/core/fleet/skill-records.js';
+import {
+  readSkillUseEventsWithDiagnostics,
+  type SkillCardCorpusReadResult,
+  type SkillUseEventReadResult,
+} from '../src/core/fleet/skill-records.js';
 import {
   SKILL_EVIDENCE_WINDOW_HOURS,
   skillEvidenceBacklogItems,
@@ -14,6 +18,11 @@ vi.mock('../src/core/improve/skill-evidence-backlog.js', async (importOriginal) 
 });
 
 const feedMock = vi.mocked(skillEvidenceBacklogItems);
+
+vi.mock('../src/core/fleet/skill-records.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/fleet/skill-records.js')>();
+  return { ...actual, readSkillUseEventsWithDiagnostics: vi.fn(actual.readSkillUseEventsWithDiagnostics) };
+});
 
 const REPO = 'ashlrai/phantom';
 
@@ -82,6 +91,20 @@ const conflictedCorpus = (): SkillCardCorpusReadResult => corpus({
 });
 
 describe('skillEvidenceBacklogItems', () => {
+  it('bounds the skill-use diagnostics read to the discovery window', async () => {
+    const now = new Date('2026-07-10T12:00:00.000Z');
+    const readUses = vi.mocked(readSkillUseEventsWithDiagnostics);
+    readUses.mockReturnValueOnce(useEvents());
+
+    expect(await skillEvidenceBacklogItems({ repo: REPO, corpus: corpus(), now, windowHours: 48 })).toEqual([]);
+    expect(readUses).toHaveBeenLastCalledWith({
+      sinceMs: Date.parse('2026-07-08T12:00:00.000Z'),
+      asOfMs: now.getTime(),
+      maxFiles: 3,
+      limit: expect.any(Number),
+    });
+  });
+
   it('emits the cards cell on a degraded corpus read with the recorded counters', async () => {
     const items = await skillEvidenceBacklogItems({
       repo: REPO,
