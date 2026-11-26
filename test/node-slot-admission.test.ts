@@ -52,6 +52,30 @@ describe('node slot admission', () => {
     expect(nodes.plan()[0]?.fix).toContain('no free job slots');
   });
 
+  it.each(['pull', 'direct claim'] as const)('reuses a slot fenced by leader expiry through %s', method => {
+    const store = new MemoryStore();
+    let now = 1_000;
+    const nodes = new DriveNodes(store, { now: () => now, leaderTtlMs: 10 });
+    const coordinator = nodes.join('coordinator')!;
+    const worker = nodes.join('worker', { owners: ['mason'], slots: 1 })!;
+    nodes.heartbeat(coordinator);
+    nodes.enqueue('first', { owner: 'mason' });
+    nodes.enqueue('second', { owner: 'mason' });
+    const first = nodes.pull(worker)!.claim;
+    expect(nodes.plan()).toMatchObject([{ jobId: 'second', nodeId: null }]);
+
+    now += 10;
+    expect(nodes.plan()).toMatchObject([{ jobId: 'second', nodeId: 'worker' }]);
+    expect(nodes.jobOutcome('first', 'mason')).toEqual({ state: 'running' });
+    const next = method === 'pull' ? nodes.pull(worker)?.claim
+      : nodes.claim(nodes.heartbeat(worker)!.leader!, worker, 'second');
+    expect(next?.jobId).toBe('second');
+    expect(next!.leaderToken).toBeGreaterThan(first.leaderToken);
+    expect(nodes.renewClaim(first)).toBeNull();
+    expect(nodes.complete(first, 'stale')).toBe(false);
+    expect(nodes.complete(next!, 'done')).toBe(true);
+  });
+
   it('holds immediately at zero slots and resumes from a fresh heartbeat', () => {
     const { nodes } = fixture();
     const session = nodes.join('air', { owners: ['mason'], slots: 2 })!;

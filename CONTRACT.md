@@ -2548,6 +2548,11 @@ with a fresh token (`WITHDRAWN_RESULT`) and persists `producerWithdrawn: true`;
 that marker, not the result or node ID, distinguishes a producer withdrawal
 from an accepted completion. `JobView.producerWithdrawn` exposes the marker,
 and `JobView.claimedBy` names the node whose live session can still act on a running claim.
+`src/core/drive/nodes/router.ts` exports `liveLeader(state, now)`, which
+returns the unexpired leader lease with a live matching session, or null.
+`actionableClaim(state, job, now)` requires an unexpired running claim,
+a live matching worker session and the current live leader token. Slot
+accounting and claimant projections use this predicate for fenced claims.
 `DriveNodes.jobOutcome(jobId, owner)` is the read-only counterpart `phm node
 result` serves: a `JobOutcome` (`pending | running | completed | absent`) with
 `result`, `completedBy` and `completedAt` for an accepted completion,
