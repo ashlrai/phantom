@@ -12,6 +12,24 @@ export function groupAddress(room: string, topic: string): string {
   return `group:${room}:${topic}`;
 }
 
+/**
+ * The topic component of a well-formed `group:<room>:<topic>` routing label —
+ * the two-component grammar `groupAddress` writes, room and topic each under
+ * the room rule — or null for any other label. Envelope `to` values carry raw
+ * routing labels, so this parse is what the `--topic` read filters match on:
+ * a bare `group:<room>`, a deeper label, an agent address and a malformed room
+ * or topic all resolve to null and never match. The same rule
+ * `phm agents bus work next --topic` and `phm comms bus next --topic` apply.
+ */
+export function groupAddressTopicOf(to: string): string | null {
+  if (!to.startsWith('group:')) return null;
+  const sep = to.indexOf(':', 'group:'.length);
+  if (sep < 0) return null;
+  const room = to.slice('group:'.length, sep);
+  const topic = to.slice(sep + 1);
+  return NAME.test(room) && NAME.test(topic) ? topic : null;
+}
+
 export function publishGroupMessage(input: {
   room: string; topic: string; id: string; from: string; body: BusJsonValue;
   ttl: number; priority?: BusPriority;

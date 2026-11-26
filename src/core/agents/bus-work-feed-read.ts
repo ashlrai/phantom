@@ -1,5 +1,6 @@
 /** Read the bounded local work feed. Labels grant no execution authority. */
 import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
+import { groupAddressTopicOf } from '../fleet/bus-group.js';
 import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from './claim-store.js';
 import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedRefusalReceipt,
   type WorkFeedResult, type WorkFeedResultCitation } from './bus-work-feed.js';
@@ -374,6 +375,20 @@ export interface BusWorkFeedViewFilters {
    */
   channel?: string;
   /**
+   * Keep only jobs whose announcement `to` is a well-formed
+   * `group:<room>:<topic>` address carrying this exact topic component —
+   * the same topic match `phm agents bus work next --topic` and
+   * `phm comms bus next --topic` apply, decided by the shared
+   * `groupAddressTopicOf` parse on the raw routing label: it needs no
+   * registry, answers across every room (compose with `channel` for one
+   * room AND one topic), and a `to` that is no well-formed group address —
+   * an agent address, a bare label, a `group:<room>` without a topic —
+   * never matches. The value takes the strict channel-name grammar the
+   * query parsers enforce; a value nothing on the feed cites is an honest
+   * empty match, never a widened one.
+   */
+  topic?: string;
+  /**
    * Keep only jobs whose newest retained `work.result` citation carries this
    * outcome — the same `WORK_RESULT_OUTCOMES` codes the result body reports
    * (`reserved`, `admitted`, `complete`, `failed`). The citation is reported
@@ -414,7 +429,7 @@ export function busWorkFeedJobCitesEnvelope(job: BusWorkFeedJob, id: string): bo
 
 /**
  * Client-side `--status`/`--job`/`--repo`/`--provider`/`--tier`/`--claimable`/`--since`/`--before`/
- * `--to`/`--owner`/`--contains`/`--channel`/`--result`/`--id` filters and newest-first ordering shared by
+ * `--to`/`--owner`/`--contains`/`--channel`/`--topic`/`--result`/`--id` filters and newest-first ordering shared by
  * the feed CLIs;
  * the matchers are the `busWorkFeedPendingToMatcher`/`busWorkFeedOwnerMatcher`
  * predicates. `since` keeps jobs whose `updatedAt` — the newest status
@@ -455,6 +470,7 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
       && (filters.toMatch === undefined || filters.toMatch(job.to, job.owner))
       && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner))
       && (filters.channel === undefined || job.to.startsWith(`group:${filters.channel}:`))
+      && (filters.topic === undefined || groupAddressTopicOf(job.to) === filters.topic)
       && (filters.result === undefined || job.result?.outcome === filters.result)
       && (filters.id === undefined || busWorkFeedJobCitesEnvelope(job, filters.id))
       && (containsNeedle === undefined || busWorkFeedJobSearchText(job).includes(containsNeedle)))

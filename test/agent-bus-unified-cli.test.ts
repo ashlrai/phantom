@@ -1420,6 +1420,44 @@ describe('phm agents bus (unified)', () => {
     }
   });
 
+  it('filters the work feed by --topic on the announcement group topic', async () => {
+    const spy = vi.spyOn(Date, 'now');
+    let clock = 1_800_000_000_000;
+    spy.mockImplementation(() => clock);
+    try {
+      expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+      for (const [job, to, id] of [
+        ['RQ-TOPIC-A', 'group:release:deploy', 'tp-a'],
+        ['RQ-TOPIC-B', 'group:ops:deploy', 'tp-b'],
+        ['RQ-TOPIC-C', 'group:release:general', 'tp-c'],
+        ['RQ-TOPIC-D', 'group:release', 'tp-d'],
+        ['RQ-TOPIC-E', 'leaders', 'tp-e'],
+      ] as const) {
+        clock += 1_000;
+        expect((await run(['work', 'post', '--from', 'atlas', '--job', job, '--title', `${job} title`,
+          '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--to', to, '--id', id])).json)
+          .toMatchObject({ status: 'posted' });
+      }
+      const ids = (feed: { json: { jobs: { id: string }[] } }) => feed.json.jobs.map(job => job.id);
+      // The topic component matches across every room — the same
+      // groupAddressTopicOf parse work next --topic applies.
+      expect(ids(await run(['work', 'feed', '--topic', 'deploy']))).toEqual(['RQ-TOPIC-B', 'RQ-TOPIC-A']);
+      expect(ids(await run(['work', 'feed', '--topic', 'general']))).toEqual(['RQ-TOPIC-C']);
+      expect(ids(await run(['work', 'feed', '--topic', 'ghost']))).toEqual([]);
+      // A bare group:<room> and a non-group label carry no topic and never match.
+      expect(ids(await run(['work', 'feed', '--topic', 'release']))).toEqual([]);
+      // The filter composes with --channel into one room AND one topic.
+      expect(ids(await run(['work', 'feed', '--channel', 'release', '--topic', 'deploy']))).toEqual(['RQ-TOPIC-A']);
+      expect(ids(await run(['work', 'feed', '--channel', 'ops', '--topic', 'deploy']))).toEqual(['RQ-TOPIC-B']);
+      // A value outside the channel-name grammar is a usage error, never a guessed match.
+      for (const bad of ['Has Space', 'UPPER', 'a:b']) {
+        expect(await run(['work', 'feed', '--topic', bad])).toMatchObject({ code: 2 });
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('pages the work feed with --limit and reports matched/omitted', async () => {
     const spy = vi.spyOn(Date, 'now');
     let clock = 1_800_000_000_000;

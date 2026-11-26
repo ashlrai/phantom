@@ -730,6 +730,58 @@ describe('work-feed --channel room filter', () => {
   });
 });
 
+describe('work-feed --topic filter', () => {
+  it('keeps only jobs announced to group:<room>:<topic> under the exact topic', async () => {
+    append(post, 1, 'fake-agent', 'group:release:general');
+    now += 10;
+    append({ ...post, jobId: 'fake-room-deploy' }, 2, 'fake-agent', 'group:release:deploy');
+    now += 10;
+    append({ ...post, jobId: 'fake-ops-deploy' }, 3, 'fake-agent', 'group:ops:deploy');
+    now += 10;
+    append({ ...post, jobId: 'fake-bare-room' }, 4, 'fake-agent', 'group:release');
+    now += 10;
+    append({ ...post, jobId: 'fake-direct' }, 5, 'fake-agent', 'agent:worker-bot');
+    now += 10;
+    append({ ...post, jobId: 'fake-sink' }, 6, 'fake-agent', 'leaders');
+    const result = readBusWorkFeed({ root });
+    expect(result).toMatchObject({ status: 'ok', receipts: 6 });
+    const log = output();
+    // The topic component matches across every room — the same
+    // groupAddressTopicOf parse work next --topic and comms bus next --topic
+    // apply on the raw routing label.
+    expect(await cmdFleetWorkFeed(['--root', root, '--topic', 'deploy', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({
+      status: 'ok', receipts: 6, jobs: [{ id: 'fake-ops-deploy' }, { id: 'fake-room-deploy' }] });
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--topic', 'general'])).toBe(0);
+    expect(log.mock.calls.map(call => String(call[0])).filter(line => line.startsWith('fake-')))
+      .toEqual([expect.stringContaining('fake-job')]);
+    log.mockClear();
+    // A bare group:<room>, a non-group label and an unknown topic are honest
+    // empty views, never errors or widened matches.
+    for (const topic of ['release', 'ghost', 'worker-bot']) {
+      expect(await cmdFleetWorkFeed(['--root', root, '--topic', topic])).toBe(0);
+      expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0 receipts=6 feed=ok');
+      log.mockClear();
+    }
+    // The filter composes with --channel into one room AND one topic.
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'release', '--topic', 'deploy', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).jobs.map((job: { id: string }) => job.id))
+      .toEqual(['fake-room-deploy']);
+  });
+
+  it('rejects topic values outside the bus channel-name grammar', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--root', root, '--topic', 'Has Space'], ['--root', root, '--topic', 'UPPER'],
+      ['--root', root, '--topic', ''], ['--root', root, '--topic', 'x'.repeat(33)],
+      ['--root', root, '--topic', 'a:b'], ['--root', root, '--topic', 'deploy', '--topic', 'ops'],
+      ['--root', root, '--topic']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(error).toHaveBeenCalledTimes(7);
+  });
+});
+
 describe('work-feed --id filter', () => {
   it('keeps jobs citing the wire id across post, status and result slots', async () => {
     append(post, 1, 'fake-agent');

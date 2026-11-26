@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { groupAddress, groupPresence, publishGroupMessage, publishGroupPresence, subscribeGroup, GROUP_PRESENCE_TTL_MS } from '../src/core/fleet/bus-group.js';
+import { groupAddress, groupAddressTopicOf, groupPresence, publishGroupMessage, publishGroupPresence, subscribeGroup, GROUP_PRESENCE_TTL_MS } from '../src/core/fleet/bus-group.js';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -24,6 +24,18 @@ describe('group bus', () => {
     if (second.status !== 'ok') throw new Error('read failed');
     expect(second.messages[0]?.envelope.body).toEqual({ kind: 'group.message', value: { text: 'hello', nested: [1, null] } });
     expect(() => groupAddress('../team', 'work')).toThrow();
+  });
+  it('parses the topic component of a well-formed group address only', () => {
+    expect(groupAddressTopicOf('group:team:work')).toBe('work');
+    expect(groupAddressTopicOf('group:a-b_c:topic-1_x')).toBe('topic-1_x');
+    // Anything that is not exactly group:<room>:<topic> under the room rule
+    // carries no topic: bare rooms, deeper labels, empty or malformed
+    // components, non-group labels and case variants all resolve to null.
+    for (const label of ['group:team', 'group:team:work:extra', 'group::work', 'group:team:',
+      'group:Team:work', 'group:team:Work', 'group:team work:x', 'team:work', 'leaders',
+      'agent:codex', 'group', 'group:', '']) {
+      expect(groupAddressTopicOf(label)).toBeNull();
+    }
   });
   it('folds presence by cursor, isolates topics, and expires observations', () => {
     const root = setup();

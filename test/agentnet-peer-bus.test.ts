@@ -10,6 +10,7 @@ import { cmdAgentnet } from '../src/cli/agentnet.js';
 import { localWriteGate } from '../src/core/agents/send-gate.js';
 import type { SlackCall, SlackDeliveryPolicy } from '../src/core/agents/slack-transport.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
+import { busWorkFeedPendingToMatcher } from '../src/core/agents/bus-work-feed-read.js';
 import { readPeerFleet, type PeerWorkFeedQuery } from '../src/core/agentnet/mesh-read.js';
 vi.mock('../src/core/agents/send-gate.js', () => ({ localWriteGate: vi.fn(() => null) }));
 let root: string, bindings: string, peers: PeerBinding[], now: number, shared: boolean, approved: boolean;
@@ -56,13 +57,14 @@ describe('team peer mesh', () => {
     expect(() => readPeerFleet('work-feed', session(), options())).toThrow();
   });
   it('serves the shared work-feed query to authenticated peers and refuses feed flags elsewhere', async () => {
-    const announce = (id: string, jobId: string, body: Record<string, unknown>, at = now) =>
-      appendBusInbox({ id, from: 'agent0', to: 'leaders', priority: 'P2', ttl: 60000,
+    const announce = (id: string, jobId: string, body: Record<string, unknown>, at = now, to = 'leaders') =>
+      appendBusInbox({ id, from: 'agent0', to, priority: 'P2', ttl: 60000,
         body: { kind: 'work.post', jobId, title: `Title for ${jobId}`, repo: 'fake/repo',
           provider: 'claude', claimKeys: ['repo:fake/repo'], ...body } }, { root, now: () => at });
     announce('feed-post-a', 'RQ-FEED-A', {});
     announce('feed-post-b', 'RQ-FEED-B', { repo: 'other/repo', provider: 'devin', claimKeys: ['repo:other/repo'],
       dispatch: { tier: 'fast', scope: 'the scope', acceptance: 'the check' } }, now + 1);
+    announce('feed-post-c', 'RQ-FEED-C', {}, now + 2, 'group:release:deploy');
     const feed = (query?: PeerWorkFeedQuery) => {
       const view = readPeerFleet('work-feed', session(), options(), query);
       if (!('jobs' in view)) throw new Error(`feed refused: ${JSON.stringify(view)}`);
@@ -70,7 +72,7 @@ describe('team peer mesh', () => {
     };
     const ids = (view: { jobs: { id: string }[] }) => view.jobs.map(job => job.id);
     // Unfiltered parity: every announced job, newest first — the order the other feed surfaces serve.
-    expect(ids(feed())).toEqual(['RQ-FEED-B', 'RQ-FEED-A']);
+    expect(ids(feed())).toEqual(['RQ-FEED-C', 'RQ-FEED-B', 'RQ-FEED-A']);
     // The shared filter set narrows the same view phm fleet work-feed, phm agents bus work feed,
     // the work-feed HTTP route and fleet_work_feed serve — one parseBusWorkFeedQuery contract.
     for (const [filters, expected] of [
@@ -78,20 +80,29 @@ describe('team peer mesh', () => {
       [{ repo: 'other/repo' }, ['RQ-FEED-B']],
       [{ provider: 'devin' }, ['RQ-FEED-B']],
       [{ tier: 'fast' }, ['RQ-FEED-B']],
-      [{ status: 'queued' }, ['RQ-FEED-B', 'RQ-FEED-A']],
+      [{ status: 'queued' }, ['RQ-FEED-C', 'RQ-FEED-B', 'RQ-FEED-A']],
       [{ status: 'done' }, []],
-      [{ owner: 'agent0' }, ['RQ-FEED-B', 'RQ-FEED-A']],
-      [{ to: 'leaders' }, ['RQ-FEED-B', 'RQ-FEED-A']],
+      [{ owner: 'agent0' }, ['RQ-FEED-C', 'RQ-FEED-B', 'RQ-FEED-A']],
+      // The --to filter is the pending-to predicate the parser builds — the
+      // group-addressed job is not addressed to 'leaders' and stays out.
+      [{ toMatch: busWorkFeedPendingToMatcher('leaders', { root }) }, ['RQ-FEED-B', 'RQ-FEED-A']],
       [{ contains: 'title for rq-feed-b' }, ['RQ-FEED-B']],
       [{ id: 'feed-post-a' }, ['RQ-FEED-A']],
+      // topic keeps jobs announced to a well-formed group:<room>:<topic>
+      // address carrying that exact component — RQ-FEED-C's
+      // group:release:deploy matches 'deploy'; the leaders-addressed jobs
+      // carry no topic and never match.
+      [{ topic: 'deploy' }, ['RQ-FEED-C']],
+      [{ topic: 'general' }, []],
+      [{ channel: 'release', topic: 'deploy' }, ['RQ-FEED-C']],
     ] as const) {
       expect(ids(feed({ claims: false, filters }))).toEqual(expected);
     }
     // --claims joins hold coverage (an absent table reads missing, never zeroed);
     // --limit pages the filtered view with honest matched/omitted counts.
     expect(feed({ claims: true, filters: {} })).toMatchObject({ status: 'ok', claims: { source: 'missing', holds: [] } });
-    expect(feed({ claims: false, filters: {}, limit: 1 })).toMatchObject({ matched: 2, omitted: 1 });
-    expect(ids(feed({ claims: false, filters: {}, limit: 1 }))).toEqual(['RQ-FEED-B']);
+    expect(feed({ claims: false, filters: {}, limit: 1 })).toMatchObject({ matched: 3, omitted: 2 });
+    expect(ids(feed({ claims: false, filters: {}, limit: 1 }))).toEqual(['RQ-FEED-C']);
     // The mesh view takes no query — passing one is a contract violation, never a silent no-op.
     expect(() => readPeerFleet('mesh', session(), options(), { claims: false, filters: {} })).toThrow('work-feed');
     // The CLI parses the same flags into the same query and refuses them on every other verb.
