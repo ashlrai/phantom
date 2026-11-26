@@ -1470,7 +1470,7 @@ class DispatchPriorityTests(unittest.TestCase):
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), sorted(jobs[1:]) + ['RQ-A-OTHER'])
 
-    def test_repo_rank_precedes_size_and_job_path(self):
+    def test_flat_repo_share_preserves_size_and_job_path_ties(self):
         home, env = self.fixture()
         repos = ['phantom', 'phantom-secrets', 'locus', 'lexicon',
                  'ashlr-md', 'ashlr-stack', 'ashlr-plugin', 'unknown-repo']
@@ -1481,7 +1481,7 @@ class DispatchPriorityTests(unittest.TestCase):
             queue_job(home, job, 'codex-personal', repo=repo, size=1000 - index)
         self.run_tick(home, env)
         self.run_tick(home, env)
-        self.assertEqual(self.claims(home), expected)
+        self.assertEqual(self.claims(home), expected[::-1])
 
     def test_repo_size_and_path_rank_override_lane_order_and_old_cursor(self):
         home, env = self.fixture(('codex-personal', 'claude', 'devin'))
@@ -1495,7 +1495,7 @@ class DispatchPriorityTests(unittest.TestCase):
         (home / '.ashlr-runs/queue/claim-cursor.json').write_text('{"lane":"devin"}')
         self.run_tick(home, env)
         self.run_tick(home, env)
-        self.assertEqual(self.claims(home), ['RQ-B-20', 'RQ-C-20', 'RQ-Z-100', 'RQ-A-1', 'RQ-0-1'])
+        self.assertEqual(self.claims(home), ['RQ-B-20', 'RQ-0-1', 'RQ-A-1', 'RQ-C-20', 'RQ-Z-100'])
 
     def test_numeric_size_hint_then_path_with_missing_and_invalid_last(self):
         home, env = self.fixture()

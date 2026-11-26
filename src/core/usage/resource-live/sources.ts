@@ -13,6 +13,7 @@
  * an empty list has no supported source yet and stays unverified.
  */
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { readLatestClaudeRateLimitEvent } from '../../fabric/claude-rate-limit-event.js';
 import { readCodexUsage, type CodexUsageReading } from '../../fabric/readers/codex-usage.js';
@@ -30,7 +31,7 @@ import type { DevinModelCatalog } from '../../devin/models.js';
 import type { DevinWeeklyCapacity } from '../../devin/weekly-capacity.js';
 import { NEEDS_SIGNIN, type ResourceLiveSource, type ResourceLiveSources } from './source-types.js';
 import { RESOURCE_LIVE_STALE_MS, type ResourceLiveTier } from './types.js';
-import { readResourceEvidenceFile } from './store.js';
+import { readPrivateJson, readResourceEvidenceFile } from './store.js';
 import type { CapacitySnapshot } from '../../routing/budget-store.js';
 import type { LiveSourcesConfig } from './config.js';
 import { capacitySource } from './capacity-source.js';
@@ -56,7 +57,7 @@ export interface ResourceLiveSourceOptions extends LiveSourcesConfig {
   readClaudeQuota?: (runsDir: string) => Promise<ClaudeQuotaReadingV1 | null>;
   readClaudeEvent?: (nowMs: number) => unknown;
   readFable?: (nowMs: number) => FablePlan;
-  readCodex?: (home: string) => Promise<Pick<CodexUsageReading, 'pctUsed' | 'resetAt' | 'fetchedAt'>>;
+  readCodex?: (home: string) => Promise<Pick<CodexUsageReading, 'pctUsed' | 'resetAt' | 'fetchedAt' | 'windows'>>;
   readGrok?: (nowMs: number) => Promise<GrokUltraRunway>;
   resourceReaders?: UsageResourceReaderDeps;
   /** Devin weekly session-list measurement and the last published one. */
@@ -95,13 +96,42 @@ function claudeFable(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
   } }];
 }
 
-function codex(o: ResourceLiveSourceOptions, home: string | undefined): ResourceLiveSource[] {
-  return [{ tier: 'official', read: async () => {
+function codexPersonal(o: ResourceLiveSourceOptions): Record<'5h' | 'weekly', ResourceLiveSource> {
+  let last: { at: number; reading: ReturnType<NonNullable<ResourceLiveSourceOptions['readCodex']>> } | undefined;
+  const source = (kind: '5h' | 'weekly'): ResourceLiveSource => ({ tier: 'official', read: async now => {
+    const home = o.codexPersonalHome;
     if (!home || !codexPoolHomeAllowed(home, o.operatorHome ?? homedir())) return null;
-    const reading = await (o.readCodex ?? (dir => readCodexUsage({ personalHome: dir })))(home);
-    if (reading.pctUsed === null) return null;
-    return { used: reading.pctUsed, limit: 100, unit: 'percent', reset_at: reading.resetAt, source: 'codex-app-server', observed_at: reading.fetchedAt };
-  } }];
+    if (last?.at !== now) last = { at: now, reading: (o.readCodex ?? (dir => readCodexUsage({ personalHome: dir })))(home) };
+    const reading = await last.reading;
+    const window = reading.windows?.[kind];
+    const fetched = Date.parse(reading.fetchedAt);
+    return window && Number.isFinite(fetched) ? { used: window.pctUsed, limit: 100, unit: 'percent', reset_at: window.resetAt,
+      source: `codex-app-server-${kind}`, observed_at: iso(Math.min(now, fetched)) } : null;
+  } });
+  return { '5h': source('5h'), weekly: source('weekly') };
+}
+
+const weeklyBudget = z.object({
+  'codex-personal': z.object({
+    weekly_used_pct: z.number().min(0).max(100),
+    reset_at: z.iso.datetime({ offset: true }),
+    as_of: z.iso.datetime({ offset: true }),
+    source: z.enum(['reader-1 codex app-server rateLimits', 'codex-app-server-rate-limits-weekly']),
+    estimated: z.literal(false).optional(),
+  }),
+});
+
+function codexBudgetWeekly(runsDir: string): ResourceLiveSource {
+  return { tier: 'official', read: async now => {
+    const parsed = weeklyBudget.safeParse(await readPrivateJson(join(runsDir, 'queue', 'budget-overrides.json'), 1024 * 1024));
+    if (!parsed.success) return null;
+    const row = parsed.data['codex-personal'];
+    const observed = Date.parse(row.as_of);
+    const reset = Date.parse(row.reset_at);
+    if (observed > now || now - observed >= RESOURCE_LIVE_STALE_MS || reset <= now || reset - observed > 7 * 86_400_000) return null;
+    return { used: row.weekly_used_pct, limit: 100, unit: 'percent', reset_at: iso(reset),
+      source: 'codex-budget-overrides-weekly', observed_at: iso(observed) };
+  } };
 }
 
 /** A row of the "Every resource" registry, which already validates and normalizes these readers. */
@@ -219,6 +249,7 @@ function devinPreview(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
 }
 
 export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): ResourceLiveSources {
+  const personal = codexPersonal(o);
   const operator = (provider: 'claude' | 'codex-personal') => operatorPageSources(o.operatorPageFallback, provider, o.operatorPageReader);
   const evidence = (id: EvidenceId) => agentCheck(() => readResourceEvidenceFile(o.runsDir), id);
   const anthropic = o.anthropicCost ? [anthropicCostSource(o.anthropicCost, o.runAnthropicCost)] : [];
@@ -228,7 +259,9 @@ export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): Resour
     'claude-api': [...(o.anthropicCost?.expiresAt ? anthropic : []),
       ...(o.accountsRoot ? [registry(o, 'claude-api-gift', 'operator-entry')] : []), evidence('claude-api'),
       ...(!o.anthropicCost?.expiresAt ? anthropic : [])],
-    'codex-personal': [...codex(o, o.codexPersonalHome), capacitySource('codex-personal', o.codexSeatMap, o.readCapacity), ...visible(o, 'chatgpt-codex'), ...operator('codex-personal')],
+    'codex-personal': [personal.weekly, codexBudgetWeekly(o.runsDir), capacitySource('codex-personal', o.codexSeatMap, o.readCapacity),
+      ...visible(o, 'chatgpt-codex'), ...operator('codex-personal')],
+    'codex-personal-5h': [personal['5h']],
     'openai-api': [evidence('openai-api')],
     devin: [registry(o, 'devin', 'official'), ...devinWeekly(o), ...visible(o, 'devin')],
     // Zero-cost SWE-2 Lightning/Flash previews the CLI lists as free, until they expire.

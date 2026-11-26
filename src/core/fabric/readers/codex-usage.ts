@@ -9,7 +9,10 @@ export interface CodexUsageReading {
   resetAt: string | null;
   source: 'codex-reader';
   fetchedAt: string;
+  windows?: { '5h': CodexWindow | null; weekly: CodexWindow | null };
 }
+
+interface CodexWindow { pctUsed: number; resetAt: string }
 
 export interface CodexUsageOptions {
   /** Explicit personal pool HOME, never the operator's HOME or a copied profile. */
@@ -38,7 +41,7 @@ export function parseCodexUsage(payload: unknown, nowMs: number): Pick<CodexUsag
   catch { return { pctUsed: null, resetAt: null }; }
 }
 
-function parseNativeUsage(payload: unknown, nowMs: number): Pick<CodexUsageReading, 'pctUsed' | 'resetAt'> {
+function parseNativeUsage(payload: unknown, nowMs: number, minutes?: number): Pick<CodexUsageReading, 'pctUsed' | 'resetAt'> {
   const unknown = { pctUsed: null, resetAt: null };
   if (!object(payload) || !Number.isFinite(nowMs)) return unknown;
   const hasMap = Object.hasOwn(payload, 'rateLimitsByLimitId');
@@ -46,7 +49,7 @@ function parseNativeUsage(payload: unknown, nowMs: number): Pick<CodexUsageReadi
     ? object(payload.rateLimitsByLimitId) && Object.hasOwn(payload.rateLimitsByLimitId, 'codex') && payload.rateLimitsByLimitId.codex
     : payload.rateLimits;
   if (!object(bucket) || (hasMap ? bucket.limitId != null && bucket.limitId !== 'codex' : bucket.limitId !== 'codex')) return unknown;
-  const windows: { pctUsed: number; resetAt: string }[] = [];
+  const windows: Array<CodexWindow & { minutes: unknown }> = [];
   for (const key of ['primary', 'secondary']) {
     const window = bucket[key];
     if (window === undefined || window === null) continue;
@@ -54,12 +57,15 @@ function parseNativeUsage(payload: unknown, nowMs: number): Pick<CodexUsageReadi
         window.usedPercent < 0 || window.usedPercent > 100 || typeof window.resetsAt !== 'number' ||
         !Number.isSafeInteger(window.resetsAt) || window.resetsAt <= nowMs / 1000 ||
         window.resetsAt > 253_402_300_799) return unknown;
-    windows.push({ pctUsed: window.usedPercent, resetAt: new Date(window.resetsAt * 1000).toISOString() });
+    windows.push({ pctUsed: window.usedPercent, resetAt: new Date(window.resetsAt * 1000).toISOString(), minutes: window.windowDurationMins });
   }
   const selected = windows.sort((a, b) => b.pctUsed - a.pctUsed || Date.parse(b.resetAt) - Date.parse(a.resetAt))[0];
   // A provider denial without a measured full window is not a percentage.
   if (!selected || bucket.rateLimitReachedType != null && selected.pctUsed !== 100) return unknown;
-  return selected;
+  const matching = minutes === undefined ? [selected] : windows.filter(window => window.minutes === minutes);
+  if (matching.length !== 1) return unknown;
+  const { pctUsed, resetAt } = matching[0]!;
+  return { pctUsed, resetAt };
 }
 
 async function poolHome(home: string | undefined): Promise<string | null> {
@@ -165,8 +171,13 @@ export async function readCodexUsage(options: CodexUsageOptions = {}): Promise<C
     if (home) payload = await readNativeStatus(home);
   } catch { /* Suppress native errors and private diagnostics. */ }
   const fetchedAt = new Date().toISOString();
+  const window = (minutes: number): CodexWindow | null => {
+    const row = parseNativeUsage(payload, Date.parse(fetchedAt), minutes);
+    return row.pctUsed === null || row.resetAt === null ? null : { pctUsed: row.pctUsed, resetAt: row.resetAt };
+  };
   const reading: CodexUsageReading = {
     pool: 'codex-personal', ...parseCodexUsage(payload, Date.parse(fetchedAt)), source: 'codex-reader', fetchedAt,
+    windows: { '5h': window(300), weekly: window(10_080) },
   };
   if (options.logPath) {
     await appendFile(options.logPath, JSON.stringify({ ...reading, used: reading.pctUsed ?? 'unknown' }) + '\n',

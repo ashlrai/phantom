@@ -120,7 +120,8 @@ export function defaultReaders(o: ReaderOptions): Partial<Record<SelfLane, Sanct
     const home = o.codexPersonalHome;
     readers['codex-personal'] = async () => {
       const r = await readCodexUsage({ personalHome: home });
-      return r.pctUsed === null ? null : { pctUsed: r.pctUsed, resetAt: r.resetAt, source: 'codex-app-server-rate-limits' };
+      const weekly = r.windows?.weekly;
+      return weekly ? { ...weekly, source: 'codex-app-server-rate-limits-weekly' } : null;
     };
   }
   return readers;

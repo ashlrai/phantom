@@ -12,7 +12,7 @@ const notes: Partial<Record<DesktopUpdateState['phase'], string>> = {
   uncommissioned: 'Signed updates are not available for this build.',
   disabled: 'Automatic downloads and installation are off.',
   'waiting-for-idle': 'Finish local work and stop the fleet before updating.',
-  'waiting-for-app-quit': 'Quit Phantom normally to install the verified update.',
+  'waiting-for-app-quit': 'Phantom will restart to install the verified update.',
   'adoption-held': 'Phantom could not confirm the conditions for automatic installation. Your current installation stays in place.',
   installed: 'The installed app and CLI were verified. Fleet restart is managed separately.',
   failed: 'The update could not be verified or prepared. Your current installation stays in place.',

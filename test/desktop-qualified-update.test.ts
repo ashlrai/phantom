@@ -13,6 +13,7 @@ import { applyQualifiedDesktopUpdate, desktopUpdateStagePath, downloadQualifiedU
   type DesktopUpdateDependencies, type UpdateAdmission } from '../src/core/desktop/qualified-update.js';
 import { authoritySurfaceDigest } from '../src/core/authority/surface.js';
 import * as authoritySurface from '../src/core/authority/surface.js';
+import {extractPinnedRuntimeArchive,readPinnedRuntimeArchive} from '../src/core/local-runtime/archive.js';
 import {getDesktopUpdateProfile, type DesktopUpdateProfileName, type CompatibleUpdateManifest, type UpdateTrust } from '../src/core/desktop/update-manifest.js';
 
 const roots: string[] = [];
@@ -87,10 +88,23 @@ describe.skipIf(process.platform === 'win32')('signed paired installed update ad
     if(kind==='changed-app')fs.writeFileSync(join(f.stage,'app.tar.gz'),Buffer.from('substituted'));
     expect(inspectQualifiedDesktopUpdate(f.id,f.deps).state).toBe('blocked');
   });
-  it.each(['surface','expired','stop','leases','unknown'])('keeps %s refusal explicit and never starts apply',async kind=>{
-    const f=fixture();if(kind==='surface')f.admission.surfaceDigest='0'.repeat(64);if(kind==='expired')f.admission.active=false;if(kind==='stop')f.admission.stop=false;if(kind==='leases')f.admission.leaseCount=1;if(kind==='unknown')f.admission.unknownLeases=1;
+  it.each(['stop','leases','unknown'])('keeps %s refusal explicit and never starts apply',async kind=>{
+    const f=fixture();if(kind==='stop')f.admission.stop=false;if(kind==='leases')f.admission.leaseCount=1;if(kind==='unknown')f.admission.unknownLeases=1;
     const install=vi.fn(async()=> 'applied' as const);const observed=await applyQualifiedDesktopUpdate(f.id,f.deps,install);
-    expect(observed.state).toBe('blocked');expect(observed.requiresReapproval).toBe(['surface','expired'].includes(kind));expect(install).not.toHaveBeenCalled();
+    expect(observed.state).toBe('blocked');expect(observed.requiresReapproval).toBe(false);expect(install).not.toHaveBeenCalled();
+  });
+  it('admits signed installation while stopped without a standing authority grant',async()=>{
+    const f=fixture();
+    f.deps.admission=()=>({...f.admission,active:false,grantId:null,envelopeDigest:null,surfaceDigest:null});
+    expect(inspectQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'ready',requiresReapproval:false});
+    const install=vi.fn(async()=> 'applied' as const);
+    expect(await applyQualifiedDesktopUpdate(f.id,f.deps,install)).toMatchObject({state:'applied',requiresReapproval:false});
+  });
+  it('holds with a fixed reason before acknowledging exit when resident stop fails',async()=>{
+    const f=fixture(),progress=vi.fn(),install=vi.fn(async()=> 'applied' as const);
+    f.deps.residentStop=async()=>false;
+    expect(await applyQualifiedDesktopUpdate(f.id,f.deps,install,progress)).toMatchObject({state:'blocked',reason:'resident-stop-failed'});
+    expect(progress).not.toHaveBeenCalled();expect(install).not.toHaveBeenCalled();
   });
   it('admits the supported installed identity0644 while refusing writable replacement files',async()=>{
     const f=fixture(),identity=join(f.deps.packageRoot!,'dist/build-identity.json');fs.chmodSync(identity,0o644);
@@ -135,11 +149,11 @@ describe.skipIf(process.platform === 'win32')('signed paired installed update ad
     const observed=await applyQualifiedDesktopUpdate(f.id,deps,install,value=>events.push(value.state));
     expect(observed).toMatchObject({state:'applied',reason:'operator-restart-required'});expect(events).toEqual(['waiting-native-exit','install']);expect(calls).toBe(2);
   });
-  it.each(['parent-missing','reused','unknown','still-running','grant-changed','stop-cleared','new-lease'])('holds %s before the installer is contacted',async kind=>{
+  it.each(['parent-missing','reused','unknown','still-running','stop-cleared','new-lease'])('holds %s before the installer is contacted',async kind=>{
     const f=fixture();let reads=0;const deps={...f.deps};
     if(kind==='parent-missing')deps.captureParent=()=>null;
     if(kind==='reused')deps.parentState=()=> 'changed';if(kind==='unknown')deps.parentState=()=> 'unknown';if(kind==='still-running')deps.parentState=()=> 'same';
-    if(['grant-changed','stop-cleared','new-lease'].includes(kind))deps.admission=()=>{reads++;return {...f.admission,...(reads>1?(kind==='grant-changed'?{envelopeDigest:'4'.repeat(64)}:kind==='stop-cleared'?{stop:false}:{leaseCount:1}):{})};};
+    if(['stop-cleared','new-lease'].includes(kind))deps.admission=()=>{reads++;return {...f.admission,...(reads>1?(kind==='stop-cleared'?{stop:false}:{leaseCount:1}):{})};};
     const install=vi.fn(async()=> 'applied' as const);expect((await applyQualifiedDesktopUpdate(f.id,deps,install)).state).toBe('blocked');expect(install).not.toHaveBeenCalled();
   });
   it('preserves uncertain previous attempts and a concurrently held claim without replay or deletion',async()=>{
@@ -173,18 +187,18 @@ function pairedFixture(profile: DesktopUpdateProfileName = 'legacy-v1', currentR
   const app=tar([...files.map(path=>({path,data:'signed file'})),{path:'Phantom.app/Contents/Resources/phantom-release.json',data:record}]);
   f.manifest.app.bytes=app.length;f.manifest.app.sha256=createHash('sha256').update(app).digest('hex');f.manifest.app.signature=signature(app);
   fs.writeFileSync(join(f.stage,'app.tar.gz'),app);f.publish();
-  const previous={target:f.deps.packageRoot!};let pointer=previous;let held=false;let installations=0;let mutation:string|null=null;let beforeSwitch:(()=>Promise<void>)|null=null;
+  let previous={target:f.deps.packageRoot!};let pointer=previous;let held=false;let appOnly=false;let installations=0;let mutation:string|null=null;let beforeSwitch:(()=>Promise<void>)|null=null;
   const io={home:f.home,clock:()=>0,sleep:async()=>{},fetchStatus:async()=>200,readCurrentPointer:()=>pointer,
     switchCurrentPointer:(_path:string,_before:unknown,target:string)=>{pointer={target};return pointer;},restoreCurrentPointer:()=>{pointer=previous;},
-    writeInstallJournal:(_owner:string,_value:{phase:string})=>{},readBoundedFile:()=>record};
+    writeInstallJournal:(_owner:string,_value:{phase:string})=>{},readBoundedFile:()=>record,exec:()=>({status:0,stdout:'3.25.0'})};
   const transaction={createLocalAppTransactionIo:()=>io,
-    selectLocalApp:()=>({path:'/Applications/Phantom.app',inventory:f.manifest.app.inventorySha256,dev:1,ino:2,signer:f.manifest.app.signer}),
+    selectLocalApp:()=>({path:'/Applications/Phantom.app',inventory:appOnly?'0'.repeat(64):f.manifest.app.inventorySha256,dev:1,ino:2,signer:f.manifest.app.signer}),
     inspectLocalApp:(path:string)=>({path,inventory:f.manifest.app.inventorySha256,dev:1,ino:2,signer:f.manifest.app.signer}),
     inspectLocalAliases:()=>[],createLocalAliases:()=>[],removeCreatedAliases:()=>{},launchedAppIsOwned:()=>true,
     installLocalApp:async(input:Record<string,unknown>)=>{
       installations++;expect(input.preserveSigned).toBe(true);expect(input.prepare).toBeUndefined();
       beforeSwitch=input.beforeSwitch as ()=>Promise<void>;
-      if(held)f.admission.active=false;
+      if(held)f.admission.stop=false;
       const mutate=()=>fs.writeFileSync(join(f.home,'.local/share/ashlr/releases',f.manifest.source.revision,'dist/core/authority/fixture.js'),'changed after initial signed-package proof');
       if(mutation==='beforeSwitch')mutate();
       await beforeSwitch();
@@ -199,7 +213,14 @@ function pairedFixture(profile: DesktopUpdateProfileName = 'legacy-v1', currentR
       expect(await (input.health as ()=>Promise<boolean>)()).toBe(true);
     }};
   f.deps.download=async(url)=>{expect(url).toBe(f.manifest.cli.url);return cli;};f.deps.transaction=async()=>transaction;
-  return {...f,cli,record,getPointer:()=>pointer,installations:()=>installations,revokeBeforeSwitch:()=>{held=true;},mutateCandidateAt:(phase:string)=>{mutation=phase;}};
+  const seedCurrent=async()=> {
+    const artifactPath=join(f.home,'original.tgz');fs.writeFileSync(artifactPath,cli);
+    const target=join(f.home,'.local/share/ashlr/releases',f.manifest.source.revision);
+    fs.mkdirSync(target,{recursive:true,mode:0o700});
+    extractPinnedRuntimeArchive(await readPinnedRuntimeArchive({artifactPath,sha256:f.manifest.cli.sha256,revision:f.manifest.source.revision,version,identityProfile:profile}),target);
+    pointer=previous={target};appOnly=true;f.deps.packageRoot=target;f.deps.currentPackageRoot=()=>target;
+  };
+  return {...f,cli,record,seedCurrent,getPointer:()=>pointer,installations:()=>installations,clearStopBeforeSwitch:()=>{held=true;},mutateCandidateAt:(phase:string)=>{mutation=phase;}};
 }
 
 describe.skipIf(process.platform === 'win32')('original package extraction and installed-byte readback',()=>{
@@ -245,12 +266,19 @@ describe.skipIf(process.platform === 'win32')('original package extraction and i
     expect(inspectQualifiedDesktopUpdate(f.id,f.deps).reason).toBe('installed-current-unverified');
     expect((await applyQualifiedDesktopUpdate(f.id,f.deps)).state).toBe('blocked');expect(f.installations()).toBe(0);
   });
-  it('withholds mutation on a fresh revocation at the final transaction boundary',async()=>{
-    const f=pairedFixture();f.revokeBeforeSwitch();
+  it('withholds mutation if Stop clears at the final transaction boundary',async()=>{
+    const f=pairedFixture();f.clearStopBeforeSwitch();
     expect(await applyQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'rollback-held'});
     expect(f.getPointer().target).toBe(f.deps.packageRoot);
     expect(fs.existsSync(join(f.stage,'consumer-attempt.json'))).toBe(true);
-    expect((await applyQualifiedDesktopUpdate(f.id,f.deps)).reason).toBe('grant-unavailable');
+    expect((await applyQualifiedDesktopUpdate(f.id,f.deps)).reason).toBe('stop-required');
+  });
+  it('replaces only the app when the current CLI matches the signed revision and package',async()=>{
+    const f=pairedFixture('canonical-v2');await f.seedCurrent();const previous=f.getPointer();
+    const residentStop=vi.fn(async()=>true);f.deps.residentStop=residentStop;
+    expect(inspectQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'ready'});
+    expect(await applyQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'applied',requiresReapproval:false});
+    expect(f.getPointer()).toBe(previous);expect(residentStop).toHaveBeenCalledOnce();
   });
   it.each(['beforeSwitch','beforePointer'])('holds actual late candidate mutation at %s without publishing current',async phase=>{
     const f=pairedFixture();f.mutateCandidateAt(phase);

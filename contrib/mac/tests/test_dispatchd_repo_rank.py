@@ -108,7 +108,7 @@ def snapshot():
 
 
 class DispatchRepoRank(unittest.TestCase):
-    def run_queue(self, content):
+    def run_queue(self, content, pause=False):
         with build(slots={'codex-personal': lane_slot(), 'hard_cap': 4}) as tmp:
             home = Path(tmp).resolve()
             env = launch_stubs(home)
@@ -120,24 +120,33 @@ class DispatchRepoRank(unittest.TestCase):
                 path = home / '.ashlr/repo-rank.json'
                 path.parent.mkdir()
                 path.write_text(content)
+            if pause:
+                path = home / '.ashlr/repo-priority'
+                path.mkdir(parents=True, exist_ok=True)
+                (path / 'ashlrai@locus').write_text('pause')
             result = tick(home, env)
             self.assertEqual(result.returncode, 0, result.stderr)
             return {j for j in ('A', 'B', 'C', 'D', 'Z', 'RQ-FIX-MAIN-X') if dispatched(home, j)}
 
-    def test_rank_breaks_ties_but_not_priority(self):
+    def test_value_share_apportions_ready_work_without_a_fixed_hierarchy(self):
         launched = self.run_queue(json.dumps(snapshot()))
         self.assertIn('Z', launched)
         self.assertIn('RQ-FIX-MAIN-X', launched)
         self.assertNotIn('C', launched)
 
-    def test_missing_and_invalid_keep_legacy_order(self):
+    def test_missing_and_invalid_historical_snapshots_keep_value_share(self):
         invalid = snapshot()
         invalid['rankings'][0]['score'] = None
         for content in (None, '{', json.dumps(invalid)):
             with self.subTest(content=content):
                 launched = self.run_queue(content)
-                self.assertNotIn('Z', launched)
+                self.assertIn('Z', launched)
                 self.assertIn('RQ-FIX-MAIN-X', launched)
+
+    def test_owner_pause_keeps_ready_repo_out_of_claims(self):
+        launched = self.run_queue(None, pause=True)
+        self.assertNotIn('Z', launched)
+        self.assertIn('RQ-FIX-MAIN-X', launched)
 
 
 if __name__ == '__main__':

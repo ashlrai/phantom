@@ -27,6 +27,18 @@ describe('parseGrantScopeEdit', () => {
 describe('applyGrantScopeEdit', () => {
   const draft = makeGrant();
 
+  it('narrows a repo ceiling and its ladder without enrolling an unknown repo', () => {
+    const target = draft.repos.find(repo => repo.stage === 'merge')!;
+    const result = applyGrantScopeEdit(draft, { proposeOnlyRepos: [target.nameWithOwner] });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.repos.find(repo => repo.nameWithOwner === target.nameWithOwner)?.stage).toBe('propose');
+    expect(result.payload.rollout.stages.flatMap(stage => stage.repos)
+      .filter(repo => repo.nameWithOwner === target.nameWithOwner).every(repo => repo.stage === 'propose')).toBe(true);
+    expect(target.stage).toBe('merge');
+    expect(applyGrantScopeEdit(draft, { proposeOnlyRepos: ['outside/repo'] }).ok).toBe(false);
+  });
+
   it('narrows the repos and every rung, dropping rungs left empty', () => {
     const result = applyGrantScopeEdit(draft, { repos: ['ashlrai/measurably'] });
     expect(result.ok).toBe(true);

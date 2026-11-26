@@ -386,49 +386,26 @@ def market_rank(record):
 ordk = lambda r: (*market_rank(r), r[0])
 def ranked_records(records):
     ordered = sorted(records, key=ordk)
-    try:
-        state = json.loads(rd(H + "/.ashlr/repo-rank.json"))
-        rows = state["rankings"]
-        enrolled = state["enrolled"]
-        datetime.fromisoformat(state["generatedAt"].replace("Z", "+00:00"))
-        blend = [state["weights"][k] for k in ("prior", "recency", "leverage")]
-        if (any(not isinstance(w, (int, float)) or isinstance(w, bool) or not math.isfinite(w) or w < 0 for w in blend)
-                or not math.isfinite(sum(blend)) or sum(blend) <= 0
-                or not isinstance(state["proposals"], list) or not isinstance(state["history"], list)):
-            return ordered
-        if (state["schemaVersion"] != 1 or not isinstance(enrolled, list) or not enrolled
-                or any(not isinstance(r, str) or not re.fullmatch(r"[a-z0-9-]+", r) for r in enrolled)
-                or len(set(enrolled)) != len(enrolled) or len(rows) != len(enrolled)
-                or {r["repo"] for r in rows} != set(enrolled)
-                or any(not isinstance(r["weight"], (int, float)) or isinstance(r["weight"], bool)
-                       or not math.isfinite(r["weight"]) or r["weight"] <= 0 for r in rows)):
-            return ordered
-        weights = {r["repo"]: r["weight"] for r in rows}
-        total = sum(weights.values())
-        if not math.isfinite(total): return ordered
-        weights = {r: w / total for r, w in weights.items()}
-        if weights[rows[0]["repo"]] < 0.4:
-            top = rows[0]["repo"]
-            rest = 1 - weights[top]
-            weights = {r: (0.4 if r == top else w / rest * 0.6) for r, w in weights.items()}
-        groups = {r["repo"]: [] for r in rows}
-        other = []
-        for record in ordered:
-            match = re.search(r"\brepo=(?:ashlrai/)?([a-z0-9-]+)", record[2])
-            repo = match.group(1) if match else None
-            (groups[repo] if repo in groups else other).append(record)
-        result = []
-        counts = dict.fromkeys(groups, 0)
-        while any(groups.values()):
-            repo = min((r for r in groups if groups[r]), key=lambda r: ((counts[r] + 1) / weights[r], list(groups).index(r)))
-            result.append(groups[repo].pop(0))
-            counts[repo] += 1
-        return result + other
-    except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError, OverflowError):
-        return ordered
+    parsed = {}
+    for record in ordered:
+        match = re.search(r"\brepo=([^,;\s]+)", record[2])
+        repo = work_market.repo_key(match[1]) if match else None
+        try: spec = work_market.from_envelope(record[2])
+        except (ValueError, TypeError): continue
+        parsed[record[0]] = (repo, record[1], spec, None)
+    shares = work_market.repo_shares(parsed.values(), H)
+    counts = {}
+    def rank(record):
+        repo, _, spec, _ = parsed.get(record[0], (None, None, {}, None))
+        band = work_market.priority(spec)[0]
+        key = (band, repo)
+        counts[key] = counts.get(key, 0) + 1
+        share = shares.get(repo, {}).get("share", 0)
+        return (band, counts[key] / share if share else math.inf)
+    return sorted((r for r in ordered if shares.get(parsed.get(r[0], (None,))[0], {}).get("priority") != "pause"), key=rank)
 
 picked_specs = {}
-for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
+for i, j, attrs, text, raw in ranked_records(recs):
     if all(len(picks[l]) >= need[l] for l in CODEX): break
     if i in parked: continue
     try: spec = work_market.from_envelope(attrs, text)

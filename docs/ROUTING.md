@@ -701,10 +701,8 @@ fill-only when no jobs row recorded a verdict: any recorded check
 failure — required or unrelated — reads `false` even beside a later
 `checks_passed` boundary or a merge (a rerun or a new head got it
 green, which is not a first pass); with zero recorded failures a
-`checks_passed` boundary or a recorded merge beside observed check
-activity reads `true`; pending-only observations, no check rows at
-all and unmerged PRs without the boundary stay `null` — unknown,
-never guessed from absent evidence. The read degrades
+`checks_passed` boundary reads `true`. Individual check observations
+leave this fallback unknown (`null`) even when the PR merged. The read degrades
 independently like the other side ledgers: the report's
 `merge_events_state` mirrors the jobs `state` vocabulary and
 `merge_events_truncated` marks a cut merge-events tail, in which case

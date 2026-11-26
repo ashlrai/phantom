@@ -42,6 +42,12 @@ mod platform {
         m.lock().unwrap_or_else(|p| p.into_inner())
     }
     fn publish(app: &AppHandle, inner: &Inner) {
+        if let Some(home) = crate::fleet_ops::home_dir() {
+            let _ = policy::publish_status(&home, &inner.state);
+        }
+        publish_ui(app, inner);
+    }
+    fn publish_ui(app: &AppHandle, inner: &Inner) {
         let _ = app.emit(policy::STATE_EVENT, &inner.state);
         if let Some(window) = app.get_webview_window(crate::MAIN_WINDOW_LABEL) {
             let _ = window.eval(policy::state_script(&inner.state));
@@ -122,14 +128,14 @@ mod platform {
             }
             i.state.bytes_received = bytes.len() as u64;
             if last_report.elapsed() >= Duration::from_millis(200) {
-                publish(app, &i);
+                publish_ui(app, &i);
                 last_report = Instant::now();
             }
         }
-        publish(app, &lock(&updates.0));
+        publish_ui(app, &lock(&updates.0));
         Ok(bytes)
     }
-    fn current_cli(home: &std::path::Path) -> Result<PathBuf, &'static str> {
+    pub(crate) fn current_cli(home: &std::path::Path) -> Result<PathBuf, &'static str> {
         let pointer = home.join(EXPECTED_CURRENT);
         let named = fs::symlink_metadata(&pointer).map_err(|_| "host-unavailable")?;
         if !named.file_type().is_symlink() || named.uid() != unsafe { libc::geteuid() } {
@@ -322,9 +328,23 @@ mod platform {
             Phase::AdoptionHeld
         }
     }
+    fn should_request_install_exit(inner: &Inner) -> bool {
+        inner.state.enabled
+            && inner.state.phase == Phase::WaitingForAppQuit
+            && inner.stage.is_some()
+            && !inner.handoff
+    }
     fn inspect(stage: &Stage) -> Result<policy::HostResult, &'static str> {
         let (child, pipe) = launch(stage, false)?;
         first_result(child, pipe, stage, Duration::from_secs(10))
+    }
+    fn retry_idle_stage(inner: &Inner, elapsed: Duration) -> bool {
+        inner.state.enabled
+            && !inner.checking
+            && !inner.handoff
+            && inner.stage.is_some()
+            && inner.state.phase == Phase::WaitingForIdle
+            && elapsed >= Duration::from_secs(30)
     }
     async fn check(app: AppHandle, updates: Updates, epoch: u64) {
         let result = async {
@@ -483,21 +503,34 @@ mod platform {
             Ok(())
         }
         .await;
-        let mut i = lock(&updates.0);
-        if i.epoch == epoch {
+        let exit = {
+            let mut i = lock(&updates.0);
+            if i.epoch != epoch {
+                return;
+            }
             i.checking = false;
             i.abort = None;
-        }
-        if i.epoch == epoch && i.state.enabled {
-            if let Err(reason) = result {
-                i.state.phase = if reason == "uncommissioned-key" {
-                    Phase::Uncommissioned
-                } else {
-                    Phase::Failed
-                };
-                i.state.reason = Some(reason.to_owned());
+            if i.state.enabled {
+                if let Err(reason) = result {
+                    i.state.phase = if reason == "uncommissioned-key" {
+                        Phase::Uncommissioned
+                    } else {
+                        Phase::Failed
+                    };
+                    i.state.reason = Some(reason.to_owned());
+                }
+                publish(&app, &i);
             }
-            publish(&app, &i);
+            should_request_install_exit(&i)
+        };
+        if exit {
+            let handle = app.clone();
+            if tauri::async_runtime::spawn_blocking(move || handoff_on_quit(&handle, Some(epoch)))
+                .await
+                .unwrap_or(false)
+            {
+                app.exit(0);
+            }
         }
     }
     pub fn start(app: &AppHandle, enabled: bool) {
@@ -541,7 +574,10 @@ mod platform {
                     break;
                 }
                 let now = wall();
-                if check_due(checked, polled, now) {
+                let retry_stage = handle.try_state::<Updates>().is_some_and(|updates| {
+                    retry_idle_stage(&lock(&updates.0), now.saturating_sub(checked))
+                });
+                if retry_stage || check_due(checked, polled, now) {
                     refresh(&handle);
                     checked = now;
                 }
@@ -591,7 +627,7 @@ mod platform {
         };
         let mut i = lock(&updates.0);
         publish(app, &i);
-        if !i.state.enabled || i.checking {
+        if !i.state.enabled || i.checking || i.handoff {
             return;
         }
         i.checking = true;
@@ -628,12 +664,16 @@ mod platform {
     }
     /// One fresh idle admission and parent ACK share ≤10 seconds; normal Quit always proceeds.
     pub fn normal_quit(app: &AppHandle) {
+        handoff_on_quit(app, None);
+    }
+    fn handoff_on_quit(app: &AppHandle, automatic_epoch: Option<u64>) -> bool {
         let Some(updates) = app.try_state::<Updates>() else {
-            return;
+            return false;
         };
         let stage = {
             let mut i = lock(&updates.0);
-            if !i.state.enabled
+            if automatic_epoch.is_some_and(|epoch| epoch != i.epoch || !should_request_install_exit(&i))
+                || !i.state.enabled
                 || i.handoff
                 || !matches!(
                     i.state.phase,
@@ -641,12 +681,12 @@ mod platform {
                 )
                 || i.state.reason.as_deref() == Some("preference-save-failed")
             {
-                return;
+                return false;
             }
+            let Some(stage) = i.stage.clone() else { return false };
             i.handoff = true;
-            i.stage.clone()
+            stage
         };
-        let Some(stage) = stage else { return };
         let result = quit_sequence(
             |apply, budget| {
                 let started = Instant::now();
@@ -661,6 +701,11 @@ mod platform {
             Duration::from_secs(10),
         );
         let mut i = lock(&updates.0);
+        if automatic_epoch.is_some_and(|epoch| epoch != i.epoch || !i.state.enabled) {
+            return false;
+        }
+        let acknowledged = matches!(&result, Ok(r) if r.state == "waiting-native-exit");
+        i.handoff = acknowledged;
         match result {
             Ok(r) if r.state == "waiting-native-exit" => {
                 i.state.phase = Phase::Installing;
@@ -676,6 +721,7 @@ mod platform {
             }
         }
         publish(app, &i);
+        acknowledged
     }
     #[cfg(test)]
     mod tests {
@@ -692,6 +738,31 @@ mod platform {
             ));
             fs::DirBuilder::new().mode(0o700).create(&home).unwrap();
             fs::canonicalize(home).unwrap()
+        }
+        #[test]
+        fn retries_only_an_idle_wait_with_a_stage_and_no_inflight_handoff() {
+            let mut i = Inner {
+                state: UpdateState {
+                    phase: Phase::WaitingForIdle,
+                    ..Default::default()
+                },
+                epoch: 0,
+                checking: false,
+                stage: Some(Stage {
+                    id: "a".repeat(32),
+                    version: "3.30.76".into(),
+                    path_env: "/usr/bin:/bin".into(),
+                }),
+                handoff: false,
+                abort: None,
+            };
+            assert!(!retry_idle_stage(&i, Duration::from_secs(29)));
+            assert!(retry_idle_stage(&i, Duration::from_secs(30)));
+            i.handoff = true;
+            assert!(!retry_idle_stage(&i, Duration::from_secs(30)));
+            i.handoff = false;
+            i.state.phase = Phase::AdoptionHeld;
+            assert!(!retry_idle_stage(&i, Duration::from_secs(30)));
         }
         #[test]
         fn preference_cancels_old_future_and_cannot_fabricate_a_stage() {
@@ -727,6 +798,14 @@ mod platform {
             preference_transition(&mut i, false);
             preference_transition(&mut i, true);
             assert_eq!(i.state.phase, Phase::Staged);
+            assert!(!should_request_install_exit(&i));
+            i.state.phase = Phase::WaitingForAppQuit;
+            assert!(should_request_install_exit(&i));
+            i.handoff = true;
+            assert!(!should_request_install_exit(&i));
+            i.handoff = false;
+            i.stage = None;
+            assert!(!should_request_install_exit(&i));
         }
         #[test]
         fn idle_and_authority_holds_are_distinct() {
@@ -899,6 +978,8 @@ mod platform {
         }
     }
 }
+#[cfg(target_os = "macos")]
+pub(crate) use platform::current_cli;
 #[cfg(target_os = "macos")]
 pub use platform::{normal_quit, preference, start};
 #[cfg(not(target_os = "macos"))]

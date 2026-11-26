@@ -18,6 +18,8 @@ export interface GrantSeatPolicyEdit {
 export interface GrantScopeEdit {
   /** nameWithOwner, a subset of the draft's repos. */
   repos?: string[];
+  /** Narrow named repositories to propose on every rung of this draft. */
+  proposeOnlyRepos?: string[];
   engines?: GrantEngine[];
   leaderClasses?: LeaderGrantClass[];
   /** Explicit choice for this draft's first stage; omission preserves its permissions. */

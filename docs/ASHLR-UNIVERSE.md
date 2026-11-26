@@ -677,7 +677,7 @@ pauses; this is not a claim of uninterrupted unattended operation.
 
 ### Renew explicitly pinned local model evidence
 
-For an existing local Ollama worker, add `localModelConfigPath` to the private
+For an existing local Ollama or LM Studio worker, add `localModelConfigPath` to the private
 resource runtime. The absolute path points to a private JSON file with this shape:
 
 ```json
@@ -685,21 +685,23 @@ resource runtime. The absolute path points to a private JSON file with this shap
   "schemaVersion": 1,
   "poolDigest": "<the generation's pinned pool-and-bindings digest>",
   "workers": [
-    { "workerId": "local-coder", "modelDigest": "sha256:<64 lowercase hexadecimal characters>" }
+    { "workerId": "local-coder", "modelDigest": "sha256:<64 lowercase hexadecimal characters>" },
+    { "workerId": "studio-coder", "runtime": "lm-studio" }
   ]
 }
 ```
 
-Obtain and verify the intended model digest from your existing local model
+For Ollama, obtain and verify the intended model digest from your existing local
 installation. Each enrolled worker must already be a `local` worker with a
-`local-chat` binding to a numeric-loopback Ollama HTTP endpoint. This option does
+`local-chat` binding to a numeric-loopback HTTP endpoint. This option does
 not create bindings, choose a model, start a service, or install model weights.
 
 Before a new resource task, Universe checks each configured model once through
-Ollama's bounded, redirect-refusing `/api/tags` inventory read. Each read takes at
+Ollama's `/api/tags` or LM Studio's `/v1/models` bounded, redirect-refusing inventory read. Each read takes at
 most five seconds and all reads share the remaining generation deadline (and the
-remaining positive `capacityWaitMs` allowance when configured). A matching digest
-produces a short-lived local observation; it is evidence of inventory availability,
+remaining positive `capacityWaitMs` allowance when configured). An exact Ollama
+digest match or exact LM Studio model ID match produces a short-lived local observation;
+LM Studio's inventory does not verify a content digest. This is evidence of inventory availability,
 not a cryptographic attestation of subsequent inference or a benchmark result.
 The actual task still uses the pinned worker binding and normal atomic admission.
 

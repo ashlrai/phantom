@@ -18,6 +18,7 @@
 import { cmdUsageSensors } from './usage-sensors.js';
 import { cmdUsageLive } from './usage-live.js';
 import { cmdUsageResourceLive } from './usage-resource-live.js';
+import { cmdUsageResourceEvidence } from './usage-resource-evidence.js';
 import { cmdUsageHistory } from './usage-history.js';
 import { makeColors, isTty } from './ui.js';
 import type { FrontierUsage } from '../core/usage/frontier-usage.js';
@@ -214,6 +215,7 @@ export async function cmdUsage(args: string[]): Promise<number> {
   if (args[0] === 'sensors') return cmdUsageSensors(args.slice(1));
   if (args[0] === 'live') return cmdUsageLive(args.slice(1));
   if (args[0] === 'resource-live') return cmdUsageResourceLive(args.slice(1));
+  if (args[0] === 'resource-evidence') return cmdUsageResourceEvidence(args.slice(1));
   if (args[0] === 'history') return cmdUsageHistory(args.slice(1));
   if (args[0] === 'validate') {
     if ((args.length !== 2 && args.length !== 3) || !args[1] || args[1].startsWith('-') ||
@@ -298,6 +300,8 @@ function printUsage(): void {
   console.log('  phm usage resource-live [--json] [--watch] [--force] [--show] [--browser [--headed]] [--runs-dir <abs>]');
   console.log('  phm usage history --lane <id> [--json] [--runs-dir <abs>]');
   console.log('  writes state/resource-live.json: every allowance with source and observed time, plus the burn-down order.');
+  console.log('  phm usage resource-evidence --targets <abs> [--watch] [--runs-dir <abs>]');
+  console.log('  reads configured quota-only desktop windows and writes state/resource-evidence.json.');
   console.log('  Reading a snapshot automatically refreshes stale Codex personal usage');
   console.log('  when its pool home is configured; the snapshot is not rewritten.');
   console.log('  Codex refresh uses an explicitly configured PHANTOM_SENSOR_CODEX_PERSONAL_HOME.');

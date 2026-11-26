@@ -35,7 +35,8 @@ const MARKET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 export const MARKET_LANE_ID = /^[a-z][a-z0-9-]*$/;
 const MAX_REQUIREMENTS = 8192;
 
-const rank = (table: Readonly<Record<string, number>>, key: string): number | undefined => table[key];
+const rank = (table: Readonly<Record<string, number>>, key: string): number | undefined =>
+  Object.hasOwn(table, key) ? table[key] : undefined;
 const known = (table: Readonly<Record<string, number>>, key: unknown): key is string =>
   typeof key === 'string' && rank(table, key) !== undefined;
 

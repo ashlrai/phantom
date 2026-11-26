@@ -18,7 +18,7 @@ function fixture(count = 2) {
     maxTasksPerWindow: 2, taskWindowMs: 60_000, priority: 1, reservePercent: 10 })) };
   const bindings: ResourceBinding[] = pool.workers.map((worker) => ({ workerId: worker.id,
     capacityKey: worker.id, kind: 'local-chat', endpoint: 'http://127.0.0.1:1/v1' }));
-  const config: ResourceLocalModelConfig = { schemaVersion: 1, poolDigest: digest(canonical({ pool, bindings })),
+  const config = { schemaVersion: 1 as const, poolDigest: digest(canonical({ pool, bindings })),
     workers: pool.workers.map((worker) => ({ workerId: worker.id, modelDigest: MODEL_DIGEST })) };
   return { pool, bindings, config, timeoutMs: 10_000 };
 }
@@ -41,7 +41,7 @@ describe('explicit local model enrollment', () => {
     expect(config).toEqual(f.config); expect(Object.isFrozen(config)).toBe(true);
     expect(Object.isFrozen(config.workers)).toBe(true); expect(Object.isFrozen(config.workers[0])).toBe(true);
     f.config.workers[0]!.modelDigest = `sha256:${'b'.repeat(64)}`;
-    expect(config.workers[0]!.modelDigest).toBe(MODEL_DIGEST); expect(inventory.verifyOllamaModelIdentity).not.toHaveBeenCalled();
+    expect(config.workers[0]).toMatchObject({ modelDigest: MODEL_DIGEST }); expect(inventory.verifyOllamaModelIdentity).not.toHaveBeenCalled();
   });
 
   it.each(['version', 'extra', 'digest', 'empty', 'duplicate', 'unknown', 'worker-extra', 'bare-hash', 'uppercase', 'sparse', 'array-extra'])(
@@ -98,6 +98,16 @@ describe('explicit local model enrollment', () => {
 });
 
 describe('single bounded local inventory pass', () => {
+  it.each([['fixture-0:exact', true], ['fixture-0', false]])('checks exact LM Studio id %s', async (id, ready) => {
+    const f = fixture(1);
+    const config: ResourceLocalModelConfig = { ...f.config, workers: [{ workerId: 'local-0', runtime: 'lm-studio' }] };
+    const fetchImpl = vi.fn(async () => Response.json({ data: [{ id }] }));
+    const result = await refreshResourceLocalModelsOnce({ ...f, config, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:1/v1/models', expect.objectContaining({ redirect: 'error' }));
+    expect(result.unavailableWorkerIds).toEqual(ready ? [] : ['local-0']);
+    expect(result.observations).toHaveLength(ready ? 1 : 0);
+    expect(inventory.verifyOllamaModelIdentity).not.toHaveBeenCalled();
+  });
   it('reads only explicitly managed workers and does not invent observations for the rest of the pool', async () => {
     const f = fixture(3); f.config.workers = [f.config.workers[1]!];
     const result = await refreshResourceLocalModelsOnce(f);
