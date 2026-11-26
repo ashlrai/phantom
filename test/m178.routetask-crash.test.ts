@@ -62,6 +62,17 @@ vi.mock('../src/core/fleet/subscription-usage.js', () => ({
   subscriptionUsage: vi.fn(() => null),
 }));
 
+vi.mock('../src/core/resources/local-memory-fit.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/resources/local-memory-fit.js')>();
+  return {
+    ...actual,
+    localModelFit: (model: string | null, contextTokens: number) =>
+      actual.memoryFit(model ?? 'fixture', 4 * 1024 ** 3, contextTokens, {
+        totalBytes: 64 * 1024 ** 3, freeBytes: 48 * 1024 ** 3, swapGrowth: 0,
+      }),
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Imports under test
 // ---------------------------------------------------------------------------
