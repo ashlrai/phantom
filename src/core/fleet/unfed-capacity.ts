@@ -234,7 +234,7 @@ export interface UnfedReport {
    */
   invalidRows: number;
   unfedLanes: string[];
-  /** Slots that could be filled now: sum of min(headroom, waiting rows) over unfed lanes. */
+  /** Upper bound from lane headroom and waiting rows, capped by total waiting work. */
   unfedSlots: number;
   resources: UnfedResource[];
   /** Whether older work-market journal bytes were omitted from the window folds. */
@@ -404,7 +404,7 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
     waiting,
     invalidRows: strict.invalid,
     unfedLanes: unfed.map(r => r.lane),
-    unfedSlots: unfed.reduce((sum, r) => sum + Math.min(r.headroom, r.waitingElsewhere), 0),
+    unfedSlots: Math.min(waiting, unfed.reduce((sum, r) => sum + Math.min(r.headroom, r.waitingElsewhere), 0)),
     resources,
   };
 }
@@ -800,7 +800,7 @@ export function renderUnfed(report: UnfedReport): string[] {
   if (report.resources.length === 0) lines.push('No lanes in queue/status.json.');
   lines.push(report.unfedLanes.length === 0
     ? `No unfed capacity: ${report.waiting} rows waiting.`
-    : `${report.unfedSlots} slot(s) could be filled now across ${report.unfedLanes.join(', ')}; ${report.waiting} rows waiting.`);
+    : `Up to ${report.unfedSlots} unfed slot(s) across ${report.unfedLanes.join(', ')}; ${report.waiting} rows waiting.`);
   if (report.statusFresh === false) {
     lines.push(report.statusAsOf === null
       ? 'Status snapshot age unknown: status.json has no readable last_tick; counts above are the last published state.'

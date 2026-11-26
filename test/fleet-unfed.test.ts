@@ -99,6 +99,15 @@ describe('currentUnfed', () => {
     expect(report.resources[0]).toMatchObject({ readyHinted: 1, waitingElsewhere: 0 });
   });
 
+  it.each(['derived', 'dispatcher'] as const)('bounds %s unfed slots by the shared waiting count', (source) => {
+    const lanes = { a: { running: 0, target: 2 }, b: { running: 0, target: 2 } };
+    const entry = { waiting_elsewhere: 1, blocked: { missing_capability: 1 } };
+    const unfed_capacity = source === 'dispatcher' ? { waiting: 1, lanes: { a: entry, b: entry } } : undefined;
+    const report = currentUnfed(JSON.stringify({ lanes, unfed_capacity }), row('RQ-A', 'elsewhere'));
+    expect(report).toMatchObject({ source, waiting: 1, unfedLanes: ['a', 'b'], unfedSlots: 1 });
+    expect(report.resources.map(r => r.waitingElsewhere)).toEqual([1, 1]);
+  });
+
   it('rejects malformed status', () => {
     expect(() => currentUnfed('{"lanes":{"a":{"running":"1","target":2}}}', '')).toThrow();
     expect(() => currentUnfed('{"lanes":{"a":{"running":1}}}', '')).toThrow();
@@ -648,7 +657,7 @@ describe('phm fleet unfed', () => {
     const body = text.lines.join('\n');
     expect(body).toContain('codex-cmp  1/4 running (25%), 1 hinted here  UNFED: 3 free, 3 rows waiting elsewhere');
     expect(body).toContain('devin  0/3 running (0%), 0 hinted here  HELD');
-    expect(body).toContain('3 slot(s) could be filled now across codex-cmp; 4 rows waiting.');
+    expect(body).toContain('Up to 3 unfed slot(s) across codex-cmp; 4 rows waiting.');
     expect(body).toContain('Last 24h: 2 tick(s) left capacity unfed.');
     expect(body).toContain('codex-cmp: 2 tick(s), 3 slot-tick(s) lost (missing_capability 4)');
     expect(body).toContain('Last 24h: 2 job(s) decided, 1 left their hinted lane.');
@@ -714,7 +723,7 @@ describe('phm fleet unfed', () => {
     const text = await run([]);
     expect(text.code).toBe(1);
     expect(text.lines.join('\n')).toContain(`Status snapshot is stale: last dispatcher tick ${staleTick}`);
-    expect(text.lines.join('\n')).toContain('3 slot(s) could be filled now across codex-cmp');
+    expect(text.lines.join('\n')).toContain('Up to 3 unfed slot(s) across codex-cmp');
   });
 });
 
