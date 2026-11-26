@@ -198,7 +198,7 @@ export function isRewardSignalV1(value: unknown): value is RewardSignalV1 {
 /**
  * Pool cost across [windowStartMs, windowEndMs] from usage-reader readings.
  * The baseline is the last reading at/before dispatch; the end is the last
- * reading at/before recording, so pctUsedDelta bounds total pool consumption
+ * reading after dispatch and at/before recording, so pctUsedDelta estimates pool consumption
  * over the job window (pool-level attribution, not per-job metering).
  * pctUsedDelta is null when the pool window reset inside the job (resetAt
  * moved or usage went backwards) or either bracketing reading is missing.
@@ -215,9 +215,8 @@ export function usageCostFromReadings(
   for (const row of rows) {
     const at = Date.parse(row.writtenAt);
     if (at <= windowStartMs) start = row;
-    if (at <= windowEndMs) end = row;
+    if (at > windowStartMs && at <= windowEndMs) end = row;
   }
-  start ??= rows[0];
   const pctUsedStart = start?.pctUsed ?? null;
   const pctUsedEnd = end?.pctUsed ?? null;
   const delta = start !== undefined && end !== undefined && pctUsedStart !== null && pctUsedEnd !== null &&

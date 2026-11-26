@@ -127,6 +127,16 @@ describe('writeRewardSignal', () => {
     const result = run(fixture(), { usageReadings: readings, usagePool: 'codex-cmp' });
     expect(result.row.cost).toMatchObject({ pctUsedStart: 90, pctUsedEnd: 5, pctUsedDelta: null });
   });
+
+  it('persists an unknown quota delta when the first reading follows dispatch', () => {
+    const result = run(fixture(), {
+      usagePool: 'codex-cmp',
+      usageReadings: [reading('codex-cmp', 12, '2026-10-28T10:30:00.000Z')],
+    });
+    expect(result.row.cost).toEqual({
+      pool: 'codex-cmp', pctUsedStart: null, pctUsedEnd: 12, pctUsedDelta: null, costUsd: 1.85,
+    });
+  });
 });
 
 describe('usageCostFromReadings', () => {
@@ -142,6 +152,24 @@ describe('usageCostFromReadings', () => {
   it('ignores other pools and stays unknown without readings', () => {
     expect(usageCostFromReadings([reading('terra', 5, '2026-10-28T11:00:00.000Z')], 'codex-cmp', window.start, window.end))
       .toMatchObject({ pool: 'codex-cmp', pctUsedStart: null, pctUsedEnd: null, pctUsedDelta: null });
+  });
+  it('leaves the endpoint unknown when readings reach only dispatch or arrive after recording', () => {
+    const cost = usageCostFromReadings(
+      [reading('codex-cmp', 40, DISPATCHED), reading('codex-cmp', 55, '2026-10-28T13:00:00.000Z')],
+      'codex-cmp', window.start, window.end);
+    expect(cost).toMatchObject({ pctUsedStart: 40, pctUsedEnd: null, pctUsedDelta: null });
+  });
+  it('keeps a measured zero when readings on both sides of dispatch agree', () => {
+    const cost = usageCostFromReadings(
+      [reading('codex-cmp', 40, DISPATCHED), reading('codex-cmp', 40, START)],
+      'codex-cmp', window.start, window.end);
+    expect(cost).toMatchObject({ pctUsedStart: 40, pctUsedEnd: 40, pctUsedDelta: 0 });
+  });
+  it('ignores readings entirely after the recording cutoff', () => {
+    const cost = usageCostFromReadings(
+      [reading('codex-cmp', 55, '2026-10-28T13:00:00.000Z')],
+      'codex-cmp', window.start, window.end);
+    expect(cost).toMatchObject({ pctUsedStart: null, pctUsedEnd: null, pctUsedDelta: null });
   });
 });
 
