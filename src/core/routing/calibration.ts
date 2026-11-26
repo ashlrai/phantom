@@ -32,6 +32,7 @@ interface Job {
   finished?: number;
   merged?: boolean;
   launched: boolean;
+  batchLanes?: Set<string>;
   /** Reward signals can account for reversions after the PR merged. */
   rewardMerged?: boolean;
 }
@@ -113,7 +114,7 @@ function pair(jobs: Job[], prediction: (job: Job) => number | undefined, actual:
     paired: pairs.length,
   };
 }
-/** Join one launch per job ID. Unknown outcomes remain unresolved. */
+/** Join per-job predictions with recorded dispatch and outcome evidence. */
 export function calibrateRouting(jobsJsonl: string, posthogJson?: string): CalibrationReport {
   const jobs = new Map<string, Job>();
   const rows = parseJsonl(jobsJsonl);
@@ -135,11 +136,16 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
     const phase = ledgerPhase(row);
     const event = ledgerLifecycleEvent(row, phase);
     const state = ledgerOutcomeState(row, event, phase);
-    if (state === null && !['launch', 'finish', 'publish', 'outcome'].includes(event ?? '')) continue;
+    if (state === null && !['launch', 'batch_claim', 'finish', 'publish', 'outcome'].includes(event ?? '')) continue;
     recognized++;
     if (!id) throw new Error('Event is missing job ID');
     const job = jobs.get(id) ?? { launched: false };
     jobs.set(id, job);
+    if (event === 'batch_claim') {
+      const lane = stringField(row, 'lane', 'pool', 'arm');
+      job.batchLanes ??= new Set();
+      if (lane && lane !== 'unknown') job.batchLanes.add(lane);
+    }
     if (event === 'launch') {
       if (job.launched) throw new Error('Duplicate launch for a job');
       job.launched = true;
@@ -162,15 +168,15 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
   if (posthogJson !== undefined) for (const row of parseExport(posthogJson)) {
     const id = stringField(row, 'jobId', 'job_id');
     const job = id ? jobs.get(id) : undefined;
-    if (!job || (!job.launched && job.rewardMerged === undefined)) { unmatchedPosthogRuns++; continue; }
+    if (!job || (!job.launched && !job.batchLanes && job.rewardMerged === undefined)) { unmatchedPosthogRuns++; continue; }
     metrics(job, row);
   }
   const groups = new Map<string, Job[]>();
   for (const job of jobs.values()) {
-    if (!job.launched && job.rewardMerged === undefined) throw new Error('Event has no matching launch');
+    if (!job.launched && !job.batchLanes && job.rewardMerged === undefined) throw new Error('Event has no matching launch');
     if (!job.arm) {
-      if (job.rewardMerged === undefined) throw new Error('Launch is missing arm');
-      job.arm = 'unknown';
+      if (!job.batchLanes && job.rewardMerged === undefined) throw new Error('Launch is missing arm');
+      job.arm = job.batchLanes?.size === 1 ? [...job.batchLanes][0]! : 'unknown';
     }
     job.merged = job.rewardMerged ?? job.merged;
     if (job.started !== undefined && job.finished !== undefined) {
