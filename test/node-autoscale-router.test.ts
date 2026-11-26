@@ -224,6 +224,18 @@ describe('autoscale router scoring', () => {
     expect(plan.map(p => p.nodeId)).toEqual(['main-mbp', 'main-mbp']);
   });
 
+  it('charges separately for same-named local models on different providers', () => {
+    const local = { model: 'm', harness: 'codex', tokensPerJob: 1, minutesPerJob: 60, local: true, modelBytes: 10 * GIB };
+    const plan = planAutoscaleRoutes({
+      nodes: [node(mbp())],
+      costs: [{ ...local, provider: 'local-a' }, { ...local, provider: 'local-b' }],
+      outcomes: {}, nowMs: T0,
+      jobs: [{ id: 'a', providers: ['local-a'] }, { id: 'b', providers: ['local-b'] }],
+    });
+    expect(plan[0]).toMatchObject({ nodeId: 'main-mbp', provider: 'local-a' });
+    expect(plan[1]).toMatchObject({ nodeId: null, rejected: { memory: 1, 'provider-not-in-job': 1 } });
+  });
+
   it('routes over the recorded main-MBP capacity document (pgrep+footprint, 2026-11-16)', () => {
     const doc = parseNodeCapacityDoc(JSON.parse(readFileSync(join(__dirname, 'fixtures/node-autoscale/main-mbp-2026-11-16.json'), 'utf8')));
     expect(doc).not.toBeNull();
