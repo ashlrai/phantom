@@ -989,7 +989,10 @@ outcome vocabulary, and a bounded `at` stamp (unparseable stamps keep
 the verdict but null the timestamp); decision rows, wrong-schema rows,
 malformed rows and foreign kinds are skipped, never counted. The
 evidence records only `{outcome, at}` — the reviewer's pool/family,
-reasons and semantic detail stay audit-side and never join. The fold's
+reasons and semantic detail stay audit-side and never join. At the newest
+parseable review time, conflicting verdicts or distinct valid
+`reviewedHeadSha` values leave the review evidence unknown. A missing or
+invalid head supplies no identity and cannot settle a conflict. The fold's
 `crossReviews` option joins each outcome's `cross_review` through the
 same PR identity as the merge-queue join. Review rows never create
 outcomes. The join is fill-only
