@@ -268,7 +268,7 @@ export function skillNudgeJobsFromLedger(
   text: string, revertedPrKeys?: ReadonlySet<string> | null, nowMs = Date.now(),
 ): SkillNudgeJob[] {
   const jobs = new Map<string, NudgeJobAccum>();
-  const dispatchReceipts = new Set<string>();
+  const recoveryReceipts = new Set<string>();
   // PR key -> claiming job ids, collected only when the caller supplied
   // standing revert keys — the same unambiguous-claim evidence pass
   // outcome-learning runs, so a contested or foreign PR never resolves.
@@ -296,10 +296,10 @@ export function skillNudgeJobsFromLedger(
     const event = ledgerEventName(row);
     const dispatched = (event !== null && ATTEMPT_EVENTS.has(event))
       || (event === 'claim' && row['launch_dedupe'] !== true);
-    if (dispatched && rowAt !== null) {
+    if ((dispatched || event === 'recut_admission') && rowAt !== null) {
       const receipt = line.trim();
-      if (dispatchReceipts.has(receipt)) continue;
-      dispatchReceipts.add(receipt);
+      if (recoveryReceipts.has(receipt)) continue;
+      recoveryReceipts.add(receipt);
     }
     const prKey = claims === null ? null : rowPrKey(row);
     if (claims !== null && prKey !== null) {

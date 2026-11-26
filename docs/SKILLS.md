@@ -54,6 +54,9 @@ retain their ledger order.
 A recut requires a `ready` recut admission followed by a dispatch attempt
 for the same job before its terminal outcome. Repeated readiness checks
 count once per dispatch. A later defer or skip clears pending readiness.
+Exact replays of timestamped admission receipts cannot re-arm consumed or
+cleared readiness or cancel a newer ready decision. Admissions without a
+parseable timestamp retain their ledger order.
 The learner uses the first identifier-safe classification on a row, skipping
 case-insensitive `unknown` values. A row with no usable classification leaves
 the last observed class intact. Without any observed class, a merge can seed
