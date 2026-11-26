@@ -2155,7 +2155,8 @@ printable value an honest empty stream. `--result
 own `outcome` strictly equals the code — the same `busBodyResultOutcome`
 own-field match and `WORK_RESULT_OUTCOMES` vocabulary `phm messages
 --result`, `agents messages --result`, `fleet messages`, `bus recent`,
-`fleet_agent_messages`'s `result` and the work feed's `--result` share —
+`fleet_bus_inbox`'s `result`, `fleet_agent_messages`'s `result` and the
+work feed's `--result` share —
 so the envelope-level audit trail a job-scoped follow already narrows by
 `--job` answers "stream only this job's failed result receipts" in one
 filtered read; every other body kind, including a `work.release` body's

@@ -10,7 +10,7 @@ import {
 import { BUS_PRIORITIES, validateBusEnvelope, type BusPriority, type BusProtocolKind } from '../core/fleet/bus-envelope.js';
 import { BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
 import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
-import { busBodyKind, busBodyThread } from '../core/agents/bus-v2-schema.js';
+import { busBodyKind, busBodyResultOutcome, busBodyThread, WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
@@ -56,6 +56,12 @@ export interface FleetBusInboxFilters {
    * printable value is an honest empty page, never an error and never a
    * widened one. */
   bodyKind?: string;
+  /** `work.result` outcome code the `busBodyResultOutcome` own-field match
+   * reads — the same `WORK_RESULT_OUTCOMES` vocabulary every bus read's
+   * `result` filter validates, so a `work.release` body's own
+   * released/completed outcome, every other body kind and a `work.result`
+   * carrying no outcome never match. */
+  result?: WorkResultOutcome;
   /** Epoch-ms cutoff resolved at parse time; keeps `receivedAt >= since`. */
   since?: number;
   /** Epoch-ms cutoff resolved at parse time; keeps `receivedAt < before` —
@@ -86,7 +92,7 @@ export interface FleetBusInboxDeps {
 }
 
 const INBOX_KEYS = new Set(['after', 'limit', 'to', 'from',
-  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'thread', 'job', 'bodyKind', 'channel', 'since', 'before', 'contains']);
+  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'thread', 'job', 'bodyKind', 'result', 'channel', 'since', 'before', 'contains']);
 /** The printable-label rule `--thread`, `--job` and the address fields share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
@@ -145,6 +151,11 @@ export function parseFleetBusInboxArgs(args: Record<string, unknown>): FleetBusI
     if (value === undefined) continue;
     if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
     filters[key] = value;
+  }
+  const result = args['result'];
+  if (result !== undefined) {
+    if (typeof result !== 'string' || !(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) return null;
+    filters.result = result as WorkResultOutcome;
   }
   const channel = args['channel'];
   if (channel !== undefined) {
@@ -226,6 +237,7 @@ export async function readFleetBusInbox(input: FleetBusInboxArgs, deps: FleetBus
     (filters?.thread === undefined || busBodyThread(envelope.body) === filters.thread) &&
     (filters?.job === undefined || busBodyJobMatch(envelope.body, filters.job)) &&
     (filters?.bodyKind === undefined || busBodyKind(envelope.body) === filters.bodyKind) &&
+    (filters?.result === undefined || busBodyResultOutcome(envelope.body) === filters.result) &&
     (filters?.channel === undefined || envelope.to.startsWith(`group:${filters.channel}:`)) &&
     (filters?.since === undefined || receivedAt >= filters.since) &&
     (filters?.before === undefined || receivedAt < filters.before) &&
