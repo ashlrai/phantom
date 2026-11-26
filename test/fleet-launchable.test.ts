@@ -24,7 +24,8 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 const status = (lanes: unknown) => writeFileSync(join(queue, 'status.json'), JSON.stringify({ lanes }));
-const row = (id: string, lane: string, prompt: string) => [id, 'work', lane, 'repo', prompt].join('\t');
+// Dispatcher dialect: job, repo, lane, tier, prompt[, requirements].
+const row = (id: string, lane: string, prompt: string) => [id, 'repo', lane, 'work', prompt].join('\t');
 const report = () => JSON.parse(String(log.mock.calls.at(-1)?.[0]));
 
 describe('fleet launchable', () => {
@@ -79,6 +80,49 @@ describe('fleet launchable', () => {
       { lane: 'alpha', free: 2, launchable: 0 },
       { lane: 'beta', free: 1, launchable: 1 },
     ] });
+  });
+  it('resolves spec-less rows through their router-queue envelope like the market', async () => {
+    const prompt = join(root, 'prompt.md');
+    writeFileSync(prompt, 'task');
+    status({ alpha: { target: 2, running: 0 }, beta: { target: 1, running: 0 } });
+    writeFileSync(join(queue, 'router-queue.md'), [
+      '- READY phantom RQ-ENV (preferred_lane=beta): hinted work',
+      '- READY phantom RQ-ENVALPHA (preferred_lane=alpha): back on the column lane anyway',
+      '- READY phantom RQ-ENVBAD (preferred_lane=CLAUDE!): rejected spec',
+    ].join('\n'));
+    writeFileSync(join(queue, 'ready.tsv'), [
+      // spec-less rows: the envelope's preferred_lane beats the lane column
+      row('RQ-ENV', 'alpha', prompt), row('RQ-ENVALPHA', 'alpha', prompt),
+      row('RQ-ENVLONE', 'alpha', prompt), // no envelope line: the lane column stands
+      row('RQ-ENVBAD', 'alpha', prompt), // envelope spec the market rejects: dead work
+      // a spec-less row whose lane cell is not a lane id is invalid, envelope or not
+      [ 'RQ-BADLANE', 'repo', 'Not A Lane!', 'work', prompt ].join('\t'),
+    ].join('\n'));
+    // beta gets RQ-ENV through its envelope; alpha gets RQ-ENVALPHA and
+    // RQ-ENVLONE; RQ-ENVBAD and RQ-BADLANE are market-rejected, never supply.
+    expect(await cmdFleetLaunchable(['--json'])).toBe(0);
+    expect(report()).toMatchObject({ openRows: 0, lanes: [
+      { lane: 'alpha', free: 2, launchable: 2 },
+      { lane: 'beta', free: 1, launchable: 1 },
+    ] });
+  });
+  it('never counts rows the market would reject', async () => {
+    const prompt = join(root, 'prompt.md');
+    writeFileSync(prompt, 'task');
+    status({ alpha: { target: 5, running: 0 } });
+    writeFileSync(join(queue, 'ready.tsv'), [
+      row('good', 'alpha', prompt),
+      // unknown tier: dispatchd skips it silently, so it can never launch
+      ['RQ-TIER', 'repo', 'alpha', 'bogus', prompt].join('\t'),
+      // job id the market rejects
+      ['bad id!', 'repo', 'alpha', 'work', prompt].join('\t'),
+      // repo cell carrying a path
+      ['RQ-REPO', 'org/repo', 'alpha', 'work', prompt].join('\t'),
+      // requirements cell that is not a JSON object
+      ['RQ-REQ', 'repo', 'alpha', 'work', prompt, 'null'].join('\t'),
+    ].join('\n'));
+    expect(await cmdFleetLaunchable(['--json'])).toBe(1);
+    expect(report()).toMatchObject({ lanes: [{ lane: 'alpha', free: 5, launchable: 1 }] });
   });
   it('flags a lane only when even all lane-open supply cannot fill its free slots', async () => {
     const prompt = join(root, 'prompt.md');

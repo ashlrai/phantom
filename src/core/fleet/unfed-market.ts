@@ -57,19 +57,27 @@ export interface UnfedMarketInputs {
   nowMs?: number;
 }
 
-/** One runnable ready.tsv row with its resolved market requirements. */
-export interface ReadyMarketRow {
+/** The market-resolved requirement fields of one runnable ready row. */
+export interface ReadyMarketFields {
   /** Resolved preferred lane (requirements preferred_lane, else the column hint); null is open. */
   hint: string | null;
-  /** Column tier; always a market tier — other rows are rejected before parsing finishes. */
-  tier: string;
+  needs: string[];
   /** Repo name when the row or its requirements name a valid one. */
   repo: string | null;
-  needs: string[];
   minTier: string | null;
   maxTier: string | null;
   maxCostClass: string | null;
   dataClass: string | null;
+}
+
+/** One runnable ready.tsv row with its resolved market requirements. */
+export interface ReadyMarketRow extends ReadyMarketFields {
+  /** The row's job id — its first cell. */
+  id: string;
+  /** The prompt path — the row's fifth cell; launch checks require the file. */
+  prompt: string;
+  /** Column tier; always a market tier — other rows are rejected before parsing finishes. */
+  tier: string;
 }
 
 const parseJson = (text: string | null | undefined): unknown => {
@@ -150,7 +158,7 @@ function envelopeAttrs(routerQueue: string | null | undefined, job: string): str
  * ready.tsv dialect, which must resolve the same effective lane hint.
  */
 export function resolveReadyMarketRow(cols: string[], spec: Record<string, unknown>):
-  Omit<ReadyMarketRow, 'tier'> | null {
+  ReadyMarketFields | null {
   if (Object.keys(spec).some(key => !SPEC_KEYS.has(key))) return null;
   const has = (key: string): boolean => Object.hasOwn(spec, key);
   let hint: string | null;
@@ -258,7 +266,7 @@ export function parseReadyMarketRows(readyTsv: string, routerQueue?: string | nu
     }
     const row = resolveReadyMarketRow(cols, spec);
     if (row === null) { invalid++; continue; }
-    rows.push({ ...row, tier });
+    rows.push({ ...row, id: job, prompt: cols[4]!, tier });
   }
   return { rows, invalid };
 }
