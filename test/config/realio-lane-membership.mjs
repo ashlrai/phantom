@@ -532,6 +532,7 @@ export const REAL_IO_TEST_FILES = [
   'test/universe-controller-not-started-integration.test.ts', // post-intent cancellation, verified no-call settlement and restart without replay
   'test/universe-campaign-owned.test.ts', // exact private execution leases and campaign admission authority
   'test/universe-integration-evaluate.test.ts', // real private candidate artifacts with injected evaluation and ledger faults
+  'test/universe-sealed-integration-scenario.test.ts', // real Git composition, acceptance receipts, and local publication
   'test/universe-delivery-review.test.ts', // independent Git provenance and historical receipt review
   'test/universe-graph-reader.test.ts', // targeted real Git/private-ledger graph observation
   'test/local-pack-universe-smoke.test.ts', // installed SDK/CLI contract with real Git fixtures

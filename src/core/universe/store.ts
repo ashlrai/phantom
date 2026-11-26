@@ -22,6 +22,7 @@ import type { UniverseIntegrationOrigin } from './integration-handoff-types.js';
 import type { UniverseCampaignDeliveryOrigin } from './campaign-handoff-types.js';
 import { buildUniverseFileOperationsContext, fileOperationsContextDigest, verifyUniverseFileOperationOutcome } from './file-operations-context.js';
 import { resolveBuiltinEvaluator } from './builtin-evaluator-registry.js';
+import { assertSealedIntegrationScenario } from './sealed-integration-scenario.js';
 
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -64,13 +65,20 @@ export function validateUniverseManifest(value: unknown): UniverseManifest {
       !integer(value.budget.maxTrials, 1, 64) || !integer(value.budget.maxParallel, 1, 8) ||
       !integer(value.budget.maxDurationMs, 1, 86_400_000) ||
       !integer(value.budget.trialTimeoutMs, 1, Object.hasOwn(value.budget, 'workerTimeoutMs') ? 2_700_000 : 900_000) ||
-      !object(value.evaluation) || !(exact(value.evaluation, ['command', 'timeoutMs']) && command(value.evaluation.command) ||
+      !object(value.evaluation) || !(exact(value.evaluation, ['command', 'timeoutMs', 'integrationScenario']) && command(value.evaluation.command) ||
         builtinEvaluation(value.evaluation)) ||
       // The fixed diagnostic spans several separately bounded native sessions.
       // This ceiling does not extend worker trials or any running deadline.
       !integer(value.evaluation.timeoutMs, 1, builtinEvaluation(value.evaluation) ? 1_800_000 : 900_000) ||
       !Array.isArray(value.variants) || value.variants.length < 1 || value.variants.length > 64) {
     throw new Error('Invalid Universe manifest: expected bounded version 1 identity, objective, seed, metric, budget, evaluator, and variants');
+  }
+  if (Object.hasOwn(value.evaluation, 'integrationScenario')) {
+    const scenario = value.evaluation.integrationScenario;
+    if (!object(scenario) || Reflect.ownKeys(scenario).length !== 2 || !exact(scenario, ['id', 'digest']) ||
+        scenario.id !== 'checkout-budget-v1' || typeof scenario.digest !== 'string' || !HASH.test(scenario.digest)) {
+      throw new Error('Invalid sealed integration scenario pin');
+    }
   }
   if (Object.hasOwn(value.budget, 'workerTimeoutMs')) {
     const descriptor = Object.getOwnPropertyDescriptor(value.budget, 'workerTimeoutMs');
@@ -316,6 +324,7 @@ export function initUniverseWithCampaignDeliveryOrigin(input: UniverseManifest, 
 function initUniverseRecord(input: UniverseManifest, options: UniverseStoreOptions,
   origin?: UniverseIntegrationOrigin, assertSource?: () => void, campaignOrigin?: UniverseCampaignDeliveryOrigin): ManifestRecord {
   const manifest = validateUniverseManifest(input);
+  if (manifest.evaluation.integrationScenario) assertSealedIntegrationScenario(manifest.evaluation.integrationScenario);
   manifest.seed = pinSeed(manifest.seed.repo, manifest.seed.revision);
   if (origin && !validIntegrationOrigin(origin, manifest)) throw new Error('Universe integration origin seed differs from its pinned source');
   if (campaignOrigin && !validCampaignDeliveryOrigin(campaignOrigin, manifest)) throw new Error('Universe campaign origin seed differs from its pinned source');
@@ -381,6 +390,7 @@ function initUniverseRecord(input: UniverseManifest, options: UniverseStoreOptio
 }
 
 export function assertComparatorUnchanged(record: ManifestRecord): void {
+  if (record.manifest.evaluation.integrationScenario) assertSealedIntegrationScenario(record.manifest.evaluation.integrationScenario);
   if (record.manifest.evaluation.builtin !== undefined) {
     const builtin = resolveBuiltinEvaluator(record.manifest.evaluation.builtin);
     if (record.evaluationBuiltinDigest !== builtin.digest || record.evaluationExecutableDigest !== builtin.executableDigest ||

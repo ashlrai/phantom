@@ -1,0 +1,7 @@
+{
+  "publicOrderCents": 900,
+  "incumbent": { "fee-cents.json": 50, "budget-cents.json": 1300 },
+  "feeChange": { "path": "fee-cents.json", "value": 200 },
+  "budgetChange": { "path": "budget-cents.json", "value": 1100 },
+  "compatibleBudgetChange": { "path": "budget-cents.json", "value": 1250 }
+}
