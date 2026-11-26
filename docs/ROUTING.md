@@ -849,7 +849,9 @@ null — unknown stays unknown, never 0). Only rows with `v:1`, a
 bounded `jobId`, a boolean `merged` verdict and parseable
 `dispatchedAt`/`recordedAt` stamps count; consumed fields join under
 their own bounded shapes and malformed values drop to `null` without
-discarding the row. The read degrades independently like the other
+discarding the row. A reward receipt with a dispatch, recording, or
+recorded merge time after the report started is excluded before selecting
+the first usable receipt for each job. The read degrades independently like the other
 side ledgers: the report's `reward_state` mirrors the jobs `state`
 vocabulary and `reward_truncated` marks a cut tail, in which case
 joined evidence covers only the newest bytes; anything but `read`

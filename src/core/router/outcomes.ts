@@ -2948,6 +2948,10 @@ const rewardPctUsed = (v: unknown): number | null =>
  * never recorded raw, never guessed.
  */
 export function foldRewardSignals(text: string): Map<string, RewardOutcomeEvidence> {
+  return foldRewardSignalsThrough(text, Infinity);
+}
+
+function foldRewardSignalsThrough(text: string, throughMs: number): Map<string, RewardOutcomeEvidence> {
   const rewards = new Map<string, RewardOutcomeEvidence>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
@@ -2960,12 +2964,13 @@ export function foldRewardSignals(text: string): Map<string, RewardOutcomeEviden
     if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
     const r = value as Row;
     const jobId = str(r, 'jobId');
-    const dispatchedAt = r['dispatchedAt'];
-    const recordedAt = r['recordedAt'];
+    const dispatchedAt = typeof r['dispatchedAt'] === 'string' ? Date.parse(r['dispatchedAt']) : NaN;
+    const recordedAt = typeof r['recordedAt'] === 'string' ? Date.parse(r['recordedAt']) : NaN;
+    const mergedAt = r['merged'] === true && typeof r['mergedAt'] === 'string' ? Date.parse(r['mergedAt']) : NaN;
     if (r['v'] !== 1 || jobId === null || !REWARD_JOB_ID.test(jobId) ||
         typeof r['merged'] !== 'boolean' ||
-        typeof dispatchedAt !== 'string' || !Number.isFinite(Date.parse(dispatchedAt)) ||
-        typeof recordedAt !== 'string' || !Number.isFinite(Date.parse(recordedAt))) continue;
+        !Number.isFinite(dispatchedAt) || !Number.isFinite(recordedAt) ||
+        dispatchedAt > throughMs || recordedAt > throughMs || mergedAt > throughMs) continue;
     if (rewards.has(jobId)) continue;
     const cost = r['cost'];
     const costRow = cost !== null && typeof cost === 'object' && !Array.isArray(cost) ? cost as Row : null;
@@ -3523,7 +3528,7 @@ export async function readRouterOutcomes(opts: {
     : opts.authorityEvidence;
   const ambiguousCiJobs = new Set<string>();
   const mergeEvents = mergeEventsRead.state === 'read' ? parseMergeEvents(mergeEventsRead.text, reportTimeMs) : undefined;
-  const rewards = rewardRead.state === 'read' ? foldRewardSignals(rewardRead.text) : undefined;
+  const rewards = rewardRead.state === 'read' ? foldRewardSignalsThrough(rewardRead.text, reportStartedAt) : undefined;
   const folded = foldRouterOutcomesWithCiCoverage(read.text, {
     passkFor: laneScoreLookup(laneScores),
     workClassFor: (jobId) => workClasses.get(jobId) ?? null,
