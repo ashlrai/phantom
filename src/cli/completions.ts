@@ -88,6 +88,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
+  resources: ['plan', 'stale', 'sample', 'ledger', 'personal', 'claude-promotion', 'profile', 'launcher', 'autopilot', 'pool',
+    '--json', '--watch', '--write-advice', '--runs-dir', '--help'],
   docs: ['cli', '--agent', '--check', '--json', '--help'],
   approvals: ['ask', 'answer', '--team', '--question', '--options', '--expires', '--by', '--json', '--help'],
   subagent: ['spawn', 'list', 'result'],
@@ -108,7 +110,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   mason: ['thread', 'digest', '--since', '--post', '--json', '--help'],
   'comms-agent': ['status', 'run', 'drafts', '--json', '--dir', '--lanes', '--help'],
   claim: ['acquire', 'release', '--lane', '--reason', '--json', '--help'],
-  usage: ['sensors', 'spend', 'limits', 'live', 'resource-live', 'history', 'validate', '--lane', '--json', '--refresh', '--file', '--watch', '--force', '--show', '--browser', '--headed', '--interval', '--queue-dir', '--bus-dir', '--runs-dir', '--help'],
+  usage: ['sensors', 'spend', 'limits', 'live', 'resource-live', 'resource-evidence', 'history', 'validate', '--lane', '--json', '--refresh', '--file', '--watch', '--force', '--show', '--browser', '--headed', '--interval', '--queue-dir', '--bus-dir', '--runs-dir', '--targets', '--help'],
   observe: ['session', '--json', '--human-steps', '--bottlenecks', '--prs', '--days', '--claim-minutes', '--help'],
   budget: ['show', 'add', 'get', 'set', '--json', '--provider', '--period', '--usd', '--bucket', '--remaining', '--reset-at', '--at', '--source', '--input', '--help'],
   world: ['get', '--json', '--refresh', '--help'],
@@ -117,7 +119,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   browser: ['doctor', 'open', 'tabs', 'shot', 'close', '--browser', '--json', '--help'],
   apps: ['list', 'log', 'open', 'quit', 'restart', 'focus', 'status', 'suggest', 'request', '--pressure', '--need-mb', '--limit', '--json', '--help'],
   // Mirrors the verb check in src/cli/repos-rank.ts (cmdReposRank).
-  repos: ['rank', 'proposals', '--json', '--recompute', '--help'],
+  repos: ['list', 'add', 'remove', 'stage', 'priority', 'rank', 'proposals', '--json', '--recompute', '--help'],
   'release-articles': ['status', 'metadata', 'enable', 'disable', 'import', 'sync', '--help'],
   release: ['status', 'notes', 'autonomy', '--since', '--write', '--json', '--file', '--help'],
   releases: ['--json', '--help'],

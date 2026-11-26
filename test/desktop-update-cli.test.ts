@@ -16,7 +16,9 @@ describe('installed desktop-update CLI contract',()=>{
     expect(await cmdDesktop(['update', 'status', '--json'])).toBe(0);
     expect(hosted).toHaveBeenCalledOnce();
     expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
-      automaticDrain: false, reason: 'drain-interlock-unsupported', hostedReleaseTrain: 'paused',
+      schema: 'desktop.native-update-status.v1',
+      drain: {automaticDrain: false, reason: 'drain-interlock-unsupported'},
+      hostedReleaseTrain: 'paused',
     });
   });
   it.each(['inspect','prepare','apply'] as const)('accepts the fixed %s opaque-ID JSON request',verb=>{

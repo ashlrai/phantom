@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({ token: 'test-token' as string | null }));
 vi.mock('./auth-store.js', () => ({
   getMutationToken: () => mocks.token,
   getReadClientProof: () => 'proof',
+  getAuthSnapshot: () => ({ phase: 'authenticated' }),
+  subscribeAuth: () => () => undefined,
 }));
 
 type SyncModule = typeof import('./appearance-sync.js');

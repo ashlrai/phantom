@@ -39,7 +39,7 @@ import type { GrantDiffLine, GrantScopeEdit, GrantSeatPolicyEdit } from './grant
 export type { GrantDiffDirection, GrantDiffLine, GrantScopeEdit } from './grant-scope-types.js';
 
 export const GRANT_SCOPE_EDIT_KEYS: readonly (keyof GrantScopeEdit)[] = Object.freeze([
-  'repos', 'engines', 'leaderClasses', 'startingStageLeaderClasses', 'maxMode', 'meteredUsdPerDay', 'days', 'conductorGoals', 'maxFiles', 'maxLines', 'repoMaxMergesPerDay', 'seatPolicies', 'reserveFloorPercent', 'maxSessionWindowPercent',
+  'repos', 'proposeOnlyRepos', 'engines', 'leaderClasses', 'startingStageLeaderClasses', 'maxMode', 'meteredUsdPerDay', 'days', 'conductorGoals', 'maxFiles', 'maxLines', 'repoMaxMergesPerDay', 'seatPolicies', 'reserveFloorPercent', 'maxSessionWindowPercent',
 ]);
 
 const LEADER_CLASSES: readonly LeaderGrantClass[] = ['A', 'B'];
@@ -70,6 +70,11 @@ export function parseGrantScopeEdit(value: unknown): { ok: true; edit: GrantScop
     const list = stringList(raw['repos'], 'repos', STANDING_GRANT_CEILINGS.maxRepos);
     if (typeof list === 'string') return { ok: false, reason: list };
     edit.repos = list;
+  }
+  if (raw['proposeOnlyRepos'] !== undefined) {
+    const list = stringList(raw['proposeOnlyRepos'], 'proposeOnlyRepos', STANDING_GRANT_CEILINGS.maxRepos);
+    if (typeof list === 'string') return { ok: false, reason: list };
+    edit.proposeOnlyRepos = list;
   }
   if (raw['engines'] !== undefined) {
     const list = stringList(raw['engines'], 'engines', 8);
@@ -211,6 +216,16 @@ export function applyGrantScopeEdit(draft: StandingGrantV1, requestedEdit: Grant
       .map((stage) => ({ ...stage, repos: stage.repos.filter((r) => wanted.has(r.nameWithOwner.toLowerCase())) }))
       .filter((stage) => stage.repos.length > 0);
     if (next.rollout.stages.length === 0) return { ok: false, reason: 'no rung of the ladder names any of those repos' };
+  }
+
+  if (edit.proposeOnlyRepos !== undefined) {
+    const wanted = new Set(edit.proposeOnlyRepos.map(repo => repo.toLowerCase()));
+    const unknown = [...wanted].find(repo => !next.repos.some(row => row.nameWithOwner.toLowerCase() === repo));
+    if (unknown !== undefined) return { ok: false, reason: 'Propose-only edits must name repositories in this draft.' };
+    for (const repo of next.repos) if (wanted.has(repo.nameWithOwner.toLowerCase())) repo.stage = 'propose';
+    for (const stage of next.rollout.stages) {
+      for (const repo of stage.repos) if (wanted.has(repo.nameWithOwner.toLowerCase())) repo.stage = 'propose';
+    }
   }
 
   if (edit.engines !== undefined) {

@@ -1,7 +1,10 @@
 """Offline shared work market. Metadata only; no auth, subprocesses or execution."""
+import datetime
 import json
 import math
 import re
+from collections import defaultdict
+from pathlib import Path
 
 TIERS = {"fast": 0, "mid": 1, "work": 2, "frontier": 3}
 COSTS = {"local": 0, "included": 1, "metered": 2}
@@ -106,6 +109,55 @@ def priority(spec):
     return (int(spec.get("priority", "P2")[1:]), -spec.get("impact", 0))
 
 
+def repo_key(label):
+    label = label.lower()
+    if "/" not in label: label = "ashlrai/" + label
+    return label if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,38}/[a-z0-9][a-z0-9._-]{0,99}", label) else None
+
+
+def repo_priority(home, repo):
+    if not repo: return "normal"
+    try:
+        with open(Path(home) / ".ashlr" / "repo-priority" / repo.replace("/", "@"), encoding="utf-8") as source:
+            value = source.read(16).strip()
+        return value if value in ("boost", "pause") else "normal"
+    except (OSError, UnicodeError): return "normal"
+
+
+def repo_shares(rows, home):
+    """Rows are (canonical repo, job ID, work spec, observed merge rate)."""
+    evidence = defaultdict(list)
+    for repo, job, spec, rate in rows:
+        if repo: evidence[repo].append((job, spec, rate))
+    result = {}
+    for repo, jobs in sorted(evidence.items()):
+        nudge = repo_priority(home, repo)
+        reasons = ["flat_baseline", "ready_work"]
+        score = 1 + min(.5, math.log2(1 + len(jobs)) / 5)
+        impact = max((max(0, job[1].get("impact", 0)) for job in jobs), default=0)
+        for present, code, bonus in (
+            (any(j.upper().startswith("RQ-FIX-MAIN-") for j, _, _ in jobs), "default_branch_ci_fix_ready", 1),
+            (any(re.search(r"(?:^|[-_])(?:BUG|REGRESSION)(?:[-_]|$)", j, re.I) for j, _, _ in jobs), "bug_fix_ready", .6),
+            (any(re.search(r"(?:^|[-_])(?:RESEARCH|EVAL)(?:[-_]|$)", j, re.I) for j, _, _ in jobs), "research_work_ready", .3),
+            (impact > 0, "declared_mission_impact", min(.75, math.log2(1 + impact) / 5)),
+        ):
+            if present:
+                score += bonus
+                reasons.append(code)
+        rates = [rate for _, _, rate in jobs if rate is not None]
+        if rates and max(rates) > 0:
+            score += .5 * max(rates)
+            reasons.append("historical_solution_yield")
+        if nudge != "normal": reasons.append("owner_" + nudge)
+        score *= {"normal": 1, "boost": 1.25, "pause": 0}[nudge]
+        result[repo] = dict(schema="work-market.v1", event="repo_share", repo=repo, priority=nudge,
+                            score=score, share=0, reason_codes=reasons)
+    total = sum(row["score"] for row in result.values())
+    if total > 0:
+        for row in result.values(): row["share"] = row["score"] / total
+    return result
+
+
 def work_class(spec, tier):
     """Declared class, else derived: frontier or P0 work needs judgment; fast and mid work is bulk."""
     if spec.get("work_class"): return spec["work_class"]
@@ -128,6 +180,21 @@ def _epoch(value):
 def _scope_names(reading):
     return {k: reading[k] for k in ("account_id", "model")
             if isinstance(reading.get(k), str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", reading[k])}
+
+
+def advisory_targets(document, now):
+    if not isinstance(document, dict) or document.get("schema") != "phantom.fleet-resource-plan.v1":
+        return {}
+    stamp, targets = document.get("generated_at"), document.get("targets")
+    if not isinstance(stamp, str) or not stamp.endswith("Z") or not isinstance(targets, dict):
+        return {}
+    try:
+        age = now - datetime.datetime.fromisoformat(stamp[:-1] + "+00:00").timestamp()
+    except (ValueError, OverflowError, OSError):
+        return {}
+    if not 0 <= age < 300:
+        return {}
+    return {lane: target for lane, target in targets.items() if type(target) is int and target > 0}
 
 
 def deadline_priority(projection, now, short_window=False, promotional=False):
@@ -473,6 +540,7 @@ def choose(job, spec, tier, view, record, now, decide):
         view[lane]["deadline_priority"] if view[lane].get("deadline_priority") is not None else math.inf,
         bool(view[lane].get("is_metered_api")),
         fit[lane],
+        not view[lane].get("below_advisory_target", False),
         lane != pref,
         view[lane]["running"] / max(1, view[lane]["target"]),
         view[lane]["empty_rate"] if view[lane]["empty_rate"] is not None else 0.5,
@@ -488,7 +556,8 @@ def choose(job, spec, tier, view, record, now, decide):
                                             posture=v.get("posture", "balanced"), posture_reason=v.get("posture_reason"),
                                             **{k: v[k] for k in ("cost_class_reason", "zero_cost", "allowance") if k in v},
                                             spend_down=v.get("spend_down"), fit=fit[lane],
-                                            deadline_priority=v.get("deadline_priority")) for lane, v in view.items()}}
+                                            deadline_priority=v.get("deadline_priority"),
+                                            advisory_target=v.get("advisory_target")) for lane, v in view.items()}}
     # Hint-only records preserve old external-proposal diagnostics without making
     # the preference a routing commitment before the first runnable assignment.
     prior = record if record and record.get("assigned", True) else None

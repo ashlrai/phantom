@@ -23,14 +23,16 @@ import { headerValue, safeEqual } from '../web/read-session.js';
 import type { VerseApiContext } from './verse-api.js';
 import { readUiAppearanceFile, updateUiAppearanceFile, type UiAppearanceFile } from './ui-appearance-file.js';
 import { appearanceSettingsFrom, validateAppearanceSettings, type AppearanceSettings } from '../settings-appearance.js';
+import { BrandUploadError, MAX_BRAND_BYTES, readBrandImage, storeBrandImage } from '../brand/sidebar-upload.js';
 
 export const VERSE_UI_APPEARANCE_PATH = '/api/verse/appearance';
+export const VERSE_BRAND_IMAGE_PATH = '/api/verse/appearance/brand-image';
 /**
- * The four plain settings (theme, accent hex, density, fontSize) as the CLI
+ * The plain settings (brand, theme, accent hex, density, fontSize) as the CLI
  * `phm settings appearance` shows them, over the SAME record:
  *
  *   GET   → AppearanceSettingsResponse
- *   PATCH { theme?, accent?, density?, fontSize? } → AppearanceSettingsResponse
+ *   PATCH { brand?, theme?, accent?, density?, fontSize? } → AppearanceSettingsResponse
  *           (validated like the CLI: an unknown key or bad value is a 400 with
  *           a plain message; no revision needed, the write merges)
  *
@@ -47,6 +49,53 @@ export interface AppearanceSettingsResponse {
 
 function settingsResponse(file: UiAppearanceFile | null): AppearanceSettingsResponse {
   return { appearance: appearanceSettingsFrom(file?.appearance), saved: file !== null, revision: file?.revision ?? 0 };
+}
+
+export async function handleBrandImage(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, method: string): Promise<boolean> {
+  if ((req.url ?? '').includes('?')) { sendJson(res, 400, { error: 'this route takes no query parameters' }); return true; }
+  if (method === 'GET') {
+    const { brandAsset } = (await readUiAppearanceFile())?.appearance ?? {};
+    const image = brandAsset ? await readBrandImage(brandAsset) : null;
+    if (!image) { sendJson(res, 404, { error: 'no custom brand image is selected' }); return true; }
+    res.writeHead(200, {
+      'Content-Type': image.contentType,
+      'Content-Length': image.bytes.length,
+      'Cache-Control': 'no-store',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.end(image.bytes);
+    return true;
+  }
+  if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+  if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+  if (!safeEqual(headerValue(req, 'x-ashlr-token'), ctx.token)) {
+    sendJson(res, 401, { error: 'unauthorized: missing or invalid x-ashlr-token' });
+    return true;
+  }
+  const maxEncoded = Math.ceil(MAX_BRAND_BYTES / 3) * 4;
+  let body: string;
+  try { body = await readBody(req, maxEncoded); }
+  catch { sendJson(res, 413, { error: 'Brand images must be at most 512 KB.' }); return true; }
+  const bytes = Buffer.from(body, 'base64');
+  if (bytes.toString('base64') !== body) {
+    sendJson(res, 400, { error: 'Expected a base64-encoded brand image.' });
+    return true;
+  }
+  if (bytes.length > MAX_BRAND_BYTES) {
+    sendJson(res, 413, { error: 'Brand images must be at most 512 KB.' });
+    return true;
+  }
+  try {
+    const brandAsset = await storeBrandImage(bytes);
+    const result = await updateUiAppearanceFile({ brand: 'upload', brandAsset }, { updatedBy: 'verse-ui' });
+    if (!result.ok) { sendJson(res, 409, { error: 'appearance changed while writing; retry' }); return true; }
+    sendJson(res, 200, result.file);
+  } catch (error) {
+    if (!(error instanceof BrandUploadError)) throw error;
+    sendJson(res, 400, { error: error.message });
+  }
+  return true;
 }
 
 export async function handleAppearanceSettings(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, method: string): Promise<boolean> {

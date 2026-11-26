@@ -58,6 +58,12 @@ mod platform {
         m.lock().unwrap_or_else(|p| p.into_inner())
     }
     fn publish(app: &AppHandle, inner: &Inner) {
+        if let Some(home) = crate::fleet_ops::home_dir() {
+            let _ = policy::publish_status(&home, &inner.state);
+        }
+        publish_ui(app, inner);
+    }
+    fn publish_ui(app: &AppHandle, inner: &Inner) {
         let _ = app.emit(policy::STATE_EVENT, &inner.state);
         if let Some(window) = app.get_webview_window(crate::MAIN_WINDOW_LABEL) {
             let _ = window.eval(policy::state_script(&inner.state));
@@ -138,14 +144,14 @@ mod platform {
             }
             i.state.bytes_received = bytes.len() as u64;
             if last_report.elapsed() >= Duration::from_millis(200) {
-                publish(app, &i);
+                publish_ui(app, &i);
                 last_report = Instant::now();
             }
         }
-        publish(app, &lock(&updates.0));
+        publish_ui(app, &lock(&updates.0));
         Ok(bytes)
     }
-    fn current_cli(home: &std::path::Path) -> Result<PathBuf, &'static str> {
+    pub(crate) fn current_cli(home: &std::path::Path) -> Result<PathBuf, &'static str> {
         let pointer = home.join(EXPECTED_CURRENT);
         let named = fs::symlink_metadata(&pointer).map_err(|_| "host-unavailable")?;
         if !named.file_type().is_symlink() || named.uid() != unsafe { libc::geteuid() } {
@@ -401,6 +407,14 @@ mod platform {
         publish(app, &i);
         Ok(())
     }
+    fn retry_idle_stage(inner: &Inner, elapsed: Duration) -> bool {
+        inner.state.enabled
+            && !inner.checking
+            && !inner.handoff
+            && inner.stage.is_some()
+            && inner.state.phase == Phase::WaitingForIdle
+            && elapsed >= Duration::from_secs(30)
+    }
     async fn check(app: AppHandle, updates: Updates, epoch: u64) {
         let result = async {
             let (key, endpoint, _repository) = trusted_config()?;
@@ -603,7 +617,10 @@ mod platform {
                     break;
                 }
                 let now = wall();
-                if check_due(checked, polled, now) {
+                let retry_stage = handle.try_state::<Updates>().is_some_and(|updates| {
+                    retry_idle_stage(&lock(&updates.0), now.saturating_sub(checked))
+                });
+                if retry_stage || check_due(checked, polled, now) {
                     refresh(&handle);
                     checked = now;
                 }
@@ -769,6 +786,31 @@ mod platform {
             ));
             fs::DirBuilder::new().mode(0o700).create(&home).unwrap();
             fs::canonicalize(home).unwrap()
+        }
+        #[test]
+        fn retries_only_an_idle_wait_with_a_stage_and_no_inflight_handoff() {
+            let mut i = Inner {
+                state: UpdateState {
+                    phase: Phase::WaitingForIdle,
+                    ..Default::default()
+                },
+                epoch: 0,
+                checking: false,
+                stage: Some(Stage {
+                    id: "a".repeat(32),
+                    version: "3.30.76".into(),
+                    path_env: "/usr/bin:/bin".into(),
+                }),
+                handoff: false,
+                abort: None,
+            };
+            assert!(!retry_idle_stage(&i, Duration::from_secs(29)));
+            assert!(retry_idle_stage(&i, Duration::from_secs(30)));
+            i.handoff = true;
+            assert!(!retry_idle_stage(&i, Duration::from_secs(30)));
+            i.handoff = false;
+            i.state.phase = Phase::AdoptionHeld;
+            assert!(!retry_idle_stage(&i, Duration::from_secs(30)));
         }
         #[test]
         fn preference_cancels_old_future_and_cannot_fabricate_a_stage() {
@@ -1015,6 +1057,8 @@ mod platform {
         }
     }
 }
+#[cfg(target_os = "macos")]
+pub(crate) use platform::current_cli;
 #[cfg(target_os = "macos")]
 pub use platform::{normal_quit, preference, start};
 #[cfg(not(target_os = "macos"))]

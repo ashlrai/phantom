@@ -9,7 +9,7 @@ export const validReleaseRepo = (repo: string): boolean => /^[A-Za-z0-9_.-]+\/[A
 const execFileAsync = promisify(execFile);
 const hasUnsafeChars = (value: string): boolean => [...value].some(char => /\s/.test(char) || char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
 const defaultRun: ReleaseRunner = async argv => {
-  try { const { stdout } = await execFileAsync('gh', argv); return { code: 0, stdout }; }
+  try { const { stdout } = await execFileAsync('gh', argv, { timeout: 10_000, killSignal: 'SIGKILL' }); return { code: 0, stdout }; }
   catch { return { code: 1, stdout: '' }; }
 };
 

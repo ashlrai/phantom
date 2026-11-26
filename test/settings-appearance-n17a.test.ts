@@ -48,7 +48,7 @@ const lastJson = (): Record<string, any> => JSON.parse(out.at(-1)!);
 
 describe('defaults', () => {
   it('match the app defaults (system theme, indigo accent, comfortable, default size)', () => {
-    expect(defaultAppearanceSettings()).toEqual({ theme: 'system', accent: '#5447e1', density: 'comfortable', fontSize: 'default' });
+    expect(defaultAppearanceSettings()).toEqual({ theme: 'system', accent: '#5447e1', density: 'comfortable', fontSize: 'default', brand: 'p' });
   });
 
   it('get --json with nothing saved reports defaults, saved:false, revision 0', async () => {
@@ -128,7 +128,7 @@ describe('set then get', () => {
 
     expect(await cmdSettings(['appearance', 'get', '--json'], osDark(null))).toBe(0);
     const got = lastJson();
-    expect(got.appearance).toEqual({ theme: 'dark', accent: set.appearance.accent, density: 'compact', fontSize: 'large' });
+    expect(got.appearance).toEqual({ theme: 'dark', accent: set.appearance.accent, density: 'compact', fontSize: 'large', brand: 'p' });
     expect(got.resolvedTheme).toBe('dark');
     expect(got.saved).toBe(true);
     expect(got.updatedBy).toBe('cli');
@@ -144,7 +144,7 @@ describe('set then get', () => {
 
   it('human output names each key in plain words', async () => {
     await cmdSettings(['appearance', 'set', 'theme', 'light']);
-    expect(out.at(-1)).toMatch(/^theme {5}light\naccent {4}#[0-9a-f]{6}\ndensity {3}comfortable\nfontSize {2}default\nsaved by cli/);
+    expect(out.at(-1)).toMatch(/^theme {5}light\naccent {4}#[0-9a-f]{6}\ndensity {3}comfortable\nfontSize {2}default\nbrand {5}p\nsaved by cli/);
   });
 });
 
