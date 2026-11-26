@@ -153,6 +153,19 @@ describe('the conflict proxy and tier counts are pure', () => {
     ].join('\n');
     expect(queueDepthByTier(readyRowsForDepth(text))).toEqual({ work: 1, fast: 1, unknown: 1 });
   });
+
+  it('counts lane-open READY rows under their own tier in the depth read', () => {
+    // Dispatcher rows with no lane hint never reach parseReadyTsv's rows —
+    // but they are still READY depth the market may place on any lane, so
+    // the board's per-tier depth must not drop them.
+    const text = [
+      row('READY', 'RQ-TEST-1', 'devin', 'work'),
+      'RQ-OPEN-A\tphantom\t\tmid\tprompts/a.md',
+      'RQ-OPEN-B\tphantom\t\twork\tprompts/b.md\t{"preferred_lane":null}',
+      'RQ-OPEN-C\tphantom\t\tfast\tprompts/c.md\t{"preferred_lane":"claude"}',
+    ].join('\n');
+    expect(queueDepthByTier(readyRowsForDepth(text))).toEqual({ work: 2, mid: 1, fast: 1 });
+  });
 });
 
 describe('phm fleet board --leader', () => {

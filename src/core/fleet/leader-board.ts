@@ -74,7 +74,7 @@ export interface LeaderBoardV1 {
   schema: typeof LEADER_BOARD_SCHEMA;
   generatedAt: string;
   lanes: LeaderBoardLane[];
-  /** READY rows by queue tier; 'unknown' covers rows naming no/invalid tier. null when ready.tsv was unreadable. */
+  /** READY rows by queue tier, lane-open rows included under their own tier; 'unknown' covers rows naming no/invalid tier. null when ready.tsv was unreadable. */
   queueDepthByTier: Record<string, number> | null;
   /** Unique merged jobs/PRs in the trailing hour across lanes; null without a healthy merge ledger. */
   mergesLastHour: number | null;
@@ -125,7 +125,7 @@ function parkedCell(cell: string | undefined): boolean {
   return PARKED_CELL.test((cell ?? '').replace(/^[A-Za-z][A-Za-z0-9._-]{0,31}=/, ''));
 }
 
-/** READY depth per tier. Unknown/invalid/missing tiers fold into 'unknown'. */
+/** READY depth per tier, lane-open rows counting under their own tier. Unknown/invalid/missing tiers fold into 'unknown'. */
 export function queueDepthByTier(rows: readonly { status: string; tier?: string }[]): Record<string, number> {
   const byTier: Record<string, number> = {};
   let keys = 0;
@@ -147,15 +147,18 @@ export function queueDepthByTier(rows: readonly { status: string; tier?: string 
  * Status-first PARKED-<reason>.<lane> and dispatcher 5-column rows
  * (job \t repo \t PARKED-<reason>.<lane> \t tier \t prompt) are holds, not
  * depth — left in, a PARKED cell lands in the positional id or pool slot and
- * would inflate the READY count.
+ * would inflate the READY count. Lane-open dispatcher rows carry no pool and
+ * so never reach `rows`, but they are still READY depth the market may place
+ * on any lane — they join the projection under their own tier.
  */
-export function readyRowsForDepth(text: string): ReturnType<typeof parseReadyTsv>['rows'] {
+export function readyRowsForDepth(text: string): { status: string; tier?: string }[] {
   const kept = text.split('\n').filter((line) => {
     if (!line.trim() || line.trimStart().startsWith('#')) return true;
     const cells = line.split('\t');
     return !parkedCell(cells[0]) && !parkedCell(cells[2]);
   });
-  return parseReadyTsv(kept.join('\n')).rows;
+  const parsed = parseReadyTsv(kept.join('\n'));
+  return [...parsed.rows, ...parsed.unhintedRows.map((row) => ({ status: 'READY', tier: row.tier }))];
 }
 
 /**
