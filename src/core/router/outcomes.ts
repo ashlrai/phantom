@@ -1713,6 +1713,7 @@ function foldRouterOutcomesWithCiCoverage(
   text: string, opts: RouterOutcomeFoldOptions, ambiguousCiJobs: Set<string>,
   mergeEventCoverage?: MergeEventCoverage,
   rewards?: ReadonlyMap<string, RewardOutcomeEvidence>,
+  throughMs = Infinity,
 ): RouterOutcomeFold {
   const rows: Row[] = [];
   let malformed = 0;
@@ -1720,8 +1721,10 @@ function foldRouterOutcomesWithCiCoverage(
     if (!line.trim()) continue;
     try {
       const value: unknown = JSON.parse(line);
-      if (value !== null && typeof value === 'object' && !Array.isArray(value)) rows.push(value as Row);
-      else malformed++;
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        const row = value as Row;
+        if ((ledgerEventTs(row, null) ?? -Infinity) <= throughMs) rows.push(row);
+      } else malformed++;
     } catch {
       malformed++;
     }
@@ -2573,7 +2576,7 @@ export function foldMarketHandoffAdvisories(text: string, throughEpochSeconds = 
  * and the jobs-ledger verdict then stands rather than a guessed
  * ordering. A job absent from the map recorded no advisory at all.
  */
-function latestJobsHandoffAdvisoryMs(text: string): Map<string, number | null> {
+function latestJobsHandoffAdvisoryMs(text: string, throughMs: number): Map<string, number | null> {
   const latest = new Map<string, number | null>();
   for (const line of text.split('\n')) {
     if (!line.includes('"session_handoff_advisory"')) continue;
@@ -2586,6 +2589,7 @@ function latestJobsHandoffAdvisoryMs(text: string): Map<string, number | null> {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
     const row = value as Row;
     if (handoffAdvisory(row) === null) continue;
+    if ((ledgerEventTs(row, null) ?? -Infinity) > throughMs) continue;
     const job = str(row, 'job', 'job_id', 'jobId', 'id');
     if (job === null) continue;
     const at = Date.parse(str(row, ...LEDGER_TS_KEYS) ?? '');
@@ -3544,7 +3548,7 @@ export async function readRouterOutcomes(opts: {
     crossReviews: crossReviewRead.state === 'read'
       ? foldCrossReviewsThrough(crossReviewRead.text, reportStartedAt)
       : undefined,
-  }, ambiguousCiJobs, mergeEvents?.coverage, rewards);
+  }, ambiguousCiJobs, mergeEvents?.coverage, rewards, reportStartedAt);
   if (spendRead.state === 'read' && !spendTruncated) {
     const costs = foldSpendCosts(spendRead.text, reportStartedAt);
     for (const o of folded.outcomes) {
@@ -3598,7 +3602,7 @@ export async function readRouterOutcomes(opts: {
   if (marketRead.state === 'read') {
     const decisions = foldRouteDecisions(marketRead.text, marketThrough);
     const advisories = foldMarketHandoffAdvisories(marketRead.text, marketThrough);
-    const jobsAdvisoryAt = latestJobsHandoffAdvisoryMs(read.text);
+    const jobsAdvisoryAt = latestJobsHandoffAdvisoryMs(read.text, reportStartedAt);
     for (const o of folded.outcomes) {
       const decision = decisions.get(o.job_id);
       if (decision !== undefined) {
