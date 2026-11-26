@@ -366,8 +366,7 @@ describe('lanes, presence and the router seam', () => {
     };
     try {
       await vi.advanceTimersByTimeAsync(0);
-      await flushObservations();
-      expect(release).toBeTypeOf('function');
+      await vi.waitFor(() => expect(release).toBeTypeOf('function'));
       expect(h.ticks.at(-1)).toMatchObject({ at: new Date(NOW).toISOString(),
         holdProduction: 'Mirror preparation is in progress.' });
       expect(h.ticks.at(-1)!.lanes.find(l => l.lane === 'local')?.slots).toBeGreaterThan(0);
