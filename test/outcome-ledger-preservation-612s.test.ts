@@ -2617,6 +2617,33 @@ describe('router outcome reward-signals join', () => {
   });
 
   it.each([
+    ['before both spans', '00:00:00', 120, 300],
+    ['at publish start', '00:01:00', null, 300],
+    ['inside publish wait', '00:02:00', null, 300],
+    ['inside CI', '00:07:00', 120, null],
+    ['at CI completion', '00:10:00', 120, null],
+    ['after both spans', '00:11:00', 120, 300],
+    ['with no recorded time', null, null, null],
+  ] as const)('handles a launch %s in router timing evidence', async (_label, launchAt, publishWait, ciWall) => {
+    const rows = [
+      { event: 'finish', ts: '2026-11-01T00:01:00Z' },
+      { event: 'publish', ts: '2026-11-01T00:03:00Z' },
+      { event: 'ci_start', ts: '2026-11-01T00:05:00Z' },
+      { event: 'ci_complete', ts: '2026-11-01T00:10:00Z' },
+      { event: 'launch', timestamp: launchAt === null ? undefined : `2026-11-01T${launchAt}Z` },
+    ].map(row => JSON.stringify({ job: 'J1', ...row })).join('\n');
+    const expected = { publish_wait_s: publishWait, ci_wall_s: ciWall };
+    expect(foldRouterOutcomes(rows).outcomes[0]).toMatchObject(expected);
+
+    const result = await readRouterOutcomes({
+      runsDir: runsDir(rows),
+      ashlarDir: rewardLedger([rewardRow('J1', true, { ciWallMs: 60_000 })]),
+      authorityEvidence: null,
+    });
+    expect(result.outcomes[0]).toMatchObject(expected);
+  });
+
+  it.each([
     ['a different completion PR', 'https://github.com/ashlrai/phantom/pull/2', [], null],
     ['a conflicting replay', 'https://github.com/ashlrai/phantom/pull/1', [2], null],
     ['equivalent PR URLs', 'https://github.com/AshlrAI/Phantom/pull/1/', [1], 300],
