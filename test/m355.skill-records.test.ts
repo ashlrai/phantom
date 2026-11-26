@@ -693,6 +693,39 @@ describe('M355 skill records', () => {
     });
   });
 
+  it('applies the inclusive report cutoff before skill-use row and conflict checks', () => {
+    const atCutoff = useEvent({ eventId: 'in-window', ts: '2026-07-10T12:00:00.000Z', score: 0.875 });
+    const later = useEvent({ ...atCutoff, ts: '2026-07-10T12:00:00.001Z' });
+    const futureRows = Array.from({ length: 5 }, (_, index) =>
+      useEvent({ ...later, eventId: `future-${index}` }));
+    recordSkillUseEvent([atCutoff, later, ...futureRows]);
+
+    const asOfMs = Date.parse(atCutoff.ts);
+    expect(readSkillUseEventsWithDiagnostics({ asOfMs })).toMatchObject({
+      eventState: 'present',
+      events: [atCutoff],
+    });
+    expect(readSkillUseEventsWithDiagnostics({ asOfMs, limit: 1 })).toMatchObject({
+      eventState: 'present',
+      events: [atCutoff],
+    });
+  });
+
+  it('leaves future partitions out of the skill-use file budget', () => {
+    const atCutoff = useEvent({ eventId: 'in-window', ts: '2026-07-10T23:59:59.999Z', score: 0.875 });
+    const nextDay = useEvent({ eventId: 'next-day', ts: '2026-07-11T00:00:00.000Z' });
+    recordSkillUseEvent([atCutoff, nextDay]);
+
+    expect(readSkillUseEventsWithDiagnostics({
+      sinceMs: Date.parse('2026-07-10T00:00:00.000Z'),
+      asOfMs: Date.parse(atCutoff.ts),
+      maxFiles: 1,
+    })).toMatchObject({
+      eventState: 'present',
+      events: [atCutoff],
+    });
+  });
+
   it('marks a skill-use sample degraded when distinct events exceed the requested limit', () => {
     const older = useEvent({ eventId: 'older-use' });
     const newer = useEvent({ eventId: 'newer-use' });

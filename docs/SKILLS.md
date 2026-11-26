@@ -139,6 +139,9 @@ attributes each trajectory's resolved terminal outcome (and deterministic
 post-merge realized outcome) back to the skill revisions selected on it.
 Only skill-use receipts timestamped within the reporting window, including
 both endpoints, contribute to the join or its coverage threshold.
+Skill-use partitions dated after the report day do not occupy file slots.
+Within scanned partitions, receipts timestamped after the report time do
+not count toward row limits or cause event-ID conflicts.
 Dispatch receipts dated after report time cannot supply production
 trajectories for that sample or contribute to dispatch join diagnostics.
 The skill-outcome report anchors its ledger read and trajectory join to one
