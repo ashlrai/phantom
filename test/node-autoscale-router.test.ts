@@ -224,6 +224,20 @@ describe('autoscale router scoring', () => {
     expect(plan.map(p => p.nodeId)).toEqual(['main-mbp', 'main-mbp']);
   });
 
+  it('preserves room on a cold host by preferring an equally scored warm placement', () => {
+    const local = { harness: 'codex', tokensPerJob: 1, minutesPerJob: 60, local: true, modelBytes: 10 * GIB };
+    const plan = planAutoscaleRoutes({
+      nodes: [
+        node(mbp({ node: 'a-cold' }), { providers: ['local-a', 'local-b'] }),
+        node(mbp({ node: 'z-warm' }), { providers: ['local-a'], localModels: ['a'] }),
+      ],
+      costs: [{ ...local, provider: 'local-a', model: 'a' }, { ...local, provider: 'local-b', model: 'b' }],
+      outcomes: {}, nowMs: T0,
+      jobs: [{ id: 'a', providers: ['local-a'] }, { id: 'b', providers: ['local-b'] }],
+    });
+    expect(plan.map(p => p.nodeId)).toEqual(['z-warm', 'a-cold']);
+  });
+
   it('charges separately for same-named local models on different providers', () => {
     const local = { model: 'm', harness: 'codex', tokensPerJob: 1, minutesPerJob: 60, local: true, modelBytes: 10 * GIB };
     const plan = planAutoscaleRoutes({
