@@ -166,7 +166,11 @@ test('unattributed live claims hold capacity and executor identity binds latency
   f.advance(100); nodes.complete(pulled.claim, 'done');
   f.beat('worker', { hostId: 'new-mac' });
   expect(projectFleetAwareness(f.state, f.now()).hosts[0]!.latency.samples).toBe(0);
-  f.state.jobs[0]!.state = 'running'; delete f.state.jobs[0]!.executionHostId;
+  delete f.state.jobs[0]!.executionHostId;
+  expect(projectFleetAwareness(f.state, f.now()).hosts[0]!.latency).toMatchObject({
+    samples: 0, medianMs: null,
+  });
+  f.state.jobs[0]!.state = 'running';
   f.state.nodes[0]!.capacity = undefined; f.add('other');
   expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.freeSlots === null)).toBe(true);
 });
