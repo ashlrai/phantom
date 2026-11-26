@@ -1,34 +1,13 @@
 /** Group rooms are a convention over the local durable bus, not an identity boundary. */
 import { appendBusInbox, listBusInboxAfter, type BusInboxOptions } from './bus-inbox.js';
 import type { BusJsonValue, BusPriority } from './bus-envelope.js';
+import { GROUP_PRESENCE_TTL_MS, groupAddress, groupMemberLabel } from './bus-group-address.js';
 
-const NAME = /^[a-z0-9](?:[a-z0-9_-]{0,31})$/;
-const MEMBER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-export const GROUP_PRESENCE_TTL_MS = 5 * 60_000;
-
-/** A room and topic are separate bounded namespace components, not paths. */
-export function groupAddress(room: string, topic: string): string {
-  if (!NAME.test(room) || !NAME.test(topic)) throw new Error('Invalid room or topic');
-  return `group:${room}:${topic}`;
-}
-
-/**
- * The topic component of a well-formed `group:<room>:<topic>` routing label —
- * the two-component grammar `groupAddress` writes, room and topic each under
- * the room rule — or null for any other label. Envelope `to` values carry raw
- * routing labels, so this parse is what the `--topic` read filters match on:
- * a bare `group:<room>`, a deeper label, an agent address and a malformed room
- * or topic all resolve to null and never match. The same rule
- * `phm agents bus work next --topic` and `phm comms bus next --topic` apply.
- */
-export function groupAddressTopicOf(to: string): string | null {
-  if (!to.startsWith('group:')) return null;
-  const sep = to.indexOf(':', 'group:'.length);
-  if (sep < 0) return null;
-  const room = to.slice('group:'.length, sep);
-  const topic = to.slice(sep + 1);
-  return NAME.test(room) && NAME.test(topic) ? topic : null;
-}
+// The pure address grammar lives in bus-group-address.ts so projections that
+// never touch the bus store (the web UI, the pure conversation model) share
+// the same wire rule; re-exported here so every existing importer keeps one
+// import site.
+export { GROUP_PRESENCE_TTL_MS, groupAddress, groupAddressTopicOf, isGroupPresenceBody } from './bus-group-address.js';
 
 export function publishGroupMessage(input: {
   room: string; topic: string; id: string; from: string; body: BusJsonValue;
@@ -46,21 +25,9 @@ export function publishGroupPresence(input: {
 }, options: BusInboxOptions = {}) {
   let to: string;
   try { to = groupAddress(input.room, input.topic); } catch { return { status: 'invalid' as const }; }
-  if (!MEMBER.test(input.member) || !['online', 'offline'].includes(input.state)) return { status: 'invalid' as const };
+  if (!groupMemberLabel(input.member) || !['online', 'offline'].includes(input.state)) return { status: 'invalid' as const };
   return appendBusInbox({ id: input.id, from: input.member, to, priority: 'P3', ttl: GROUP_PRESENCE_TTL_MS,
     body: { kind: 'group.presence', state: input.state } }, options);
-}
-
-/**
- * A `group.presence` body is an observation with its own read (`groupPresence`),
- * never mail or a work-board request: the curated agent-facing projections
- * (inbox, conversations, messages-on-map, fleet edges, work board) exclude it
- * while the raw retained reads — `subscribeGroup`, `comms bus group read`,
- * `bus show`, `phm messages` — keep it.
- */
-export function isGroupPresenceBody(body: unknown): boolean {
-  return body !== null && typeof body === 'object' && !Array.isArray(body) &&
-    (body as Record<string, unknown>).kind === 'group.presence';
 }
 
 /** One page of a subscription. Advance using nextCursor even when no rows match. */
@@ -82,7 +49,7 @@ export function groupPresence(room: string, topic: string, options: BusInboxOpti
     for (const row of page.messages) {
       const body = row.envelope.body;
       if (body && typeof body === 'object' && !Array.isArray(body) && body.kind === 'group.presence' &&
-          (body.state === 'online' || body.state === 'offline') && row.envelope.ttl <= GROUP_PRESENCE_TTL_MS && MEMBER.test(row.envelope.from)) {
+          (body.state === 'online' || body.state === 'offline') && row.envelope.ttl <= GROUP_PRESENCE_TTL_MS && groupMemberLabel(row.envelope.from)) {
         members.set(row.envelope.from, { member: row.envelope.from, state: body.state, receivedAt: row.receivedAt });
       }
     }

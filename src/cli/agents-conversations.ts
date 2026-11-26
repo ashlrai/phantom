@@ -6,7 +6,7 @@ import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js'
 import { WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 
 /** `phm agents conversations`: thin argv adapter for core/fleet/agent-conversations.ts. Exit 0 read, 1 bus unreadable, 2 bad usage. */
-export const AGENTS_CONVERSATIONS_USAGE = `Usage: phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--to <name>] [--thread <label>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--kind <ask|reply|handoff|status|blocker>] [--limit <1..1024>] [--json]
+export const AGENTS_CONVERSATIONS_USAGE = `Usage: phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--topic <topic>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--to <name>] [--thread <label>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--kind <ask|reply|handoff|status|blocker>] [--limit <1..1024>] [--json]
 
 Agent-to-agent messages grouped into threads by reply chain: who is in each
 thread, the latest subject, message count, last activity and one state:
@@ -58,7 +58,15 @@ addressed to group:<name>:* — the room's whole traffic under every topic,
 the same raw address prefix phm messages --channel, agents bus inbox
 --channel and channel read --channel match — so "which threads touch
 channel X" is one filtered read, the value taking the strict channel-name
-grammar;
+grammar; --topic keeps only the threads where at least one member
+message's to label is a well-formed group:<room>:<topic> address carrying
+that exact topic component — the same groupAddressTopicOf parse phm
+messages --topic, agents bus work feed --topic, work next --topic, inbox
+--topic, channel read --topic, wakes --topic and comms bus next --topic
+apply — so "which threads carry release-topic traffic across every room"
+is one filtered read, composing with --channel into one room AND one
+topic while an agent address, a bare group:<room> or a malformed topic
+never matches, the value taking the same strict channel-name grammar;
 --priority keeps only the threads where at least one member message
 carries that exact P0..P3 band — the same match every other bus read's
 --priority applies — so "which threads have urgent traffic" is one
@@ -127,7 +135,7 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
   if (args.some(arg => arg === '--help' || arg === '-h')) { out(AGENTS_CONVERSATIONS_USAGE); return 0; }
   let json = false, waitingOnly = false, blockedOnly = false, agent: string | undefined, job: string | undefined, waitingOn: string | undefined;
   let state: ConversationState | undefined, limit: number | undefined, sinceRaw: string | undefined, beforeRaw: string | undefined, contains: string | undefined;
-  let inReplyTo: string | undefined, id: string | undefined, channel: string | undefined, priority: BusPriority | undefined, from: string | undefined, excludeFrom: string | undefined, to: string | undefined;
+  let inReplyTo: string | undefined, id: string | undefined, channel: string | undefined, topic: string | undefined, priority: BusPriority | undefined, from: string | undefined, excludeFrom: string | undefined, to: string | undefined;
   let withPeer: string | undefined, thread: string | undefined, bodyKind: string | undefined;
   let kind: AgentMessageKind | undefined, resultOutcome: WorkResultOutcome | undefined;
   for (let i = 0; i < args.length; i++) {
@@ -145,6 +153,7 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
     else if (arg === '--in-reply-to' && inReplyTo === undefined && value !== undefined && JOB_ID.test(value) && !value.startsWith('--')) { inReplyTo = value; i++; }
     else if (arg === '--id' && id === undefined && value !== undefined && JOB_ID.test(value) && !value.startsWith('--')) { id = value; i++; }
     else if (arg === '--channel' && channel === undefined && value !== undefined && agentChannelNameSchema.safeParse(value).success) { channel = value; i++; }
+    else if (arg === '--topic' && topic === undefined && value !== undefined && agentChannelNameSchema.safeParse(value).success) { topic = value; i++; }
     else if (arg === '--priority' && priority === undefined && value !== undefined &&
       (BUS_PRIORITIES as readonly string[]).includes(value)) { priority = value as BusPriority; i++; }
     else if (arg === '--from' && from === undefined && value !== undefined && JOB_ID.test(value) && !value.startsWith('--')) { from = value; i++; }
@@ -186,7 +195,7 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
   const before = beforeRaw === undefined ? undefined : parseSince(beforeRaw, options.now?.() ?? Date.now());
   if (beforeRaw !== undefined && before === null) { err('--before takes 15m, 2h, 1d, epoch ms or an ISO time.'); return 2; }
   const { formatAgentConversationsText, readAgentConversations } = await import('../core/fleet/agent-conversations.js');
-  const result = readAgentConversations({ agent, waitingOnly, blockedOnly, job, waitingOn, state, since: since ?? undefined, before: before ?? undefined, contains, inReplyTo, id, channel, priority, from, excludeFrom, to, with: withPeer, thread, bodyKind, result: resultOutcome, kind, limit }, options);
+  const result = readAgentConversations({ agent, waitingOnly, blockedOnly, job, waitingOn, state, since: since ?? undefined, before: before ?? undefined, contains, inReplyTo, id, channel, topic, priority, from, excludeFrom, to, with: withPeer, thread, bodyKind, result: resultOutcome, kind, limit }, options);
   out(json ? JSON.stringify(result, null, 2) : formatAgentConversationsText(result));
   return result.source === 'unavailable' ? 1 : 0;
 }

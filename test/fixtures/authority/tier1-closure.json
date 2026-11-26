@@ -696,6 +696,7 @@
     "src/core/fleet/bus-board.ts",
     "src/core/fleet/bus-delivery.ts",
     "src/core/fleet/bus-envelope.ts",
+    "src/core/fleet/bus-group-address.ts",
     "src/core/fleet/bus-group.ts",
     "src/core/fleet/bus-hoplog.ts",
     "src/core/fleet/bus-inbox.ts",
