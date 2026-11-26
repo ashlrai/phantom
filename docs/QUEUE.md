@@ -1318,7 +1318,10 @@ Without `--lane` and `--n`, `fleet supply` retains its batch activity report.
 
 Run `phm queue yield --since 24h --json` to compare generators from the local
 `metrics/jobs.jsonl` ledger. The Metrics screen shows the same 24-hour report.
-Events in the window are joined by job ID. An explicit `src` takes precedence
+Events in the window are joined by job ID. Job lifecycle evidence comes from
+`jobs.jsonl` and draft or rejection decisions come from `generation.jsonl`.
+Decision rows use their own timestamps even if they carry outcome fields.
+An explicit `src` takes precedence
 over the job ID pattern; unrecognized sources are `unknown`. The fold uses
 recorded timestamps, with ledger order breaking ties. Late arrivals with
 older timestamps cannot overwrite newer recorded measurements. Jobs and
