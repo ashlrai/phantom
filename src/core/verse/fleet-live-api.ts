@@ -859,6 +859,7 @@ export function gateFunnelFromLedger(rows: readonly LedgerEntry[], fromMs: numbe
 interface BuiltState {
   atMs: number;
   snapshot: FleetLiveSnapshotV1;
+  laneSlotsObserved: boolean;
   needsYou: NeedsYouItem[];
   /** Why needsYou cannot vouch for an all-clear; null when it can. */
   needsYouProblem: string | null;
@@ -1461,7 +1462,7 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
       ? 'the authority ledger could not be read'
       : null;
   const needsYou = needsYouProblem === null ? needsYouFrom(holds ?? [], rows ?? [], nowMs) : [];
-  return { atMs: nowMs, snapshot, needsYou, needsYouProblem };
+  return { atMs: nowMs, snapshot, laneSlotsObserved: standingTickFresh, needsYou, needsYouProblem };
 }
 
 // ---------------------------------------------------------------------------

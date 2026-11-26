@@ -9,6 +9,8 @@ phm fleet lane-slots --json
 The command uses the same projection as `GET /api/verse/fleet/live`.
 It reports slot counts and working jobs, with no account credentials or invented
 usage percentages. Missing observations are `null` in JSON and `unknown` in text.
+This also applies when the fleet is paused, stopped, or dark and has no fresh
+standing observation. A fresh observation can report zero slots.
 
 A standing tick publishes lane observations before mirror preparation and
 re-probes every minute while it waits. Tick completion is not required. If an

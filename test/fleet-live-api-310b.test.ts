@@ -261,6 +261,7 @@ describe('GET /api/verse/fleet/live — states', () => {
     expect(res.body.darkSince).toBe('2026-09-01T19:10:00.000Z');
     expect(res.body.darkSince).toBe(res.body.lastActivityAt);
     expect(res.body.lanes.every((l) => l.slots === 0 && l.capReason !== null)).toBe(true);
+    expect((await buildFleetLiveSnapshot()).laneSlotsObserved).toBe(false);
     // The ledger was readable and empty: zero is a measurement here, not a default.
     expect(res.body.summary).toMatchObject({ mergedToday: 0, merged7d: 0, revertsToday: 0, postMergeGreenPct7d: null, cycleTimeP50Ms7d: null });
   });
@@ -338,11 +339,17 @@ describe('GET /api/verse/fleet/live — states', () => {
     })]);
     expect(body.repos[0]!.greenTrend).toHaveLength(14);
     tick.at = iso(45 * MIN);
-    expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === 0)).toBe(true);
+    const stale = await buildFleetLiveSnapshot();
+    expect(stale.snapshot.lanes.every(lane => lane.slots === 0)).toBe(true);
+    expect(stale.laneSlotsObserved).toBe(false);
     tick.at = iso(0); // A new observation while the old tick is still preparing mirrors.
-    expect((await buildFleetLiveSnapshot()).snapshot.lanes.find(lane => lane.lane === 'local')?.slots).toBe(2);
+    const fresh = await buildFleetLiveSnapshot();
+    expect(fresh.snapshot.lanes.find(lane => lane.lane === 'local')?.slots).toBe(2);
+    expect(fresh.laneSlotsObserved).toBe(true);
     tick.at = iso(-MIN);
-    expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === 0)).toBe(true);
+    const future = await buildFleetLiveSnapshot();
+    expect(future.snapshot.lanes.every(lane => lane.slots === 0)).toBe(true);
+    expect(future.laneSlotsObserved).toBe(false);
   });
 });
 
