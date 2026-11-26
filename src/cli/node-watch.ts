@@ -10,6 +10,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 export const NODE_WATCH_DEFAULT_SECONDS = 10;
 /** Sessions and claims expire 30 s after the last beat/renew; the interval stays well inside that. */
 export const NODE_WATCH_MAX_SECONDS = 25;
+/** Sub-second passes would spin the store's fsync'd transactions for no lease benefit. */
+export const NODE_WATCH_MIN_SECONDS = 1;
 
 export interface NodeWatchFlags {
   /** Verb arguments with --watch/--every removed; everything else passes through verbatim. */
@@ -21,7 +23,7 @@ export interface NodeWatchFlags {
 function everySeconds(raw: string): number | null {
   if (!/^\d+(\.\d+)?$/.test(raw)) return null;
   const seconds = Number(raw);
-  return seconds > 0 && seconds <= NODE_WATCH_MAX_SECONDS ? seconds : null;
+  return seconds >= NODE_WATCH_MIN_SECONDS && seconds <= NODE_WATCH_MAX_SECONDS ? seconds : null;
 }
 
 /** --watch and --every are dispatcher flags: they are stripped here and never reach the verb parser. */
@@ -37,7 +39,7 @@ export function parseNodeWatchFlags(args: string[]): NodeWatchFlags | { error: s
       if (raw === undefined || raw.startsWith('--')) return { error: '--every needs a number of seconds.' };
       if (every !== undefined) return { error: '--every was given more than once.' };
       const seconds = everySeconds(raw);
-      if (seconds === null) return { error: `--every must be a number of seconds above 0 and at most ${NODE_WATCH_MAX_SECONDS}.` };
+      if (seconds === null) return { error: `--every must be a number of seconds at least ${NODE_WATCH_MIN_SECONDS} and at most ${NODE_WATCH_MAX_SECONDS}.` };
       every = seconds;
       continue;
     }

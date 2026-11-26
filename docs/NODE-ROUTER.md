@@ -192,11 +192,12 @@ omits `--capacity` but still advertises `--slots 0` — the same zero bound the
 pool worker sends — so the node holds admission instead of keeping its last
 reported slots; a caller-supplied `--slots` wins, and a measurement that fails
 stays unknown rather than held. The interval
-defaults to 10 seconds and is capped at 25, inside the expiry window. Ctrl-C or
-SIGTERM stops the loop and prints a confirmation; a beat that exits non-zero —
-a lapsed session, a refused flag — stops it at once with that beat's error. The
-watch flags are consumed by the dispatcher and never reach the beat parser, so
-older stores and pool primaries see only the usual beat arguments.
+defaults to 10 seconds and must be between 1 and 25 seconds, inside the expiry
+window. Ctrl-C or SIGTERM stops the loop and prints a confirmation; a beat that
+exits non-zero — a lapsed session, a refused flag — stops it at once with that
+beat's error. The watch flags are consumed by the dispatcher and never reach the
+beat parser, so older stores and pool primaries see only the usual beat
+arguments.
 
 `phm node join --watch [--every <seconds>]` is the one-command first run on
 the standalone registry: it performs the ordinary join — same flags, same

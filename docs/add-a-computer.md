@@ -72,7 +72,7 @@ phm node beat --node <nodeId> --session 1 --probe-auth --watch
 ```
 
 `--watch` repeats the ordinary beat every 10 seconds (or `--every <seconds>`,
-at most 25) and re-measures capacity and host stats on this computer each pass,
+between 1 and 25) and re-measures capacity and host stats on this computer each pass,
 so do not also pass `--capacity` or `--host-stats` — an explicit flag wins and
 would freeze a stale sample. Keep any other flags (`--probe-auth`, `--usage`,
 `--json`) on the same command; they apply to every beat. Press Ctrl-C to stop;

@@ -68,7 +68,7 @@ describe('phm node renew --watch', () => {
 
   it('refuses a bad --every as usage with the renew envelope under --json', async () => {
     for (const args of [
-      ['--every'], ['--every', 'abc'], ['--every', '0'], ['--every', '26'], ['--every', '5', '--every', '6'],
+      ['--every'], ['--every', 'abc'], ['--every', '0'], ['--every', '0.5'], ['--every', '26'], ['--every', '5', '--every', '6'],
     ]) {
       const lines = capture();
       const ac = new AbortController();
