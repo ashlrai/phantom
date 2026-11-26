@@ -5,7 +5,7 @@
 // does the resolution; unlike `npm run check:docs`, which checks only the
 // curated operator entrypoints, this walks the full tree so no page opt-outs.
 import { readdirSync, statSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error Standalone Node documentation checker has no declaration output.
@@ -19,7 +19,7 @@ function collectMarkdownFiles(): string[] {
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);
       if (statSync(path).isDirectory()) walk(path);
-      else if (name.endsWith('.md')) files.push(relative(ROOT, path));
+      else if (name.endsWith('.md')) files.push(relative(ROOT, path).split(sep).join('/'));
     }
   };
   walk(join(ROOT, 'docs'));

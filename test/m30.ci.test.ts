@@ -440,11 +440,17 @@ describe('M30 CI workflow', () => {
   it('uses the native Windows regression files for test-only diff classification and manual proof', () => {
     expect(WINDOWS_FAST_TESTS).toContain('test/m22.backlog.test.ts');
     expect(WINDOWS_FAST_TESTS).toContain('test/m250.resource-control.test.ts');
+    expect(WINDOWS_FAST_TESTS).toEqual(expect.arrayContaining([
+      'test/docs-repo-links.test.ts',
+      'test/m30.ci.test.ts',
+      'test/slack-status-digest-disk-preservation-478s.test.ts',
+    ]));
     for (const file of WINDOWS_FAST_TESTS) {
       expect(existsSync(resolve(repoRoot, file)), file).toBe(true);
       expect(diffNeedsOsLegs([file]), file).toBe(true);
+      expect(diffNeedsOsLegs([file.replaceAll('/', '\\')]), file).toBe(true);
     }
-    expect(diffNeedsOsLegs(['test/m30.ci.test.ts', 'docs/QUEUE.md'])).toBe(false);
+    expect(diffNeedsOsLegs(['test/status-digest-peers-396.test.ts', 'docs/QUEUE.md'])).toBe(false);
     const paths = spawnSync(process.execPath, ['.github/scripts/ci-os-paths.mjs', '--windows-tests'], {
       cwd: repoRoot, encoding: 'utf8',
     });
@@ -717,7 +723,9 @@ echo pending=true; exit 2
       // The native compiler is a preview binary that is occasionally killed by a
       // signal on constrained runners (status null). Diagnostics (exit 1/2) are
       // final; only a signal death is retried, and a persistent one fails loudly.
-      const run = () => spawnSync(resolve(repoRoot, 'node_modules/.bin/tsgo'), ['--noEmit', '-p', config], { encoding: 'utf8', timeout: 60_000, killSignal: 'SIGKILL' });
+      const run = () => spawnSync(process.execPath, [
+        resolve(repoRoot, 'node_modules/@typescript/native-preview/bin/tsgo'), '--noEmit', '-p', config,
+      ], { encoding: 'utf8', timeout: 60_000, killSignal: 'SIGKILL' });
       const compile = () => {
         let result = run();
         for (let attempt = 1; attempt < 3 && result.signal && !result.error; attempt += 1) result = run();

@@ -18,10 +18,13 @@ const OS_TREE = /^(?:desktop|contrib)\//;
 export const WINDOWS_FAST_TESTS = Object.freeze([
   'test/authority-cli-310b.test.ts',
   'test/devin-engine-identity-315.test.ts',
+  'test/docs-repo-links.test.ts',
   'test/fleet-profile.test.ts',
   'test/fleet-unfed.test.ts',
   'test/m22.backlog.test.ts',
   'test/m250.resource-control.test.ts',
+  'test/m30.ci.test.ts',
+  'test/slack-status-digest-disk-preservation-478s.test.ts',
 ]);
 
 export function pathIsOsSensitive(file) {

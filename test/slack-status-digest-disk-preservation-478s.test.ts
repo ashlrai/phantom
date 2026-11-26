@@ -7,8 +7,8 @@
  * gatherStatusDigestInput -> buildStatusDigest -> composeSlackStatusReply
  * chain in place and lets the production readers (readFleetRunsDirState,
  * readNeedsMason, readInboxEntries) hit real temporary files under a
- * synthetic runs dir. Only the external installed/published/GitHub-merge
- * readers are replaced at their lowest boundary; runsState, needs, inbox, the
+ * synthetic runs dir. External installed/published/GitHub-merge readers and
+ * the Windows ACL adapter are replaced at their lowest boundary; runsState, needs, inbox, the
  * owner composer and the adapter routing are never stubbed.
  *
  * Drive: real openSlackSocket handler -> slackEventToBus ->
@@ -32,6 +32,8 @@ import { ownerStatusReply } from '../src/core/agents/owner-status-reply.js';
 import { buildStatusDigest } from '../src/core/leader/status-digest.js';
 import { gatherStatusDigestInput, type StatusDigestSources } from '../src/core/leader/status-digest-sources.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
+import { PRIVATE_STORAGE_TEST_CONTROL, _setPrivateStorageTestControlForTest } from '../src/core/util/private-storage.js';
+import { createSemanticPrivateStorageHarness, trustedWindowsSystemRootForTest, type SemanticPrivateStorageHarness } from './helpers/semantic-private-storage.js';
 
 vi.setConfig({ testTimeout: 30_000 });
 // Ingest awaits the unified owner-thread receipt (~1-2 s cold); poll past it.
@@ -46,6 +48,7 @@ const configText = `[mason]\nidentities=[{channel="slack",id="${OPERATOR}"}]\n` 
   `[[slack.map]]\ntopic="leaders"\nchannel="${CHANNEL}"\n`;
 
 let root: string;
+let privateStorage: SemanticPrivateStorageHarness | undefined;
 let options: { configDir: string; runsDir: string; busRoot: string; now: () => number };
 const statusPath = () => join(options.runsDir, 'queue', 'status.json');
 
@@ -97,12 +100,20 @@ const diskBrief = async (runsDir: string, now: Date): Promise<string> =>
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'status-digest-disk-478s-'));
+  if (process.platform === 'win32') {
+    privateStorage = createSemanticPrivateStorageHarness({ systemRoot: trustedWindowsSystemRootForTest() });
+    _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, { runner: privateStorage.runner });
+  }
   options = { configDir: join(root, 'config'), runsDir: join(root, 'runs'), busRoot: join(root, 'bus'), now: () => Date.parse('2026-11-06T02:00:00Z') };
   mkdirSync(options.configDir, { mode: 0o700 });
   writeFileSync(join(options.configDir, 'agent-network.toml'), configText, { mode: 0o600 });
   writeFileSync(join(options.configDir, 'comms.toml'), 'confirmedByMason=true\n', { mode: 0o600 });
 });
-afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+afterEach(() => {
+  _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, undefined);
+  privateStorage = undefined;
+  rmSync(root, { recursive: true, force: true });
+});
 
 function fakeCall(input: { post?: () => Promise<Record<string, unknown>> } = {}): SlackCall {
   return vi.fn(async (method, body = {}) => {
@@ -160,6 +171,17 @@ describe('Slack "Phantom status" digest from persisted runs state (PR #4885 disk
     const first = await receive(call, slackEvent('Phantom status', 'Ev-disk-a1', '1793920001.000001', THREAD_TS));
     expect(first.routed).toMatchObject({ owned: true, durable: true });
     expect(first.answer).toEqual({ answered: true, reason: 'answered in-thread' });
+    if (process.platform === 'win32') {
+      for (const record of ['MASON-INBOX.md', 'MASON-OUTBOX.md']) {
+        expect(privateStorage?.requests).toContainEqual({
+          operation: 'assure-private-path',
+          anchorPath: join(options.runsDir, 'leader'),
+          paths: [join(options.runsDir, 'leader', record)],
+          kind: 'file',
+          mode: 'secure-created',
+        });
+      }
+    }
     expect(posts(call)).toHaveLength(1);
     const body = postBody(call, 0);
     // Same channel and same request thread the verified owner used.

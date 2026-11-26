@@ -135,12 +135,30 @@ export function createLeaderNetwork(options: LeaderNetworkOptions) {
     if (Buffer.byteLength(next) > MAX_RECORD_BYTES) throw new Error('Leader record full');
     // Other producers use appendFile, so never replace the shared Markdown file.
     // Validate the opened inode and append one bounded record using O_APPEND.
-    const fd = openSync(file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+    const appendFlags = constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+    const windows = process.platform === 'win32';
+    let created = false;
+    let fd: number;
+    if (windows) {
+      try {
+        fd = openSync(file, appendFlags | constants.O_CREAT | constants.O_EXCL, 0o600);
+        created = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        fd = openSync(file, appendFlags);
+      }
+    } else {
+      fd = openSync(file, appendFlags | constants.O_CREAT, 0o600);
+    }
     try {
-      const stat = fstatSync(fd), installed = lstatSync(file);
-      if (!stat.isFile() || stat.nlink !== 1 || stat.ino !== installed.ino || stat.dev !== installed.dev ||
-          typeof process.getuid === 'function' && stat.uid !== process.getuid() ||
-          (stat.mode & 0o022) !== 0 || !assurePrivateStoragePath(file, 'file', 'inspect-existing', { anchorPath: leaderDir }).ok) throw new Error('Unsafe leader record');
+      const stat = fstatSync(fd, { bigint: true }), installed = lstatSync(file, { bigint: true });
+      const sameFile = (entry: typeof stat) => entry.isFile() && !entry.isSymbolicLink() && entry.nlink === 1n &&
+        entry.ino === stat.ino && entry.dev === stat.dev;
+      if (!sameFile(stat) || !sameFile(installed) ||
+          typeof process.getuid === 'function' && stat.uid !== BigInt(process.getuid()) ||
+          (!windows && (stat.mode & 0o022n) !== 0n) ||
+          !assurePrivateStoragePath(file, 'file', created ? 'secure-created' : 'inspect-existing', { anchorPath: leaderDir }).ok ||
+          !sameFile(lstatSync(file, { bigint: true }))) throw new Error('Unsafe leader record');
       const bytes = Buffer.from(`\n${content}\n`, 'utf8');
       const written = writeSync(fd, bytes);
       if (written !== bytes.length) throw new Error('Incomplete leader record');
