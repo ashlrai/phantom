@@ -20,7 +20,7 @@ const count = (value: unknown): number | null => Number.isSafeInteger(value) ? n
 const time = (value: unknown): number => typeof value === 'string' ? Date.parse(value) : NaN;
 const round = (n: number): number => Number(n.toFixed(3));
 
-interface Finish { lane: string; at: number; minutes: number; tokens: number | null; fable: boolean }
+interface Finish { lane: string; at: number; minutes: number | null; tokens: number | null; fable: boolean; bundled: boolean }
 function finishes(ledger: JobsTailRead, now: number): Finish[] {
   const out: Finish[] = [];
   for (const line of ledger.text?.split('\n') ?? []) {
@@ -29,8 +29,12 @@ function finishes(ledger: JobsTailRead, now: number): Finish[] {
     try { row = object(JSON.parse(line)); } catch { continue; }
     const at = time(row['ts']), seconds = number(row['wall_s']);
     if (row['event'] !== 'finish' || typeof row['lane'] !== 'string' || !Number.isFinite(at) ||
-      at > now || at < now - 7 * 1440 * MINUTE || seconds === null || seconds === 0) continue;
-    out.push({ lane: row['lane'], at, minutes: seconds / 60, tokens: number(row['tokens_total']), fable: row['sublane'] === 'fable' });
+      at > now || at < now - 7 * 1440 * MINUTE) continue;
+    const bundled = Boolean(row['bundle']) || (count(row['batch_size']) ?? 0) > 0;
+    const minutes = seconds === null || seconds === 0 ? null : seconds / 60;
+    if (bundled || minutes !== null) {
+      out.push({ lane: row['lane'], at, minutes, tokens: number(row['tokens_total']), fable: row['sublane'] === 'fable', bundled });
+    }
   }
   return out;
 }
@@ -68,13 +72,13 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const cap = ceiling === null || hard === null ? null : Math.min(ceiling, hard);
     const held = typeof row['held'] === 'boolean' ? row['held'] || Boolean(dispatch['paused']) : null;
     const queued = demand?.get(lane)?.length ?? count(row['queued']);
-    const recent = jobs.filter(job => job.lane === lane);
+    const recent = jobs.filter(job => job.lane === lane && !job.bundled && job.minutes !== null);
     const tokenJobs = recent.filter(job => job.tokens !== null);
     const exhaustedUntil = (lane === 'agy' || lane === 'agy-neon') ? antigravity.reset_at : null;
     return { lane, running, held, max_concurrency: cap, queued_jobs: queued,
       jobs_sampled: ledger.text === null ? null : recent.length,
       token_jobs_sampled: ledger.text === null ? null : tokenJobs.length,
-      minutes_per_job: recent.length ? recent.reduce((sum, job) => sum + job.minutes, 0) / recent.length : null,
+      minutes_per_job: recent.length ? recent.reduce((sum, job) => sum + job.minutes!, 0) / recent.length : null,
       tokens_per_job: tokenJobs.length ? tokenJobs.reduce((sum, job) => sum + job.tokens!, 0) / tokenJobs.length : null,
       target_concurrency: exhaustedUntil ? 0 : null as number | null, additional_slots: exhaustedUntil ? 0 : null as number | null,
       ...(exhaustedUntil ? { reason: ANTIGRAVITY_EXHAUSTION, reset_at: exhaustedUntil } : {}) };
@@ -88,14 +92,15 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const points = (sidecar.history[row.id] ?? []).filter(point => point.reset_at === reading.reset_at &&
       time(point.observed_at) <= now).sort((a, b) => time(a.observed_at) - time(b.observed_at));
     const first = points[0], last = points.at(-1);
-    const measured = first && last && time(first.observed_at) < time(last.observed_at) &&
+    const interval = first && last && time(first.observed_at) < time(last.observed_at) &&
       (!ledger.truncated || jobs.some(job => job.at <= time(first.observed_at)))
       ? jobs.filter(job => job.lane === row.lane && (row.id !== 'claude-fable' || job.fable) &&
         job.at > time(first.observed_at) && job.at <= time(last.observed_at)) : [];
+    const measured = interval.filter(job => !job.bundled);
     const spent = first && last ? last.used - first.used : null;
     const tokens = measured.every(job => job.tokens !== null) ? measured.reduce((sum, job) => sum + job.tokens!, 0) : 0;
     const tokenFit = tokens > 0 && lane?.tokens_per_job != null && lane.tokens_per_job > 0;
-    const perJob = measured.length && spent !== null && spent > 0 && reading.unit !== 'models'
+    const perJob = measured.length && !interval.some(job => job.bundled) && spent !== null && spent > 0 && reading.unit !== 'models'
       ? tokenFit ? spent / tokens * lane!.tokens_per_job! : spent / measured.length : null;
     const jobsPerSlot = minutes === null || lane?.minutes_per_job == null ? null : Math.floor(minutes / lane.minutes_per_job);
     return { id: row.id, label: reading.label, class: reading.class, lane: row.lane, unit: row.unit, remaining: row.remaining, deadline_at: row.deadline_at,

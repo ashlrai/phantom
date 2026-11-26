@@ -70,6 +70,31 @@ describe('fleet resource plan', () => {
     expect(buildFleetResourcePlan(null, [], null, ledger, now).allowances.find(row => row.id === 'codex-personal')?.remaining).toBeNull();
   });
 
+  it('excludes bundle and member finishes from standalone throughput and mixed quota estimates', () => {
+    const batch = { event: 'finish', lane: 'codex-personal', ts: iso(now - hr / 8) };
+    for (const bundled of [
+      { ...batch, batch_size: 4, wall_s: null, tokens_total: 24000 },
+      { ...batch, bundle: 'B1', wall_s: 10, tokens_total: 24000 },
+    ]) {
+      const plan = buildFleetResourcePlan(live, [node], status(), {
+        ...ledger, text: `${ledger.text}\n${JSON.stringify(bundled)}`,
+      }, now);
+      expect(plan.lanes.find(row => row.lane === batch.lane)).toMatchObject({
+        jobs_sampled: 2, token_jobs_sampled: 2, minutes_per_job: 20, tokens_per_job: 6000, additional_slots: null,
+      });
+      expect(plan.allowances.find(row => row.id === batch.lane)).toMatchObject({
+        measured_jobs_for_quota: 2, estimated_quota_per_job: null, projected_waste_at_deadline: null,
+      });
+      expect(plan.allowances.find(row => row.id === 'antigravity')?.estimated_quota_per_job).toBe(5);
+    }
+
+    const olderBatch = { ...batch, ts: iso(now - 2 * hr), batch_size: 4, wall_s: 600 };
+    const plan = buildFleetResourcePlan(live, [node], status(), {
+      ...ledger, text: `${JSON.stringify(olderBatch)}\n${ledger.text}`,
+    }, now);
+    expect(plan.allowances.find(row => row.id === batch.lane)?.estimated_quota_per_job).toBe(5);
+  });
+
   it('keeps advisory unfed slots unknown when only the dispatcher total is available', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'phantom-unfed-ready-'));
     try {
