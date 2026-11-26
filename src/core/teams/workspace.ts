@@ -2,16 +2,20 @@
 import { HumanPresenceRequired } from '../approvals/actor.js';
 import { assertLocalHuman, enrolledHumanActor } from './identity.js';
 import {
-  parseAccessRequestAction, validHumanMemberId, REPO_NAME_RE,
-  type AccessRequestAction, type TeamActor, type TeamEvent,
+  isAssignableMemberRole, parseAccessRequestAction, validHumanMemberId, REPO_NAME_RE,
+  type AccessRequestAction, type TeamActor, type TeamEvent, type TeamEventType,
 } from './protocol.js';
 import { appendUnlocked, readEvents, withTeamLock } from './store.js';
 import { releaseCoordinationBySource } from '../agents/claim-store.js';
-import { approvalRequiresHuman, teamState, type TeamState } from './state.js';
+import { approvalRequiresHuman, isHumanAdmin, teamState, type TeamState } from './state.js';
 
 export type WorkspaceAction =
   | AccessRequestAction
   | { type: 'member.removed'; memberId: string };
+
+const AUDIT_EVENT_TYPES: ReadonlySet<TeamEventType> = new Set([
+  'member.joined', 'member.invited', 'member.removed', 'member.role-changed', 'repo.linked', 'access.requested',
+]);
 
 /**
  * All state-dependent checks for a workspace mutation, returning the event
@@ -46,7 +50,7 @@ function workspacePayload(state: TeamState, actor: TeamActor, action: WorkspaceA
     const reopenedHandoffs = state.handoffs.filter(h => h.state === 'accepted' && h.assignee === member.id).map(h => h.id).sort();
     return { memberId: member.id, drainedClaims, reopenedHandoffs };
   }
-  if (!['admin', 'member'].includes(action.role)) throw new Error('role must be admin or member.');
+  if (!isAssignableMemberRole(action.role)) throw new Error('role must be admin or member.');
   if (member.role === action.role) throw new Error('Member already has that role.');
   return { memberId: action.memberId, previousRole: member.role, role: action.role };
 }
@@ -59,7 +63,7 @@ function workspacePayload(state: TeamState, actor: TeamActor, action: WorkspaceA
 function applyWorkspaceAction(team: string, actor: TeamActor, action: WorkspaceAction, provenance?: Record<string, unknown>): TeamEvent {
   const state = teamState(team);
   const caller = state.members.find(m => m.id === actor.id);
-  if (!caller || caller.kind !== 'human' || !['owner', 'admin'].includes(caller.role)) {
+  if (!isHumanAdmin(caller)) {
     throw new Error('Workspace changes require a human owner/admin.');
   }
   const payload = { ...workspacePayload(state, actor, action), ...provenance };
@@ -142,7 +146,7 @@ export function decideApproval(
     if (recorded.kind === 'agent' && (!pending || approvalRequiresHuman(pending))) throw new HumanPresenceRequired();
     if (decision === 'approve' && recorded.kind === 'human') {
       const caller = before.members.find(m => m.id === recorded.id);
-      if (pending?.access && caller?.kind === 'human' && ['owner', 'admin'].includes(caller.role)) {
+      if (pending?.access && isHumanAdmin(caller)) {
         // An access request that went stale stays pending for a deny rather
         // than recording an approval whose mutation can no longer apply.
         workspacePayload(before, recorded, pending.access);
@@ -161,5 +165,5 @@ export function decideApproval(
 
 /** Detached records, newest first; deliberately no update/delete API. */
 export function readTeamAudit(team: string) {
-  return readEvents(team).filter(e => ['member.joined', 'member.invited', 'member.removed', 'member.role-changed', 'repo.linked', 'access.requested'].includes(e.type)).reverse();
+  return readEvents(team).filter(e => AUDIT_EVENT_TYPES.has(e.type)).reverse();
 }
