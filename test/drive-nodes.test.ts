@@ -358,6 +358,35 @@ describe('pull session honesty', () => {
     expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a))
       .toEqual({ pulled: false, slots: 0, held: 'memory-pressure' });
   });
+
+  it('keeps the newest capacity observation when beats arrive out of order', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'] })!;
+    const ready = { hostId: 'worker-host', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000 };
+    const held = { ...ready, slots: 0, held: 'memory-pressure' as const, sampledAtMs: 1_010 };
+    f.a.enqueue('j', { owner: 'o' });
+    f.advance(10);
+    f.a.heartbeat(worker, { capacity: held });
+    f.advance(10);
+    f.a.heartbeat(worker, { capacity: ready, slots: 1, usage: 200 });
+    expect(f.a.view(['o']).nodes[0]).toMatchObject({ capacity: held, slots: 0, usage: 200, heartbeatAt: 1_020 });
+    expect(f.a.pull(worker)).toBeNull();
+
+    const recovered = { ...ready, sampledAtMs: 1_020 };
+    f.a.heartbeat(worker, { capacity: recovered });
+    f.a.heartbeat(worker, { capacity: held });
+    expect(f.a.view(['o']).nodes[0]).toMatchObject({ capacity: recovered, slots: 1 });
+    expect(f.a.pull(worker)?.job.id).toBe('j');
+  });
+
+  it('can replace a stored capacity observation ahead of the router clock', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'] })!;
+    const ready = { hostId: 'worker-host', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000 };
+    f.a.heartbeat(worker, { capacity: { ...ready, slots: 0, held: 'memory-pressure', sampledAtMs: 2_000 } });
+    f.a.heartbeat(worker, { capacity: ready });
+    expect(f.a.view(['o']).nodes[0]).toMatchObject({ capacity: ready, slots: 1 });
+  });
 });
 
 describe('pull open-work count', () => {
