@@ -54,6 +54,16 @@ describe('fleet lane-truth incident gate', () => {
     expect(out.output()).not.toContain('fake-secret-path');
   });
 
+  it('distinguishes a zero lane target from an unknown target when work is queued', async () => {
+    const { lane, sample } = fixture();
+    const out = capture();
+    const readers = { lanes: async () => [{ ...lane, running: 0, target: 0 }], meters: async () => [sample] };
+    expect(await cmdFleetLaneTruth(['--check', '--json'], readers)).toBe(0);
+    expect(out.json()).toMatchObject({ lanes: [{ target: 0, running: 0, queued: lane.queued, verdict: 'ok' }], check: { passed: true, entries: [] } });
+    expect(await cmdFleetLaneTruth(['--check', '--json'], { ...readers, lanes: async () => [{ ...lane, running: 0, target: null }] })).toBe(1);
+    expect(out.json()).toMatchObject({ lanes: [{ target: null, verdict: 'unknown' }], check: { passed: false } });
+  });
+
   it('fails empty and missing selections even with a healthy different lane', async () => {
     const { lane, sample } = fixture();
     const out = capture();

@@ -61,6 +61,10 @@ provider window. Readings with unreadable observation timestamps are excluded
 from ordering and reset detection. If an observed window has no dated reading,
 the lane verdict is unknown.
 
+The `idle_with_work` verdict requires a positive lane target, queued work,
+zero running workers and no hold. A measured target of zero is valid and
+suppresses the stall verdict. A missing target leaves the idle check unknown.
+
 ## Memory shed plan
 
 Both `phm fleet shed-plan` and `phm lanes pressure` classify the work
