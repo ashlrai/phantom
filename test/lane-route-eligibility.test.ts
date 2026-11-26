@@ -156,7 +156,7 @@ describe('lane yield weight', () => {
       if (i < 8) {
         lines.push(i === 7
           ? JSON.stringify({ event: 'publish', jobId: `z${i}`, prUrl: 'https://github.com/ashlrai/phantom/pull/7', outcome: 'MERGED', source: 'metrics-outcomes-reconciler' })
-          : JSON.stringify({ jobId: `z${i}`, prUrl: `https://github.com/ashlrai/phantom/pull/${i}`, outcome: 'MERGED', mergedAt: '2026-11-16T15:00:00.000Z', source: 'metrics-outcomes-reconciler' }));
+          : JSON.stringify({ jobId: `z${i}`, prUrl: `https://github.com/ashlrai/phantom/pull/${i}`, outcome: 'MERGED', mergedAt: NOW.toISOString(), source: 'metrics-outcomes-reconciler' }));
       } else {
         lines.push(JSON.stringify({ kind: 'finish', id: `z${i}`, empty: true, at: NOW.toISOString() }));
       }

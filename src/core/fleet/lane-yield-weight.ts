@@ -4,7 +4,7 @@
  *
  * Per lane and size (a launch row's `size`, else "unknown"), plus a per-lane
  * "all" row, the window is the lane's last 50 launches. A job's merge counts
- * once on its latest launch, and empty evidence must follow that launch.
+ * once on its latest launch, and outcome evidence must follow that launch.
  * Exact replays of timestamped launch receipts count once.
  * Rows fold through the fleet's jobs-ledger dialect: reconciler
  * outcome rows keyed by `jobId`/`prUrl`/`outcome`/`status`, `type`/`kind`
@@ -79,7 +79,7 @@ const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
-const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt', 'revertedAt', 'reverted_at'] as const;
 
 /** Terminal "no work" phases: the fleet's empty-outcome vocabulary (skill-nudge EMPTY_PHASES, launch_precheck _TERMINAL_EMPTY). */
 const EMPTY_PHASES: ReadonlySet<string> = new Set(['DONE-NOOP', 'EMPTY', 'EMPTY_DONE', 'SKIPPED-EMPTY', 'NOOP']);
@@ -145,9 +145,8 @@ export function computeLaneYield(ledger: string | null): LaneYieldReport {
   const launches: Launch[] = [];
   const seenLaunchReceipts = new Set<string>();
   const byJob = new Map<string, Launch>();
-  const merged = new Set<string>();
-  const reverted = new Set<string>();
-  const empty = new Map<string, Receipt[]>();
+  type Outcome = Receipt & { kind: 'reverted' | 'merged' | 'empty' };
+  const outcomes = new Map<string, Outcome[]>();
   for (const [seq, line] of ledger.split('\n').entries()) {
     let row: Row;
     try { const value: unknown = JSON.parse(line); if (!value || typeof value !== 'object' || Array.isArray(value)) continue; row = value as Row; } catch { continue; }
@@ -168,23 +167,24 @@ export function computeLaneYield(ledger: string | null): LaneYieldReport {
       launches.push(launch);
       const prev = byJob.get(id);
       if (!prev || (at ?? 0) >= (prev.at ?? 0)) byJob.set(id, launch);
-    } else {
-      if (mergeEvidence(row, event, phase)) merged.add(id);
-      else if (emptyEvidence(row, event, phase)) {
-        const finishes = empty.get(id) ?? [];
-        finishes.push({ at: eventTs(row, phase), seq });
-        empty.set(id, finishes);
-      }
-      if (hasRevertEvidence(row)) reverted.add(id);
+      continue;
     }
+    const kind = hasRevertEvidence(row) ? 'reverted'
+      : mergeEvidence(row, event, phase) ? 'merged'
+      : emptyEvidence(row, event, phase) ? 'empty' : null;
+    if (kind === null) continue;
+    const receipts = outcomes.get(id) ?? [];
+    receipts.push({ at: eventTs(row, phase), seq, kind });
+    outcomes.set(id, receipts);
   }
   for (const [id, last] of byJob) {
-    if (reverted.has(id)) last.reverted = true;
-    else if (merged.has(id)) last.merged = true;
-    else last.empty = empty.get(id)?.some(finish =>
-      finish.at !== null && last.at !== null && finish.at !== last.at
-        ? finish.at > last.at
-        : finish.seq > last.seq) ?? false;
+    const eligible = outcomes.get(id)?.filter(receipt =>
+      receipt.at !== null && last.at !== null && receipt.at !== last.at
+        ? receipt.at > last.at
+        : receipt.seq > last.seq) ?? [];
+    last.reverted = eligible.some(receipt => receipt.kind === 'reverted');
+    last.merged = !last.reverted && eligible.some(receipt => receipt.kind === 'merged');
+    last.empty = !last.reverted && !last.merged && eligible.some(receipt => receipt.kind === 'empty');
   }
   launches.sort((a, b) => (b.at ?? 0) - (a.at ?? 0) || b.seq - a.seq);
   const groups = new Map<string, Launch[]>();

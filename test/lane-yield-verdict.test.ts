@@ -61,6 +61,39 @@ describe('parseLaneJobs', () => {
     ]);
   });
 
+  it('uses only merge and revert receipts belonging to the latest launch', () => {
+    const first = '2026-11-20T10:00:00Z';
+    const retry = '2026-11-20T11:00:00Z';
+    const oldOutcome = '2026-11-20T10:30:00Z';
+    const records = ['stale-merge', 'stale-revert', 'current-revert', 'same-time-before', 'undated'].flatMap(job => [
+      { event: 'launch', job, lane: 'zai', ts: first },
+      ...(job === 'same-time-before' ? [{ job, outcome: 'MERGED', mergedAt: retry }] : []),
+      { event: 'launch', job, lane: 'claude', ts: retry },
+      // A reconciler can append an old merge after the retry.
+      { job, outcome: 'MERGED', mergedAt: oldOutcome, ts: retry },
+      ...(job === 'stale-revert' ? [
+        { job, revertedAt: oldOutcome },
+        { job, outcome: 'MERGED', mergedAt: retry },
+      ] : []),
+      ...(job === 'current-revert' ? [
+        { job, outcome: 'MERGED', mergedAt: retry },
+        { job, event: 'revert', ts: retry },
+      ] : []),
+      ...(job === 'undated' ? [{ job, outcome: 'MERGED' }] : []),
+    ]);
+    const ledger = records.map(record => JSON.stringify(record)).join('\n');
+
+    expect(parseLaneJobs(ledger).map(({ job, merged }) => ({ job, merged }))).toEqual([
+      { job: 'stale-revert', merged: true },
+      { job: 'current-revert', merged: false },
+      { job: 'undated', merged: true },
+    ]);
+    expect(computeLaneYield(ledger).rows.filter(row => row.size === 'all')).toMatchObject([
+      { lane: 'claude', launches: 5, merged: 2, reverted: 1, yield: null },
+      { lane: 'zai', launches: 5, merged: 0, reverted: 0, yield: null },
+    ]);
+  });
+
   it('keeps pre-launch skips from becoming empty finishes on older attempts', () => {
     const records = Array.from({ length: 20 }, (_, i) => [
       { event: 'launch', job: `job-${i}`, lane: 'zai', ts: '2026-11-20T10:00:00Z' },
