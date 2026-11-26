@@ -87,6 +87,29 @@ describe('readers', () => {
     expect(countReady(tsv)).toEqual({ claude: 2 });
   });
 
+  it('counts ready jobs by the lane the market resolves, not the lane column', () => {
+    const spec = (lane: string | null) => JSON.stringify({ preferred_lane: lane });
+    const tsv = [
+      'RQ-A\tphantom\tcodex\twork\t/p/a\t' + spec('claude'),                    // spec preferred_lane wins over the column
+      'RQ-B\tphantom\tclaude\twork\t/p/b\t' + spec(null),                       // open hint: the market places it anywhere
+      'RQ-C\tphantom\tclaude\twork\t/p/c\t' + spec('claude'),
+      'RQ-D\tphantom\tclaude\twork\t/p/d\t{"preferred_lane":"Not A Lane"}',    // invalid spec: the market drops the row
+      'PARKED-DEP.after\tRQ-E\tclaude\twork\tphantom\t/p/e\t' + spec('claude'), // status-first parked row
+      'READY\tRQ-F\tclaude\twork\tphantom\t/p/f',                              // status-first ready: not a dispatcher job
+      'READY\tRQ-G\tclaude\twork\tphantom',                                    // five-cell status-first: still not a job
+    ].join('\n');
+    expect(countReady(tsv)).toEqual({ claude: 2 });
+  });
+
+  it('resolves spec-less ready rows through their router-queue.md envelope', () => {
+    const tsv = 'RQ-H\tphantom\tcodex\twork\t/p/h\nRQ-I\tphantom\tclaude\twork\t/p/i';
+    const routerQueue = '- READY RQ-H (P1, preferred_lane=claude): hinted work\n- READY RQ-I (P2): no lane in attrs';
+    // RQ-H takes the envelope's preferred_lane; RQ-I's envelope names no lane, so the row is open.
+    expect(countReady(tsv, routerQueue)).toEqual({ claude: 1 });
+    // Without the queue text the lane column stands, exactly like the market's fallback.
+    expect(countReady(tsv)).toEqual({ codex: 1, claude: 1 });
+  });
+
   it('counts LAUNCH lines per lane inside the window only', () => {
     const local = (hoursAgo: number) => { const d = new Date(NOW - hoursAgo * 3_600_000); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
     const log = [`${local(1)} LAUNCH RQ-A phantom claude mid`, `${local(5)} LAUNCH RQ-B phantom claude mid`, `${local(7)} LAUNCH RQ-C phantom claude mid`, `${local(2)} DONE RQ-A`].join('\n');

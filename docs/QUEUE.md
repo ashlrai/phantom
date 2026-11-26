@@ -1273,7 +1273,9 @@ per hour over the last 6 hours, and the hours of work queued (ready jobs divided
 come first: "Claude: 0 jobs queued, 16% left, about 3 hours of usage idle" or "codex-personal: 104 jobs queued, plan used
 up until Sat 3:30 PM". `--json` returns `queue.supply.v1` for agents. It is read-only and built from `phm pools`, the
 ready queue and the dispatch events. A figure that cannot be read is `null` and shown as unknown, never zero. Ready jobs
-are counted by the lane on their queue row, so a job not yet placed on a lane is not counted.
+are counted by the lane the work market resolves for the row — its requirements `preferred_lane`, read from the row's
+spec or its router-queue.md envelope when the row carries no spec, else the lane column — so a job the market leaves
+lane-open, or one it would reject, is not counted.
 
 The hourly digest adds a `supply_low` line, naming the pool, when a pool that is behind (or has waste risk high or
 medium) has under an hour of work queued.
