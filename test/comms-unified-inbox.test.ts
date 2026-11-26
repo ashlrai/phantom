@@ -1035,6 +1035,27 @@ describe('wake hints in the unified inbox', () => {
     expect(inbox.items.filter(i => i.source === 'wakes')).toHaveLength(0);
   });
 
+  it('degrades the wakes source when the bounded queue tail cut hints', async () => {
+    const page: AllWakesPage = { status: 'ok', scope: 'fleet',
+      wakes: [wakeRow('m-1', 'agent:helper', now - 900_000)],
+      matched: 1, truncated: true };
+    const inbox = await read({ readWakes: () => page });
+    // The found group still lists and counts; degraded flags the partial read
+    // the same way mailbox/board/conversations degrade on their own caps.
+    expect(inbox.sources.wakes).toEqual({ state: 'degraded', pending: 1 });
+    expect(inbox.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+  });
+
+  it('degrades the wakes source when matched hints exceed the shown slice', async () => {
+    const page: AllWakesPage = { status: 'ok', scope: 'fleet',
+      wakes: [wakeRow('m-1', 'agent:helper', now - 900_000),
+        wakeRow('m-2', 'agent:helper', now - 1_800_000)],
+      matched: 9, truncated: false };
+    const inbox = await read({ readWakes: () => page });
+    expect(inbox.sources.wakes).toEqual({ state: 'degraded', pending: 1 });
+    expect(inbox.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+  });
+
   it('honors source, kind, since and contains filters on wake items', async () => {
     const page = wakesPage([
       wakeRow('m-1', 'agent:helper', now - 7_200_000, { message: resolvedMsg('old ping') }),

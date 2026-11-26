@@ -14,8 +14,9 @@
  *     reads as "not available yet", never as a crash or a zero;
  *   - short sentences for the serving runtime and each local model's context.
  */
+import { ageInSeconds, relativeTime } from '../../../lib/relative-time.js';
 import { CLOUD_BALANCE_URL, type CloudOverviewResponse } from '../../../../core/cloud/types.js';
-import { formatMetric, formatMetricUsd } from '../../../components/charts/format-metric.js';
+import { formatMetricUsd } from '../../../components/charts/format-metric.js';
 import { costBasisOf, seatTier, tierRank, type CostBasis, type ResourceTier } from '../../../../core/routing/tiers.js';
 import type { ServingRuntimeSnapshot, VerseSeat } from '../../../data/api-types.js';
 import { accountStatus, accountStatusRank, hasCurrentUsage, type AccountStatusKind, type CapacityRow } from '../usage/capacity-strip-model.js';
@@ -24,10 +25,8 @@ import { formatContextWindow } from '../verse-model.js';
 
 /** Original local observation time, never cache refresh time or inferred freshness. */
 export function localObservationAge(at: string | null | undefined, now: number): string {
-  const elapsed = now - Date.parse(at ?? '');
-  if (!Number.isFinite(elapsed) || elapsed < 0) return 'age unavailable';
-  return elapsed < 60_000 ? 'just measured' : elapsed < 3_600_000 ? `${formatMetric(elapsed / 60_000)} min ago`
-    : elapsed < 86_400_000 ? `${formatMetric(elapsed / 3_600_000)} h ago` : `${formatMetric(elapsed / 86_400_000)} d ago`;
+  const reading = relativeTime(at, now);
+  return reading ? reading.seconds < 60 ? 'just measured' : ageInSeconds(reading.seconds, 'spaced') : 'age unavailable';
 }
 
 // ---------------------------------------------------------------------------

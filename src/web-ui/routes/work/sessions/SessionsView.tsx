@@ -15,6 +15,7 @@
  * from "unreadable"; elapsed time ticks client-side from the server's
  * generatedAt so the column stays live between SSE invalidations.
  */
+import { ageInSeconds, relativeTime } from '../../../lib/relative-time.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fleetSessionsQuery } from '../../../data/queries.js';
 import { useQuery, useRefresh } from '../../../data/hooks.js';
@@ -47,12 +48,7 @@ function formatElapsedSeconds(seconds: number): string {
 }
 
 function formatAgo(iso: string | null, now: number): string {
-  if (!iso) return '—';
-  const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return iso;
-  const diff = Math.max(0, Math.round((now - ms) / 1000));
-  if (diff < 60) return `${diff}s ago`;
-  return `${formatElapsedSeconds(diff)} ago`;
+  return relativeTime(iso, now)?.text ?? iso ?? '—';
 }
 
 function formatClock(iso: string | null): string {
@@ -139,7 +135,7 @@ function RecentRow({ session, now }: { session: FleetSessionV1; now: number }) {
       </td>
       <td className={styles.numeric}>{session.tokensTotal === null ? '—' : session.tokensTotal.toLocaleString()}</td>
       <td className={styles.numeric}>{session.diffLines === null ? '—' : `${session.diffLines > 0 ? '+' : ''}${session.diffLines}`}</td>
-      <td className={styles.date}>{formatAgo(session.finishedAt, now)}</td>
+      <td className={styles.date} title={session.finishedAt ?? undefined}>{formatAgo(session.finishedAt, now)}</td>
       <td>
         {session.prUrl ? (
           <a className={styles.prLink} href={session.prUrl} target="_blank" rel="noreferrer">PR</a>
@@ -189,7 +185,7 @@ export function SessionsView() {
     const d = snap.dispatcher;
     if (d.paused === true) return 'dispatcher paused';
     if (d.paused === null) return null;
-    return d.tickAgeSeconds === null ? 'dispatcher running' : `dispatcher tick ${formatElapsedSeconds(d.tickAgeSeconds)} ago`;
+    return d.tickAgeSeconds === null ? 'dispatcher running' : `dispatcher tick ${ageInSeconds(d.tickAgeSeconds)}`;
   }, [snap]);
 
   return (

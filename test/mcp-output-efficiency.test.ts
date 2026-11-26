@@ -188,7 +188,8 @@ describe('native MCP tool inventory', () => {
     expect(ownerCommsBytes).toBeLessThanOrEqual(1900);
     const agentComms = addedTools.filter(tool => tool.name.startsWith('ashlr_comms_agent_'));
     const agentCommsBytes = agentComms.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    expect(agentCommsBytes).toBeLessThanOrEqual(767);
+    // Standing-approvals status disclosure adds 108 discovery bytes; keep the measured cap.
+    expect(agentCommsBytes).toBeLessThanOrEqual(875);
     // phantom_fleet_needs measured 380 bytes with its comma; no headroom.
     const needs = addedTools.find(tool => tool.name === 'phantom_fleet_needs')!;
     const needsBytes = Buffer.byteLength(JSON.stringify(needs)) + 1;

@@ -1,3 +1,4 @@
+import { relativeTime } from '../../../lib/relative-time.js';
 import { useState } from 'react';
 import { releaseChainLine } from './release-chain-line.js';
 import { releaseChainQuery } from './release-chain-query.js';
@@ -21,12 +22,8 @@ import { useAutoUpdatePolicy, useAutoUpdateSentence } from './useAutoSelfUpdate.
 import { writeAutoUpdatePolicy } from './update-auto-model.js';
 
 function checkedAgo(at: number | null): string {
-  if (at === null) return 'not checked this session';
-  const seconds = Math.floor(Math.max(0, Date.now() - at) / 1000);
-  if (seconds < 60) return `checked ${seconds}s ago`;
-  if (seconds < 3600) return `checked ${Math.floor(seconds / 60)} min ago`;
-  if (seconds < 86400) return `checked ${Math.floor(seconds / 3600)}h ago`;
-  return `checked ${Math.floor(seconds / 86400)}d ago`;
+  const reading = relativeTime(at);
+  return reading ? `checked ${reading.text}` : 'not checked this session';
 }
 
 export function UpdateStatusRow() {
@@ -75,7 +72,7 @@ export function UpdateStatusRow() {
   return (
     <>
     <SettingRow label="Updates" description={<>
-      <span aria-live="polite">{checking ? 'Checking origin…' : status.headline} · {checkedAgo(lastFetchAt)}<br />{status.detail}{fetchFailed && !checking ? ' · fetch failed' : ''}</span>
+      <span aria-live="polite">{checking ? 'Checking origin…' : status.headline} · <span title={relativeTime(lastFetchAt)?.dateTime}>{checkedAgo(lastFetchAt)}</span><br />{status.detail}{fetchFailed && !checking ? ' · fetch failed' : ''}</span>
       {line && <><br /><span title={chain.data?.reason ?? undefined}>Release chain stopped at {line.step}: {line.reason} ({line.ageText})</span></>}
       {behind && <>
         <br />

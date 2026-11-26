@@ -67,6 +67,8 @@ export type DisplayFont = 'grotesk' | 'ui' | 'mono';
 export type RadiusScale = 'sharp' | 'default' | 'soft';
 
 export interface Appearance {
+  brand: import('../../core/brand/sidebar-upload.js').BrandMark;
+  brandAsset?: string;
   /** Delegated to theme-store.ts — persisted under its own key. */
   theme: ThemePreference;
   /** Accent hue 0-360. */
@@ -125,6 +127,7 @@ function prefersReducedMotion(): boolean {
 
 export function defaultAppearance(): Appearance {
   return {
+    brand: 'p',
     theme: 'system',
     accentH: DEFAULT_ACCENT.h,
     accentS: DEFAULT_ACCENT.s,
@@ -178,7 +181,11 @@ function normalize(base: Appearance, patch: Partial<Appearance> | Partial<Stored
       : isMotion(base.motion)
         ? base.motion
         : 'system';
+  const brandAsset = typeof merged.brandAsset === 'string' && /^sha256:[a-f0-9]{64}$/.test(merged.brandAsset) ? merged.brandAsset : undefined;
+  const brand = merged.brand === 'ghost' ? 'ghost' : merged.brand === 'upload' && brandAsset ? 'upload' : 'p';
   return {
+    brand,
+    ...(brand === 'upload' ? { brandAsset } : {}),
     theme: merged.theme === 'light' || merged.theme === 'dark' || merged.theme === 'high-contrast' ? merged.theme : 'system',
     accentH: Number.isFinite(merged.accentH) ? ((Math.round(merged.accentH) % 360) + 360) % 360 : DEFAULT_ACCENT.h,
     accentS: Number.isFinite(merged.accentS) ? clamp(Math.round(merged.accentS), 0, 100) : DEFAULT_ACCENT.s,

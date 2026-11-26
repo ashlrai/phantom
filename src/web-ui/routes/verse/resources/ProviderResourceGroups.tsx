@@ -2,6 +2,7 @@ import { Fragment, useLayoutEffect, type ReactNode } from 'react';
 import { aggregateProviderResources } from '../../../../core/resources/provider-aggregation.js';
 import { ProviderGroupsUnavailable } from './useResourceDisplayClock.js';
 import type { ProviderResourceDescriptor } from '../../../../core/resources/provider-aggregation-types.js';
+import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 
 export interface ProviderResourceGroupsProps {
   resources: readonly ProviderResourceDescriptor[]; nowMs: number; maxAgeMs?: number;
@@ -25,7 +26,7 @@ export function ProviderResourceGroups(props: ProviderResourceGroupsProps) {
   return <>
     <p className={classes.note}>Provider coverage only · quotas, credit balances and currencies are not combined. Distinct provider account identities and total account coverage are unknown.</p>
     {view.providers.map(group => <details key={group.provider} className={classes.group} data-provider-group={group.provider}>
-      <summary>{LABELS[group.provider] ?? group.provider} · {group.coverage.current} current readings · {group.coverage.stale} stale readings · {group.coverage.unknown} unconfirmed resources · {group.coverage.accountReferences} configured/declared references</summary>
+      <summary><ProviderBadge of={group.provider} iconOnly /> {LABELS[group.provider] ?? group.provider} · {group.coverage.current} current readings · {group.coverage.stale} stale readings · {group.coverage.unknown} unconfirmed resources · {group.coverage.accountReferences} configured/declared references</summary>
       {group.accounts.map(account => {
         const content = account.resources.map(resource => <Fragment key={resource.resourceId}>{renderResource(resource)}</Fragment>);
         return <details key={account.key} className={classes.account}>

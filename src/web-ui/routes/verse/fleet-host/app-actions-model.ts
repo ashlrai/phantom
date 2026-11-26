@@ -4,6 +4,7 @@
  * is filled in: an outcome this build does not know is shown as written, and
  * an action with no result on record says so.
  */
+import { relativeTime } from '../../../lib/relative-time.js';
 import type { AppActionEntry, AppActionsReport } from '../../../../core/apps-actions.js';
 
 export const APP_ACTIONS_API = '/api/verse/apps/actions';
@@ -32,14 +33,9 @@ const TO: Record<string, (app: string) => string> = {
   open: app => `open ${app}`, focus: app => `bring ${app} to front`, quit: app => `quit ${app}`, restart: app => `restart ${app}`,
 };
 
-/** "40s ago", "12m ago", "5h ago", "3d ago": the log spans a week, so days are counted from 48 hours on. */
+/** Age of the action's recorded result. */
 export function actionAgo(at: string, nowMs: number): string {
-  const atMs = Date.parse(at);
-  if (!Number.isFinite(atMs)) return 'time unknown';
-  const seconds = Math.max(0, Math.round((nowMs - atMs) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  return seconds < 48 * 3600 ? `${Math.floor(seconds / 3600)}h ago` : `${Math.floor(seconds / 86_400)}d ago`;
+  return relativeTime(at, nowMs)?.text ?? 'time unknown';
 }
 
 /** Outcomes that are not a plain success: the ones worth a look. */

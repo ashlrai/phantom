@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -490,6 +490,7 @@ describe('phm fleet unfed', () => {
       unfedLanes: ['codex-cmp'], unfedSlots: 3,
       statusAsOf: expect.any(String), statusFresh: true,
     });
+    expect(report.marketTruncated).toBe(false);
     expect(report.history).toMatchObject({ windowHours: 1, available: true, ticks: 1 });
     expect(report.history.lanes[0]).toMatchObject({ lane: 'codex-cmp', unfedTicks: 1, slotTicks: 2 });
     // RQ-M1's latest in-window decision ran on-hint; only RQ-M2 counts as overridden.
@@ -554,6 +555,24 @@ describe('phm fleet unfed', () => {
     expect(body).toContain('devin: 1 job(s) rejected (quota_exhausted 1)');
   });
 
+  it('labels window folds built from a truncated work-market journal', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), '{"lanes":{}}');
+    const market = join(dir, 'metrics', 'work-market.jsonl');
+    writeFileSync(market, decisionRow('RQ-OLDER', Date.now() / 1000 - 60) + '\n');
+    truncateSync(market, 32 * 1024 * 1024);
+    appendFileSync(market, '\n' + decisionRow('RQ-RETAINED', Date.now() / 1000 - 30) + '\n');
+
+    const json = await run();
+    expect(JSON.parse(json.lines[0]!)).toMatchObject({
+      marketTruncated: true,
+      history: { available: true, ticks: 0 },
+      overrides: { available: true, decided: 1 },
+    });
+    vi.restoreAllMocks();
+    const text = await run([]);
+    expect(text.lines.join('\n')).toContain('Last 24h: work-market journal tail only.');
+  });
+
   it('exits 0 with no unfed capacity and no history file', async () => {
     writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
       schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(),
@@ -595,7 +614,7 @@ describe('status freshness', () => {
     ...(lastTick === undefined ? {} : { last_tick: lastTick }),
   });
   const render = (report: ReturnType<typeof currentUnfed>) =>
-    renderUnfed({ ...report, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) });
+    renderUnfed({ ...report, marketTruncated: false, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) });
 
   it('marks a fresh dispatcher tick fresh and reports its timestamp', () => {
     const tick = new Date(NOW - 30_000).toISOString();
@@ -638,7 +657,7 @@ describe('status freshness', () => {
 
 describe('renderUnfed', () => {
   it('says so when there are no lanes', () => {
-    const report = { ...currentUnfed('{"lanes":{}}', ''), history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) };
+    const report = { ...currentUnfed('{"lanes":{}}', ''), marketTruncated: false, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) };
     expect(renderUnfed(report)).toEqual(['No lanes in queue/status.json.', 'No unfed capacity: 0 rows waiting.',
       'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.', 'Last 24h: no unfed ticks recorded.',
       'Last 24h: no route decisions recorded.', 'Last 24h: no claims recorded.']);

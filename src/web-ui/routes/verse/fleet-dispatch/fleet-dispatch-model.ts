@@ -1,3 +1,4 @@
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import type { FleetRunsV1 } from '../../../../core/verse/fleet-runs-types.js';
 import { incidents } from '../command/incidents-model.js';
 import { parseHeldReason } from '../fleet/held-reason.js';
@@ -63,7 +64,7 @@ export function laneVerdict(lane: Lane, ctx: Context): LaneVerdict {
   if (ctx.paused === true) return result('paused', 'dispatch paused', 'warn', 'Dispatch is paused; clear the pause switch');
   if (running >= target && target > 0) return running > target ? result('over', `${running} running — over target ${target}`, 'warn') : result('at-target', 'at target', 'ok');
   if (running < target && queued > 0) {
-    if (ctx.lastTickAgeMs !== null && ctx.lastTickAgeMs > 5 * 60_000) return result('starved', `${free} free, ${queued} queued — last tick ${Math.floor(ctx.lastTickAgeMs / 60_000)} min ago`, 'danger', 'Dispatch is not launching: check the tick and lane holds');
+    if (ctx.lastTickAgeMs !== null && ctx.lastTickAgeMs > 5 * 60_000) return result('starved', `${free} free, ${queued} queued — last tick ${ageInSeconds(ctx.lastTickAgeMs / 1000, 'spaced')}`, 'danger', 'Dispatch is not launching: check the tick and lane holds');
     const ageMs = ctx.youngestWorkerAgeMs.get(lane.lane);
     const duration = ageMs === undefined ? 'this session' : durationText(ageMs);
     if ((ageMs !== undefined && ageMs >= 15 * 60_000) || (ageMs === undefined && !ctx.workerLanes?.has(lane.lane) && free > 0 && ctx.lastTickAgeMs !== null && ctx.lastTickAgeMs < 5 * 60_000)) {

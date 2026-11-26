@@ -24,6 +24,10 @@ describe('native update badge', () => {
     ['failed', 'Update failed · open Settings'],
   ])('labels phase %s', (phase, label) => expect(nativeUpdateLabel({ ...state, phase })).toBe(label));
 
+  it('shows the fixed native hold reason', () => {
+    expect(nativeUpdateLabel({ ...state, phase: 'adoption-held', reason: 'resident-stop-failed' })).toBe('Update held · resident-stop-failed');
+  });
+
   it('rounds progress and omits it without a positive total', () => {
     expect(nativeUpdateLabel({ ...state, phase: 'downloading', bytesReceived: 2, bytesTotal: 3 })).toBe('Downloading Phantom 3.30.1 · 67%');
     expect(nativeUpdateLabel({ ...state, phase: 'downloading', bytesTotal: null })).toBe('Downloading Phantom 3.30.1');

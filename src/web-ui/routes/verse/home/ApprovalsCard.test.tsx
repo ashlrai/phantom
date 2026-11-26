@@ -39,7 +39,7 @@ describe.each([['390 px', 390], ['desktop width', 1440]])('Decisions card at %s'
     expect(within(rows[0]!).getAllByRole('button').map(button => button.textContent)).toEqual(['Yes', 'No', 'Later']);
     expect(within(rows[1]!).getAllByRole('button').map(button => button.textContent)).toEqual(['Use it', 'Not now']);
     expect(within(rows[0]!).getByText('Device approval')).toBeTruthy();
-    expect(within(rows[0]!).getByText('asked 60 min ago · by unknown · reply “yes 3f2a” from your phone')).toBeTruthy();
+    expect(within(rows[0]!).getByText('asked 1 h ago · by unknown · reply “yes 3f2a” from your phone')).toHaveAttribute('title', LIST.approvals[0]!.created);
     expect(within(rows[1]!).getByText('asked at an unknown time · by claude · expires in 2 h · reply “use it 3” from your phone')).toBeTruthy();
     // Nothing in the card can force sideways scroll at a phone width.
     for (const el of rows[1]!.querySelectorAll<HTMLElement>('*')) expect(el.style.whiteSpace).not.toBe('nowrap');

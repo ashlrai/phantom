@@ -1,5 +1,6 @@
 """Shared market contracts plus real dispatcher ticks, all in synthetic homes."""
 import ast
+import datetime
 import json
 from pathlib import Path
 import sys
@@ -26,6 +27,22 @@ def view(**overrides):
 
 
 class MarketUnit(unittest.TestCase):
+    def test_fresh_unused_deadline_reorders_only_eligible_executors(self):
+        earlier = dict(known=True, stale=False, used_pct=50, reset_at=11000, projected_unused_pct=40)
+        later = dict(earlier, reset_at=12000, projected_unused_pct=45)
+        self.assertIsNone(market.deadline_priority(dict(earlier, stale=True), 10000))
+        self.assertIsNone(market.deadline_priority(dict(earlier, reset_at=9999), 10000))
+        self.assertIsNone(market.deadline_priority(dict(earlier, used_pct=100), 10000))
+        self.assertEqual(market.deadline_priority(dict(earlier, projected_unused_pct=None), 10000, short_window=True), 11000)
+        self.assertEqual(market.deadline_priority(dict(earlier, expires_at=10500), 10000, promotional=True), 10500)
+        lanes = view()
+        lanes['claude']['deadline_priority'] = market.deadline_priority(earlier, 10000)
+        lanes['codex-personal']['deadline_priority'] = market.deadline_priority(later, 10000)
+        spec = {'preferred_lane': 'codex-personal', 'needs': []}
+        self.assertEqual(self.choose(spec, lanes)[0]['chosen_lane'], 'claude')
+        lanes['claude']['quota'] = 0
+        self.assertEqual(self.choose(spec, lanes)[0]['chosen_lane'], 'codex-personal')
+
     def test_producer_infers_gh_without_losing_declared_requirements(self):
         for job, prompt in CAPABILITY_PROMPTS['c499'].items():
             with self.subTest(job=job):
@@ -437,6 +454,21 @@ class MarketTick(unittest.TestCase):
     def run_tick(self, home):
         result = tick(home)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_resource_advice_reaches_market_but_cannot_raise_target(self):
+        home, queue = self.fixture({'codex-personal': 2, 'claude': 1})
+        now = int(time.time())
+        document = {'schema': 'phantom.fleet-resource-plan.v1',
+                    'generated_at': datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+                    'targets': {'claude': 1000, 'codex-personal': True}}
+        self.assertEqual(market.advisory_targets(document, now), {'claude': 1000})
+        self.assertEqual(market.advisory_targets(document, now + 300), {})
+        (queue / 'resource-capacity-advice.json').write_text(json.dumps(document))
+        self.add(home, 'RQ-ADVICE', 'codex-personal')
+        self.run_tick(home)
+        receipt = next(row for row in self.rows(home) if row.get('job') == 'RQ-ADVICE' and row.get('event') == 'route_decision')
+        self.assertEqual(receipt['ranking_inputs']['claude']['advisory_target'], 1)
+        self.assertIsNone(receipt['ranking_inputs']['codex-personal']['advisory_target'])
 
     def devin_accounting(self, home, used=20):
         now = time.time()

@@ -24,6 +24,7 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { BRAND_ASSET_ID, type BrandMark } from '../brand/sidebar-upload.js';
 
 export const UI_THEMES = ['system', 'light', 'dark', 'high-contrast'] as const;
 export const UI_DENSITIES = ['comfortable', 'compact'] as const;
@@ -43,6 +44,8 @@ export type UiMotion = (typeof UI_MOTIONS)[number];
 
 /** The stored appearance: the web `Appearance` minus derived `reduceMotion`. */
 export interface UiAppearance {
+  brand: BrandMark;
+  brandAsset?: string;
   theme: UiTheme;
   /** Accent hue 0-359 (any finite input wraps). */
   accentH: number;
@@ -77,6 +80,7 @@ export const UI_ACCENT_L_MAX = 78;
 
 export function defaultUiAppearance(): UiAppearance {
   return {
+    brand: 'p',
     theme: 'system',
     accentH: UI_DEFAULT_ACCENT.h,
     accentS: UI_DEFAULT_ACCENT.s,
@@ -125,7 +129,12 @@ export function normalizeUiAppearance(base: UiAppearance, patch: unknown): UiApp
   const accentH = typeof merged.accentH === 'number' && Number.isFinite(merged.accentH)
     ? ((Math.round(merged.accentH) % 360) + 360) % 360
     : UI_DEFAULT_ACCENT.h;
+  const brandAsset = typeof merged.brandAsset === 'string' && BRAND_ASSET_ID.test(merged.brandAsset)
+    ? merged.brandAsset : undefined;
+  const brand = merged.brand === 'ghost' ? 'ghost' : merged.brand === 'upload' && brandAsset ? 'upload' : 'p';
   return {
+    brand,
+    ...(brand === 'upload' ? { brandAsset } : {}),
     theme: merged.theme === 'light' || merged.theme === 'dark' || merged.theme === 'high-contrast' ? merged.theme : 'system',
     accentH,
     accentS: typeof merged.accentS === 'number' && Number.isFinite(merged.accentS)

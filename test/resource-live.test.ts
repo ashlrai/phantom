@@ -55,6 +55,58 @@ const fixed = (seen: Partial<ResourceLiveObservation> | null, tier: ResourceLive
   read: (nowMs) => seen === null ? null : { used: 40, limit: 100, unit: 'percent', reset_at: WEEKLY_RESET, source: 'test-source', observed_at: iso(nowMs), ...seen },
 });
 
+describe('personal Codex resets', () => {
+  it('uses the weekly budget reading and keeps the native five-hour window separate', async () => {
+    const runsDir = tmp();
+    mkdirSync(join(runsDir, 'queue'));
+    writeFileSync(join(runsDir, 'queue', 'budget-overrides.json'), JSON.stringify({
+      'codex-personal': { weekly_used_pct: 45, reset_at: WEEKLY_RESET, as_of: iso(NOW),
+        source: 'reader-1 codex app-server rateLimits', estimated: false },
+    }));
+    const readCodex = vi.fn(async () => ({ fetchedAt: iso(NOW), pctUsed: 91, resetAt: iso(NOW + HOUR),
+      windows: { '5h': { pctUsed: 91, resetAt: iso(NOW + HOUR) }, weekly: null } }));
+    const sources = defaultResourceLiveSources({ runsDir, operatorHome: '/Users/op', codexPersonalHome: '/pools/personal', readCodex });
+    await expect(sources['codex-personal'][0]!.read(NOW)).resolves.toBeNull();
+    await expect(sources['codex-personal'][1]!.read(NOW)).resolves.toMatchObject({ used: 45, reset_at: WEEKLY_RESET });
+    await expect(sources['codex-personal-5h'][0]!.read(NOW)).resolves.toMatchObject({ used: 91, reset_at: iso(NOW + HOUR) });
+    expect(readCodex).toHaveBeenCalledTimes(1);
+    await expect(sources['codex-personal'][1]!.read(NOW + HOUR)).resolves.toBeNull();
+  });
+
+  it('proposes at most one expiring full reset for queued work before measured exhaustion', async () => {
+    const runsDir = tmp();
+    mkdirSync(join(runsDir, 'state'));
+    mkdirSync(join(runsDir, 'queue'));
+    const expires = iso(NOW + HOUR / 2), reset = iso(NOW + 3 * HOUR);
+    const grant = { count: 1, kind: 'full', expires_at: expires, source: 'chatgpt-settings-usage' };
+    const evidence = { schema: 'resource-evidence.v1', readings: {
+      'codex-personal-resets': { observed_at: iso(NOW), count: 2, grants: [grant, { ...grant, expires_at: iso(NOW + 7 * HOUR) }] },
+    } };
+    const evidencePath = join(runsDir, 'state', 'resource-evidence.json');
+    writeFileSync(evidencePath, JSON.stringify(evidence));
+    const status = (queued: number) => writeFileSync(join(runsDir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: iso(NOW), lanes: { 'codex-personal': { queued } },
+    }));
+    const sourcesAt = (used: number) => sourcesOf({
+      'codex-personal-5h': [fixed({ used, reset_at: reset, source: 'codex-app-server-5h' })],
+      'codex-personal': [fixed({ used: 45, reset_at: WEEKLY_RESET, source: 'codex-budget-overrides-weekly' })],
+    });
+    await runResourceLiveTick({ runsDir, nowMs: NOW - HOUR, force: true, sources: sourcesAt(90) });
+    status(0);
+    const tick = () => runResourceLiveTick({ runsDir, nowMs: NOW, force: true, sources: sourcesAt(95) });
+    expect((await tick()).sidecar.burn_down.banked_resets).toMatchObject({ count: 2, proposal: null });
+    status(3);
+    const { sidecar } = await tick();
+    expect(sidecar.burn_down.banked_resets).toMatchObject({ count: 2, proposal: {
+      action: 'use-reset-now', requires_explicit_request: true, grant, window: '5h',
+      used_pct: 95, projected_exhaustion_at: iso(NOW + HOUR), queued_jobs: 3,
+    } });
+    expect(JSON.parse(readFileSync(evidencePath, 'utf8'))).toEqual(evidence);
+    expect((await runResourceLiveTick({ runsDir, nowMs: NOW + HOUR, sources: sourcesAt(96) })).sidecar.burn_down.banked_resets)
+      .toMatchObject({ count: null, proposal: null });
+  });
+});
+
 function sourcesOf(map: Partial<Record<ResourceLiveId, ResourceLiveSource[]>>): ResourceLiveSources {
   return Object.fromEntries(RESOURCE_LIVE_ALLOWANCES.map(row => [row.id, map[row.id] ?? []])) as unknown as ResourceLiveSources;
 }

@@ -12,6 +12,23 @@ with master reason codes and posture evidence; no model calls, dispatch or write
 `cli/bots.ts::runBotsCli(argv, out?, home?)` returns 0 on success, 1 on error/refusal.
 Creation requires `--dry-run` and never calls the writer.
 
+## Desktop appearance
+
+`UiAppearance` (`src/core/verse/ui-appearance-file.ts`) includes
+`brand: 'p' | 'ghost' | 'upload'` and an optional `brandAsset` digest
+in `sha256:<hex>` form, carried only for an uploaded mark. Older records default to `p`.
+`AppearanceSettings` and `phm settings appearance get --json` expose the
+brand choice, not the asset digest. Use `set --brand p|ghost` for a built-in
+mark or `set --brand-file <path>` to import an image together with any
+other appearance flags.
+
+`GET /api/verse/appearance/brand-image` returns the selected image under
+the read-session boundary, or 404 when none is available. The response
+does not allow caching, content sniffing, or active SVG. `POST` to the
+same path requires dispatch and the mutation token, accepts a base64
+SVG/PNG/WebP of at most 512 KiB decoded, and returns the updated
+`UiAppearanceFile`. See [Customize Phantom Desktop](docs/APPEARANCE.md).
+
 ## Harness experiment adoption
 
 `ExperimentResultV1` (`src/core/learn/harness-types.ts`) records the base and
@@ -213,7 +230,14 @@ cloud permission and owner key required for other metered providers;
 it does not promote Gemini into the default chain. Catalog discovery for the
 separate `agy` seat uses only IDs returned by `agy models`.
 
-# Managed desktop CLI upgrade
+# Managed desktop upgrade
+
+`phm desktop update status --json` and `fleet_desktop_update_status` read the
+same bounded, private native observation (`desktop.native-update-status.v1`),
+not upgrade admission or a live process check. Managed macOS resident starts
+require the admitted running release to match the verified managed current
+pointer. Resident status reports registration drift and known alternate CLI
+copies; neither read mutates those installations or changes authority.
 
 `src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`
 (the consumer install ports plus `smokeVersion` and lowering-only
@@ -222,12 +246,17 @@ separate `agy` seat uses only IDs returned by `agy models`.
 `applyConsumerDesktopUpgrade`. Inspection returns frozen `desktop-upgrade.v1`
 observations and stages verified paired public artifacts privately. Apply
 consumes an invocation-owned admission once; it requires Stop/drain, stops the
-resident, switches the managed CLI pointer atomically and keeps the old release.
+resident, and replaces a verified older native app and the managed CLI in the
+same rollback-aware transaction. An equal, verified CLI can repair only the
+older app. `--require-app` refuses absence even at an equal version.
 `desktop-upgrade-journal.v1` records the previous/current release and version
-for explicit rollback. Neither mode replaces the native app, grants authority,
-or restarts the resident. `cmdDesktop` accepts optional upgrade dependencies as
+for explicit CLI-only rollback, which holds when an app is installed. Neither
+mode grants authority or restarts the resident. `cmdDesktop` accepts optional upgrade dependencies as
 its fifth parameter; `parseDesktopInstallArgs` preserves `{apply}` for plain
 install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
+The native `DesktopUpdateDependencies` port includes lowering-only
+`residentStop`; native installation requires Stop and known idle work, not a
+standing authority grant.
 The install module also exports `ConsumerInstallHeld` for shared error
 classification and the `directory`, `parents`, `owned`, `regular`, `write`,
 `sha`, `ioRead` and `packageReady` guards.
@@ -305,7 +334,9 @@ settled: attempts younger than five minutes are not trusted yet, unresolved
 attempts older than 24 hours stop being polled, and each pass checks at most
 eight pending reruns per repository. `success` maps to `pass`, `failure` and
 `timed_out` to `fail`, other completed conclusions to `inconclusive`; runs
-still in progress or reads predating the rerun call stay pending.
+still in progress stay pending, as do reads without a matching run ID and
+head SHA, a nonempty conclusion, or a parseable update time within the
+rerun's freshness guard.
 `src/core/fleet/ci-flakes.ts` exports `recurringFlakes(rows, opts?)`,
 `flakeJobId(repo, test)` and `enqueueFlakeFixes(flakes, absoluteQueuePath)`:
 a test probable-flaking on at least three distinct heads within seven days
@@ -1425,7 +1456,11 @@ jobsTruncated?)`,
 `foldRouteRejections(marketJsonl, nowMs, windowHours)` and
 `renderUnfed(report)` in
 `src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
-`phm fleet unfed` (`fleet.unfed.v1`). `foldMarketOverrides` collapses the
+`phm fleet unfed` (`fleet.unfed.v1`). The report's `marketTruncated` boolean
+is true when the bounded work-market journal read omitted older bytes.
+History, overrides, rejections and decision outcomes may then be incomplete
+for the requested window. A missing or unreadable journal is indicated by
+the market folds' `available: false`. `foldMarketOverrides` collapses the
 window's `route_decision` rows to each job's latest decision and tallies
 `lane_override`s by reason and hinted-to-chosen lane; the report's
 `overrides` field carries the counts (`available`, `decided`, `overridden`,

@@ -65,7 +65,12 @@ function line(r: Omit<ReplyState, 'text'>): string {
   switch (r.state) {
     case 'VERIFIED': {
       const v = e.verified;
-      body = v?.pr != null ? `PR ${v.pr}${v.head ? ` at ${v.head}` : ''}` : v?.tests ? `tests ${v.tests}` : `artifact ${v?.artifact ?? 'unknown'}`;
+      const proof = [
+        v?.pr != null ? `PR ${v.pr}${v.head ? ` at ${safe(v.head)}` : ''}` : v?.head ? `head ${safe(v.head)}` : null,
+        v?.tests ? `tests ${safe(v.tests)}` : null,
+        v?.artifact ? `artifact ${safe(v.artifact)}` : null,
+      ];
+      body = proof.filter(part => part !== null).join('; ');
       break;
     }
     case 'BLOCKED': body = `waiting on ${e.blocked?.dependency ?? 'unknown'}`; break;

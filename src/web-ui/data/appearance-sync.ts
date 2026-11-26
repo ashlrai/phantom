@@ -17,7 +17,7 @@
  * appearance-store the same way, so the Settings-only store is not pulled into
  * the boot chunk either.
  */
-import { getMutationToken, getReadClientProof } from './auth-store.js';
+import { getAuthSnapshot, getMutationToken, getReadClientProof, subscribeAuth } from './auth-store.js';
 
 /** Same literal as core/verse/ui-appearance-api.ts VERSE_UI_APPEARANCE_PATH — kept textual: the core module is node-only. */
 export const UI_APPEARANCE_API_PATH = '/api/verse/appearance';
@@ -80,12 +80,10 @@ async function fetchServer(): Promise<ServerAppearanceBody | null> {
   }
 }
 
-async function poll(): Promise<void> {
-  const server = await fetchServer();
-  if (server === null) return;
-  if (server.revision < lastRevision) rememberRevision(server.revision);
+async function applyServer(server: ServerAppearanceBody): Promise<void> {
   if (server.revision > lastRevision && server.appearance) {
     const { setAppearance } = await appearanceStore();
+    if (server.revision <= lastRevision) return;
     applyingRemote = true;
     try {
       setAppearance(server.appearance);
@@ -95,6 +93,15 @@ async function poll(): Promise<void> {
     rememberRevision(server.revision);
   }
 }
+
+async function poll(): Promise<void> {
+  const server = await fetchServer();
+  if (server === null) return;
+  if (server.revision < lastRevision) rememberRevision(server.revision);
+  await applyServer(server);
+}
+
+export { applyServer as applyUploadedAppearance };
 
 /** The snapshot minus the derived reduceMotion — the shape the server stores. */
 function storedShape(appearance: import('./appearance-store.js').Appearance): Record<string, unknown> {
@@ -152,6 +159,12 @@ export function startAppearanceSync(): () => void {
   timer = setInterval(() => { if (visible()) void poll(); }, UI_APPEARANCE_POLL_MS);
   const onVisible = () => { if (visible()) void poll(); };
   document.addEventListener('visibilitychange', onVisible);
+  let phase = getAuthSnapshot().phase;
+  const unsubscribeAuth = subscribeAuth(() => {
+    const next = getAuthSnapshot().phase;
+    if (next !== phase && next === 'authenticated') void poll();
+    phase = next;
+  });
   void appearanceStore().then((s) => {
     if (!started || unsubscribe !== null) return;
     unsubscribe = s.subscribeAppearance(onLocalChange);
@@ -161,6 +174,7 @@ export function startAppearanceSync(): () => void {
     if (timer !== null) clearInterval(timer);
     timer = null;
     document.removeEventListener('visibilitychange', onVisible);
+    unsubscribeAuth();
     unsubscribe?.();
     unsubscribe = null;
   };

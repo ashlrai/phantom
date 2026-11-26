@@ -551,6 +551,7 @@ export const REAL_IO_TEST_FILES = [
   'test/universe-resource-quota-integration.test.ts', // inert native metadata capture before confined Universe generation
   'test/universe-capacity-wait-integration.test.ts', // parallel inert campaigns sharing collector and worker capacity
   'test/universe-local-refresh-integration.test.ts', // inert inventory and local-chat campaign lifecycle
+  'test/swarm-pilot-mac.test.ts', // disposable Git seed and real fixed shell oracles without provider contact
   'test/universe-campaign-readiness.test.ts', // immutable private campaign and evaluator readback
   'test/universe-supervision-integration.test.ts', // confined multi-campaign supervision and owned cleanup
   'test/universe-campaign-supervisor-restart.test.ts', // real campaign ledgers, admission and leases across foreground reinvocations
