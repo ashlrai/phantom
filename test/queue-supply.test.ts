@@ -155,6 +155,22 @@ describe('readers', () => {
     expect(countReady(tsv)).toEqual({ codex: 1, claude: 1 });
   });
 
+  it('counts each job once using its first valid row and preserves low-supply alerts', () => {
+    const tsv = [
+      'RQ-A\tphantom\tclaude\twork\t/p/a',
+      'RQ-A\tphantom\tclaude\twork\t/p/a',
+      'RQ-A\tphantom\tcodex\twork\t/p/a',
+      'RQ-B\tphantom\t\twork\t/p/b',
+      'RQ-B\tphantom\tclaude\twork\t/p/b',
+      'RQ-C\tphantom\tclaude\tinvalid\t/p/c',
+      'RQ-C\tphantom\tclaude\twork\t/p/c',
+    ].join('\n');
+    const ready = countReady(tsv);
+    expect(ready).toEqual({ claude: 2 });
+    const data = supply([lane('claude', { usedPct: 72, resetAt: at(31), burnPctPerHour: 0.3 })], ready, { claude: 18 });
+    expect(row(data, 'claude')).toMatchObject({ state: 'low', ready: 2, supply_low: true });
+  });
+
   it('counts LAUNCH lines per lane inside the window only', () => {
     const local = (hoursAgo: number) => { const d = new Date(NOW - hoursAgo * 3_600_000); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
     const log = [`${local(1)} LAUNCH RQ-A phantom claude mid`, `${local(5)} LAUNCH RQ-B phantom claude mid`, `${local(7)} LAUNCH RQ-C phantom claude mid`, `${local(2)} DONE RQ-A`].join('\n');

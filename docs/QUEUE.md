@@ -1339,6 +1339,8 @@ leaves the ready count unknown and suppresses the `supply_low` alert. An observe
 are counted by the lane the work market resolves for the row — its requirements `preferred_lane`, read from the row's
 spec or its router-queue.md envelope when the row carries no spec, else the lane column — so a job the market leaves
 lane-open, or one it would reject, is not counted.
+The first valid dispatcher row for each job ID determines its hint, including
+when the hint leaves the job lane-open. Duplicate copies add no supply.
 
 The hourly digest adds a `supply_low` line, naming the pool, when a pool that is behind (or has waste risk high or
 medium) has under an hour of work queued. The alert uses the observed ready and launch counts at full precision.
