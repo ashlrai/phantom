@@ -51,6 +51,8 @@ A stuck verdict requires a readable timestamp for the current phase. That
 timestamp must be at or before report time and at or after the run start when
 one is recorded and readable. Queued runs can qualify using their phase
 timestamp alone. A run can still count as a call when its phase age is unknown.
+An end timestamp suppresses the alert only when it is readable and falls
+between the current phase start and report time, inclusive.
 
 ## Memory shed plan
 
