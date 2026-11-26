@@ -2601,7 +2601,7 @@ function latestJobsHandoffAdvisoryMs(text: string, throughMs: number): Map<strin
 /**
  * The empty-tags ledger's row schema and closed tag vocabulary, mirrored
  * from the producer (src/core/fleet/empty-tags.ts): `phm jobs empty
- * --record` appends `job.empty-tag.v1` rows — { schema, job, lane, tag } —
+ * --record` appends `job.empty-tag.v1` rows — { schema, job, lane, tag, ts? } —
  * where tag is one of EMPTY_TAGS. The router keeps its own copy of the
  * vocabulary so a fleet-side rename can never leak an unbounded label
  * into router.outcome.v1.
@@ -2613,16 +2613,15 @@ const EMPTY_TAGS: ReadonlySet<string> = new Set([
 
 /**
  * Folds empty-tags.jsonl text into each job's recorded empty tag. The
- * ledger carries no timestamp — recordEmptyTags dedups by job id, so a
- * repeated row for one job resolves last-appended-wins like every other
- * append-only fold here. Only rows with the exact job.empty-tag.v1 schema,
- * a bounded job id and a tag in the closed EMPTY_TAGS vocabulary count;
+ * latest eligible append wins for each job. Legacy rows lack timestamps.
+ * Timestamped rows require a parseable time at or before the cutoff.
+ * Only rows with the exact job.empty-tag.v1 schema, a bounded job id and a tag in the closed EMPTY_TAGS vocabulary count;
  * malformed JSON, other schemas, out-of-vocabulary tags and non-object
  * rows are skipped, never guessed. A job with no tag row stays absent from
  * the map so its outcome keeps empty_tag null — the recorded-unknown tag
  * is itself evidence, distinct from missing evidence.
  */
-export function foldEmptyTags(text: string): Map<string, string> {
+export function foldEmptyTags(text: string, throughMs = Infinity): Map<string, string> {
   const tags = new Map<string, string>();
   for (const line of text.split('\n')) {
     // Cheap prefilter: the schema marker is on every real row.
@@ -2636,6 +2635,11 @@ export function foldEmptyTags(text: string): Map<string, string> {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
     const row = value as Row;
     if (row['schema'] !== EMPTY_TAG_SCHEMA) continue;
+    const ts = row['ts'];
+    if (ts !== undefined) {
+      const at = typeof ts === 'string' ? Date.parse(ts) : NaN;
+      if (!Number.isFinite(at) || at > throughMs) continue;
+    }
     const job = row['job'];
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const tag = row['tag'];
@@ -3583,7 +3587,7 @@ export async function readRouterOutcomes(opts: {
     }
   }
   if (emptyTagRead.state === 'read') {
-    const tags = foldEmptyTags(emptyTagRead.text);
+    const tags = foldEmptyTags(emptyTagRead.text, reportStartedAt);
     for (const o of folded.outcomes) {
       const tag = tags.get(o.job_id);
       if (tag !== undefined) o.empty_tag = tag;
