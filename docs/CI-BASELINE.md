@@ -642,8 +642,10 @@ runs and incomplete, mismatched or stale reads stay pending for a later pass. At
 yet so a stale pre-rerun read cannot be mistaken for the new attempt's result;
 unresolved attempts older than 24 hours stop being polled. Each pass performs
 at most eight verdict reads per repository inside the same five-minute
-deadline, and transient read failures leave the rerun pending rather than
-recording a guess.
+deadline. Each repository resumes after its last checked rerun, wrapping
+to the oldest eligible rerun when it reaches the end. The polling position
+persists across restarts, so transient read failures leave reruns pending
+for retry while later reruns still get checked.
 
 `phm ci reruns --json` reports `verdicts` tallies over the retained journal
 window: `pass`/`fail`/`inconclusive` counts, `pending` fired reruns still
