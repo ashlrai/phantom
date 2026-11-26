@@ -1,6 +1,6 @@
 /** The `phm metrics leverage` report as one tile: the fleet plus product share, a per-hour trend, and counts per class. */
 import type { LeverageReport } from '../../../../core/metrics/leverage-class.js';
-import { MERGE_CLASSES } from '../../../../core/metrics/leverage-class.js';
+import { MERGE_CLASSES } from '../../../../core/metrics/leverage-class-types.js';
 import { Sparkline } from '../../../components/charts/Sparkline.js';
 import styles from './fleet-metrics.module.css';
 

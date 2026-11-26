@@ -4,7 +4,7 @@
  * "unknown", never 0. Green or red appears only where it means something: main branches, and a plan
  * that runs out before it resets.
  */
-import { FLEET_BRIEF_SCHEMA, type FleetBrief } from '../../../../core/fleet/status-brief.js';
+import { FLEET_BRIEF_SCHEMA, type FleetBrief } from '../../../../core/fleet/status-brief-types.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';

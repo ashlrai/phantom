@@ -8,7 +8,8 @@
  * own; unknown is shown as unknown with its reason, never as zero. One column
  * that wraps, so it reads at 390 px; the phone Goals screen mounts it too.
  */
-import { TREND_MARK, type FleetGoal, type GoalScorecard, type GoalStatus, type GoalTrend, type TrendDirection } from '../../../../core/fleet/goal-scorecard.js';
+import type { FleetGoal, GoalScorecard, GoalStatus, GoalTrend } from '../../../../core/fleet/goal-scorecard.js';
+import { TREND_MARK, type TrendDirection } from '../../../../core/fleet/goal-trend.js';
 import { Sparkline } from '../../../components/charts/Sparkline.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery } from '../../../data/hooks.js';

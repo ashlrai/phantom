@@ -3,10 +3,9 @@ import { join } from 'node:path';
 import { foldJobsLedger, parseGhPullRequests, type EvalReportJobsRead } from '../fleet/eval-report.js';
 import { readLedgerTail } from '../router/outcomes.js';
 import { runsRoot } from './loop-collect.js';
+import type { MergeClass } from './leverage-class-types.js';
 
-/** How much a merged PR moves the fleet or the product. `unknown` is shown as unknown, never guessed. */
-export const MERGE_CLASSES = ['fleet', 'product', 'docs', 'filler', 'unknown'] as const;
-export type MergeClass = typeof MERGE_CLASSES[number];
+export { MERGE_CLASSES, type MergeClass } from './leverage-class-types.js';
 export interface MergeFacts { title?: string | null; jobId?: string | null; paths?: readonly string[] }
 
 const HOUR = 3_600_000;
