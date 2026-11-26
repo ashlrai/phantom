@@ -53,6 +53,8 @@ const REBASE_JOB_RE = /^RQ-REBASE-(?!BATCH-)([A-Z0-9][A-Z0-9-]*)-(\d{1,7})-(?:[0
 /** Batch members share a repo and end with a six-character hash. */
 const REBASE_BATCH_RE = /^RQ-REBASE-BATCH-([A-Za-z][A-Za-z0-9-]*?)-((?:\d{1,7}-)*\d{1,7})-[0-9a-f]{6}$/i;
 const KEYED_JOB_ID = /^(?:id|job|job[._-]?id|task|name)=\s*/i;
+const KEYED_STATUS = /^(?:status|state)=\s*/i;
+const QUEUED_CONFLICT_STATUSES = new Set(['READY', 'QUEUED', 'WAITING', 'BLOCKED', 'HOLD', 'HELD']);
 
 export interface LeaderBoardLane {
   lane: string;
@@ -167,18 +169,25 @@ export function readyRowsForDepth(text: string): { status: string; tier?: string
 export function conflictingPrIds(readyTsvText: string): Set<string> {
   const prs = new Set<string>();
   let idColumn: number | null = null;
+  let statusColumn = -1;
   for (const raw of readyTsvText.split('\n')) {
     if (!raw.trim() || raw.trimStart().startsWith('#')) continue;
     const cells = raw.trimEnd().split('\t').map(cell => cell.trim());
     const header = readyTsvHeader(cells);
     if (header !== null) {
       idColumn = header.indexOf('id');
+      statusColumn = header.indexOf('status');
       continue;
     }
     const first = cells[0] ?? '';
+    const positionalStatus = KNOWN_STATUSES.has(first.toUpperCase()) || parkedCell(first);
+    const status = idColumn !== null ? cells[statusColumn]
+      : first.includes('=') ? cells.find(cell => KEYED_STATUS.test(cell))?.replace(KEYED_STATUS, '')
+      : positionalStatus ? first : undefined;
+    if (status && !QUEUED_CONFLICT_STATUSES.has(status.toUpperCase()) && !parkedCell(status)) continue;
     const id = idColumn !== null ? cells[idColumn]
       : first.includes('=') ? cells.find(cell => KEYED_JOB_ID.test(cell))
-      : KNOWN_STATUSES.has(first.toUpperCase()) || parkedCell(first) ? cells[1]
+      : positionalStatus ? cells[1]
       : first;
     const jobId = id?.replace(KEYED_JOB_ID, '') ?? '';
     const batch = REBASE_BATCH_RE.exec(jobId);
