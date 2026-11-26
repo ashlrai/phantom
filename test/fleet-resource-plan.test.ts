@@ -70,6 +70,25 @@ describe('fleet resource plan', () => {
     expect(buildFleetResourcePlan(null, [], null, ledger, now).allowances.find(row => row.id === 'codex-personal')?.remaining).toBeNull();
   });
 
+  it('honors a controller-reduced target and leaves shared slots for unshed lanes', () => {
+    const dispatch = status();
+    const codex = dispatch.lanes['codex-personal']!;
+    const agy = dispatch.lanes['agy']!;
+    const plan = buildFleetResourcePlan(live, [{ ...node, freeSlots: 1 }], {
+      ...dispatch,
+      lanes: {
+        'codex-personal': { ...codex, target: 2, effective_target: 0 },
+        agy: { ...agy, target: 1, effective_target: 1 },
+      },
+    }, ledger, now);
+    expect(plan.lanes.find(row => row.lane === 'codex-personal')).toMatchObject({
+      running: 1, max_concurrency: 0, target_concurrency: 1, additional_slots: 0,
+    });
+    expect(plan.lanes.find(row => row.lane === 'agy')).toMatchObject({
+      running: 1, max_concurrency: 2, target_concurrency: 2, additional_slots: 1,
+    });
+  });
+
   it('includes an expiring reset proposal only when the allowance and bank evidence support it', () => {
     const reading = { ...readings[0]!, used: 95, source: 'codex-budget-overrides-weekly' };
     const weekly = { ...live, readings: [reading], history: { [reading.id]: [

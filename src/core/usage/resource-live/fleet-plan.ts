@@ -63,7 +63,11 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
   const lanes = laneNames.map(lane => {
     const row = object(statusLanes[lane]);
     const running = count(row['running']), ceiling = count(row['ceiling']), hard = count(row['hard_cap']);
-    const cap = ceiling === null || hard === null ? null : Math.min(ceiling, hard);
+    const target = count(row['target']), effective = count(row['effective_target']);
+    // The configured target can grow up to the advisory cap, but an active
+    // controller reduction is a bound on what the lane can launch now.
+    const shed = target !== null && effective !== null && effective < target;
+    const cap = ceiling === null || hard === null ? null : Math.min(ceiling, hard, shed ? effective : Infinity);
     const held = typeof row['held'] === 'boolean' ? row['held'] || Boolean(dispatch['paused']) : null;
     const queued = demand?.get(lane)?.length ?? count(row['queued']);
     const recent = jobs.filter(job => job.lane === lane);
