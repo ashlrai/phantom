@@ -1,9 +1,10 @@
 /** Inert fixtures only. No provider calls, native profiles or credentials. */
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { foldJobsLedgerRewards, syncRewardSignalsFromJobsLedger } from '../src/core/metrics/reward-feed.js';
+import { ROUTER_OUTCOME_LEDGER_LIMIT } from '../src/core/router/outcomes.js';
 import {
   readRewardSignals, rewardSignalPath, writeRewardSignal, writeRewardSignals,
   type RewardSignalInput,
@@ -561,6 +562,18 @@ describe('syncRewardSignalsFromJobsLedger', () => {
     expect(second.skippedRecorded).toBe(2);
     expect(second.recorded).toBe(0);
     expect(rewardRows()).toHaveLength(2);
+  });
+
+  it('records a merge with unknown USD cost when earlier spend is outside the retained tail', async () => {
+    writeJobs([launch('RQ-A'), merged('RQ-A')].join('\n'));
+    writeSpend(line({ job: 'RQ-A', cost_usd: 2.5 }) + '\n');
+    const path = join(runsDir, 'metrics', 'api-spend.jsonl');
+    truncateSync(path, ROUTER_OUTCOME_LEDGER_LIMIT + 1);
+    appendFileSync(path, '\n' + line({ job: 'RQ-A', cost_usd: 1 }) + '\n');
+
+    const result = await syncRewardSignalsFromJobsLedger({ runsDir, home, now: NOW });
+    expect(result).toMatchObject({ state: 'read', spendState: 'read', recorded: 1 });
+    expect(rewardRows()).toMatchObject([{ jobId: 'RQ-A', merged: true, cost: { costUsd: null } }]);
   });
 
   it('folds a standing-reverted merge as merged:false when the caller supplies the revert set', async () => {

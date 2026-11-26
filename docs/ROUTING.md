@@ -759,7 +759,9 @@ recorded revert time when available and the receipt timestamp otherwise.
 Replayed merge receipts cannot restore credit for a reverted merge, and the
 original merge time still bounds dispatch and CI evidence.
 Missing or ambiguous timing stays unknown, and existing
-reward rows retain their original values.
+reward rows retain their original values. When the daemon reads a truncated
+spend ledger, it still records resolved rewards and leaves USD cost unknown.
+Reward rows have no coverage field for a partial spend total.
 The jobs fold uses its outcome attribution rules for the queue, CI and
 publish timing boundaries. An explicit job ID takes precedence. A receipt
 with only a PR URL contributes when exactly one job claims that PR in the
