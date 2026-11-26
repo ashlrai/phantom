@@ -169,6 +169,21 @@ describe('currentUnfed', () => {
     expect(empty.resources[0]).toMatchObject({ waitingElsewhere: 0, unfed: false });
   });
 
+  it.each([0, 1])('rejects a published lane count above the tick total of %i', waiting => {
+    const lanes = { a: { running: 0, target: 2 } };
+    const unfed_capacity = {
+      waiting,
+      lanes: { a: { waiting_elsewhere: 2, blocked: { missing_capability: 2 } } },
+    };
+    const report = currentUnfed(JSON.stringify({ lanes, unfed_capacity }), row('RQ-A', 'elsewhere'));
+    const expected = waiting === 0 ? 0 : null;
+
+    expect(report).toMatchObject({ waiting, unfedLanes: [], unfedSlots: expected });
+    expect(report.resources[0]).toMatchObject({
+      readyHinted: 0, waitingElsewhere: expected, unfed: waiting === 0 ? false : null, blocked: {},
+    });
+  });
+
   it.each(['derived', 'dispatcher'] as const)('bounds %s unfed slots by the shared waiting count', (source) => {
     const lanes = { a: { running: 0, target: 2 }, b: { running: 0, target: 2 } };
     const entry = { waiting_elsewhere: 1, blocked: { missing_capability: 1 } };

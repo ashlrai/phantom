@@ -380,7 +380,8 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     // The live ready file may already differ from the dispatcher's tick.
     let waitingElsewhere: number | null = canBeUnfed && waiting !== 0 ? null : 0;
     let blocked: Record<string, number> = {};
-    if (isRecord(entry) && count(entry.waiting_elsewhere)) {
+    if (isRecord(entry) && count(entry.waiting_elsewhere) &&
+        (waiting === null || entry.waiting_elsewhere <= waiting)) {
       waitingElsewhere = entry.waiting_elsewhere;
       blocked = codes(entry.blocked);
     } else if (!published && hints !== null && readyHinted !== null && canBeUnfed) {
