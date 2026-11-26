@@ -243,6 +243,19 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(skillNudgeJobsFromLedger(text)[0]).toMatchObject({ lane: 'devin' });
   });
 
+  it('uses observed failure classifications through aliases and later unknown values', () => {
+    expect(skillNudgeJobsFromLedger([
+      finish('RQ-A', { failure_class: 'UNKNOWN', failure_reason: 'quota' }),
+      finish('RQ-A', { failure_class: 'unknown' }),
+      outcome('RQ-A', 'MERGED'),
+      finish('RQ-B', { failure_class: 'unknown' }),
+      outcome('RQ-B', 'CLOSED'),
+    ].join('\n'))).toEqual([
+      { id: 'RQ-A', lane: 'codex', outcome: 'merged', failureClass: 'quota' },
+      { id: 'RQ-B', lane: 'codex', outcome: 'failed' },
+    ]);
+  });
+
   it('uses eventless terminal lane evidence and preserves known lanes through unknown values', () => {
     const text = [
       enqueue('RQ-N1', 'fast'),

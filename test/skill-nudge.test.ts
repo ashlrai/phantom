@@ -39,6 +39,13 @@ describe('shadow skill nudges', () => {
     expect(draftSkillNudges([job('retry', { retries: 1 }), job('recut', { recuts: 1 })], ts)).toHaveLength(2);
     expect(draftSkillNudges([job('fail', { outcome: 'failed', retries: 3 })], ts)).toEqual([]);
   });
+  it('requires an observed failure class for recurrence and keeps generic retry evidence separate', () => {
+    const unclassified = repeated.map(entry => ({ ...entry, failureClass: 'UNKNOWN' }));
+    expect(draftSkillNudges(unclassified, ts)).toEqual([]);
+    const failures = repeated.slice(0, 3).map(entry => ({ ...entry, failureClass: 'recovery' }));
+    expect(draftSkillNudges([...failures, job('retry', { retries: 1, failureClass: 'unknown' })], ts))
+      .toMatchObject([{ trigger: 'typecheck: recover after retry', sourceJobIds: ['retry'] }]);
+  });
   it('withholds drafts without an observed lane', () => {
     const unknownLane = repeated.map(entry => ({ ...entry, lane: 'unknown' }));
     expect(draftSkillNudges(unknownLane, ts)).toEqual([]);
