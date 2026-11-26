@@ -10,6 +10,7 @@
  * shared `tailscale status --json` read, and nothing throws. A fact that
  * cannot be confirmed is "unknown" plus a `reasons[]` entry.
  */
+import { actionableClaim } from '../drive/nodes/router.js';
 import { existsSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
@@ -203,13 +204,9 @@ export function buildNodesView(
     // Absence proves "not running" only where the list is authoritative and current.
     const silenceKnown = state !== null ? !mirrorStale : machine.isSelf && registry?.source === 'none';
     const phantom = live.length ? 'running' : silenceKnown ? 'not-running' : UNKNOWN;
-    // A claim counts only while the session that took it can still act on it:
-    // unexpired claim, unexpired record on this machine, same node and session.
-    const jobs = state === null || mirrorStale ? UNKNOWN : state.jobs.filter(job => {
-      const claim = job.claim;
-      return job.state === 'running' && claim !== undefined && claim.expiresAt > nowMs &&
-        live.some(record => record.nodeId === claim.nodeId && record.session === claim.session);
-    }).map(job => job.id).sort();
+    const jobs = state === null || mirrorStale ? UNKNOWN : state.jobs.filter(job =>
+      live.some(record => record.nodeId === job.claim?.nodeId) && actionableClaim(state, job, nowMs),
+    ).map(job => job.id).sort();
     const slots = live.length && live.every(record => record.slots !== undefined) && jobs !== UNKNOWN
       ? Math.max(0, live.reduce((sum, record) => sum + (record.slots ?? 0), 0) - jobs.length) : UNKNOWN;
     const held = live.map(record => record.capacity?.held).find(Boolean);

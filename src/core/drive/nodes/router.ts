@@ -30,20 +30,14 @@ export function liveNodes(state: NodesState, now: number): NodeRecord[] {
   return state.nodes.filter(n => nodeCanAcceptWork(n, now));
 }
 
-/** True while a running job's claim can still be acted on: the claim is
- * unexpired and an unexpired node record carries the same id and session.
- * A lapsed claim is re-routable, and a claim fenced by a rejoin or departure
- * frees the node's capacity at once even though the job stays fenced until
- * the claim expires. */
+/** A running claim needs both a live worker session and a live leader epoch. */
 export function actionableClaim(state: NodesState, job: QueueJobV1, now: number): boolean {
   const claim = job.claim;
+  const leader = state.leader;
   return job.state === 'running' && claim !== undefined && claim.expiresAt > now &&
+    leader !== null && leader.expiresAt > now && leader.token === claim.leaderToken &&
+    state.nodes.some(n => n.expiresAt > now && n.nodeId === leader.nodeId && n.session === leader.session) &&
     state.nodes.some(n => n.expiresAt > now && n.nodeId === claim.nodeId && n.session === claim.session);
-}
-
-function activeClaims(state: NodesState, node: NodeRecord, now: number): number {
-  return state.jobs.filter(j => j.state === 'running' && j.claim && j.claim.expiresAt > now &&
-    j.claim.nodeId === node.nodeId && j.claim.session === node.session).length;
 }
 
 /** Capability fences every assignment path honors: a session that released the
@@ -113,8 +107,13 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const neutralLatency = measuredLatency.length ? measuredLatency.reduce((a, b) => a + b, 0) / measuredLatency.length : 1;
   const reserved = new Map<string, number>();
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
-  const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
-  const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
+  const claims = new Map(nodes.map(n => [n.nodeId, 0]));
+  for (const job of state.jobs) {
+    if (!actionableClaim(state, job, now)) continue;
+    const id = job.claim!.nodeId;
+    if (claims.has(id)) claims.set(id, claims.get(id)! + 1);
+  }
+  const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * claims.get(n.nodeId)!]));
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
