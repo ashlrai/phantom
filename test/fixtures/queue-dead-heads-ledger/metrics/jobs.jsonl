@@ -1,0 +1,6 @@
+{"event":"launch","job":"RQ-LEDGER-LIVE-05","lane":"devin","repo":"fake/repo","ts":"2026-11-20T09:00:00+0000"}
+{"event":"skipped_empty","job":"RQ-LEDGER-DEAD-01","lane":"devin","reason":"prompt_empty_same_base_24h","ts":"2026-11-20T10:00:00+0000"}
+{"event":"skipped_empty","job":"RQ-LEDGER-DEAD-02","lane":"devin","repo":"fake/repo","code":11,"ts":"2026-11-20T10:00:00+0000"}
+{"event":"skipped_empty","job":"RQ-LEDGER-VETO-03","lane":"devin","reason":"prompt_empty_same_base_24h","action":"defer","applied":false,"ts":"2026-11-20T10:00:00+0000"}
+{"event":"skipped_empty","job":"RQ-LEDGER-OVER-04","lane":"devin","reason":"old_marker_reason","ts":"2026-11-20T09:30:00+0000"}
+{"event":"skipped_empty","job":"RQ-LEDGER-OVER-04","lane":"devin","reason":"task_empty_repeat_24h","ts":"2026-11-20T10:00:00+0000"}

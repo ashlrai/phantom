@@ -3,8 +3,9 @@ import { constants } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { queueDeadHeads } from '../core/fleet/queue-dead-heads.js';
+import { queueDeadHeads, ledgerDeadHeadSkips } from '../core/fleet/queue-dead-heads.js';
 import { parseReadyTsv } from '../core/fleet/lane-console.js';
+import { readJobsTail } from '../core/fleet/report-ledger.js';
 
 const usage = `ashlr fleet dead-heads [--json] [--root PATH] [--cap N]
 Read-only skip evidence; positions are one-based per lane. Default cap: 4 launchable lines.`;
@@ -46,6 +47,15 @@ export async function cmdFleetDeadHeads(args: string[]): Promise<number> {
       if (!row.id || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(row.id) || /^PARKED-/i.test(row.pool) || reasons.has(row.id)) continue;
       try { reasons.set(row.id, await readText(join(root, 'queue/run', `${row.id}.skipped-empty`), 4096)); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    }
+    // The live dispatcher records empty-gate skips as jobs.jsonl events, not
+    // marker files; its newest verdict per job overrides (or vetoes) markers.
+    const ledger = await readJobsTail(join(root, 'metrics', 'jobs.jsonl'));
+    if (ledger.text !== null) {
+      for (const [id, verdict] of ledgerDeadHeadSkips(ledger.text)) {
+        if (verdict.dead) reasons.set(id, verdict.reason ?? 'skipped_empty');
+        else reasons.delete(id);
+      }
     }
     const result = { schema: 'fleet.dead-heads.v1', perLaneCap: cap, lanes: queueDeadHeads(ready, reasons, cap) };
     console.log(json ? JSON.stringify(result) : result.lanes.map(lane =>
