@@ -38,6 +38,14 @@ export interface LaunchablePlan {
   openRows: number;
 }
 
+/** True when the same lane-open job would have to fill more than one slot. */
+export function hasLaunchableShortfall(plan: LaunchablePlan): boolean {
+  const slotsNeedingOpenRows = plan.lanes.reduce(
+    (total, lane) => total + Math.max(0, lane.free - lane.launchable), 0,
+  );
+  return slotsNeedingOpenRows > plan.openRows;
+}
+
 export interface LaunchableInputs {
   /** queue/status.json text: lanes with running, target and optional effective_target and held. */
   statusJson: string;

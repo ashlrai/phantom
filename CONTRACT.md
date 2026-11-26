@@ -2137,6 +2137,13 @@ No merge, publish, send or scheduler authority is added. The full limits,
 dedupe, protected-scope and failure contract is in the
 [feedback pipeline contract](docs/contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md).
 
+## Fleet launchable supply
+
+`hasLaunchableShortfall(plan: LaunchablePlan): boolean` in
+`src/core/fleet/launchable.ts` sums the uncovered free slots on each lane after
+applying its hinted supply, then compares the total with `plan.openRows`.
+`phm fleet launchable` exits 1 when that total exceeds the shared supply.
+
 ## Fleet merge queue snapshots
 
 The `mergeQueueAge(input, now?)` snapshot API and optional revision pins are

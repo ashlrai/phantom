@@ -850,9 +850,10 @@ set `ASHLR_RUNS_DIR` to inspect another runs directory.
 `launchable` reports zero free slots for a lane with `held: true`, while
 keeping its published occupancy, launch target and ready supply visible.
 
-`lane-starve` exits 1 when it finds a starved lane; `launchable` exits 1 when
-any lane has more free slots than launchable rows plus lane-open supply — a
-lane is under-supplied only when even all open rows could not fill it. Both
+`lane-starve` exits 1 when it finds a starved lane. `launchable` exits 1 when
+the sum of the slots left after applying each lane's hinted rows exceeds the
+shared lane-open supply. Each shared row can cover one slot across the fleet.
+Surplus hinted rows on one lane do not cover a shortfall on another. Both
 exit 0 otherwise and 2 for invalid arguments or unreadable required data.
 Their JSON schemas are `fleet.lane-starve.v1` and `fleet.launchable.v1`.
 Neither report launches work or removes a hold.

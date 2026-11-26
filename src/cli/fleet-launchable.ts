@@ -1,7 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { planLaunchable } from '../core/fleet/launchable.js';
+import { hasLaunchableShortfall, planLaunchable } from '../core/fleet/launchable.js';
 
 const SCHEMA = 'fleet.launchable.v1';
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -10,8 +10,8 @@ const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 const USAGE = `Usage: ashlr fleet launchable [--json]
 Count ready jobs that can start per lane and compare them with free slots.
 Lane-open ready rows are shared supply any lane may take. Reads
-~/.ashlr-runs/queue (override with ASHLR_RUNS_DIR). Exit 1 if any lane has
-more free slots than launchable jobs plus lane-open supply.`;
+~/.ashlr-runs/queue (override with ASHLR_RUNS_DIR). Exit 1 if the shared
+supply cannot cover all slots left after applying each lane's hinted jobs.`;
 
 async function read(path: string, optional = false, maxBytes = MAX_BYTES): Promise<string> {
   try {
@@ -58,9 +58,7 @@ export async function cmdFleetLaunchable(args: string[]): Promise<number> {
       console.log(rows.map(l => `${l.lane}: ${l.launchable} launchable, ${l.free} free slots (${l.running}/${l.target} running)`).join('\n') || 'No lanes.');
       if (openRows > 0) console.log(`${openRows} lane-open row(s) can start on any lane.`);
     }
-    // Lane-open rows are shared supply the market may place on any lane, so a
-    // lane is under-supplied only when even all of them could not fill it.
-    return rows.some(l => l.free > l.launchable + openRows) ? 1 : 0;
+    return hasLaunchableShortfall(plan) ? 1 : 0;
   } catch {
     const error = 'Cannot read queue data or valid lane status.';
     console.log(json ? JSON.stringify({ schema: SCHEMA, readOnly: true, error }) : error);

@@ -124,7 +124,7 @@ describe('fleet launchable', () => {
     expect(await cmdFleetLaunchable(['--json'])).toBe(1);
     expect(report()).toMatchObject({ lanes: [{ lane: 'alpha', free: 5, launchable: 1 }] });
   });
-  it('flags a lane only when even all lane-open supply cannot fill its free slots', async () => {
+  it('flags a lane when even all lane-open supply cannot fill its free slots', async () => {
     const prompt = join(root, 'prompt.md');
     writeFileSync(prompt, 'task');
     status({ alpha: { target: 4, running: 0 }, beta: { target: 1, running: 0 } });
@@ -139,6 +139,25 @@ describe('fleet launchable', () => {
     ] });
     expect(await cmdFleetLaunchable([])).toBe(1);
     expect(log.mock.calls.map(call => String(call[0])).join('\n')).toContain('1 lane-open row(s) can start on any lane.');
+  });
+  it('allocates each lane-open row at most once across lane shortfalls', async () => {
+    const prompt = join(root, 'prompt.md');
+    writeFileSync(prompt, 'task');
+    status({ alpha: { target: 1, running: 0 }, beta: { target: 2, running: 1 },
+      full: { target: 1, running: 1 } });
+    const ready = join(queue, 'ready.tsv');
+    const rows = [row('RQ-OPEN1', '', prompt), row('RQ-SURPLUS', 'full', prompt)];
+    writeFileSync(ready, rows.join('\n'));
+
+    expect(await cmdFleetLaunchable(['--json'])).toBe(1);
+    expect(report()).toMatchObject({ openRows: 1, lanes: [
+      { lane: 'alpha', free: 1, launchable: 0 },
+      { lane: 'beta', free: 1, launchable: 0 },
+      { lane: 'full', free: 0, launchable: 1 },
+    ] });
+
+    writeFileSync(ready, [...rows, row('RQ-OPEN2', '', prompt)].join('\n'));
+    expect(await cmdFleetLaunchable(['--json'])).toBe(0);
   });
   it('counts free slots against the shed launch target', async () => {
     status({ shed: { target: 4, running: 3, effective_target: 3 }, room: { target: 4, running: 2, effective_target: 3 } });
