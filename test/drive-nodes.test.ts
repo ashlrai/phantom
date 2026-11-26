@@ -360,6 +360,24 @@ describe('pull session honesty', () => {
   });
 });
 
+describe('owner-scoped route previews', () => {
+  it('matches status and pull when owners share a node slot', () => {
+    const f = fixture();
+    const worker = f.a.join('shared', { owners: ['acme', 'ops'], slots: 1 })!;
+    f.a.enqueue('ops-first', { owner: 'ops' });
+    f.a.enqueue('acme-next', { owner: 'acme' });
+
+    const { routes } = executeNodeFleet('plan', ['--owner', 'acme'], f.a);
+    expect(routes).toEqual([expect.objectContaining({ jobId: 'acme-next', owner: 'acme', nodeId: null })]);
+    expect(routes).toEqual(f.a.view(['acme']).routes);
+    const first = f.a.pull(worker)!;
+    expect(first.job.id).toBe('ops-first');
+    expect(f.a.complete(first.claim, 'done')).toBe(true);
+    expect(f.a.plan('acme')).toEqual([{ jobId: 'acme-next', owner: 'acme', nodeId: 'shared' }]);
+    expect(f.a.pull(worker)?.job.id).toBe('acme-next');
+  });
+});
+
 describe('pull open-work count', () => {
   const pullArgs = (nodeId: string, session: number) => ['--node', nodeId, '--session', String(session)];
   it('counts open work that fit this node but routed to other nodes', () => {
