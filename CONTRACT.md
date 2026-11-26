@@ -807,7 +807,10 @@ resolves `ci_first_pass` fill-only when no jobs row recorded a verdict:
 any recorded `check_observed` failure — required or unrelated — reads
 `false` even beside a later `checks_passed` boundary or a merge (a
 rerun or a new head got it green, which is not a first pass); with
-zero recorded failures, a `checks_passed` boundary reads `true`.
+zero recorded failures or recut requests, a `checks_passed` boundary
+in an uncut ledger reads `true`. A recorded recut request leaves the
+green boundary's attribution to the original candidate uncertain, so
+the fallback stays `null` when no check failure is recorded.
 A merge verdict, including one filled from the reward journal, and
 individual check observations leave CI first-pass evidence unknown
 (`null`) when the all-required-checks-passed boundary is absent. The read degrades
