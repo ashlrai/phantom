@@ -50,7 +50,7 @@ const FAKE_NIM_API_KEY = 'm250-fake-nim-credential';
 
 beforeEach(() => {
   tmpHome = realpathSync.native(mkdtempSync(join(tmpdir(), 'ashlr-m250-')));
-  mkdirSync(join(tmpHome, '.ashlr', 'fleet'), { recursive: true });
+  mkdirSync(join(tmpHome, '.ashlr'));
   mkdirSync(join(tmpHome, '.claude'), { recursive: true });
   origHome = process.env['HOME'];
   origAshlrHome = process.env['ASHLR_HOME'];
@@ -1049,7 +1049,6 @@ describe('M252 Gateway — resource-aware demote', () => {
     });
     const item = makeItem('self', {
       id: 'repo:proposal-repair-capture:abcdef123456',
-      repo: join(tmpHome, 'repo'),
       effort: 1,
       score: 1,
       title: 'Repair dispatch capture failure for repo item repo:self-heal:stalled',
