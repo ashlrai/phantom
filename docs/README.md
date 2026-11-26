@@ -44,7 +44,7 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 | Install, connect MCP, upgrade, and uninstall | [Self-hosting](SELF-HOSTING.md) |
 | Install a tool and its project MCP server with one command | [Tool installer](https://github.com/ashlrai/phantom/blob/master/docs/INSTALL-TOOLS.md) |
 | Use the console | [Phantom user guide](VERSE.md) |
-| Turn a screen-level request into an agent pull request | [Prompt-to-PR](PROMPT-TO-PR.md) |
+| Turn a screen-level request into an agent pull request | [Prompt-to-PR](https://github.com/ashlrai/phantom/blob/master/docs/PROMPT-TO-PR.md) |
 | Publish local reports and browse their pages | [Report pages — source guide](https://github.com/ashlrai/phantom/blob/master/docs/PAGES.md) |
 | Work in a floating personal agent window | [Owner Assist](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-ASSIST.md) |
 | See what each fleet lane runs on and is best at | [Fleet lanes](lanes.md) |

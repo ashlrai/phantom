@@ -1,6 +1,6 @@
 # Cross-platform fleet profile
 
-From a trusted checkout of the [fleet profile](../fleet/profile), with Python
+From a trusted checkout of the [fleet profile](https://github.com/ashlrai/phantom/tree/master/fleet/profile), with Python
 3.11+ on each machine (use `python` in place of `python3` on Windows):
 
 ```sh
