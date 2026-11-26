@@ -60,6 +60,18 @@ describe('router calibration', () => {
     expect(() => calibrateRouting(jobs, JSON.stringify([{ job_id: 'TEST-job-2', total_tokens: 999 }]))).toThrow('Conflicting tokens');
     expect(() => calibrateRouting(jobs, '{}')).toThrow('PostHog export');
   });
+  it('excludes dispatcher receipts for work that never launched', () => {
+    const skipped = row({ event: 'outcome', state: 'DONE-NOOP', job: 'RQ-SKIP', lane: 'codex', launched: false });
+    const exportJson = JSON.stringify([{ job_id: 'RQ-SKIP', total_tokens: 10 }]);
+    expect(calibrateRouting(skipped, exportJson)).toMatchObject({ arms: [], unmatchedPosthogRuns: 1 });
+
+    const launch = row({ event: 'launch', job: 'RQ-RUN', lane: 'codex', predicted_tokens: 120 });
+    const declined = row({ event: 'outcome', state: 'DONE-NOOP', job: 'RQ-RUN', launched: false, tokens_total: 0 });
+    const finish = row({ event: 'finish', job: 'RQ-RUN', tokens_total: 100 });
+    expect(calibrateRouting(skipped + declined + launch + finish).arms).toMatchObject([
+      { arm: 'codex', jobs: 1, resolved: 0, tokens: { predicted: 120, actual: 100, paired: 1 } },
+    ]);
+  });
   it('calibrates a batch member from its claim and reconciled verdict', () => {
     const report = calibrateRouting(
       row({ event: 'batch_claim', job: 'RQ-MEMBER', batch: 'RQ-BATCH-A',

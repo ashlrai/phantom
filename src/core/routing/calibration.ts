@@ -146,6 +146,7 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
     const state = ledgerOutcomeState(row, event, phase);
     if (state === null && !['launch', 'batch_claim', 'finish', 'publish', 'outcome'].includes(event ?? '')) continue;
     recognized++;
+    if (row['launched'] === false) continue;
     if (!id) throw new Error('Event is missing job ID');
     const job = jobs.get(id) ?? { launched: false };
     jobs.set(id, job);
