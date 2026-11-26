@@ -260,7 +260,7 @@ def terminal_jobs(home, root, job=None):
             jobs.add(path.name)
         return jobs
     except (Hold, ValueError, TypeError, KeyError, AttributeError):
-        raise Hold('disk-maint-classifier-unavailable') from None
+        raise Hold('classifier-unavailable') from None
 
 
 def scan(wt, cutoff):
@@ -423,7 +423,7 @@ def sweep(home, dry_run=False, event_path=None):
             except (Hold, OSError):
                 held += 1
     except (Hold, OSError) as error:
-        classifier = ' disk_maint_classifier_unavailable=1' if str(error) == 'disk-maint-classifier-unavailable' else ''
+        classifier = ' disk_maint_classifier_unavailable=1' if str(error) == 'classifier-unavailable' else ''
         print('WT_PRUNE inspection_failed=1' + classifier, file=sys.stderr)
         print(f'WT_PRUNE freed_bytes={freed} would_free_bytes={planned} removed={removed} held={held}')
         return 1
