@@ -12,6 +12,7 @@ import { buildSessionThread, THREAD_LIMITS, THREAD_OWNER_WINDOW, type SessionThr
 import type { FleetSessionMap } from './sessions-view.js';
 import type { SubagentRecord } from '../subagent/spawn.js';
 import { sanitizePublicJson } from '../util/public-json.js';
+import { readOwnerDisplayName } from '../owner-display-read.js';
 
 export interface SessionThreadReadOptions {
   now?: number;
@@ -55,7 +56,7 @@ export async function readSessionThread(id: string, options: SessionThreadReadOp
   if (!found.session) return sanitizePublicJson(found) as SessionThreadV1;
   const { jobId, kind } = found.session;
   const job = jobId !== null && isFleetJobId(jobId) ? jobId : null;
-  const [activity, bus, owner, replies, orders, output, controls] = await Promise.all([
+  const [activity, bus, owner, replies, orders, output, controls, ownerName] = await Promise.all([
     job === null ? undefined : guarded(() => (options.readActivity ?? (name => getFleetJobActivity(name)))(job)),
     guarded(options.readBus ?? (() => readAgentMessages({ limit: AGENT_MESSAGES_MAX_LIMIT }))),
     kind === 'subagent' ? undefined : guarded(options.readOwner ?? (() => readInboxEntries({ limit: THREAD_OWNER_WINDOW }))),
@@ -64,7 +65,8 @@ export async function readSessionThread(id: string, options: SessionThreadReadOp
     kind === 'leader' || (kind === 'worker' && jobId !== null) ? guarded(options.readOrders ?? (() => readOrderTrace({ now: () => now }))) : undefined,
     job === null ? undefined : guarded(() => (options.readOutput ?? readSessionOutput)(job)),
     job === null ? undefined : guarded(options.readControls ?? (() => readJobControlLedger())),
+    kind === 'subagent' ? undefined : readOwnerDisplayName(),
   ]);
   // Sanitizing keeps the shape; it only rewrites home paths and secret-shaped strings.
-  return sanitizePublicJson(buildSessionThread(list, id, { sessionsRead, activity, bus, owner, replies, orders, output, controls }, now, depth)) as SessionThreadV1;
+  return sanitizePublicJson(buildSessionThread(list, id, { sessionsRead, activity, bus, owner, replies, orders, output, controls, ownerName }, now, depth)) as SessionThreadV1;
 }

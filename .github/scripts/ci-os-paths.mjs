@@ -14,6 +14,16 @@ const BIN = /(?:^|\/)bin\//;
 const PATH_CODE = /(?:^|\/)[^/]*path[^/]*\.(?:ts|tsx|js|mjs|cjs)$/i;
 const OS_TREE = /^(?:desktop|contrib)\//;
 
+// Regression suites that need native coverage even on test-only revisions.
+export const WINDOWS_FAST_TESTS = Object.freeze([
+  'test/authority-cli-310b.test.ts',
+  'test/devin-engine-identity-315.test.ts',
+  'test/fleet-profile.test.ts',
+  'test/fleet-unfed.test.ts',
+  'test/m22.backlog.test.ts',
+  'test/m250.resource-control.test.ts',
+]);
+
 export function pathIsOsSensitive(file) {
   const name = String(file).replace(/\\/g, '/');
   return SCRIPT.test(name)
@@ -22,7 +32,8 @@ export function pathIsOsSensitive(file) {
     || INSTALLER.test(name)
     || BIN.test(name)
     || PATH_CODE.test(name)
-    || OS_TREE.test(name);
+    || OS_TREE.test(name)
+    || WINDOWS_FAST_TESTS.includes(name);
 }
 
 export function diffNeedsOsLegs(paths) {
@@ -36,7 +47,9 @@ function writeOutput(value) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const event = process.env.EVENT_NAME ?? '';
-  if (event !== 'pull_request' && event !== 'merge_group') {
+  if (process.argv[2] === '--windows-tests') {
+    console.log(WINDOWS_FAST_TESTS.join('\n'));
+  } else if (event !== 'pull_request' && event !== 'merge_group') {
     writeOutput('false');
   } else {
     try {

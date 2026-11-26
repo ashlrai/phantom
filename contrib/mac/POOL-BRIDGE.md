@@ -110,3 +110,21 @@ Review and pin the supplied `agent.sb` and `devin-overage-stop.py` before
 adoption. AGY remains held until Security supplies redacted
 `/help` and `/usage` fixtures from the pinned binary, profile and isolated HOME.
 Do not install or dispatch anything live as part of this review.
+
+### Pending re-pin: profile-driven dispatcher (#9194)
+
+[#9194](https://github.com/ashlrai/phantom/pull/9194) moved dispatcher lane admission
+and slot floors to the configured fleet profile and registered resources. Security
+review and re-pin are pending. The only installer-managed file changed by that PR
+is `dispatchd.py`.
+
+| Dry-run source | `dispatchd.py` SHA-256 (`new_sha256`) |
+| --- | --- |
+| Original PR head `2a1f7a844` | `5069613c9a4780432064cd789ffbbf86e5c0d349b8b001ac5508c18dc3725a54` |
+| Merged candidate `ef316548d` | `382adfbd2ca7296ccbf2e935cbf65aacc33f82cdf60b2d70956acb62c401f124` |
+
+The installer preview against an empty scratch bin reported
+`schema: macdispatch.install.v1`, `dry_run: true`, and `ok: true`. Use the merged
+candidate hash for this review, not the original PR head hash. A dry run does not
+authorize installation; if the candidate changes, regenerate the preview and
+have Security review the exact bytes before any live installation.
