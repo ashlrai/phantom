@@ -3,7 +3,7 @@
  * Thin handler; the store and rules live in src/core/cos/drafts.ts. Approve records
  * the decision only and never sends. See docs/DRAFTS.md.
  */
-import { approveDraft, DraftError, DRAFT_STATUSES, getDraft, listDrafts, rejectDraft, type Draft, type DraftStatus } from '../core/cos/drafts.js';
+import { approveDraft, DraftError, getDraft, isDraftStatus, listDrafts, rejectDraft, type Draft } from '../core/cos/drafts.js';
 
 const USAGE = `phm drafts list [--status pending|approved|rejected] [--json]
 phm drafts show <id> [--json]
@@ -37,14 +37,14 @@ export async function cmdDrafts(args: string[], deps: { runsDir?: string } = {})
   const known = ['list', 'show', 'approve', 'reject'].includes(verb);
   const needsId = verb !== 'list';
   const badShape = extra.length > 0 || (needsId ? !id : id !== undefined)
-    || (status !== undefined && (verb !== 'list' || !(DRAFT_STATUSES as readonly string[]).includes(status)))
+    || (status !== undefined && (verb !== 'list' || !isDraftStatus(status)))
     || (digest !== undefined && verb !== 'approve')
     || rest.some((a, i) => i > 0 && a.startsWith('-'));
   if (!known || badShape) return usage();
 
   try {
     if (verb === 'list') {
-      const drafts = await listDrafts({ runsDir: deps.runsDir, status: status as DraftStatus | undefined });
+      const drafts = await listDrafts({ runsDir: deps.runsDir, status: status !== undefined && isDraftStatus(status) ? status : undefined });
       if (json) emit({ ok: true, drafts: drafts.map(summary) });
       else for (const d of drafts) console.log(`${d.id}  ${d.status}  ${d.to}  ${d.subject}`);
       return 0;

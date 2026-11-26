@@ -1,4 +1,4 @@
-import { MEMORY_KINDS, MemoryError, addMemory, forgetMemory, listMemory, searchMemory, type MemoryKind } from '../core/cos/memory.js';
+import { MEMORY_KINDS, MemoryError, addMemory, forgetMemory, isMemoryKind, listMemory, searchMemory, type MemoryKind } from '../core/cos/memory.js';
 
 const USAGE = `phm memory add "<text>" --kind preference|doctrine|fact [--source <label>] [--json]
 phm memory list [--kind preference|doctrine|fact] [--json]
@@ -26,8 +26,11 @@ export async function cmdMemory(args: string[]): Promise<number> {
       else rest.push(v);
     }
     const kindFlag = flags['--kind'];
-    if (kindFlag !== undefined && !(MEMORY_KINDS as readonly string[]).includes(kindFlag)) throw new MemoryError(`Unknown kind. Use ${MEMORY_KINDS.join(', ')}.`);
-    const kind = kindFlag as MemoryKind | undefined;
+    let kind: MemoryKind | undefined;
+    if (kindFlag !== undefined) {
+      if (!isMemoryKind(kindFlag)) throw new MemoryError(`Unknown kind. Use ${MEMORY_KINDS.join(', ')}.`);
+      kind = kindFlag;
+    }
     if (verb === 'add') {
       if (rest.length !== 1 || !kind) throw new MemoryError('Use phm memory add "<text>" --kind preference|doctrine|fact.');
       const entry = await addMemory({ kind, text: rest[0]!, source: flags['--source'] });
