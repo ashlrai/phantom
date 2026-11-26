@@ -2261,6 +2261,20 @@ describe('CI baseline evidence', () => {
       expect(report.groups[0]?.action, touched).toBe('pr-caused');
     }
   });
+  it('counts newly added ancestor toolchain configs as harness changes', async () => {
+    const contents = {
+      'src/web-ui/design/tokens.test.tsx': "import { it } from 'vitest';",
+      'tsconfig.json': '{}',
+    };
+    for (const touched of ['src/web-ui/design/tsconfig.json', 'src/web-ui/jsconfig.json']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ count: 1, web: true, pass: true, contents, touched }).gh);
+      expect(report.groups[0]?.action, touched).toBe('pr-caused');
+    }
+    const unrelated = await analyzeCiBaseline('owner/repo', github({
+      count: 1, web: true, pass: true, contents, touched: 'src/web-ui/test/tsconfig.json',
+    }).gh);
+    expect(unrelated.groups[0]?.action).toBe('rerun-failed');
+  });
   it('fails closed when a harness probe errors or a setup entry is a glob', async () => {
     const contents = {
       'test/example.test.ts': "import { it } from 'vitest';",
