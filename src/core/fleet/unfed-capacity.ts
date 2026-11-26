@@ -698,7 +698,7 @@ export function foldDecisionOutcomes(
   if (marketJsonl === null) return report;
   const outcomes = new Map<string, { merged: boolean | null; reverted: boolean | null }>();
   if (jobsJsonl !== null) {
-    for (const outcome of foldRouterOutcomes(jobsJsonl).outcomes) {
+    for (const outcome of foldRouterOutcomes(jobsJsonl, { verdictAsOfMs: nowMs }).outcomes) {
       outcomes.set(outcome.job_id, { merged: outcome.merged, reverted: outcome.reverted });
     }
   }

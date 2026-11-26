@@ -422,6 +422,24 @@ describe('foldDecisionOutcomes', () => {
     expect(truncated.overridden).toMatchObject({ decided: 1, merged: 1 });
   });
 
+  it('uses only merge and revert evidence dated at or before the report time', () => {
+    const market = [
+      decision('RQ-MERGED', t - 100),
+      decision('RQ-FUTURE', t - 100),
+      decision('RQ-UNDATED', t - 100),
+    ].join('\n');
+    const jobs = [
+      outcome('RQ-MERGED', { mergedAt: iso(now), reverted: true, revertedAt: iso(now + 1) }),
+      outcome('RQ-MERGED', { phase: 'CLOSED', ts: iso(now + 1) }),
+      outcome('RQ-FUTURE', { mergedAt: iso(now + 1) }),
+      outcome('RQ-UNDATED', { ts: undefined }),
+    ].join('\n');
+
+    expect(foldDecisionOutcomes(market, jobs, now, 24).overridden).toEqual({
+      decided: 3, known: 1, merged: 1, unmerged: 0, reverted: 0, unresolved: 2,
+    });
+  });
+
   it('says when there is no market journal', () => {
     expect(foldDecisionOutcomes(null, outcome('RQ-A'), now, 24)).toMatchObject({
       available: false, jobsAvailable: true, decided: 0,

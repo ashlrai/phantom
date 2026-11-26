@@ -683,7 +683,7 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
-`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?, mergeEventsTruncated?})`,
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?, mergeEventsTruncated?, verdictAsOfMs?})`,
 `authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
 `foldRouteDecisionWorkClasses(text)`, `foldRouteDecisions(text)`,
 `foldMarketHandoffAdvisories(text)`,
