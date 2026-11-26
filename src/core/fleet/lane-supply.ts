@@ -105,7 +105,10 @@ export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: num
   else if (idle && leftPct !== null) { verdict = 'idle-with-usage-left'; text = `${view.lane} idle: ${plural(free, 'free slot')}, ${pct(leftPct)}% left`; }
   else if (idle) { verdict = 'idle-usage-unknown'; text = `${view.lane} idle: ${plural(free, 'free slot')}, usage unknown`; }
   else if (free === null) { verdict = 'unknown'; text = `${view.lane}: running or target unknown`; }
-  else { verdict = 'busy'; text = `${view.lane} busy: ${running} of ${target} running, ${view.queueDepth ?? 0} queued`; }
+  // Free slots with an unreadable queue can be starved or busy — never call
+  // it either. A lane already at target is busy whatever the queue read says.
+  else if (view.queueDepth === null && free > 0) { verdict = 'unknown'; text = `${view.lane}: ${running} of ${target} running, queue depth unknown`; }
+  else { verdict = 'busy'; text = `${view.lane} busy: ${running} of ${target} running, ${view.queueDepth ?? 'unknown'} queued`; }
   return { ...row, verdict, detail, text };
 }
 
