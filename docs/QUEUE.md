@@ -1098,7 +1098,9 @@ Without `--lane` and `--n`, `fleet supply` retains its batch activity report.
 Run `phm queue yield --since 24h --json` to compare generators from the local
 `metrics/jobs.jsonl` ledger. The Metrics screen shows the same 24-hour report.
 Events in the window are joined by job ID. An explicit `src` takes precedence
-over the job ID pattern; unrecognized sources are `unknown`. PRs and merges
+over the job ID pattern; unrecognized sources are `unknown`. The fold uses
+recorded timestamps, with ledger order breaking ties. Late arrivals with
+older timestamps cannot overwrite newer recorded measurements. PRs and merges
 count jobs with recorded PRs and merges. Empty rate uses jobs with a recorded
 empty result. Median diff lines uses recorded `diff_lines`. Tokens per merged PR
 is the sum of recorded job tokens divided by merged PRs; it is unknown if any
