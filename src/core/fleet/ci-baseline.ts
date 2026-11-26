@@ -2269,7 +2269,9 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (fetched.absent) auditExceptions = [];
     else if (fetched.ok && fetched.source !== null) auditExceptions = parseAuditExceptions(fetched.source);
   }
-  const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
+  const masterFailures = masterLogs
+    .filter(l => l.conclusion === 'failure' || INCOMPLETE_CONCLUSIONS.has(l.conclusion))
+    .flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
   // Parenthesized identities are gate checks, not vitest tests: only
   // '(suite)' resolves through pass evidence, because the file loading is
   // what failed. '(lint)', '(typecheck)' and the other gate names can never

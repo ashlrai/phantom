@@ -174,6 +174,14 @@ describe('CI baseline evidence', () => {
       expect(report.freshness.every(p => p.state === 'fresh')).toBe(true);
     }
   });
+  it.each(['success', 'neutral'])('ignores failure output from a master job concluded %s', async conclusion => {
+    const { gh } = github({ count: 1, pass: true, extraMasterJob: conclusion });
+    const report = await analyzeCiBaseline('owner/repo', args => args[1]?.endsWith('/jobs/30/logs')
+      ? Promise.resolve({ ok: true, stdout: `/usr/bin/git log -1 --format=%H\n${master}\n${fixture('shared')}`, stderr: '' })
+      : gh(args));
+    expect(report.master.known).toBe(true);
+    expect(report.groups).toMatchObject([{ classification: 'probable-flake', master: 'pass' }]);
+  });
   it('drops master known state on incomplete checks but keeps failure evidence', async () => {
     const report = await analyzeCiBaseline('owner/repo', github({ masterJobConclusion: 'timed_out' }).gh);
     expect(report.master.known).toBe(false);
