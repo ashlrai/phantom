@@ -68,7 +68,7 @@ export interface LlamaProbeReadings {
  * while measuring docs/LOCAL-FLEET.md. Carried verbatim as the runtime's words
  * so a surface can show evidence beside its own sentence.
  */
-export const OLLAMA_PARALLEL_REFUSAL =
+const OLLAMA_PARALLEL_REFUSAL =
   'ollama: "model architecture does not currently support parallel requests" ' +
   '(architecture=qwen35) — requests queue rather than batch, and OLLAMA_NUM_PARALLEL ' +
   'does not change it';
@@ -92,7 +92,6 @@ export function identifyRuntime(
     return 'ollama';
   }
   if (state === 'up' || state === 'loading') return 'llama-server';
-  if (state === 'down') return 'unknown';
   return 'unknown';
 }
 

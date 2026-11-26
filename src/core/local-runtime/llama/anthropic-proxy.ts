@@ -70,7 +70,7 @@ import { applyLocalAgentDefaults, normaliseAnthropicRequest } from './anthropic-
 import type { AshlrConfig } from '../../types.js';
 
 /** The one path whose POST bodies are normalised. Everything else is a pipe. */
-export const ANTHROPIC_MESSAGES_PATH = '/v1/messages';
+const ANTHROPIC_MESSAGES_PATH = '/v1/messages';
 
 /**
  * Largest request body we will hold in memory to normalise it.
@@ -82,7 +82,7 @@ export const ANTHROPIC_MESSAGES_PATH = '/v1/messages';
  * oversized request degrades to the unnormalised passthrough it would have had
  * without this proxy at all, instead of failing.
  */
-export const MAX_NORMALISED_BODY_BYTES = 32 * 1024 * 1024;
+const MAX_NORMALISED_BODY_BYTES = 32 * 1024 * 1024;
 
 /**
  * Headers that describe THIS hop and must not be copied to the next one
@@ -208,7 +208,7 @@ function forwardableHeaders(
 }
 
 /** Parse an origin into the pieces `http.request` wants. Never throws. */
-export function upstreamTarget(origin: string): { hostname: string; port: number } {
+function upstreamTarget(origin: string): { hostname: string; port: number } {
   try {
     const url = new URL(origin);
     const port = url.port ? Number.parseInt(url.port, 10) : 80;

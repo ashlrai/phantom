@@ -22,6 +22,14 @@ import {
   buildAnthropicProxyShim,
 } from '../src/core/local-runtime/llama/proxy-launchd.js';
 import type { AnthropicProxyAgentSpec } from '../src/core/local-runtime/llama/proxy-launchd.js';
+import {
+  buildLaunchAgentPlist,
+  renderLaunchAgentPlist,
+} from '../src/core/local-runtime/llama/launchd.js';
+import {
+  ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL,
+  LAUNCH_AGENT_LABEL,
+} from '../src/core/local-runtime/llama/paths.js';
 import { requestAttributionLogger, startAnthropicProxyHost } from '../src/core/local-runtime/llama/anthropic-proxy-host.js';
 
 /** The real on-disk URL of the invocation module, for the dev/tsx branch. */
@@ -182,6 +190,39 @@ describe('the proxy launch agent files', () => {
   it('escapes XML in paths', () => {
     const plist = buildAnthropicProxyPlist({ ...SPEC, workingDirectory: '/a&b/<c>' });
     expect(plist).toContain('/a&amp;b/&lt;c&gt;');
+  });
+
+  it('shares the exact launchd plist template with buildLaunchAgentPlist', () => {
+    const shimPath = '/Users/someone/.ashlr/local-runtime/shared.sh';
+    const proxyPlist = buildAnthropicProxyPlist(SPEC, shimPath);
+    const serverPlist = buildLaunchAgentPlist(
+      {
+        binPath: '/opt/homebrew/bin/llama-server',
+        args: ['-m', '/blobs/sha256-test', '--port', '8080'],
+        workingDirectory: SPEC.workingDirectory,
+        stdoutLog: SPEC.stdoutLog,
+        stderrLog: SPEC.stderrLog,
+      },
+      shimPath,
+    );
+    expect(proxyPlist).toBe(
+      serverPlist.replace(LAUNCH_AGENT_LABEL, ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL),
+    );
+  });
+
+  it('renderLaunchAgentPlist escapes XML across every interpolated field', () => {
+    const plist = renderLaunchAgentPlist({
+      label: 'ai.ashlr.<job>&"1"',
+      shimPath: "/Users/a'b/shim&.sh",
+      workingDirectory: '/work/<dir>',
+      stdoutLog: '/logs/out&1.log',
+      stderrLog: '/logs/err"2".log',
+    });
+    expect(plist).toContain('<string>ai.ashlr.&lt;job&gt;&amp;&quot;1&quot;</string>');
+    expect(plist).toContain('<string>/Users/a&apos;b/shim&amp;.sh</string>');
+    expect(plist).toContain('<string>/work/&lt;dir&gt;</string>');
+    expect(plist).toContain('<string>/logs/out&amp;1.log</string>');
+    expect(plist).toContain('<string>/logs/err&quot;2&quot;.log</string>');
   });
 });
 

@@ -14,14 +14,14 @@ import { modelTiers, type ModelTier } from '../../resources/model-tiers.js';
 import { assessHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
 
 const MIB = 1024 ** 2;
-export const LANE_MODEL_ENVELOPE_FRACTION = 0.5;
+const LANE_MODEL_ENVELOPE_FRACTION = 0.5;
 /** Resident runtime beyond weights + KV: server process, activations, scratch. */
-export const LANE_PROCESS_OVERHEAD_BYTES = 1024 ** 3;
+const LANE_PROCESS_OVERHEAD_BYTES = 1024 ** 3;
 export const LANE_MAX_SLOTS = 4;
 export const LANE_DEFAULT_SLOTS = 2;
 
 /** Caps a node may advertise; anything else named omlx-* is not ours. */
-export const LOCAL_MODEL_CAPS = ['omlx', 'omlx-fast', 'omlx-work', 'omlx-frontier'] as const;
+const LOCAL_MODEL_CAPS = ['omlx', 'omlx-fast', 'omlx-work', 'omlx-frontier'] as const;
 export const isLocalModelCap = (cap: string): boolean => (LOCAL_MODEL_CAPS as readonly string[]).includes(cap);
 
 export interface OmlxModelQuality {

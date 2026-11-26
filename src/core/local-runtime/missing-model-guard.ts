@@ -54,7 +54,7 @@ import { localRuntimeDir } from './llama/paths.js';
 export const MISSING_MODEL_BACKOFF_MS = 30 * 60 * 1000;
 
 /** How often a holding attempt re-stats the model path for early recovery. */
-export const MISSING_MODEL_POLL_MS = 30 * 1000;
+const MISSING_MODEL_POLL_MS = 30 * 1000;
 
 /** What a start attempt should do about a model that may be absent. */
 export type MissingModelDecision = 'run' | 'blocked' | 'retry-after';

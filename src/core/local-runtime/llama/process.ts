@@ -41,16 +41,7 @@ const MAX_TREE_DEPTH = 4;
  * crashed server look alive forever, so its port would never be reclaimed.
  */
 export function processAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 1) return false;
-  let exists: boolean;
-  try {
-    process.kill(pid, 0);
-    exists = true;
-  } catch (err: unknown) {
-    // EPERM means the process exists but belongs to another user.
-    exists = (err as NodeJS.ErrnoException)?.code === 'EPERM';
-  }
-  return exists && !processIsZombie(pid);
+  return processExists(pid) && !processIsZombie(pid);
 }
 
 /**
@@ -60,9 +51,22 @@ export function processAlive(pid: number): boolean {
  * as alive and nothing is killed on a guess.
  */
 function processIsZombie(pid: number): boolean {
-  const out = runPs(['-p', String(pid), '-o', 'state=']);
-  if (out === null) return false;
-  return out.trim().startsWith('Z');
+  return isZombieState(runPs(['-p', String(pid), '-o', 'state=']));
+}
+
+function processExists(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    // EPERM means the process exists but belongs to another user.
+    return (err as NodeJS.ErrnoException)?.code === 'EPERM';
+  }
+}
+
+function isZombieState(out: string | null): boolean {
+  return out !== null && out.trim().startsWith('Z');
 }
 
 const PS_TIMEOUT_MS = 5_000;
@@ -117,9 +121,7 @@ function runPsAsync(args: string[]): Promise<string | null> {
 
 /** Async {@link processIsZombie}; same unknown-reads-as-not-zombie rule. */
 async function processIsZombieAsync(pid: number): Promise<boolean> {
-  const out = await runPsAsync(['-p', String(pid), '-o', 'state=']);
-  if (out === null) return false;
-  return out.trim().startsWith('Z');
+  return isZombieState(await runPsAsync(['-p', String(pid), '-o', 'state=']));
 }
 
 /**
@@ -127,15 +129,7 @@ async function processIsZombieAsync(pid: number): Promise<boolean> {
  * exists), with the zombie probe off the event loop.
  */
 export async function processAliveAsync(pid: number): Promise<boolean> {
-  if (!Number.isInteger(pid) || pid <= 1) return false;
-  let exists: boolean;
-  try {
-    process.kill(pid, 0);
-    exists = true;
-  } catch (err: unknown) {
-    exists = (err as NodeJS.ErrnoException)?.code === 'EPERM';
-  }
-  return exists && !(await processIsZombieAsync(pid));
+  return processExists(pid) && !(await processIsZombieAsync(pid));
 }
 
 /**
@@ -400,7 +394,7 @@ function childPids(pid: number): number[] {
  * Must be called while `pid` is still ALIVE: once the parent dies the kernel
  * reparents its children to pid 1 and `pgrep -P` returns nothing.
  */
-export function descendantPids(pid: number): number[] {
+function descendantPids(pid: number): number[] {
   const found: number[] = [];
   let frontier = [pid];
   for (let depth = 0; depth < MAX_TREE_DEPTH; depth += 1) {
