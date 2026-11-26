@@ -573,9 +573,13 @@ export async function sendNotifications(
     appendLedger?: (row: BoardNotifyLedgerRow) => void;
     now?: () => number;
     log?: (line: string) => void;
+    /** Per-sender deadline; timeout leaves delivery uncertain and pending. */
+    senderTimeoutMs?: number;
   },
 ): Promise<BoardSendResult[]> {
   const results: BoardSendResult[] = [];
+  const timeoutMs = Number.isFinite(opts.senderTimeoutMs) && opts.senderTimeoutMs! > 0
+    ? Math.min(opts.senderTimeoutMs!, 2_147_483_647) : 30_000;
   const append = opts.appendLedger
     ?? (opts.ledgerPath ? (row: BoardNotifyLedgerRow) => appendBoardNotifyLedger(opts.ledgerPath!, row) : undefined);
   for (const notice of notices) {
@@ -589,8 +593,16 @@ export async function sendNotifications(
       continue;
     }
     let receipt: BoardSendReceipt;
-    try { receipt = await sender(notice); }
-    catch { receipt = { status: 'unavailable', reason: 'sender threw' }; }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      receipt = await Promise.race([
+        Promise.resolve().then(() => sender(notice)),
+        new Promise<BoardSendReceipt>(resolve => {
+          timer = setTimeout(() => resolve({ status: 'unavailable', reason: 'sender-timeout' }), timeoutMs);
+        }),
+      ]);
+    } catch { receipt = { status: 'unavailable', reason: 'sender threw' }; }
+    finally { if (timer !== undefined) clearTimeout(timer); }
     if (receipt.status !== 'sent' && receipt.status !== 'duplicate') {
       results.push({ notice, status: receipt.status, ...(receipt.reason ? { reason: receipt.reason } : {}) });
       continue;
