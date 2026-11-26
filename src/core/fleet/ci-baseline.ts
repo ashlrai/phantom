@@ -50,6 +50,19 @@ const FILE_PASS_LINE = /^[✓✔√]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[
 //   Bound candidate <sha> to event tree <tree>
 //   Bound candidate <sha> to event merge <sha> of base <sha>...
 const BOUND_LINE = /^Bound candidate ([a-f0-9]{40}) to event (?:tree|merge) [a-f0-9]{40}/;
+const CHECKOUT_SHA_COMMAND = /(?:^|\/)git log -1 --format=%H$/;
+
+function explicitCheckoutProof(output: string[], head: string): 'verified' | 'mismatch' | 'absent' {
+  let verified = false;
+  for (const [index, line] of output.entries()) {
+    const bound = BOUND_LINE.exec(line);
+    const raw = CHECKOUT_SHA_COMMAND.test(line);
+    if (!bound && !raw) continue;
+    if ((raw ? output[index + 1] : bound?.[1]) !== head) return 'mismatch';
+    verified = true;
+  }
+  return verified ? 'verified' : 'absent';
+}
 
 // Gate jobs that never run ci-source-binding.mjs (secret-shape, quick,
 // clean-tree, authority-drift, fast-gate, secret-scan, the whole
@@ -2207,18 +2220,9 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
         return null;
       }
       const output = lines(r.stdout);
-      const checkout = output.findIndex(line => /(?:^|\/)git log -1 --format=%H$/.test(line));
-      if (checkout >= 0) {
-        if (output[checkout + 1] !== head) return null;
-        result.push({ conclusion: job.conclusion, text: r.stdout });
-        continue;
-      }
-      // Bound CI jobs prove the checkout through the source-binding receipt
-      // instead of a raw `git log -1` echo; the bound revision must equal the
-      // analyzed head exactly like the marker's following line does.
-      const bound = output.find(line => BOUND_LINE.test(line));
-      if (bound !== undefined) {
-        if (BOUND_LINE.exec(bound)![1] !== head) return null;
+      const proof = explicitCheckoutProof(output, head);
+      if (proof === 'mismatch') return null;
+      if (proof === 'verified') {
         result.push({ conclusion: job.conclusion, text: r.stdout });
         continue;
       }

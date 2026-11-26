@@ -15,6 +15,9 @@ or, for gate jobs that never run the binding script (secret-shape, quick,
 clean-tree, authority-drift, fast-gate, secret-scan and the whole
 dependency-audit job), recording `actions/checkout` steps whose resolved
 `with: ref:` input is the analyzed head in every checkout group of the log.
+When a log contains explicit checkout proofs, every source-binding receipt
+and every echoed `git log -1 --format=%H` command must confirm the analyzed
+head. A later mismatch or a missing command result leaves the log unverifiable.
 The bound revision or checkout ref must equal the analyzed head exactly; an
 unpinned checkout (which falls back to the event's merge commit on pull
 requests), a non-SHA ref or a second checkout of anything else leaves the
