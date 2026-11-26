@@ -34,14 +34,14 @@
  *   fleet resume
  *       Release the kill switch (setKill(false)). Idempotent.
  *
- * Pause/resume mutate only the kill-switch sentinel. The nested shadow canary
- * command owns its separate metadata-only controller store. `queue` owns the
- * separate untrusted router handoff and its read audit; status remains read-only.
+ * Pause/resume also pause and restore the hosted release train from stop
+ * provenance. The nested shadow canary command owns its separate metadata-only
+ * controller store. `queue` owns the separate untrusted router handoff and its
+ * read audit; status remains read-only.
  */
 
-import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { AshlrConfig } from '../core/types.js';
@@ -49,6 +49,7 @@ import type { AuditEntry } from '../core/types.js';
 import type { FleetLaneSnapshot, FleetLaneView } from '../core/fleet/lane-console.js';
 import type { UsageMotionAuditView, UsageMotionClassification, UsageMotionLaneView } from '../core/fleet/usage-motion-audit.js';
 import { formatFleetMetrics } from '../core/fleet/metrics-feed.js';
+import { pauseReleaseTrainForStop, resumeReleaseTrainAfterStop } from '../core/release/train.js';
 import type { FleetStatus } from '../core/fleet/status.js';
 import { formatFleetDiskAttribution } from '../core/fleet/disk-attribution.js';
 import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.js';
@@ -2134,14 +2135,12 @@ export async function cmdFleetWatch(jsonMode: boolean): Promise<number> {
 
 function pauseHostedReleaseTrain(): void {
   if (process.env.VITEST) return;
-  try {
-    const dir = join(homedir(), '.ashlr-runs');
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const off = join(dir, 'RELEASE_AUTORUN_OFF');
-    if (!existsSync(off)) writeFileSync(off, 'release train off\n', { mode: 0o600 });
-  } catch { /* the local kill switch is already the stop */ }
-  const result = spawnSync('gh', ['variable', 'set', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom', '--body', 'off'], { stdio: 'ignore', timeout: 15_000 });
-  if (result.status !== 0) console.error('PHANTOM_RELEASE_TRAIN was not set off');
+  pauseReleaseTrainForStop();
+}
+
+function resumeHostedReleaseTrain(): void {
+  if (process.env.VITEST) return;
+  resumeReleaseTrainAfterStop();
 }
 
 async function setKillSwitch(on: boolean): Promise<number> {
@@ -2177,6 +2176,7 @@ async function setKillSwitch(on: boolean): Promise<number> {
     console.log(dim('  Any running loop halts on its next tick; nothing autonomous dispatches.'));
     console.log(dim('  Resume with `ashlr fleet resume`.'));
   } else {
+    resumeHostedReleaseTrain();
     console.log(green('  ✓ fleet resumed') + dim(' — kill switch released.'));
     console.log(dim('  The daemon may dispatch again on its next tick (if running).'));
     console.log(dim('  Daemon activation remains separate and requires exact activation authority.'));

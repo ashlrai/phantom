@@ -3,8 +3,8 @@
  * and resumes the sanctioned publishers. KILL fails closed.
  * See docs/RELEASING.md.
  */
-import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -326,6 +326,142 @@ export interface TrainPlan { state: TrainState; writes: ReleaseWrite[]; exitCode
 
 export function fleetKillPath(home = homedir()): string { return join(home, '.ashlr', 'KILL'); }
 export function autorunOffPath(home = homedir()): string { return join(home, '.ashlr-runs', 'RELEASE_AUTORUN_OFF'); }
+export const RELEASE_TRAIN_STOP_SCHEMA = 'phantom.release-train-stop.v1';
+const RELEASE_TRAIN_STOP_MARKER = 'release train off (fleet-stop)\n';
+const RELEASE_TRAIN_STOP_RECORD = 'RELEASE_TRAIN_PAUSED_BY_STOP';
+const RELEASE_TRAIN_GH_TIMEOUT_MS = 15_000;
+
+export function releaseTrainStopRecordPath(home = homedir()): string {
+  return join(home, '.ashlr-runs', RELEASE_TRAIN_STOP_RECORD);
+}
+
+export interface ReleaseTrainStopGhResult { status: number | null; stdout: string }
+export type ReleaseTrainStopGhRunner = (args: string[], timeout: number) => ReleaseTrainStopGhResult;
+export interface ReleaseTrainStopDeps {
+  home?: string;
+  gh?: ReleaseTrainStopGhRunner;
+  now?: () => Date;
+  log?: (line: string) => void;
+}
+
+const runReleaseTrainStopGh: ReleaseTrainStopGhRunner = (args, timeout) =>
+  spawnSync('gh', args, { encoding: 'utf8', stdio: 'pipe', timeout });
+
+function releaseTrainStopRecord(value: unknown): value is {
+  schema: typeof RELEASE_TRAIN_STOP_SCHEMA;
+  at: string;
+  variableWasOn: boolean | null;
+} {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return row['schema'] === RELEASE_TRAIN_STOP_SCHEMA
+    && typeof row['at'] === 'string' && Number.isFinite(Date.parse(row['at']))
+    && (row['variableWasOn'] === true || row['variableWasOn'] === false || row['variableWasOn'] === null);
+}
+
+function readReleaseTrainVariableState(gh: ReleaseTrainStopGhRunner, log: (line: string) => void): boolean | null {
+  try {
+    const result = gh(['variable', 'get', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom'], RELEASE_TRAIN_GH_TIMEOUT_MS);
+    if (result.status === 0) {
+      const value = result.stdout.trim();
+      if (value === 'on') return true;
+      if (value === 'off') return false;
+    }
+  } catch { /* a failed read is unknown */ }
+  log('PHANTOM_RELEASE_TRAIN state could not be read before fleet stop; recording unknown');
+  return null;
+}
+
+function setReleaseTrainVariable(value: 'on' | 'off', gh: ReleaseTrainStopGhRunner, log: (line: string) => void): void {
+  try {
+    const result = gh(['variable', 'set', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom', '--body', value], RELEASE_TRAIN_GH_TIMEOUT_MS);
+    if (result.status !== 0) log(`PHANTOM_RELEASE_TRAIN was not set ${value}`);
+  } catch {
+    log(`PHANTOM_RELEASE_TRAIN was not set ${value}`);
+  }
+}
+
+export function pauseReleaseTrainForStop(deps: ReleaseTrainStopDeps = {}): void {
+  const home = deps.home ?? homedir();
+  const gh = deps.gh ?? runReleaseTrainStopGh;
+  const log = deps.log ?? ((line: string) => console.error(line));
+  const dir = join(home, '.ashlr-runs');
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  } catch {
+    log('release autorun pause directory was not created');
+  }
+  try {
+    writeFileSync(autorunOffPath(home), RELEASE_TRAIN_STOP_MARKER, { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') log('release autorun pause file was not written');
+  }
+  const variableWasOn = readReleaseTrainVariableState(gh, log);
+  try {
+    writeFileSync(releaseTrainStopRecordPath(home), `${JSON.stringify({
+      schema: RELEASE_TRAIN_STOP_SCHEMA,
+      at: (deps.now ?? (() => new Date()))().toISOString(),
+      variableWasOn,
+    })}\n`, { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    const recordPath = releaseTrainStopRecordPath(home);
+    let existingRecordIsValid = false;
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      try {
+        const stat = lstatSync(recordPath);
+        existingRecordIsValid = !stat.isSymbolicLink() && stat.isFile()
+          && releaseTrainStopRecord(JSON.parse(readFileSync(recordPath, 'utf8')) as unknown);
+      } catch { /* a missing or invalid record cannot authorize restoration */ }
+    }
+    if (!existingRecordIsValid) {
+      log('release train stop provenance was not recorded');
+    }
+  }
+  setReleaseTrainVariable('off', gh, log);
+}
+
+export function resumeReleaseTrainAfterStop(deps: ReleaseTrainStopDeps = {}): void {
+  const home = deps.home ?? homedir();
+  const gh = deps.gh ?? runReleaseTrainStopGh;
+  const log = deps.log ?? ((line: string) => console.error(line));
+  const recordPath = releaseTrainStopRecordPath(home);
+  if (!existsSync(recordPath)) return;
+
+  let variableWasOn: boolean | null = null;
+  try {
+    const stat = lstatSync(recordPath);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      log('release train stop provenance is not a regular file; leaving it untouched');
+      return;
+    }
+    const record: unknown = JSON.parse(readFileSync(recordPath, 'utf8'));
+    if (releaseTrainStopRecord(record)) variableWasOn = record.variableWasOn;
+    else log('release train stop provenance is invalid; the GitHub variable will not be restored');
+  } catch {
+    log('release train stop provenance could not be read; the GitHub variable will not be restored');
+  }
+
+  const offPath = autorunOffPath(home);
+  try {
+    if (existsSync(offPath)) {
+      const stat = lstatSync(offPath);
+      if (!stat.isSymbolicLink() && stat.isFile() && readFileSync(offPath, 'utf8') === RELEASE_TRAIN_STOP_MARKER) {
+        unlinkSync(offPath);
+      } else {
+        log(`Release train remains held by ${offPath}; delete it if the hold is not intentional.`);
+      }
+    }
+  } catch {
+    log(`Release train OFF file could not be cleared; check ${offPath} manually.`);
+  }
+
+  if (variableWasOn === true) setReleaseTrainVariable('on', gh, log);
+  try {
+    unlinkSync(recordPath);
+  } catch {
+    log('release train stop provenance could not be removed');
+  }
+}
 
 /** Proven absence is inactive. A symlink, odd node, or unreadable path is unknown. */
 export function readSentinel(path: string): KillObservation {

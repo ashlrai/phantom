@@ -27,7 +27,7 @@
  */
 import { execFile, spawnSync } from 'node:child_process';
 import { createHash, createPublicKey, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -38,6 +38,7 @@ import type { GrantScopeEdit } from '../core/authority/grant-scope-types.js';
 import { HUB_REPOSITORY_IDENTITY } from '../core/authority/repository-binding.js';
 import { STANDING_GRANT_PATTERNS } from '../core/authority/types.js';
 import { checkClaudeAuth, renewClaudeToken } from '../core/resources/claude-resignin.js';
+import { pauseReleaseTrainForStop, resumeReleaseTrainAfterStop } from '../core/release/train.js';
 import { resolveBinAbsolute } from '../core/run/engines.js';
 import type { ResidentAdmission, ResidentPlistState } from '../core/authority/resident.js';
 import type { RepoEnforcement } from '../core/fleet/fleet-types.js';
@@ -580,14 +581,12 @@ function drainSummary(r: { quiesced: boolean; liveExecutionLeases: number; drain
  */
 function pauseHostedReleaseTrain(): void {
   if (process.env.VITEST) return;
-  try {
-    const dir = join(homedir(), '.ashlr-runs');
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const off = join(dir, 'RELEASE_AUTORUN_OFF');
-    if (!existsSync(off)) writeFileSync(off, 'release train off\n', { mode: 0o600 });
-  } catch { /* the local kill switch is already the stop */ }
-  const result = spawnSync('gh', ['variable', 'set', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom', '--body', 'off'], { stdio: 'ignore', timeout: 15_000 });
-  if (result.status !== 0) console.error('PHANTOM_RELEASE_TRAIN was not set off');
+  pauseReleaseTrainForStop();
+}
+
+function resumeHostedReleaseTrain(): void {
+  if (process.env.VITEST) return;
+  resumeReleaseTrainAfterStop();
 }
 
 async function cmdStop(parsed: Parsed, deps: AuthorityCliDeps): Promise<number> {
@@ -616,6 +615,7 @@ async function cmdClearStop(deps: AuthorityCliDeps): Promise<number> {
     deps.err(result.reason);
     return 1;
   }
+  resumeHostedReleaseTrain();
   deps.out(result.reason);
   return 0;
 }
