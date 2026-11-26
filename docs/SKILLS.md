@@ -40,7 +40,9 @@ one bounded draft card.
 Each draft lists up to 16 source job IDs and always includes the latest
 qualifying merge for that draft, even when earlier failures fill the list.
 For recurrence, Phantom orders jobs by their latest terminal outcome row in
-the retained ledger. Later bookkeeping rows do not change that order.
+the retained ledger. Exact replays of timestamped terminal rows keep their
+original position and evidence snapshot, including rows dated only by a
+merge or close timestamp. Later bookkeeping rows do not change that order.
 For each resolved job, the learner uses the lane, retries, recuts and
 failure class recorded through that terminal row in ledger order.
 Subsequent execution evidence becomes eligible when a newer terminal row
