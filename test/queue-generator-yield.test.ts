@@ -40,6 +40,17 @@ describe('generator yield', () => {
       { generator: 'drain', jobs: 1, merged: 1, emptyRate: 0, medianDiffLines: 10, tokensPerMergedPr: 100 },
     ]);
   });
+  it.each(['launch', 'batch_claim'])('uses only current-attempt empty evidence after a %s', (event) => {
+    const job = 'FIXUP-X';
+    const firstFinish = row({ job, event: 'finish', empty: true });
+    const dispatch = row({ job, event, batch: 'RQ-BATCH-X' });
+    const receipts = [firstFinish, dispatch, firstFinish];
+    const report = (rows: string[]) => generatorYield(rows.join('\n'), 24, now).generators;
+
+    expect(report(receipts)).toMatchObject([{ generator: 'fixup', jobs: 1, emptyRate: null }]);
+    expect(report([...receipts, row({ job, event: 'finish', empty: false }), dispatch]))
+      .toMatchObject([{ generator: 'fixup', jobs: 1, emptyRate: 0 }]);
+  });
   it('uses terminal timestamps to place reconciled receipts in the report window', () => {
     const report = generatorYield([
       row({ job: 'RQ-DRAIN-1', event: 'publish', outcome: 'MERGED',

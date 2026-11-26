@@ -82,6 +82,8 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   }
   // Late receipts can be appended out of order. Stable sorting preserves
   // ledger order when receipts share a timestamp.
+  let emptyEvidenceAt: number | undefined;
+  const seenEmptyEvidence = new Set<string>();
   for (const { id, at, event, terminal, row: r } of rows.sort((a, b) => a.at - b.at)) {
     const launch = event === 'launch' || event === 'launched';
     if (id.startsWith('RQ-BATCH-')) {
@@ -114,8 +116,19 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
         memberBatches.set(id, batches);
       }
     }
-    if (typeof r.empty === 'boolean') job.empty = r.empty;
-    if (phase?.toLowerCase() === 'empty') job.empty = true;
+    const empty = phase?.toLowerCase() === 'empty' ? true : typeof r.empty === 'boolean' ? r.empty : null;
+    const dispatch = launch || event === 'batch_claim';
+    if (dispatch || empty !== null) {
+      if (at !== emptyEvidenceAt) {
+        seenEmptyEvidence.clear();
+        emptyEvidenceAt = at;
+      }
+      const receipt = JSON.stringify(r);
+      if (!seenEmptyEvidence.has(receipt)) {
+        seenEmptyEvidence.add(receipt);
+        job.empty = empty;
+      }
+    }
     if (pickString(r, PR_KEYS) !== null) job.pr = true;
     if (terminal === 'MERGED') { job.merged = true; job.pr = true; }
     job.diff = count(r.diff_lines) ?? job.diff;
