@@ -41,9 +41,8 @@ const PASS_LINE = /^[\u2713\u2714\u221a]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui
 // The default reporter emits no per-test pass line for a green file; it
 // summarizes the whole module instead:
 //   ✓ |unit| test/example.test.ts (4 tests) 4ms
-// A green module means every test it contains passed on that run -- the
-// finest pass evidence the default reporter produces.
-const FILE_PASS_LINE = /^[✓✔√]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?)\s+\(\d+ tests?(?:\s*\|[^)]*)?\)(?:\s+\d+(?:\.\d+)?m?s)?$/;
+// A summary with skipped or todo cases cannot identify which tests ran.
+const FILE_PASS_LINE = /^[✓✔√]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?)\s+\(([1-9]\d*) tests?(?:\s*\|\s*([1-9]\d*) skipped)?(?:\s*\|\s*([1-9]\d*) todo)?\)(?:\s+\d+(?:\.\d+)?m?s)?$/;
 
 // .github/scripts/ci-source-binding.mjs verifies `git rev-parse HEAD` equals
 // the candidate revision and prints this receipt in every bound CI job:
@@ -2278,12 +2277,15 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   const filePassable = (names: string) => names === SUITE_NAMES || !names.startsWith('(');
   // A suite failure has no per-test pass line to match: the file loading and
   // running at all is what resolves it. The default reporter's green-module
-  // line (`✓ file (N tests)`) is the same evidence at file granularity -- a
-  // green module means every test it contains passed on master.
+  // line can resolve a suite failure if any case ran. For a named
+  // failure, all cases must have run to infer a pass from the summary.
   const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
     if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
-    return FILE_PASS_LINE.exec(line)?.[1] === f.file;
+    const summary = FILE_PASS_LINE.exec(line);
+    if (!summary || summary[1] !== f.file) return false;
+    const unrun = Number(summary[3] ?? 0) + Number(summary[4] ?? 0);
+    return f.names === SUITE_NAMES ? unrun < Number(summary[2]) : unrun === 0;
   }));
   // Bundler-resolution candidates for one normalized repo-relative spec base.
   // Explicit extensions keep TypeScript precedence (.js -> .ts before .tsx,
