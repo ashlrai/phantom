@@ -384,6 +384,7 @@ describe('foldClaimOverrides', () => {
       claim('RQ-B', iso(now - 80_000), { lane_hint: 'codex-personal', lane_override: 'preferred_lane_fallback' }),
       batchClaim('RQ-C', iso(now - 70_000), { lane_hint: 'devin', lane_override: 'batch_session' }),
       batchClaim('RQ-D', iso(now - 60_000), { lane_hint: null, lane_override: 'resource_fit' }),
+      claim('RQ-BATCH-1', iso(now - 60_000)),
       // Out-of-window, future, missing-ts, malformed and non-claim rows never count.
       claim('RQ-E', iso(now - 25 * 3_600_000)),
       claim('RQ-F', iso(now + 3_600_000)),

@@ -99,7 +99,7 @@ export interface UnfedClaims {
   available: boolean;
   /** True when the ledger exceeded the retained tail: counts are a lower bound. */
   truncated: boolean;
-  /** Claim launches in the window (claim + batch_claim events). */
+  /** Job claim events in the window, including batch members. */
   claimed: number;
   /** Of those, launches that left their hinted lane (a lane_override was recorded). */
   overridden: number;
@@ -595,8 +595,9 @@ export function foldMarketOverrides(jsonl: string | null, nowMs: number, windowH
  * lane_override accounting at launch time — the record the dispatcher writes
  * when a claim actually leaves its hinted lane. `overrides` counts market
  * decisions; this counts what launched, including `batch_session` moves a
- * combined session makes after each member's own decision. Claim events, not
- * distinct jobs: a re-launched attempt is another real launch. Timestamps are
+ * combined session makes after each member's own decision. The synthetic
+ * RQ-BATCH-* session claim is excluded because members have their own events.
+ * Each re-launched job attempt counts again. Timestamps are
  * the ledger's ISO strings (parseLedgerTs handles dispatchd's %z offset);
  * rows outside the window, malformed fields and non-claim events are skipped.
  * Null text means the file was absent or unreadable. Counts and lane/reason
@@ -619,7 +620,7 @@ export function foldClaimOverrides(
     try { row = JSON.parse(line); } catch { continue; }
     if (!isRecord(row) || (row.event !== 'claim' && row.event !== 'batch_claim')) continue;
     const job = row.job;
-    if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
+    if (typeof job !== 'string' || job.length === 0 || job.length > 200 || job.startsWith('RQ-BATCH-')) continue;
     const lane = row.lane;
     if (typeof lane !== 'string' || !LANE.test(lane)) continue;
     const at = parseLedgerTs(row.ts);
