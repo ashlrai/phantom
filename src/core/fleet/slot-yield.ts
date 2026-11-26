@@ -7,7 +7,9 @@
  * Counting model: every `launch` row inside the window is one run. A relaunched
  * job id is several runs. `finish` rows pair with the job's earliest unfinished
  * run, `publish` rows with its latest run, and the job's last `outcome` row is
- * credited once, to the run that opened the PR (else the latest run). A merge
+ * credited once, preferring the run that published the outcome's PR URL.
+ * Without a matching URL, credit goes to the latest run with a PR claim
+ * or, failing that, the latest launch. A merge
  * recorded as reverted (`hasRevertEvidence`) is credited as `reverted`, never
  * as a held merge — the same rule the router outcome fold applies.
  *
@@ -401,23 +403,31 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
   const outcomes = new Map<string, { state: string; at: number | null; pr: string | null }>();
   const revertedJobs = new Set<string>();
   const skips = new Map<string, { repo: string; rows: number }>();
-  /** Credit each resolved job once. Safe to repeat. A recorded revert is never a held merge. */
-  const settle = (): Run[] => {
-    for (const [job, { state, at, pr }] of outcomes) {
-      const runs = byJob.get(job)!;
-      const withPr = runs.filter(r => r.prs.size > 0);
-      const run = withPr[withPr.length - 1] ?? runs[runs.length - 1]!;
-      if (state === 'MERGED') {
-        if (revertedJobs.has(job)) run.reverted = true;
-        else {
-          run.merged = true;
-          run.mergedAt = at !== null && at >= run.at && at <= now ? at : null;
-          if (pr !== null) run.mergedPr = pr;
-        }
-      } else if (REVERT_OUTCOMES.has(state)) run.reverted = true;
+  /** Project each outcome once without writing derived credit into the launch ledger. */
+  const settle = (): Run[] => [...byJob.entries()].flatMap(([job, runs]) => {
+    const outcome = outcomes.get(job);
+    if (!outcome) return runs;
+    const { state, at, pr } = outcome;
+    const reverted = REVERT_OUTCOMES.has(state) || (state === 'MERGED' && revertedJobs.has(job));
+    if (state !== 'MERGED' && !reverted) return runs;
+    let latestClaim: Run | undefined;
+    let matchingClaim: Run | undefined;
+    for (const run of runs) {
+      if (run.prs.size > 0) latestClaim = run;
+      if (pr !== null && run.prs.has(pr)) matchingClaim = run;
     }
-    return [...byJob.values()].flat();
-  };
+    const credited = matchingClaim ?? latestClaim ?? runs[runs.length - 1];
+    return runs.map(run => {
+      if (run !== credited) return run;
+      if (reverted) return { ...run, reverted: true };
+      return {
+        ...run,
+        merged: true,
+        mergedAt: at !== null && at >= run.at && at <= now ? at : null,
+        ...(pr === null ? {} : { mergedPr: pr }),
+      };
+    });
+  });
   return {
     add(line: string) {
       let row: Record<string, unknown>;
@@ -473,8 +483,13 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         // A publish row naming a PR url under any spelling is a PR claim; the
         // eventless PUBLISHED spelling carries `prUrl` and no `class` at all.
         const url = firstString(row, URL_KEYS);
-        if (kind === 'pr' || (kind === 'unknown' && url !== null)) run.prs.add(url ?? `pr:${run.prs.size}`);
-        else if (kind === 'empty') {
+        if (kind === 'pr' || (kind === 'unknown' && url !== null)) {
+          // A reconciler may retain the original publish event on an outcome
+          // receipt. Keep any earlier claim instead of assigning it to a retry.
+          const alreadyPublished = RESOLVED_PHASES.has(phase) && url !== null
+            && runs.some(candidate => candidate.prs.has(url));
+          if (!alreadyPublished) run.prs.add(url ?? `pr:${run.prs.size}`);
+        } else if (kind === 'empty') {
           run.empty = true;
           const reason = classifyYieldEmpty([row.empty_reason, row.reason, row.summary].filter(v => typeof v === 'string').join('\n'));
           if (reason !== 'unknown' && run.empty_reason !== 'worker_error') run.empty_reason = reason;
