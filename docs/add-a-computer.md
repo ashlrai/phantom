@@ -73,14 +73,17 @@ would freeze a stale sample. Keep any other flags (`--probe-auth`, `--usage`,
 the session then expires on its own within 30 seconds. If a beat fails — for
 example the session expired — the watch stops and prints the beat's error.
 
-If the session lapses anyway, join again and use the new session number — `beat`
-and `pull` both answer `session-expired` once it lapses, and the error's `fix`
+If the session lapses anyway, join again and use the new session number — `beat`,
+`pull` and the claim verbs (`renew`, `complete`, `release`) all answer
+`session-expired` once it lapses, and the error's `fix`
 prints the rejoin command with this node's last advertised owner and caps
 (`phm nodes` and `phm node status` print the same hint ending in `--watch`, so
-the suggested rejoin also keeps the session live). If
-the node already rejoined under a newer session, the fix names that session and
+the suggested rejoin also keeps the session live). For `beat` and `pull`, if
+the node already rejoined under a newer session the fix names that session and
 the exact `leave` command instead, so you can resume without hunting for the
-number. Omit `--probe-auth` if this node does not need GitHub authentication.
+number; a claim verb names the live session for the re-pull instead, since its
+tokens died with the old one. Omit `--probe-auth` if this node does not need
+GitHub authentication.
 
 ## See it take a job
 

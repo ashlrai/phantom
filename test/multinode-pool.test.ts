@@ -85,7 +85,9 @@ describe('multi-Mac durable fencing witness', () => {
     const fresh = f.run('backup', 'pull', ['--node', 'worker', '--session', String(next)]).result['claim'] as typeof old;
     expect(fresh.token).toBeGreaterThan(old.token);
     const stale = ['--node', 'worker', '--session', String(s), '--job', 'j', '--token', String(old.token), '--leader-token', String(old.leaderToken)];
-    expect(() => f.run('backup', 'complete', stale)).toThrow(/Completion refused/);
+    // The rejoin replaced session s, so the stale complete is refused as a dead
+    // session — session-expired, whose fix names the live session — not lease-lost.
+    expect(() => f.run('backup', 'complete', stale)).toThrow(/no live session/);
     expect(f.beat('primary')).toMatchObject({ active: 'backup', demoted: true });
     expect(f.store.state.jobs[0]!.state).toBe('running');
   });
