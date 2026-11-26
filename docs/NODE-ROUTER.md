@@ -171,7 +171,12 @@ before the lease lapses.
 Every error ends with a fix. A job with no taker is shown by `phm node plan`
 with the reason: no live node in that owner (join one), no node advertising the
 caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,
-then `phm node beat --probe-auth`). A `session-expired` error — from `beat` or
+then `phm node beat --probe-auth`). When live nodes fail for different reasons
+at once, the fix names the nearest unblock rather than the first fence seen: a
+node that already advertises every required cap but lacks `gh` auth earns the
+auth fix even while another node lacks the caps, and a node that declined the
+job keeps the all-declined fix — "no node advertises" is printed only when no
+live in-scope node advertises them all. A `session-expired` error — from `beat` or
 `pull` — means the node's heartbeat lapsed: its `fix` prints the rejoin command,
 carrying the node's last advertised owner scopes, caps and slots while the
 registry still holds the record (placeholders when it does not). If the node
