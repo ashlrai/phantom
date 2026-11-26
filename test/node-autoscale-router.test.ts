@@ -163,4 +163,43 @@ describe('autoscale router scoring', () => {
     expect(fleetRunnable(docs, T0 + 10 * 60_000).codex).toBeNull();
     expect(fleetFootprints(docs).claude!.mem_bytes_max).toBe(900 * MIB);
   });
+
+  it('budgets duplicate snapshots once and honors a newer pressure hold in either input order', () => {
+    const ready = node(mbp());
+    const held = node(mbp({
+      measuredAtMs: T0 + 1_000,
+      mem: { totalBytes: 128 * GIB, freeBytes: null, freePercent: 43, pressureLevel: 2 },
+    }));
+    const input = {
+      costs: [COSTS[0]!], outcomes: {}, nowMs: T0 + 1_000,
+      jobs: Array.from({ length: 50 }, (_, i) => ({ id: `j${i}` })),
+    };
+    const single = planAutoscaleRoutes({ ...input, nodes: [ready] });
+    expect(single.some(p => p.nodeId !== null)).toBe(true);
+    expect(single.some(p => p.nodeId === null)).toBe(true);
+    expect(planAutoscaleRoutes({ ...input, nodes: [ready, structuredClone(ready)] })).toEqual(single);
+    expect(fleetRunnable([ready.doc, ready.doc], input.nowMs)).toEqual(fleetRunnable([ready.doc], input.nowMs));
+
+    for (const nodes of [[ready, held], [held, ready]]) {
+      const plan = planAutoscaleRoutes({ ...input, nodes });
+      expect(plan.every(p => p.nodeId === null && p.rejected?.['node-pressure'] === 1)).toBe(true);
+      expect(fleetRunnable(nodes.map(n => n.doc), input.nowMs)).toEqual(fleetRunnable([held.doc], input.nowMs));
+    }
+  });
+
+  it('reports conflicting same-time capacity as unknown and keeps other nodes eligible', () => {
+    const ready = node(mbp());
+    const held = node(mbp({
+      mem: { totalBytes: 128 * GIB, freeBytes: null, freePercent: 43, pressureLevel: 2 },
+    }));
+    const input = { costs: [COSTS[0]!], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }] };
+    for (const nodes of [[ready, held], [held, ready]]) {
+      expect(planAutoscaleRoutes({ ...input, nodes })[0]).toMatchObject({
+        nodeId: null, rejected: { 'node-capacity-conflict': 1 },
+      });
+      expect(fleetRunnable(nodes.map(n => n.doc), T0).codex).toBeNull();
+      const other = node(mbp8({ node: 'other', sessions: mbp().sessions }));
+      expect(planAutoscaleRoutes({ ...input, nodes: [...nodes, other] })[0]?.nodeId).toBe('other');
+    }
+  });
 });
