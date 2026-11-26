@@ -141,7 +141,7 @@ describe('phm node join --watch', () => {
   });
 
   it('refuses a bad --every as join usage before the store is touched', async () => {
-    for (const args of [['--every'], ['--every', 'abc'], ['--every', '0'], ['--every', '26'], ['--every', '5', '--every', '6']]) {
+    for (const args of [['--every'], ['--every', 'abc'], ['--every', '0'], ['--every', '0.5'], ['--every', '26'], ['--every', '5', '--every', '6']]) {
       const store = new MemoryStore();
       const ac = new AbortController();
       const run = vi.fn(async () => 0);
