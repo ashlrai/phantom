@@ -53,6 +53,10 @@ without a parseable timestamp retain their ledger order.
 Exact replays of timestamped dispatch receipts count once and cannot consume
 a later recut admission. Dispatch receipts without a parseable timestamp
 retain their ledger order.
+Exact replays of timestamped `launch_failed`, `launch_terminal`, and `finish`
+receipts keep their original position. They contribute retry evidence once
+and cannot overwrite a later lane or failure classification. Receipts without
+a parseable timestamp retain their ledger order.
 A recut requires a `ready` recut admission followed by a dispatch attempt
 for the same job before its terminal outcome. Repeated readiness checks
 count once per dispatch. A later defer or skip clears pending readiness.

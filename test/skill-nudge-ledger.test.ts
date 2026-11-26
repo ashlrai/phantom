@@ -355,6 +355,29 @@ describe('skillNudgeJobsFromLedger', () => {
       { id: 'RQ-RETRIED', lane: 'devin', outcome: 'merged', retries: 1, recuts: 1, failureClass: 'quota' },
     ]);
   });
+
+  it('counts only distinct timestamped launch failure retries', () => {
+    const job = 'RQ-RETRY-REPLAY';
+    const retry = (ts: string) => line({ job, event: 'launch_failed', action: 'retry', reason: 'quota', ts });
+    const first = retry('2026-10-28T13:00:00Z');
+    const second = retry('2026-10-28T13:30:00Z');
+    const text = [first, second, first, outcome(job, 'MERGED')].join('\n');
+
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', retries: 2, failureClass: 'quota' },
+    ]);
+  });
+
+  it.each(['finish', 'launch_failed', 'launch_terminal'])('keeps the newer class and lane when a %s receipt replays', event => {
+    const job = 'RQ-CLASS-REPLAY';
+    const earlier = line({ job, event, lane: 'claude', failure_class: 'quota', reason: 'quota', ts: '2026-10-28T13:00:00Z' });
+    const latest = finish(job, { failure_class: 'timeout', ts: '2026-10-28T14:00:00Z' });
+    const text = [earlier, latest, earlier, line({ job, state: 'MERGED' })].join('\n');
+
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', failureClass: 'timeout' },
+    ]);
+  });
 });
 
 describe('syncSkillNudgesFromJobsLedger', () => {
