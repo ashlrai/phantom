@@ -68,8 +68,11 @@ cleared readiness or cancel a newer ready decision. Admissions without a
 parseable timestamp retain their ledger order.
 The learner uses the first identifier-safe classification on a row, skipping
 case-insensitive `unknown` values. A row with no usable classification leaves
-the last observed class intact. Without any observed class, a merge can seed
-a generic draft through a recorded retry or recut.
+the last observed class intact while the lane stays the same. When the
+ledger changes from one known lane to another, the learner clears the
+previous failure class before reading any classification on that row.
+Without a class for the new lane, recorded retries or recuts can still
+seed a generic recovery draft.
 Recovery drafts require an observed lane. A terminal row can supply that
 lane even when it has no event name. The learner takes the first usable
 `lane`, `pool` or `arm` value on an eligible row, skipping case-insensitive

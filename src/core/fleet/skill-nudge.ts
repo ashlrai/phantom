@@ -130,7 +130,8 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 //     decision. Polling the admission gate does not count as execution.
 //   - failureClass: the last identifier-safe classification a finish row
 //     carries (failure_class, then failure_reason, then pool_error) or a
-//     launch_failed/launch_terminal reason. Prose reasons never qualify.
+//     launch_failed/launch_terminal reason, reset when the known lane changes.
+//     Prose reasons never qualify.
 // Anything unresolved stays absent: no outcome means draftSkillNudges skips
 // the row, exactly like an MetricsJob without a terminal outcome.
 
@@ -335,7 +336,9 @@ export function skillNudgeJobsFromLedger(
       for (const key of LEDGER_LANE_KEYS) {
         const value = row[key];
         if (typeof value !== 'string' || !hasKnownLane(value.trim())) continue;
-        evidence.lane = value.trim();
+        const lane = value.trim();
+        if (evidence.lane !== null && evidence.lane !== lane) evidence.failureClass = null;
+        evidence.lane = lane;
         break;
       }
     }
