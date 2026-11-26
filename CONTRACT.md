@@ -3145,10 +3145,10 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `bodyKind?`, `result?: WorkResultOutcome`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `bodyKind?`, `result?: WorkResultOutcome`, `thread?: string`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, id?, inReplyTo?, bodyKind?, result?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, id?, inReplyTo?, bodyKind?, result?, thread?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, a `job` outside the same rule
 (`invalid-job`), a `contains` outside the shared bounded free-text
@@ -3159,11 +3159,11 @@ rule every bus `--contains` read applies (`invalid-contains`), a
 grammar every bus `--channel` read validates (`invalid-channel`), a
 `from`/`excludeFrom` outside the same printable-label bound every bus
 sender filter shares (`invalid-from`/`invalid-exclude-from`), an
-`id`/`inReplyTo`/`bodyKind` outside the same printable-label bound every bus
-`--id`/`--in-reply-to`/`--body-kind` read validates (`invalid-id`/`invalid-in-reply-to`/`invalid-body-kind`),
+`id`/`inReplyTo`/`bodyKind`/`thread` outside the same printable-label bound every bus
+`--id`/`--in-reply-to`/`--body-kind`/`--thread` read validates (`invalid-id`/`invalid-in-reply-to`/`invalid-body-kind`/`invalid-thread`),
 or a `result` outside the `WORK_RESULT_OUTCOMES` vocabulary every bus
 `--result` read validates (`invalid-result`).
-`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `from`, `excludeFrom`, `id`, `inReplyTo`, `bodyKind` and `result` echo the applied
+`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `from`, `excludeFrom`, `id`, `inReplyTo`, `bodyKind`, `result` and `thread` echo the applied
 filters and are absent on an
 unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -3182,7 +3182,9 @@ labels, resolved `fromAgent` (null unregistered), `bodyKind` (the
 `busBodyKind` discriminator — the body's own `kind`, else
 `protocol.kind`, `type` or `schema`), the body's own `inReplyTo` citation verbatim
 (absent when the body cites nothing through that field — never the
-`replyTo` alias), a scrubbed clipped `summary`, optional live
+`replyTo` alias), the body's own v2 `thread` label verbatim through the
+same kind-scoped `busBodyThread` match every bus `--thread` read applies
+(absent when the body is no `note`/`context` or declares none), a scrubbed clipped `summary`, optional live
 `job` feed citation on `jobId` bodies and `pinned` — `true` when a journal
 row's `(id, cursor, receivedAt)` triple matches the live receipt, `false`
 when the journal reads clean but holds no row for the claim (bare-id
@@ -3773,14 +3775,48 @@ no resolved message, a scope-key claim or an unresolvable/unreadable
 lease names no provable outcome and never lists, the same "unknown stays
 out" rule `priority` applies) — `inbox` passes it to `readAgentInbox`'s
 `result` and `wakes` to `readAgentWakes`' `filter.result`, and the
-`threads`/`awaiting`/`blocked` sections, `board`, `channels` and `seats`
-carry no per-item result evidence the digest can prove — the shared
-conversations read's query contract has no outcome field, board post
+`threads`/`awaiting`/`blocked` sections pass it into the one shared
+`readAgentConversations` query's `result` — a thread survives on any
+member message that is a `work.result` receipt reporting that outcome,
+the same whole-thread member match `agents conversations --result`
+applies — while `board`, `channels` and `seats`
+carry no per-item result evidence the digest can prove — board post
 bodies are `{threadId, text}` records and seat handoff records keep no
 per-record body — and stay unfiltered, like they do under `priority`.
 Every count stays the filtered total, the result echoes `result`, and an
 outcome nothing on the bus reports is an honest empty match, never an
 error and never a widened one.
+
+`options.thread` narrows the whole digest to pending items tied to one
+v2 conversation thread label — the same kind-scoped `busBodyThread`
+own-field match every bus read's `--thread` applies (the `thread`
+field a `note`/`context` body carries; every other body kind and a
+note declaring none never matching), validated by the same
+printable-label bound: `next`/`handoffs`/`mailbox` keep envelopes whose
+body carries the label inside the shared pending-work walk and
+`BusMailbox.pendingFor`'s `match` predicate — claimable `work`/`task`
+receipts and `worker-handoff` assignments declare no thread label, so
+those sections come back honestly empty — `claims` keep only message
+claims whose resolved leased envelope's body carries it (the resolved
+message's verbatim `thread`, absent when the body is no `note`/`context`
+or declares none — a claim naming no resolved message, a scope-key
+claim or an unresolvable/unreadable lease names no provable thread and
+never lists, the same "unknown stays out" rule `priority` applies) —
+`inbox` passes it to `readAgentInbox`'s `thread`, `wakes` to
+`readAgentWakes`' `filter.thread` (the resolved referent's label), and
+the `threads`/`awaiting`/`blocked` sections pass it into the one shared
+`readAgentConversations` query's `thread` — a thread survives on any
+member message whose declared conversation bucket equals the label, the
+same whole-thread member match `agents conversations --thread` applies.
+`jobs`/`announced` keep no per-item thread evidence — the feed's citing
+receipts are strict `work.post`/`work.status`/`work.result` bodies that
+carry no `thread` field — `board` post bodies are `{threadId, text}`
+records whose `threadId` is the shared board's own thread namespace,
+never a bus thread label — and `channels`/`seats` carry no per-item
+thread either, so those sections stay unfiltered, like they do under
+`priority`. Every count stays the filtered total, the result echoes
+`thread`, and a label nothing on the bus carries is an honest empty
+match, never an error and never a widened one.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 
@@ -3829,7 +3865,7 @@ carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
 check `thread` gets, and `kind` — `note` or `context`, the v2 conversational
 body kind `postLabelMessage` already exposed, now shared by all three so a
-DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?, bodyKind?}, options?)`
+DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?, bodyKind?, result?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every

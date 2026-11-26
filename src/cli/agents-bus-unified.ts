@@ -63,7 +63,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -514,7 +514,22 @@ conversations --result applies — while board, channels and seats carry no
 per-item result evidence the digest can prove and stay unfiltered; an
 outcome nothing on
 the bus reports is an honest empty match and every count stays the
-filtered total. work next claims the next claimable
+filtered total. --thread on work mine keeps only pending items tied to one
+v2 conversation thread label — the same busBodyThread own-field match
+every bus read's --thread applies, so "what is still pending for me in
+thread T" is one filtered digest: next, handoffs and mailbox keep
+envelopes whose body carries that label (claimable work, task and
+worker-handoff bodies declare none, so those sections are provably
+empty), claims keep only message claims whose resolved leased envelope's
+body carries it (a claim naming no resolved message never lists), inbox
+and wakes pass the value to their own reads' thread filters, and the
+thread sections pass it to the shared conversations read's thread filter
+— a thread survives on any member message whose declared conversation
+bucket equals the label, the same whole-thread member match agents
+conversations --thread applies — while jobs, announced, board, channels
+and seats carry no per-item thread label the digest can prove and stay
+unfiltered; a label nothing on the bus carries is an honest empty match
+and every count stays the filtered total. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -1192,6 +1207,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const inReplyTo = one('--in-reply-to');
       const bodyKind = one('--body-kind');
       const resultOutcome = resultArg();
+      const thread = one('--thread');
       const result = await readBusWorkMineWithSeats(agent,
         { ...options, ...(job === undefined ? {} : { job }),
           ...(contains === undefined ? {} : { contains }),
@@ -1204,7 +1220,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           ...(id === undefined ? {} : { id }),
           ...(inReplyTo === undefined ? {} : { inReplyTo }),
           ...(bodyKind === undefined ? {} : { bodyKind }),
-          ...(resultOutcome === undefined ? {} : { result: resultOutcome }) });
+          ...(resultOutcome === undefined ? {} : { result: resultOutcome }),
+          ...(thread === undefined ? {} : { thread }) });
       if (result.status !== 'ok') {
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;

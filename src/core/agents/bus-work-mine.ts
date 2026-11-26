@@ -30,7 +30,7 @@ import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { busClaimJobRef, listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { agentChannelNameSchema, agentLabels, agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
-import { busBodyKind, busBodyResultOutcome, parseClaimKey, WORK_RESULT_OUTCOMES,
+import { busBodyKind, busBodyResultOutcome, busBodyThread, parseClaimKey, WORK_RESULT_OUTCOMES,
   type WorkResultOutcome } from './bus-v2-schema.js';
 import type { AgentMessageKind } from '../fleet/agent-messages.js';
 import { conversationScope, readAgentConversations, type AgentConversations, type Conversation, type ConversationScope } from '../fleet/agent-conversations.js';
@@ -356,6 +356,40 @@ export interface BusWorkMineOptions {
    * empty match. Every section's count stays the filtered total, never
    * the unfiltered one. */
   result?: WorkResultOutcome;
+  /** Keep only pending items tied to one v2 conversation thread label —
+   * the same `busBodyThread` own-field match every bus read's `--thread`
+   * applies (the `thread` field a `note`/`context` body carries; every
+   * other body kind and a note declaring none never matches), so "what is
+   * still pending for me in thread T" is one filtered digest:
+   * `next`/`handoffs`/`mailbox` keep envelopes whose body the
+   * `busBodyThread` rule accepts — claimable `work`/`task` receipts and
+   * `worker-handoff` assignments carry no thread label, so those
+   * sections come back honestly empty, the same rule `--result` applies
+   * to kinds those bodies never are — `claims` keep only message claims
+   * whose resolved leased envelope's body carries the label (the
+   * resolved message's own `thread`, absent when the body is no
+   * `note`/`context` or declares none — a claim naming no resolved
+   * message names no provable thread and never lists, the same "unknown
+   * stays out" rule `priority`/`channel`/`from`/`id` apply) — `inbox`
+   * passes the value to `readAgentInbox`'s `thread`, `wakes` to
+   * `readAgentWakes`' `filter.thread` (the resolved referent's label),
+   * and the three thread sections pass it into the one shared
+   * `readAgentConversations` query's `thread` (a thread survives on any
+   * member message whose declared conversation bucket equals the label —
+   * the same whole-thread member match `agents conversations --thread`
+   * applies). `jobs`/`announced` keep no per-item thread evidence — the
+   * feed's citing receipts are strict `work.post`/`work.status`/
+   * `work.result` bodies that carry no `thread` field — `board` post
+   * bodies are `{threadId, text}` records whose `threadId` is the shared
+   * board's own thread namespace, never a bus thread label — and
+   * `channels`/`seats` carry no per-item thread either, so those
+   * sections stay unfiltered, the same rule `priority`/`channel` apply
+   * to sections with no per-item band or room. The value takes the same
+   * printable-label bound every bus `--thread` read validates; a label
+   * nothing on the bus carries is an honest empty match, never an error
+   * and never a widened one. Every section's count stays the filtered
+   * total, never the unfiltered one. */
+  thread?: string;
   /** Injectable clock, frozen once so every section reads the same instant. */
   now?: () => number;
 }
@@ -431,6 +465,8 @@ export type BusWorkMineClaimMessage =
       bodyKind: string | null;
       /** The leased body's own `inReplyTo` citation verbatim — the same own-property field every bus read's `--in-reply-to` matches, never the `replyTo` alias; absent when the body cites nothing through that field. */
       inReplyTo?: string;
+      /** The leased body's own v2 `thread` label verbatim — the same kind-scoped `busBodyThread` field every bus read's `--thread` matches; absent when the body is not a `note`/`context` or declares none, so it never matches a thread filter. */
+      thread?: string;
       /** The leased body's own `work.result` outcome verbatim — the same kind-scoped `busBodyResultOutcome` field every bus read's `--result` matches; absent when the body is not a `work.result` or reports no outcome, so it never matches a result filter. */
       resultOutcome?: string;
       /** Scrubbed, single-line body summary, clipped to the digest bound. */
@@ -853,6 +889,8 @@ export type BusWorkMineResult =
       bodyKind?: string;
       /** The result-outcome filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
       result?: WorkResultOutcome;
+      /** The thread-label filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
+      thread?: string;
       claims: BusWorkMineClaims; jobs: BusWorkMineJobs; announced: BusWorkMineAnnounced;
       next: BusWorkMineNext;
       handoffs: BusWorkMineHandoffs; threads: BusWorkMineThreads; awaiting: BusWorkMineAwaiting;
@@ -1107,6 +1145,7 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number,
     ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
     ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
     ...(options.result === undefined ? {} : { result: options.result }),
+    ...(options.thread === undefined ? {} : { thread: options.thread }),
     ...(contains === undefined ? {} : { contains }) },
     { root: options.root, now: () => nowMs });
   if (page.status !== 'ok') return { status: page.status, reason: page.reason };
@@ -1166,7 +1205,7 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
   const match = job === undefined && contains === undefined && since === undefined && before === undefined &&
       priority === undefined && channelPrefix === undefined && fromMatch === undefined && excludeFromMatch === undefined &&
       options.id === undefined && options.inReplyTo === undefined && options.bodyKind === undefined &&
-      options.result === undefined ? undefined
+      options.result === undefined && options.thread === undefined ? undefined
     : (message: BusMailboxPendingMessage) =>
       (job === undefined || busBodyJobMatch(message.envelope.body, job)) &&
       (since === undefined || message.acceptedAt >= since) &&
@@ -1179,6 +1218,7 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
       (options.inReplyTo === undefined || busBodyInReplyToMatch(message.envelope.body, options.inReplyTo)) &&
       (options.bodyKind === undefined || busBodyKind(message.envelope.body) === options.bodyKind) &&
       (options.result === undefined || busBodyResultOutcome(message.envelope.body) === options.result) &&
+      (options.thread === undefined || busBodyThread(message.envelope.body) === options.thread) &&
       (contains === undefined || busReadContainsMatch(message.envelope.body, contains));
   let read: ReturnType<ReturnType<typeof createBusMailbox>['pendingFor']>;
   try {
@@ -1425,11 +1465,16 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
       // reporting that outcome — the same kind-scoped
       // `busBodyResultOutcome` match every bus read's `--result` applies —
       // which no claimable receipt or handoff body ever is, so both
-      // sections come back honestly empty under it.
+      // sections come back honestly empty under it. A thread filter keeps
+      // only envelopes whose body carries that v2 thread label — the same
+      // kind-scoped `busBodyThread` match every bus read's `--thread`
+      // applies — which no claimable receipt or handoff body ever
+      // declares, so both sections come back honestly empty under it too.
       if (options.id !== undefined && envelope.id !== options.id) continue;
       if (options.inReplyTo !== undefined && !busBodyInReplyToMatch(envelope.body, options.inReplyTo)) continue;
       if (options.bodyKind !== undefined && busBodyKind(envelope.body) !== options.bodyKind) continue;
       if (options.result !== undefined && busBodyResultOutcome(envelope.body) !== options.result) continue;
+      if (options.thread !== undefined && busBodyThread(envelope.body) !== options.thread) continue;
       const kind = claimableKind(envelope.body);
       if (kind !== null) {
         nextCandidates.push({
@@ -1618,6 +1663,11 @@ function resolveClaimMessage(id: string, owner: string, journal: BusWorkClaimVie
   const inReplyTo = body !== null && typeof body === 'object' && !Array.isArray(body) &&
     Object.hasOwn(body, 'inReplyTo') && typeof (body as Record<string, unknown>)['inReplyTo'] === 'string'
     ? (body as Record<string, unknown>)['inReplyTo'] as string : undefined;
+  // The body's own v2 thread label, read through the same kind-scoped
+  // `busBodyThread` own-field match every bus read's `--thread` applies —
+  // null when the body is not a `note`/`context` or declares none, so it
+  // never matches a thread filter.
+  const thread = busBodyThread(body);
   // The body's own `work.result` outcome, read through the same
   // kind-scoped `busBodyResultOutcome` own-field match every bus read's
   // `--result` applies — absent when the body is not a `work.result` or
@@ -1633,6 +1683,7 @@ function resolveClaimMessage(id: string, owner: string, journal: BusWorkClaimVie
     fromAgent: registry === undefined ? null : resolveAgent(registry, receipt.envelope.from)?.handle ?? null,
     bodyKind: busBodyKind(body),
     ...(inReplyTo === undefined ? {} : { inReplyTo }),
+    ...(thread === null ? {} : { thread }),
     ...(resultOutcome === null ? {} : { resultOutcome }),
     summary: mineField(busBodySummary(body) ?? busBodyFallbackSummary(body), WORK_MINE_SUMMARY_MAX),
     ...(jobId === undefined ? {} : { job: jobAnnotationFromFeed(feed, jobId) }),
@@ -1902,7 +1953,22 @@ function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
  * reads' channel filters (the wakes read's raw `to` prefix, the inbox
  * read's member-channel rule). `board`, `channels` and `seats` carry no
  * per-item room and stay unfiltered. `channels` is registry context, not
- * pending work, and stays unfiltered under any filter. Counts
+ * pending work, and stays unfiltered under any filter. `options.thread`
+ * applies the thread-label rule every bus read's `--thread` shares across
+ * the sections whose items provably carry a declared conversation bucket:
+ * next/handoffs/mailbox keep envelopes whose body the `busBodyThread`
+ * rule accepts (claimable `work`/`task` receipts and `worker-handoff`
+ * assignments declare no thread label, so those sections come back
+ * honestly empty), claims keep only message claims whose resolved leased
+ * envelope's body carries the label — a claim naming no resolved message
+ * never lists — the three thread sections pass the value into the one
+ * shared `readAgentConversations` query's `thread` (a thread survives on
+ * any member message whose declared bucket equals it), and
+ * wakes/inbox delegate to their own reads' thread filters. `jobs`,
+ * `announced`, `board`, `channels` and `seats` carry no per-item thread
+ * label — the feed's citing receipts keep no `thread` field, board post
+ * `threadId`s are the shared board's own namespace, and seat handoff
+ * records keep no per-record body — and stay unfiltered. Counts
  * stay filtered totals; a section that cannot prove the relation reports
  * its own read state, never a padded match.
  */
@@ -1964,6 +2030,12 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   if (options.result !== undefined && !(WORK_RESULT_OUTCOMES as readonly string[]).includes(options.result)) {
     return { status: 'invalid', reason: 'invalid-result' };
   }
+  // The same printable-label bound every bus `--thread` read validates:
+  // a thread label is 1-128 visible ASCII characters — an unrecognized but
+  // printable value is an honest empty match, never an error.
+  if (options.thread !== undefined && (typeof options.thread !== 'string' || !AGENT_REF.test(options.thread))) {
+    return { status: 'invalid', reason: 'invalid-thread' };
+  }
   const sinceMs = options.since;
   const beforeMs = options.before;
   const channelPrefix = options.channel === undefined ? undefined : `group:${options.channel}:`;
@@ -2007,7 +2079,8 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(options.id === undefined ? {} : { id: options.id }),
       ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
       ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
-      ...(options.result === undefined ? {} : { result: options.result }) },
+      ...(options.result === undefined ? {} : { result: options.result }),
+      ...(options.thread === undefined ? {} : { thread: options.thread }) },
     { root: options.root, now: () => nowMs });
   const scope = conversationScope(agent, registry, identity);
   const threads = threadsSection(conversations, scope, channelPrefix);
@@ -2148,6 +2221,18 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       claims.claims = claims.claims.filter(claim =>
         claim.message?.status === 'resolved' && claim.message.resultOutcome === options.result);
     }
+    if (options.thread !== undefined) {
+      // A claim lists under a thread filter only when its leased
+      // envelope's body carries that v2 thread label — the resolved
+      // message's verbatim `thread`, the same kind-scoped `busBodyThread`
+      // evidence every other section's `--thread` match reports. A claim
+      // naming no resolved message — a scope-key claim, an unresolvable
+      // or unreadable lease — names no provable thread and never lists,
+      // the same "unknown stays out" rule the band and room filters
+      // apply.
+      claims.claims = claims.claims.filter(claim =>
+        claim.message?.status === 'resolved' && claim.message.thread === options.thread);
+    }
   }
 
   const page = readAgentWakes(agent, sinceMs,
@@ -2162,6 +2247,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
       ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
       ...(options.result === undefined ? {} : { result: options.result }),
+      ...(options.thread === undefined ? {} : { thread: options.thread }),
       ...(beforeMs === undefined ? {} : { before: beforeMs }) });
   const wakes: BusWorkMineWakes = page.status === 'ok'
     ? { status: 'ok', agent: page.agent, scope: page.scope, matched: page.matched,
@@ -2197,6 +2283,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
     ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
     ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
     ...(options.result === undefined ? {} : { result: options.result }),
+    ...(options.thread === undefined ? {} : { thread: options.thread }),
     claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board,
     channels };
 }
@@ -2246,7 +2333,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
     (result.id === undefined ? '' : ` id=${result.id}`) +
     (result.inReplyTo === undefined ? '' : ` in-reply-to=${result.inReplyTo}`) +
     (result.bodyKind === undefined ? '' : ` body-kind=${result.bodyKind}`) +
-    (result.result === undefined ? '' : ` result=${result.result}`));
+    (result.result === undefined ? '' : ` result=${result.result}`) +
+    (result.thread === undefined ? '' : ` thread=${result.thread}`));
 
   const claims = result.claims;
   if (claims.status !== 'ok') {
