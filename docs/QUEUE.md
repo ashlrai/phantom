@@ -1302,7 +1302,9 @@ Run `phm queue yield --since 24h --json` to compare generators from the local
 Events in the window are joined by job ID. An explicit `src` takes precedence
 over the job ID pattern; unrecognized sources are `unknown`. The fold uses
 recorded timestamps, with ledger order breaking ties. Late arrivals with
-older timestamps cannot overwrite newer recorded measurements. Merge and
+older timestamps cannot overwrite newer recorded measurements. Jobs and
+generation decisions use the first parseable timestamp in ledger field order.
+Rows without any parseable timestamp count as malformed. Merge and
 close receipts use their parseable `mergedAt` or `closedAt` timestamps when
 available, including when a reconciliation row still carries its original
 publish timestamp. Window placement and merge credit use the first terminal
