@@ -99,6 +99,12 @@ export interface ResidentServiceObservation {
   expectedKeepAwake?: boolean | null;
   /** Why the expected plist could not be computed (config unreadable…); null when it could. */
   problem: string | null;
+  managedRuntime?: {
+    version: string;
+    reason: 'resident-registration-drifted' | null;
+    remedy: string | null;
+    alternateCopies: ReturnType<typeof import('../core/desktop/managed-resident-runtime.js').observeHomebrewDesktopCopies>;
+  };
 }
 
 export type ResidentEffectResult = { ok: true; detail: string } | { ok: false; reason: string };
@@ -226,7 +232,7 @@ async function defaultDeps(): Promise<AuthorityCliDeps> {
 
 type ServiceInstallOptions = import('../core/daemon/service.js').ServiceInstallOptions;
 
-async function residentServiceOptions(): Promise<{ ok: true; opts: ServiceInstallOptions; budgetUsd: number | null } | { ok: false; problem: string }> {
+async function residentServiceOptions(): Promise<{ ok: true; opts: ServiceInstallOptions; budgetUsd: number | null; managedRoot?: string; managedVersion?: string } | { ok: false; problem: string }> {
   const { loadConfigReadOnlyStrict } = await import('../core/config.js');
   const { daemonServiceInstallOptions } = await import('../core/daemon/service-config.js');
   let cfg: ReturnType<typeof loadConfigReadOnlyStrict>;
@@ -239,6 +245,13 @@ async function residentServiceOptions(): Promise<{ ok: true; opts: ServiceInstal
   // parallel) — never carried over from an earlier install, so a budget
   // changed in config reaches the service on the next `resident start`.
   const opts = daemonServiceInstallOptions(cfg, { autostart: true });
+  if (process.platform === 'darwin') {
+    const { inspectManagedResidentRuntime } = await import('../core/desktop/managed-resident-runtime.js');
+    const managed = inspectManagedResidentRuntime();
+    if (managed.state === 'held') return { ok: false, problem: `${managed.reason}: run ${managed.remedy}` };
+    if (managed.state === 'verified') return { ok: true, opts: { ...opts, binPath: managed.launcher }, budgetUsd: opts.budget ?? null,
+      managedRoot: managed.root, managedVersion: managed.version };
+  }
   return { ok: true, opts, budgetUsd: opts.budget ?? null };
 }
 
@@ -265,15 +278,23 @@ const realResidentDeps: ResidentCliDeps = {
     const prepared = await residentServiceOptions();
     const def = generateServiceDefinition(prepared.ok ? prepared.opts : {});
     const installed = readServiceFile(def.filePath);
+    const plist = residentPlistState(installed, prepared.ok ? def.content : null);
+    const version = prepared.ok ? prepared.managedVersion : undefined;
+    const managedRuntime: ResidentServiceObservation['managedRuntime'] = version === undefined ? undefined : {
+      version, reason: plist === 'drifted' ? 'resident-registration-drifted' : null,
+      remedy: plist === 'drifted' ? '~/.local/bin/phm authority resident start' : null,
+      alternateCopies: (await import('../core/desktop/managed-resident-runtime.js')).observeHomebrewDesktopCopies(version),
+    };
     return {
       state,
-      plist: residentPlistState(installed, prepared.ok ? def.content : null),
+      plist,
       plistPath: def.filePath,
       installedBudgetUsd: plistBudgetUsd(installed ?? null),
       expectedBudgetUsd: prepared.ok ? prepared.budgetUsd : null,
       installedKeepAwake: plistKeepAwake(installed ?? null),
       expectedKeepAwake: prepared.ok ? prepared.opts.keepAwake === true : null,
       problem: prepared.ok ? null : prepared.problem,
+      ...(managedRuntime ? { managedRuntime } : {}),
     };
   },
   operatorRefusal: async () => {
@@ -297,6 +318,9 @@ const realResidentDeps: ResidentCliDeps = {
     // command computed or printed earlier counts toward the decision.
     const minted = resident.mintResidentServiceCapability();
     if (!minted.ok) return { ok: false, reason: minted.reason };
+    if (prepared.managedRoot && minted.admission.packageRoot !== prepared.managedRoot) {
+      return { ok: false, reason: 'resident-requires-managed-cli: run ~/.local/bin/phm authority resident start' };
+    }
     const def = service.generateServiceDefinition(prepared.opts);
     const digest = createHash('sha256').update(def.content, 'utf8').digest('hex');
     const grantId = minted.capability.grantId;
@@ -2573,6 +2597,11 @@ async function cmdResidentStatus(parsed: Parsed, deps: AuthorityCliDeps): Promis
   deps.out(`Plist: ${observed.plist}${observed.plist === 'drifted' ? ' — `ashlr authority resident start` regenerates it' : ''} (budget: ${budget})`);
   deps.out(`Awake on AC: installed ${observed.installedKeepAwake === undefined || observed.installedKeepAwake === null ? 'unknown' : observed.installedKeepAwake ? 'on' : 'off'}, config ${observed.expectedKeepAwake === undefined || observed.expectedKeepAwake === null ? 'unknown' : observed.expectedKeepAwake ? 'on' : 'off'}; lid closure and explicit sleep still follow macOS policy.`);
   if (observed.problem) deps.out(`  ${observed.problem}`);
+  if (observed.managedRuntime) {
+    const runtime = observed.managedRuntime;
+    if (runtime.reason) deps.out(`  ${runtime.reason}: run ${runtime.remedy}`);
+    for (const copy of runtime.alternateCopies) deps.out(`  ${copy.reason}: ${copy.path} (${copy.version}). ${copy.remedy}`);
+  }
   return 0;
 }
 

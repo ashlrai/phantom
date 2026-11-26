@@ -501,8 +501,11 @@ fn owned_metadata(path: &Path, directory: bool) -> Result<fs::Metadata, String> 
     Ok(m)
 }
 fn private_dirs(home: &Path) -> Result<PathBuf, String> {
+    ensure_private_dirs(home, &[".ashlr", "updates", "staged"])
+}
+fn ensure_private_dirs(home: &Path, components: &[&str]) -> Result<PathBuf, String> {
     let mut p = home.to_path_buf();
-    for piece in [".ashlr", "updates", "staged"] {
+    for piece in components {
         p.push(piece);
         match fs::DirBuilder::new().mode(0o700).create(&p) {
             Ok(()) => {}
@@ -706,6 +709,27 @@ pub fn remembered_stage(home: &Path) -> Result<Option<String>, String> {
         serde_json::from_slice(&read_private(&path, 1024)?).map_err(|_| held("unsafe-stage"))?;
     need(stage_id(&pointer.stage_id), "unsafe-stage")?;
     Ok(Some(pointer.stage_id))
+}
+
+pub fn publish_status(home: &Path, state: &UpdateState) -> Result<(), String> {
+    let parent = ensure_private_dirs(home, &[".ashlr", "updates"])?;
+    let path = parent.join("native-status.json");
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {
+            owned_metadata(&path, false)?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(held("unsafe-stage")),
+    }
+    let mut value = serde_json::to_value(state).map_err(|_| held("stage-write"))?;
+    value["schema"] = serde_json::json!("desktop.native-update-status.v1");
+    let temporary = parent.join(format!("native-status-{}.tmp", random_id()));
+    let result = write_new(&temporary, value.to_string().as_bytes())
+        .and_then(|_| fs::rename(&temporary, &path).map_err(|_| held("stage-write")));
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 #[derive(Clone, Debug, Deserialize)]
