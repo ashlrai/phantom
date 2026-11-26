@@ -40,6 +40,10 @@ deliberate non-verdicts, not incomplete checks. A completed run that
 instantiated no jobs at all reads the same way when its own conclusion is
 not `success`/`neutral`/`skipped` — the jobless `startup_failure` case has
 no job list to mark incomplete, so the run's conclusion carries it.
+A verified master job with a failure conclusion and no recognizable failure
+also makes master coverage unknown. Passing sibling logs then cannot support
+a flake verdict or mark a baseline fix verified. Recognized failures from
+other verified master logs still contribute evidence.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.
