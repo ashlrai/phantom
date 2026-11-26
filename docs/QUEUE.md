@@ -604,6 +604,17 @@ evidence never suppresses — suppression is advisory and fails open. The
 ledger read is tail-bounded via `--metrics` (default
 `~/.ashlr-runs/metrics/jobs.jsonl`).
 
+Queuegen reads repositories from the verified, effective standing policy.
+Both proposal and merge stages can receive work. An inactive policy or Stop
+parks generation. The Mac launcher currently takes AshlrAI checkout names.
+
+Each active repo receives two P2 freshness jobs per seven-day UTC window.
+The docs job checks documented commands and examples against current code
+and CLI help. The site job checks the configured production deployment and
+records its revision and health, including when no site is configured or
+the evidence is unreadable. The jobs share queuegen's cycle cap. An active
+job carries over into the next window without a duplicate.
+
 The recut loop ([`recut-loop.ts`](../src/core/fleet/recut-loop.ts)) applies
 the same rule to the drop jobs it mints for conflicting fleet PRs: when the
 last two attempts it wrote for one PR on the *same head* all finished empty
