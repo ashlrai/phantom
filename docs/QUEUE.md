@@ -1216,7 +1216,11 @@ fleet-wide total, including the Leader board total, requires a healthy ledger.
 Blocked jobs are the parked ones. Each lane has `blockedReasons`
 (`[{ reason, count }]`, biggest first, e.g. `DEP` or `HOLD`) and `stale`, the
 parked dependency jobs whose gates all show MERGED but were never unparked
-(capped at 50 per run). `totals` carries the same two fields across lanes. The
+(capped at 50 per run). `totals` carries the same two fields across lanes.
+If `ready.tsv` is missing or unreadable, `ready`, `parked` and `stale` are
+`null` and `blockedReasons` is empty, both per lane and fleet-wide. A readable
+file with malformed rows reports counts from the valid rows and marks the
+source as degraded. The
 top-level `sources` (`ready`, `running`, `ledger`: `healthy`, `missing` or
 `degraded`) and plain-words `notes` say which file made a count `null`, so an
 empty queue (zeros, no notes) is never confused with unavailable data
