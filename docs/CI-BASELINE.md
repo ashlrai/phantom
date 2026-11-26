@@ -666,6 +666,9 @@ rerun firing rules are unchanged. In recurring-failure briefs from
 `phm improve discover`, a shared attempt counts once for each recorded
 triggering test. The shared workflow verdict does not count toward any
 test's recurring-failure threshold.
+Discovery counts at most one verdict per repository and workflow run ID
+within the recurrence window. If records for a run disagree on its head,
+test attribution, or verdict, that run provides no per-test evidence.
 `ci-reruns/status.json` contains the last
 maintenance time, per-repository counts (including `recurringFlakes` detected,
 `flakeFixesQueued` appended, `verdictsPending` and `verdictsResolved`), errors

@@ -45,7 +45,7 @@
  *    the backlog addresses owner/name, so evidence recorded against a
  *    different repository never lands on this one.
  *  - Recurring means recorded. A verdict group emits only at
- *    CI_RERUN_FAIL_RECURRING fail verdicts spanning at least two distinct
+ *    CI_RERUN_FAIL_RECURRING distinct run failures spanning at least two distinct
  *    heads inside the journal's own recurrence window
  *    (RECURRING_FLAKE_WINDOW_MS — the same 7 days the flake fold uses), so
  *    one PR's stubborn failure and a single unlucky rerun never queue a
@@ -218,6 +218,7 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
     // Every folded row names the target repo (case-insensitive), so test
     // alone keys a verdict group and the call tally is a single pair.
     const verdicts = new Map<string, VerdictGroup>();
+    const runVerdicts = new Map<number, RerunEntry | null>();
     const attempts = new Map<string, number>();
     let callFailed = 0;
     let callOk = 0;
@@ -234,7 +235,15 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
         }
         continue;
       }
-      if (entry.outcome !== 'verdict' || typeof entry.test !== 'string' || !entry.test) continue;
+      if (entry.outcome !== 'verdict') continue;
+      const prior = runVerdicts.get(entry.runId);
+      if (prior === undefined) runVerdicts.set(entry.runId, entry);
+      else if (prior && (prior.head !== entry.head || prior.test !== entry.test || prior.verdict !== entry.verdict)) {
+        runVerdicts.set(entry.runId, null);
+      }
+    }
+    for (const entry of runVerdicts.values()) {
+      if (!entry || typeof entry.test !== 'string' || !entry.test) continue;
       const group = verdicts.get(entry.test) ?? { test: entry.test, fails: 0, passes: 0, inconclusive: 0, failHeads: new Set<string>(), attempts: 0 };
       if (entry.verdict === 'fail') {
         group.fails += 1;
