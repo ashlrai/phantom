@@ -1340,6 +1340,7 @@
 /test/router-arms-replay.test.ts @masonwyatt23
 /test/router-calibration.test.ts @masonwyatt23
 /test/router-catalog-refresh.test.ts @masonwyatt23
+/test/router-community-seats.test.ts @masonwyatt23
 /test/router-controller-quality-original-8064-797s.test.ts @masonwyatt23
 /test/router-controller-quality.test.ts @masonwyatt23
 /test/router-current-claude-models.test.ts @masonwyatt23
