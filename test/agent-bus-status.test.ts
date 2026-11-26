@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -8,7 +9,7 @@ import { readUnifiedBusStatus, type UnifiedBusStatusOptions } from '../src/core/
 import { announceWork, sendDirectMessage, sendWakeRequest, type UnifiedBusOptions } from '../src/core/agents/bus-unified.js';
 import { writeOwnerChatReceipts, type OwnerChatReceipt } from '../src/core/agents/chat-owner-receipts.js';
 import { acquireCoordination, releaseLiveClaimByOwner } from '../src/core/agents/claim-store.js';
-import { appendBusInbox, BUS_INBOX_MAX_MESSAGES } from '../src/core/fleet/bus-inbox.js';
+import { appendBusInbox, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES } from '../src/core/fleet/bus-inbox.js';
 import { BusBoard } from '../src/core/fleet/bus-board.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import { SharedStore } from '../src/core/fleet/shared-store.js';
@@ -68,6 +69,8 @@ describe('readUnifiedBusStatus', () => {
     expect(status.peerBindings).toEqual({ source: 'missing', peers: 0, active: 0 });
     // A verifiably absent dispatch policy allows no peers or repos: real zeros.
     expect(status.peerDispatchPolicy).toEqual({ source: 'missing', peers: 0, repositories: 0 });
+    // No enrolled callsign can hold admitted peer mail: 0 is proven.
+    expect(status.peerInbox).toEqual({ source: 'missing', pending: 0, truncated: false });
     // A verifiably absent handoff store holds no journals: 0 is the real count.
     expect(status.sessionHandoffs).toEqual({ source: 'missing', journals: 0, open: 0,
       awaitingFailover: 0, unreadable: 0, truncated: false });
@@ -686,6 +689,127 @@ describe('peerDispatchPolicy section', () => {
 
     expect(readUnifiedBusStatus(options).peerDispatchPolicy)
       .toEqual({ source: 'unavailable', peers: null, repositories: null });
+  });
+});
+
+describe('peerInbox section', () => {
+  const NOW = 1_800_000_000_000, HOUR = 3_600_000;
+  const agentnetDir = (options: UnifiedBusStatusOptions) => join(dirname(options.root!), 'agentnet');
+  const bindingsFile = (options: UnifiedBusStatusOptions) => join(agentnetDir(options), 'bindings.json');
+  const binding = (n: number, expiresAt: number) => ({ callsign: `agent${n}`, lane: `lane-${n}`,
+    sessionId: `session-${n}`, sessionHash: n.toString(16).padStart(64, 'a'),
+    expiresAt, teamId: 'TTEAM', userId: `UAGENT${n}`, botId: `BAGENT${n}`, topic: 'mesh' });
+  const writeBindings = (options: UnifiedBusStatusOptions, peers: unknown[]) => {
+    options.agentnetBindings = bindingsFile(options);
+    mkdirSync(agentnetDir(options), { recursive: true, mode: 0o700 });
+    writeFileSync(bindingsFile(options), JSON.stringify({ version: 1, peers }), { mode: 0o600 });
+  };
+  const peerId = (n: number) => `peer-123e4567-e89b-42d3-a456-4266141740${String(n).padStart(2, '0')}`;
+  const peerEnvelope = (id: string, to: string) => ({ id, from: 'agent0', to, priority: 'P2', ttl: 86_400_000,
+    body: { kind: 'peer.message', peer: { fromAgent: 'agent0', toAgent: to, kind: 'query',
+      text: 'ping', refs: [], threadId: id, origin: id, hopCount: 1 } } });
+  /** Post a peer-shaped envelope and return the stored original plus the
+   * digest `sendPeerMessage` would have written into the coordination
+   * ledger for it — the two halves of the ledger admission proof. */
+  const postPeerMail = (options: UnifiedBusStatusOptions, id: string, to: string, at = NOW) => {
+    expect(appendBusInbox(peerEnvelope(id, to), { root: options.root, now: () => at }).status).toBe('posted');
+    const page = listBusInboxAfter(0, 100, { root: options.root, now: () => at, includeOriginalEnvelope: true });
+    const original = page.status === 'ok' ? page.messages.find(m => m.envelope.id === id)?.originalEnvelope : undefined;
+    if (original === undefined) throw new Error('fixture envelope missing');
+    return { original, digest: createHash('sha256').update(JSON.stringify(original)).digest('hex') };
+  };
+  const writeLedger = (options: UnifiedBusStatusOptions, rows: unknown[]) => {
+    const dir = join(options.root!, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'coordination.json'), JSON.stringify(rows), { mode: 0o600 });
+  };
+  const ledgerRow = (id: string, target: string, at: number, digest: string) => ({
+    id, fromAgent: 'agent0', target, origin: id, digest, hopCount: 1, threadId: 'thread', at });
+
+  it('counts only mail the admission proofs accept for live-enrolled callsigns', () => {
+    const options = setup(NOW);
+    // agent0's binding expired: nothing it was sent can be read back now.
+    writeBindings(options, [binding(0, NOW - 1), binding(1, NOW + 60_000)]);
+    const admitted = postPeerMail(options, peerId(1), 'agent1');
+    const dead = postPeerMail(options, peerId(2), 'agent0');
+    const stranger = postPeerMail(options, peerId(3), 'agent9');
+    // Same peer shape but no ledger row: unproven mail never counts.
+    appendBusInbox(peerEnvelope(peerId(4), 'agent1'), { root: options.root, now: () => NOW });
+    const stale = postPeerMail(options, peerId(5), 'agent1', NOW - 25 * HOUR);
+    const forged = postPeerMail(options, peerId(6), 'agent1');
+    writeLedger(options, [
+      ledgerRow(admitted.original.id, 'agent1', NOW, admitted.digest),
+      ledgerRow(dead.original.id, 'agent0', NOW, dead.digest),
+      ledgerRow(stranger.original.id, 'agent9', NOW, stranger.digest),
+      ledgerRow(stale.original.id, 'agent1', NOW - 25 * HOUR, stale.digest),
+      // Right id, target and instant but a digest the stored body cannot match.
+      ledgerRow(forged.original.id, 'agent1', NOW, 'a'.repeat(64)),
+    ]);
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.peerInbox).toEqual({ source: 'available', pending: 1, truncated: false });
+    // The rest of the probe is untouched: the ledger itself still reports live rows.
+    expect(status.peerLedger).toEqual({ source: 'available', liveRows: 4 });
+  });
+
+  it('counts journal-proven work.result replies addressed to live callsigns', () => {
+    const options = setup(NOW);
+    writeBindings(options, [binding(1, NOW + 60_000)]);
+    const receiptId = `pw-${'a'.repeat(32)}`;
+    const body = { kind: 'work.result', jobId: 'RQ-PEER-1', claimKey: 'repo:ashlrai/phantom',
+      queueId: `peer-work-${'b'.repeat(32)}`, receiptId, outcome: 'complete' };
+    expect(appendBusInbox({ id: `${receiptId}-complete`, from: 'agent0', to: 'agent1', priority: 'P2',
+      ttl: 86_400_000, body }, { root: options.root, now: () => NOW }).status).toBe('posted');
+    const dir = join(options.root!, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'work-dispatch.json'), JSON.stringify({ version: 1, receipts: [{
+      ...body, peer: 'agent1', consumer: 'agent0', digest: 'c'.repeat(64), at: NOW,
+      sent: 'complete', outcome: 'complete' }] }), { mode: 0o600 });
+
+    expect(readUnifiedBusStatus(options).peerInbox).toEqual({ source: 'available', pending: 1, truncated: false });
+  });
+
+  it('reports verified-empty peer planes without touching the bus store', () => {
+    // Enrolled but every session expired: no callsign can authenticate, so 0 is proven.
+    const expired = setup(NOW);
+    writeBindings(expired, [binding(1, NOW - 1)]);
+    expect(readUnifiedBusStatus(expired).peerInbox).toEqual({ source: 'available', pending: 0, truncated: false });
+    // Enrolled with a live session but no bus store: no retained mail exists.
+    const empty = setup(NOW);
+    writeBindings(empty, [binding(1, NOW + 60_000)]);
+    expect(readUnifiedBusStatus(empty).peerInbox).toEqual({ source: 'missing', pending: 0, truncated: false });
+  });
+
+  it('degrades only the peerInbox section when an admission input cannot be read', () => {
+    const corruptBindings = setup(NOW);
+    writeBindings(corruptBindings, [binding(1, NOW + 60_000)]);
+    writeFileSync(bindingsFile(corruptBindings), '{not json', { mode: 0o600 });
+    expect(readUnifiedBusStatus(corruptBindings).peerInbox)
+      .toEqual({ source: 'unavailable', pending: null, truncated: null });
+
+    const corruptLedger = setup(NOW);
+    writeBindings(corruptLedger, [binding(1, NOW + 60_000)]);
+    postPeerMail(corruptLedger, peerId(1), 'agent1');
+    mkdirSync(join(corruptLedger.root!, 'agentnet'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(corruptLedger.root!, 'agentnet', 'coordination.json'), '{not json', { mode: 0o600 });
+    expect(readUnifiedBusStatus(corruptLedger).peerInbox)
+      .toEqual({ source: 'unavailable', pending: null, truncated: null });
+
+    const corruptJournal = setup(NOW);
+    writeBindings(corruptJournal, [binding(1, NOW + 60_000)]);
+    postPeerMail(corruptJournal, peerId(1), 'agent1');
+    mkdirSync(join(corruptJournal.root!, 'agentnet'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(corruptJournal.root!, 'agentnet', 'work-dispatch.json'), '{not json', { mode: 0o600 });
+    expect(readUnifiedBusStatus(corruptJournal).peerInbox)
+      .toEqual({ source: 'unavailable', pending: null, truncated: null });
+
+    const corruptStore = setup(NOW);
+    writeBindings(corruptStore, [binding(1, NOW + 60_000)]);
+    postPeerMail(corruptStore, peerId(1), 'agent1');
+    writeFileSync(join(corruptStore.root!, 'bus-inbox', 'messages.json'), '{not json', { mode: 0o600 });
+    const status = readUnifiedBusStatus(corruptStore);
+    expect(status.peerInbox).toEqual({ source: 'unavailable', pending: null, truncated: null });
+    expect(status.store.source).toBe('unavailable');
   });
 });
 

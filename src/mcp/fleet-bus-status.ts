@@ -11,7 +11,9 @@
  * projection, legacy mailbox, owner-chat receipts ledger, shared task
  * board and fleet queue, bot-seat store, peer work-dispatch journal, peer
  * coordination ledger, the agentnet peer session bindings and dispatch
- * policy every `peers` verb authenticates and gates against, the
+ * policy every `peers` verb authenticates and gates against, the pending
+ * peer-mail backlog `peers read` would return for live-enrolled
+ * callsigns, the
  * session-handoff journal store behind
  * `phm checkpoint handoff list|show` and `fleet_session_handoffs`, and the
  * outbound send gate (`sendGate.state`

@@ -13,7 +13,8 @@
  * `peers dispatch` and `phm fleet peer-ledger` parse, the agentnet peer
  * session bindings `peers send|post|read|list|dispatch` authenticate
  * against and the host-provisioned dispatch policy `consumePeerWork`
- * requires, the session-handoff
+ * requires, the pending peer-mail backlog `peers read` would return for
+ * this host's live-enrolled callsigns, the session-handoff
  * journal store `phm checkpoint handoff list|show` and
  * `fleet_session_handoffs` read, the claim-store
  * drift verdict comparing the claim journal with the coordination table it
@@ -23,9 +24,12 @@
  * unavailable or null, never zero, and the whole read never throws. Read-only:
  * takes no writer lock, writes nothing, makes no network calls and grants
  * nothing. */
+import { createHash } from 'node:crypto';
+import { lstatSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
-import { inspectBusInbox, busPathMissing, type BusInboxInspection } from '../fleet/bus-inbox.js';
+import { inspectBusInbox, busPathMissing, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
+  type BusInboxInspection, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { readClaimStoreDrift } from '../fleet/claim-store-drift.js';
 import { createBusMailbox } from '../fleet/bus-mailbox.js';
@@ -41,10 +45,10 @@ import { readAgentRegistry } from './bus-identity.js';
 import { inspectSeatStore } from '../bots/seats.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { ownerChatRoot, ownerReceiptDir, readOwnerChatReceipts } from './chat-owner-receipts.js';
-import { readWorkDispatchJournal } from '../agentnet/work-dispatch-journal.js';
+import { readWorkDispatchJournal, workDispatchResultBody } from '../agentnet/work-dispatch-journal.js';
 import { inspectPeerDispatchPolicy } from '../agentnet/work-dispatch.js';
-import { readPeerLedger } from '../agentnet/peer-ledger.js';
-import { inspectPeerBindings } from '../agentnet/slack-identities.js';
+import { readPeerLedger, readPeerLedgerRows, type PeerLedgerRow } from '../agentnet/peer-ledger.js';
+import { inspectPeerBindings, readPeerBindings } from '../agentnet/slack-identities.js';
 import { listSessionHandoffs } from './session-handoff.js';
 import { handoffPressure } from './session-handoff-schema.js';
 import { probePauseState } from '../comms/pause.js';
@@ -306,6 +310,35 @@ export interface UnifiedBusStatus {
     /** Repository capability rows the policy carries; same null rule. */
     repositories: number | null;
   };
+  /** Pending peer mail the `peers read` admission proofs accept for this
+   * host's live-enrolled callsigns — the one peer-inbox signal the probe
+   * used to leave unreported, so an agent can tell admitted peer mail is
+   * waiting without holding a session. The count applies `readPeerInbox`'s
+   * own rules fleet-wide instead of per session: a retained bus envelope
+   * counts when a live coordination-ledger row proves this host sent it to
+   * an enrolled callsign (id, target, send instant, 24h window and body
+   * digest all matching, exactly as the sessioned read requires) or when
+   * the private dispatch journal proves this host published that
+   * work.result outcome to the addressed callsign. It reads the same
+   * stores under the same roots the peer verbs resolve — the bindings
+   * file at `peerBindingsPath`, the ledger, journal and bus store under
+   * `agentnetBusRoot` — so a corrupt file is named here instead of leaving
+   * status green while `peers read` refuses or silently drops admitted
+   * mail. Counts only, never callsigns, digests, threads or bodies;
+   * `pending` is exact inside the bounded scan `truncated` flags — 0 on a
+   * verified-empty peer plane or bus store, null when any admission input
+   * cannot be read (an unreadable journal leaves work.result mail
+   * unprovable, so the total is unknown rather than a ledger-only
+   * undercount). */
+  peerInbox: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Bus envelopes the peer admission proofs accept for a live-enrolled
+     * callsign; same null rule as the other pending counts. */
+    pending: number | null;
+    /** The bounded bus scan did not cover every retained receipt, so
+     * `pending` is a floor; null when the store state is unknown. */
+    truncated: boolean | null;
+  };
   /** Session-handoff journal store (`<runsRoot>/handoffs/*.jsonl`) behind
    * `phm checkpoint handoff list|show` and `fleet_session_handoffs` — read
    * by `listSessionHandoffs`,
@@ -408,6 +441,90 @@ function probeBusBoard(options: UnifiedBusStatusOptions): UnifiedBusStatus['boar
   }
   return { source: 'available', threads: summary.threads, tasks: summary.tasks,
     pendingDeliveries: summary.pendingDeliveries, claims };
+}
+
+const PEER_INBOX_LIVE_MS = 86_400_000;
+const PEER_WORK_RESULT_ID = /^(pw-[a-f0-9]{32})-(reserved|admitted|complete|failed)$/;
+
+/** Count the bus envelopes `readPeerInbox`'s admission proofs accept for
+ * every live-enrolled callsign at once — the sessioned read's per-peer
+ * filter evaluated fleet-wide. Ledger rows prove peer sends; dispatch
+ * journal receipts prove work.result replies. Anything either proof
+ * cannot verify stays uncounted, matching the sessioned read's own
+ * conservative admission. */
+function probePeerInbox(input: {
+  busRoot: string | undefined; bindingsPath: string | undefined; now: () => number;
+}): UnifiedBusStatus['peerInbox'] {
+  const unavailable: UnifiedBusStatus['peerInbox'] = { source: 'unavailable', pending: null, truncated: null };
+  if (input.busRoot === undefined || input.bindingsPath === undefined) return unavailable;
+  const nowMs = input.now();
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) return unavailable;
+  let enrolled: 'missing' | 'available';
+  try { lstatSync(input.bindingsPath); enrolled = 'available'; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') enrolled = 'missing';
+    else return unavailable;
+  }
+  const callsigns = new Set<string>();
+  if (enrolled === 'available') {
+    try {
+      for (const peer of readPeerBindings(input.bindingsPath)) {
+        if (peer.expiresAt > nowMs) callsigns.add(peer.callsign);
+      }
+    } catch { return unavailable; }
+  }
+  // No live-enrolled callsign can hold admitted mail: 0 is proven without
+  // touching the bus store, ledger or journal.
+  if (callsigns.size === 0) {
+    return { source: enrolled === 'missing' ? 'missing' : 'available', pending: 0, truncated: false };
+  }
+  const store = inspectBusInbox({ root: input.busRoot, now: input.now });
+  if (store.source === 'missing') return { source: 'missing', pending: 0, truncated: false };
+  if (store.source !== 'available') return unavailable;
+  const ledger = readPeerLedgerRows({ busRoot: input.busRoot });
+  if (ledger.status === 'unavailable') return unavailable;
+  const journal = readWorkDispatchJournal(input.busRoot);
+  // work.result replies admit only on journal proof; an unreadable journal
+  // leaves that half of the count unprovable, so the total is unknown.
+  if (journal.status === 'unavailable') return unavailable;
+  const dispatched = new Map(journal.receipts.map(receipt => [receipt.receiptId, receipt]));
+  const admittedRows = new Map<string, PeerLedgerRow[]>();
+  for (const row of ledger.rows) {
+    if (!callsigns.has(row.target) || row.at > nowMs || nowMs - row.at >= PEER_INBOX_LIVE_MS) continue;
+    const list = admittedRows.get(row.id);
+    if (list) list.push(row); else admittedRows.set(row.id, [row]);
+  }
+  const workResultAdmitted = (original: NonNullable<BusInboxReceipt['originalEnvelope']>): boolean => {
+    if (!callsigns.has(original.to)) return false;
+    const match = PEER_WORK_RESULT_ID.exec(original.id);
+    if (!match) return false;
+    const receipt = dispatched.get(match[1]!);
+    return receipt !== undefined && receipt.peer === original.to && receipt.sent === match[2] &&
+      receipt.outcome === match[2] && original.from === receipt.consumer &&
+      JSON.stringify(original.body) === JSON.stringify(workDispatchResultBody(receipt));
+  };
+  let pending = 0, truncated = false, after = 0;
+  const maxPages = Math.ceil(BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ);
+  for (let page = 0; page < maxPages; page++) {
+    const result = listBusInboxAfter(after, BUS_INBOX_MAX_READ,
+      { root: input.busRoot, now: input.now, includeOriginalEnvelope: true });
+    if (result.status !== 'ok') {
+      if (page === 0) return unavailable;
+      truncated = true; break;
+    }
+    for (const receipt of result.messages) {
+      const original = receipt.originalEnvelope;
+      if (original === undefined) continue;
+      const ledgerHit = (admittedRows.get(original.id) ?? []).some(row =>
+        receipt.receivedAt === row.at &&
+        row.digest === createHash('sha256').update(JSON.stringify(original)).digest('hex'));
+      if (ledgerHit || workResultAdmitted(original)) pending++;
+    }
+    after = result.nextCursor;
+    if (result.messages.length < BUS_INBOX_MAX_READ) break;
+    if (page === maxPages - 1) truncated = true;
+  }
+  return { source: 'available', pending, truncated };
 }
 
 /** Compose the dependency reads. Each probe is isolated: one failing
@@ -628,6 +745,13 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     }
   }
 
+  let peerInbox: UnifiedBusStatus['peerInbox'];
+  try {
+    peerInbox = probePeerInbox({ busRoot: agentnetBusRoot, bindingsPath: peerBindingsPath, now });
+  } catch {
+    peerInbox = { source: 'unavailable', pending: null, truncated: null };
+  }
+
   // `phm checkpoint handoff list|show` and `fleet_session_handoffs` both
   // serve `listSessionHandoffs` over `<runsRoot>/handoffs` — the same
   // bounded scan under the same runs root the wake probe resolves
@@ -689,5 +813,5 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     kill, pause,
   };
 
-  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, sessionHandoffs, sendGate };
+  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, peerInbox, sessionHandoffs, sendGate };
 }

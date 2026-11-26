@@ -4412,7 +4412,7 @@ and bound, each bracket naming `#<channel>:<topic>`. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the sixteen dependencies the unified verbs touch — the
+read-only probe over the seventeen dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -4476,7 +4476,19 @@ dispatch --apply` — `inspectPeerDispatchPolicy`, validated by the same
 `policySchema` the consumer enforces; `source` plus `peers` and
 `repositories` counts, 'missing' a verified-unprovisioned policy with real
 zeros, null when the file cannot be read or validated, never peer
-callsigns, repository names, tier ceilings or path grants), the
+callsigns, repository names, tier ceilings or path grants), the pending
+peer-mail backlog `phm agentnet peers read` would return for this host's
+live-enrolled callsigns (`probePeerInbox` — `readPeerBindings` filtered to
+unexpired sessions at the resolved bindings path, `readPeerLedgerRows` over
+`<busRoot>/agentnet/coordination.json`, `readWorkDispatchJournal` over
+`<busRoot>/agentnet/work-dispatch.json` and a bounded `listBusInboxAfter`
+scan, all under the same `agentnetBusRoot` the peer verbs resolve; a
+retained envelope counts when a live ledger row satisfies the sessioned
+read's id/target/instant/24h-window/digest proof or the journal proves the
+work.result outcome to the addressed callsign — `source` plus `pending`
+and a `truncated` flag for a partial scan; 0 on a verified-empty peer
+plane or bus store, null when any admission input cannot be read, never
+callsigns, digests, threads or bodies), the
 session-handoff journal store (`listSessionHandoffs` over
 `<runsRoot>/handoffs` under the same runs root the wake probe resolves —
 `options.runsRoot`, else `ASHLR_RUNS_DIR` or `~/.ashlr-runs` — the read

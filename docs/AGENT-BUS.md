@@ -1605,7 +1605,7 @@ held work, and every other store state keeps its own status. Exit 0 on
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the sixteen
+**Status.** `phm agents bus status [--json]` is a read-only probe of the seventeen
 dependencies every verb above touches plus the outbound send gate every
 write verb passes through: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
@@ -1677,7 +1677,20 @@ derives — that `phm agentnet peers dispatch --apply` requires (read by
 consumer enforces; `source` plus `peers` and `repositories` counts;
 'missing' is a verified-unprovisioned policy with real zeros, null when
 the file cannot be read or validated, never peer callsigns, repository
-names, tier ceilings or path grants), the session-handoff journal store
+names, tier ceilings or path grants), the pending peer-mail backlog
+`phm agentnet peers read` would return for this host's live-enrolled
+callsigns — the peer inbox's own admission proofs applied fleet-wide
+instead of per session: a retained bus envelope counts when a live
+coordination-ledger row proves this host sent it to an enrolled callsign
+(id, target, send instant, 24h window and body digest all matching, the
+same checks `readPeerInbox` runs) or when the private dispatch journal
+proves this host published that work.result outcome to the addressed
+callsign (`source` plus a `pending` count and a `truncated` flag for a
+partial bounded scan; 0 on a verified-empty peer plane or bus store, null
+when bindings, ledger, journal or bus store cannot be read — an
+unreadable journal leaves work.result mail unprovable, so the total is
+unknown rather than a ledger-only undercount, never callsigns, digests,
+threads or bodies), the session-handoff journal store
 `<runsRoot>/handoffs` that `phm checkpoint handoff list|show` and
 `fleet_session_handoffs` read through the same `listSessionHandoffs`
 bounded scan under the same runs root the wake probe resolves
