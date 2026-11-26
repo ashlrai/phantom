@@ -223,6 +223,21 @@ describe('CI baseline evidence', () => {
     expect(report.master.known).toBe(false);
     expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
   });
+  it.each([true, false])('withholds master coverage on an unclassified failed job (passing sibling: %s)', async pass => {
+    const { gh } = github({ count: pass ? 1 : 2, pass, extraMasterJob: 'failure' });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      if (args[1]?.endsWith('/jobs/30/logs')) {
+        return { ok: true, stdout: `/usr/bin/git log -1 --format=%H\n${master}\n${fixture('unknown')}`, stderr: '' };
+      }
+      return gh(args);
+    });
+    expect(report.master.known).toBe(false);
+    expect(report.freshness).toHaveLength(pass ? 1 : 2);
+    expect(report.freshness.every(pr => pr.state === 'fresh')).toBe(true);
+    expect(report.groups[0]).toMatchObject(pass
+      ? { classification: 'unknown', action: 'unknown', master: 'unknown' }
+      : { classification: 'shared-baseline', master: 'fail' });
+  });
   it('reads a jobless run that did not succeed as incomplete evidence', async () => {
     for (const conclusion of ['startup_failure', 'cancelled', 'timed_out', 'action_required', 'stale', 'failure']) {
       const report = await analyzeCiBaseline('owner/repo', github({ noJobs: true, runConclusion: conclusion }).gh);
