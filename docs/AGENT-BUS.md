@@ -2470,7 +2470,11 @@ take the same identity-label rule every bus read's sender filter applies —
 the literal ref plus every label of the identity it resolves to, exact-label
 matching kept on an unresolvable ref or unreadable registry — and they compose
 with each other and with the window. `--root <absolute>` reads a non-default
-fleet store like the other fleet bus reads. Provider labels come from sender metadata observed on
+fleet store like the other fleet bus reads. `fleet_agent_edges` (the isolated
+fleet MCP tool) serves the same `readFleetEdges` projection with the same
+`windowMinutes`/`from`/`to` arguments — every other key refused and no caller
+root, path or working directory accepted, the bus store and registry roots
+staying server-owned. Provider labels come from sender metadata observed on
 the filtered receipts — a provider proven only by traffic the filters exclude
 stays `null` (unknown), the same bound the window applies. A missing or conflicting provider is `null` (unknown). Labels
 are not authenticated identities. Broadcasts to `leaders`, human/external
