@@ -27,8 +27,11 @@ Arm lookup skips blank values and
 case-insensitive `unknown` placeholders, so a later alias or a recorded
 reward pool can supply the arm. Jobs with no usable arm and jobs with
 conflicting claim lanes alone use the `unknown` arm. Conflicting known
-launch and reward arms still cause an error. Claim timestamps provide no execution timing. Batch
-session wrappers and node-pool telemetry are excluded. Lifecycle receipts
+launch and reward arms still cause an error. Claim timestamps provide no execution timing.
+Calibration withholds elapsed wall time inferred from launch and finish when
+a batch claim for the same job falls at or between those timestamps or has
+no usable timestamp. Explicit wall-time measurements remain eligible.
+Batch session wrappers and node-pool telemetry are excluded. Lifecycle receipts
 explicitly marked `launched: false`, such as admission-time `DONE-NOOP`
 outcomes, contribute no jobs, verdicts or measurements. A ledger containing
 only these recognized receipts yields an empty calibration sample.
