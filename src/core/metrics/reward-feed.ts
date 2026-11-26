@@ -178,7 +178,12 @@ function standingReverted(
   return claimants?.size === 1 && claimants.has(id);
 }
 
-interface DispatchMark { ms: number; lane: string | null; repo: string | null }
+interface DispatchMark {
+  ms: number;
+  lane: string | null;
+  /** null means conflicting evidence, undefined means no repository was observed. */
+  repo: string | null | undefined;
+}
 
 interface ResolutionMark {
   atMs: number;
@@ -350,7 +355,7 @@ export function foldJobsLedgerRewards(
       if (dispatch) acc.dispatchUndated = true;
       if (ciBoundary) acc.ciBoundaryUndated = true;
     } else if (dispatch) {
-      acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row, prKeys) ?? null });
+      acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row, prKeys) });
       if (name === 'batch_claim') acc.batchClaims.add(at);
     } else if (ciBoundary) {
       noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at, prKeys, repoOf(row, prKeys));
@@ -388,11 +393,11 @@ export function foldJobsLedgerRewards(
 }
 
 /** Latest dispatch at or before the outcome, regardless of ledger row order. */
-function dispatchBefore(acc: RewardJobAccum, boundMs: number): DispatchMark | null {
+function dispatchBefore(acc: RewardJobAccum, boundMs: number) {
   if (acc.dispatchUndated) return null;
   let latestMs: number | null = null;
   const lanes = new Set<string>();
-  const repos = new Set<string>();
+  const repos = new Set<string | null>();
   for (const dispatch of acc.dispatches) {
     if (dispatch.ms > boundMs || (latestMs !== null && dispatch.ms < latestMs)) continue;
     if (dispatch.ms !== latestMs) {
@@ -401,14 +406,14 @@ function dispatchBefore(acc: RewardJobAccum, boundMs: number): DispatchMark | nu
       repos.clear();
     }
     if (dispatch.lane !== null) lanes.add(dispatch.lane);
-    if (dispatch.repo !== null) repos.add(dispatch.repo);
+    if (dispatch.repo !== undefined) repos.add(dispatch.repo);
   }
   // The dispatcher stamps receipts to the second. Conflicting lanes at the
   // same timestamp cannot prove which pool earned the reward.
   return latestMs === null ? null : {
     ms: latestMs,
     lane: lanes.size === 1 ? [...lanes][0]! : null,
-    repo: repos.size === 1 ? [...repos][0]! : null,
+    repo: repos.size === 1 ? [...repos][0] ?? null : null,
   };
 }
 
