@@ -175,6 +175,33 @@ describe('lanes read: starved object', () => {
     expect(snap.starved.open_rows).toBe(ready === null ? null : 0);
   });
 
+  it.each([
+    { label: 'a reassigned job', attrs: 'tier=work, preferred_lane=claude', claudeReady: 1, devinReady: 0, open: 0 },
+    { label: 'an open job', attrs: 'tier=work', claudeReady: 0, devinReady: 0, open: 1 },
+    { label: 'an unreadable envelope file', attrs: null, claudeReady: null, devinReady: null, open: null },
+  ])('uses envelope evidence for starvation with $label', async ({ attrs, claudeReady, devinReady, open }) => {
+    const root = await scratch();
+    const queueDir = join(root, 'queue');
+    await mkdir(queueDir);
+    await writeFile(join(queueDir, 'ready.tsv'), 'RQ-ENVELOPE\tphantom\tdevin\twork\tprompts/job.md\n');
+    const routerPath = join(queueDir, 'router-queue.md');
+    if (attrs === null) await mkdir(routerPath);
+    else await writeFile(routerPath, `- READY RQ-ENVELOPE (${attrs}): Job\n`);
+    await writeFile(join(queueDir, 'status.json'), JSON.stringify({
+      last_tick: new Date(NOW).toISOString(),
+      lanes: {
+        claude: { running: 0, target: 4, held: false },
+        devin: { running: 0, target: 4, held: false },
+      },
+    }));
+    const snap = await getFleetLaneSnapshot({
+      queueDir, budgetsDir: join(root, 'budgets'), usageLogPaths: [], now: () => new Date(NOW), starvedStateDir: root,
+    });
+    expect(snap.starved.lanes.claude).toMatchObject({ ready_rows: claudeReady, starved: false });
+    expect(snap.starved.lanes.devin).toMatchObject({ ready_rows: devinReady, starved: open === 0 });
+    expect(snap.starved.open_rows).toBe(open);
+  });
+
   it('reports starved, held and full lanes from queue files', async () => {
     const root = await scratch();
     const queueDir = join(root, 'queue');

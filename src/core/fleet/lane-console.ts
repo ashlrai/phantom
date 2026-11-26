@@ -822,7 +822,11 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   try {
     const text = await readBounded(join(queueDir, 'ready.tsv'), MAX_QUEUE_FILE_BYTES);
     if (text !== null) {
-      const parsed = parseReadyTsv(text);
+      const routerQueue = await readBounded(join(queueDir, 'router-queue.md'), MAX_QUEUE_FILE_BYTES).catch(error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw error;
+      });
+      const parsed = parseReadyTsv(text, routerQueue);
       queueRows = parsed.rows;
       openQueueRows = parsed.dropped === 0 ? parsed.unhinted : null;
       sources.queue = {
