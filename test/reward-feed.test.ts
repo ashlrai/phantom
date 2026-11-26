@@ -682,6 +682,28 @@ describe('foldJobsLedgerRewards', () => {
     for (const input of inputs) expect(input).not.toHaveProperty('ciWallMs');
   });
 
+  it('keeps the reward verdict but withholds CI timing when a batch claim coincides with CI start', () => {
+    const start = '2026-10-28T15:10:00.000Z';
+    const complete = '2026-10-28T15:25:00.000Z';
+    const rows = [
+      batchClaim('RQ-CI-TIED', 'RQ-BATCH-A', start),
+      ciStart('RQ-CI-TIED', start),
+      ciComplete('RQ-CI-TIED', complete),
+      merged('RQ-CI-TIED'),
+      batchClaim('RQ-CI-LATER', 'RQ-BATCH-A', '2026-10-28T15:09:59.000Z'),
+      ciStart('RQ-CI-LATER', start),
+      ciComplete('RQ-CI-LATER', complete),
+      closed('RQ-CI-LATER'),
+    ];
+    const inputs = foldJobsLedgerRewards(rows.join('\n'), NOW_MS);
+    expect(inputs).toHaveLength(2);
+    const tied = inputs.find((input) => input.jobId === 'RQ-CI-TIED');
+    expect(tied).toMatchObject({ pool: 'claude', merged: true, dispatchedAt: start });
+    expect(tied).not.toHaveProperty('ciWallMs');
+    expect(inputs.find((input) => input.jobId === 'RQ-CI-LATER'))
+      .toMatchObject({ pool: 'claude', merged: false, ciWallMs: 900_000 });
+  });
+
   it('withholds CI timing when an undated boundary could fall inside the rewarded dispatch', () => {
     const job = 'RQ-UNDATED-CI';
     const text = [
