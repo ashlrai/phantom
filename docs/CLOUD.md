@@ -1353,7 +1353,30 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   lower bounds, recorded exception/result text is scrubbed and capped,
   and items emit only for the fleet's own repository since the journal
   describes this install's dispatch machinery and carries no repo
-  column.
+  column —
+  and the jobs ledger's Git-operation observations' recurring adverse
+  cells, the `git_operation` rows `observeGit`/`observeGitSync`/
+  `observeGitAsync` (src/core/fleet/git-observations.ts) and
+  `router_git_observed` (contrib/router/lib/git_safety.sh) append to
+  `metrics/jobs.jsonl` under the fleet runs directory around every
+  fleet and router Git invocation — `index.lock` rows written only
+  when a Git call failed on a detected index.lock, `fetch`/`push`
+  rows carrying the recorded retries count, and timed
+  `worktree_add`/`worktree_remove`/`fetch`/`push` rows (otherwise only
+  visible through `phm fleet job-latency`'s git_contention section — a
+  report someone had to run and read, so recurring Git contention
+  never became work). An operation cell becomes an item only at the
+  recurring bars — index.lock cells count rows recorded `failed`,
+  fetch/push cells count rows whose `retries` is a recorded positive
+  integer, timed rows and clean retries are quoted as p90 context
+  never counted as adverse — of three adverse rows across two
+  distinct UTC days inside the 7-day window; hostnames are counted
+  never printed (the job-latency fold is the per-host breakdown), a
+  missing or unreadable ledger emits nothing, malformed lines and
+  off-contract rows drop like the sibling jobs-ledger readers' own
+  parse, truncated tails are stated as lower bounds, and rows emit
+  only for the fleet's own repository since the rows describe this
+  install's hosts and lanes and carry no repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1364,7 +1387,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts and postrun items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts, postrun and git-contention items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1689,7 +1712,18 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   wrapped share of the engine's in-window spawns, with the same
   owner-side no-change escape, and emit only for the fleet's own
   repository since the ledger describes this install's spawn machinery
-  and carries no repository column. They
+  and carries no repository column. Git-contention items name the
+  jobs-ledger git_operation rows, `phm fleet job-latency`'s
+  git_contention fold and the observation wrappers in
+  src/core/fleet/git-observations.ts, keep the
+  find-what-serializes-or-wedges-fleet-git framing per cell — fleet
+  Git call patterns, worktree lifecycle serialization or a missing
+  lock-retry posture this repository owns versus pinned contrib/mac
+  machinery, host Git or AV/indexing state only the owner can fix —
+  quoting recorded lanes, host and day counts without hostnames, with
+  the same owner-side no-change escape, and emit only for the fleet's
+  own repository since the rows describe this install's hosts and
+  lanes. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

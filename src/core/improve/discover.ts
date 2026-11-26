@@ -962,6 +962,24 @@
  *     inherits the items since the journal describes this install's
  *     land path — the row's repo names the publish target, quoted
  *     inside the cells;
+ *   - the jobs ledger's Git-operation observations' recurring adverse
+ *     cells: the git_operation rows observeGit/observeGitSync/
+ *     observeGitAsync (src/core/fleet/git-observations.ts) and
+ *     router_git_observed (contrib/router/lib/git_safety.sh) append to
+ *     metrics/jobs.jsonl around every fleet and router Git invocation —
+ *     index.lock rows written only on a detected lock failure, and
+ *     fetch/push rows carrying the recorded retries count
+ *     (gitContentionBacklogItems below). Until now the rows' only reader
+ *     was `phm fleet job-latency`'s git_contention section, a report
+ *     someone had to run and read, so a host whose Git operations kept
+ *     hitting index.lock or whose fetches/pushes kept retrying never
+ *     became work. A cell emits only at the recurring bars of adverse
+ *     rows across distinct UTC days inside the 7-day window — timed
+ *     rows and clean retries are quoted as context, never counted as
+ *     adverse — hostnames are counted never printed (the job-latency
+ *     fold is the per-host breakdown), truncated tails are stated as
+ *     lower bounds, and only the fleet's own repository inherits the
+ *     items since the rows describe this install's hosts and lanes;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -1022,6 +1040,7 @@ import { branchGardenerBacklogItems } from './branch-gardener-backlog.js';
 import { rewardBacklogItems } from './reward-backlog.js';
 import { jobControlBacklogItems } from './job-control-backlog.js';
 import { usageGapBacklogItems } from './usage-gap-backlog.js';
+import { gitContentionBacklogItems } from './git-contention-backlog.js';
 import { runtimeJournalBacklogItems } from './runtime-journal-backlog.js';
 import { generatorYieldBacklogItems } from './generator-yield-backlog.js';
 import { incidentGateBacklogItems } from './incident-gate-backlog.js';
@@ -1512,6 +1531,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the capture paths are this install's
   // dispatcher and lanes.
   items.push(...await usageGapBacklogItems({ repo }));
+
+  // Jobs-ledger Git operations: the git_operation rows the fleet's own
+  // Git call paths record — recurring index.lock failure cells and
+  // fetch/push retry cells across distinct UTC days inside the 7-day
+  // window — become backlog items too. Until now the rows' only reader
+  // was `phm fleet job-latency`'s git_contention section, a report
+  // someone had to run and read, so recurring Git contention never
+  // became work. Same bounded tail read the router outcome fold uses,
+  // the writers' own row contract (index.lock rows count only on a
+  // recorded failure, fetch/push only on recorded positive retries,
+  // timed rows context only), hostnames counted never printed, truncated
+  // tails stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the rows describe this install's hosts
+  // and lanes.
+  items.push(...await gitContentionBacklogItems({ repo }));
 
   // Fleet runtime journal: the standing fleet's own dispatch journal —
   // fleet/runtime/runs.jsonl under the ASHLR home — records every
