@@ -152,15 +152,16 @@ Every command, grouped by topic.
     memory add|list|search|forget [--json]  Durable markdown memory under ~/.phantom/memory; secret-shaped text refused.
 
   Knowledge - portfolio RAG + graph
-    graph nodes|edges|status [--json]  Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.
-    radar <list|run|diff>              Observe public documentation and compare bounded local snapshots.
-    knowledge build                    Index enrolled repos locally (read-only, secret-scrubbed) for portfolio RAG.
-    ask "<question>"                   Local RAG across the indexed portfolio; cites repo/file:line. --allow-cloud opt-in. `ask status` prints the ask.status.v1 stream from the metrics jobs ledger.
-    knowledge impact <target>          Show references + dependents of a file/symbol within and across enrolled repos.
-    knowledge graph                    Print the portfolio knowledge graph (repos/modules/deps + cross-repo findings).
-    wiki build [repo] [--all]          Private architecture wiki per repo (local models; cited, verified file:line). Only stale pages rebuild.
-    wiki ask "<question>"              Answer from the wiki + index + genome with verified file:line citations, or say "not found".
-    wiki status [repo]                 Wiki freshness: generated at <commit>, N pages stale.
+    graph nodes|edges|status [--json]                  Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.
+    radar <list|run|diff>                              Observe public documentation and compare bounded local snapshots.
+    knowledge build                                    Index enrolled repos locally (read-only, secret-scrubbed) for portfolio RAG.
+    ask "<question>"                                   Local RAG across the indexed portfolio; cites repo/file:line. --allow-cloud opt-in. `ask status` prints the ask.status.v1 stream from the metrics jobs ledger.
+    knowledge impact <target>                          Show references + dependents of a file/symbol within and across enrolled repos.
+    knowledge graph                                    Print the portfolio knowledge graph (repos/modules/deps + cross-repo findings).
+    wiki build [repo] [--all]                          Private architecture wiki per repo (local models; cited, verified file:line). Only stale pages rebuild.
+    wiki ask "<question>"                              Answer from the wiki + index + genome with verified file:line citations, or say "not found".
+    wiki status [repo]                                 Wiki freshness: generated at <commit>, N pages stale.
+    wiki map [repo] [--focus <node-or-file>] [--json]  Commit-pinned modules, declarations and source relationships for an enrolled repo.
 
   Autonomy - enrollment, backlog, daemon, inbox, goals
     bots list|show|create --dry-run|explain|seats|handoffs|handoff --seat <id> [--apply] [--json]                                                                                                                                                                                                                                                                                                                             Provider-neutral bot metadata, seat quota and draining handoffs. handoffs plans every seat; handoff --seat is dry-run unless --apply.
