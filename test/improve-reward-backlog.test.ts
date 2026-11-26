@@ -216,8 +216,6 @@ describe('rewardCells', () => {
     expect(cells[0]).toMatchObject({ pool: 'claude', rows: 7, held: 2, notHeld: 5 });
     expect(cells[0]!.share).toBeCloseTo(5 / 7, 5);
     expect(cells[0]!.days).toHaveLength(3);
-    expect(cells[0]!.lowerBound).toBe(false);
-    expect(rewardCells(recurring, true)[0]!.lowerBound).toBe(true);
     expect(cells[0]!.repos[0]).toEqual(['ashlrai/phantom', 7]);
   });
 
@@ -283,7 +281,6 @@ describe('rewardBacklogItems', () => {
     expect(item.prompt).toContain('9 of 11');
     expect(item.prompt).toContain('not held across 3 UTC day(s)');
     expect(item.prompt).toContain('no-change');
-    expect(item.prompt).not.toContain('lower bound');
   });
 
   it('emits nothing for missing evidence, another repository, or below-bar cells', async () => {
@@ -311,14 +308,11 @@ describe('rewardBacklogItems', () => {
     expect(await rewardBacklogItems({ repo: 'ashlrai/phantom', ledgerPath: healthy, now: NOW_MS })).toEqual([]);
   });
 
-  it('states truncation as a lower bound in every prompt', async () => {
-    const rows = poolSeries('claude', 3, 2, (d, i) => notHeld(`n${d}-${i}`, NOW_MS - d * DAY));
-    // Pad the ledger past the 16 MiB tail bound so the read reports truncated.
-    const pad = 'x'.repeat(17 * 1024 * 1024);
-    const path = await ledger('led-trunc', [pad, ...rows]);
-    const items = await rewardBacklogItems({ repo: 'ashlrai/phantom', ledgerPath: path, now: NOW_MS });
-    expect(items.length).toBeGreaterThan(0);
-    expect(items.every((i) => i.prompt.includes('lower bound'))).toBe(true);
+  it('withholds collapse items when the clipped prefix can overturn the majority', async () => {
+    const notHeldRows = poolSeries('claude', 3, 2, (d, i) => notHeld(`n${d}-${i}`, NOW_MS - d * DAY));
+    const heldRows = poolSeries('claude', 3, 2, (d, i) => held(`h${d}-${i}`, NOW_MS - d * DAY));
+    const path = await ledger('led-trunc', [heldRows.join('\n'), ' '.repeat(17 * 1024 * 1024), ...notHeldRows]);
+    expect(await rewardBacklogItems({ repo: 'ashlrai/phantom', ledgerPath: path, now: NOW_MS })).toEqual([]);
   });
 
   it('derives stable ids so a refresh re-adds nothing and honours the limit', async () => {

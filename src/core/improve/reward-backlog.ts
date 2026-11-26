@@ -52,8 +52,8 @@
  *    sources apply. Row-level repo names are quoted as evidence, never
  *    used to filter — a pool's arm quality is fleet-level in
  *    calibration.
- *  - Truncation is stated, never hidden: when the bounded tail cuts
- *    older rows, every prompt says the counts are a lower bound.
+ *  - A truncated ledger yields no items. The omitted rows can change
+ *    the majority verdict and which row was recorded first for a job.
  *  - Dedup is downstream: item ids hash the pool identity — never the
  *    counts or timestamps — so a refresh re-derives the same ids and
  *    appendUserBacklogItems adds only what is new; a pool that recovers
@@ -222,7 +222,6 @@ export interface RewardPoolCell {
   lastSeen: string | null;
   /** Top recorded repo tallies for prompt evidence, repo name → row count. */
   repos: [string, number][];
-  lowerBound: boolean;
 }
 
 /**
@@ -232,7 +231,7 @@ export interface RewardPoolCell {
  * REWARD_MIN_DAYS distinct UTC days. Sorted worst-first by not-held
  * count, then rows, then pool name.
  */
-export function rewardCells(fold: RewardJournalFold, lowerBound = false): RewardPoolCell[] {
+export function rewardCells(fold: RewardJournalFold): RewardPoolCell[] {
   const cells: RewardPoolCell[] = [];
   for (const tally of fold.pools.values()) {
     if (tally.rows < REWARD_MIN_ROWS || tally.notHeld < REWARD_MIN_NOT_HELD ||
@@ -248,7 +247,6 @@ export function rewardCells(fold: RewardJournalFold, lowerBound = false): Reward
       firstSeen: isoOrNull(tally.firstMs),
       lastSeen: isoOrNull(tally.lastMs),
       repos: [...tally.repos.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, MAX_PROMPT_REPOS),
-      lowerBound,
     });
   }
   return cells.sort((a, b) => b.notHeld - a.notHeld || b.rows - a.rows ||
@@ -273,9 +271,6 @@ const daysText = (days: readonly string[]): string => {
 const cellDaysText = (cell: RewardPoolCell): string =>
   `across ${cell.notHeldDays.length} UTC day(s) (${daysText(cell.notHeldDays)})`;
 
-const boundNote = (lowerBound: boolean): string =>
-  lowerBound ? ' The ledger tail was truncated at the bounded read, so these counts cover only the retained window — a lower bound, not the full window.' : '';
-
 const repoText = (repos: readonly [string, number][]): string => {
   if (repos.length === 0) return 'no recorded repo';
   return repos.map(([name, count]) => `${name}: ${count}`).join(', ');
@@ -290,7 +285,7 @@ function rewardPrompt(cell: RewardPoolCell): string {
     '',
     `merged:false is the substrate's held-merge verdict: the job's PR closed without merging (rejected, superseded or abandoned) or a verified merge was later reverted — either way the dispatch produced no lasting change. The ledger only records resolved jobs, so in-flight work never counts; a strict majority of one pool's resolutions not holding is the same low-merge signature outcome learning's own cells flag, now visible per calibration arm.`,
     '',
-    `First recorded ${cell.firstSeen ?? 'unknown'}, last ${cell.lastSeen ?? 'unknown'}.${boundNote(cell.lowerBound)}`,
+    `First recorded ${cell.firstSeen ?? 'unknown'}, last ${cell.lastSeen ?? 'unknown'}.`,
     '',
     EVIDENCE,
     '',
@@ -328,10 +323,10 @@ export async function rewardBacklogItems(opts: RewardBacklogItemsOptions): Promi
       : REWARD_BACKLOG_WINDOW_MS;
     const path = opts.ledgerPath ?? rewardSignalPath(opts.homeDir);
     const tail = await readLedgerTail(path, REWARD_SIGNAL_MAX_BYTES);
-    if (tail.state !== 'read') return [];
+    if (tail.state !== 'read' || tail.truncated) return [];
     const fold = foldRewardJournal(tail.text, nowMs, windowMs);
     if (fold.records === 0) return [];
-    const cells = rewardCells(fold, tail.truncated);
+    const cells = rewardCells(fold);
     const limit = Math.max(1, Math.min(opts.limit ?? REWARD_BACKLOG_MAX_ITEMS, REWARD_BACKLOG_ITEM_HARD_MAX));
     return cells.slice(0, limit).map((cell) => rewardItem(cell, repo));
   } catch {

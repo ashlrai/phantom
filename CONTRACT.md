@@ -14,7 +14,7 @@ Creation requires `--dry-run` and never calls the writer.
 
 ## Reward backlog evidence
 
-`foldRewardJournal(text, nowMs, windowMs)` and `rewardCells(fold, lowerBound?)`
+`foldRewardJournal(text, nowMs, windowMs)` and `rewardCells(fold)`
 (`src/core/improve/reward-backlog.ts`) expose `days` for all in-window
 reward rows and `notHeldDays` for rows with `merged: false`, both based on
 the UTC date of `recordedAt`. The latter supplies the recurrence day gate
