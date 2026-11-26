@@ -828,6 +828,11 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         `peerDispatch ${result.peerDispatch.source} receipts=${result.peerDispatch.receipts ?? unknown} ` +
           `unpublished=${result.peerDispatch.unpublished ?? unknown}`,
         `peerLedger ${result.peerLedger.source} liveRows=${result.peerLedger.liveRows ?? unknown}`,
+        `sessionHandoffs ${result.sessionHandoffs.source} journals=${result.sessionHandoffs.journals ?? unknown} ` +
+          `open=${result.sessionHandoffs.open ?? unknown} ` +
+          `awaitingFailover=${result.sessionHandoffs.awaitingFailover ?? unknown} ` +
+          `unreadable=${result.sessionHandoffs.unreadable ?? unknown} ` +
+          `truncated=${result.sessionHandoffs.truncated ?? unknown}`,
         `sendGate ${result.sendGate.state} kill=${result.sendGate.kill.state}:${result.sendGate.kill.reason} ` +
           `pause=${result.sendGate.pause.state}` +
           `${result.sendGate.pause.reason === null ? '' : `:${result.sendGate.pause.reason}`}` +
