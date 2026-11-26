@@ -72,6 +72,31 @@ describe('fleet resource plan', () => {
     expect(plan.lanes.find(row => row.lane === 'agy')!.additional_slots).toBeNull();
   });
 
+  it('shares the dispatcher’s remaining fleet slots across lane recommendations', () => {
+    const snapshot = { ...status(), admission: { ts: iso(now), admit: true, cap: 3, running: 2 } };
+    const plan = buildFleetResourcePlan(live, [node], snapshot, ledger, now);
+    expect(plan.lanes.find(row => row.lane === 'codex-personal')).toMatchObject({ additional_slots: 1, target_concurrency: 2 });
+    expect(plan.lanes.find(row => row.lane === 'agy')).toMatchObject({ additional_slots: 0, target_concurrency: 1 });
+  });
+
+  it.each([
+    { paused: 'maintenance' },
+    { admission: { ts: iso(now), admit: false } },
+    { admission: { ts: iso(now), decision: 'stop' } },
+    { admission: { ts: iso(now), gate_reason: 'disk' } },
+    { admission: { ts: iso(now), cap: 2, running: 2 } },
+  ])('withholds added concurrency for a fleet stop (%j)', stop => {
+    const plan = buildFleetResourcePlan(live, [node], { ...status(), ...stop }, ledger, now);
+    for (const lane of lanes) expect(plan.lanes.find(row => row.lane === lane))
+      .toMatchObject({ additional_slots: 0, target_concurrency: 1 });
+  });
+
+  it('ignores admission evidence from a different dispatcher tick', () => {
+    const snapshot = { ...status(), admission: { ts: iso(now - 30_000), admit: false, cap: 2, running: 2 } };
+    const plan = buildFleetResourcePlan(live, [node], snapshot, ledger, now);
+    for (const lane of lanes) expect(plan.lanes.find(row => row.lane === lane)?.additional_slots).toBe(1);
+  });
+
   it('does not double count shared slots and distinguishes unknown from known zero', () => {
     const plan = buildFleetResourcePlan(live, [{ ...node, freeSlots: 1 }], status(), ledger, now);
     expect(plan.lanes.find(row => row.lane === 'codex-personal')?.additional_slots).toBe(1);

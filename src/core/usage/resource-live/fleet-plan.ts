@@ -61,6 +61,12 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
   const dispatch = object(status);
   const age = now - time(dispatch['last_tick']);
   const statusLanes = dispatch['schema'] === 'dispatchd.status.v1' && age >= 0 && age < 5 * MINUTE ? object(dispatch['lanes']) : {};
+  const recordedAdmission = object(dispatch['admission']);
+  const admission = recordedAdmission.ts === undefined || recordedAdmission.ts === dispatch['last_tick'] ? recordedAdmission : {};
+  const admissionStopped = Boolean(dispatch['paused']) || admission.admit === false || admission.decision === 'stop' ||
+    (typeof admission.gate_reason === 'string' && admission.gate_reason.trim().length > 0);
+  const fleetCap = count(admission.cap), fleetRunning = count(admission.running);
+  let fleetSlots = admissionStopped ? 0 : fleetCap === null || fleetRunning === null ? null : Math.max(0, fleetCap - fleetRunning);
   const antigravity = antigravityQuota(measured.get('antigravity'), now);
   const laneNames = [...new Set([...plan.allowances.flatMap(row => row.lane ? [row.lane] : []), ...Object.keys(statusLanes)])];
   const lanes = laneNames.map(lane => {
@@ -134,6 +140,11 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
         : nodes[index]?.isSelf === true && (row.lanes?.some(cap => capServesLane(cap, name)) ?? false);
       return serves ? [index] : [];
     });
+    if (fleetSlots === 0 && lane.running !== null) {
+      lane.target_concurrency = lane.running;
+      lane.additional_slots = 0;
+      continue;
+    }
     if (lane.running === null || lane.max_concurrency === null || lane.queued_jobs === null || lane.held === null) continue;
     if (lane.held || lane.queued_jobs === 0 || lane.running >= lane.max_concurrency || candidates.some(row => row.action === 'hold')) {
       lane.target_concurrency = lane.running;
@@ -144,7 +155,9 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const need = Math.max(...active.map(row => Math.ceil(row.remaining! / row.estimated_quota_per_job! / row.jobs_per_slot!)));
     const total = eligible.reduce((sum, index) => sum + slots[index]!, 0);
     const available = demand?.get(name)?.filter(job => !reserved.has(job));
-    const additional = Math.min(need, total, available?.length ?? lane.queued_jobs, Math.max(0, lane.max_concurrency - lane.running));
+    const additional = Math.min(need, total, available?.length ?? lane.queued_jobs,
+      Math.max(0, lane.max_concurrency - lane.running), fleetSlots ?? Infinity);
+    if (fleetSlots !== null) fleetSlots -= additional;
     if (available) {
       for (const job of available.slice(0, additional)) reserved.add(job);
       plannedJobs.set(name, additional);
