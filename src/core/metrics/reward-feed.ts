@@ -231,7 +231,8 @@ function ciWallEvidence(acc: RewardJobAccum, dispatchMs: number, outcomeMs: numb
 /**
  * Fold jobs.jsonl text into one RewardSignalInput per job with resolved merge
  * evidence. Pure; never throws; rows without a usable timestamp or job id are
- * ignored, and rows stamped after `nowMs` cannot fabricate outcomes.
+ * ignored. Both the receipt and its effective resolution must fall at or
+ * before `nowMs` to contribute a verdict.
  *
  * `revertedPrKeys` is the caller-resolved standing revert set (`owner/repo#n`
  * keys from the outcome ledger, cloud tasks and the revert-outcomes scan —
@@ -291,6 +292,7 @@ export function foldJobsLedgerRewards(
     const state = outcomeStateOf(row);
     if (row['merged'] === true || MERGE_STATES.has(state)) {
       const mergedAtMs = resolutionAt(row, MERGED_AT_KEYS) ?? at;
+      if (mergedAtMs > nowMs) continue;
       if (acc.merge === null || at >= acc.merge.atMs) {
         acc.merge = { atMs: at, mergedAtMs, url: firstString(row, URL_KEYS) };
       }

@@ -361,6 +361,9 @@ Positive allowance with a future reset is `reset-pressure` even when burn pace i
 
 ## Recorded job outcomes
 
+The reward feed records merge evidence once both the jobs-ledger receipt time
+and the effective merge time have been reached.
+
 `phm router outcomes [--json] [--runs-dir <dir>] [--lane <lane>] [--limit <1..1000>]`
 reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
 `ASHLR_RUNS_DIR`, then `~/.ashlr-runs`; 16 MiB retained) joined with the
