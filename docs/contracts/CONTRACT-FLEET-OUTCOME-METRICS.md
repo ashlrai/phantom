@@ -11,6 +11,7 @@ model calls, writes, routing changes or sending. The CLI only reads a ledger.
 into the newest finish per job, including its receipt time `at` in epoch
 milliseconds. A launch or batch claim supersedes earlier finishes for that
 job. Receipt time determines ordering, with ledger order breaking ties.
+Identical receipts at the same timestamp retain their first ledger position.
 Empty-tag sync and backlog discovery share this projection.
 
 `phm fleet metrics --json` (or `metrics series --json`) returns

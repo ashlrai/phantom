@@ -84,6 +84,7 @@ describe('emptyTagBacklogItems', () => {
     const receipts = ids.flatMap((job) => [
       finishRow(job, 4),
       JSON.stringify({ ts: iso(4), job, event }),
+      finishRow(job, 4), // Replaying the old finish cannot complete the retry.
     ]);
     const options = { repo: 'ashlrai/phantom', now: NOW, tagsText: '' };
     expect(await emptyTagBacklogItems({ ...options, jobsText: receipts.join('\n') })).toEqual([]);
