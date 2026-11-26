@@ -328,6 +328,12 @@ mod platform {
             Phase::AdoptionHeld
         }
     }
+    fn should_request_install_exit(inner: &Inner) -> bool {
+        inner.state.enabled
+            && inner.state.phase == Phase::WaitingForAppQuit
+            && inner.stage.is_some()
+            && !inner.handoff
+    }
     fn inspect(stage: &Stage) -> Result<policy::HostResult, &'static str> {
         let (child, pipe) = launch(stage, false)?;
         first_result(child, pipe, stage, Duration::from_secs(10))
@@ -497,21 +503,34 @@ mod platform {
             Ok(())
         }
         .await;
-        let mut i = lock(&updates.0);
-        if i.epoch == epoch {
+        let exit = {
+            let mut i = lock(&updates.0);
+            if i.epoch != epoch {
+                return;
+            }
             i.checking = false;
             i.abort = None;
-        }
-        if i.epoch == epoch && i.state.enabled {
-            if let Err(reason) = result {
-                i.state.phase = if reason == "uncommissioned-key" {
-                    Phase::Uncommissioned
-                } else {
-                    Phase::Failed
-                };
-                i.state.reason = Some(reason.to_owned());
+            if i.state.enabled {
+                if let Err(reason) = result {
+                    i.state.phase = if reason == "uncommissioned-key" {
+                        Phase::Uncommissioned
+                    } else {
+                        Phase::Failed
+                    };
+                    i.state.reason = Some(reason.to_owned());
+                }
+                publish(&app, &i);
             }
-            publish(&app, &i);
+            should_request_install_exit(&i)
+        };
+        if exit {
+            let handle = app.clone();
+            if tauri::async_runtime::spawn_blocking(move || handoff_on_quit(&handle, Some(epoch)))
+                .await
+                .unwrap_or(false)
+            {
+                app.exit(0);
+            }
         }
     }
     pub fn start(app: &AppHandle, enabled: bool) {
@@ -608,7 +627,7 @@ mod platform {
         };
         let mut i = lock(&updates.0);
         publish(app, &i);
-        if !i.state.enabled || i.checking {
+        if !i.state.enabled || i.checking || i.handoff {
             return;
         }
         i.checking = true;
@@ -645,12 +664,16 @@ mod platform {
     }
     /// One fresh idle admission and parent ACK share ≤10 seconds; normal Quit always proceeds.
     pub fn normal_quit(app: &AppHandle) {
+        handoff_on_quit(app, None);
+    }
+    fn handoff_on_quit(app: &AppHandle, automatic_epoch: Option<u64>) -> bool {
         let Some(updates) = app.try_state::<Updates>() else {
-            return;
+            return false;
         };
         let stage = {
             let mut i = lock(&updates.0);
-            if !i.state.enabled
+            if automatic_epoch.is_some_and(|epoch| epoch != i.epoch || !should_request_install_exit(&i))
+                || !i.state.enabled
                 || i.handoff
                 || !matches!(
                     i.state.phase,
@@ -658,12 +681,12 @@ mod platform {
                 )
                 || i.state.reason.as_deref() == Some("preference-save-failed")
             {
-                return;
+                return false;
             }
+            let Some(stage) = i.stage.clone() else { return false };
             i.handoff = true;
-            i.stage.clone()
+            stage
         };
-        let Some(stage) = stage else { return };
         let result = quit_sequence(
             |apply, budget| {
                 let started = Instant::now();
@@ -678,6 +701,11 @@ mod platform {
             Duration::from_secs(10),
         );
         let mut i = lock(&updates.0);
+        if automatic_epoch.is_some_and(|epoch| epoch != i.epoch || !i.state.enabled) {
+            return false;
+        }
+        let acknowledged = matches!(&result, Ok(r) if r.state == "waiting-native-exit");
+        i.handoff = acknowledged;
         match result {
             Ok(r) if r.state == "waiting-native-exit" => {
                 i.state.phase = Phase::Installing;
@@ -693,6 +721,7 @@ mod platform {
             }
         }
         publish(app, &i);
+        acknowledged
     }
     #[cfg(test)]
     mod tests {
@@ -769,6 +798,14 @@ mod platform {
             preference_transition(&mut i, false);
             preference_transition(&mut i, true);
             assert_eq!(i.state.phase, Phase::Staged);
+            assert!(!should_request_install_exit(&i));
+            i.state.phase = Phase::WaitingForAppQuit;
+            assert!(should_request_install_exit(&i));
+            i.handoff = true;
+            assert!(!should_request_install_exit(&i));
+            i.handoff = false;
+            i.stage = None;
+            assert!(!should_request_install_exit(&i));
         }
         #[test]
         fn idle_and_authority_holds_are_distinct() {

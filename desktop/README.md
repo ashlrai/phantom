@@ -67,21 +67,21 @@ phm desktop install --rollback --apply              # explicitly switch back
 Flags may appear in any order. `--require-app` and `--to` require `--upgrade`;
 rollback accepts only optional `--apply`. Inspection downloads and verifies
 signed app and CLI artifacts into the private staging directory but changes no
-installation and never stops the resident. Equal versions report `current`;
-older candidates are refused. Apply requires Stop/drain and normal Quit of
-Phantom, verifies and smoke-tests the new CLI, then uses resident stop before an
-atomic managed-pointer switch. It keeps the previous release and records a
-private rollback journal. Rollback requires that journal's current release still
-matches the managed pointer; a successful rollback swaps the journal entries.
-Neither operation writes to `/Applications`, builds, signs or edits shell setup.
+installation and never stops the resident. Apply requires Stop/drain and the
+app to be closed. It verifies and smoke-tests the CLI, stops the resident, then
+updates the signed app and managed CLI together when an app is installed. If the
+CLI already matches the signed release but the app is older, apply repairs only
+the app. A failed transaction restores the prior pair when it can prove recovery
+is safe; otherwise it preserves the recovery evidence and keeps Stop engaged.
+The CLI-only rollback command requires a matching journal and holds if a native
+app is installed. Neither operation builds, signs or edits shell setup.
 
 The JSON `app.state` is `current` for the manifest's signed inventory,
 `update-available` for a different verified signed inventory (`native-signed-update`),
 `needs-owner` for an unverified identity (`app-identity-unverified`, including an
 ad-hoc signature), `absent` when no app is found, or `unknown` when not inspected.
-An owner must reinstall the signed Phantom.app for `needs-owner`; by default
-this does not block the CLI switch. `--require-app` holds on `needs-owner` or
-`absent` instead of silently treating an unverified app as updated.
+Upgrade holds on `needs-owner` rather than leaving an installed app behind.
+`--require-app` also holds on `absent`, even if the CLI version is current.
 
 Resident restart and any Touch ID grant stay with the owner. The plan includes
 `phm authority grant (Touch ID)` if the authority surface changed, before
@@ -89,7 +89,7 @@ Resident restart and any Touch ID grant stay with the owner. The plan includes
 labels, not automatically executed commands: use `phm authority grant` for the
 Touch ID ceremony and `phm authority resident start` only after owner confirmation.
 Upgrade uses resident stop with no confirmation and never grants or starts
-authority. A successful CLI switch does not claim native-app update or restart.
+authority. Updating or relaunching the app does not resume the fleet.
 
 Common `reason` codes (and `stop.reason` for drain state):
 
@@ -104,7 +104,8 @@ Common `reason` codes (and `stop.reason` for drain state):
 | `artifact-mismatch` | Downloaded size, digest or signature failed verification. |
 | `app-artifact` | Signed app verification, inventory or paired release record failed. |
 | `launcher-identity` | Candidate launcher differs from the running package's canonical launcher. |
-| `app-needs-owner` | `--require-app` found an absent or unverified app; install the signed app. |
+| `app-needs-owner` | An installed app was not verified, or `--require-app` found no app; install the signed app. |
+| `paired-rollback-required` | An installed app prevents CLI-only rollback; preserve the paired recovery evidence. |
 | `stop-required` / `drain-required` | Engage Stop, drain work and close Phantom normally before applying. |
 | `smoke-failed` | Previous/candidate CLI version smoke failed; no pointer switch accepted. |
 | `resident-stop-failed` | Resident stop failed; current pointer was not switched. |
@@ -239,18 +240,21 @@ confirmation. It registers the verified managed release rather than an
 alternate CLI. `phm authority resident status --json` reports registration
 drift and observed Homebrew global copies without modifying them.
 
-The update panel can turn **Automatic updates** on or off, show verified
-download progress, or refresh status. Preparing a download is separate from installing it. Installation requires
-local work to be idle, the fleet stopped, and a normal **Quit**. Closing a window
-only hides the app and does not install an update. Unknown activity holds the
-update; the updater never stops work or clears Stop on your behalf.
+The update panel can turn **Automatic updates** on or off, see verified download progress, or refresh
+status. Preparing a download is separate from installing it. After Stop is
+engaged and local work is idle, the updater verifies the handoff and quits and
+relaunches Phantom without an owner click. Unknown activity holds the update
+with a fixed reason code in Settings; the updater never clears Stop.
 
-Automatic installation requires a current, active grant with the same authority
-surface. Changed authority, missing or expired grants hold installation for the
-existing manual approval workflow. Settings and accounts stay in their existing
-locations. Installation does not restart the resident fleet. On the next launch,
-Phantom independently checks installed app and CLI bytes before reporting an
-update as installed; a saved success receipt alone is insufficient.
+While the update details are open, Settings refreshes the public release and
+feed observation every 15 seconds. A feed-ready observation is not installation
+admission; the native updater still verifies the signed release and artifacts.
+
+Installation does not require a standing grant or Touch ID and does not restart
+the resident fleet. Changed authority still requires grant re-approval before
+resuming the fleet. Settings and accounts stay in their existing locations.
+On the next launch Phantom checks installed app and CLI bytes before reporting
+success; a saved receipt alone is insufficient.
 
 The desktop bridge exposes only `updates.getState()` and `updates.refresh()`
 (status observation), plus the boolean `automaticUpdates` preference. Native

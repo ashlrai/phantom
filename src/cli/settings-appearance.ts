@@ -1,6 +1,6 @@
 /**
  * `phm settings appearance` — the desktop and phone app's theme, accent,
- * density and font size, as a typed CLI so agents can read and change them.
+ * density, font size and sidebar brand, as a typed CLI.
  *
  *   phm settings appearance [--json]          (read; `get` is an alias)
  *   phm settings appearance [--theme <t>] [--accent <hex>] [--density <d>] [--font-size <n>] [--json]
@@ -11,7 +11,7 @@
  *
  * Reads and writes the SAME shared record the app polls and applies live
  * (<runs dir>/ui/appearance.json via core/verse/ui-appearance-file.ts); the
- * four keys and their validation live in core/settings-appearance.ts. The
+ * keys and their validation live in core/settings-appearance.ts. The
  * fuller set (radius, layout, motion, display font, raw accent channels)
  * stays on `phm fleet appearance`.
  *
@@ -19,6 +19,7 @@
  * invalid value. With --json, errors print `{ ok: false, error }` on stdout.
  */
 import { execFile } from 'node:child_process';
+import { BrandUploadError, storeBrandImageFile } from '../core/brand/sidebar-upload.js';
 import {
   APPEARANCE_SETTING_KEYS,
   appearanceSettingsFrom,
@@ -40,7 +41,8 @@ import {
 export const SETTINGS_APPEARANCE_SCHEMA = 'phm.settings.appearance.v1';
 
 const USAGE = `Usage: phm settings appearance [--json]
-       phm settings appearance [--theme <t>] [--accent <hex>] [--density <d>] [--font-size <n>] [--json]
+       phm settings appearance [set] [--theme <t>] [--accent <hex>] [--density <d>] [--font-size <n>] [--brand p|ghost] [--json]
+       phm settings appearance set --brand-file <path> [--json]
        phm settings appearance --reset [--json]
        phm settings appearance set <key> <value> [--json]
 
@@ -49,6 +51,8 @@ Settings:
   --accent     a hex color, e.g. #6366f1
   --density    ${UI_DENSITIES.join(' | ')}
   --font-size  ${UI_SCALES.join(' | ')}, or a percent 100-125
+  --brand      p | ghost
+  --brand-file a local SVG, PNG or WebP of at most 512 KB
   --reset      back to the defaults, like the page's "Reset to defaults"
 
 A running Phantom app applies a change within a few seconds, no restart.
@@ -113,6 +117,7 @@ function print(v: AppearanceView, json: boolean): void {
     `accent    ${a.accent}`,
     `density   ${a.density}`,
     `fontSize  ${a.fontSize}`,
+    `brand     ${a.brand}`,
     v.saved ? `saved by ${v.updatedBy}${v.updatedAt ? ` at ${v.updatedAt}` : ''}` : 'Nothing saved yet; these are the defaults.',
   ].join('\n'));
 }
@@ -141,9 +146,20 @@ export async function cmdSettings(args: string[], deps: SettingsAppearanceDeps =
     if (rest.length > 2) return fail('--reset takes no other settings.', json, 2);
     return write(defaultUiAppearance(), json, deps);
   }
-  if (verb?.startsWith('--')) {
-    const parsed = parseAppearanceFlags(rest.slice(1));
-    return parsed.ok ? write(parsed.patch, json, deps) : fail(`${parsed.error}\n${USAGE}`, json, 2);
+  if (verb?.startsWith('--') || (verb === 'set' && key?.startsWith('--'))) {
+    const parsed = parseAppearanceFlags(rest.slice(verb === 'set' ? 2 : 1));
+    if (!parsed.ok) return fail(`${parsed.error}\n${USAGE}`, json, 2);
+    if (parsed.brandFile !== undefined) {
+      try {
+        const brandAsset = await storeBrandImageFile(parsed.brandFile);
+        return write({ ...parsed.patch, brand: 'upload', brandAsset }, json, deps);
+      } catch (error) {
+        return error instanceof BrandUploadError
+          ? fail(error.message, json, 2)
+          : fail('Could not save the brand image.', json, 1);
+      }
+    }
+    return write(parsed.patch, json, deps);
   }
   if (verb !== 'set' || key === undefined || value === undefined || extra.length > 0) {
     return fail(verb === 'set'

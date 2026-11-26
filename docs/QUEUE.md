@@ -138,6 +138,20 @@ underperformance; it does not infer a causal yield gain or train a tier optimize
 
 ### Resource posture: the lane is a hint
 
+Among otherwise eligible executors, a fresh unused allowance can put the
+earliest reset or promotional expiry ahead of the lane hint and ordinary
+posture scoring. Antigravity can be prioritized before a burn rate exists when
+the enrolled personal Ultra seat has a verified five-hour window with capacity
+left. The dispatcher reads that window from `use-it-all.v1` or the matching
+`resource-live.v1` observation. Workspace evidence never substitutes for it.
+Missing, stale, spent, or passed windows get no deadline preference. This is a
+ranking rule for ready work, not a promise to launch without compatible demand.
+API lanes classified as metered still require a job to declare
+`max_cost_class=metered`. An executor already configured as included may
+retain that classification for a fresh, unspent promotional window; missing
+credit evidence is treated as metered. An observation never upgrades a
+metered executor to included or authorizes spending.
+
 Measured `work-market.v1` posture entries carry `lane`, `account_id`, `model`,
 `window_start` and `reset_at`, with the journal row's `ts` proving freshness.
 Only usage-derived posture carries reading provenance; host declarations, free
@@ -244,6 +258,26 @@ a target, clear a hold or enable spending. Unknown model mappings do not invent
 a price. Cost classes come from host executor metadata.
 
 ## Routing receipts and JSON audit
+
+### Repository shares
+
+The Mac shared queue starts flat: no repository has a fixed rank or guaranteed
+top share. Within existing job urgency and safety bands, restock and dispatch
+interleave candidates by repository score. Ready depth, CI repair work, bug and
+research jobs, and declared mission impact increase the bounded score; dispatch
+also considers observed merge rates for comparable work. `boost` multiplies the
+score by 1.25, `normal` leaves it alone, and `pause` keeps work pending without
+admitting new claims on this queue. These are local scheduling settings, not
+authority, cancellation or changes to execution constraints.
+
+When shares change, dispatch records `work-market.v1` events named `repo_share`
+in `metrics/work-market.jsonl`, with `repo`, `score`, `share` and
+`reason_codes` (for example `default_branch_ci_fix_ready` or
+`historical_solution_yield`). The allocation displayed in [Repos manager](./ECOSYSTEM-ONBOARDING.md#manage-ecosystem-repositories)
+is the target, not guaranteed throughput: runnable capacity, safety gates and
+work availability still govern claims. The historical `phm repos rank` report
+does not control this queue.
+
 
 Every evaluated decision appends a private JSON record to
 `metrics/work-market.jsonl`. Lifecycle events remain in `metrics/jobs.jsonl`.
