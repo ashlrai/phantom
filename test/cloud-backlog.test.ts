@@ -162,7 +162,8 @@ describe('user items', () => {
 
   it('caps the file at 200 items, retiring merged items first and never waiting ones', () => {
     const many = Array.from({ length: CLOUD_BACKLOG_MAX_USER_ITEMS }, (_, i) => item(`u-${i}`));
-    expect(appendUserBacklogItems(many)).toBe(CLOUD_BACKLOG_MAX_USER_ITEMS);
+    // Asserted before the merged tasks below were minted, so their merges still retire them.
+    expect(appendUserBacklogItems(many, new Date(NOW.getTime() - 10 * DAY))).toBe(CLOUD_BACKLOG_MAX_USER_ITEMS);
     expect(appendUserBacklogItems([item('overflow')])).toBe(0);
 
     // Two items finished for good make room for two new ones.
@@ -178,5 +179,52 @@ describe('user items', () => {
     // A hand-edited file past the cap is read only up to the cap.
     fs.writeFileSync(cloudBacklogPath(), JSON.stringify({ v: 1, items: Array.from({ length: 250 }, (_, i) => item(`h-${i}`)) }), { mode: 0o600 });
     expect(readUserBacklogItems()).toHaveLength(CLOUD_BACKLOG_MAX_USER_ITEMS);
+  });
+});
+
+describe('re-assertion', () => {
+  const T_FIRST = new Date(NOW.getTime() - 10 * DAY);
+  const T_AGAIN = new Date(NOW.getTime() - DAY);
+
+  it('a merged item stays claimed while its last assertion predates the task', () => {
+    appendUserBacklogItems([item('ev-1', { priority: 1 })], T_FIRST);
+    // Minted after the assertion: the prompt saw the evidence, so the merge covered it.
+    const t = task('ev-1', 'merged', 0, 5 * DAY);
+    expect(readCloudBacklog([t], NOW).items.find((i) => i.id === 'ev-1')).toMatchObject({ claimedBy: t.id, lastState: 'merged' });
+  });
+
+  it('re-asserting a merged item after its task was minted releases the claim and refreshes the spec', () => {
+    appendUserBacklogItems([item('ev-2', { priority: 1, prompt: 'First attempt.' })], T_FIRST);
+    const t = task('ev-2', 'merged', 0, 5 * DAY);
+    expect(readCloudBacklog([t], NOW).items.find((i) => i.id === 'ev-2')!.claimedBy).toBe(t.id);
+
+    // The producer still sees the condition: same id, refreshed spec, no duplicate.
+    expect(appendUserBacklogItems([item('ev-2', { priority: 1, prompt: 'Second attempt — new evidence.' })], T_AGAIN)).toBe(0);
+    const stored = readUserBacklogItems().find((i) => i.id === 'ev-2')!;
+    expect(stored.prompt).toBe('Second attempt — new evidence.');
+    expect(stored.assertedAt).toBe(T_AGAIN.toISOString());
+    expect(readUserBacklogItems().filter((i) => i.id === 'ev-2')).toHaveLength(1);
+
+    expect(readCloudBacklog([t], NOW).items.find((i) => i.id === 'ev-2')).toMatchObject({ claimedBy: null, lastState: 'merged' });
+    const claimAll = BUILTIN_IMPROVEMENT_BACKLOG.map((i) => task(i.id, 'running'));
+    expect(nextBacklogItem([...claimAll, t], 'ashlrai/ashlr-hub', NOW)?.id).toBe('ev-2');
+  });
+
+  it('a merged item whose producer stopped asserting stays done for good', () => {
+    // A hand-written or pre-assertion file carries no stamp: merged claims hold.
+    fs.mkdirSync(path.dirname(cloudBacklogPath()), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(cloudBacklogPath(), JSON.stringify({ v: 1, items: [item('ev-3', { priority: 1 })] }), { mode: 0o600 });
+    const t = task('ev-3', 'merged', 0, 5 * DAY);
+    expect(readCloudBacklog([t], NOW).items.find((i) => i.id === 'ev-3')!.claimedBy).toBe(t.id);
+    const claimAll = BUILTIN_IMPROVEMENT_BACKLOG.map((i) => task(i.id, 'running'));
+    expect(nextBacklogItem([...claimAll, t], 'ashlrai/ashlr-hub', NOW)).toBeNull();
+  });
+
+  it('a newer in-flight task still claims a re-asserted item', () => {
+    appendUserBacklogItems([item('ev-4', { priority: 1 })], T_FIRST);
+    const merged = task('ev-4', 'merged', 5 * DAY, 6 * DAY);
+    const running = task('ev-4', 'running', 0, DAY);
+    appendUserBacklogItems([item('ev-4', { priority: 1 })], T_AGAIN);
+    expect(readCloudBacklog([merged, running], NOW).items.find((i) => i.id === 'ev-4')).toMatchObject({ claimedBy: running.id, lastState: 'running' });
   });
 });

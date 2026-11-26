@@ -1797,7 +1797,15 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
   after it ends `merged` or its session reported `no-change` (the work was
-  already done).
+  already done) — with one exception: every append stamps the item
+  `assertedAt`, and re-emitting an id already in the file refreshes its
+  prompt and stamp in place instead of duplicating. When the newest task
+  ended `merged` but the item's `assertedAt` is later than that task's
+  creation, evidence arrived after the prompt was minted — evidence the
+  merge cannot have covered — so the claim releases and the item is
+  claimable again. Items never re-asserted (built-in, hand-written, or a
+  producer whose condition cleared) carry no later stamp and stay done for
+  good.
 - **Order.** The next item is the highest priority (1 first). Within a
   priority, areas whose measured outcomes improved their metric go first
   (higher measured leverage first), unmeasured areas next, and areas with a
@@ -1969,7 +1977,8 @@ App PR is never touched.
 the diff that was filed, the intake comments "Superseded by #N" on the cloud
 PR, closes it, and records `supersededBy` on the task. From then on the
 tracker follows the App PR: open stays `pr-open`, merged makes the task
-`merged` (so its backlog item is done for good), and closed makes it
+`merged` (so its backlog item is done for good unless the item is asserted
+again — see Claims), and closed makes it
 `closed`. The App PR's own merge/CI/review verdict is kept on the task's
 `outcome` at that terminal transition, exactly as the cloud PR's was — it is
 the evidence the outcome ledger, retros and lesson trial read for the PR

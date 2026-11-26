@@ -317,6 +317,18 @@ export interface CloudBacklogItem {
    * session that reports "no-change".
    */
   doneWhen?: CloudBacklogDoneWhen;
+  /**
+   * When a producer last asserted this item into the backlog — stamped by
+   * appendUserBacklogItems on insert and refreshed whenever the same id is
+   * emitted again (the evidence feeders re-emit while their condition
+   * holds). A task's claim releases a `merged` end only when this is later
+   * than the task's creation: evidence asserted after the prompt was minted
+   * is evidence the merge cannot have covered, so the item becomes
+   * claimable again instead of retiring for good. Items never re-asserted
+   * (built-in and hand-written) carry no stamp and keep done-for-good
+   * semantics.
+   */
+  assertedAt?: string;
 }
 
 export type CloudBacklogDoneWhen = { path: string; contains?: string } | { issue: number };
