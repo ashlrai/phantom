@@ -3786,13 +3786,17 @@ describe('readBusWorkMine', () => {
     expect(failed.mailbox).toMatchObject({ status: 'ok', matched: 1 });
     if (failed.mailbox.status !== 'ok') throw new Error('unreachable');
     expect(failed.mailbox.messages.map(message => message.id)).toEqual(['mb-result-f']);
-    // The thread sections carry no per-item result evidence the digest
-    // can prove — the shared conversations read has no outcome field —
-    // and board/channels stay whole, like they do under every filter
-    // those projections cannot express.
-    expect(failed.threads).toEqual(all.threads);
-    expect(failed.awaiting).toEqual(all.awaiting);
-    expect(failed.blocked).toEqual(all.blocked);
+    // The thread sections pass the outcome to the shared conversations
+    // read's own member-message result filter: the blocked thread whose
+    // member reports failed survives, while the worker-handoff thread —
+    // no member reports failed — drops, the same whole-thread member
+    // match `agents conversations --result` applies. Board and channels
+    // carry no per-item result evidence and stay whole.
+    expect(failed.threads).toMatchObject({ status: 'ok', matched: 0 });
+    expect(failed.awaiting).toMatchObject({ status: 'ok', matched: 0 });
+    expect(failed.blocked).toMatchObject({ status: 'ok', matched: 1 });
+    if (failed.blocked.status !== 'ok') throw new Error('unreachable');
+    expect(failed.blocked.items.map(item => item.id)).toEqual(['job:RQ-RES-F']);
     expect(failed.board).toEqual(all.board);
     expect(failed.channels).toEqual(all.channels);
 
@@ -3820,6 +3824,15 @@ describe('readBusWorkMine', () => {
     expect(complete.mailbox.messages.map(message => message.id)).toEqual(['mb-result-c']);
     expect(complete.next).toMatchObject({ status: 'ok', matched: 0 });
     expect(complete.handoffs).toMatchObject({ status: 'ok', matched: 0 });
+    // No member of any waiting, awaiting or blocked thread reports
+    // complete — the failed-report thread's members name no complete
+    // outcome — so the thread sections come back honestly empty while
+    // board and channels stay whole.
+    expect(complete.threads).toMatchObject({ status: 'ok', matched: 0 });
+    expect(complete.awaiting).toMatchObject({ status: 'ok', matched: 0 });
+    expect(complete.blocked).toMatchObject({ status: 'ok', matched: 0 });
+    expect(complete.board).toEqual(all.board);
+    expect(complete.channels).toEqual(all.channels);
 
     // result=admitted keeps atlas's own admitted announcement on both
     // feed views and its claim/mail/wake — the outcome filter composes
@@ -3843,6 +3856,14 @@ describe('readBusWorkMine', () => {
     if (admitted.inbox.status !== 'ok') throw new Error('unreachable');
     expect(admitted.inbox.messages.map(message => message.id)).toEqual(['res-mail-a']);
     expect(admitted.mailbox).toMatchObject({ status: 'ok', matched: 0 });
+    // The admitted report sits on a thread that is neither waiting on
+    // atlas, awaiting its reply nor blocked, so no thread section lists
+    // it; board and channels stay whole.
+    expect(admitted.threads).toMatchObject({ status: 'ok', matched: 0 });
+    expect(admitted.awaiting).toMatchObject({ status: 'ok', matched: 0 });
+    expect(admitted.blocked).toMatchObject({ status: 'ok', matched: 0 });
+    expect(admitted.board).toEqual(all.board);
+    expect(admitted.channels).toEqual(all.channels);
 
     // result=reserved is an outcome nothing on the bus reports — an
     // honest empty match on every filtered section, never an error and
@@ -3863,9 +3884,12 @@ describe('readBusWorkMine', () => {
     expect(reserved.inbox.matched).toBe(0);
     expect(reserved.mailbox.matched).toBe(0);
     expect(reserved.claims.claims).toEqual([]);
-    expect(reserved.threads).toEqual(all.threads);
-    expect(reserved.awaiting).toEqual(all.awaiting);
-    expect(reserved.blocked).toEqual(all.blocked);
+    // No member of any thread reports reserved either, so the thread
+    // sections are an honest empty match too; board and channels stay
+    // whole.
+    expect(reserved.threads).toMatchObject({ status: 'ok', matched: 0 });
+    expect(reserved.awaiting).toMatchObject({ status: 'ok', matched: 0 });
+    expect(reserved.blocked).toMatchObject({ status: 'ok', matched: 0 });
     expect(reserved.board).toEqual(all.board);
     expect(reserved.channels).toEqual(all.channels);
 

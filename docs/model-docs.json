@@ -1,0 +1,13 @@
+{
+  "schema": "models.docs.v1",
+  "version": 1,
+  "records": [
+    {"provider": "google", "id": "gemini-3.8-flash", "status": "deprecated", "source_url": "https://antigravity.google/docs/models/", "seen_at": "2026-11-26", "retires_at": "2026-11-30"},
+    {"provider": "google", "id": "gemini-4-argon-high", "status": "deprecated", "source_url": "https://antigravity.google/docs/models/", "seen_at": "2026-11-26", "retires_at": "2026-11-30"},
+    {"provider": "google", "id": "gemini-4-argon-medium", "status": "deprecated", "source_url": "https://antigravity.google/docs/models/", "seen_at": "2026-11-26", "retires_at": "2026-11-30"},
+    {"provider": "google", "id": "gemini-pro-orchestrator-argon", "status": "deprecated", "source_url": "https://antigravity.google/docs/models/", "seen_at": "2026-11-26", "retires_at": "2026-11-30"},
+    {"provider": "google", "id": "claude-opus-4-6-thinking", "status": "deprecated", "source_url": "https://antigravity.google/docs/models/", "seen_at": "2026-11-26", "retires_at": "2026-11-30"},
+    {"provider": "google", "id": "claude-sonnet-4-6-thinking", "status": "deprecated", "source_url": "https://antigravity.google/docs/models/", "seen_at": "2026-11-26", "retires_at": "2026-11-30"},
+    {"provider": "google", "id": "gpt-oss-120b", "status": "deprecated", "source_url": "https://antigravity.google/docs/models/", "seen_at": "2026-11-26", "retires_at": "2026-11-30"}
+  ]
+}

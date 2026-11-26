@@ -88,8 +88,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
-  resources: ['plan', 'stale', 'sample', 'ledger', 'personal', 'claude-promotion', 'profile', 'launcher', 'autopilot', 'pool',
-    '--json', '--watch', '--write-advice', '--runs-dir', '--help'],
+  resources: ['plan', 'evidence', 'stale', 'sample', 'ledger', 'personal', 'claude-promotion', 'profile', 'launcher', 'autopilot', 'pool',
+    '--json', '--watch', '--write-advice', '--runs-dir', '--resource', '--resets', '--expires', '--source', '--kind', '--observed-at', '--help'],
   docs: ['cli', '--agent', '--check', '--json', '--help'],
   approvals: ['ask', 'answer', '--team', '--question', '--options', '--expires', '--by', '--json', '--help'],
   subagent: ['spawn', 'list', 'result'],
@@ -203,7 +203,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],
   ask: ['status', '--help', '--json', '--repo', '--allow-cloud', '--jobs'],
-  wiki: ['build', 'status', 'show', 'ask'],
+  wiki: ['build', 'status', 'show', 'ask', 'map'],
   reflect: ['playbooks', 'propose'],
   health: ['propose'],
   goals: [

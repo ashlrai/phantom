@@ -1454,7 +1454,8 @@ class QueueWaitTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         rows = self.metrics(home)
         self.assertEqual([r['event'] for r in rows], ['enqueue', 'claim', 'launch'])
-        wait = (datetime.fromisoformat(rows[1]['ts']) - datetime.fromisoformat(rows[0]['ts'])).total_seconds()
+        fmt = '%Y-%m-%dT%H:%M:%S%z'
+        wait = (datetime.strptime(rows[1]['ts'], fmt) - datetime.strptime(rows[0]['ts'], fmt)).total_seconds()
         self.assertGreaterEqual(wait, 0)
         self.assertLess(wait, 300)
         for key in ('job', 'repo', 'lane', 'tier'):

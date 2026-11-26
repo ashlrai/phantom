@@ -30,7 +30,7 @@ interface Parsed {
   values: Map<string, string>;
 }
 
-const VALUE_FLAGS = new Set(['--repo', '--pages', '--tokens']);
+const VALUE_FLAGS = new Set(['--repo', '--pages', '--tokens', '--focus']);
 
 function parse(args: string[]): Parsed {
   const positional: string[] = [];
@@ -65,6 +65,10 @@ const WIKI_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> =
   status: { allowed: { flags: ['--json'] }, usage: 'Usage: ashlr wiki status [repo] [--json]' },
   list: { allowed: { flags: ['--json'] }, usage: 'Usage: ashlr wiki list [repo] [--json]' },
   show: { allowed: {}, usage: 'Usage: ashlr wiki show <repo> [page]' },
+  map: {
+    allowed: { flags: ['--json'], values: ['--focus'] },
+    usage: 'Usage: ashlr wiki map [repo] [--focus <node-or-file>] [--json]',
+  },
   ask: {
     allowed: { flags: ['--no-model', '--json'], values: ['--repo'] },
     usage: 'Usage: ashlr wiki ask "<question>" [--repo <path|name>] [--no-model] [--json]',
@@ -129,6 +133,7 @@ function printHelp(): void {
   out(`    ${cyan('build [repo] [--all]')}         Generate or refresh (only stale pages are rebuilt).`);
   out(`    ${cyan('status [repo]')}                Freshness: generated at <commit>, N pages stale.`);
   out(`    ${cyan('show <repo> [page]')}           Print a page (default: overview).`);
+  out(`    ${cyan('map [repo] [--focus id]')}      Read the commit-pinned system map.`);
   out(`    ${cyan('ask "<question>" [--repo r]')}  Answer from the wiki, index and genome with file:line citations.`);
   out('');
   out(`    ${dim('--force        regenerate every page')}`);
@@ -297,6 +302,27 @@ async function cmdAsk(wiki: WikiModule, p: Parsed): Promise<number> {
   return res.status === 'not-found' ? 1 : 0;
 }
 
+async function cmdMap(wiki: WikiModule, p: Parsed): Promise<number> {
+  const focus = p.values.get('--focus');
+  if (p.positional.length > 1 || (focus !== undefined && (!focus || focus.length > 1200 || focus.startsWith('--')))) {
+    process.stderr.write(`${WIKI_OPTIONS.map!.usage}\n`);
+    return 2;
+  }
+  const target = resolveRepo(wiki, p.positional[0]);
+  if ('error' in target) {
+    process.stderr.write(`${target.error}\n`);
+    return 1;
+  }
+  const { querySystemMap } = await import('../core/knowledge/wiki/system-map.js');
+  const result = await querySystemMap(target.repo, focus);
+  if (p.flags.has('--json')) process.stdout.write(`${JSON.stringify(result)}\n`);
+  else if (result.status === 'current') {
+    process.stdout.write(`${result.commit} (${result.update.mode})${result.truncated ? ' — truncated' : ''}\n`);
+    for (const node of result.nodes) process.stdout.write(`${node.id}\t${node.anchor.file}:${node.anchor.line}\n`);
+  } else process.stderr.write(`System map: ${result.status}.\n`);
+  return result.status === 'current' ? 0 : 1;
+}
+
 export async function cmdWiki(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') {
@@ -327,6 +353,8 @@ export async function cmdWiki(args: string[]): Promise<number> {
       return cmdStatus(wiki, p);
     case 'show':
       return cmdShow(wiki, p);
+    case 'map':
+      return cmdMap(wiki, p);
     case 'ask':
       return cmdAsk(wiki, p);
     default:

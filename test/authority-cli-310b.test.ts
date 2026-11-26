@@ -45,11 +45,13 @@ import {
   type GhResult,
 } from '../src/cli/authority.js';
 import { resetLedgerCachesForTest } from '../src/core/authority/ledger.js';
+import * as authoritySurface from '../src/core/authority/surface.js';
 import { invalidateStandingPolicyCache } from '../src/core/authority/effective-config.js';
 import { resetAuthorityApiCachesForTest } from '../src/core/verse/authority-api.js';
 import { keyIdForPublicKeyPem } from '../src/core/authority/custody-client.js';
 import { killSwitchOn } from '../src/core/sandbox/policy.js';
-import { ed25519RootPem, editGrant, makeGrant, TEST_ROOT, withTempHome } from './helpers/authority-310b.js';
+import { writeCapacitySnapshot } from '../src/core/routing/budget-store.js';
+import { ed25519RootPem, editGrant, makeGrant, TEST_ROOT, TEST_SURFACE, withTempHome } from './helpers/authority-310b.js';
 
 let home: string;
 let restore: () => void;
@@ -110,6 +112,44 @@ function harness(opts: { confirm?: boolean; gh?: (args: readonly string[]) => Gh
 }
 
 describe('basic commands', () => {
+  it('drafts and reviews only connected seats, not a stale capacity seat', async () => {
+    const verify = vi.spyOn(authoritySurface, 'verifyAuthoritySurface').mockImplementation((target) => ({
+      ok: true, target, packageRoot: home, digest: TEST_SURFACE, fileCount: 1, checkedAt: new Date().toISOString(),
+    }));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
+    const accounts = join(home, '.ashlr', 'account-connections');
+    mkdirSync(accounts, { recursive: true });
+    const configure = (...ids: string[]) => writeFileSync(join(accounts, 'connections.json'), JSON.stringify({
+      accounts: ids.map(id => ({ id, provider: 'codex', command: [join(home, id)] })),
+    }));
+    writeCapacitySnapshot([{
+      seatId: 'codex-cmp', engine: 'codex', reachable: true, signedOut: false, free: false,
+      contextWindow: null, observedAt: null, spentTodayUsd: null, windows: [],
+    }]);
+    try {
+      configure('codex-personal');
+      const draft = harness();
+      expect(await runAuthorityCli(['draft', '--new'], draft.deps), draft.err.join('\n')).toBe(0);
+      expect(draft.out.join('\n')).toContain('seat codex-personal: on, keep 0% for the owner');
+      expect(draft.out.join('\n')).not.toContain('seat codex-cmp');
+
+      const grant = harness();
+      expect(await runAuthorityCli(['grant', '--no-elite-direct'], grant.deps)).toBe(1);
+      expect(grant.out.join('\n')).toContain('seat codex-personal: on, keep 0% for the owner');
+      expect(grant.out.join('\n')).not.toContain('seat codex-cmp');
+      expect(grant.out).toContain('Not signed.');
+      expect(grant.deps.custody?.signGrant).not.toHaveBeenCalled();
+
+      configure('codex-personal', 'codex-cmp');
+      const connected = harness();
+      expect(await runAuthorityCli(['draft', '--new', '--json'], connected.deps), connected.err.join('\n')).toBe(0);
+      expect(Object.keys(JSON.parse(connected.out.join('\n')).payload.spend.seats)).toEqual(['codex-personal', 'codex-cmp']);
+    } finally {
+      verify.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('stop --json writes only the JSON result to stdout, on both the drain and --no-wait paths', async () => {
     for (const args of [['stop', '--json'], ['stop', '--json', '--no-wait']]) {
       const h = harness();
