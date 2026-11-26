@@ -532,10 +532,15 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   // The dependency-audit gate reads each lockfile's installed graph plus
   // the manifests, shrinkwraps and .npmrc files that shape it, the
   // exception file its verdicts are filtered by, and the audit script
-  // itself. The desktop Cargo.lock is audited by cargo-audit, whose
-  // output this analyzer does not parse.
+  // itself. The desktop Cargo.lock is audited by the workflow's
+  // cargo-audit step instead; its inputs are seeded separately below.
   'package-lock.json': ['package.json', 'npm-shrinkwrap.json', '.npmrc', '.github/dependency-audit-exceptions.json', 'scripts/npm-audit-with-osv-fallback.sh'],
   'src/raycast/package-lock.json': ['src/raycast/package.json', 'src/raycast/npm-shrinkwrap.json', 'src/raycast/.npmrc', '.github/dependency-audit-exceptions.json', 'scripts/npm-audit-with-osv-fallback.sh'],
+  // The desktop lockfile's cargo-audit graph has no npm manifest pair:
+  // its direct inputs are the lockfile itself, the Cargo.toml declaring
+  // the dependencies and the workflow file carrying the step's --file
+  // target, pinned cargo-audit version and inline --ignore exceptions.
+  'desktop/src-tauri/Cargo.lock': ['desktop/src-tauri/Cargo.toml', '.github/workflows/dependency-audit.yml'],
   // The pack-smoke gate verifies the packed name/version against
   // package.json and the measured dist/ graph has no enumerable closure,
   // so only the manifest is a direct repo input; the artifact gate also
@@ -833,8 +838,12 @@ function parsePerfBudgetFailures(log: string): Failure[] {
 // below, per printed row, because osv-scanner itself already applied the
 // step's IgnoredVulns config -- every row it prints is an unexcepted
 // advisory, so these groups do not need the exception list and still emit
-// when it is unreadable. Cargo-audit output carries no audit v2 document
-// and stays unparsed. Invalid reports (non-v2 schema, malformed severity
+// when it is unreadable. The workflow's last step then runs cargo-audit on
+// the desktop lockfile: its fixed-label vulnerability blocks parse
+// separately below, scoped to the echoed `cargo-audit audit --file`
+// command, because `--ignore` suppresses its one documented exception
+// before printing and only vulnerabilities fail the step -- warning
+// blocks stay unparsed. Invalid reports (non-v2 schema, malformed severity
 // counts), reports with no preceding step echo, unrelated JSON and clean
 // reports (`total: 0`) stay unparsed. Like the other non-test identities
 // these groups can never resolve through a vitest pass line:
@@ -847,6 +856,46 @@ const DEPENDENCY_AUDIT_INVOKE = /(?:^|[\s"'`(=])(\.\.\/\.\.\/)?scripts\/npm-audi
 const DEPENDENCY_AUDIT_GHSA = /GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/i;
 const DEPENDENCY_AUDIT_GHSA_ALL = /GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/gi;
 const DEPENDENCY_AUDIT_PACKAGE = /^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/i;
+// The same workflow's last step audits the desktop lockfile with the
+// pinned cargo-audit binary (`cargo-audit audit --file
+// desktop/src-tauri/Cargo.lock --ignore RUSTSEC-2024-0429`). Its report is
+// a sequence of fixed-label attribute blocks on stdout -- one per
+// vulnerability or warning -- each closed by `Dependency tree:` and the
+// rendered graph, while the verdict (`error: N vulnerabilities found`)
+// goes to stderr. With the workflow's flags only vulnerabilities fail the
+// step, so warning blocks are recognized but never emitted, and `--ignore`
+// suppresses its advisory before printing, so no exemption replay is
+// needed here. Each vulnerable crate groups under
+// `desktop/src-tauri/Cargo.lock > (dependency-audit) <crate>`; the
+// lockfile, the manifest shaping its graph and the workflow file carrying
+// the step's flags are its closed input set (STATIC_FAILURE_INPUTS).
+const CARGO_AUDIT_STEP = /\bcargo-audit\s+audit\b/;
+const CARGO_AUDIT_FILE = /--file(?:=|\s+)(\S+)/;
+const CARGO_AUDIT_ATTR = /^(Crate|Version|Title|Date|ID|URL|Severity|Solution|Warning|Affected):[ \t]+(\S.*?)\s*$/;
+const CARGO_AUDIT_CRATE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+const CARGO_AUDIT_ID = /^(?:RUSTSEC-\d{4}-\d+|GHSA-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}-[0-9A-Za-z]{4})$/;
+const CARGO_AUDIT_URL = /^https:\/\/\S{1,400}$/;
+const CARGO_AUDIT_URLS_PER_PACKAGE = 8;
+
+interface CargoAuditBlock {
+  crate: string | null;
+  version: string | null;
+  id: string | null;
+  url: string | null;
+  severity: string | null;
+  warning: boolean;
+}
+
+interface CargoAuditPackage {
+  file: string;
+  names: string;
+  testId: string;
+  pkg: string;
+  versions: string[];
+  ids: string[];
+  severities: string[];
+  urls: string[];
+}
 
 // Master's exception file is small and hand-reviewed; any malformed entry
 // makes the whole file untrusted (the gate script itself fails closed on
@@ -994,6 +1043,7 @@ function parseAuditFailures(log: string, auditExceptions: readonly DependencyAud
   const out: Failure[] = [];
   const seen = new Set<string>();
   const osvPackages = new Map<string, OsvAuditPackage>();
+  const cargoPackages = new Map<string, CargoAuditPackage>();
   // Timestamped job-log lines keep the document's and table's own columns:
   // the strip removes the stamp and its single separating space only, the
   // same convention as the check:docs and perf-budget report parsers, so a
@@ -1002,8 +1052,67 @@ function parseAuditFailures(log: string, auditExceptions: readonly DependencyAud
   const raw = stripVTControlCharacters(log).split('\n')
     .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, '').replace(/\r$/, ''));
   let context: AuditStep | null = null;
+  // cargo-audit state: `cargoFile` is the lockfile named by the last
+  // `cargo-audit audit --file` step echo (null outside that step or on an
+  // unattributable argument); `cargoBlock` accumulates the attribute lines
+  // of the one advisory block currently open. A block finalizes on the
+  // first non-attribute line -- `Dependency tree:`, the verdict's stderr
+  // lines, a blank separator or the next step's echo all end it.
+  let cargoFile: string | null = null;
+  let cargoBlock: CargoAuditBlock | null = null;
+  const flushCargoBlock = (): void => {
+    const block = cargoBlock;
+    cargoBlock = null;
+    if (block === null || cargoFile === null || block.warning || block.crate === null || block.id === null) return;
+    if (!CARGO_AUDIT_CRATE.test(block.crate) || !CARGO_AUDIT_ID.test(block.id)) return;
+    const testId = `${cargoFile} > ${DEPENDENCY_AUDIT_NAMES} ${block.crate}`;
+    let entry = cargoPackages.get(testId);
+    if (entry === undefined) {
+      entry = { file: cargoFile, names: `${DEPENDENCY_AUDIT_NAMES} ${block.crate}`, testId, pkg: block.crate, versions: [], ids: [], severities: [], urls: [] };
+      cargoPackages.set(testId, entry);
+    }
+    pushUnique(entry.versions, block.version ?? '', 8);
+    pushUnique(entry.ids, block.id, 8);
+    pushUnique(entry.severities, block.severity ?? '', 4);
+    if (block.url !== null && CARGO_AUDIT_URL.test(block.url)) pushUnique(entry.urls, block.url, CARGO_AUDIT_URLS_PER_PACKAGE);
+  };
   for (let i = 0; i < raw.length && out.length < DEPENDENCY_AUDIT_MAX; i++) {
     const line = raw[i]!;
+    if (CARGO_AUDIT_STEP.test(line)) {
+      flushCargoBlock();
+      const fileArg = CARGO_AUDIT_FILE.exec(line)?.[1];
+      cargoFile = fileArg !== undefined && fileArg !== '' && !posix.isAbsolute(fileArg) && posix.normalize(fileArg) === fileArg && !fileArg.includes('..')
+        ? fileArg
+        : null;
+      context = null;
+      continue;
+    }
+    if (cargoFile !== null && DEPENDENCY_AUDIT_INVOKE.test(line)) {
+      // A later npm audit step rebinds the log to its own lockfile.
+      flushCargoBlock();
+      cargoFile = null;
+    }
+    if (cargoFile !== null) {
+      const attr = CARGO_AUDIT_ATTR.exec(line);
+      if (attr === null) {
+        flushCargoBlock();
+      } else {
+        if (cargoBlock === null) cargoBlock = { crate: null, version: null, id: null, url: null, severity: null, warning: false };
+        const block = cargoBlock;
+        const value = attr[2]!;
+        switch (attr[1]) {
+          case 'Crate': block.crate ??= value; break;
+          case 'Version': block.version ??= value; break;
+          case 'ID': block.id ??= value; break;
+          case 'URL': block.url ??= value; break;
+          case 'Severity': block.severity ??= value; break;
+          case 'Warning': block.warning = true; break;
+          // Title, Date, Solution and Affected keep the block open but are
+          // not part of the group's identity.
+        }
+      }
+      continue;
+    }
     const invoke = DEPENDENCY_AUDIT_INVOKE.exec(line);
     if (invoke !== null) {
       const arg = invoke[2]!;
@@ -1086,6 +1195,7 @@ function parseAuditFailures(log: string, auditExceptions: readonly DependencyAud
       out.push({ file: step.file, names: namesField, testId, excerpt: clean([`${pkg} severity=${severity}`, ...advisories, ...(fixText === '' ? [] : [fixText])].join('\n')) });
     }
   }
+  flushCargoBlock();
   for (const entry of osvPackages.values()) {
     if (out.length >= DEPENDENCY_AUDIT_MAX) break;
     if (seen.has(entry.testId)) continue;
@@ -1095,6 +1205,17 @@ function parseAuditFailures(log: string, auditExceptions: readonly DependencyAud
       entry.versions.length ? `version=${entry.versions.join(',')}` : '',
       entry.fixed.length ? `fixed=${entry.fixed.join(',')}` : '',
       entry.cvss.length ? `cvss=${entry.cvss.join(',')}` : '',
+    ].filter(part => part !== '').join(' ');
+    out.push({ file: entry.file, names: entry.names, testId: entry.testId, excerpt: clean([`${entry.pkg}${meta === '' ? '' : ` ${meta}`}`, ...entry.urls].join('\n')) });
+  }
+  for (const entry of cargoPackages.values()) {
+    if (out.length >= DEPENDENCY_AUDIT_MAX) break;
+    if (seen.has(entry.testId)) continue;
+    seen.add(entry.testId);
+    const meta = [
+      entry.versions.length ? `version=${entry.versions.join(',')}` : '',
+      entry.ids.length ? `id=${entry.ids.join(',')}` : '',
+      entry.severities.length ? `severity=${entry.severities.join(',')}` : '',
     ].filter(part => part !== '').join(' ');
     out.push({ file: entry.file, names: entry.names, testId: entry.testId, excerpt: clean([`${entry.pkg}${meta === '' ? '' : ` ${meta}`}`, ...entry.urls].join('\n')) });
   }
