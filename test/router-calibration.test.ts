@@ -92,6 +92,17 @@ describe('router calibration', () => {
       row({ event: 'publish', id: 'TEST-a', status: 'published' }) + row({ event: 'outcome', id: 'TEST-a', outcome: 'pending' }));
     expect(report.arms[0]).toMatchObject({ resolved: 0, observedMergeRate: null, brier: null });
   });
+  it('skips unknown arm aliases and groups launches with no arm evidence as unknown', () => {
+    const report = calibrateRouting(
+      row({ event: 'launch', job: 'RQ-SOLO', arm: ' Unknown ', lane: 'codex' }) +
+      row({ event: 'batch_claim', job: 'RQ-MEMBER', lane: 'UNKNOWN', pool: 'codex' }) +
+      row({ event: 'launch', job: 'RQ-NO-ARM' }),
+    );
+    expect(report.arms).toMatchObject([
+      { arm: 'codex', jobs: 2 },
+      { arm: 'unknown', jobs: 1, observedMergeRate: null },
+    ]);
+  });
   it('rejects reverse time and escapes markdown arm names', () => {
     expect(() => calibrateRouting(row({ event: 'launch', id: 'TEST-a', arm: 'a', timestamp: '2026-01-02T00:00:00Z' }) +
       row({ event: 'finish', id: 'TEST-a', timestamp: '2026-01-01T00:00:00Z' }))).toThrow('Finish precedes');

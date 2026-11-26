@@ -48,6 +48,14 @@ function stringField(row: Row, ...names: string[]): string | undefined {
   const value = field(row, ...names);
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
+function observedArm(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const arm = value.trim();
+    if (arm && arm.toLowerCase() !== 'unknown') return arm;
+  }
+  return undefined;
+}
 function numberField(row: Row, names: string[], max = Infinity): number | undefined {
   const value = field(row, ...names);
   if (value === undefined) return undefined;
@@ -127,7 +135,7 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       recognized++;
       const job = jobs.get(row.jobId) ?? { launched: false };
       jobs.set(row.jobId, job);
-      if (row.pool !== null) assign(job, 'arm', row.pool);
+      assign(job, 'arm', observedArm(row.pool));
       assign(job, 'rewardMerged', row.merged);
       continue;
     }
@@ -142,14 +150,14 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
     const job = jobs.get(id) ?? { launched: false };
     jobs.set(id, job);
     if (event === 'batch_claim') {
-      const lane = stringField(row, 'lane', 'pool', 'arm');
+      const lane = observedArm(row['lane'], row['pool'], row['arm']);
       job.batchLanes ??= new Set();
-      if (lane && lane !== 'unknown') job.batchLanes.add(lane);
+      if (lane) job.batchLanes.add(lane);
     }
     if (event === 'launch') {
       if (job.launched) throw new Error('Duplicate launch for a job');
       job.launched = true;
-      assign(job, 'arm', stringField(row, 'arm', 'lane', 'pool'));
+      assign(job, 'arm', observedArm(row['arm'], row['lane'], row['pool']));
       assign(job, 'started', timestamp(row));
     }
     if (event === 'finish') {
@@ -175,7 +183,6 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
   for (const job of jobs.values()) {
     if (!job.launched && !job.batchLanes && job.rewardMerged === undefined) throw new Error('Event has no matching launch');
     if (!job.arm) {
-      if (!job.batchLanes && job.rewardMerged === undefined) throw new Error('Launch is missing arm');
       job.arm = job.batchLanes?.size === 1 ? [...job.batchLanes][0]! : 'unknown';
     }
     job.merged = job.rewardMerged ?? job.merged;
