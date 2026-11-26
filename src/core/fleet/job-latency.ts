@@ -1,4 +1,5 @@
-import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
+import { ledgerEventName } from './empty-cause.js';
+import { isNodePoolLedgerRow, ledgerEventTs, ledgerJobId } from './jobs-ledger-dialect.js';
 
 const jobPhases = [
   ['queue_wait', 'queued', 'launch', 'Measure admission delays and remove the largest queue bottleneck.'],
@@ -11,27 +12,6 @@ const jobPhases = [
 ] as const;
 
 type Events = Map<string, number[]>;
-
-/**
- * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
- * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
- * the same field set dispatchd `_vc_pick` and metrics/loop accept.
- */
-const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-
-/** First parseable stamp among the ledger's timestamp fields for one boundary; merged prefers mergedAt, closed closedAt. */
-function boundaryTs(row: Record<string, unknown>, event: string): number {
-  const preferred = event === 'merged' ? 'mergedAt' : event === 'closed' ? 'closedAt' : null;
-  const fields = preferred === null ? TS_KEYS : [preferred, ...TS_KEYS.filter(f => f !== preferred)];
-  for (const field of fields) {
-    const value = row[field];
-    if (typeof value === 'string') {
-      const at = Date.parse(value);
-      if (Number.isFinite(at)) return at;
-    }
-  }
-  return NaN;
-}
 
 /**
  * Canonical boundary name for one ledger row, or undefined when the row is
@@ -52,10 +32,9 @@ function boundaryEvent(row: Record<string, unknown>): string | undefined {
   const terminal = states.find(state => state === 'MERGED' || state === 'CLOSED');
   if (terminal !== undefined) return terminal.toLowerCase();
   if (states.includes('PUBLISHED')) return 'publish';
-  const raw = row.event ?? row.type ?? row.kind;
+  const raw = ledgerEventName(row);
   if (raw === 'enqueue' || raw === 'enqueued') return 'queued';
-  if (raw === 'published') return 'publish';
-  return typeof raw === 'string' ? raw : undefined;
+  return raw ?? undefined;
 }
 
 const gitOperations = ['index.lock', 'worktree_add', 'worktree_remove', 'fetch', 'push'] as const;
@@ -68,7 +47,7 @@ function gitObservation(row: Record<string, unknown>): Observation | null {
   const { machine, lane, elapsed_ms, failed, retries } = row;
   if (!operation || typeof machine !== 'string' || !machine || typeof lane !== 'string' || !lane) return null;
   const elapsed = typeof elapsed_ms === 'number' && Number.isSafeInteger(elapsed_ms) && elapsed_ms >= 0 ? elapsed_ms : null;
-  const end = boundaryTs(row, 'git_operation');
+  const end = ledgerEventTs(row, null) ?? NaN;
   return { machine, lane, operation, start: elapsed === null ? NaN : end - elapsed, end, elapsed,
     failed: typeof failed === 'boolean' ? Number(failed) : null,
     retries: typeof retries === 'number' && Number.isSafeInteger(retries) && retries >= 0 ? retries : null };
@@ -139,7 +118,7 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
       row = value as Record<string, unknown>;
     } catch { ignored++; continue; }
     if (isNodePoolLedgerRow(row)) continue;
-    const id = row.job ?? row.job_id ?? row.jobId ?? row.id;
+    const id = ledgerJobId(row);
     const event = boundaryEvent(row);
     if (event === 'git_operation') {
       if (phases === jobPhases) {
@@ -150,9 +129,9 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
       continue;
     }
     // Batch members carry their own evidence. The session is a shared worker.
-    if (typeof id === 'string' && id.startsWith('RQ-BATCH-')) continue;
-    const at = event === undefined ? NaN : boundaryTs(row, event);
-    if (typeof id !== 'string' || !id || event === undefined) { ignored++; continue; }
+    if (id?.startsWith('RQ-BATCH-')) continue;
+    if (id === null || event === undefined) { ignored++; continue; }
+    const at = ledgerEventTs(row, event.toUpperCase()) ?? NaN;
     const events = jobs.get(id) ?? new Map<string, number[]>();
     const times = events.get(event) ?? [];
     if (!Number.isFinite(at)) ignored++;

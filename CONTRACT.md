@@ -2495,7 +2495,11 @@ fence. The owner match is `withdraw`'s, so another scope's job answers
 ## Fleet job latency Git observations (`fleet.job-latency.v1`)
 
 `phm fleet job-latency --json` and `phm pulse merge-latency --json` read
-only the local jobs ledger. Per-job phase totals and job counts exclude
+only the local jobs ledger. They use the first non-blank string from
+`job|job_id|jobId|id` and `event|type|kind`, trim both values, and
+match event names case-insensitively. Timestamps follow the shared
+jobs-ledger parser, including space-separated datetimes with UTC offsets.
+Per-job phase totals and job counts exclude
 `RQ-BATCH-*` session wrappers and node-pool telemetry
 (`fleet.session-pool.v1` and `phm-node-runner.v1`). Batch member rows
 still contribute their own recorded boundaries. Excluded rows do not
