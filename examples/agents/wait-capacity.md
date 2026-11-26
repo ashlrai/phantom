@@ -3,7 +3,7 @@
 From the repository root:
 
 ```sh
-npx tsx examples/agents/wait-capacity.ts --lane codex-cmp --timeout-ms 60000
+npx tsx examples/agents/wait-capacity.ts --lane codex-personal --timeout-ms 60000
 ```
 
 Optionally add `--runs-dir /path/to/runs`; the default is `~/.ashlr-runs`. The timeout must be an integer from 1 to 3600000 milliseconds. The workflow checks immediately and then at most once per second until its deadline. It uses the existing local runs-directory reader; it makes no provider calls and does not change targets or submit work.

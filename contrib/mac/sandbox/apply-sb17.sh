@@ -1,5 +1,5 @@
 #!/bin/sh
-# apply-sb17.sh — install the SB-17 SANDBOX-DENY-OSA tighten into the 5 lane
+# apply-sb17.sh — install the SB-17 SANDBOX-DENY-OSA tighten into the 4 lane
 # profiles + the codex-local launch.sh pin. Masbot-run, outside any lane.
 # Idempotent: a file already at its post state is skipped, so this composes
 # with `patch -p2 < sandbox-deny-osa.diff` (patch may move some or all files).
@@ -19,8 +19,6 @@ has_block(){ grep -Fq 'com.apple.coreservices.launchservicesd' "$1" && grep -Fq 
 # against live bin by Masbot 2026-10-27 — terminals/1336.txt) ---
 PRE_A=002278b0c55fee509a27787c11fd4818c2395d1ccb1d9edb9c095966647b82d1
 POST_A=ed8fc729c73bbcfa77e5286a6ce7af518acc1d99b08f4d779b6d4e3f338a9003
-PRE_C=56fe451c11a8ec28bfa726fd65a456d79769de5c2ac613df8f1b3dd041f70f2b
-POST_C=a007a4074c7976538f28efbbaa1017d154702bb0262bc9b6b48d9e7d89f0d7f7
 PRE_P=d3f5658f1c24d1e4ba0b27d51bec2833c9e0acf07025c5608e959c568c93757a
 POST_P=e085cf77b53eebb9ee94952342dbb929f78ada88382790bb3c60500ee6a1f30a
 PRE_L=fdb051cdf1a379f94bd8ebd71594ddc619dc0a4ce8f364bc16e6f7fe2df82f06   # codex-local.sb pin from launch.sh
@@ -29,7 +27,7 @@ L_TOKEN=422ea9b69bcaecd0c51948fc0e03974566e26b7940e83a95b01feeffdb5d75ab     # l
 
 want "$S/sb17-block.sb" 994cada9889adecc58064fa3118025c60cde3864b2bc82772cc4e0913b07d9f5
 TODO=""
-for spec in "agent $PRE_A $POST_A" "claude $PRE_A $POST_A" "codex-cmp $PRE_C $POST_C" "codex-personal $PRE_P $POST_P"; do
+for spec in "agent $PRE_A $POST_A" "claude $PRE_A $POST_A" "codex-personal $PRE_P $POST_P"; do
   set -- $spec
   [ -f "$B/$1.sb" ] || die "$B/$1.sb missing"
   [ ! -L "$B/$1.sb" ] || die "$B/$1.sb is a symlink"
@@ -79,7 +77,7 @@ for f in $TODO; do
 done
 
 # --- verify post shas; codex-local post sha feeds the launch.sh pin ---
-for spec in "agent $POST_A" "claude $POST_A" "codex-cmp $POST_C" "codex-personal $POST_P"; do
+for spec in "agent $POST_A" "claude $POST_A" "codex-personal $POST_P"; do
   set -- $spec; want "$B/$1.sb" "$2"
 done
 has_block "$B/codex-local.sb" || { echo "POST FAIL codex-local.sb lacks SB-17 block"; exit 10; }
@@ -99,11 +97,11 @@ if [ "$REPIN" != done ]; then
 fi
 
 # --- verify: SBPL parses, launch.sh syntax, print the pin table ---
-for f in agent claude codex-cmp codex-personal codex-local; do
+for f in agent claude codex-personal codex-local; do
   sandbox-exec -f "$B/$f.sb" /usr/bin/true >/dev/null 2>&1 || { echo "SANDBOX PARSE FAIL $f.sb — restore $B/$f.sb.bak-sb17-$E"; exit 11; }
 done
 bash -n "$B/launch.sh" || { echo "launch.sh SYNTAX FAIL — restore $B/launch.sh.bak-sb17-$E"; exit 11; }
 echo "POST-SB17 SHAS"
-for f in agent claude codex-cmp codex-personal codex-local; do echo "$(sha "$B/$f.sb")  $f.sb"; done
+for f in agent claude codex-personal codex-local; do echo "$(sha "$B/$f.sb")  $f.sb"; done
 echo "$(sha "$B/launch.sh")  launch.sh"
 echo "SB17 APPLIED ok"

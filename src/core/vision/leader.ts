@@ -1011,6 +1011,18 @@ export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<Leader
     announceRelease: () => import('../fleet/release-live-announce.js').then(m => m.runDefaultReleaseAnnouncement()),
     announcePace: () => import('../usage/plan-pace.js').then(m => m.runDefaultPaceAlerts()),
     announceStarved: () => import('../fleet/lane-starved.js').then(m => m.runDefaultStarvedNotices()),
+    board: { record: async nowMs => {
+      const [{ recordLeaderBoard }, { readFleetResourcePlan }, { routeExpiringCapacity }, { defaultResourceLiveRunsDir }] = await Promise.all([
+        import('../fleet/leader-board.js'), import('../usage/resource-live/fleet-plan.js'),
+        import('../fleet/resource-queue-route.js'), import('../usage/resource-live/feed.js'),
+      ]);
+      const runsDir = defaultResourceLiveRunsDir();
+      const plan = readFleetResourcePlan(runsDir, nowMs);
+      await plan.then(value => routeExpiringCapacity(runsDir, value)).catch(() => {
+        console.error('leader tick: resource-plan queue routing unavailable');
+      });
+      return recordLeaderBoard({ runsDir, nowMs, readCapacity: () => plan });
+    } },
     amplifyTick: async nowMs => { amplifySnapshot = await amplifier.amplifyTick(undefined, nowMs); },
     sources: {
       amplify: async nowMs => {

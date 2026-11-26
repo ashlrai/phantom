@@ -19,7 +19,7 @@ export interface StatusSupply {
 }
 
 const LANES = [
-  'codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local',
+  'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local',
   'devin-flash', 'gemini', 'zai', 'agy', 'grok', 'cursor',
 ] as const;
 const FAIL_REASONS = ['usage-limit', 'auth-rejected', 'executor-fail'] as const;

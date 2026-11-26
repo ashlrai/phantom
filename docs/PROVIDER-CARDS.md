@@ -5,7 +5,7 @@ whether the current pace will run out first. Pools are grouped by vendor:
 
 | Card | Pools |
 |---|---|
-| OpenAI | `codex-cmp`, `codex-personal`, `terra` |
+| OpenAI | `codex-personal`, `terra` |
 | Anthropic | `claude-max` |
 | Cognition / Devin | `devin` |
 | xAI | `grok-ultra` |

@@ -1,6 +1,6 @@
 /** Shared, derived resource facts. Percentages are percentage points, never fractions. */
 export const RESOURCE_SCHEMA = 'resource.v1' as const;
-export const RESOURCE_POOLS = ['grok-ultra', 'codex-cmp', 'codex-personal', 'claude-max', 'terra', 'devin'] as const;
+export const RESOURCE_POOLS = ['grok-ultra', 'codex-personal', 'claude-max', 'terra', 'devin'] as const;
 export type ResourcePool = typeof RESOURCE_POOLS[number];
 export type ResourceStatus = 'green' | 'amber' | 'red' | 'unknown';
 export const RESOURCE_MAX_AGE_MS = 35 * 60_000;

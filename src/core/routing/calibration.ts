@@ -123,9 +123,6 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       jobs.set(row.jobId, job);
       job.rewarded = true;
       if (row.pool !== null) assign(job, 'arm', row.pool);
-      assign(job, 'started', Date.parse(row.dispatchedAt));
-      if (row.mergedAt !== null) assign(job, 'finished', Date.parse(row.mergedAt));
-      if (row.ciWallMs !== null) assign(job, 'wallTimeMs', row.ciWallMs);
       assign(job, 'merged', row.merged);
       continue;
     }

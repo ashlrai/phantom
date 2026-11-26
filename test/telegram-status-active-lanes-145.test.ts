@@ -63,11 +63,12 @@ const baseDeps = {
 describe('telegramFleetStatus active resource lanes', () => {
   it('keeps detailed rows for every supply-supported lane including devin-flash, gemini and zai', async () => {
     const body = await telegramFleetStatus(baseDeps);
+    expect(body).not.toContain('codex-cmp:');
     expect(body).toContain('codex-personal: observed 1; reported 4; queue 2; target 3; held yes; tokens/1h 123');
     expect(body).toContain('devin-flash: observed 2; reported 2; queue 1; target 3; held no; tokens/1h 45');
     expect(body).toContain('gemini: observed 1; reported 1; queue 4; target 2; held yes; tokens/1h 67');
     expect(body).toContain('zai: observed 1; reported 3; queue 0; target 3; held no; tokens/1h 89');
-    for (const lane of ['codex-cmp', 'claude', 'devin', 'claude-api', 'codex-local', 'agy', 'grok', 'cursor']) {
+    for (const lane of ['claude', 'devin', 'claude-api', 'codex-local', 'agy', 'grok', 'cursor']) {
       expect(body).toContain(`${lane}: observed 0; reported unavailable; queue unavailable; target unavailable; held unavailable; tokens/1h unavailable`);
     }
   });

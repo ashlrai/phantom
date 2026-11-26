@@ -79,7 +79,7 @@ class NativePressureBoundary(unittest.TestCase):
             return result, (home / 'provider-called').exists(), (home / 'preflight').read_text() if (home / 'preflight').exists() else '', (run / 'queue/run/JOB.rc').exists(), (run / 'JOB.prompt').exists()
 
     def test_fresh_flip_holds_without_launch_and_preserves_early_effects(self):
-        for lane in ('codex-cmp', 'codex-personal', 'devin'):
+        for lane in ('codex-personal', 'devin'):
             with self.subTest(lane=lane):
                 result, called, preflight, old_rc, prompt = self.launch(lane, '2')
                 self.assertEqual(result.returncode, 3, result.stderr)
@@ -88,10 +88,19 @@ class NativePressureBoundary(unittest.TestCase):
                 self.assertFalse(called)
                 self.assertFalse(old_rc)
                 self.assertTrue(prompt)
-                self.assertEqual(len(preflight) // len('preflight'), {'codex-cmp': 1, 'codex-personal': 2, 'devin': 0}[lane])
+                self.assertEqual(len(preflight) // len('preflight'), {'codex-personal': 2, 'devin': 0}[lane])
+
+    def test_retired_lane_is_refused_before_launch_preflight(self):
+        with tempfile.TemporaryDirectory() as home:
+            result = subprocess.run(
+                ['/bin/bash', str(HERE / 'host-integration/launch.candidate.sh'), 'JOB', 'phantom', 'codex-cmp'],
+                input='fixture', text=True, capture_output=True, env={'HOME': home}, timeout=10)
+            self.assertEqual(result.returncode, 3, result.stderr)
+            self.assertIn('REFUSED: retired lane', result.stderr)
+            self.assertFalse((Path(home) / '.ashlr-runs').exists())
 
     def test_healthy_recovery_launches_inert_provider(self):
-        for lane in ('codex-cmp', 'codex-personal', 'devin'):
+        for lane in ('codex-personal', 'devin'):
             with self.subTest(lane=lane):
                 result, called, _, _, _ = self.launch(lane, '1')
                 self.assertEqual(result.returncode, 0, result.stderr)

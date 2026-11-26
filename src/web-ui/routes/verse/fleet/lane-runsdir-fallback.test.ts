@@ -38,7 +38,7 @@ describe('laneFallback', () => {
     const runs = [
       runsLane({ lane: 'codex-local', running: 2, target: 6 }),
       runsLane({ lane: 'claude', running: 1, target: 4 }),
-      runsLane({ lane: 'codex-cmp', running: 9, target: 10 }),
+      runsLane({ lane: 'codex-personal', running: 9, target: 10 }),
     ];
     expect(laneFallback(staleLane({ lane: 'local' }), runs, ago(MIN), NOW)?.slots).toBe('2 of 6');
     expect(laneFallback(staleLane({ lane: 'claude-cli' }), runs, ago(MIN), NOW)?.slots).toBe('1 of 4');

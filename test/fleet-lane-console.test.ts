@@ -163,11 +163,11 @@ describe('parseReadyTsv', () => {
     expect(dropped).toBe(2);
     expect(invalid).toBe(2);
     expect(unhinted).toBe(2);
-    // Lane-open rows keep their validated id and repo for supply counts; the
+    // Lane-open rows keep their validated id, repo and tier for supply counts; the
     // row that resolved a preferred_lane and the invalid rows are not among them.
     expect(unhintedRows).toEqual([
-      { id: 'RQ-OPEN-A', repo: 'phantom' },
-      { id: 'RQ-OPEN-B', repo: 'ashlrai/phantom' },
+      { id: 'RQ-OPEN-A', repo: 'phantom', tier: 'work' },
+      { id: 'RQ-OPEN-B', repo: 'ashlrai/phantom', tier: 'mid' },
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: 'RQ-OPEN-C', status: 'READY', pool: 'claude', tier: 'frontier', repo: 'phantom' });
@@ -190,7 +190,7 @@ describe('parseReadyTsv', () => {
     expect(dropped).toBe(2);
     expect(invalid).toBe(2);
     expect(unhinted).toBe(1);
-    expect(unhintedRows).toEqual([{ id: 'RQ-SPEC-B', repo: 'phantom' }]);
+    expect(unhintedRows).toEqual([{ id: 'RQ-SPEC-B', repo: 'phantom', tier: 'work' }]);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ id: 'RQ-SPEC-A', status: 'READY', pool: 'claude', tier: 'work', repo: 'phantom' });
     expect(rows[1]).toMatchObject({ id: 'RQ-SPEC-C', status: 'READY', pool: 'devin', tier: 'work', repo: 'phantom' });
@@ -369,8 +369,8 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(codex.queueDepth).toBe(1);
     expect(codex.liveJobs).toBe(1);            // RQ-FIXTURE-008 PR-OPEN
     expect(codex.mergesPerHour).toBe(1);       // RQ-FIXTURE-008 → LAND at 01:40
-    expect(codex.credit.label).toBe('64% weekly · 3 credits');
-    expect(codex.credit.remainingPct).toBe(64);
+    expect(codex.credit.label).toBe('unknown');
+    expect(codex.credit.remainingPct).toBeNull();
 
     const local = byLane.get('local-omlx')!;
     expect(local.liveJobs).toBe(1);            // RQ-FIXTURE-009 CLAIMED
@@ -555,7 +555,7 @@ describe('formatFleetLanes', () => {
     expect(out).toContain('merges/h');
     expect(out).toContain('devin');
     expect(out).toContain('12.5 ACU');
-    expect(out).toContain('64% weekly · 3 credits');
+    expect(out).not.toContain('64% weekly · 3 credits');
     expect(out).toContain('sources: ready.tsv healthy (6 rows)');
     expect(out).not.toContain('\x1b[');
   });
