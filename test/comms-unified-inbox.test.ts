@@ -131,6 +131,7 @@ describe('readUnifiedInbox sources', () => {
         wakes: { state: 'healthy', pending: 0 },
         seats: { state: 'missing', pending: 0 },
         'peer-dispatch': { state: 'missing', pending: 0 },
+        'org-outbox': { state: 'missing', pending: 0 },
         'email-inbox': { state: 'missing', pending: 0 },
         'email-outbox': { state: 'missing', pending: 0 },
         'team-approvals': { state: 'healthy', pending: 0 },
@@ -2278,6 +2279,153 @@ describe('readUnifiedInbox peer dispatch', () => {
     expect(byText.items).toEqual([]);
     const byPeer = await read({ filter: { contains: 'peer peer-a' } });
     expect(byPeer.items.map(i => i.id).sort()).toEqual([`peer-dispatch:${receiptId('4')}`, `peer-dispatch:${receiptId('b')}`].sort());
+  });
+});
+
+describe('readUnifiedInbox org outbox', () => {
+  const STORE_ID = '123e4567-e89b-42d3-a456-426614174000';
+  const role = (id: string, over: Record<string, unknown> = {}) => ({
+    id, title: `fake role ${id}`, charter: 'fake charter',
+    tier: 'WORKER_SESSION', reportsTo: 'orch', status: 'active', scope: 'engineering',
+    needs: [], laneAffinities: [],
+    budget: { tokens: 100, sessions: 2, maxCostClass: 'local' },
+    sizing: { batchDepth: 10, fanOut: 2 },
+    sessionId: null, ...over,
+  });
+  // A chart `validateChart` accepts: one active leader, one orchestrator
+  // under it, workers under the orchestrator inside its budget ceiling.
+  const agents = [
+    role('leader', { tier: 'LEADER', reportsTo: null, budget: { tokens: 1000, sessions: 10, maxCostClass: 'local' }, sizing: { batchDepth: 10, fanOut: 8 } }),
+    role('orch', { tier: 'ORCHESTRATOR', reportsTo: 'leader', budget: { tokens: 500, sessions: 5, maxCostClass: 'local' }, sizing: { batchDepth: 10, fanOut: 4 } }),
+  ];
+  const entry = (revision: number, edits: unknown[], over: Record<string, unknown> = {}) => ({
+    revision, at: `2026-11-07T10:0${revision}:00.000Z`,
+    proposal: { actor: 'leader', reason: 'fake reason', expectedRevision: revision - 1,
+      change: { kind: 'upsert', role: role(`worker-${revision}`) } },
+    applied: true, edits, busDelivered: false, ...over,
+  });
+  const plane = (ledger: unknown[], over: Record<string, unknown> = {}) => ({
+    schema: 'org.agents.v1', storeId: STORE_ID, revision: ledger.length,
+    agents, ledger, ...over,
+  });
+  /** The store `readAgentPlane` reads — `<runsDir>/org/agents.json`, private-file gated. */
+  const writePlane = (value: unknown) => {
+    const dir = join(runsDir, 'org');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'agents.json'), typeof value === 'string' ? value : JSON.stringify(value), { mode: 0o600 });
+  };
+
+  it('lists ledger edits the bus never received and keeps delivered ones out', async () => {
+    writePlane(plane([
+      // Delivered — history, not pending.
+      entry(1, [{ before: null, after: role('worker-1') }], { busDelivered: true }),
+      // Undelivered upsert — one pending org.membership event.
+      entry(2, [{ before: null, after: role('worker-2') }]),
+      // Undelivered retire edit — after null means status retired, role is the before row.
+      entry(3, [{ before: role('worker-3'), after: null }], {
+        proposal: { actor: 'leader', reason: 'fake reason', expectedRevision: 2, change: { kind: 'retire', id: 'worker-3' } },
+      }),
+    ]));
+    const inbox = await read();
+    expect(inbox.sources['org-outbox']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'org-outbox');
+    expect(items).toHaveLength(2);
+    const byId = new Map(items.map(i => [i.id, i]));
+    expect(byId.get(`org-outbox:org-${STORE_ID}-2-worker-2`)).toMatchObject({
+      kind: 'org-membership', severity: 'warn', blocking: false,
+      title: 'org role worker-2 (WORKER_SESSION active) awaits bus delivery',
+      detail: `rev 2 · proposed by leader · event org-${STORE_ID}-2-worker-2`,
+      since: '2026-11-07T10:02:00.000Z', expiresAt: null,
+      act: ['phm fleet org-sync --apply', 'phm fleet org-board'],
+    });
+    expect(byId.get(`org-outbox:org-${STORE_ID}-3-worker-3`)).toMatchObject({
+      title: 'org role worker-3 (WORKER_SESSION retired) awaits bus delivery',
+      detail: `rev 3 · proposed by leader · event org-${STORE_ID}-3-worker-3`,
+      since: '2026-11-07T10:03:00.000Z',
+    });
+    // Ledger fields are callsigns, role ids and revisions — never charters or reasons.
+    expect(JSON.stringify(items)).not.toContain('fake charter');
+    expect(JSON.stringify(items)).not.toContain('fake reason');
+  });
+
+  it('keeps one item per (revision, role) event id even if edits repeat a role', async () => {
+    writePlane(plane([
+      entry(1, [
+        { before: null, after: role('worker-1') },
+        { before: role('worker-1'), after: role('worker-1', { status: 'retired' }) },
+      ]),
+      // Same role in a later revision is a different stable event id — still pending.
+      entry(2, [{ before: role('worker-1', { status: 'retired' }), after: null }], {
+        proposal: { actor: 'leader', reason: 'fake reason', expectedRevision: 1, change: { kind: 'retire', id: 'worker-1' } },
+      }),
+    ]));
+    const inbox = await read();
+    expect(inbox.sources['org-outbox']).toEqual({ state: 'healthy', pending: 2 });
+    expect(inbox.items.filter(i => i.source === 'org-outbox').map(i => i.id).sort())
+      .toEqual([`org-outbox:org-${STORE_ID}-1-worker-1`, `org-outbox:org-${STORE_ID}-2-worker-1`]);
+  });
+
+  it('reports the store state honestly: missing, unreadable, invalid, throwing seam', async () => {
+    const missing = await read();
+    expect(missing.sources['org-outbox']).toEqual({ state: 'missing', pending: 0 });
+
+    writePlane('{not json');
+    const degraded = await read();
+    expect(degraded.sources['org-outbox']).toEqual({ state: 'unavailable', pending: null });
+    expect(degraded.items.filter(i => i.source === 'org-outbox')).toHaveLength(0);
+
+    // A chart validateChart refuses — a second leader — is unavailable, never a partial backlog.
+    writePlane(plane([entry(1, [{ before: null, after: role('worker-1') }])], {
+      agents: [...agents, role('leader2', { tier: 'LEADER', reportsTo: null })],
+    }));
+    const badChart = await read();
+    expect(badChart.sources['org-outbox']).toEqual({ state: 'unavailable', pending: null });
+
+    // A non-contiguous ledger is refused exactly like readAgentPlane refuses it.
+    writePlane(plane([entry(2, [{ before: null, after: role('worker-2') }])]));
+    const badLedger = await read();
+    expect(badLedger.sources['org-outbox']).toEqual({ state: 'unavailable', pending: null });
+
+    // An undelivered edit with neither before nor after is one envelopes() cannot
+    // form — the apply pass would crash on it, so the read reports unavailable.
+    writePlane(plane([entry(1, [{ before: null, after: null }])]));
+    const noRole = await read();
+    expect(noRole.sources['org-outbox']).toEqual({ state: 'unavailable', pending: null });
+
+    // Secret-shaped content anywhere in the store trips the same assertMetadata gate.
+    writePlane(plane([entry(1, [{ before: null, after: role('worker-1') }])], {
+      agents: agents.map(a => a.id === 'orch' ? { ...a, charter: 'token sk-ant-api03-' + 'x'.repeat(30) } : a),
+    }));
+    const secret = await read();
+    expect(secret.sources['org-outbox']).toEqual({ state: 'unavailable', pending: null });
+
+    rmSync(join(runsDir, 'org', 'agents.json'));
+    const throwing = await read({
+      readOrgOutbox: () => { throw new Error('boom'); },
+    });
+    expect(throwing.sources['org-outbox']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'org-outbox')).toHaveLength(0);
+  });
+
+  it('filters by source, kind, contains and never matches --job (no job citation)', async () => {
+    writePlane(plane([
+      entry(1, [{ before: null, after: role('worker-1') }]),
+      entry(2, [{ before: null, after: role('worker-2') }]),
+    ]));
+    const bySource = await read({ filter: { source: 'org-outbox' } });
+    expect(bySource.total).toBe(2);
+    expect(bySource.items.every(i => i.source === 'org-outbox' && i.kind === 'org-membership')).toBe(true);
+    expect(bySource.sources['org-outbox']).toEqual({ state: 'healthy', pending: 2 });
+
+    const byKind = await read({ filter: { kind: 'org-membership', source: 'org-outbox' } });
+    expect(byKind.total).toBe(2);
+
+    const byText = await read({ filter: { contains: 'worker-2' } });
+    expect(byText.items.map(i => i.id)).toEqual([`org-outbox:org-${STORE_ID}-2-worker-2`]);
+
+    // Org events name no job — a --job filter never pulls one in.
+    const byJob = await read({ filter: { job: 'RQ-ANYTHING' } });
+    expect(byJob.items.filter(i => i.source === 'org-outbox')).toHaveLength(0);
   });
 });
 

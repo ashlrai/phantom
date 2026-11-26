@@ -182,7 +182,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'lane-starve', 'lane-target', 'launchable', 'leader-facts', 'leader-health', 'load',
     'login-health', 'machine', 'main-health', 'main-red-age', 'map', 'mason-digest', 'memory',
     'merge-identity', 'merge-latency', 'merge-queue-age', 'merge-retry', 'message-graph', 'metrics',
-    'mission', 'needs', 'needs-resolve', 'orchestrate', 'order-state', 'orders', 'org',
+    'mission', 'needs', 'needs-resolve', 'orchestrate', 'order-state', 'orders', 'org', 'org-board', 'org-sync',
     'output-eval', 'outside-outcomes', 'owner-history', 'owner-pull', 'peer-ledger', 'pool-reach', 'pools', 'profile', 'proof',
     'publication-evidence', 'pulse', 'queue-age', 'queue-counts', 'queue-latency', 'queue-repeats',
     'ready-supply', 'rebase-status', 'recheck', 'recheck-record', 'red-merges', 'release-chain',

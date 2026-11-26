@@ -371,7 +371,22 @@ names the peer, outcome, consumer and receipt with `since`/`expiresAt` null
 because the journal stamps receipt creation, not the last outcome move, and
 deep-links `phm agentnet peers dispatch --apply`; an absent journal is
 `missing`, an unreadable one `unavailable`, never an empty backlog passed off
-as fact) — plus
+as fact) — plus org-membership bus events the org plane still owes the bus
+(`<runsDir>/org/agents.json` ledger entries with `busDelivered:false` — the
+exact set `previewOrgOutbox` replays and `phm fleet org-sync --apply` posts,
+one event per distinct `(revision, role)` edit under the stable id
+`org-<storeId>-<revision>-<roleId>`; until the apply pass runs the bus cannot
+see a staffing change the chart already recorded and `phm fleet org-board`
+reports only a pending count, so each warn item names the role, tier,
+status, proposing actor and ledger revision, carries `since` the entry's
+recorded application time and `expiresAt` null — the event waits for the
+next sync pass, never a guessed deadline — and deep-links `phm fleet
+org-sync --apply` and `phm fleet org-board`; the read applies the same
+`readAgentPlane` acceptance the org-sync/org-board reads do — private-file
+gate, `org.agents.v1` schema mirrored locally for the Tier-1 closure,
+chart invariants, secret-shape refusal and ledger contiguity — so an absent
+store is `missing` and any refusal `unavailable`, never an empty backlog
+passed off as fact) — plus
 Gmail archive-plan overages, LinkedIn messages saved as
 JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
 same id exists in `.../linkedin/answered/`; replies stay drafts) and live
@@ -445,7 +460,7 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 `phm drafts approve`, `phm comms-agent drafts`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
-`phm bots handoff`, `phm agentnet peers dispatch`, `phm agents bus post`, `phm comms email-cycle`,
+`phm bots handoff`, `phm agentnet peers dispatch`, `phm fleet org-sync --apply`, `phm fleet org-board`, `phm agents bus post`, `phm comms email-cycle`,
 `phm fleet email-outbox`,
 `phm bus inbox`, `phm bus ack`, `phm bus thread pending`, `phm bus thread
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
