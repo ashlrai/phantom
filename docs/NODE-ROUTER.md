@@ -299,6 +299,9 @@ claim-to-completion duration over 24 hours; a producer withdrawal is a fence,
 not an execution, and adds no sample. Missing latency uses the mean of
 measured host medians (equal weights when none exist). Unknown duration is never
 reported as zero. Owner, capability, local-auth and fencing checks still apply.
+Legacy completions without a recorded execution host contribute latency only
+while the registry still contains the original worker session. Rejoining with
+the same worker ID does not transfer that latency to the new session's host.
 
 `phm node status --json` exposes scoped capacity samples. `phm fleet status-api
 --json` and the existing Fleet compute API add lane occupancy, targets, floors
