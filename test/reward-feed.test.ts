@@ -68,6 +68,23 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs[0]!.dispatchedAt).toBe('2026-10-28T13:30:00.000Z');
   });
 
+  it('keeps batch member rewards and excludes wrapper rewards for the same PR', () => {
+    const batch = 'RQ-BATCH-17';
+    const member = 'RQ-MEMBER17'; // Same length gives both verdict receipts the same PR URL.
+    const rows = [launch(batch), batchClaim(member, batch), merged(batch), merged(member)];
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toEqual([
+      expect.objectContaining({ jobId: member, pool: 'claude', merged: true }),
+    ]);
+  });
+
+  it.each(['fleet.session-pool.v1', 'phm-node-runner.v1'])(
+    'does not pair a %s attempt receipt with a PR verdict', (schema) => {
+      const job = 'ready:RQ-A:1:2';
+      const attempt = line({ schema, event: 'launch', job, jobId: 'ready:RQ-A:1', ts: DISPATCH_ISO });
+      expect(foldJobsLedgerRewards([attempt, merged(job)].join('\n'), NOW_MS)).toEqual([]);
+    },
+  );
+
   it('emits merged:false for a CLOSED-unmerged outcome', () => {
     const text = [claim('RQ-C'), closed('RQ-C')].join('\n');
     const inputs = foldJobsLedgerRewards(text, NOW_MS);
