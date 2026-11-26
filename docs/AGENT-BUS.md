@@ -1498,8 +1498,12 @@ body kind never match, so those sections are provably empty), `claims`
 keep only message claims whose resolved leased envelope's body reports
 it (a claim naming no resolved message never lists), `inbox` and `wakes`
 pass the value to their own reads' result filters, and the three thread
-sections, `board`, `channels` and `seats` carry no per-item result
-evidence the digest can prove and stay unfiltered; an outcome nothing
+sections pass it to the shared conversations read's own member-message
+result filter — a thread survives when at least one member message is a
+`work.result` receipt reporting that outcome, the same whole-thread
+member match `agents conversations --result` applies — while `board`,
+`channels` and `seats` carry no per-item result evidence the digest can
+prove and stay unfiltered; an outcome nothing
 on the bus reports is an honest empty match, every count stays the
 filtered total, the result echoes `result` in JSON and the human header
 prints it. The agent defaults to
