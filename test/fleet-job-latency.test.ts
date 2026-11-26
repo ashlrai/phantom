@@ -246,6 +246,36 @@ it('uses actual merge time, aliases and shuffled events without counting duplica
   expect(mergeQueueLatency([event('ci_start', start), event('ci_complete', start)].map(row => JSON.stringify(row)).join('\n')).phases[1]?.total_seconds).toBe(0);
 });
 
+it('withholds phases whose boundaries name different pull requests', () => {
+  const first = 'https://github.com/acme/phantom/pull/1';
+  const second = 'https://github.com/acme/phantom/pull/2';
+  const text = [
+    { ...event('publish', start), prUrl: first },
+    { ...event('ci_start', end), pr_url: 'https://github.com/Acme/Phantom/pull/1/' },
+    { ...event('ci_complete', '2026-01-01T00:02:00Z'), url: second },
+    { ...event('merged', '2026-01-01T00:03:00Z'), pr: second },
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(mergeQueueLatency(text).phases.map(phase => [phase.phase, phase.total_seconds])).toEqual([
+    ['check_wait', 60], ['ci', null], ['merge', 60], ['open_to_merge', null],
+  ]);
+  expect(jobLatency(text).phases.find(phase => phase.phase === 'ci'))
+    .toMatchObject({ measured_jobs: 0, missing_jobs: 1, total_seconds: null });
+});
+
+it('retains conflicting PR claims on otherwise duplicate boundaries', () => {
+  const text = [
+    event('ci_start', start),
+    { ...event('ci_complete', end), url: 'https://github.com/acme/phantom/pull/1' },
+    { ...event('ci_complete', end), url: 'https://github.com/acme/phantom/pull/2' },
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  for (const report of [jobLatency(text), mergeQueueLatency(text)]) {
+    expect(report.phases.find(phase => phase.phase === 'ci'))
+      .toMatchObject({ measured_jobs: 0, missing_jobs: 1, total_seconds: null });
+  }
+});
+
 it('reads the remaining timestamp aliases and the kind event key', () => {
   const rows = [
     { job: 'attempt-1', kind: 'enqueue', time: '2026-01-01T00:00:00Z' },
