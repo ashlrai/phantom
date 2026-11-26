@@ -328,6 +328,42 @@ describe('foldJobsLedgerRewards', () => {
     ]);
   });
 
+  it('uses valid PR references behind placeholders in merge, revert and competing receipts', () => {
+    const job = 'RQ-PR-FIELDS';
+    const pr = 'https://github.com/ashlrai/phantom/pull/101';
+    const merge = line({ job, state: 'MERGED', mergedAt: MERGED_ISO, url: 'unknown', pr_url: pr });
+    const base = [launch(job), merge];
+    const standing = new Set(['ashlrai/phantom#101']);
+    const revert = line({
+      job, event: 'reverted', ts: '2026-10-28T18:00:00.000Z',
+      url: 'unknown', prUrl: pr, html_url: 'https://github.com/AshlrAI/Phantom/pull/101/',
+    });
+    const competitor = line({ job: 'RQ-COMPETITOR', event: 'publish', url: 'unknown', pr: pr });
+    expect(foldJobsLedgerRewards([...base, revert].join('\n'), NOW_MS))
+      .toMatchObject([{ jobId: job, merged: false }]);
+    expect(foldJobsLedgerRewards(base.join('\n'), NOW_MS, undefined, standing))
+      .toMatchObject([{ jobId: job, merged: false }]);
+    expect(foldJobsLedgerRewards([...base, competitor].join('\n'), NOW_MS, undefined, standing))
+      .toMatchObject([{ jobId: job, merged: true }]);
+  });
+
+  it.each(['merge', 'revert'])('withholds PR-specific discounts when the %s receipt names different PRs', (conflict) => {
+    const job = 'RQ-CONFLICTING-PR-FIELDS';
+    const pr = 'https://github.com/ashlrai/phantom/pull/101';
+    const other = 'https://github.com/ashlrai/phantom/pull/102';
+    const text = [
+      launch(job),
+      line({ job, state: 'MERGED', mergedAt: MERGED_ISO, url: pr, html_url: conflict === 'merge' ? other : pr }),
+      line({
+        job, event: 'reverted', ts: '2026-10-28T18:00:00.000Z',
+        url: pr, html_url: conflict === 'revert' ? other : pr,
+      }),
+    ].join('\n');
+    const standing = conflict === 'merge' ? new Set(['ashlrai/phantom#101']) : undefined;
+    expect(foldJobsLedgerRewards(text, NOW_MS, undefined, standing))
+      .toMatchObject([{ jobId: job, merged: true }]);
+  });
+
   it.each(['ledger', 'standing set'])('attributes a revert from the %s to the original merge attempt', (source) => {
     const job = 'RQ-REUSED';
     const original = launch(job);
