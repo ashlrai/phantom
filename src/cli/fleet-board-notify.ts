@@ -217,7 +217,9 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
     if (!sender) continue;
     tracked[channel] = async notice => {
       const receipt = await sender(notice);
-      if (receipt.status === 'sent' || receipt.status === 'duplicate') {
+      if (receipt !== null && typeof receipt === 'object' && !Array.isArray(receipt)
+        && (receipt.status === 'sent' || receipt.status === 'duplicate')
+        && typeof receipt.receipt === 'string' && receipt.receipt.trim() !== '') {
         evidence.set(notice, deliveryFor(channel, injected, receipt.status === 'duplicate'));
       }
       return receipt;
@@ -225,8 +227,10 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   }
   const results = await sendNotifications(plan.notices, { senders: tracked, ledgerPath });
   const delivered = results.filter(r => r.status === 'sent' || r.status === 'duplicate');
+  const resultEvidence = (r: typeof results[number]): NoticeDelivery | undefined =>
+    r.status === 'sent' || r.status === 'duplicate' ? evidence.get(r.notice) : undefined;
   const deliveries = results.map(r => ({ itemId: r.notice.itemId, state: r.notice.state, status: r.status,
-    ...(evidence.get(r.notice) ?? { evidence: 'none', transport: 'none' }) }));
+    ...(resultEvidence(r) ?? { evidence: 'none', transport: 'none' }) }));
   const count = (e: NoticeDelivery['evidence']): number => deliveries.filter(d => d.evidence === e).length;
   const queued = count('slack-bus-note-enqueued');
   const busPosted = count('bus-reply-posted');
@@ -245,7 +249,7 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
     lines: [
       ...(!saved ? ['board-notify: snapshot could not be saved; retry after restoring state storage'] : []),
       `board-notify: transitions=${transitions.length} planned=${plan.notices.length} receipts=${delivered.length} queued=${queued} bus-posted=${busPosted} pending=${pending.size} dropped=${plan.dropped.length}`,
-      ...results.map(r => `${describeResult(r.status, evidence.get(r.notice))} [${r.notice.sourceChannel}${r.notice.sourceThread ? ` ${r.notice.sourceThread}` : ''}] ${r.notice.text}${r.reason ? ` (${r.reason})` : ''}`),
+      ...results.map(r => `${describeResult(r.status, resultEvidence(r))} [${r.notice.sourceChannel}${r.notice.sourceThread ? ` ${r.notice.sourceThread}` : ''}] ${r.notice.text}${r.reason ? ` (${r.reason})` : ''}`),
       ...plan.dropped.map(d => `dropped ${d.itemId}: ${d.reason}`),
     ],
   }, saved ? 0 : 1);
