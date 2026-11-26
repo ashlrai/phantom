@@ -229,7 +229,8 @@ The paired release manifest binds one macOS arm64 app archive to its original qu
 
 In the updated desktop, the top bar shows native update status. Expand it to
 turn **Automatic updates** on or off, see verified download progress, or refresh
-status. Preparing a download is separate from installing it. After Stop is
+status. Before attempting handoff, the updater asks the managed CLI to download
+and verify the signed CLI archive and check the staged app. After Stop is
 engaged and local work is idle, the updater verifies the handoff and quits and
 relaunches Phantom without an owner click. Unknown activity holds the update
 with a fixed reason code in Settings; the updater never clears Stop.

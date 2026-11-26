@@ -22,6 +22,22 @@ mod platform {
 
     const ACK_LIMIT: usize = 64 * 1024;
     const EXPECTED_CURRENT: &str = ".local/share/ashlr/current";
+    const PREPARE_BUDGET: Duration = Duration::from_secs(600);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum HostVerb {
+        Inspect,
+        Prepare,
+        Apply,
+    }
+    impl HostVerb {
+        fn as_str(self) -> &'static str {
+            match self {
+                Self::Inspect => "inspect",
+                Self::Prepare => "prepare",
+                Self::Apply => "apply",
+            }
+        }
+    }
     #[derive(Clone)]
     struct Stage {
         id: String,
@@ -194,7 +210,7 @@ mod platform {
     }
     fn launch(
         stage: &Stage,
-        apply: bool,
+        verb: HostVerb,
     ) -> Result<
         (
             ashlr_desktop::child_reaper::ReapOnDrop,
@@ -206,12 +222,12 @@ mod platform {
             return Err("host-unavailable");
         }
         let home = crate::fleet_ops::home_dir().ok_or("host-unavailable")?;
-        launch_at(&home, stage, apply)
+        launch_at(&home, stage, verb)
     }
     fn launch_at(
         home: &std::path::Path,
         stage: &Stage,
-        apply: bool,
+        verb: HostVerb,
     ) -> Result<
         (
             ashlr_desktop::child_reaper::ReapOnDrop,
@@ -226,7 +242,7 @@ mod platform {
         let mut cmd = Command::new(&bin);
         cmd.args([
             "desktop-update",
-            if apply { "apply" } else { "inspect" },
+            verb.as_str(),
             "--stage",
             &stage.id,
             "--json",
@@ -329,8 +345,61 @@ mod platform {
             && !inner.handoff
     }
     fn inspect(stage: &Stage) -> Result<policy::HostResult, &'static str> {
-        let (child, pipe) = launch(stage, false)?;
+        let (child, pipe) = launch(stage, HostVerb::Inspect)?;
         first_result(child, pipe, stage, Duration::from_secs(10))
+    }
+    fn prepare_then_inspect(
+        mut call: impl FnMut(HostVerb) -> Result<policy::HostResult, &'static str>,
+    ) -> Result<(bool, policy::HostResult), &'static str> {
+        let prepared = call(HostVerb::Prepare)?;
+        if prepared.state == "blocked" {
+            return Ok((false, prepared));
+        }
+        if !policy::ready_to_handoff(&prepared) {
+            return Err("host-status-unavailable");
+        }
+        Ok((true, call(HostVerb::Inspect)?))
+    }
+    async fn check_staged_candidate(
+        app: &AppHandle,
+        updates: &Updates,
+        epoch: u64,
+        stage: Stage,
+        app_bytes: u64,
+    ) -> Result<(), &'static str> {
+        {
+            let mut i = lock(&updates.0);
+            if i.epoch != epoch || !i.state.enabled {
+                return Err("disabled");
+            }
+            i.stage = None;
+            i.state.version = Some(stage.version.clone());
+            i.state.bytes_total = Some(app_bytes);
+            i.state.bytes_received = app_bytes;
+            i.state.phase = Phase::Staged;
+            publish(app, &i);
+        }
+        let worker = stage.clone();
+        let (prepared, checked) = tauri::async_runtime::spawn_blocking(move || {
+            prepare_then_inspect(|verb| {
+                if verb == HostVerb::Inspect {
+                    return inspect(&worker);
+                }
+                let (child, pipe) = launch(&worker, verb)?;
+                first_result(child, pipe, &worker, PREPARE_BUDGET)
+            })
+        })
+        .await
+        .map_err(|_| "host-status-unavailable")??;
+        let mut i = lock(&updates.0);
+        if i.epoch != epoch || !i.state.enabled {
+            return Err("disabled");
+        }
+        i.stage = prepared.then_some(stage);
+        i.state.phase = inspected_phase(&checked);
+        i.state.reason = checked.reason;
+        publish(app, &i);
+        Ok(())
     }
     async fn check(app: AppHandle, updates: Updates, epoch: u64) {
         let result = async {
@@ -360,29 +429,31 @@ mod platform {
                         version: m.version().to_owned(),
                         path_env: path_env.clone(),
                     };
-                    let st = stage.clone();
-                    let checked = tauri::async_runtime::spawn_blocking(move || inspect(&st))
-                        .await
-                        .map_err(|_| "host-status-unavailable")??;
-                    if version == current && checked.state == "applied" {
-                        {
-                            let mut i = lock(&updates.0);
-                            if i.epoch != epoch || !i.state.enabled {
-                                return Err("disabled");
-                            }
-                            i.state.version = Some(stage.version);
-                            i.state.bytes_total = Some(m.app_bytes());
-                            i.state.bytes_received = m.app_bytes();
-                        }
-                        change(
-                            &app,
-                            &updates,
-                            epoch,
-                            Phase::Installed,
-                            checked.reason.as_deref(),
-                        );
-                    } else if version > current {
+                    if version > current {
                         remembered = Some((stage, m));
+                    } else {
+                        let st = stage.clone();
+                        let checked = tauri::async_runtime::spawn_blocking(move || inspect(&st))
+                            .await
+                            .map_err(|_| "host-status-unavailable")??;
+                        if checked.state == "applied" {
+                            {
+                                let mut i = lock(&updates.0);
+                                if i.epoch != epoch || !i.state.enabled {
+                                    return Err("disabled");
+                                }
+                                i.state.version = Some(stage.version);
+                                i.state.bytes_total = Some(m.app_bytes());
+                                i.state.bytes_received = m.app_bytes();
+                            }
+                            change(
+                                &app,
+                                &updates,
+                                epoch,
+                                Phase::Installed,
+                                checked.reason.as_deref(),
+                            );
+                        }
                     }
                 }
                 // Old/equal unattempted stages are history, never a downgrade or a discovery fence.
@@ -418,23 +489,8 @@ mod platform {
                     if manifest.digest != prior.digest {
                         return Err("signed-release-conflict");
                     }
-                    let st = stage.clone();
-                    let checked = tauri::async_runtime::spawn_blocking(move || inspect(&st))
-                        .await
-                        .map_err(|_| "host-status-unavailable")??;
-                    {
-                        let mut i = lock(&updates.0);
-                        if i.epoch != epoch || !i.state.enabled {
-                            return Err("disabled");
-                        }
-                        i.state.version = Some(stage.version.clone());
-                        i.state.bytes_total = Some(prior.app_bytes());
-                        i.state.bytes_received = prior.app_bytes();
-                        i.stage = Some(stage);
-                    }
-                    let phase = inspected_phase(&checked);
-                    change(&app, &updates, epoch, phase, checked.reason.as_deref());
-                    return Ok(());
+                    return check_staged_candidate(&app, &updates, epoch, stage, prior.app_bytes())
+                        .await;
                 }
             }
             {
@@ -473,20 +529,7 @@ mod platform {
                 version: manifest.version().to_owned(),
                 path_env,
             };
-            {
-                let mut i = lock(&updates.0);
-                if i.epoch != epoch || !i.state.enabled {
-                    return Err("disabled");
-                }
-                i.stage = Some(stage.clone());
-            }
-            change(&app, &updates, epoch, Phase::Staged, None);
-            let checked = tauri::async_runtime::spawn_blocking(move || inspect(&stage))
-                .await
-                .map_err(|_| "host-status-unavailable")??;
-            let phase = inspected_phase(&checked);
-            change(&app, &updates, epoch, phase, checked.reason.as_deref());
-            Ok(())
+            check_staged_candidate(&app, &updates, epoch, stage, manifest.app_bytes()).await
         }
         .await;
         let exit = {
@@ -673,7 +716,12 @@ mod platform {
         let result = quit_sequence(
             |apply, budget| {
                 let started = Instant::now();
-                let (child, pipe) = launch(&stage, apply)?;
+                let verb = if apply {
+                    HostVerb::Apply
+                } else {
+                    HostVerb::Inspect
+                };
+                let (child, pipe) = launch(&stage, verb)?;
                 first_result(
                     child,
                     pipe,
@@ -790,6 +838,37 @@ mod platform {
             }
         }
         #[test]
+        fn staged_pair_requires_prepare_before_idle_inspection() {
+            let mut calls = Vec::new();
+            let (prepared, held) = prepare_then_inspect(|verb| {
+                calls.push(verb);
+                Ok(match verb {
+                    HostVerb::Prepare => result("ready", None),
+                    HostVerb::Inspect => result("blocked", Some("work-active-or-unknown")),
+                    HostVerb::Apply => panic!("staging cannot apply"),
+                })
+            })
+            .unwrap();
+            assert_eq!(calls, [HostVerb::Prepare, HostVerb::Inspect]);
+            assert!(prepared);
+            assert_eq!(inspected_phase(&held), Phase::WaitingForIdle);
+        }
+        #[test]
+        fn unprepared_pair_cannot_reach_idle_inspection() {
+            let (prepared, held) = prepare_then_inspect(|verb| {
+                assert_eq!(verb, HostVerb::Prepare);
+                Ok(result("blocked", Some("artifact-mismatch")))
+            })
+            .unwrap();
+            assert!(!prepared);
+            assert_eq!(held.reason.as_deref(), Some("artifact-mismatch"));
+            assert!(prepare_then_inspect(|verb| {
+                assert_eq!(verb, HostVerb::Prepare);
+                Ok(result("waiting-native-exit", None))
+            })
+            .is_err());
+        }
+        #[test]
         fn quit_rechecks_idle_once_and_only_then_requests_parent_ack() {
             let mut calls = Vec::new();
             let r = quit_sequence(
@@ -904,7 +983,7 @@ mod platform {
                 version: "3.25.2".into(),
                 path_env: format!("{}:/usr/bin:/bin", node.parent().unwrap().display()),
             };
-            let (child, pipe) = launch_at(&home, &stage, false).unwrap();
+            let (child, pipe) = launch_at(&home, &stage, HostVerb::Inspect).unwrap();
             assert!(policy::ready_to_handoff(
                 &first_result(child, pipe, &stage, Duration::from_secs(2)).unwrap()
             ));
