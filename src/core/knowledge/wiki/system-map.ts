@@ -6,14 +6,13 @@ import { z } from 'zod';
 
 import { checkedCitation } from './citations.js';
 import { groupModules, resolveSpecifier } from './facts.js';
-import { extractMapFacts, mapFactsKey, mapFactsSchema, mapMarks, safeMapPath, sourcePattern } from './system-map-facts.js';
-import { mapBlobs, mapDiff, mapGit, mapTree, objectId } from './system-map-git.js';
+import { extractMapFacts, isEligibleMapFile, mapFactsKey, mapFactsSchema, mapMarks, WIKI_STEERING_PATH } from './system-map-facts.js';
+import { mapBlobs, mapDiff, mapTree, objectId, resolveMapCommit } from './system-map-git.js';
 import { isTestFile, isWikiReadable } from './scan.js';
 import { wikiIgnorePaths } from './steering.js';
 import { wikiKey, wikiRoot } from './store.js';
 import type { WikiCitation } from './types.js';
 
-const STEERING = '.ashlr/wiki.json';
 const MAX_CACHE_BYTES = 64 * 1024 * 1024;
 const MAX_FILES = 40_000;
 const SHA = z.string().regex(objectId);
@@ -55,7 +54,6 @@ async function saveSnapshot(file: string, snapshot: Snapshot): Promise<void> {
   try { await rename(temp, file); } finally { await rm(temp, { force: true }); }
 }
 
-const eligible = (file: string) => sourcePattern.test(file) && safeMapPath(file);
 const factsKey = (file: string, oid: string) => `${oid}:${path.posix.extname(file)}:${mapFactsKey(file)}`;
 
 async function refresh(repo: string, revision?: string): Promise<Refresh> {
@@ -64,8 +62,8 @@ async function refresh(repo: string, revision?: string): Promise<Refresh> {
   let requestedCommit: string | null = null;
   try {
     if (revision && !objectId.test(revision)) throw new Error('Expected a commit ID.');
-    const [prefix, commit] = (await mapGit(repo, ['rev-parse', '--show-prefix', '--verify', (revision ?? 'HEAD') + '^{commit}'])).toString('utf8').split('\n');
-    if (prefix !== '' || !commit || !objectId.test(commit)) throw new Error('Expected a committed repository root.');
+    const commit = await resolveMapCommit(repo, revision);
+    if (!commit) throw new Error('Expected a committed repository root.');
     requestedCommit = commit;
     const update: Update = { mode: 'cold', blobsRead: 0, filesParsed: 0 };
     if (previous?.commit === commit) return { snapshot: previous, update: { ...update, mode: 'unchanged' } };
@@ -76,18 +74,18 @@ async function refresh(repo: string, revision?: string): Promise<Refresh> {
       if (changes) {
         update.mode = 'incremental';
         for (const [file, oid] of previous.files) entries.set(file, oid);
-        if (previous.steering) entries.set(STEERING, previous.steering);
+        if (previous.steering) entries.set(WIKI_STEERING_PATH, previous.steering);
         for (const [file, oid] of changes) {
-          if (oid && (file === STEERING || eligible(file))) entries.set(file, oid);
+          if (oid && (file === WIKI_STEERING_PATH || isEligibleMapFile(file))) entries.set(file, oid);
           else entries.delete(file);
         }
       }
     }
     if (update.mode === 'cold') {
-      for (const [file, oid] of await mapTree(repo, commit)) if (file === STEERING || eligible(file)) entries.set(file, oid);
+      for (const [file, oid] of await mapTree(repo, commit)) if (file === WIKI_STEERING_PATH || isEligibleMapFile(file)) entries.set(file, oid);
     }
-    const steering = entries.get(STEERING) ?? null;
-    entries.delete(STEERING);
+    const steering = entries.get(WIKI_STEERING_PATH) ?? null;
+    entries.delete(WIKI_STEERING_PATH);
     if (entries.size > MAX_FILES) throw new Error('System map file budget exceeded.');
     let ignore: string[] = [];
     if (steering && previous?.steering === steering) ignore = previous.ignore;

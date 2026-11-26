@@ -68,11 +68,6 @@ export type BuildWikiResult =
 
 const inFlight = new Map<string, Promise<BuildWikiResult>>();
 
-/** True while a build for this repo runs in this process. */
-export function wikiBuildInFlight(repo: string): boolean {
-  return inFlight.has(wikiKey(repo));
-}
-
 async function acquireLock(key: string): Promise<(() => Promise<void>) | null> {
   const file = path.join(wikiRoot(), key, 'build.lock');
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });

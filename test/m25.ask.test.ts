@@ -75,13 +75,15 @@ vi.mock('../src/core/sandbox/policy.js', () => {
 });
 
 // Mock the knowledge index module so we control what chunks are returned
-vi.mock('../src/core/knowledge/index.js', () => {
+vi.mock('../src/core/knowledge/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/knowledge/index.js')>();
   let _chunks: Array<{
     repo: string; file: string; startLine: number; endLine: number; text: string;
     vector?: number[]; summary?: string;
   }> = [];
 
   return {
+    ...actual,
     buildKnowledge: vi.fn().mockResolvedValue({ repos: 1, chunks: 0 }),
     knowledgeDir: () => path.join(process.env['HOME'] ?? os.homedir(), '.ashlr', 'knowledge'),
     loadChunks: vi.fn().mockImplementation((repo?: string) => {

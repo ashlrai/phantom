@@ -17,7 +17,7 @@
 
 import type { WikiCitation } from './types.js';
 
-export const CITE_PREFIX = '#cite:';
+const CITE_PREFIX = '#cite:';
 
 /** Returns the line count of a repo file, or null when it is not a known file. */
 export type LineCounter = (rel: string) => number | null | Promise<number | null>;
@@ -48,6 +48,11 @@ export function citationLabel(c: WikiCitation): string {
 export function citationLink(c: WikiCitation): string {
   const span = c.endLine && c.endLine > c.line ? `${c.line}-${c.endLine}` : `${c.line}`;
   return `[${citationLabel(c)}](${CITE_PREFIX}${encodePath(c.file)}:${span})`;
+}
+
+/** Strip canonical `#cite:` / `#page:` markdown links down to their visible label. */
+export function plainCitations(markdown: string): string {
+  return markdown.replace(/\[([^\]]+)\]\(#(?:cite|page):[^)]+\)/g, '$1');
 }
 
 /** Parse the href of a canonical citation link (used by the UI and tests). */

@@ -16,7 +16,7 @@
  */
 
 import type { AskResult, KnowledgeChunk } from '../types.js';
-import { loadChunks } from './index.js';
+import { detectEmbeddingModel, fetchEmbedding, loadChunks } from './index.js';
 import { getActiveClient } from '../run/provider-client.js';
 import { loadConfig } from '../config.js';
 
@@ -84,76 +84,6 @@ function keywordScoreChunk(query: string, chunk: KnowledgeChunk): number {
 }
 
 // ---------------------------------------------------------------------------
-// Local Ollama embedding helpers (best-effort; never throw)
-// ---------------------------------------------------------------------------
-
-async function detectEmbeddingModel(
-  ollamaBase: string,
-): Promise<{ available: false } | { available: true; model: string }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3000);
-  try {
-    const res = await fetch(`${ollamaBase.replace(/\/+$/, '')}/api/tags`, {
-      signal: controller.signal,
-      headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) return { available: false };
-    const body = (await res.json()) as unknown;
-    if (
-      typeof body !== 'object' ||
-      body === null ||
-      !Array.isArray((body as Record<string, unknown>)['models'])
-    ) {
-      return { available: false };
-    }
-    const models = (body as { models: { name: string }[] }).models;
-    const EMBED_HINTS = ['bge', 'nomic-embed', 'mxbai-embed', 'all-minilm', 'embed'];
-    for (const hint of EMBED_HINTS) {
-      const found = models.find((m) => m.name.toLowerCase().includes(hint));
-      if (found) return { available: true, model: found.name };
-    }
-    return { available: false };
-  } catch {
-    return { available: false };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function fetchEmbedding(
-  ollamaBase: string,
-  model: string,
-  text: string,
-): Promise<number[] | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), EMBED_TIMEOUT_MS);
-  try {
-    const res = await fetch(`${ollamaBase.replace(/\/+$/, '')}/api/embeddings`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt: text.slice(0, 2000) }),
-    });
-    if (!res.ok) return null;
-    const body = (await res.json()) as unknown;
-    if (
-      typeof body !== 'object' ||
-      body === null ||
-      !Array.isArray((body as Record<string, unknown>)['embedding'])
-    ) {
-      return null;
-    }
-    const embedding = (body as { embedding: unknown[] }).embedding;
-    if (!validVector(embedding)) return null;
-    return embedding as number[];
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Retrieval
 // ---------------------------------------------------------------------------
 
@@ -178,7 +108,12 @@ export async function retrieve(
   let queryVec: number[] | null = null;
   if (question.trim() && chunks.some((c) => validVector(c.vector))) {
     const probe = await detectEmbeddingModel(ollamaBase);
-    if (probe.available) queryVec = await fetchEmbedding(ollamaBase, probe.model, question);
+    if (probe.available) {
+      queryVec = await fetchEmbedding(ollamaBase, probe.model, question, {
+        timeoutMs: EMBED_TIMEOUT_MS,
+        validate: validVector,
+      });
+    }
   }
 
   const ranked = chunks.map((chunk): Hit => {

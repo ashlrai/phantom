@@ -55,9 +55,6 @@ export interface WikiEngineChoice {
 
 export type WikiEngineResolver = (req: WikiEngineRequest) => Promise<WikiEngineChoice>;
 
-/** No engines at all — facts-only pages and extractive answers. */
-export const NO_MODEL_RESOLVER: WikiEngineResolver = async () => ({ engines: [], note: 'Model generation was turned off for this run.' });
-
 export interface WikiConfig {
   localOnly: boolean;
   localOnlyRepos: string[];

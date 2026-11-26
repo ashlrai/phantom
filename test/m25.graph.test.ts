@@ -73,13 +73,15 @@ vi.mock('../src/core/sandbox/policy.js', () => {
 });
 
 // Mock loadChunks so we control what the graph sees without real file I/O
-vi.mock('../src/core/knowledge/index.js', () => {
+vi.mock('../src/core/knowledge/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/knowledge/index.js')>();
   let _chunks: Array<{
     repo: string; file: string; startLine: number; endLine: number; text: string;
     vector?: number[]; summary?: string;
   }> = [];
 
   return {
+    ...actual,
     buildKnowledge: vi.fn().mockResolvedValue({ repos: 0, chunks: 0 }),
     knowledgeDir: () => path.join(process.env['HOME'] ?? os.homedir(), '.ashlr', 'knowledge'),
     loadChunks: vi.fn().mockImplementation((repo?: string) => {

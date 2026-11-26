@@ -39,7 +39,7 @@ import { localOllamaBase } from '../providers.js';
  * is filtered. Any failure keeps the list as it was (the pre-3.10 behaviour):
  * a duplicate is a nuisance, an empty scan is an outage.
  */
-function withoutFleetMirrors(enrolled: string[]): string[] {
+export function withoutFleetMirrors(enrolled: string[]): string[] {
   try {
     if (activeEnrollmentLenses().length > 0) return enrolled;
     return enrolled.filter((repo) => {
@@ -466,7 +466,7 @@ function chunkText(text: string): Array<{ startLine: number; endLine: number; te
  * Detect an embedding-capable model at the local Ollama base URL.
  * Mirrors the approach in genome/recall.ts. Never throws.
  */
-async function detectEmbeddingModel(
+export async function detectEmbeddingModel(
   ollamaBase: string,
 ): Promise<{ available: false } | { available: true; model: string }> {
   const controller = new AbortController();
@@ -504,13 +504,15 @@ async function detectEmbeddingModel(
  * Returns null on any error (network, model unavailable, timeout).
  * NEVER sends to a cloud endpoint — only ever hits ollamaBase (localhost).
  */
-async function fetchEmbedding(
+export async function fetchEmbedding(
   ollamaBase: string,
   model: string,
   text: string,
+  opts?: { timeoutMs?: number; validate?: (value: unknown) => value is number[] },
 ): Promise<number[] | null> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), EMBED_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? EMBED_TIMEOUT_MS);
+  const validate = opts?.validate ?? isValidVector;
   try {
     const res = await fetch(`${ollamaBase.replace(/\/+$/, '')}/api/embeddings`, {
       method: 'POST',
@@ -528,7 +530,7 @@ async function fetchEmbedding(
       return null;
     }
     const embedding = (body as { embedding: unknown[] }).embedding;
-    return isValidVector(embedding) ? embedding : null;
+    return validate(embedding) ? embedding : null;
   } catch {
     return null;
   } finally {

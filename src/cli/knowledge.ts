@@ -36,6 +36,26 @@ function partitionEnrolled(repos: string[]): { enrolled: string[]; rejected: str
   return { enrolled, rejected };
 }
 
+/** Validate explicit --repo / positional paths against enrollment; null means rejected. */
+function resolveScopedRepos(
+  repos: string[],
+  verb: 'indexed' | 'analyzed',
+  red: (s: string) => string,
+): string[] | undefined | null {
+  if (repos.length === 0) return undefined;
+  const { enrolled, rejected } = partitionEnrolled(repos);
+  if (rejected.length > 0) {
+    process.stderr.write(
+      red('error: ') +
+      'not enrolled: ' + rejected.join(', ') + '\n' +
+      `       Only enrolled repos can be ${verb}. Enroll first: ` +
+      'ashlr enroll add <path>\n',
+    );
+    return null;
+  }
+  return enrolled;
+}
+
 // ─── Lazy imports (graceful degradation if M25 modules not yet built) ────────
 
 type BuildKnowledgeFn = (opts?: {
@@ -234,20 +254,8 @@ async function runBuild(subArgs: string[]): Promise<number> {
 
   // ENROLLMENT-SCOPED: reject any user-supplied --repo / positional path that is
   // not enrolled before forwarding to buildKnowledge (no scanning of arbitrary dirs).
-  let scopedRepos: string[] | undefined;
-  if (parsed.repos.length > 0) {
-    const { enrolled, rejected } = partitionEnrolled(parsed.repos);
-    if (rejected.length > 0) {
-      process.stderr.write(
-        red('error: ') +
-        'not enrolled: ' + rejected.join(', ') + '\n' +
-        '       Only enrolled repos can be indexed. Enroll first: ' +
-        'ashlr enroll add <path>\n',
-      );
-      return 1;
-    }
-    scopedRepos = enrolled;
-  }
+  const scopedRepos = resolveScopedRepos(parsed.repos, 'indexed', red);
+  if (scopedRepos === null) return 1;
 
   if (parsed.allowCloud && !parsed.json) {
     process.stderr.write(
@@ -415,20 +423,8 @@ async function runGraph(subArgs: string[]): Promise<number> {
   const { red } = makeColors(tty);
 
   // ENROLLMENT-SCOPED: reject non-enrolled --repo / positional paths.
-  let scopedRepos: string[] | undefined;
-  if (parsed.repos.length > 0) {
-    const { enrolled, rejected } = partitionEnrolled(parsed.repos);
-    if (rejected.length > 0) {
-      process.stderr.write(
-        red('error: ') +
-        'not enrolled: ' + rejected.join(', ') + '\n' +
-        '       Only enrolled repos can be analyzed. Enroll first: ' +
-        'ashlr enroll add <path>\n',
-      );
-      return 1;
-    }
-    scopedRepos = enrolled;
-  }
+  const scopedRepos = resolveScopedRepos(parsed.repos, 'analyzed', red);
+  if (scopedRepos === null) return 1;
 
   const graphMod = await importGraph();
   if (!graphMod) {
@@ -520,20 +516,8 @@ async function runImpact(subArgs: string[]): Promise<number> {
   const { red } = makeColors(tty);
 
   // ENROLLMENT-SCOPED: reject non-enrolled --repo / positional paths.
-  let scopedRepos: string[] | undefined;
-  if (parsed.repos.length > 0) {
-    const { enrolled, rejected } = partitionEnrolled(parsed.repos);
-    if (rejected.length > 0) {
-      process.stderr.write(
-        red('error: ') +
-        'not enrolled: ' + rejected.join(', ') + '\n' +
-        '       Only enrolled repos can be analyzed. Enroll first: ' +
-        'ashlr enroll add <path>\n',
-      );
-      return 1;
-    }
-    scopedRepos = enrolled;
-  }
+  const scopedRepos = resolveScopedRepos(parsed.repos, 'analyzed', red);
+  if (scopedRepos === null) return 1;
 
   const graphMod = await importGraph();
   if (!graphMod) {
@@ -637,9 +621,4 @@ async function runCommand(args: string[], run: () => Promise<number>): Promise<n
 
 export async function cmdKnowledge(args: string[]): Promise<number> {
   return runCommand(args, () => dispatchKnowledge(args));
-}
-
-/** Programmatic entry for `ashlr knowledge impact`. */
-export async function cmdImpact(args: string[]): Promise<number> {
-  return runCommand(args, () => runImpact(args));
 }

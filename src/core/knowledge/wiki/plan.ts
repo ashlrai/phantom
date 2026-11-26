@@ -42,7 +42,7 @@ function topSourceFiles(m: ModuleInfo, facts: RepoFacts, max: number): string[] 
 }
 
 /** Find the module a focus area names: exact key, key suffix, or substring. */
-export function moduleForFocus(focus: string, modules: readonly ModuleInfo[]): ModuleInfo | null {
+function moduleForFocus(focus: string, modules: readonly ModuleInfo[]): ModuleInfo | null {
   const f = focus.replace(/^\.\//, '').replace(/\/+$/, '').toLowerCase();
   return (
     modules.find((m) => m.key.toLowerCase() === f) ??

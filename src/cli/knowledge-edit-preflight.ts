@@ -1,10 +1,9 @@
-import { dirname, resolve } from 'node:path';
 import {
   sanitizeFleetEdits,
   type ChangelogFragmentSpec,
   type FleetFileEdit,
 } from '../core/fleet/collision-free-edits.js';
-import { readStableRegularFile } from '../core/util/stable-file-read.js';
+import { isPlainObject, parseKnowledgeFileArgs, readKnowledgeInputFile } from './knowledge-input.js';
 
 const MAX_INPUT_BYTES = 16 * 1024 * 1024;
 const HELP = `Usage: phm knowledge edit-preflight --file <edits.json> [--json]
@@ -27,46 +26,30 @@ input. This is advisory, writes nothing, grants no merge permission, and does
 not replace the owner lane.
 `;
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 function inputShape(value: unknown): value is { edits: FleetFileEdit[]; changelog?: ChangelogFragmentSpec | null } {
-  if (!isObject(value) || !Array.isArray(value.edits) ||
+  if (!isPlainObject(value) || !Array.isArray(value.edits) ||
       Object.keys(value).some(key => key !== 'edits' && key !== 'changelog')) return false;
   const spec = value.changelog;
   if (spec === undefined || spec === null) return true;
-  return isObject(spec) && typeof spec.id === 'string' && typeof spec.kind === 'string' &&
+  return isPlainObject(spec) && typeof spec.id === 'string' && typeof spec.kind === 'string' &&
     Array.isArray(spec.entries) && spec.entries.every(entry => typeof entry === 'string') &&
     Object.keys(spec).every(key => ['id', 'kind', 'entries'].includes(key));
 }
 
 export async function runKnowledgeEditPreflight(args: string[]): Promise<number> {
-  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    process.stdout.write(HELP);
-    return 0;
-  }
   const invalid = (message: string): number => {
     process.stderr.write(`error: ${message}\n`);
     return 2;
   };
-  let file: string | undefined;
-  let json = false;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--json' && !json) json = true;
-    else if (arg === '--file' && file === undefined) {
-      const value = args[++i];
-      if (!value?.trim() || value.startsWith('-')) return invalid('--file requires a path');
-      file = value;
-    } else return invalid('invalid edit-preflight arguments; see --help');
+  const parsed = parseKnowledgeFileArgs(args, () => 'invalid edit-preflight arguments; see --help');
+  if (parsed.kind === 'help') {
+    process.stdout.write(HELP);
+    return 0;
   }
-  if (file === undefined) return invalid('--file is required');
+  if (parsed.kind === 'error') return invalid(parsed.message);
+  const { file, json } = parsed;
 
-  const absolute = resolve(file);
-  const read = readStableRegularFile(absolute, {
-    anchorPath: dirname(absolute), maxFileBytes: MAX_INPUT_BYTES, remainingBytes: MAX_INPUT_BYTES,
-  });
+  const read = readKnowledgeInputFile(file, MAX_INPUT_BYTES);
   if (!read.ok) return invalid(`input file unavailable (${read.reason})`);
   let input: unknown;
   try { input = JSON.parse(read.text) as unknown; }

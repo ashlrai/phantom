@@ -18,6 +18,7 @@ import { statSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfigReadOnly } from '../core/config.js';
+import { plainCitations } from '../core/knowledge/wiki/citations.js';
 import type { AshlrConfig } from '../core/types.js';
 import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
@@ -124,9 +125,8 @@ function resolveRepo(wiki: WikiModule, arg: string | undefined): { repo: string 
   return { error: `${arg} is not an enrolled repo name or a directory (see \`ashlr enroll list\`).` };
 }
 
-/** Citations render as plain `file:line` in a terminal. */
-function plainCitations(md: string): string {
-  return md.replace(/\[([^\]]+)\]\(#(?:cite|page):[^)]+\)/g, '$1');
+function invalidFocus(focus: string | undefined): boolean {
+  return focus !== undefined && (!focus || focus.length > 1200 || focus.startsWith('--'));
 }
 
 function printHelp(): void {
@@ -312,7 +312,7 @@ async function cmdAsk(wiki: WikiModule, p: Parsed): Promise<number> {
 
 async function cmdMap(wiki: WikiModule, p: Parsed): Promise<number> {
   const focus = p.values.get('--focus');
-  if (p.positional.length > 1 || (focus !== undefined && (!focus || focus.length > 1200 || focus.startsWith('--')))) {
+  if (p.positional.length > 1 || invalidFocus(focus)) {
     process.stderr.write(`${WIKI_OPTIONS.map!.usage}\n`);
     return 2;
   }
@@ -345,7 +345,7 @@ async function cmdBrain(wiki: WikiModule, p: Parsed): Promise<number> {
   };
   const curated = Object.values(source).some(value => value !== undefined);
   const parsed = brainSourceSchema.safeParse(source);
-  if (p.positional.length > 1 || (focus !== undefined && (!focus || focus.length > 1200 || focus.startsWith('--'))) ||
+  if (p.positional.length > 1 || invalidFocus(focus) ||
       (node !== undefined ? !parsed.success || focus !== undefined : curated)) {
     process.stderr.write(`${WIKI_OPTIONS.brain!.usage}\n`);
     return 2;
