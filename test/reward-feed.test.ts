@@ -190,6 +190,31 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs.find((i) => i.jobId === 'RQ-F')).toMatchObject({ merged: true, mergedAt: '2026-10-28T18:00:00.000Z' });
   });
 
+  it.each(['ledger', 'standing set'])('attributes a revert from the %s to the original merge attempt', (source) => {
+    const job = 'RQ-REUSED';
+    const original = launch(job);
+    const later = [
+      merged(job),
+      launch(job, 'devin', '2026-10-28T16:00:00.000Z'),
+      ciStart(job, '2026-10-28T16:15:00.000Z'),
+      ciComplete(job, '2026-10-28T16:45:00.000Z'),
+    ];
+    if (source === 'ledger') {
+      later.push(line({ event: 'reverted', job, ts: '2026-10-28T17:00:00.000Z' }));
+    }
+    const keys = source === 'standing set' ? new Set([`ashlrai/phantom#${job.length}`]) : undefined;
+    const rows = [
+      original,
+      ciStart(job, '2026-10-28T14:30:00.000Z'),
+      ciComplete(job, '2026-10-28T14:45:00.000Z'),
+      ...later,
+    ];
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS, undefined, keys)).toEqual([
+      expect.objectContaining({ pool: 'codex-cmp', dispatchedAt: DISPATCH_ISO, merged: false, mergedAt: null, ciWallMs: 900_000 }),
+    ]);
+    expect(foldJobsLedgerRewards(later.join('\n'), NOW_MS, undefined, keys)).toEqual([]);
+  });
+
   it('discounts a held merge the standing revert set proves did not hold', () => {
     const pr = (n: number) => `https://github.com/ashlrai/phantom/pull/${n}`;
     const merge = (job: string, n: number) =>

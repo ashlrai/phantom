@@ -23,7 +23,9 @@
  *     vocabulary: reverted:true, reverted_at/revertedAt, revert event/state
  *     names) newer than the latest merge resolves the job as merged:false —
  *     the v1 schema has no revert dimension and consumers score held merges.
- *     A later merge is a fresh held merge. Reverts only git history or the
+ *     A later merge is a fresh held merge. For a known merge, its merge time
+ *     bounds dispatch and CI evidence even when a revert changes the verdict.
+ *     Reverts only git history or the
  *     outcome/cloud ledgers prove — the standing `owner/repo#n` keys
  *     `revertedPrKeys()` resolves — discount the same way when the held
  *     merge's PR URL is claimed by exactly that job (the unambiguous-claim
@@ -336,8 +338,7 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 /**
  * One job's reward input, or null when the evidence cannot support a row:
  * no dispatch in the window, a dispatch after the outcome, a merge whose
- * GitHub timestamp predates dispatch, or a merge superseded by a revert —
- * row-level revert evidence or the standing revert set's unambiguous claim.
+ * GitHub timestamp predates every observed dispatch, or no resolved verdict.
  */
 function rewardInput(
   id: string, acc: RewardJobAccum, costUsd: number | undefined,
@@ -345,24 +346,19 @@ function rewardInput(
   const cost = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : null;
   const heldMerge = acc.merge !== null && !acc.standingReverted &&
     (acc.revertMs === null || acc.merge.atMs > acc.revertMs);
-  if (heldMerge) {
-    const merge = acc.merge!;
+  if (acc.merge !== null) {
+    const merge = acc.merge;
     const dispatch = dispatchBefore(acc, merge.mergedAtMs);
     if (dispatch === null) return null;
     return {
       jobId: id, pool: dispatch.lane,
       repo: acc.repo !== null && REPO_PATTERN.test(acc.repo) ? acc.repo : null,
-      merged: true, dispatchedAt: iso(dispatch.ms), mergedAt: iso(merge.mergedAtMs),
+      merged: heldMerge, dispatchedAt: iso(dispatch.ms), mergedAt: heldMerge ? iso(merge.mergedAtMs) : null,
       costUsd: cost,
       ...ciWallEvidence(acc, dispatch.ms, merge.mergedAtMs),
     };
   }
-  // A standing-reverted held merge resolves like a row-level revert: the
-  // merge's own GitHub stamp bounds the dispatch lookup — the revert's
-  // ledger time is not recorded in the standing set, and the merge stamp
-  // is the latest outcome time the fold can prove.
-  const closedMs = Math.max(acc.closedMs ?? 0, acc.revertMs ?? 0,
-    acc.standingReverted && acc.merge !== null ? acc.merge.mergedAtMs : 0);
+  const closedMs = Math.max(acc.closedMs ?? 0, acc.revertMs ?? 0);
   if (closedMs > 0) {
     const dispatch = dispatchBefore(acc, closedMs);
     if (dispatch === null) return null;

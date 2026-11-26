@@ -743,7 +743,9 @@ and resolution window contains exactly one distinct CI start and one distinct
 completion in order. CI receipts outside that window are ignored when
 checking for ambiguity, so earlier attempts can coexist with a measured
 retry. A merge uses its recorded merge time even if its ledger receipt
-arrived later. Missing or ambiguous timing stays unknown, and existing
+arrived later. A recorded revert changes the verdict of a known merge
+while the original merge time still bounds dispatch and CI evidence.
+Missing or ambiguous timing stays unknown, and existing
 reward rows retain their original values.
 `foldRewardSignals` collapses the bounded tail to
 each job's recorded evidence and the read fills only what the jobs
