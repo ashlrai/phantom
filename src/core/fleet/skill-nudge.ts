@@ -88,11 +88,8 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 // jobs.jsonl fold
 // ---------------------------------------------------------------------------
 //
-// The fleet jobs ledger is append-only and chronological, so file order is the
-// evidence order. One SkillNudgeJob is emitted per job id, sorted by the file
-// position of its last row — the closest honest stand-in for "oldest outcome
-// first" that the ledger supports (rows carry no per-job resolution stamp in
-// the fields this fold consumes).
+// One SkillNudgeJob is emitted per job id, sorted by the ledger position of
+// its latest terminal outcome (or its last row while unresolved).
 //
 // Field provenance, all real ledger evidence:
 //   - id/lane: job plus the last execution-side lane (enqueue/queued rows are
@@ -252,8 +249,6 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
   // PR URL -> claiming job ids, collected only when the caller supplied
   // standing revert keys — the same unambiguous-claim evidence pass
   // outcome-learning runs, so a contested or foreign URL never resolves.
-  // Node-pool producer rows are a different dialect and batch session ids
-  // are infrastructure: neither ever claims.
   const claims = revertedPrKeys === undefined || revertedPrKeys === null || revertedPrKeys.size === 0
     ? null : new Map<string, Set<string>>();
   let lineNo = 0;
@@ -267,7 +262,10 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
       row = parsed as Record<string, unknown>;
     } catch { continue; }
     const id = firstString(row, LEDGER_JOB_KEYS);
-    if (claims !== null && id !== null && !id.startsWith(BATCH_SESSION_PREFIX) && !isNodePoolLedgerRow(row)) {
+    // Batch members have their own rows. The session wrapper and node-pool
+    // attempt telemetry do not supply job-level recovery evidence.
+    if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
+    if (claims !== null) {
       const url = rowPrUrl(row);
       if (url !== null) {
         const set = claims.get(url) ?? new Set<string>();
@@ -275,7 +273,7 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
         claims.set(url, set);
       }
     }
-    if (id === null || !LEDGER_ID_PATTERN.test(id)) continue;
+    if (!LEDGER_ID_PATTERN.test(id)) continue;
     let acc = jobs.get(id);
     if (acc === undefined) {
       acc = { lane: null, outcome: undefined, verdictUrl: null, reverted: false, attempts: 0,
