@@ -1567,9 +1567,9 @@ admission-stopped tick the dispatcher counts every JID+tier-valid row by its
 raw lane column instead, and the derived report follows that relaxed set.
 Reports also carry `fleetStop` (`admission_stopped` | `global_admission` | null): the
 tick's fleet-wide stop in the dispatcher's own codes, read from status.json's
-`paused`/`admission` verdict for a derived report (where it replaces the
-per-lane codes) or back out of the published `blocked` codes for a
-dispatcher one. Every report carries `statusAsOf` (status.json's `last_tick`
+`paused`/`admission` verdict for either source. Published `blocked` codes
+provide fallback evidence, and derived per-lane reasons use the fleet-wide
+stop when recorded. Every report carries `statusAsOf` (status.json's `last_tick`
 as ISO-8601, or null) and `statusFresh` (boolean, or null when no evaluation
 clock was supplied): fresh requires a `dispatchd.status.v1` schema, a
 parseable non-future `last_tick`, and an age within the same two-minute
