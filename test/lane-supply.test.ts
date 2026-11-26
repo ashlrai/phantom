@@ -82,6 +82,21 @@ describe('lane supply verdicts', () => {
     expect(report.lanes.map(l => l.verdict)).toEqual(['out-of-usage', 'held']);
     expect(report.alarm).toBeNull();
   });
+
+  it('reports free slots with an unreadable queue as unknown, never busy or idle', () => {
+    const report = buildLaneSupply(snapshot([lane('claude', { liveJobs: 1, queueDepth: null })]), null, NOW);
+    expect(report.lanes[0]).toMatchObject({ verdict: 'unknown', queued: null, freeSlots: 3 });
+    expect(report.lanes[0]!.text).toBe('claude: 1 of 4 running, queue depth unknown');
+    expect(report.lanes[0]!.text).not.toContain('0 queued');
+    expect(report.idle).toEqual([]);
+    expect(report.alarm).toBeNull();
+  });
+
+  it('still calls a lane at target busy when the queue read is unknown', () => {
+    const report = buildLaneSupply(snapshot([lane('claude', { liveJobs: 4, queueDepth: null })]), null, NOW);
+    expect(report.lanes[0]).toMatchObject({ verdict: 'busy', freeSlots: 0 });
+    expect(report.lanes[0]!.text).toBe('claude busy: 4 of 4 running, unknown queued');
+  });
 });
 
 describe('planner and autofill facts', () => {
