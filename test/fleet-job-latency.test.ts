@@ -162,6 +162,35 @@ it('reports measured local Git operations and exact cross-lane overlaps only', a
 
 const event = (event: string, ts: string | null) => ({ job: 'attempt-1', event, ts });
 const start = '2026-01-01T00:00:00Z', end = '2026-01-01T00:01:00Z';
+it('keeps phases that span a recorded relaunch unmeasured', () => {
+  const firstLaunch = event('launch', start);
+  const relaunch = event('launch', end);
+  const checkout = event('checkout_complete', '2026-01-01T00:00:30Z');
+  const finish = event('finish', end);
+  const merged = event('merged', '2026-01-01T00:02:00Z');
+  const text = [merged, relaunch, event('publish', checkout.ts), finish, firstLaunch, checkout]
+    .map(row => JSON.stringify(row)).join('\n');
+
+  expect(jobLatency(text).phases.find(p => p.phase === 'model'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+  expect(mergeQueueLatency(text).phases.find(p => p.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+});
+
+it('measures phases whose boundaries both follow the last launch', () => {
+  const text = [
+    event('launch', start), event('launch', end),
+    event('checkout_complete', '2026-01-01T00:01:10Z'),
+    event('finish', '2026-01-01T00:01:30Z'),
+    event('publish', '2026-01-01T00:02:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(jobLatency(text).phases.find(p => p.phase === 'model'))
+    .toMatchObject({ total_seconds: 20, measured_jobs: 1, missing_jobs: 0 });
+  expect(jobLatency(text).phases.find(p => p.phase === 'publish_wait'))
+    .toMatchObject({ total_seconds: 30, measured_jobs: 1, missing_jobs: 0 });
+});
+
 it.each([
   ['missing', [event('ci_start', start)]],
   ['reversed', [event('ci_start', end), event('ci_complete', start)]],

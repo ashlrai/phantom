@@ -2477,7 +2477,10 @@ only the local jobs ledger. Per-job phase totals and job counts exclude
 `RQ-BATCH-*` session wrappers and node-pool telemetry
 (`fleet.session-pool.v1` and `phm-node-runner.v1`). Batch member rows
 still contribute their own recorded boundaries. Excluded rows do not
-count as ignored events. The
+count as ignored events. A phase is unmeasured when a recorded launch falls
+after its start and at or before its end, except when the launch itself is
+the phase's end boundary. This keeps retries that reuse a job ID from
+joining timestamps across dispatch attempts. The
 `git_contention` section reports nearest-rank p90 for paired checkout
 boundaries and the manual recovery rate per 100 measured checkouts that
 explicitly record `manual_checkout_recovery: true|false` on

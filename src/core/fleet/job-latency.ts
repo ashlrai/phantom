@@ -123,7 +123,7 @@ function summarizeGit(rows: Observation[]) {
   });
 }
 
-/** A job ID must identify one attempt; ambiguous repeated boundaries are never paired. */
+/** Pair unique, ordered boundaries within a recorded dispatch attempt when launch evidence exists. */
 export function jobLatency(text: string | null, phases: readonly (readonly [string, string, string, string])[] = jobPhases) {
   const jobs = new Map<string, Events>();
   const git: Observation[] = [], recovery = new Map<string, Set<number>>();
@@ -168,9 +168,11 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
     for (const [id, events] of jobs) {
       const a = events.get(start), b = events.get(end);
       if (a?.length !== 1 || b?.length !== 1 || !Number.isFinite(a[0]) || !Number.isFinite(b[0]) || b[0]! < a[0]!) continue;
-      samples.push((b[0]! - a[0]!) / 1000);
+      const from = a[0]!, to = b[0]!;
+      if (end !== 'launch' && events.get('launch')?.some(at => from < at && at <= to)) continue;
+      samples.push((to - from) / 1000);
       if (phases === jobPhases && phase === 'checkout') {
-        checkout.push(b[0]! - a[0]!);
+        checkout.push(to - from);
         const values = recovery.get(id);
         if (values?.size === 1) recoverySamples.push(...values);
       }
