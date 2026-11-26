@@ -259,6 +259,20 @@ it('reports a healthy empty queue as zeros with no notes', async () => {
   expect(report.totals).toMatchObject({ ready: 0, parked: 0, blockedReasons: [], stale: 0 });
 });
 
+it('includes open-hint READY rows in the fleet total without attributing them to a lane', async () => {
+  const open = 'RQ-OPEN\tphantom\t\twork\tprompts/open.md';
+  await writeFile(join(queueDir, 'ready.tsv'), open);
+  const openOnly = await getLaneQueueCounts({ runsDir: root, now });
+  expect(openOnly.sources.ready).toBe('healthy');
+  expect(openOnly.totals.ready).toBe(1);
+  expect(openOnly.lanes).toEqual([]);
+
+  await writeFile(join(queueDir, 'ready.tsv'), [open, row('READY', 'a-1', 'devin')].join('\n'));
+  const mixed = await getLaneQueueCounts({ runsDir: root, now });
+  expect(mixed.totals.ready).toBe(2);
+  expect(mixed.lanes).toMatchObject([{ lane: 'devin', ready: 1 }]);
+});
+
 it('groups blocked jobs by reason per lane, biggest first', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), [
     row('PARKED-DEP.devin', 'a-1', 'devin'), row('PARKED-HOLD.devin', 'a-2', 'devin'), row('PARKED-HOLD.devin', 'a-3', 'devin'),

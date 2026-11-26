@@ -1071,6 +1071,9 @@ event falls between the windows counts as missing evidence, never as a
 shorter wait. Without `--json`, the same command prints a plain-language
 report. Use `--root /path` to inspect a different runs directory.
 
+`totals.ready` includes open-hint READY jobs from the shared work market.
+Those jobs can go to any eligible lane and have no per-lane count.
+
 Trailing-hour merge counts use a readable, timezone-qualified `mergedAt` on
 merge ledger rows when available. Older rows and rows with an unreadable
 `mergedAt` use the existing ledger event timestamp unless a retained receipt
