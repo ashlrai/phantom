@@ -87,8 +87,9 @@ job's outcome: `pending`, `running` (naming the node whose live claim can act),
 
 A text `pull` (no `--json`) prints the same claim for a person: the job's
 owner, requirements, pack and secret names, the embedded task text when the
-job carries one, the lease token pair and expiry, and paste-ready `renew` and
-`complete` commands.
+job carries one, the lease token pair and expiry, and paste-ready `renew`,
+`complete` and `release` commands — the last names `--decline` for a job this
+node can never run.
 
 The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
