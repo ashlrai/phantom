@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+import type {
+  CommunitySeatOutcome,
+  CommunitySeatsCoverage,
+  CommunitySeatsState,
+  OutsidePrCommunitySeatsRead,
+} from './community-seats.js';
 import type { ControllerQualityRead, ControllerQualityReceipt, ControllerQualityState } from './controller-quality.js';
 import type { RouterOutcome, RouterOutcomeRead } from './outcomes.js';
 
@@ -292,6 +298,14 @@ export interface RouterWeightProposalOptions {
    * file — and controller_quality null.
    */
   controllerQuality?: ControllerQualityRead | null;
+  /**
+   * Outside-PR community-seat read (`metrics/outside-pr-outcomes.jsonl`,
+   * see community-seats.ts). Absent or null leaves community_seats_state
+   * 'unreported' — distinct from 'missing' (no journal yet) — and
+   * community_seats null. Advisory context only: outside PRs carry no
+   * lane or work_class, so the tallies never enter a proposal group.
+   */
+  communitySeats?: OutsidePrCommunitySeatsRead | null;
 }
 
 export interface RouterWeightProposal {
@@ -1582,6 +1596,32 @@ export interface RouterWeightProposalReport {
   controller_quality: ControllerQualityReceipt[] | null;
   /** Receipt rows rejected during validation; null unless state==='read'. */
   controller_quality_invalid_rows: number | null;
+  /**
+   * Health of the outside-PR outcome journal tail behind the
+   * community-seat tallies — merged non-fleet PRs per attributed agent
+   * (community-seats.ts). 'unreported' means the caller supplied no read —
+   * distinct from 'missing' (no journal yet) and the degraded states.
+   */
+  community_seats_state: CommunitySeatsState | 'unreported';
+  /** True when the journal tail was cut; seat counts cover the newest bytes only. */
+  community_seats_truncated: boolean;
+  /** Journal lines rejected by the parser; null unless state==='read'. */
+  community_seats_ignored: number | null;
+  /** Evidence window the seat tallies were folded under, in days; null unless state==='read'. */
+  community_seats_window_days: number | null;
+  /**
+   * Per attributed-agent outside-merge tallies — prs/reverted/kept/unknown
+   * inside the window, model always null (gh records none). Null unless
+   * community_seats_state==='read'; an empty array then means no outside
+   * merges were journaled inside the window, a real measurement.
+   */
+  community_seats: CommunitySeatOutcome[] | null;
+  /**
+   * Newest scan receipt's coverage fields — gh source state, revert-ledger
+   * state and degraded/partial repo reads. Null when no scan row parsed or
+   * the journal was not read; the tallies then carry no coverage context.
+   */
+  community_seats_coverage: CommunitySeatsCoverage | null;
   proposals: RouterWeightProposal[];
 }
 
@@ -1590,6 +1630,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
   if (!z.iso.datetime().safeParse(asOf).success) throw new RangeError('as_of must be an ISO-8601 UTC timestamp');
   const bounds = { min_samples: opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES, max_shift: opts.maxShift ?? ROUTER_WEIGHT_DEFAULT_MAX_SHIFT };
   const controller = opts.controllerQuality ?? null;
+  const seats = opts.communitySeats ?? null;
   const head = { schema: 'router.weight-proposals.v1' as const, advisory_only: true as const, as_of: asOf,
     source: ROUTER_WEIGHT_PROPOSAL_SOURCE, ledger: { state: read.state, path: read.path }, truncated: read.truncated,
     market_state: read.market_state, market_truncated: read.market_truncated,
@@ -1602,6 +1643,15 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     controller_quality_state: (controller?.state ?? 'unreported') as RouterWeightProposalReport['controller_quality_state'],
     controller_quality: controller?.state === 'read' ? controller.receipts : null,
     controller_quality_invalid_rows: controller?.state === 'read' ? controller.invalid_rows : null,
+    // Community seats are an independent journal, not a jobs-ledger join:
+    // they report whenever the caller supplied a read, even when the jobs
+    // ledger itself was unavailable.
+    community_seats_state: (seats?.state ?? 'unreported') as RouterWeightProposalReport['community_seats_state'],
+    community_seats_truncated: seats?.state === 'read' ? seats.truncated : false,
+    community_seats_ignored: seats?.state === 'read' ? seats.ignored_rows : null,
+    community_seats_window_days: seats?.state === 'read' ? seats.window_days : null,
+    community_seats: seats?.state === 'read' ? seats.seats : null,
+    community_seats_coverage: seats?.state === 'read' ? seats.coverage : null,
     bounds };
   if (read.state !== 'read') {
     return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null,

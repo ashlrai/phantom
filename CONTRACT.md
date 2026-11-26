@@ -1406,6 +1406,42 @@ read itself (a controller-read failure degrades to `unreadable`, never a
 command failure) and renders the verdicts as advisory context alongside
 the proposals. Nothing here routes, weights or applies anything.
 
+`router/community-seats.ts` exports `readOutsidePrCommunitySeats`,
+`foldCommunitySeats`, `COMMUNITY_SEATS_JOURNAL_MAX_BYTES` (8 MiB),
+`COMMUNITY_SEATS_DEFAULT_WINDOW_DAYS` (30),
+`COMMUNITY_SEATS_MAX_WINDOW_DAYS` (365), `COMMUNITY_SEATS_FUTURE_SKEW_MS`
+(60 s) and `COMMUNITY_SEATS_MAX_SEATS` (32), plus the
+`OutsidePrCommunitySeatsRead`/`CommunitySeatOutcome`/
+`CommunitySeatsCoverage`/`CommunitySeatsState` types. It reads
+`<runsDir>/metrics/outside-pr-outcomes.jsonl` — the
+`fleet.outside-pr-outcome.v1`/`fleet.outside-pr-scan.v1` journal
+`outside-outcome-sync` writes — through `readLedgerTail`'s bounded
+no-follow tail read and `parseOutsidePrOutcomeJournal`, resolving
+`runsDir` like `readRouterOutcomes` (ASHLR_RUNS_DIR, then
+`~/.ashlr-runs`); `journalPath` overrides the location and `runsDir`
+must be absolute when given. The read state is `'read'` or the tail
+read's `'missing'`/`'unreadable'`/`'not-file'`; on `'read'` the fold
+keeps each PR's newest outcome row inside the `windowDays` window keyed
+on `mergedAt` (unparseable stamps and stamps past `now` plus the
+future-skew bound are skipped, never counted), tallies them per recorded
+`agent` attribution (`null` = the unattributed bucket, `model` always
+`null`), sorts by PR count and caps at 32 seats. `coverage` carries the
+newest scan row's `source_state`, `revert_ledger` and bounded
+`degraded_repos`; `truncated`/`ignored_rows` mark a cut tail and
+contract-rejected lines. The read feeds the advisory
+`router.weight-proposals.v1` report: `buildRouterWeightProposalReport`
+accepts `opts.communitySeats` and reports `community_seats_state`
+(`'unreported'` when no read was supplied — distinct from `missing`),
+`community_seats` (the tallies, `null` unless state is `read`),
+`community_seats_coverage`, `community_seats_truncated`,
+`community_seats_ignored` and `community_seats_window_days`.
+`phm fleet router-weights` performs the read itself (a read failure
+degrades to `unreadable`, never a command failure) and renders the seats
+and coverage notes as advisory context alongside the proposals. Outside
+PRs carry no lane or work_class, so the tallies never enter a proposal
+group and the weight math is unchanged by them. Nothing here routes,
+weights or applies anything.
+
 `explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
 256 KiB tail of `metrics/work-market.jsonl` (regular files only, no symlink
 following). Its `lanes` map contains `posture`, `postureReason`, nullable

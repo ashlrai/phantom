@@ -1128,7 +1128,30 @@ recorded for each lane, with unrecognized fields joining as `null` and
 rejected rows counted in `controller_quality_invalid_rows`. These are the
 verdicts the controller is actively enforcing for live routing, surfaced
 here as advisory context only — the weight math still moves on
-held-merge rate alone and nothing in the report applies them. Each proposal also carries an `evidence` block folded
+held-merge rate alone and nothing in the report applies them. The
+report also folds the outside-PR outcome journal
+(`metrics/outside-pr-outcomes.jsonl`, the `fleet.outside-pr-outcome.v1`
+and `fleet.outside-pr-scan.v1` rows `outside-outcome-sync` writes from
+`gh`): `community_seats_state` reports that journal's read health
+(`'unreported'` when the caller supplied no read, `'missing'`/
+`'unreadable'`/`'not-file'` otherwise, `'read'` on success),
+`community_seats_window_days` the evidence window (default 30 days,
+keyed on each merged PR's `mergedAt` with the same one-minute
+future-skew bound the outcomes fold uses), `community_seats` lists the
+per-agent tallies — each recorded `agent` attribution (the
+branch/login convention the sync records, `null` rendered as
+`unattributed`, `model` always `null` because the journal never
+records one) with its PR count, `reverted`/`kept`/`unknown` revert
+verdict counts, and the distinct repo count — and
+`community_seats_coverage` carries the newest scan row's recorded
+`source_state`/`revert_ledger` plus the degraded repo list so a
+partial community picture reads as partial. `community_seats_truncated`
+marks a journal exceeding the retained tail and
+`community_seats_ignored` counts rows that failed the recorded
+contract. Outside PRs carry no lane or work_class, so these tallies
+are advisory context only: they never enter a `(work_class, lane)`
+proposal group and the weight math is unchanged by them. Each
+proposal also carries an `evidence` block folded
 from the same known cohort: the group's CI first-pass rate, summed review
 findings, mean `cost_usd`, mean recorded `acus` (the Devin lane's billed
 spend — a different unit, never mixed with USD), mean recorded
