@@ -78,6 +78,23 @@ describe('recordLeaderBoard', () => {
     expect(stored.sources).toMatchObject({ readyTsv: 'healthy', queueCounts: 'ok', needsMason: 'available' });
   });
 
+  it('resolves spec-less ready rows through router-queue.md for the tier tally', async () => {
+    await writeFile(join(queueDir, 'ready.tsv'), [
+      'RQ-DEPTH-ENV\tphantom\t\twork\tqueue/prompts/a.md',
+      'RQ-DEPTH-OPEN\tphantom\t\tfast\tqueue/prompts/b.md',
+      'RQ-DEPTH-BAD\tphantom\tclaude\tmid\tqueue/prompts/c.md',
+    ].join('\n'));
+    await writeFile(join(queueDir, 'router-queue.md'), [
+      '- READY RQ-DEPTH-ENV (P1, preferred_lane=claude): a',
+      '- READY RQ-DEPTH-BAD (P1, impact=not-a-number): c',
+    ].join('\n'));
+    const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+    if (!result.wrote) throw new Error('unreachable');
+    // ENV resolves to a lane row, OPEN stays lane-open READY supply, and BAD's
+    // malformed envelope makes it dead work — never depth.
+    expect(result.board.queueDepthByTier).toEqual({ work: 1, fast: 1 });
+  });
+
   it('keeps a bounded trend across records: delta and direction follow the samples', async () => {
     await seed();
     const first = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS - 3_600_000 });

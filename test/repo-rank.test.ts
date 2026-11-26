@@ -1,12 +1,13 @@
 import { describe, test, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { computeRank, SEEDS, updateRank, readRank, validRank, localMerges } from '../src/core/fleet/repo-rank.js';
 import { allocateRepos, readRepoPriority, setRepoPriority, type RepoMarketEvidence } from '../src/core/fleet/repo-market.js';
-import { managedRepoCatalog, parseRepoMarketFacts, planRepoChange } from '../src/core/fleet/repos-manager.js';
+import { listManagedRepos, managedRepoCatalog, parseRepoMarketFacts, planRepoChange } from '../src/core/fleet/repos-manager.js';
+import type { GitRunResult } from '../src/core/verse/git-ops.js';
 const now = new Date('2026-11-04T12:00:00Z');
 
 test('repository management distinguishes unknown metrics and routes scope changes to grant review', () => {
@@ -40,6 +41,26 @@ test('allocation responds to evidence, and boost and pause are bounded', () => {
     expect(readRepoPriority('ashlrai/locus', directory)).toBe('pause');
     expect(readRepoPriority('ashlrai/lexicon', directory)).toBe('normal');
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('managed repo queue depth resolves spec-less rows through router-queue.md', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'repos-depth-'));
+  try {
+    mkdirSync(join(dir, 'queue'), { recursive: true });
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), [
+      // Lane-open spec-less row: real supply for phantom.
+      'RQ-DEPTH-OPEN\tphantom\t\twork\tqueue/prompts/a.md',
+      // Malformed envelope: dead work, never depth.
+      'RQ-DEPTH-BAD\tphantom\tclaude\twork\tqueue/prompts/b.md',
+    ].join('\n'));
+    writeFileSync(join(dir, 'queue', 'router-queue.md'),
+      '- READY RQ-DEPTH-BAD (P1, impact=not-a-number): b\n');
+    const run = async (): Promise<GitRunResult> => ({
+      code: 0, stdout: JSON.stringify({ data: {} }), stderr: '', timedOut: false, truncated: false, missing: false,
+    });
+    const result = await listManagedRepos({ runsDir: dir, now: +now, run });
+    expect(result.repos.find(row => row.repo === 'ashlrai/phantom')?.queueDepth).toBe(1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('the manager includes the effective stage for repos beyond the ecosystem seed list', () => {
