@@ -215,6 +215,10 @@ export function boardNotifyDeltaMaterial(f: BoardNotifyDeltaFields): string | nu
     if (f.pr === undefined && head === '' && tests === '' && artifact === '') return null;
     core = { pr: f.pr ?? null, head: head === '' ? null : head, tests: tests === '' ? null : tests, artifact: artifact === '' ? null : artifact };
   } else return null;
+  if (f.state === 'BLOCKED' || f.state === 'VERIFIED') {
+    const owner = normDeltaField(f.owner), claim = normDeltaField(f.claimReceipt);
+    if (owner && claim) Object.assign(core, { owner, claim });
+  }
   return JSON.stringify({ channel: f.channel, thread: f.thread, ...core });
 }
 
@@ -261,13 +265,15 @@ function detail(t: BoardTransition, state: BoardNotifyState): string | null {
     if (!e.owner || !e.claimReceipt) return null;
     return `${field(e.owner, 120)} (claim ${field(e.claimReceipt, 160)})`;
   }
-  if (state === 'BLOCKED') return e.dependency ? field(e.dependency, 160) : null;
+  const owner = field(e.owner ?? '', 120), claim = field(e.claimReceipt ?? '', 160);
+  const attribution = owner && claim ? ` — ${owner} (claim ${claim})` : '';
+  if (state === 'BLOCKED') return e.dependency ? field(e.dependency, 160) + attribution : null;
   const parts: string[] = [];
   if (e.pr !== undefined) parts.push(`PR #${e.pr}`);
   if (e.head) parts.push(`head ${field(e.head, 40)}`);
   if (e.tests) parts.push(`tests ${field(e.tests, 120)}`);
   if (e.artifact) parts.push(parts.length === 0 ? field(e.artifact, 160) : `artifact ${field(e.artifact, 160)}`);
-  return parts.length === 0 ? null : parts.join(' ');
+  return parts.length === 0 ? null : parts.join(' ') + attribution;
 }
 
 /** The evidence each postable state must cite; null means it may post. */
