@@ -48,8 +48,8 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   const jobs = new Map<string, Job>(); let malformedLines = 0;
   const drafts = new Map<string, Set<string>>();
   const generation = new Map<string, Map<string, { drafted: boolean; reasons: Set<string> }>>();
-  const launchedBatches = new Set<string>();
-  const memberBatches = new Map<string, Set<string>>();
+  const launchedBatches = new Map<string, number>();
+  const memberBatches = new Map<string, Map<string, number>>();
   const rows: { id: string; at: number; row: Record<string, unknown> }[] = [];
   const since = now - hours * 3600000;
   for (const line of `${raw}\n${decisions}`.split(/\r?\n/)) {
@@ -68,11 +68,11 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   }
   // Late receipts can be appended out of order. Stable sorting preserves
   // ledger order when receipts share a timestamp.
-  for (const { id, row: r } of rows.sort((a, b) => a.at - b.at)) {
+  for (const { id, at, row: r } of rows.sort((a, b) => a.at - b.at)) {
     const event = pickString(r, EVENT_KEYS)?.toLowerCase();
     const launch = event === 'launch' || event === 'launched';
     if (id.startsWith('RQ-BATCH-')) {
-      if (launch) launchedBatches.add(id);
+      if (launch) launchedBatches.set(id, at);
       continue;
     }
     if (event === 'drafted' || event === 'rejected') {
@@ -96,8 +96,8 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     if (event === 'batch_claim') {
       const batch = pickString(r, ['batch', 'batch_id', 'batchId']);
       if (batch?.startsWith('RQ-BATCH-')) {
-        const batches = memberBatches.get(id) ?? new Set<string>();
-        batches.add(batch);
+        const batches = memberBatches.get(id) ?? new Map<string, number>();
+        if (!batches.has(batch)) batches.set(batch, at);
         memberBatches.set(id, batches);
       }
     }
@@ -111,8 +111,9 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   }
   const groups = new Map<string, Job[]>();
   for (const [id, job] of jobs) {
-    for (const batch of memberBatches.get(id) ?? []) {
-      if (launchedBatches.has(batch)) {
+    for (const [batch, claimedAt] of memberBatches.get(id) ?? []) {
+      const launchedAt = launchedBatches.get(batch);
+      if (launchedAt !== undefined && launchedAt >= claimedAt) {
         job.launched = true;
         break;
       }

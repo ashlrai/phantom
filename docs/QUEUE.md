@@ -1223,7 +1223,8 @@ recorded timestamps, with ledger order breaking ties. Late arrivals with
 older timestamps cannot overwrite newer recorded measurements. PRs and merges
 count jobs with recorded PRs and merges. A batch member counts as launched
 when the window contains its `batch_claim` and the matching worker's launch
-receipt. Each member counts once. Batch worker totals and node-pool attempt
+receipt has an equal or later recorded timestamp. Each member counts once.
+Batch worker totals and node-pool attempt
 telemetry are excluded from generator yield. Empty rate uses jobs with a recorded
 empty result. Median diff lines uses recorded `diff_lines`. Tokens per merged PR
 is the sum of recorded job tokens divided by merged PRs; it is unknown if any
