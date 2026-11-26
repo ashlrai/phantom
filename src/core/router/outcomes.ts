@@ -3127,6 +3127,10 @@ export interface CrossReviewEvidence {
  * itself never creates outcomes.
  */
 export function foldCrossReviews(text: string): Map<string, CrossReviewEvidence> {
+  return foldCrossReviewsThrough(text, Infinity);
+}
+
+function foldCrossReviewsThrough(text: string, asOfMs: number): Map<string, CrossReviewEvidence> {
   const latest = new Map<string, {
     evidence: CrossReviewEvidence;
     timestamp: number;
@@ -3152,6 +3156,7 @@ export function foldCrossReviews(text: string): Map<string, CrossReviewEvidence>
     const at = typeof row['at'] === 'string' ? row['at'] : null;
     const parsedAt = at === null ? NaN : Date.parse(at);
     const timestamp = Number.isFinite(parsedAt) ? parsedAt : -Infinity;
+    if (timestamp > asOfMs) continue;
     const key = `${repo.toLowerCase()}#${pr}`;
     const previous = latest.get(key);
     if (!previous || timestamp > previous.timestamp || (timestamp === -Infinity && previous.timestamp === -Infinity)) {
@@ -3435,7 +3440,8 @@ function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: Reado
  * safe-integer `pr` and an in-vocabulary `outcome`
  * (`approve`/`reject`/`failed`/`skipped`); `kind:'decision'` rows are
  * merge-action evidence and never join. The latest recorded review time
- * determines the standing verdict. The fold's `crossReviews` option joins each
+ * at or before the report start determines the standing verdict. The fold's
+ * `crossReviews` option joins each
  * outcome's `cross_review` through the job's standing PR claim — shared with
  * `mergeEvents` — so a contested or foreign URL never resolves
  * — carrying the verdict and the review record's `at` timestamp.
@@ -3458,6 +3464,7 @@ export async function readRouterOutcomes(opts: {
    */
   authorityEvidence?: readonly RouterOutcomeEvidenceRow[] | null;
 } = {}): Promise<RouterOutcomeRead> {
+  const reportStartedAt = Date.now();
   const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   if (!isAbsolute(runsDir)) throw new RangeError('runsDir must be an absolute path');
   if (opts.ashlarDir !== undefined && !isAbsolute(opts.ashlarDir)) throw new RangeError('ashlarDir must be an absolute path');
@@ -3522,7 +3529,9 @@ export async function readRouterOutcomes(opts: {
       revertLedger.keys),
     mergeEvents: mergeEvents?.evidence,
     mergeEventsTruncated,
-    crossReviews: crossReviewRead.state === 'read' ? foldCrossReviews(crossReviewRead.text) : undefined,
+    crossReviews: crossReviewRead.state === 'read'
+      ? foldCrossReviewsThrough(crossReviewRead.text, reportStartedAt)
+      : undefined,
   }, ambiguousCiJobs, mergeEvents?.coverage, rewards);
   if (spendRead.state === 'read' && !spendTruncated) {
     const costs = foldSpendCosts(spendRead.text);

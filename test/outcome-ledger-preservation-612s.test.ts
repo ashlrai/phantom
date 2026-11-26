@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   authorityRevertedPrKeys,
@@ -2535,6 +2535,32 @@ describe('router outcome cross-review join', () => {
     // No claim, no join — unknown stays null, never a guessed review.
     expect(byId.get('J3')?.cross_review).toBeNull();
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
+  });
+
+  it('joins only dated cross-review receipts at or before report start', async () => {
+    const reportStart = '2026-11-25T12:00:00.000Z';
+    const future = '2026-11-25T12:00:00.001Z';
+    const root = runsDir([42, 43, 44].map(pr => JSON.stringify({
+      job: `J${pr}`, pr_url: `https://github.com/ashlrai/phantom/pull/${pr}`,
+    })).join('\n'));
+    const ashlarDir = crossReviewLedger([
+      crossReview(42, 'approve', { at: reportStart }),
+      crossReview(42, 'reject', { at: future }),
+      crossReview(43, 'approve', { at: future }),
+      crossReview(44, 'approve', { at: null }),
+      crossReview(44, 'reject', { at: future }),
+    ]);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(reportStart));
+    try {
+      const result = await readRouterOutcomes({ runsDir: root, ashlarDir, authorityEvidence: null });
+      expect(result.outcomes).toMatchObject([
+        { job_id: 'J42', cross_review: { outcome: 'approve', at: reportStart } },
+        { job_id: 'J43', cross_review: null },
+        { job_id: 'J44', cross_review: { outcome: 'approve', at: null } },
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('keeps cross_review null and reports cross_review_state when the ledger is absent or refused', async () => {
