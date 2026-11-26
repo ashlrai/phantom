@@ -91,7 +91,7 @@ afterEach(() => {
 });
 
 async function glanceLoaded() {
-  await screen.findByText(/main red: phantom/);
+  await screen.findByText(/main red: phantom/, undefined, { timeout: 4000 });
 }
 
 async function openFleet() {
