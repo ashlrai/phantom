@@ -1047,12 +1047,15 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     const dispatchCredit: FleetLaneCreditView = { ...UNKNOWN_CREDIT, resetAt, observedAt,
       ...(remainingPct === null ? {} : { remainingPct, state: 'observed', label: `${remainingPct}% weekly`, source: 'dispatcher' }) };
     const startsInWindow = sawLaunch ? startJobs.get(lane)?.size ?? 0 : null;
-    const target = count(dispatch?.target) ?? row?.target ?? null;
     const effectiveTarget = count(dispatch?.effective_target);
+    const dispatchTarget = count(dispatch?.target);
+    const launchTarget = dispatchTarget === null ? effectiveTarget : laneLaunchTarget(dispatchTarget, effectiveTarget);
+    // A lower configured target takes effect immediately. A raise must wait for the dispatcher.
+    const slotTarget = row?.target == null ? launchTarget : laneLaunchTarget(row.target, launchTarget);
     // Placeholder verdict; replaced once the starved read below has run.
     return { lane, queueDepth, liveJobs, mergesPerHour, startsInWindow, health: { state: 'ok' as const, reason: 'ok', number: null },
       credit: credit.state === 'unknown' && (observedAt !== null || credit.observedAt === null) ? dispatchCredit : credit,
-      slotTarget: target === null ? effectiveTarget : laneLaunchTarget(target, effectiveTarget), hold,
+      slotTarget, hold,
       ...(heldByLane.has(lane) ? { held: heldByLane.get(lane)! } : {}) };
   });
 

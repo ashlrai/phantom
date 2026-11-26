@@ -134,11 +134,19 @@ describe('lanes read: starved object', () => {
     { effectiveTarget: 8, launchTarget: 2 },
     { effectiveTarget: 1, launchTarget: 1 },
     { effectiveTarget: 0, launchTarget: 0 },
-  ])('uses the configured target and effective ceiling ($effectiveTarget)', async ({ effectiveTarget, launchTarget }) => {
+    { configuredTarget: 1, effectiveTarget: 2, launchTarget: 1 },
+    { configuredTarget: 0, launchTarget: 0 },
+    { configuredTarget: 4, effectiveTarget: 8, launchTarget: 2 },
+  ])('uses the lowest known launch ceiling (%j)', async ({ configuredTarget, effectiveTarget, launchTarget }) => {
     const root = await scratch();
     const queueDir = join(root, 'queue');
     await mkdir(queueDir);
     await writeFile(join(queueDir, 'ready.tsv'), '');
+    if (configuredTarget !== undefined) {
+      await writeFile(join(queueDir, 'slots.json'), JSON.stringify({
+        claude: { target: configuredTarget, floor: 0, ceiling: 8, held: false },
+      }), { mode: 0o600 });
+    }
     await writeFile(join(queueDir, 'status.json'), JSON.stringify({
       last_tick: new Date(NOW).toISOString(),
       lanes: { claude: { running: 2, target: 2, effective_target: effectiveTarget, queued: 0, held: false } },
