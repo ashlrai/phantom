@@ -276,6 +276,7 @@ export function poolUsageSeries(pool: string, rows: readonly UsageReading[], now
   if (!known) return { ...series, reason: 'Reset time unknown.' };
   if (resetMs <= nowMs) return { ...series, reason: 'The window reset. Waiting for a new reading.' };
   if (window.length < 2) return { ...series, reason: 'Only one reading in this window.' };
+  if (nowMs - ms(latest.observed_at) > USAGE_RUNWAY_STALE_MS) return { ...series, reason: 'Latest reading is stale.' };
   const gap = latest.used_pct - series.ideal_pct!;
   return { ...series, pace: gap > PACE_BAND_PCT ? 'ahead' : gap < -PACE_BAND_PCT ? 'behind' : 'on pace' };
 }
