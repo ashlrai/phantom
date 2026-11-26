@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, readFileSync, rmSync, truncateSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,6 +12,7 @@ import { queryBrain, recordBrainRejection } from '../src/core/knowledge/wiki/bra
 import { projectWikiEcosystem } from '../src/core/knowledge/wiki/ecosystem.js';
 import { wikiSliceStats } from '../src/core/knowledge/wiki/slice-stats.js';
 import { querySystemMap, rankSystemMap } from '../src/core/knowledge/wiki/system-map.js';
+import { mapFreshness } from '../src/core/knowledge/wiki/system-map-git.js';
 import { wikiKey, wikiRoot } from '../src/core/knowledge/wiki/store.js';
 import { callNativeTool, nativeToolSafety } from '../src/core/mcp-native.js';
 import { makeFixture, type DisposableRepo, type H1Fixture } from './helpers/h1-fixture.js';
@@ -147,6 +148,11 @@ describe('Wiki Brain', () => {
     expect(initial).toMatchObject({ ok: true });
     expect(initial.task?.wikiSlice?.bytes).toBeGreaterThan(0);
     expect(initial.task?.wikiSlice?.bytes).toBeLessThanOrEqual(3072);
+    const checkoutCommit = git('rev-parse', 'HEAD');
+    expect(initial.task?.wikiSlice?.freshness).toEqual({
+      commit: checkoutCommit, defaultCommit: checkoutCommit, ahead: 0, behind: 0,
+    });
+    expect(prompts[0]).toContain('0 behind, 0 ahead');
     expect(prompts[0]).not.toContain('Related Wiki Brain');
     repo.writeFile(TARGET, 'export const value = 7;\n');
     const mergeSha = commit();
@@ -220,6 +226,40 @@ it('indexes scoped repositories incrementally and pins cross-repo declaration an
   expect((await run()).edges).toHaveLength(2);
 });
 
+it('links workspace package identities and typed declarations, even to an unindexed GitHub target', async () => {
+  git('remote', 'add', 'origin', 'https://github.com/example/consumer.git');
+  const companion = fixture.makeRepo({ files: {
+    'npm-mcp/package.json': '{"name":"@example/companion"}\n',
+    'crates/companion/Cargo.toml': '[package]\nname = "companion-crate"\n',
+    'pyproject.toml': '[project]\nname = "companion_py"\n',
+  } });
+  execFileSync('git', ['-C', companion.dir, 'remote', 'add', 'origin', 'https://github.com/example/companion.git']);
+  repo.writeFile('package.json', '{\n  "dependencies": {"renamed": "npm:@example/companion@1"}\n}\n');
+  repo.writeFile('.mcp.json', '{"mcpServers":{"fixture":{"command":"npx","args":["-y","--package=@example/companion","fixture"]}}}\n');
+  repo.writeFile(IMPORTER, 'import "@example/companion/subpath";\n');
+  repo.writeFile('Cargo.toml', '[dependencies]\nrenamed = { package = "companion-crate", version = "1" }\n');
+  repo.writeFile('pyproject.toml', '[project]\ndependencies = [\n    "companion-py>=1",\n]\n');
+  repo.writeFile('.gitmodules', '[submodule "dep"]\n  path = vendor/dep\n  url = ../companion.git\n');
+  repo.writeFile('.github/workflows/check.yml', 'jobs:\n  external:\n    uses: example/missing/.github/workflows/check.yml@v1\n  not-a-dependency:\n    steps:\n      - run: |\n          uses: example/companion@v1\n');
+  repo.writeFile('Formula/companion.rb', 'class Companion < Formula\n  url "https://github.com/example/companion/archive/v1.tar.gz"\nend\n');
+  const revision = commit();
+  const graph = await projectWikiEcosystem(['example/consumer', 'example/companion', 'example/missing'], [repo.dir, companion.dir]);
+  expect(graph.edges).toHaveLength(8);
+  expect(graph.edges).toEqual(expect.arrayContaining([
+    ['npm-dependency', 'package.json', 2],
+    ['mcp-companion', '.mcp.json', 1],
+    ['package-import', IMPORTER, 1],
+    ['cargo-dependency', 'Cargo.toml', 2],
+    ['git-submodule', '.gitmodules', 3],
+    ['python-dependency', 'pyproject.toml', 3],
+    ['github-action', '.github/workflows/check.yml', 3, 'example/missing'],
+    ['brew-formula', 'Formula/companion.rb', 2],
+  ].map(([kind, file, line, to]) => ({
+    from: 'example/consumer', to: to ?? 'example/companion', kind, anchor: { file, line, commit: revision },
+  }))));
+  expect(graph.truncated).toBe(false);
+});
+
 it('ranks pinned goal matches and uses unique incoming dependencies to break relevance ties', async () => {
   repo.writeFile('src/core/alpha.ts', 'export const shared = 1;\n');
   repo.writeFile('src/core/zeta.ts', 'export const shared = 1;\n');
@@ -234,11 +274,19 @@ it('ranks pinned goal matches and uses unique incoming dependencies to break rel
 it('enriches the fleet drop prompt and joins only measured jobs with resolved PR delivery', async () => {
   git('remote', 'add', 'origin', 'https://github.com/example/phantom.git');
   repo.enroll();
+  const pin = git('rev-parse', 'HEAD');
+  expect(await mapFreshness(repo.dir, pin)).toEqual({ commit: pin, defaultCommit: null, ahead: null, behind: null });
+  repo.writeFile(TARGET, 'export const newer = true;\n');
+  const defaultCommit = commit();
+  git('update-ref', 'refs/remotes/origin/main', defaultCommit);
+  git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  git('checkout', '--detach', pin);
   const root = join(repo.dir, 'disposable-runs');
   const now = () => new Date('2026-01-01T00:00:00.000Z');
   const job = { id: 'WIKISERVED', repo: 'phantom', lane: 'claude', tier: 'work', body: 'Review ' + TARGET };
   const { file } = await writeDropJob(root, job, now);
   expect(readFileSync(file, 'utf8')).toContain(`Ranked Wiki map at ${git('rev-parse', 'HEAD')}`);
+  expect(readFileSync(file, 'utf8')).toContain(`local origin/HEAD ${defaultCommit}: 1 behind, 0 ahead`);
   await writeDropJob(root, { ...job, id: 'WIKICONTROL', repo: 'locus' }, now);
   await writeDropJob(root, { ...job, id: 'WIKIUNRESOLVED' }, now);
   const ledger = join(root, 'metrics', 'jobs.jsonl');
@@ -246,14 +294,26 @@ it('enriches the fleet drop prompt and joins only measured jobs with resolved PR
   expect(rows[0]).toMatchObject({ event: 'wiki_slice', job: 'RQ-PHX-WIKISERVED', wikiSlice: { nodeIds: expect.arrayContaining(['file:' + TARGET]) } });
   expect(rows[0].wikiSlice.bytes).toBeGreaterThan(0);
   expect(rows[0].wikiSlice.bytes).toBeLessThanOrEqual(3072);
+  expect(rows[0].wikiSlice.freshness).toEqual({ commit: pin, defaultCommit, behind: 1, ahead: 0 });
   expect(rows[1].wikiSlice).toEqual({ bytes: 0, nodeIds: [] });
-  for (const [id, state] of [['WIKISERVED', 'MERGED'], ['WIKICONTROL', 'CLOSED'], ['PRE-WIKI', 'MERGED']]) {
-    appendFileSync(ledger, JSON.stringify({ event: 'publish', job: 'RQ-PHX-' + id, status: state, ts: '2026-01-01T00:05:00.000Z' }) + '\n');
-  }
+  const url = 'https://github.com/example/phantom/pull/8';
+  const ts = '2026-01-01T00:05:00.000Z';
+  for (const row of [
+    { event: 'publish', job: 'RQ-PHX-WIKISERVED', url, ts },
+    { event: 'merged', url, mergedAt: '2026-01-01T00:06:00.000Z' },
+    { event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'RQ-PHX-WIKICONTROL',
+      prUrl: 'https://github.com/example/locus/pull/9', outcome: 'CLOSED', closedAt: 'invalid', ts },
+    { event: 'outcome', job: 'RQ-PHX-PRE-WIKI', state: 'MERGED', ts },
+  ]) appendFileSync(ledger, JSON.stringify(row) + '\n');
   expect((await wikiSliceStats(root)).fleet).toMatchObject({
+    window: { source: join('metrics', 'jobs.jsonl'), maxBytes: 16 * 1024 * 1024 },
+    truncated: false, measuredJobs: 3, unmeasuredResolved: 1,
     withSlice: { resolved: 1, merged: 1, mergeRate: 1 },
     withoutSlice: { resolved: 1, merged: 0, mergeRate: 0 },
   });
+  truncateSync(ledger, 16 * 1024 * 1024 + readFileSync(ledger).length);
+  appendFileSync(ledger, '\n' + JSON.stringify({ event: 'outcome', job: 'RQ-PHX-WIKISERVED', state: 'MERGED', ts }) + '\n');
+  expect((await wikiSliceStats(root)).fleet).toMatchObject({ truncated: true, measuredJobs: 0, unmeasuredResolved: 1 });
 });
 
 it('stores scrubbed rejection lessons against the exact PR head and applies existing validity checks', async () => {

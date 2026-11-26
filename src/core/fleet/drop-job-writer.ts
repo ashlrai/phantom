@@ -374,7 +374,7 @@ export async function writeDropJob(
   const at = now().toISOString();
   await recordWikiSlice(root, {
     event: 'wiki_slice', job: DROP_JOB_FILE_PREFIX + input.id, repo, ts: at,
-    wikiSlice: { bytes: Buffer.byteLength(slice.text), nodeIds: slice.nodeIds },
+    wikiSlice: { bytes: Buffer.byteLength(slice.text), nodeIds: slice.nodeIds, freshness: slice.freshness },
   }).catch(() => undefined);
   return { file, bytes: Buffer.byteLength(content, 'utf8'), at };
 }

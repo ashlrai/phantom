@@ -230,10 +230,20 @@ function isLessons(v: unknown): boolean {
 
 function isWikiSlice(v: unknown): boolean {
   if (!v || typeof v !== 'object') return false;
-  const { bytes, nodeIds } = v as Record<string, unknown>;
+  const { bytes, nodeIds, freshness } = v as Record<string, unknown>;
   return typeof bytes === 'number' && Number.isSafeInteger(bytes) && bytes >= 0 && bytes <= 3072
     && Array.isArray(nodeIds) && nodeIds.length <= 16
-    && nodeIds.every(id => typeof id === 'string' && id.length > 0 && id.length <= 1200);
+    && nodeIds.every(id => typeof id === 'string' && id.length > 0 && id.length <= 1200)
+    && (freshness === undefined || isWikiFreshness(freshness));
+}
+
+function isWikiFreshness(v: unknown): boolean {
+  if (!v || typeof v !== 'object') return false;
+  const { commit, defaultCommit, ahead, behind } = v as Record<string, unknown>;
+  const isCommit = (value: unknown) => typeof value === 'string' && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(value);
+  const isCount = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+  return isCommit(commit) && (defaultCommit === null || isCommit(defaultCommit))
+    && ((ahead === null && behind === null) || (isCommit(defaultCommit) && isCount(ahead) && isCount(behind)));
 }
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -281,8 +291,13 @@ export function listCloudTasks(limit: number = DEFAULT_LIST_LIMIT): CloudTaskV1[
 export function wikiCloudSliceStats() {
   const withSlice = { resolved: 0, merged: 0 };
   const withoutSlice = { resolved: 0, merged: 0 };
+  let unmeasuredResolved = 0;
   for (const task of listCloudTasks(Number.MAX_SAFE_INTEGER)) {
-    if (!task.wikiSlice || (task.state !== 'merged' && task.state !== 'closed')) continue;
+    if (task.state !== 'merged' && task.state !== 'closed') continue;
+    if (!task.wikiSlice) {
+      unmeasuredResolved++;
+      continue;
+    }
     const cohort = task.wikiSlice.bytes ? withSlice : withoutSlice;
     cohort.resolved++;
     if (task.state === 'merged') cohort.merged++;
@@ -290,7 +305,7 @@ export function wikiCloudSliceStats() {
   const summarize = (cohort: typeof withSlice) => ({
     ...cohort, mergeRate: cohort.resolved ? cohort.merged / cohort.resolved : null,
   });
-  return { schema: 'phantom.wiki.slice-stats.v1', withSlice: summarize(withSlice), withoutSlice: summarize(withoutSlice) };
+  return { schema: 'phantom.wiki.slice-stats.v1', withSlice: summarize(withSlice), withoutSlice: summarize(withoutSlice), unmeasuredResolved };
 }
 
 export function readCloudTask(id: string): CloudTaskV1 | null {
