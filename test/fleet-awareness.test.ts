@@ -113,6 +113,34 @@ test('accepted witness boundaries weight observed latency and discard expired or
   f.advance(86_400_001); expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.latency.samples === 0)).toBe(true);
 });
 
+test.each(['held', 'incompatible'] as const)('pool latency fallback excludes %s hosts for the current job', unavailable => {
+  const f = fixture();
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  const slow = f.add('slow', { slots: 1 });
+  f.enqueue('slow-sample');
+  const slowClaim = nodes.pull(slow)!.claim;
+  f.advance(4000);
+  expect(nodes.complete(slowClaim, 'done')).toBe(true);
+  f.beat('slow', { slots: 0, held: 'disk-pressure' });
+
+  const fast = f.add('fast', { slots: 1 });
+  f.enqueue('fast-sample');
+  const fastClaim = nodes.pull(fast)!.claim;
+  f.advance(1000);
+  expect(nodes.complete(fastClaim, 'done')).toBe(true);
+  f.beat('fast', { slots: 1 });
+  f.beat('slow', { slots: 1 });
+  const newcomer = f.add('newcomer', { slots: 2 });
+  f.enqueue('next');
+  expect(f.plan()).toMatchObject([{ jobId: 'next', nodeId: 'fast' }]);
+
+  if (unavailable === 'held') f.beat('slow', { slots: 0, held: 'disk-pressure' });
+  else slow.caps = ['claude'];
+  expect(projectFleetAwareness(f.state, f.now()).hosts.find(h => h.hostId === 'slow')?.latency.medianMs).toBe(4000);
+  expect(f.plan()).toMatchObject([{ jobId: 'next', nodeId: 'newcomer' }]);
+  expect(nodes.pull(newcomer)?.job.id).toBe('next');
+});
+
 test('a producer withdrawal is a fence, not latency evidence; accepted completions still count', () => {
   const f = fixture();
   const worker = f.add('worker', { hostId: 'mac', slots: 4 });
