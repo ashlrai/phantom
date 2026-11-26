@@ -270,10 +270,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   reason codes and review failures `fleet/cross-review.jsonl` records for
   each repository's pull requests (otherwise only visible through
   `phm router outcomes`/`phm fleet router-weights` tallies and the audit
-  log). A finding becomes an item while its recorded rows span enough
-  distinct pull requests inside the recency window — a producer whose
-  diffs keep failing independent review for the same reason, or a
-  reviewer pipeline that keeps failing before a verdict — and the
+  log). A finding becomes an item when at least three receipts span at
+  least two pull requests within the 30-day window ending at evaluation
+  time, inclusive, with exact journal replays counted once. These findings
+  cover recurring rejection reasons and repeated reviewer failures
+  before a verdict. Discovery also reads the
   empty-job tag ledger's recurring
   actionable tags, the `job.empty-tag.v1` rows the daemon's empty-tag-sync
   and `phm jobs empty --record` write to `metrics/empty-tags.jsonl`

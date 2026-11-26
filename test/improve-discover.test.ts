@@ -1227,6 +1227,18 @@ describe('cross-review findings', () => {
     expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toHaveLength(1);
   });
 
+  it.each([rejectFindings, failureFindings])('counts exact replays once and waits for future receipts', async (findings) => {
+    const [first, , second] = findings();
+    const future = JSON.stringify({ ...JSON.parse(second!), at: iso(-1) });
+    writeJournal([first!, second!, `  ${first!}  `, future]);
+
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+
+    const items = await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: new Date(iso(-1)) });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.prompt).toMatch(/3 recorded (reject|failed-review) rows across 2 distinct pull requests/);
+  });
+
   it('turns recurring review failures into failure items and ignores non-finding rows', async () => {
     writeJournal([
       ...failureFindings(),
