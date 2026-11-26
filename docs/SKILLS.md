@@ -43,6 +43,10 @@ For each resolved job, the learner uses the lane, retries, recuts and
 failure class recorded through that terminal row in ledger order.
 Subsequent execution evidence becomes eligible when a newer terminal row
 resolves the job.
+The learner uses the first identifier-safe classification on a row, skipping
+case-insensitive `unknown` values. A row with no usable classification leaves
+the last observed class intact. Without any observed class, a merge can seed
+a generic draft through a recorded retry or recut.
 Recovery drafts require an observed lane. A terminal row can supply that
 lane even when it has no event name. Queue hints and `unknown` values
 leave the last observed lane intact. Jobs without an observed lane supply

@@ -43,19 +43,20 @@ export function draftSkillNudges(jobs: readonly SkillNudgeJob[], ts: string): Sk
   const drafts = new Map<string, SkillCard>();
   for (const job of byId.values()) {
     if (conflicts.has(job.id) || !['merged', 'failed', 'empty', 'cancelled'].includes(job.outcome ?? '')) continue;
-    const key = JSON.stringify([job.lane, job.failureClass ?? 'recovery']);
+    const failureClass = job.failureClass?.toLowerCase() === 'unknown' ? undefined : job.failureClass;
+    const key = JSON.stringify([job.lane, failureClass ?? null]);
     const sources = seen.get(key) ?? [];
-    if (job.failureClass && job.outcome === 'failed') sources.push(job.id);
+    if (failureClass && job.outcome === 'failed') sources.push(job.id);
     seen.set(key, sources);
     if (job.outcome !== 'merged' || job.reverted === true) continue;
     const retry = positiveCount(job.retries), recut = positiveCount(job.recuts);
-    if (!retry && !recut && !(job.failureClass && sources.length >= 3)) continue;
-    const trigger = job.failureClass
-      ? `${job.lane}: recover from ${job.failureClass}`
+    if (!retry && !recut && !(failureClass && sources.length >= 3)) continue;
+    const trigger = failureClass
+      ? `${job.lane}: recover from ${failureClass}`
       : `${job.lane}: recover after ${recut ? 'recut' : 'retry'}`;
     const steps = [
       `Inspect the structured failure classification for ${job.lane}.`,
-      `Address ${job.failureClass ?? 'the failed attempt'} before retrying or recutting.`,
+      `Address ${failureClass ?? 'the failed attempt'} before retrying or recutting.`,
       'Run the affected verification and confirm a successful outcome before reuse.',
     ];
     const skillId = `skill.nudge.${createHash('sha256').update(JSON.stringify([trigger, steps])).digest('hex')}`;
@@ -235,13 +236,21 @@ function outcomeOf(row: Record<string, unknown>): NudgeOutcome | undefined {
 
 /** Fixed-label failure classifications only; anything else stays unknown. */
 function failureClassOf(row: Record<string, unknown>, event: string | null): string | null {
-  let raw: string | null = null;
+  let keys: readonly string[];
   if (event === 'finish') {
-    raw = firstString(row, ['failure_class', 'failureClass', 'failure_reason', 'failureReason', 'pool_error', 'poolError']);
+    keys = ['failure_class', 'failureClass', 'failure_reason', 'failureReason', 'pool_error', 'poolError'];
   } else if (event === 'launch_failed' || event === 'launch_terminal') {
-    raw = firstString(row, ['reason', 'class']);
+    keys = ['reason', 'class'];
+  } else {
+    return null;
   }
-  return raw !== null && LEDGER_ID_PATTERN.test(raw) ? raw : null;
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value !== 'string') continue;
+    const raw = value.trim();
+    if (validId(raw) && raw.toLowerCase() !== 'unknown') return raw;
+  }
+  return null;
 }
 
 /**
