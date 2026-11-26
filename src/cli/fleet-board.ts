@@ -10,6 +10,7 @@ import { cmdFleetCoordination } from './fleet-coordination.js';
 
 import { LEADER_BOARD_SCHEMA, readLeaderBoard, type LeaderBoardRead, type LeaderBoardV1 } from '../core/fleet/leader-board.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { readFleetReplica } from '../core/fleet/fleet-replica.js';
 
 export const FLEET_BOARD_USAGE = 'Usage: ashlr fleet board [--json] | --leader [--json] [--runs-dir DIR]';
 
@@ -65,20 +66,24 @@ export async function cmdFleetLeaderBoard(args: string[], deps: FleetBoardDeps =
     }
   }
   const read = deps.readBoard ?? readLeaderBoard;
-  const result = await read({ runsDir: runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs') });
   const nowMs = (deps.now ?? Date.now)();
+  const observation = runsDir === undefined && deps.readBoard === undefined ? readFleetReplica(nowMs) : null;
+  const result: LeaderBoardRead = observation
+    ? observation.replica?.board ?? { status: 'unavailable', board: null }
+    : await read({ runsDir: runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs') });
   const board = result.board;
   const ageMs = board === null ? null : Math.max(0, nowMs - Date.parse(board.generatedAt));
   const ageSeconds = ageMs === null || !Number.isFinite(ageMs) ? null : Math.floor(ageMs / 1000);
   if (json) {
     console.log(JSON.stringify(sanitizePublicJson({
-      schema: LEADER_BOARD_SCHEMA, status: result.status, ageSeconds, board,
+      schema: LEADER_BOARD_SCHEMA, status: result.status, ageSeconds, board, source: observation?.source,
     })));
   } else if (board === null) {
-    console.log(result.status === 'missing'
+    console.log(observation?.source.reason ?? (result.status === 'missing'
       ? 'No Leader board yet — no Leader tick has recorded one.'
-      : 'Leader board is unreadable.');
+      : 'Leader board is unreadable.'));
   } else {
+    if (observation) console.log(`Source: ${observation.source.machine}, as of ${board.generatedAt}`);
     for (const line of plainLines(board)) console.log(line);
   }
   return result.status === 'unavailable' ? 1 : 0;

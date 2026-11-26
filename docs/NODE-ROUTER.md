@@ -210,6 +210,33 @@ machine's version (or `--target x.y.z`) and prints a plan. It is plan only: it
 never updates or restarts a node. A node showing `unreported` predates this or
 has not rejoined. Update primary and backup first, then workers.
 
+## One fleet across enrolled Macs
+
+The fleet leader serves a read-only `fleet.replica.v1` snapshot on the existing
+authenticated Node RPC over SSH. No listener, copied grant or shared provider
+login is needed. With an approved, host-key-pinned SSH alias to the fleet
+leader, run on a worker:
+
+```sh
+phm node replica sync --leader leader-mac --json
+phm node replica status --json
+```
+
+The alias overrides the pool's primary alias; omit it on pool workers whose
+primary also runs the fleet leader. A leader without a node-pool config must
+have a readable Leader board before it serves snapshots. The authenticated
+worker sends a bounded observation of its lane loops and node-worker claims,
+not command lines, credentials or grant data.
+
+`phm node worker` and `phm node beat --watch` refresh observations in the
+background, at most once every 30 seconds per machine. For a separately
+managed runner that uses neither, run `phm node replica sync --json` on a
+30-second schedule. A failed snapshot exchange does not affect heartbeat,
+claim or fencing behavior. The worker keeps the last good observation for
+two minutes, then reports unavailable with its last successful timestamp
+instead of counting unknown capacity as zero. Check `lastError` in status
+for the most recent sync failure.
+
 ## Live pool awareness
 
 Configured multi-Mac pools consume the capacity slice of `fleet.awareness.v1`

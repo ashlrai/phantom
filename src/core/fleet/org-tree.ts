@@ -3,7 +3,8 @@
  * jobs. `phm org` prints it and the Fleet map renders it; both read this file.
  * Pure. A fact no source reported is `null` (shown as "unknown"), never 0.
  */
-import type { FleetLaneState } from './fleet-types.js';
+import type { FleetLiveLaneState } from './fleet-types.js';
+import type { FleetReplicaSource } from './fleet-replica.js';
 import { ORG_LANES, type FleetOrgMap } from './org-map.js';
 import type { ProviderName } from './provider.js';
 import type { ResourceLedgerV1 } from './runs-resource-ledger.js';
@@ -41,6 +42,8 @@ export interface OrgTreeJob {
 }
 export interface OrgTreeLane {
   lane: string; provider: ProviderName;
+  machine?: string;
+  source?: FleetReplicaSource;
   /** The model its jobs share, else the lane's newest launch; null when neither is known. */
   model: string | null;
   state: OrgState; doing: string; heldReason: string | null;
@@ -64,6 +67,7 @@ export interface OrgTreePlanner {
 }
 export interface FleetOrgTree {
   schema: 'fleet.org.v1';
+  source?: FleetReplicaSource;
   /** Bumped only when a field is removed or changes meaning; new fields do not bump it. */
   version: 1;
   leaderSeat?: LeaderSeatReport;
@@ -87,7 +91,7 @@ export interface OrgTreeInputs {
   /** Pool usage (`readResourceLedger`). */
   usage?: ResourceLedgerV1 | null;
   /** In-app engine lanes; used for a lane the dispatcher does not report. */
-  engineLanes?: readonly FleetLaneState[] | null;
+  engineLanes?: readonly FleetLiveLaneState[] | null;
   /** Each lane's newest launch (`getLaneModelSnapshot`). */
   models?: LaneModelSnapshot | null;
   /** Each lane's health verdict (`getFleetLaneSnapshot`); a lane with none reads `health: null`. */
@@ -239,11 +243,13 @@ export function orgLaneUsage(lane: OrgTreeLane, now: number): string {
 export function renderOrgTreeText(tree: FleetOrgTree, now = Date.now()): string {
   const { dispatcher } = tree.leader;
   const lines = [`${tree.leader.label}: ${tree.leader.state}. ${tree.leader.doing}. Dispatcher ${dispatcher.paused === null ? 'state unknown' : dispatcher.paused ? 'paused' : 'running'}, last tick ${orgAgo(dispatcher.lastTick, now)}.`];
+  if (tree.source) lines.push(`Source: ${tree.source.machine ?? 'unknown'} (${tree.source.via}), as of ${tree.source.asOf ?? 'unknown'}${tree.source.reason ? `; ${tree.source.reason}` : ''}.`);
   if (tree.planners) lines.push('  Planners:', ...tree.planners.map(row => `    ${row.label}: ${row.state}. ${row.doing}. Last sign ${orgAgo(row.lastActivityAt, now)}.`));
   for (const lane of tree.lanes) {
     // A bare "Idle" would only repeat the state word.
-    const why = lane.state === 'held' || (lane.state === 'idle' && lane.doing !== 'Idle') ? `${lane.doing}. ` : '';
-    lines.push(`  ${lane.lane} (${lane.provider}, ${lane.model ?? 'model unknown'}): ${lane.state}. ${why}${orgLaneCounts(lane)}, ${orgLaneUsage(lane, now)}`);
+    const why = lane.source || lane.state === 'held' || (lane.state === 'idle' && lane.doing !== 'Idle') ? `${lane.doing}. ` : '';
+    const machine = lane.source && lane.machine ? ` @ ${lane.machine} (as of ${lane.source.asOf ?? 'unknown'})` : '';
+    lines.push(`  ${lane.lane}${machine} (${lane.provider}, ${lane.model ?? 'model unknown'}): ${lane.state}. ${why}${orgLaneCounts(lane)}, ${orgLaneUsage(lane, now)}`);
     if (!lane.jobs.length) lines.push(tree.jobsKnown ? '    idle' : '    jobs unknown');
     for (const job of lane.jobs) {
       const live = orgLive(job.lastActivityAt, now);

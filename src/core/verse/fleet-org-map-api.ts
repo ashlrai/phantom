@@ -11,6 +11,8 @@ import { readResourceLedger, type ResourceLedgerV1 } from '../fleet/runs-resourc
 import type { LaneHealth } from '../fleet/lane-badge.js';
 import { buildLeaderSeat } from '../fleet/leader-seat.js';
 import { loadVerifiedRegistry, type VerifiedModelRegistryEntry } from '../fleet/model-verify.js';
+import { fleetPeerReports, localFleetSource, readFleetReplica } from '../fleet/fleet-replica.js';
+import { providerFor } from '../fleet/provider.js';
 
 /** Every source the org reads. Tests pass fixtures; each reader may fail alone and its facts then read unknown. */
 export interface FleetOrgReaders {
@@ -32,12 +34,23 @@ export const fleetOrgReaders: FleetOrgReaders = { live: buildFleetLiveSnapshot, 
     const { getFleetLaneSnapshot } = await import('../fleet/lane-console.js');
     const { fleetLaneEmptyNotes } = await import('../fleet/lane-empty-notes.js');
     return getFleetLaneSnapshot({ emptyNotes: fleetLaneEmptyNotes });
-  }, messages: readFleetEdges, now: Date.now };
+  }, messages: readFleetEdges, now: () => Date.now() };
 
 /** The org map, its tree and the pool-usage ledger it was built from (`phm map` also draws the ledger's resources). */
 export async function readFleetOrgSources(minutes = 60, readers: Partial<FleetOrgReaders> = {}): Promise<{ map: FleetOrgMap & { tree: FleetOrgTree }; usage: ResourceLedgerV1 | null }> {
   mapWindowMinutes(String(minutes));
   const read = { ...fleetOrgReaders, ...readers }, now = read.now(), clock = { now: () => now };
+  const observation = Object.keys(readers).length === 0 ? readFleetReplica(now) : null;
+  if (observation) {
+    const { source, replica } = observation;
+    if (replica) return { map: { ...replica.map, tree: { ...replica.map.tree, source } }, usage: replica.usage };
+    const map = fleetOrgMap(null, { minutes, now });
+    const tree = fleetOrgTree(map);
+    return { map: { ...map, generatedAt: null, tree: { ...tree, generatedAt: null, source,
+      leader: { ...tree.leader, doing: source.reason ?? 'Unknown' },
+      planners: tree.planners?.map(planner => ({ ...planner, doing: source.reason ?? 'Unknown' })),
+    } }, usage: null };
+  }
   const settled = <T>(result: PromiseSettledResult<T>) => result.status === 'fulfilled' ? result.value : null;
   const [live, sessions, runs, ledger, models, registry, health] = await Promise.allSettled([read.live(), read.sessions(clock), read.runs(clock), read.ledger(clock), read.models(), read.registry(), read.laneHealth()]);
   let messages: FleetEdges | null = null;
@@ -45,7 +58,28 @@ export async function readFleetOrgSources(minutes = 60, readers: Partial<FleetOr
   const snapshot = settled(live)?.snapshot ?? null, usage = settled(ledger);
   const map = fleetOrgMap(snapshot, { sessions: settled(sessions), messages, minutes, now });
   const leaderSeat = buildLeaderSeat(settled(runs), settled(models), settled(registry), now);
-  return { map: { ...map, tree: fleetOrgTree(map, { runs: settled(runs), usage, engineLanes: snapshot?.lanes, models: settled(models), leaderSeat, laneHealth: settled(health)?.lanes }) }, usage };
+  const tree = fleetOrgTree(map, { runs: settled(runs), usage, engineLanes: snapshot?.lanes, models: settled(models), leaderSeat, laneHealth: settled(health)?.lanes });
+  const source = localFleetSource(tree.generatedAt, now);
+  const lanes = tree.lanes.map(lane => ({ ...lane, machine: source.machine ?? undefined }));
+  for (const peer of fleetPeerReports(now)) {
+    for (const row of peer.lanes) {
+      const id = `peer:${peer.machine}:${row.lane}`, provider = providerFor(row.lane).name;
+      const running = row.dispatch?.running ?? row.claims;
+      const state = row.dispatch?.held ? 'held' : (running ?? 0) > 0 || (row.processes ?? 0) > 0
+        ? 'running' : running === 0 ? 'idle' : 'unknown';
+      const doing = [row.processes === null ? null : `${row.processes} lane loop processes`,
+        row.claims === null ? null : `${row.claims} node worker claims`,
+        row.dispatch ? `${row.dispatch.running} running, ${row.dispatch.queued} queued at the dispatcher` : null,
+      ].filter(Boolean).join(', ') || 'Unknown';
+      map.nodes.push({ id, kind: 'lane', label: row.lane, machine: peer.machine, provider, status: state });
+      map.edges.push({ id: `reports:${id}:leader`, kind: 'reports-to', from: id, to: 'leader', provider });
+      lanes.push({ lane: row.lane, machine: peer.machine, provider, model: null, state, doing, heldReason: null,
+        source: { ...localFleetSource(peer.receivedAt, now), machine: peer.machine, via: 'leader-replica' },
+        running, target: row.dispatch?.target ?? null, queued: row.dispatch?.queued ?? null, held: row.dispatch?.held ?? null, health: null,
+        usage: { usedPct: null, asOf: null, resetAt: null }, jobs: [] });
+    }
+  }
+  return { map: { ...map, tree: { ...tree, source, lanes } }, usage };
 }
 export async function readFleetOrgMap(minutes = 60, readers: Partial<FleetOrgReaders> = {}): Promise<FleetOrgMap & { tree: FleetOrgTree }> {
   return (await readFleetOrgSources(minutes, readers)).map;

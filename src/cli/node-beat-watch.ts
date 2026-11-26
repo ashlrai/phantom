@@ -75,7 +75,12 @@ export async function cmdNodeBeatWatch(args: string[], deps: NodeBeatWatchDeps =
     command: 'beat',
     flags: parsed,
     stoppedText: 'Heartbeat stopped; the node session expires on its own within 30 seconds.',
-    run: deps.run ?? (async (beat: string[]) => (await import('./node-fleet.js')).cmdNodeFleet('beat', beat)),
+    run: deps.run ?? (async (beat: string[]) => {
+      void import('../core/fleet/fleet-replica.js')
+        .then(({ syncFleetReplica }) => syncFleetReplica())
+        .catch(() => undefined);
+      return (await import('./node-fleet.js')).cmdNodeFleet('beat', beat);
+    }),
     argsFor: base => beatArgs(base, deps),
     sleep: deps.sleep,
     signal: deps.signal,

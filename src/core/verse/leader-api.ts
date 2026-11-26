@@ -877,6 +877,14 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
       if (method !== 'GET') sendJson(res, 405, { error: 'method not allowed' });
       else if ((req.url ?? '').includes('?')) sendInvalid(res, 'this route takes no query parameters');
       else {
+        const { readFleetReplica } = await import('../fleet/fleet-replica.js');
+        const observation = readFleetReplica(now());
+        if (observation) {
+          const { source, replica } = observation;
+          if (!replica?.usage) sendJson(res, 503, { error: source.reason ?? 'Leader resource ledger unavailable', source });
+          else sendJson(res, 200, { ...replica.usage, source });
+          return true;
+        }
         const { readResourceLedger } = await import('../fleet/runs-resource-ledger.js');
         // Each desktop poll is a new ledger reading; keep it in the spend-down history.
         sendJson(res, 200, await readResourceLedger({ now, recordHistory: true }));

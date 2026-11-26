@@ -39,7 +39,7 @@ export async function cmdNode(args: string[]): Promise<number> {
   // only when a pool config exists and otherwise answers with the standalone
   // registry's own usage error.
   if (!args.includes('--help') && !args.includes('-h') &&
-      (['pool', 'rpc', 'watch', 'worker'].includes(args[0] ?? '') || (args[0] === 'join' && args.includes('--primary')))) {
+      (['pool', 'rpc', 'watch', 'worker', 'replica'].includes(args[0] ?? '') || (args[0] === 'join' && args.includes('--primary')))) {
     return (await import('./node-pool.js')).cmdNodePool(args[0]!, args.slice(1));
   }
   if ((args[0] === 'capacity' || args[0] === 'route') && !args.includes('--help') && !args.includes('-h')) {

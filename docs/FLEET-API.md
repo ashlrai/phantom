@@ -386,6 +386,23 @@ planners, each lane, each job under it.
 JSON is the default; `phm org --text` prints it for people.
 The map endpoint above carries the tree in its `tree` field.
 
+With a [fleet replica configured](NODE-ROUTER.md#one-fleet-across-enrolled-macs),
+the worker reads the leader's tree, live totals, queue and resource ledger.
+`source` identifies the observation: `machine`, `via` (`local` or
+`leader-replica`), `asOf`, `ageSeconds`, `stale` and `reason`. Lanes name
+their `machine`; a peer-reported lane also has its own `source` with the
+leader's receipt time. Loop presence alone does not establish a job count.
+The replicated org map carries the leader's 60-minute message window and
+reports that window in `messageWindowMinutes`, even if a different window
+was requested on the worker.
+
+`phm fleet lane-slots --json` and the live API use the same replica. A
+worker's `capReason` names the leader's grant sequence and machine when a
+grant is in force there; no grant is imported. After two minutes without a
+fresh observation, the worker exposes null slot and busy counts (not zero),
+and reports when the leader was last reached. Queue and resource requests
+return 503 with the observation source and reason when data is unavailable.
+
 The tree carries `version: 1`; it changes only when a field is removed or
 changes meaning. Every node has `provider`, `model`, `state` (`running`,
 `idle`, `held`, `done` or `unknown`) and `doing`, a plain sentence.

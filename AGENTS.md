@@ -454,6 +454,7 @@ registers a worker. `phm node watch [--once] --json` maintains primary heartbeat
 checks backup promotion. `phm node worker --runner /absolute/host-owned-runner --json`
 runs one claimed job. `phm node list --json` and `phm node status --json` expose
 lanes, load and heartbeat. `phm node rpc --json` is the fixed SSH stdin endpoint.
+`phm node replica sync --leader <alias> --json` enables read-only fleet state on a worker; see [Node router](docs/NODE-ROUTER.md#one-fleet-across-enrolled-macs).
 The backup witnesses every admission; after 15 minutes without heartbeat it takes
 over and fences the returning primary. Publication remains primary-only. No
 production dispatchd cutover or runner installation is performed. See

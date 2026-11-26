@@ -352,6 +352,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{schemaVersion:1, command, ...result} | {schemaVersion:1, command, error:{code,message,fix}}',
   },
   {
+    usage: 'phm node replica sync [--leader <alias>] [--json] | phm node replica status [--json]',
+    description: 'Refresh the read-only fleet snapshot over authenticated SSH or report its source and freshness. An explicit leader alias is saved locally. Does not import authority or change node admission.',
+    safety: 'append',
+    jsonShape: '{schema:"fleet.replica.status.v1",leader,source,receivedAt,lastAttemptAt,lastError}',
+  },
+  {
     usage: 'phm metrics levers [--window <7d|30d>] [--json]',
     description: 'Rank three opportunity proxies from local activity and fleet rollups.',
     safety: 'read',

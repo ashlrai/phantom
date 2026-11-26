@@ -2665,6 +2665,15 @@ when that read had no verdict) and each `messages[]` row gains optional `lastAt`
 (ISO, newest message on the line). `OrgTreeInputs.laneHealth` and
 `FleetOrgReaders.laneHealth` are new. Additive; `version` stays 1.
 
+**Fleet replica.** `fleet.org.v1` and the live snapshot may carry a
+`FleetReplicaSource` (`machine`, `via`, `asOf`, `ageSeconds`, `stale`,
+`reason`). Org and live lanes can name their source machine; peer org lanes
+carry their observation time. Live lane counts use `FleetLiveLaneState` so
+`slots` and `busy` can be null when the leader is unreachable. The live
+snapshot's `state` is also null in this case. The authority journal's
+`FleetLaneState` is unchanged, and replica observations are never used as
+authority. See [Fleet API](docs/FLEET-API.md#org-tree).
+
 ## Session find (`fleet.session-find.v1`)
 
 `src/core/fleet/session-find.ts` exports the pure

@@ -51,6 +51,9 @@ export async function readFleetLiveMap(now = Date.now()): Promise<FleetLiveMap> 
   const [{ readFleetOrgSources }, { defaultNodesViewDeps, readNodesView }] = await Promise.all([
     import('./fleet-org-map-api.js'), import('../fleet/nodes-view.js')]);
   const org = await readFleetOrgSources(LIVE_MAP_WINDOW_MINUTES).catch(() => null);
+  const { readFleetReplica } = await import('../fleet/fleet-replica.js');
+  const observation = readFleetReplica(now);
+  if (observation) return buildFleetLiveMap({ org: org?.map, jobs: observation.replica?.live.liveJobs ?? null, usage: org?.usage, now });
   const jobs = await readLiveJobs({ now: () => now }).catch(() => null);
   let computers = null;
   try { computers = readNodesView(defaultNodesViewDeps()); } catch { /* unknown, listed in gaps */ }

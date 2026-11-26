@@ -74,6 +74,21 @@ the node already rejoined under a newer session, the fix names that session and
 the exact `leave` command instead, so you can resume without hunting for the
 number. Omit `--probe-auth` if this node does not need GitHub authentication.
 
+## Read the same fleet as the leader
+
+On an enrolled worker, use the existing approved SSH alias for your fleet
+leader (replace `leader-mac` with that alias):
+
+```sh
+phm node replica sync --leader leader-mac --json
+phm org --text
+phm fleet lane-slots --json
+```
+
+Look for the leader's machine and observation time, and for "Governed by
+leader grant #…" in the lane slots. This is a read-only view, not authority to
+run the leader's lanes locally. See [One fleet across enrolled Macs](NODE-ROUTER.md#one-fleet-across-enrolled-macs) for automatic refresh and the offline behavior.
+
 ## Leave
 
 ```sh

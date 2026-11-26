@@ -21,6 +21,7 @@ export function recordLaneSamples(snapshot: FleetLiveSnapshotV1, nowMs = Date.no
   const at = Number.isFinite(timestamp) ? timestamp : nowMs;
   let updated = false;
   for (const lane of snapshot.lanes) {
+    if (lane.busy === null || lane.slots === null) continue;
     const previous = history.get(lane.lane) ?? empty;
     const last = previous[previous.length - 1];
     if (last && at - last.at < MIN_GAP_MS) continue;

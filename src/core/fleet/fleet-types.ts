@@ -20,6 +20,7 @@
  * imports and plain constants, no node: modules.
  */
 import type { RoutingDifficulty, SeatDecision } from '../routing/types.js';
+import type { FleetReplicaSource } from './fleet-replica.js';
 import type { LiveJobsReport } from './live-jobs.js';
 
 // ---------------------------------------------------------------------------
@@ -545,6 +546,12 @@ export interface FleetLaneState {
   capReason: string | null;
 }
 
+export interface FleetLiveLaneState extends Omit<FleetLaneState, 'slots' | 'busy'> {
+  slots: number | null;
+  busy: number | null;
+  machine?: string;
+}
+
 export interface FleetFunnelStage {
   gate: GateId;
   entered: number;
@@ -609,9 +616,10 @@ export type FleetLiveState = 'dark' | 'idle' | 'running' | 'paused' | 'stopped';
 
 export interface FleetLiveSnapshotV1 {
   liveJobs?: LiveJobsReport;
+  source?: FleetReplicaSource;
   v: 1;
   generatedAt: string;
-  state: FleetLiveState;
+  state: FleetLiveState | null;
   stateReason: string | null;
   /** When the fleet last did anything; null = never / unknown. */
   lastActivityAt: string | null;
@@ -635,7 +643,7 @@ export interface FleetLiveSnapshotV1 {
   summary: FleetLiveSummary;
   /** Short commit of the build serving this view; null/absent = unknown. */
   commit?: string | null;
-  lanes: FleetLaneState[];
+  lanes: FleetLiveLaneState[];
   /** Live runs plus the last 12 h (Swimlane), newest first. */
   runs: FleetLiveRun[];
   funnel: FleetGateFunnel | null;

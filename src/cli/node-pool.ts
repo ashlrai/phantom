@@ -46,7 +46,7 @@ function flags(args: string[], values: string[], booleans: string[] = []): Map<s
 function configFrom(f: Map<string, string>, role: PoolConfig['role']): PoolConfig {
   return { role, node: f.get('--node') ?? '', owner: f.get('--owner') ?? '', primary: f.get('--primary') ?? '', backup: f.get('--backup') ?? '' };
 }
-async function readRequest(): Promise<NodeRpcRequest> {
+async function readRequest(): Promise<NodeRpcRequest | { kind: 'replica'; report?: unknown }> {
   const chunks: Buffer[] = [];
   let bytes = 0;
   for await (const chunk of process.stdin) {
@@ -54,7 +54,7 @@ async function readRequest(): Promise<NodeRpcRequest> {
     if (bytes > 128 * 1024) throw new Error('Node RPC request too large');
     chunks.push(Buffer.from(chunk));
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as NodeRpcRequest;
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
 export async function cmdNodePool(verb: string, args: string[]): Promise<number> {
@@ -92,13 +92,32 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       emit({ schemaVersion: 1, configured: true, role, approvalSteps: [sshApprovalStep(config.primary), sshApprovalStep(config.backup)] });
       return 0;
     }
-    const config = readPoolConfig();
-    if (!config) throw new PoolNotConfigured(poolConfigMissing());
+    if (verb === 'replica') {
+      const action = args[0];
+      if (action !== 'status' && action !== 'sync') throw new PoolUsageError('Use phm node replica status|sync');
+      const f = flags(args.slice(1), action === 'sync' ? ['--leader'] : []);
+      const { fleetReplicaStatus, syncFleetReplica } = await import('../core/fleet/fleet-replica.js');
+      const leader = f.get('--leader');
+      if (leader !== undefined && !validSshHost(leader)) throw new PoolUsageError('Use an explicit SSH config alias for --leader');
+      const result = action === 'sync' ? await syncFleetReplica({ leader, force: true }) : fleetReplicaStatus();
+      emit({ schema: 'fleet.replica.status.v1', ...result });
+      return action === 'sync' && (!result.leader || result.lastError || result.source?.stale) ? 1 : 0;
+    }
     if (verb === 'rpc') {
       flags(args, []);
-      emit(serveNodeRpc(config, await readRequest()));
+      const request = await readRequest();
+      if (request?.kind === 'replica') {
+        const { serveFleetReplica } = await import('../core/fleet/fleet-replica.js');
+        emit(await serveFleetReplica(request));
+        return 0;
+      }
+      const config = readPoolConfig();
+      if (!config) throw new PoolNotConfigured(poolConfigMissing());
+      emit(serveNodeRpc(config, request));
       return 0;
     }
+    const config = readPoolConfig();
+    if (!config) throw new PoolNotConfigured(poolConfigMissing());
     if (verb === 'watch') {
       const f = flags(args, [], ['--once']);
       if (config.role === 'worker') throw new PoolUsageError('Only primary and backup watch the runner heartbeat');

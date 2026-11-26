@@ -6,6 +6,7 @@ import type { FleetOrgTree } from './org-tree.js';
 
 export interface FleetMapNode {
   id: string; kind: 'leader' | 'lane' | 'job' | 'guardian' | 'channel';
+  machine?: string;
   label: string; provider: ProviderName; status: string;
   jobId?: string; lane?: string; model?: string; repo?: string; ageSeconds?: number | null;
   /** Jobs only. Start instant, and whether a worker process was seen when the map was built. */
