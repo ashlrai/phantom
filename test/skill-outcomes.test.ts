@@ -91,6 +91,18 @@ describe('readSkillTrajectoryOutcomes', () => {
     })).toBeNull();
   });
 
+  it('allows the weekly discovery window to cross eight daily skill-use partitions', () => {
+    const readEvents = vi.fn(() => skillRead());
+    readSkillTrajectoryOutcomes({ windowHours: 168, limit: 500 }, {
+      readSkillUseEvents: readEvents,
+      listRecords: () => [],
+      summarize: () => learningStatus(undefined),
+    });
+    expect(readEvents).toHaveBeenCalledWith({
+      sinceMs: expect.any(Number), limit: 4000, maxFiles: 8,
+    });
+  });
+
   it('honours caller window and limit', () => {
     const listRecords = vi.fn((_opts?: TrajectoryRecordListOptions) => [] as TrajectoryRecord[]);
     readSkillTrajectoryOutcomes({ windowHours: 6, limit: 50 }, {

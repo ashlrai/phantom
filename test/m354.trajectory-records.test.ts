@@ -286,6 +286,24 @@ function deps(overrides: Partial<TrajectoryRecordReadDeps> = {}): TrajectoryReco
 }
 
 describe('Trajectory records', () => {
+  it('budgets all dated trajectory inputs for a weekly lookback', () => {
+    const readDispatchProductionEvents = vi.fn(() => []);
+    const readAgentActions = vi.fn(() => []);
+    const readSkillUseEvents = vi.fn(() => []);
+    listTrajectoryRecords({
+      windowHours: 168,
+      deps: deps({ readDispatchProductionEvents, readAgentActions, readSkillUseEvents }),
+    });
+
+    const expectedWindow = expect.objectContaining({
+      sinceMs: TEST_NOW_MS - 7 * 24 * 60 * 60 * 1000,
+      maxFiles: 8,
+    });
+    expect(readDispatchProductionEvents).toHaveBeenCalledWith(expectedWindow);
+    expect(readAgentActions).toHaveBeenCalledWith(expectedWindow);
+    expect(readSkillUseEvents).toHaveBeenCalledWith(expectedWindow);
+  });
+
   it('materializes preclaim route infeasibility as an action-only trajectory', () => {
     const attemptId = 'attempt-12345678-1234-4123-8123-123456789abc';
     const [record] = listTrajectoryRecords({

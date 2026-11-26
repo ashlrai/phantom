@@ -1239,12 +1239,14 @@ function listTrajectoryRecordsAt(
   const windowHours = opts?.windowHours && opts.windowHours > 0 ? opts.windowHours : DEFAULT_WINDOW_HOURS;
   const limit = opts?.limit && opts.limit > 0 ? Math.floor(opts.limit) : DEFAULT_LIMIT;
   const sinceMs = asOfMs - windowHours * 60 * 60 * 1000;
+  // A rolling lookback can intersect a partial UTC day at either end.
+  const maxFiles = Math.max(3, Math.ceil(windowHours / 24) + 1);
   const deps = opts?.deps ?? {};
 
   const dispatchReadOptions = {
     sinceMs,
     limit: Math.max(limit * 6, 200),
-    maxFiles: 3,
+    maxFiles,
   };
   let dispatchReadQuality: TrajectoryTraceReadQuality | undefined;
   let dispatchEvents: DispatchProductionEvent[];
@@ -1299,12 +1301,12 @@ function listTrajectoryRecordsAt(
       ? deps.readAgentActions({
         sinceMs,
         limit: Math.max(limit * 4, 200),
-        maxFiles: 3,
+        maxFiles,
       })
       : readAgentActions({
         sinceMs,
         limit: Math.max(limit * 4, 200),
-        maxFiles: 3,
+        maxFiles,
         requireComplete: true,
       });
     actions = Array.isArray(read) ? read : [];
@@ -1325,7 +1327,7 @@ function listTrajectoryRecordsAt(
     (deps.readSkillUseEvents ?? readSkillUseEvents)({
       sinceMs,
       limit: Math.max(limit * 8, 400),
-      maxFiles: 3,
+      maxFiles,
     }),
   );
 
