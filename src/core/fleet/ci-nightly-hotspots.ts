@@ -121,7 +121,7 @@ export async function readCiNightly(repo: string, gh: CloudGh = defaultNightlyGh
 }
 
 function measureJob(repo: string, run: Run, job: Job) {
-  const steps = Array.isArray(job.steps) ? job.steps : [];
+  const steps = Array.isArray(job.steps) ? job.steps.filter(step => step && typeof step === 'object') : [];
   const started = Date.parse(job.started_at ?? '');
   const completed = Date.parse(job.completed_at ?? '');
   const executed = positive(job.runner_id) && job.status === 'completed' && Number.isFinite(started) && Number.isFinite(completed) && completed >= started && steps.some(step => {
@@ -134,7 +134,12 @@ function measureJob(repo: string, run: Run, job: Job) {
     conclusion: job.conclusion ?? null, url, startedAt: job.started_at ?? null, completedAt: job.completed_at ?? null,
     executionMs: executed ? elapsed(job.started_at, job.completed_at) : null,
     queueMs: executed ? elapsed(job.created_at, job.started_at) : null,
-    slowestSteps: steps.filter(s => typeof s.name === 'string' && positive(s.number)).map(s => ({ name: s.name, conclusion: s.conclusion ?? null,
-      durationMs: elapsed(s.started_at, s.completed_at), url: `${url}#step:${s.number}:1` }))
+    slowestSteps: steps.filter(s => typeof s.name === 'string' && positive(s.number)).map(s => {
+      const hasExecutionWindow = executed && s.status === 'completed' && s.conclusion !== 'skipped'
+        && Date.parse(s.started_at ?? '') >= started && Date.parse(s.completed_at ?? '') <= completed;
+      return { name: s.name, conclusion: s.conclusion ?? null,
+        durationMs: hasExecutionWindow ? elapsed(s.started_at, s.completed_at) : null,
+        url: `${url}#step:${s.number}:1` };
+    })
       .sort((a, b) => (b.durationMs ?? -1) - (a.durationMs ?? -1)).slice(0, 5) };
 }

@@ -1,5 +1,11 @@
 # CI baseline analyzer
 
+Use `phm fleet ci-nightly --repo owner/repo --json` to inspect scheduled
+workflow timing by run attempt, job and step. Step durations require a
+completed, non-skipped step with ordered timestamps inside its measured
+job's execution window. Steps without that evidence report a null duration
+and sort behind measured steps.
+
 Run `phm ci baseline --json` to inspect open PRs in ashlrai/phantom. Use
 `--repo owner/repo` for another repository with a master branch. Analysis is
 read-only: it does not rerun jobs, change tests, merge PRs, or update branches.
