@@ -202,6 +202,25 @@ describe('fleet lane-reward', () => {
     expect(fold.attempts.get('RQ-FAKE-B1')).toMatchObject({ lane: 'lane-b', published: true, outcome: 'closed' });
   });
 
+  it('excludes batch wrappers and node-pool telemetry from measured attempts and PR claims', async () => {
+    const job = 'RQ-FAKE-MEMBER';
+    const url = URL(7);
+    const text = rows(
+      { event: 'batch_claim', job, batch: 'RQ-BATCH-FAKE' },
+      { event: 'finish', job, lane: 'lane-a', tokens_total: 100 },
+      { event: 'publish', job, url },
+      { event: 'finish', job: 'RQ-BATCH-FAKE', lane: 'lane-a', tokens_total: 900, url },
+      { schema: 'fleet.session-pool.v1', event: 'launch', id: 'session-fake', url },
+      { schema: 'phm-node-runner.v1', event: 'finish', jobId: job, lane: 'node-lane', tokens_total: 800 },
+      { event: 'merged', url },
+    );
+    const report = await readLaneReward({ deps: deps({ jobsText: read(text) }) });
+    expect(report).toMatchObject({ source: 'healthy', attempts: 1, tokensMeasured: 100 });
+    expect(report.lanes).toMatchObject([
+      { lane: 'lane-a', attempts: 1, tokensMeasured: 100, reasons: { 'proposal-unavailable': 1 } },
+    ]);
+  });
+
   it('reads alias timestamp fields and prefers mergedAt/closedAt on terminal rows', () => {
     const fold = foldLaneRewardAttempts(rows(
       { event: 'finish', job: 'RQ-FAKE-W1', lane: 'lane-a', tokens_total: 100 },

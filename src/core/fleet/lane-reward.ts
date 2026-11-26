@@ -12,7 +12,7 @@ import { loadProposal } from '../inbox/store.js';
 import { readLedgerTail } from '../router/outcomes.js';
 import type { Proposal } from '../types.js';
 import { inspectOneAskReward, type OneAskReward } from './one-ask-reward.js';
-import { ledgerEventTs } from './jobs-ledger-dialect.js';
+import { isNodePoolLedgerRow, ledgerEventTs } from './jobs-ledger-dialect.js';
 
 export const LANE_REWARD_SCHEMA = 'fleet.lane-reward.v1' as const;
 /** Uniform caller weight: every recorded attempt counts the same. */
@@ -115,7 +115,7 @@ const tokensOf = (row: Row): number | null => {
 
 /** Fold a jobs ledger into attempts; malformed lines are counted, never thrown. */
 export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attempts: Map<string, LaneRewardAttempt>; dropped: number } {
-  const rows: { row: Row; event: string; phase: string }[] = [];
+  const rows: { row: Row; job: string | null; event: string; phase: string }[] = [];
   let dropped = 0;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -123,29 +123,31 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
     let row: Row | null;
     try { row = asRow(JSON.parse(line)); } catch { dropped++; continue; }
     if (!row) { dropped++; continue; }
+    const job = jobOf(row);
+    if (job?.startsWith('RQ-BATCH-') || isNodePoolLedgerRow(row)) continue;
     const event = eventOf(row);
     const phase = phaseOf(row, event);
     const receiptAt = ledgerEventTs(row, null);
     const outcomeAt = TERMINAL_PHASES.has(phase) ? ledgerEventTs(row, phase) : null;
     if ((receiptAt !== null && receiptAt > asOfMs) || (outcomeAt !== null && outcomeAt > asOfMs)) continue;
-    rows.push({ row, event, phase });
+    rows.push({ row, job, event, phase });
   }
   // URL-only rows can resolve only against a unique recorded job.
   const jobByUrl = new Map<string, string | null>();
-  for (const { row } of rows) {
-    const job = jobOf(row), url = urlOf(row);
+  for (const { row, job } of rows) {
+    const url = urlOf(row);
     if (job === null || url === null) continue;
     const previous = jobByUrl.get(url);
     if (previous === undefined) jobByUrl.set(url, job);
     else if (previous !== job) jobByUrl.set(url, null);
   }
   const attempts = new Map<string, LaneRewardAttempt>();
-  for (const { row, event, phase } of rows) {
+  for (const { row, job: explicitJob, event, phase } of rows) {
     const launch = LAUNCH_EVENTS.has(event), finish = FINISH_EVENTS.has(event);
     if (!launch && !finish && !PUBLISH_EVENTS.has(event) && phase !== 'PUBLISHED' &&
         !OUTCOME_EVENTS.has(event) && !TERMINAL_PHASES.has(phase)) continue;
     const url = urlOf(row);
-    const job = jobOf(row) ?? (url !== null ? jobByUrl.get(url) ?? null : null);
+    const job = explicitJob ?? (url !== null ? jobByUrl.get(url) ?? null : null);
     if (job === null) continue;
     const attempt = attempts.get(job) ??
       { lane: null, tokens: null, published: false, outcome: null, outcomeTsMs: -1 };
