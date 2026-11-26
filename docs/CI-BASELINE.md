@@ -560,10 +560,10 @@ unresolvable or globbed setup entry, or a failed harness probe yields
 resolution; any other fetch failure, unresolvable spec, alias, or computed
 import prevents independence claims. Pass evidence comes in two shapes: a
 verbose per-test line (`✓ file > suite > test`) resolves only the named
-test, while the default reporter's green-module line (`✓ file (N tests)`)
-resolves any failure identity in that file because every test the module
-contains passed on that run. Other pass output does not establish a test
-pass. The scan caps open PRs, runs, and jobs
+test. The default reporter's green-module line (`✓ file (N tests)`) can
+resolve a named test when the module contains at least one test and every
+case ran. A summary with skipped or todo cases can resolve a suite-load
+failure when at least one case ran. The scan caps open PRs, runs, and jobs
 at 100 each and reports unknown rather than drawing conclusions from truncated
 run/job listings. Master reproduction remains an explicit step in the fix brief.
 
