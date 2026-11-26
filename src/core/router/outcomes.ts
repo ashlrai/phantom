@@ -1760,6 +1760,9 @@ function foldRouterOutcomesWithCiCoverage(
   const claimToJob = new Map([...claims].filter(([key]) => !ambiguous.has(key))
     .map(([key, jobs]) => [key, [...jobs][0]!] as const));
 
+  const claimantFor = (url: string | null) => url === null ? undefined : claimToJob.get(claimKey(url));
+  const attributedJobId = (r: Row) => jobId(r) ?? claimantFor(prUrl(r));
+
   // Queue-admission evidence, derived once per job from the same boundary
   // stamps job-latency's queue_wait phase pairs: arrival rows (enqueue/
   // enqueued/queued) start the wait, dispatch rows (claim/batch_claim/
@@ -1769,7 +1772,7 @@ function foldRouterOutcomesWithCiCoverage(
   // first dispatch stays absent here so its outcome keeps null.
   const queueMarks = new Map<string, { arrivals: number[]; dispatches: number[] }>();
   for (const r of rows) {
-    const j = jobId(r);
+    const j = attributedJobId(r);
     if (!j || j.startsWith(BATCH_SESSION_PREFIX)) continue;
     const event = str(r, ...EVENT_NAME_KEYS);
     if (event === null) continue;
@@ -1801,7 +1804,7 @@ function foldRouterOutcomesWithCiCoverage(
   // set leaves the job absent so its outcome keeps null.
   const ciMarks = new Map<string, { starts: Set<number>; completes: Set<number> }>();
   for (const r of rows) {
-    const j = jobId(r);
+    const j = attributedJobId(r);
     if (!j || j.startsWith(BATCH_SESSION_PREFIX)) continue;
     const event = str(r, ...EVENT_NAME_KEYS);
     if (event === null) continue;
@@ -1838,7 +1841,7 @@ function foldRouterOutcomesWithCiCoverage(
   // on any row is the publish claim itself, event name or not.
   const publishMarks = new Map<string, { finishes: Set<number>; publishes: Set<number> }>();
   for (const r of rows) {
-    const j = jobId(r);
+    const j = attributedJobId(r);
     if (!j || j.startsWith(BATCH_SESSION_PREFIX)) continue;
     const event = str(r, ...EVENT_NAME_KEYS)?.toLowerCase() ?? null;
     const phase = mergePhase(r);
@@ -1871,7 +1874,7 @@ function foldRouterOutcomesWithCiCoverage(
   let sessionRows = 0;
   for (const r of rows) {
     const u = prUrl(r);
-    const claimant = u === null ? undefined : claimToJob.get(claimKey(u));
+    const claimant = claimantFor(u);
     const j = jobId(r) ?? claimant;
     if (!j) { unattached++; continue; }
     if (j.startsWith(BATCH_SESSION_PREFIX)) { sessionRows++; continue; }

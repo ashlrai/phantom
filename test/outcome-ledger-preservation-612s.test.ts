@@ -352,6 +352,36 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('Q7')).toMatchObject({ merged: false, queue_wait_s: 30 });
   });
 
+  it('uses the same PR attribution for timing boundaries and outcome rows', () => {
+    const unique = 'https://github.com/ashlrai/phantom/pull/42';
+    const contested = 'https://github.com/ashlrai/phantom/pull/43';
+    const rows = [
+      { event: 'enqueue', url: unique, ts: '2026-11-01T10:00:00Z' },
+      { event: 'launch', job: 'unique', ts: '2026-11-01T10:01:00Z' },
+      { event: 'finish', job: 'unique', ts: '2026-11-01T10:02:00Z' },
+      { event: 'publish', url: unique, ts: '2026-11-01T10:03:00Z' },
+      { event: 'ci_start', prUrl: 'https://github.com/AshlrAI/Phantom/pull/42', ts: '2026-11-01T10:04:00Z' },
+      { event: 'ci_complete', url: unique, ts: '2026-11-01T10:06:00Z' },
+      { phase: 'MERGED', job: 'unique', url: unique },
+      { event: 'ci_start', job: 'first', url: contested, ts: '2026-11-01T10:04:00Z' },
+      { event: 'ci_complete', url: contested, ts: '2026-11-01T10:06:00Z' },
+      { event: 'ci_complete', job: 'first', url: contested, ts: '2026-11-01T10:07:00Z' },
+      { event: 'ci_start', job: 'second', url: contested, ts: '2026-11-01T10:04:00Z' },
+    ];
+    const fold = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n'));
+    const byId = new Map(fold.outcomes.map(outcome => [outcome.job_id, outcome]));
+    expect(byId.get('unique')).toMatchObject({ queue_wait_s: 60, publish_wait_s: 60, ci_wall_s: 120 });
+    expect(byId.get('first')?.ci_wall_s).toBe(180);
+    expect(byId.get('second')?.ci_wall_s).toBeNull();
+    expect(fold.unattached_rows).toBe(1);
+
+    const withUndatedCi = foldRouterOutcomes([
+      ...rows,
+      { event: 'ci_start', url: unique },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    expect(withUndatedCi.outcomes.find(outcome => outcome.job_id === 'unique')?.ci_wall_s).toBeNull();
+  });
+
   it('folds CI wall seconds from the recorded ci_start/ci_complete pair, unknown when ambiguous', () => {
     const fold = foldRouterOutcomes([
       // C1: one start, one complete 20 minutes later -> 1200s of CI wall.

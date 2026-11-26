@@ -760,6 +760,10 @@ Replayed merge receipts cannot restore credit for a reverted merge, and the
 original merge time still bounds dispatch and CI evidence.
 Missing or ambiguous timing stays unknown, and existing
 reward rows retain their original values.
+The jobs fold uses its outcome attribution rules for the queue, CI and
+publish timing boundaries. An explicit job ID takes precedence. A receipt
+with only a PR URL contributes when exactly one job claims that PR in the
+retained jobs ledger. A contested or unclaimed URL contributes no timing.
 `foldRewardSignals` collapses the bounded tail to
 each job's recorded evidence and the read fills only what the jobs
 fold left null — `merged`, `ttm_s` (only when both the standing verdict
