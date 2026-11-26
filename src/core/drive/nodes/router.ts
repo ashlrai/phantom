@@ -109,8 +109,6 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
 export function planRoutes(state: NodesState, now: number, owner?: string): RouteAssignment[] {
   const capacity = nodeCapacityView(state, now);
   const hosts = new Map(capacity.flatMap(h => h.nodeIds.map(id => [id, h] as const)));
-  const measuredLatency = capacity.map(h => h.latency.medianMs).filter((n): n is number => n !== null && n > 0);
-  const neutralLatency = measuredLatency.length ? measuredLatency.reduce((a, b) => a + b, 0) / measuredLatency.length : 1;
   const reserved = new Map<string, number>();
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
@@ -119,19 +117,30 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
     const reasons = new Map<string, number>();
-    let best: NodeRecord | null = null;
+    const candidates: { node: NodeRecord; remaining: number; latency: number | null }[] = [];
+    const measuredLatency = new Map<string, number>();
     for (const node of nodes) {
       const why = shortfall(node, job);
       if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
       if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) { reasons.set('capacity', 1); continue; }
       const host = hosts.get(node.nodeId);
-      if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
-          (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) { reasons.set('capacity', 1); continue; }
-      const score = (n: NodeRecord) => {
-        const h = hosts.get(n.nodeId)!;
-        return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
-      };
-      if (!best || score(node) > score(best)) best = node;
+      if (!state.pool) {
+        candidates.push({ node, remaining: 0, latency: null });
+        continue;
+      }
+      const remaining = host ? (host.freeSlots ?? 0) - (reserved.get(host.hostId) ?? 0) : 0;
+      if (!host || remaining <= 0 || !host.eligibleNodeIds.includes(node.nodeId)) { reasons.set('capacity', 1); continue; }
+      const latency = host.latency.medianMs;
+      if (latency !== null && latency > 0) measuredLatency.set(host.hostId, latency);
+      candidates.push({ node, remaining, latency });
+    }
+    const neutralLatency = measuredLatency.size
+      ? [...measuredLatency.values()].reduce((sum, latency) => sum + latency, 0) / measuredLatency.size : 1;
+    let best: NodeRecord | null = null;
+    let bestScore = -Infinity;
+    for (const { node, remaining, latency } of candidates) {
+      const score = state.pool ? remaining / Math.max(1, latency ?? neutralLatency) : -load.get(node.nodeId)!;
+      if (score > bestScore) { best = node; bestScore = score; }
     }
     if (best) {
       const host = hosts.get(best.nodeId);
