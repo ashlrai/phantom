@@ -142,16 +142,23 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
     else if (previous !== job) jobByUrl.set(url, null);
   }
   const attempts = new Map<string, LaneRewardAttempt>();
+  const batchClaimLanes = new Map<string, string>();
   for (const { row, job: explicitJob, event, phase } of rows) {
     const launch = LAUNCH_EVENTS.has(event), finish = FINISH_EVENTS.has(event);
-    if (!launch && !finish && !PUBLISH_EVENTS.has(event) && phase !== 'PUBLISHED' &&
+    const batchClaim = event === 'batch_claim';
+    if (!batchClaim && !launch && !finish && !PUBLISH_EVENTS.has(event) && phase !== 'PUBLISHED' &&
         !OUTCOME_EVENTS.has(event) && !TERMINAL_PHASES.has(phase)) continue;
     const url = urlOf(row);
     const job = explicitJob ?? (url !== null ? jobByUrl.get(url) ?? null : null);
     if (job === null) continue;
     const attempt = attempts.get(job) ??
       { lane: null, tokens: null, published: false, outcome: null, outcomeTsMs: -1 };
-    attempt.lane = laneOf(row) ?? attempt.lane;
+    const lane = laneOf(row);
+    if (batchClaim) {
+      if (lane !== null) batchClaimLanes.set(job, lane);
+    } else {
+      attempt.lane = lane ?? attempt.lane;
+    }
     if (finish) attempt.tokens = tokensOf(row) ?? attempt.tokens;
     attempt.published ||= PUBLISH_EVENTS.has(event) || phase === 'PUBLISHED' || url !== null;
     if (TERMINAL_PHASES.has(phase)) {
@@ -162,6 +169,10 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
       }
     }
     attempts.set(job, attempt);
+  }
+  for (const [job, lane] of batchClaimLanes) {
+    const attempt = attempts.get(job);
+    if (attempt?.lane === null) attempt.lane = lane;
   }
   return { attempts, dropped };
 }
