@@ -74,7 +74,7 @@ export interface QueueSupplyInput {
   view: Pick<PoolsViewV1, 'pools' | 'generatedAt'>;
   /** Ready jobs per lane the market resolves; null when ready.tsv could not be read. */
   readyByLane: Readonly<Record<string, number>> | null;
-  /** Launches per lane inside the window; null when the launch log could not be read. */
+  /** Launches per lane inside the window; null when log coverage is unavailable. */
   startsByLane: Readonly<Record<string, number>> | null;
   /** Window the launches were counted over, in hours. */
   windowH?: number;
@@ -118,7 +118,7 @@ function rowFor(pool: PoolRow, input: QueueSupplyInput, nowMs: number, windowH: 
 
   const reasons: string[] = [];
   if (ready === null) reasons.push('ready queue not readable');
-  if (starts === null) reasons.push('launch log not readable');
+  if (starts === null) reasons.push('launch window unavailable');
   else if (ready !== null && ready > 0 && starts === 0) reasons.push(`no launches in the last ${windowH} h to size the queue`);
   if (!known) reasons.push(pool.reason ?? 'no usage reading');
 
@@ -136,7 +136,10 @@ function rowFor(pool: PoolRow, input: QueueSupplyInput, nowMs: number, windowH: 
   if (ready === null) return out('unknown', `${label}: queue unknown, ${leftText}`);
   const idleText = idle === null ? '' : `, about ${span(idle)} of usage idle`;
   if (ready === 0) return out('empty', `${label}: 0 jobs queued, ${leftText}${idleText}`, risk);
-  if (hoursQueued === null) return out('healthy', `${label}: ${queued}, ${leftText}, no recent starts to size the queue`);
+  if (hoursQueued === null) {
+    const explanation = starts === null ? 'launch window unavailable' : 'no recent starts to size the queue';
+    return out('healthy', `${label}: ${queued}, ${leftText}, ${explanation}`);
+  }
   if (hoursQueued < SUPPLY_LOW_HOURS) return out('low', `${label}: ${queued}, about ${span(hoursQueued)} of work, ${leftText}${idleText}`, risk);
   return out('healthy', `${label}: ${queued}, about ${span(hoursQueued)} of work, ${leftText}`);
 }
@@ -154,7 +157,7 @@ export function buildQueueSupply(input: QueueSupplyInput): QueueSupplyV1 {
     `Starts per hour is the last ${windowH} hours of launches, so a pool that has not launched lately shows its hours of work as unknown.`,
   ];
   if (input.readyByLane === null) gaps.unshift('The ready queue could not be read.');
-  if (input.startsByLane === null) gaps.unshift('The dispatch event log could not be read.');
+  if (input.startsByLane === null) gaps.unshift('The dispatch event log did not establish coverage of the launch window.');
   return { schema: QUEUE_SUPPLY_SCHEMA, generated_at: input.view.generatedAt, pools, gaps };
 }
 
@@ -190,14 +193,28 @@ export function countStarts(eventsText: string, nowMs: number, windowH = SUPPLY_
   return out;
 }
 
-async function readTail(path: string): Promise<string> {
+async function readStarts(path: string, nowMs: number): Promise<Record<string, number> | null> {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const { size } = await handle.stat();
+    const stat = await handle.stat();
+    if (!stat.isFile()) return null;
+    const { size } = stat;
     const length = Math.min(size, TAIL_BYTES);
     const buffer = Buffer.alloc(length);
-    await handle.read(buffer, 0, length, size - length);
-    return buffer.toString('utf8');
+    const { bytesRead } = await handle.read(buffer, 0, length, size - length);
+    if (bytesRead !== length) return null;
+    let text = buffer.toString('utf8');
+    if (size > length) {
+      // The byte offset may land inside a line. Require a complete event
+      // strictly before the inclusive window to establish tail coverage.
+      const boundary = text.indexOf('\n');
+      if (boundary < 0) return null;
+      text = text.slice(boundary + 1);
+      const first = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) [^\n]+\n/.exec(text);
+      const at = first ? Date.parse(first[1]!.replace(' ', 'T')) : NaN;
+      if (!Number.isFinite(at) || at >= nowMs - SUPPLY_STARTS_WINDOW_H * 3_600_000) return null;
+    }
+    return countStarts(text, nowMs);
   } finally { await handle.close(); }
 }
 
@@ -247,7 +264,7 @@ export async function readQueueSupply(opts: { runsDir?: string; now?: () => numb
   const [view, ready, startsByLane] = await Promise.all([
     readResourceLedger({ runsDir, now: () => nowMs }).then(async ledger => buildPoolsView(ledger, nowMs, await readUsageSamples({ nowMs }))),
     readyByLane,
-    readTail(join(runsDir, 'dispatch-events.log')).then(text => countStarts(text, nowMs), () => null),
+    readStarts(join(runsDir, 'dispatch-events.log'), nowMs).catch(() => null),
   ]);
   return buildQueueSupply({ view, readyByLane: ready, startsByLane });
 }

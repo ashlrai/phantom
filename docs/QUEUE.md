@@ -1372,6 +1372,10 @@ when the hint leaves the job lane-open. Duplicate copies add no supply.
 The hourly digest adds a `supply_low` line, naming the pool, when a pool that is behind (or has waste risk high or
 medium) has under an hour of work queued. The alert uses the observed ready and launch counts at full precision.
 JSON retains that precision for `starts_per_hour` and `hours_queued`. Text rounds estimated durations for display.
+The launch reader scans at most 2 MiB of the local dispatch log. If that
+cuts off the beginning, the first complete retained event must precede the
+six-hour window. Otherwise the launch rate and the duration of a nonempty
+queue stay unknown. An observed empty ready queue still has zero hours of work.
 
 ## Which producer earns its slots?
 
