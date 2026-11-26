@@ -4105,8 +4105,9 @@ carries the needle as a case-insensitive whitespace-collapsed substring;
 `UnifiedInboxFilter.kind` (`comms inbox --kind`, validated by
 `isUnifiedInboxKind` over `UNIFIED_INBOX_KINDS`) keeps only items of that
 stored kind — the item's own classification, finer than `source` where one
-source emits several kinds (the `bus` source's `bus-work`/`bus-handoff`
-split, the `board` source's `board-delivery`/`board-task` split) — and
+source emits several kinds (the `bus` source's
+`bus-work`/`bus-handoff`/`bus-dead-letter` split, the `board` source's
+`board-delivery`/`board-task` split) — and
 ANDs with every other view dimension while the per-source `pending`
 reports stay the unfiltered store truth;
 and
