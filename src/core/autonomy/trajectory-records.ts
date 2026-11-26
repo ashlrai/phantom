@@ -1335,6 +1335,7 @@ function listTrajectoryRecordsAt(
   const skillUses = safeArray(() =>
     (deps.readSkillUseEvents ?? readSkillUseEvents)({
       sinceMs,
+      untilMs: asOfMs,
       limit: Math.max(limit * 8, 400),
       maxFiles,
     }),
