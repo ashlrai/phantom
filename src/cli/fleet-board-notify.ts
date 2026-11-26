@@ -116,6 +116,7 @@ function deliveryFor(channel: string, injected: boolean, duplicate: boolean): No
 
 function describeResult(status: string, d: NoticeDelivery | undefined): string {
   if (!d) return status;
+  if (status !== 'sent' && status !== 'duplicate') return `${status}; sender evidence: ${describeResult('sent', d)}; notification receipt unrecorded, pending retry`;
   const dup = d.duplicate ? ' (already recorded)' : '';
   if (d.evidence === 'bus-reply-posted') return `posted to bus${dup}`;
   if (d.evidence === 'slack-bus-note-enqueued') return `queued for slack drain, transport delivery unconfirmed${dup}`;
@@ -216,7 +217,7 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   }
   const results = await sendNotifications(plan.notices, { senders: tracked, ledgerPath });
   const delivered = results.filter(r => r.status === 'sent' || r.status === 'duplicate');
-  const deliveries = results.map(r => ({ itemId: r.notice.itemId, state: r.notice.state, status: r.status,
+  const deliveries = results.map(r => ({ itemId: r.notice.itemId, state: r.notice.state, status: r.status, ...(r.reason ? { reason: r.reason } : {}),
     ...(evidence.get(r.notice) ?? { evidence: 'none', transport: 'none' }) }));
   const count = (e: NoticeDelivery['evidence']): number => deliveries.filter(d => d.evidence === e).length;
   const queued = count('slack-bus-note-enqueued');
