@@ -368,6 +368,9 @@ The Leader's compact brief follows the same first-valid-row rule when
 counting hinted and lane-open supply for its starvation headline.
 The Fleet lane console uses the same rule for its ready-file queue depth
 fallback and lane-open supply.
+`phm fleet ready-supply` uses the same rule for hinted and lane-open jobs.
+The planner uses those counts for its supply floor, so repeated READY rows
+cannot inflate the backlog. Parked rows are counted separately.
 
 An executor is unfed when it has free slots while runnable rows wait under
 another lane's hint. Each tick the dispatcher computes this after its launches
