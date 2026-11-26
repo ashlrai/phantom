@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DriveNodes, LocalNodesStore, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { probeLocalAuth } from '../src/core/drive/nodes/auth-probe.js';
+import { nodeCapacityView } from '../src/core/drive/nodes/router.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { localPhmVersion, versionCap } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNode } from '../src/cli/node.js';
@@ -86,6 +87,34 @@ describe('node router', () => {
 });
 
 describe('job leases: no job runs twice', () => {
+  it.each(['pull', 'direct claim'] as const)('reuses a leader-fenced slot for %s before the old job can be pulled again', method => {
+    const f = fixture();
+    const a = f.box.join('a', { owners: ['o'], slots: 0 })!;
+    const b = f.mac.join('b', { owners: ['o'] })!;
+    f.box.heartbeat(a);
+    f.mac.heartbeat(b, { capacity: { hostId: 'mac-b', sampledAtMs: 1_000, ramBytes: 8 * 1024 ** 3, slots: 1, held: null } });
+    f.box.enqueue('old-job', { owner: 'o' });
+    f.box.enqueue('next-job', { owner: 'o' });
+    const old = f.mac.pull(b)!.claim;
+    expect(f.box.plan()).toMatchObject([{ jobId: 'next-job', nodeId: null }]);
+    expect(nodeCapacityView(f.store.state, 1_000)).toContainEqual(expect.objectContaining({ hostId: 'mac-b', running: 1, freeSlots: 0 }));
+
+    f.advance(20);
+    expect(f.mac.renewClaim(old)).toBeNull();
+    expect(f.mac.complete(old, 'late')).toBe(false);
+    expect(f.box.jobOutcome('old-job', 'o')).toEqual({ state: 'running' });
+    expect(f.box.plan()).toEqual([{ jobId: 'next-job', owner: 'o', nodeId: 'b' }]);
+    expect(nodeCapacityView(f.store.state, 1_020)).toContainEqual(expect.objectContaining({ hostId: 'mac-b', running: 0, freeSlots: 1 }));
+
+    const next = method === 'pull' ? f.mac.pull(b)?.claim : f.mac.claim(f.mac.heartbeat(b)!.leader!, b, 'next-job');
+    expect(next).toMatchObject({ jobId: 'next-job' });
+    expect(next!.leaderToken).toBeGreaterThan(old.leaderToken);
+    expect(f.mac.complete(next!, 'done')).toBe(true);
+    expect(f.mac.pull(b)).toBeNull();
+    f.advance(20);
+    expect(f.mac.pull(b)?.job.id).toBe('old-job');
+  });
+
   it('two nodes racing the same job get exactly one claim', () => {
     const f = fixture();
     const a = f.box.join('a', { owners: ['o'] })!;

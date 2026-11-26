@@ -30,20 +30,16 @@ export function liveNodes(state: NodesState, now: number): NodeRecord[] {
   return state.nodes.filter(n => nodeCanAcceptWork(n, now));
 }
 
-/** True while a running job's claim can still be acted on: the claim is
- * unexpired and an unexpired node record carries the same id and session.
- * A lapsed claim is re-routable, and a claim fenced by a rejoin or departure
- * frees the node's capacity at once even though the job stays fenced until
- * the claim expires. */
+/** A running claim consumes capacity while both its worker session and its
+ * issuing leader lease can still authorize it. Pull eligibility for the job
+ * itself is governed separately by the claim deadline in routable(). */
 export function actionableClaim(state: NodesState, job: QueueJobV1, now: number): boolean {
   const claim = job.claim;
+  const leader = state.leader;
   return job.state === 'running' && claim !== undefined && claim.expiresAt > now &&
+    leader !== null && leader.expiresAt > now && leader.token === claim.leaderToken &&
+    state.nodes.some(n => n.expiresAt > now && n.nodeId === leader.nodeId && n.session === leader.session) &&
     state.nodes.some(n => n.expiresAt > now && n.nodeId === claim.nodeId && n.session === claim.session);
-}
-
-function activeClaims(state: NodesState, node: NodeRecord, now: number): number {
-  return state.jobs.filter(j => j.state === 'running' && j.claim && j.claim.expiresAt > now &&
-    j.claim.nodeId === node.nodeId && j.claim.session === node.session).length;
 }
 
 /** Capability fences every assignment path honors: a session that released the
@@ -113,8 +109,13 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const neutralLatency = measuredLatency.length ? measuredLatency.reduce((a, b) => a + b, 0) / measuredLatency.length : 1;
   const reserved = new Map<string, number>();
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
-  const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
-  const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
+  const claims = new Map<string, number>();
+  for (const job of state.jobs) {
+    if (!actionableClaim(state, job, now)) continue;
+    const id = job.claim!.nodeId;
+    claims.set(id, (claims.get(id) ?? 0) + 1);
+  }
+  const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * (claims.get(n.nodeId) ?? 0)]));
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
@@ -123,7 +124,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
     for (const node of nodes) {
       const why = shortfall(node, job);
       if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
-      if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) { reasons.set('capacity', 1); continue; }
+      if (node.slots !== undefined && (claims.get(node.nodeId) ?? 0) >= node.slots) { reasons.set('capacity', 1); continue; }
       const host = hosts.get(node.nodeId);
       if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
           (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) { reasons.set('capacity', 1); continue; }
@@ -137,7 +138,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       const host = hosts.get(best.nodeId);
       if (host) reserved.set(host.hostId, (reserved.get(host.hostId) ?? 0) + 1);
       load.set(best.nodeId, load.get(best.nodeId)! + CLAIM_LOAD);
-      claims.set(best.nodeId, claims.get(best.nodeId)! + 1);
+      claims.set(best.nodeId, (claims.get(best.nodeId) ?? 0) + 1);
       plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
       continue;
     }
