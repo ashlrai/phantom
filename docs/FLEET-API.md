@@ -184,6 +184,11 @@ CLI has related, independently shaped views and controls: `phm fleet status`,
 from the runs leader inbox above. See the [fleet CLI](../src/cli/fleet.ts) and
 [inbox CLI](../src/cli/inbox.ts) for flags and authority gates.
 
+`phm fleet board --leader --json` estimates the conflict backlog from rebase
+job IDs in `queue/ready.tsv`. Ready and parked jobs contribute distinct PRs,
+including each member of a rebase batch. References in prompts and requirements
+do not contribute to the count. An unavailable queue leaves the count unknown.
+
 `phm fleet status` also reports disk use and the ten largest proven cleanup
 candidates. `--json` adds typed `disk` data (`fleet.disk-attribution.v1`):
 categories, per-job entries, source health and ranked `cleanupCandidates`.
