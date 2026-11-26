@@ -1691,6 +1691,8 @@ function listTrajectoryRecordsAt(
   const skillObservationByRecordId = new Map<string, SkillObservationCounts>();
   const skillSelectionsByRecordId = new Map<string, Map<string, { skillId: string; skillRevision: number }>>();
   for (const event of skillUses) {
+    const observedMs = Date.parse(event.ts);
+    if (!Number.isFinite(observedMs) || observedMs < sinceMs || observedMs > asOfMs) continue;
     const aliases = aliasesFromIds({
       trajectoryId: cleanId(event.trajectoryId, 240),
       runId: cleanId(event.runId, 160),
