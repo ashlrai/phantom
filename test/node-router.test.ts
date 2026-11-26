@@ -53,6 +53,20 @@ describe('node router', () => {
     expect(nodes).toEqual(['a', 'b', 'a', 'b']);
   });
 
+  it('keeps shared slot reservations in owner-scoped previews', () => {
+    const f = fixture();
+    const worker = f.box.join('shared', { owners: ['a', 'b'], slots: 1 })!;
+    f.box.enqueue('first', { owner: 'a' });
+    f.mac.enqueue('second', { owner: 'b' });
+
+    const scoped = f.mac.plan('b');
+    expect(scoped).toEqual([
+      { jobId: 'second', owner: 'b', nodeId: null, fix: expect.stringContaining('no free job slots') },
+    ]);
+    expect(scoped).toEqual(f.mac.view(['b']).routes);
+    expect(f.box.pull(worker)?.job.id).toBe('first');
+  });
+
   it('requires a live local gh-auth heartbeat for gh jobs and explains the fix', () => {
     const f = fixture();
     const s = f.box.join('n', { owners: ['o'], caps: ['gh'] })!;

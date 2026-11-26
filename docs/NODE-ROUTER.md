@@ -189,6 +189,10 @@ Ctrl-C stops it cleanly and the claim then expires on its own, after which the
 job can be pulled again. Without `--watch`, a manual holder renews by hand
 before the lease lapses.
 
+`phm node plan --owner <scope>` shows that owner's rows from the same shared
+placement plan used by `pull`. Earlier eligible jobs from other scopes can
+reserve shared capacity in the preview, while their rows remain outside its output.
+
 ## When something is refused
 
 Every error ends with a fix. A job with no taker is shown by `phm node plan`
