@@ -367,10 +367,23 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
         };
         break;
       case 'missing-restock': {
-        const lane = lanes.find((row) => row.lane === topGap.lane)!;
+        if (admission === null) {
+          action = { kind: 'no-op', reason: 'state-unreadable', detail: 'Fleet admission is unknown, so restock capacity cannot be measured.' };
+          break;
+        }
+        if (nonCapClosed) {
+          action = { kind: 'no-op', reason: 'admission-closed', detail: 'Fleet admission is closed, so the empty lane queue does not need an immediate restock.' };
+          break;
+        }
+        const { cap, running } = admission.global;
+        if (atCap || running >= cap) {
+          action = { kind: 'no-op', reason: 'capacity-bound', detail: 'The fleet cap is full, so the empty lane queue does not need an immediate restock.' };
+          break;
+        }
+        const count = Math.min(topGap.evidence.freeSlots as number, cap - running);
         action = {
-          kind: 'enqueue', type: 'restock', count: lane.freeSlots ?? 1, lane: lane.lane,
-          detail: `Enqueue ${lane.freeSlots} restock job${lane.freeSlots === 1 ? '' : 's'} for '${lane.lane}': free slots but an empty ready queue.`,
+          kind: 'enqueue', type: 'restock', count, lane: topGap.lane,
+          detail: `Enqueue ${count} restock job${count === 1 ? '' : 's'} for '${topGap.lane}': the ready queue is empty and both the lane and fleet have room.`,
         };
         break;
       }

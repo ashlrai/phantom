@@ -167,6 +167,18 @@ describe('planFleetAutopilot', () => {
     expect(report.action).toMatchObject({ kind: 'enqueue', type: 'restock', count: 3, lane: 'devin' });
   });
 
+  it.each([
+    { running: 3, closed: false, expected: { kind: 'enqueue', type: 'restock', count: 1, lane: 'devin' } },
+    { running: 4, closed: false, expected: { kind: 'no-op', reason: 'capacity-bound' } },
+    { running: 3, closed: true, expected: { kind: 'no-op', reason: 'admission-closed' } },
+  ])('honors shared admission for restock with $running of 4 slots used and gate closed=$closed', ({ running, closed, expected }) => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 0, 3, 0)], 4, running, undefined, closed),
+    }));
+    expect(report.topGap).toMatchObject({ kind: 'missing-restock', evidence: { freeSlots: 3 } });
+    expect(report.action).toMatchObject(expected);
+  });
+
   it('does not propose restock while lane-open rows wait as open supply', () => {
     // Unhinted READY rows are launchable supply the market may place on any
     // lane — a free lane is fed-pending, not missing restock.
