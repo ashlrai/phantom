@@ -2800,14 +2800,14 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
  * `check_observed` failure means CI was observed red at least once, so
  * the verdict is false even when a later `checks_passed` boundary
  * exists. A `checks_passed` boundary establishes first-pass success only
- * when the ledger is uncut and records no failures or recut requests.
- * A recut request leaves it unclear whether the green boundary belongs
- * to the original candidate. A merge and individual check observations
- * leave the fallback verdict unknown.
+ * when the ledger is uncut and records no failures, retries or recuts.
+ * Retry and recut receipts leave the original check attempt unproven.
+ * A merge and individual check observations leave the fallback unknown.
  */
 function mergeQueueCiFirstPass(evidence: MergeQueueEvidence, truncated: boolean): boolean | null {
   if (evidence.check_failures > 0) return false;
-  return !truncated && evidence.checks_passed > 0 && evidence.recuts === 0 ? true : null;
+  const hasRecoveryEvidence = evidence.retries > 0 || evidence.retry_failures > 0 || evidence.recuts > 0;
+  return !truncated && evidence.checks_passed > 0 && !hasRecoveryEvidence ? true : null;
 }
 
 /**

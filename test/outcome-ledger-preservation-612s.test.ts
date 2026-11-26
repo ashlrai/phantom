@@ -2137,26 +2137,30 @@ describe('router outcome merge-events join', () => {
     expect(o?.ci_first_pass).toBeNull();
   });
 
-  it('withholds first-pass credit for a green PR with recorded recut evidence', async () => {
+  it.each([
+    { receipt: 'recut_requested', tally: 'recuts' },
+    { receipt: 'retry_requested', tally: 'retries' },
+    { receipt: 'retry_failed', tally: 'retry_failures' },
+  ])('withholds first-pass credit for a green PR with a $receipt receipt', async ({ receipt, tally }) => {
     const root = runsDir([
       { job: 'J1', phase: 'MERGED', pr_url: 'https://github.com/ashlrai/phantom/pull/61' },
       { job: 'J2', phase: 'MERGED', pr_url: 'https://github.com/ashlrai/phantom/pull/62' },
       { job: 'J3', phase: 'MERGED', pr_url: 'https://github.com/ashlrai/phantom/pull/63', ci_first_pass: true },
     ].map(row => JSON.stringify(row)).join('\n'));
     writeMergeEvents(root, [
-      mergeEvent(61, 'recut_requested'),
+      mergeEvent(61, receipt),
       mergeEvent(61, 'checks_passed'),
       mergeEvent(62, 'check_observed', { conclusion: 'failure' }),
-      mergeEvent(62, 'recut_requested'),
+      mergeEvent(62, receipt),
       mergeEvent(62, 'checks_passed'),
-      mergeEvent(63, 'recut_requested'),
+      mergeEvent(63, receipt),
       mergeEvent(63, 'checks_passed'),
     ]);
     const { outcomes } = await readRouterOutcomes({ runsDir: root });
     const byId = new Map(outcomes.map(outcome => [outcome.job_id, outcome]));
     expect(byId.get('J1')).toMatchObject({
       ci_first_pass: null,
-      merge_queue: { recuts: 1, checks_passed: 1 },
+      merge_queue: { [tally]: 1, checks_passed: 1 },
     });
     expect(byId.get('J2')?.ci_first_pass).toBe(false);
     expect(byId.get('J3')?.ci_first_pass).toBe(true);
