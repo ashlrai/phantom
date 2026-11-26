@@ -352,7 +352,9 @@ The same window's `route_decision` rows are folded into `overrides`:
 each waiting job counts once, by its latest in-window decision — how many
 jobs the market decided and how many left their hinted lane, by reason
 (`resource_fit`, `preferred_lane_fallback`, `unknown_preference`) and by
-hinted-to-chosen lane. The same collapsed decisions also fold their
+hinted-to-chosen lane. If global admission clears the chosen lane, the job
+counts as unrouted even when the journal retains its proposed override.
+The same collapsed decisions also fold their
 `rejected_lanes` into `rejections`: every lane the market refused each job,
 with the reason codes that say why (`missing_capability`, `quota_exhausted`,
 `saturated`, `lower_rank`, ...). `lanes` tallies each rejected lane per job

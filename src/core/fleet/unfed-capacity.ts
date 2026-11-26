@@ -520,8 +520,10 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const prev = latest.get(job);
     if (prev !== undefined && prev.ts >= ts) continue;
+    const chosen = laneField(row.chosen_lane);
     let override: LatestRouteDecision['override'] = null;
-    if (isRecord(row.override)) {
+    // Global admission can clear the chosen lane after the market proposed an override.
+    if (chosen !== null && isRecord(row.override)) {
       const from = row.override.from, to = row.override.to, reason = row.override.reason;
       if ((from === null || (typeof from === 'string' && LANE.test(from)))
           && typeof to === 'string' && LANE.test(to)
@@ -535,7 +537,7 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
       ts,
       override,
       preferred: laneField(row.preferred_lane),
-      chosen: laneField(row.chosen_lane),
+      chosen,
       workClass,
       rejected: rejectedLanes(row.rejected_lanes),
     });
