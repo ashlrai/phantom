@@ -16,15 +16,13 @@
  *
  * V3.10 — a restarted desktop sidecar is re-adopted at once. The desktop
  * shell restarts a crashed server in the background, hands the new tokens to
- * this page as `window.__ASHLR_TOKENS__` and fires `ashlr:sidecar-restarted`
- * (desktop/src-tauri/src/main.rs token_handoff_script). The old cookie died
- * with the old server, so without listening the page would sit until its
- * next 401 → failed renewal → SessionGate → adoption.
+ * this page over IPC. The `ashlr:sidecar-restarted` signal refreshes the
+ * tokens immediately rather than waiting for a 401 from the old cookie.
  */
 import { PRODUCT_NAME } from './product-brand.js';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { ToastProvider } from '../components/primitives/Toast.js';
-import { adoptInjectedTokens, markCheckComplete } from '../data/auth-store.js';
+import { adoptInjectedTokens, isDesktopSession, markCheckComplete } from '../data/auth-store.js';
 import { getQuerySnapshot, runQuery } from '../data/cache.js';
 import { useAuthPhase } from '../data/hooks.js';
 import { PhantomApp } from '../routes/verse/VerseApp.js';
@@ -73,7 +71,7 @@ export function preloadVerseFonts(doc: Document | null, display: boolean): void 
  */
 export function preloadVerseFirstPaint(
   doc: Document | null = typeof document === 'undefined' ? null : document,
-  signedIn: boolean = typeof window !== 'undefined' && window.__ASHLR_TOKENS__ !== undefined,
+  signedIn: boolean = isDesktopSession() || (typeof window !== 'undefined' && window.__ASHLR_TOKENS__ !== undefined),
 ): void {
   // The opening section's chunk starts in app/verse-first-paint.ts, imported below.
   preloadVerseFonts(doc, signedIn);
@@ -102,6 +100,7 @@ const firstPaintSurface: Promise<void> = typeof window === 'undefined'
  */
 const importSessionGate = () => import('../components/auth/SessionGate.js');
 const SessionGate = lazy(() => importSessionGate().then((m) => ({ default: m.SessionGate })));
+const DesktopSessionRecovery = lazy(() => importSessionGate().then((m) => ({ default: m.DesktopSessionRecovery })));
 function preloadSessionGate(): void {
   void importSessionGate().catch(() => undefined);
 }
@@ -145,6 +144,10 @@ export function PhantomConsoleApp() {
     let cancelled = false;
     void adoptInjectedTokens().then((adopted) => {
       if (cancelled || adopted) return;
+      if (isDesktopSession()) {
+        markCheckComplete(false);
+        return;
+      }
       return runQuery(verseBootstrapQuery.key, verseBootstrapQuery.fetch).then(() => {
         if (!cancelled) markCheckComplete(getQuerySnapshot(verseBootstrapQuery.key).status === 'success');
       });
@@ -157,7 +160,9 @@ export function PhantomConsoleApp() {
   if (phase === 'unauthenticated') {
     return (
       <Suspense fallback={<p className={styles.checking} role="status">Checking for an existing Phantom session…</p>}>
-        <SessionGate heading={`Connect to ${PRODUCT_NAME}`} command="phm console" subject={PRODUCT_NAME} mutationField pairing />
+        {isDesktopSession() ? <DesktopSessionRecovery /> : (
+          <SessionGate heading={`Connect to ${PRODUCT_NAME}`} command="phm console" subject={PRODUCT_NAME} mutationField pairing />
+        )}
       </Suspense>
     );
   }

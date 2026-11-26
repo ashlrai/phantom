@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../components/primitives/Button.js';
-import { SessionGate } from '../../components/auth/SessionGate.js';
+import { DesktopSessionRecovery, SessionGate } from '../../components/auth/SessionGate.js';
 import { MutationTokenDialog } from '../../components/auth/MutationTokenDialog.js';
-import { adoptInjectedTokens, markCheckComplete } from '../../data/auth-store.js';
+import { adoptInjectedTokens, isDesktopSession, markCheckComplete, refreshDesktopSession } from '../../data/auth-store.js';
 import { useAuthPhase } from '../../data/hooks.js';
 import { ApiError } from '../../data/client.js';
 import { pickDirectory } from '../verse/folder-picker.js';
@@ -20,14 +20,22 @@ declare global { interface Window { __ASHLR_OWNER_WINDOW__?: (mode: Mode | 'hide
 export function OwnerAssistApp() {
   const phase = useAuthPhase();
   useEffect(() => {
+    let live = true;
     const adopt = () => { void adoptInjectedTokens().then(ok => {
-      if (!ok) void ownerAssistApi.snapshot().then(() => markCheckComplete(true), () => markCheckComplete(false));
+      if (!live || ok) return;
+      if (isDesktopSession()) markCheckComplete(false);
+      else void ownerAssistApi.snapshot().then(() => { if (live) markCheckComplete(true); }, () => { if (live) markCheckComplete(false); });
     }); };
+    const restart = () => { void refreshDesktopSession(); };
     adopt();
-    window.addEventListener('ashlr:sidecar-restarted', adopt);
-    return () => window.removeEventListener('ashlr:sidecar-restarted', adopt);
+    window.addEventListener('ashlr:sidecar-restarted', restart);
+    return () => {
+      live = false;
+      window.removeEventListener('ashlr:sidecar-restarted', restart);
+    };
   }, []);
   if (phase === 'checking') return <p role="status">Connecting Owner Assist…</p>;
+  if (phase !== 'authenticated' && isDesktopSession()) return <DesktopSessionRecovery />;
   if (phase !== 'authenticated') return <SessionGate heading="Connect Owner Assist" subject="Owner Assist" command="phm verse" mutationField />;
   return <OwnerAssistPanel />;
 }

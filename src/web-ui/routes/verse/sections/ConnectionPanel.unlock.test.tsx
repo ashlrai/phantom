@@ -13,7 +13,11 @@ vi.mock('../../../data/hooks.js', () => ({
   useAuthPhase: () => 'authenticated',
   useMutationHold: () => ({ hasHold: mocks.hasHold, heldUntil: mocks.hasHold ? Date.now() + 1_200_000 : null, setToken: mocks.setToken }),
 }));
-vi.mock('../../../data/auth-store.js', () => ({ clearMutationToken: mocks.clearToken, clearReadSession: vi.fn() }));
+vi.mock('../../../data/auth-store.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../data/auth-store.js')>(),
+  clearMutationToken: mocks.clearToken,
+  clearReadSession: vi.fn(),
+}));
 vi.mock('../../../components/primitives/Toast.js', () => ({ useToast: () => ({ show: mocks.show }) }));
 vi.mock('./FleetSourcesRows.js', () => ({ FleetSourcesRows: () => null }));
 vi.mock('./PairedDevicesRows.js', () => ({ PairedDevicesRows: () => null }));

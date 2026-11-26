@@ -94,6 +94,8 @@ let rememberedReadToken: string | null = null;
 let renewal: Promise<boolean> | null = null;
 /** Desktop-injected tokens kept for re-adoption (see the host-injected section below). */
 let hostTokens: InjectedTokens | null = null;
+let desktopAdoption: Promise<boolean> | null = null;
+let desktopSignedOut = false;
 
 let state: AuthState = { phase: 'checking', checked: false, mutationTokenHeldUntil: null };
 const listeners = new Set<() => void>();
@@ -156,6 +158,8 @@ export async function clearReadSession(): Promise<void> {
     finally { expireNow(); }
     return;
   }
+  desktopSignedOut = isDesktopSession();
+  if (desktopSignedOut && desktopAdoption) await desktopAdoption;
   try {
     await fetch('/api/session', {
       method: 'DELETE',
@@ -205,26 +209,31 @@ function expireNow(): void {
  * (and by sse.ts on `session-expired`). With a remembered read token the
  * cookie is re-issued silently and the phase never flips; the failed call's
  * own retry/reconnect (SSE backoff, the next refetch) then succeeds. Only
- * when renewal fails (server restarted with fresh tokens) does the gate show.
+ * when renewal fails does the browser gate or desktop recovery screen show.
  */
 export function reportSessionExpired(): void {
   if (state.phase !== 'authenticated') return;
   if (isRemoteMobileMode()) { expireNow(); return; }
-  if (rememberedReadToken) {
+  if (isDesktopSession() || rememberedReadToken) {
     void renewReadSession();
     return;
   }
   expireNow();
 }
 
-/** Re-exchange the remembered read token for a fresh cookie; one flight at a time. */
+/** Refresh from the desktop host or re-exchange the browser's remembered read token. */
 export function renewReadSession(): Promise<boolean> {
   if (renewal) return renewal;
   const token = rememberedReadToken;
-  if (!token) return Promise.resolve(false);
+  const desktop = isDesktopSession();
+  if (!desktop && !token) return Promise.resolve(false);
   renewal = (async () => {
     try {
-      await establishReadSession(token);
+      if (desktop) {
+        if (!await adoptInjectedTokens()) throw new Error('Desktop session unavailable.');
+      } else if (token) {
+        await establishReadSession(token);
+      }
       // Whatever is on screen and 401ed while the ticket was lapsed refetches
       // against the new cookie. Only what is OBSERVED: an entry nobody reads
       // (a surface the idle warm-up fetched but the operator never opened)
@@ -249,6 +258,7 @@ export function forgetRememberedTokens(): void {
   rememberedReadToken = null;
   hostTokens = null;
   renewal = null;
+  desktopSignedOut = false;
 }
 
 export function markCheckComplete(authenticated: boolean): void {
@@ -257,14 +267,11 @@ export function markCheckComplete(authenticated: boolean): void {
 
 // ---------------------------------------------------------------------------
 // Host-injected tokens (desktop wrapper). The Tauri shell starts the server
-// itself and hands both tokens to the page through an initialization script
-// (`window.__ASHLR_TOKENS__`, see desktop/README.md) so the operator never
-// pastes them. The object is removed from `window` before either token is
-// used and kept in this module's memory instead (`hostTokens`), because the
-// desktop operator has no terminal to paste from: when the 15-minute cookie
-// lapses or the gate re-mounts, adoption re-runs from memory. The read token
-// is exchanged for the cookie exactly like a typed one and the mutation token
-// goes into the memory-only hold. Nothing is persisted and nothing is logged.
+// itself. The desktop command returns the live pair, even after the sidecar
+// restarts or a new document replaces the page's in-memory state. Older hosts
+// use the initialization script (`window.__ASHLR_TOKENS__`), which is consumed
+// once and cleared from the page. The read token is exchanged for a cookie;
+// the separate mutation token goes into the memory-only hold.
 // ---------------------------------------------------------------------------
 
 export interface InjectedTokens {
@@ -277,6 +284,19 @@ declare global {
   interface Window {
     __ASHLR_TOKENS__?: InjectedTokens;
   }
+}
+
+function desktopBridge() {
+  const win = typeof window === 'undefined' ? undefined : window;
+  if (win?.location.origin !== 'http://127.0.0.1:7777' || isRemoteMobileMode()) return;
+  const bridge = (win as Window & {
+    __TAURI_INTERNALS__?: { invoke?: (command: string) => Promise<InjectedTokens | null> };
+  }).__TAURI_INTERNALS__;
+  return typeof bridge?.invoke === 'function' ? bridge.invoke.bind(bridge) : undefined;
+}
+
+export function isDesktopSession(): boolean {
+  return desktopBridge() !== undefined;
 }
 
 /**
@@ -299,15 +319,40 @@ export function takeInjectedTokens(): InjectedTokens | null {
 }
 
 /**
- * Establish the read session (and set the mutation hold) from host-injected
- * tokens. Resolves true when a session was established; false when nothing
- * was injected or the server rejected the read token (the caller then falls
- * back to the normal SessionGate flow — the failure is never surfaced with
- * the token in it).
+ * Establish the read session and mutation hold from the desktop host.
+ * Resolves false when no credentials are available or the exchange fails.
  */
 export async function adoptInjectedTokens(): Promise<boolean> {
   if (isRemoteMobileMode()) return false;
-  const injected = takeInjectedTokens();
+  const bridge = desktopBridge();
+  if (!bridge) return exchangeHostTokens(takeInjectedTokens());
+  if (desktopSignedOut) return false;
+  if (desktopAdoption) return desktopAdoption;
+  desktopAdoption = (async () => {
+    const injected = takeInjectedTokens();
+    let tokens: InjectedTokens | null;
+    try {
+      tokens = await bridge('desktop_session_tokens');
+    } catch {
+      // Older desktop hosts only supply the startup injection.
+      tokens = injected;
+    }
+    return !desktopSignedOut && await exchangeHostTokens(tokens);
+  })().finally(() => { desktopAdoption = null; });
+  return desktopAdoption;
+}
+
+export async function refreshDesktopSession(): Promise<boolean> {
+  if (desktopAdoption) await desktopAdoption;
+  return adoptInjectedTokens();
+}
+
+export function reconnectDesktopSession(): Promise<boolean> {
+  desktopSignedOut = false;
+  return refreshDesktopSession();
+}
+
+async function exchangeHostTokens(injected: InjectedTokens | null): Promise<boolean> {
   if (!injected) return false;
   try {
     await establishReadSession(injected.readToken);
@@ -317,6 +362,7 @@ export async function adoptInjectedTokens(): Promise<boolean> {
     return false;
   }
   if (injected.token && /^[a-f0-9]{64}$/.test(injected.token.trim())) setMutationToken(injected.token.trim(), { host: true });
+  else if (isDesktopSession() || mutationHeldByHost) clearMutationToken();
   return true;
 }
 

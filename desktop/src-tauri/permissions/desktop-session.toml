@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-desktop-session-tokens"
+description = "Read the current credentials of the desktop-owned sidecar."
+commands.allow = ["desktop_session_tokens"]

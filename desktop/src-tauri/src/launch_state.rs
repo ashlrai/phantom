@@ -138,7 +138,7 @@ impl LaunchFailure {
                     "Something is already listening on 127.0.0.1:{port}, so Phantom could not start its own server there."
                 ),
                 format!(
-                    "If that is your own `ashlr verse` or `ashlr serve`, use it — you will be asked to paste its read token once. Otherwise find the process with `lsof -ti tcp:{port}`, stop it, and try again."
+                    "Stop the existing `ashlr verse` or `ashlr serve` and retry to let Phantom sign in automatically. If you don't know what is listening, find the process with `lsof -ti tcp:{port}`."
                 ),
                 vec![ACTION_USE_RUNNING, ACTION_RETRY_SECONDARY, ACTION_QUIT],
             ),

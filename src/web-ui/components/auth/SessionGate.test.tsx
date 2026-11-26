@@ -38,6 +38,24 @@ describe('SessionGate', () => {
     expect(Object.values(sessionStorage)).not.toContain(mutation);
   });
 
+  it('uses desktop recovery rather than redeeming a browser pairing link in the desktop shell', async () => {
+    const dom = (globalThis as unknown as { jsdom: { reconfigure(options: { url: string }): void } }).jsdom;
+    const previousUrl = window.location.href;
+    const invoke = vi.fn().mockResolvedValue(null);
+    vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+    dom.reconfigure({ url: `http://127.0.0.1:7777/verse/#/pair/${'q'.repeat(43)}` });
+    try {
+      render(<SessionGate pairing mutationField />);
+
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith('desktop_session_tokens'));
+      expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+      expect(screen.queryByText('Enter tokens manually')).not.toBeInTheDocument();
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      dom.reconfigure({ url: previousUrl });
+    }
+  });
+
   it('adopts host-injected window.__ASHLR_TOKENS__ without a paste and clears them from the page', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
