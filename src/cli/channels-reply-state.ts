@@ -15,6 +15,10 @@ export async function cmdChannelsReplyState(args: string[]): Promise<number> {
   if (rest.length !== 1 || !id || id.startsWith('-') || !id.trim()) { console.error(USAGE); return 2; }
   const state = readReplyState(id, { root: join(ashlrHome(), 'fleet'), now: Date.now() });
   let text = `${state.text}\nEvidence as of: ${state.asOf}`;
+  if (!json && state.state === 'RUNNING' && state.evidence.running) {
+    const clean = (value: string) => scrubSecrets(value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' '));
+    text += `\nRunning evidence:\nSource: ${clean(state.evidence.running.source)}\nRecorded at: ${clean(state.evidence.running.at)}`;
+  }
   if (!json && state.state === 'VERIFIED' && state.evidence.verified) {
     const proof = state.evidence.verified;
     const fields = [['PR', proof.pr], ['Head', proof.head], ['Tests', proof.tests], ['Artifact', proof.artifact]] as const;
