@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto';
 
 export const MAX_BATCH = 8;
 /** Largest declared `size<=` that still counts as a small task. */
-export const SMALL_SIZE = 200;
+const SMALL_SIZE = 200;
 
 export type KeepReason = 'P0' | 'frontier' | 'fixup' | 'leader' | 'not small' | 'alone';
 export interface CoalesceBatch {

@@ -18,9 +18,9 @@ import { dirname } from 'node:path';
 import { headerValue, isAllowedHost, requestUrl, safeEqual, sendJson } from '../web/read-session.js';
 import { SpawnRejection, type SpawnResult } from './decompose.js';
 
-export const SPAWN_INGEST_PATH = '/v1/spawn';
-export const SPAWN_INGEST_HEALTH = '/v1/health';
-export const SPAWN_INGEST_MAX_BODY = 64 * 1024;
+const SPAWN_INGEST_PATH = '/v1/spawn';
+const SPAWN_INGEST_HEALTH = '/v1/health';
+const SPAWN_INGEST_MAX_BODY = 64 * 1024;
 
 export interface SpawnIngestOptions {
   /** Applies a validated proposal — typically `store.propose`. */

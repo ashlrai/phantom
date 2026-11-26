@@ -18,12 +18,12 @@ import { extractJobPaths } from '../fleet/job-precheck.js';
 import { commandNouns, dupcheckGoal } from './dupcheck.js';
 
 const run = promisify(execFile);
-export const GIT_DUPCHECK_SCHEMA = 'jobs.dupcheck.v1';
+const GIT_DUPCHECK_SCHEMA = 'jobs.dupcheck.v1';
 export type GitDupcheckVerdict = 'new' | 'partly on master' | 'likely done';
 export type GitAnchorKind = 'command' | 'flag' | 'file' | 'name';
 export interface GitAnchor { kind: GitAnchorKind; text: string; found: boolean; where: string | null }
 export interface GitDupcheckReport {
-  schema: typeof GIT_DUPCHECK_SCHEMA;
+  schema: 'jobs.dupcheck.v1';
   verdict: GitDupcheckVerdict;
   summary: string;
   /** The ref that was searched, e.g. origin/master; null when the repo has none of the candidates. */
@@ -50,7 +50,7 @@ async function git(repo: string, args: string[]): Promise<{ ok: boolean; out: st
 }
 
 /** origin/master, else master, else HEAD: bridge worktrees often have no origin remote. */
-export async function resolveRef(repo: string): Promise<string | null> {
+async function resolveRef(repo: string): Promise<string | null> {
   for (const ref of ['origin/master', 'master', 'HEAD']) if ((await git(repo, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])).out.trim()) return ref;
   return null;
 }
@@ -58,7 +58,7 @@ export async function resolveRef(repo: string): Promise<string | null> {
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Pure shape of the report from checked anchors. */
-export function gitDupcheckVerdict(anchors: GitAnchor[], ref: string | null): GitDupcheckReport {
+function gitDupcheckVerdict(anchors: GitAnchor[], ref: string | null): GitDupcheckReport {
   const found = anchors.filter(a => a.found).map(a => a.text), missing = anchors.filter(a => !a.found).map(a => a.text);
   const at = ref ?? 'the repo';
   let verdict: GitDupcheckVerdict, summary: string;

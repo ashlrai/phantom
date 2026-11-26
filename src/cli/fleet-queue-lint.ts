@@ -2,13 +2,14 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { lintQueue } from '../core/queue/lint.js';
+import { isPlainRecord } from '../core/queue/schema.js';
 
 const usage = 'Usage: ashlr fleet queue-lint [--json]';
 
 function dispatcherInvalidCount(status: string): number | null {
   try {
     const parsed: unknown = JSON.parse(status);
-    const count = parsed !== null && typeof parsed === 'object' && 'invalid_queue_lines' in parsed ? parsed.invalid_queue_lines : undefined;
+    const count = isPlainRecord(parsed) ? parsed.invalid_queue_lines : undefined;
     return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 ? count : null;
   } catch {
     return null;

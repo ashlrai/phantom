@@ -2,11 +2,11 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { compactQueueVisits, queueJournalPath, readQueueVisits, recordQueueVisit } from '../core/queue/journal.js';
+import { appendQueueVisits, compactQueueVisits, queueJournalPath, readQueueVisits } from '../core/queue/journal.js';
 import { isQueueVisit, queueVisitKey } from '../core/queue/stats.js';
 import { planVisitSync, queueReadyVisits, queueVisitsFromJobs, VISIT_SYNC_SCHEMA } from '../core/queue/visit-sync.js';
 
-export const QUEUE_VISITS_SYNC_USAGE = `Usage: phm queue visits-sync [--jobs <path>] [--queue <path>] [--journal <path>] [--apply] [--json]
+const QUEUE_VISITS_SYNC_USAGE = `Usage: phm queue visits-sync [--jobs <path>] [--queue <path>] [--journal <path>] [--apply] [--json]
 Folds the jobs ledger (default <runs>/metrics/jobs.jsonl) and the live router
 queue (default <runs>/queue/router-queue.md) into station visits and appends new
 or progressed snapshots to the visit journal (default ~/.ashlr/queue/visits.jsonl)
@@ -57,7 +57,7 @@ export async function cmdQueueVisitsSync(args: string[]): Promise<number> {
     let compacted = false;
     let dropped = 0;
     if (parsed.apply) {
-      for (const visit of plan.append) { await recordQueueVisit(visit, journalPath); appended++; }
+      appended = await appendQueueVisits(plan.append, journalPath);
       // Same bound the daemon pass enforces: the derived visits are the keys
       // still provable from the evidence windows, so they always survive.
       const compaction = await compactQueueVisits(journalPath, {

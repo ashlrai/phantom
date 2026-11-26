@@ -1,5 +1,6 @@
 import { fanoutAskV1 } from '../core/ask/fanout.js';
 import { completeRouterJob, enqueueRouterFollowup, enqueueRouterRecut, readRouterQueue, routerQueueAskFanout, routerQueueStats } from '../core/fleet/router-queue.js';
+import { readQueueStream } from '../core/queue/store.js';
 
 interface QueueIO {
   input: AsyncIterable<string | Buffer>;
@@ -32,15 +33,12 @@ export async function cmdRouterQueue(args: string[], io: QueueIO = { input: proc
   }
   try {
     if (command === 'merged' || command === 'conflicted' || command === 'ask') {
-      const chunks: Buffer[] = [];
-      let bytes = 0;
-      for await (const chunk of io.input) {
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        bytes += buffer.length;
-        if (bytes > STDIN_CAP[command]) throw new Error('oversized input record');
-        chunks.push(buffer);
-      }
-      const record: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks)));
+      const text = await readQueueStream(io.input, {
+        maxBytes: STDIN_CAP[command],
+        maxBytesError: 'oversized input record',
+        fatalUtf8: true,
+      });
+      const record: unknown = JSON.parse(text);
       io.output(command === 'merged' ? enqueueRouterFollowup(record)
         : command === 'conflicted' ? enqueueRouterRecut(record) : routerQueueAskFanout(record, fanoutAskV1));
     } else if (command === 'read') {

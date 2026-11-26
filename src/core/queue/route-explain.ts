@@ -1,19 +1,19 @@
 import { constants } from 'node:fs';
 import { planFallbackChain, readFallbackUsed } from '../router/fallback.js';
 import { open, readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { defaultRunsDir } from '../fleet/landed-closes-read.js';
 import { decidePairing, type PairingLane } from '../routing/pairing.js';
 import { readTypedDecisions } from '../router/typed-decisions.js';
 import { buildShadowPolicyReport } from '../router/shadow-policy.js';
 import { validResetCalendarPool } from '../routing/reset-pressure.js';
 import { loadRouteSources } from '../routing/decision-candidates.js';
 import { withRunwayYield } from './route-yield.js';
+import { isPlainRecord } from './schema.js';
 import { decideRoute } from '../routing/decision.js';
 import { modelModeTierSchema, routeRequestSchema, routeModelSchema } from '../routing/decision-schema.js';
 
 export async function postureEvidence(root: string) {
-  const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
   const projection = (v: unknown) => v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
   try {
     const fd = await open(join(root, 'metrics/work-market.jsonl'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -29,18 +29,18 @@ export async function postureEvidence(root: string) {
     } finally { await fd.close(); }
     const rows: Record<string, unknown>[] = [];
     for (const line of tail.split('\n').reverse()) {
-      try { const row: unknown = JSON.parse(line); if (object(row) && row.schema === 'work-market.v1') rows.push(row); } catch { /* Partial journal rows are not evidence. */ }
+      try { const row: unknown = JSON.parse(line); if (isPlainRecord(row) && row.schema === 'work-market.v1') rows.push(row); } catch { /* Partial journal rows are not evidence. */ }
     }
     const row = rows.find(r => r.event === 'posture') ?? rows.find(r => r.event === 'route_decision');
     const input = row?.event === 'posture' ? row.lanes : row?.ranking_inputs;
-    if (!object(input) || !Object.keys(input).length) return null;
+    if (!isPlainRecord(input) || !Object.keys(input).length) return null;
     const lanes: Record<string, { posture: string; postureReason: string; projectedUnusedPct: number | null; hoursToReset: number | null;
       observedAt?: string; lane?: string; accountId?: string; model?: string; windowStart?: string; resetAt?: string;
       costClass?: string; costClassReason?: string; zeroCost?: boolean; freePreview?: boolean; previewExpiresAt?: string; allowance?: Record<string, number | null> }> = {};
     for (const [lane, value] of Object.entries(input)) {
-      if (!object(value) || !['burn', 'balanced', 'preserve'].includes(String(value.posture)) ||
+      if (!isPlainRecord(value) || !['burn', 'balanced', 'preserve'].includes(String(value.posture)) ||
           typeof value.posture_reason !== 'string' || !value.posture_reason) return null;
-      const source = row?.event === 'posture' ? value : object(value.spend_down) ? value.spend_down : {};
+      const source = row?.event === 'posture' ? value : isPlainRecord(value.spend_down) ? value.spend_down : {};
       const unused = source.projected_unused_pct ?? null, hours = source.hours_to_reset ?? null;
       if (!projection(unused) || !projection(hours)) return null;
       lanes[lane] = { posture: String(value.posture), postureReason: value.posture_reason,
@@ -56,7 +56,7 @@ export async function postureEvidence(root: string) {
       if (typeof value.zero_cost === 'boolean') lanes[lane].zeroCost = value.zero_cost;
       if (typeof value.free_preview === 'boolean') lanes[lane].freePreview = value.free_preview;
       if (typeof value.preview_expires_at === 'string' && Number.isFinite(Date.parse(value.preview_expires_at))) lanes[lane].previewExpiresAt = value.preview_expires_at;
-      if (object(value.allowance)) {
+      if (isPlainRecord(value.allowance)) {
         const allowance = value.allowance;
         lanes[lane].allowance = Object.fromEntries(['used', 'limit', 'in_flight', 'reserve', 'session_cap', 'headroom']
           .map(key => {
@@ -71,7 +71,7 @@ export async function postureEvidence(root: string) {
 }
 
 /** Counts accepted pool changes, excluding initial assignment and held proposals. */
-export async function explainRoutes(root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), now = Date.now() / 1000) {
+export async function explainRoutes(root = defaultRunsDir(), now = Date.now() / 1000) {
   // Quality receipts are independent of per-job route residency and its move count.
   let laneQuality: unknown[] | null = null;
   let pairing: ReturnType<typeof decidePairing> | null = null;

@@ -45,15 +45,49 @@ export interface QueueDocument {
   /** Original lines, including terminators, retain comments and unknown router fields. */
   source?: { text: string; jobs: QueueJob[] };
 }
+
+/** Canonical jobs.jsonl dialect field sets shared by queue readers (mirrors dispatchd `_vc_pick`). */
+export const QUEUE_LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+export const QUEUE_LEDGER_EVENT_KEYS = ['event', 'type', 'kind'] as const;
+export const QUEUE_LEDGER_PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
+export const QUEUE_LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+export const QUEUE_LEDGER_PR_KEYS = ['pr', 'pr_url', 'prUrl', 'url', 'html_url'] as const;
+
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function nonEmptyTrimmedString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+}
+
+export function pickLedgerString(row: Record<string, unknown>, keys: readonly string[]): string | null {
+  for (const key of keys) {
+    const value = nonEmptyTrimmedString(row[key]);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+const READY_QUEUE_LINE = /^- READY\s+([A-Za-z0-9][A-Za-z0-9._-]*)(?=\s|$)/;
+const READY_QUEUE_ENQ = /(?:^|[\s,(])enq=(\d+)(?=$|[\s,)])/;
+
+/** Parse a live `- READY <id>` line from router-queue.md plus its optional `enq=<unix-seconds>` token. */
+export function parseReadyQueueLine(line: string): { id: string; enqSeconds: number | null } | null {
+  const match = READY_QUEUE_LINE.exec(line);
+  if (!match) return null;
+  const token = READY_QUEUE_ENQ.exec(line);
+  return { id: match[1]!, enqSeconds: token ? Number(token[1]) : null };
+}
+
 const TIER_ORDER: readonly string[] = ['fast', 'mid', 'work', 'frontier'];
-const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const nonempty = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
 const timestamp = (v: unknown): boolean => typeof v === 'string' && /^\d{4}-\d\d-\d\dT/.test(v) && Number.isFinite(Date.parse(v));
 export function validateQueue(value: unknown): asserts value is QueueDocument {
-  if (!record(value) || value.schema !== 'queue.v1' || !Array.isArray(value.jobs)) throw new Error('Expected queue.v1 document');
+  if (!isPlainRecord(value) || value.schema !== 'queue.v1' || !Array.isArray(value.jobs)) throw new Error('Expected queue.v1 document');
   const ids = new Set<string>();
   for (const job of value.jobs) {
-    if (!record(job) || !nonempty(job.id) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(job.id)) throw new Error('Invalid job id');
+    if (!isPlainRecord(job) || !nonempty(job.id) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(job.id)) throw new Error('Invalid job id');
     if (ids.has(job.id)) throw new Error(`Duplicate job: ${job.id}`);
     ids.add(job.id);
     if (!QUEUE_STATUSES.includes(job.status as QueueStatus)) throw new Error(`Invalid status: ${job.id}`);
@@ -72,7 +106,7 @@ export function validateQueue(value: unknown): asserts value is QueueDocument {
     if (job.impact !== undefined && (typeof job.impact !== 'number' || !Number.isFinite(job.impact))) throw new Error(`Invalid impact: ${job.id}`);
     if (typeof job.acceptance !== 'string') throw new Error(`Invalid acceptance: ${job.id}`);
     if (!Array.isArray(job.deps) || job.deps.some(d => !nonempty(d) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(d) || d === job.id) || new Set(job.deps).size !== job.deps.length) throw new Error(`Invalid deps: ${job.id}`);
-    if (!Array.isArray(job.claims) || job.claims.some(c => !record(c) || !nonempty(c.owner) || !timestamp(c.claimedAt) || (c.finishedAt !== undefined && (!timestamp(c.finishedAt) || Date.parse(c.finishedAt as string) < Date.parse(c.claimedAt as string))))) throw new Error(`Invalid claims: ${job.id}`);
+    if (!Array.isArray(job.claims) || job.claims.some(c => !isPlainRecord(c) || !nonempty(c.owner) || !timestamp(c.claimedAt) || (c.finishedAt !== undefined && (!timestamp(c.finishedAt) || Date.parse(c.finishedAt as string) < Date.parse(c.claimedAt as string))))) throw new Error(`Invalid claims: ${job.id}`);
     if (job.replayOf !== undefined && (!nonempty(job.replayOf) || job.replayOf === job.id || !timestamp(job.replayedAt))) throw new Error(`Invalid replay lineage: ${job.id}`);
     if (job.prUrl !== undefined) {
       if (typeof job.prUrl !== 'string' || !/^https:\/\/[^\s]+$/.test(job.prUrl)) throw new Error(`Invalid PR URL: ${job.id}`);
@@ -86,12 +120,12 @@ export function validateQueue(value: unknown): asserts value is QueueDocument {
   if (value.raw !== undefined) {
     if (!Array.isArray(value.raw)) throw new Error('Invalid raw records');
     for (const entry of value.raw) {
-      if (!record(entry) || !Number.isInteger(entry.line) || (entry.line as number) < 1 || !nonempty(entry.text) || !nonempty(entry.warning)) throw new Error('Invalid raw record');
+      if (!isPlainRecord(entry) || !Number.isInteger(entry.line) || (entry.line as number) < 1 || !nonempty(entry.text) || !nonempty(entry.warning)) throw new Error('Invalid raw record');
     }
   }
   if (value.warnings !== undefined && (!Array.isArray(value.warnings) || value.warnings.some(w => !nonempty(w)))) throw new Error('Invalid warnings');
   if (value.source !== undefined) {
-    if (!record(value.source) || typeof value.source.text !== 'string') throw new Error('Invalid queue source');
+    if (!isPlainRecord(value.source) || typeof value.source.text !== 'string') throw new Error('Invalid queue source');
     validateQueue({ schema: 'queue.v1', jobs: value.source.jobs });
   }
 }

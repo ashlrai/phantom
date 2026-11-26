@@ -23,7 +23,7 @@ import { parseReadyRows, readReadyText } from '../fleet/ready-row-edit.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export const DUPCHECK_SCHEMA = 'queue.dupcheck.v1';
-export const DUPCHECK_WINDOW_DAYS = 7;
+const DUPCHECK_WINDOW_DAYS = 7;
 const CLI_REFERENCE = 'docs/CLI-REFERENCE.md';
 const MAX_GOAL = 12_000;
 const MAX_MERGED = 5_000;
@@ -240,7 +240,7 @@ export interface DupcheckLoadDeps {
   help?: readonly { cmd: string; desc: string }[];
 }
 
-export async function loadDupcheckSources(deps: DupcheckLoadDeps = {}): Promise<DupcheckSources> {
+async function loadDupcheckSources(deps: DupcheckLoadDeps = {}): Promise<DupcheckSources> {
   const root = deps.root ?? process.cwd(), gaps: string[] = [];
   let help = deps.help;
   if (!help) { try { help = (await import('../../cli/help.js')).HELP_ENTRIES; } catch { gaps.push('The CLI command list could not be loaded.'); } }
@@ -256,7 +256,7 @@ export async function loadDupcheckSources(deps: DupcheckLoadDeps = {}): Promise<
 export class DupcheckInputError extends Error {}
 
 /** `<job-id|prompt-file>` -> the prompt text. A file wins; otherwise the id is looked up in queue/ready.tsv. */
-export async function readDupcheckInput(input: string, deps: { cwd?: string; runsDir?: string } = {}): Promise<{ text: string; jobId: string | null; kind: 'job' | 'file' }> {
+async function readDupcheckInput(input: string, deps: { cwd?: string; runsDir?: string } = {}): Promise<{ text: string; jobId: string | null; kind: 'job' | 'file' }> {
   const path = resolve(deps.cwd ?? process.cwd(), input);
   const idLike = /^RQ-[A-Za-z0-9._-]+$/.test(input);
   if (!idLike || existsSync(path)) {

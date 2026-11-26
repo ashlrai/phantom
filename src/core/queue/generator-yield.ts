@@ -1,7 +1,16 @@
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isNodePoolLedgerRow, ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
+import { defaultRunsDir } from '../fleet/landed-closes-read.js';
+import {
+  isPlainRecord,
+  nonEmptyTrimmedString,
+  pickLedgerString,
+  QUEUE_LEDGER_EVENT_KEYS,
+  QUEUE_LEDGER_JOB_KEYS,
+  QUEUE_LEDGER_PHASE_KEYS,
+  QUEUE_LEDGER_PR_KEYS,
+} from './schema.js';
 
 export interface GenerationDecision {
   job: string; src: string; event: 'drafted' | 'rejected';
@@ -17,27 +26,10 @@ export interface GeneratorYieldReport {
 }
 type Job = { generator: string | null; explicit: boolean; empty: boolean | null; pr: boolean; merged: boolean; diff: number | null; tokens: number | null;
   launched: boolean };
-const string = (v: unknown): string | null => typeof v === 'string' && v.trim() ? v.trim() : null;
 const count = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
-/** jobs.jsonl field dialects, the same sets dispatchd `_vc_pick` accepts:
- * ids job|job_id|jobId|id, events event|type|kind, phases
- * state|outcome|status plus producer aliases, timestamps
- * ts|timestamp|at|startedAt|time|mergedAt|closedAt|recordedAt|updatedAt, and
- * PR links pr|pr_url|prUrl|url|html_url. */
-const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
-const EVENT_KEYS = ['event', 'type', 'kind'] as const;
-const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
-const PR_KEYS = ['pr', 'pr_url', 'prUrl', 'url', 'html_url'] as const;
-const pickString = (r: Record<string, unknown>, keys: readonly string[]): string | null => {
-  for (const key of keys) {
-    const value = string(r[key]);
-    if (value !== null) return value;
-  }
-  return null;
-};
 function terminalVerdict(row: Record<string, unknown>, event: string | undefined): 'MERGED' | 'CLOSED' | null {
-  for (const key of PHASE_KEYS) {
-    const phase = string(row[key])?.toUpperCase();
+  for (const key of QUEUE_LEDGER_PHASE_KEYS) {
+    const phase = nonEmptyTrimmedString(row[key])?.toUpperCase();
     if (phase === 'MERGED' || phase === 'CLOSED') return phase;
   }
   if (event === 'merged') return 'MERGED';
@@ -65,13 +57,13 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
       if (!line.trim()) continue;
       let value: unknown;
       try { value = JSON.parse(line); } catch { malformedLines++; continue; }
-      if (!value || typeof value !== 'object' || Array.isArray(value)) { malformedLines++; continue; }
-      const r = value as Record<string, unknown>;
+      if (!isPlainRecord(value)) { malformedLines++; continue; }
+      const r = value;
       if (isNodePoolLedgerRow(r)) continue;
-      const event = pickString(r, EVENT_KEYS)?.toLowerCase();
+      const event = pickLedgerString(r, QUEUE_LEDGER_EVENT_KEYS)?.toLowerCase();
       const isDecision = event === 'drafted' || event === 'rejected';
       if (isGenerationJournal !== isDecision) continue;
-      const id = pickString(r, JOB_ID_KEYS);
+      const id = pickLedgerString(r, QUEUE_LEDGER_JOB_KEYS);
       const terminal = isDecision ? null : terminalVerdict(r, event);
       // Reconciled outcomes can retain the original publish timestamp.
       const at = ledgerEventTs(r, terminal);
@@ -91,7 +83,7 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
       continue;
     }
     if (event === 'drafted' || event === 'rejected') {
-      const source = string(r.src) ?? 'unknown', group = generation.get(source) ?? new Map<string, { drafted: boolean; reasons: Set<string> }>();
+      const source = nonEmptyTrimmedString(r.src) ?? 'unknown', group = generation.get(source) ?? new Map<string, { drafted: boolean; reasons: Set<string> }>();
       const decision = group.get(id) ?? { drafted: false, reasons: new Set<string>() };
       if (event === 'drafted') {
         decision.drafted = true;
@@ -99,17 +91,17 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
         sources.add(source);
         drafts.set(id, sources);
       }
-      else decision.reasons.add(string(r.reason) ?? 'unknown');
+      else decision.reasons.add(nonEmptyTrimmedString(r.reason) ?? 'unknown');
       group.set(id, decision); generation.set(source, group); continue;
     }
     const job = jobs.get(id) ?? { generator: null, explicit: false, empty: null, pr: false, merged: false, diff: null, tokens: null, launched: false };
-    const src = string(r.src);
+    const src = nonEmptyTrimmedString(r.src);
     if (src) { job.generator = src; job.explicit = true; }
     else if (!job.explicit) job.generator = generator(id);
-    const phase = pickString(r, PHASE_KEYS);
+    const phase = pickLedgerString(r, QUEUE_LEDGER_PHASE_KEYS);
     if (launch) job.launched = true;
     if (event === 'batch_claim') {
-      const batch = pickString(r, ['batch', 'batch_id', 'batchId']);
+      const batch = pickLedgerString(r, ['batch', 'batch_id', 'batchId']);
       if (batch?.startsWith('RQ-BATCH-')) {
         const batches = memberBatches.get(id) ?? new Map<string, number>();
         if (!batches.has(batch)) batches.set(batch, at);
@@ -129,7 +121,7 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
         job.empty = empty;
       }
     }
-    if (pickString(r, PR_KEYS) !== null) job.pr = true;
+    if (pickLedgerString(r, QUEUE_LEDGER_PR_KEYS) !== null) job.pr = true;
     if (terminal === 'MERGED') { job.merged = true; job.pr = true; }
     job.diff = count(r.diff_lines) ?? job.diff;
     job.tokens = count(r.tokens_total ?? r.tokens) ?? job.tokens;
@@ -169,7 +161,7 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   }).sort((a, b) => a.generator.localeCompare(b.generator));
   return { schema: 'queue.generator-yield.v1', sinceHours: hours, known: true, jobsKnown: true, generationKnown: true, malformedLines, generators };
 }
-export async function readGeneratorYield(runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), hours = 24, now = Date.now()): Promise<GeneratorYieldReport> {
+export async function readGeneratorYield(runsDir = defaultRunsDir(), hours = 24, now = Date.now()): Promise<GeneratorYieldReport> {
   const [jobs, decisions] = await Promise.allSettled([
     readFile(join(runsDir, 'metrics', 'jobs.jsonl'), 'utf8'),
     readFile(join(runsDir, 'metrics', 'generation.jsonl'), 'utf8'),
