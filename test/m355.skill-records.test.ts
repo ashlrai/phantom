@@ -646,6 +646,36 @@ describe('M355 skill records', () => {
     expectReadDenied(unreadable);
   });
 
+  it('marks a skill-use sample degraded when distinct events exceed the requested limit', () => {
+    const older = useEvent({ eventId: 'older-use' });
+    const newer = useEvent({ eventId: 'newer-use' });
+    recordSkillUseEvent([older, newer, newer]);
+
+    expect(readSkillUseEventsWithDiagnostics({ limit: 2 })).toMatchObject({
+      sourceState: 'healthy',
+      eventState: 'present',
+      events: [{ eventId: newer.eventId }, { eventId: older.eventId }],
+    });
+    expect(readSkillUseEventsWithDiagnostics({ limit: 1 })).toMatchObject({
+      sourceState: 'degraded',
+      eventState: 'degraded',
+      events: [{ eventId: newer.eventId }],
+    });
+  });
+
+  it('marks a skill-use sample degraded when replays exhaust the scan budget', () => {
+    const replay = useEvent({ eventId: 'recent-replay' });
+    recordSkillUseEvent(Array.from({ length: 4 }, () => replay));
+    expect(readSkillUseEventsWithDiagnostics({ limit: 1 }).eventState).toBe('present');
+
+    recordSkillUseEvent(replay);
+    expect(readSkillUseEventsWithDiagnostics({ limit: 1 })).toMatchObject({
+      sourceState: 'degraded',
+      eventState: 'degraded',
+      events: [{ eventId: replay.eventId }],
+    });
+  });
+
   it('deduplicates exact replays and quarantines conflicting event ids', () => {
     const replay = useEvent({ eventId: 'stable-replay' });
     recordSkillUseEvent([
