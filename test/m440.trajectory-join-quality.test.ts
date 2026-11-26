@@ -324,6 +324,22 @@ describe('trajectory join quality', () => {
     expect(result.edges.dispatchToProposal).toMatchObject({ denominator: 1, joined: 1, rate: 1 });
   });
 
+  it('omits future proposal snapshots from join matches and denominators', () => {
+    const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
+    outcomes.records[0]!.proposal.createdAt = new Date(Date.parse(NOW) + 1).toISOString();
+
+    const result = listTrajectoryJoinQuality({
+      deps: {
+        readDispatchProductionEventsDetailed: () => dispatchRead(),
+        listOutcomeRecordsDetailed: () => outcomes,
+        readAgentActionsDetailed: () => actionRead(),
+      },
+    });
+
+    expect(result.edges.dispatchToProposal).toMatchObject({ denominator: 1, joined: 0, unjoined: 1 });
+    expect(result.edges.proposalToVerification.denominator).toBe(0);
+  });
+
   it('reconstructs a protected GitHub trajectory and publishes exact healthy edge rates', () => {
     const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
     const result = listTrajectoryJoinQuality({

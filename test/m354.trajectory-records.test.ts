@@ -2505,6 +2505,32 @@ describe('Trajectory records', () => {
     expect(published.skillOutcomes).toBeDefined();
   });
 
+  it('excludes future proposal snapshots from existing dispatch trajectories', () => {
+    const outcome = outcomeRecord();
+    const readRecords = (createdAtMs: number) => listTrajectoryRecords({
+      asOfMs: TEST_NOW_MS,
+      deps: deps({
+        readDispatchProductionEvents: () => [dispatch()],
+        listOutcomeRecords: () => [{
+          ...outcome,
+          proposal: {
+            ...outcome.proposal,
+            status: 'applied',
+            realizedMergeSource: 'github-host',
+            createdAt: new Date(createdAtMs).toISOString(),
+          },
+        }],
+        readAgentActions: () => [],
+      }),
+    });
+
+    const future = readRecords(TEST_NOW_MS + 1);
+    expect(future).toHaveLength(1);
+    expect(future[0]?.coverage).toMatchObject({ dispatch: true, proposal: false });
+    expect(future[0]?.terminalOutcome).toBe('pending');
+    expect(readRecords(TEST_NOW_MS)[0]).toMatchObject({ terminalOutcome: 'merged', coverage: { proposal: true } });
+  });
+
   it('excludes future dispatches from the skill outcome sample', () => {
     const at = (ms: number) => new Date(ms).toISOString();
     const trajectoryIds = ['traj-a', 'traj-b', 'traj-c'];
