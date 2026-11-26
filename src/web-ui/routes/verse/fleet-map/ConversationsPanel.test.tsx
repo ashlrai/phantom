@@ -61,4 +61,15 @@ describe('thread lines on the map', () => {
     fireEvent.click(screen.getByRole('button', { name: /Waiting for a reply between claude and grok/ }));
     expect(within(screen.getByRole('list', { name: 'Thread' })).getAllByRole('listitem').length).toBeGreaterThan(0);
   });
+
+  it('marks the line the unanswered ask runs on, not a later nudge the requester sent elsewhere', () => {
+    const list = narrowConversations(JSON.parse(JSON.stringify({ schema: 'agents.conversations.v1', version: 1,
+      conversations: buildConversations([
+        say('ask', 'claude', 'grok', 4, { kind: 'ask', subject: 'build ok' }),
+        say('nudge', 'claude', 'leader', 1, { kind: 'status', subject: 'bumping', replyTo: 'ask' }),
+      ], NOW) })))!;
+    const lines = threadLines(list, NOW, new Set(['leader', 'lane:claude', 'lane:grok']));
+    expect(lines.map(l => [l.a, l.b, l.waiting]).sort()).toEqual([
+      ['lane:claude', 'lane:grok', true], ['lane:claude', 'leader', false]]);
+  });
 });

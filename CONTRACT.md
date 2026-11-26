@@ -3412,10 +3412,12 @@ never a gate, because receiving a handoff checks no claims. Section-level
 `holds` follows the same `complete`/`unknown` rule as `next`, and a failed
 walk reports the same `unavailable`/`retryable`/`invalid` status on both
 sections.
-`threads` lists the conversation threads whose latest message still wants
-the agent's answer — the same `state:'waiting'` threads
+`threads` lists the conversation threads whose unanswered ask or handoff
+still wants the agent's answer — the same `state:'waiting'` threads
 `agents conversations --waiting-only` computes from the one shared
-conversations projection, narrowed to waits the agent owes: `waiting.on`
+conversations projection, where a request stays open until a message from
+a different sender answers it (the requester's own later posts never do),
+narrowed to waits the agent owes: `waiting.on`
 names the agent under any of its identity labels or a
 `group:<channel>:<topic>` address of a registry channel it belongs to (the
 same membership rule the other sections apply, minus threads whose waiting
@@ -3431,8 +3433,8 @@ the true total and `truncated` definitive. The section reports
 keeps the damaged-row count — or `{status:'unavailable'}` when the bus
 store cannot be read; a missing store is a verified-empty `ok`.
 `awaiting` is the outbound mirror of `threads` over the same shared
-conversations read: every `state:'waiting'` thread whose latest message
-the agent itself sent (`isSelf` on the last message's `from`) and whose
+conversations read: every `state:'waiting'` thread whose unanswered
+request the agent itself sent and whose
 `waiting.on` does not resolve back to the agent — the agent's own asks
 and handoffs nobody has answered yet, so "is my question still
 outstanding?" needs no second `agents conversations` read. The two

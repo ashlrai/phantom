@@ -118,7 +118,7 @@ export function conversationScope(agent: string, registry: AgentRegistry | undef
 
 /**
  * The `--waiting-on` match over one waiting thread: `waiting.on` must denote
- * the queried agent and the waiting (latest) message must not be the agent's
+ * the queried agent and the waiting request's sender must not be the agent's
  * own — the same rule `work mine threads` applies, so a fleet-wide read and
  * the per-agent digest never disagree about who owes a reply. An unreadable
  * or missing registry and an unresolvable ref reduce to the literal-label

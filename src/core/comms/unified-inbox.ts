@@ -126,9 +126,12 @@
  *               person — the same `state:'waiting'` and `state:'blocked'`
  *               threads the one shared conversations projection computes,
  *               fleet-wide: a waiting thread names who must answer and how
- *               long it has waited, a blocked thread names who reported the
+ *               long it has waited — the unanswered ask or handoff itself,
+ *               never the requester's own later posts, which no longer
+ *               answer it — a blocked thread names who reported the
  *               block, who was told and how long it has stood. A thread
- *               whose latest message is already a pending bus item (an
+ *               whose pending request (or block report) is already a
+ *               pending bus item (an
  *               unclaimed work envelope or a live worker-handoff) or whose
  *               `job:` thread the feed already lists stays under the bus
  *               source: one pending thing, one item. Act: `phm agents
@@ -427,7 +430,7 @@ import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-
 import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
 import { readOwnerAwaitingReplies, readOwnerUndeliveredReplies, type OwnerAwaitingReplies, type OwnerUndeliveredReplies } from './owner-thread.js';
 import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, readCommsRequests, type CommsRequestsRead } from './requests.js';
-import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
+import { readAgentConversations, plainAge, waitingRequest, type AgentConversations } from '../fleet/agent-conversations.js';
 import { readSlackJournal, type SlackJournalRead, type SlackObservation } from '../agents/slack-journal.js';
 import { readSlackSendReceipts, type SlackSendReceiptRead } from '../agents/slack-send-receipts.js';
 import type { SentReceipt } from '../agents/slack-reply-binding.js';
@@ -1741,16 +1744,22 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
     if (thread.state !== 'waiting' && thread.state !== 'blocked') continue;
     const last = thread.messages[thread.messages.length - 1];
     if (last === undefined) continue;
-    if (covered.envelopes.has(last.id)) continue;
+    // The pending item a waiting thread still waits on is its unanswered
+    // ask or handoff — the request member — never the requester's own later
+    // posts, which no longer answer it; a blocked thread's pending item is
+    // its latest message, the block report itself.
+    const request = thread.waiting !== null ? waitingRequest(thread) : undefined;
+    const focus = request ?? last;
+    if (covered.envelopes.has(focus.id)) continue;
     if (thread.id.startsWith(JOB_THREAD_PREFIX) && covered.feedJobs.has(thread.id.slice(JOB_THREAD_PREFIX.length))) continue;
-    const act = ['phm agents conversations', `phm agents bus show ${last.id}`];
+    const act = ['phm agents conversations', `phm agents bus show ${focus.id}`];
     // The reply template only prints when the conversation key is itself a
     // label `agents bus post --thread` accepts; a key beyond the label bound
     // keeps the inspect acts rather than a command that cannot run.
     if (THREAD_LABEL.test(thread.id)) {
       act.push(`phm agents bus post --to <sender-label> --text "<reply>" --thread ${thread.id}`);
     }
-    const title = oneLine(thread.subject, TITLE_MAX) || `agent thread ${thread.id}`;
+    const title = oneLine(focus.subject, TITLE_MAX) || `agent thread ${thread.id}`;
     const count = `${thread.messageCount} message${thread.messageCount === 1 ? '' : 's'}`;
     if (thread.state === 'waiting' && thread.waiting !== null) {
       items.push({
@@ -1759,10 +1768,10 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
         kind: 'agent-thread',
         // A handoff waiting on a recipient is delegated work nobody picked up;
         // an ask is ordinary coordination. Neither blocks Mason, so never `blocking`.
-        severity: last.kind === 'handoff' ? 'warn' : 'info',
+        severity: request?.kind === 'handoff' ? 'warn' : 'info',
         blocking: false,
         title,
-        detail: cap(`from ${last.from} · waiting on ${thread.waiting.on} · ${count} · waiting ${plainAge(thread.waiting.ms)}`, DETAIL_MAX),
+        detail: cap(`from ${focus.from} · waiting on ${thread.waiting.on} · ${count} · waiting ${plainAge(thread.waiting.ms)}`, DETAIL_MAX),
         since: thread.waiting.since,
         expiresAt: null,
         ...jobIdsField(thread.jobs),

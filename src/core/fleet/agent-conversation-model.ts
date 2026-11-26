@@ -92,7 +92,8 @@ export interface Conversation {
   state: ConversationState;
   /** `state` in plain words. */
   stateText: string;
-  /** Present only while waiting: who has to answer, since when, for how long. */
+  /** Present only while waiting: who has to answer the thread's unanswered
+   * ask or handoff, since when it was sent, for how long. */
   waiting: { on: string; since: string; ms: number } | null;
   /** Every job id a member message names — a body citation, a reported job link or the `job:<id>` bucket itself; sorted, empty when the thread names none. */
   jobs: readonly string[];
@@ -299,9 +300,24 @@ export function groupConversations(messages: readonly ConversationMessage[], now
     const items = [...list].sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1));
     const last = items[items.length - 1]!;
     const names = [...new Set(items.flatMap(m => [m.from, m.to]))];
-    const wantsReply = last.kind === 'ask' || last.kind === 'handoff';
+    // The thread's open request: its latest ask or handoff that no message
+    // from a different sender has answered. The requester's own later posts —
+    // a nudge, a status — never answer it, so the wait keeps the request's
+    // recipient and start instead of flipping to answered the moment the
+    // asker speaks again; any other participant's later message still moves
+    // the thread on exactly as before. The latest request alone decides:
+    // an earlier request from another sender was already answered by this
+    // one arriving, and one from the same sender falls with it.
+    let request: ConversationMessage | undefined;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const candidate = items[i]!;
+      if (candidate.kind !== 'ask' && candidate.kind !== 'handoff') continue;
+      if (!items.slice(i + 1).some(later => later.from !== candidate.from)) request = candidate;
+      break;
+    }
     const state: ConversationState = last.kind === 'blocker' || last.state === 'blocked' ? 'blocked'
-      : last.state === 'done' ? 'done' : wantsReply ? 'waiting'
+      : last.state === 'done' ? 'done'
+      : request !== undefined ? 'waiting'
       : last.kind === 'reply' || items.some(m => m.kind === 'ask' || m.kind === 'handoff') ? 'answered' : 'done';
     const jobs = new Set<string>();
     if (id.startsWith(JOB_BUCKET_PREFIX) && id.length > JOB_BUCKET_PREFIX.length) jobs.add(id.slice(JOB_BUCKET_PREFIX.length));
@@ -314,7 +330,9 @@ export function groupConversations(messages: readonly ConversationMessage[], now
     out.push({
       id, participants: names.map(who), subject: last.subject, messageCount: items.length, lastAt: new Date(last.at).toISOString(),
       state, stateText: CONVERSATION_STATE_WORDS[state],
-      waiting: state === 'waiting' ? { on: last.to, since: new Date(last.at).toISOString(), ms: Math.max(0, now - last.at) } : null,
+      waiting: state === 'waiting' && request !== undefined
+        ? { on: request.to, since: new Date(request.at).toISOString(), ms: Math.max(0, now - request.at) }
+        : null,
       jobs: [...jobs].sort(),
       links: [...links.values()],
       messages: items.map(m => ({ id: m.id, at: new Date(m.at).toISOString(), from: m.from, to: m.to, kind: m.kind, subject: m.subject,
@@ -326,6 +344,23 @@ export function groupConversations(messages: readonly ConversationMessage[], now
     });
   }
   return out.sort((a, b) => (b.waiting?.ms ?? -1) - (a.waiting?.ms ?? -1) || (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : a.id < b.id ? -1 : 1));
+}
+
+/**
+ * The member message a `waiting` thread still waits on: its latest ask or
+ * handoff. The projection reports `waiting` only while that request is
+ * unanswered — the requester's own later posts never answer it — so the
+ * last ask/handoff member IS the request `waiting.on`/`waiting.since`
+ * describe, and every member after it is the requester's own voice. While
+ * `waiting` is set this always finds it; a thread with no ask or handoff
+ * member honestly returns undefined.
+ */
+export function waitingRequest(c: Conversation): ConversationItem | undefined {
+  for (let i = c.messages.length - 1; i >= 0; i--) {
+    const m = c.messages[i]!;
+    if (m.kind === 'ask' || m.kind === 'handoff') return m;
+  }
+  return undefined;
 }
 
 /**
@@ -343,7 +378,7 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * only `identityOf` keeps the historical fold on both sides.
  * `waitingOn` keeps the waiting threads one agent owes a reply on: only a
  * `state:'waiting'` thread whose `waiting.on` the caller's `waitingOnMatch`
- * predicate accepts for its latest sender qualifies — `readAgentConversations`
+ * predicate accepts for its waiting request's sender qualifies — `readAgentConversations`
  * builds that predicate from the identity registry (the agent's own labels,
  * names resolving to its identity, `group:<channel>:<topic>` addresses of
  * channels it belongs to, minus threads whose waiting message the agent
@@ -473,7 +508,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     && (query.state === undefined || c.state === query.state)
     && (query.waitingOn === undefined || (c.waiting !== null && (
       waitingOnMatch !== undefined
-        ? waitingOnMatch(c.waiting.on, c.messages[c.messages.length - 1]?.from ?? '')
+        ? waitingOnMatch(c.waiting.on, waitingRequest(c)?.from ?? '')
         : c.waiting.on.toLowerCase() === owed))));
 }
 

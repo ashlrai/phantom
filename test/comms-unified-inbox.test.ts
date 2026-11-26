@@ -955,6 +955,24 @@ describe('agent conversation threads in the unified inbox', () => {
     expect(item.detail).toContain('waiting on worker');
   });
 
+  it('keeps a handoff wait warned when the sender posts a follow-up in the thread', async () => {
+    const id = postV2Body({ kind: 'handoff', text: 'please take this', thread: 'esc-9' },
+      { from: 'agent:lead', to: 'agent:worker', at: now - 3_600_000 });
+    // The sender's own status note is not an answer: the wait still names
+    // the handoff — its warn severity, title, deep link and recipient.
+    postV2Body({ kind: 'note', text: 'bumping this', thread: 'esc-9' },
+      { from: 'agent:lead', to: 'agent:worker', at: now - 60_000 });
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === 'conversations:esc-9')!;
+    expect(item).toMatchObject({
+      kind: 'agent-thread', severity: 'warn', blocking: false, title: 'please take this',
+      detail: 'from lead · waiting on worker · 2 messages · waiting 1h 0m',
+      since: new Date(now - 3_600_000).toISOString(),
+      act: ['phm agents conversations', `phm agents bus show ${id}`,
+        'phm agents bus post --to <sender-label> --text "<reply>" --thread esc-9'],
+    });
+  });
+
   it('clears the item once the thread is answered', async () => {
     ask('can you review the diff?', 'review-7');
     postV2Body({ kind: 'context', text: 'done — shipped', thread: 'review-7' }, { from: 'agent:reviewer', to: 'agent:asker' });

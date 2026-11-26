@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { runAgentsConversationsCli } from '../src/cli/agents-conversations.js';
 import { createAgentChannel, registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
-import { buildConversations, filterConversations, formatAgentConversationsText, plainAge, readAgentConversations,
+import { buildConversations, filterConversations, formatAgentConversationsText, plainAge, readAgentConversations, waitingRequest,
   type ConversationMessage } from '../src/core/fleet/agent-conversations.js';
 import { AGENT_CONVERSATIONS_PATH, createFleetLiveMapApi } from '../src/core/verse/fleet-live-map-api.js';
 
@@ -45,6 +45,31 @@ describe('conversations from messages', () => {
     expect(list[0]).toMatchObject({ state: 'waiting', stateText: 'waiting for reply', waiting: { on: 'claude', ms: 120 * MIN } });
     expect(plainAge(list[0]!.waiting!.ms)).toBe('2h 0m');
     expect(list[2]!.waiting).toBeNull();
+  });
+
+  it('an asker\'s own follow-up never answers its ask — the wait pins the request', () => {
+    const [c] = buildConversations([
+      say('ask', 'leader', 'claude', 0, { kind: 'ask', subject: 'review the diff?' }),
+      say('nudge', 'leader', 'claude', 5, { kind: 'status', subject: 'still waiting', replyTo: 'ask' }),
+      say('aside', 'leader', 'grok', 6, { kind: 'status', subject: 'fyi', replyTo: 'ask' }),
+    ], NOW);
+    // The ask stays unanswered even though the asker kept talking — once to
+    // claude, once to grok — so the wait names claude since the ask, not the
+    // latest nudge's recipient or start.
+    expect(c).toMatchObject({ state: 'waiting', messageCount: 3,
+      waiting: { on: 'claude', since: new Date(T0).toISOString(), ms: 30 * MIN } });
+    expect(c!.lastAt).toBe('2026-11-18T12:06:00.000Z');
+    expect(waitingRequest(c!)).toMatchObject({ id: 'ask', kind: 'ask', from: 'leader', to: 'claude' });
+  });
+
+  it('a different sender\'s later message still answers the ask', () => {
+    const [c] = buildConversations([
+      say('ask', 'leader', 'claude', 0, { kind: 'ask' }),
+      say('nudge', 'leader', 'claude', 5, { kind: 'status', replyTo: 'ask' }),
+      say('ack', 'claude', 'leader', 6, { kind: 'status', replyTo: 'ask' }),
+    ], NOW);
+    expect(c).toMatchObject({ state: 'answered', waiting: null });
+    expect(waitingRequest(c!)).toMatchObject({ id: 'ask' });
   });
 
   it('a blocked thread is blocked, by kind or by the sender saying so', () => {
