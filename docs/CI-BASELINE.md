@@ -650,7 +650,10 @@ pass+fail, null when nothing has resolved). Recurring-flake entries carry the
 same per-test verdict tallies and the `RQ-CIFLAKE-*` brief names them. Shared
 reruns contribute a workflow verdict only, since the run conclusion does
 not identify which test passed or failed. For singleton reruns, the per-test tally includes the workflow verdict. A `fail` verdict is evidence the classification may be wrong, not proof;
-rerun firing rules are unchanged.
+rerun firing rules are unchanged. In recurring-failure briefs from
+`phm improve discover`, a shared attempt counts once for each recorded
+triggering test. The shared workflow verdict does not count toward any
+test's recurring-failure threshold.
 `ci-reruns/status.json` contains the last
 maintenance time, per-repository counts (including `recurringFlakes` detected,
 `flakeFixesQueued` appended, `verdictsPending` and `verdictsResolved`), errors
