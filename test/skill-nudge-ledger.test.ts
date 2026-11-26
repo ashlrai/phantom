@@ -166,12 +166,16 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#999']))[0]).not.toHaveProperty('reverted');
   });
 
-  it('never discounts a contested PR claim', () => {
+  it.each([
+    'https://github.com/ashlrai/phantom/pull/779',
+    'https://github.com/AshlrAI/Phantom/pull/779',
+    'https://github.com/ashlrai/phantom/pull/779/',
+  ])('never discounts a contested PR claim through %s', (competingUrl) => {
     const url = 'https://github.com/ashlrai/phantom/pull/779';
     const text = [
       launch('RQ-C1'), launch('RQ-C2'),
       outcome('RQ-C1', 'MERGED', { pr_url: url }),
-      line({ event: 'publish', job: 'RQ-C2', pr_url: url, ts: '2026-10-28T15:30:00.000Z' }),
+      line({ event: 'publish', job: 'RQ-C2', pr_url: competingUrl, ts: '2026-10-28T15:30:00.000Z' }),
     ].join('\n');
     const byId = new Map(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#779']))
       .map(job => [job.id, job]));

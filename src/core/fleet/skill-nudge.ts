@@ -164,8 +164,8 @@ interface NudgeJobAccum {
   evidence: NudgeRecoveryEvidence;
   verdictEvidence: NudgeRecoveryEvidence | null;
   outcome: NudgeOutcome | undefined;
-  /** PR URL on the row that set the standing outcome; null when that row carried none. */
-  verdictUrl: string | null;
+  /** Canonical PR key on the standing verdict row, when available. */
+  verdictPrKey: string | null;
   reverted: boolean;
   lastLine: number;
   outcomeLine: number | null;
@@ -179,14 +179,10 @@ function firstString(row: Record<string, unknown>, keys: readonly string[]): str
   return null;
 }
 
-/** First non-empty PR URL spelling on a ledger row; null when none is recorded. */
-function rowPrUrl(row: Record<string, unknown>): string | null {
-  return firstString(row, PR_URL_KEYS);
-}
-
 /** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
-function pullRequestKey(url: string): string | null {
-  const match = GITHUB_PULL_URL.exec(url);
+function rowPrKey(row: Record<string, unknown>): string | null {
+  const url = firstString(row, PR_URL_KEYS);
+  const match = url === null ? null : GITHUB_PULL_URL.exec(url);
   return match ? `${match[1]!.toLowerCase()}/${match[2]!.toLowerCase()}#${match[3]}` : null;
 }
 
@@ -205,11 +201,9 @@ function standingReverted(
   keys: ReadonlySet<string> | null | undefined,
 ): boolean {
   if (claims === null || keys === null || keys === undefined
-    || acc.outcome !== 'merged' || acc.verdictUrl === null) return false;
-  const claimants = claims.get(acc.verdictUrl);
-  if (claimants === undefined || claimants.size !== 1 || !claimants.has(id)) return false;
-  const key = pullRequestKey(acc.verdictUrl);
-  return key !== null && keys.has(key);
+    || acc.outcome !== 'merged' || acc.verdictPrKey === null) return false;
+  const claimants = claims.get(acc.verdictPrKey);
+  return claimants?.size === 1 && claimants.has(id) && keys.has(acc.verdictPrKey);
 }
 
 /** Event names (post-normalization, lowercase) that carry a terminal verdict with no phase field. */
@@ -255,9 +249,9 @@ function failureClassOf(row: Record<string, unknown>, event: string | null): str
  */
 export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: ReadonlySet<string> | null): SkillNudgeJob[] {
   const jobs = new Map<string, NudgeJobAccum>();
-  // PR URL -> claiming job ids, collected only when the caller supplied
+  // PR key -> claiming job ids, collected only when the caller supplied
   // standing revert keys — the same unambiguous-claim evidence pass
-  // outcome-learning runs, so a contested or foreign URL never resolves.
+  // outcome-learning runs, so a contested or foreign PR never resolves.
   const claims = revertedPrKeys === undefined || revertedPrKeys === null || revertedPrKeys.size === 0
     ? null : new Map<string, Set<string>>();
   let lineNo = 0;
@@ -274,20 +268,18 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     // Batch members have their own rows. The session wrapper and node-pool
     // attempt telemetry do not supply job-level recovery evidence.
     if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
-    if (claims !== null) {
-      const url = rowPrUrl(row);
-      if (url !== null) {
-        const set = claims.get(url) ?? new Set<string>();
-        set.add(id);
-        claims.set(url, set);
-      }
+    const prKey = claims === null ? null : rowPrKey(row);
+    if (claims !== null && prKey !== null) {
+      const set = claims.get(prKey) ?? new Set<string>();
+      set.add(id);
+      claims.set(prKey, set);
     }
     if (!LEDGER_ID_PATTERN.test(id)) continue;
     let acc = jobs.get(id);
     if (acc === undefined) {
       acc = {
         evidence: { lane: null, attempts: 0, retryReceipts: 0, recuts: 0, failureClass: null },
-        verdictEvidence: null, outcome: undefined, verdictUrl: null, reverted: false,
+        verdictEvidence: null, outcome: undefined, verdictPrKey: null, reverted: false,
         lastLine: lineNo, outcomeLine: null,
       };
       jobs.set(id, acc);
@@ -316,9 +308,9 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
       acc.verdictEvidence = { ...evidence };
       acc.outcome = outcome;
       acc.outcomeLine = lineNo;
-      // The standing verdict row's own PR URL is what the revert-set join
+      // The standing verdict row's own PR key is what the revert-set join
       // binds to — a later verdict of a different PR is a fresh merge era.
-      acc.verdictUrl = rowPrUrl(row);
+      acc.verdictPrKey = prKey;
     }
   }
   return [...jobs.entries()]
