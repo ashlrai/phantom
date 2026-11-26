@@ -670,6 +670,29 @@ describe('M355 skill records', () => {
     });
   });
 
+  it('marks a skill-use sample degraded when its file cap omits an in-window partition', () => {
+    const older = useEvent({ eventId: 'older-use', ts: '2026-07-09T15:00:00.000Z' });
+    const newer = useEvent({ eventId: 'newer-use', ts: '2026-07-10T00:01:00.000Z' });
+    recordSkillUseEvent([older, newer]);
+
+    expect(readSkillUseEventsWithDiagnostics({
+      sinceMs: Date.parse('2026-07-09T12:00:00.000Z'),
+      maxFiles: 1,
+    })).toMatchObject({
+      sourceState: 'degraded',
+      eventState: 'degraded',
+      events: [{ eventId: newer.eventId }],
+    });
+    expect(readSkillUseEventsWithDiagnostics({
+      sinceMs: Date.parse('2026-07-10T00:00:00.000Z'),
+      maxFiles: 1,
+    })).toMatchObject({
+      sourceState: 'healthy',
+      eventState: 'present',
+      events: [{ eventId: newer.eventId }],
+    });
+  });
+
   it('marks a skill-use sample degraded when distinct events exceed the requested limit', () => {
     const older = useEvent({ eventId: 'older-use' });
     const newer = useEvent({ eventId: 'newer-use' });
