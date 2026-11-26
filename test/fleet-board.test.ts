@@ -58,6 +58,31 @@ async function seed(): Promise<void> {
 }
 
 describe('recordLeaderBoard', () => {
+  it('uses dispatcher requirements when counting legacy ready rows by tier', async () => {
+    await writeFile(join(queueDir, 'ready.tsv'), [
+      'RQ-BAD\texample/phantom\tdevin\twork\tprompts/bad.md',
+      'RQ-OPEN\texample/phantom\tdevin\tfast\tprompts/open.md',
+      'RQ-INLINE\texample/phantom\tdevin\tmid\tprompts/inline.md\t{}',
+      'RQ-LEGACY\texample/phantom\tdevin\twork\tprompts/legacy.md',
+    ].join('\n'));
+    await writeFile(join(queueDir, 'router-queue.md'), [
+      '- READY RQ-BAD (P1, pool=devin, exclusive=maybe): fixture',
+      '- READY RQ-OPEN (P1, tier=fast): fixture',
+      '- READY RQ-INLINE (P1, pool=devin, exclusive=maybe): fixture',
+    ].join('\n'));
+
+    const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+    expect(result).toMatchObject({ wrote: true, board: { queueDepthByTier: { work: 1, fast: 1, mid: 1 } } });
+  });
+
+  it('withholds tier counts when the requirements source is unreadable', async () => {
+    await seed();
+    await mkdir(join(queueDir, 'router-queue.md'));
+
+    const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+    expect(result).toMatchObject({ wrote: true, board: { queueDepthByTier: null, conflictingPrs: { count: 2 } } });
+  });
+
   it('writes a fleet.leader-board.v1 snapshot covering lanes, tiers, merges, conflicts and needs-Mason', async () => {
     await seed();
     const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });

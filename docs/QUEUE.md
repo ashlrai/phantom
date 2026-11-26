@@ -518,6 +518,11 @@ The Leader board's `queueDepthByTier` counts READY work across the fleet,
 including rows with an empty lane column or an explicit
 `"preferred_lane": null` in the requirements. These open jobs have no
 per-lane attribution.
+Legacy five-column dispatcher rows inherit matching requirements from
+`queue/router-queue.md`. Malformed inherited requirements exclude the row
+from the tally. Rows with inline requirements use their own requirements.
+When the router queue file is missing, the board uses the ready rows alone.
+An unreadable or oversized router queue file leaves the tier tally unknown.
 
 The Leader board estimates the number of conflicting PRs from rebase job IDs
 in `ready.tsv`. It includes parked rebase jobs, expands batches into their
