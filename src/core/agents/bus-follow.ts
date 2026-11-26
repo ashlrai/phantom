@@ -42,6 +42,8 @@ export interface AgentBusFollowFilters {
   before?: number;
   /** Keep only mail addressed to `group:<name>:*` of one registry channel the agent belongs to. */
   channel?: string;
+  /** Keep only mail whose `to` is a well-formed `group:<room>:<topic>` address carrying this exact topic — the same `groupAddressTopicOf` match every bus `--topic` read applies, composing with `channel` into one room and one topic. */
+  topic?: string;
   /** Keep only mail whose scrubbed one-line summary carries the needle. */
   contains?: string;
   /** Keep only mail whose object body cites that envelope id through its own `inReplyTo`. */
@@ -154,7 +156,7 @@ export async function followAgentBus(
   const filters: AgentBusFollowFilters = {
     thread: request.thread, from: request.from, excludeFrom: request.excludeFrom, with: request.with,
     priority: request.priority, kind: request.kind, job: request.job, since: request.since,
-    before: request.before, channel: request.channel, contains: request.contains,
+    before: request.before, channel: request.channel, topic: request.topic, contains: request.contains,
     inReplyTo: request.inReplyTo, id: request.id, bodyKind: request.bodyKind, result: request.result,
   };
   let cursor = request.after ?? 0, delivered = 0, status: AgentBusFollowStatus = 'expired';

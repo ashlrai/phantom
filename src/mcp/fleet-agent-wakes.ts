@@ -23,7 +23,7 @@
  * across all addressees under `scope: 'fleet'`, the same
  * `phm agents bus wakes --all` read — so a leader or comms pass sees who
  * has pending hints in one call instead of one per identity.
- * `since`, `job`, `from`, `excludeFrom`, `channel`, `priority`,
+ * `since`, `job`, `from`, `excludeFrom`, `channel`, `topic`, `priority`,
  * `contains`, `thread`, `inReplyTo`, `bodyKind`, `result` and `id` apply
  * the same rules the `phm agents bus wakes` flags share and are validated
  * before any store read; the page always reports `matched` (every hint
@@ -50,7 +50,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent`, `job`, `from`, `excludeFrom` and `id` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains', 'id', 'thread', 'inReplyTo', 'bodyKind', 'result']);
+const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'topic', 'priority', 'contains', 'id', 'thread', 'inReplyTo', 'bodyKind', 'result']);
 const LABEL_KEYS = ['job', 'from', 'excludeFrom', 'id', 'thread', 'inReplyTo', 'bodyKind'] as const;
 
 export interface FleetAgentWakesArgs {
@@ -68,6 +68,8 @@ export interface FleetAgentWakesArgs {
   excludeFrom?: string;
   /** Keep only hints addressed to `group:<name>:*` of this channel — the same room prefix `phm agents bus wakes --channel` and every other bus read's channel filter match. */
   channel?: string;
+  /** Keep only hints addressed to a well-formed `group:<room>:<topic>` address carrying this exact topic — the same `groupAddressTopicOf` match `phm agents bus wakes --topic` and every other bus `--topic` read applies, composing with `channel` into one room and one topic. */
+  topic?: string;
   /** Keep only hints in one exact P0–P3 band, decided on the resolved referent — the same match `phm agents bus wakes --priority` applies. */
   priority?: BusPriority;
   /** Keep only hints whose resolved referent text carries this needle — the shared `--contains` rule. */
@@ -92,7 +94,7 @@ export interface FleetAgentWakesArgs {
  * other key takes the same value rules `phm agents bus wakes` flags and
  * the other bus reads share: `job`/`from`/`excludeFrom`/`id`/`thread`/
  * `inReplyTo`/`bodyKind` printable
- * routing labels (`id` the exact hint-id match), `channel` the strict
+ * routing labels (`id` the exact hint-id match), `channel`/`topic` the strict
  * channel-name grammar, the P0–P3 priority enum, the
  * `WORK_RESULT_OUTCOMES` result-outcome enum, `since` the shared
  * `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved
@@ -118,6 +120,11 @@ export function parseFleetAgentWakesArgs(args: Record<string, unknown>): FleetAg
   if (channel !== undefined) {
     if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
     parsed.channel = channel;
+  }
+  const topic = args.topic;
+  if (topic !== undefined) {
+    if (typeof topic !== 'string' || !agentChannelNameSchema.safeParse(topic).success) return null;
+    parsed.topic = topic;
   }
   const priority = args.priority;
   if (priority !== undefined) {
@@ -187,6 +194,7 @@ export async function readFleetAgentWakes(
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
     ...(args.channel === undefined ? {} : { channel: args.channel }),
+    ...(args.topic === undefined ? {} : { topic: args.topic }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),

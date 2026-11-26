@@ -500,6 +500,7 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>]
+[--topic <topic>]
 [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]`
 returns one page of
@@ -564,7 +565,16 @@ handoffs alike, matched on the delivery address rather than the reported
 kind — so an agent in several rooms reads one room's pending mail in one
 filtered read; it composes with `--kind` to separate a room's direct mail
 from its assignments, and a channel the agent is not a member of simply
-has no mail to show. `--contains` keeps only mail whose scrubbed
+has no mail to show. `--topic` keeps only mail addressed to a well-formed
+`group:<room>:<topic>` address carrying that exact topic component — the
+same `groupAddressTopicOf` parse the work feed's, work claim-next's,
+work next's and comms bus next's `--topic` filters share — matched on
+the raw routing label across every room, so it needs no registry and
+composes with `--channel` into one room AND one topic: "which of my
+rooms' deploy mail arrived" is one filtered read, while an agent
+address, a bare label or a `group:<room>` without a topic never matches;
+the value takes the same strict channel-name grammar `channel read
+--topic` validates, and a name outside it is an `invalid` page. `--contains` keeps only mail whose scrubbed
 one-line summary — the same text the `--frame` read renders per row —
 carries the needle as a case-insensitive substring, whitespace collapsed
 on both sides, so "did anyone send me mail about X" is one filtered read
@@ -675,7 +685,7 @@ reports — so an agent on the unified surface can wait for mail without
 polling `inbox` in a loop or dropping to the raw-envelope stream.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
-[--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
+[--channel <name>] [--topic <topic>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]` lists wake
 hints for the agent — addressed under any spelling that resolves to its
 identity, exact first then lowercase, the same fold the inbox read
@@ -714,7 +724,18 @@ and every other filter: on a per-agent read it narrows to one room's
 hints for that agent (a channel the agent does not belong to simply has
 no hints to show), and on `--all` it answers "which hints concern room
 X" in one fleet read, with `matched` counting it inside the queue-tail
-match like `from`/`excludeFrom`. A ref that resolves to no registered identity keeps exact-label
+match like `from`/`excludeFrom`. `--topic` keeps only hints addressed to
+a well-formed `group:<room>:<topic>` address carrying that exact topic
+component — the same `groupAddressTopicOf` parse the work feed's, work
+claim-next's, work next's and comms bus next's `--topic` filters share,
+and the same queue-tail match `--channel` applies — decided on the
+hint's own `to` label across every room, so it needs no referent
+resolution and composes with `--channel` into one room AND one topic:
+"which wake hints concern the reviews topic" is one filtered read, an
+agent address, a bare label or a `group:<room>` without a topic never
+matches, the value takes the same strict channel-name grammar
+`channel read --topic` validates, and a name outside it is an
+`invalid` page. A ref that resolves to no registered identity keeps exact-label
 matching instead — the page reports `scope: 'label'` (vs `'identity'`),
 `agent` the queried label verbatim, and only hints whose `to` is that label
 match — so hints queued under a bare coordination or routing label, like the
@@ -818,7 +839,7 @@ cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
 the same dimensions as arguments — `agent` optional (omitted, the
 fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
-`excludeFrom`/`channel`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` the same filters — under the identical
+`excludeFrom`/`channel`/`topic`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` the same filters — under the identical
 `readAgentWakes`/`readAllWakes` validation, so an MCP-connected agent reads its wake
 hints, claim-holder citations and resolved referents — or the whole
 fleet's pending hints in one call — without shelling out

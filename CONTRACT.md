@@ -4192,7 +4192,7 @@ carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
 check `thread` gets, and `kind` — `note` or `context`, the v2 conversational
 body kind `postLabelMessage` already exposed, now shared by all three so a
-DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?, bodyKind?, result?}, options?)`
+DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, topic?, contains?, inReplyTo?, id?, bodyKind?, result?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every
@@ -4214,7 +4214,14 @@ keeps only mail addressed to `group:<name>:*` of one registry channel the
 agent belongs to — channel posts and channel-addressed handoffs alike,
 matched on the delivery address rather than the reported kind, so it
 composes with `kind` and a channel the agent is not a member of simply
-has no mail to show; `job` keeps
+has no mail to show; `topic` keeps only mail addressed to a well-formed
+`group:<room>:<topic>` address carrying that exact topic component — the
+same `groupAddressTopicOf` parse the work feed's, work claim-next's,
+work next's and comms bus next's `topic` filters share — matched on the
+raw routing label across every room, so it needs no registry, composes
+with `channel` into one room and one topic, an agent address, a bare
+label or a `group:<room>` without a topic never matching, and a value
+outside the shared channel-name grammar answering `invalid`; `job` keeps
 only mail that names one job — a `work.post`/`work.status`/`work.result`/`wake`
 body declaring that `jobId`, a `worker-handoff` assigning that fleet job id
 through `taskId`, or a `note`/`context` body carrying the
@@ -4318,6 +4325,16 @@ the addressee scope (a per-agent read narrows to one room's hints for
 that agent) and with every other filter, `matched` counting it inside
 the queue-tail match, a name no hint addresses matching nothing rather
 than erroring, and a malformed channel name answering `invalid`;
+`filter.topic` keeps only hints whose own `to` label is a well-formed
+`group:<room>:<topic>` address carrying that exact topic component — the
+same `groupAddressTopicOf` parse the work feed's, work claim-next's,
+work next's and comms bus next's `topic` filters share and the same
+queue-tail match `filter.channel` applies — decided on the hint's
+address alone across every room, so it needs no referent resolution,
+composes with `filter.channel` into one room and one topic, an agent
+address, a bare label or a `group:<room>` without a topic never
+matching, `matched` counting it inside the queue-tail match, and a value
+outside the shared channel-name grammar answering `invalid`;
 `filter.priority` keeps only
 hints in one exact P0..P3 band — the same match every other bus read's
 `--priority` applies — decided on the resolved referent's own band (the
@@ -4385,10 +4402,12 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
+`job`/`from`/`excludeFrom`/`channel`/`topic`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
 and resolves referents identically — sender matchers resolve through
 the registry with exact-label fallback, `channel` keeps only hints whose
-own `to` label sits under `group:<name>:*` inside the queue-tail match,
+own `to` label sits under `group:<name>:*` inside the queue-tail match
+and `topic` keeps only hints whose own `to` label is a well-formed
+`group:<room>:<topic>` address carrying that exact topic component,
 filtered verdicts fail closed
 `unavailable` on an unreadable bus store, and malformed filter values
 answer `invalid`; an unreadable registry or wake queue answers
