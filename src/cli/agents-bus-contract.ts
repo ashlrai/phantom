@@ -5,13 +5,14 @@ import { busV2ContractSummary } from '../core/agents/bus-v2-schema.js';
 import { listChannelRegistry, probeRegisteredChannel } from '../core/agents/channel-registry.js';
 import { CHANNEL_IDS, type ChannelId } from '../core/agents/channel-policy.js';
 import { readFleetEdges } from '../core/fleet/fleet-edges.js';
+import { mapWindowMinutesOrNull } from '../core/fleet/org-map.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { AGENTS_BUS_UNIFIED_HELP, AGENTS_BUS_UNIFIED_VERBS, runAgentsBusUnified } from './agents-bus-unified.js';
 
 const HELP = `ashlr agents list|show <id>|validate <id>|versions <id> [--json]
 ashlr agents chat list|read <outcome:id|run:id> --channel <channel> [--after <cursor>] [--limit <1-100>] [--from <agent>] [--exclude-from <agent>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--id <id>] [--in-reply-to <id>] [--json]
 ashlr agents mesh status [--root <abs>] [--json]
-ashlr agents edges [--json]
+ashlr agents edges [--window-minutes <1..1440>] [--from <agent>] [--to <agent>] [--root <abs>] [--json]
 ashlr agents messages [--since 1h] [--before <10m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--body-kind <kind>] [--limit N] [--json]
 ashlr agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..1024>] [--json]
 ashlr agents roster [--json]
@@ -27,6 +28,9 @@ claim key forms. The contract command is read-only. channels list reports which
 adapters are registered. channels test bus and channels test handoff record one
 local probe in the private store. Other channels stay refused. No network.
 Spec: docs/AGENT-BUS.md ("v2").`;
+
+/** Same printable routing-label bound `phm fleet edges --from/--to` validates. */
+const EDGE_REF = /^[\x21-\x7e]{1,128}(?![\s\S])/;
 
 /** Contract print is read-only. Channel probes write only to the local bus store. */
 export async function runAgentsCli(
@@ -63,8 +67,34 @@ export async function runAgentsCli(
     }
     rest.push(arg);
   }
-  if (rest.length === 1 && rest[0] === 'edges' && root === undefined) {
-    const result = readFleetEdges();
+  if (rest[0] === 'edges') {
+    // The same flags `phm fleet edges` parses, validated before any store read.
+    const flags = rest.slice(1);
+    if (flags.length === 1 && (flags[0] === '--help' || flags[0] === '-h')) { out(HELP); return 0; }
+    let windowMinutes: number | undefined, from: string | undefined, to: string | undefined;
+    const invalid = (): number => {
+      err(json ? JSON.stringify({ error: 'invalid-argument' }) : HELP);
+      return 2;
+    };
+    for (let i = 0; i < flags.length; i += 1) {
+      const arg = flags[i]!;
+      if (arg === '--window-minutes' && windowMinutes === undefined) {
+        const value = flags[i + 1];
+        const minutes = value === undefined ? null : mapWindowMinutesOrNull(value);
+        if (minutes === null) return invalid();
+        windowMinutes = minutes; i += 1; continue;
+      }
+      if ((arg === '--from' || arg === '--to') && (arg === '--from' ? from : to) === undefined) {
+        const value = flags[i + 1];
+        if (value === undefined || value.startsWith('--') || !EDGE_REF.test(value)) return invalid();
+        if (arg === '--from') from = value; else to = value;
+        i += 1; continue;
+      }
+      return invalid();
+    }
+    const result = readFleetEdges({ ...(root === undefined ? {} : { root }),
+      ...(windowMinutes === undefined ? {} : { windowMinutes }),
+      ...(from === undefined ? {} : { from }), ...(to === undefined ? {} : { to }) });
     out(JSON.stringify(sanitizePublicJson(result), null, json ? undefined : 2));
     return result.source === 'unavailable' ? 1 : 0;
   }

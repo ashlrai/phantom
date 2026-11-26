@@ -98,6 +98,69 @@ describe('fleet edges', () => {
     expect(await runAgentsCli(['edges', '--json'], line => out.push(line))).toBe(0);
     expect(JSON.parse(out[0]!)).toMatchObject({ schema: 'fleet.edges.v1' });
   });
+  describe('agents edges flags', () => {
+    let root: string;
+    const lines: string[] = [], errors: string[] = [];
+    const out = (line: string) => { lines.push(line); };
+    const err = (line: string) => { errors.push(line); };
+    const post = (id: string, from: string, to: string, at: number) => appendBusInbox(
+      { id, from, to, priority: 'P2', ttl: 9_000_000, body: { text: 'private body' },
+        channel: 'bus', channel_ref: id, sender: { agent_id: from, vendor: 'openai', human: false, team: true }, external: false },
+      { root, now: () => at });
+    const run = async (args: string[]) => {
+      const o = lines.length, e = errors.length;
+      const code = await runAgentsCli(['edges', ...args], out, err);
+      return { code, out: lines.slice(o), err: errors.slice(e) };
+    };
+    beforeEach(() => {
+      root = mkdtempSync(join(tmpdir(), 'agents-edges-cli-'));
+      lines.length = 0; errors.length = 0;
+    });
+    afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+    it('passes --window-minutes, --from, --to and --root through to the same projection', async () => {
+      const now = Date.now();
+      expect(post('stale', 'a', 'b', now - 7_200_000).status).toBe('posted');
+      expect(post('fresh', 'c', 'd', now).status).toBe('posted');
+      expect(post('pair', 'a', 'd', now).status).toBe('posted');
+      // --root alone reads the non-default store like `phm fleet edges --root`.
+      const all = await run(['--root', root, '--json']);
+      expect(all.code).toBe(0);
+      expect(JSON.parse(all.out[0]!)).toMatchObject({ schema: 'fleet.edges.v1', source: 'available' });
+      expect(JSON.parse(all.out[0]!).edges).toHaveLength(3);
+      expect(JSON.stringify(all.out)).not.toContain('private body');
+      // The window keeps only receipts inside the trailing minutes.
+      const hour = await run(['--root', root, '--window-minutes', '60', '--json']);
+      expect(JSON.parse(hour.out[0]!).edges).toHaveLength(2);
+      // The refs narrow sender and recipient under the shared identity rule.
+      const fromA = await run(['--root', root, '--from', 'a', '--json']);
+      expect(JSON.parse(fromA.out[0]!).edges).toEqual([
+        { from: { address: 'a', provider: 'openai' }, to: { address: 'd', provider: null }, messages: 1, messagesLastHour: 1, lastAt: now },
+        { from: { address: 'a', provider: 'openai' }, to: { address: 'b', provider: null }, messages: 1, messagesLastHour: 0, lastAt: now - 7_200_000 },
+      ]);
+      const pair = await run(['--root', root, '--from', 'a', '--to', 'd', '--json']);
+      expect(JSON.parse(pair.out[0]!).edges).toHaveLength(1);
+      const none = await run(['--root', root, '--from', 'nobody', '--json']);
+      expect(JSON.parse(none.out[0]!).edges).toEqual([]);
+    });
+
+    it('rejects malformed flags before touching the store', async () => {
+      for (const bad of [['--window-minutes'], ['--window-minutes', '--json'],
+        ['--window-minutes', '0'], ['--window-minutes', '1441'], ['--window-minutes', '1.5'],
+        ['--window-minutes', 'abc'], ['--window-minutes', '60', '--window-minutes', '30'],
+        ['--from'], ['--from', '--json'], ['--from', 'has space'], ['--from', ''],
+        ['--from', 'a', '--from', 'b'], ['--to'], ['--to', '--json'], ['--to', 'a b'],
+        ['--to', 'a', '--to', 'b'], ['--root', 'relative'], ['--root', '/nonexistent\0x'],
+        ['--json', '--json'], ['--unknown'], ['bogus'], ['--from', 'a', 'extra'],
+        ['--help', 'extra'], ['-h', '--from', 'a'], ['--window-minutes', '-h']]) {
+        expect((await run(bad)).code).toBe(2);
+      }
+      // --help prints usage and exits 0 like every other agents read.
+      const help = await run(['--help']);
+      expect(help.code).toBe(0);
+      expect(help.out[0]).toContain('ashlr agents edges');
+    });
+  });
   it('projects live receipts, preserves unknown providers, and omits bodies', () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-edges-'));
     const options = { root, now: () => 1000 };
