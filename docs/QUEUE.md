@@ -1056,6 +1056,9 @@ report. Use `--root /path` to inspect a different runs directory.
 Trailing-hour merge counts use a readable, timezone-qualified `mergedAt` on
 merge ledger rows when available. Older rows and rows with an unreadable
 `mergedAt` use the existing ledger event timestamp.
+When the merge ledger is missing or degraded, a lane with no observed merges
+reports `null`. Observed counts remain visible and may be incomplete. The
+fleet-wide total, including the Leader board total, requires a healthy ledger.
 
 Blocked jobs are the parked ones. Each lane has `blockedReasons`
 (`[{ reason, count }]`, biggest first, e.g. `DEP` or `HOLD`) and `stale`, the

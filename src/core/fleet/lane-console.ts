@@ -910,7 +910,6 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
 
   const mergeCounts = new Map<string, number>();
   const candidates: Array<{ pool: string; job: string | null; pr: string | null }> = [];
-  let sawMergeEvidence = sources.ledger.state === 'healthy';
   for (const event of ledgerEvents) {
     const at = eventTimestamp(event.mergedAt ?? event.at);
     if (!event.merge || at === null || at > now.getTime() || at < cutoff) continue;
@@ -920,11 +919,9 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   }
   // ready.tsv LAND rows with their own timestamps count too — some routers
   // export the whole queue, lands included, in one file.
-  let sawReadyLand = false;
   for (const row of queueRows) {
     const at = eventTimestamp(row.at);
     if (!MERGE_WORDS.has(row.status.toLowerCase()) || at === null || at > now.getTime() || at < cutoff) continue;
-    sawReadyLand = true;
     candidates.push({ pool: row.pool, job: row.id, pr: null });
   }
   // Prefer PR identity; a legacy job-only observation of that PR is a duplicate.
@@ -937,7 +934,6 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     if (key) seen.add(key);
     mergeCounts.set(candidate.pool, (mergeCounts.get(candidate.pool) ?? 0) + 1);
   }
-  sawMergeEvidence = sawMergeEvidence || sawReadyLand || mergeCounts.size > 0;
 
   // Starts = distinct jobs launched in the window, for the wasteful verdict.
   const startJobs = new Map<string, Set<string>>();
@@ -986,7 +982,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
         ? liveFromTsv.get(lane) ?? (sources.queue.state === 'healthy' && liveFromTsv.size > 0 ? 0 : null)
         : null);
     const mergeCount = mergeCounts.get(lane) ?? 0;
-    const mergesPerHour = !sawMergeEvidence ? null
+    const mergesPerHour = mergeCount === 0 && sources.ledger.state !== 'healthy' ? null
       : Math.round((mergeCount / (mergeWindowMs / 3_600_000)) * 100) / 100;
     const row = holds.get(lane);
     const hold: FleetLaneView['hold'] = row ? {
