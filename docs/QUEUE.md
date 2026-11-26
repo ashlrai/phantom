@@ -1320,6 +1320,8 @@ When the empty-tag journal exceeds the tail read limit, the daemon scans
 the full journal for tags belonging to the current candidates. An older
 recorded tag still governs the dupcheck outcome and uses no classification
 slot. If that scan fails, the daemon defers recording until a later pass.
+When duplicate tag rows exist, the daemon uses the first valid recorded
+tag in journal order for the dupcheck outcome.
 
 
 `phm ideas list` reads the same ledger as its `dupcheck-gate` signal: two or more skipped jobs that were launched later become a `dupcheck-gate:false-skips` idea, and jobs the gate let through (launch or warn) that still ended `already_done` become a `dupcheck-gate:missed-duplicates` idea once at least 3 did so and they are at least 10% of let-through decisions. A missing or unreadable ledger leaves the signal unknown.

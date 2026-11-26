@@ -126,6 +126,22 @@ describe('syncEmptyTagsFromJobsLedger', () => {
     ]);
   });
 
+  it.each([false, true])('keeps the first valid tag across duplicate rows (truncated=%s)', async (truncated) => {
+    const job = 'RQ-RECORDED';
+    writeJobs(finish(job, true) + '\n');
+    const tagRow = (tag: string) => line({ schema: 'job.empty-tag.v1', job, tag }) + '\n';
+    const padding = (' '.repeat(4095) + '\n').repeat(truncated ? ROUTER_OUTCOME_LEDGER_LIMIT / 4096 : 0);
+    writeFileSync(join(runsDir, TAGS_FILE), tagRow('invalid-tag') + tagRow('blocked') + padding + tagRow('already_done'));
+    writeFileSync(join(runsDir, DUPCHECK_FILE), line({
+      schema: 'queue.dupcheck-event.v1', at: TS, job, action: 'launch',
+    }) + '\n');
+
+    const result = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
+
+    expect(result).toMatchObject({ state: 'read', alreadyTagged: 1, classified: 0, recorded: 0, dupcheckOutcomes: 0 });
+    expect(readDupcheck(runsDir).map(row => row['action'])).toEqual(['launch']);
+  });
+
   it.each(['launch', 'batch_claim'])('waits for the current attempt after a %s', async (event) => {
     const job = 'RQ-RETRY';
     const dispatch = line({ event, job, ts: TS });
