@@ -1388,6 +1388,9 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   report someone had to run and read, so recurring Git contention
   never became work). A cell emits only at the recurring bars of three
   adverse rows across two distinct UTC days inside the 7-day window —
+  identical receipt lines (ignoring surrounding whitespace) count once
+  toward both recurrence and recorded retry totals. Distinct lines can
+  contribute even when they share a timestamp. For recurrence,
   index.lock cells count rows recorded `failed`, fetch/push cells
   count rows whose `retries` is a recorded positive integer, timed
   rows and clean retries are context never counted as adverse — a
