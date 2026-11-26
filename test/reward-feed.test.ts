@@ -353,6 +353,30 @@ describe('foldJobsLedgerRewards', () => {
     expect(foldJobsLedgerRewards(later.join('\n'), NOW_MS, undefined, keys)).toEqual([]);
   });
 
+  it('keeps a closed PR attributed to its original dispatch when a later revert arrives', () => {
+    const job = 'RQ-CLOSED-REUSED';
+    const later = [
+      launch(job, 'devin', '2026-10-28T16:30:00.000Z'),
+      ciStart(job, '2026-10-28T17:00:00.000Z'),
+      ciComplete(job, '2026-10-28T17:30:00.000Z'),
+      line({ event: 'reverted', job, url: 'https://github.com/ashlrai/phantom/pull/10', ts: '2026-10-28T18:00:00.000Z' }),
+    ];
+    const rows = [
+      launch(job),
+      ciStart(job, '2026-10-28T14:30:00.000Z'),
+      ciComplete(job, '2026-10-28T14:45:00.000Z'),
+      closed(job),
+      ...later,
+    ];
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, pool: 'codex-cmp', merged: false, dispatchedAt: DISPATCH_ISO, ciWallMs: 900_000 },
+    ]);
+    expect(foldJobsLedgerRewards([closed(job), ...later].join('\n'), NOW_MS)).toEqual([]);
+    expect(foldJobsLedgerRewards(later.join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, pool: 'devin', merged: false, ciWallMs: 1_800_000 },
+    ]);
+  });
+
   it('discounts a held merge the standing revert set proves did not hold', () => {
     const pr = (n: number) => `https://github.com/ashlrai/phantom/pull/${n}`;
     const merge = (job: string, n: number) =>

@@ -783,7 +783,10 @@ for ledger reverts and standing revert claims. Revert receipts without
 a usable PR URL retain job-level attribution. The fold uses the
 recorded revert time when available and the receipt timestamp otherwise.
 Replayed merge receipts cannot restore credit for a reverted merge, and the
-original merge time still bounds dispatch and CI evidence.
+original merge time still bounds dispatch and CI evidence. An explicit
+closed-unmerged outcome likewise uses its close time to bound dispatch and
+CI evidence. A revert supplies the resolution time only when the job has
+neither a merge nor a close receipt.
 Missing or ambiguous timing stays unknown, and existing
 reward rows retain their original values. When the daemon reads a truncated
 spend ledger, it still records resolved rewards and leaves USD cost unknown.
