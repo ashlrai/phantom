@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { DriveNodes, JobClaim } from './index.js';
+import type { DriveNodes, JobClaim, NodeProfile } from './index.js';
 import { isVersionCap } from './phm-version.js';
 import type { NodeAuth, NodeCapacitySample } from './state.js';
 import { isNodeCapacity, isHostStats, validCap, validId, validSecretName } from './state.js';
@@ -172,6 +172,24 @@ function joinHint(nodes: DriveNodes, nodeId: string, watch = false): string {
   return joinHintCommand(nodeId, nodes.nodeProfile(nodeId), { watch });
 }
 
+/** What a join stops advertising relative to the expired profile it replaces.
+ * A re-join names only the owners, caps and slot bound it is given, so each
+ * omission is a silent opt-out — the same failure org join's droppedLanes
+ * reports. Version-report caps never count: join re-derives the build marker
+ * every time, the rule joinHintCommand already follows. */
+function joinDrops(prior: NodeProfile | null, next: NodeProfile):
+  { owners?: string[]; caps?: string[]; slots?: number } | undefined {
+  if (!prior) return undefined;
+  const nextOwners = new Set(next.owners);
+  const nextCaps = new Set((next.caps ?? []).filter(cap => !isVersionCap(cap)));
+  const owners = prior.owners.filter(o => !nextOwners.has(o));
+  const caps = (prior.caps ?? []).filter(c => !isVersionCap(c) && !nextCaps.has(c));
+  const slots = prior.slots !== undefined && next.slots === undefined ? prior.slots : undefined;
+  if (!owners.length && !caps.length && slots === undefined) return undefined;
+  return { ...(owners.length ? { owners } : {}), ...(caps.length ? { caps } : {}),
+    ...(slots === undefined ? {} : { slots }) };
+}
+
 /** planRoutes' unrouted-job fix can end in a bare `phm node join`; on the
  * standalone registry the keep-alive is `join --watch` — a bare join's session
  * dies 30 s after its last beat — so the hint must carry it, the same rule
@@ -276,15 +294,37 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       const owners = needIdList(flags, '--owner');
       const caps = optCapList(flags, '--caps');
       const nodeId = needId(flags, '--node');
-      const joined = nodes.join(nodeId, { owners, caps,
-        ...(flags.has('--slots') ? { slots: boundedNum(flags, '--slots', 64, SLOTS_FIX) } : {}) });
+      const slots = flags.has('--slots') ? boundedNum(flags, '--slots', 64, SLOTS_FIX) : undefined;
+      const profile: NodeProfile = { owners, caps, ...(slots === undefined ? {} : { slots }) };
+      // The profile this join replaces is still readable before join swaps it
+      // (a live record makes join refuse below, so `prior` only ever describes
+      // an expired predecessor or nothing). The read is advisory like
+      // liveSession's: a racing join can leave it one profile stale.
+      const prior = nodes.nodeProfile(nodeId);
+      const joined = nodes.join(nodeId, profile);
       if (!joined) {
         const live = liveSession(nodes, nodeId);
         throw new UsageError('node-live', 'A live node already uses that ID.',
           live === null ? 'Pick another --node, wait for its lease to expire, or run phm node leave from that node.'
             : `It is live as session ${live}: keep it with --session ${live} on beat, pull and leave, or run phm node leave --node ${nodeId} --session ${live} to replace it.`, 1);
       }
-      return { nodeId: joined.nodeId, session: joined.session, owners: [...new Set(owners)].sort(), caps: [...new Set(caps)].sort() };
+      const dropped = joinDrops(prior, profile);
+      // The restore command keeps the new profile and adds back what it
+      // dropped, so running it can never lose this join's own additions —
+      // the same rule org join's open-lane note follows. --watch follows the
+      // caller's registry: standalone joins hold the session, pool joins do not.
+      let restore: string | undefined;
+      if (dropped !== undefined) {
+        const bound = slots ?? dropped.slots;
+        restore = joinHintCommand(nodeId, {
+          owners: [...new Set([...owners, ...(dropped.owners ?? [])])].sort(),
+          caps: [...new Set([...caps, ...(dropped.caps ?? [])])],
+          ...(bound === undefined ? {} : { slots: bound }),
+        }, { watch: opts.rejoinWatch === true });
+      }
+      return { nodeId: joined.nodeId, session: joined.session, owners: [...new Set(owners)].sort(), caps: [...new Set(caps)].sort(),
+        ...(slots === undefined ? {} : { slots }),
+        ...(dropped === undefined ? {} : { dropped: { ...dropped, restore } }) };
     }
     case 'beat': {
       let hostStats: unknown;

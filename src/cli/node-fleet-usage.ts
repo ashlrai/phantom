@@ -16,7 +16,10 @@ export const NODE_FLEET_USAGE = `Usage: phm node join [--node <id>] --owner <sco
 
 Computers join Phantom as nodes; \`join\` defaults \`--node\` to this computer's
 sanitized hostname (the pool join's default), so \`phm node join --owner <scope>\`
-is the shortest first join — pass \`--node\` to choose another id. A job carries an owner scope and only nodes in that scope
+is the shortest first join — pass \`--node\` to choose another id. A re-join
+replaces the whole advertised profile; the reply names any owner scopes, caps
+or \`--slots\` bound it drops and prints the re-join that keeps them. A job
+carries an owner scope and only nodes in that scope
 see or pull it. The router picks the least-loaded live node that advertises the job's caps
 (\`gh\` also needs a local gh-auth heartbeat). A per-job lease with a fencing token means no
 job runs twice: renew before it expires and pass the token to every effect. A pulled job the

@@ -90,7 +90,12 @@ the suggested rejoin also keeps the session live). For `beat` and `pull`, if
 the node already rejoined under a newer session the fix names that session and
 the exact `leave` command instead, so you can resume without hunting for the
 number; a claim verb names the live session for the re-pull instead, since its
-tokens died with the old one. Omit `--probe-auth` if this node does not need
+tokens died with the old one. A re-join replaces the node's whole advertised
+profile rather than merging into it, so the reply names what it drops:
+`dropped` in `--json` lists the owner scopes, caps and `--slots` bound the
+last join carried that this one does not, plus a `restore` command that
+re-joins keeping both; text mode prints the same note and command. Pass every
+flag you still want advertised. Omit `--probe-auth` if this node does not need
 GitHub authentication.
 
 ## See it take a job
