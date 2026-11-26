@@ -387,6 +387,20 @@ page passed off as "no wakes") — plus bot seats whose projected handoff plan s
 move (the same `planSeatHandoffs` read `phm bots handoffs` serves; only
 eligible seats with pending, not yet journaled, handoff records list, each
 item deep-linking `phm bots handoff --seat` and `phm bots handoffs`) — plus
+journaled seat handoffs whose bus or owner notice never provably landed
+(the same `handoffs.jsonl` journal and `handoff-notices.json` receipts
+`applySeatHandoff` writes — the seats plan above lists only records not
+yet journaled, so a handoff whose notice failed, halted or was never
+attempted had no surface anywhere; each handoff with an unconfirmed
+channel lists as one warn, non-blocking `seat-notice` item — 'unrecorded'
+channels are what the next `bots handoffs --apply` retries while a
+recorded non-delivery outcome is final and the detail says so — `since`
+the journal record's own createdAt and `expiresAt` null, a `node-job`
+ref the item's `--job` citation like the seats source's; an absent
+journal is `missing` — verified no handoff was ever applied — and an
+unsafe or malformed store `unavailable`, never an empty gap list passed
+off as fact; items deep-link `phm bots handoffs`, `phm bots handoff
+--seat <id>` and `phm bots handoff --seat <id> --apply`) — plus
 unpublished peer work-dispatch results (the private
 `agentnet/work-dispatch.json` journal's `work.result` receipts whose latest
 recorded outcome was never confirmed sent to the proposing peer — the same
@@ -635,7 +649,7 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 `phm drafts approve`, `phm comms-agent drafts`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
-`phm bots handoff`, `phm agentnet peers dispatch`, `phm checkpoint handoff show|list`, `phm fleet org-sync --apply`, `phm fleet org-board`, `phm agents bus post`, `phm comms email-cycle`,
+`phm bots handoff`, `phm bots handoffs --apply`, `phm agentnet peers dispatch`, `phm checkpoint handoff show|list`, `phm fleet org-sync --apply`, `phm fleet org-board`, `phm agents bus post`, `phm comms email-cycle`,
 `phm fleet email-outbox`,
 `phm bus inbox`, `phm bus ack`, `phm bus thread pending`, `phm bus thread
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
@@ -659,7 +673,7 @@ severity band, `--blocking` only items that block, `--job <id>` only items
 that provably name that job — a bus or mailbox body's `busBodyJobMatch`
 citation, a feed job's id, a board task's fleet item or a delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
-seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
+seat's `node-job` handoff or seat-notice gap (a `bus-claim` ref is a claim key, never a job), a
 peer-dispatch receipt's job, a session-handoff journal's job id or a
 router-queue row's own READY id —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance

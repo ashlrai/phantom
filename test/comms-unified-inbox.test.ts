@@ -18,7 +18,7 @@ import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
-import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
+import type { SeatHandoff, SeatHandoffNoticeGap, SeatHandoffNoticesRead, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
 import { DEFAULT_TEAM } from '../src/core/teams/tools.js';
 import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms/imessage-teammate-inbox.js';
@@ -143,6 +143,7 @@ describe('readUnifiedInbox sources', () => {
         conversations: { state: 'missing', pending: 0 },
         wakes: { state: 'healthy', pending: 0 },
         seats: { state: 'missing', pending: 0 },
+        'seat-notices': { state: 'missing', pending: 0 },
         'peer-dispatch': { state: 'missing', pending: 0 },
         'session-handoff': { state: 'missing', pending: 0 },
         'org-outbox': { state: 'missing', pending: 0 },
@@ -1266,6 +1267,75 @@ describe('bot seat handoffs in the unified inbox', () => {
     const mixed = await readSeats([seat()]);
     expect(mixed.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
     expect(mixed.items.filter(i => i.source === 'seats').map(i => i.id)).toEqual(['seats:devin-review']);
+  });
+});
+
+describe('seat handoff notices in the unified inbox', () => {
+  const gap = (over: Partial<SeatHandoffNoticeGap> = {}): SeatHandoffNoticeGap => ({
+    handoffId: 'a'.repeat(64), seatId: 'devin-review',
+    work: { kind: 'bus-claim', ref: 'pr:o/r#7' }, createdAt: new Date(now - 60_000).toISOString(),
+    unconfirmed: [{ channel: 'bus', state: 'unrecorded' }, { channel: 'owner', state: 'unrecorded' }],
+    ...over,
+  });
+  const readNotices = (read: () => Promise<SeatHandoffNoticesRead> | SeatHandoffNoticesRead) => readUnifiedInbox({
+    runsDir, busRoot, now: () => now,
+    readSeatNotices: async () => read(),
+    readRequests: () => ({ status: 'missing', requests: [] }),
+  });
+  const ok = (gaps: SeatHandoffNoticeGap[]): SeatHandoffNoticesRead => ({ status: 'ok', source: 'available', gaps });
+
+  it('lists each unconfirmed notice as a warn item naming channels, states and acts', async () => {
+    const inbox = await readNotices(() => ok([
+      gap(),
+      gap({ handoffId: 'b'.repeat(64), seatId: 'codex-fast', work: { kind: 'node-job', ref: 'job-9' },
+        createdAt: new Date(now - 120_000).toISOString(),
+        unconfirmed: [{ channel: 'owner', state: 'halted' }] }),
+    ]));
+    const items = inbox.items.filter(i => i.source === 'seat-notices');
+    expect(items).toHaveLength(2);
+    const unrecorded = items.find(i => i.id === `seat-notices:${'a'.repeat(64)}`)!;
+    expect(unrecorded).toMatchObject({
+      kind: 'seat-notice', severity: 'warn', blocking: false,
+      title: 'Seat devin-review bus-claim pr:o/r#7: notice unconfirmed',
+      detail: 'bus unrecorded · owner unrecorded — apply retries unrecorded channels',
+      since: new Date(now - 60_000).toISOString(), expiresAt: null,
+      act: ['phm bots handoff --seat devin-review', 'phm bots handoff --seat devin-review --apply', 'phm bots handoffs'],
+    });
+    expect(unrecorded.jobIds).toBeUndefined();
+    const recorded = items.find(i => i.id === `seat-notices:${'b'.repeat(64)}`)!;
+    expect(recorded).toMatchObject({
+      title: 'Seat codex-fast node-job job-9: notice unconfirmed',
+      detail: 'owner recorded halted — recorded outcomes are not re-sent',
+      jobIds: ['job-9'],
+    });
+    expect(inbox.sources['seat-notices']).toEqual({ state: 'healthy', pending: 2 });
+  });
+
+  it('matches --job on a node-job ref and --kind on the new kind', async () => {
+    const gaps = [gap(), gap({ handoffId: 'b'.repeat(64), work: { kind: 'node-job', ref: 'job-9' } })];
+    const byJob = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readSeatNotices: async () => ok(gaps),
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      filter: { job: 'job-9' } });
+    expect(byJob.items.filter(i => i.source === 'seat-notices').map(i => i.id)).toEqual([`seat-notices:${'b'.repeat(64)}`]);
+    const byKind = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readSeatNotices: async () => ok(gaps),
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      filter: { kind: 'seat-notice' } });
+    expect(byKind.items.filter(i => i.source === 'seat-notices')).toHaveLength(2);
+  });
+
+  it('reports missing and unavailable reads honestly while other sources still list', async () => {
+    const missing = await readNotices(() => ({ status: 'ok', source: 'missing', gaps: [] }));
+    expect(missing.sources['seat-notices']).toEqual({ state: 'missing', pending: 0 });
+    const unavailable = await readNotices(() => ({ status: 'unavailable', reason: 'Seat handoff store unavailable.' }));
+    expect(unavailable.sources['seat-notices']).toEqual({ state: 'unavailable', pending: null });
+    const throwing = await readNotices(() => { throw new Error('boom'); });
+    expect(throwing.sources['seat-notices']).toEqual({ state: 'unavailable', pending: null });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const mixed = await readNotices(() => ok([gap()]));
+    expect(mixed.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+    expect(mixed.items.filter(i => i.source === 'seat-notices')).toHaveLength(1);
   });
 });
 
