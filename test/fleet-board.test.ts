@@ -93,6 +93,23 @@ describe('recordLeaderBoard', () => {
     ]);
   });
 
+  it('reads spec-less ready rows through router-queue.md for the tier depth', async () => {
+    await writeFile(join(queueDir, 'ready.tsv'), [
+      'RQ-A\tphantom\tdevin\twork\t/p/a',
+      'RQ-B\tphantom\tdevin\twork\t/p/b',
+      'RQ-C\tphantom\tdevin\tfast\t/p/c',
+    ].join('\n'));
+    await writeFile(join(queueDir, 'router-queue.md'), [
+      '- READY phantom RQ-A (preferred_lane=claude): hinted work',
+      '- READY phantom RQ-B (exclusive=maybe): malformed envelope',
+      '- READY phantom RQ-C (P2): open supply',
+    ].join('\n'));
+    const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+    expect(result.wrote).toBe(true);
+    if (!result.wrote) throw new Error('unreachable');
+    expect(result.board.queueDepthByTier).toEqual({ work: 1, fast: 1 });
+  });
+
   it('reports unknown conflict figures, not a stale trend, when ready.tsv is unreadable', async () => {
     await seed();
     await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS - 3_600_000 });
@@ -153,6 +170,24 @@ describe('the conflict proxy and tier counts are pure', () => {
       'READY\tRQ-TEST-5\tdevin\tnot a tier!',
     ].join('\n');
     expect(queueDepthByTier(readyRowsForDepth(text))).toEqual({ work: 1, fast: 1, unknown: 1 });
+  });
+
+  it('resolves spec-less rows through router-queue envelopes for the tier tally', () => {
+    const tsv = [
+      'RQ-A\tphantom\tdevin\twork\t/p/a',
+      'RQ-B\tphantom\tdevin\twork\t/p/b',
+      'RQ-C\tphantom\tdevin\tfast\t/p/c',
+    ].join('\n');
+    const routerQueue = [
+      '- READY phantom RQ-A (preferred_lane=claude): hinted work',
+      '- READY phantom RQ-B (exclusive=maybe): malformed envelope',
+      '- READY phantom RQ-C (P2): open supply',
+    ].join('\n');
+    // RQ-B's envelope fails validation — dead work, never depth. RQ-C's names
+    // no lane, so it stays lane-open READY supply. Without the queue text the
+    // lane column stands and RQ-B counts like any other ready row.
+    expect(queueDepthByTier(readyRowsForDepth(tsv, routerQueue))).toEqual({ work: 1, fast: 1 });
+    expect(queueDepthByTier(readyRowsForDepth(tsv))).toEqual({ work: 2, fast: 1 });
   });
 });
 

@@ -26,6 +26,17 @@ describe('rebase status', () => {
       { id: 'RQ-REBASE-phantom-1234-abcdef0-retry1', status: 'RUNNING' },
     ], now).coverage).toEqual({ currentHead: 1, staleHeadOnly: 0, unknownHead: 0, uncovered: 0 });
   });
+  it('degrades the queue source when a spec-less row has a malformed router-queue envelope', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rebase-status-'));
+    try {
+      await mkdir(join(root, 'queue'));
+      await writeFile(join(root, 'queue', 'ready.tsv'), 'RQ-REBASE-PHANTOM-1-abcdef0\tphantom\tdevin\twork\t/p/r\n');
+      await writeFile(join(root, 'queue', 'router-queue.md'), '- READY phantom RQ-REBASE-PHANTOM-1-abcdef0 (exclusive=maybe): malformed\n');
+      expect((await readRebaseStatus([], root, new Date(now))).queueSource).toBe('degraded');
+      await writeFile(join(root, 'queue', 'router-queue.md'), '- READY phantom RQ-REBASE-PHANTOM-1-abcdef0 (P2, preferred_lane=devin): ok\n');
+      expect((await readRebaseStatus([], root, new Date(now))).queueSource).toBe('healthy');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('reports missing queue instead of empty success', async () => {
     const root = await mkdtemp(join(tmpdir(), 'rebase-status-'));
     try {

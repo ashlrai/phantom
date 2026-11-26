@@ -1,12 +1,12 @@
 import { describe, test, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { computeRank, SEEDS, updateRank, readRank, validRank, localMerges } from '../src/core/fleet/repo-rank.js';
 import { allocateRepos, readRepoPriority, setRepoPriority, type RepoMarketEvidence } from '../src/core/fleet/repo-market.js';
-import { managedRepoCatalog, parseRepoMarketFacts, planRepoChange } from '../src/core/fleet/repos-manager.js';
+import { listManagedRepos, managedRepoCatalog, parseRepoMarketFacts, planRepoChange } from '../src/core/fleet/repos-manager.js';
 const now = new Date('2026-11-04T12:00:00Z');
 
 test('repository management distinguishes unknown metrics and routes scope changes to grant review', () => {
@@ -53,6 +53,30 @@ test('the manager includes the effective stage for repos beyond the ecosystem se
   expect(catalog.get('ashlrai/project-27')).toEqual({ label: 'project-27', logo: null, grantStage: 'propose' });
   expect(catalog.get('ashlrai/cortex')).toMatchObject({ logo: 'cortex-logo.svg', grantStage: 'merge' });
   expect(catalog.get('ashlrai/local-only')).toMatchObject({ grantStage: null });
+});
+
+test('repo queue depth resolves spec-less ready rows through router-queue envelopes', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'repos-depth-'));
+  try {
+    mkdirSync(join(dir, 'queue'), { recursive: true });
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), [
+      'RQ-LIVE\tphantom\tdevin\twork\t/p/l',
+      'RQ-OPEN\tphantom\tdevin\twork\t/p/o',
+      'RQ-DEAD\tphantom\tdevin\twork\t/p/d',
+    ].join('\n'));
+    writeFileSync(join(dir, 'queue', 'router-queue.md'), [
+      '- READY phantom RQ-LIVE (preferred_lane=codex): hinted work',
+      '- READY phantom RQ-OPEN (P2): open supply',
+      '- READY phantom RQ-DEAD (exclusive=maybe): malformed envelope',
+    ].join('\n'));
+    const result = await listManagedRepos({
+      runsDir: dir, now: now.getTime(),
+      run: async () => ({ code: 0, stdout: '{"data":{}}', stderr: '', timedOut: false, truncated: false, missing: false }),
+    });
+    // RQ-LIVE and lane-open RQ-OPEN count toward phantom's depth; RQ-DEAD's
+    // malformed envelope makes it dead work the market never launches.
+    expect(result.repos.find(row => row.repo === 'ashlrai/phantom')?.queueDepth).toBe(2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('only current or previous weekly findings add to the estimate before the owner multiplier', () => {

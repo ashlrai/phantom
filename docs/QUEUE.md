@@ -531,7 +531,11 @@ route-decision events.
 The Leader board's `queueDepthByTier` counts READY work across the fleet,
 including rows with an empty lane column or an explicit
 `"preferred_lane": null` in the requirements. These open jobs have no
-per-lane attribution.
+per-lane attribution. Spec-less dispatcher rows resolve through their
+`queue/router-queue.md` `(attrs)` envelope exactly like the work market, so
+a row whose envelope fails validation is dead work and stays out of the
+depth; the same envelope read feeds the fleet truth queued count, the
+rebase-coverage job set and the per-repo `queueDepth` in the repos report.
 
 The Leader board estimates the number of conflicting PRs from rebase job IDs
 in `ready.tsv`. It includes parked rebase jobs, expands batches into their
