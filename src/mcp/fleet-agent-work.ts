@@ -12,8 +12,9 @@
  * envelopes and worker-handoff assignments in bus-next order, the
  * conversation threads waiting on its answer, its own unanswered asks,
  * blocked threads it is party to, wake hints, the next inbox page,
- * legacy `phm bus` mailbox mail, the shared task board digest, its
- * registry channels and its bot-seat handoff records. Every section
+ * legacy `phm bus` mailbox mail, the shared task board digest, the
+ * fleet's open session-handoff checkpoints awaiting resume or failover,
+ * its registry channels and its bot-seat handoff records. Every section
  * reports its own read state, so one unreadable store degrades only its
  * own section and unknown stays unknown — never an empty list passed
  * off as fact.

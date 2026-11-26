@@ -4574,6 +4574,135 @@ describe('board section', () => {
   });
 });
 
+describe('sessions section', () => {
+  const AT = '2026-11-20T10:00:00.000Z';
+  const AT_MS = Date.parse(AT);
+
+  function handoffRecord(job: string, extra: Record<string, unknown> = {}) {
+    return {
+      schema: 'session-handoff.v1', revision: 1, at: AT,
+      signal: { kind: 'checkpoint' },
+      job, attempt: 'att-1', repo: 'test/fixture', lane: 'codex-personal', model: 'model-a',
+      minTier: 'work', needs: ['typescript'], goal: 'Do the fake thing',
+      plan: [{ action: 'step 1', state: 'pending' }], filesTouched: ['result'],
+      decisions: ['keep it'], evidence: ['e1'], nextAction: 'do step 1', contextDigest: 'ctx',
+      repoState: { root: '/fake/host/root', head: 'a'.repeat(40), digest: 'b'.repeat(64), entireCheckpoint: null },
+      ...extra,
+    };
+  }
+
+  function writeHandoffJournal(runsRoot: string, job: string, records: object[]): void {
+    const dir = join(runsRoot, 'handoffs');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${job}.jsonl`), records.map(record => JSON.stringify(record)).join('\n') + '\n');
+  }
+
+  it('lists open checkpoints with their resume facts and excludes completed journals', () => {
+    const options = setup();
+    register(options, 'atlas');
+    writeHandoffJournal(options.runsRoot, 'job-open', [handoffRecord('job-open')]);
+    writeHandoffJournal(options.runsRoot, 'job-done', [
+      handoffRecord('job-done'),
+      handoffRecord('job-done', { revision: 2, at: '2026-11-20T11:00:00.000Z',
+        signal: { kind: 'completed' }, plan: [{ action: 'step 1', state: 'done' }] }),
+    ]);
+    writeHandoffJournal(options.runsRoot, 'job-pressured', [
+      handoffRecord('job-pressured', { at: '2026-11-20T11:00:00.000Z',
+        signal: { kind: 'rate-limit', status: 429 } }),
+    ]);
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.sessions).toMatchObject({ status: 'ok', source: 'available',
+      matched: 2, unreadable: 0, truncated: false });
+    if (result.sessions.status !== 'ok') throw new Error('unreachable');
+    // Newest revision first: the 11:00 pressured checkpoint sorts ahead.
+    expect(result.sessions.sessions.map(session => session.job)).toEqual(['job-pressured', 'job-open']);
+    expect(result.sessions.sessions[1]).toEqual({
+      job: 'job-open', attempt: 'att-1', revision: 1, at: AT,
+      lane: 'codex-personal', model: 'model-a', minTier: 'work', repo: 'test/fixture',
+      signal: 'checkpoint', pressure: false, needs: ['typescript'], head: 'a'.repeat(40),
+      resumeBy: '2026-11-21T10:00:00.000Z' });
+    expect(result.sessions.sessions[0]).toMatchObject({ job: 'job-pressured',
+      signal: 'rate-limit', pressure: true });
+  });
+
+  it('reports a missing runs store as missing and counts unreadable journals', () => {
+    const options = setup();
+    register(options, 'atlas');
+    const missing = readBusWorkMine('atlas', options);
+    expect(missing.status).toBe('ok');
+    if (missing.status !== 'ok') throw new Error('unreachable');
+    // No runs directory was ever written — verified-absent, never unavailable.
+    expect(missing.sessions).toEqual({ status: 'ok', source: 'missing', matched: 0,
+      sessions: [], unreadable: 0, truncated: false });
+
+    writeHandoffJournal(options.runsRoot, 'job-open', [handoffRecord('job-open')]);
+    mkdirSync(join(options.runsRoot, 'handoffs'), { recursive: true });
+    writeFileSync(join(options.runsRoot, 'handoffs', 'corrupt.jsonl'), 'not json\n');
+    const torn = join(options.runsRoot, 'handoffs', 'torn.jsonl');
+    writeFileSync(torn, JSON.stringify(handoffRecord('torn'))); // no trailing newline
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.sessions).toMatchObject({ status: 'ok', source: 'available',
+      matched: 1, unreadable: 2 });
+    if (result.sessions.status !== 'ok') throw new Error('unreachable');
+    expect(result.sessions.sessions.map(session => session.job)).toEqual(['job-open']);
+  });
+
+  it('applies the shared job/contains/since/before filters and leaves the section whole under sender filters', () => {
+    const options = setup();
+    register(options, 'atlas');
+    writeHandoffJournal(options.runsRoot, 'job-open', [handoffRecord('job-open')]);
+    const sessionsOf = (over: BusWorkMineOptions) => {
+      const result = readBusWorkMine('atlas', { ...options, ...over });
+      expect(result.status).toBe('ok');
+      if (result.status !== 'ok') throw new Error('unreachable');
+      if (result.sessions.status !== 'ok') throw new Error('unreachable');
+      return result.sessions;
+    };
+
+    expect(sessionsOf({}).matched).toBe(1);
+    // job: the journal job id, delegated to the shared list filter.
+    expect(sessionsOf({ job: 'job-open' }).matched).toBe(1);
+    expect(sessionsOf({ job: 'job-other' }).matched).toBe(0);
+    // contains: the scrubbed lane/model/repo/signal/tier/needs text — never the job id.
+    expect(sessionsOf({ contains: 'codex-personal' }).matched).toBe(1);
+    expect(sessionsOf({ contains: 'typescript' }).matched).toBe(1);
+    expect(sessionsOf({ contains: 'job-open' }).matched).toBe(0);
+    // since/before: the [since, before) window on the latest revision's at.
+    expect(sessionsOf({ since: AT_MS }).matched).toBe(1);
+    expect(sessionsOf({ since: AT_MS + 1 }).matched).toBe(0);
+    expect(sessionsOf({ before: AT_MS + 1 }).matched).toBe(1);
+    expect(sessionsOf({ before: AT_MS }).matched).toBe(0);
+    // Every other filter leaves the section whole: a checkpoint record
+    // carries no envelope, band, room or sender the digest could prove.
+    expect(sessionsOf({ priority: 'P0' }).matched).toBe(1);
+    expect(sessionsOf({ channel: 'eng' }).matched).toBe(1);
+    expect(sessionsOf({ from: 'agent:nova' }).matched).toBe(1);
+    expect(sessionsOf({ excludeFrom: 'agent:nova' }).matched).toBe(1);
+    expect(sessionsOf({ id: 'env-1' }).matched).toBe(1);
+    expect(sessionsOf({ inReplyTo: 'env-1' }).matched).toBe(1);
+    expect(sessionsOf({ bodyKind: 'work' }).matched).toBe(1);
+    expect(sessionsOf({ result: 'failed' }).matched).toBe(1);
+    expect(sessionsOf({ thread: 'job:job-open' }).matched).toBe(1);
+  });
+
+  it('renders the sessions section in the human digest', () => {
+    const options = setup();
+    register(options, 'atlas');
+    writeHandoffJournal(options.runsRoot, 'job-open', [handoffRecord('job-open')]);
+    const lines = formatBusWorkMine(readBusWorkMine('atlas', options));
+    expect(lines).toContain('sessions=1 shown=1 source=available unreadable=0');
+    const row = lines.find(line => line.includes('job-open rev=1'));
+    expect(row).toContain('lane=codex-personal model=model-a tier=work repo=test/fixture');
+    expect(row).toContain('signal=checkpoint needs=typescript');
+    expect(row).toContain(`head=${'a'.repeat(40)} resumeBy=2026-11-21T10:00:00.000Z`);
+  });
+});
+
 describe('formatBusWorkMine', () => {
   it('renders every section with unknown states spelled out', async () => {
     const options = setup();

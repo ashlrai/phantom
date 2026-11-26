@@ -359,8 +359,11 @@ conversation threads it is waiting on — its own asks and handoffs nobody
 has answered yet, each naming who owes the reply — its
 pending wake hints, the next page of mail addressed
 to it, pending legacy phm bus mailbox mail addressed to any of its
-labels and the shared task board's pending digest (phm bus board pending)
-under the same labels, plus the bot-seat handoff work the agent's seats
+labels, the shared task board's pending digest (phm bus board pending)
+under the same labels, the fleet's open session-handoff checkpoints —
+the same listSessionHandoffs read phm checkpoint handoff list and
+fleet_session_handoffs serve, work awaiting resume or failover — plus
+the bot-seat handoff work the agent's seats
 still hold — the same planSeatHandoffs read phm bots handoffs serves,
 listing only eligible seats with pending records under any of the agent's
 labels or a literal seat/participant ref — capped sections carry matched
@@ -373,7 +376,8 @@ declared-key overlap with an announced job or a leased body's job
 citations, next and handoffs by body citation (claimable work names none,
 so next is empty under --job), threads/awaiting/blocked by
 the conversations job query, wakes and inbox by their own job filters,
-mailbox by body citation, the board by its job-carrying-thread rule, and
+mailbox by body citation, the board by its job-carrying-thread rule, the
+sessions section by journal job id, and
 the seats section by node-job handoff refs — with every count the
 filtered total. --contains on work mine narrows the whole digest to the
 rows whose displayed descriptive text carries the needle as a
@@ -385,8 +389,9 @@ threads/awaiting/blocked match member-message subjects through the
 conversations read, wakes match the resolved referent's summary or
 citing status detail, inbox matches the inbox read's own contains rule,
 the board matches delivery post text and task/thread titles inside
-pendingFor, and seats match the held-work ref/branch/pr a handoff
-record carries — while ids, claim keys as keys, statuses and routing
+pendingFor, seats match the held-work ref/branch/pr a handoff
+record carries, and sessions match the checkpoint's lane, model, repo,
+signal kind, tier and needs — while ids, claim keys as keys, statuses and routing
 labels keep their own filters and channels, registry context rather
 than pending work, stays unfiltered; a row whose text cannot be proven
 never matches and every count stays the filtered total. --since on work
@@ -398,7 +403,8 @@ null start never matches), feed jobs and announced jobs match
 updatedAt, next/handoffs/inbox match the envelope receipt, mailbox
 matches acceptance, threads/awaiting/blocked and wakes inherit their own
 reads' since rules on latest activity, board deliveries match createdAt
-while board tasks — which keep no timestamp — never match, and seats
+while board tasks — which keep no timestamp — never match, sessions
+match the journal's latest revision at, and seats
 stay unfiltered — a pending handoff record's createdAt stamps the plan
 read instant, not the held work's age, so no per-record recency exists
 to filter on; a pending item older than the
@@ -413,8 +419,10 @@ started, feed jobs and announced jobs match updatedAt, next/handoffs
 match the envelope receipt, threads/awaiting/blocked inherit the shared
 conversations read's lastAt bound, mailbox matches acceptance, inbox
 matches receivedAt and wakes the hint's queue time inside their own
-reads' exclusive upper bounds, and board deliveries match createdAt
-while board tasks — which keep no timestamp — never match; an item
+reads' exclusive upper bounds, board deliveries match createdAt while
+board tasks — which keep no timestamp — never match, and sessions bound
+the journal's latest revision at on the same [since, before) window;
+an item
 stamped exactly at the cutoff never
 matches, channels and seats stay unfiltered, and every count stays the
 filtered total. --priority on work mine keeps only
@@ -425,7 +433,8 @@ of that band, inbox and mailbox keep mail of that band, wakes keep hints
 whose resolved referent reports it (unresolved or unknown referents
 never match), and claims keep only message claims whose resolved leased
 envelope reports that band — a claim naming no provable band never lists;
-feed jobs, announced jobs, the thread sections, board rows, channels and
+feed jobs, announced jobs, the thread sections, board rows, channels,
+sessions and
 seats carry no per-item band and stay unfiltered, and every count stays
 the filtered total. --channel on work mine keeps only pending items
 provably addressed to group:<name>:* of one bus channel — the same room
@@ -436,7 +445,8 @@ keep envelopes whose to carries it, claims keep only message claims whose
 resolved leased envelope sits in the room (a claim naming no resolved
 message never lists), the thread sections keep threads whose latest
 message is addressed to the room, and wakes and inbox pass the name to
-their own reads' channel filters; board, channels and seats carry no
+their own reads' channel filters; board, channels, sessions and seats
+carry no
 per-item room and stay unfiltered, and every count stays the filtered
 total. --from on work mine keeps only pending items provably sent by the
 named agent — the same sender rule every bus read's --from applies, so
@@ -449,7 +459,8 @@ lists), the thread sections pass the ref into the shared conversations
 read's own from filter, and wakes and inbox pass it to their own reads'
 sender filters; board deliveries keep only posts whose sender label
 matches while board tasks — which record no author — never match, and
-seats and channels carry no per-record sender and stay unfiltered, and
+sessions, seats and channels carry no per-record sender and stay
+unfiltered, and
 every count stays the filtered total. --exclude-from inverts the same
 match — a section keeps an item unless its sender evidence resolves to
 the excluded ref, so a sender that cannot be proven excluded is never
@@ -466,7 +477,8 @@ claims whose resolved leased envelope's id equals it (a claim naming no
 resolved message never lists), inbox, wakes and the thread sections pass
 the value to their own reads' id filters (inbox and wakes the item
 envelope, conversations the thread envelope a member message belongs to),
-and board, channels and seats carry no per-item envelope citation the
+and board, channels, sessions and seats carry no per-item envelope
+citation the
 digest can prove and stay unfiltered; an id nothing on the bus carries is
 an honest empty match and every count stays the filtered total.
 --in-reply-to on work mine keeps only pending items whose body cites the
@@ -478,7 +490,8 @@ envelopes whose body the citation rule accepts, claims keep only message
 claims whose resolved leased envelope's own inReplyTo equals it (a claim
 naming no resolved message or no citation never lists), and inbox, wakes
 and the thread sections pass the value to their own reads' in-reply-to
-filters; feed jobs, announced jobs, board rows, channels and seats carry
+filters; feed jobs, announced jobs, board rows, channels, sessions and
+seats carry
 no retained body citation in their projections and stay unfiltered, and
 every count stays the filtered total. --body-kind on work mine keeps only
 pending items whose body carries that exact kind discriminator — the same
@@ -494,7 +507,8 @@ the feed jobs citing a retained receipt of that kind — every job cites
 its work.post announcement so work.post keeps them all, work.status keeps
 jobs a status receipt has moved, work.result keeps jobs a result receipt
 cites, and any other kind is an honest empty match — while board,
-channels and seats carry no per-item retained body and stay whole; a kind
+channels, sessions and seats carry no per-item retained body and stay
+whole; a kind
 nothing on the bus carries is an honest empty match and every count stays
 the filtered total. --result on work mine keeps only pending items tied to
 a work.result receipt reporting that one outcome — the same
@@ -510,7 +524,8 @@ and wakes pass the value to their own reads' result filters, and the
 thread sections pass it to the shared conversations read's member-message
 result filter — a thread survives when a member message is a work.result
 reporting that outcome, the same whole-thread member match agents
-conversations --result applies — while board, channels and seats carry no
+conversations --result applies — while board, channels, sessions and
+seats carry no
 per-item result evidence the digest can prove and stay unfiltered; an
 outcome nothing on
 the bus reports is an honest empty match and every count stays the
@@ -526,8 +541,9 @@ and wakes pass the value to their own reads' thread filters, and the
 thread sections pass it to the shared conversations read's thread filter
 — a thread survives on any member message whose declared conversation
 bucket equals the label, the same whole-thread member match agents
-conversations --thread applies — while jobs, announced, board, channels
-and seats carry no per-item thread label the digest can prove and stay
+conversations --thread applies — while jobs, announced, board, channels,
+sessions and
+seats carry no per-item thread label the digest can prove and stay
 unfiltered; a label nothing on the bus carries is an honest empty match
 and every count stays the filtered total. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
