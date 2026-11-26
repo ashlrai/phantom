@@ -6,7 +6,7 @@
  *
  *   held_with_capacity  lane held while every fresh meter window shows room
  *   reset_detected      a window dropped >= 20 points or its reset moved later
- *   idle_with_work      queued work with zero running and no hold
+ *   idle_with_work      positive target, queued work, zero running and no hold
  *   ok                  evidence agrees
  *   unknown             lane or meter evidence missing, invalid or stale
  *
@@ -73,6 +73,9 @@ interface LaneTruthAnalysis {
 
 function analyzeLaneTruth(lanes: readonly LaneState[], meters: readonly MeterSample[], now: number): LaneTruthAnalysis[] {
   return lanes.map(lane => {
+    const target = count(lane.target);
+    const running = count(lane.running);
+    const queued = count(lane.queued);
     const groups = new Map<string, MeterSample[]>();
     let latest: MeterSample | null = null;
     for (const sample of meters.filter(s => s.provider === lane.lane)) {
@@ -96,13 +99,13 @@ function analyzeLaneTruth(lanes: readonly LaneState[], meters: readonly MeterSam
       // A contradictory hold is the actionable verdict even when a reset also occurred.
       if (lane.held && windows.every(samples => samples[0]!.usedPercent! < 95)) verdict = 'held_with_capacity';
       else if (reset) verdict = 'reset_detected';
-      else if (count(lane.running) !== null && count(lane.queued) !== null && count(lane.target) !== null) {
-        verdict = !lane.held && lane.running === 0 && lane.queued! > 0 ? 'idle_with_work' : 'ok';
+      else if (running !== null && queued !== null && target !== null) {
+        verdict = !lane.held && target > 0 && running === 0 && queued > 0 ? 'idle_with_work' : 'ok';
       }
     }
     // Deliberately omit free-form hold reasons, transcripts and account metadata.
     return {
-      row: { lane: /^[a-z][a-z0-9-]{1,40}$/.test(lane.lane) ? lane.lane : 'unknown', target: count(lane.target), running: count(lane.running), queued: count(lane.queued), held: typeof lane.held === 'boolean' ? lane.held : null, verdict },
+      row: { lane: /^[a-z][a-z0-9-]{1,40}$/.test(lane.lane) ? lane.lane : 'unknown', target, running, queued, held: typeof lane.held === 'boolean' ? lane.held : null, verdict },
       meter: latest,
     };
   });
