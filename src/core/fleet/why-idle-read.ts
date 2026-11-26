@@ -30,7 +30,7 @@ export async function readWhyIdle(runsDir = defaultRunsDir(), now = Date.now()):
           && count(l.pause_new_until) && count(l.queuedReady))
         || !Array.isArray(e.attention) || e.attention.length > 5 || !e.attention.every(j => row(j)
           && Object.keys(j).every(k => k === 'lane' || k === 'status') && boundedName(j.lane) && j.status === 'stuck')) return [];
-      return whyIdle({ at: b.at, lanes: e.lanes, attention: e.attention, pools: [] } as WhyIdleBrief).map(scrubSecrets);
+      return whyIdle({ at: b.at, lanes: e.lanes, attention: e.attention, pools: [], openRows: b.openRows } as WhyIdleBrief).map(scrubSecrets);
     }
     return whyIdle({ ...b, pools: [] }).map(scrubSecrets);
 
