@@ -38,7 +38,7 @@ export interface DesktopUpdateDependencies {
   parentState(parent: NativeUpdateParent): 'same' | 'gone' | 'changed' | 'unknown';
   now(): number; sleep(ms: number): Promise<void>;
   download(url: string, maximum: number): Promise<Buffer>;
-  residentStop?(): Promise<boolean>;
+  residentQuiescent?(): Promise<boolean>;
   /** Internal test seam; the CLI never accepts an alternate implementation. */
   transaction?(): Promise<TransactionModule>;
 }
@@ -539,11 +539,12 @@ export async function applyQualifiedDesktopUpdate(stageId: string, deps: Desktop
     if (!await deps.verifyParent(parent, staged.manifest)) hold('native-parent-unverified');
     if (deps.now() >= ackDeadline) hold('native-parent-proof-timeout');
     freshAdmission(deps);
-    if (deps.residentStop && !await deps.residentStop()) hold('resident-stop-failed');
+    if (deps.residentQuiescent && !await deps.residentQuiescent()) hold('resident-stop-failed');
     if (deps.now() >= ackDeadline) hold('native-parent-proof-timeout');
     freshAdmission(deps);
     await progress(result('waiting-native-exit', version, null));
     await waitForNativeUpdateParent(parent, deps);
+    if (deps.residentQuiescent && !await deps.residentQuiescent()) hold('resident-stop-failed');
     freshAdmission(deps);
     // Exclusive claim; uncertain/crashed attempt files remain a durable no-replay fence.
     const claim = join(staged.stage, 'consumer-lock'); fs.mkdirSync(claim, {mode: 0o700}); lock = claim; fsyncDirectory(staged.stage);
@@ -577,9 +578,21 @@ export function createDesktopUpdateDependencies(trust: UpdateTrust | null): Desk
     },
     currentPackageRoot: () => {try {return fs.realpathSync(join(userInfo().homedir, '.local', 'share', 'ashlr', 'current'));} catch {return null;}},
     ...(process.platform === 'darwin' && {hostCensus: () => readDesktopHostInterlockCensus(userInfo().homedir)}),
-    residentStop: async () => {
-      try {const service=await import('../daemon/service.js');await service.uninstall({});return true;}
-      catch {return false;}
+    residentQuiescent: async () => {
+      try {
+        const { serviceStatus } = await import('../daemon/service.js');
+        const { daemonServiceInstallOptions } = await import('../daemon/service-config.js');
+        const { loadConfigReadOnlyStrict } = await import('../config.js');
+        const { inspectManagedResidentRuntime } = await import('./managed-resident-runtime.js');
+        const home = userInfo().homedir;
+        const managed = inspectManagedResidentRuntime(home);
+        if (managed.state !== 'verified' || managed.root !== root) return false;
+        const status = serviceStatus(daemonServiceInstallOptions(loadConfigReadOnlyStrict(), {
+          platform: 'darwin', homeDir: home, binPath: managed.launcher,
+        }));
+        return status.registrationState !== 'unknown' &&
+          (status.runtimeState === 'stopped' || status.runtimeState === 'ready');
+      } catch { return false; }
     },
     captureParent: () => parentObservation(process.ppid),
     verifyParent: async (parent, manifest) => {

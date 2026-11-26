@@ -141,11 +141,17 @@ describe.skipIf(process.platform === 'win32')('signed paired installed update ad
     const install=vi.fn(async()=> 'applied' as const);
     expect(await applyQualifiedDesktopUpdate(f.id,f.deps,install)).toMatchObject({state:'applied',requiresReapproval:false});
   });
-  it('holds with a fixed reason before acknowledging exit when resident stop fails',async()=>{
+  it('holds with a fixed reason before acknowledging exit when resident quiescence is unproven',async()=>{
     const f=fixture(),progress=vi.fn(),install=vi.fn(async()=> 'applied' as const);
-    f.deps.residentStop=async()=>false;
+    f.deps.residentQuiescent=async()=>false;
     expect(await applyQualifiedDesktopUpdate(f.id,f.deps,install,progress)).toMatchObject({state:'blocked',reason:'resident-stop-failed'});
     expect(progress).not.toHaveBeenCalled();expect(install).not.toHaveBeenCalled();
+  });
+  it('rechecks resident quiescence after the native parent exits',async()=>{
+    const f=fixture(),progress=vi.fn(),install=vi.fn(async()=> 'applied' as const);
+    f.deps.residentQuiescent=vi.fn(async()=>false).mockResolvedValueOnce(true);
+    expect(await applyQualifiedDesktopUpdate(f.id,f.deps,install,progress)).toMatchObject({state:'blocked',reason:'resident-stop-failed'});
+    expect(progress).toHaveBeenCalledOnce();expect(install).not.toHaveBeenCalled();
   });
   it('admits the supported installed identity0644 while refusing writable replacement files',async()=>{
     const f=fixture(),identity=join(f.deps.packageRoot!,'dist/build-identity.json');fs.chmodSync(identity,0o644);
@@ -267,12 +273,12 @@ function pairedFixture(profile: DesktopUpdateProfileName = 'legacy-v1', currentR
 describe.skipIf(process.platform === 'win32')('original package extraction and installed-byte readback',()=>{
   it('prepares both signed artifacts before Stop and reuses the verified download on apply',async()=>{
     const f=pairedFixture();
-    const admission=vi.fn(f.deps.admission), download=vi.fn(f.deps.download), residentStop=vi.fn(async()=>true);
-    Object.assign(f.deps,{admission,download,residentStop});
+    const admission=vi.fn(f.deps.admission), download=vi.fn(f.deps.download), residentQuiescent=vi.fn(async()=>true);
+    Object.assign(f.deps,{admission,download,residentQuiescent});
     f.admission.stop=false;
     expect(await prepareQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'ready'});
     expect(admission).not.toHaveBeenCalled();
-    expect(residentStop).not.toHaveBeenCalled();
+    expect(residentQuiescent).not.toHaveBeenCalled();
     expect(f.installations()).toBe(0);
     expect(fs.readFileSync(join(f.stage,'package.tgz'))).toEqual(f.cli);
     expect(fs.readdirSync(f.stage).sort()).toEqual(['app.tar.gz','manifest.json','manifest.sig','package.tgz']);
@@ -338,10 +344,10 @@ describe.skipIf(process.platform === 'win32')('original package extraction and i
   });
   it('replaces only the app when the current CLI matches the signed revision and package',async()=>{
     const f=pairedFixture('canonical-v2');await f.seedCurrent();const previous=f.getPointer();
-    const residentStop=vi.fn(async()=>true);f.deps.residentStop=residentStop;
+    const residentQuiescent=vi.fn(async()=>true);f.deps.residentQuiescent=residentQuiescent;
     expect(inspectQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'ready'});
     expect(await applyQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'applied',requiresReapproval:false});
-    expect(f.getPointer()).toBe(previous);expect(residentStop).toHaveBeenCalledOnce();
+    expect(f.getPointer()).toBe(previous);expect(residentQuiescent).toHaveBeenCalledTimes(2);
   });
   it.each(['beforeSwitch','beforePointer'])('holds actual late candidate mutation at %s without publishing current',async phase=>{
     const f=pairedFixture();f.mutateCandidateAt(phase);
