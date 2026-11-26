@@ -15,7 +15,7 @@ import { listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
 import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
 import { isGroupPresenceBody } from '../fleet/bus-group.js';
 import { listCoordination } from '../agents/claim-store.js';
-import { RUNNING_FRESH_MS, type WorkItemEvidence } from './work-item-state.js';
+import type { WorkItemEvidence } from './work-item-state.js';
 
 export interface BusWorkItemSources {
   /** 'found' when the message id was read; 'missing' when a settled scan did
@@ -80,21 +80,13 @@ function replyBlockedEvidence(row: BusInboxReceipt, id: string): WorkItemEvidenc
 /** Evidence for the claim bound to this receipt. The receipt coordinates
  * (id, cursor, receivedAt) must all match, so a stale claim for a re-posted
  * id cannot pass as current. */
-function claimEvidence(evidence: WorkItemEvidence, claims: BusWorkClaimView[], receipt: BusInboxReceipt, now: number): void {
+function claimEvidence(evidence: WorkItemEvidence, claims: BusWorkClaimView[], receipt: BusInboxReceipt): void {
   const claim = claims.find(c => c.id === receipt.envelope.id && c.cursor === receipt.cursor && c.receivedAt === receipt.receivedAt);
   if (!claim) return;
   evidence.owner = claim.owner;
   evidence.claimReceipt = `bus-claim:${claim.id}:${claim.cursor}:${claim.receivedAt}`;
-  if (claim.completedAt !== null) return;
-  const until = new Date(claim.leaseUntil).toISOString();
-  if (claim.leaseUntil > now) {
-    evidence.runningEvidence = { source: `bus-work-claims lease-until ${until}`, at: new Date(now).toISOString() };
-  } else if (now - claim.leaseUntil > RUNNING_FRESH_MS) {
-    // A lease dead past the freshness window is stale running evidence: kept
-    // so the classifier reports 'fresh running evidence' missing. A lease
-    // lapsed within the window counts as no running evidence at all.
-    evidence.runningEvidence = { source: `bus-work-claims lease-until ${until}`, at: until };
-  }
+  // A coordination lease records ownership, not execution. Neither its
+  // expiry nor the read clock is an observation that work has started.
 }
 
 /**
@@ -208,7 +200,7 @@ export function deriveBusWorkItemEvidence(
   }
   if (request) {
     evidence.receivedAt = new Date(request.receivedAt).toISOString();
-    claimEvidence(evidence, authoritativeBusClaims(claims, authority, now), request, now);
+    claimEvidence(evidence, authoritativeBusClaims(claims, authority, now), request);
   }
   return { evidence, inbox: request ? 'found' : 'missing' };
 }
