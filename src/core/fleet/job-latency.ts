@@ -47,10 +47,11 @@ function boundaryTs(row: Record<string, unknown>, event: string): number {
  * publish claim the reconciler consumes.
  */
 function boundaryEvent(row: Record<string, unknown>): string | undefined {
-  const state = String([row.outcome, row.state, row.status, row.phase, row.result, row.conclusion].find(v => typeof v === 'string') ?? '').toUpperCase();
-  if (state === 'MERGED') return 'merged';
-  if (state === 'CLOSED') return 'closed';
-  if (state === 'PUBLISHED') return 'publish';
+  const states = [row.outcome, row.state, row.status, row.phase, row.result, row.conclusion]
+    .map(value => typeof value === 'string' ? value.trim().toUpperCase() : '');
+  const terminal = states.find(state => state === 'MERGED' || state === 'CLOSED');
+  if (terminal !== undefined) return terminal.toLowerCase();
+  if (states.includes('PUBLISHED')) return 'publish';
   const raw = row.event ?? row.type ?? row.kind;
   if (raw === 'enqueue' || raw === 'enqueued') return 'queued';
   if (raw === 'published') return 'publish';

@@ -85,6 +85,20 @@ it('reads the production ledger dialects: enqueue arrival, PUBLISHED/published p
   expect(merge.phases.find(p => p.phase === 'open_to_merge')).toMatchObject({ total_seconds: 150, measured_jobs: 1, missing_jobs: 1 });
 });
 
+it('uses terminal verdicts even when earlier fields carry publish or unknown states', () => {
+  const text = [
+    { job: 'RQ-M', event: 'publish', ts: '2026-01-01T00:01:00Z' },
+    { job: 'RQ-M', event: 'publish', state: 'PUBLISHED', status: 'MERGED', mergedAt: '2026-01-01T00:03:00Z' },
+    { job: 'RQ-C', event: 'finish', ts: '2026-01-01T00:01:00Z' },
+    { job: 'RQ-C', outcome: 'unknown', status: 'PUBLISHED', ts: '2026-01-01T00:02:00Z' },
+    { job: 'RQ-C', event: 'publish', outcome: 'unknown', status: 'CLOSED', closedAt: '2026-01-01T00:04:00Z' },
+  ].map(row => JSON.stringify(row)).join('\n');
+  expect(mergeQueueLatency(text).phases.find(p => p.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: 120, measured_jobs: 1, missing_jobs: 1 });
+  expect(jobLatency(text).phases.find(p => p.phase === 'publish_wait'))
+    .toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 1 });
+});
+
 it('keeps conflicting publish dialects ambiguous rather than picking one', () => {
   const text = [
     { job: 'RQ-C', event: 'enqueue', ts: '2026-01-01T00:00:00Z' },
