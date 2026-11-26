@@ -121,7 +121,7 @@ export async function getLaneQueueCounts(
     return arrival;
   };
   const byLane = new Map(queue.byLane.map(row => [row.lane, row]));
-  const readyKnown = queue.sources.ready !== 'missing';
+  const readyKnown = queue.health.counts.ready !== null;
   // Budget- and hold-only lanes carry no queue activity; leave them out.
   const lanes = new Set([
     ...byLane.keys(),
