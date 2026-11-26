@@ -89,6 +89,22 @@ describe('currentUnfed', () => {
     expect(() => currentUnfed(status, '')).toThrow('invalid lane');
   });
 
+  it.each([
+    { configured: 1, target: 1, headroom: 0 },
+    { configured: 3, target: 3, headroom: 2 },
+    { configured: 6, target: 4, headroom: 3 },
+    { configured: -1, target: 4, headroom: 3 },
+    { configured: undefined, target: 4, headroom: 3 },
+  ])('bounds derived unfed capacity with slots.json target $configured', ({ configured, target, headroom }) => {
+    const slots = JSON.stringify({ 'codex-cmp': { target: configured } });
+    const report = currentUnfed(JSON.stringify({ lanes: LANES }), READY, { slots });
+
+    expect(report.unfedSlots).toBe(headroom);
+    expect(report.resources.find(r => r.lane === 'codex-cmp')).toMatchObject({
+      target, headroom, unfed: headroom > 0,
+    });
+  });
+
   it('prefers the dispatcher verdict and keeps only well-formed reason codes', () => {
     const status = JSON.stringify({
       lanes: LANES,
@@ -100,7 +116,7 @@ describe('currentUnfed', () => {
         },
       },
     });
-    const report = currentUnfed(status, READY);
+    const report = currentUnfed(status, READY, { slots: JSON.stringify({ 'codex-cmp': { target: 0 } }) });
     expect(report.source).toBe('dispatcher');
     expect(report.waiting).toBe(2);
     expect(report.unfedSlots).toBe(2);

@@ -379,6 +379,10 @@ phm fleet unfed --window 6 --json
 now. Lane headroom uses the configured target, tightened by any valid lower
 `effective_target` reported in the same tick. A missing or invalid configured
 target makes the snapshot unusable for this calculation.
+When the dispatcher omits its unfed block, a valid lower target in
+`queue/slots.json` also bounds the derived headroom. A target increase
+requires dispatcher confirmation. Published unfed blocks use their own tick's
+targets.
 The fleet-wide `unfedSlots` upper bound sums each unfed lane's smaller
 count of headroom and rows waiting elsewhere, capped by total waiting rows
 because lanes can see the same work. If `ready.tsv` is unavailable, queue-derived
