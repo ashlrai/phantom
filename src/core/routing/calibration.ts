@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 import { ledgerPhase } from '../fleet/empty-cause.js';
 import { isNodePoolLedgerRow, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
 import { parseLedgerTs } from '../metrics/loop.js';
@@ -32,6 +33,7 @@ interface Job {
   finished?: number;
   merged?: boolean;
   launched: boolean;
+  launchReceipt?: Row;
   batchLanes?: Set<string>;
   /** Reward signals can account for reversions after the PR merged. */
   rewardMerged?: boolean;
@@ -156,10 +158,14 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       if (lane) job.batchLanes.add(lane);
     }
     if (event === 'launch') {
-      if (job.launched) throw new Error('Duplicate launch for a job');
+      if (job.launched) {
+        if (job.launchReceipt && isDeepStrictEqual(row, job.launchReceipt)) continue;
+        throw new Error('Duplicate launch for a job');
+      }
       job.launched = true;
       assign(job, 'arm', observedArm(row['arm'], row['lane'], row['pool']));
       assign(job, 'started', timestamp(row));
+      if (job.started !== undefined) job.launchReceipt = row;
     }
     if (event === 'finish') {
       assign(job, 'finished', timestamp(row));
