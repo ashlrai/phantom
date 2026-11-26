@@ -27,6 +27,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 
 import type { ApiModule } from './api-modules.js';
+import { readAllowedQuery as queryParam, sendInvalid } from './api-request-helpers.js';
 import type { VerseApiContext } from './verse-api.js';
 import { agentActorForToken } from '../approvals/actor.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
@@ -101,31 +102,6 @@ export interface OpsApiDeps {
   releases?: (paths: readonly string[]) => Promise<OpsReleasesV1['repos']>;
   postMessage?: (team: string, text: string, actor?: TeamActor) => { ok: boolean; reason?: string };
   releaseDeps?: OpsReleaseProbeDeps;
-}
-
-// ---------------------------------------------------------------------------
-// Small route helpers (the shapes fleet-control-api.ts set)
-// ---------------------------------------------------------------------------
-
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-function queryParam(req: IncomingMessage, res: ServerResponse, allowed: readonly string[]): URLSearchParams | null {
-  let params: URLSearchParams;
-  try {
-    params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  } catch {
-    sendInvalid(res, 'invalid query string');
-    return null;
-  }
-  for (const key of params.keys()) {
-    if (!allowed.includes(key)) {
-      sendInvalid(res, `unknown query parameter: ${key}`);
-      return null;
-    }
-  }
-  return params;
 }
 
 function safe<T>(fn: () => T): T | null {

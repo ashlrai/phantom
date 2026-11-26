@@ -6,9 +6,10 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { nameWithOwnerFromRemote } from '../fleet/repo-identity.js';
 import { listEnrolled } from '../sandbox/policy.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { ApiModule } from './api-modules.js';
+import { readMutationBody, sendInvalid } from './api-request-helpers.js';
 import { mapLimited } from './folder-io.js';
 import type { OpsRunner } from './ops-releases.js';
 import { isReleasePrRepoName, mergeReleasePr, probeReleasePr, type ReleasePrV1 } from './ops-release-pr.js';
@@ -44,38 +45,6 @@ const readTreeVersionFile = async (path: string): Promise<string | null> => {
   try { return treeVersionFromPackageJson(await readFile(join(path, 'package.json'), 'utf8')); }
   catch { return null; }
 };
-
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-/** The dispatch + mutation gate and body read every Verse POST re-checks (fleet-holds-api.ts). */
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  return parsed as Record<string, unknown>;
-}
 
 const MERGE_STATUS = { 'not-found': 404, 'not-green': 409, blocked: 409, 'gh-failed': 502 } as const;
 

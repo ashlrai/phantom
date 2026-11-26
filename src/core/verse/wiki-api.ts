@@ -31,9 +31,9 @@ import path from 'node:path';
 import { realpath } from 'node:fs/promises';
 
 import type { ApiModule } from './api-modules.js';
-import type { VerseApiContext } from './verse-api.js';
+import { hasNoQuery, readMutationBody, sendInvalid, sendRefused } from './api-request-helpers.js';
 import type { AshlrConfig } from '../types.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { sendJson } from '../web/api.js';
 import { askWiki, type AskWikiOptions } from '../knowledge/wiki/ask.js';
 import { queryWikiEcosystem } from '../knowledge/wiki/ecosystem.js';
 import { buildWikiGraph } from '../knowledge/wiki/graph.js';
@@ -73,14 +73,6 @@ export const DEFAULT_WIKI_API_DEPS: WikiApiDeps = {
   github: (repo) => githubNameWithOwner(repo),
 };
 
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-function sendRefused(res: ServerResponse, reason: string): void {
-  sendJson(res, 409, { code: 'VERSE_REFUSED', error: reason });
-}
-
 function sendNotFound(res: ServerResponse, what: string): void {
   sendJson(res, 404, { error: `not found: ${what}` });
 }
@@ -105,54 +97,6 @@ async function sendSystemMap(req: IncomingMessage, res: ServerResponse, repo: st
     : body;
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
   res.end(JSON.stringify(payload));
-}
-
-function hasNoQuery(req: IncomingMessage, res: ServerResponse): boolean {
-  let params: URLSearchParams;
-  try {
-    params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  } catch {
-    sendInvalid(res, 'invalid query string');
-    return false;
-  }
-  for (const key of params.keys()) {
-    sendInvalid(res, `unknown query parameter: ${key.slice(0, 64)}`);
-    return false;
-  }
-  return true;
-}
-
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, allowed: readonly string[]): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req, MAX_BODY_BYTES);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  for (const key of Object.keys(parsed)) {
-    if (!allowed.includes(key)) {
-      sendInvalid(res, `unknown key: ${key.slice(0, 64)}`);
-      return null;
-    }
-  }
-  return parsed as Record<string, unknown>;
 }
 
 /**
@@ -211,7 +155,7 @@ export function createWikiApi(deps: WikiApiDeps = DEFAULT_WIKI_API_DEPS): ApiMod
       // ── GET /api/verse/wiki ──────────────────────────────────────────────
       if (p === VERSE_WIKI_PATH) {
         if (method !== 'GET') return (sendNotFound(res, `${method} ${p}`), true);
-        if (!hasNoQuery(req, res)) return true;
+        if (!hasNoQuery(req, res, 64)) return true;
         const repos = await listWikiRepos();
         const allowed = new Set(deps.candidates());
         const view: WikiReposView = {
@@ -226,7 +170,7 @@ export function createWikiApi(deps: WikiApiDeps = DEFAULT_WIKI_API_DEPS): ApiMod
 
       if (p === `${VERSE_WIKI_PATH}/ecosystem`) {
         if (method !== 'GET') return (sendNotFound(res, `${method} ${p}`), true);
-        if (!hasNoQuery(req, res)) return true;
+        if (!hasNoQuery(req, res, 64)) return true;
         const graph = await queryWikiEcosystem();
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
         res.end(JSON.stringify(graph));
@@ -236,7 +180,7 @@ export function createWikiApi(deps: WikiApiDeps = DEFAULT_WIKI_API_DEPS): ApiMod
       // ── POST /api/verse/wiki/ask ─────────────────────────────────────────
       if (p === `${VERSE_WIKI_PATH}/ask`) {
         if (method !== 'POST') return (sendNotFound(res, `${method} ${p}`), true);
-        const body = await readMutationBody(ctx, req, res, ['question', 'repoKey', 'noModel']);
+        const body = await readMutationBody(ctx, req, res, { allowedKeys: ['question', 'repoKey', 'noModel'], maxBytes: MAX_BODY_BYTES });
         if (!body) return true;
         const noModel = optionalBool(body['noModel']);
         if (typeof body['question'] !== 'string' || !body['question'].trim() || body['question'].length > 1000 || noModel === null) {
@@ -260,7 +204,7 @@ export function createWikiApi(deps: WikiApiDeps = DEFAULT_WIKI_API_DEPS): ApiMod
       // ── POST /api/verse/wiki/open ────────────────────────────────────────
       if (p === `${VERSE_WIKI_PATH}/open`) {
         if (method !== 'POST') return (sendNotFound(res, `${method} ${p}`), true);
-        const body = await readMutationBody(ctx, req, res, ['repoKey', 'file', 'line']);
+        const body = await readMutationBody(ctx, req, res, { allowedKeys: ['repoKey', 'file', 'line'], maxBytes: MAX_BODY_BYTES });
         if (!body) return true;
         const line = body['line'] === undefined ? 1 : body['line'];
         if (typeof body['repoKey'] !== 'string' || typeof body['file'] !== 'string' || typeof line !== 'number' || !Number.isInteger(line) || line < 1) {
@@ -313,7 +257,7 @@ export function createWikiApi(deps: WikiApiDeps = DEFAULT_WIKI_API_DEPS): ApiMod
 
       if (parsed.rest.length === 1 && parsed.rest[0] === 'graph') {
         if (method !== 'GET') return (sendNotFound(res, `${method} ${p}`), true);
-        if (!hasNoQuery(req, res)) return true;
+        if (!hasNoQuery(req, res, 64)) return true;
         sendJson(res, 200, await buildWikiGraph(repo));
         return true;
       }
@@ -326,7 +270,7 @@ export function createWikiApi(deps: WikiApiDeps = DEFAULT_WIKI_API_DEPS): ApiMod
 
       if (parsed.rest.length === 0) {
         if (method !== 'GET') return (sendNotFound(res, `${method} ${p}`), true);
-        if (!hasNoQuery(req, res)) return true;
+        if (!hasNoQuery(req, res, 64)) return true;
         const manifest = await readManifest(parsed.key);
         const [status, nameWithOwner] = await Promise.all([manifest ? statusFromManifest(manifest) : wikiStatus(repo), deps.github(repo)]);
         const view: WikiRepoView = {
@@ -340,7 +284,7 @@ export function createWikiApi(deps: WikiApiDeps = DEFAULT_WIKI_API_DEPS): ApiMod
 
       if (parsed.rest.length === 2 && parsed.rest[0] === 'page') {
         if (method !== 'GET') return (sendNotFound(res, `${method} ${p}`), true);
-        if (!hasNoQuery(req, res)) return true;
+        if (!hasNoQuery(req, res, 64)) return true;
         const id = parsed.rest[1]!;
         if (!isPageId(id)) return (sendNotFound(res, 'wiki page'), true);
         const [manifest, markdown] = await Promise.all([readManifest(parsed.key), readPage(parsed.key, id)]);
@@ -368,7 +312,7 @@ export function createWikiApi(deps: WikiApiDeps = DEFAULT_WIKI_API_DEPS): ApiMod
 
       if (parsed.rest.length === 1 && parsed.rest[0] === 'build') {
         if (method !== 'POST') return (sendNotFound(res, `${method} ${p}`), true);
-        const body = await readMutationBody(ctx, req, res, ['force', 'noModel']);
+        const body = await readMutationBody(ctx, req, res, { allowedKeys: ['force', 'noModel'], maxBytes: MAX_BODY_BYTES });
         if (!body) return true;
         const force = optionalBool(body['force']);
         const noModel = optionalBool(body['noModel']);

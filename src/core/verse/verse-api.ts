@@ -96,7 +96,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { AshlrConfig } from '../types.js';
-import { notifyVerseSessionsChanged, passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { notifyVerseSessionsChanged, passesMutationGate, sendJson } from '../web/api.js';
+import { readAllowedQuery, readMutationBody, sendInvalid } from './api-request-helpers.js';
 import { isBrowserMcpPath } from './browser-types.js';
 import { forgetAgentToolsChat, revokeVerseMcpTurn, verseMcpMintSeq, verseMcpTurnActive } from './verse-mcp-grants.js';
 import { isVerseMcpEndpointPath } from './verse-mcp-types.js';
@@ -177,7 +178,7 @@ import {
 // Route matching
 // ---------------------------------------------------------------------------
 
-export const VERSE_API_PREFIX = '/api/verse';
+const VERSE_API_PREFIX = '/api/verse';
 
 /**
  * Every prefix this handler answers for. `/api/reasoning` is here — not in a
@@ -865,7 +866,7 @@ let workspaceStore: VerseWorkspaceStore | null = null;
  * module load, so a relocated HOME is honored exactly as `getVerseEngine()`
  * does it.
  */
-export function getVerseWorkspaceStore(): VerseWorkspaceStore {
+function getVerseWorkspaceStore(): VerseWorkspaceStore {
   if (!workspaceStore) {
     workspaceStore = createVerseWorkspaceStore({ root: join(homedir(), '.ashlr', 'verse') });
   }
@@ -1000,49 +1001,6 @@ function isSeatNotReadyError(err: unknown): boolean {
   return err !== null && typeof err === 'object' && (err as { code?: unknown }).code === 'VERSE_SEAT_NOT_READY';
 }
 
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-// ---------------------------------------------------------------------------
-// Body helpers
-// ---------------------------------------------------------------------------
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-/**
- * readBody() + JSON.parse with the contract's error shape. Returns null after
- * responding. `maxBytes` is omitted by every route but POST /memory, so each
- * of them keeps readBody's shared 64 KB cap.
- */
-async function readJsonBody(
-  req: IncomingMessage,
-  res: ServerResponse,
-  maxBytes?: number,
-): Promise<Record<string, unknown> | null> {
-  let raw: string;
-  try {
-    raw = await readBody(req, maxBytes);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (!isRecord(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  return parsed;
-}
-
 const MAX_TITLE_CHARS = 200;
 const MAX_PATH_CHARS = 4096;
 
@@ -1068,40 +1026,13 @@ function rejectUnknownKeys(
   return false;
 }
 
-/**
- * Parse the query string of a V3.9 GET under the same strictness as a body:
- * an unknown parameter is a 400, and a parameter that is not `repeatable` may
- * appear at most once (two `projectPath`s have no honest meaning). Returns
- * null after responding.
- *
- * The read boundary's `?client=` proof never reaches these routes — only the
- * SSE paths accept it (web/read-session.ts) — so no auth parameter needs to be
- * tolerated here.
- */
 function readQuery(
   req: IncomingMessage,
   res: ServerResponse,
   allowed: readonly string[],
   repeatable: readonly string[] = [],
 ): URLSearchParams | null {
-  let params: URLSearchParams;
-  try {
-    params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  } catch {
-    sendInvalid(res, 'invalid query string');
-    return null;
-  }
-  for (const key of new Set(params.keys())) {
-    if (!allowed.includes(key)) {
-      sendInvalid(res, `unknown query parameter: ${key}`);
-      return null;
-    }
-    if (!repeatable.includes(key) && params.getAll(key).length > 1) {
-      sendInvalid(res, `query parameter ${key} may appear only once`);
-      return null;
-    }
-  }
-  return params;
+  return readAllowedQuery(req, res, allowed, { rejectRepeats: true, repeatable });
 }
 
 /**
@@ -1567,12 +1498,7 @@ async function handleWorkspaces(
     sendJson(res, 404, { error: `not found: ${method} ${path}` });
     return true;
   }
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return true;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return true;
-  const body = await readJsonBody(req, res);
+  const body = await readMutationBody(ctx, req, res);
   if (!body) return true;
 
   try {
@@ -1710,26 +1636,6 @@ const SESSION_POST_ACTIONS: ReadonlySet<string> = new Set([
   'terminate',
 ]);
 const TERMINATE_KEYS: ReadonlySet<string> = new Set(['confirm']);
-
-/**
- * The gate every POST in this file sits behind, in the same order: 404 unless
- * the server allows dispatch, then the constant-time mutation token + JSON
- * Content-Type, then the body cap (64 KB unless `maxBytes` raises it for the
- * one route that needs more). Null after responding.
- */
-async function readMutationBody(
-  ctx: VerseApiContext,
-  req: IncomingMessage,
-  res: ServerResponse,
-  maxBytes?: number,
-): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  return readJsonBody(req, res, maxBytes);
-}
 
 /**
  * The body cap for POST /api/verse/memory ONLY.
@@ -1985,7 +1891,7 @@ async function handleContextRoutes(
         sendJson(res, 200, flagSanitizedMemory(memory));
         return true;
       }
-      const body = await readMutationBody(ctx, req, res, VERSE_MEMORY_BODY_MAX_BYTES);
+      const body = await readMutationBody(ctx, req, res, { maxBytes: VERSE_MEMORY_BODY_MAX_BYTES });
       if (!body) return true;
       if (rejectUnknownKeys(body, MEMORY_WRITE_KEYS, res)) return true;
       const guard = await guardRoot(body['projectPath'], 'projectPath');

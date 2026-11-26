@@ -69,9 +69,10 @@ import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 
 import type { ApiModule } from './api-modules.js';
+import { readMutationBody, sendInvalid } from './api-request-helpers.js';
 import type { VerseApiContext } from './verse-api.js';
 import type { NeedsYouItem } from './workbench-types.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { sendJson } from '../web/api.js';
 import { handleLeaderAttachment, VERSE_LEADER_ATTACHMENT_PATH } from './leader-attachment-api.js';
 import { handleLeaderAttachmentList } from './leader-attachment-list-api.js';
 import { handleLeaderAttachmentRead } from './leader-attachment-read-api.js';
@@ -475,40 +476,9 @@ const QUESTION_PATH_RE = /^\/api\/verse\/leader\/questions\/([^/]+)$/;
 const APPROVE_PATH_RE = /^\/api\/verse\/leader\/actions\/([^/]+)\/approve$/;
 const DIRECTIVE_PATH_RE = /^\/api\/verse\/leader\/directives\/([^/]+)$/;
 
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
 function hasOnlyKeys(body: Record<string, unknown>, allowed: readonly string[]): string | null {
   for (const key of Object.keys(body)) if (!allowed.includes(key)) return key;
   return null;
-}
-
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, allowEmpty = true): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 && allowEmpty ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  return parsed as Record<string, unknown>;
 }
 
 function parseNote(value: unknown): string | null | undefined {
@@ -743,7 +713,7 @@ export interface PlannerLimitedRow {
   /** Advertised reset (local ISO), null when none was read. */
   until: string | null;
 }
-export interface PlannerPlanV1 {
+interface PlannerPlanV1 {
   v: 1;
   generatedAt: string;
   /** The candidates file this plan was read from (home collapses to ~ on the wire). */
@@ -758,7 +728,7 @@ export interface PlannerPlanV1 {
   health: PlannerHealthRow[];
 }
 
-export interface PlannerPlanDeps {
+interface PlannerPlanDeps {
   runsRoot?: string;
   now?: number;
 }
@@ -771,7 +741,7 @@ export interface PlannerPlanDeps {
  * say which is wrong. Never throws: source 'unavailable' when the plan read
  * itself fails.
  */
-export async function buildPlannerPlan(deps: PlannerPlanDeps = {}): Promise<PlannerPlanV1> {
+async function buildPlannerPlan(deps: PlannerPlanDeps = {}): Promise<PlannerPlanV1> {
   const now = deps.now ?? Date.now();
   const runsRoot = deps.runsRoot ?? join(homedir(), '.ashlr-runs');
   const { readPlannerCandidates } = await import('../fleet/planner-candidates.js');
@@ -854,7 +824,7 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
       sendJson(res, 200, await readLeaderInbox()); return true;
     }
     if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
-    const body = await readMutationBody(ctx, req, res, false);
+    const body = await readMutationBody(ctx, req, res, { allowEmpty: false });
     if (!body) return true;
     if (Object.keys(body).some(key => key !== 'text' && key !== 'source') || typeof body.text !== 'string' ||
         (body.source !== undefined && body.source !== 'Phantom desktop')) { sendInvalid(res, 'invalid inbox body'); return true; }
@@ -906,7 +876,7 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
     }
     if (path === `${VERSE_LEADER_PATH}/planner/slate`) {
       if (method !== 'GET' && method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
-      const body = method === 'POST' ? await readMutationBody(ctx, req, res, false) : null;
+      const body = method === 'POST' ? await readMutationBody(ctx, req, res, { allowEmpty: false }) : null;
       if (method === 'POST' && !body) return true;
       if ((req.url ?? '').includes('?')) { sendInvalid(res, 'this route takes no query parameters'); return true; }
       const runsRoot = hooks.plannerRunsRoot?.() ?? join(homedir(), '.ashlr-runs');
@@ -961,7 +931,7 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
     }
     if (path === `${VERSE_LEADER_PATH}/planner/run`) {
       if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
-      const body = await readMutationBody(ctx, req, res, false);
+      const body = await readMutationBody(ctx, req, res, { allowEmpty: false });
       if (!body) return true;
       if (hasOnlyKeys(body, ['reason']) || (body['reason'] !== undefined
         && (typeof body['reason'] !== 'string' || body['reason'].length > 200))) {

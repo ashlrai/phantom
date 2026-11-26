@@ -17,59 +17,11 @@
  * like every Verse mutation (agents and MCP clients cannot reach it), and
  * sendJson → sanitizePublicJson on the way out.
  */
-import type { IncomingMessage, ServerResponse } from 'node:http';
-
 import { parseStrayStopAction, stopStray, StrayStopError, VERSE_FLEET_CONTROL_STRAY_STOP_PATH } from '../fleet/stray-stop.js';
 import type { ApiModule } from './api-modules.js';
-import type { VerseApiContext } from './verse-api.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { hasNoQuery as noQuery, readMutationBody, sendInvalid } from './api-request-helpers.js';
+import { sendJson } from '../web/api.js';
 import { VERSE_FLEET_CONTROL_HOLDS_PATH } from '../fleet/runs-lane-hold.js';
-
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-function noQuery(req: IncomingMessage, res: ServerResponse): boolean {
-  let params: URLSearchParams;
-  try {
-    params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  } catch {
-    sendInvalid(res, 'invalid query string');
-    return false;
-  }
-  for (const key of params.keys()) {
-    sendInvalid(res, `unknown query parameter: ${key}`);
-    return false;
-  }
-  return true;
-}
-
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  return parsed as Record<string, unknown>;
-}
 
 /** One action at a time: a double-click must not interleave two rewrites. */
 let actionInFlight: Promise<unknown> | null = null;

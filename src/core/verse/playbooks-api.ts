@@ -18,11 +18,9 @@
  * that fails validation is `200 {ok: false, errors}` (field by field). All
  * file I/O is async (scripts/check-verse-sync-io.mjs).
  */
-import type { IncomingMessage, ServerResponse } from 'node:http';
-
 import type { ApiModule } from './api-modules.js';
-import type { VerseApiContext } from './verse-api.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { hasNoQuery, readAllowedQuery, readMutationBody, sendInvalid } from './api-request-helpers.js';
+import { sendJson } from '../web/api.js';
 import {
   PLAYBOOK_ID_PATTERN,
   VERSE_PLAYBOOKS_PATH,
@@ -35,60 +33,6 @@ const SAVE_KEYS = ['source', 'baseVersion', 'note'] as const;
 
 function owns(path: string): boolean {
   return path === VERSE_PLAYBOOKS_PATH || path.startsWith(`${VERSE_PLAYBOOKS_PATH}/`);
-}
-
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-function queryOf(req: IncomingMessage, res: ServerResponse, allowed: readonly string[]): URLSearchParams | null {
-  let params: URLSearchParams;
-  try {
-    params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  } catch {
-    sendInvalid(res, 'invalid query string');
-    return null;
-  }
-  for (const key of params.keys()) {
-    if (!allowed.includes(key)) {
-      sendInvalid(res, `unknown query parameter: ${key.slice(0, 64)}`);
-      return null;
-    }
-  }
-  return params;
-}
-
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  for (const key of Object.keys(parsed)) {
-    if (!(SAVE_KEYS as readonly string[]).includes(key)) {
-      sendInvalid(res, `unknown key: ${key.slice(0, 64)}`);
-      return null;
-    }
-  }
-  return parsed as Record<string, unknown>;
 }
 
 async function detail(id: string, version: number | null): Promise<PlaybookDetailResponse | null> {
@@ -121,7 +65,7 @@ export const handlePlaybooksApi: ApiModule = async (ctx, req, res, path, method)
   try {
     if (method === 'GET') {
       if (path === VERSE_PLAYBOOKS_PATH) {
-        if (!queryOf(req, res, [])) return true;
+        if (!hasNoQuery(req, res, 64)) return true;
         const { listPlaybookSummaries } = await import('../playbooks/store.js');
         const body: PlaybooksListResponse = { v: 1, playbooks: await listPlaybookSummaries() };
         sendJson(res, 200, body);
@@ -132,7 +76,7 @@ export const handlePlaybooksApi: ApiModule = async (ctx, req, res, path, method)
         sendJson(res, 404, { error: `not found: ${method} ${path}` });
         return true;
       }
-      const params = queryOf(req, res, ['version']);
+      const params = readAllowedQuery(req, res, ['version'], { maxKeyChars: 64 });
       if (!params) return true;
       const rawVersion = params.get('version');
       let version: number | null = null;
@@ -155,7 +99,7 @@ export const handlePlaybooksApi: ApiModule = async (ctx, req, res, path, method)
       sendJson(res, 404, { error: `not found: ${method} ${path}` });
       return true;
     }
-    const body = await readMutationBody(ctx, req, res);
+    const body = await readMutationBody(ctx, req, res, { allowedKeys: SAVE_KEYS });
     if (!body) return true;
     if (typeof body['source'] !== 'string') {
       sendInvalid(res, 'source must be the playbook markdown');
