@@ -25,15 +25,17 @@ default reporter's green-module pass lines are expected from checkout jobs
 that never bound a receipt, so they neither verify nor poison a run; any
 other consumable evidence in an unverifiable log keeps the run unknown.
 Unreadable, incomplete, capped, or unverified logs are unknown, never clean.
-A job whose conclusion is not a verdict — `cancelled`, `timed_out`,
-`action_required`, `startup_failure` or `stale` — is incomplete evidence
+A job needs a `success`, `failure`, `skipped`, or `neutral` conclusion
+to supply complete evidence. Missing, unrecognized, and other conclusions
+such as `cancelled`, `timed_out`, and `stale` make the job incomplete
 even when its log is absent or empty: the run cannot prove the ref's
 checks, so the PR reads `unknown` rather than `fresh` — freshness reason
 `incomplete-check`, distinct from `unreadable-log-or-unverified-checkout` —
 and master's known state drops while the run's verified job logs still
 feed failure parsing. If an incomplete job's log is unavailable, the
-analyzer retains verified sibling logs. These same conclusions on the
-workflow run itself mark it incomplete even when every listed job reached
+analyzer retains verified sibling logs. The workflow conclusions
+`cancelled`, `timed_out`, `action_required`, `startup_failure`, and `stale`
+also mark a run incomplete even when every listed job reached
 a verdict. Verified master failures still contribute evidence. A missing log for a job that
 reached a verdict still makes the run's logs unusable. `skipped` and `neutral` conclusions are
 deliberate non-verdicts, not incomplete checks. A completed run that

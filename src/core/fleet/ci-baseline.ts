@@ -21,6 +21,7 @@ type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: n
 // and `neutral` are deliberate non-verdicts (path filters, `if:` gates,
 // required-check-neutral), not incomplete checks, and stay ignored.
 const INCOMPLETE_CONCLUSIONS = new Set(['cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
+const COMPLETE_JOB_CONCLUSIONS = new Set(['success', 'failure', 'skipped', 'neutral']);
 
 function completeActionsPage<T extends { id: number }>(rows: T[] | undefined, total: number | undefined): rows is T[] {
   return Array.isArray(rows) && rows.length === total && rows.length <= 100 &&
@@ -2196,7 +2197,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     // otherwise verify or drop silently.
     // The workflow can stop before starting other jobs. Its conclusion
     // still applies when every listed job reached a verdict.
-    const incomplete = data.jobs.some(job => INCOMPLETE_CONCLUSIONS.has(job.conclusion)) ||
+    const incomplete = data.jobs.some(job => !COMPLETE_JOB_CONCLUSIONS.has(job.conclusion)) ||
       (run.conclusion !== undefined && INCOMPLETE_CONCLUSIONS.has(run.conclusion)) ||
       (data.jobs.length === 0 && run.conclusion === 'failure');
     const result: { conclusion: string; text: string }[] = [];
@@ -2208,7 +2209,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       if (!r?.ok) {
         // The job list already marks this run incomplete. A job that
         // never started may have no log, while its siblings still do.
-        if (INCOMPLETE_CONCLUSIONS.has(job.conclusion)) continue;
+        if (!COMPLETE_JOB_CONCLUSIONS.has(job.conclusion)) continue;
         return null;
       }
       const output = lines(r.stdout);

@@ -199,6 +199,28 @@ describe('CI baseline evidence', () => {
       }
     }
   });
+  it.each([null, undefined, '', 'unrecognized'])(
+    'withholds PR freshness and master pass evidence for job conclusion %s',
+    async conclusion => {
+      const { gh } = github({ count: 1, pass: true, extraMasterJob: 'success', extraPrJob: 'success' });
+      const reportWithIncompleteJob = (runId: number) => analyzeCiBaseline('owner/repo', async args => {
+        const result = await gh(args);
+        if (!args[1]?.includes(`/actions/runs/${runId}/jobs?`)) return result;
+        const page = JSON.parse(result.stdout);
+        page.jobs[1].conclusion = conclusion;
+        return { ...result, stdout: JSON.stringify(page) };
+      });
+
+      const pr = await reportWithIncompleteJob(2);
+      expect(pr.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
+      expect(pr.groups).toEqual([]);
+      expect(pr.master.known).toBe(true);
+
+      const masterReport = await reportWithIncompleteJob(1);
+      expect(masterReport.master.known).toBe(false);
+      expect(masterReport.groups).toMatchObject([{ classification: 'unknown', master: 'unknown' }]);
+    },
+  );
   it('reads jobs that never reached a verdict as unknown, never fresh', async () => {
     // A cancelled, timed-out, action-required, startup-failed or stale job
     // produced no verdict even when its log verifies: the run cannot prove
