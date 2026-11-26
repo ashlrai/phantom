@@ -699,6 +699,7 @@
 /test/improve-stuck-job-backlog.test.ts @masonwyatt23
 /test/improve-superseded-close-backlog.test.ts @masonwyatt23
 /test/improve-teammate-inbox-backlog.test.ts @masonwyatt23
+/test/improve-telemetry-span-backlog.test.ts @masonwyatt23
 /test/improve-tick-health-backlog.test.ts @masonwyatt23
 /test/improve-trajectory-gap-backlog.test.ts @masonwyatt23
 /test/improve-typed-route-backlog.test.ts @masonwyatt23
