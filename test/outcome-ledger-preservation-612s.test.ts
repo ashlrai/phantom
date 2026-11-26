@@ -8,6 +8,7 @@ import {
   authorityRevertedPrKeys,
   foldCrossReviews,
   foldEmptyTags,
+  foldJobCosts,
   foldLaunchCosts,
   foldMarketHandoffAdvisories,
   foldMergeEvents,
@@ -84,6 +85,20 @@ const launchCostRow = (launchId: string, status: 'measured' | 'partial' | 'unkno
   meanCpuPercentOneCore: status === 'unknown' ? null : 12.5,
   peakCpuPercentOneCore: status === 'unknown' ? null : 40,
   status, ...extra,
+});
+
+const jobCostsPath = (root: string) => join(root, 'metrics', 'job-cost-model.jsonl');
+
+function writeJobCosts(root: string, rows: object[]): void {
+  mkdirSync(join(root, 'metrics'), { recursive: true });
+  writeFileSync(jobCostsPath(root), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+}
+
+/** An ashlr.job-cost-model/v1 row in the shape growth_exports.py appends (one per finish). */
+const jobCostRow = (job: string, modeledValueUsd: number | null, extra: Record<string, unknown> = {}): object => ({
+  schema: 'ashlr.job-cost-model/v1', job, lane: 'alpha', ts: '2026-11-01T00:00:00Z',
+  realSpendUsd: null, modeledValueUsd, method: modeledValueUsd === null ? 'none' : 'tokens-x-list-price',
+  inputs: {}, source: null, confidence: modeledValueUsd === null ? null : 'medium', reason: null, ...extra,
 });
 
 /** A merge-events.jsonl observation row in the fleet merge-latency shape (repo#pr keyed). */
@@ -310,6 +325,7 @@ describe('router outcome ledger (612S preservation)', () => {
       node_outcome: null, node_id: null, node_pack: null,
       merge_queue: null, cross_review: null,
       launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
+  modeled_cost_usd: null,
       passk: null,
     }]);
   });
@@ -2808,6 +2824,86 @@ describe('router outcome launch-cost join', () => {
     const result = await readRouterOutcomes({ runsDir: root });
     expect(result).toMatchObject({ state: 'read', launch_cost_state: 'read', launch_cost_truncated: true });
     expect(result.outcomes[0]).toMatchObject({ launch_cost_status: null, launch_peak_processes: null });
+  });
+});
+
+describe('router outcome job-cost-model join', () => {
+  it('folds only ashlr.job-cost-model/v1 rows carrying a finite non-negative modeledValueUsd', () => {
+    const costs = foldJobCosts([
+      JSON.stringify(jobCostRow('J1', 1.5)),
+      JSON.stringify(jobCostRow('J1', 0.25)),          // a second finish sums into the same job
+      JSON.stringify(jobCostRow('J2', null)),          // unpriced finish: contributes nothing
+      JSON.stringify(jobCostRow('J3', 2)),
+      JSON.stringify({ ...jobCostRow('J4', 9), schema: 'ashlr.job-cost-model/v2' }),
+      JSON.stringify(jobCostRow('bad id!', 9)),
+      JSON.stringify(jobCostRow('J5', -1)),
+      JSON.stringify(jobCostRow('J6', 'expensive')),
+      // 1e999 parses to Infinity — a non-finite modeled value never joins.
+      '{"schema":"ashlr.job-cost-model/v1","job":"J7","modeledValueUsd":1e999}',
+      // The metered lane's real-spend figure is never a modeled value.
+      JSON.stringify(jobCostRow('J8', null, { realSpendUsd: 3.5, method: 'real-spend' })),
+      'not json',
+      '',
+    ].join('\n'));
+    expect([...costs.keys()].sort()).toEqual(['J1', 'J3']);
+    expect(costs.get('J1')).toBeCloseTo(1.75);
+    expect(costs.get('J3')).toBe(2);
+  });
+
+  it('joins each job\'s summed modeled spend and leaves unpriced jobs null', async () => {
+    const root = runsDir([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J2","lane":"beta","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J3","lane":"alpha","phase":"CLOSED","ts":"2026-11-01T00:00:00Z"}',
+      // JX has cost rows but no jobs outcome: it never creates one.
+    ].join('\n'));
+    writeJobCosts(root, [
+      jobCostRow('J1', 1.5),
+      jobCostRow('J1', 0.5),
+      jobCostRow('J2', 0.125),
+      // J3's finishes recorded no modeled value — stays unknown, never zero.
+      jobCostRow('J3', null, { reason: 'model None has no list price in the table' }),
+      jobCostRow('JX', 9),
+      // Malformed rows never join.
+      { ...jobCostRow('J1', 100), schema: 'ashlr.job-cost-model/v2' },
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', job_cost_state: 'read', job_cost_truncated: false });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({ modeled_cost_usd: 2 });
+    expect(byId.get('J2')).toMatchObject({ modeled_cost_usd: 0.125 });
+    expect(byId.get('J3')).toMatchObject({ modeled_cost_usd: null });
+    expect(byId.has('JX')).toBe(false);
+    expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
+  });
+
+  it('keeps modeled_cost_usd null and reports job_cost_state when the ledger is absent, refused or the jobs read failed', async () => {
+    const missing = await readRouterOutcomes({ runsDir: runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n') });
+    expect(missing).toMatchObject({ state: 'read', job_cost_state: 'missing', job_cost_truncated: false });
+    expect(missing.outcomes[0]).toMatchObject({ modeled_cost_usd: null });
+
+    const root = runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
+    const target = join(root, 'real-job-cost-model.jsonl');
+    writeFileSync(target, JSON.stringify(jobCostRow('J1', 1.5)) + '\n');
+    symlinkSync(target, jobCostsPath(root));
+    const linked = await readRouterOutcomes({ runsDir: root });
+    expect(linked).toMatchObject({ state: 'read', job_cost_state: 'unreadable' });
+    expect(linked.outcomes[0]).toMatchObject({ modeled_cost_usd: null });
+
+    // The job-cost read still reports its health when the jobs ledger is missing.
+    const noJobs = runsDir();
+    writeJobCosts(noJobs, [jobCostRow('J1', 1.5)]);
+    const withCosts = await readRouterOutcomes({ runsDir: noJobs });
+    expect(withCosts).toMatchObject({ state: 'missing', job_cost_state: 'read', job_cost_truncated: false, outcomes: [] });
+  });
+
+  it('flags a cut job-cost tail so joined modeled values read as newest-bytes coverage', async () => {
+    const root = runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
+    writeFileSync(jobCostsPath(root), '');
+    truncateSync(jobCostsPath(root), ROUTER_OUTCOME_LEDGER_LIMIT + 1);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', job_cost_state: 'read', job_cost_truncated: true });
+    expect(result.outcomes[0]).toMatchObject({ modeled_cost_usd: null });
   });
 });
 

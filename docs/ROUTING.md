@@ -892,6 +892,22 @@ vocabulary and `cross_review_truncated` marks a cut tail, in which
 case joined verdicts cover only the newest bytes; anything but
 `read` leaves every `cross_review` `null` — unknown, never a guessed
 verdict — while an empty readable ledger means zero recorded joins.
+`modeled_cost_usd` joins the ops-side cost projection's
+`ashlr.job-cost-model/v1` journal — `<runs>/metrics/job-cost-model.jsonl`,
+one row per finish pricing the job's recorded token usage
+(`modeledValueUsd` against the model's list price or plan-window
+share on subscription lanes; the metered lane's `realSpendUsd`
+duplicates the api-spend `cost_usd` join and never joins). The fold
+keeps each job's summed modeled value — the producer's own per-job
+aggregate sums the same rows — under a closed check (exact schema,
+bounded job id, finite non-negative modeled value); rows recording
+no modeled value contribute nothing and stay indistinguishable from
+absent rows. The figure is a modeled estimate, never billed spend:
+a different unit than `cost_usd`, `acus` and `pool_pct_used`, never
+summed with them. `job_cost_state` mirrors the jobs `state`
+vocabulary and `job_cost_truncated` marks a cut tail; anything but
+`read` leaves `modeled_cost_usd` `null` — unknown, never a zeroed
+or guessed cost.
 `reverted`
 folds explicit revert evidence — a `reverted` boolean, a revert event name
 or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
@@ -1103,8 +1119,9 @@ health, `empty_tag_state`/`empty_tag_truncated` the tags journal's,
 `merge_events_state`/`merge_events_truncated` the merge-events
 journal's, `revert_ledger_state` the scan-detected revert ledger's,
 `reward_state`/`reward_truncated` the reward-signal substrate's,
-`launch_cost_state`/`launch_cost_truncated` the launch-cost journal's
-and `cross_review_state`/`cross_review_truncated` the cross-review
+`launch_cost_state`/`launch_cost_truncated` the launch-cost journal's,
+`cross_review_state`/`cross_review_truncated` the cross-review
+journal's and `job_cost_state`/`job_cost_truncated` the job-cost-model
 journal's
 the same way. The report also carries the fleet controller's own recorded
 lane-quality verdicts: `controller_quality_state` reports the health of

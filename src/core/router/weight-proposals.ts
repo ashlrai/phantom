@@ -113,6 +113,17 @@ export interface RouterWeightEvidence {
   /** Mean recorded pool_pct_used over pool_pct_used_known; null when none recorded. */
   pool_pct_used_mean: number | null;
   /**
+   * Group outcomes with a recorded modeled_cost_usd — the
+   * job-cost-model ledger's summed modeled spend estimate per job
+   * (subscription lanes' only per-job dollar figure; the metered
+   * lane's realSpendUsd duplicates cost_usd and is never joined).
+   * A modeled estimate, not billed spend: a different unit than
+   * cost_usd, acus and pool_pct_used — the four means never mix.
+   */
+  modeled_cost_known: number;
+  /** Mean recorded modeled_cost_usd over modeled_cost_known; null when none recorded. */
+  modeled_cost_usd_mean: number | null;
+  /**
    * Group outcomes carrying a recorded launch-cost probe verdict —
    * launch-cost.jsonl's fleet.launch-cost.v1 rows joined as
    * `launch_cost_status`: the fleet's first-minute process/CPU
@@ -612,6 +623,7 @@ interface WeightEvidenceTally {
   passkSum: number; passkKnown: number;
   acusSum: number; acusKnown: number;
   poolPctSum: number; poolPctKnown: number;
+  modeledCostSum: number; modeledCostKnown: number;
   launchCost: number; launchCostMeasured: number;
   launchPeakSum: number; launchPeakKnown: number;
   launchCpuSum: number; launchCpuKnown: number;
@@ -651,6 +663,7 @@ const freshTally = (): WeightEvidenceTally => ({
   laneBlocked: 0, blockedReasons: new Map(),
   tokensSum: 0, tokensKnown: 0, passkSum: 0, passkKnown: 0,
   acusSum: 0, acusKnown: 0, poolPctSum: 0, poolPctKnown: 0,
+  modeledCostSum: 0, modeledCostKnown: 0,
   launchCost: 0, launchCostMeasured: 0,
   launchPeakSum: 0, launchPeakKnown: 0, launchCpuSum: 0, launchCpuKnown: 0,
   launchCpuPeakSum: 0, launchCpuPeakKnown: 0,
@@ -730,6 +743,8 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   acus_mean: t.acusKnown === 0 ? null : round6(t.acusSum / t.acusKnown),
   pool_pct_used_known: t.poolPctKnown,
   pool_pct_used_mean: t.poolPctKnown === 0 ? null : round6(t.poolPctSum / t.poolPctKnown),
+  modeled_cost_known: t.modeledCostKnown,
+  modeled_cost_usd_mean: t.modeledCostKnown === 0 ? null : round6(t.modeledCostSum / t.modeledCostKnown),
   launch_cost_known: t.launchCost,
   launch_cost_measured: t.launchCostMeasured,
   launch_peak_processes_mean: t.launchPeakKnown === 0 ? null : round6(t.launchPeakSum / t.launchPeakKnown),
@@ -1087,6 +1102,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     if (o.passk !== null) { t.passkKnown++; t.passkSum += o.passk; }
     if (o.acus !== null) { t.acusKnown++; t.acusSum += o.acus; }
     if (o.pool_pct_used !== null) { t.poolPctKnown++; t.poolPctSum += o.pool_pct_used; }
+    if (o.modeled_cost_usd !== null) { t.modeledCostKnown++; t.modeledCostSum += o.modeled_cost_usd; }
     if (o.launch_cost_status !== null) {
       t.launchCost++;
       if (o.launch_cost_status === 'measured') t.launchCostMeasured++;
@@ -1338,6 +1354,16 @@ export interface RouterWeightProposalReport {
   cross_review_state: RouterOutcomeRead['cross_review_state'];
   /** True when the cross-review tail was cut; joined verdicts cover only the newest bytes. */
   cross_review_truncated: boolean;
+  /**
+   * Health of the job-cost-model.jsonl tail behind the modeled_cost_usd
+   * outcome joins and the per-group modeled-cost evidence. Anything but
+   * 'read' means no cost-model rows joined — every group's
+   * modeled_cost_known reads 0 and the mean stays null, never a
+   * zeroed or guessed cost figure.
+   */
+  job_cost_state: RouterOutcomeRead['job_cost_state'];
+  /** True when the job-cost-model tail was cut; joined modeled values cover only the newest bytes. */
+  job_cost_truncated: boolean;
   /** 'unavailable' when the ledger was not read; counts are then null, never zero. */
   status: 'proposed' | 'insufficient-evidence' | 'unavailable';
   bounds: { min_samples: number; max_shift: number };
@@ -1598,6 +1624,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     reward_state: read.reward_state, reward_truncated: read.reward_truncated,
     launch_cost_state: read.launch_cost_state, launch_cost_truncated: read.launch_cost_truncated,
     cross_review_state: read.cross_review_state, cross_review_truncated: read.cross_review_truncated,
+    job_cost_state: read.job_cost_state, job_cost_truncated: read.job_cost_truncated,
     controller_quality_state: (controller?.state ?? 'unreported') as RouterWeightProposalReport['controller_quality_state'],
     controller_quality: controller?.state === 'read' ? controller.receipts : null,
     controller_quality_invalid_rows: controller?.state === 'read' ? controller.invalid_rows : null,
