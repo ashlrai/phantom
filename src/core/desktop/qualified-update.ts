@@ -9,6 +9,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { gunzipSync } from 'node:zlib';
 import { Header } from 'tar';
 import { evaluateStandingAuthority } from '../authority/effective-config.js';
+import {canonicalJson} from '../authority/canonical-json.js';
+import {standingGrantEnvelopeDigest} from '../authority/standing-grant.js';
+import type {SignedDesktopUpdateApproval} from '../authority/custody-client.js';
+import type {ConsumerApprovalAuthority, ConsumerApprovalRequest} from './consumer-approval.js';
 import { runningPackageRoot, verifyAuthoritySurfaceAt } from '../authority/surface.js';
 import { censusExecutionLeases } from '../sandbox/execution-leases.js';
 import { readKillSwitch } from '../sandbox/policy.js';
@@ -32,11 +36,12 @@ export interface DesktopUpdateResult {
 export interface UpdateAdmission {
   grantId: string | null; envelopeDigest: string | null; surfaceDigest: string | null;
   active: boolean; stop: boolean; leaseCount: number; unknownLeases: number;
+  grantState?: string;
 }
 export interface NativeUpdateParent { pid: number; ppid: number; started: string; executable: string }
 export interface DesktopUpdateDependencies {
   home: string; platform: NodeJS.Platform; architecture: string; packageRoot: string | null; trust: UpdateTrust | null;
-  admission(): UpdateAdmission;
+  admission(surface?: 'installed'): UpdateAdmission;
   hostCensus?(timeoutMs?: number): DesktopHostInterlockCensus;
   queuedWork?(): boolean | null;
   monotonicNow?(): number;
@@ -76,9 +81,9 @@ export function consumeDesktopUpdateResume(capability: unknown): UpdateResume | 
   return consumeResume(updateResumes, capability);
 }
 
-function supportsOwnedPause(deps: DesktopUpdateDependencies, admission: UpdateAdmission, host = deps.hostCensus?.()): boolean {
+function supportsOwnedPause(deps: DesktopUpdateDependencies, admission: UpdateAdmission, host = deps.hostCensus?.(), approved = false): boolean {
   if (deps.platform !== 'darwin' || !deps.ownedResident || deps.operatorStop?.() !== 'inactive' || desktopUpdateInterlockPresent(deps.home) ||
-      admission.stop || !admission.active || !admission.grantId || !admission.envelopeDigest || !admission.surfaceDigest) return false;
+      admission.stop || !admission.surfaceDigest || (!approved && (!admission.active || !admission.grantId || !admission.envelopeDigest))) return false;
   return host?.state === 'absent' || host?.state === 'supported';
 }
 const ACTIVITY_MAX_DEFER_MS = 5 * 60_000;
@@ -184,10 +189,10 @@ function workAdmissionReason(deps: DesktopUpdateDependencies, admission: UpdateA
   return host?.state === 'supported' && (host.activeJobs !== 0 || host.unknown !== 0) ? 'work-active-or-unknown' : null;
 }
 function ownedActivityReason(deps: DesktopUpdateDependencies, staged: ReturnType<typeof readStage>,
-  admission: UpdateAdmission, host: DesktopHostInterlockCensus | undefined): string | null {
+  admission: UpdateAdmission, host: DesktopHostInterlockCensus | undefined, approvedAt?:number): string | null {
   const work = workAdmissionReason(deps, {...admission, stop:true}, host);
   if (work) return work;
-  const age = deps.now() - staged.identity.birthtimeMs;
+  const age = deps.now() - (approvedAt ?? staged.identity.birthtimeMs);
   return deps.queuedWork && age < ACTIVITY_MAX_DEFER_MS && deps.queuedWork() !== false ?
     'waiting-for-low-activity' : null;
 }
@@ -325,7 +330,7 @@ export async function downloadQualifiedUpdateArtifact(url: string, maximum: numb
 }
 
 interface Pointer {target: string; [key: string]: unknown}
-interface AppProof {path: string; inventory: string; dev: number; ino: number; signer: string}
+export interface AppProof {path: string; inventory: string; dev: number; ino: number; signer: string}
 interface TransactionIo {
   home: string; clock(): number; sleep(ms: number): Promise<void>; fetchStatus(url: string): Promise<number | null>;
   readCurrentPointer(path: string): Pointer | null; switchCurrentPointer(path: string, before: Pointer | null, target: string): Pointer;
@@ -445,13 +450,44 @@ export interface ConsumerOwnedUpdatePlan {
   readonly releaseDigest: string;
   readonly app: AppProof;
 }
+export interface ApprovedConsumerUpdate {
+  readonly request: ConsumerApprovalRequest;
+  readonly value: SignedDesktopUpdateApproval;
+  readonly authority: ConsumerApprovalAuthority;
+  readonly approvedAt: number;
+}
 interface ConsumerOwnedRun {
   plan: ConsumerOwnedUpdatePlan;
   quit(path: string): boolean;
   resumed: boolean;
   installed: boolean;
   crossedSwitch: boolean;
+  approval?: ApprovedConsumerUpdate;
   candidate?: {root: string; identity: fs.Stats; previous: string};
+}
+function consumerRunAuthorized(run: ConsumerOwnedRun, deps: DesktopUpdateDependencies, admission: UpdateAdmission): boolean {
+  if (!run.approval) return consumerGrantMatches(run.plan, admission);
+  const {authority, request, value} = run.approval;
+  return Boolean(admission.surfaceDigest && deps.currentPackageRoot() === request.previous &&
+    authority.verify(request, value, deps.now()));
+}
+export function planApprovedConsumerUpdate(deps: DesktopUpdateDependencies, approval: ApprovedConsumerUpdate):
+  ConsumerOwnedUpdatePlan & {candidate:{version:string;release:string}} {
+  const {request, value, authority} = approval;
+  const {transaction, releaseDigest, surfaceDigest} = request.binding;
+  const staged = readStage(transaction, deps, true);
+  updateMode(deps, staged.manifest);
+  if (staged.digest !== releaseDigest || staged.manifest.authoritySurfaceDigest !== surfaceDigest ||
+      deps.currentPackageRoot() !== request.previous || !authority.verify(request, value, deps.now())) hold('update-approval-unverified');
+  return {releaseDigest, candidate:{version:staged.manifest.version,release:staged.manifest.source.revision},
+    coveredBy:{transaction, surfaceDigest, grantId:value.grant.payload.grantId},
+    envelopeDigest:standingGrantEnvelopeDigest(value.grant), app:request.app};
+}
+export function verifyConsumerApprovalStage(deps: DesktopUpdateDependencies, request: ConsumerApprovalRequest): boolean {
+  const staged = readStage(request.binding.transaction, deps, true);
+  updateMode(deps, staged.manifest);
+  return staged.digest === request.binding.releaseDigest && staged.manifest.authoritySurfaceDigest === request.binding.surfaceDigest &&
+    deps.currentPackageRoot() === request.previous;
 }
 function consumerGrantMatches(plan: ConsumerOwnedUpdatePlan, admission: UpdateAdmission): boolean {
   return admission.active && admission.grantId === plan.coveredBy.grantId &&
@@ -469,9 +505,10 @@ export function planConsumerOwnedUpdate(stageId: string, deps: DesktopUpdateDepe
   });
 }
 
-export async function applyConsumerOwnedUpdate(plan: ConsumerOwnedUpdatePlan, deps: DesktopUpdateDependencies, quit: (path: string) => boolean):
+export async function applyConsumerOwnedUpdate(plan: ConsumerOwnedUpdatePlan, deps: DesktopUpdateDependencies, quit: (path: string) => boolean,
+  approval?: ApprovedConsumerUpdate):
   Promise<{outcome: DesktopUpdateResult; resumed: boolean; installed: boolean}> {
-  const run: ConsumerOwnedRun = {plan, quit, resumed: false, installed: false, crossedSwitch: false};
+  const run: ConsumerOwnedRun = {plan, quit, resumed: false, installed: false, crossedSwitch: false, approval};
   const observation = (outcome: DesktopUpdateResult) => ({outcome, resumed: run.resumed, installed: run.installed});
   const stageId = plan.coveredBy.transaction;
   let version: string | null = null;
@@ -483,16 +520,19 @@ export async function applyConsumerOwnedUpdate(plan: ConsumerOwnedUpdatePlan, de
     const deadline = (deps.monotonicNow ?? deps.now)() + ACTIVITY_MAX_DEFER_MS;
     for (;;) {
       const admission = deps.admission(), host = deps.hostCensus?.();
-      if (!consumerGrantMatches(plan, admission)) hold('resume-grant-changed');
-      if (!supportsOwnedPause(deps, admission, host)) hold(host?.state === 'unsupported' ? 'drain-interlock-unsupported' : 'resume-ownership-lost');
-      const reason = ownedActivityReason(deps, staged, admission, host);
+      if (!consumerRunAuthorized(run, deps, admission)) hold(approval ? 'update-approval-unverified' : 'resume-grant-changed');
+      if (!supportsOwnedPause(deps, admission, host, Boolean(approval))) hold(host?.state === 'unsupported' ? 'drain-interlock-unsupported' : 'resume-ownership-lost');
+      const reason = ownedActivityReason(deps, staged, admission, host, approval?.approvedAt);
       if (!reason) break;
+      if (approval) hold(reason);
       const remaining = deadline - (deps.monotonicNow ?? deps.now)();
       if (remaining <= 0) hold(reason);
       await deps.sleep(Math.min(30_000, remaining));
     }
     const claim = join(staged.stage, 'consumer-lock');
-    fs.mkdirSync(claim, {mode: 0o700}); lock = claim; fsyncDirectory(staged.stage);
+    try {fs.mkdirSync(claim, {mode: 0o700});}
+    catch (error) {if ((error as NodeJS.ErrnoException).code==='EEXIST') hold('update-attempt-busy');throw error;}
+    lock = claim; fsyncDirectory(staged.stage);
     if (fs.lstatSync(join(staged.stage, 'consumer-attempt.json'), {throwIfNoEntry:false})) hold('update-attempt-already-recorded');
     const installed = await installPairedUpdate(stageId, staged, deps, mode, true, run);
     const outcome = typeof installed === 'string' ? result(installed, version, 'installation-recovery-required') : installed;
@@ -500,7 +540,14 @@ export async function applyConsumerOwnedUpdate(plan: ConsumerOwnedUpdatePlan, de
     catch { return observation(result('rollback-held', version, 'result-persistence-unknown')); }
     return observation(outcome);
   } catch (error) {
-    return observation(result('blocked', version, error instanceof Held ? error.reason : 'update-unavailable'));
+    const outcome = result('blocked', version, error instanceof Held ? error.reason : 'update-unavailable');
+    if (lock) {
+      const stage = dirname(lock);
+      if (outcome.reason !== 'update-attempt-already-recorded' && fs.existsSync(join(stage, 'consumer-attempt.json'))) {
+        try { saveConsumerResult(stage, outcome, deps); } catch { /* Keep the existing durable attempt or result. */ }
+      }
+    }
+    return observation(outcome);
   } finally {
     if (run.candidate && (!run.crossedSwitch || run.resumed && !run.installed)) {
       const {root, identity, previous} = run.candidate;
@@ -527,7 +574,7 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
   if (!previous || fs.realpathSync(previous.target) !== fs.realpathSync(root)) hold('running-current-mismatch');
   const selected = helper.selectLocalApp(staged.manifest.app.signer, io);
   if (!selected) hold('installed-app-unavailable');
-  if (consumer && JSON.stringify(selected) !== JSON.stringify(consumer.plan.app)) hold('app-identity-changed');
+  if (consumer && canonicalJson(selected) !== canonicalJson(consumer.plan.app)) hold('app-identity-changed');
   if (mode === 'app-only') {
     if (selected.inventory === staged.manifest.app.inventorySha256) hold('candidate-not-newer');
     requireOlderNativeApp(selected.path, staged.manifest.version, io);
@@ -554,7 +601,9 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
   if (readStage(stageId, deps, staged.consumer).digest !== staged.digest) hold('stage-changed');
   if (!automatic) freshAdmission(deps);
   const attempted = join(staged.stage, 'consumer-attempt.json');
-  writeExclusive(attempted, Buffer.from(JSON.stringify({schemaVersion: 1, manifestDigest: staged.digest, state: 'installation-attempted'}) + '\n'));
+  writeExclusive(attempted, Buffer.from(JSON.stringify({schemaVersion: 1, manifestDigest: staged.digest, state: 'installation-attempted',
+    ...(consumer?.approval && {approvalDigest:sha(Buffer.from(consumer.approval.value.approvalSignature, 'base64'))}),
+  }) + '\n'));
   fsyncDirectory(staged.stage);
   const tick = deps.monotonicNow ?? deps.now;
   const pausePath = join(staged.stage, 'resident-pause.json');
@@ -565,6 +614,7 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
   let pauseDeadline = 0;
   let boundary = false;
   let pauseRecord: string | undefined;
+  let restoredPointer: Pointer | null = null;
   const ownsPause = () => {
     try {
       return Boolean(owned && deps.operatorStop?.() === 'inactive' &&
@@ -596,13 +646,18 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
             actualApp.inventory !== staged.manifest.app.inventorySha256) return blocked('resume-install-unverified');
         verifyAppReleaseRecord(actualApp.path, staged.manifest, io.readBoundedFile.bind(io));
       } else if (!actualApp || JSON.stringify(actualApp) !== JSON.stringify(selected) ||
-          JSON.stringify(io.readCurrentPointer(current)) !== JSON.stringify(previous)) return blocked('resume-abort-unverified');
+          JSON.stringify(io.readCurrentPointer(current)) !== JSON.stringify(restoredPointer ?? previous)) return blocked('resume-abort-unverified');
+      const approval = consumer?.approval;
+      const approvedInstall = installed && approval;
       const authorityCheck = () => {
         if (!ownsPause() || deps.currentPackageRoot() !== nextRoot) return 'resume-ownership-lost';
         const surface = verifyAuthoritySurfaceAt(nextRoot, 'installed', {fresh: true});
-        if (!surface.ok || surface.digest !== beforePause.surfaceDigest) return 'resume-surface-changed';
-        const now = deps.admission();
-        if (!now.active || now.grantId !== beforePause.grantId || now.envelopeDigest !== beforePause.envelopeDigest) return 'resume-grant-changed';
+        if (!surface.ok || surface.digest !== (approvedInstall ? approval.request.binding.surfaceDigest : beforePause.surfaceDigest)) return 'resume-surface-changed';
+        const now = deps.admission(approvedInstall ? 'installed' : undefined);
+        if (approval && !installed) {
+          if (approval.authority.snapshot() !== approval.request.authority) return 'resume-grant-changed';
+        } else if (!now.active || now.grantId !== (approvedInstall ? consumer.plan.coveredBy.grantId : beforePause.grantId) ||
+          now.envelopeDigest !== (approvedInstall ? consumer.plan.envelopeDigest : beforePause.envelopeDigest)) return 'resume-grant-changed';
         if (productionDeps.has(deps)) {
           const managed = inspectManagedResidentRuntime(deps.home);
           if (managed.state !== 'verified' || managed.root !== nextRoot || managed.launcher !== join(nextRoot, 'bin', 'ashlr'))
@@ -614,6 +669,8 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
       const proof = JSON.stringify({stageId, manifest: staged.digest, nonce: owned!.nonce, state: installed ? 'installed' : 'aborted', nextRoot});
       writeExclusive(terminalPath, Buffer.from(proof));
       fsyncDirectory(staged.stage);
+      if (approvedInstall && (!ownsPause() ||
+          !approval.authority.accept(approval.request, approval.value, deps.now()))) return blocked('update-grant-acceptance-unverified');
       const reason = authorityCheck();
       if (reason) return blocked(reason);
       const check = () => {
@@ -622,20 +679,25 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
       };
       let released = false;
       let localRestoreFailed = false;
+      const release = () => {
+        if (released || !check()) return false;
+        if (!localPause?.restore()) {
+          localRestoreFailed = true;
+          return false;
+        }
+        released = ownsPause() && releaseDesktopUpdateInterlock(deps.home, owned!);
+        return released && deps.operatorStop?.() === 'inactive';
+      };
+      if (!resident!.runtime.pid) {
+        if (!release()) return blocked(localRestoreFailed ? 'resume-local-pause-unverified' : 'resume-ownership-lost');
+        return result(installed ? 'applied' : 'blocked', version, installed ? 'applied' :
+          capExpired ? 'owned-pause-cap-expired' : 'owned-pause-aborted');
+      }
       const resume: UpdateResume = Object.freeze({
         previous: resident!.previous, dev: resident!.dev, ino: resident!.ino, ctimeMs: resident!.ctimeMs,
         pid: resident!.runtime.pid!, processStart: resident!.processStart!,
         next: Object.freeze({...resident!.previous, binPath: join(nextRoot, 'bin', 'ashlr')}),
-        check, release: () => {
-          if (released) return false;
-          if (!check()) return false;
-          if (!localPause?.restore()) {
-            localRestoreFailed = true;
-            return false;
-          }
-          released = ownsPause() && releaseDesktopUpdateInterlock(deps.home, owned!);
-          return released && deps.operatorStop?.() === 'inactive';
-        },
+        check, release,
       });
       const production = productionDeps.has(deps);
       const capabilities = production ? updateResumes : new WeakMap<object, UpdateResume>();
@@ -686,9 +748,10 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
     if (consumer) {
       if (!helper.requireLocalAppQuiescence) hold('app-quit-unverified');
       const beforeQuit = deps.admission(), host = deps.hostCensus?.();
-      if (!consumerGrantMatches(consumer.plan, beforeQuit)) hold('resume-grant-changed');
-      if (!supportsOwnedPause(deps, beforeQuit, host)) hold(host?.state === 'unsupported' ? 'drain-interlock-unsupported' : 'resume-ownership-lost');
-      if (!deps.ownedResident?.()?.runtime.pid) hold('resume-resident-unverified');
+      if (!consumerRunAuthorized(consumer, deps, beforeQuit)) hold(consumer.approval ? 'update-approval-unverified' : 'resume-grant-changed');
+      if (!supportsOwnedPause(deps, beforeQuit, host, Boolean(consumer.approval))) hold(host?.state === 'unsupported' ? 'drain-interlock-unsupported' : 'resume-ownership-lost');
+      const beforeQuitResident=deps.ownedResident?.();
+      if (!beforeQuitResident?.runtime.loaded || (!beforeQuitResident.runtime.pid && !consumer.approval)) hold('resume-resident-unverified');
       if (JSON.stringify(helper.selectLocalApp(staged.manifest.app.signer, io)) !== JSON.stringify(selected)) hold('app-identity-changed');
       if (!consumer.quit(selected.path)) hold('app-quit-unverified');
       const quitBy = tick() + 30_000;
@@ -705,10 +768,10 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
       await candidateReady();
     }
     beforePause = deps.admission();
-    if (consumer && !consumerGrantMatches(consumer.plan, beforePause)) hold('resume-grant-changed');
+    if (consumer && !consumerRunAuthorized(consumer, deps, beforePause)) hold(consumer.approval ? 'update-approval-unverified' : 'resume-grant-changed');
     const host = deps.hostCensus?.();
-    resident = supportsOwnedPause(deps, beforePause, host) ? deps.ownedResident?.() : null;
-    if (!resident?.runtime.pid) hold('drain-interlock-unsupported');
+    resident = supportsOwnedPause(deps, beforePause, host, Boolean(consumer?.approval)) ? deps.ownedResident?.() : null;
+    if (!resident?.runtime.loaded || (!resident.runtime.pid && !consumer?.approval)) hold('drain-interlock-unsupported');
     pauseDeadline = tick() + OWNED_PAUSE_CAP_MS;
     const drainBy = pauseDeadline - SWITCH_RESERVE_MS;
     let localPauseFailed = false;
@@ -764,7 +827,7 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
         if (automatic) {
           checkCap(pauseDeadline);
           if (!ownsPause()) hold('resume-ownership-lost');
-          if (consumer && !consumerGrantMatches(consumer.plan, deps.admission())) hold('resume-grant-changed');
+          if (consumer && !consumerRunAuthorized(consumer, deps, deps.admission())) hold(consumer.approval ? 'update-approval-unverified' : 'resume-grant-changed');
           checkCap(pauseDeadline);
         }
         boundary = true;
@@ -785,6 +848,9 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
           return; // the fresh guard refused before any current-pointer mutation
         }
         io.restoreCurrentPointer(current, previous, switched);
+        const restored = io.readCurrentPointer(current);
+        if (restored?.target !== previous.target) hold('pointer-recovery-unknown');
+        restoredPointer = restored;
       },
       health: async () => {
         const deadline = io.clock() + 30_000;
@@ -949,11 +1015,11 @@ export function createDesktopUpdateDependencies(trust: UpdateTrust | null, coord
   const home = userInfo().homedir;
   const deps: DesktopUpdateDependencies = {
     home: userInfo().homedir, platform: process.platform, architecture: process.arch, packageRoot: root, trust,
-    admission: () => {
-      const evaluated = evaluateStandingAuthority({mode: 'fresh', surface: 'running'}); const leases = censusExecutionLeases();
+    admission: surface => {
+      const evaluated = evaluateStandingAuthority({mode: 'fresh', surface: surface ?? 'running'}); const leases = censusExecutionLeases();
       return {grantId: evaluated.grant?.grantId ?? null, envelopeDigest: evaluated.envelopeDigest,
         surfaceDigest: evaluated.surface.ok ? evaluated.surface.digest : null,
-        active: evaluated.grantState === 'active' && evaluated.ledger.chain === 'ok', stop: readKillSwitch().state === 'active',
+        active: evaluated.grantState === 'active' && evaluated.ledger.chain === 'ok', grantState:evaluated.grantState, stop: readKillSwitch().state === 'active',
         leaseCount: leases.leases.length, unknownLeases: leases.unknown};
     },
     currentPackageRoot: () => {try {return fs.realpathSync(join(userInfo().homedir, '.local', 'share', 'ashlr', 'current'));} catch {return null;}},

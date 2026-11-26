@@ -13,6 +13,9 @@ import * as bootIdentity from '../src/core/resources/native-boot-identity.js';
 import {canonical, digest} from '../src/core/universe/artifacts.js';
 import {consumeDesktopUpdateResume, extractSignedAppArchive, type DesktopUpdateDependencies} from '../src/core/desktop/qualified-update.js';
 import {desktopUpdateInterlockPath} from '../src/core/desktop/update-interlock.js';
+import {buildDefaultGrantPayload, standingGrantEnvelopeDigest} from '../src/core/authority/standing-grant.js';
+import type {SignedDesktopUpdateApproval} from '../src/core/authority/custody-client.js';
+import type {ConsumerApprovalAuthority} from '../src/core/desktop/consumer-approval.js';
 import {consumerInstallerOsCommand,type ConsumerInstallDependencies,type ConsumerTransaction} from '../src/core/desktop/consumer-install.js';
 import {cmdDesktop,parseDesktopInstallArgs} from '../src/cli/desktop.js';
 import type {CompatibleUpdateManifest,UpdateTrust} from '../src/core/desktop/update-manifest.js';
@@ -98,7 +101,8 @@ function installFixture(version='3.30.35') {
   return {root,home,applications,version,manifest,published,publish,deps,helper,io,census,current,appRoot,surface,code,setLive:(value:boolean)=>{live=value;},setHealth:(value:boolean)=>{health=value;},failOpen:()=>{spawnFailure=true;}};
 }
 
-import {applyConsumerDesktopUpgrade,inspectConsumerDesktopUpgrade,type ConsumerUpgradeDependencies} from '../src/core/desktop/consumer-upgrade.js';
+import {applyConsumerDesktopUpgrade,approveConsumerDesktopUpdate,inspectConsumerDesktopUpgrade,retryApprovedConsumerDesktopUpdate,
+  type ConsumerUpgradeDependencies} from '../src/core/desktop/consumer-upgrade.js';
 function fixture(version='3.30.35') {
   const f=installFixture(version),old=join(f.home,'.local/share/ashlr/releases','a'.repeat(40));
   const packageRoot=join(f.root,'running');write(join(packageRoot,'bin/ashlr'),fs.readFileSync(resolve(import.meta.dirname,'../bin/ashlr')),0o755);
@@ -130,7 +134,7 @@ describe('managed consumer upgrade',()=> {
     const sidecar = join(f.home,'.ashlr/.desktop-sidecar.json');
     write(sidecar,JSON.stringify({desktopPid:100,sidecarPid:101,port:7777,sidecarPath:'/Applications/Phantom.app/Contents/MacOS/ashlr'}));
     let now=Date.now(),queued=true;
-    const admission={active:true,stop:false,grantId:'a'.repeat(32),envelopeDigest:'e'.repeat(64),surfaceDigest:f.surface.digest,leaseCount:0,unknownLeases:0};
+    const admission={active:true,stop:false,grantId:'a'.repeat(32),envelopeDigest:'e'.repeat(64),surfaceDigest:f.surface.digest,leaseCount:0,unknownLeases:0,grantState:'active'};
     const queuedWork=vi.fn(()=>queued);
     const resident={previous:{platform:'darwin' as const,homeDir:f.home,binPath:join(f.old,'bin/ashlr')},
       dev:1,ino:2,ctimeMs:3,target:'gui/42/ai.ashlr.daemon',processStart:'Wed Oct 7 12:00:00 2026'};
@@ -154,10 +158,106 @@ describe('managed consumer upgrade',()=> {
       expect(path).toBe('/Applications/Phantom.app'); expect(queued).toBe(false);expect(fs.existsSync(marker)).toBe(false);
       f.setLive(false); fs.unlinkSync(sidecar);return true;
     });
-    const post=vi.fn((value:unknown)=>({status:'posted' as const,id:(value as {id:string}).id,cursor:1}));
+    const post=vi.fn<NonNullable<NonNullable<ConsumerUpgradeDependencies['ownedUpdate']>['post']>>(
+      value=>({status:'posted',id:(value as {id:string}).id,cursor:1}));
     f.deps.ownedUpdate={dependencies:owned,quit,post};
-    return {...f,app,marker,owned,admission,resume,quit,post};
+    return {...f,app,marker,owned,admission,resume,quit,post,setQueued:(value:boolean)=>{queued=value;}};
   }
+
+  function oneAskFixture(prior:'changed'|'none'|'expired') {
+    const f=coveredFixture();
+    if (prior==='changed') {
+      const oldCode=Buffer.from('previous authority');
+      const oldSurface={...f.surface,files:[{...f.surface.files[0]!,sha256:sha(oldCode),bytes:oldCode.length}]};
+      oldSurface.digest=authoritySurfaceDigest(oldSurface);
+      write(join(f.old,'dist/authority-surface.json'),JSON.stringify(oldSurface));
+      write(join(f.old,'dist/core/authority/fixture.js'),oldCode);
+      f.admission.surfaceDigest=oldSurface.digest;
+    } else {
+      f.admission.grantState=prior;
+      f.admission.active=false;
+    }
+    let baseline='previous grant and ledger', signed:SignedDesktopUpdateApproval|undefined;
+    const signApproval=vi.fn<ConsumerApprovalAuthority['sign']>(async request=>signed={
+      grant:{payload:request.grant,signature:Buffer.alloc(64).toString('base64')}, approvalSignature:Buffer.alloc(64,1).toString('base64'),
+    });
+    const accept=vi.fn<ConsumerApprovalAuthority['accept']>((request,approval)=>{
+      const stage=join(f.home,'.ashlr/updates/consumer-staging',`upgrade-${request.binding.transaction}`);
+      expect(JSON.parse(fs.readFileSync(join(stage,'resident-terminal.json'),'utf8')).state).toBe('installed');
+      expect(fs.realpathSync(f.current)).toBe(join(dirname(f.old),f.manifest.source.revision));
+      expect(JSON.parse(fs.readFileSync(join(f.app,'Contents/Info.plist'),'utf8')).CFBundleShortVersionString).toBe('3.30.76');
+      baseline='candidate grant and ledger';
+      f.owned.admission=target=>target==='installed' ? {...f.admission,active:true,surfaceDigest:f.surface.digest,
+        grantId:approval.grant.payload.grantId,envelopeDigest:standingGrantEnvelopeDigest(approval.grant)} : f.admission;
+      return true;
+    });
+    const draft=vi.fn<ConsumerApprovalAuthority['draft']>(async (surface,now)=>buildDefaultGrantPayload({
+      nowMs:now,grantId:'b'.repeat(32),grantSeq:2,keyId:'se-p256-0123456789abcdef',hostBinding:'a'.repeat(64),
+      authoritySurfaceDigest:surface,repos:[{nameWithOwner:'ashlrai/fleet-canary',visibility:'public',hasVerify:true}],seats:[],
+    }));
+    f.deps.ownedUpdate!.authority={draft,sign:signApproval,accept,snapshot:()=>baseline,
+      verify(request,approval,now):approval is SignedDesktopUpdateApproval {
+        return Boolean(signed && canonicalJson(approval)===canonicalJson(signed) &&
+          request.authority===baseline && request.binding.expiresAtMs>now);
+      }};
+    const events=new Map<string,unknown>();
+    f.post.mockImplementation(value=>{
+      const {id}=value as {id:string};
+      if(events.has(id))return {status:'duplicate',id,cursor:1};
+      events.set(id,value);return {status:'posted',id,cursor:1};
+    });
+    return {...f,draft,signApproval,accept,events,baseline:()=>baseline};
+  }
+
+  it.each([
+    ['changed','update-surface-changed'],['none','update-grant-missing'],['expired','update-grant-expired'],
+  ] as const)('asks once for %s authority, defers work, and consumes approval before installing',async(prior,reason)=>{
+    const f=oneAskFixture(prior), opt={...options,requireApp:true};
+    const plan=await inspectConsumerDesktopUpgrade(f.deps,opt);
+    expect(plan).toMatchObject({state:'held',reason,scheduleHint:'next-low-activity-window',
+      ownerAction:{reason,touchId:true,command:expect.stringMatching(/^phm desktop update sign-desktop-update --stage [a-f0-9]{32}$/)}});
+    expect(await inspectConsumerDesktopUpgrade(f.deps,opt)).toMatchObject({ownerAction:plan.ownerAction,busAudit:'duplicate'});
+    expect(f.draft).toHaveBeenCalledOnce();
+    expect(f.draft).toHaveBeenCalledWith(f.surface.digest,expect.any(Number));
+    const id=plan.ownerAction!.command.split(' ').at(-1)!;
+    expect(await approveConsumerDesktopUpdate(f.deps,id)).toMatchObject({state:'held',scheduleHint:'next-low-activity-window'});
+    expect(f.signApproval).toHaveBeenCalledOnce();expect(f.quit).not.toHaveBeenCalled();expect(f.accept).not.toHaveBeenCalled();
+    expect((await inspectConsumerDesktopUpgrade(f.deps,opt)).ownerAction).toBeUndefined();
+    f.setQueued(false);
+    expect(await retryApprovedConsumerDesktopUpdate(f.deps)).toMatchObject({state:'upgraded',authorityResumed:true,applied:true,
+      daemon:{restart:{ownerConfirmation:false,coveredBy:{grantId:'b'.repeat(32),transaction:id,surfaceDigest:f.surface.digest}}}});
+    expect(f.accept).toHaveBeenCalledOnce();expect(f.resume).toHaveBeenCalledOnce();
+    const attempt=join(f.home,'.ashlr/updates/consumer-staging',`upgrade-${id}`,'consumer-attempt.json');
+    expect(JSON.parse(fs.readFileSync(attempt,'utf8'))).toMatchObject({approvalDigest:expect.stringMatching(/^[a-f0-9]{64}$/)});
+    expect(await retryApprovedConsumerDesktopUpdate(f.deps,id)).toBeNull();
+    await approveConsumerDesktopUpdate(f.deps,id);
+    expect(f.signApproval).toHaveBeenCalledOnce();
+    expect([...f.events.keys()]).toEqual([`desktop-update:${id}:owner-action`,`desktop-update:${id}:hold`,`desktop-update:${id}:outcome`]);
+  });
+
+  it('does not accept the replacement on rollback and consumes the attempt',async()=>{
+    const f=oneAskFixture('changed');
+    const plan=await inspectConsumerDesktopUpgrade(f.deps,{...options,requireApp:true});
+    const id=plan.ownerAction!.command.split(' ').at(-1)!;
+    f.setQueued(false);f.failOpen();
+    const outcome=await approveConsumerDesktopUpdate(f.deps,id);
+    expect(outcome).toMatchObject({state:'held',applied:false,authorityResumed:true,reason:'owned-pause-aborted'});
+    expect(f.accept).not.toHaveBeenCalled();expect(f.baseline()).toBe('previous grant and ledger');
+    expect(fs.realpathSync(f.current)).toBe(f.old);expect(fs.existsSync(f.marker)).toBe(false);
+    expect(await retryApprovedConsumerDesktopUpdate(f.deps,id)).toBeNull();
+  });
+
+  it('never starts a previously stopped resident after approving a missing grant',async()=>{
+    const f=oneAskFixture('none');
+    const resident=f.owned.ownedResident!()!;
+    f.owned.ownedResident=()=>({...resident,runtime:{loaded:true}});
+    const plan=await inspectConsumerDesktopUpgrade(f.deps,{...options,requireApp:true});
+    f.setQueued(false);
+    await expect(approveConsumerDesktopUpdate(f.deps,plan.ownerAction!.command.split(' ').at(-1)!))
+      .resolves.toMatchObject({state:'upgraded',applied:true,authorityResumed:false});
+    expect(f.accept).toHaveBeenCalledOnce();expect(f.resume).not.toHaveBeenCalled();
+    expect(fs.existsSync(f.marker)).toBe(false);
+  });
 
   it('plans and applies the Pro paired upgrade without native handoff or owner confirmation', async()=>{
     const f=coveredFixture();

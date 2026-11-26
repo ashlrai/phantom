@@ -66,6 +66,7 @@ import {
   autonomyBadge,
   buildAuthorityStatus,
   buildStandingGrantDraft,
+  draftDesktopUpdateGrant,
   handleAuthorityApi,
   needsYouItems,
   resetAuthorityApiCachesForTest,
@@ -616,6 +617,25 @@ describe('drafts name server enforcement only where GitHub enforces checks (3.14
     expect(unavailable.summary.some((line) => line.includes(`${CANARY}: up to merge, low risk, 4/day, local enforcement`))).toBe(true);
     const reapproved = await call('POST', '/api/verse/authority', { action: 're-approve', draftDigest: unavailable.digest });
     expect(reapproved?.status).toBe(200);
+  });
+
+  it('preserves verified prior scope for a candidate even after the prior grant expired', async () => {
+    state.roots.push(TEST_ROOT);
+    const first = await buildStandingGrantDraft('new', Date.now(), { githubGet: github('enforced').get });
+    expect((await call('POST', '/api/verse/authority', { action: 'grant', draftDigest: first.digest }))?.status).toBe(200);
+    const candidate = 'd'.repeat(64);
+    const continued = await draftDesktopUpdateGrant(candidate, Date.parse(first.payload.expiresAt) + 1);
+    expect(continued).toMatchObject({authoritySurfaceDigest:candidate,grantSeq:first.payload.grantSeq + 1,
+      repos:first.payload.repos,spend:first.payload.spend,merge:first.payload.merge,rollout:first.payload.rollout});
+    expect(continued.grantId).not.toBe(first.payload.grantId);
+  });
+
+  it('uses the normal new grant scope when there is no prior grant', async () => {
+    state.roots.push(TEST_ROOT);
+    const now=Date.now(), candidate='d'.repeat(64);
+    const normal=(await buildStandingGrantDraft('new',now)).payload;
+    const drafted=await draftDesktopUpdateGrant(candidate,now);
+    expect(drafted).toEqual({...normal,grantId:drafted.grantId,authoritySurfaceDigest:candidate});
   });
 });
 

@@ -293,6 +293,19 @@ authority surface, expiry, and exact grant payload. The helper does not install
 the grant, authorize resident startup, or consume an update stage. The desktop
 coordinator must verify and consume the stage separately, and may accept a
 replacement grant only after proving the paired installation.
+An eligible CLI upgrade not covered by the current grant returns one
+`ownerAction` (`reason`, `command`, `touchId: true`) and a
+`next-low-activity-window` schedule hint. The command is
+`phm desktop update sign-desktop-update --stage <id>`: it signs a
+candidate-bound continuation of verifiable prior scope, or the normal
+new-grant draft otherwise. The CLI records the attempt durably before quit
+and switch. The enabled native update loop retries a signed, unused stage
+every 30 seconds while it waits for idle. Active or unknown work still
+blocks it. Only after proving the installed pair and writing terminal proof
+does the updater accept the replacement grant. Rollback keeps the previous
+grant and does not authorize a different resident. The resumed resident
+passes normal grant checks. The owner ask, hold, and final outcome use
+deduplicated Agent Bus IDs derived from the approval stage.
 `phm desktop-update prepare --stage <id> --json` verifies the private staged
 app and the original CLI archive before Stop, including the app inventory and
 the candidate authority surface. It caches only the verified original package

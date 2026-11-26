@@ -244,10 +244,16 @@ and resumes the same resident without an owner-start step. An older dispatcher
 still requires manual Stop. The CLI records covered resumes and apply holds on
 the Agent Bus and does not change operator Stop or hosted publishing.
 
-The custody helper can sign a release-specific update approval and prospective
-standing grant together. The signature alone neither installs the grant nor
-restarts the resident. The existing desktop install and native update commands
-do not yet consume that approval.
+If the authority surface changes, or the standing grant is missing or
+expired, an eligible upgrade returns one `ownerAction`. Run its
+`phm desktop update sign-desktop-update --stage <id>` command to review and
+sign the release-specific approval and prospective grant in a single
+Touch ID gesture. The draft preserves prior scope when it can be verified;
+otherwise it uses the normal new-grant draft. A signed stage can be attempted
+only once and expires. If work is active, the enabled native updater retries
+at the next low-activity check. The replacement grant is accepted only
+after the paired installation is proven; rollback leaves the previous
+grant intact. The Agent Bus records the ask and the outcome.
 
 For a managed install, run `~/.local/bin/phm authority resident start` from
 the managed CLI. That command still requires authority admission and owner

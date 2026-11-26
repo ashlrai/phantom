@@ -2,6 +2,7 @@ import {applyConsumerDesktopInstall, createConsumerInstallDependencies, inspectC
   type ConsumerInstallDependencies, type ConsumerInstallResult} from '../core/desktop/consumer-install.js';
 import {cmdDesktopOperator, type DesktopOperatorCliDeps} from './desktop-operator.js';
 import {applyConsumerDesktopUpgrade, createConsumerUpgradeDependencies, inspectConsumerDesktopUpgrade,
+  approveConsumerDesktopUpdate, retryApprovedConsumerDesktopUpdate,
   type ConsumerUpgradeDependencies, type ConsumerUpgradeOptions, type ConsumerUpgradeResult} from '../core/desktop/consumer-upgrade.js';
 import { desktopUpdateInterlockPresent } from '../core/desktop/update-interlock.js';
 import { readDesktopHostInterlockCensus } from '../core/desktop/host-update-interlock.js';
@@ -10,6 +11,7 @@ import { realHome } from '../core/real-home.js';
 
 const USAGE = `usage: phm desktop install [--apply]
        phm desktop update status --json
+       phm desktop update sign-desktop-update --stage <id>
        phm desktop install --upgrade [--apply] [--require-app] [--to x.y.z]
        phm desktop install --rollback [--apply]
        phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]
@@ -45,6 +47,16 @@ export async function cmdDesktop(args: string[], dependencies?: ConsumerInstallD
   const head = args[0];
   if (head === 'update') {
     if (args.length === 2 && ['--help', '-h', 'help'].includes(args[1]!)) {console.log(USAGE);return 0;}
+    if (args.length===4 && args[1]==='sign-desktop-update' && args[2]==='--stage' && /^[a-f0-9]{32}$/.test(args[3]!)) {
+      const result=await approveConsumerDesktopUpdate(upgradeDeps??createConsumerUpgradeDependencies(),args[3]!);
+      await emit(result);
+      return result.state==='upgraded' || result.scheduleHint ? 0 : 1;
+    }
+    if (args.length===2 && args[1]==='retry-approved') {
+      const result=await retryApprovedConsumerDesktopUpdate(upgradeDeps??createConsumerUpgradeDependencies());
+      if (result) await emit(result);
+      return result?.scheduleHint ? 75 : 0;
+    }
     if (args.length !== 3 || args[1] !== 'status' || args[2] !== '--json') {console.error(USAGE);return 2;}
     const {readNativeUpdateStatus}=await import('../core/desktop/native-update-status.js');
     const home = realHome();
