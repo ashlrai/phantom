@@ -72,6 +72,24 @@ describe('router calibration', () => {
       { arm: 'codex', jobs: 1, resolved: 0, tokens: { predicted: 120, actual: 100, paired: 1 } },
     ]);
   });
+  it('counts a replayed timestamped launch once and rejects ambiguous duplicate launches', () => {
+    const launch = { event: 'launch', job: 'RQ-REPLAY', lane: 'codex',
+      ts: '2026-01-01T00:00:00Z', predicted_wall_time_ms: 2000 };
+    const finish = row({ event: 'finish', job: launch.job, ts: '2026-01-01T00:00:02Z' });
+    const merged = row({ job: launch.job, outcome: 'MERGED' });
+    const ledger = row(launch) + finish + merged;
+    const replay = row({ job: launch.job, event: launch.event, lane: launch.lane,
+      ts: launch.ts, predicted_wall_time_ms: launch.predicted_wall_time_ms });
+
+    expect(calibrateRouting(ledger + replay)).toEqual(calibrateRouting(ledger));
+    expect(calibrateRouting(ledger + replay).arms).toMatchObject([
+      { arm: 'codex', jobs: 1, resolved: 1, wallTimeMs: { predicted: 2000, actual: 2000, paired: 1 } },
+    ]);
+    expect(() => calibrateRouting(ledger + row({ ...launch, lane: 'other' }))).toThrow('Duplicate launch');
+    expect(() => calibrateRouting(ledger + row({ ...launch, ts: '2026-01-01T00:00:03Z' }))).toThrow('Duplicate launch');
+    const undated = row({ ...launch, ts: undefined });
+    expect(() => calibrateRouting(undated + undated)).toThrow('Duplicate launch');
+  });
   it('calibrates a batch member from its claim and reconciled verdict', () => {
     const report = calibrateRouting(
       row({ event: 'batch_claim', job: 'RQ-MEMBER', batch: 'RQ-BATCH-A',
