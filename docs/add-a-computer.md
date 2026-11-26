@@ -78,10 +78,16 @@ between 1 and 25) and re-measures capacity and host stats on this computer each 
 so do not also pass `--capacity` or `--host-stats` — an explicit flag wins and
 would freeze a stale sample. Keep any other flags (`--probe-auth`, `--usage`,
 `--json`) on the same command; they apply to every beat. Press Ctrl-C to stop;
-the session then expires on its own within 30 seconds. If a beat fails — for
-example the session expired — the watch stops and prints the beat's error.
+the session then expires on its own within 30 seconds. If the session lapses —
+laptop sleep is the usual cause — the watch rejoins it automatically: it adopts
+the live session when one exists, or re-joins under this node's last advertised
+owner scopes and caps (refreshed like `join`, so the version and local-lane
+caps stay current) and keeps beating on the new session number. A node that
+was `leave`d is never resurrected, and any other beat failure still stops the
+watch and prints the beat's error.
 
-If the session lapses anyway, join again and use the new session number — `beat`,
+If you stopped the watch or it ended another way and the session has lapsed,
+join again and use the new session number — `beat`,
 `pull` and the claim verbs (`renew`, `complete`, `release`) all answer
 `session-expired` once it lapses, and the error's `fix`
 prints the rejoin command with this node's last advertised owner and caps

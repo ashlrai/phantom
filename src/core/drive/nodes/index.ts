@@ -175,12 +175,17 @@ export class DriveNodes implements QueueV1 {
     return leader && leader.expiresAt > now && this.liveNode(state, leader, now) ? leader : null;
   }
 
-  join(nodeId: string, profile?: NodeProfile): NodeSession | null {
-    if (!validId(nodeId)) throw new Error('Invalid drive node ID');
+  private checkedProfile(profile: NodeProfile | undefined): { owners: string[]; caps: string[]; slots?: number } | null | undefined {
     if (profile?.slots !== undefined && !validSlots(profile.slots)) throw new Error('Invalid drive slots (integer 0-64)');
     const extra = profile && { owners: names(profile.owners, validId, 'owner scope'), caps: names(profile.caps, validCap, 'capability'),
       ...(profile.slots === undefined ? {} : { slots: profile.slots }) };
     if (extra && extra.owners.length === 0) throw new Error('Invalid drive owner scope');
+    return extra;
+  }
+
+  join(nodeId: string, profile?: NodeProfile): NodeSession | null {
+    if (!validId(nodeId)) throw new Error('Invalid drive node ID');
+    const extra = this.checkedProfile(profile);
     return this.transaction((state, now) => {
       const existing = state.nodes.find(n => n.nodeId === nodeId);
       if (existing && existing.expiresAt > now) return null;
@@ -189,6 +194,29 @@ export class DriveNodes implements QueueV1 {
       state.nodes = state.nodes.filter(n => n.nodeId !== nodeId);
       state.nodes.push(node);
       return { nodeId, session: node.session };
+    });
+  }
+
+  /** Rejoin an expired node under a caller-refreshed profile — the watch
+   * keep-alive's session-expired recovery. The liveness check and the replace
+   * share one transaction, so the three outcomes are exact: a live record
+   * answers its current session (adopt, never replace — a newer join's profile
+   * stands), an expired record is replaced exactly like `join`, and no record
+   * answers null — a `leave`d node is never resurrected by a racing rejoin.
+   * Returns the session number to beat with, or null when the node is gone. */
+  rejoin(nodeId: string, profile: NodeProfile): number | null {
+    if (!validId(nodeId)) throw new Error('Invalid drive node ID');
+    const extra = this.checkedProfile(profile);
+    if (!extra) throw new Error('Invalid drive owner scope');
+    return this.transaction((state, now) => {
+      const existing = state.nodes.find(n => n.nodeId === nodeId);
+      if (!existing) return null;
+      if (existing.expiresAt > now) return existing.session;
+      const node: NodesState['nodes'][number] = { nodeId, session: nextToken(state), heartbeatAt: now,
+        expiresAt: now + this.nodeTtl, ...extra };
+      state.nodes = state.nodes.filter(n => n.nodeId !== nodeId);
+      state.nodes.push(node);
+      return node.session;
     });
   }
 

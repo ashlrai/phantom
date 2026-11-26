@@ -180,6 +180,70 @@ describe('phm node beat --watch', () => {
     expect(seen).toHaveLength(2);
   });
 
+  it('rewrites --session to the rejoined session and keeps beating', async () => {
+    const ac = new AbortController();
+    const { seen, run } = recorder(4, ac, [0, 1, 0, 0]);
+    const rejoin = vi.fn(async () => 7);
+    const lines = capture();
+    expect(await cmdNodeBeatWatch(['--node', 'n1', '--session', '1', '--watch', '--json'],
+      baseDeps(ac, { run, rejoin }))).toBe(0);
+    expect(rejoin).toHaveBeenCalledWith('n1');
+    expect(seen.map(a => a[a.indexOf('--session') + 1])).toEqual(['1', '1', '7', '7']);
+    // The recovery is announced once, between the failed beat and the next pass.
+    const notices = lines.map(l => JSON.parse(l)).filter(e => e.watch?.rejoined === 'n1');
+    expect(notices).toEqual([{ schemaVersion: 1, command: 'beat', watch: { rejoined: 'n1', session: 7 } }]);
+  });
+
+  it('stops when rejoin hands back the same session — the failure was not the session', async () => {
+    const ac = new AbortController();
+    const { seen, run } = recorder(10, ac, [1]);
+    const rejoin = vi.fn(async () => 1);
+    capture();
+    expect(await cmdNodeBeatWatch(['--node', 'n1', '--session', '1', '--watch'], baseDeps(ac, { run, rejoin }))).toBe(1);
+    expect(rejoin).toHaveBeenCalledWith('n1');
+    expect(seen).toHaveLength(1);
+  });
+
+  it('stops when rejoin finds the node gone — a left node is never resurrected', async () => {
+    const ac = new AbortController();
+    const { seen, run } = recorder(10, ac, [1]);
+    const rejoin = vi.fn(async () => null);
+    capture();
+    expect(await cmdNodeBeatWatch(['--node', 'n1', '--session', '1', '--watch'], baseDeps(ac, { run, rejoin }))).toBe(1);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('never consults rejoin on a usage failure or a missing session', async () => {
+    const ac = new AbortController();
+    const { run } = recorder(10, ac, [2]);
+    const rejoin = vi.fn(async () => 9);
+    capture();
+    expect(await cmdNodeBeatWatch(['--node', 'n1', '--session', '1', '--watch'], baseDeps(ac, { run, rejoin }))).toBe(2);
+    expect(rejoin).not.toHaveBeenCalled();
+    // No --session at all: there is nothing to rewrite, so recovery stays off.
+    const ac2 = new AbortController();
+    const second = recorder(10, ac2, [1]);
+    const rejoin2 = vi.fn(async () => 9);
+    capture();
+    expect(await cmdNodeBeatWatch(['--node', 'n1', '--watch'], baseDeps(ac2, { run: second.run, rejoin: rejoin2 }))).toBe(1);
+    expect(rejoin2).not.toHaveBeenCalled();
+  });
+
+  it('keeps a duplicate --session for the beat parser to refuse', async () => {
+    const ac = new AbortController();
+    const { seen, run } = recorder(10, ac, [2]);
+    const rejoin = vi.fn(async () => 9);
+    capture();
+    // The watch lifts only the first well-formed --session; the second stays
+    // in the args so the beat parser raises duplicate-flag (exit 2 here).
+    expect(await cmdNodeBeatWatch(['--node', 'n1', '--session', '1', '--session=2', '--watch'],
+      baseDeps(ac, { run, rejoin }))).toBe(2);
+    expect(seen[0]).toContain('--session=2');
+    expect(seen[0]!.filter(a => a === '--session')).toHaveLength(1);
+    expect(seen[0]![seen[0]!.indexOf('--session') + 1]).toBe('1');
+    expect(rejoin).not.toHaveBeenCalled();
+  });
+
   it('refuses a bad --every as usage with the beat envelope under --json', async () => {
     for (const args of [
       ['--every'], ['--every', 'abc'], ['--every', '0'], ['--every', '0.5'], ['--every', '26'], ['--every', '5', '--every', '6'],

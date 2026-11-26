@@ -503,6 +503,51 @@ describe('live-session recovery hints', () => {
   });
 });
 
+describe('rejoin: session-expired watch recovery', () => {
+  const profile = { owners: ['acme'], caps: ['build'], slots: 2 };
+  it('replaces an expired record under the refreshed profile and kills the old session', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', profile)!;
+    f.advance(100);
+    const session = f.a.rejoin('laptop', { owners: ['acme'], caps: ['build', 'gh'], slots: 4 });
+    expect(session).not.toBeNull();
+    expect(session).not.toBe(worker.session);
+    // The lapsed session stays dead; only the rejoin's session beats.
+    expect(f.a.heartbeat(worker)).toBeNull();
+    expect(f.a.heartbeat({ nodeId: 'laptop', session: session! })).not.toBeNull();
+    expect(f.a.nodeProfile('laptop')).toMatchObject({ owners: ['acme'], caps: ['build', 'gh'], slots: 4 });
+  });
+  it('adopts the live record session without touching its profile', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', profile)!;
+    f.advance(100);
+    // A newer join already holds the live record; rejoin must hand its session
+    // back, never replace the profile the newer join advertised.
+    const newer = f.a.join('laptop', { owners: ['ops'], caps: ['review'] })!;
+    expect(f.a.rejoin('laptop', { owners: ['acme'], caps: ['build'], slots: 2 })).toBe(newer.session);
+    expect(f.a.nodeProfile('laptop')).toMatchObject({ owners: ['ops'], caps: ['review'] });
+    expect(f.a.rejoin('laptop', profile)).toBe(newer.session);
+    expect(worker.session).not.toBe(newer.session);
+  });
+  it('answers null for a node that left or never joined — a watch never resurrects it', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', profile)!;
+    f.advance(100);
+    expect(f.a.leave(worker)).toBe(true);
+    expect(f.a.rejoin('laptop', profile)).toBeNull();
+    expect(f.a.nodeProfile('laptop')).toBeNull();
+    expect(f.a.rejoin('ghost', profile)).toBeNull();
+  });
+  it('refuses an invalid profile or node id like join does', () => {
+    const f = fixture();
+    f.a.join('laptop', profile);
+    expect(() => f.a.rejoin('laptop', { owners: [], caps: ['build'] })).toThrow('Invalid drive owner scope');
+    expect(() => f.a.rejoin('bad;id', profile)).toThrow('Invalid drive node ID');
+    expect(() => f.a.rejoin('laptop', { owners: ['acme'], caps: ['Build'] })).toThrow('Invalid drive capability');
+    expect(() => f.a.rejoin('laptop', { owners: ['acme'], caps: ['build'], slots: 65 })).toThrow('Invalid drive slots');
+  });
+});
+
 describe('claim verbs on a lapsed session', () => {
   const leaseArgs = (claim: { jobId: string; nodeId: string; session: number; token: number; leaderToken: number },
     extra: string[] = []) =>

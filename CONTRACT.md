@@ -2639,6 +2639,13 @@ result` serves: a `JobOutcome` (`pending | running | completed | absent`) with
 `claimedBy` for a live running claim and `producerWithdrawn` for a producer
 fence. The owner match is `withdraw`'s, so another scope's job answers
 `absent`; the read never mutates state or exposes fencing tokens.
+`DriveNodes.rejoin(nodeId, profile)` is the standalone watch keep-alive's
+session-expired recovery: in one transaction it adopts the live record's
+current session (never replacing a newer join's profile), replaces an expired
+record exactly like `join` under the caller-refreshed profile, and answers
+null when no record exists — a `leave`d node is never resurrected. It returns
+the session number to beat with, or null when the node is gone; the profile
+faces the same validation as `join`.
 `src/core/drive/nodes/runner-packs.ts` exports
 `probeRunnerPacks(runner, run?)`, which returns `pack:<name>` caps from
 `<runner> packs`. `runner.ts` exports `NODE_RUNNER_PACKS` and
