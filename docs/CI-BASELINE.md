@@ -25,6 +25,9 @@ default reporter's green-module pass lines are expected from checkout jobs
 that never bound a receipt, so they neither verify nor poison a run; any
 other consumable evidence in an unverifiable log keeps the run unknown.
 Unreadable, incomplete, capped, or unverified logs are unknown, never clean.
+For master and PRs alike, the workflow-run and job lists must each return
+exactly their advertised `total_count` within one page of at most 100 rows.
+A short or inconsistent page cannot establish a verdict from the rows it returns.
 A job whose conclusion is not a verdict — `cancelled`, `timed_out`,
 `action_required`, `startup_failure` or `stale` — is incomplete evidence
 even when its log is absent or empty: the run cannot prove the ref's
