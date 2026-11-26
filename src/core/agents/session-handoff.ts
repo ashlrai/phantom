@@ -1,139 +1,21 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { lstatSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { readStableRegularFile } from '../util/stable-file-read.js';
-import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { acquireCoordination, renewCoordination, settleCoordination } from './claim-store.js';
 import { handoffRepoState } from './session-handoff-repo.js';
+import { handoffDir, readHandoffJournal, readSessionHandoff, listSessionHandoffs } from './session-handoff-read.js';
 import { HANDOFF_LOG_BYTES, handoffId, handoffModel, handoffTier, handoffPressure, handoffSignalSchema, parseHandoff, refuseHandoff,
   scrubHandoffDraft, type HandoffDraft, type HandoffSignal, type SessionHandoff } from './session-handoff-schema.js';
 
-function directory(runs: string, create = false): string {
-  const root = realpathSync(runs);
-  const dir = join(root, 'handffs'); // Wire spelling is intentional: runs/handffs/<job>.jsonl.
-  if (create) mkdirSync(dir, { mode: 0o700 });
-  if (!assurePrivateStoragePath(dir, 'directory', 'inspect-existing', { anchorPath: root }).ok) {
-    return refuseHandoff('Unsafe handoff directory.');
-  }
-  return dir;
-}
-
-function journal(dir: string, job: string): { text: string; records: SessionHandoff[] } {
-  if (!handoffId.safeParse(job).success) return refuseHandoff('Invalid job id.');
-  const path = join(dir, `${job}.jsonl`);
-  try { lstatSync(path); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { text: '', records: [] };
-    return refuseHandoff('Cannot inspect handoff journal.');
-  }
-  const read = readStableRegularFile(path, { anchorPath: dir, maxFileBytes: HANDOFF_LOG_BYTES, remainingBytes: HANDOFF_LOG_BYTES });
-  if (!read.ok || !read.text.endsWith('\n')) return refuseHandoff('Unreadable or incomplete handoff journal.');
-  try {
-    const records = read.text.slice(0, -1).split('\n').map(line => parseHandoff(JSON.parse(line)));
-    if (records.some((record, i) => record.job !== job || record.revision !== i + 1 || record.attempt !== records[0].attempt ||
-      record.repo !== records[0].repo || (i > 0 && records[i - 1].signal.kind === 'completed'))) return refuseHandoff('Broken handoff history.');
-    return { text: read.text, records };
-  } catch { return refuseHandoff('Invalid handoff journal.'); }
-}
-
-export function readSessionHandoff(runs: string, job: string): SessionHandoff {
-  return journal(directory(runs), job).records.at(-1) ?? refuseHandoff('No checkpoint available.');
-}
-
-export interface SessionHandoffListEntry {
-  job: string;
-  attempt: string;
-  revision: number;
-  at: string;
-  lane: string;
-  model: string;
-  minTier: HandoffDraft['minTier'];
-  repo: string;
-  signal: HandoffSignal;
-  needs: string[];
-  /** 'open' while the latest signal is not 'completed'; a completed journal is retained history. */
-  state: 'open' | 'completed';
-  /** repoState.head only; the absolute root, diff digest and Entire reference stay in the per-job read. */
-  head: string;
-}
-
-export interface SessionHandoffList {
-  schema: 'session-handoff.list.v1';
-  /** 'missing' is a verified-absent store (no runs or handoffs directory); 'unavailable' means the
-   * directory could not be read, so handoffs and unreadable stay null — unknown, never a fabricated empty. */
-  status: 'ok' | 'missing' | 'unavailable';
-  handoffs: SessionHandoffListEntry[] | null;
-  /** Job ids whose journal failed the same validation `show` applies; other journals still list. */
-  unreadable: string[] | null;
-  /** More journal files exist than the bounded scan covers; the newest by journal mtime were read. */
-  truncated: boolean;
-}
-
-const HANDOFF_LIST_MAX_JOURNALS = 256;
-
-function handoffList(status: 'missing' | 'unavailable'): SessionHandoffList {
-  const empty = status === 'missing';
-  return { schema: 'session-handoff.list.v1', status,
-    handoffs: empty ? [] : null, unreadable: empty ? [] : null, truncated: false };
-}
-
-/** Fleet-wide index of session-handoff journals: which jobs hold a checkpoint awaiting resume or
- * failover, without knowing each job id. Read-only; per-file validation matches `show`, so one
- * corrupt journal lands in `unreadable` instead of poisoning the index. Existence is staged before
- * the private-storage check because a never-written store is 'missing', not 'unsafe'. */
-export function listSessionHandoffs(runs: string): SessionHandoffList {
-  let root: string;
-  try { root = realpathSync(runs); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return handoffList('missing');
-    return handoffList('unavailable');
-  }
-  const dir = join(root, 'handoffs'); // Wire spelling is intentional: runs/handffs/<job>.jsonl.
-  try { lstatSync(dir); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return handoffList('missing');
-    return handoffList('unavailable');
-  }
-  if (!assurePrivateStoragePath(dir, 'directory', 'inspect-existing', { anchorPath: root }).ok) {
-    return refuseHandoff('Unsafe handoff directory.');
-  }
-  let names: string[];
-  try { names = readdirSync(dir); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return handoffList('missing');
-    return handoffList('unavailable');
-  }
-  const candidates = names.filter(name => name.endsWith('.jsonl'))
-    .map(name => name.slice(0, -'.jsonl'.length))
-    .filter(job => handoffId.safeParse(job).success)
-    .map(job => {
-      let mtime = Number.NEGATIVE_INFINITY;
-      try { mtime = lstatSync(join(dir, `${job}.jsonl`)).mtimeMs; } catch { /* journal() reports it unreadable */ }
-      return { job, mtime };
-    })
-    .sort((a, b) => b.mtime - a.mtime || a.job.localeCompare(b.job));
-  const scanned = candidates.slice(0, HANDOFF_LIST_MAX_JOURNALS);
-  const handoffs: SessionHandoffListEntry[] = [];
-  const unreadable: string[] = [];
-  for (const { job } of scanned) {
-    try {
-      const record = journal(dir, job).records.at(-1);
-      if (record === undefined) { unreadable.push(job); continue; }
-      handoffs.push({ job: record.job, attempt: record.attempt, revision: record.revision, at: record.at,
-        lane: record.lane, model: record.model, minTier: record.minTier, repo: record.repo,
-        signal: record.signal, needs: [...record.needs],
-        state: record.signal.kind === 'completed' ? 'completed' : 'open', head: record.repoState.head });
-    } catch { unreadable.push(job); }
-  }
-  handoffs.sort((a, b) => b.at.localeCompare(a.at) || a.job.localeCompare(b.job));
-  unreadable.sort();
-  return { schema: 'session-handoff.list.v1', status: 'ok', handoffs, unreadable,
-    truncated: candidates.length > scanned.length };
-}
+// The read-only accessors live in session-handoff-read.ts so read surfaces can
+// use them without this file's write/plan imports; re-exported here so every
+// existing `session-handoff.js` importer keeps working unchanged.
+export { readSessionHandoff, listSessionHandoffs };
+export type { SessionHandoffList, SessionHandoffListEntry } from './session-handoff-read.js';
 
 /** Atomic append preserving every previous row. CAS prevents stale workers overwriting newer progress. */
 export async function checkpointSession(input: {
@@ -153,14 +35,14 @@ export async function checkpointSession(input: {
     });
   if (inRepo) return refuseHandoff('Handoffs must live outside repositories.');
   let dir: string;
-  try { dir = directory(root, true); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; dir = directory(root); }
+  try { dir = handoffDir(root, true); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; dir = handoffDir(root); }
   const repoState = await handoffRepoState(input.worktree);
   const lock = acquireLocalStoreLock(join(dir, `${draft.job}.lock`), 0, { anchorPath: dir, exactPrivateStorage: true });
   if (!lock) return refuseHandoff('Checkpoint writer busy or unavailable.');
   try {
     input.beforeWrite?.();
-    const old = journal(dir, draft.job), previous = old.records.at(-1);
+    const old = readHandoffJournal(dir, draft.job), previous = old.records.at(-1);
     if (old.records.length !== input.expectedRevision || (previous &&
       (previous.attempt !== draft.attempt || previous.repo !== draft.repo || previous.goal !== draft.goal ||
        !previous.needs.every(need => draft.needs.includes(need)) ||
@@ -193,7 +75,7 @@ export async function planSessionResume(options: ResumeOptions) {
   if (age < 0 || age > 24 * 60 * 60 * 1000) return refuseHandoff('Checkpoint expired or clock moved backwards.');
   const current = await handoffRepoState(options.worktree);
   if (JSON.stringify(current) !== JSON.stringify(record.repoState)) return refuseHandoff('Repository changed; reconcile and checkpoint before resuming.');
-  return { advisory: true as const, record, packet: join(directory(options.runs), `${record.job}.jsonl`),
+  return { advisory: true as const, record, packet: join(handoffDir(options.runs), `${record.job}.jsonl`),
     nextAction: record.nextAction, claimKeys: [`queue:${record.job}`, `repo:${record.repo.toLowerCase()}`],
     target: { lane: options.lane, model: options.model, tier: options.tier } };
 }
