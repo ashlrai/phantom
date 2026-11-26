@@ -44,6 +44,18 @@ const COSTS: HarnessModelCost[] = [
 ];
 
 describe('autoscale router scoring', () => {
+  it.each([[0.30, 3], [0.29, 2]])('places exactly the jobs that fit in %s CPU cores', (headroom, expected) => {
+    const routeNode = node(mbp());
+    routeNode.doc.cpu.headroom_cores = headroom;
+    routeNode.doc.per_harness_footprint.codex!.cpu_cores_per_session = 0.10;
+    const plan = planAutoscaleRoutes({
+      nodes: [routeNode], costs: [COSTS[0]!], outcomes: {}, nowMs: T0,
+      jobs: Array.from({ length: 4 }, (_, index) => ({ id: `j${index}` })),
+    });
+    expect(plan.slice(0, expected).map(row => row.nodeId)).toEqual(Array(expected).fill(routeNode.doc.node));
+    for (const row of plan.slice(expected)) expect(row).toMatchObject({ nodeId: null, rejected: { cpu: 1 } });
+  });
+
   it.each(['pressure', 'swap-growth'] as const)('honors measured %s when limiter labels are absent', hold => {
     const { doc } = node(mbp());
     doc.basis.limiting = {};

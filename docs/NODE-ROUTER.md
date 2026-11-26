@@ -377,6 +377,8 @@ tool runners), measured with `ps`, or with `pgrep` and `footprint` where `ps` is
 denied. Memory headroom is the memory above memguard's raise line (30% free).
 CPU headroom is 85% of cores minus busy cores. Measured zero CPU headroom
 blocks placements even when CPU cost per session is unknown or recorded as zero.
+The runnable count and placement planner allow for arithmetic roundoff at
+exact CPU fits, so 0.30 cores of headroom can fit three 0.10-core sessions.
 It also reduces measured runnable counts to zero, including in fleet totals
 that read older capacity documents. Unmeasured harness counts remain null.
 Kernel pressure above normal or swap growth stop placements and reduce

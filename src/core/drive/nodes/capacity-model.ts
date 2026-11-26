@@ -167,9 +167,15 @@ export function computeNodeCapacity(s: NodeSnapshot, prev: NodeCapacityDoc | nul
     if (s.mem.pressureLevel === null || headroomBytes === null || !fp) { runnable[id] = null; limiting[id] = 'unmeasured'; continue; }
     if (headroomCores === 0) { runnable[id] = 0; limiting[id] = 'cpu'; continue; }
     const byMem = Math.floor(headroomBytes / fp.mem_bytes_max);
-    const byCpu = fp.cpu_cores_per_session !== null && headroomCores !== null
-      ? fp.cpu_cores_per_session > 0 ? Math.floor(headroomCores / fp.cpu_cores_per_session) : byMem
-      : null;
+    let byCpu: number | null = null;
+    if (headroomCores !== null && fp.cpu_cores_per_session !== null) {
+      if (fp.cpu_cores_per_session === 0) byCpu = byMem;
+      else {
+        // Undo division roundoff at exact decimal boundaries (e.g. 0.30 / 0.10).
+        const ratio = headroomCores / fp.cpu_cores_per_session;
+        byCpu = Math.floor(ratio + ratio * Number.EPSILON);
+      }
+    }
     if (byCpu === null) { runnable[id] = byMem; limiting[id] = 'memory'; notes.push(`${id}: cpu per session unknown, memory-only`); continue; }
     runnable[id] = Math.min(byMem, byCpu);
     limiting[id] = byCpu < byMem ? 'cpu' : 'memory';
