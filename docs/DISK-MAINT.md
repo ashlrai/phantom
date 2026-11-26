@@ -43,16 +43,22 @@ and the apply report's `freedBytes` attribute every byte to one of:
 - `worktrees-runs`: job worktrees under `~/.ashlr-runs/wt`.
 - `worktrees-jobs`: job and publisher worktrees under `~/Projects/ashlrai/wt`.
   Both classes use terminal metrics ledger outcomes (including outcome-only
-  reconciler rows), explicit empty finishes, or a cloud-publisher PR receipt.
-  A PR URL alone is not proof its current HEAD was pushed. The reaper requires
-  HEAD to match the published receipt's `headSha` or be reachable from a local
+  reconciler rows). A dispatcher `publish` row's PR `url` is terminal only when
+  GitHub reports it closed or merged. Older empty or nonzero-exit `finish` rows
+  qualify after 24 hours by default (`--worktree-failed-hours N`); an
+  `abort_secret_shape` publish stays protected for supervisor review.
+  Without a ledger row, an exact bridge job in local `origin/master` history or
+  a merged bridge PR can establish completion. Inbox bundles and PR drafts
+  alone are not proof of completion. A merged commit or PR URL alone is not
+  proof the worktree's current HEAD was pushed. The reaper requires
+  HEAD to match a verified PR head or be reachable from a local
   remote-tracking ref. It protects queued, leased, live, pinned, and unknown
   trees. Git refuses dirty worktrees, and disk-maint refuses worktrees with
   protected local payloads even when Git ignores them. Committed copies of
   repository files whose names match a protection pattern are not local payloads.
   The leader's cloud publisher is not shipped here; the worktree timer is the
-  repository-side cleanup path for these publisher receipts, not a post-push
-  hook in the installed publisher.
+  repository-side cleanup path after closure or merge, not a post-push hook
+  in the installed publisher.
 - `job-artifacts`: archived dispatcher results (`JOB.publish.prev-<timestamp>`)
   older than 45 days for jobs whose latest attempt finished and merged. A
   surviving workspace, base, dispatch or reap marker keeps the artifact;
@@ -80,8 +86,8 @@ phm disk-maint --worktree "$J" --only worktrees-jobs --apply --json
 ```
 
 Without `--apply` this previews the job only. Without `--only`, it checks
-both worktree roots for that exact job id. A named cloud-publisher job with a
-head-bearing PR receipt can skip the normal one-hour wait; all evidence,
+both worktree roots for that exact job id. A head-bearing receipt alone no
+longer bypasses the PR verdict or the normal one-hour grace period. All
 process, lease, payload, and Git checks still apply. Check the JSON result
 before assuming cleanup succeeded. This command does not delete local or
 remote branches or bundles.
@@ -133,13 +139,24 @@ printed activation commands' disable forms (`launchctl bootout` /
 `phm disk-maint --json` prints `disk-maint.v1`: `roots`, `freeGb`,
 `diskguardReuseOnlyGb`, `jobsSource`, per-class `candidates`/`bytes`, worktree
 counts `scanned`, `reapable`, and `protected` for each worktree root, and
-separate `reapReasons` and `protectReasons` maps. Each scanned worktree
+separate `reapReasons` and `protectReasons` maps. Each worktree class also
+breaks these totals and reasons down by `prefixes`, with trailing numeric
+and `-N<digits>` segments removed from job names. Each scanned worktree
 contributes to exactly one reason; the maps sum to `reapable` and
 `protected` respectively. The JSON also includes plan
 `totals`, and the `refused` evidence list. With `--apply` the same object
 gains `results` (per-class per-path status and `freedBytes`), updates `freeGb`
 from the runs volume after the sweep, and adds
 `totals.freedBytes`/`failures`. Paths are home-relative sanitized.
+
+Both roots share one bounded GitHub request per sweep for uncached PRs.
+`disk-maint-pulls.json` under the runs root holds verdicts for five minutes;
+missing or expired verdicts protect the worktree if the lookup fails.
+`disk-maint-bridges.json` caches the last 20,000 first-parent commits' exact
+bridge matches keyed by the local `origin/master` SHA. Disk-maint does not
+fetch Git refs. These evidence caches may be written during a dry run; no
+worktree or Git ref is changed. The GitHub request also checks the latest
+100 merged PRs in Phantom for exact bridge titles or bridge head names.
 
 Dry runs also return typed `reclaimAdvice`, printed in the human view. It
 compares free space with a 150 GB review target, without changing DISKGUARD.

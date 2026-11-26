@@ -31,7 +31,7 @@ import { pipeline } from 'node:stream/promises';
 import { createGunzip, createGzip } from 'node:zlib';
 import { promisify } from 'node:util';
 import {
-  artifactJobInactive, artifactJobName, candidateStillSafe, completedArtifactJobs, defaultFreeBytes,
+  artifactJobInactive, artifactJobName, candidateStillSafe, completedArtifactJobs, defaultFreeBytes, DEFAULT_POLICY,
   type DiskMaintPlan, type MaintCandidate, type MaintClassId,
 } from './plan.js';
 import { readSource, type Source } from '../fleet/runs-parked-queue.js';
@@ -71,6 +71,7 @@ export interface ApplyDeps extends WorktreeDeps {
   /** Extra containment roots are never needed; managed roots are derived. */
   runner?: (file: string, args: string[]) => Promise<string>;
   now?: number;
+  worktreeFailedAgeHours?: number;
   readJobs?: (path: string) => Promise<{ state: Source; text: string }>;
   freeBytes?: (path: string) => number | null | Promise<number | null>;
 }
@@ -197,7 +198,10 @@ export async function applyDiskMaint(plan: DiskMaintPlan, deps: ApplyDeps = {}):
   const runner = deps.runner ?? defaultRunner;
   const readJobs = deps.readJobs ?? ((path: string) => readSource(path, 8 * 1024 * 1024, true));
   let activity: Awaited<ReturnType<typeof worktreeActivity>> = null;
-  let outcomes: ReturnType<typeof worktreeOutcomes> = null;
+  let outcomes: Awaited<ReturnType<typeof worktreeOutcomes>> = null;
+  const jobsToRecheck = new Set(plan.classes.flatMap(cls => cls.candidates.flatMap(
+    candidate => candidate.action === 'worktree-remove' ? [basename(candidate.path)] : [],
+  )));
   let refreshAt = 0;
   const classes: ApplyClassResult[] = [];
   for (const cls of plan.classes) {
@@ -211,13 +215,16 @@ export async function applyDiskMaint(plan: DiskMaintPlan, deps: ApplyDeps = {}):
           if (Date.now() >= refreshAt) {
             [activity, outcomes] = await Promise.all([
               worktreeActivity(roots, deps),
-              readJobs(join(roots.runsDir, 'metrics', 'jobs.jsonl')).then(worktreeOutcomes),
+              readJobs(join(roots.runsDir, 'metrics', 'jobs.jsonl')).then(jobs =>
+                worktreeOutcomes(jobs, jobsToRecheck, roots, { ...deps, worktreePullCacheOnly: true })),
             ]);
             refreshAt = Date.now() + 5_000;
           }
           const name = basename(candidate.path);
           const fresh = outcomes?.get(name);
-          eligible = fresh !== undefined && fresh.at === candidate.mtimeMs &&
+          eligible = fresh !== undefined && !fresh.hold && fresh.at === candidate.mtimeMs &&
+            (!fresh.failed || (deps.now ?? Date.now()) - fresh.at >
+              (deps.worktreeFailedAgeHours ?? DEFAULT_POLICY.worktreeFailedAgeHours) * 3_600_000) &&
             worktreeHold(roots, name, activity) === null &&
             !isKeptWorktree(candidate.path, await readKeptWorktrees()) &&
             await (deps.worktreeHasUnpushed ?? worktreeHasUnpushed)(candidate.path, fresh.prHead) === false;
