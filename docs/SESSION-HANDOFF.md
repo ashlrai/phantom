@@ -65,11 +65,16 @@ validation `show` applies lands in `unreadable` by job id instead of poisoning
 the index. `list` also takes the shared read filters — `--state open|completed`,
 `--job`, `--lane`, `--repo owner/name` (matched case-insensitively),
 `--signal <kind>`, `--pressure` (the same failover verdict `planSessionFailover`
-applies: rate-limit, quota-exhausted or a budget under its threshold) and
+applies: rate-limit, quota-exhausted or a budget under its threshold),
+`--capabilities <id>` (repeatable — the resuming candidate's capability set;
+a checkpoint matches when every need it declares is covered, the same
+admission rule `plan`/`resume` applies, so "which open checkpoints could I
+or this lane take" is one read) and
 `--since`/`--before` on the 15m/2h/1d/epoch-ms/ISO grammar composing into one
 [since, before) window on each entry's revision time — so "which sessions await
 failover on this lane or repo" is one read instead of a client-side pass;
-`fleet_session_handoffs` accepts the same arguments. Only `--job` narrows
+`fleet_session_handoffs` accepts the same arguments (`capabilities` as an id
+or list of ids). Only `--job` narrows
 `unreadable`, since no other field is provable for a journal that cannot be
 read. A never-written store reports `status: "missing"` (verified absent,
 empty lists); a store that cannot be read reports `status: "unavailable"` with
