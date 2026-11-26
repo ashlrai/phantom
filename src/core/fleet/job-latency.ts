@@ -110,6 +110,7 @@ function summarizeGit(rows: Observation[]) {
 export function jobLatency(text: string | null, phases: readonly (readonly [string, string, string, string])[] = jobPhases) {
   const jobs = new Map<string, Events>();
   const git: Observation[] = [], recovery = new Map<string, Set<number>>();
+  const seenGitReceipts = new Set<string>();
   const checkout: number[] = [], recoverySamples: number[] = [];
   let ignored = 0;
   for (const line of (text ?? '').split(/\r?\n/)) {
@@ -126,8 +127,18 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
     if (event === 'git_operation') {
       if (phases === jobPhases) {
         const observation = gitObservation(row);
-        if (observation) git.push(observation);
-        else ignored++;
+        if (!observation) {
+          ignored++;
+          continue;
+        }
+        // A dated receipt can be replayed verbatim. Preserve distinct lines
+        // even when the writer records multiple operations at the same time.
+        if (Number.isFinite(observation.end)) {
+          const receipt = line.trim();
+          if (seenGitReceipts.has(receipt)) continue;
+          seenGitReceipts.add(receipt);
+        }
+        git.push(observation);
       }
       continue;
     }
