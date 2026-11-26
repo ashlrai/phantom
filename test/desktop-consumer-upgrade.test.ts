@@ -11,11 +11,13 @@ import {authoritySurfaceDigest} from '../src/core/authority/surface.js';
 import {acquireResourceQuotaRefreshLease} from '../src/core/resources/quota-refresh-lease.js';
 import * as bootIdentity from '../src/core/resources/native-boot-identity.js';
 import {canonical, digest} from '../src/core/universe/artifacts.js';
-import {consumeDesktopUpdateResume, extractSignedAppArchive, type DesktopUpdateDependencies} from '../src/core/desktop/qualified-update.js';
+import {consumeDesktopUpdateResume, type DesktopUpdateDependencies} from '../src/core/desktop/qualified-update.js';
 import {desktopUpdateInterlockPath} from '../src/core/desktop/update-interlock.js';
 import {buildDefaultGrantPayload, standingGrantEnvelopeDigest} from '../src/core/authority/standing-grant.js';
 import type {SignedDesktopUpdateApproval} from '../src/core/authority/custody-client.js';
 import type {ConsumerApprovalAuthority} from '../src/core/desktop/consumer-approval.js';
+import * as qualifiedUpdate from '../src/core/desktop/qualified-update.js';
+import * as runtimeArchive from '../src/core/local-runtime/archive.js';
 import {consumerInstallerOsCommand,type ConsumerInstallDependencies,type ConsumerTransaction} from '../src/core/desktop/consumer-install.js';
 import {cmdDesktop,parseDesktopInstallArgs} from '../src/cli/desktop.js';
 import type {CompatibleUpdateManifest,UpdateTrust} from '../src/core/desktop/update-manifest.js';
@@ -64,7 +66,7 @@ function installFixture(version='3.30.35') {
     {path:'Phantom.app/Contents/MacOS/ashlr-desktop',data:code,mode:0o755},{path:'Phantom.app/Contents/MacOS/ashlr',data:code,mode:0o755},
     {path:'Phantom.app/Contents/Resources/phantom-release.json',data:marker}]);
   Object.assign(manifest.app,artifact(manifest.app.filename,app));
-  const source=join(root,'source');fs.mkdirSync(source,{mode:0o700});const appRoot=extractSignedAppArchive(app,source);
+  const source=join(root,'source');fs.mkdirSync(source,{mode:0o700});const appRoot=qualifiedUpdate.extractSignedAppArchive(app,source);
   const base=transaction.createLocalAppTransactionIo({packageRoot:resolve(import.meta.dirname,'..'),home});manifest.app.inventorySha256=base.appInventory(appRoot);
   const trust:UpdateTrust={publicKey:publicText,repository:{fullName:'ashlrai/phantom',repositoryId:1263526319,repositoryNodeId:'R_kgDOS0_hrw',ownerLogin:'ashlrai',ownerId:258113726,ownerNodeId:'O_kgDOD2KAvg'},channel:'stable',platform:'darwin-aarch64'};
   const published=new Map<string,Buffer>();
@@ -312,6 +314,33 @@ describe('managed consumer upgrade',()=> {
     expect(fs.existsSync(f.marker)).toBe(false);
     expect(fs.existsSync(join(dirname(f.old),f.manifest.source.revision))).toBe(false);
     expect(await inspectConsumerDesktopUpgrade(f.deps,opt)).toMatchObject({state:'ready'});
+  });
+  it('plans and applies the Darwin pair with a Win32 host path module',async()=> {
+    const f=fixture();oldApp(f);
+    const surface=await import('../src/core/authority/surface.js');
+    vi.resetModules();
+    vi.doMock('node:path',async importOriginal=>{
+      const paths=await importOriginal<typeof import('node:path')>();
+      return {...paths,...paths.win32,default:paths.win32};
+    });
+    vi.doMock('../src/core/desktop/qualified-update.js',()=>qualifiedUpdate);
+    vi.doMock('../src/core/local-runtime/archive.js',()=>runtimeArchive);
+    vi.doMock('../src/core/authority/surface.js',()=>surface);
+    try {
+      const paths=await import('node:path');
+      expect(paths.join).toBe(paths.win32.join);
+      const {inspectConsumerDesktopUpgrade,applyConsumerDesktopUpgrade}=await import('../src/core/desktop/consumer-upgrade.js');
+      const inspected=await inspectConsumerDesktopUpgrade(f.deps,{...options,requireApp:true});
+      expect(inspected,JSON.stringify(inspected)).toMatchObject({state:'ready',app:{state:'update-available'}});
+      expect(await applyConsumerDesktopUpgrade(inspected)).toMatchObject({state:'upgraded',app:{state:'current'}});
+      expect(fs.readlinkSync(f.current)).toBe(join(dirname(f.old),f.manifest.source.revision));
+    } finally {
+      vi.doUnmock('../src/core/authority/surface.js');
+      vi.doUnmock('../src/core/local-runtime/archive.js');
+      vi.doUnmock('../src/core/desktop/qualified-update.js');
+      vi.doUnmock('node:path');
+      vi.resetModules();
+    }
   });
   it('does not claim already-current with an absent required app',async()=> {
     const f=fixture('3.30.24');

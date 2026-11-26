@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-import {basename, join} from 'node:path';
+import {posix} from 'node:path';
 import {canonicalJson} from '../authority/canonical-json.js';
 import {verifyAuthoritySurfaceAt} from '../authority/surface.js';
 import {readPinnedRuntimeArchive, extractPinnedRuntimeArchive, type PinnedRuntimeArchiveOptions} from '../local-runtime/archive.js';
@@ -16,6 +16,8 @@ import {applyConsumerOwnedUpdate, createDesktopUpdateDependencies, extractSigned
   type ConsumerOwnedUpdatePlan, type DesktopUpdateDependencies} from './qualified-update.js';
 import {consumerApprovalAuthority, type ConsumerApprovalAuthority, type ConsumerApprovalRequest} from './consumer-approval.js';
 import {verifyCompatibleUpdateManifest, verifyMinisign, verifyUpdateBundleRecord, type CompatibleUpdateManifest} from './update-manifest.js';
+
+const {basename, join}=posix;
 
 export interface ConsumerUpgradeDependencies extends ConsumerInstallDependencies {
   smokeVersion(launcher: string): Promise<string|null>;

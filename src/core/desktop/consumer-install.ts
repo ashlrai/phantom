@@ -4,7 +4,7 @@ import {createHash,randomBytes} from 'node:crypto';
 import * as fs from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {userInfo} from 'node:os';
-import {dirname, join, resolve} from 'node:path';
+import {join as hostJoin, posix} from 'node:path';
 import {parseBuildIdentity} from '../build-identity.js';
 import {runningPackageRoot, verifyAuthoritySurfaceAt} from '../authority/surface.js';
 import {canonicalJson} from '../authority/canonical-json.js';
@@ -14,6 +14,8 @@ import {acquireResourceQuotaRefreshLease} from '../resources/quota-refresh-lease
 import {getDesktopUpdateTrustForProfile} from './update-trust.js';
 import {verifyCompatibleUpdateManifest, verifyMinisign, verifyUpdateBundleRecord, type CompatibleUpdateManifest, type UpdateTrust} from './update-manifest.js';
 import {downloadQualifiedUpdateArtifact, extractSignedAppArchive, loadInstalledDesktopTransaction, verifyInstalledRuntimeArchive} from './qualified-update.js';
+
+const {dirname, join, resolve}=posix;
 
 type Pointer = {target: string; [key: string]: unknown};
 type AppProof = {path: string; inventory: string; dev: number; ino: number; signer: string};
@@ -342,7 +344,7 @@ export function parseConsumerShellTargets(text: string, nonce: string): Readonly
 }
 export function createConsumerInstallDependencies(): ConsumerInstallDependencies {
   const packageRoot=runningPackageRoot();require(packageRoot,'compiled-package-required');
-  const packageFile=join(packageRoot,'package.json'),identityFile=join(packageRoot,'dist/build-identity.json');
+  const packageFile=hostJoin(packageRoot,'package.json'),identityFile=hostJoin(packageRoot,'dist/build-identity.json');
   const pinnedPackage=regular(packageFile,1024*1024),pinnedIdentity=regular(identityFile,128*1024);
   const pkg=JSON.parse(pinnedPackage.data.toString('utf8')) as {name: string;version:string};
   const identity=parseBuildIdentity(pinnedIdentity.data.toString('utf8'));
