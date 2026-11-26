@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Eighty-one sources, all of which Phantom
+ * evidence instead of a hand-kept list. Eighty-two sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -471,6 +471,24 @@
  *     recurring — so a backend whose parents keep finishing empty, a
  *     capture path that keeps erroring, or a gate that keeps blocking
  *     proposals into repair children never became work;
+ *   - the dispatch-production ledger's recurring adverse evidence:
+ *     the sanitized per-attempt outcome events recordDispatchProduction
+ *     appends to <ashlr home>/dispatch-production/YYYY-MM-DD.jsonl on
+ *     every dispatched work item's production finish — the stream the
+ *     repair lifecycle, generated-repair ledgers, yield summaries and
+ *     fleet status read for attempt-level questions — folded per
+ *     (repo checkout basename, outcome, backend) cell across distinct
+ *     itemIds and UTC days inside the 7-day window
+ *     (dispatchProductionBacklogItems below). Until now every reader
+ *     answered "what happened to this attempt" and "is this handoff
+ *     still live", never "does this failure class keep recurring" —
+ *     so an engine that keeps failing, a sandbox that keeps erroring,
+ *     empty diffs outside the repair-eligible classes, a disabled
+ *     proposal path or unclassifiable outcomes never became work.
+ *     Events the live repair-handoff machinery already owns are
+ *     excluded (the daemon's own proposalRepair/sharedQueueMode gate
+ *     decides coverage), and are counted again when repair is
+ *     disabled or shared-queue mode bypasses handoff minting;
  *   - the router catalog refresh report series' recurring adverse
  *     evidence: the router.catalog-refresh.v1 reports refreshCatalog
  *     writes one per `phm router catalog refresh` run — the weekly
@@ -1284,6 +1302,7 @@ import { selfTickBacklogItems } from './self-tick-backlog.js';
 import { auditBacklogItems } from './audit-backlog.js';
 import { desktopErrorBacklogItems } from './desktop-error-backlog.js';
 import { repairHandoffBacklogItems } from './repair-handoff-backlog.js';
+import { dispatchProductionBacklogItems } from './dispatch-production-backlog.js';
 import { catalogRefreshBacklogItems } from './catalog-refresh-backlog.js';
 import { automationBacklogItems } from './automation-backlog.js';
 import { gatewayActivityBacklogItems } from './gateway-activity-backlog.js';
@@ -2105,6 +2124,28 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // tails are stated as lower bounds, and every journal string is
   // scrubbed before it reaches a prompt.
   items.push(...await repairHandoffBacklogItems({ repo }));
+
+  // Dispatch-production ledger: the daemon appends one sanitized event
+  // per dispatched work item's production outcome to
+  // <ashlr home>/dispatch-production/YYYY-MM-DD.jsonl — the stream the
+  // repair lifecycle, generated-repair ledgers, yield summaries and
+  // fleet status all read for "what happened to this attempt". Until
+  // now no backlog source folded recurring adverse outcomes back into
+  // discovery, so an engine that keeps failing, a sandbox that keeps
+  // erroring, proposals that keep coming back empty-diff or outcomes
+  // the writer cannot classify could recur for weeks while every
+  // consumer answered lifecycle questions only. The bounded
+  // inspection-only read keeps events inside the 7-day window; a cell
+  // emits only at the recurring bars of distinct item ids across
+  // distinct UTC days, repo attribution is the canonical checkout
+  // path's basename matched to the target's repository name, events
+  // the live repair-handoff machinery already owns are excluded (and
+  // counted again when repair is disabled or shared-queue mode
+  // bypasses handoff minting), degraded reads are stated as lower
+  // bounds, and only closed vocabularies and aggregate counts ever
+  // reach a prompt — item ids, attempt ids, machine ids and the repo
+  // path itself are counted or hashed, never emitted.
+  items.push(...await dispatchProductionBacklogItems({ repo }));
 
   // Router catalog refresh report series: each `phm router catalog
   // refresh` run — the weekly catalogSchedule unit plus manual runs —
