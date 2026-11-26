@@ -1441,14 +1441,17 @@ edits the input queue.
 
 Run `phm queue` to list the queued jobs in the order they launch: position, id,
 repo, lane, tier, age and, when a newer cycle of the same job is queued, the id
-that replaces it. `phm queue --json` returns the same list as the `launch` field
+that replaces it. A row's lane is the hint the work market resolves — the
+requirements cell's `preferred_lane`, a spec-less row's router-queue.md
+envelope, or the lane column when neither names one — matching Queue health
+below. `phm queue --json` returns the same list as the `launch` field
 (schema `queue.order.v1`, `version` 1) beside the batch report.
 
 Three actions change one queued job. Each takes `--dry-run`, which prints the
 change and writes nothing, and `--json` (schema `queue.action.v1`):
 
 - `phm queue top <id>` moves the job to the front.
-- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused. The row's lane column and its requirements cell's `preferred_lane` move together — the market prefers the spec hint, so a column-only rewrite would leave the job on its old lane.
+- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused. The row's lane column and its requirements cell's `preferred_lane` move together — the market prefers the spec hint, so a column-only rewrite would leave the job on its old lane. A spec-less row has no requirements cell: its spec comes from the matching `queue/router-queue.md` `(attrs)` envelope, so the steer materializes that spec — every envelope attr preserved — with `preferred_lane` set to the new lane, the same cell the dispatcher's routed pass writes on its next tick. With no matching envelope the lane column is the hint and the rewrite stays column-only.
 - `phm queue drop <id>` takes it out. The row is copied to `queue/dropped.tsv` and its router line is marked `DROPPED`.
 
 Every write holds `queue/ready.lock`, edits a fresh read of `queue/ready.tsv` and
