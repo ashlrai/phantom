@@ -1253,6 +1253,7 @@ function listTrajectoryRecordsAt(
   }
   const dispatches = dispatchEvents
     .filter((event) =>
+      Date.parse(event.ts) <= asOfMs &&
       event.basis !== 'repair-lifecycle-candidate' && event.basis !== 'repair-lifecycle-outcome'
     )
     .slice(0, Math.max(limit * 3, 100));
@@ -1971,7 +1972,10 @@ export function listTrajectoryJoinQuality(
   const outcomesInWindow = outcomeRead.records.filter(
     (outcome) => eventMs(outcome.lastActivityAt) >= sinceMs,
   );
-  const dispatches = attachReadQuality(dispatchRead.events, dispatchQuality);
+  const dispatches = attachReadQuality(
+    dispatchRead.events.filter((event) => Date.parse(event.ts) <= asOfMs),
+    dispatchQuality,
+  );
   const outcomes = attachReadQuality(outcomesInWindow, outcomeRead.sourceQuality);
   const actions = attachReadQuality(actionRead.events, actionQuality);
   const records = listTrajectoryRecordsAt({
@@ -1997,7 +2001,7 @@ export function listTrajectoryJoinQuality(
   );
 
   const dispatchToProposal = emptyJoinEdge();
-  for (const event of dispatchRead.events) {
+  for (const event of dispatches) {
     if (event.proposalCreated !== true && event.proposalId === undefined) continue;
     const aliases = joinAliases(event);
     const matches = aliasMatches(proposalIndex, aliases);

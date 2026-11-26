@@ -305,6 +305,25 @@ describe('trajectory join quality', () => {
     });
   });
 
+  it('omits future dispatch receipts from the join denominator', () => {
+    const read = dispatchRead();
+    const receipt = read.events[0]!;
+    read.events = [
+      { ...receipt, ts: NOW },
+      { ...receipt, ts: new Date(Date.parse(NOW) + 1).toISOString() },
+    ];
+
+    const result = listTrajectoryJoinQuality({
+      deps: {
+        readDispatchProductionEventsDetailed: () => read,
+        listOutcomeRecordsDetailed: () => listOutcomeRecordsDetailed({ deps: outcomeDeps() }),
+        readAgentActionsDetailed: () => actionRead(),
+      },
+    });
+
+    expect(result.edges.dispatchToProposal).toMatchObject({ denominator: 1, joined: 1, rate: 1 });
+  });
+
   it('reconstructs a protected GitHub trajectory and publishes exact healthy edge rates', () => {
     const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
     const result = listTrajectoryJoinQuality({
