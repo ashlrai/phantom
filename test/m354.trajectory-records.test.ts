@@ -2468,6 +2468,41 @@ describe('Trajectory records', () => {
     expect(JSON.stringify(summary.routeDiagnostics)).not.toContain('private-arbitrary-reason');
   });
 
+  it('counts only skill-use receipts inside the trajectory window toward outcome coverage', () => {
+    const windowHours = 24;
+    const start = TEST_NOW_MS - windowHours * 60 * 60 * 1000;
+    const at = (ms: number) => new Date(ms).toISOString();
+    const trajectoryIds = ['traj-a', 'traj-b', 'traj-c'];
+    const summarizeWithThirdReceipt = (ts: string) => summarizeTrajectoryLearning(listTrajectoryRecords({
+      windowHours,
+      deps: deps({
+        readDispatchProductionEvents: () => trajectoryIds.map((trajectoryId) => dispatch({
+          ts: at(start),
+          itemId: trajectoryId,
+          proposalId: undefined,
+          runId: trajectoryId,
+          trajectoryId,
+        })),
+        listOutcomeRecords: () => [],
+        readAgentActions: () => [],
+        readSkillUseEvents: () => [at(start), at(TEST_NOW_MS), ts].map((receiptTime, index) => skillUse({
+          eventId: `use-${index}`,
+          ts: receiptTime,
+          proposalId: undefined,
+          runId: trajectoryIds[index],
+          trajectoryId: trajectoryIds[index],
+        })),
+      }),
+    }), windowHours);
+
+    for (const ts of [at(start - 1), at(TEST_NOW_MS + 1), 'invalid']) {
+      expect(summarizeWithThirdReceipt(ts).skillOutcomes).toBeUndefined();
+    }
+    const published = summarizeWithThirdReceipt(at(TEST_NOW_MS));
+    expect(published.coverage.skillUse).toEqual({ count: 3, rate: 1 });
+    expect(published.skillOutcomes).toBeDefined();
+  });
+
   it('suppresses every exact skill metric when the observation source is degraded', () => {
     const records = listTrajectoryRecords({
       windowHours: 1000,
