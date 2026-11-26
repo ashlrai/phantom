@@ -36,7 +36,7 @@ import type { CloudInternalLaunch } from '../cloud/service.js';
 import type { DevinLaunchResponse } from '../devin/types.js';
 import type { DevinInternalLaunch } from '../devin/service.js';
 import type { EnqueueTaskResult, FleetTaskInput } from '../fleet/fleet-types.js';
-import type { AutomationFiringV1, AutomationLaneRef, AutomationV1 } from './types.js';
+import { roundUsd, type AutomationFiringV1, type AutomationLaneRef, type AutomationV1 } from './types.js';
 
 export type LaneOutcome =
   | { kind: 'dispatched'; ref: AutomationLaneRef; spendUsd: number; reason: string }
@@ -106,7 +106,7 @@ async function defaultEstimateUsd(lane: AutomationV1['lane']): Promise<number> {
     if (lane === 'devin') {
       const { readDevinBudget } = await import('../devin/store.js');
       const b = readDevinBudget();
-      return Math.round(b.maxAcuPerSession * b.usdPerAcu * 100) / 100;
+      return roundUsd(b.maxAcuPerSession * b.usdPerAcu);
     }
   } catch { /* fall through: unknown spend is not free — see caller */ }
   return lane === 'fleet' || lane === 'leader-review' ? 0 : Number.POSITIVE_INFINITY;
@@ -168,14 +168,26 @@ export function grantRepos(policy: EffectivePolicy | null): string[] {
   return policy ? policy.repos.map((r) => r.nameWithOwner) : [];
 }
 
+/** Safe fail-closed read of KILL/Stop (a throw counts as active). */
+export async function readKillActive(deps: Required<AutomationLaneDeps>): Promise<boolean> {
+  try { return await deps.killActive(); } catch { return true; }
+}
+
+/** Safe fail-closed read of the standing policy (a throw counts as no grant). */
+export async function readStandingPolicy(deps: Required<AutomationLaneDeps>): Promise<EffectivePolicy | null> {
+  try { return await deps.policy(); } catch { return null; }
+}
+
+/** Safe fail-closed read of a lane's cost estimate (a throw counts as infinite/unknown). */
+export async function readLaneEstimateUsd(lane: AutomationV1['lane'], deps: Required<AutomationLaneDeps>): Promise<number> {
+  try { return await deps.estimateUsd(lane); } catch { return Number.POSITIVE_INFINITY; }
+}
+
 /** KILL first (every lane), then the grant (every lane that does work). Null = clear. */
 export async function laneGateRefusal(lane: AutomationV1['lane'], repo: string, deps: Required<AutomationLaneDeps>): Promise<string | null> {
-  let kill = true;
-  try { kill = await deps.killActive(); } catch { kill = true; }
-  if (kill) return KILL_REASON;
+  if (await readKillActive(deps)) return KILL_REASON;
   if (lane === 'leader-review') return null;
-  let policy: EffectivePolicy | null = null;
-  try { policy = await deps.policy(); } catch { policy = null; }
+  const policy = await readStandingPolicy(deps);
   if (!policy) return NO_GRANT_REASON;
   if (!repoInPolicy(policy, repo)) return `${repo} is not in the standing grant's current stage.`;
   return null;
@@ -222,7 +234,7 @@ export function buildAutomationPrompt(automation: AutomationV1, firing: Automati
 }
 
 /** Fleet dedupe keys are short identifiers without spaces (task-source cleanRef). */
-export function fleetDedupeKey(firing: AutomationFiringV1): string {
+function fleetDedupeKey(firing: AutomationFiringV1): string {
   return `automation:${firing.automationId}:${firing.id}`.slice(0, 190);
 }
 

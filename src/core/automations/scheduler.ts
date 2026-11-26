@@ -13,10 +13,10 @@ import { scrubSecrets } from '../util/scrub.js';
 import { runAutomationsTick, type AutomationEngineDeps } from './engine.js';
 import { refreshAutomationsNeedsYou } from './needs-you.js';
 
-export const AUTOMATIONS_TICK_EVERY_MS = 60_000;
-export const AUTOMATIONS_FIRST_TICK_MS = 30_000;
+const AUTOMATIONS_TICK_EVERY_MS = 60_000;
+const AUTOMATIONS_FIRST_TICK_MS = 30_000;
 
-export function automationsSchedulerRefusal(env: NodeJS.ProcessEnv = process.env): string | null {
+function automationsSchedulerRefusal(env: NodeJS.ProcessEnv = process.env): string | null {
   if (env['VITEST'] || env['NODE_ENV'] === 'test') return 'test process';
   if (env['ASHLR_AUTOMATIONS_AUTO'] === '0') return 'disabled by ASHLR_AUTOMATIONS_AUTO=0';
   return null;

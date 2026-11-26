@@ -20,6 +20,8 @@
  * Pure: no clock; the caller passes `after`.
  */
 
+import { padTwo } from './types.js';
+
 export type RruleFreq = 'HOURLY' | 'DAILY' | 'WEEKLY' | 'MONTHLY';
 
 export interface ParsedRrule {
@@ -34,7 +36,7 @@ export interface ParsedRrule {
 
 export type RruleParse = { ok: true; rule: ParsedRrule } | { ok: false; error: string };
 
-const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'] as const;
+export const RRULE_DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'] as const;
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 const FREQS: readonly RruleFreq[] = ['HOURLY', 'DAILY', 'WEEKLY', 'MONTHLY'];
 const KNOWN = new Set(['FREQ', 'INTERVAL', 'BYDAY', 'BYMONTHDAY', 'BYHOUR', 'BYMINUTE']);
@@ -84,8 +86,8 @@ export function parseRrule(input: unknown): RruleParse {
     if (freq === 'MONTHLY') return { ok: false, error: 'BYDAY is not supported with FREQ=MONTHLY (use BYMONTHDAY).' };
     const days: number[] = [];
     for (const code of parts['BYDAY'].split(',')) {
-      const idx = (DAY_CODES as readonly string[]).indexOf(code);
-      if (idx === -1) return { ok: false, error: `BYDAY "${code.slice(0, 8)}" must be one of ${DAY_CODES.join(', ')} (no ordinals).` };
+      const idx = (RRULE_DAY_CODES as readonly string[]).indexOf(code);
+      if (idx === -1) return { ok: false, error: `BYDAY "${code.slice(0, 8)}" must be one of ${RRULE_DAY_CODES.join(', ')} (no ordinals).` };
       if (!days.includes(idx)) days.push(idx);
     }
     byDay = days.sort((a, b) => a - b);
@@ -166,8 +168,6 @@ export function nextOccurrence(rule: ParsedRrule, after: Date): Date | null {
   return null;
 }
 
-const pad = (n: number): string => String(n).padStart(2, '0');
-
 function joinWords(words: string[]): string {
   if (words.length <= 1) return words.join('');
   return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
@@ -176,12 +176,12 @@ function joinWords(words: string[]): string {
 /** Operator language: "Every day at 02:00", "Every Monday at 06:00", "Every 2 hours at :15". */
 export function describeRrule(rule: ParsedRrule): string {
   const times = rule.freq === 'HOURLY'
-    ? `at ${rule.byMinute.map((m) => `:${pad(m)}`).join(', ')}`
-    : `at ${joinWords(rule.byHour.flatMap((h) => rule.byMinute.map((m) => `${pad(h)}:${pad(m)}`)).slice(0, 6))}`;
+    ? `at ${rule.byMinute.map((m) => `:${padTwo(m)}`).join(', ')}`
+    : `at ${joinWords(rule.byHour.flatMap((h) => rule.byMinute.map((m) => `${padTwo(h)}:${padTwo(m)}`)).slice(0, 6))}`;
   const every = (unit: string, units: string): string => (rule.interval === 1 ? `Every ${unit}` : `Every ${rule.interval} ${units}`);
   switch (rule.freq) {
     case 'HOURLY': {
-      const hours = rule.byHour.length === 24 ? '' : ` during ${joinWords(rule.byHour.map((h) => `${pad(h)}h`))}`;
+      const hours = rule.byHour.length === 24 ? '' : ` during ${joinWords(rule.byHour.map((h) => `${padTwo(h)}h`))}`;
       return `${every('hour', 'hours')} ${times}${hours}`;
     }
     case 'DAILY': {

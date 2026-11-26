@@ -29,12 +29,14 @@ import {
   disableAutomation,
   enableAutomation,
   fireAutomation,
+  formatLocalMinute,
+  isAutomationRecord,
   type AutomationEngineDeps,
   type AutomationInput,
   type AutomationView,
 } from '../core/automations/index.js';
 
-export const AUTOMATIONS_USAGE = [
+const AUTOMATIONS_USAGE = [
   'Usage: ashlr automations <command>',
   '',
   '  list [--json]                         Automations with last fired, next run, queue, spend, success rate',
@@ -111,11 +113,7 @@ function clean(text: string): string {
 }
 
 function when(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return formatLocalMinute(iso) ?? '—';
 }
 
 function viewLines(view: AutomationView): string[] {
@@ -175,11 +173,11 @@ async function cmdAdd(deps: AutomationsCliDeps, p: Parsed): Promise<number> {
       deps.err(`Could not read ${clean(file!)} as JSON.`);
       return 1;
     }
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (!isAutomationRecord(parsed)) {
       deps.err('The file must hold one automation object.');
       return 1;
     }
-    input = parsed as Record<string, unknown>;
+    input = parsed;
   }
   const name = str(p, '--name');
   if (name !== undefined) input['name'] = name;

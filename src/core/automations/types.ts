@@ -197,7 +197,31 @@ export const AUTOMATION_DEFAULTS = Object.freeze({
 export const AUTOMATION_ID_PATTERN = /^au_[a-z0-9][a-z0-9-]{1,47}$/;
 export const AUTOMATION_FIRING_ID_PATTERN = /^af_\d{8}T\d{6}_[a-z0-9]{6}$/;
 export const AUTOMATION_REPO_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
+export const AUTOMATION_BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 export const AUTOMATION_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 :._/+-]{0,49}$/;
+
+export function isAutomationRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function parseIsoDate(value: unknown): Date | null {
+  if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) return null;
+  return new Date(value);
+}
+
+export function padTwo(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+export function formatLocalMinute(iso: string | null): string | null {
+  const d = parseIsoDate(iso);
+  if (!d) return null;
+  return `${d.getFullYear()}-${padTwo(d.getMonth() + 1)}-${padTwo(d.getDate())} ${padTwo(d.getHours())}:${padTwo(d.getMinutes())}`;
+}
+
+export function roundUsd(value: number): number {
+  return Math.round(value * 100) / 100;
+}
 
 // ---------------------------------------------------------------------------
 // Firings

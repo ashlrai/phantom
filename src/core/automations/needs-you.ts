@@ -25,7 +25,7 @@ let refreshing: Promise<void> | null = null;
 
 const cap = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
-export function reviewNeedsYouItem(firing: AutomationFiringV1, automation: AutomationV1 | null): NeedsYouItem {
+function reviewNeedsYouItem(firing: AutomationFiringV1, automation: AutomationV1 | null): NeedsYouItem {
   const route = `${VERSE_AUTOMATIONS_PATH}/firings/${firing.id}`;
   const lane = automation && automation.lane !== 'leader-review' ? automation.lane : 'fleet';
   const detailParts = [`${automation?.name ?? firing.automationId} · ${firing.repo}`];
