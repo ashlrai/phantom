@@ -4,6 +4,8 @@ import type { DriveNodes, NodesStore } from '../core/drive/nodes/index.js';
 import { UsageError, joinHintCommand, knownOwnerScopes, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
 import { validId, type NodeAuth } from '../core/drive/nodes/state.js';
 import type { SelfUpdatePlan } from '../core/drive/nodes/phm-version.js';
+import { parseNodeWatchFlags, type NodeWatchFlags } from './node-watch.js';
+import type { NodeBeatWatchDeps } from './node-beat-watch.js';
 
 export interface NodeFleetDeps {
   store?: NodesStore;
@@ -14,6 +16,9 @@ export interface NodeFleetDeps {
   phmVersion?: () => string | null;
   /** This computer's hostname for the join `--node` default; defaults to os.hostname. */
   hostname?: () => string;
+  /** Test seam for `join --watch`: forwarded to the beat watch loop (run, sleep,
+   * signal, capacity/host-stats measurement). */
+  watch?: NodeBeatWatchDeps;
 }
 
 
@@ -51,7 +56,11 @@ function expiredRejoinHints(nodes: DriveNodes, out: Record<string, unknown>): Ma
     if (n.live !== false || typeof n.nodeId !== 'string') continue;
     let profile: ReturnType<DriveNodes['nodeProfile']> = null;
     try { profile = nodes.nodeProfile(n.nodeId); } catch { /* degrade to the generic rejoin hint */ }
-    hints.set(n.nodeId, joinHintCommand(n.nodeId, profile));
+    // The standalone keep-alive is `join --watch`: a bare join's session dies
+    // 30 s after its last beat, so the hint that restores "Phantom running"
+    // must also hold the session. This view only renders for the local store —
+    // a pool Mac's status delegates before reaching here.
+    hints.set(n.nodeId, joinHintCommand(n.nodeId, profile, { watch: true }));
   }
   return hints.size ? hints : undefined;
 }
@@ -149,7 +158,7 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       if (known !== undefined && known.length > 0) {
         lines.push(`This store knows: ${known.join(', ')} — none of the requested scopes have nodes or jobs here.`);
       }
-      lines.push(`Join this computer: phm node join --owner ${scope}`);
+      lines.push(`Join this computer: phm node join --owner ${scope} --watch`);
     }
     // self-update takes one --owner scope; a multi-scope status keeps the
     // placeholder rather than silently checking only the first scope.
@@ -258,10 +267,28 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
   // the caller asked for JSON even when flag parsing fails first.
   const json = args.includes('--json');
   try {
+    // `join --watch` is a dispatcher-level keep-alive like `beat --watch`: the
+    // watch flags are stripped here so the fleet parser never sees them, and a
+    // successful standalone join hands its new session to the beat watch loop.
+    let joinWatch: NodeWatchFlags | null = null;
+    if (verb === 'join' && args.includes('--watch')) {
+      const parsed = parseNodeWatchFlags(args);
+      if ('error' in parsed) throw new UsageError('usage', parsed.error, 'Run: phm node join --help');
+      joinWatch = parsed;
+      args = parsed.base;
+    }
     const flags = parseNodeFleetFlags(verb, args);
     if (!deps.store) {
       const { cmdNodePool, hasNodePool } = await import('./node-pool.js');
-      if (hasNodePool()) return cmdNodePool(verb, args);
+      if (hasNodePool()) {
+        // A pool join releases its probe session on purpose and workers hold
+        // their own sessions per batch, so the standalone keep-alive has no
+        // pool meaning — refuse rather than silently drop --watch.
+        if (joinWatch !== null) throw new UsageError('usage',
+          'join --watch keeps a standalone registry session alive; this Mac is in a node pool, where join releases its probe session and workers hold their own sessions per batch.',
+          'Run: phm node join --json, then phm node worker --runner /absolute/host-owned-runner --json');
+        return cmdNodePool(verb, args);
+      }
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
     const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join }, { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }] = await Promise.all([
@@ -296,7 +323,10 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
         flags.set('--caps', caps.join(','));
       }
     }
-    const out = runNodeFleet(verb, flags, drive, deps.probeAuth ?? probeLocalAuth);
+    // rejoinWatch: this path only runs with no pool config (or an injected
+    // store), so a session-expired fix may name `join --watch` — the command
+    // that both creates the session and holds it live.
+    const out = runNodeFleet(verb, flags, drive, deps.probeAuth ?? probeLocalAuth, { rejoinWatch: true });
     // Standalone join names its keep-alive beat. This stays out of runNodeFleet:
     // pool replies already carry their own `next` (the worker command) and a
     // `next` inside result.result would override it in the spread below. The
@@ -343,6 +373,20 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       ? planEmptyNote(drive, flags.get('--owner'))
       : undefined;
     console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out, { rejoin, drift, knownScopes, planEmpty }));
+    if (joinWatch !== null) {
+      // The join printed its session; now hold it live exactly like
+      // `phm node beat --watch` — same loop, same fresh capacity/host-stats
+      // samples, and --probe-auth under the same gh-cap rule `next` uses.
+      const { cmdNodeBeatWatch } = await import('./node-beat-watch.js');
+      const caps = out['caps'];
+      const probe = Array.isArray(caps) && caps.includes('gh') ? ['--probe-auth'] : [];
+      const { watch: watchDeps, ...fleetDeps } = deps;
+      const run = watchDeps?.run ?? (async (beatArgs: string[]) => cmdNodeFleet('beat', beatArgs, fleetDeps));
+      return cmdNodeBeatWatch([
+        '--node', String(out['nodeId']), '--session', String(out['session']),
+        ...(json ? ['--json'] : []), ...probe, '--every', String(joinWatch.everySeconds),
+      ], { ...watchDeps, run });
+    }
     return 0;
   } catch (error) {
     const known = error instanceof UsageError;

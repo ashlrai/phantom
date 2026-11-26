@@ -102,7 +102,7 @@ describe('readNodesDoctor', () => {
     // proves Phantom is not running here even though every lane checks out.
     const report = await readNodesDoctor({ view: deps([]), probe: fake({ 'home-mac': healthy() }) });
     const self = report.nodes.find(n => n.name === 'home-mac')!;
-    expect(self.gaps).toEqual(['home-mac: reachable but Phantom not running: run `phm node join --owner <scope>` here']);
+    expect(self.gaps).toEqual(['home-mac: reachable but Phantom not running: run `phm node join --owner <scope> --watch` here']);
     expect(self.ready).toBe(false);
   });
 

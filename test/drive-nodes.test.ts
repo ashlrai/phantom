@@ -731,7 +731,7 @@ describe('text output names outcomes in plain words', () => {
         'Owner scope: acme',
         'No nodes joined in this scope.',
         'No jobs queued in this scope.',
-        'Join this computer: phm node join --owner acme',
+        'Join this computer: phm node join --owner acme --watch',
       ].join('\n'));
       const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
       // enqueue names the id; a duplicate id is a fact, not a failure.

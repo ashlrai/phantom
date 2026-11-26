@@ -22,6 +22,12 @@ capabilities for this computer's role (see below). Save the `nodeId` and
 and adds `--probe-auth` when `gh` was advertised, so GitHub jobs can actually
 route to this node once `gh auth login` has run here.
 
+To join and stay live in one step, add `--watch` to the join itself:
+`phm node join --owner acme --caps build,gh --watch` prints the same join
+answer, then holds the new session with the same beat watch described below
+(`--every <seconds>` works too). It is refused on a pool-configured Mac —
+there `phm node worker` holds the live sessions instead.
+
 To keep the exercise fully separate from real Phantom state, point
 `ASHLR_HOME` at a scratch directory first (`export ASHLR_HOME=$(mktemp -d)`);
 every command then uses that home, and symlinks in the path are fine.
@@ -69,7 +75,9 @@ example the session expired — the watch stops and prints the beat's error.
 
 If the session lapses anyway, join again and use the new session number — `beat`
 and `pull` both answer `session-expired` once it lapses, and the error's `fix`
-prints the rejoin command with this node's last advertised owner and caps. If
+prints the rejoin command with this node's last advertised owner and caps
+(`phm nodes` and `phm node status` print the same hint ending in `--watch`, so
+the suggested rejoin also keeps the session live). If
 the node already rejoined under a newer session, the fix names that session and
 the exact `leave` command instead, so you can resume without hunting for the
 number. Omit `--probe-auth` if this node does not need GitHub authentication.

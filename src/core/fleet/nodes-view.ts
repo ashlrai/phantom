@@ -132,10 +132,12 @@ interface Machine { name: string; isSelf: boolean; reachable: boolean | Unknown;
 /** The standalone rejoin for this computer's own expired session, from its newest record.
  * With no record it is a first join, which needs no --node: join defaults the id to the hostname.
  * A record restores the last advertised profile — owners, caps and slots — through the same
- * hint a session-expired fix prints, so the suggested rejoin never silently downgrades the node. */
+ * hint a session-expired fix prints, so the suggested rejoin never silently downgrades the node.
+ * Every form ends in --watch: a bare join's session dies 30 s after its last beat, so the
+ * command that restores "Phantom running" must also hold the session live. */
 function standaloneRejoin(records: NodeRecord[]): string {
   const rec = [...records].sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
-  return rec ? joinHintCommand(rec.nodeId, rec) : 'phm node join --owner <scope>';
+  return rec ? joinHintCommand(rec.nodeId, rec, { watch: true }) : 'phm node join --owner <scope> --watch';
 }
 
 /** The lane view of a record's advertised caps. `phm-<version>` is the
