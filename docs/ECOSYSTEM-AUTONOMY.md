@@ -9,6 +9,11 @@ existing cleanly identified checkouts for the new enrollments in
 `promote` (`ashlrai/name` strings) arrays. Review the printed scope and complete
 one Touch ID signature. Keep the current Stop and switch posture.
 
+The core set is Phantom, Phantom Secrets, Lexicon, Locus, Ashlr Stack,
+Ashlr MD, Binshield, Ashlr Plugin and [Morph Kit](https://github.com/ashlrai/morphkit).
+The private selection adds the missing core repos and requests merge-stage
+ceilings for them.
+
 ```sh
 (
   set -eu
@@ -30,7 +35,9 @@ one Touch ID signature. Keep the current Stop and switch posture.
       "https://github.com/ashlrai/$repo"|"https://github.com/ashlrai/$repo.git"|"git@github.com:ashlrai/$repo"|"git@github.com:ashlrai/$repo.git") ;;
       *) printf 'Unexpected origin for %s\n' "$repo" >&2; exit 1 ;;
     esac
-    phm enroll add "$checkout" --no-secrets-offer --json
+  done < "$tmp/enroll"
+  while IFS= read -r repo; do
+    phm enroll add "$root/$repo" --no-secrets-offer --json
   done < "$tmp/enroll"
   phm authority draft --new --json > "$tmp/candidates.json"
   jq -e --slurpfile candidates "$tmp/candidates.json" --slurpfile selection "$selection" '
