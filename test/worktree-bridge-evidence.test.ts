@@ -7,7 +7,7 @@ import { resolveMaintRoots } from '../src/core/disk-maint/protect.js';
 import { readWorktreeBridgeCommits } from '../src/core/disk-maint/worktree-evidence.js';
 
 it('reads exact bridge subjects from origin/master and invalidates the index when it moves', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'phm-disk-maint-bridge-'));
+  const home = mkdtempSync(join(tmpdir(), 'phm-worktree-bridge-'));
   const roots = resolveMaintRoots({ home });
   const repo = join(dirname(roots.wtDir), 'phantom');
   const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();

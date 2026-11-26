@@ -43,7 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
-  'test/disk-maint-bridge-real-git.test.ts', // Advances a real origin/master ref and verifies cache invalidation.
+  'test/worktree-bridge-evidence.test.ts', // Advances a real origin/master ref and verifies cache invalidation.
   'test/install-process.test.ts', // Runs isolated real Node and npm child processes.
   'test/update-release-directory.test.ts', // Extracts real archives and smoke-tests a candidate executable.
   'test/channel-health-ingress-failure-322s.test.ts', // Spawns real ingress health probes.
