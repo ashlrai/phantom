@@ -266,6 +266,18 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   item while `state-persistence-failed` or `activation-refused` recurs;
   policy reasons like `budget-exhausted` never do. A missing or unreadable
   state file emits nothing —
+  and the post-merge credit release funnel's recurring machinery
+  failures, the per-reason skip tallies and source-completeness verdicts
+  `sweepPostMergeCreditReleases` records on each producer-maintenance
+  pass's `producerMaintenance.postMergeCredit*` fields in `daemon.json`
+  (otherwise only visible through `phm daemon status`'s last-tick
+  summary — and released credit is what learned-skill card attestation
+  requires, so a stuck funnel starves the skills lane). A skip reason, an
+  incomplete-source streak or an unattributed-skip streak becomes an item
+  while it recurs across in-window sweep passes; the funnel's designed
+  holds — the observation window, missing merge or stability witnesses,
+  recorded adverse outcomes and the operational-release ops gate — never
+  do. A missing or unreadable state file emits nothing —
   and the cross-model review journal's recurring findings, the reject
   reason codes and review failures `fleet/cross-review.jsonl` records for
   each repository's pull requests (otherwise only visible through
@@ -1489,7 +1501,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   own repository since the journal describes this install's
   routing.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
-  cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
+  credit-release, cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   claude-recovery, memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, stray-stop, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
@@ -1515,7 +1527,12 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   dispatch, queue and lane machinery. Tick-health items name the state
   ledger and keep the inspect-the-phase-deadlines framing, emitting only
   for the fleet's own repository since the daemon is this install's
-  machinery. Cross-review items name the review
+  machinery. Credit-release items name the daemon state ledger and the
+  post-merge-credit sweep, keep the find-why-the-release-funnel-keeps-
+  failing-closed framing — a degraded ledger, witness producer or
+  eligibility path this repository owns versus a designed hold or the
+  ops gate — and emit only for the fleet's own repository since the
+  sweep is this install's machinery. Cross-review items name the review
   journal and keep the find-why-review-keeps-failing framing, emitting
   only when a review row's recorded repository matches the discovery
   target — findings on another repository's pull requests never land on

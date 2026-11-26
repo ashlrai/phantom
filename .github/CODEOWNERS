@@ -615,6 +615,7 @@
 /test/improve-cli-boundary.test.ts @masonwyatt23
 /test/improve-comms-requests-backlog.test.ts @masonwyatt23
 /test/improve-controller-backlog.test.ts @masonwyatt23
+/test/improve-credit-release-backlog.test.ts @masonwyatt23
 /test/improve-custody-backlog.test.ts @masonwyatt23
 /test/improve-delivery-receipts-backlog.test.ts @masonwyatt23
 /test/improve-desktop-error-backlog.test.ts @masonwyatt23
