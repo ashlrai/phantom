@@ -51,7 +51,7 @@ export async function routePins(input: FleetRoutePinsInput): Promise<FleetRouteP
     const pool = line.match(/(?:^|[\s,(])pool=([A-Za-z0-9_./-]+)(?=\s|[,;)]|$)/)?.[1];
     if (id && pool && !queued.has(id)) queued.set(id, pool);
   }
-  for (const row of parseReadyTsv(input.readyTsv ?? '').rows) if (row.id) queued.set(row.id, row.pool);
+  for (const row of parseReadyTsv(input.readyTsv ?? '', input.routerQueue).rows) if (row.id) queued.set(row.id, row.pool);
 
   const ids = [...new Set((input.pinned ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => ID.test(l)))];
   const pins: RoutePinRow[] = [];

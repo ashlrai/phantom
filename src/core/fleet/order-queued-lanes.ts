@@ -26,10 +26,10 @@ const DOTTED_POOL = /^([A-Z-]+)\.(.+)$/;
  * for the whole snapshot (tombstoned, so a later duplicate cannot restore
  * it) rather than letting last-row-wins fabricate a blocker. Identical
  * repeats keep the lane. One ambiguous job never marks the source degraded. */
-export function queuedLanesFromText(text: string): Map<string, string> {
+export function queuedLanesFromText(text: string, routerQueue?: string | null): Map<string, string> {
   const lanes = new Map<string, string>();
   const ambiguous = new Set<string>();
-  for (const row of parseReadyTsv(text).rows) {
+  for (const row of parseReadyTsv(text, routerQueue).rows) {
     if (row.id === null || ambiguous.has(row.id)) continue;
     const lane = DOTTED_POOL.exec(row.pool)?.[2] ?? row.pool;
     const prior = lanes.get(row.id);
@@ -46,8 +46,12 @@ export function queuedLanesFromText(text: string): Map<string, string> {
  * reports 'missing', any other failure 'degraded'. */
 export async function readQueuedLanes(root: string): Promise<QueuedLanes> {
   try {
-    const source = await readSource(join(root, 'queue', 'ready.tsv'), MAX_READY, false);
-    return { state: source.state, lanes: queuedLanesFromText(source.text) };
+    const queue = join(root, 'queue');
+    const [source, router] = await Promise.all([
+      readSource(join(queue, 'ready.tsv'), MAX_READY, false),
+      readSource(join(queue, 'router-queue.md'), MAX_READY, false),
+    ]);
+    return { state: source.state, lanes: queuedLanesFromText(source.text, router.state === 'healthy' ? router.text : null) };
   } catch {
     return { state: 'degraded', lanes: new Map() };
   }

@@ -40,14 +40,17 @@ export async function cmdFleetDeadHeads(args: string[]): Promise<number> {
     for (const dir of [root, join(root, 'queue'), join(root, 'queue/run')]) {
       if (!(await lstat(dir)).isDirectory()) throw new Error('unavailable');
     }
-    const ready = await readText(join(root, 'queue/ready.tsv'), 2 * 1024 * 1024);
+    const [ready, routerQueue] = await Promise.all([
+      readText(join(root, 'queue/ready.tsv'), 2 * 1024 * 1024),
+      readText(join(root, 'queue/router-queue.md'), 2 * 1024 * 1024).catch(() => ''),
+    ]);
     const reasons = new Map<string, string>();
-    for (const row of parseReadyTsv(ready).rows) {
+    for (const row of parseReadyTsv(ready, routerQueue).rows) {
       if (!row.id || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(row.id) || /^PARKED-/i.test(row.pool) || reasons.has(row.id)) continue;
       try { reasons.set(row.id, await readText(join(root, 'queue/run', `${row.id}.skipped-empty`), 4096)); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
-    const result = { schema: 'fleet.dead-heads.v1', perLaneCap: cap, lanes: queueDeadHeads(ready, reasons, cap) };
+    const result = { schema: 'fleet.dead-heads.v1', perLaneCap: cap, lanes: queueDeadHeads(ready, reasons, cap, routerQueue) };
     console.log(json ? JSON.stringify(result) : result.lanes.map(lane =>
       `${lane.lane}: ${lane.deadLines.length} dead lines; first launchable ${lane.firstLaunchablePosition ?? 'none'}; ${lane.roundsLost} rounds lost\n` +
       lane.deadLines.map(line => `  ${line.position}. ${line.job}: ${line.reason}`).join('\n')).join('\n'));

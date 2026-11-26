@@ -196,6 +196,51 @@ describe('parseReadyTsv', () => {
     expect(rows[1]).toMatchObject({ id: 'RQ-SPEC-C', status: 'READY', pool: 'devin', tier: 'work', repo: 'phantom' });
   });
 
+  it('resolves spec-less rows through router-queue envelopes like the market', () => {
+    // dispatchd's routed pass replaces a five-column row's requirements with
+    // the matching router-queue.md `(attrs)` envelope wholesale: its
+    // preferred_lane (or lane/pool attr) beats the lane column, an envelope
+    // naming no lane is open supply, and a bad lane cell or malformed spec is
+    // invalid_requirements — never supply.
+    const routerQueue = [
+      '- READY phantom RQ-ENV-A (preferred_lane=claude): hinted work',
+      '- READY phantom RQ-ENV-B (P2): no lane named, open supply',
+      '- READY phantom RQ-ENV-C (lane=devin): lane attr fallback',
+      '- READY phantom RQ-ENV-D (): no lane named',
+      '- READY phantom RQ-ENV-E (preferred_lane=CLAUDE!): bad spec',
+      '- READY phantom RQ-ENV-G (preferred_lane=claude): fills an empty cell',
+      '- READY phantom RQ-ENV-H (preferred_lane=claude): bad lane cell still rejects',
+      '- READY phantom RQ-OTHER (preferred_lane=zai): a different job',
+    ].join('\n');
+    const { rows, dropped, invalid, unhinted, unhintedRows } = parseReadyTsv([
+      'RQ-ENV-A\tphantom\tcodex\twork\tprompts/a.md',
+      'RQ-ENV-B\tphantom\tcodex\twork\tprompts/b.md',
+      'RQ-ENV-C\tphantom\tcodex\twork\tprompts/c.md',
+      'RQ-ENV-D\tphantom\tcodex\twork\tprompts/d.md',
+      'RQ-ENV-E\tphantom\tcodex\twork\tprompts/e.md',
+      'RQ-ENV-G\tphantom\t\twork\tprompts/g.md',
+      'RQ-ENV-H\tphantom\tnot a lane!\twork\tprompts/h.md',
+      'RQ-PLAIN\tphantom\tcodex\twork\tprompts/f.md',
+      'RQ-SPEC-F\tphantom\tcodex\twork\tprompts/i.md\t{"preferred_lane":"zai"}',
+    ].join('\n'), routerQueue);
+    expect(dropped).toBe(2);
+    expect(invalid).toBe(2);
+    expect(unhinted).toBe(2);
+    expect(unhintedRows).toEqual([
+      { id: 'RQ-ENV-B', repo: 'phantom', tier: 'work' },
+      { id: 'RQ-ENV-D', repo: 'phantom', tier: 'work' },
+    ]);
+    expect(rows).toHaveLength(5);
+    expect(rows[0]).toMatchObject({ id: 'RQ-ENV-A', status: 'READY', pool: 'claude', tier: 'work', repo: 'phantom' });
+    expect(rows[1]).toMatchObject({ id: 'RQ-ENV-C', status: 'READY', pool: 'devin', tier: 'work' });
+    expect(rows[2]).toMatchObject({ id: 'RQ-ENV-G', status: 'READY', pool: 'claude', tier: 'work' });
+    // No envelope match: the lane column still decides, and a requirements
+    // cell on a six-column row wins over any envelope.
+    expect(rows[3]).toMatchObject({ id: 'RQ-PLAIN', status: 'READY', pool: 'codex', tier: 'work' });
+    expect(rows[4]).toMatchObject({ id: 'RQ-SPEC-F', status: 'READY', pool: 'zai', tier: 'work' });
+    expect(rows.map(r => r.pool)).not.toContain('codex-personal');
+  });
+
   it('keeps generic positional rows on the generic contract', () => {
     // A row whose third cell is not a queue tier stays on the generic
     // id/pool/tier/repo/title reading — the dialect never steals it.

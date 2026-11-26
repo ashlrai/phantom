@@ -297,9 +297,10 @@ function projectReadyTsvJob(row: FleetLaneQueueRow): WorkbenchJobRow {
 }
 
 async function jobsSection(queueDir: string): Promise<WorkbenchJobsSection> {
-  const [queueV1, readyTsv] = await Promise.all([
+  const [queueV1, readyTsv, routerQueue] = await Promise.all([
     readQueueFile(join(queueDir, 'queue.v1.json')),
     readQueueFile(join(queueDir, 'ready.tsv')),
+    readQueueFile(join(queueDir, 'router-queue.md')),
   ]);
 
   const sources: WorkbenchJobsSection['sources'] = {
@@ -321,7 +322,7 @@ async function jobsSection(queueDir: string): Promise<WorkbenchJobsSection> {
     }
   }
   if (readyTsv.state === 'ok') {
-    const parsed = parseReadyTsv(readyTsv.text!);
+    const parsed = parseReadyTsv(readyTsv.text!, routerQueue.state === 'ok' ? routerQueue.text! : null);
     dropped += parsed.dropped;
     for (const row of parsed.rows) {
       // queue.v1 is authoritative where present: its ids win, and id-less TSV

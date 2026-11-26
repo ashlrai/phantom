@@ -48,11 +48,12 @@ export function summarizeStatusSupply(rows: FleetLaneQueueRow[], health: Planner
 export async function readStatusSupply(runsDir: string | undefined, now: () => Date): Promise<StatusSupply> {
   try {
     const root = runsDir ?? join(homedir(), '.ashlr-runs');
-    const [source, planner] = await Promise.all([
+    const [source, router, planner] = await Promise.all([
       readSource(join(root, 'queue', 'ready.tsv'), 2 * 1024 * 1024, false),
+      readSource(join(root, 'queue', 'router-queue.md'), 2 * 1024 * 1024, false),
       readPlannerHealth(root, now().getTime()).catch(() => null),
     ]);
-    const parsed = parseReadyTsv(source.text);
+    const parsed = parseReadyTsv(source.text, router.state === 'healthy' ? router.text : null);
     const state = source.state === 'healthy' && parsed.dropped ? 'degraded' : source.state;
     return summarizeStatusSupply(parsed.rows, planner ?? { ...unknownPlanner, failingSince: null, resetAt: null }, state);
   } catch {
