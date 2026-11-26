@@ -75,6 +75,7 @@ const STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion
  */
 const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const MERGED_AT_KEYS = ['mergedAt', 'merged_at', 'closedAt', 'closed_at'] as const;
+const CLOSED_AT_KEYS = ['closedAt', 'closed_at'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
@@ -133,9 +134,9 @@ function outcomeStateOf(row: Record<string, unknown>): string {
   return event === null ? '' : OUTCOME_EVENT_STATES[event.toLowerCase()] ?? '';
 }
 
-/** The GitHub merge timestamp a MERGED row carries, when it has one. */
-function mergedAtValue(row: Record<string, unknown>): number | null {
-  for (const key of MERGED_AT_KEYS) {
+/** The first parseable GitHub resolution timestamp for this verdict. */
+function resolutionAt(row: Record<string, unknown>, keys: readonly string[]): number | null {
+  for (const key of keys) {
     const parsed = parseLedgerTs(row[key]);
     if (parsed !== null) return parsed;
   }
@@ -187,7 +188,7 @@ interface RewardJobAccum {
   dispatches: DispatchMark[];
   /** Latest merge-resolution row: row time, the GitHub mergedAt it reported, and its PR URL. */
   merge: { atMs: number; mergedAtMs: number; url: string | null } | null;
-  /** Latest closed-unmerged resolution row time. */
+  /** Latest closed-unmerged resolution time, falling back to the row stamp. */
   closedMs: number | null;
   /** Latest positive revert-evidence row time. */
   revertMs: number | null;
@@ -285,12 +286,13 @@ export function foldJobsLedgerRewards(
     if (hasRevertEvidence(row)) acc.revertMs = Math.max(acc.revertMs ?? 0, at);
     const state = outcomeStateOf(row);
     if (row['merged'] === true || MERGE_STATES.has(state)) {
-      const mergedAtMs = mergedAtValue(row) ?? at;
+      const mergedAtMs = resolutionAt(row, MERGED_AT_KEYS) ?? at;
       if (acc.merge === null || at >= acc.merge.atMs) {
         acc.merge = { atMs: at, mergedAtMs, url: firstString(row, URL_KEYS) };
       }
     } else if (row['merged'] === false || CLOSED_STATES.has(state)) {
-      acc.closedMs = Math.max(acc.closedMs ?? 0, at);
+      const closedAtMs = resolutionAt(row, CLOSED_AT_KEYS) ?? at;
+      if (closedAtMs <= nowMs) acc.closedMs = Math.max(acc.closedMs ?? 0, closedAtMs);
     }
   }
   for (const [id, acc] of jobs) {
