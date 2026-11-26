@@ -68,7 +68,7 @@ import { CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
 import { EMPTY_TAG_LABELS, EMPTY_TAGS } from '../fleet/empty-tags.js';
 import { EMPTY_TAG_SYNC_HOURS, EMPTY_TAG_SYNC_MAX_CLASSIFY } from '../fleet/empty-tag-sync.js';
-import { ledgerFinishes, type EmptiesFinish } from '../fleet/empty-finishes.js';
+import { currentAttemptFinishes, type EmptiesFinish } from '../fleet/empty-finishes.js';
 import {
   foldEmptyTags,
   readLedgerFile,
@@ -247,7 +247,7 @@ export async function emptyTagBacklogItems(opts: EmptyTagItemsOptions): Promise<
     // trusted, so the source stays quiet rather than guessing tags.
     if (tags.state !== 'read' && tags.state !== 'missing') return [];
     const tagMap = tags.state === 'read' ? foldEmptyTags(tags.text) : new Map<string, string>();
-    const { finishes } = ledgerFinishes(jobs.text, (opts.now ?? new Date()).getTime(), EMPTY_TAG_WINDOW_HOURS);
+    const finishes = currentAttemptFinishes(jobs.text, (opts.now ?? new Date()).getTime(), EMPTY_TAG_WINDOW_HOURS);
     const fold = foldEmptyTagWindow(finishes, tagMap);
     const limit = Math.max(1, Math.min(opts.limit ?? EMPTY_TAG_MAX_ITEMS, EMPTY_TAG_ITEM_HARD_MAX));
     const items: CloudBacklogItem[] = [];

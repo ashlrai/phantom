@@ -6,6 +6,13 @@ model calls, writes, routing changes or sending. The CLI only reads a ledger.
 
 ## Interface and commands
 
+`currentAttemptFinishes(text, nowMs, hours)` in
+`src/core/fleet/empty-finishes.ts` folds the supplied jobs ledger window
+into the newest finish per job, including its receipt time `at` in epoch
+milliseconds. A launch or batch claim supersedes earlier finishes for that
+job. Receipt time determines ordering, with ledger order breaking ties.
+Empty-tag sync and backlog discovery share this projection.
+
 `phm fleet metrics --json` (or `metrics series --json`) returns
 `fleet.metrics-series.v1`, shared with the Metrics pane through
 `GET /api/verse/fleet/runs/metrics` (`series`). It streams the same
