@@ -43,7 +43,7 @@ export const MERGE_RECOVER_REASONS: Readonly<Record<string, string>> = {
 };
 export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDeps = {}): Promise<number> {
   const output = deps.output ?? console.log;
-  if (args.length === 1 && args[0] === '--help') { output(USAGE); return 0; }
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { output(USAGE); return 0; }
   let apply = false, json = false, root: string | undefined, queuePath: string | undefined;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {

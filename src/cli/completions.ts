@@ -181,7 +181,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'intent-import', 'intent-read', 'intent-summary', 'lane-hold', 'lane-idle', 'lane-share',
     'lane-starve', 'lane-target', 'launchable', 'leader-facts', 'leader-health', 'load',
     'login-health', 'machine', 'main-health', 'main-red-age', 'map', 'mason-digest', 'memory',
-    'merge-identity', 'merge-latency', 'merge-queue-age', 'merge-retry', 'message-graph', 'metrics',
+    'merge-identity', 'merge-latency', 'merge-queue-age', 'merge-recover', 'merge-retry', 'message-graph', 'metrics',
     'mission', 'needs', 'needs-resolve', 'orchestrate', 'order-state', 'orders', 'org', 'org-board', 'org-sync',
     'output-eval', 'outside-outcomes', 'owner-history', 'owner-pull', 'peer-ledger', 'pool-reach', 'pools', 'profile', 'proof',
     'publication-evidence', 'pulse', 'queue-age', 'queue-counts', 'queue-latency', 'queue-repeats',

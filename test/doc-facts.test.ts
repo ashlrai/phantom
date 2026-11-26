@@ -76,9 +76,8 @@ const DOCS = [
   'docs/verify-changed.md',
   // Operating guides AGENTS.md and README.md link to. Linked guides that are
   // missing here name a verb completions SUBCOMMANDS does not offer: QUEUE
-  // (`queue yield`, whose --help exits 2, and a `phm foo bar` example),
-  // AGENT-BUS (`agents mesh status`, whose --help exits 2) and FLEET-API
-  // (`fleet merge-recover`, whose -h exits 2).
+  // (`queue yield`, whose --help exits 2, and a `phm foo bar` example) and
+  // AGENT-BUS (`agents mesh status`, whose --help exits 2).
   'docs/AGENT-APPS.md',
   'docs/AGENT-NETWORK-CHANNELS.md',
   'docs/AGENT-PROFILES.md',
@@ -127,6 +126,7 @@ const DOCS = [
   'docs/DONE-CONTRACT.md',
   'docs/DRIVE.md',
   'docs/DRIVER.md',
+  'docs/FLEET-API.md',
   'docs/FLEET-MERGE-BATCH.md',
   'docs/FLEET-USAGE-PACING.md',
   'docs/GROUP-CHAT.md',
