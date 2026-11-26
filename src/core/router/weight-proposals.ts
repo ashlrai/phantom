@@ -18,7 +18,8 @@ export const ROUTER_WEIGHT_DEFAULT_MAX_SHIFT = 0.1;
 
 // Mirrors the documented route-ID shape. Not imported from src/core/routing/** (Tier-1 protected).
 const ROUTE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
-const isRouteId = (v: unknown): v is string => typeof v === 'string' && ROUTE_ID.test(v);
+const isRouteId = (v: unknown): v is string =>
+  typeof v === 'string' && ROUTE_ID.test(v) && v.toLowerCase() !== 'unknown';
 const round6 = (v: number): number => Math.round(v * 1e6) / 1e6;
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
@@ -796,7 +797,7 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
 });
 
 /**
- * Groups by (work_class, lane). Non-ID work_class or lane is unclassified; merged:null is unknown and
+ * Groups by (work_class, lane). Missing, invalid or placeholder IDs are unclassified; merged:null is unknown and
  * excluded from evidence. A group below minSamples is refused and keeps its baseline. Otherwise the
  * weight moves toward the observed held-merge rate — merged outcomes recorded as reverted count as
  * known evidence but never as held merges — capped at maxShift and clamped to [0, 1]. Each proposal
