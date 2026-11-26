@@ -345,7 +345,7 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
     : data.schema === 'dispatchd.status.v1' && Number.isFinite(tickMs) && nowMs >= tickMs && nowMs - tickMs <= STATUS_FRESH_MS;
   const published = isRecord(data.unfed_capacity) && isRecord(data.unfed_capacity.lanes) ? data.unfed_capacity : null;
   const ctx = published === null ? marketContext(market) : null;
-  const stop = published === null ? fleetStopVerdict(data) : null;
+  const stop = fleetStopVerdict(data);
   // An admission-stopped tick never ran the market: the dispatcher's own
   // _waiting then counts every JID+tier-valid row by its raw lane column.
   const strict = readyHints(readyTsv, market?.routerQueue);
@@ -393,6 +393,7 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
   }
   resources.sort((a, b) => a.lane.localeCompare(b.lane));
   const unfed = resources.filter(r => r.unfed);
+  const laneStop = publishedFleetStop(resources);
   return {
     schema: FLEET_UNFED_SCHEMA,
     readOnly: true,
@@ -400,7 +401,8 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
     derivedReasons: ctx !== null,
     statusAsOf,
     statusFresh,
-    fleetStop: stop ?? publishedFleetStop(resources),
+    fleetStop: stop === 'admission_stopped' || laneStop === 'admission_stopped'
+      ? 'admission_stopped' : stop ?? laneStop,
     waiting,
     invalidRows: strict.invalid,
     unfedLanes: unfed.map(r => r.lane),
