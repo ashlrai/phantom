@@ -290,6 +290,8 @@ describe('resident CI reruns', () => {
     { updated_at: undefined },
     { updated_at: 'invalid' },
     { updated_at: '2026-01-01T12:00:30Z' },
+    { updated_at: '2026-01-01T12:10:01Z' },
+    { run_started_at: '2026-01-01T12:10:01Z', updated_at: '2026-01-01T12:10:02Z' },
     { run_attempt: undefined },
     { run_attempt: 1 },
     { run_started_at: undefined },
@@ -307,7 +309,7 @@ describe('resident CI reruns', () => {
       pass: 0, fail: 0, inconclusive: 0, pending: 1, resolutionRate: null,
     });
 
-    gh.mockResolvedValue({ ok: true, stdout: JSON.stringify(evidence), stderr: '' });
+    gh.mockResolvedValue({ ok: true, stdout: JSON.stringify({ ...evidence, updated_at: '2026-01-01T12:10:00Z' }), stderr: '' });
     await runCiRerunMaintenance(opts);
     expect(readCiReruns(opts.journalPath!, opts.now!()).verdicts).toMatchObject({ pass: 1, pending: 0 });
   });
