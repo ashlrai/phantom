@@ -1,12 +1,13 @@
 /** Browser-safe offline planning DTOs. A routing receipt never grants execution. */
 import type { ProactiveResourceEvidenceResponse } from './resource-evidence-types.js';
+import type { ProactiveIdentity } from './types.js';
 import type { TypeSafeChoiceQuestion } from '../classify/typesafe-client.js';
 
 export interface RoutingLabTask {
   taskId: string; tenantId: string; projectBindingId: string; packetDigest: string;
   capabilityIds: string[]; accountRefs: string[]; deadline: string | null; maxCostUsd: number | null;
   /** Exact planned recipient, separately bound from source-account evidence refs. */
-  allowedDestination?: { provider: string; accountId: string; agentId: string };
+  allowedDestination?: ProactiveIdentity;
 }
 export interface RoutingLabCandidate {
   resourceId: string; label: string; qualification: 'planning-candidate' | 'qualified-shadow-fixture' | 'held';

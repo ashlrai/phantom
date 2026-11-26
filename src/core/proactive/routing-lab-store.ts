@@ -1,27 +1,37 @@
 /** Durable offline receipts, with intent-before-evaluation and conservative interruption replay. */
-import { join, resolve } from 'node:path';
-import { inspectPrivateDirectory, privateDirectory } from '../universe/artifacts.js';
-import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
-import { readImmutablePrivateRecords, recoverImmutablePrivateRecordStore, writeImmutablePrivateRecord,
-  type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
+import { resolve } from 'node:path';
 import { companionDigest } from './coordination-types.js';
 import { companionSafeText, companionToken } from './coordination-store.js';
-import { createRevisionRecordCodec, readReplayWatermark, reserveReplayWatermark } from './replay-watermark.js';
-import type { RoutingLabCommand, RoutingLabEvaluation, RoutingLabPreferenceProposal, RoutingLabRecord, RoutingLabState, RoutingLabView, RoutingLabWrite } from './routing-lab-types.js';
+import {
+  commitWatermarkedLedgerRecord, createRevisionRecordCodec, createWatermarkedLedgerConfig, readWatermarkedLedger,
+} from './replay-watermark.js';
+import type {
+  RoutingLabCandidate, RoutingLabCommand, RoutingLabEvaluation, RoutingLabPreferenceProposal, RoutingLabRecord,
+  RoutingLabState, RoutingLabView, RoutingLabWrite,
+} from './routing-lab-types.js';
 import { canonicalJson, hasNoControlChars, hasPlainDataKeys, isCanonicalIsoTimestamp, isSha256Hex } from './validation.js';
 
+export const ROUTING_LAB_POLICY = 'companion-routing-lab-v1' as const;
+export const ROUTING_LAB_MODEL = 'jev-1.13.0' as const;
 export const ROUTING_LAB_LIMITS = Object.freeze({ evaluations: 64, proposals: 64, cases: 32, rows: 512, choices: 255,
   records: 1024, recordBytes: 1024 * 1024, aggregateBytes: 64 * 1024 * 1024 });
 export function routingLabEvaluationId(requestId: string): string { return `rl_${companionDigest(['routing-lab', requestId]).slice(0, 32)}`; }
 export const routingLabId = (value: unknown): value is string => typeof value === 'string' && /^r[lp]_[a-f0-9]{32}$/.test(value);
 export const routingLabReference = (value: unknown): value is string => companionSafeText(value, 1024) && value === value.trim() && hasNoControlChars(value);
+export function isQualifiedRoutingCandidate(candidate: Pick<RoutingLabCandidate, 'qualification' | 'holds'>): boolean {
+  return candidate.qualification !== 'held' && candidate.holds.length === 0;
+}
+export function hasEligibleRoutingCandidate(state: Pick<RoutingLabState, 'evaluations'>, evaluationId: string, resourceId: string): boolean {
+  return state.evaluations.some(evaluation => evaluation.id === evaluationId && evaluation.status === 'completed' &&
+    evaluation.cases.some(item => item.candidates.some(candidate => candidate.resourceId === resourceId && candidate.qualification !== 'held')));
+}
 function validEvaluation(evaluation: RoutingLabEvaluation): boolean {
   if (!hasPlainDataKeys(evaluation, ['id', 'requestId', 'kind', 'mode', 'status', 'inputDigest', 'snapshotDigest', 'policyId', 'modelId', 'adapterMode',
     'createdAt', 'completedAt', 'localDurationMs', 'providerLatencyMs', 'cases', 'summary', 'executionAuthorized', 'notes']) ||
     evaluation.id !== routingLabEvaluationId(evaluation.requestId) || !companionToken(evaluation.requestId) ||
     !['preview', 'benchmark'].includes(evaluation.kind) || evaluation.mode !== (evaluation.kind === 'preview' ? 'shadow-readonly' : 'fixture') ||
     !['uncertain', 'completed', 'aborted'].includes(evaluation.status) || !isSha256Hex(evaluation.inputDigest) || !isSha256Hex(evaluation.snapshotDigest) ||
-    evaluation.policyId !== 'companion-routing-lab-v1' || evaluation.modelId !== 'jev-1.13.0' ||
+    evaluation.policyId !== ROUTING_LAB_POLICY || evaluation.modelId !== ROUTING_LAB_MODEL ||
     evaluation.adapterMode !== (evaluation.mode === 'fixture' ? 'offline-fixture' : 'deterministic-only') ||
     !isCanonicalIsoTimestamp(evaluation.createdAt) || !(evaluation.completedAt === null || isCanonicalIsoTimestamp(evaluation.completedAt)) ||
     evaluation.providerLatencyMs !== null || evaluation.executionAuthorized !== false ||
@@ -51,7 +61,7 @@ function validEvaluation(evaluation: RoutingLabEvaluation): boolean {
       ids.add(candidate.resourceId);
     }
     if (item.selectedResourceId !== null && !item.candidates.some(candidate => candidate.resourceId === item.selectedResourceId &&
-      candidate.qualification !== 'held' && candidate.holds.length === 0) ||
+      isQualifiedRoutingCandidate(candidate)) ||
       ['held', 'aborted'].includes(item.path) && item.selectedResourceId !== null) return false;
   }
   const summary = evaluation.summary;
@@ -64,8 +74,7 @@ function validEvaluation(evaluation: RoutingLabEvaluation): boolean {
 }
 function validProposal(proposal: RoutingLabPreferenceProposal, state: RoutingLabState): boolean {
   return hasPlainDataKeys(proposal, ['id', 'evaluationId', 'resourceId', 'reason', 'state', 'createdAt', 'withdrawnAt', 'executionAuthorized']) &&
-    routingLabId(proposal.id) && state.evaluations.some(value => value.id === proposal.evaluationId && value.status === 'completed' &&
-      value.cases.some(item => item.candidates.some(candidate => candidate.resourceId === proposal.resourceId && candidate.qualification !== 'held'))) &&
+    routingLabId(proposal.id) && hasEligibleRoutingCandidate(state, proposal.evaluationId, proposal.resourceId) &&
     routingLabReference(proposal.resourceId) && companionSafeText(proposal.reason, 1000) && ['proposed', 'withdrawn'].includes(proposal.state) &&
     isCanonicalIsoTimestamp(proposal.createdAt) && (proposal.state === 'proposed' ? proposal.withdrawnAt === null : isCanonicalIsoTimestamp(proposal.withdrawnAt)) && proposal.executionAuthorized === false;
 }
@@ -91,61 +100,48 @@ const codec = createRevisionRecordCodec(parse);
 export class RoutingLabStore {
   readonly directory: string;
   constructor(directory: string) { this.directory = resolve(directory); }
-  private config(): ImmutablePrivateRecordStoreConfig<RoutingLabRecord> {
-    return { label: 'Offline routing lab', anchorPath: this.directory, rootPath: join(this.directory, 'ledger'), lockFileName: '.records.lock',
-      maxRecordBytes: ROUTING_LAB_LIMITS.recordBytes, defaultMaxFiles: ROUTING_LAB_LIMITS.records, hardMaxFiles: ROUTING_LAB_LIMITS.records,
-      defaultMaxBytes: ROUTING_LAB_LIMITS.aggregateBytes, hardMaxBytes: ROUTING_LAB_LIMITS.aggregateBytes, codecForRead: () => codec, codecForWrite: () => codec };
+  private config() {
+    return createWatermarkedLedgerConfig({ label: 'Offline routing lab', directory: this.directory,
+      maxRecordBytes: ROUTING_LAB_LIMITS.recordBytes, maxRecords: ROUTING_LAB_LIMITS.records, maxAggregateBytes: ROUTING_LAB_LIMITS.aggregateBytes, codec });
   }
   read(): { view: RoutingLabView; records: RoutingLabRecord[] } {
-    const empty = (sourceState: RoutingLabView['sourceState']) => ({ view: { schemaVersion: 1 as const, revision: 0, sourceState,
-      evaluations: [], proposals: [], executionAuthorized: false as const }, records: [] });
-    try {
-      inspectPrivateDirectory(this.directory); const read = readImmutablePrivateRecords(this.config(), { requireComplete: true });
-      const watermark = readReplayWatermark(this.directory, { maxRecords: ROUTING_LAB_LIMITS.records });
-      if (watermark.sourceState === 'degraded') return empty('degraded');
-      const last = read.records.at(-1);
-      if (last ? watermark.sourceState !== 'healthy' || watermark.revision !== last.revision || watermark.ledgerDigest !== last.digest
-        : watermark.sourceState !== 'missing') return empty('degraded');
-      if (read.sourceState === 'missing') return empty('missing');
-      if (!read.complete || read.sourceState !== 'healthy') return empty('degraded');
-      const intents = new Set<string>(); const settled = new Set<string>();
-      for (const [index, record] of read.records.entries()) {
-        const prior = read.records[index - 1];
-        if (record.revision !== index + 1 || record.previousDigest !== (prior?.digest ?? null)) return empty('degraded');
-        if (record.phase === 'settled') {
-          const intent = read.records.find(item => item.requestId === record.requestId && item.phase === 'intent');
-          if (!intent || settled.has(record.requestId) || intent.requestDigest !== record.requestDigest || intent.subjectId !== record.subjectId) return empty('degraded');
-          settled.add(record.requestId);
-        } else {
-          if (intents.has(record.requestId)) return empty('degraded'); intents.add(record.requestId);
-        }
-        if (prior && prior.state.evaluations.some(evaluation => {
-          const next = record.state.evaluations.find(item => item.id === evaluation.id);
-          if (!next) return true;
-          if (evaluation.status !== 'uncertain') return canonicalJson(next) !== canonicalJson(evaluation);
-          const fixed = (item: RoutingLabEvaluation) => { const { status: _status, completedAt: _at, localDurationMs: _duration,
-            cases: _cases, summary: _summary, notes: _notes, ...rest } = item; return rest; };
-          return canonicalJson(fixed(next)) !== canonicalJson(fixed(evaluation));
-        })) return empty('degraded');
-        if (prior && prior.state.proposals.some(proposal => {
-          const next = record.state.proposals.find(item => item.id === proposal.id); if (!next) return true;
-          const fixed = (item: RoutingLabPreferenceProposal) => { const { state: _state, withdrawnAt: _at, ...rest } = item; return rest; };
-          return canonicalJson(fixed(proposal)) !== canonicalJson(fixed(next)) ||
-            proposal.state === 'withdrawn' && canonicalJson(proposal) !== canonicalJson(next);
-        })) return empty('degraded');
-      }
-      const state = read.records.at(-1)?.state;
-      return state ? { view: { ...structuredClone(state), sourceState: 'healthy', executionAuthorized: false }, records: read.records } : empty('missing');
-    } catch (error) { return empty((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded'); }
+    const intents = new Set<string>(); const settled = new Set<string>();
+    const ledgerRead = readWatermarkedLedger(this.directory, this.config(), ROUTING_LAB_LIMITS.records, (record, prior, _index, records) => {
+      if (record.phase === 'settled') {
+        const intent = records.find(item => item.requestId === record.requestId && item.phase === 'intent');
+        if (!intent || settled.has(record.requestId) || intent.requestDigest !== record.requestDigest || intent.subjectId !== record.subjectId) return false;
+        settled.add(record.requestId);
+      } else { if (intents.has(record.requestId)) return false; intents.add(record.requestId); }
+      if (prior && prior.state.evaluations.some(evaluation => {
+        const next = record.state.evaluations.find(item => item.id === evaluation.id); if (!next) return true;
+        if (evaluation.status !== 'uncertain') return canonicalJson(next) !== canonicalJson(evaluation);
+        const fixed = (item: RoutingLabEvaluation) => { const { status: _status, completedAt: _at, localDurationMs: _duration,
+          cases: _cases, summary: _summary, notes: _notes, ...rest } = item; return rest; };
+        return canonicalJson(fixed(next)) !== canonicalJson(fixed(evaluation));
+      })) return false;
+      if (prior && prior.state.proposals.some(proposal => {
+        const next = record.state.proposals.find(item => item.id === proposal.id); if (!next) return true;
+        const fixed = (item: RoutingLabPreferenceProposal) => { const { state: _state, withdrawnAt: _at, ...rest } = item; return rest; };
+        return canonicalJson(fixed(proposal)) !== canonicalJson(fixed(next)) || proposal.state === 'withdrawn' && canonicalJson(proposal) !== canonicalJson(next);
+      })) return false;
+      return true;
+    });
+    const state = ledgerRead.sourceState === 'healthy' ? ledgerRead.records.at(-1)?.state : undefined;
+    return state ? { view: { ...structuredClone(state), sourceState: 'healthy', executionAuthorized: false }, records: ledgerRead.records }
+      : { view: { schemaVersion: 1, revision: 0, sourceState: ledgerRead.sourceState === 'healthy' ? 'missing' : ledgerRead.sourceState,
+          evaluations: [], proposals: [], executionAuthorized: false }, records: [] };
+  }
+  private replayFromRecords(records: readonly RoutingLabRecord[], command: RoutingLabCommand, requestDigest: string): RoutingLabWrite | null {
+    const record = records.find(item => item.requestId === command.requestId);
+    if (!record) return null;
+    if (record.requestDigest !== requestDigest) return this.fail('conflict');
+    // Intent-only interruptions remain uncertain; never invoke the adapter again.
+    const latest = records.filter(item => item.requestId === command.requestId).at(-1)!;
+    return this.result(latest, 'replayed');
   }
   replay(command: RoutingLabCommand): RoutingLabWrite | null {
     const read = this.read(); if (read.view.sourceState === 'degraded') return this.fail('unavailable');
-    const record = read.records.find(item => item.requestId === command.requestId);
-    if (!record) return null;
-    if (record.requestDigest !== companionDigest(command)) return this.fail('conflict');
-    // Intent-only interruptions remain uncertain; never invoke the adapter again.
-    const latest = read.records.filter(item => item.requestId === command.requestId).at(-1)!;
-    return this.result(latest, 'replayed');
+    return this.replayFromRecords(read.records, command, companionDigest(command));
   }
   fail(reason: 'invalid' | 'conflict' | 'held' | 'unavailable' | 'capacity'): RoutingLabWrite { return { ok: false, reason, executionAuthorized: false }; }
   private result(record: RoutingLabRecord, disposition: 'recorded' | 'replayed'): RoutingLabWrite {
@@ -153,32 +149,28 @@ export class RoutingLabStore {
       evaluation: structuredClone(record.state.evaluations.find(item => item.id === record.subjectId) ?? null),
       proposal: structuredClone(record.state.proposals.find(item => item.id === record.subjectId) ?? null), executionAuthorized: false };
   }
-  append(command: RoutingLabCommand, phase: RoutingLabRecord['phase'], subjectId: string,
-    mutate: (state: RoutingLabState) => void): RoutingLabWrite {
-    try { privateDirectory(this.directory); } catch { return this.fail('unavailable'); }
-    const lock = acquireLocalStoreLockWithOutcome(join(this.directory, '.lab.lock'), 0, { anchorPath: this.directory, exactPrivateStorage: true });
-    if (lock.state !== 'acquired') return this.fail(lock.state === 'contended' ? 'conflict' : 'unavailable');
-    try {
-      // Reservation gaps and truncated prefixes are never repaired into fresh permission.
-      if (this.read().view.sourceState === 'degraded') return this.fail('unavailable');
-      if (!['clean', 'recovered', 'missing'].includes(recoverImmutablePrivateRecordStore(this.config()))) return this.fail('unavailable');
-      const read = this.read(); if (read.view.sourceState === 'degraded') return this.fail('unavailable');
-      if (phase !== 'settled') { const replay = this.replay(command); if (replay) return replay;
-        if (read.view.revision !== command.expectedRevision) return this.fail('conflict'); }
-      else if (!read.records.some(item => item.requestId === command.requestId && item.phase === 'intent' && item.requestDigest === companionDigest(command)) ||
-        read.records.some(item => item.requestId === command.requestId && item.phase === 'settled')) return this.fail('conflict');
-      if (read.records.length >= ROUTING_LAB_LIMITS.records) return this.fail('capacity');
-      const state: RoutingLabState = { schemaVersion: 1, revision: read.view.revision, evaluations: structuredClone(read.view.evaluations), proposals: structuredClone(read.view.proposals) };
-      try { mutate(state); } catch { return this.fail('held'); } state.revision += 1;
-      const payload = { schemaVersion: 1 as const, revision: state.revision, previousDigest: read.records.at(-1)?.digest ?? null,
-        requestId: command.requestId, requestDigest: companionDigest(command), phase, subjectId, state };
-      const record = { ...payload, digest: companionDigest(payload) };
-      if (!parse(record)) return this.fail('invalid'); if (Buffer.byteLength(codec.serialize(record)) > ROUTING_LAB_LIMITS.recordBytes) return this.fail('capacity');
-      if (!ownsLocalStoreLock(lock.lock) || reserveReplayWatermark(this.directory,
-        { revision: record.revision, ledgerDigest: record.digest, previousLedgerDigest: record.previousDigest },
-        { maxRecords: ROUTING_LAB_LIMITS.records }) !== 'recorded') return this.fail('unavailable');
-      const disposition = writeImmutablePrivateRecord(this.config(), record, { prepublish: () => ownsLocalStoreLock(lock.lock) });
-      return ['recorded', 'replayed'].includes(disposition) ? this.result(record, disposition as 'recorded' | 'replayed') : this.fail('unavailable');
-    } catch { return this.fail('unavailable'); } finally { releaseLocalStoreLock(lock.lock); }
+  append(command: RoutingLabCommand, phase: RoutingLabRecord['phase'], subjectId: string, mutate: (state: RoutingLabState) => void): RoutingLabWrite {
+    return commitWatermarkedLedgerRecord({
+      directory: this.directory, lockFileName: '.lab.lock', config: this.config(), maxRecords: ROUTING_LAB_LIMITS.records,
+      read: () => { const current = this.read(); return { sourceState: current.view.sourceState, records: current.records }; },
+      fail: (reason) => this.fail(reason),
+      prepare: (records) => {
+        const requestDigest = companionDigest(command); const latest = records.at(-1); const currentRevision = latest?.state.revision ?? 0;
+        if (phase !== 'settled') {
+          const replay = this.replayFromRecords(records, command, requestDigest); if (replay) return { kind: 'short-circuit', value: replay };
+          if (currentRevision !== command.expectedRevision) return { kind: 'short-circuit', value: this.fail('conflict') };
+        } else if (!records.some(item => item.requestId === command.requestId && item.phase === 'intent' && item.requestDigest === requestDigest) ||
+          records.some(item => item.requestId === command.requestId && item.phase === 'settled')) return { kind: 'short-circuit', value: this.fail('conflict') };
+        if (records.length >= ROUTING_LAB_LIMITS.records) return { kind: 'short-circuit', value: this.fail('capacity') };
+        const state: RoutingLabState = { schemaVersion: 1, revision: currentRevision, evaluations: structuredClone(latest?.state.evaluations ?? []), proposals: structuredClone(latest?.state.proposals ?? []) };
+        try { mutate(state); } catch { return { kind: 'short-circuit', value: this.fail('held') }; } state.revision += 1;
+        const payload = { schemaVersion: 1 as const, revision: state.revision, previousDigest: latest?.digest ?? null, requestId: command.requestId, requestDigest, phase, subjectId, state };
+        const record = { ...payload, digest: companionDigest(payload) };
+        if (!parse(record)) return { kind: 'short-circuit', value: this.fail('invalid') };
+        if (Buffer.byteLength(codec.serialize(record)) > ROUTING_LAB_LIMITS.recordBytes) return { kind: 'short-circuit', value: this.fail('capacity') };
+        return { kind: 'commit', record };
+      },
+      onCommitted: (record, disposition) => this.result(record, disposition),
+    });
   }
 }
