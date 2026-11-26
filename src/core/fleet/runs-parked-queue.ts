@@ -3,8 +3,8 @@ import { constants } from 'node:fs';
 import { lstat, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
-import { parseReadyTsv } from './lane-console.js';
-import { MARKET_LANE_ID } from './unfed-market.js';
+import { KNOWN_STATUSES, parseReadyTsv } from './lane-console.js';
+import { MARKET_LANE_ID, readyEnvelopeSpec, resolveReadyMarketRow } from './unfed-market.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export const VERSE_FLEET_LIVE_QUEUE_PATH = '/api/verse/fleet/live/queue';
@@ -57,6 +57,9 @@ const GATE_TOK = /\b([A-Za-z0-9][A-Za-z0-9._-]{0,79})\b/g;
 const GATE_SKIP = new Set(['DEPENDENCY', 'GATE', 'AND', 'OR', 'NONE', 'N/A']);
 const MAX_READY = 2 * 1024 * 1024;
 const MAX_SKIPS = 256 * 1024;
+// router-queue.md envelopes resolve spec-less ready rows' requirements; the
+// same 32 MiB bound the unfed report and queue supply read it under.
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_PROMPT = 64 * 1024;
 const MAX_JOBS_JSONL = 2 * 1024 * 1024;
 // eslint-disable-next-line no-control-regex -- public fields must not carry control bytes.
@@ -303,6 +306,10 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
   const parsedRows: Array<{ row: ReturnType<typeof parseReadyTsv>['rows'][number]; originalState: string | undefined; unsafeRepo: boolean }> = [];
   let dropped = 0;
   let unhinted = 0;
+  /** router-queue.md text for spec-less envelope resolution, read lazily on
+   *  the first five-column market row. Undefined = not yet read; null = the
+   *  market's own fallback (missing or over-bound leaves the lane column). */
+  let routerQueueText: string | null | undefined;
   /** Private prompt paths captured from raw cells — never emitted publicly. */
   const rawDepPromptByJob = new Map<string, string>();
   for (const raw of readySource.text.split('\n')) {
@@ -321,22 +328,55 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     }
     const first = cells[0] ?? '';
     const positional = !header || (statusColumn !== 0 && (/^READY$/i.test(first) || PARKED.test(first)));
-    const input = positional && PARKED.test(first) ? `status=${first}\t${cells.slice(1).join('\t')}` : line;
-    // Dispatcher rows are [job, repo, pool, tier, prompt], unlike the
-    // generic positional format [job, pool, tier, repo, title]. A lane cell
-    // the market would not accept as a preferred_lane — empty (open hint) or
-    // invalid (invalid_requirements) — needs the dialect's requirements-aware
-    // verdict, so probe those rows through the shared parser and keep the
-    // header verdict for anything else — malformed stays malformed instead
-    // of surfacing as a generic-positional row or a bogus lane.
-    const dispatcherShape = positional && cells.length === 5 && JOB_ID.test(first) &&
-      !/^READY$/i.test(first) && !PARKED.test(first) &&
+    // A five-column dispatcher row carries no requirements cell: like the
+    // market's routed pass, its spec comes from the matching router-queue.md
+    // `(attrs)` envelope — the envelope's preferred_lane (or explicit open)
+    // beats the lane column, and a malformed envelope or lane cell is
+    // invalid_requirements, never supply. Status-first rows and parked
+    // encodings are not market rows and keep the dialect readers below.
+    const specLessMarket = positional && cells.length === 5 &&
+      JOB_ID.test(first) && !KNOWN_STATUSES.has(first.toUpperCase()) &&
+      !PARKED.test(first) && !PARKED.test(cells[2] ?? '') &&
       /^(?:frontier|work|mid|fast)$/.test(cells[3] ?? '');
-    const openProbe = dispatcherShape && !MARKET_LANE_ID.test(cells[2] ?? '');
-    let result = parseReadyTsv(dispatcherShape && !openProbe ? `id\trepo\tpool\ttier\ttitle\n${line}`
-      : positional ? input : `${header}\n${input}`);
-    if (openProbe && result.unhinted === 0 && result.invalid === 0) {
-      result = parseReadyTsv(`id\trepo\tpool\ttier\ttitle\n${line}`);
+    let result: ReturnType<typeof parseReadyTsv>;
+    if (specLessMarket) {
+      if (routerQueueText === undefined) {
+        const queue = await readSource(join(root, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false);
+        routerQueueText = queue.state === 'healthy' ? queue.text : null;
+      }
+      const laneCell = cells[2] ?? '';
+      const spec = laneCell !== '' && !MARKET_LANE_ID.test(laneCell)
+        ? 'invalid' as const
+        : readyEnvelopeSpec(routerQueueText, first);
+      const resolved = spec === 'invalid' ? null : resolveReadyMarketRow(cells, spec ?? {});
+      if (resolved === null) {
+        result = { rows: [], dropped: 1, invalid: 1, unhinted: 0, unhintedRows: [] };
+      } else if (resolved.hint === null) {
+        result = { rows: [], dropped: 0, invalid: 0, unhinted: 1,
+          unhintedRows: [{ id: first, repo: cells[1] ?? '', tier: cells[3] ?? '' }] };
+      } else {
+        result = { rows: [{ id: first, status: 'READY', pool: resolved.hint,
+          tier: cells[3], repo: cells[1] || undefined, title: cells[4] }],
+          dropped: 0, invalid: 0, unhinted: 0, unhintedRows: [] };
+      }
+    } else {
+      const input = positional && PARKED.test(first) ? `status=${first}\t${cells.slice(1).join('\t')}` : line;
+      // Dispatcher rows are [job, repo, pool, tier, prompt], unlike the
+      // generic positional format [job, pool, tier, repo, title]. A lane cell
+      // the market would not accept as a preferred_lane — empty (open hint) or
+      // invalid (invalid_requirements) — needs the dialect's requirements-aware
+      // verdict, so probe those rows through the shared parser and keep the
+      // header verdict for anything else — malformed stays malformed instead
+      // of surfacing as a generic-positional row or a bogus lane.
+      const dispatcherShape = positional && cells.length === 5 && JOB_ID.test(first) &&
+        !/^READY$/i.test(first) && !PARKED.test(first) &&
+        /^(?:frontier|work|mid|fast)$/.test(cells[3] ?? '');
+      const openProbe = dispatcherShape && !MARKET_LANE_ID.test(cells[2] ?? '');
+      result = parseReadyTsv(dispatcherShape && !openProbe ? `id\trepo\tpool\ttier\ttitle\n${line}`
+        : positional ? input : `${header}\n${input}`);
+      if (openProbe && result.unhinted === 0 && result.invalid === 0) {
+        result = parseReadyTsv(`id\trepo\tpool\ttier\ttitle\n${line}`);
+      }
     }
     dropped += result.dropped;
     unhinted += result.unhinted;

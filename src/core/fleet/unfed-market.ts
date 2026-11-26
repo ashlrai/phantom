@@ -153,6 +153,24 @@ function envelopeAttrs(routerQueue: string | null | undefined, job: string): str
 }
 
 /**
+ * The spec a spec-less (five-column) ready row inherits from its
+ * router-queue.md `(attrs)` envelope, resolved like dispatchd's routed pass:
+ * a matching envelope replaces the requirements wholesale — its
+ * preferred_lane (or explicit open) decides the hint and the lane column is
+ * never consulted — while no match returns null so the caller falls back to
+ * work_market.requirements on the row itself (the lane column). 'invalid'
+ * where from_envelope or requirements would reject the row before the
+ * market sees it (a malformed exclusive or impact).
+ */
+export function readyEnvelopeSpec(
+  routerQueue: string | null | undefined, job: string,
+): Record<string, unknown> | 'invalid' | null {
+  const attrs = envelopeAttrs(routerQueue, job);
+  if (attrs === null) return null;
+  return envelopeSpec(attrs) ?? 'invalid';
+}
+
+/**
  * Strict port of work_market.requirements: returns the row's resolved fields,
  * or null where the Python raises (unknown key, malformed field, tier order,
  * repo disagreement). The dispatcher drops such rows before the market sees
@@ -259,12 +277,9 @@ export function parseReadyMarketRows(readyTsv: string, routerQueue?: string | nu
       // not a lane id rejects the row before its router-queue envelope is read.
       const laneCell = cols[2] ?? '';
       if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) { invalid++; continue; }
-      const attrs = envelopeAttrs(routerQueue, job);
-      if (attrs !== null) {
-        const env = envelopeSpec(attrs);
-        if (env === null) { invalid++; continue; }
-        spec = env;
-      }
+      const env = readyEnvelopeSpec(routerQueue, job);
+      if (env === 'invalid') { invalid++; continue; }
+      if (env !== null) spec = env;
     }
     const row = resolveReadyMarketRow(cols, spec);
     if (row === null) { invalid++; continue; }

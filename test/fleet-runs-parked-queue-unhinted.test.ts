@@ -13,6 +13,12 @@ async function queueWith(ready: string) {
   return dir;
 }
 
+async function queueWithFiles(ready: string, routerQueue?: string) {
+  const dir = await queueWith(ready);
+  if (routerQueue !== undefined) await writeFile(join(dir, 'queue', 'router-queue.md'), routerQueue);
+  return dir;
+}
+
 describe('fleet queue lane-open rows', () => {
   it('counts open-hint rows as ready work without degrading the source or inventing a lane', async () => {
     const dir = await queueWith([
@@ -59,6 +65,70 @@ describe('fleet queue lane-open rows', () => {
         sources: { ready: 'degraded' },
       });
       expect(result.byLane.map((row) => row.lane)).toEqual(['devin']);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('resolves spec-less ready rows through their router-queue.md envelope', async () => {
+    const dir = await queueWithFiles([
+      'RQ-ENV-LANE\tphantom\tcodex\twork\tprompts/e1.md',
+      'RQ-ENV-OPEN\tphantom\tclaude\twork\tprompts/e2.md',
+      'RQ-ENV-POOL\tphantom\tcodex-local\tmid\tprompts/e3.md',
+      'RQ-PLAIN\tphantom\tdevin\twork\tprompts/p.md',
+      'RQ-SPECWIN\tphantom\tcodex\twork\tprompts/s.md\t{"preferred_lane":"claude"}',
+    ].join('\n'), [
+      '- READY RQ-ENV-LANE (P1, preferred_lane=devin): hinted work',
+      '- READY RQ-ENV-OPEN (P2): the envelope names no lane — the row is open',
+      '- CLAIMED 03:17 worker RQ-ENV-POOL (pool=claude-api): pool attr is the hint',
+      '- READY RQ-SPECWIN (P1, pool=devin): the spec cell beats the envelope',
+    ].join('\n'));
+    try {
+      const result = await readFleetQueue({ runsDir: dir, now: () => now });
+      // A matching envelope replaces the spec wholesale: preferred_lane wins
+      // over the lane column, an envelope with no lane attrs is the open hint
+      // (the lane column is never consulted), and pool=/lane= attrs resolve
+      // like the market. RQ-PLAIN has no envelope — its lane column stands —
+      // and RQ-SPECWIN's requirements cell beats its envelope.
+      expect(result).toMatchObject({
+        total: 5, ready: 5, parked: 0, malformed: 0, unhinted: 1,
+        sources: { ready: 'healthy' },
+      });
+      expect(result.byLane).toEqual([
+        { lane: 'claude', ready: 1, parked: 0, phantom: 1, other: 0, otherRepos: [] },
+        { lane: 'claude-api', ready: 1, parked: 0, phantom: 1, other: 0, otherRepos: [] },
+        { lane: 'devin', ready: 2, parked: 0, phantom: 2, other: 0, otherRepos: [] },
+      ]);
+      expect(result.nextUp).toEqual([
+        { lane: 'claude', jobs: ['RQ-SPECWIN'] },
+        { lane: 'claude-api', jobs: ['RQ-ENV-POOL'] },
+        { lane: 'devin', jobs: ['RQ-ENV-LANE', 'RQ-PLAIN'] },
+      ]);
+      expect(JSON.stringify(result)).not.toContain('prompts/');
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('counts spec-less rows the market rejects as malformed, never supply', async () => {
+    const dir = await queueWithFiles([
+      'RQ-BADENV\tphantom\tcodex\twork\tprompts/b1.md',
+      'RQ-BADLANE\tphantom\tNOT_A_LANE\twork\tprompts/b2.md',
+      'RQ-BADSPEC\tphantom\tdevin\twork\tprompts/b3.md',
+      'RQ-OK\tphantom\tcodex-local\tmid\tprompts/ok.md',
+    ].join('\n'), [
+      '- READY RQ-BADENV (P1, exclusive=maybe): malformed envelope',
+      '- READY RQ-BADLANE (P1, pool=claude): an envelope cannot rescue a bad lane cell',
+      '- READY RQ-BADSPEC (P1, preferred_lane=Not_A_Lane): bad hint',
+    ].join('\n'));
+    try {
+      const result = await readFleetQueue({ runsDir: dir, now: () => now });
+      // exclusive=maybe fails from_envelope, NOT_A_LANE fails the lane-cell
+      // pre-check the shared market applies before the envelope, and
+      // preferred_lane=Not_A_Lane fails requirements — all invalid_requirements.
+      expect(result).toMatchObject({
+        total: 1, ready: 1, parked: 0, malformed: 3, unhinted: 0,
+        sources: { ready: 'degraded' },
+      });
+      expect(result.byLane).toEqual([
+        { lane: 'codex-local', ready: 1, parked: 0, phantom: 1, other: 0, otherRepos: [] },
+      ]);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
