@@ -35,6 +35,11 @@ import {
   type AgentOsEpochAttemptReceiptV2,
   type AgentOsEpochAttemptSignerV2,
 } from './agent-os-epoch-records.js';
+import {
+  deepFreezeEpochValue as freeze,
+  epochPlainRecord as record,
+  exactEpochKeys as exactKeys,
+} from './agent-os-epoch-shared.js';
 import type {
   AgentOsEpochSnapshotEnvelopeV2,
   AgentOsEpochSnapshotSignerV2,
@@ -63,7 +68,7 @@ import {
 } from './agent-os-observation-lock.js';
 import type { AgentOsReadModelV1 } from './agent-os-read-model.js';
 
-export const AGENT_OS_EPOCH_RUNTIME_PROTOCOL_V1 =
+const AGENT_OS_EPOCH_RUNTIME_PROTOCOL_V1 =
   'ashlr-agent-os-epoch-observation-runtime-v1' as const;
 
 export interface AgentOsAuthenticatedEpochRuntimeClosureV1 {
@@ -270,37 +275,6 @@ function enterRuntime(rootPath: string): RuntimeOperation | null {
 
 function leaveRuntime(rootPath: string, operation: RuntimeOperation): void {
   if (activeRuntimeOperations.get(rootPath) === operation) activeRuntimeOperations.delete(rootPath);
-}
-
-function freeze<T>(value: T, seen = new WeakSet<object>()): T {
-  if (ArrayBuffer.isView(value)) return value;
-  if (value !== null && typeof value === 'object' && !seen.has(value)) {
-    seen.add(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) freeze(nested, seen);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
 }
 
 function clonePlain<T>(value: T, depth = 0, seen = new WeakSet<object>()): T | null {

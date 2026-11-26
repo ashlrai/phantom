@@ -80,3 +80,15 @@ it('flags a run past its phase timeout with phase age, not one within it or one 
   expect(stuckBadge(codex)).toBe('stuck · producing 47m');
   expect(stuckBadge(h.lanes[1]!)).toBeNull();
 });
+
+it('requires a readable current-phase start before flagging an old run as stuck', () => {
+  const h = computeLaneHealth(snap([
+    run({ id: 'missing', phase: 'verifying', startedAt: at(90), phaseStartedAt: null }),
+    run({ id: 'invalid', phase: 'verifying', startedAt: at(90), phaseStartedAt: 'invalid' }),
+    run({ id: 'recent', phase: 'verifying', startedAt: at(90), phaseStartedAt: at(5) }),
+    run({ id: 'overdue', phase: 'verifying', startedAt: at(90), phaseStartedAt: at(25) }),
+  ]));
+  expect(h.lanes[0]).toMatchObject({ calls: 4, stuck: [
+    { runId: 'overdue', phase: 'verifying', phaseAgeMs: 25 * 60_000, timeoutMs: 20 * 60_000 },
+  ] });
+});

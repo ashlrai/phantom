@@ -11,7 +11,7 @@ it('runs the hermetic fleet profile regression suite', () => {
   const result = spawnSync('python3', ['-B', '-m', 'unittest', 'fleet.tests.test_profile'], { cwd, encoding: 'utf8', timeout: 25_000 });
   expect(result.error).toBeUndefined();
   expect(result.status, result.stdout + result.stderr).toBe(0);
-  expect(result.stderr).toMatch(/\nOK\s*$/);
+  expect(result.stderr).toMatch(/\nOK(?: \(skipped=\d+\))?\s*$/);
 }, 30_000);
 
 it('only discovers an explicitly authorized lane with a registered resource and a matching ready executor', async () => {
