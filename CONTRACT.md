@@ -2520,6 +2520,10 @@ The `BridgeRouter.view(owner)` result and `planNodeBridge(input)` input may
 include `routes: RouteAssignment[]` alongside the scoped node and job lists.
 Assigned routes reserve slots on their destination node and host. Older views
 that omit routes use capability-based reservation estimates.
+Scoped router status nodes may carry `routingLive: boolean`. The current
+router computes it using its own clock and the same session and heartbeat
+freshness checks as placement. The bridge excludes nodes with
+`routingLive: false`. If the field is absent, the bridge uses `live`.
 Bridge manifests bind `owner` and
 optional `routerScope`; reconciliation holds owner mismatches as
 `hold-owner-mismatch` and missing or changed scopes as `hold-router-mismatch`,

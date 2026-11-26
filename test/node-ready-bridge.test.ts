@@ -80,6 +80,23 @@ describe('ready.tsv -> node router bridge', () => {
       pack: 'codex-file', secrets: [] })]);
   });
 
+  it('keeps work local when the worker lease outlives heartbeat freshness', async () => {
+    const job = 'RQ-REVIEW-STALE';
+    const f = fixture([row(job)], [{ id: 'air', caps: READ, slots: 1 }]);
+    f.advance(300_000);
+    expect(f.router.view('ashlr').nodes[0]).toMatchObject({ live: true, routingLive: false });
+    const held = await f.pass();
+    expect(held.rows[0]).toMatchObject({ offload: false, reasons: ['no_live_node'] });
+    expect(held.claimed).toEqual([]);
+    expect(f.ready()).toBe(f.line(job) + '\n');
+    expect(existsSync(f.lease(job))).toBe(false);
+
+    const session = f.sessions.get('air')!;
+    f.nodes.heartbeat(session);
+    expect((await f.pass()).claimed).toEqual([job]);
+    expect(f.nodes.pull(session)?.job.id).toBe(`ready:${job}:1`);
+  });
+
   it('keeps ineligible rows local with a reason code', async () => {
     const f = fixture([row('RQ-REVIEW-EX', 'codex-cmp', { exclusive: true }), row('RQ-REVIEW-LOC', 'codex-local'),
       row('RQ-REVIEW-DC', 'codex-cmp', { data_class: 'confidential' }), row('RQ-REVIEW-CL', 'claude'),
