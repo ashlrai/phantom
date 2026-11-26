@@ -32,6 +32,13 @@ export const HARNESS_ADAPTERS: readonly HarnessAdapter[] = Object.freeze([
   { id: 'devin', kind: 'cloud-cli', names: ['devin'] },
   { id: 'cursor', kind: 'cloud-cli', names: ['cursor-agent'] },
   { id: 'gemini', kind: 'cloud-cli', names: ['gemini'] },
+  // The remaining builtin cli-agent engines, named by their engine-registry
+  // `bins` (ashlrcode installs as `ac` or `ashlrcode`). api-model engines run
+  // inside the dispatcher process and own no CLI session tree to measure.
+  { id: 'aw', kind: 'cloud-cli', names: ['aw'] },
+  { id: 'ashlrcode', kind: 'cloud-cli', names: ['ac', 'ashlrcode'] },
+  { id: 'hermes', kind: 'cloud-cli', names: ['hermes'] },
+  { id: 'opencode', kind: 'cloud-cli', names: ['opencode'] },
   { id: 'local-model', kind: 'local-model', names: ['ollama', 'llama-server', 'omlx'] },
 ]);
 

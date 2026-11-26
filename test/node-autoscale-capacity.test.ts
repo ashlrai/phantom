@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { childrenFromRows, harnessFor, harnessSessions, type ProcessRow } from '../src/core/drive/nodes/harness-adapters.js';
+import { BUILTIN_ENGINE_REGISTRY } from '../src/core/run/engine-registry.js';
 import { CAPACITY_POLICY, computeNodeCapacity, parseNodeCapacityDoc, type NodeSnapshot } from '../src/core/drive/nodes/capacity-model.js';
 import {
   cpuBusyPercent, measureNode, parseFootprint, parsePgrepList, parsePsRows, parseSwapTotal, parseSwapouts, type MeasureHost,
@@ -51,8 +52,24 @@ describe('harness adapters', () => {
     expect(harnessFor('2.1.321')?.id).toBe('claude');
     expect(harnessFor('grok-native')?.id).toBe('grok');
     expect(harnessFor('cursor-agent')?.id).toBe('cursor');
+    expect(harnessFor('hermes')?.id).toBe('hermes');
+    expect(harnessFor('opencode')?.id).toBe('opencode');
+    expect(harnessFor('aw')?.id).toBe('aw');
+    expect(harnessFor('ac')?.id).toBe('ashlrcode');
+    expect(harnessFor('ashlrcode')?.id).toBe('ashlrcode');
     expect(harnessFor('llama-server')?.kind).toBe('local-model');
-    for (const app of ['Claude', 'Codex', 'Grok', 'Devin', 'node', 'Python', '2.1']) expect(harnessFor(app)).toBeNull();
+    for (const app of ['Claude', 'Codex', 'Grok', 'Devin', 'Hermes', 'Opencode', 'Ac', 'Aw', 'node', 'Python', '2.1']) expect(harnessFor(app)).toBeNull();
+  });
+
+  it('maps every builtin cli-agent binary so node capacity can measure its sessions', () => {
+    // A cli-agent engine without an adapter row is invisible to `phm node
+    // measure`/`capacity` and its route costs are dropped as unknown harness.
+    for (const spec of Object.values(BUILTIN_ENGINE_REGISTRY)) {
+      if (spec.kind !== 'cli-agent') continue;
+      const bins = spec.bins ?? (spec.bin ? [spec.bin] : []);
+      expect(bins.length, spec.id).toBeGreaterThan(0);
+      for (const bin of bins) expect(harnessFor(bin), `${spec.id} bin ${bin}`).not.toBeNull();
+    }
   });
 
   it('counts a CLI with its MCP children as one session and never double-counts a nested harness', () => {

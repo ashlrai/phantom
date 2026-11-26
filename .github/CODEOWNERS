@@ -1185,6 +1185,7 @@
 /test/model-cap-route-preservation-782s.test.ts @masonwyatt23
 /test/model-racing-proposal-types.test.ts @masonwyatt23
 /test/native-locus-metadata-scope.test.ts @masonwyatt23
+/test/node-autoscale-capacity.test.ts @masonwyatt23
 /test/node-autoscale-router.test.ts @masonwyatt23
 /test/node-router.test.ts @masonwyatt23
 /test/north-star-measured-leverage.test.ts @masonwyatt23
