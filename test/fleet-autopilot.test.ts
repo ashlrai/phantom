@@ -240,6 +240,24 @@ describe('planFleetAutopilot', () => {
     expect(report.action.kind).toBe('no-op');
   });
 
+  it.each(['missing', 'degraded'] as const)('keeps queue gaps unknown when ready supply is %s', (source) => {
+    const report = planFleetAutopilot(state({
+      sources: { status: 'healthy', queue: source, slots: 'healthy', rebase: 'unconfigured' },
+      admission: admission([
+        admissionLane('devin', 0, 2, 6),
+        admissionLane('codex-local', 0, 2, 0),
+      ]),
+      queue: queueView({ sources: { ready: source, skips: 'healthy' } }),
+    }));
+
+    expect(report.lanes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ lane: 'devin', ready: null, queued: 6 }),
+      expect.objectContaining({ lane: 'codex-local', ready: null, queued: 0 }),
+    ]));
+    expect(report.gaps).toEqual([]);
+    expect(report.action).toMatchObject({ kind: 'no-op', detail: expect.stringContaining('ready queue supply is unknown') });
+  });
+
   it('joins a lane seen only in slots with unknown utilization and no free slots', () => {
     const [lane] = autopilotLanes(state({
       admission: admission([]),

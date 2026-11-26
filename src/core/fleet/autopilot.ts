@@ -281,7 +281,7 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
 
   // starved-lane: launchable work queued while running under target (not held).
   for (const lane of lanes) {
-    const waiting = lane.ready ?? lane.queued;
+    const waiting = lane.ready;
     if (lane.held || lane.running === null || lane.target === null || lane.running >= lane.target || !waiting || waiting <= 0) continue;
     gaps.push({
       kind: 'starved-lane', lane: lane.lane,
@@ -310,8 +310,8 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
   // positive unhinted count keeps a free lane from reading as missing restock.
   const openSupply = state.queue?.unhinted ?? 0;
   for (const lane of lanes) {
-    const waiting = lane.ready ?? lane.queued;
-    if (lane.held || lane.freeSlots === null || lane.freeSlots <= 0 || waiting === null || waiting > 0 || openSupply > 0) continue;
+    const waiting = lane.ready;
+    if (lane.held || lane.freeSlots === null || lane.freeSlots <= 0 || waiting !== 0 || openSupply > 0) continue;
     gaps.push({
       kind: 'missing-restock', lane: lane.lane,
       severity: 50 + Math.min(lane.freeSlots * 2, 20),
@@ -328,7 +328,9 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
   if (!localUsable) {
     action = { kind: 'no-op', reason: 'state-unreadable', detail: 'No local queue, slots or admission source was readable; nothing safe to propose.' };
   } else if (topGap === null) {
-    action = { kind: 'no-op', reason: 'fleet-healthy', detail: 'No gap measured: every lane is held, at target, or fed to its queue.' };
+    action = { kind: 'no-op', reason: 'fleet-healthy', detail: state.sources.queue === 'healthy'
+      ? 'No gap measured: every lane is held, at target, or fed to its queue.'
+      : 'No gap measured with the available evidence; ready queue supply is unknown.' };
   } else {
     switch (topGap.kind) {
       case 'uncovered-conflicts': {
