@@ -126,7 +126,9 @@ Recurring adverse tallies do not stay report-only:
 `phm improve discover` reads the same projection and queues a priority-3
 backlog item for the fleet repository when one live card revision records
 at least three reverted + regressed + followed-up realized outcomes inside
-the 7-day window. Only the corpus's newest revision in a `candidate` or
+the 7-day window. The weekly fold can read up to eight UTC-day partitions
+from each dated input (skill uses, dispatches, and agent actions), subject to
+the existing reader limits. Only the corpus's newest revision in a `candidate` or
 `verified` status qualifies — superseded and withdrawn cards were already
 handled — and the items keep the association-not-causation framing since
 shadow selections never steered those runs. Withdrawing or rewriting a card

@@ -57,7 +57,7 @@ export function readSkillTrajectoryOutcomes(
     const skillRead = readEvents({
       sinceMs,
       limit: Math.max(limit * 8, 400),
-      maxFiles: 3,
+      maxFiles: Math.max(3, Math.ceil(windowHours / 24) + 1),
     });
     if (skillRead.eventState === 'degraded') return null;
     const listRecords = deps.listRecords ?? listTrajectoryRecords;
