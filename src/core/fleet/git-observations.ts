@@ -1,21 +1,27 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 type Operation = 'worktree_add' | 'worktree_remove' | 'fetch' | 'push';
+
+/** Default fleet jobs ledger, shared by local Git observers and latency readers. */
+export function jobsLedgerPath(): string {
+  const runsDir = process.env.ASHLR_RUNS_DIR?.trim() || join(homedir(), '.ashlr-runs');
+  return join(runsDir, 'metrics', 'jobs.jsonl');
+}
 
 export function recordGitOperation(lane: string, operation: Operation | undefined, elapsed_ms: number, ts: string, indexLocked: boolean): void {
   if (!operation && !indexLocked) return;
   try {
-    const dir = join(homedir(), '.ashlr-runs', 'metrics');
+    const path = jobsLedgerPath();
     const base = { event: 'git_operation', machine: hostname(), lane, ts };
     const rows = [];
     if (operation) rows.push({ ...base, operation, elapsed_ms, ...(
       operation === 'fetch' || operation === 'push' ? { retries: 0 } : {}) });
     // The diagnostic proves failure, not how much time Git spent on the lock.
     if (indexLocked) rows.push({ ...base, operation: 'index.lock', failed: true });
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    appendFileSync(join(dir, 'jobs.jsonl'), rows.map(row => JSON.stringify(row) + '\n').join(''), { mode: 0o600 });
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    appendFileSync(path, rows.map(row => JSON.stringify(row) + '\n').join(''), { mode: 0o600 });
   } catch { /* telemetry must not affect Git */ }
 }
 
