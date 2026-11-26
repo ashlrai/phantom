@@ -59,6 +59,9 @@ an exclusive job claim on the merge's PR. The claim check uses the lowercase
 `owner/repo#n` key, so repository case and a trailing slash do not distinguish
 claims. Future-dated claims can contest attribution once their receipt time
 is reached. Undated claims can still make attribution ambiguous.
+Ledger revert receipts with a PR link apply only to that PR, including links
+under `html_url`. An unparseable link supplies no revert evidence. A receipt
+without a PR link can still supply job-wide revert evidence.
 The fold takes the lane and dispatch
 time from the latest dispatch at or before the outcome, using GitHub's
 merge timestamp when available for a held merge. A closed-unmerged PR uses
