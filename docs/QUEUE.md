@@ -1449,11 +1449,17 @@ not-held outcomes. Held merges count toward the denominator.
 
 `phm resources plan --json` joins verified allowance deadlines and remaining
 quota to registered machines, their current CPU and memory headroom and free
-slots, dispatcher lane caps and ready counts, and recent finishes in
+slots, dispatcher lane caps, eligible ready jobs, and recent finishes in
 `metrics/jobs.jsonl`. It models **additional** work: already-running jobs
 occupy slots but are not credited with future quota spend. Headroom must be
 observed and positive for a machine to offer extra slots; a shared slot can
-only be allocated once. Unhinted work and future arrivals are not counted.
+only be allocated once. Compatible unhinted rows with explicit requirements
+can count toward demand. Future arrivals are outside the projection.
+
+The live planner requires a current eligible-queue read to estimate demand
+for an included lane. An unavailable read or an unverified lane leaves demand
+unknown and withholds demand-based target increases and reset-bank proposals.
+A verified lane with no eligible rows has zero demand.
 
 Waste is in the allowance's own units. Where there is a quota change and
 matching finishes inside the observation interval, the estimate uses the
