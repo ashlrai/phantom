@@ -52,10 +52,11 @@ runs on two nodes.
 phm node join --node box --owner acme --caps build,gh --json   # prints a session number
 phm node beat --node box --session 1 --usage 120 --probe-auth --json
 
-# Anyone in the owner scope queues work:
+# Anyone in the owner scope queues work; the reply already names the route —
+# `job -> node`, or `job -> nobody` with the fix that would give it a taker:
 phm node enqueue --job fix-123 --owner acme --requires gh --pack pack-fix-123 --secrets DEPLOY_KEY --json
 
-# See where it would go, then pull on the node that should run it:
+# The full plan for the scope, then pull on the node that should run it:
 phm node plan --owner acme
 phm node pull --node box --session 1 --json
 
@@ -100,7 +101,10 @@ legacy routing, not a measured zero) and its last measured hold as
 `held=<reason>` while one is reported, mark producer withdrawals, carry the
 same fix `phm node plan` prints on a job that still has no taker, and an
 empty scope says so with the join command; `enqueue` says when the job id already
-exists;
+exists and reports the job's route in the same `job -> node` / `job -> nobody`
+notation `plan` prints, so a producer learns at enqueue time whether the job has
+a taker or the fix that would give it one (a job that is already running under a
+live claim or completed carries no route — none is invented for it);
 `withdraw` names `held` (a live claim still owns it — retry after it lapses),
 `completed` and `absent`; `renew` prints the lease expiry as a time;
 `complete` and `leave` name what happened, a refused `leave` names the

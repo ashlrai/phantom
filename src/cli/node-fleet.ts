@@ -81,9 +81,16 @@ function text(verb: string, out: Record<string, unknown>): string {
   }
   if (verb === 'enqueue') {
     // enqueued:false means the job id is already taken — enqueue is idempotent
-    // on the id, so this is a fact, not a failure.
+    // on the id, so this is a fact, not a failure. The route is the same
+    // assignment `phm node plan` prints, reported at enqueue time so a producer
+    // sees immediately whether the job has a taker; a job with no plan entry
+    // (running under a live claim or completed) keeps the bare sentence.
     const jobId = String(out['jobId']);
-    return out['enqueued'] === true ? `Enqueued ${jobId}.` : `Job ${jobId} already exists; nothing changed.`;
+    const route = out['route'] as { nodeId?: string | null; fix?: string } | undefined;
+    const base = out['enqueued'] === true ? `Enqueued ${jobId}.` : `Job ${jobId} already exists; nothing changed.`;
+    if (route?.nodeId) return `${base} ${jobId} -> ${route.nodeId}.`;
+    if (route && typeof route.fix === 'string') return `${base} ${jobId} -> nobody. ${route.fix}`;
+    return base;
   }
   if (verb === 'withdraw') {
     const jobId = String(out['jobId']);

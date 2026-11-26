@@ -279,7 +279,15 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       }
       const added = nodes.enqueue(jobId, { owner, requires,
         ...(pack === undefined ? {} : { pack }), secrets, ...(task ? { task } : {}) });
-      return { jobId, enqueued: added };
+      // Report where the router would send the job now — the same assignment
+      // `phm node plan` prints — so a producer learns at enqueue time whether
+      // the job has a taker instead of discovering starvation on a later plan.
+      // A job that is not pending-routable (already running under a live claim
+      // or completed) has no plan entry, so no route is invented for it.
+      const route = nodes.plan(owner).find(a => a.jobId === jobId);
+      return { jobId, enqueued: added,
+        ...(route === undefined ? {} : { route: { nodeId: route.nodeId,
+          ...(route.fix === undefined ? {} : { fix: route.fix }) } }) };
     }
     case 'plan': return { routes: nodes.plan(optId(flags, '--owner')) };
     case 'pull': {

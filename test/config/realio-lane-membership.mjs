@@ -876,4 +876,5 @@ export const REAL_IO_TEST_FILES = [
   'test/recut-n4r2000s79.test.ts', // execFileSync builds a real temp git repo for the recovered guardian-head module
   'test/leader-relay-process-preservation-10srt1.test.ts', // spawnSync runs the real `leader replies sync` CLI child
   'test/node-ready-bridge.test.ts', // spawns python3 flock holders and contrib/mac/batch_sessions.py against real temp queue dirs
+  'test/node-task-transport-615s.test.ts', // spawnSync runs contrib/mac/node-runner.mjs as a real child process
 ];

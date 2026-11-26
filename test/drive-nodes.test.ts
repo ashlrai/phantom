@@ -685,11 +685,12 @@ describe('text output names outcomes in plain words', () => {
         'Join this computer: phm node join --owner acme',
       ].join('\n'));
       const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
-      // enqueue names the id; a duplicate id is a fact, not a failure.
+      // enqueue names the id and the route plan would give it; a duplicate id
+      // is a fact, not a failure, and still reports where the job routes.
       expect(await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], deps)).toBe(0);
-      expect(last(lines)).toBe('Enqueued j1.');
+      expect(last(lines)).toBe('Enqueued j1. j1 -> box.');
       expect(await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], deps)).toBe(0);
-      expect(last(lines)).toBe('Job j1 already exists; nothing changed.');
+      expect(last(lines)).toBe('Job j1 already exists; nothing changed. j1 -> box.');
       expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
       expect(last(lines)).toContain('job j1 pending');
       // Once pulled, status names the node holding the claim.
@@ -753,6 +754,37 @@ describe('text output names outcomes in plain words', () => {
       // list renders the same annotations.
       expect(await cmdNodeFleet('list', ['--owner', 'acme'], deps)).toBe(0);
       expect(last(lines)).toContain("job j2 pending — No node owned by 'acme' advertises gh");
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('enqueue reports the route plan gives the job, or why it has no taker', async () => {
+    const { deps, nodes, lines } = harness();
+    try {
+      // No live node in scope: the same fix `phm node plan` prints rides along.
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe("Enqueued j1. j1 -> nobody. No live node belongs to owner 'acme'. Run: phm node join --owner acme");
+      const joined = executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes());
+      const session = String(joined['session']);
+      // A live node that satisfies the job takes it; the route names that node.
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j2', '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe('Enqueued j2. j2 -> box.');
+      // A capability no node advertises reports the caps fix, not a silent queue.
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j3', '--owner', 'acme', '--requires', 'gh'], deps)).toBe(0);
+      expect(last(lines)).toBe("Enqueued j3. j3 -> nobody. No node owned by 'acme' advertises gh. Rejoin a node with --caps including them.");
+      // --json carries the same route under `route`.
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j4', '--owner', 'acme', '--json'], deps)).toBe(0);
+      expect(JSON.parse(last(lines))).toMatchObject({ schemaVersion: 1, command: 'enqueue',
+        jobId: 'j4', enqueued: true, route: { nodeId: 'box' } });
+      // The unrouted JSON shape names nodeId null with the fix, never a guess.
+      expect(executeNodeFleet('enqueue', ['--job', 'j5', '--owner', 'acme', '--requires', 'gh'], nodes()))
+        .toMatchObject({ jobId: 'j5', enqueued: true,
+          route: { nodeId: null, fix: expect.stringContaining('advertises gh') } });
+      // A completed job is not routable: re-enqueueing it invents no route.
+      const claim = executeNodeFleet('pull', ['--node', 'box', '--session', session], nodes())['claim'] as
+        { jobId: string; nodeId: string; session: number; token: number; leaderToken: number };
+      executeNodeFleet('complete', ['--job', claim.jobId, '--node', claim.nodeId, '--session', String(claim.session),
+        '--token', String(claim.token), '--leader-token', String(claim.leaderToken), '--result', 'done'], nodes());
+      expect(await cmdNodeFleet('enqueue', ['--job', claim.jobId, '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe(`Job ${claim.jobId} already exists; nothing changed.`);
     } finally { vi.restoreAllMocks(); }
   });
   it('status names each node\'s advertised slots and last measured hold', async () => {
@@ -976,9 +1008,9 @@ describe('fleet flag value validation', () => {
     // masked store refusal.
     expect(run('enqueue', taskArgs('shell-check', `sha256:${sha('do the thing')}`), f)).toMatchObject({ code: 'bad-pack', exit: 2 });
     expect(run('enqueue', taskArgs('codex-file', sha('do the thing')), f)).toMatchObject({ code: 'bad-task-sha256', exit: 2 });
-    // The valid form still enqueues.
+    // The valid form still enqueues; no node serves 'acme', so the route says so.
     expect(executeNodeFleet('enqueue', taskArgs('codex-file', `sha256:${sha('do the thing')}`), f.a))
-      .toEqual({ jobId: 'j1', enqueued: true });
+      .toMatchObject({ jobId: 'j1', enqueued: true, route: { nodeId: null } });
   });
   it('keeps the --json envelope on the new usage refusals', async () => {
     const lines: string[] = [];
