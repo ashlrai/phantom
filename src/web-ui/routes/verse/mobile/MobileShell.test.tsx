@@ -20,6 +20,7 @@ import { activityResponse, json, needsItem, runningRow, stubFetch, TOKEN } from 
 import { resetMobileToastsForTest } from './mobile-toast.js';
 import { ReachStrip } from './MobileRuntime.js';
 import { ChunkBoundary, MobileShell } from './MobileShell.js';
+import './screens/HomeGlance.js';
 
 function control(over: { paused?: boolean; running?: boolean; kill?: boolean; todayUsd?: number | null } = {}): VerseControlSnapshot {
   return {
@@ -118,7 +119,6 @@ describe('the shell', () => {
 
   it('switches screens through the hash (so Back works), and a re-tap pops to the tab root', async () => {
     mac();
-    await import('./screens/HomeGlance.js');
     render(<MobileShell />);
     await glanceLoaded();
     const tabs = screen.getByRole('navigation', { name: 'Phantom' });
