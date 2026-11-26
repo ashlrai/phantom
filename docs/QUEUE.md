@@ -780,14 +780,16 @@ whether the `PARKED` marker is in the first column or the lane column.
 
 `launchable` compares each lane's `free` slots with ready rows whose prompt
 file exists. A row counts toward the lane its market hint resolves to: the
-requirements cell's `preferred_lane` wins over the lane column, an explicit
-`null` — or an empty lane cell — is lane-open, and a row the market would
-reject is dead work, never launchable. Lane-open rows are shared supply any
-lane may take and are reported once as `openRows` (the text output names the
-count). It also excludes parked rows, jobs marked `drop` or `defer` in
-`skipped-empty.tsv`, and filler while `FILLER_HOLD` exists. Both commands use
-the launch target described below and read `~/.ashlr-runs/queue`; set
-`ASHLR_RUNS_DIR` to inspect another runs directory.
+requirements cell's `preferred_lane` — or the matching `router-queue.md`
+`(attrs)` envelope for a spec-less row — wins over the lane column, an
+explicit `null` — or an empty lane cell — is lane-open, and a row the market
+would reject (bad job id, repo, tier or spec) is dead work, never launchable.
+Lane-open rows are shared supply any lane may take and are reported once as
+`openRows` (the text output names the count). It also excludes parked rows,
+jobs marked `drop` or `defer` in `skipped-empty.tsv`, and filler while
+`FILLER_HOLD` exists. Both commands use the launch target described below and
+read `~/.ashlr-runs/queue` (including `router-queue.md` for `launchable`);
+set `ASHLR_RUNS_DIR` to inspect another runs directory.
 
 `lane-starve` exits 1 when it finds a starved lane; `launchable` exits 1 when
 any lane has more free slots than launchable rows plus lane-open supply — a
