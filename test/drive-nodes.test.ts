@@ -290,6 +290,25 @@ describe('drive node leases', () => {
   });
 });
 
+describe('nodeViews: unscoped node projection', () => {
+  it('reports every node record like view, without the owner filter', () => {
+    const store = new MemoryStore();
+    const nodes = new DriveNodes(store, { now: () => 1_000, nodeTtlMs: 100 });
+    nodes.join('alpha', { owners: ['acme'], caps: ['codex', 'phm-1.2.3'], slots: 2 });
+    nodes.join('beta', { owners: ['other'], caps: ['claude'] });
+    nodes.join('orphan');
+    const all = nodes.nodeViews();
+    expect(all.map(n => n.nodeId)).toEqual(['alpha', 'beta', 'orphan']);
+    // The same projection view() applies inside a scope — owners unfiltered.
+    expect(all[0]).toMatchObject({ nodeId: 'alpha', live: true, owners: ['acme'],
+      caps: ['codex', 'phm-1.2.3'], lanes: ['codex'], slots: 2, usage: null, auth: 'unknown' });
+    expect(all[2]).toMatchObject({ nodeId: 'orphan', owners: [], caps: [] });
+    // view() still hides what the scope cannot see; nodeViews is the
+    // host-local diagnostic read, not a wider operator surface.
+    expect(nodes.view(['acme']).nodes.map(n => n.nodeId)).toEqual(['alpha']);
+  });
+});
+
 describe('release: decline versus retry (CLI + router)', () => {
   const lease = (c: { nodeId: string; session: number; jobId: string; token: number; leaderToken: number }) =>
     ['--job', c.jobId, '--node', c.nodeId, '--session', String(c.session), '--token', String(c.token), '--leader-token', String(c.leaderToken)];

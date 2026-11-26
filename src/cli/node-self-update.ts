@@ -5,6 +5,9 @@ import { validId } from '../core/drive/nodes/state.js';
 
 export const SELF_UPDATE_USAGE = 'Usage: phm node self-update [--owner <scope>] [--target <x.y.z>] [--json]\n' +
   'Plan only: reports which pool nodes run a different phm build than --target (default: this machine). Never updates anything.\n' +
+  'On a configured pool --owner defaults to the pool scope; on the standalone registry it narrows the\n' +
+  'read to one owner scope, and without it every node record on this host is reported — the store is\n' +
+  'single-host, so owner scope gates job visibility, not which builds run here.\n' +
   'With --json every failure prints {"schemaVersion":1,"command":"self-update","error":{"code","message","fix"}} on stdout.';
 
 export interface SelfUpdateDeps {
@@ -16,12 +19,17 @@ export interface SelfUpdateDeps {
 async function defaultNodes(owner: string | null): Promise<NodeView[]> {
   const { readPoolConfig, callPool } = await import('../core/drive/nodes/pool-host.js');
   const pool = (await import('./node-pool.js')).hasNodePool() ? readPoolConfig() : null;
-  const scope = owner ?? pool?.owner;
-  if (!scope) throw new Error('--owner is required without a configured node pool');
-  if (pool) return (callPool(pool, 'status', ['--owner', scope]).result['nodes'] as NodeView[] | undefined) ?? [];
+  if (pool) {
+    const scope = owner ?? pool.owner;
+    return (callPool(pool, 'status', ['--owner', scope]).result['nodes'] as NodeView[] | undefined) ?? [];
+  }
   const [{ DriveNodes, LocalNodesStore }, { ashlrHome }, { canonicalPath, privateDirectory }, { join }] = await Promise.all([
     import('../core/drive/nodes/index.js'), import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path')]);
-  return new DriveNodes({ transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) }).view([scope]).nodes;
+  const drive = new DriveNodes({ transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) });
+  // No --owner on the standalone registry: every record is a node on this
+  // machine, so report them all — owner scope gates job visibility, not which
+  // builds run here.
+  return owner === null ? drive.nodeViews() : drive.view([owner]).nodes;
 }
 
 export async function cmdNodeSelfUpdate(args: string[], deps: SelfUpdateDeps = {}): Promise<number> {
@@ -55,16 +63,13 @@ export async function cmdNodeSelfUpdate(args: string[], deps: SelfUpdateDeps = {
       plan.steps.forEach((s, i) => console.log(`${i + 1}. ${s}`));
     }
     return 0;
-  } catch (error) {
-    // A missing --owner with no configured pool is bad usage (exit 2); a
-    // registry or pool read failure is operational (exit 1, fixed message).
-    const usageError = error instanceof Error && error.message.startsWith('--owner') ? error : null;
-    const message = usageError?.message ?? 'Node registry unavailable. Check the pool config and SSH approvals.';
+  } catch {
+    // A registry or pool read failure is operational (exit 1, fixed message);
+    // argument refusals already exited 2 above.
+    const message = 'Node registry unavailable. Check the pool config and SSH approvals.';
     if (json) console.log(JSON.stringify({ schemaVersion: 1, command: 'self-update',
-      error: { code: usageError ? 'usage' : 'error', message,
-        fix: usageError ? 'Add --owner <scope>, or configure a node pool first. Run: phm node self-update --help'
-          : 'Check the pool config and SSH approvals.' } }));
-    else console.error(usageError ? `${message}\n${SELF_UPDATE_USAGE}` : message);
-    return usageError ? 2 : 1;
+      error: { code: 'error', message, fix: 'Check the pool config and SSH approvals.' } }));
+    else console.error(message);
+    return 1;
   }
 }

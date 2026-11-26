@@ -322,16 +322,31 @@ export class DriveNodes implements QueueV1 {
     return this.transaction((state, now) => ({
       owners: [...scope],
       nodes: state.nodes.filter(n => n.owners?.some(o => scope.has(o)))
-        .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
-          caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
-          heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? null, auth: n.auth ?? 'unknown',
-          ...(n.capacity ? { capacity: n.capacity } : {}),
-          ...(n.slots === undefined ? {} : { slots: n.slots }) }))
+        .map(n => this.nodeView(n, now, scope))
         .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
       jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => ({ ...this.jobView(j),
         ...(actionableClaim(state, j, now) ? { claimedBy: j.claim!.nodeId } : {}) })),
       routes: planRoutes(state, now).filter(a => scope.has(a.owner)),
     }));
+  }
+
+  /** Every node record projected exactly like `view`, without the owner filter.
+   * For host-local diagnostics — owner scope gates job visibility, not which
+   * builds run on this machine — so `phm node self-update` can report drift
+   * across every local join. Session and fencing tokens stay hidden. */
+  nodeViews(): NodeView[] {
+    return this.transaction((state, now) => state.nodes
+      .map(n => this.nodeView(n, now))
+      .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)));
+  }
+
+  private nodeView(n: NodesState['nodes'][number], now: number, scope?: ReadonlySet<string>): NodeView {
+    return { nodeId: n.nodeId, live: n.expiresAt > now,
+      owners: scope ? (n.owners ?? []).filter(o => scope.has(o)) : [...(n.owners ?? [])],
+      caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
+      heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? null, auth: n.auth ?? 'unknown',
+      ...(n.capacity ? { capacity: n.capacity } : {}),
+      ...(n.slots === undefined ? {} : { slots: n.slots }) };
   }
 
   private currentClaim(state: NodesState, claim: JobClaim, now: number): boolean {
