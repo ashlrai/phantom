@@ -171,6 +171,9 @@ IDs must identify individual attempts. Missing, reversed or ambiguous
 repeated boundaries are reported as unmeasured, not estimated; phase totals
 need not cover the whole wall time. Existing ledgers may not yet contain all
 boundaries.
+Both latency reports withhold timings when a job's `batch_claim` falls
+at or between the paired boundaries, or when its timestamp is unknown.
+A claim does not supply a launch timestamp for queue or worker timing.
 
 Fleet IQ: `phm fleet eval-report [--days 7] [--prs prs.json] --json` scores
 merged PRs post-merge: revert, regression and follow-up rates, CI-failure

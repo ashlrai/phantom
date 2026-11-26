@@ -205,6 +205,33 @@ it('measures phases whose boundaries both follow the last launch', () => {
     .toMatchObject({ total_seconds: 30, measured_jobs: 1, missing_jobs: 0 });
 });
 
+it.each([start, end, null])('withholds latency across a batch member claim at %s', timestamp => {
+  const text = [
+    event('publish', start),
+    { ...event('batch_claim', timestamp), batch: 'RQ-BATCH-2' },
+    event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(mergeQueueLatency(text).phases.find(phase => phase.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+});
+
+it('uses batch claims to separate attempts while requiring a launch for worker timing', () => {
+  const text = [
+    event('enqueue', start), event('finish', start),
+    { ...event('batch_claim', end), batch: 'RQ-BATCH-2' },
+    event('publish', '2026-01-01T00:02:00Z'), event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const report = jobLatency(text);
+  for (const name of ['queue_wait', 'worker', 'publish_wait']) {
+    expect(report.phases.find(phase => phase.phase === name))
+      .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+  }
+  expect(mergeQueueLatency(text).phases.find(phase => phase.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 0 });
+});
+
 it.each([null, 'bad-date'])('withholds phase timings when a launch timestamp is %s', timestamp => {
   const text = [
     event('enqueue', start),
