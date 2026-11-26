@@ -382,6 +382,8 @@ async function runVerse(parsed: VerseOptions, command: VerseCommandName, signal:
   let handle: import('../core/types.js').WebServerHandle;
   try {
     handle = await startServer(cfg, { port, open, allowDispatch });
+    // Local agents reach the self-surface through this 0600 file (docs/DESKTOP-OPERATOR.md).
+    try { (await import('../core/verse/self-surface.js')).publishSelfSurfaceEndpoint(handle.url); } catch { /* the console runs without it */ }
   } catch (err) {
     console.error(red('error: ') + (describeListenError(err, port) ?? 'Failed to start server: ' + String(err)));
     return 1;

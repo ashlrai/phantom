@@ -337,6 +337,26 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "append",
     },
     {
+      "name": "self_snapshot",
+      "safety": "read",
+    },
+    {
+      "name": "self_screenshot",
+      "safety": "read",
+    },
+    {
+      "name": "self_navigate",
+      "safety": "append",
+    },
+    {
+      "name": "self_act",
+      "safety": "append",
+    },
+    {
+      "name": "self_check",
+      "safety": "append",
+    },
+    {
       "name": "phm_wiki_map",
       "safety": "read",
     },
@@ -2627,6 +2647,84 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "desktop_click",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object",
+    },
+    "name": "self_snapshot",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "include_image": {
+          "description": "<description>",
+          "type": "boolean",
+        },
+      },
+      "required": [],
+      "type": "object",
+    },
+    "name": "self_screenshot",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "section": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "section",
+      ],
+      "type": "object",
+    },
+    "name": "self_navigate",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "click",
+            "focus",
+          ],
+          "type": "string",
+        },
+        "test_id": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "test_id",
+      ],
+      "type": "object",
+    },
+    "name": "self_act",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "update_baseline": {
+          "description": "<description>",
+          "type": "boolean",
+        },
+      },
+      "required": [],
+      "type": "object",
+    },
+    "name": "self_check",
   },
   {
     "inputSchema": {

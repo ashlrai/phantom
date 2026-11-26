@@ -271,6 +271,8 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-slow-prs' as MountedApiModuleId, load: async () => (await import('./slow-prs-api.js')).handleSlowPrsApi },
   // The `phm commands` catalog for the palette, plus bounded read-only runs (core/verse/commands-api.ts).
   { id: 'commands' as MountedApiModuleId, load: async () => (await import('./commands-api.js')).handleCommandsApi },
+  // Phantom sees and drives its own window (core/verse/self-surface-api.ts).
+  { id: 'self-surface' as MountedApiModuleId, load: async () => (await import('./self-surface-api.js')).handleSelfSurfaceApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
@@ -339,7 +341,9 @@ async function dispatchMountedModules(
       sendJson(res, 404, { error: `not found: ${method} ${path}` });
       return true;
     }
-    if (!passesMutationGate(req, res, ctx.token)) return true;
+    // The self-surface request route takes its own scoped token (or this one) and
+    // refuses browser origins itself (self-surface-api.ts); nothing else is exempt.
+    if (path !== '/api/verse/self/request' && !passesMutationGate(req, res, ctx.token)) return true;
   }
   const unavailable: MountedApiModuleId[] = [];
   for (const entry of mountedModules) {
