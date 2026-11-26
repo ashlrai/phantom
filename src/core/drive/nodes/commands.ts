@@ -60,16 +60,18 @@ const need = (flags: Map<string, string>, name: string): string => {
 };
 
 const csv = (value: string | undefined): string[] => (value ? value.split(',').map(v => v.trim()).filter(Boolean) : []);
-const num = (flags: Map<string, string>, name: string): number => {
+/** The default fix names where lease numbers come from; self-reported flags
+ * (--slots, --usage) pass their own, since join and pull never print them. */
+const num = (flags: Map<string, string>, name: string, fix = 'Pass the number printed by phm node join or pull.'): number => {
   const raw = need(flags, name);
-  if (!/^\d{1,15}$/.test(raw)) throw new UsageError('bad-number', `${name} must be a non-negative integer.`, `Pass the number printed by phm node join or pull.`);
+  if (!/^\d{1,15}$/.test(raw)) throw new UsageError('bad-number', `${name} must be a non-negative integer.`, fix);
   return Number(raw);
 };
 /** Integer flag under the store's documented ceiling (slots 0-64, usage permille
  * 0-1000). Out-of-range is bad usage — exit 2 naming the flag — never the masked
  * store failure the DriveNodes bound check would surface as. */
 const boundedNum = (flags: Map<string, string>, name: string, max: number, fix: string): number => {
-  const value = num(flags, name);
+  const value = num(flags, name, fix);
   if (value > max) throw new UsageError(`bad-${name.slice(2)}`, `${name} must be an integer from 0 to ${max}.`, fix);
   return value;
 };
