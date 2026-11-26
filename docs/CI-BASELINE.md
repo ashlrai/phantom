@@ -634,6 +634,10 @@ counts in that window, the last-hour attempt count, the recurring flakes and
 the rerun verdicts. Reports and the hourly cap count rows through the
 evaluation time, inclusive. Future-dated receipts still prevent duplicate
 reruns and duplicate verdict writes.
+Attempt totals, the hourly cap, and flake recurrence use the earliest
+observed attempt receipt for each repository, head SHA and run ID within
+the retained journal. Ties use journal order. Replays leave the original
+attempt time in effect, and recent entries still show each observed receipt.
 
 ## Rerun verdicts
 
