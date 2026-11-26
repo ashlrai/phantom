@@ -1,6 +1,6 @@
 import { statfsSync } from 'node:fs';
-import { homedir, platform, totalmem } from 'node:os';
-import { readMacHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
+import { homedir, totalmem } from 'node:os';
+import { readPlatformHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
 import { assessNodeCapacity, nodeRamSlots, type NodeCapacity } from './capacity.js';
 
 const GIB = 1024 ** 3;
@@ -64,5 +64,5 @@ export function assessProfileCapacity(profile: NodeProfile, ramBytes: number, me
 export function readProfileCapacity(profile: NodeProfile): NodeCapacity {
   let freeDisk: number | null = null;
   try { const disk = statfsSync(homedir()); freeDisk = disk.bavail * disk.bsize; } catch { /* unknown holds */ }
-  return assessProfileCapacity(profile, totalmem(), platform() === 'darwin' ? readMacHostHeadroom() : null, freeDisk);
+  return assessProfileCapacity(profile, totalmem(), readPlatformHostHeadroom(), freeDisk);
 }

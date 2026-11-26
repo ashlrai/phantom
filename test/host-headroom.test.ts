@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { assessHostHeadroom, createHostHeadroomGate, parsePressureLevel, parseSwapUsage, parseVmStat,
-  readMacHostHeadroom } from '../src/core/run/host-headroom.js';
+import { assessHostHeadroom, createHostHeadroomGate, parseLinuxPressureLevel, parsePressureLevel, parseSwapUsage,
+  parseVmStat, readLinuxHostHeadroom, readMacHostHeadroom } from '../src/core/run/host-headroom.js';
 
 const vm = readFileSync(new URL('./fixtures/host-headroom/vm_stat.txt', import.meta.url), 'utf8');
 const swap = readFileSync(new URL('./fixtures/host-headroom/swapusage.txt', import.meta.url), 'utf8');
@@ -103,4 +103,38 @@ describe('launch refusal based on kernel pressure', () => {
     'refuses invalid telemetry %j', (reading) => {
       expect(assessHostHeadroom(reading as Parameters<typeof assessHostHeadroom>[0]).allowed).toBe(false);
     });
+});
+
+describe('Linux /proc memory telemetry', () => {
+  const meminfo = 'MemTotal:       16384000 kB\nMemFree:         2048000 kB\nMemAvailable:    8192000 kB\n'
+    + 'Buffers:          512000 kB\nCached:          4096000 kB\nSwapCached:            0 kB\n'
+    + 'SwapTotal:       2097152 kB\nSwapFree:        1048576 kB\n';
+  const pressure = (avg10: string) => `some avg10=${avg10} avg60=0.00 avg300=0.00 total=12345\n`
+    + 'full avg10=0.00 avg60=0.00 avg300=0.00 total=678\n';
+
+  it.each([['0.00', 1], ['9.99', 1], ['10.00', 2], ['29.99', 2], ['30.00', 4], ['100.00', 4]] as const)(
+    'maps PSI some avg10 %s to pressure level %i', (avg10, expected) => {
+      expect(parseLinuxPressureLevel(pressure(avg10))).toBe(expected);
+    });
+
+  it.each([null, '', 'full avg10=0.00 avg60=0.00 avg300=0.00 total=1', pressure('abc'), pressure('-1'),
+    pressure('101'), 'some avg10=', 'some avg10=1.2.3 avg60=0.00 total=1'])(
+    'rejects missing or malformed PSI %j', (text) => {
+      expect(parseLinuxPressureLevel(text)).toBeNull();
+    });
+
+  it('reads MemAvailable share, used swap and PSI level from the /proc files', () => {
+    const read = (path: string) => path === '/proc/meminfo' ? meminfo : pressure('2.50');
+    // MemAvailable 8192000/16384000 kB = 50%; swap used (2097152-1048576) kB = 1 GiB.
+    expect(readLinuxHostHeadroom(read)).toEqual({ freePercent: 50, swapGb: 1, pressureLevel: 1 });
+    const held = (path: string) => path === '/proc/meminfo' ? meminfo : pressure('42.50');
+    expect(readLinuxHostHeadroom(held)?.pressureLevel).toBe(4);
+  });
+
+  it('fails closed when either /proc file is missing or malformed', () => {
+    expect(readLinuxHostHeadroom(() => null)).toBeNull();
+    expect(readLinuxHostHeadroom(path => path === '/proc/meminfo' ? meminfo : null)).toBeNull();
+    expect(readLinuxHostHeadroom(path => path === '/proc/pressure/memory' ? pressure('1.00') : 'garbage')).toBeNull();
+    expect(readLinuxHostHeadroom(() => { throw new Error('private kernel details'); })).toBeNull();
+  });
 });

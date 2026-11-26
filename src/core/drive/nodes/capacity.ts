@@ -1,6 +1,6 @@
 import { statfsSync } from 'node:fs';
 import { availableParallelism, cpus, freemem, homedir, loadavg, platform, totalmem, uptime } from 'node:os';
-import { assessHostHeadroom, readMacHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
+import { assessHostHeadroom, readPlatformHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
 import { hostSlots, type HostSlotLease, type HostSlots } from './host-slots.js';
 
 import type { HostStats } from './state.js';
@@ -18,6 +18,11 @@ export interface CapacityOptions {
   pack?: string;
   resourceHint?: PackResourceHint;
   readCpu?: () => { parallelism: number; load: number[] } | null;
+  /** Injected memory-headroom reader; defaults to the platform reader (macOS
+   * kernel telemetry, Linux /proc; other platforms read nothing and hold). */
+  readMemory?: () => HostHeadroom | null;
+  /** Injected free-disk reader in bytes; defaults to statfs of the home directory. */
+  readDisk?: () => number | null;
   registry?: HostSlots;
   lease?: HostSlotLease;
 }
@@ -74,10 +79,12 @@ export function assessNodeCapacity(ramBytes: number, memory: HostHeadroom | null
 
 /** Additive to DISKGUARD: never substitutes for the runner's existing disk checks. */
 export function readNodeCapacity(light = false, options: CapacityOptions = {}): NodeCapacity {
+  const readDisk = options.readDisk ?? (() => { const disk = statfsSync(homedir()); return disk.bavail * disk.bsize; });
   let freeDisk: number | null = null;
-  try { const disk = statfsSync(homedir()); freeDisk = disk.bavail * disk.bsize; } catch { /* unknown holds */ }
+  try { freeDisk = readDisk(); } catch { /* unknown holds */ }
   const readCpu = () => platform() === 'win32' ? null : { parallelism: availableParallelism(), load: loadavg() };
-  return shareNodeCapacity(assessNodeCapacity(totalmem(), platform() === 'darwin' ? readMacHostHeadroom() : null, freeDisk,
+  const readMemory = options.readMemory ?? readPlatformHostHeadroom;
+  return shareNodeCapacity(assessNodeCapacity(totalmem(), readMemory(), freeDisk,
     light, { readCpu, ...options }), options);
 }
 

@@ -128,7 +128,9 @@ Exit codes: 0 ok, 1 lease or session lost or store unavailable, 2 bad usage.
 slot-aware admission and host grouping. Do not hand-write it: `phm node measure`
 prints the exact object to paste (`--capacity "$(phm node measure)"`), measured
 on this machine under the same rules the pool worker applies, so manual and
-worker samples cannot drift apart. `held` is `null` or `memory-unmeasured`,
+worker samples cannot drift apart. The memory reading is measured on this
+machine — macOS kernel telemetry or Linux /proc — and a platform with no reader
+reports `memory-unmeasured`. `held` is `null` or `memory-unmeasured`,
 `memory-pressure`, `disk-unmeasured` or `disk-pressure`, and a held node reports
 `"slots":0`. A node held for a reason the sample cannot express (`cpu-*`,
 `host-slots-*`) makes `measure` exit 1; omit `--capacity` on that beat, as the
