@@ -70,6 +70,16 @@ describe('fleet resource plan', () => {
     expect(buildFleetResourcePlan(null, [], null, ledger, now).allowances.find(row => row.id === 'codex-personal')?.remaining).toBeNull();
   });
 
+  it('does not reserve shared slots from raw dispatcher demand for an omitted lane', () => {
+    const demand = new Map([['agy', ['eligible-job']]]);
+    const plan = buildFleetResourcePlan(live, [{ ...node, freeSlots: 1 }], status(), ledger, now, [], undefined, demand);
+    expect(plan.lanes.find(row => row.lane === 'codex-personal')).toMatchObject({
+      queued_jobs: 10, target_concurrency: null, additional_slots: null,
+    });
+    expect(plan.allowances.find(row => row.id === 'codex-personal')?.projected_jobs).toBeNull();
+    expect(plan.lanes.find(row => row.lane === 'agy')).toMatchObject({ queued_jobs: 1, additional_slots: 1 });
+  });
+
   it('keeps advisory unfed slots unknown when only the dispatcher total is available', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'phantom-unfed-ready-'));
     try {

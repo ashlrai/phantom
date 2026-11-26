@@ -123,16 +123,20 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const active = candidates.filter(row => row.action === 'burn' && row.remaining !== null && row.jobs_per_slot !== null &&
       row.jobs_per_slot > 0 && row.estimated_quota_per_job !== null);
     const eligible = machines.flatMap((row, index) => row.lanes?.some(cap => capServesLane(cap, name)) ? [index] : []);
+    // When queue eligibility was evaluated, an omitted lane has no verified
+    // demand. Its raw dispatcher count must not reserve shared slots.
+    const laneDemand = demand?.get(name);
     if (lane.running === null || lane.max_concurrency === null || lane.queued_jobs === null || lane.held === null) continue;
     if (lane.held || lane.queued_jobs === 0 || lane.running >= lane.max_concurrency || candidates.some(row => row.action === 'hold')) {
       lane.target_concurrency = lane.running;
       lane.additional_slots = 0;
       continue;
     }
+    if (demand !== undefined && laneDemand === undefined) continue;
     if (!active.length || !eligible.length || eligible.some(index => slots[index] === null)) continue;
     const need = Math.max(...active.map(row => Math.ceil(row.remaining! / row.estimated_quota_per_job! / row.jobs_per_slot!)));
     const total = eligible.reduce((sum, index) => sum + slots[index]!, 0);
-    const available = demand?.get(name)?.filter(job => !reserved.has(job));
+    const available = laneDemand?.filter(job => !reserved.has(job));
     const additional = Math.min(need, total, available?.length ?? lane.queued_jobs, Math.max(0, lane.max_concurrency - lane.running));
     if (available) {
       for (const job of available.slice(0, additional)) reserved.add(job);
