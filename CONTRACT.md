@@ -5001,7 +5001,14 @@ explicit and peer mappings confer no authority. See the
 `listTrajectoryRecords(opts?)` (`src/core/autonomy/trajectory-records.ts`) accepts
 an optional `asOfMs` report time in epoch milliseconds. It defaults to the
 current time and anchors the lookback and both endpoints of the skill-use
-and post-merge observation windows.
+and post-merge observation windows. Direct dispatch ledger reads use the
+same cutoff.
+
+`readDispatchProductionEventsDetailed(opts?)` and
+`readDispatchProductionEvents(opts?)` accept an optional inclusive `asOfMs`
+in epoch milliseconds. Future UTC partitions do not consume dated file
+slots, and future events, including treatment outcome receipts, do not
+consume event slots. Physical scan limits still apply to selected files.
 
 `fleet.plugins-panel.v1` and `fleet.skills-panel.v1` (`src/core/fleet/installed-panels.ts`):
 `readPluginsPanel(opts?)`, `readSkillsPanel(opts?)`, `formatInstalledPanel(panel, noun)`.

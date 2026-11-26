@@ -1396,6 +1396,7 @@ export function mergeTreatmentOutcomeReceipts(
         throw new Error('restored retired treatment outcome receipt');
       }
       if (opts.sinceMs !== undefined && eventMs < opts.sinceMs) continue;
+      if (opts.asOfMs !== undefined && eventMs > opts.asOfMs) continue;
       receipts.set(name, withLearningLabelOrigin(event, event.learningLabel, event));
     } catch {
       recordDispatchProductionInvalidReason(result, 'receipt-invalid');

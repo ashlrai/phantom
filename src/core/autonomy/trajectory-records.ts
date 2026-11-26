@@ -1225,6 +1225,7 @@ function listTrajectoryRecordsAt(
   const maxFiles = trajectoryWindowMaxFiles(windowHours);
   const dispatchReadOptions = {
     sinceMs,
+    asOfMs,
     limit: Math.max(limit * 6, 200),
     maxFiles,
   };
@@ -1940,6 +1941,7 @@ export function listTrajectoryJoinQuality(
   try {
     dispatchRead = (deps.readDispatchProductionEventsDetailed ?? readDispatchProductionEventsDetailed)({
       sinceMs,
+      asOfMs,
       limit: Math.max(limit * 6, 200),
       maxFiles,
     });
