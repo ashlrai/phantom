@@ -3559,11 +3559,11 @@ proven, not fabricated) and an unreadable one reports
 `{status:'unavailable', reason}`.
 `board` is the digest's window into the shared task board
 (`src/core/fleet/bus-board.ts`, the store `phm bus board pending` reads)
-that the unified bus never carried: `BusBoard.pendingFor(labels, now, jobId?, contains?, sinceMs?, beforeMs?, sender?)` runs
+that the unified bus never carried: `BusBoard.pendingFor(labels, now, jobId?, contains?, sinceMs?, beforeMs?, sender?, id?)` runs
 the board's own locked snapshot plus one shared-queue claim-index read under
 the union of every label the agent answers to, so an agent on the board no
 longer needs a separate `--peer` read per label. Its fleet-wide form,
-`BusBoard.pendingAll(now?, jobId?, contains?, sinceMs?, beforeMs?, sender?)`, takes the same
+`BusBoard.pendingAll(now?, jobId?, contains?, sinceMs?, beforeMs?, sender?, id?)`, takes the same
 optional filters over every thread member as the label set — the digest
 `phm comms inbox`'s board source and `fleet_bus_board` project through the
 shared `readBusBoardPending` read, which reports `missing` for a
@@ -3575,7 +3575,7 @@ through the identity registry under the board's fleet root into the
 unresolvable ref or unreadable registry — and `phm bus
 board pending --all` serves the same `pendingAll` digest directly. The
 single-peer form `phm bus board pending` serves,
-`BusBoard.pending(actor, now?, jobId?, contains?, sinceMs?, beforeMs?, sender?)`, takes the
+`BusBoard.pending(actor, now?, jobId?, contains?, sinceMs?, beforeMs?, sender?, id?)`, takes the
 same optional filters under the identical `pendingDigest` rules while
 keeping its `peer` display shape. `peers` names the queried
 labels the board actually knows — each a member of at least one thread,
@@ -3613,7 +3613,14 @@ shares: a delivery matches only when its parsed time is strictly below the
 cutoff, so `sinceMs`/`beforeMs` read one `[since, before)` window — the
 lower bound inclusive, the upper exclusive, an unparseable `createdAt`
 satisfying neither — while tasks stay unmatchable under either bound and
-the rollup rule is unchanged. Board
+the rollup rule is unchanged. `id` is the exact retained-envelope match
+every bus read's `--id` applies: deliveries keep only the unacknowledged
+post whose stored `id` — the envelope id `thread ack` and `hops` report —
+strictly equals it, while tasks record no envelope id and never match, the
+same "unknown stays out" rule a time bound applies to the undated rows,
+and a thread rollup lists only while that surviving delivery remains.
+`phm bus board pending --id` serves it on both the single-peer and `--all`
+forms, composing with the other filters. Board
 content stays `trust:'untrusted'` shared data: it coordinates attention,
 never grants execution authority.
 `sessions` is the digest's window into the fleet's open session-handoff

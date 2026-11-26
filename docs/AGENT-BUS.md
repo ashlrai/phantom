@@ -1590,10 +1590,11 @@ the three thread sections pass the value to their own reads' id
 filters (the inbox and conversations reads keep the item envelope
 `id` belongs to, the wakes read the hint id — the triggering
 envelope's wire id on a `bus.send` hint). `board` reports the
-shared `phm bus board pending` digest whole — that projection's
-own filter grammar takes no envelope citation — and `channels`/
-`sessions`/`coordination`/`seats` carry no per-item envelope, so all
-four stay
+shared `phm bus board pending` digest whole — that read's own
+`--id` envelope filter is not applied to this section — and
+`channels`/`sessions`/`coordination`/`seats` carry no per-item
+envelope, so all
+stay
 unfiltered,
 like they do under `--priority`; an id nothing on the bus carries
 is an honest empty match, never an error and never a widened one,
