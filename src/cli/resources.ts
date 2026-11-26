@@ -185,6 +185,10 @@ function printResourcesHelp(): void {
 }
 
 export async function cmdResources(args: string[]): Promise<number> {
+  if (args[0] === 'evidence') {
+    const { cmdResourcesEvidence } = await import('./resources-evidence.js');
+    return cmdResourcesEvidence(args.slice(1));
+  }
   if (args[0] === 'plan') {
     const { cmdResourcesPlan } = await import('./resources-plan.js');
     return cmdResourcesPlan(args.slice(1));
