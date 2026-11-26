@@ -46,6 +46,13 @@ describe('phm node self-update', () => {
     expect(nodesFn).toHaveBeenCalledWith('ashlr');
     expect(JSON.parse(out)).toMatchObject({ target: '3.30.34', drifted: ['w2'], executable: false });
   });
+  it('passes a null scope to the registry read when --owner is omitted', async () => {
+    // On a configured pool the null falls back to the pool scope; on the
+    // standalone registry it means "every node record on this host".
+    const { code, nodesFn } = await run(['--json']);
+    expect(code).toBe(0);
+    expect(nodesFn).toHaveBeenCalledWith(null);
+  });
   it('refuses any flag that could apply an update, and bad values, before reading nodes', async () => {
     for (const args of [['--apply'], ['--owner'], ['--target', 'latest'], ['--owner', 'a b'], ['--owner=a', '--owner=b']]) {
       const { code, nodesFn } = await run(args);

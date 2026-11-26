@@ -211,8 +211,12 @@ A node advertises its build as a `phm-<version>` capability when it joins — a
 pool worker sends it explicitly and a standalone `phm node join` adds it
 automatically (a cap, so a primary on an older build still accepts the join, and
 the node's own build replaces any stale `phm-*` cap copied into `--caps`).
-`phm node self-update --owner <scope> --json` compares every node against this
-machine's version (or `--target x.y.z`) and prints a plan. It is plan only: it
+`phm node self-update --json` compares every node against this
+machine's version (or `--target x.y.z`) and prints a plan. On a configured pool
+`--owner` defaults to the pool scope; on the standalone registry `--owner`
+narrows the read to one owner scope and, omitted, every node record on this
+host is reported — the store is single-host, so owner scope gates job
+visibility, not which builds run here. It is plan only: it
 never updates or restarts a node. A node showing `unreported` predates this or
 has not rejoined. Update primary and backup first, then workers.
 

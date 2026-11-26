@@ -422,6 +422,26 @@ describe('phm node CLI', () => {
     expect(JSON.parse(json.out).error).toMatchObject({ code: 'missing-flag' });
   });
 
+  it('self-update reads every standalone node without --owner and narrows with it', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    // First run on an empty store is a plan, not the old --owner refusal.
+    const empty = await cli('self-update', '--json');
+    expect(empty.code).toBe(0);
+    expect(JSON.parse(empty.out)).toMatchObject({ command: 'self-update', nodes: [], drifted: [] });
+    // Owner scope gates job visibility, not which builds run on this host:
+    // joins under two scopes both report, and --owner still narrows the read.
+    expect((await cli('join', '--node', 'alpha', '--owner', 'acme', '--json')).code).toBe(0);
+    expect((await cli('join', '--node', 'beta', '--owner', 'other', '--json')).code).toBe(0);
+    const all = JSON.parse((await cli('self-update', '--json')).out);
+    expect(all.nodes.map((n: { nodeId: string }) => n.nodeId)).toEqual(['alpha', 'beta']);
+    expect(all.nodes.every((n: { live: boolean }) => n.live)).toBe(true);
+    // Both joined under this build, so neither reports drift against it.
+    expect(all.drifted).toEqual([]);
+    const scoped = JSON.parse((await cli('self-update', '--owner', 'acme', '--json')).out);
+    expect(scoped.nodes.map((n: { nodeId: string }) => n.nodeId)).toEqual(['alpha']);
+  });
+
   it('reports usage for bare and unknown node verbs instead of the bootstrap error', async () => {
     const bare = await cli();
     expect(bare.code).toBe(2);

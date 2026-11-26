@@ -8,7 +8,8 @@
  * subcommands.
  */
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const deps = vi.hoisted(() => ({
@@ -45,7 +46,7 @@ beforeEach(() => {
   deps.capacity.mockReturnValue({ slots: 2, held: null });
   deps.call.mockImplementation((_config, verb) => ({ demoted: false, result: verb === 'status' ? { nodes: [], jobs: [] } : {} }));
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe('phm node pool verbs', () => {
   it('names local usage refusals instead of masking them as pool failures', async () => {
@@ -113,10 +114,13 @@ describe('phm node self-update', () => {
       error: { code: 'usage', fix: expect.stringContaining('self-update --help') } });
   });
 
-  it('treats a missing --owner with no pool as usage, not an operational failure', async () => {
+  it('reads the standalone registry when --owner is omitted and no pool exists', async () => {
+    // A fresh home keeps this off the worker's shared store, which earlier
+    // cases in this file leave malformed on purpose.
+    vi.stubEnv('ASHLR_HOME', realpathSync(mkdtempSync(join(tmpdir(), 'self-update-'))));
     const lines = capture();
-    expect(await cmdNodeSelfUpdate(['--json'])).toBe(2);
-    expect(lastJson(lines).error).toMatchObject({ code: 'usage', message: expect.stringContaining('--owner') });
+    expect(await cmdNodeSelfUpdate(['--json'], { localVersion: () => '3.30.34' })).toBe(0);
+    expect(lastJson(lines)).toMatchObject({ command: 'self-update', nodes: [], drifted: [] });
   });
 
   it('masks registry read failures', async () => {
