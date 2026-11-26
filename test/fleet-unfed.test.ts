@@ -544,6 +544,21 @@ describe('foldDecisionOutcomes', () => {
     });
   });
 
+  it('uses the first parseable verdict stamp while preserving terminal timestamp precedence', () => {
+    const market = ['RQ-MERGED', 'RQ-CLOSED', 'RQ-REVERTED', 'RQ-FUTURE']
+      .map(job => decision(job, t - 100)).join('\n');
+    const jobs = [
+      outcome('RQ-MERGED', { mergedAt: 'invalid', ts: iso(now) }),
+      outcome('RQ-CLOSED', { phase: 'CLOSED', closedAt: 'invalid', ts: 'invalid', at: iso(now) }),
+      outcome('RQ-REVERTED', { reverted: true, reverted_at: 'invalid', revertedAt: iso(now) }),
+      outcome('RQ-FUTURE', { mergedAt: iso(now + 1), ts: iso(now) }),
+    ].join('\n');
+
+    expect(foldDecisionOutcomes(market, jobs, now, 24).overridden).toEqual({
+      decided: 4, known: 3, merged: 2, unmerged: 1, reverted: 1, unresolved: 1,
+    });
+  });
+
   it('says when there is no market journal', () => {
     expect(foldDecisionOutcomes(null, outcome('RQ-A'), now, 24)).toMatchObject({
       available: false, jobsAvailable: true, decided: 0,

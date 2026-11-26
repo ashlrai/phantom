@@ -6,6 +6,7 @@ import { isAbsolute, join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 import { ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
+import { parseLedgerTs } from '../metrics/loop.js';
 
 // Read-only recorded job outcomes from the newest ROUTER_OUTCOME_LEDGER_LIMIT
 // bytes of <runs>/metrics/jobs.jsonl, joined with the per-call spend ledger
@@ -1573,11 +1574,6 @@ const hasRevertStamp = (r: Row): boolean =>
  * the same field set dispatchd `_vc_pick` and metrics/loop accept.
  */
 const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-/** Timestamp keys for a row in the given phase; MERGED prefers mergedAt, CLOSED closedAt. */
-const ledgerTsKeys = (phase: string): readonly string[] => {
-  const preferred = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
-  return preferred === null ? LEDGER_TS_KEYS : [preferred, ...LEDGER_TS_KEYS.filter(k => k !== preferred)];
-};
 
 /**
  * Event names that carry a terminal merge verdict when no phase field
@@ -1962,10 +1958,10 @@ function foldRouterOutcomesWithCiCoverage(
     const state = mergePhase(r);
     const merged = state === 'MERGED' ? true : state === 'CLOSED' ? false : typeof r['merged'] === 'boolean' ? r['merged'] : null;
     if (merged !== null) {
-      const verdictAt = Date.parse(str(r, ...ledgerTsKeys(state)) ?? '');
-      const ts = verdictAt || 0;
-      if ((opts.verdictAsOfMs === undefined || verdictAt <= opts.verdictAsOfMs)
-        && ts >= (mergedAt.get(j) ?? -1)) {
+      const verdictAt = ledgerEventTs(r, merged ? 'MERGED' : 'CLOSED');
+      const ts = verdictAt ?? Number.NEGATIVE_INFINITY;
+      if ((opts.verdictAsOfMs === undefined || (verdictAt !== null && verdictAt <= opts.verdictAsOfMs))
+        && ts >= (mergedAt.get(j) ?? Number.NEGATIVE_INFINITY)) {
         o.merged = merged;
         mergedAt.set(j, ts);
         if (u === null) verdictPrKeys.delete(j);
@@ -1980,8 +1976,10 @@ function foldRouterOutcomesWithCiCoverage(
     // Sticky-true, matching metrics-ingest: any recorded revert evidence wins
     // and a later reverted:false cannot undo it; explicit false only stands
     // when no positive evidence exists anywhere in the job's rows.
+    const revertAt = opts.verdictAsOfMs === undefined ? null
+      : parseLedgerTs(r['reverted_at']) ?? parseLedgerTs(r['revertedAt']) ?? ledgerEventTs(r, null);
     if (o.reverted !== true && (opts.verdictAsOfMs === undefined
-      || Date.parse(str(r, 'reverted_at', 'revertedAt', ...LEDGER_TS_KEYS) ?? '') <= opts.verdictAsOfMs)) {
+      || (revertAt !== null && revertAt <= opts.verdictAsOfMs))) {
       if (r['reverted'] === true || hasRevertStamp(r) || hasRevertName(r, EVENT_NAME_KEYS) || hasRevertName(r, PHASE_KEYS)) {
         o.reverted = true;
       } else if (r['reverted'] === false) {
