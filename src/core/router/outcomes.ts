@@ -3341,14 +3341,17 @@ async function liveAuthorityEvidence(): Promise<readonly RouterOutcomeEvidenceRo
  * ledger contributes no keys — corrupt evidence never marks a merge
  * reverted.
  */
-async function liveRevertOutcomeKeys(rootDir: string | undefined): Promise<{ state: LedgerReadState; keys: ReadonlySet<string> }> {
+async function liveRevertOutcomeKeys(rootDir: string | undefined, throughMs: number): Promise<{ state: LedgerReadState; keys: ReadonlySet<string> }> {
   try {
     const { readRevertOutcomeRecords, revertOutcomesLedgerPath, standingRevertKeys } = await import('../improve/revert-ledger.js');
     const read = readRevertOutcomeRecords(revertOutcomesLedgerPath(rootDir));
     const state: LedgerReadState = read.state === 'missing' ? 'missing'
       : read.state === 'read' ? 'read'
       : read.reasons.includes('ledger-too-large') ? 'too-large' : 'unreadable';
-    return { state, keys: state === 'read' ? standingRevertKeys(read.records) : new Set<string>() };
+    const keys = state === 'read'
+      ? standingRevertKeys(read.records.filter(record => Date.parse(record.revertedAt) <= throughMs))
+      : new Set<string>();
+    return { state, keys };
   } catch {
     return { state: 'unreadable', keys: new Set<string>() };
   }
@@ -3515,7 +3518,7 @@ export async function readRouterOutcomes(opts: {
   const crossReviewRead = await readLedgerTail(join(ashlarRoot, ROUTER_CROSS_REVIEW_LEDGER_RELATIVE));
   const crossReviewState = crossReviewRead.state;
   const crossReviewTruncated = crossReviewRead.state === 'read' ? crossReviewRead.truncated : false;
-  const revertLedger = await liveRevertOutcomeKeys(opts.ashlarDir);
+  const revertLedger = await liveRevertOutcomeKeys(opts.ashlarDir, reportStartedAt);
   if (read.state !== 'read') {
     return { ...empty, state: read.state, path, eval_state: laneScores.state,
       spend_state: spendState, spend_truncated: spendTruncated,

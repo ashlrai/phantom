@@ -3300,6 +3300,32 @@ describe('router outcome scan-ledger revert join', () => {
     expect(byId.get('J2')?.reverted).toBeNull();
   });
 
+  it('uses only scan detections whose revert time is at or before report start', async () => {
+    const atReportStart = scanRecord();
+    const future = scanRecord({
+      revertedAt: '2026-11-01T10:00:00.001Z',
+      relandedBy: 'd'.repeat(40),
+    });
+    const runs = runsDir(jobsLedger);
+    const futureOnly = ashlarWithLedger([{ ...future, relandedBy: null }]);
+    const both = ashlarWithLedger([atReportStart, future]);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(atReportStart.revertedAt));
+    try {
+      const read = await readRouterOutcomes({ runsDir: runs, ashlarDir: futureOnly, authorityEvidence: [] });
+      expect(read.revert_ledger_state).toBe('read');
+      expect(read.outcomes.find(o => o.job_id === 'J1')?.reverted).toBeNull();
+
+      const standing = await readRouterOutcomes({ runsDir: runs, ashlarDir: both, authorityEvidence: [] });
+      expect(standing.outcomes.find(o => o.job_id === 'J1')?.reverted).toBe(true);
+
+      clock.mockReturnValue(Date.parse(future.revertedAt));
+      const updated = await readRouterOutcomes({ runsDir: runs, ashlarDir: both, authorityEvidence: [] });
+      expect(updated.outcomes.find(o => o.job_id === 'J1')?.reverted).toBeNull();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('unions with authority keys and honours reland clearing newest-record-wins', async () => {
     const root = runsDir(jobsLedger);
     // A reland record after the revert clears the key: J1 must not mark.
