@@ -279,6 +279,8 @@ usable fleet counts, availability describes lane-local headroom. A fresh dispatc
 explicit fleet admission stop sets every lane's `available` to zero, including
 when the fleet-wide cap is reached. Four local reads run concurrently,
 each capped at 2 MiB and 250 ms, with phase status; no SSH probes or writes.
+Fleet awareness also reports zero available slots for a fresh explicit lane
+hold when running or target counts are missing. The missing counts stay null.
 Lane availability expires after two 30-second dispatcher intervals.
 
 This connects the existing node-pool dispatch path. The `ready.tsv` to node
