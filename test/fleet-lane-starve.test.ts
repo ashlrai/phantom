@@ -8,11 +8,13 @@ import { FILLER_ID, findStarvedLanes, isParkedReadyRow } from '../src/core/fleet
 
 let dir: string;
 const saved = process.env.ASHLR_RUNS_DIR;
+const NOW = Date.parse('2026-11-26T12:00:00Z');
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'lane-starve-'));
   mkdirSync(join(dir, 'queue'));
   process.env.ASHLR_RUNS_DIR = dir;
+  vi.spyOn(Date, 'now').mockReturnValue(NOW);
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -22,6 +24,7 @@ afterEach(() => {
 });
 
 const STATUS = JSON.stringify({
+  last_tick: new Date(NOW).toISOString(),
   lanes: {
     'claude-api': { running: 1, target: 3, queued: 4 },
     codex: { running: 2, target: 2, queued: 9 },
@@ -285,13 +288,14 @@ describe('cmdFleetLaneStarve', () => {
     expect(report.open_rows).toBe(readyFile === null ? null : 0);
   });
   it('exits 0 when nothing is starved', async () => {
-    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ lanes: {} }));
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ last_tick: new Date(NOW).toISOString(), lanes: {} }));
     const { code, lines } = await run([]);
     expect(code).toBe(0);
     expect(lines).toEqual(['No starved lanes.']);
   });
   it('excludes held lanes with queued work from starvation alerts', async () => {
     writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: new Date(NOW).toISOString(),
       lanes: { 'claude-api': { running: 1, target: 3, queued: 4, held: true } },
     }));
     writeFileSync(join(dir, 'queue', 'ready.tsv'), READY);
@@ -303,6 +307,27 @@ describe('cmdFleetLaneStarve', () => {
     const { code, lines } = await run();
     expect(code).toBe(2);
     expect(JSON.parse(lines[0]!).error).toMatch(/Cannot read/);
+  });
+  it.each([
+    ['missing', undefined],
+    ['invalid', 'bad timestamp'],
+    ['future', new Date(NOW + 1).toISOString()],
+    ['stale', new Date(NOW - 60_001).toISOString()],
+  ])('exits 2 without lane counts when the dispatcher tick is %s', async (_label, tick) => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ ...JSON.parse(STATUS), last_tick: tick }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), READY);
+    const { code, lines } = await run();
+    expect(code).toBe(2);
+    expect(JSON.parse(lines[0]!)).toEqual({
+      schema: 'fleet.lane-starve.v1', readOnly: true, error: expect.stringContaining('last_tick'),
+    });
+  });
+  it('still reports starvation at the inclusive freshness boundary', async () => {
+    vi.mocked(Date.now).mockReturnValue(NOW + 60_000);
+    writeFileSync(join(dir, 'queue', 'status.json'), STATUS);
+    const { code, lines } = await run();
+    expect(code).toBe(1);
+    expect(JSON.parse(lines[0]!).lanes[0]).toMatchObject({ lane: 'claude-api', queued: 4 });
   });
   it('rejects unknown arguments and prints help', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);

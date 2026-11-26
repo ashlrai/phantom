@@ -64,7 +64,7 @@ export async function cmdFleetLaneStarve(args: string[], io: LaneStarveIo = defa
       io.read(join(queue, 'FILLER_HOLD')),
     ]);
     if (status === null) throw new Error('no status');
-    const { lanes, openRows } = findStarvedLanes(status, ready, routerQueue);
+    const { lanes, openRows } = findStarvedLanes(status, ready, routerQueue, Date.now());
     report = {
       schema: FLEET_LANE_STARVE_SCHEMA,
       readOnly: true,
@@ -73,7 +73,7 @@ export async function cmdFleetLaneStarve(args: string[], io: LaneStarveIo = defa
       lanes,
     };
   } catch {
-    const error = 'Cannot read lane status. Expected lanes with running, target and queued in queue/status.json.';
+    const error = 'Cannot read current lane status. Expected lane counts and a last_tick at most 60 seconds old in queue/status.json.';
     console.log(json ? JSON.stringify({ schema: FLEET_LANE_STARVE_SCHEMA, readOnly: true, error }) : error);
     return 2;
   }

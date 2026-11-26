@@ -986,6 +986,9 @@ so it can differ from `ready`. When `ready.tsv` is missing, the split reads
 in JSON, and `open_rows` is `null`. An empty file yields zero counts. Lane
 selection and the exit code still use the status snapshot.
 Lanes with `held: true` in the dispatcher snapshot are excluded.
+`lane-starve` requires a readable `last_tick` at most 60 seconds old and no
+later than report time. Missing, invalid, stale or future timestamps produce
+an error and exit 2, with no lane verdict.
 
 `launchable` compares each lane's `free` slots with ready rows whose prompt
 file exists. A row counts toward the lane its market hint resolves to: the
