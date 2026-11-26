@@ -1131,6 +1131,22 @@ describe('beat --capacity sample honesty', () => {
     expect(node.capacity).toEqual(sample);
     expect(node.slots).toBe(4);
   });
+  it('keeps the newer capacity and slots when a delayed sample arrives', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', { owners: ['acme'] })!;
+    f.a.enqueue('job', { owner: 'acme' });
+    f.advance(10);
+    const held = { ...sample, sampledAtMs: 1_010, slots: 0, held: 'memory-pressure' as const };
+    f.a.heartbeat(worker, { capacity: held });
+
+    f.advance(10);
+    executeNodeFleet('beat', [...beatArgs(worker.session, JSON.stringify(sample)), '--slots', '4'], f.b);
+    expect(f.a.view(['acme']).nodes[0]).toMatchObject({ capacity: held, slots: 0, heartbeatAt: 1_020 });
+    expect(f.a.pull(worker)).toBeNull();
+
+    f.a.heartbeat(worker, { capacity: { ...sample, sampledAtMs: 1_020 } });
+    expect(f.a.pull(worker)?.job.id).toBe('job');
+  });
 });
 
 describe('fleet flag value validation', () => {
