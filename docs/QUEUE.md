@@ -354,7 +354,10 @@ phm fleet unfed --window 6 --json
 ```
 
 `phm fleet unfed` prints each resource's utilization and its unfed capacity
-now, then folds the unfed ticks of the last `--window` hours (default 24, at
+now. The fleet-wide `unfedSlots` upper bound sums each unfed lane's smaller
+count of headroom and rows waiting elsewhere, capped by total waiting rows
+because lanes can see the same work. Actual placement depends on eligibility
+and admission. The command then folds the unfed ticks of the last `--window` hours (default 24, at
 most 168): ticks unfed and slot-ticks lost per lane, with the leading reasons.
 The history includes both endpoints of the trailing window and excludes ticks
 timestamped after the report time.
