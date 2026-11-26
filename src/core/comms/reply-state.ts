@@ -67,8 +67,8 @@ function line(r: Omit<ReplyState, 'text'>): string {
       break;
     }
     case 'BLOCKED': body = `waiting on ${e.blocked?.dependency ?? 'unknown'}`; break;
-    case 'RUNNING':
-    case 'ASSIGNED': body = who; break;
+    case 'RUNNING': body = who; break;
+    case 'ASSIGNED': body = `${who}${r.missing.length ? ` (missing: ${r.missing.join(', ')})` : ''}`; break;
     default: body = `${who}${r.missing.length ? ` (missing: ${r.missing.join(', ')})` : ''}`;
   }
   const assignment = (r.state === 'BLOCKED' || r.state === 'VERIFIED') && r.owner !== null && r.claim !== null
