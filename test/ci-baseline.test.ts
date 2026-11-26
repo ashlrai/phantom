@@ -142,6 +142,27 @@ describe('CI baseline evidence', () => {
     const suite = await analyzeCiBaseline('owner/repo', github({ suite: true, pass: true, filePass: true, count: 1 }).gh);
     expect(suite.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
   });
+  it('requires complete module coverage for a case but only execution for a suite', async () => {
+    for (const [summary, suitePass] of [
+      ['4 tests | 1 skipped', true],
+      ['4 tests | 1 todo', true],
+      ['4 tests | 2 skipped | 2 todo', false],
+      ['0 tests', false],
+    ] as const) {
+      for (const suite of [false, true]) {
+        const { gh } = github({ count: 1, pass: true, filePass: true, suite });
+        const report = await analyzeCiBaseline('owner/repo', async args => {
+          const result = await gh(args);
+          if (!args[1]?.endsWith('/jobs/10/logs')) return result;
+          return { ...result, stdout: result.stdout.replace('4 tests', summary) };
+        });
+        expect(report.groups[0]).toMatchObject({
+          master: suite && suitePass ? 'pass' : 'unknown',
+          action: suite && suitePass ? 'rerun-failed' : 'unknown',
+        });
+      }
+    }
+  });
   it('excludes stale and unreadable or unrecognized logs', async () => {
     for (const options of [{ stale: true }, { unknown: true }, { unreadable: true }]) {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);
