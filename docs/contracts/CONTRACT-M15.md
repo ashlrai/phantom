@@ -137,7 +137,8 @@ export async function cmdModels(args: string[]): Promise<number>;
   `version: 1`). Read-only; exit 0 only when `ok`.
   `checkModelsAgainstDocs(registry, docs)` in `src/core/fleet/model-verify.ts`
   is the pure comparison with provider docs; `readDocsRecords` reads the
-  `models.docs.v1` list, and `selectVerifiedModel(models, registry, docs?)`
+  `models.docs.v1` list plus bundled targeted notices (which do not imply
+  full provider coverage), and `selectVerifiedModel(models, registry, docs?)`
   skips a model the docs call retired or do not name.
 - `ashlr models radar [--json] [--from <folder>] [--fetch]`: `runModelRadar` in
   `src/core/fleet/model-radar.ts`, returning `ModelRadarReport` (`models.radar.v1`,

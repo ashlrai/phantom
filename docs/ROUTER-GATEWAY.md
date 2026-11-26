@@ -196,7 +196,10 @@ docs models the registry lacks, and `summary` is the top line in plain words.
 The gateway uses the same function: a verified model that the docs call
 `retired` or do not name is skipped, and the next verified model on the lane is
 used. A docs list can only take a model away. With no list, `docs` is `unknown`
-and routing follows the registry alone.
+and routing follows the registry and any matching bundled deprecation notices.
+The [bundled notices](model-docs.json) flag specific Antigravity model IDs without
+claiming to cover all Google models. The listed models retire on 2026-11-30 UTC.
+The bare `gemini-4-argon` remains valid for the Gemini API.
 
 `phm models radar [--json] [--from <folder>] [--fetch]` finds models the day
 they ship. It reads saved release notes, one file per provider (`anthropic.md`,
