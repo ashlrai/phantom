@@ -661,6 +661,11 @@ deadline. Each repository resumes after its last checked rerun, wrapping
 to the oldest eligible rerun when it reaches the end. The polling position
 persists across restarts, so transient read failures leave reruns pending
 for retry while later reruns still get checked.
+For each repository, head SHA and run ID, polling and the pending count
+use the earliest visible successful-call receipt in the retained journal.
+Later receipts cannot reset the settle or expiry clock. When these receipts
+disagree on the triggering test, the workflow verdict still counts in the
+overall tally and its per-test attribution is withheld.
 
 `phm ci reruns --json` reports `verdicts` tallies over the retained journal
 window: `pass`/`fail`/`inconclusive` counts, `pending` fired reruns still
