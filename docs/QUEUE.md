@@ -1015,12 +1015,13 @@ a held or drained pool that a starved lane could run instead. `--json` adds
 `starved_lanes`, `waiting_elsewhere` and `open_rows` under the `fleet.starved.v1`
 schema, and the command exits 1 when a lane is starved. The same data is the `starved` object of the
 `fleet.lanes.v1` read (`phm fleet lanes --json`, `GET /api/fleet/lanes`): per lane
-`free_slots` (floor minus running, 0 when held), `ready_rows` and `starved_since`,
+`free_slots` (slot target minus running, 0 when held), `ready_rows` and `starved_since`,
 plus read-level `open_rows` — the lane-open READY rows (no lane hint) the market
-may place on any lane. Open supply keeps a free lane from reading as starved, the
-same rows `phm fleet unfed` counts as `waitingElsewhere`; `open_rows` is null when
-ready.tsv was not read. A held lane is waiting, not starved, and a lane at its
-floor is full. The desktop lane
+may place on any lane. Open supply keeps a free lane from reading as starved.
+Both ready counts come from a healthy `ready.tsv` read. A missing or degraded
+read leaves both counts null and suppresses the starvation verdict. The lane's
+separate queue depth can include parked work from dispatcher totals. A lane
+must be unheld and below its slot target to be starved. The desktop lane
 card (Ops, Lanes on this Mac) shows the same line. The Leader posts one chat notice
 when a lane has been starved for 30 minutes, at most once per lane every 6 hours,
 and remembers first sightings in `~/.ashlr/vision/leader/starved-lanes.json`. The

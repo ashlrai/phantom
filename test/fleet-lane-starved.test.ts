@@ -102,6 +102,31 @@ describe('readStarved', () => {
 });
 
 describe('lanes read: starved object', () => {
+  it.each([
+    { label: 'parked work', readyTsv: 'RQ-PARKED\tphantom\tPARKED-DEP.claude\twork\tprompts/job.md\n', queued: 1, ready: 0 },
+    { label: 'ready work ahead of the dispatcher tick', readyTsv: 'RQ-READY\tphantom\tclaude\twork\tprompts/job.md\n', queued: 0, ready: 1 },
+    { label: 'missing evidence', readyTsv: null, queued: 0, ready: null },
+    { label: 'degraded evidence', readyTsv: 'unparseable\n', queued: 0, ready: null },
+  ])('uses ready supply for starvation with $label', async ({ readyTsv, queued, ready }) => {
+    const root = await scratch();
+    const queueDir = join(root, 'queue');
+    await mkdir(queueDir);
+    if (readyTsv !== null) await writeFile(join(queueDir, 'ready.tsv'), readyTsv);
+    await writeFile(join(queueDir, 'status.json'), JSON.stringify({
+      last_tick: new Date(NOW).toISOString(),
+      lanes: { claude: { running: 0, target: 8, queued, held: false } },
+    }));
+    const snap = await getFleetLaneSnapshot({
+      queueDir, budgetsDir: join(root, 'budgets'), usageLogPaths: [], now: () => new Date(NOW), starvedStateDir: root,
+    });
+    expect(snap.lanes.find(lane => lane.lane === 'claude')).toMatchObject({
+      queueDepth: queued,
+      health: { state: ready === 0 ? 'starved' : 'ok' },
+    });
+    expect(snap.starved.lanes.claude).toMatchObject({ free_slots: 8, ready_rows: ready, starved: ready === 0 });
+    expect(snap.starved.open_rows).toBe(ready === null ? null : 0);
+  });
+
   it('reports starved, held and full lanes from queue files', async () => {
     const root = await scratch();
     const queueDir = join(root, 'queue');

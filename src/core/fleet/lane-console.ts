@@ -806,7 +806,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     if (text !== null) {
       const parsed = parseReadyTsv(text);
       queueRows = parsed.rows;
-      openQueueRows = parsed.unhinted;
+      openQueueRows = parsed.dropped === 0 ? parsed.unhinted : null;
       sources.queue = {
         state: parsed.dropped > 0 ? 'degraded' : 'healthy',
         file: 'ready.tsv', rows: parsed.rows.length, dropped: parsed.dropped,
@@ -1043,7 +1043,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     lane: view.lane,
     target: view.slotTarget,
     running: view.liveJobs,
-    ready: view.queueDepth,
+    ready: openQueueRows === null ? null : readyCounts.get(view.lane) ?? 0,
     held: view.hold?.held === true,
     drained: view.credit.remainingPct !== null && view.credit.remainingPct <= 0,
   })), parseStarvedState(stateText).since, now.getTime(), openQueueRows);
@@ -1059,7 +1059,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
       slotTarget: view.slotTarget,
       starved: row?.starved === true,
       freeSlots: row?.free_slots ?? null,
-      readyRows: view.queueDepth,
+      readyRows: row?.ready_rows ?? null,
       starvedSince: row?.starved_since ?? null,
       starts: view.startsInWindow,
       // Merges are per hour over the window; convert back to a count.
