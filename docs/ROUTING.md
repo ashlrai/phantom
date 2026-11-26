@@ -362,7 +362,13 @@ Positive allowance with a future reset is `reset-pressure` even when burn pace i
 ## Recorded job outcomes
 
 The reward feed records merge evidence once both the jobs-ledger receipt time
-and the effective merge time have been reached.
+and the effective merge time have been reached. For merge and close verdicts,
+the reward uses the repository identified by the verdict's GitHub PR URL or
+its qualified repository field. If the receipt lacks repository evidence,
+the feed uses the single distinct repository observed at the latest dispatch
+timestamp at or before the outcome. Repository names are case-insensitive.
+Missing or conflicting dispatch repository evidence leaves the reward's
+repository null when the verdict supplies none.
 
 `phm router outcomes [--json] [--runs-dir <dir>] [--lane <lane>] [--limit <1..1000>]`
 reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
