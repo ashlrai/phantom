@@ -1993,7 +1993,13 @@ checked before interpreting observations as complete. Each lane also carries
 `effectiveTarget`, the fleet controller's load-shed ceiling from the
 dispatcher's `effective_target` (null when the producer does not publish it).
 Available slots count against the launch target — the configured target
-tightened by `effectiveTarget` — so a shed lane never reports phantom room.
+tightened by `effectiveTarget`. Fresh, unpaused snapshots also bound each lane
+by the shared remaining fleet slots when the embedded admission record provides
+valid `cap` and `running` counts. An explicit admission stop reports zero.
+The lane values share the same fleet ceiling and cannot be added together.
+Missing or unusable fleet counts leave the lane-local calculation in place.
+The runs-directory reader exposes the embedded record's remaining slots as
+`admissionHeadroom`, with null for unavailable evidence.
 
 ## Lane target snapshot v1
 
