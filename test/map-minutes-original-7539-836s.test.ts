@@ -24,14 +24,14 @@ describe('map edges minutes alias', () => {
   it('passes minutes to the existing reader and prints its text', async () => {
     expect(MAP_USAGE).toContain('--minutes <n>');
     expect(await cmdMap(['edges', '--minutes', '30'])).toBe(0);
-    expect(readMapEdges).toHaveBeenCalledWith('30m', { before: undefined });
+    expect(readMapEdges).toHaveBeenCalledWith('30m', { before: undefined, filters: {} });
     expect(formatMapEdgesText).toHaveBeenCalledWith(result);
     expect(log).toHaveBeenCalledWith('fake-agent -> fake-worker: hello');
   });
 
   it('prints the existing JSON schema and returns unavailable status', async () => {
     expect(await cmdMap(['edges', '--minutes', '30', '--json'])).toBe(0);
-    expect(readMapEdges).toHaveBeenCalledWith('30m', { before: undefined });
+    expect(readMapEdges).toHaveBeenCalledWith('30m', { before: undefined, filters: {} });
     expect(JSON.parse(String(log.mock.calls[0]![0]))).toEqual(result);
     readMapEdges.mockReturnValue({ ...result, source: 'unavailable', edges: null });
     expect(await cmdMap(['edges', '--json', '--minutes', '30'])).toBe(1);
@@ -40,7 +40,7 @@ describe('map edges minutes alias', () => {
 
   it('preserves since durations', async () => {
     expect(await cmdMap(['edges', '--since', '10m'])).toBe(0);
-    expect(readMapEdges).toHaveBeenCalledWith('10m', { before: undefined });
+    expect(readMapEdges).toHaveBeenCalledWith('10m', { before: undefined, filters: {} });
   });
 
   it.each([

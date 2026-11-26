@@ -517,14 +517,25 @@ reduced motion; phones always get the 2D rows. No 3D library is used.
 
 #### Map edges
 
-`phm map edges [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>]` lists who
+`phm map edges [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>]` lists who
 messaged whom, read from the
 same agent bus as `phm messages`. `--json` prints `fleet.map-edges.v1`
-(`version` 1), and `GET /api/verse/fleet/control/map-edges[?since=10m&before=1h]` serves
+(`version` 1), and `GET /api/verse/fleet/control/map-edges[?since=10m&before=1h&kind=ask]` serves
 the same read with a current read session. The default window is the last 15
 minutes, the same as the map. `--before` keeps only messages received strictly
 before its cutoff, so `--since` and `--before` read one closed
 `[since, before)` window.
+
+Every other flag is the `phm messages` filter vocabulary `phm agents messages`
+forwards — the matching rules `phm messages --help` describes — so "who
+messaged whom about job X" or "which lines reach agent Y" is one filtered read
+here too: the filters narrow the window's matched rows before the edges
+aggregate, `messages` counts exactly the rows they keep, and each edge's
+`count`, `lastAt` and `lastSummary` describe only that traffic. On the API
+every filter is a query param of the same name (camelCase where the flag is
+dashed), each once and validated by the same parser; there is no `limit`
+param because edges aggregate the whole matched set, and a filtered read is
+never served from the default window's 5-second cache.
 
 `phm map replay [--json] [--since 6h] [--step 5m]` replays the fleet one frame
 per step (default: the last 6 hours, every 5 minutes; at most 288 frames).
