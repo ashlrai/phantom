@@ -272,6 +272,22 @@ describe('skillNudgeJobsFromLedger', () => {
     ]);
   });
 
+  it('ignores enqueued lane hints and uses the first observed execution lane alias', () => {
+    const text = [
+      line({ job: 'RQ-N4', event: 'launch', lane: 'UNKNOWN', pool: 'codex', arm: 'devin' }),
+      line({ job: 'RQ-N4', type: 'enqueued', lane: 'fast' }),
+      line({ job: 'RQ-N4', state: 'MERGED' }),
+      line({ job: 'RQ-N5', kind: 'enqueued', pool: 'fast' }),
+      line({ job: 'RQ-N5', state: 'MERGED' }),
+      line({ job: 'RQ-N6', state: 'MERGED', lane: 'unknown', pool: 'unknown', arm: 'devin' }),
+    ].join('\n');
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: 'RQ-N4', lane: 'codex', outcome: 'merged' },
+      { id: 'RQ-N5', lane: 'unknown', outcome: 'merged' },
+      { id: 'RQ-N6', lane: 'devin', outcome: 'merged' },
+    ]);
+  });
+
   it('keeps only identifier-safe failure classes and prefers finish fields', () => {
     const text = [
       launch('RQ-O'),
