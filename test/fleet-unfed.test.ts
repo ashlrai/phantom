@@ -99,6 +99,29 @@ describe('currentUnfed', () => {
     expect(report.resources[0]).toMatchObject({ readyHinted: 1, waitingElsewhere: 0 });
   });
 
+  it.each([undefined, { waiting_elsewhere: -1 }])(
+    'keeps an idle lane unknown when its published count is unavailable (%j)',
+    (entry) => {
+      const lanes = { a: { running: 0, target: 2 }, b: { running: 0, target: 2 } };
+      const unfed_capacity = { waiting: 2, lanes: { a: { waiting_elsewhere: 1 }, b: entry } };
+      const report = currentUnfed(JSON.stringify({ lanes, unfed_capacity }), '');
+      expect(report).toMatchObject({ waiting: 2, unfedLanes: ['a'], unfedSlots: null });
+      expect(report.resources[1]).toMatchObject({ lane: 'b', readyHinted: 0, waitingElsewhere: null, unfed: null });
+    },
+  );
+
+  it('distinguishes a missing dispatcher total from a measured empty tick', () => {
+    const lanes = { a: { running: 0, target: 2 } };
+    const ready = row('RQ-A', 'elsewhere');
+    const partial = currentUnfed(JSON.stringify({ lanes, unfed_capacity: { lanes: {} } }), ready);
+    expect(partial).toMatchObject({ waiting: null, unfedSlots: null });
+    expect(partial.resources[0]).toMatchObject({ waitingElsewhere: null, unfed: null });
+
+    const empty = currentUnfed(JSON.stringify({ lanes, unfed_capacity: { waiting: 0, lanes: {} } }), ready);
+    expect(empty).toMatchObject({ waiting: 0, unfedSlots: 0 });
+    expect(empty.resources[0]).toMatchObject({ waitingElsewhere: 0, unfed: false });
+  });
+
   it.each(['derived', 'dispatcher'] as const)('bounds %s unfed slots by the shared waiting count', (source) => {
     const lanes = { a: { running: 0, target: 2 }, b: { running: 0, target: 2 } };
     const entry = { waiting_elsewhere: 1, blocked: { missing_capability: 1 } };
