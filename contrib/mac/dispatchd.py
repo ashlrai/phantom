@@ -1748,6 +1748,60 @@ try:
         UIA = projection["lanes"]
 except (OSError, ValueError, subprocess.SubprocessError): pass
 
+def live_allowance(sidecar, resource_id, now):
+    if not isinstance(sidecar, dict) or sidecar.get("schema") != "resource-live.v1":
+        return None
+    readings = sidecar.get("readings")
+    if not isinstance(readings, list):
+        return None
+    row = next((r for r in readings if isinstance(r, dict) and r.get("id") == resource_id), None)
+    if not row or row.get("verified") is not True:
+        return None
+    obs, stale = (work_market._epoch(row.get(k)) for k in ("observed_at", "stale_after"))
+    if obs is None or stale is None or not 0 <= now - obs < 900 or not now < stale:
+        return None
+    return row
+
+def antigravity_window(sidecar, seats, now):
+    seat = seats.get("agy") if isinstance(seats, dict) else None
+    if seat != {"account_kind": "personal", "plan": "google-ai-ultra"}:
+        return None
+    row = live_allowance(sidecar, "antigravity", now)
+    if not row or row.get("unit") != "percent" or row.get("lane") != "agy":
+        return None
+    obs, start, reset = (work_market._epoch(row.get(k)) for k in ("observed_at", "window_start", "reset_at"))
+    if start is None or reset is None or not start <= obs <= now < reset or reset - start != 18000:
+        return None
+    plan = sidecar.get("burn_down")
+    entries = plan.get("allowances") if isinstance(plan, dict) else None
+    projected = next((r.get("projected_unused") for r in entries if isinstance(r, dict)
+                      and r.get("id") == "antigravity" and r.get("deadline_at") == row["reset_at"]), None) if isinstance(entries, list) else None
+    return dict(known=True, stale=False, used_pct=row.get("used_pct"), reset_at=reset, projected_unused_pct=projected)
+
+def promo_window(sidecar, lane, now):
+    row = live_allowance(sidecar, lane, now)
+    if not row or row.get("class") != "metered-included" or row.get("unit") != "usd":
+        return None
+    expiry = work_market._epoch(row.get("expires_at"))
+    used, limit = work_market.number(row.get("used")), work_market.number(row.get("limit"))
+    if expiry is None or expiry <= now or used is None or limit is None or not 0 <= used < limit:
+        return None
+    return dict(known=True, stale=False, used_pct=used / limit * 100, expires_at=expiry, reset_at=row.get("reset_at"))
+
+_RESOURCE_LIVE = jload(R + "/state/resource-live.json", {})
+if "agy" in LANES and "agy" not in UIA:
+    agy = antigravity_window(_RESOURCE_LIVE, jload(Q + "/subscription-seats.json", {}), NOW)
+    if agy is not None: UIA["agy"] = agy
+_API_LANES = {"claude-api", "openai-api"}.intersection(LANES)
+_PROMOS = {lane: promo_window(_RESOURCE_LIVE, lane, NOW) for lane in _API_LANES}
+
+def dispatch_deadline(lane, executor):
+    cost = executor.get("cost_class")
+    if lane in _API_LANES:
+        return work_market.deadline_priority(_PROMOS[lane], NOW, promotional=True)
+    if cost != "included": return None
+    return work_market.deadline_priority(UIA.get(lane), NOW, short_window=lane == "agy")
+
 tick_phase("restock", 5)
 # ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
 import queue_gate
@@ -2279,6 +2333,12 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                                          market_models, BUS["quota"], JOBS_RAW, now=NOW,
                                          allowance=market_allowance, tier=tier))
         for dest in LANES:
+            view[dest]["deadline_priority"] = dispatch_deadline(dest, view[dest])
+            if dest in _API_LANES and _PROMOS[dest] is None and view[dest]["cost_class"] == "included":
+                view[dest]["cost_class"] = "metered"
+            view[dest]["is_metered_api"] = dest in _API_LANES and view[dest]["cost_class"] == "metered"
+            if view[dest]["is_metered_api"] and spec.get("max_cost_class") != "metered":
+                view[dest]["unavailable"] = "metered_api_opt_in_required"
             if parent and (dest in ('claude', 'claude-api') or view[dest]['cost_class'] == 'metered'):
                 view[dest]['unavailable'] = 'claude_recovery_lane_excluded'
             if dest == "devin":

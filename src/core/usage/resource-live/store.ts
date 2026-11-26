@@ -32,17 +32,20 @@ const instant = z.string().refine(value => {
 });
 const amount = z.number().finite().nonnegative().nullable();
 const ids = RESOURCE_LIVE_ALLOWANCES.map(row => row.id) as [ResourceLiveId, ...ResourceLiveId[]];
+export const resourceIdSchema = z.union([z.enum(ids),
+  z.custom<`custom:${string}`>(value => typeof value === 'string' && /^custom:[a-z0-9][a-z0-9-]{0,62}$/.test(value))]);
 
 export const readingSchema = z.object({
   account_id: z.string().trim().min(1).max(128).optional(),
   model: z.string().trim().min(1).max(128).optional(),
   window_start: instant.optional(),
-  id: z.enum(ids),
+  id: resourceIdSchema,
   verified: z.boolean(),
   used: amount,
   limit: amount,
   unit: z.enum(['percent', 'acu', 'usd', 'points', 'models']).nullable(),
   reset_at: instant.nullable(),
+  expires_at: instant.nullable().optional(),
   source: z.string().min(1).max(128).regex(/^[\x20-\x7e]+$/).nullable(),
   source_tier: z.enum(['official', 'own-call', 'visible-window', 'operator-entry']).nullable(),
   observed_at: instant.nullable(),
@@ -61,6 +64,7 @@ const draftedSchema = z.object({ drafted_at: instant, window: instant }).nullabl
 export function unverified(allowance: ResourceLiveAllowance, reason: ResourceLiveReason): ResourceLiveReading {
   return {
     id: allowance.id as ResourceLiveId, label: allowance.label, lane: allowance.lane, class: allowance.class, verified: false,
+    ...(allowance.custom ? { custom: allowance.custom } : {}),
     used: null, limit: null, unit: null, used_pct: null, remaining: null, reset_at: null, expires_at: allowance.expires_at,
     source: null, source_tier: null, confidence: null, observed_at: null, stale_after: null, reason,
   };
@@ -73,13 +77,14 @@ export function toReading(allowance: ResourceLiveAllowance, row: StoredReading &
   const measured = row.used !== null && row.limit !== null && row.limit > 0;
   return {
     id: row.id, label: allowance.label, lane: allowance.lane, class: allowance.class, verified: true,
+    ...(allowance.custom ? { custom: allowance.custom } : {}),
     ...(row.account_id ? { account_id: row.account_id } : {}),
     ...(row.model ? { model: row.model } : {}),
     ...(row.window_start ? { window_start: row.window_start } : {}),
     used: row.used, limit: row.limit, unit: row.unit,
     used_pct: measured ? Math.min(100, Math.round(row.used! / row.limit! * 1000) / 10) : null,
     remaining: measured ? Math.max(0, Math.round((row.limit! - row.used!) * 1000) / 1000) : null,
-    reset_at: row.reset_at, expires_at: allowance.expires_at, source: row.source, source_tier: row.source_tier,
+    reset_at: row.reset_at, expires_at: allowance.expires_at ?? row.expires_at ?? null, source: row.source, source_tier: row.source_tier,
     confidence: row.source_tier === 'official' ? 'high' : row.source_tier === 'own-call' ? 'medium' : 'low',
     observed_at: row.observed_at,
     stale_after: new Date(Math.min(Date.parse(row.observed_at) + RESOURCE_LIVE_STALE_MS,
@@ -93,16 +98,21 @@ export function usable(row: StoredReading): row is StoredReading & { observed_at
 }
 
 /** Parse a sidecar. Anything malformed is dropped, so a damaged file reads as no prior state. */
-export function parseResourceLiveSidecar(raw: unknown): Pick<ResourceLiveSidecar, 'readings' | 'poll' | 'history' | 'reset_rule'> & { generated_at: string | null } {
+export function parseResourceLiveSidecar(raw: unknown, custom: readonly ResourceLiveAllowance[] = []): Pick<ResourceLiveSidecar, 'readings' | 'poll' | 'history' | 'reset_rule'> & { generated_at: string | null } {
   const empty = { generated_at: null, readings: [], poll: {}, history: {}, reset_rule: { ...EMPTY_RESET_STATE } };
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return empty;
   const file = raw as Record<string, unknown>;
   if (file['schema'] !== RESOURCE_LIVE_SCHEMA) return empty;
+  const catalog = new Map<string, ResourceLiveAllowance>([...RESOURCE_LIVE_ALLOWANCES, ...custom].map(item => [item.id, item]));
+  const accepted = new Set<string>(ids);
   const readings: ResourceLiveReading[] = [];
   for (const row of Array.isArray(file['readings']) ? file['readings'] : []) {
     const parsed = readingSchema.safeParse(row);
-    const allowance = parsed.success ? RESOURCE_LIVE_ALLOWANCES.find(item => item.id === parsed.data.id) : undefined;
+    const allowance = parsed.success ? catalog.get(parsed.data.id) : undefined;
     if (!parsed.success || !allowance || readings.some(item => item.id === allowance.id)) continue;
+    const stored = row as Record<string, unknown>;
+    if (allowance.custom && JSON.stringify(stored['custom']) !== JSON.stringify(allowance.custom)) continue;
+    accepted.add(parsed.data.id);
     if (usable(parsed.data)) readings.push(toReading(allowance, parsed.data));
     else {
       const reason = reasonSchema.safeParse((row as Record<string, unknown>)['reason']);
@@ -113,7 +123,7 @@ export function parseResourceLiveSidecar(raw: unknown): Pick<ResourceLiveSidecar
   const history: Partial<Record<ResourceLiveId, HistorySample[]>> = {};
   const record = (value: unknown): Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  for (const id of ids) {
+  for (const id of accepted as Set<ResourceLiveId>) {
     const state = pollSchema.safeParse(record(file['poll'])[id]);
     if (state.success) poll[id] = state.data;
     const rows = record(file['history'])[id];
@@ -141,11 +151,15 @@ export async function readResourceLiveFile(runsDir: string): Promise<unknown | n
   return readPrivateJson(resourceLivePath(runsDir), MAX_SIDECAR_BYTES);
 }
 
+export async function readResourceEvidenceFile(runsDir: string): Promise<unknown | null> {
+  return readPrivateJson(join(resourceLiveStateDir(runsDir), 'resource-evidence.json'), 16 * 1024);
+}
+
 export async function readResourceHistoryFile(runsDir: string): Promise<unknown | null> {
   return readPrivateJson(resourceHistoryPath(runsDir), 8 * 1024 * 1024);
 }
 
-async function readPrivateJson(path: string, cap: number): Promise<unknown | null> {
+export async function readPrivateJson(path: string, cap: number): Promise<unknown | null> {
   let handle;
   try { handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch { return null; }
   try {
@@ -178,7 +192,7 @@ export function parseResourceHistory(raw: unknown, nowMs = Date.now()): Resource
 export function appendResourceHistory(raw: unknown, readings: readonly ResourceLiveReading[], nowMs: number): ResourceHistoryFile {
   const file = parseResourceHistory(raw, nowMs);
   for (const r of readings) {
-    if (!r.verified || r.used === null || r.limit === null || r.observed_at === null || r.source === null) continue;
+    if (r.custom || !r.verified || r.used === null || r.limit === null || r.observed_at === null || r.source === null) continue;
     const points = file.allowances[r.id] ?? [];
     const last = points.at(-1);
     const at = Date.parse(r.observed_at);

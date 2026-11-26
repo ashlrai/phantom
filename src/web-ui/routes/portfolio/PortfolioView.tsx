@@ -5,6 +5,7 @@
  * and is rendered as an honest "not available" state, never as a zeroed
  * chart pretending to be real data.
  */
+import { RelativeTime } from '../../components/primitives/RelativeTime.js';
 import { dashboardSnapshotQuery, portfolioQuery } from '../../data/queries.js';
 import { useQuery } from '../../data/hooks.js';
 import { RefreshIndicator } from '../../components/primitives/RefreshIndicator.js';
@@ -26,14 +27,6 @@ import type {
 import { usedPercentText } from '../verse/percent-text.js';
 import styles from './PortfolioView.module.css';
 
-function formatRelative(ts: number): string {
-  const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (seconds < 5) return 'just now';
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
-  return `${minutes}m ago`;
-}
-
 export function PortfolioView() {
   const query = useQuery(portfolioQuery);
   // Today-deltas are computed against a prior digest and live on the same
@@ -49,7 +42,7 @@ export function PortfolioView() {
         <h1 className={styles.title}>Portfolio</h1>
         <div className={styles.freshness} aria-live="polite">
           {query.status === 'refreshing' || snapshotQuery.status === 'refreshing' ? <RefreshIndicator /> : null}
-          {query.updatedAt ? <span className={styles.freshnessLabel}>Updated {formatRelative(query.updatedAt)}</span> : null}
+          {query.updatedAt ? <span className={styles.freshnessLabel}>Updated <RelativeTime value={query.updatedAt} /></span> : null}
         </div>
       </header>
 

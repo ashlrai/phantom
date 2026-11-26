@@ -1,4 +1,5 @@
 /** The last Gmail triage result for the Inbox pane (GET /api/verse/comms/gmail-triage). Read only; narrowing is defensive, never repairing. */
+import { relativeTime } from '../../../lib/relative-time.js';
 export const GMAIL_TRIAGE_PATH = '/api/verse/comms/gmail-triage';
 /** The CLI that writes the record this card reads. */
 export const GMAIL_TRIAGE_COMMAND = 'ashlr fleet gmail-triage --dir <eml dir>';
@@ -49,12 +50,8 @@ export function readGmailTriageView(data: unknown): GmailTriageView | null {
 
 /** "2h ago"; "time unknown" when the time is unparseable or in the future. */
 export function triageAge(at: string, nowMs: number): string {
-  const then = Date.parse(at);
-  if (!Number.isFinite(then) || then > nowMs) return 'time unknown';
-  const minutes = Math.floor((nowMs - then) / 60_000);
-  if (minutes < 60) return `${minutes}m ago`;
-  if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
-  return `${Math.floor(minutes / 1440)}d ago`;
+  const reading = relativeTime(at, nowMs);
+  return reading ? reading.seconds < 60 ? 'just now' : reading.text : 'time unknown';
 }
 
 export function gmailTriageLine(view: Extract<GmailTriageView, { state: 'read' }>, nowMs: number): { summary: string; unread: string } {

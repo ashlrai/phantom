@@ -4,6 +4,7 @@
  * fleet inbox interject client; nothing here writes files. Idea titles are
  * untrusted backlog text, so they are flattened to one capped line.
  */
+import { relativeTime } from '../../../lib/relative-time.js';
 export type IdeaVerdict = 'do-next' | 'not-now';
 
 const TITLE_MAX = 160;
@@ -23,9 +24,6 @@ export function ideaSteerText(idea: { title: string; repo: string }, verdict: Id
 
 export function ideaSteeredLabel(verdict: IdeaVerdict, at: number, now: number): string {
   const what = `Sent: ${VERDICT_TEXT[verdict].toLowerCase()}`;
-  const minutes = Math.floor(Math.max(0, now - at) / 60_000);
-  if (minutes < 1) return `${what} · just now`;
-  if (minutes < 60) return `${what} · ${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  return `${what} · ${hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`} ago`;
+  const reading = relativeTime(at, now);
+  return reading ? `${what} · ${reading.seconds < 60 ? 'just now' : reading.text}` : what;
 }

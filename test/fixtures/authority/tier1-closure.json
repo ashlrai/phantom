@@ -1530,6 +1530,7 @@
     "src/core/usage/resource-live/cadence.ts",
     "src/core/usage/resource-live/capacity-source.ts",
     "src/core/usage/resource-live/config.ts",
+    "src/core/usage/resource-live/custom.ts",
     "src/core/usage/resource-live/engine.ts",
     "src/core/usage/resource-live/feed.ts",
     "src/core/usage/resource-live/history.ts",

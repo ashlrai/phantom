@@ -1,3 +1,4 @@
+import { ageInSeconds } from '../../../lib/relative-time.js';
 type Tone = 'ok' | 'warn' | 'neutral';
 type Tile = { text: string; detail: string; tone: Tone; stale: boolean };
 
@@ -17,8 +18,7 @@ export function backlogTile(read: unknown, nowMs: number): Tile | null {
   if (!actions.every(action => count(actionCounts[action]))) return null;
 
   const age = Math.max(0, nowMs - Date.parse(read.generatedAt));
-  const minutes = Math.floor(age / 60_000);
-  const ageText = minutes === 0 ? 'read just now' : `read ${minutes} min ago`;
+  const ageText = age < 60_000 ? 'read just now' : `read ${ageInSeconds(age / 1000, 'spaced')}`;
   const stale = age > 15 * 60_000;
   if (read.source === 'gh-failed') {
     const reason = typeof read.reason === 'string' && /^[a-z0-9-]{1,80}$/.test(read.reason) ? read.reason : 'unknown';

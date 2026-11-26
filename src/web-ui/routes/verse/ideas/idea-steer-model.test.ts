@@ -32,6 +32,6 @@ describe('ideaSteeredLabel', () => {
     expect(ideaSteeredLabel('do-next', now, now)).toBe('Sent: do next · just now');
     expect(ideaSteeredLabel('not-now', now - 3 * 60_000, now)).toBe('Sent: not now · 3m ago');
     expect(ideaSteeredLabel('do-next', now - 2 * 3_600_000, now)).toBe('Sent: do next · 2h ago');
-    expect(ideaSteeredLabel('do-next', now - 50 * 3_600_000, now)).toBe('Sent: do next · 2d ago');
+    expect(ideaSteeredLabel('do-next', now - 50 * 3_600_000, now)).toBe('Sent: do next · 2d 2h ago');
   });
 });

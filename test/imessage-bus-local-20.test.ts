@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 vi.mock('../src/core/comms/imessage-outbox.js', () => ({ sendIMessageOutbox: vi.fn(async () => undefined) }));
-vi.mock('../src/core/fleet/channel-bus-publish.js', () => ({ publishChannelEnvelope: vi.fn(async () => 'published') }));
+vi.mock('../src/core/fleet/channel-bus-publish.js', async () => ({
+  ...await vi.importActual<typeof import('../src/core/fleet/channel-bus-publish.js')>('../src/core/fleet/channel-bus-publish.js'),
+  publishChannelEnvelope: vi.fn(async () => 'published'),
+}));
 
 import { writeCursor, type IntakeMsg } from '../src/core/integrations/imessage.js';
 import { ingestIMessages } from '../src/core/comms/imessage-inbox-bridge.js';

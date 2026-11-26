@@ -53,6 +53,15 @@ export interface ResourceLiveAllowance {
   sensor_lane: string | null;
   /** Fixed end of an expiring allowance. Null for everything else. */
   expires_at: string | null;
+  custom?: ResourceLiveCustom;
+}
+
+export interface ResourceLiveCustom {
+  provider: string;
+  kind: 'subscription' | 'promo-credit' | 'metered' | 'local' | 'bot';
+  source: 'official-endpoint' | 'cli-status' | 'agent-check';
+  metered_opt_in: boolean;
+  window_hours: number | null;
 }
 
 /**
@@ -63,27 +72,33 @@ export const CODEX_CMP_EXPIRES_AT = '2026-11-26T05:00:00.000Z';
 export const DEVIN_FLASH_EXPIRES_AT = '2026-12-01T05:00:00.000Z';
 
 export const RESOURCE_LIVE_ALLOWANCES = [
-  { id: 'claude-weekly', label: 'Claude subscription', lane: 'claude', class: 'included', sensor_lane: 'claude-max', expires_at: null },
+  { id: 'claude-weekly', label: 'Claude Max · Code & desktop', lane: 'claude', class: 'included', sensor_lane: 'claude-max', expires_at: null },
   { id: 'claude-fable', label: 'Claude Fable share', lane: 'claude', class: 'included', sensor_lane: null, expires_at: null },
   { id: 'claude-api', label: 'Claude API included credit', lane: 'claude-api', class: 'metered-included', sensor_lane: 'claude-api', expires_at: null },
-  { id: 'codex-personal', label: 'Codex personal', lane: 'codex-personal', class: 'included', sensor_lane: 'codex-personal', expires_at: null },
+  { id: 'codex-personal', label: 'ChatGPT / Codex personal', lane: 'codex-personal', class: 'included', sensor_lane: 'codex-personal', expires_at: null },
   { id: 'codex-cmp', label: 'Codex CMP', lane: 'codex-cmp', class: 'expiring', sensor_lane: 'codex-cmp', expires_at: CODEX_CMP_EXPIRES_AT },
-  { id: 'devin', label: 'Devin', lane: 'devin', class: 'included', sensor_lane: 'devin', expires_at: null },
-  { id: 'devin-flash', label: 'Devin Flash', lane: 'devin-flash', class: 'expiring', sensor_lane: 'devin-swe-flash', expires_at: DEVIN_FLASH_EXPIRES_AT },
-  { id: 'glm-lite', label: 'GLM Lite', lane: 'zai', class: 'included', sensor_lane: 'zai', expires_at: null },
+  { id: 'openai-api', label: 'OpenAI API promotional credit', lane: null, class: 'metered-included', sensor_lane: null, expires_at: null },
+  { id: 'devin', label: 'Devin Cloud', lane: 'devin', class: 'included', sensor_lane: 'devin', expires_at: null },
+  { id: 'devin-flash', label: 'Devin CLI · SWE-2 Flash', lane: 'devin-flash', class: 'expiring', sensor_lane: 'devin-swe-flash', expires_at: DEVIN_FLASH_EXPIRES_AT },
+  { id: 'glm-lite', label: 'Z.ai GLM Coding Lite', lane: 'zai', class: 'included', sensor_lane: 'zai', expires_at: null },
   { id: 'gemini', label: 'Gemini', lane: 'gemini', class: 'included', sensor_lane: 'gemini', expires_at: null },
-  { id: 'antigravity', label: 'Antigravity', lane: 'agy', class: 'included', sensor_lane: 'agy', expires_at: null },
-  { id: 'dot', label: 'Dot', lane: 'dot', class: 'free', sensor_lane: 'dot', expires_at: null },
+  { id: 'antigravity', label: 'Google AI Ultra · Antigravity', lane: 'agy', class: 'included', sensor_lane: 'agy', expires_at: null },
+  { id: 'google-workspace', label: 'Google Workspace · Antigravity starter', lane: null, class: 'included', sensor_lane: null, expires_at: null },
+  { id: 'dot', label: 'OpenAI Dot · iMessage', lane: 'dot', class: 'free', sensor_lane: 'dot', expires_at: null },
   { id: 'instinct', label: 'Instinct', lane: 'instinct', class: 'included', sensor_lane: 'instinct', expires_at: null },
   // Local capacity is a model count, not a usage window, so it stays out of the sensor report.
   { id: 'local', label: 'Local models', lane: 'codex-local', class: 'free', sensor_lane: null, expires_at: null },
+  { id: 'lm-studio', label: 'LM Studio', lane: null, class: 'free', sensor_lane: null, expires_at: null },
+  { id: 'ollama', label: 'Ollama', lane: null, class: 'free', sensor_lane: null, expires_at: null },
   // Grok is a weekly allowance kept in reserve. When it is spent the lane sits at zero until the
   // reset and other lanes keep running. Policy (Eng Ops, 2026-11-09): never buy extra Grok credits.
   { id: 'grok', label: 'Grok', lane: 'grok', class: 'reserve', sensor_lane: 'grok-ultra', expires_at: null },
   { id: 'cursor', label: 'Cursor', lane: 'cursor', class: 'reserve', sensor_lane: 'cursor-cloud', expires_at: null },
+  { id: 'grok-bot', label: 'Grok Bot · desktop', lane: null, class: 'included', sensor_lane: null, expires_at: null },
 ] as const satisfies readonly ResourceLiveAllowance[];
 
-export type ResourceLiveId = (typeof RESOURCE_LIVE_ALLOWANCES)[number]['id'];
+export type BuiltInResourceLiveId = (typeof RESOURCE_LIVE_ALLOWANCES)[number]['id'];
+export type ResourceLiveId = BuiltInResourceLiveId | `custom:${string}`;
 
 /** Fixed labels for why an allowance has no verified reading. Never provider text. */
 export type ResourceLiveReason =
@@ -103,6 +118,7 @@ export interface ResourceLiveReading {
   label: string;
   lane: string | null;
   class: ResourceLiveClass;
+  custom?: ResourceLiveCustom;
   verified: boolean;
   confidence: 'high' | 'medium' | 'low' | null;
   used: number | null;

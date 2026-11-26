@@ -14,6 +14,13 @@ const row = (changes: Partial<LaneAllowanceRow> = {}): LaneAllowanceRow => ({ la
   costClass: 'included', projectedUnusedPct: null, history: null, reason: null, devin: null, ...changes });
 afterEach(() => vi.resetAllMocks());
 describe('lane allowance cards', () => {
+  it('shows the Gemini mark and names fresh observations, rates and projected waste', () => {
+    const resource = { source: 'antigravity-agent-check', sourceTier: 'operator-entry' as const, expiresAt: null, burnPerHour: 2, projectedUnused: 24 };
+    const { container } = render(<LaneAllowanceCard row={row({ lane: 'agy', label: 'Google AI Ultra · Antigravity', resource })} now={now} />);
+    expect(container.querySelector('[data-provider="gemini"]')).toBeInTheDocument();
+    expect(screen.getByText('Operator / agent check · antigravity-agent-check')).toBeVisible();
+    expect(screen.getByText('2 %/h · 24 % projected unused')).toBeVisible();
+  });
   it('renders the missing-reading ancient-receipt projection without included or free claims', () => {
     const snapshot = projectLaneAllowance({ posture: { lanes: { devin: { posture: 'burn', postureReason: 'preview',
       projectedUnusedPct: null, hoursToReset: null, costClass: 'included', freePreview: true,

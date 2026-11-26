@@ -72,11 +72,12 @@ describe('Spend down section in the Resources sidebar', () => {
       row({ pool: 'gemini', reason: 'reading missing', summary: 'unknown: reading missing' }),
     ])) : json({}, 404));
     render(<SidebarResources />);
-    expect(await screen.findByText('reading missing')).toBeVisible();
+    expect(await screen.findByText('No readings yet')).toHaveAttribute('title', 'reading missing');
     expect(screen.getByText('gemini')).toBeVisible();
     // Unknown is never drawn or written as zero.
-    expect(screen.getByRole('img', { name: 'unknown used now, unknown projected at reset' })).toBeVisible();
-    expect(screen.getAllByText('unknown')).toHaveLength(5);
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(screen.queryByText('unknown')).not.toBeInTheDocument();
+    expect(screen.queryByText('Burn per hour')).not.toBeInTheDocument();
     expect(screen.queryByText('0%')).not.toBeInTheDocument();
   });
 
@@ -90,8 +91,8 @@ describe('Spend down section in the Resources sidebar', () => {
     render(<SidebarResources />);
     const items = await screen.findAllByRole('listitem');
     expect(items.map(item => item.getAttribute('aria-label'))).toEqual(pools);
-    expect(within(items[1]!).getByText('reading stale')).toBeVisible();
-    expect(within(items[1]!).getAllByText('unknown')).toHaveLength(5);
+    expect(within(items[1]!).getByText('No readings yet')).toHaveAttribute('title', 'reading stale');
+    expect(within(items[1]!).queryByText('unknown')).not.toBeInTheDocument();
     expect(within(items[2]!).getByText('exhausted')).toBeVisible();
     expect(within(items[3]!).getByText('exhausted')).toBeVisible();
   });
@@ -120,8 +121,9 @@ describe('Spend down section in the Resources sidebar', () => {
     const items = screen.getAllByRole('listitem');
     expect(items.slice(0, 2).map(item => item.getAttribute('aria-label'))).toEqual(['claude-api', 'claude']);
     expect(items).toHaveLength(snapshot.pools.length);
-    // Every row carries a bar, a countdown or "unknown", and one of the four status words.
+    // Measured rows keep their bar and status; missing readings collapse.
     for (const item of items) {
+      if (within(item).queryByText('No readings yet') && !item.querySelector('[data-verdict]')) continue;
       expect(within(item).getByRole('img')).toBeVisible();
       expect(['on pace', 'behind', 'exhausted', 'unknown']).toContain(item.querySelector('[data-verdict]:not([role])')!.textContent);
     }
@@ -130,7 +132,7 @@ describe('Spend down section in the Resources sidebar', () => {
     // Balance and projected unused at expiry: all of it.
     expect(within(items[0]!).getAllByText('112 USD')).toHaveLength(2);
     expect(within(screen.getByRole('listitem', { name: 'zai' })).getByText('exhausted')).toBeVisible();
-    expect(within(screen.getByRole('listitem', { name: 'local' })).getByText('reading missing')).toBeVisible();
+    expect(within(screen.getByRole('listitem', { name: 'local' })).getByText('No readings yet')).toHaveAttribute('title', 'reading missing');
   });
 
   it('cannot restore an old forecast after a visibility refresh reports stale usage', async () => {
@@ -144,9 +146,9 @@ describe('Spend down section in the Resources sidebar', () => {
     const { rerender } = render(view(true));
     rerender(view(false));
     rerender(view(true));
-    expect(await screen.findByText('reading stale')).toBeVisible();
+    expect(await screen.findByText('No readings yet')).toHaveAttribute('title', 'reading stale');
     await act(async () => { finishOld(json(spend([row({ pool: 'codex-personal', usedPercent: 65, verdict: 'on-pace' })]))); });
-    expect(screen.getByText('reading stale')).toBeVisible();
+    expect(screen.getByText('No readings yet')).toHaveAttribute('title', 'reading stale');
     expect(screen.queryByText('65%')).not.toBeInTheDocument();
     expect(reads).toBe(2);
   });

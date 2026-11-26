@@ -8,16 +8,18 @@
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { WORLD_CACHE_TTL_MS } from '../../../../core/world/types.js';
+import type { LaneAllowanceRow } from '../../../../core/usage/lane-allowance.js';
 import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { WindowBar, WindowBarSwatch } from '../../../components/primitives/WindowBar.js';
 import { Tooltip } from '../../../components/primitives/Tooltip.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { openResources } from './resources-store.js';
-import { worldModelQuery } from './world-query.js';
+import { resourceWorldModelQuery } from './world-query.js';
 import { sameWorldLaneRow, WORLD_LANE_STALE_MS, worldLaneRows, type LaneEngine, type WorldLaneRow } from './world-lane-rows.js';
 import styles from './WorldLaneRows.module.css';
 import { BurnSparkline } from './BurnSparkline.js';
+import { PoolAllowanceBar } from './LaneAllowanceCards.js';
 
 const AGE_CLOCK_MS = 60_000;
 
@@ -47,9 +49,9 @@ function Mark({ engine }: { engine: LaneEngine }) {
     case 'grok':
     case 'local':
     case 'devin':
-      return <BrandMark brand={engine} size={14} />;
     case 'cursor':
-      return <span className={styles.monogram} aria-hidden="true">Cu</span>;
+    case 'gemini':
+      return <BrandMark brand={engine} size={14} />;
     case 'dot':
       return <span className={styles.monogram} aria-hidden="true">Dt</span>;
     case 'other':
@@ -68,7 +70,7 @@ function Bar({ row, expanded }: { row: WorldLaneRow; expanded: boolean }) {
 }
 
 const PROVIDER: Record<LaneEngine, string> = {
-  claude: 'Claude', codex: 'Codex', devin: 'Devin', grok: 'Grok', cursor: 'Cursor', dot: 'Dot', local: 'Local', other: 'Other',
+  claude: 'Claude', codex: 'Codex', devin: 'Devin', grok: 'Grok', cursor: 'Cursor', gemini: 'Gemini', dot: 'Dot', local: 'Local', other: 'Other',
 };
 
 /** The one state chip an expanded row shows: live, stale with its age, or not connected. */
@@ -105,7 +107,7 @@ const LaneButton = memo(function LaneButton({ row, expanded, now }: { row: World
         <div className={styles.tipLine}>Burn {row.burn}</div>
         <div className={styles.tipLine}>Forecast {row.forecastText}</div>
         <div className={styles.tipLine}>Source {row.source}</div>
-        <div className={styles.tipLine}>Observed {row.observedAt ? <time dateTime={row.observedAt}>{row.freshness} · {row.age}</time> : row.freshness}</div>
+        <div className={styles.tipLine}>Observed {row.observedAt ? <time dateTime={row.observedAt} title={row.observedAt}>{row.freshness} · {row.age}</time> : row.freshness}</div>
       </div>
     }>
       <button
@@ -120,7 +122,7 @@ const LaneButton = memo(function LaneButton({ row, expanded, now }: { row: World
           <Mark engine={row.engine} />
           {expanded ? <span className={styles.name}>{row.label}</span> : null}
           {expanded && row.bar.figure ? <span className={styles.figure} data-figure>{row.bar.figure}</span> : null}
-          <time className={styles.badge} data-freshness={row.freshness} dateTime={row.observedAt ?? undefined}>{badge}</time>
+          <time className={styles.badge} data-freshness={row.freshness} dateTime={row.observedAt ?? undefined} title={row.observedAt ?? undefined}>{badge}</time>
         </span>
         <Bar row={row} expanded={expanded} />
         {expanded && row.bar.used !== null ? <span className={styles.note} data-ending={row.bar.ending}>{row.bar.note}</span> : null}
@@ -155,8 +157,8 @@ export function WorldLaneRows({ expanded, enabled = true, now: fixedNow, onLive,
   const sectionVisible = useSectionVisible();
   const documentVisible = useDocumentVisible();
   const visible = sectionVisible && documentVisible;
-  const read = useQuery(worldModelQuery, { enabled: enabled && visible && !provided, freshMs: WORLD_CACHE_TTL_MS });
-  const refresh = useRefetch(worldModelQuery);
+  const read = useQuery(resourceWorldModelQuery, { enabled: enabled && visible && !provided, freshMs: WORLD_CACHE_TTL_MS });
+  const refresh = useRefetch(resourceWorldModelQuery);
   usePollWhileVisible(refresh, WORLD_CACHE_TTL_MS, { enabled: enabled && !provided });
   const source = provided ? snapshot : read.data;
   const live = provided || source !== undefined || read.error !== undefined;
@@ -173,12 +175,14 @@ export function WorldLaneRows({ expanded, enabled = true, now: fixedNow, onLive,
     hold.current = stable.length === prev.length && stable.every((row, index) => row === prev[index]) ? prev : stable;
     return hold.current;
   }, [live, source, now]);
-  if (!live || rows.length === 0) return null;
+  const pools = (source as { resourcePools?: LaneAllowanceRow[] } | null)?.resourcePools;
+  if (!live || rows.length === 0 && !pools?.length) return null;
   return (
     <div className={styles.group} data-expanded={expanded || undefined} data-world-lanes role="group" aria-label="Lane resources">
+      {pools?.length ? <PoolAllowanceBar lanes={pools} expanded={expanded} now={now} /> : null}
       {expanded ? providerGroups(rows).map((group) => (
         <div key={group.engine} className={styles.provider} role="group" aria-label={`${PROVIDER[group.engine]} resources`}>
-          <span className={styles.providerName} aria-hidden="true">{PROVIDER[group.engine]}</span>
+          <span className={styles.providerName} aria-hidden="true"><Mark engine={group.engine} /> {PROVIDER[group.engine]}</span>
           {group.rows.map((row) => <LaneButton key={row.key} row={row} expanded now={now} />)}
         </div>
       )) : rows.map((row) => <LaneButton key={row.key} row={row} expanded={false} now={now} />)}

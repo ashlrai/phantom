@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdUsageResourceLive } from '../src/cli/usage-resource-live.js';
 import { loadSensorReport } from '../src/core/observe/read.js';
+import { readLaneAllowance } from '../src/core/usage/lane-allowance.js';
 import { observedRate, planBurnDown } from '../src/core/usage/resource-live/burn-down.js';
 import { ACTIVE_POLL_MS, IDLE_POLL_MS, nextPollState, nextWakeMs, pollDue, readingFingerprint } from '../src/core/usage/resource-live/cadence.js';
 import { ResourceLiveBusyError, readActiveLanes, runResourceLiveTick } from '../src/core/usage/resource-live/engine.js';
@@ -60,6 +61,48 @@ function sourcesOf(map: Partial<Record<ResourceLiveId, ResourceLiveSource[]>>): 
 
 const stored = (runsDir: string): ResourceLiveSidecar => JSON.parse(readFileSync(resourceLivePath(runsDir), 'utf8')) as ResourceLiveSidecar;
 const byId = (sidecar: ResourceLiveSidecar, id: ResourceLiveId): ResourceLiveReading => sidecar.readings.find(row => row.id === id)!;
+
+it('registers, ranks, projects and removes user-defined resources without running their adapters', async () => {
+  const runsDir = tmp();
+  vi.stubEnv('ASHLR_HOME', runsDir);
+  const registry = join(runsDir, 'custom-resources.json');
+  const base = { id: 'shell-status', name: 'Studio agents', provider: 'Example AI',
+    kind: 'subscription', source: 'cli-status', unit: 'points', limit: 50, window_hours: 5 };
+  const register = (resources: unknown[]) => writeFileSync(registry, JSON.stringify({ schema: 'custom-resources.v1', resources }));
+  register([base, { ...base, id: 'metered', kind: 'metered', source: 'official-endpoint' },
+    { ...base, id: 'local', kind: 'local', source: 'agent-check' }, { ...base, id: 'bad', command: 'not accepted' }]);
+  mkdirSync(join(runsDir, 'state'));
+  const evidence = (at: number, used: number) => writeFileSync(join(runsDir, 'state', 'resource-evidence.json'),
+    JSON.stringify({ schema: 'resource-evidence.v1', readings: {
+      'custom:shell-status': { source: 'cli-status', used, observed_at: iso(at), reset_at: iso(NOW + 5 * HOUR) },
+      'custom:metered': { source: 'official-endpoint', used: 3, observed_at: iso(at) },
+      'custom:local': { source: 'agent-check', used: 4, observed_at: iso(at + HOUR) },
+    } }));
+  const tick = (nowMs: number) => runResourceLiveTick({ runsDir, nowMs, sources: sourcesOf({}), force: true });
+  evidence(NOW, 8);
+  await tick(NOW);
+  evidence(NOW + HOUR, 10);
+  const result = await tick(NOW + HOUR);
+  expect(byId(result.sidecar, 'custom:shell-status')).toMatchObject({ remaining: 40, source: 'cli-status', verified: true });
+  expect(byId(result.sidecar, 'custom:local')).toMatchObject({ used: null, limit: null, verified: false });
+  expect(byId(result.sidecar, 'custom:metered')).toMatchObject({ used: 3, source: 'official-endpoint' });
+  expect(result.sidecar.readings.some(row => row.id === 'custom:bad')).toBe(false);
+  const plans = result.sidecar.burn_down.allowances;
+  expect(plans[0]).toMatchObject({ id: 'custom:shell-status', projected_unused: 32 });
+  expect(plans.find(row => row.id === 'custom:metered')?.action).toBe('hold');
+  const projected = await readLaneAllowance({ runsDir, nowMs: NOW + HOUR });
+  expect(projected.lanes.find(row => row.lane === 'custom:shell-status')).toMatchObject({
+    label: 'Studio agents', left: 40, freshness: 'live',
+    resource: { provider: 'Example AI', burnPerHour: 2, projectedUnused: 32 },
+  });
+  const stale = await tick(NOW + HOUR + 16 * 60_000);
+  expect(byId(stale.sidecar, 'custom:shell-status').used).toBeNull();
+  register([{ ...base, id: 'metered', kind: 'metered', source: 'official-endpoint', metered_opt_in: true }]);
+  evidence(NOW + HOUR, 10);
+  const changed = await tick(NOW + HOUR);
+  expect(changed.sidecar.burn_down.allowances.find(row => row.id === 'custom:metered')?.action).toBe('reserve');
+  expect(changed.sidecar.readings.some(row => row.id === 'custom:shell-status')).toBe(false);
+});
 
 describe('poll cadence', () => {
   it('derives confidence for new and legacy sidecars and keeps unverified confidence null', () => {
@@ -516,7 +559,36 @@ describe('default sources', () => {
     expect(await sources['glm-lite'][0]!.read(NOW)).toMatchObject({ used: 12, source: 'zai-lane-resources' });
     expect(sources['glm-lite'][0]!.tier).toBe('own-call');
     expect(await sources['claude-api'][0]!.read(NOW)).toMatchObject({ used: 20, limit: 50, unit: 'usd', source: 'claude-api-grant-store' });
-    expect(defaultResourceLiveSources({ runsDir })['claude-api']).toEqual([]);
+    expect(await defaultResourceLiveSources({ runsDir })['claude-api'][0]!.read(NOW)).toBeNull();
+  });
+
+  it('keeps separate, timestamped owner-pool observations and holds a credit past expiry', async () => {
+    const runsDir = tmp();
+    mkdirSync(join(runsDir, 'state'));
+    const pct = { used: 35, limit: 100, observed_at: iso(NOW), reset_at: iso(NOW + 5 * HOUR) };
+    const credit = { used: 40, limit: 200, observed_at: iso(NOW), reset_at: null, expires_at: iso(NOW + HOUR) };
+    writeFileSync(join(runsDir, 'state/resource-evidence.json'), JSON.stringify({ schema: 'resource-evidence.v1', readings: {
+      antigravity: { ...pct, window_start: iso(NOW) }, 'google-workspace': { ...pct, used: 70 }, 'openai-api': credit,
+      cursor: { ...pct, observed_at: iso(NOW - HOUR) }, 'grok-bot': { ...pct, observed_at: iso(NOW + HOUR) },
+    } }));
+    const fetchImpl = vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith('/api/tags') ? { models: [{}] } : { data: [] })));
+    const defaults = defaultResourceLiveSources({ runsDir, fetchImpl: fetchImpl as typeof fetch });
+    const sources = sourcesOf({});
+    Object.assign(sources, { antigravity: defaults.antigravity, 'google-workspace': defaults['google-workspace'],
+      'openai-api': defaults['openai-api'], cursor: defaults.cursor, 'grok-bot': defaults['grok-bot'],
+      'lm-studio': defaults['lm-studio'], ollama: defaults.ollama });
+    const { sidecar } = await runResourceLiveTick({ runsDir, sources, nowMs: NOW });
+    expect(byId(sidecar, 'antigravity')).toMatchObject({ lane: 'agy', used: 35, source_tier: 'operator-entry', window_start: iso(NOW) });
+    expect(byId(sidecar, 'google-workspace')).toMatchObject({ lane: null, used: 70 });
+    expect(byId(sidecar, 'openai-api')).toMatchObject({ remaining: 160, expires_at: credit.expires_at, reset_at: null });
+    expect(byId(sidecar, 'cursor')).toMatchObject({ used: null, verified: false });
+    expect(byId(sidecar, 'grok-bot')).toMatchObject({ used: null, verified: false });
+    expect(byId(sidecar, 'lm-studio')).toMatchObject({ used: null, limit: 0, unit: 'models' });
+    expect(byId(sidecar, 'ollama')).toMatchObject({ used: null, limit: 1, unit: 'models' });
+    expect(fetchImpl.mock.calls.map(([url]) => url).sort()).toEqual(['http://127.0.0.1:11434/api/tags', 'http://127.0.0.1:1234/v1/models']);
+    expect(sidecar.burn_down.allowances.slice(0, 2).map(r => r.id)).toEqual(['openai-api', 'antigravity']);
+    const expired = planBurnDown([byId(sidecar, 'openai-api')], {}, NOW + HOUR).allowances[0];
+    expect(expired).toMatchObject({ action: 'hold', remaining: null });
   });
 
   it('marks an operator-entered Grok reading as such and ignores a stale one', async () => {
@@ -546,7 +618,8 @@ describe('default sources', () => {
     expect(without.gemini).toEqual([]);
     expect(without['claude-weekly'].some(source => source.tier === 'visible-window')).toBe(false);
     expect(without['devin-flash'].map(source => source.tier)).toEqual(['official']);
-    for (const id of ['antigravity', 'dot', 'instinct', 'cursor'] as const) expect(without[id]).toEqual([]);
+    for (const id of ['antigravity', 'dot', 'cursor'] as const) expect(without[id].map(source => source.tier)).toEqual(['operator-entry']);
+    expect(without.instinct).toEqual([]);
     const page = (text: string, url?: string) => ({ newPage: async () => ({ goto: async () => {}, url: () => url ?? 'https://claude.ai/settings/usage',
       visibleText: async () => text, close: async () => {} }), close: async () => {} });
     const withBrowser = defaultResourceLiveSources({ runsDir: tmp(), browser: page('Weekly limits\nResets in 3 days\n62% used\n') });

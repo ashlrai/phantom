@@ -1,4 +1,5 @@
 /** Display-only scheduling evidence. Never infer quota tokens or change admission. */
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import { formatMetric } from '../../../components/charts/format-metric.js';
 import type { ObservedPercentiles } from '../../../../core/routing/scheduling-types.js';
 import { formatDuration, percentText } from '../autonomy/format.js';
@@ -124,7 +125,7 @@ export function schedulingEvidence(budget: unknown, seat: { seatId: string; engi
   if (evidenceAvailable && cohortMatches) {
     const duration = percentiles(field(rawForecast, 'durationMs')), tokens = percentiles(field(rawForecast, 'tokens'));
     const recordedAt = instant(field(rawForecast, 'recordedAt'));
-    const recordingAge = recordedAt !== null && recordedAt <= now ? `recorded ${formatDuration(now - recordedAt)} ago` : 'recording time unknown';
+    const recordingAge = recordedAt !== null && recordedAt <= now ? `recorded ${ageInSeconds((now - recordedAt) / 1000)}` : 'recording time unknown';
     if (duration || tokens) {
       forecast.push(`Last selected task estimate · ${recordingAge} · recorded model ${model}. This is not the current task or model selection.`);
       forecastSummary = { recorded: `Last selected task · ${recordingAge}. Not the current task or model.`, duration: null, fit: null };

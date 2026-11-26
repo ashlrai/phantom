@@ -263,6 +263,21 @@ describe('phm node CLI', () => {
     expect(build.next).not.toContain('--probe-auth');
   });
 
+  it('join names the local registry boundary in JSON and text', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    // A standalone join reaches only this machine's private store, so the
+    // reply itself must say so — an outside contributor's first command is
+    // where the "I joined the fleet" misunderstanding starts.
+    const joined = JSON.parse((await cli('join', '--node', 'laptop', '--owner', 'acme', '--json')).out);
+    expect(joined.registry).toBe('local');
+    const text = await cli('join', '--node', 'desktop', '--owner', 'acme');
+    expect(text.out).toContain('local to this machine');
+    expect(text.out).toContain('docs/NODES.md');
+    // The beat keep-alive hint is unchanged; the boundary line follows it.
+    expect(text.out.indexOf('phm node beat --node desktop')).toBeLessThan(text.out.indexOf('local to this machine'));
+  });
+
   it('reports unmeasured load as unknown, never a fabricated 0', async () => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
     vi.stubEnv('ASHLR_HOME', dir);
