@@ -41,7 +41,7 @@ export function leaderRows(input: LeaderPulseInput, nowMs: number): Array<{ labe
 }
 
 export function formatPulseAge(ageMs: number | null): string {
-  return ageMs === null ? 'unknown' : ageInSeconds(ageMs / 1000, 'spaced').replace(/ s ago$/, ' sec ago');
+  return ageMs === null ? '—' : ageInSeconds(ageMs / 1000, 'spaced').replace(/ s ago$/, ' sec ago');
 }
 
 export function dropRows(input: LeaderPulseInput): Array<{ lane: string; pending: number; files: string[] }> {

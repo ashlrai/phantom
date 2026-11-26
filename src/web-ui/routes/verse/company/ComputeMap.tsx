@@ -20,6 +20,7 @@ import { advanceCores, fresh, isFleetCompute, isFleetSessionMap, loadRatio, type
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { elapsedTime } from '../../../lib/relative-time.js';
 import { ComputeScene3D, OrgMessages } from './ComputeScene3D.js';
+import { ComputeFlow } from './ComputeFlow.js';
 import { shown } from './company-model.js';
 import { isOfflineWithoutFreshMetrics, LaneTelemetry, MachineReadings, Observation, OfflineMachine } from './ComputeTelemetry.js';
 import styles from './compute.module.css';
@@ -221,6 +222,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       return read.status === 'error' ? <p key={String(label)} role="alert">{String(label)} refresh failed. {read.data ? 'Last reading retained; may be stale.' : 'No data available.'}</p> : null;
     })}
     <p>{data ? <>Compute <Observation value={data.generatedAt} now={now} />{data.truncated && ' · partial inventory'}</> : 'No compute data yet.'}</p>
+    <ComputeFlow nodes={nodes} snapshot={sessions.data} now={now} />
     <section aria-label="Lane quota strip">
       <h3>Lanes &amp; capacity</h3>
       <div className={styles.quota}>{!laneRows.length && <p>No lane observations.</p>}{laneRows.map(lane => {

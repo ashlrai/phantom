@@ -62,6 +62,26 @@ it('shows offline/unknown telemetry, lane holds and queued placement', async () 
   expect(within(screen.getByRole('region', { name: 'Unassigned agents' })).getByText('RQ-WAIT')).toBeInTheDocument();
   expect(getPane('fleet-compute')?.needsSession).toBe(false);
 });
+it('draws running flow from observed placement, widening shared links and dashing uncertain links', async () => {
+  const { payloads } = serve();
+  payloads['/api/verse/fleet/control/sessions'] = { ...sessions, computeAt: at(), mapRecent: [], mapSessions: [
+    mapped(), mapped({ job: 'RQ-B' }),
+    mapped({ job: 'RQ-C', nodeId: 'muse', placement: 'claim' }),
+    mapped({ job: 'RQ-D', nodeId: null, lane: null, placement: 'unknown' }),
+    mapped({ job: 'RQ-WAIT', status: 'queued', mapState: 'queued' }),
+  ] };
+  render(<ComputeMap visible />);
+  const flow = await screen.findByRole('img', { name: 'Running agent flow' });
+  const shared = within(flow).getByText('local → codex-personal: 2 running agents').parentElement!;
+  const stale = within(flow).getByText('muse → codex-personal: 1 running agent (stale or unknown)').parentElement!;
+  const unplaced = within(flow).getByText('Machine unknown → Lane unknown: 1 running agent (stale or unknown)').parentElement!;
+  const agent = within(flow).getByText('codex-personal → RQ-A: 1 running agent').parentElement!;
+  expect(Number(shared.getAttribute('stroke-width'))).toBeGreaterThan(Number(agent.getAttribute('stroke-width')));
+  expect(shared).not.toHaveAttribute('stroke-dasharray');
+  expect(stale).toHaveAttribute('stroke-dasharray');
+  expect(unplaced).toHaveAttribute('stroke-dasharray');
+  expect(flow).not.toHaveTextContent('RQ-WAIT');
+});
 it('keeps the selected agent and its recorded detail through orbit and zoom', async () => {
   serve(); vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null); // jsdom has no canvas
   render(<ComputeMap visible />);
