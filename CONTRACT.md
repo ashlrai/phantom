@@ -236,6 +236,14 @@ standing authority grant.
 The install module also exports `ConsumerInstallHeld` for shared error
 classification and the `directory`, `parents`, `owned`, `regular`, `write`,
 `sha`, `ioRead` and `packageReady` guards.
+The default inspection is non-mutating apart from private artifact staging.
+`inspectConsumerDesktopInstall(input, apply = false)` and upgrade inspection
+with `options.apply` can tighten eligible existing private directories and run
+the quota collector's supported recovery before checking quiescence. The
+results can carry `path`, `remedyCommand`, and `tightenedPaths`; upgrade
+inspection puts failed quiescence codes in `stop.reason`, and apply reports
+the code as the hold `reason`. The shared transaction's quiescence refusals
+carry a fixed error `code` in addition to the local operator message.
 
 # Lane allowance evidence
 

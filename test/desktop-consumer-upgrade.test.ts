@@ -8,6 +8,9 @@ import {gzipSync} from 'node:zlib';
 import {Header} from 'tar';
 import {canonicalJson} from '../src/core/authority/canonical-json.js';
 import {authoritySurfaceDigest} from '../src/core/authority/surface.js';
+import {acquireResourceQuotaRefreshLease} from '../src/core/resources/quota-refresh-lease.js';
+import * as bootIdentity from '../src/core/resources/native-boot-identity.js';
+import {canonical, digest} from '../src/core/universe/artifacts.js';
 import {extractSignedAppArchive} from '../src/core/desktop/qualified-update.js';
 import {consumerInstallerOsCommand,type ConsumerInstallDependencies,type ConsumerTransaction} from '../src/core/desktop/consumer-install.js';
 import {cmdDesktop,parseDesktopInstallArgs} from '../src/cli/desktop.js';
@@ -140,6 +143,63 @@ describe('managed consumer upgrade',()=> {
     expect(fs.readlinkSync(f.current)).toBe(f.old);
     expect(f.io.appInventory('/Applications/Phantom.app')).toBe(inventory);
   });
+  it.each([false,true])('recovers a proven same-boot dead collector before quiescence on apply (paired app: %s)',async paired=> {
+    const f=fixture(),ledger=join(f.home,'.ashlr/account-connections/ledger');
+    if(paired)oldApp(f);
+    fs.mkdirSync(ledger,{recursive:true,mode:0o700});
+    vi.spyOn(bootIdentity,'readNativeBootIdentity').mockReturnValue({machineDigest:'a'.repeat(64),bootId:'11111111-2222-3333-4444-555555555555'});
+    const lease=await acquireResourceQuotaRefreshLease(ledger,{scope:'native-connection-metadata',trackNativeActivity:true});
+    lease.markPending();lease.close(true);
+    const pending=join(ledger,'.resource-quota-refresh-pending.json'),activity=join(ledger,'.resource-quota-refresh-activity.json');
+    const record=JSON.parse(fs.readFileSync(pending,'utf8')),pid=2147483000;
+    record.ownerPid=pid;write(pending,canonical(record)+'\n');
+    write(activity,canonical({...JSON.parse(fs.readFileSync(activity,'utf8')),markerDigest:digest(canonical(record))})+'\n');
+    const kill=process.kill;
+    vi.spyOn(process,'kill').mockImplementation((target,signal)=>{
+      if(target===pid)throw Object.assign(new Error('fixture owner absent'),{code:'ESRCH'});
+      return kill(target,signal);
+    });
+    const emit=vi.fn();
+    expect(await cmdDesktop(['install','--upgrade','--apply'],undefined,emit,undefined,f.deps)).toBe(0);
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({state:'upgraded'}));
+    if(paired)expect(emit).toHaveBeenCalledWith(expect.objectContaining({app:{state:'current',reason:null}}));
+    expect(fs.existsSync(pending)).toBe(false);
+  });
+  it('reports a fixed hold if a quota marker appears at the paired app transaction boundary',async()=> {
+    const f=fixture();oldApp(f);
+    const inspected=await inspectConsumerDesktopUpgrade(f.deps,options);
+    const pending=join(f.home,'.ashlr/account-connections/ledger/.resource-quota-refresh-pending.json');
+    vi.mocked(f.deps.residentStop).mockImplementationOnce(async()=> {
+      f.io.executionLeaseCensus.mockImplementationOnce(async()=>{
+        f.io.executionLeaseCensus.mockImplementationOnce(async()=>{write(pending,'{}');return f.census;});
+        return f.census;
+      });
+      return {ok:true};
+    });
+    expect(await applyConsumerDesktopUpgrade(inspected)).toMatchObject({state:'held',reason:'collector-pending',stop:{reason:'collector-pending',drained:false},remedyCommand:expect.any(String)});
+    expect(fs.readlinkSync(f.current)).toBe(f.old);
+    expect(fs.readFileSync(pending,'utf8')).toBe('{}');
+  });
+  it('reports the exact private path in inspection and tightens it only on explicit apply',async()=> {
+    const f=fixture(),local=join(f.home,'.local'),share=join(local,'share');
+    fs.mkdirSync(share,{recursive:true,mode:0o700});
+    fs.chmodSync(local,0o755);fs.chmodSync(share,0o751);
+    expect(await inspectConsumerDesktopUpgrade(f.deps,options)).toMatchObject({state:'held',reason:'unsafe-local-path',path:local,remedyCommand:`chmod go-rwx '${local}'`});
+    expect(fs.statSync(local).mode&0o777).toBe(0o755);
+    const emit=vi.fn();
+    expect(await cmdDesktop(['install','--upgrade','--apply'],undefined,emit,undefined,f.deps)).toBe(0);
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({state:'upgraded',tightenedPaths:[local,share]}));
+    expect(fs.statSync(local).mode&0o777).toBe(0o700);
+    expect(fs.statSync(share).mode&0o777).toBe(0o700);
+  });
+  it('holds an unproven collector marker and provides a remedy command',async()=> {
+    const f=fixture(),pending=join(f.home,'.ashlr/account-connections/ledger/.resource-quota-refresh-pending.json');
+    write(pending,'{}');
+    const emit=vi.fn(),code=await cmdDesktop(['install','--upgrade','--apply'],undefined,emit,undefined,f.deps);
+    expect(code).toBe(1);
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({state:'held',reason:'collector-pending',remedyCommand:expect.any(String)}));
+    expect(fs.readFileSync(pending,'utf8')).toBe('{}');
+  });
   it('inspects without mutation then upgrades once, retaining previous and writing a private journal',async()=> {
     const f=fixture(),before=fs.readlinkSync(f.current),r=await inspectConsumerDesktopUpgrade(f.deps,options);
     expect(r).toMatchObject({state:'ready',installed:{version:'3.30.24'},candidate:{version:'3.30.35'},stop:{engaged:true,drained:true}});
@@ -171,11 +231,11 @@ describe('managed consumer upgrade',()=> {
     expect(await inspectConsumerDesktopUpgrade(f.deps,options)).toMatchObject({state:'held',reason:'unsafe-local-path'});
     expect(f.deps.residentStop).not.toHaveBeenCalled();
   });
-  it('preserves shared install guard reasons during apply',async()=> {
+  it('tightens owned release parents that become public between inspection and apply',async()=> {
     const f=fixture(),r=await inspectConsumerDesktopUpgrade(f.deps,options);
-    fs.chmodSync(join(f.home,'.local/share'),0o755);
-    expect(await applyConsumerDesktopUpgrade(r)).toMatchObject({state:'held',reason:'unsafe-local-path'});
-    expect(f.deps.residentStop).not.toHaveBeenCalled();
+    const share=join(f.home,'.local/share');fs.chmodSync(share,0o755);
+    expect(await applyConsumerDesktopUpgrade(r)).toMatchObject({state:'upgraded',tightenedPaths:[share]});
+    expect(fs.statSync(share).mode&0o777).toBe(0o700);
   });
   it('keeps unexpected inspection errors generic',async()=> {
     const f=fixture();vi.mocked(f.deps.transaction).mockRejectedValue(new Error('unexpected transaction error'));
@@ -229,7 +289,7 @@ describe('managed consumer upgrade',()=> {
   });
   it('requires Stop only at apply and never stops the resident on a refusal',async()=> {
     const f=fixture();fs.unlinkSync(join(f.home,'.ashlr/KILL'));const r=await inspectConsumerDesktopUpgrade(f.deps,options);expect(r).toMatchObject({state:'ready',stop:{engaged:false,drained:false}});
-    expect(await applyConsumerDesktopUpgrade(r)).toMatchObject({state:'held',reason:'stop-required'});expect(f.deps.residentStop).not.toHaveBeenCalled();
+    expect(await applyConsumerDesktopUpgrade(r)).toMatchObject({state:'held',reason:'stop-not-engaged',remedyCommand:'phm authority stop'});expect(f.deps.residentStop).not.toHaveBeenCalled();
   });
   it('holds a failed resident stop before switching',async()=> {
     const f=fixture();vi.mocked(f.deps.residentStop).mockResolvedValue({ok:false});

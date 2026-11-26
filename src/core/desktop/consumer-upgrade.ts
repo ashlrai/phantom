@@ -7,7 +7,7 @@ import {canonicalJson} from '../authority/canonical-json.js';
 import {verifyAuthoritySurfaceAt} from '../authority/surface.js';
 import {readPinnedRuntimeArchive, extractPinnedRuntimeArchive, type PinnedRuntimeArchiveOptions} from '../local-runtime/archive.js';
 import {fsyncDirectory} from '../util/durability.js';
-import {ConsumerInstallHeld, createConsumerInstallDependencies, directory, parents, owned, regular, write, sha, ioRead, packageReady,
+import {ConsumerInstallHeld, checkConsumerQuiescence, quiescenceHold, createConsumerInstallDependencies, directory, parents, owned, regular, write, sha, ioRead, packageReady,
   type ConsumerInstallDependencies, type ConsumerInstallIo, type ConsumerTransaction} from './consumer-install.js';
 import {extractSignedAppArchive} from './qualified-update.js';
 import {verifyCompatibleUpdateManifest, verifyMinisign, verifyUpdateBundleRecord, type CompatibleUpdateManifest} from './update-manifest.js';
@@ -22,6 +22,7 @@ export interface ConsumerUpgradeResult {
   schema:'desktop-upgrade.v1'; mode:'upgrade'|'rollback';
   state:'ready'|'current'|'upgraded'|'reverted'|'rolled-back'|'held'; reason:string|null;
   applied:boolean; authorityResumed:false; installed:Release|null; candidate:Release|null; previous:Release|null;
+  path?: string; remedyCommand?: string; tightenedPaths?: readonly string[];
   app:{state:'current'|'update-available'|'needs-owner'|'absent'|'unknown'; reason:string|null};
   stop:{engaged:boolean|null; drained:boolean|null; reason:string|null; command:'phm authority stop'};
   daemon:{stop:{command:'phm authority resident stop'; performed:boolean; confirmation:'none'};
@@ -32,9 +33,13 @@ const semver=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const releasePattern=/^[a-f0-9]{40}$/;
 class Held extends Error {}
 function need(value:unknown,reason:string):asserts value {if(!value)throw new Held(reason);}
-function heldReason(error:unknown):string|null {
+function heldReason(error:unknown,r:ConsumerUpgradeResult):string|null {
+  if(error instanceof ConsumerInstallHeld) {
+    if(error.path)r.path=error.path;
+    if(error.remedyCommand)r.remedyCommand=error.remedyCommand;
+    return error.reason;
+  }
   if(error instanceof Held)return error.message;
-  if(error instanceof ConsumerInstallHeld)return error.reason;
   return null;
 }
 function versionAt(root:string):string {
@@ -52,6 +57,7 @@ interface Admission {
   pins?:PinnedRuntimeArchiveOptions; journal?:Journal; attempted:boolean;
   selected?:NonNullable<ReturnType<ConsumerTransaction['selectLocalApp']>>;
   source?:ReturnType<ConsumerTransaction['inspectLocalApp']>;
+  retryCommand:string;
 }
 const appPaths=['/Applications/Phantom.app','/Applications/Ashlr.app'];
 function appPresent(io:ConsumerInstallIo):boolean {
@@ -74,10 +80,14 @@ function initial(mode:ConsumerUpgradeOptions['mode']):ConsumerUpgradeResult {
     app:{state:'unknown',reason:null},stop:{engaged:null,drained:null,reason:null,command:'phm authority stop'},
     daemon:{stop:{command:'phm authority resident stop',performed:false,confirmation:'none'},restart:{command:'phm authority resident start',performed:false,ownerConfirmation:true,touchId:'unknown',reason:null}},steps:[]};
 }
-async function quiescence(a:Pick<Admission,'helper'|'io'|'deps'>,r:ConsumerUpgradeResult):Promise<boolean> {
+async function quiescence(a:Admission,r:ConsumerUpgradeResult,recover=false):Promise<void> {
   try {const s=fs.lstatSync(join(a.deps.home,'.ashlr/KILL'));r.stop.engaged=s.isFile()&&!s.isSymbolicLink();}catch {r.stop.engaged=false;}
-  try {await a.helper.requireLocalQuiescence(a.io);r.stop.drained=true;r.stop.reason=null;return true;}
-  catch {r.stop.drained=false;r.stop.reason=r.stop.engaged?'drain-required':'stop-required';return false;}
+  try {await checkConsumerQuiescence(a.helper,a.io,recover);r.stop.drained=true;r.stop.reason=null;delete r.remedyCommand;}
+  catch(error) {
+    const hold=quiescenceHold(error,a.retryCommand)??new ConsumerInstallHeld('quiescence-unavailable',undefined,a.retryCommand);
+    r.stop.drained=false;r.stop.reason=hold.reason;r.remedyCommand=hold.remedyCommand;
+    throw hold;
+  }
 }
 function touchId(r:ConsumerUpgradeResult,root:string,digest:string):void {
   try {const old=verifyAuthoritySurfaceAt(root,'installed',{fresh:true});if(old.ok)r.daemon.restart.touchId=old.digest!==digest;}catch { /* Unknown remains unknown. */ }
@@ -86,24 +96,28 @@ function touchId(r:ConsumerUpgradeResult,root:string,digest:string):void {
 /** Inspection writes only private staged public artifacts. Admission cannot be serialized or replayed. */
 export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDependencies,options:ConsumerUpgradeOptions):Promise<ConsumerUpgradeResult> {
   const deps=Object.freeze({...input,trust:Object.freeze({...input.trust,repository:Object.freeze({...input.trust.repository})})}),r=initial(options.mode);
+  const tightenedPaths=options.apply?[] as string[]:undefined;
+  if(tightenedPaths)r.tightenedPaths=tightenedPaths;
   try {
     need(deps.platform==='darwin'&&deps.architecture==='arm64','unsupported-platform');deps.assertRunning();
     const helper=await deps.transaction(),io=helper.createLocalAppTransactionIo({home:deps.home,packageRoot:deps.packageRoot});io.log=()=>{};
+    const releases=join(deps.home,'.local/share/ashlr/releases');
+    parents(deps.home,releases,false,tightenedPaths,true);
     const current=join(deps.home,'.local/share/ashlr/current');let before:Pointer|null;
     try {before=io.readCurrentPointer(current);}catch {throw new Held('unmanaged-current');}
     need(before,'not-installed');need(releasePattern.test(basename(before.target)),'unmanaged-current');
     let aliases:Admission['aliases'];try {aliases=helper.inspectLocalAliases(io);need(aliases.length===2&&aliases.every(x=>x.identity!==null),'unmanaged-links');}catch {throw new Held('unmanaged-links');}
-    parents(deps.home,before.target,false);
+    parents(deps.home,before.target,false,tightenedPaths);
     r.installed={version:versionAt(before.target),release:basename(before.target)};
-    const releases=join(deps.home,'.local/share/ashlr/releases');
-    const a:Admission={deps,helper,io,before,aliases,destination:'',attempted:false};
+    const a:Admission={deps,helper,io,before,aliases,destination:'',attempted:false,
+      retryCommand:`phm desktop install --${options.mode}${options.to&&semver.test(options.to)?' --to '+options.to:''}${options.requireApp?' --require-app':''} --apply`};
     if(options.mode==='rollback') {
       need(!appPresent(io),'paired-rollback-required');
       let journal:Journal;
       try {journal=JSON.parse(owned(join(deps.home,'.local/share/ashlr/upgrade.json'),8192).data.toString());}catch {throw new Held('no-rollback');}
       need(journal.schema==='desktop-upgrade-journal.v1' && [journal.previous,journal.current].every(x=>x&&releasePattern.test(x.release)&&semver.test(x.version)),'no-rollback');
       need(before.target===join(releases,journal.current.release)&&r.installed.version===journal.current.version,'current-changed');
-      a.destination=join(releases,journal.previous.release);parents(deps.home,a.destination,false);directory(a.destination);
+      a.destination=join(releases,journal.previous.release);parents(deps.home,a.destination,false,tightenedPaths);directory(a.destination);
       need(versionAt(a.destination)===journal.previous.version,'no-rollback');
       need(io.isCanonicalLauncher(join(a.destination,'bin/ashlr')),'launcher-identity');
       need(await deps.smokeVersion(join(a.destination,'bin/ashlr'))===journal.previous.version,'smoke-failed');
@@ -135,7 +149,7 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
       for(const [i,artifact] of [m.app,m.cli].entries()) {
         try {need(downloaded[i]!.length===artifact.bytes&&sha(downloaded[i]!)===artifact.sha256,'artifact-mismatch');verifyMinisign(downloaded[i]!,artifact.signature,deps.trust.publicKey);}catch {throw new Held('artifact-mismatch');}
       }
-      const staging=join(deps.home,'.ashlr/updates/consumer-staging');parents(deps.home,staging,true);const stage=fs.mkdtempSync(join(staging,'upgrade-'));fs.chmodSync(stage,0o700);
+      const staging=join(deps.home,'.ashlr/updates/consumer-staging');parents(deps.home,staging,true,tightenedPaths);const stage=fs.mkdtempSync(join(staging,'upgrade-'));fs.chmodSync(stage,0o700);
       write(join(stage,'app.tar.gz'),downloaded[0]!);write(join(stage,'package.tgz'),downloaded[1]!);
       try {
         const appStage=join(stage,'app');fs.mkdirSync(appStage,{mode:0o700});const appRoot=extractSignedAppArchive(downloaded[0]!,appStage);
@@ -151,12 +165,13 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
       if(order===0&&r.app.state==='current'){r.state='current';r.reason='already-current';return freeze(r);}
       touchId(r,before.target,m.authoritySurfaceDigest);
     }
-    await quiescence(a,r);r.steps=['phm authority stop','Close Phantom normally and drain work','phm authority resident stop','Switch managed CLI release; keep previous release'];
+    try {await quiescence(a,r,options.apply);}catch(error) {if(options.apply)throw error;}
+    r.steps=['phm authority stop','Close Phantom normally and drain work','phm authority resident stop','Switch managed CLI release; keep previous release'];
     if(r.app.state==='update-available')r.steps.push('Install the paired signed Phantom.app');
     if(r.daemon.restart.touchId===true)r.steps.push('phm authority grant (Touch ID)');
     r.steps.push('phm authority resident start (owner confirmation)');
     r.state='ready';const observed=freeze(r);admissions.set(observed,a);return observed;
-  }catch(error){r.reason=heldReason(error)??'inspection-unavailable';if(r.reason==='not-installed')r.steps=['phm desktop install'];return freeze(r);}
+  }catch(error){r.reason=heldReason(error,r)??'inspection-unavailable';if(r.reason==='not-installed')r.steps=['phm desktop install'];return freeze(r);}
 }
 function writeJournal(home:string,journal:Journal):void {
   const root=join(home,'.local/share/ashlr');parents(home,root,false);const temp=join(root,`.upgrade-${randomBytes(12).toString('hex')}`);
@@ -168,22 +183,23 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
   if(!a||a.attempted||observed.state!=='ready')return freeze({...r,state:'held',reason:'inspection-required'});a.attempted=true;
   const {deps,helper,io}=a,current=join(deps.home,'.local/share/ashlr/current');let created:fs.Stats|undefined,switched:Pointer|undefined;
   const repair=a.destination===a.before.target;
+  const tightenedPaths=[...(r.tightenedPaths??[])];r.tightenedPaths=tightenedPaths;
   try {
-    deps.assertRunning();need(await quiescence(a,r),'stop-required');
+    deps.assertRunning();await quiescence(a,r,true);
     need(canonicalJson(io.readCurrentPointer(current))===canonicalJson(a.before),'current-changed');assert.deepEqual(helper.inspectLocalAliases(io),a.aliases);
     if(a.manifest&&a.pins) {
-      const archive=await readPinnedRuntimeArchive(a.pins);parents(deps.home,join(deps.home,'.local/share/ashlr/releases'),false);
+      const archive=await readPinnedRuntimeArchive(a.pins);parents(deps.home,join(deps.home,'.local/share/ashlr/releases'),false,tightenedPaths);
       if(!repair){fs.mkdirSync(a.destination,{mode:0o700});created=directory(a.destination);extractPinnedRuntimeArchive(archive,a.destination);}
       await packageReady(a.destination,{pins:a.pins,manifest:a.manifest});
     } else {
-      parents(deps.home,a.destination,false);need(versionAt(a.destination)===r.candidate!.version,'no-rollback');
+      parents(deps.home,a.destination,false,tightenedPaths);need(versionAt(a.destination)===r.candidate!.version,'no-rollback');
       need(io.isCanonicalLauncher(join(a.destination,'bin/ashlr')),'launcher-identity');
       need(canonicalJson(JSON.parse(owned(join(deps.home,'.local/share/ashlr/upgrade.json'),8192).data.toString()))===canonicalJson(a.journal),'current-changed');
     }
     try {need(await deps.smokeVersion(join(a.destination,'bin/ashlr'))===r.candidate!.version,'smoke-failed');}catch {throw new Held('smoke-failed');}
-    need(await quiescence(a,r),'stop-required');deps.assertRunning();assert.deepEqual(io.readCurrentPointer(current),a.before);assert.deepEqual(helper.inspectLocalAliases(io),a.aliases);
+    await quiescence(a,r);deps.assertRunning();assert.deepEqual(io.readCurrentPointer(current),a.before);assert.deepEqual(helper.inspectLocalAliases(io),a.aliases);
     try {need((await deps.residentStop()).ok,'resident-stop-failed');}catch {throw new Held('resident-stop-failed');}r.daemon.stop.performed=true;
-    need(await quiescence(a,r),'stop-required');assert.deepEqual(io.readCurrentPointer(current),a.before);
+    await quiescence(a,r);assert.deepEqual(io.readCurrentPointer(current),a.before);
     if(a.manifest&&a.pins&&a.source&&a.selected&&r.app.state==='update-available') {
       const {manifest,pins,source,selected}=a;
       let phase:string|undefined;
@@ -196,7 +212,7 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
         const active=helper.selectLocalApp(manifest.app.signer,io);
         if(afterAppMove) need(active?.inventory===source.inventory,'installed-app-changed');
         else {assert.deepEqual(active,selected);requireOlderApp(selected,manifest.version,io);}
-        need(await quiescence(a,r),'stop-required');
+        await quiescence(a,r);
       };
       try {
         await helper.installLocalApp({selected,source:source.path,sourceProof:source,signer:manifest.app.signer,version:manifest.version,native:true,preserveSigned:true,previousCurrent:a.before.target,
@@ -218,9 +234,15 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
             return false;
           }},installIo);
       } catch(error) {
+        const hold=quiescenceHold(error,a.retryCommand);
+        if(hold) {
+          if(hold.reason==='stop-not-engaged')r.stop.engaged=false;
+          r.stop.drained=false;r.stop.reason=hold.reason;
+          heldReason(hold,r);
+        }
         if(phase==='rollback-held'){created=undefined;throw new Held('rollback-held');}
-        if(phase==='rolled-back'){r.state='rolled-back';r.reason=heldReason(error)??'app-install-failed';}
-        throw error;
+        if(phase==='rolled-back'){r.state='rolled-back';r.reason=heldReason(hold??error,r)??'app-install-failed';}
+        throw hold??error;
       }
       r.app={state:'current',reason:null};
       if(!repair) {
@@ -250,7 +272,7 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
       try {const now=directory(a.destination);if(now.dev===created.dev&&now.ino===created.ino)fs.rmSync(a.destination,{recursive:true,force:true});}catch { /* Preserve uncertain ownership. */ }
     }
     if(r.state==='rolled-back')return freeze(r);
-    r.state='held';r.reason=heldReason(error)??'upgrade-unavailable';return freeze(r);
+    r.state='held';r.reason=heldReason(error,r)??'upgrade-unavailable';return freeze(r);
   }
 }
 export function createConsumerUpgradeDependencies():ConsumerUpgradeDependencies {
