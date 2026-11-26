@@ -146,6 +146,26 @@ describe('CI baseline evidence', () => {
     const fail = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
     expect(fail.groups[0]?.action).toBe('unknown');
   });
+  it('does not let a successful master job’s failure-shaped output override its pass', async () => {
+    const { gh } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      return args[1]?.endsWith('/jobs/10/logs')
+        ? { ...result, stdout: result.stdout + '\n' + fixture('shared') }
+        : result;
+    });
+    expect(report.master.known).toBe(true);
+    expect(report.groups[0]).toMatchObject({
+      classification: 'probable-flake', action: 'rerun-failed', master: 'pass',
+    });
+  });
+  it('does not infer a master failure from a neutral job', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1, masterJobConclusion: 'neutral' }).gh);
+    expect(report.master.known).toBe(true);
+    expect(report.groups[0]).toMatchObject({
+      classification: 'unknown', action: 'unknown', master: 'unknown',
+    });
+  });
   it('reads default-reporter file-pass lines as master pass evidence', async () => {
     // The default reporter prints `✓ file (N tests)` for a green module and
     // no per-test pass lines; a green module means every test in it passed.
