@@ -308,6 +308,8 @@ deleted and bot flags). Slack Connect, shared channels, guests, unknown
 bots and any member who is not an allowlisted team identity refuse; anything
 that cannot be proved stays a draft. Explicitly mapped DMs require the same authenticated membership proof. A durable intent precedes one post; uncertain outcomes are reconciled by client message ID through history, never blindly resent. Rate limits stop the bounded pass. Sends still unconfirmed surface as `slack-sends` items in `phm comms inbox` — the same send-store receipts `phm channels slack status` counts as `uncertainSends` — until a later pass proves or leaves them uncertain.
 
+Every delivery outcome — `sent`, `duplicate`, `uncertain` or `refused`, including refusals that never reach the send store — is journaled metadata-only (ids, timestamps, status and reason codes, the bus topic; never text or tokens) to `<runs>/slack-bridge/outbound.jsonl` beside the inbound `journal.jsonl`, and each claim-notice pass the `run` tick executes lands there as well. The self-improvement backlog folds recurring adverse cells — unproved or refused sends per topic and reason, halted or degraded notice passes — into work; healthy outcomes count as context only.
+
 ```sh
 phm channels slack status --json
 phm channels slack map --json

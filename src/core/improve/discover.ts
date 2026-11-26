@@ -1014,6 +1014,28 @@
  *     stated as recorded floors, and items emit only for the fleet's
  *     own repository since the journal describes this install's bridge
  *     config and carries no repo column;
+ *   - the Slack bridge OUTBOUND journal's recurring adverse cells:
+ *     the {at, kind: 'delivery', status, reason?, topic?, envelopeId?}
+ *     rows the deliverSlackEnvelope wrapper journals for every send
+ *     outcome — sent, duplicate, uncertain and refused alike, including
+ *     refusals that never reach the send store — and the
+ *     {at, kind: 'notice-pass', status, reason?, planned?, sent?,
+ *     failed?, skipped?} rows the channels slack run tick journals for
+ *     every claim-notice pass, appended by recordSlackOutbound
+ *     (src/core/agents/slack-outbound.ts) to
+ *     <runs>/slack-bridge/outbound.jsonl (slackOutboundBacklogItems
+ *     below). Until now every outbound outcome lived only in session
+ *     memory: the send store keeps just the attempted→sent lifecycle
+ *     of messages that reached its write, so terminal refusals,
+ *     unproved sends and claim-notice halts left no durable evidence
+ *     at all. A cell emits at three adverse rows across two distinct
+ *     UTC days AND two distinct event identities inside the 7-day
+ *     window — retried sends of one envelope collapse to one event —
+ *     proved sends and clean passes count as context only, a degraded
+ *     read folds the retained valid rows with counts stated as
+ *     recorded floors, and items emit only for the fleet's own
+ *     repository since the journal describes this install's bridge
+ *     and carries no repo column;
  *   - the selector picks journal's recurring adverse outcome classes:
  *     the {at, rank, id, repo, jobType, score, predictedValue,
  *     mergeRate, minutes, usage, basis, frictionId?} rows `phm select`
@@ -1511,6 +1533,7 @@ import { spawnProposalsBacklogItems } from './spawn-proposals-backlog.js';
 import { betAuditBacklogItems } from './bet-audit-backlog.js';
 import { betOutcomeBacklogItems } from './bet-outcome-backlog.js';
 import { slackBridgeBacklogItems } from './slack-bridge-backlog.js';
+import { slackOutboundBacklogItems } from './slack-outbound-backlog.js';
 import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
 import { pickGradeBacklogItems } from './pick-grade-backlog.js';
 import { efficiencyBacklogItems } from './efficiency-backlog.js';
@@ -2932,6 +2955,27 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // journal describes this install's bridge config and carries no repo
   // column.
   items.push(...await slackBridgeBacklogItems({ repo }));
+
+  // Slack bridge OUTBOUND journal: the send-side sibling of the inbound
+  // fold above. recordSlackOutbound (src/core/agents/slack-outbound.ts)
+  // appends {at, kind: 'delivery', status, reason?, topic?, envelopeId?}
+  // rows for every deliverSlackEnvelope outcome — 'sent', 'duplicate',
+  // 'uncertain' and 'refused', including refusals that never reach the
+  // send store — and {at, kind: 'notice-pass', status, reason?,
+  // planned?, sent?, failed?, skipped?} rows for every claim-notice
+  // pass the channels slack run tick executes. Until now those outcomes
+  // lived only in session memory: the send store's attempted→sent
+  // lifecycle covers in-flight intents, never terminal refusals,
+  // unproved sends or pass halts. A cell emits at three adverse rows
+  // across two distinct UTC days AND two distinct event identities
+  // inside the 7-day window — retried sends of one envelope collapse
+  // to one event, and each pass row is its own event — proved sends,
+  // duplicates, dry-runs and clean passes count as context only, a
+  // degraded read folds the retained valid rows with counts stated as
+  // recorded floors, and only the fleet's own repository inherits the
+  // items since the journal describes this install's bridge and
+  // carries no repo column.
+  items.push(...await slackOutboundBacklogItems({ repo }));
 
   // Selector pick outcomes: the funded picks `phm select` journals to
   // selector/picks.jsonl — each carrying the predictedValue and

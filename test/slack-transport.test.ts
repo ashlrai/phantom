@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSlackApi, deliverSlackEnvelope, observeSlackAudience, openSlackSocket, receiveSlackSocketEnvelope, verifySlackIdentity, type SlackCall } from '../src/core/agents/slack-transport.js';
+import { readSlackOutboundJournal } from '../src/core/agents/slack-outbound.js';
 import { slackEventToBus, unwrapSlackSocketEnvelope } from '../src/core/agents/slack-inbound.js';
 import { evaluateSlackAudience } from '../src/core/agents/slack-audience.js';
 import type { SlackBridgeConfig } from '../src/core/agents/slack-network.js';
@@ -145,6 +146,23 @@ describe('Slack authenticated receive and delivery', () => {
     expect(await deliverSlackEnvelope({ ...envelope, channel: 'imessage', channel_ref: 'imessage:local',
       sender: { agent_id: 'dot', vendor: 'local', human: false, team: true }, external: false }, deliveryInput(call))).toMatchObject({ status: 'refused', reason: 'private-source' });
     expect(call).not.toHaveBeenCalled();
+  });
+  it('journals every delivery outcome to the outbound observation journal', async () => {
+    const runsDir = root();
+    const call = fakeCall();
+    const input = { ...deliveryInput(call), runsDir };
+    // A plan refusal journals too — terminal refusals never reach the send store.
+    expect(await deliverSlackEnvelope({ ...envelope, id: 'env-refused-1', to: 'unmapped-topic' }, input)).toMatchObject({ status: 'refused' });
+    expect(await deliverSlackEnvelope(envelope, input)).toMatchObject({ status: 'sent' });
+    const read = readSlackOutboundJournal({ runsDir });
+    expect(read.state).toBe('ok');
+    expect(read.entries).toHaveLength(2);
+    // Newest-first: the proved send, then the refusal.
+    expect(read.entries[0]).toMatchObject({ kind: 'delivery', status: 'sent', topic: 'leader', envelopeId: envelope.id, reason: 'delivery-proved' });
+    expect(read.entries[1]).toMatchObject({ kind: 'delivery', status: 'refused', topic: 'unmapped-topic', envelopeId: 'env-refused-1' });
+    // The journal is metadata-only: no message text, no credential references.
+    expect(JSON.stringify(read.entries)).not.toContain('signed candidate');
+    expect(JSON.stringify(read.entries)).not.toContain('SLACK_AGENTNET');
   });
   it('reclaims terminal receipts after their bus TTL while retaining uncertain intents', async () => {
     const input = deliveryInput(fakeCall());
