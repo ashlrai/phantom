@@ -110,6 +110,14 @@ job carries one, the lease token pair and expiry, and paste-ready `renew`,
 `complete` and `release` commands — the last names `--decline` for a job this
 node can never run.
 
+`phm node plan` prints one `job -> node` line per routable job, or `nobody`
+with the fix when no live node can take it. An empty route set is not the
+same as an empty queue, so the text answer reads the scope once more: with no
+jobs queued it names the `phm node enqueue` command, and otherwise it counts
+the scope's jobs by state (`pending`, `running`, `completed`) — claimed or
+finished work is not routable, and the note says so instead of implying the
+queue is empty.
+
 The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
 expiry, prints the keep-alive `beat --watch` command and says the registry is

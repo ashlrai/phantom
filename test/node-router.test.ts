@@ -291,13 +291,43 @@ describe('phm node CLI', () => {
     // Text mode renders the node view, not the plan's routes array.
     expect((await cli('status', '--owner', 'acme')).out).toContain('node laptop live usage=unknown');
     expect((await cli('list', '--owner', 'acme')).out).toContain('node laptop live usage=unknown');
-    expect((await cli('plan', '--owner', 'acme')).out).toBe('No routable jobs.');
+    expect((await cli('plan', '--owner', 'acme')).out).toBe("No jobs queued in owner 'acme'. Enqueue one: phm node enqueue --job <id> --owner acme");
     expect((await cli('beat', '--node', 'laptop', '--session', s, '--usage', '250', '--json')).code).toBe(0);
     const after = JSON.parse((await cli('status', '--owner', 'acme', '--json')).out);
     expect(after.nodes[0].usage).toBe(250);
     // A beat without --usage keeps the last reported value rather than resetting it.
     expect((await cli('beat', '--node', 'laptop', '--session', s, '--json')).code).toBe(0);
     expect(JSON.parse((await cli('status', '--owner', 'acme', '--json')).out).nodes[0].usage).toBe(250);
+  });
+
+  it('plan names the next step on an empty queue and counts jobs that cannot route', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    // First run: nothing queued — plan names the enqueue step, the same
+    // next-step naming status and the session-expired fix already give.
+    expect((await cli('plan', '--owner', 'acme')).out)
+      .toBe("No jobs queued in owner 'acme'. Enqueue one: phm node enqueue --job <id> --owner acme");
+    // A job in another scope stays out of the count: the note is scope-exact.
+    expect((await cli('enqueue', '--job', 'j-b', '--owner', 'beta', '--json')).code).toBe(0);
+    expect((await cli('plan', '--owner', 'acme')).out).toContain("No jobs queued in owner 'acme'");
+    // The whole-store plan still routes beta's pending job, so no empty note.
+    expect((await cli('plan')).out).toContain('j-b ->');
+    // Claimed or completed work is not routable; the note says what the
+    // scope holds instead of implying an empty queue.
+    const joined = JSON.parse((await cli('join', '--node', 'n1', '--owner', 'acme', '--json')).out);
+    const s = String(joined.session);
+    expect((await cli('enqueue', '--job', 'j1', '--owner', 'acme', '--json')).code).toBe(0);
+    const pulled = JSON.parse((await cli('pull', '--node', 'n1', '--session', s, '--json')).out);
+    const lease = ['--job', 'j1', '--node', 'n1', '--session', s, '--token', String(pulled.claim.token), '--leader-token', String(pulled.claim.leaderToken)];
+    const running = await cli('plan', '--owner', 'acme');
+    expect(running.out).toContain('No routable jobs');
+    expect(running.out).toContain('1 running');
+    expect((await cli('complete', ...lease, '--result', 'done', '--json')).code).toBe(0);
+    const done = await cli('plan', '--owner', 'acme');
+    expect(done.out).toContain('No routable jobs');
+    expect(done.out).toContain('1 completed');
+    // --json keeps the routes array alone; the note is text-only.
+    expect(JSON.parse((await cli('plan', '--owner', 'acme', '--json')).out).routes).toEqual([]);
   });
 
   it('runs the documented flow through a symlinked ASHLR_HOME (scratch homes under macOS $TMPDIR)', async () => {
