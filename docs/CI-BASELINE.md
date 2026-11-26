@@ -643,8 +643,9 @@ a `fail`, and any other reported conclusion (cancelled, skipped, neutral,
 startup failure, stale) an `inconclusive` one. Verdicts require a matching run
 ID and head SHA, a nonempty conclusion, and a `run_attempt` of at least two.
 The recorded `run_started_at` must be no earlier than one minute before the
-successful rerun call was journaled, and `updated_at` must be at or after
-that start. This keeps an updated workflow record for an older attempt from
+successful rerun call was journaled, and `updated_at` must fall between
+that start and the time Phantom observes the API response, inclusive.
+This keeps an updated workflow record for an older attempt from
 supplying a verdict. In-progress runs and incomplete, mismatched or stale
 reads stay pending for a later pass. Attempts younger than five minutes are
 given time to settle before polling;

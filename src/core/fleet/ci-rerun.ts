@@ -59,7 +59,7 @@ function pendingVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
 }
 
 /** Map a workflow-run API payload to a verdict; null means not yet resolvable. */
-function verdictFromRun(data: unknown, entry: Entry): Entry['verdict'] | null {
+function verdictFromRun(data: unknown, entry: Entry, observedAt: number): Entry['verdict'] | null {
   if (typeof data !== 'object' || data === null) return null;
   const run = data as { id?: unknown; status?: unknown; conclusion?: unknown; head_sha?: unknown; updated_at?: unknown; run_attempt?: unknown; run_started_at?: unknown };
   if (run.id !== entry.runId || run.head_sha !== entry.head || run.status !== 'completed') return null;
@@ -69,7 +69,7 @@ function verdictFromRun(data: unknown, entry: Entry): Entry['verdict'] | null {
   const started = Date.parse(run.run_started_at);
   const updated = Date.parse(run.updated_at);
   if (!Number.isFinite(started) || !Number.isFinite(updated)
-      || started < Date.parse(entry.at) - VERDICT_SKEW_MS || updated < started) return null;
+      || started < Date.parse(entry.at) - VERDICT_SKEW_MS || updated < started || updated > observedAt) return null;
   if (run.conclusion === 'success') return 'pass';
   if (run.conclusion === 'failure' || run.conclusion === 'timed_out') return 'fail';
   return 'inconclusive';
@@ -229,16 +229,18 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
           const p = eligible[(start + offset) % eligible.length]!;
           opts.signal.throwIfAborted();
           let verdict: Entry['verdict'] | null = null;
+          let observedAt = 0;
           try {
             const r = await gh(['api', `repos/${repo}/actions/runs/${p.runId}`]);
             if (r.ok) {
-              try { verdict = verdictFromRun(JSON.parse(r.stdout), p); }
+              observedAt = now();
+              try { verdict = verdictFromRun(JSON.parse(r.stdout), p, observedAt); }
               catch { /* malformed run payload: stays pending for a later pass */ }
             }
           } catch (error) { if (opts.signal.aborted) throw error; }
           s.verdictCursor = { at: p.at, repo: p.repo, head: p.head, runId: p.runId };
           if (verdict === null) continue;
-          append({ at: new Date(now()).toISOString(), repo: p.repo, head: p.head, runId: p.runId, pr: p.pr, outcome: 'verdict', verdict, ...(p.test ? { test: p.test } : {}) });
+          append({ at: new Date(observedAt).toISOString(), repo: p.repo, head: p.head, runId: p.runId, pr: p.pr, outcome: 'verdict', verdict, ...(p.test ? { test: p.test } : {}) });
           s.verdictsResolved++;
         }
       } catch (error) {
