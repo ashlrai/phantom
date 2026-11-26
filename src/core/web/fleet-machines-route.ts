@@ -30,7 +30,7 @@ export interface FleetMachinesDeps {
 
 export const MACHINES_UNAVAILABLE_REASON = 'machines: reader unavailable';
 
-export function defaultFleetMachinesDeps(): FleetMachinesDeps {
+function defaultFleetMachinesDeps(): FleetMachinesDeps {
   const identityDeps = defaultRuntimeIdentityDeps();
   const peerDeps = defaultTailnetPeersDeps();
   return { now: () => new Date(), identity: () => readRuntimeIdentity(identityDeps), peers: () => readTailnetPeers(peerDeps) };

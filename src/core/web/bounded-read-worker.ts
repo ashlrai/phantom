@@ -1,4 +1,19 @@
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { Worker, type WorkerOptions } from 'node:worker_threads';
+
+/** Resolve a fixed sibling read-worker URL for dev `.ts` (tsx bootstrap) and built `.js` runs. */
+export function resolveReadWorkerEntrypoint(callerUrl: string, sourceFileName: string, workerBaseName: string): URL {
+  const moduleUrl = new URL(callerUrl);
+  if (moduleUrl.protocol === 'file:' && moduleUrl.pathname.endsWith(`/${sourceFileName}`)) {
+    // Register tsx inside the worker thread for source runs; inheriting --import tsx does not cover workers.
+    const loader = pathToFileURL(createRequire(callerUrl).resolve('tsx/esm/api')).href;
+    const source = new URL(`./${workerBaseName}.ts`, callerUrl).href;
+    const bootstrap = `import { register } from ${JSON.stringify(loader)}; register(); await import(${JSON.stringify(source)});`;
+    return new URL(`data:text/javascript,${encodeURIComponent(bootstrap)}`);
+  }
+  return new URL(`./${workerBaseName}.js`, callerUrl);
+}
 
 export class ReadProjectionError extends Error {
   constructor(message: string, readonly code = 'READ_PROJECTION_UNAVAILABLE') {

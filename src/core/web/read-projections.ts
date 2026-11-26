@@ -2,10 +2,8 @@ import { normalizeCreditIdentitySnapshots, normalizeInvalidatedAccountIds } from
 import type { ResourceAccountIdentitySnapshot } from '../resources/account-identity-witness.js';
 import type { CreditPoolReadView } from '../resources/credit-pool-types.js';
 import type { WorkerOptions } from 'node:worker_threads';
-import { createBoundedReadWorker, ReadProjectionError, type ReadProjectionWorkerHandle } from './bounded-read-worker.js';
+import { createBoundedReadWorker, ReadProjectionError, resolveReadWorkerEntrypoint, type ReadProjectionWorkerHandle } from './bounded-read-worker.js';
 export { ReadProjectionError, type ReadProjectionWorkerHandle } from './bounded-read-worker.js';
-import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
 import type { AshlrConfig, ActivityRollup, Proposal } from '../types.js';
 import type { DashboardSnapshotWithSourceQuality } from '../dashboard.js';
 import type { PublicDaemonObservation } from '../daemon/public-observation.js';
@@ -128,20 +126,8 @@ export function normalizeReadProjectionPayload(kind: unknown, payload: unknown):
   return { window: value.window as '1d' | '7d' | '30d', ...(value.project === undefined ? {} : { project: value.project as string }) };
 }
 
-function workerEntrypoint(): URL {
-  const moduleUrl = new URL(import.meta.url);
-  if (moduleUrl.protocol === 'file:' && moduleUrl.pathname.endsWith('/read-projections.ts')) {
-    // `npm run dev` runs the source tree, where sibling .js files do not exist.
-    // Register the installed dev-only loader inside the thread before loading
-    // our fixed TS entry; inheriting --import tsx does not cover worker imports.
-    const loader = pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm/api')).href;
-    const source = new URL('./read-projection-worker.ts', import.meta.url).href;
-    const bootstrap = `import { register } from ${JSON.stringify(loader)}; register(); await import(${JSON.stringify(source)});`;
-    return new URL(`data:text/javascript,${encodeURIComponent(bootstrap)}`);
-  }
-  // npm dist and Bun's sibling compiled shim use the same fixed module name.
-  return new URL('./read-projection-worker.js', import.meta.url);
-}
+const workerEntrypoint = (): URL =>
+  resolveReadWorkerEntrypoint(import.meta.url, 'read-projections.ts', 'read-projection-worker');
 
 /**
  * One lazily-created thread per HTTP server moves existing synchronous reads
