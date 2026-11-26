@@ -609,7 +609,10 @@ export async function sendNotifications(
       continue;
     }
     if (receipt.status !== 'sent' && receipt.status !== 'duplicate') {
-      results.push({ notice, status: receipt.status, ...(receipt.reason ? { reason: receipt.reason } : {}) });
+      // Scrub before the 256-code-unit, single-line cap so truncation cannot expose a partial secret.
+      const reason = typeof receipt.reason === 'string' && receipt.reason.trim()
+        ? field(scrubSecrets(receipt.reason), 256) : '';
+      results.push({ notice, status: receipt.status, reason: reason || 'sender-reason-unavailable' });
       continue;
     }
     const senderReceipt = typeof receipt.receipt === 'string' ? receipt.receipt.trim().slice(0, 512) : '';
