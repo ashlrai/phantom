@@ -432,12 +432,14 @@ export function unfedExitCode(report: UnfedReport): 0 | 1 | 2 {
 /**
  * Fold `unfed_capacity` rows from metrics/work-market.jsonl over a window.
  * Null text means the file was absent or unreadable. Malformed rows are skipped.
+ * The last usable snapshot for each dispatcher tick wins.
  */
 export function foldUnfedHistory(jsonl: string | null, nowMs: number, windowHours: number): UnfedHistory {
   const history: UnfedHistory = { windowHours, available: jsonl !== null, ticks: 0, lanes: [] };
   if (jsonl === null) return history;
   const until = nowMs / 1000;
   const since = until - windowHours * 3600;
+  const ticks = new Map<number, { lane: string; slots: number; blocked: Record<string, number> }[]>();
   const lanes = new Map<string, UnfedHistoryLane & { last: number }>();
   for (const line of jsonl.split('\n')) {
     // Cheap prefilter: the file is mostly route decisions.
@@ -447,22 +449,27 @@ export function foldUnfedHistory(jsonl: string | null, nowMs: number, windowHour
     if (!isRecord(row) || row.schema !== 'work-market.v1' || row.event !== 'unfed_capacity' || !isRecord(row.lanes)) continue;
     const ts = row.ts;
     if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > until) continue;
-    let any = false;
+    const snapshot = [];
     for (const [lane, value] of Object.entries(row.lanes)) {
       if (!LANE.test(lane) || !isRecord(value) || value.unfed !== true
         || !count(value.headroom) || value.headroom === 0
         || !count(value.waiting_elsewhere) || value.waiting_elsewhere === 0) continue;
-      any = true;
+      snapshot.push({ lane, slots: Math.min(value.headroom, value.waiting_elsewhere), blocked: codes(value.blocked) });
+    }
+    if (snapshot.length > 0) ticks.set(ts, snapshot);
+  }
+  history.ticks = ticks.size;
+  for (const [ts, snapshot] of ticks) {
+    for (const { lane, slots, blocked } of snapshot) {
       const entry = lanes.get(lane) ?? { lane, unfedTicks: 0, slotTicks: 0, lastUnfedAt: null, blocked: {}, last: 0 };
       entry.unfedTicks++;
-      entry.slotTicks += Math.min(value.headroom, value.waiting_elsewhere);
+      entry.slotTicks += slots;
       entry.last = Math.max(entry.last, ts);
-      for (const [code, n] of Object.entries(codes(value.blocked))) {
+      for (const [code, n] of Object.entries(blocked)) {
         if (code in entry.blocked || Object.keys(entry.blocked).length < MAX_CODES) entry.blocked[code] = (entry.blocked[code] ?? 0) + n;
       }
       lanes.set(lane, entry);
     }
-    if (any) history.ticks++;
   }
   history.lanes = [...lanes.values()]
     .map(({ last, ...entry }) => ({ ...entry, lastUnfedAt: new Date(last * 1000).toISOString() }))
