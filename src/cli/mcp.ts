@@ -261,37 +261,25 @@ async function cmdMcpList(args: string[]): Promise<number> {
 // Subcommand: doctor
 // ---------------------------------------------------------------------------
 
-/**
- * Required server names — gateway is unhealthy if these are down.
- * Identity plane (`locus`) + secret plane (`phantom-secrets`) + hub (`ashlr`).
- * Discovery keys match MCP config server names (not binary names).
- */
-const REQUIRED_SERVERS = new Set(['ashlr', 'phantom-secrets', 'locus']);
-
 async function cmdMcpDoctor(args: string[]): Promise<number> {
   await registerFleetTools();
   const jsonMode  = args.includes('--json');
   const timeoutMs = 8000;
 
   const { discoverMcpServers } = await importRegistry();
-  const { probeServer } = await importGateway();
+  const {
+    diagnoseMcpServers,
+    hasRequiredMcpServerDown,
+    REQUIRED_MCP_DOCTOR_SERVERS,
+  } = await import('../core/mcp-doctor.js');
 
   const registry = discoverRegistryForMcpHost(discoverMcpServers);
 
   if (!jsonMode) {
     console.log('');
-    console.log(bold('  ashlr mcp doctor') + gray(`  — probing ${registry.servers.length} server(s)`));
+    console.log(bold('  ashlr mcp doctor') + gray(`  — checking ${registry.servers.length} server(s)`));
     console.log('');
   }
-
-  // Probe all servers in parallel
-  const probes = registry.servers.map(async (srv) => {
-    if (!jsonMode) {
-      process.stderr.write(`  probing ${srv.name}…\n`);
-    }
-    const health = await probeServer(srv, timeoutMs);
-    return health;
-  });
 
   // M31: native tools need no probe — they are in-process and always present.
   const { nativeToolDefs } = await import('../core/mcp-native.js');
@@ -301,22 +289,25 @@ async function cmdMcpDoctor(args: string[]): Promise<number> {
     console.log('');
   }
 
-  const results = await Promise.allSettled(probes);
-  const healths: McpServerHealth[] = results.map((r, i) => {
-    if (r.status === 'fulfilled') return r.value;
-    return {
-      name:      registry.servers[i]!.name,
-      ok:        false,
-      toolCount: 0,
-      tools:     [],
-      error:     r.reason instanceof Error ? r.reason.message : String(r.reason),
-    };
+  const diagnosed = await diagnoseMcpServers(registry.servers, timeoutMs, {
+    onCheck: jsonMode
+      ? undefined
+      : (srv, selfGateway) => {
+          process.stderr.write(
+            selfGateway
+              ? `  checking ${srv.name} (gateway launcher)…\n`
+              : `  probing ${srv.name}…\n`,
+          );
+        },
   });
+  const healths: McpServerHealth[] = diagnosed.map((entry) => entry.health);
 
   if (jsonMode) {
     process.stdout.write(JSON.stringify(healths) + '\n');
+  } else if (diagnosed.length === 0) {
+    console.log('  ' + dim('No MCP servers discovered.'));
+    console.log('');
   } else {
-    // Clear the "probing…" lines were written to stderr; now print table to stdout
     const nameW  = Math.max(8, ...healths.map(h => h.name.length));
     const statusW = 6;
     const toolW  = 7;
@@ -326,13 +317,24 @@ async function cmdMcpDoctor(args: string[]): Promise<number> {
     );
     console.log(`  ${'─'.repeat(nameW)}  ${'─'.repeat(statusW)}  ${'─'.repeat(toolW)}  ${'─'.repeat(40)}`);
 
-    for (const h of healths) {
-      const isRequired  = REQUIRED_SERVERS.has(h.name);
+    for (const entry of diagnosed) {
+      const h = entry.health;
+      const isRequired  = REQUIRED_MCP_DOCTOR_SERVERS.has(h.name);
       const statusStr   = h.ok ? green('ok') : (isRequired ? red('DOWN') : yellow('down'));
       const toolStr     = h.ok ? cyan(String(h.toolCount)) : dim('0');
-      const infoStr     = h.ok
-        ? dim(h.tools.slice(0, 3).join(', ') + (h.tools.length > 3 ? ` +${h.tools.length - 3} more` : ''))
-        : red(h.error ?? 'failed');
+      let infoStr: string;
+      if (!h.ok) {
+        infoStr = red(h.error ?? 'failed');
+      } else if (entry.selfGateway) {
+        const versionNote = entry.versionMismatch
+          ? `v${entry.gatewayVersion}; current CLI v${entry.versionMismatch}`
+          : entry.gatewayVersion
+            ? `v${entry.gatewayVersion}; launcher verified`
+            : 'launcher verified';
+        infoStr = dim(`this gateway (${versionNote})`);
+      } else {
+        infoStr = dim(h.tools.slice(0, 3).join(', ') + (h.tools.length > 3 ? ` +${h.tools.length - 3} more` : ''));
+      }
 
       console.log(
         `  ${pad(bold(h.name), nameW)}  ${pad(statusStr, statusW)}  ${pad(toolStr, toolW)}  ${infoStr}`
@@ -342,9 +344,9 @@ async function cmdMcpDoctor(args: string[]): Promise<number> {
   }
 
   // Exit 1 if any REQUIRED server is down
-  const anyRequiredDown = healths.some(h => REQUIRED_SERVERS.has(h.name) && !h.ok);
+  const anyRequiredDown = hasRequiredMcpServerDown(healths);
   if (anyRequiredDown && !jsonMode) {
-    console.log(red('  One or more required servers (ashlr, phantom-secrets, locus) are down.'));
+    console.log(red('  One or more required servers (ashlr-hub, ashlr, phantom-secrets, locus) are down.'));
     console.log('');
   }
 
@@ -963,7 +965,7 @@ function printHelp(): void {
     ['context',                         'Read-only context-pack MCP on stdio (node_context_pack; caller supplies records; unread P0/P1 bus notices for the node join best-effort).'],
     ['docs',                            'Read-only docs MCP on stdio (search, list_pages, get_page over the shipped Markdown docs; no network).'],
     ['list [--json]',                   'Print discovered servers + ecosystem tools summary.'],
-    ['doctor [--json]',                 'Probe each server; exit 1 if required servers (ashlr/phantom/locus) are down.'],
+    ['doctor [--json]',                 'Check each server; exit 1 if required servers (ashlr-hub/ashlr/phantom-secrets/locus) are down.'],
     ['install <claude|ashlrcode>',      'Idempotently add the ashlr gateway to a target config (backs up first).'],
     ['install <target> --config <path>', 'Install to a specific config path (use in tests to avoid real configs).'],
     ['ecosystem [--json]',               'Detect installed ecosystem MCP servers + show registration status.'],

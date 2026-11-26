@@ -112,7 +112,7 @@ phm wire status --json
 phm mcp doctor --json
 ```
 
-A row that says the file contains `ashlr-hub` only proves the config write. `phm mcp doctor` is the start check. Registration is not authorization.
+A row that says the file contains `ashlr-hub` only proves the config write. `phm mcp doctor` is the start check: it verifies the configured `ashlr-hub` launcher non-recursively without spawning a nested gateway, probes `phantom-fleet` and companion servers over MCP, and exits 1 if a required server (`ashlr-hub`, `ashlr`, `phantom-secrets`, `locus`) fails. Registration is not authorization.
 
 ## 9. Read-only fleet server
 

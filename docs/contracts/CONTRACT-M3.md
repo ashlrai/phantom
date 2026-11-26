@@ -78,7 +78,9 @@ export async function startGateway(registry: McpRegistry): Promise<void>;
  * Probe a single downstream server: start it, list its tools, return health,
  * and ALWAYS tear it down (even on error/timeout). Default timeout 8000ms.
  * Never throws — failures are reported via the returned health (ok:false,
- * error set).
+ * error set). Refuses self-gateway entries to prevent recursion; isolated
+ * standalone `phm mcp fleet|context|docs` subcommands do not aggregate and
+ * are probed normally.
  */
 export async function probeServer(spec: McpServerSpec, timeoutMs?: number): Promise<McpServerHealth>;
 
@@ -90,6 +92,18 @@ export async function probeServer(spec: McpServerSpec, timeoutMs?: number): Prom
  */
 export function unknownToolMessage(requested: string, routed: Iterable<{ name: string; original: string }>): string;
 ```
+
+### `src/core/mcp-doctor.ts`
+
+```ts
+export const REQUIRED_MCP_DOCTOR_SERVERS: ReadonlySet<string>; // ashlr-hub, ashlr, phantom-secrets, locus
+export interface McpDoctorServerResult { health: McpServerHealth; selfGateway: boolean; gatewayVersion?: string; versionMismatch?: string; }
+export async function diagnoseMcpServer(spec: McpServerSpec, timeoutMs?: number, deps?: McpDoctorDeps): Promise<McpDoctorServerResult>;
+export async function diagnoseMcpServers(servers: readonly McpServerSpec[], timeoutMs?: number, deps?: McpDoctorDeps): Promise<McpDoctorServerResult[]>;
+export function hasRequiredMcpServerDown(results: readonly McpServerHealth[]): boolean;
+```
+
+Downstream servers are probed via `probeServer()`. Recognized self-gateway launchers (`ashlr-hub` / legacy `ashlr` with `mcp [run] [--lazy]`) are verified non-recursively via `--version` (and `mcp list --json` on version mismatch); opaque wrappers and secret-like argv remain refused.
 
 ### `src/core/tools-registry.ts`
 

@@ -384,10 +384,26 @@ function safeChildBase(): NodeJS.ProcessEnv {
 }
 
 /**
+ * Standalone read-only `phm mcp <subcommand>` servers that never read MCP
+ * configs or spawn downstream servers, so probing or aggregating them cannot
+ * recurse into this gateway.
+ */
+const ISOLATED_MCP_SUBCOMMANDS = new Set(['fleet', 'context', 'docs']);
+
+function isOwnCliEntry(arg: string, executableName: (value: string) => string): boolean {
+  const name = executableName(arg);
+  return name === 'ashlr' || name === 'phm'
+    || resolve(arg) === fileURLToPath(new URL('../../dist/cli/index.js', import.meta.url))
+    || resolve(arg) === fileURLToPath(new URL('../../src/cli/index.ts', import.meta.url));
+}
+
+/**
  * True when a spec resolves to THIS aggregation gateway — i.e. running it as a
  * downstream would recurse (`ashlr mcp install` writes exactly such an entry:
  * name "ashlr", command <bin>/ashlr, args ['mcp']). Recognize installed aliases
- * and Node wrappers without resolving user-controlled executable paths. The
+ * and Node wrappers without resolving user-controlled executable paths. Isolated
+ * read-only subcommands (`phm mcp fleet|context|docs`) do not aggregate and are
+ * allowed through unless masked behind an opaque `ashlr`/`phm` server name. The
  * legacy `phantom` name and executable belong to Phantom Secrets, so neither
  * alone identifies this gateway. Inherited markers cover opaque wrappers.
  */
@@ -399,15 +415,19 @@ export function isSelfGateway(spec: McpServerSpec): boolean {
   const gatewayNames = new Set(['ashlr', 'phm']);
   if (gatewayNames.has(spec.name.toLowerCase())) return true;
   const command = executableName(spec.command);
-  if (command === 'ashlr' || command === 'phm') return true;
+  const afterMcp = spec.args.slice(mcpIndex + 1);
+  const isIsolatedSubcommand =
+    afterMcp.length === 1 && ISOLATED_MCP_SUBCOMMANDS.has(afterMcp[0]!);
+  if (command === 'ashlr' || command === 'phm') {
+    return !(mcpIndex === 0 && isIsolatedSubcommand);
+  }
   // `node /path/bin/phm mcp` must be excluded just like `phm mcp`.
-  return (command === 'node' || command === 'bun' || command === 'tsx')
-    && spec.args.slice(0, mcpIndex).some((arg) => {
-      const name = executableName(arg);
-      return name === 'ashlr' || name === 'phm'
-        || resolve(arg) === fileURLToPath(new URL('../../dist/cli/index.js', import.meta.url))
-        || resolve(arg) === fileURLToPath(new URL('../../src/cli/index.ts', import.meta.url));
-    });
+  const isWrappedOwnCli = (command === 'node' || command === 'bun' || command === 'tsx')
+    && spec.args.slice(0, mcpIndex).some((arg) => isOwnCliEntry(arg, executableName));
+  if (!isWrappedOwnCli) return false;
+  const entryDirectlyBeforeMcp =
+    mcpIndex >= 1 && isOwnCliEntry(spec.args[mcpIndex - 1]!, executableName);
+  return !(entryDirectlyBeforeMcp && isIsolatedSubcommand);
 }
 
 // ---------------------------------------------------------------------------
