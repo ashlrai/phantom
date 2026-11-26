@@ -490,7 +490,29 @@ only — owner recipient ids and channel refs never leave the reader, and
 request text is scrubbed like every other source; source state is the
 read's own — `missing` a verified-absent store, `unavailable` any
 refusal — never an empty backlog passed off as fact; deep links `phm
-leader inbox` and `phm comms thread`) — and the advisory coordination
+leader inbox` and `phm comms thread`) — and leader replies to Mason
+still owed a proven iMessage delivery (the send ledger
+`<imessageStateDir>/leader-sent.jsonl` `sendLeaderReplies` appends —
+`{at, hash, status}` per attempted reply, the hash a content
+fingerprint, never text — read through the same
+last-status-per-hash fold `readClaimed` applies: a hash whose last row
+is `failed` lists as warn `leader-reply-failed`, the send provably did
+not land and the next live `phm imessage replies` pass retries it; a
+hash whose last row is `pending` older than the one-hour in-flight
+bound lists as warn `leader-reply-orphaned` — the process died between
+claim and outcome, `readClaimed` counts it as sent forever, and no
+pass ever retries it; fresh pending rows may be in flight and never
+list, `sent`/`baseline` rows are resolved claims; each item resolves
+its reply text through the same bounded `readOutboxEntries` read the
+sender uses — the ledger claims by text hash, so identical texts share
+one pending unit — showing a scrubbed snippet with its outbox stamp
+when the read still holds it and saying "reply text not in the current
+outbox read" when it does not, `since` the first recorded attempt and
+`expiresAt` null; source state is the read's own — `missing` a
+verified-absent ledger, `degraded` a tail-truncated read whose pending
+is a stated lower bound, `unavailable` an unreadable store — never an
+empty backlog passed off as fact; deep links `phm imessage replies`,
+`phm leader replies` and `phm comms send-owner`) — and the advisory coordination
 ledger's whole pending surface (the `fleet.coordination.v1` ledger at
 `~/.ashlr/fleet/coordination.jsonl`, through `readFleetCoordinationPending`
 — the same replay `readFleetBoard` runs, projected fleet-wide in one read
@@ -540,7 +562,8 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 `phm team approve|deny`, `phm inbox approve|reject`,
 `phm fleet slack-trace`, `phm channels slack status`, `phm channels slack
-run`, `phm channels`, `phm comms cycle`, `phm leader inbox`, `phm fleet
+run`, `phm channels`, `phm comms cycle`, `phm leader inbox`, `phm imessage
+replies`, `phm leader replies`, `phm comms send-owner`, `phm fleet
 coordination board`, `phm fleet coordination inbox --agent`, `phm fleet
 claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
