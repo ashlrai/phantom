@@ -2106,6 +2106,31 @@ describe('router outcome merge-events join', () => {
     expect(o?.ci_first_pass).toBeNull();
   });
 
+  it('withholds first-pass credit for a green PR with recorded recut evidence', async () => {
+    const root = runsDir([
+      { job: 'J1', phase: 'MERGED', pr_url: 'https://github.com/ashlrai/phantom/pull/61' },
+      { job: 'J2', phase: 'MERGED', pr_url: 'https://github.com/ashlrai/phantom/pull/62' },
+      { job: 'J3', phase: 'MERGED', pr_url: 'https://github.com/ashlrai/phantom/pull/63', ci_first_pass: true },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    writeMergeEvents(root, [
+      mergeEvent(61, 'recut_requested'),
+      mergeEvent(61, 'checks_passed'),
+      mergeEvent(62, 'check_observed', { conclusion: 'failure' }),
+      mergeEvent(62, 'recut_requested'),
+      mergeEvent(62, 'checks_passed'),
+      mergeEvent(63, 'recut_requested'),
+      mergeEvent(63, 'checks_passed'),
+    ]);
+    const { outcomes } = await readRouterOutcomes({ runsDir: root });
+    const byId = new Map(outcomes.map(outcome => [outcome.job_id, outcome]));
+    expect(byId.get('J1')).toMatchObject({
+      ci_first_pass: null,
+      merge_queue: { recuts: 1, checks_passed: 1 },
+    });
+    expect(byId.get('J2')?.ci_first_pass).toBe(false);
+    expect(byId.get('J3')?.ci_first_pass).toBe(true);
+  });
+
   it('keeps merge_queue null and reports merge_events_state when the ledger is absent or refused', async () => {
     const missing = await readRouterOutcomes({ runsDir: runsDir('{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}\n') });
     expect(missing).toMatchObject({ state: 'read', merge_events_state: 'missing', merge_events_truncated: false });
