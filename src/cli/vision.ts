@@ -598,8 +598,8 @@ async function cmdSet(args: string[]): Promise<number> {
   if (endState) partial.endState = endState;
 
   const summary = northStar
-    ? `Mason set northStar: "${northStar.slice(0, 60)}${northStar.length > 60 ? '...' : ''}"`
-    : `Mason set endState.`;
+    ? `The owner set northStar: "${northStar.slice(0, 60)}${northStar.length > 60 ? '...' : ''}"`
+    : `The owner set endState.`;
 
   const spec = applyEvolution(specId, partial, 'mason', summary);
   console.log(green(`Spec '${spec.id}' updated to v${spec.version}.`));
@@ -620,7 +620,7 @@ Subcommands:
   shadow [--json]        Record an evidence snapshot and show one zero-effect reconcile suggestion.
   approve                Apply the latest briefing: evolve spec + create goals.
   reconcile              Materialize at most one newly dependency-ready goal; planning-only.
-  set --north-star "…"   Update the north star directly (Mason-owned edit).
+  set --north-star "…"   Update the north star directly (owner-only edit).
   set --end-state "…"    Update the end state directly.
   set --id <specId>      Target a specific spec (default: ecosystem).
 

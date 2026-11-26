@@ -92,7 +92,7 @@ export function GearTray({ open, anchorRef, onClose, compact }: GearTrayProps) {
   const [position, setPosition] = useState<{ left: number; bottom: number } | null>(null);
 
   const entries: Entry[] = [
-    ...(updateLine ? [{ key: 'update', role: 'menuitem' as const, label: updateLine, icon: <SettingsIcon />, run: () => setVerseSection('settings') }] : []),
+    ...(updateLine ? [{ key: 'update', role: 'menuitem' as const, label: updateLine, icon: <SettingsIcon />, run: () => setVerseSection('settings', 'desktop-updates') }] : []),
     { key: 'settings', role: 'menuitem', label: 'Settings', icon: <SettingsIcon />, shortcut: shortcutOf('section.settings'), run: () => setVerseSection('settings') },
     { key: 'apps', role: 'menuitem', label: 'Apps & Accounts', icon: <AppsIcon />, run: () => setVerseSection('apps') },
     { key: 'usage', role: 'menuitem', label: 'Usage', icon: <UsageIcon />, run: () => setVerseSection('usage') },

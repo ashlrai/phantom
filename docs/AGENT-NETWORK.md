@@ -462,12 +462,19 @@ bus and approved Slack broker:
 ```sh
 phm agentnet peers list --json
 phm agentnet peers read --after 0 --json
+phm agentnet peers read --peer-kind task --thread sprint-7 --json
 phm agentnet peers send reviewer review "Review pr:123" --json
 phm agentnet peers send builder handoff "Review complete" --reply-to peer-00000000-0000-0000-0000-000000000000 --json
 phm agentnet channels propose parser-review --json
 phm agentnet channels propose parser-review --apply --json
 phm agentnet identity register reviewer --json
 ```
+
+`peers read` accepts the shared bus filters (`--from`, `--exclude-from`,
+`--to`, `--since`, `--before`, `--contains`, `--id`, `--kind`, `--peer-kind`,
+`--thread`, `--job`, `--result`) applied to the admitted page only — they
+narrow the view, never the admission, and the cursor still advances over every
+scanned row.
 
 Channel proposals preview by default; `--apply` and identity registration record
 local drafts. Actual bot/channel provisioning needs a reviewed provisioner and
