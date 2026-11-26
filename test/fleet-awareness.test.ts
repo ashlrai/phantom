@@ -130,6 +130,31 @@ test('a producer withdrawal is a fence, not latency evidence; accepted completio
   expect(host.latency).toEqual({ samples: 1, medianMs: 2000, windowMs: 86_400_000 });
 });
 
+test('unattributed completions cannot give a reassigned worker a routing advantage', () => {
+  const f = fixture();
+  const worker = f.add('z-worker', { hostId: 'old-mac', slots: 1 });
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  f.enqueue('legacy');
+  const legacy = nodes.pull(worker)!;
+  f.advance(100);
+  expect(nodes.complete(legacy.claim, 'result:legacy')).toBe(true);
+  delete f.state.jobs[0]!.executionHostId; // Older records may lack claim-time host evidence.
+  f.run('leave', ['--node', worker.nodeId, '--session', String(worker.session)]);
+
+  const measured = f.add('a-worker', { hostId: 'measured-mac', slots: 1 });
+  f.enqueue('measured');
+  const run = nodes.pull(measured)!;
+  f.advance(4000);
+  expect(nodes.complete(run.claim, 'result:measured')).toBe(true);
+  f.beat(measured.nodeId, { hostId: 'measured-mac', slots: 1 });
+  f.add(worker.nodeId, { hostId: 'new-mac', slots: 1 });
+  f.enqueue('next');
+
+  expect(projectFleetAwareness(f.state, f.now()).hosts.map(h => [h.hostId, h.latency.medianMs]))
+    .toEqual([['measured-mac', 4000], ['new-mac', null]]);
+  expect(f.plan()[0]?.nodeId).toBe(measured.nodeId);
+});
+
 test('capacity cannot bypass owner/capability/auth fences and status stays scoped', () => {
   const f = fixture(); f.add('node');
   const nodes = new DriveNodes(f.store, { now: f.now });
