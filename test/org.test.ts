@@ -262,6 +262,35 @@ describe('cmdOrg', () => {
     vi.unstubAllEnvs();
   });
 
+  it('show names the machines behind each opt-in and says the records are this machine\'s', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = 'docs/examples/org.toml';
+    // Only mason-scofield's record exists here, so every other lane must read
+    // "not opted in" — and the footer must say that is this machine's view.
+    expect(await cmdOrg(['join', '--file', file, '--member', 'mason-scofield', '--machine', 'sco-mac', '--lane', 'codex-personal=20'])).toBe(0);
+    logs.pop();
+    expect(await cmdOrg(['show', '--file', file])).toBe(0);
+    const text = logs.pop()!;
+    expect(text).toContain('lane codex-personal: 30% declared, opted in on sco-mac');
+    expect(text).toContain('lane claude: 100% declared, not opted in');
+    expect(text).toContain(`Opt-in counts join records held on this machine (${join(home, 'org', 'joins')})`);
+    expect(await cmdOrg(['show', '--file', file, '--json'])).toBe(0);
+    const shown = JSON.parse(logs.pop()!);
+    expect(shown.schema).toBe('org.show.v1');
+    expect(shown.joinsDir).toBe(join(home, 'org', 'joins'));
+    expect(shown.joins).toHaveLength(1);
+    // Plan carries the same scope note in text and the directory in JSON.
+    expect(await cmdOrg(['plan', '--file', file])).toBe(0);
+    expect(logs.pop()!).toContain('the plan covers only those records');
+    expect(await cmdOrg(['plan', '--file', file, '--json'])).toBe(0);
+    const planned = JSON.parse(logs.pop()!);
+    expect(planned.schema).toBe('org.plan.v1');
+    expect(planned.joinsDir).toBe(join(home, 'org', 'joins'));
+    vi.unstubAllEnvs();
+  });
+
   it('join reports the lanes a re-join dropped, in JSON and text', async () => {
     const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
     const logs: string[] = [];

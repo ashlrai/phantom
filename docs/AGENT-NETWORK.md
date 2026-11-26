@@ -419,7 +419,10 @@ The leader starts with `phm org show --json` to identify declared members,
 machines, lane contributions, agent roles and reporting lines. Each co-founder
 uses `phm org join` on their own machine to opt in only the lane share they
 intend to contribute. Join records do not transfer provider sign-in or permit
-another agent to enroll someone else's capacity.
+another agent to enroll someone else's capacity. Opt-in status counts the join
+records held on the machine running `phm org show` or `phm org plan`: a member's
+own machine holds only the records joined there, so other members' lanes read
+`not opted in` until their records reach the leader's joins directory.
 
 The leader then reads `phm org plan --json`, or supplies an explicit queue
 snapshot with `--queue`, and uses the returned assignments, roles and
