@@ -103,8 +103,8 @@ const tokensOf = (row: Row): number | null => {
 };
 
 /** Fold a jobs ledger into attempts; malformed lines are counted, never thrown. */
-export function foldLaneRewardAttempts(text: string): { attempts: Map<string, LaneRewardAttempt>; dropped: number } {
-  const rows: Row[] = [];
+export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attempts: Map<string, LaneRewardAttempt>; dropped: number } {
+  const rows: { row: Row; event: string; phase: string }[] = [];
   let dropped = 0;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -112,11 +112,16 @@ export function foldLaneRewardAttempts(text: string): { attempts: Map<string, La
     let row: Row | null;
     try { row = asRow(JSON.parse(line)); } catch { dropped++; continue; }
     if (!row) { dropped++; continue; }
-    rows.push(row);
+    const event = eventOf(row);
+    const phase = phaseOf(row) || (TERMINAL_PHASES.has(event.toUpperCase()) ? event.toUpperCase() : '');
+    const receiptAt = ledgerEventTs(row, null);
+    const outcomeAt = TERMINAL_PHASES.has(phase) ? ledgerEventTs(row, phase) : null;
+    if ((receiptAt !== null && receiptAt > asOfMs) || (outcomeAt !== null && outcomeAt > asOfMs)) continue;
+    rows.push({ row, event, phase });
   }
   // URL-only rows can resolve only against a unique recorded job.
   const jobByUrl = new Map<string, string | null>();
-  for (const row of rows) {
+  for (const { row } of rows) {
     const job = jobOf(row), url = urlOf(row);
     if (job === null || url === null) continue;
     const previous = jobByUrl.get(url);
@@ -124,9 +129,7 @@ export function foldLaneRewardAttempts(text: string): { attempts: Map<string, La
     else if (previous !== job) jobByUrl.set(url, null);
   }
   const attempts = new Map<string, LaneRewardAttempt>();
-  for (const row of rows) {
-    const event = eventOf(row);
-    const phase = phaseOf(row) || (TERMINAL_PHASES.has(event.toUpperCase()) ? event.toUpperCase() : '');
+  for (const { row, event, phase } of rows) {
     const launch = LAUNCH_EVENTS.has(event), finish = FINISH_EVENTS.has(event);
     if (!launch && !finish && !PUBLISH_EVENTS.has(event) && phase !== 'PUBLISHED' &&
         !OUTCOME_EVENTS.has(event) && !TERMINAL_PHASES.has(phase)) continue;
@@ -197,7 +200,7 @@ export async function readLaneReward(opts: {
     tokensMeasured: 0, verifiedResults: 0, tokensPerVerifiedResult: null };
   if (ledger === null) return { ...base, source: 'missing' };
 
-  const fold = foldLaneRewardAttempts(ledger.text);
+  const fold = foldLaneRewardAttempts(ledger.text, nowMs);
   const lanes = new Map<string, LaneRewardLane & { rewardSum: number }>();
   let rewardSum = 0;
   for (const [job, attempt] of fold.attempts) {

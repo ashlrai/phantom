@@ -69,6 +69,34 @@ describe('fleet lane-reward', () => {
     ]);
   });
 
+  it('bounds spend, PR ownership and terminal evidence by the report time', async () => {
+    const at = '2026-10-31T12:00:00Z';
+    const future = '2026-10-31T12:00:01Z';
+    const first = 'RQ-FAKE-T1';
+    const second = 'RQ-FAKE-T2';
+    const jobsText = read(rows(
+      { event: 'finish', job: first, lane: 'lane-a', tokens_total: 120 },
+      { event: 'publish', job: first, url: URL(21), ts: at },
+      { event: 'merged', url: URL(21), mergedAt: at },
+      { event: 'finish', job: first, lane: 'lane-b', tokens_total: 900, ts: future },
+      { event: 'publish', job: second, url: URL(21), ts: future },
+      { event: 'closed', job: first, ts: at, closedAt: future },
+      { event: 'merged', job: second, ts: future, mergedAt: at },
+    ));
+    const score: LaneRewardDeps['score'] = input => input.outcome.kind === 'merged'
+      ? { state: 'scored', outcome: 'stable', rewardPerToken: 0.001 }
+      : { state: 'scored', outcome: 'published', rewardPerToken: 0 };
+    const proposal: LaneRewardDeps['proposal'] = id => ({ id } as Proposal);
+    const report = await readLaneReward({ deps: deps({ jobsText, score, proposal }) });
+    expect(report).toMatchObject({ attempts: 1, tokensMeasured: 120, verifiedResults: 1 });
+    expect(report.lanes).toMatchObject([{ lane: 'lane-a', outcomes: { stable: 1 } }]);
+
+    const later = await readLaneReward({
+      deps: deps({ jobsText, score, proposal, nowMs: () => Date.parse(future) }),
+    });
+    expect(later).toMatchObject({ attempts: 2, tokensMeasured: 900, verifiedResults: 0 });
+  });
+
   it('scores merged attempts through the inspector using the trusted proposal', async () => {
     const proposal = { id: 'RQ-FAKE-M1', repo: '/fake/repo', status: 'applied' } as Proposal;
     const seen: unknown[] = [];
