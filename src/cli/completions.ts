@@ -203,7 +203,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],
   ask: ['status', '--help', '--json', '--repo', '--allow-cloud', '--jobs'],
-  wiki: ['build', 'status', 'show', 'ask', 'map'],
+  wiki: ['build', 'status', 'show', 'ask', 'map', 'brain'],
   reflect: ['playbooks', 'propose'],
   health: ['propose'],
   goals: [

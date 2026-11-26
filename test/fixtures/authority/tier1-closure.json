@@ -1086,6 +1086,8 @@
     "src/core/knowledge/ask.ts",
     "src/core/knowledge/graph.ts",
     "src/core/knowledge/index.ts",
+    "src/core/knowledge/wiki/brain-cloud.ts",
+    "src/core/knowledge/wiki/brain.ts",
     "src/core/knowledge/wiki/citations.ts",
     "src/core/knowledge/wiki/facts.ts",
     "src/core/knowledge/wiki/plan.ts",
