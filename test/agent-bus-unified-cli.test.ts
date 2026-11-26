@@ -2335,10 +2335,25 @@ describe('phm agents bus (unified)', () => {
     // `phm agents --help` is the complete agents reference: it must name every
     // dispatched subcommand and the filters each read actually accepts, so an
     // agent discovering the surface here is not told a narrower command than
-    // the dispatcher runs.
+    // the dispatcher runs. Each usage line is checked against the full flag
+    // set its dispatcher parses — a filter added to the read but not the help
+    // fails here instead of drifting silently.
     expect(help).toContain('ashlr agents roster [--json]');
-    expect(help).toMatch(/ashlr agents conversations [^\n]*--contains <text>/);
-    expect(help).toMatch(/ashlr agents chat [^\n]*--after <cursor>/);
-    expect(help).toMatch(/ashlr agents chat [^\n]*--limit <1-100>/);
+    const line = (prefix: string) => {
+      const found = help.split('\n').find(l => l.startsWith(prefix));
+      expect(found, `help line for ${prefix}`).toBeDefined();
+      return found!;
+    };
+    const hasFlags = (text: string, flags: string[]) => {
+      for (const flag of flags) expect(text, `missing ${flag}`).toMatch(new RegExp(`--${flag}(?=[\\s\\]])`));
+    };
+    hasFlags(line('ashlr agents chat '), ['channel', 'topic', 'after', 'limit', 'from', 'exclude-from',
+      'contains', 'since', 'before', 'id', 'in-reply-to', 'priority', 'json']);
+    hasFlags(line('ashlr agents messages '), ['since', 'before', 'agent', 'with', 'kind', 'priority', 'job',
+      'thread', 'channel', 'contains', 'from', 'exclude-from', 'to', 'in-reply-to', 'id', 'body-kind',
+      'result', 'limit', 'json']);
+    hasFlags(line('ashlr agents conversations '), ['agent', 'with', 'waiting', 'blocked', 'state', 'job',
+      'waiting-on', 'since', 'before', 'contains', 'in-reply-to', 'id', 'channel', 'priority', 'from',
+      'exclude-from', 'to', 'thread', 'body-kind', 'result', 'kind', 'limit', 'json']);
   });
 });
