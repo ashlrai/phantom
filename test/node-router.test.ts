@@ -274,6 +274,9 @@ describe('phm node CLI', () => {
     const text = await cli('join', '--node', 'desktop', '--owner', 'acme');
     expect(text.out).toContain('local to this machine');
     expect(text.out).toContain('docs/NODES.md');
+    // The shared-queue pointer names the doc that carries the join commands,
+    // not only the design doc — a first-run node must see how to enroll.
+    expect(text.out).toContain('docs/AGENT-NETWORK.md');
     // The beat keep-alive hint is unchanged; the boundary line follows it.
     expect(text.out.indexOf('phm node beat --node desktop')).toBeLessThan(text.out.indexOf('local to this machine'));
   });

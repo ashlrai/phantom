@@ -73,7 +73,7 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       `Joined ${String(out['nodeId'])} as session ${String(out['session'])} for ${owners.length === 1 ? 'owner' : 'owners'} ${owners.join(', ')} (caps: ${caps.join(', ') || 'none'}).`,
       'The session expires 30 seconds after the last beat. Keep it live:',
       `  ${String(out['next'])}`,
-      'This registry is local to this machine — the node sees only jobs enqueued on this computer; other machines cannot see it. A shared queue needs a pool or team (docs/NODES.md).',
+      'This registry is local to this machine — the node sees only jobs enqueued on this computer; other machines cannot see it. A shared queue needs the SSH pool (docs/NODES.md; join commands: docs/AGENT-NETWORK.md).',
     ].join('\n');
   }
   if (verb === 'plan') {
