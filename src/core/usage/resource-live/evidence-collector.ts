@@ -1,11 +1,6 @@
-import { randomUUID } from 'node:crypto';
-import { lstat, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
 import { z } from 'zod';
 import { runDesktopOperator, scrubOperatorJson } from '../../desktop/operator.js';
-import { acquireLocalStoreLock, releaseLocalStoreLock } from '../../fleet/local-store-lock.js';
-import { writePrivateFileAtomically } from '../../util/private-file-write.js';
-import { readPrivateJson, resourceLiveStateDir } from './store.js';
+import { readPrivateJson, updateEvidence } from './store.js';
 import { bankSchema } from './banked-resets.js';
 import type { BankedResetGrant } from './types.js';
 
@@ -23,10 +18,6 @@ const configSchema = z.object({
   schema: z.literal('resource-evidence-targets.v1'),
   targets: z.partialRecord(idSchema, targetSchema),
 }).strict();
-const fileSchema = z.object({
-  schema: z.literal('resource-evidence.v1'),
-  readings: z.record(z.string(), z.unknown()),
-});
 const timestamp = z.string().datetime();
 const rowSchema = z.object({
   used: z.number().nullable(),
@@ -160,32 +151,6 @@ async function readWindow(target: Target, operator: typeof runDesktopOperator): 
   if (!result.ok || result.data['truncated'] !== false) return null;
   const text = scrubOperatorJson(result.data) as Record<string, unknown>;
   return typeof text['text'] === 'string' ? text['text'] : null;
-}
-
-async function updateEvidence<T>(runsDir: string, update: (readings: Record<string, unknown>) => Promise<{ changed: boolean; result: T }>): Promise<T | null> {
-  const state = resourceLiveStateDir(runsDir);
-  await mkdir(state, { recursive: true, mode: 0o700 });
-  const path = join(state, 'resource-evidence.json');
-  const lock = acquireLocalStoreLock(join(state, 'resource-evidence.lock'), 0, { anchorPath: runsDir });
-  if (!lock) return null;
-  try {
-    const existing = await lstat(path).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT') throw error;
-      return null;
-    });
-    const stored = existing ? fileSchema.safeParse(await readPrivateJson(path, FILE_CAP)) : null;
-    if (stored && !stored.success) throw new Error('Invalid existing resource-evidence.v1 file.');
-    const readings = stored?.data.readings ?? {};
-    const { changed, result } = await update(readings);
-    if (changed) {
-      const body = JSON.stringify({ schema: 'resource-evidence.v1', readings }) + '\n';
-      if (Buffer.byteLength(body) > FILE_CAP) throw new Error('Resource evidence exceeds the sidecar limit.');
-      writePrivateFileAtomically(`${path}.${randomUUID()}.tmp`, path, body, { anchorPath: runsDir, label: 'Resource evidence' });
-    }
-    return result;
-  } finally {
-    releaseLocalStoreLock(lock);
-  }
 }
 
 export async function recordResetEvidence(runsDir: string, count: number, expiries: string[], kind: BankedResetGrant['kind'],

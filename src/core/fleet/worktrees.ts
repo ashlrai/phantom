@@ -45,6 +45,8 @@ const REAP_BATCH_MS = 10 * 60_000;
 const CLEAN_CHECK_BUDGET_MS = 60_000;
 const MEASURE_BUDGET_MS = 20_000;
 const CLEAN_CHECK_CONCURRENCY = 4;
+const INDEX_POLL_ROWS = 16;
+const INDEX_POLL_MS = 200;
 
 export type WorktreeState = 'live' | 'merged' | 'empty' | 'open' | 'kept' | 'unknown';
 export const WORKTREE_STATES: readonly WorktreeState[] = ['live', 'merged', 'empty', 'open', 'kept', 'unknown'];
@@ -128,9 +130,9 @@ export interface WorktreesDeps extends Pick<WtAuditDeps, 'fs' | 'readJobs' | 'ps
   /** Injected audit; default is readWtAudit over the deps above. */
   audit?: typeof readWtAudit;
   /** true/false from `git status`; null when it could not be read. */
-  isClean?: (path: string) => Promise<boolean | null>;
+  isClean?: (path: string, signal?: AbortSignal) => Promise<boolean | null>;
   /** true when HEAD has commits no other branch or remote holds; null when it could not be read. */
-  hasUnpushed?: (path: string) => Promise<boolean | null>;
+  hasUnpushed?: (path: string, signal?: AbortSignal) => Promise<boolean | null>;
   measure?: (path: string) => WorktreeMeasurement | Promise<WorktreeMeasurement>;
   /** Reaper removal log; missing when never written, unreadable on other failures. */
   readReapLog?: (runsRoot: string) => Promise<{ state: 'ok' | 'missing' | 'unreadable'; text: string }>;
@@ -142,6 +144,8 @@ export interface WorktreesDeps extends Pick<WtAuditDeps, 'fs' | 'readJobs' | 'ps
   staleHours?: number;
   /** Most safe rows to attempt in one apply; the rest wait for the next run. Default: all. */
   maxRemovals?: number;
+  /** Display only; dry run and apply always use fresh checks. */
+  inspectionIndex?: ReturnType<typeof createWorktreeInspectionIndex>;
 }
 
 const STATE_OF: Record<WtAuditState, WorktreeState | null> = {
@@ -199,18 +203,18 @@ const run = promisify(execFile);
 
 /** Modified or untracked files count; ignored build output (node_modules,
  * dist) does not, matching what `git worktree remove` itself refuses on. */
-async function defaultIsClean(path: string): Promise<boolean | null> {
+async function defaultIsClean(path: string, signal?: AbortSignal): Promise<boolean | null> {
   try {
     const { stdout } = await run('git', ['-C', path, 'status', '--porcelain', '--untracked-files=normal'],
-      { timeout: 15_000, maxBuffer: 1024 * 1024 });
+      { timeout: 15_000, maxBuffer: 1024 * 1024, signal });
     return stdout.length === 0;
   } catch { return null; }
 }
 
 /** Commits on HEAD that no other local branch, tag or remote branch holds. */
-export async function defaultHasUnpushed(path: string): Promise<boolean | null> {
+export async function defaultHasUnpushed(path: string, signal?: AbortSignal): Promise<boolean | null> {
   try {
-    const git = (args: string[]) => run('git', ['-C', path, ...args], { timeout: 15_000, maxBuffer: 64 * 1024 });
+    const git = (args: string[]) => run('git', ['-C', path, ...args], { timeout: 15_000, maxBuffer: 64 * 1024, signal });
     const branch = await git(['symbolic-ref', '-q', '--short', 'HEAD']).then(r => r.stdout.trim(), () => '');
     const others = branch ? [`--exclude=${branch}`] : [];
     const { stdout } = await git(['rev-list', '--count', 'HEAD', '--not', ...others, '--branches', '--remotes', '--tags']);
@@ -297,6 +301,65 @@ async function pool<T>(items: T[], limit: number, work: (item: T) => Promise<voi
   }));
 }
 
+type Inspection = Pick<WorktreeRow, 'clean' | 'hold' | 'safe' | 'bytes'> & { complete: boolean };
+
+async function inspectWorktree(row: WorktreeRow, path: string, deps: WorktreesDeps, deadline: number, signal: AbortSignal): Promise<Inspection> {
+  const clean = await (deps.isClean ?? defaultIsClean)(path, signal).catch(() => null);
+  if (signal.aborted || Date.now() >= deadline) return { clean: null, hold: 'not-checked', safe: false, bytes: null, complete: false };
+  let hold: WorktreeHold | null = clean === true ? null : clean === false ? 'uncommitted-changes' : 'not-checked';
+  if (hold === null && (row.exitOnly || row.stale)) {
+    const unpushed = await (deps.hasUnpushed ?? defaultHasUnpushed)(path, signal).catch(() => null);
+    hold = unpushed === true ? 'unpushed-commits' : unpushed === null ? 'not-checked' : null;
+  }
+  if (signal.aborted || Date.now() >= deadline) return { clean: null, hold: 'not-checked', safe: false, bytes: null, complete: false };
+  if (hold !== null) return { clean, hold, safe: false, bytes: null, complete: hold !== 'not-checked' };
+  const size = await Promise.resolve().then(() => deps.measure?.(path) ?? measureWorktreeBytes(path, { deadlineMs: deadline }))
+    .catch(() => ({ bytes: 0, complete: false }));
+  return { clean, hold, safe: true, bytes: size.bytes, complete: size.complete };
+}
+
+export function createWorktreeInspectionIndex() {
+  const entries = new Map<string, { signature: string; result: Inspection | null }>();
+  let sequence = 0;
+  const order = new Map<string, number>();
+  return async (wtRoot: string, rows: WorktreeRow[], deps: WorktreesDeps): Promise<boolean> => {
+    const eligible = rows.filter(row => row.hold === null).map(row => ({
+      row, path: join(wtRoot, row.job), signature: JSON.stringify([row.state, row.repo, row.exitOnly, row.stale]),
+    }));
+    const current = new Set(eligible.map(item => item.path));
+    for (const path of entries.keys()) {
+      if (!current.has(path)) { entries.delete(path); order.delete(path); }
+    }
+    for (const { path, signature } of eligible) {
+      if (entries.get(path)?.signature !== signature) {
+        entries.set(path, { signature, result: null });
+        order.set(path, 0);
+      }
+    }
+    eligible.sort((a, b) => order.get(a.path)! - order.get(b.path)!);
+    const deadline = Date.now() + INDEX_POLL_MS;
+    const signal = AbortSignal.timeout(INDEX_POLL_MS);
+    await pool(eligible.slice(0, INDEX_POLL_ROWS), CLEAN_CHECK_CONCURRENCY, async ({ row, path, signature }) => {
+      if (signal.aborted || Date.now() >= deadline) return;
+      const result = await inspectWorktree(row, path, deps, deadline, signal);
+      order.set(path, ++sequence);
+      if (result.hold !== 'not-checked') entries.set(path, { signature, result });
+    });
+    let complete = true;
+    for (const { row, path } of eligible) {
+      const result = entries.get(path)?.result;
+      if (result) {
+        ({ clean: row.clean, hold: row.hold, safe: row.safe, bytes: row.bytes } = result);
+        complete &&= result.complete;
+      } else {
+        row.hold = 'not-checked';
+        complete = false;
+      }
+    }
+    return complete;
+  };
+}
+
 /** Read every job worktree; with mode 'apply', remove the safe ones. */
 export async function readWorktrees(mode: WorktreesReport['mode'] = 'list', deps: WorktreesDeps = {}): Promise<WorktreesReport> {
   const now = deps.now ?? Date.now();
@@ -314,29 +377,32 @@ export async function readWorktrees(mode: WorktreesReport['mode'] = 'list', deps
   // Git and size scans run only for rows that passed every cheaper gate.
   const isClean = deps.isClean ?? defaultIsClean;
   const hasUnpushed = deps.hasUnpushed ?? defaultHasUnpushed;
-  const cleanDeadline = Date.now() + CLEAN_CHECK_BUDGET_MS;
-  await pool(rows.filter(row => row.hold === null), CLEAN_CHECK_CONCURRENCY, async row => {
-    const path = join(wtRoot, row.job);
-    row.clean = Date.now() < cleanDeadline ? await isClean(path).catch(() => null) : null;
-    row.hold = row.clean === true ? null : row.clean === false ? 'uncommitted-changes' : 'not-checked';
-    // Only an exit-code-only finish can hide committed work that was never published.
-    if (row.hold === null && (row.exitOnly || row.stale)) {
-      const unpushed = await hasUnpushed(path).catch(() => null);
-      row.hold = unpushed === true ? 'unpushed-commits' : unpushed === null ? 'not-checked' : null;
-    }
-    row.safe = row.hold === null;
-  });
-  const measureDeadline = Date.now() + MEASURE_BUDGET_MS;
-  const measure = deps.measure ?? ((path: string) => measureWorktreeBytes(path, { deadlineMs: measureDeadline }));
-  let reclaimableBytes = 0;
+  const index = mode === 'list' ? deps.inspectionIndex : undefined;
   let reclaimableComplete = true;
-  for (const row of rows.filter(r => r.safe)) {
-    const size = await Promise.resolve().then(() => measure(join(wtRoot, row.job))).catch(() => ({ bytes: 0, complete: false }));
-    row.bytes = size.bytes;
-    reclaimableBytes += size.bytes;
-    reclaimableComplete &&= size.complete;
+  if (index) reclaimableComplete = await index(wtRoot, rows, deps);
+  else {
+    const cleanDeadline = Date.now() + CLEAN_CHECK_BUDGET_MS;
+    await pool(rows.filter(row => row.hold === null), CLEAN_CHECK_CONCURRENCY, async row => {
+      const path = join(wtRoot, row.job);
+      row.clean = Date.now() < cleanDeadline ? await isClean(path).catch(() => null) : null;
+      row.hold = row.clean === true ? null : row.clean === false ? 'uncommitted-changes' : 'not-checked';
+      // Only an exit-code-only finish can hide committed work that was never published.
+      if (row.hold === null && (row.exitOnly || row.stale)) {
+        const unpushed = await hasUnpushed(path).catch(() => null);
+        row.hold = unpushed === true ? 'unpushed-commits' : unpushed === null ? 'not-checked' : null;
+      }
+      row.safe = row.hold === null;
+    });
+    const measureDeadline = Date.now() + MEASURE_BUDGET_MS;
+    const measure = deps.measure ?? ((path: string) => measureWorktreeBytes(path, { deadlineMs: measureDeadline }));
+    for (const row of rows.filter(r => r.safe)) {
+      const size = await Promise.resolve().then(() => measure(join(wtRoot, row.job))).catch(() => ({ bytes: 0, complete: false }));
+      row.bytes = size.bytes;
+      reclaimableComplete &&= size.complete;
+    }
   }
 
+  const reclaimableBytes = rows.reduce((total, row) => total + (row.bytes ?? 0), 0);
   const counts = { total: rows.length, safe: 0, live: 0, merged: 0, empty: 0, open: 0, kept: 0, unknown: 0 };
   for (const row of rows) { counts[row.state]++; if (row.safe) counts.safe++; }
   const s = audit.sources;

@@ -4,7 +4,7 @@
  *
  * Agents could not see how far each repo's default branch has drifted past its
  * newest version tag (phantom is hundreds of commits past v3.29.15). For every
- * repo in QUEUEGEN_REPOS this prints the newest version tag, its age and the
+ * companion repo this prints the newest version tag, its age and the
  * commit count the default branch is ahead of it.
  *
  * READ-ONLY: the only gh calls are `gh api repos/{repo}`,
@@ -29,7 +29,7 @@ import { tmpdir } from 'node:os';
 
 import { defaultGitRunner } from '../core/verse/git-ops.js';
 import type { CloudGh } from '../core/cloud/pr-actions.js';
-import { QUEUEGEN_REPOS } from '../core/drive/queuegen.js';
+import { COMPANION_PROBE_REPOS } from '../core/fleet/planner-real-supply.js';
 import { makeColors, isTty } from './ui.js';
 
 const { bold, dim, red, yellow } = makeColors(isTty());
@@ -252,7 +252,7 @@ export async function cmdFleetShipGap(args: string[], deps: FleetShipGapDeps = {
 
   const reader = deps.reader ?? ghShipGapReader(deps.gh ?? defaultGh, deps.getJson);
   const now = (deps.now ?? (() => new Date()))();
-  const reads = await Promise.all(QUEUEGEN_REPOS.map(async (repo) => {
+  const reads = await Promise.all(COMPANION_PROBE_REPOS.map(async (repo) => {
     try {
       return { repo, read: await reader(repo) };
     } catch (error) {

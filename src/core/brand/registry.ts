@@ -108,6 +108,13 @@ export function resolveBrand(name: string | null | undefined): BrandId | null {
 }
 
 /** Spec for a name or id; null when unknown. */
+const customLogo = /^data:image\/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/;
+
+export function isCustomLogo(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 4096 && customLogo.test(value)
+    && (value.length - 'data:image/png;base64,'.length) % 4 === 0;
+}
+
 export function brandOf(name: string | null | undefined): BrandSpec | null {
   const id = resolveBrand(name);
   return id ? BRANDS[id] : null;

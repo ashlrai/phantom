@@ -307,11 +307,21 @@ export async function cmdResources(args: string[]): Promise<number> {
       console.log(JSON.stringify(await getResourceLedger(cfg), null, 2));
       return;
     }
-    const snapshot = await getResourceSnapshot(cfg);
+    const [{ readBankedResets, codexResetBankUpgradeHint }, { defaultResourceLiveRunsDir }] = await Promise.all([
+      import('../core/usage/resource-live/banked-resets.js'), import('../core/usage/resource-live/feed.js'),
+    ]);
+    const [snapshot, resetBank] = await Promise.all([
+      getResourceSnapshot(cfg), readBankedResets(defaultResourceLiveRunsDir(), Date.now()).catch(() => null),
+    ]);
+    const resetReason = resetBank?.unknown_reason;
+    const resetHint = codexResetBankUpgradeHint(resetReason);
     if (jsonMode) {
-      console.log(JSON.stringify(snapshot, null, 2));
+      console.log(JSON.stringify(resetReason ? { ...snapshot, codex_reset_bank: {
+        count: null, unknown_reason: resetReason, ...(resetHint ? { hint: resetHint } : {}),
+      } } : snapshot, null, 2));
     } else {
       printSnapshot(snapshot);
+      if (resetReason) console.log(`  Codex reset bank: unknown (${resetReason})${resetHint ? `. ${resetHint}` : ''}`);
     }
   }
 

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { scrubSecrets } from '../../util/scrub.js';
+import { checkedCitation } from './citations.js';
 import { extractImportReferences } from './facts.js';
 import { isWikiReadable } from './scan.js';
 
@@ -72,4 +73,15 @@ export function mapFactsKey(file: string): string {
   if (/^src\/(?:mcp\/|core\/mcp-native)/.test(file)) return 'mcp';
   if (/^src\/core\/(?:verse|web)\//.test(file)) return 'verse';
   return 'source';
+}
+
+export function* mapMarks(file: string, facts: Facts) {
+  const seen = new Map<string, number>();
+  for (const [kind, label, line] of facts.marks) {
+    if (!checkedCitation({ file, line }, facts.lines)) continue;
+    const key = `${kind}:${file}:${encodeURIComponent(label)}`;
+    const occurrence = (seen.get(key) ?? 0) + 1;
+    seen.set(key, occurrence);
+    yield { id: `${key}:${occurrence}`, kind, label, line };
+  }
 }

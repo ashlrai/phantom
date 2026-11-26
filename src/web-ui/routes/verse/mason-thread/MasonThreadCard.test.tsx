@@ -22,7 +22,7 @@ describe('MasonThreadCard', () => {
       { at: '2026-11-19T11:56:00.000Z', dir: 'out', channel: 'slack', text: 'On it.', state: null, job_ids: [], also_on: [] },
     ], gaps: ['The bus inbox could not be read.'] } });
     renderMobile(<MasonThreadCard />);
-    expect(await screen.findByText('11:50 Mason via imessage (also slack): Ship the docs fix')).toBeInTheDocument();
+    expect(await screen.findByText('11:50 Operator via imessage (also slack): Ship the docs fix')).toBeInTheDocument();
     expect(screen.getByText('Running · RQ-ONE')).toBeInTheDocument();
     expect(screen.getByText('Unknown')).toBeInTheDocument();
     expect(screen.getByText('11:56 Leader to slack: On it.')).toBeInTheDocument();
