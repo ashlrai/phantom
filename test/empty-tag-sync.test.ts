@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { syncEmptyTagsFromJobsLedger } from '../src/core/fleet/empty-tag-sync.js';
+import { ROUTER_OUTCOME_LEDGER_LIMIT } from '../src/core/router/outcomes.js';
 
 const NOW_MS = Date.parse('2026-10-28T20:00:00.000Z');
 const NOW = () => new Date(NOW_MS);
@@ -100,6 +101,29 @@ describe('syncEmptyTagsFromJobsLedger', () => {
     expect(out).toMatchObject({ candidates: 1, alreadyTagged: 1, classified: 0, recorded: 0, dupcheckOutcomes: 0 });
     expect(readTags(runsDir)).toHaveLength(1);
     expect(readDupcheck(runsDir).filter(r => r['action'] === 'outcome')).toHaveLength(0);
+  });
+
+  it('keeps tags outside the tail authoritative without starving fresh candidates', async () => {
+    writeJobs([finish('RQ-RECORDED', true), finish('RQ-FRESH', true)].join('\n') + '\n');
+    for (const job of ['RQ-RECORDED', 'RQ-FRESH']) {
+      writeLog(job, 'This is a duplicate of an earlier job.');
+    }
+    const recorded = line({ schema: 'job.empty-tag.v1', job: 'RQ-RECORDED', tag: 'unknown' });
+    const padding = line({ schema: 'job.empty-tag.v1', job: 'RQ-OTHER', tag: 'blocked' }).padEnd(4095) + '\n';
+    writeFileSync(join(runsDir, TAGS_FILE), recorded + '\n' + padding.repeat(ROUTER_OUTCOME_LEDGER_LIMIT / 4096));
+    writeFileSync(join(runsDir, DUPCHECK_FILE), ['RQ-RECORDED', 'RQ-FRESH'].map(job => line({
+      schema: 'queue.dupcheck-event.v1', at: TS, job, action: 'launch',
+    })).join('\n') + '\n');
+
+    const result = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW, maxClassify: 1 });
+
+    expect(result).toMatchObject({
+      tagsState: 'read', candidates: 2, alreadyTagged: 1, classified: 1,
+      deferred: 0, recorded: 1, dupcheckOutcomes: 1,
+    });
+    expect(readDupcheck(runsDir).filter(row => row['action'] === 'outcome')).toEqual([
+      expect.objectContaining({ job: 'RQ-FRESH', tag: 'already_done' }),
+    ]);
   });
 
   it.each(['launch', 'batch_claim'])('waits for the current attempt after a %s', async (event) => {

@@ -44,6 +44,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { currentAttemptFinishes } from './empty-finishes.js';
+import { readLedgerLines } from './ledger-lines.js';
 import { EMPTY_TAGS, recordEmptyTags, tagEmpty, type EmptyTag, type TaggedEmptyJob } from './empty-tags.js';
 import { readSource } from './runs-parked-queue.js';
 import { recordDupcheckOutcomes } from '../queue/dupcheck-gate.js';
@@ -105,24 +106,20 @@ async function tailOrInjected(injected: string | undefined, path: string): Promi
   return readLedgerTail(path);
 }
 
-/** job id -> recorded tag, from the tags ledger's `job.empty-tag.v1` rows. */
-function recordedTags(text: string): Map<string, EmptyTag> {
-  const tags = new Map<string, EmptyTag>();
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    let row: Record<string, unknown>;
-    try {
-      const parsed: unknown = JSON.parse(line);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-      row = parsed as Record<string, unknown>;
-    } catch { continue; }
-    if (row['schema'] !== 'job.empty-tag.v1') continue;
-    const job = row['job'];
-    const tag = row['tag'];
-    if (typeof job !== 'string' || typeof tag !== 'string') continue;
-    if ((EMPTY_TAGS as readonly string[]).includes(tag)) tags.set(job, tag as EmptyTag);
-  }
-  return tags;
+/** Collect recorded tags for the current candidates only. */
+function collectRecordedTag(line: string, candidates: ReadonlySet<string>, tags: Map<string, EmptyTag>): void {
+  if (!line.includes('job.empty-tag.v1')) return;
+  let row: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(line);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+    row = parsed as Record<string, unknown>;
+  } catch { return; }
+  if (row['schema'] !== 'job.empty-tag.v1') return;
+  const job = row['job'];
+  const tag = row['tag'];
+  if (typeof job !== 'string' || !candidates.has(job) || typeof tag !== 'string') return;
+  if ((EMPTY_TAGS as readonly string[]).includes(tag)) tags.set(job, tag as EmptyTag);
 }
 
 /**
@@ -155,11 +152,26 @@ export async function syncEmptyTagsFromJobsLedger(
       ...emptyResult('read', jobsPath), truncated: jobs.truncated, tagsState,
     };
     if (tagsState !== 'read' && tagsState !== 'missing') return base;
-    const seen = tagsRead.state === 'read' ? recordedTags(tagsRead.text) : new Map<string, EmptyTag>();
 
     const candidates = currentAttemptFinishes(jobs.text, nowMs, EMPTY_TAG_SYNC_HOURS)
       .filter(finish => finish.empty && !finish.skipped)
       .map(finish => ({ id: finish.id, lane: finish.lane }));
+    if (candidates.length === 0) return base;
+
+    const candidateIds = new Set(candidates.map(candidate => candidate.id));
+    const seen = new Map<string, EmptyTag>();
+    const collect = (line: string) => collectRecordedTag(line, candidateIds, seen);
+    if (tagsRead.state === 'read') {
+      if (tagsRead.truncated) {
+        // Older tags still reserve their jobs in the writer. Recover them
+        // before spending classification slots or deriving dupcheck outcomes.
+        if (!await readLedgerLines(tagsPath, collect)) return { ...base, tagsState: 'unreadable' };
+      } else {
+        for (const line of tagsRead.text.split('\n')) collect(line);
+      }
+    }
+    if (opts.signal?.aborted) return base;
+
     const fresh = candidates.filter(candidate => !seen.has(candidate.id));
     const toClassify = fresh.slice(0, Math.max(0, opts.maxClassify ?? EMPTY_TAG_SYNC_MAX_CLASSIFY));
 
