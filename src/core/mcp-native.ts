@@ -1629,6 +1629,15 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
+    name: 'phm_wiki_ecosystem',
+    description: 'Read commit-pinned relationships across the signed repository scope.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async args => Object.keys(args).length
+      ? { error: 'Invalid wiki ecosystem arguments.' }
+      : (await import('./knowledge/wiki/ecosystem.js')).queryWikiEcosystem(),
+  },
+  {
     name: 'phm_wiki_brain',
     description: 'Read system map evidence and staleness for an enrolled repo.',
     inputSchema: {
@@ -2066,7 +2075,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       auditNativeCall(`${tool.name} keys=${argKeys} — refused: ${payload.error}`, 'refused');
       return textResult(payload, true);
     }
-    if (name === 'phm_wiki_map' || name === 'phm_wiki_brain') {
+    if (name === 'phm_wiki_map' || name === 'phm_wiki_brain' || name === 'phm_wiki_ecosystem') {
       const failed = (payload as { status: string }).status !== 'current';
       auditNativeCall(`${tool.name} keys=${argKeys} — ${failed ? 'unavailable' : 'ok'}`, failed ? 'refused' : 'ok');
       return { content: [{ type: 'text', text: JSON.stringify(payload) }], ...(failed ? { isError: true } : {}) };

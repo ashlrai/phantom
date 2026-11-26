@@ -6,6 +6,15 @@ Use numeric `predicted_merge_rate` (probability from 0 to 1), `predicted_tokens`
 
 The optional PostHog export is a JSON array or an object with a `results` array; each row is a run or has a `properties` object. Join by `job_id` or `jobId`, using the same numeric fields. Unmatched rows are counted. Conflicting values and duplicate launches are rejected rather than silently double-counted. PostHog export input must represent one run per job or contain consistent duplicate observations.
 
+Calibration also accepts dispatcher records with `job` as the job ID and
+`lane` or `pool` as the launch arm. It reads `tokens_total` and converts a
+finish row's `wall_s` to milliseconds when that row has no millisecond
+measurement. Launch and finish `ts` stamps provide the elapsed-time fallback.
+Eventless `MERGED` or `CLOSED` verdicts and those carried on reconciler publish
+rows resolve the job. An ordinary publish claim alone leaves it unresolved.
+Batch session wrappers and node-pool telemetry are excluded. Supply records
+with one launch per included job or a matching reward signal.
+
 The jobs input also accepts reward-signal rows. Each supplies the resolved
 merge outcome and any recorded pool and joins launch or PostHog evidence by
 job ID. Execution wall time uses explicit measurements or the launch and
