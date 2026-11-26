@@ -27,10 +27,10 @@ export interface UnfedResource {
   /** Free slots: target minus running, never negative. */
   headroom: number;
   /** Ready rows whose lane hint names this resource. */
-  readyHinted: number;
+  readyHinted: number | null;
   /** Ready rows hinted elsewhere (or unhinted) while this resource had headroom. */
-  waitingElsewhere: number;
-  unfed: boolean;
+  waitingElsewhere: number | null;
+  unfed: boolean | null;
   /** Why those rows did not run here, by reason code. Empty when neither the dispatcher nor derivable market inputs say. */
   blocked: Record<string, number>;
 }
@@ -222,7 +222,7 @@ export interface UnfedReport {
    */
   fleetStop: FleetStopCode | null;
   /** Ready rows still waiting (market-evaluated rows; see invalidRows). */
-  waiting: number;
+  waiting: number | null;
   /**
    * Ready rows the work market cannot evaluate — a malformed job id, tier or
    * requirements spec, including a router-queue envelope that fails
@@ -232,10 +232,10 @@ export interface UnfedReport {
    * `_waiting` never parses requirements), so they can appear in `waiting`
    * while still being listed here.
    */
-  invalidRows: number;
+  invalidRows: number | null;
   unfedLanes: string[];
   /** Upper bound from lane headroom and waiting rows, capped by total waiting work. */
-  unfedSlots: number;
+  unfedSlots: number | null;
   resources: UnfedResource[];
   /** Whether older work-market journal bytes were omitted from the window folds. */
   marketTruncated: boolean;
@@ -330,12 +330,12 @@ function publishedFleetStop(resources: readonly UnfedResource[]): FleetStopCode 
 }
 
 /**
- * The current picture from queue/status.json and queue/ready.tsv ('' when absent).
+ * The current picture from queue/status.json and queue/ready.tsv (null when unavailable).
  * Throws when status.json has no usable lanes map. `market` carries the
  * dispatcher's own input files; when present and slots.json parses, a derived
  * report recomputes per-lane reason codes instead of leaving them unknown.
  */
-export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'marketTruncated' | 'history' | 'overrides' | 'claims' | 'decisionOutcomes' | 'rejections'> {
+export function currentUnfed(statusJson: string, readyTsv: string | null, market?: UnfedMarketInputs): Omit<UnfedReport, 'marketTruncated' | 'history' | 'overrides' | 'claims' | 'decisionOutcomes' | 'rejections'> {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const tickMs = typeof data.last_tick === 'string' ? Date.parse(data.last_tick) : NaN;
@@ -344,16 +344,16 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
   const statusFresh = nowMs === undefined || !Number.isFinite(nowMs) ? null
     : data.schema === 'dispatchd.status.v1' && Number.isFinite(tickMs) && nowMs >= tickMs && nowMs - tickMs <= STATUS_FRESH_MS;
   const published = isRecord(data.unfed_capacity) && isRecord(data.unfed_capacity.lanes) ? data.unfed_capacity : null;
-  const ctx = published === null ? marketContext(market) : null;
+  const ctx = published === null && readyTsv !== null ? marketContext(market) : null;
   const stop = fleetStopVerdict(data);
   // An admission-stopped tick never ran the market: the dispatcher's own
   // _waiting then counts every JID+tier-valid row by its raw lane column.
-  const strict = readyHints(readyTsv, market?.routerQueue);
-  const hints = published === null && stop === 'admission_stopped'
+  const strict = readyTsv === null ? null : readyHints(readyTsv, market?.routerQueue);
+  const hints = strict !== null && readyTsv !== null && published === null && stop === 'admission_stopped'
     ? { ...stoppedReadyHints(readyTsv), rows: strict.rows, invalid: strict.invalid }
     : strict;
   const publishedLanes = published && isRecord(published.lanes) ? published.lanes : {};
-  const waiting = published && count(published.waiting) ? published.waiting : hints.waiting;
+  const waiting = published && count(published.waiting) ? published.waiting : hints?.waiting ?? null;
   const resources: UnfedResource[] = [];
   for (const [lane, value] of Object.entries(data.lanes)) {
     if (!LANE.test(lane) || !isRecord(value) || !count(value.running)) throw new Error('invalid lane');
@@ -362,37 +362,37 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
     if (!count(target)) throw new Error('invalid lane');
     const held = value.held === true;
     const headroom = Math.max(0, target - value.running);
-    const readyHinted = hints.byLane.get(lane) ?? 0;
+    const readyHinted = hints === null ? null : hints.byLane.get(lane) ?? 0;
     const entry = publishedLanes[lane];
-    let waitingElsewhere = 0;
+    const canBeUnfed = headroom > 0 && !held;
+    let waitingElsewhere: number | null = canBeUnfed && hints === null ? null : 0;
     let blocked: Record<string, number> = {};
     if (isRecord(entry) && count(entry.waiting_elsewhere)) {
       waitingElsewhere = entry.waiting_elsewhere;
       blocked = codes(entry.blocked);
-    } else if (!published) {
-      if (headroom > 0 && !held) {
-        waitingElsewhere = hints.waiting - readyHinted;
-        // A fleet stop outranks every per-lane code: the dispatcher never ran
-        // (or never launched past) the market, so eligibility was not the
-        // binding constraint for the rows still waiting.
-        if (stop !== null) {
-          if (waitingElsewhere > 0) blocked[stop] = waitingElsewhere;
-        } else if (ctx !== null) {
-          const view = marketLaneView(lane, value.running, target, held, ctx);
-          for (const row of hints.rows) {
-            if (row.hint === lane) continue;
-            for (const code of derivedRowCodes(row, lane, view)) blocked[code] = (blocked[code] ?? 0) + 1;
-          }
+    } else if (!published && hints !== null && readyHinted !== null && canBeUnfed) {
+      waitingElsewhere = hints.waiting - readyHinted;
+      // A fleet stop outranks every per-lane code: the dispatcher never ran
+      // (or never launched past) the market, so eligibility was not the
+      // binding constraint for the rows still waiting.
+      if (stop !== null) {
+        if (waitingElsewhere > 0) blocked[stop] = waitingElsewhere;
+      } else if (ctx !== null) {
+        const view = marketLaneView(lane, value.running, target, held, ctx);
+        for (const row of hints.rows) {
+          if (row.hint === lane) continue;
+          for (const code of derivedRowCodes(row, lane, view)) blocked[code] = (blocked[code] ?? 0) + 1;
         }
       }
     }
     resources.push({
       lane, running: value.running, target, held, utilization: utilization(value.running, target), headroom,
-      readyHinted, waitingElsewhere, unfed: headroom > 0 && !held && waitingElsewhere > 0, blocked,
+      readyHinted, waitingElsewhere, unfed: canBeUnfed && (waitingElsewhere === null ? null : waitingElsewhere > 0), blocked,
     });
   }
   resources.sort((a, b) => a.lane.localeCompare(b.lane));
-  const unfed = resources.filter(r => r.unfed);
+  const unfed = resources.filter(r => r.unfed === true);
+  const slotBound = unfed.reduce((sum, r) => sum + Math.min(r.headroom, r.waitingElsewhere ?? 0), 0);
   return {
     schema: FLEET_UNFED_SCHEMA,
     readOnly: true,
@@ -402,9 +402,10 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
     statusFresh,
     fleetStop: stop ?? publishedFleetStop(resources),
     waiting,
-    invalidRows: strict.invalid,
+    invalidRows: strict?.invalid ?? null,
     unfedLanes: unfed.map(r => r.lane),
-    unfedSlots: Math.min(waiting, unfed.reduce((sum, r) => sum + Math.min(r.headroom, r.waitingElsewhere), 0)),
+    unfedSlots: resources.some(r => r.unfed === null) ? null
+      : waiting === null ? (slotBound === 0 ? 0 : null) : Math.min(waiting, slotBound),
     resources,
   };
 }
@@ -794,22 +795,24 @@ export function renderUnfed(report: UnfedReport): string[] {
   for (const r of report.resources) {
     const use = r.utilization === null ? 'no target' : `${Math.round(r.utilization * 100)}%`;
     const state = r.held ? '  HELD' : r.unfed ? `  UNFED: ${r.headroom} free, ${r.waitingElsewhere} rows waiting elsewhere${Object.keys(r.blocked).length ? ` (${topCodes(r.blocked)})` : ''}` : '';
-    lines.push(`${r.lane}  ${r.running}/${r.target} running (${use}), ${r.readyHinted} hinted here${state}`);
+    lines.push(`${r.lane}  ${r.running}/${r.target} running (${use}), ${r.readyHinted ?? 'unknown'} hinted here${state}`);
   }
   for (const lane of report.resourcePlan ?? []) {
     if (lane.target === null) continue;
     lines.push(`plan ${lane.lane}: ${lane.running ?? 'unknown'}/${lane.target ?? 'unknown'} running, ${lane.unfedSlots ?? 'unknown'} unfilled plan slots with waiting work`);
   }
   if (report.resources.length === 0) lines.push('No lanes in queue/status.json.');
-  lines.push(report.unfedLanes.length === 0
-    ? `No unfed capacity: ${report.waiting} rows waiting.`
-    : `Up to ${report.unfedSlots} unfed slot(s) across ${report.unfedLanes.join(', ')}; ${report.waiting} rows waiting.`);
+  lines.push(report.unfedSlots === null
+    ? `Unfed capacity unknown: ${report.waiting ?? 'unknown'} rows waiting.`
+    : report.unfedLanes.length === 0
+    ? `No unfed capacity: ${report.waiting ?? 'unknown'} rows waiting.`
+    : `Up to ${report.unfedSlots} unfed slot(s) across ${report.unfedLanes.join(', ')}; ${report.waiting ?? 'unknown'} rows waiting.`);
   if (report.statusFresh === false) {
     lines.push(report.statusAsOf === null
       ? 'Status snapshot age unknown: status.json has no readable last_tick; counts above are the last published state.'
       : `Status snapshot is stale: last dispatcher tick ${report.statusAsOf}; counts above are the last published state, not live.`);
   }
-  if (report.invalidRows > 0) {
+  if (report.invalidRows !== null && report.invalidRows > 0) {
     lines.push(`${report.invalidRows} ready row(s) fail work-market validation (job id, tier or requirements) and can never launch; fix or drop them.`);
   }
   if (report.fleetStop !== null) {

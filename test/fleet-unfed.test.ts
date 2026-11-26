@@ -596,6 +596,45 @@ describe('phm fleet unfed', () => {
     expect((await run([])).code).toBe(2);
   });
 
+  it.each(['missing', 'unreadable'])('preserves unknown queue counts when ready.tsv is %s', async unavailable => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(), lanes: LANES,
+    }));
+    const ready = join(dir, 'queue', 'ready.tsv');
+    if (unavailable === 'unreadable') mkdirSync(ready);
+
+    const result = await run();
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.lines[0]!)).toMatchObject({
+      waiting: null, invalidRows: null, unfedSlots: null, unfedLanes: [],
+      resources: expect.arrayContaining([
+        expect.objectContaining({ lane: 'codex-cmp', headroom: 3, readyHinted: null, waitingElsewhere: null, unfed: null }),
+        expect.objectContaining({ lane: 'devin', unfed: false }),
+      ]),
+    });
+    vi.restoreAllMocks();
+    expect((await run([])).lines.join('\n')).toContain('Unfed capacity unknown: unknown rows waiting.');
+
+    vi.restoreAllMocks();
+    rmSync(ready, { recursive: true, force: true });
+    writeFileSync(ready, '');
+    const empty = await run();
+    expect(JSON.parse(empty.lines[0]!)).toMatchObject({ waiting: 0, invalidRows: 0, unfedSlots: 0 });
+  });
+
+  it('preserves published unfed counts when ready.tsv is unavailable', () => {
+    const report = currentUnfed(JSON.stringify({
+      lanes: LANES,
+      unfed_capacity: { waiting: 2, lanes: { 'codex-cmp': { waiting_elsewhere: 2 } } },
+    }), null);
+    expect(report).toMatchObject({
+      source: 'dispatcher', waiting: 2, invalidRows: null, unfedSlots: 2, unfedLanes: ['codex-cmp'],
+      resources: expect.arrayContaining([
+        expect.objectContaining({ lane: 'codex-cmp', readyHinted: null, waitingElsewhere: 2, unfed: true }),
+      ]),
+    });
+  });
+
   it('reports utilization, unfed lanes and windowed history from the runs directory', async () => {
     writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
       schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(), lanes: LANES,
@@ -717,6 +756,7 @@ describe('phm fleet unfed', () => {
       schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(),
       lanes: { a: { running: 2, target: 2 } },
     }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), '');
     const result = await run([]);
     expect(result.code).toBe(0);
     expect(result.lines).toEqual([
