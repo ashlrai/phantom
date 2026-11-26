@@ -31,6 +31,11 @@ jobs:
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.22.3"
+      - name: Install dependencies for the restock CLI fixture
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Run contrib/mac unittest discovery
         id: suites
         working-directory: contrib/mac/tests

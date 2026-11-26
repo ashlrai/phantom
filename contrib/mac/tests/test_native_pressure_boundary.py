@@ -1,4 +1,4 @@
-"""Exercise the exact patched launcher with only unsafe external effects stubbed."""
+"""Exercise the checked-in launcher candidate with external effects stubbed."""
 import hashlib
 import importlib.util
 import os
@@ -9,9 +9,7 @@ import time
 import unittest
 
 HERE = Path(__file__).resolve().parents[1]
-PACKET = HERE.parents[2]
-REFERENCE = PACKET / 'reference/ACTUAL-READONLY-launch.sh'
-PATCH = HERE / 'host-integration/launch.patch'
+CANDIDATE = HERE / 'host-integration/launch.candidate.sh'
 
 spec = importlib.util.spec_from_file_location('pressure', HERE / 'host_pressure_admission.py')
 pressure = importlib.util.module_from_spec(spec)
@@ -45,9 +43,7 @@ class NativePressureBoundary(unittest.TestCase):
             sandbox.write_text('#!/bin/sh\nprintf provider > "$HOME/provider-called"\n')
             sandbox.chmod(0o755)
             launcher = home / 'launch.sh'
-            launcher.write_bytes(REFERENCE.read_bytes())
-            subprocess.run(['patch', '-s', str(launcher), str(PATCH)], check=True)
-            text = launcher.read_text()
+            text = CANDIDATE.read_text().replace('PATH="/opt/homebrew/bin:', 'PATH="')
             # Real preflight checks depend on pinned personal files; this stub records
             # their execution and does not invoke auth, token or provider helpers.
             start = text.index('lm_ok(){')
@@ -93,7 +89,7 @@ class NativePressureBoundary(unittest.TestCase):
     def test_retired_lane_is_refused_before_launch_preflight(self):
         with tempfile.TemporaryDirectory() as home:
             result = subprocess.run(
-                ['/bin/bash', str(HERE / 'host-integration/launch.candidate.sh'), 'JOB', 'phantom', 'codex-cmp'],
+                ['/bin/bash', str(CANDIDATE), 'JOB', 'phantom', 'codex-cmp'],
                 input='fixture', text=True, capture_output=True, env={'HOME': home}, timeout=10)
             self.assertEqual(result.returncode, 3, result.stderr)
             self.assertIn('REFUSED: retired lane', result.stderr)

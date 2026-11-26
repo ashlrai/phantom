@@ -48,11 +48,14 @@ class CpuInventoryTests(unittest.TestCase):
         self.assertIsNone(result.cpu)
         self.assertEqual(result.stdout, '1 /System/idle\n42 /usr/bin/tool\n')
 
-    def test_default_capture_keeps_the_legacy_argv_and_no_cpu_table(self):
-        names = '1 /System/idle\n42 /usr/bin/tool\n'
+    def test_default_capture_reads_start_times_without_a_cpu_table(self):
+        started = 'Thu Nov 26 06:00:00 2026'
+        names = f' 1 {started} /System/idle\n42 {started} /usr/bin/tool\n'
         with patch.object(snapshot, '_bounded', side_effect=[completed(names)]) as run:
             result = snapshot.capture()
-        self.assertEqual(run.call_args_list[0].args[0], ['ps', '-axo', 'pid=,comm='])
+        self.assertEqual(run.call_args_list[0].args[0], ['ps', '-axo', 'pid=,lstart=,comm='])
+        self.assertEqual(result.stdout, '1 /System/idle\n42 /usr/bin/tool\n')
+        self.assertEqual(result.start_times, {1: started, 42: started})
         self.assertIsNone(result.cpu)
 
     def test_failed_inventory_is_unknown_with_cpu_requested(self):

@@ -66,7 +66,7 @@ class OmlxTests(unittest.TestCase):
                 env['OMLX_URL'] = 'http://127.0.0.1:8000/v1'
                 (home / 'stubbin/sysctl').write_text('#!/bin/sh\necho 68719476736\n')
                 shutil.copy(SCRIPT.parent / 'local_job.py', root / 'bin/local_job.py')
-                queue_job(home, job, 'omlx')
+                queue_job(home, job, 'omlx', tier='mid')
                 result = tick(home, env); self.assertEqual(result.returncode, 0, result.stderr)
                 status = json.loads((root / 'queue/status.json').read_text())
                 self.assertEqual(status['launched_this_tick'], [job], (status, result.stdout))
@@ -90,7 +90,7 @@ class OmlxTests(unittest.TestCase):
                 rows = [json.loads(l) for l in (root / 'metrics/jobs.jsonl').read_text().splitlines()]
                 self.assertEqual([r['event'] for r in rows if r.get('lane') == 'omlx'], ['enqueue', 'claim', 'launch', 'finish'])
                 env['OMLX_URL'] = 'http://192.0.2.1:8000/v1'
-                queue_job(home, 'RQ-OMLX-REMOTE', 'omlx')
+                queue_job(home, 'RQ-OMLX-REMOTE', 'omlx', tier='mid')
                 result = tick(home, env); self.assertEqual(result.returncode, 0, result.stderr)
                 status = json.loads((root / 'queue/status.json').read_text())
                 self.assertFalse(status['lanes']['omlx']['healthy'])
