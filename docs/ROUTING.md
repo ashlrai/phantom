@@ -845,8 +845,10 @@ folds explicit revert evidence — a `reverted` boolean, a revert event name
 or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
 stamp — plus the authority ledger's verified evidence index: a
 `revert:landed` row undoing a `merge:landed` landing marks the merged PR's
-outcome reverted when the job's own canonical github.com pull URL claim is
-unambiguous (ambiguous, foreign or non-canonical claims never mark). The
+outcome reverted when the job's standing merge verdict identifies that
+unambiguous canonical github.com pull URL. A legacy merge verdict without
+a URL can use the job's sole PR claim in the retained ledger. This keeps
+reverts of superseded PRs from discounting a replacement merge. The
 index join reads `ledgerSnapshot('cached')` lazily, contributes only
 hash-verified rows — a broken chain still marks only its verified prefix —
 and degrades to no join on any read failure. A second, independent revert
