@@ -766,7 +766,9 @@ a parseable `ts`, `at`, or `timestamp` retain their existing eligibility.
 Both the router outcomes and the daemon's reward feed withhold a job's
 spend-derived total if any call attributed to that job lacks a usable USD
 price or the sum is non-finite. Spend totals for other jobs can still be
-measured.
+measured. The reward feed uses its sync start as the inclusive spend cutoff,
+the same cutoff it uses for jobs evidence. Future-dated calls affect neither
+the sum nor price coverage. Undated calls remain eligible.
 The reward-signal ledger joins under the ASHLR home root — the same
 root the eval passk projection resolves — because it persists resolved
 per-job outcome evidence far longer than the bounded jobs tail: the

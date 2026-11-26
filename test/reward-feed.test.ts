@@ -1017,6 +1017,26 @@ describe('syncRewardSignalsFromJobsLedger', () => {
     expect(rewardRows()).toHaveLength(2);
   });
 
+  it('records spend through the sync start before checking price coverage', async () => {
+    writeJobs([launch('RQ-A'), merged('RQ-A'), claim('RQ-C'), closed('RQ-C')].join('\n'));
+    const cutoff = NOW().toISOString();
+    const future = new Date(NOW_MS + 1).toISOString();
+    writeSpend([
+      line({ job: 'RQ-A', cost_usd: 2.5, ts: cutoff }),
+      line({ job: 'RQ-A', cost_usd: 1 }),
+      line({ job: 'RQ-A', cost_usd: 10, at: future }),
+      line({ job: 'RQ-A', timestamp: future }),
+      line({ job: 'RQ-C', cost_usd: 4, ts: future }),
+    ].join('\n'));
+
+    const result = await syncRewardSignalsFromJobsLedger({ runsDir, home, now: NOW });
+    expect(result).toMatchObject({ state: 'read', recorded: 2 });
+    expect(rewardRows().map((row) => [row.jobId, row.cost.costUsd])).toEqual([
+      ['RQ-A', 3.5],
+      ['RQ-C', null],
+    ]);
+  });
+
   it('records a merge with unknown USD cost when earlier spend is outside the retained tail', async () => {
     writeJobs([launch('RQ-A'), merged('RQ-A')].join('\n'));
     writeSpend(line({ job: 'RQ-A', cost_usd: 2.5 }) + '\n');
