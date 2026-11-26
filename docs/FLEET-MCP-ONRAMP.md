@@ -147,9 +147,15 @@ never passes), `channel` (envelopes addressed to
 `to`-prefix the `phm comms bus read --channel` and `fleet bus-follow
 --channel` flags apply), `since` (a `15m`/`2h`/`1d`, epoch-ms or ISO cutoff),
 `before` (the exclusive upper bound on the same grammar, composing with
-`since` into one `[since, before)` window) and `contains` (a
+`since` into one `[since, before)` window), `contains` (a
 case-insensitive substring over each envelope's scrubbed
-one-line summary — secret-shaped values stay unfindable). Filtered rows still
+one-line summary — secret-shaped values stay unfindable) and `result`
+(keeps only `work.result` bodies whose own `outcome` strictly equals the
+code — `reserved`, `admitted`, `complete` or `failed`, the same
+`WORK_RESULT_OUTCOMES` vocabulary every other bus read's `--result`
+filter shares; every other body kind, a `work.release` body's own
+`released`/`completed` outcome and a `work.result` carrying no outcome
+never match). Filtered rows still
 advance `nextCursor`, so a narrowed page resumes on the same cursor an
 unfiltered one would.
 
