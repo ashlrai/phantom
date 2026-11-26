@@ -168,8 +168,8 @@ const FAILING = new Set(['failure', 'timed_out', 'cancelled', 'action_required',
 const shortName = (repo: string): string => repo.split('/').pop() ?? repo;
 
 const FRESHNESS_WORK = {
-  DOCS: 'Check docs, generated navigation, and README examples against current code and CLI help. Verify commands and flags with the project docs checks. Report evidence and propose a focused docs update only for confirmed drift.',
-  SITE: 'Check configured production deployment revision and public endpoint health against the default branch. Use existing deployment evidence and read-only probes. Record healthy, stale, unhealthy, unknown, or no site configured in BRIDGE_NOTES.md. Keep private evidence local and route any repair through existing review and deployment gates.',
+  DOCS: 'Check docs, generated navigation, and README examples against current code and CLI help. Verify commands and flags with the project docs checks. Report evidence and propose a focused docs update only for confirmed drift. In BRIDGE_NOTES.md put exactly one standalone line: FRESHNESS: clean, FRESHNESS: drift, or FRESHNESS: unknown.',
+  SITE: 'Check configured production deployment revision and public endpoint health against the default branch. Use existing deployment evidence and read-only probes. In BRIDGE_NOTES.md put exactly one standalone line: FRESHNESS: healthy, FRESHNESS: stale, FRESHNESS: unhealthy, FRESHNESS: unknown, or FRESHNESS: not-configured. Keep private evidence local and route any repair through existing review and deployment gates.',
 };
 
 function enqueueFreshness(

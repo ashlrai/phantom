@@ -8,7 +8,7 @@ import { USAGE_EVENTS, USAGE_POOLS, writeUsageSignal, type UsageEvent, type Usag
 /** Separate bridge entrypoint: no daemon registration and no timer lifecycle. */
 export async function runUsageSignal(argv: string[]): Promise<void> {
   let directory: string | undefined; let event: string | undefined; let readersPath: string | undefined;
-  let dryRun = false; let builtin = false; let codexHome: string | undefined;
+  let dryRun = false; let builtin = false; let codexPersonalHome: string | undefined;
   const pools: UsagePool[] = [];
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i];
@@ -19,14 +19,14 @@ export async function runUsageSignal(argv: string[]): Promise<void> {
     if (flag === '--directory' && !directory) directory = value;
     else if (flag === '--event' && !event) event = value;
     else if (flag === '--readers' && !readersPath) readersPath = value;
-    else if (flag === '--codex-home' && !codexHome) codexHome = value;
+    else if (flag === '--codex-personal-home' && !codexPersonalHome) codexPersonalHome = value;
     else if (flag === '--pool' && USAGE_POOLS.includes(value as UsagePool)) pools.push(value as UsagePool);
     else throw new Error('Invalid usage signal option');
   }
   if (!directory || !isAbsolute(directory) || !USAGE_EVENTS.includes(event as UsageEvent)) {
-    throw new Error('Usage: --directory ABS_PATH --event dispatch-start|pr-merge|429|limit-message|manual-reading|hourly [--pool POOL] [--readers ABS_PATH | --status-readers [--codex-home ABS_PATH]] [--dry-run]');
+    throw new Error('Usage: --directory ABS_PATH --event dispatch-start|pr-merge|429|limit-message|manual-reading|hourly [--pool POOL] [--readers ABS_PATH | --status-readers [--codex-personal-home ABS_PATH]] [--dry-run]');
   }
-  if (builtin && readersPath || codexHome && !builtin) throw new Error('Invalid usage signal option');
+  if (builtin && readersPath || codexPersonalHome && !builtin) throw new Error('Invalid usage signal option');
   if (event === 'hourly' && (process.platform !== 'darwin' || !readersPath || pools.length)) {
     throw new Error('Hourly usage requires macOS and a complete reader configuration');
   }
@@ -58,7 +58,7 @@ export async function runUsageSignal(argv: string[]): Promise<void> {
     throw new Error('Hourly usage requires macOS and a complete reader configuration');
   }
   // Built-in readers cover only their own pools; default selection follows them.
-  const readers = builtin ? statusReaders({ ...(codexHome ? { codexHome } : {}) }) : usageSignalReaders(commands);
+  const readers = builtin ? statusReaders({ ...(codexPersonalHome ? { codexPersonalHome } : {}) }) : usageSignalReaders(commands);
   const selected = pools.length ? pools : builtin ? Object.keys(readers) as UsagePool[] : [];
   const result = await writeUsageSignal({ directory, event: event as UsageEvent, ...(dryRun ? { dryRun } : {}),
     ...(selected.length ? { pools: selected } : {}), readers });

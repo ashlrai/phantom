@@ -8,7 +8,7 @@ import { wasteLevel } from '../../../core/fleet/pools-view.js';
 export const FLEET_USAGE_SCHEMA = 'fleet-usage.v1';
 /** Source readings older than this are flagged even if the feed forgot to. */
 export const FLEET_USAGE_STALE_AFTER_SEC = 15 * 60;
-export const FLEET_USAGE_LANES = ['claude', 'claude-api', 'codex-cmp', 'codex-personal', 'codex-local', 'devin', 'gemini', 'zai', 'omlx-local'] as const;
+export const FLEET_USAGE_LANES = ['claude', 'claude-api', 'codex-personal', 'codex-local', 'devin', 'gemini', 'zai', 'omlx-local'] as const;
 
 export interface FleetUsageLane {
   lane: string;

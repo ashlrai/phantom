@@ -86,7 +86,7 @@ describe('usage pace snapshot carries the shares (resources API payload)', () =>
     const shares = projectUsagePace(raw, now).shares;
     const row = (pool: string) => shares.pools.find(r => r.pool === pool)!;
     expect(row('codex-personal').verdict).toBe('on pace');
-    expect(row('codex-cmp').verdict).toBe('will run dry 2 days early');
+    expect(row('codex-cmp')).toBeUndefined();
     expect(row('claude')).toMatchObject({ verdict: 'will waste 30%', used_percent: 50, burn_pct_per_hour: 1, hours_to_reset: 20, reset_at: at(20), projected_percent_at_reset: 70 });
     expect(row('claude-api')).toMatchObject({ unit: 'usd', remaining_usd: 50, used_percent: 50, burn_pct_per_hour: 1, verdict: 'will waste 30%' });
     expect(row('zai')).toMatchObject({ verdict: 'unknown: reading stale', used_percent: null });
@@ -135,7 +135,7 @@ describe('phm fleet pools', () => {
       expect(Object.keys(parsed).sort()).toEqual(['asOf', 'next_pool', 'pools', 'schema']);
       expect(parsed).toMatchObject({ schema: 'fleet.pools.v1', next_pool: 'claude', asOf: expect.any(String) });
       const pools = parsed.pools as Record<string, unknown>[];
-      expect(pools.map(row => row.pool)).toEqual(['claude', 'codex-personal', 'claude-api', 'codex-cmp', 'gemini', 'zai']);
+      expect(pools.map(row => row.pool)).toEqual(['claude', 'codex-personal', 'claude-api', 'gemini', 'zai']);
       for (const row of pools) {
         expect(Object.keys(row).sort()).toEqual(['burn_pct_per_hour', 'hours_to_reset', 'line', 'pool', 'projected_percent_at_reset', 'rank', 'reason',
           'remaining_usd', 'reset_at', 'runway_hours', 'state', 'suggested_share', 'unit', 'used_percent', 'verdict']);
@@ -143,7 +143,7 @@ describe('phm fleet pools', () => {
           expect(row[key] === null || typeof row[key] === 'number').toBe(true);
         }
       }
-      expect(pools.map(row => row.state)).toEqual(['wasting', 'starving', 'unknown', 'unknown', 'unknown', 'unknown']);
+      expect(pools.map(row => row.state)).toEqual(['wasting', 'starving', 'unknown', 'unknown', 'unknown']);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
@@ -153,7 +153,7 @@ describe('phm fleet pools', () => {
       const out = capture();
       expect(await cmdFleetPools(['--runs-dir', root])).toBe(0);
       expect(out[0]).toBe('Next job: unknown (no pool is known to have room)');
-      expect(out.slice(1)).toHaveLength(6);
+      expect(out.slice(1)).toHaveLength(5);
       expect(out.slice(1).every(line => line.includes('unknown: status missing or stale') && !line.includes('0%'))).toBe(true);
       expect(await cmdFleetPools(['--runs-dir', 'relative'])).toBe(2);
       expect(await cmdFleetPools(['--bogus'])).toBe(2);

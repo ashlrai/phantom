@@ -38,7 +38,10 @@ function plainLines(board: LeaderBoardV1): string[] {
     : `queue depth by tier: ${Object.entries(tiers).sort(([a], [b]) => a.localeCompare(b)).map(([tier, n]) => `${tier} ${n}`).join(', ') || 'none'}`);
   if (board.lanes.length === 0) lines.push('lanes: none observed');
   for (const lane of board.lanes) {
-    lines.push(`lane ${lane.lane}  ready ${cell(lane.ready)}  parked ${cell(lane.parked)}  running ${cell(lane.running)}  merges/h ${cell(lane.mergesLastHour)}`);
+    lines.push(`lane ${lane.lane}  ready ${cell(lane.ready)}  parked ${cell(lane.parked)}  running ${cell(lane.running)} / target ${cell(board.resourcePlan?.lanes.find(row => row.lane === lane.lane)?.target_concurrency)}  merges/h ${cell(lane.mergesLastHour)}`);
+  }
+  for (const row of board.resourcePlan?.deadlines ?? []) {
+    lines.push(`  ${row.label}: projected waste ${row.projected_waste_at_deadline === null ? 'unknown' : `${row.projected_waste_at_deadline} ${row.unit}`} by ${row.deadline_at}`);
   }
   lines.push(`needs Mason: ${board.needsMason.count} item(s)${board.needsMason.status === 'available' ? '' : ` (${board.needsMason.status})`}`);
   for (const item of board.needsMason.items) lines.push(`  ${item.id}  ${item.text}`);

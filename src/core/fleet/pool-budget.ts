@@ -1,10 +1,11 @@
 /** Value-free pool observations. This ledger is advisory, never dispatch authority. */
-export const BUDGET_POOLS = ['codex-cmp', 'codex-personal', 'devin', 'claude', 'grok-build', 'local-omlx', 'grok-ultra'] as const;
+export const BUDGET_POOLS = ['codex-personal', 'devin', 'claude', 'grok-build', 'local-omlx', 'grok-ultra'] as const;
 export type BudgetPool = typeof BUDGET_POOLS[number];
+type JournalBudgetPool = BudgetPool | 'codex-cmp';
 export type BudgetBucket = 'weeklyPct' | 'credits' | 'acus' | 'capacity';
 export type BudgetSource = 'cli' | 'log' | 'manual';
 export interface BudgetReading {
-  pool: BudgetPool;
+  pool: JournalBudgetPool;
   bucket: BudgetBucket;
   remaining: number;
   resetAt: string | null;
@@ -34,7 +35,7 @@ export interface PoolBudgetSnapshot {
   sourceState: 'healthy' | 'unavailable';
   pools: Record<BudgetPool, PoolBudgetView>;
 }
-const BUCKETS: Record<BudgetPool, readonly BudgetBucket[]> = {
+const BUCKETS: Record<JournalBudgetPool, readonly BudgetBucket[]> = {
   'codex-cmp': ['weeklyPct', 'credits'], 'codex-personal': ['weeklyPct', 'credits'],
   devin: ['acus'], claude: ['weeklyPct'], 'grok-build': ['weeklyPct', 'credits'],
   'local-omlx': ['capacity'], 'grok-ultra': ['weeklyPct', 'credits'],
@@ -52,8 +53,8 @@ export function budgetTime(value: unknown): string {
 export function validateBudgetReading(value: unknown): BudgetReading {
   if (!value || typeof value !== 'object') throw new Error('Invalid budget reading');
   const r = value as Record<string, unknown>;
-  if (!BUDGET_POOLS.includes(r.pool as BudgetPool)) throw new Error('Unknown budget pool');
-  const pool = r.pool as BudgetPool;
+  if (r.pool !== 'codex-cmp' && !BUDGET_POOLS.some(pool => pool === r.pool)) throw new Error('Unknown budget pool');
+  const pool = r.pool as JournalBudgetPool;
   if (!BUCKETS[pool].includes(r.bucket as BudgetBucket)) throw new Error('Unsupported budget bucket');
   if (typeof r.remaining !== 'number' || !Number.isFinite(r.remaining) || r.remaining < 0 ||
       r.remaining > (r.bucket === 'weeklyPct' ? 100 : Number.MAX_SAFE_INTEGER)) throw new Error('Invalid remaining budget');
@@ -120,7 +121,7 @@ export function claudePoolMode(bucket: BudgetBucketView | undefined): 'metered' 
 }
 export function projectPoolBudgets(readings: readonly BudgetReading[], now = new Date(), sourceState: PoolBudgetSnapshot['sourceState'] = 'healthy'): PoolBudgetSnapshot {
   const clean = readings.map(validateBudgetReading);
-  const pools = {} as Record<BudgetPool, PoolBudgetView>;
+  const pools = {} as PoolBudgetSnapshot['pools'];
   for (const pool of BUDGET_POOLS) {
     const buckets: PoolBudgetView['buckets'] = {};
     for (const bucket of BUCKETS[pool]) buckets[bucket] = bucketView(clean.filter(r => r.pool === pool && r.bucket === bucket), now.getTime(), pool === 'local-omlx');
@@ -136,7 +137,7 @@ export function parseBudgetOutput(pool: BudgetPool, source: 'cli' | 'log', outpu
   budgetTime(timestamp);
   const readings: BudgetReading[] = [];
   for (const line of output.split(/\r?\n/)) {
-    if (line.trim().startsWith('{') && (pool === 'codex-cmp' || pool === 'codex-personal')) {
+    if (line.trim().startsWith('{') && pool === 'codex-personal') {
       readings.push(...parseCodexBudgetLine(pool, source, line, timestamp));
       continue;
     }

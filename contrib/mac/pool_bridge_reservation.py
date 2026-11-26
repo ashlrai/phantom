@@ -3,6 +3,7 @@
 
 import argparse
 from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pool_bridge_evidence import (Held, MAX_AGE, clock, executable, plan_evidence, private,
+from pool_bridge_evidence import (Held, MAX_AGE, clock, devin_evidence, executable, plan_evidence, private,
                                   parse_pinned_agy_help, publish, read_attestation, read_quota,
                                   sha, snapshot)
 
@@ -24,6 +25,11 @@ from pool_bridge_evidence import (Held, MAX_AGE, clock, executable, plan_evidenc
 REVIEW = Path(__file__).resolve().parent / "host-integration"
 PROJECTS = Path("/Users/masonwyatt/Projects/ashlrai")
 SAFE_PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+DEVIN = Path("/opt/homebrew/bin/devin")
+FLASH_PRESSURE = {
+    "host_pressure_admission.py": "6b2e87df1253fbf501a31553562293e26862871b30d9823a5c87a4fe3ed15e80",
+    "host_session_observation.py": "dfee0279acfa7f20bc93ce743c4afcc6581fb3f42f0cf62675c41a9513ef40de",
+}
 LIMITS = {"fast": (2, 80), "mid": (8, 120), "work": (15, 200), "frontier": (40, 600)}
 ZAI_MODELS = {"fast": ("glm-5.3-flash", "40"), "work": ("glm-5.3", "60")}
 ZAI_SETTINGS = "3a85cc369f6cd3b30a20b7ec596117c92866d6782233369d5fe7a66bf8554bfb"
@@ -120,14 +126,21 @@ def check_scope(ws, base, r):
 
 def derive_profile(original, writable):
     broad = f'(subpath "{PROJECTS}")'
-    if original.count(broad) != 1:
+    default = "(allow default)"
+    if original.count(broad) != 1 or original.count(default) != 1:
         raise Held("sandbox-profile-unverified")
     replacement = '(subpath (param "POOL_WORKSPACE"))' if writable else ""
-    return original.replace(broad, replacement) + """
+    return original.replace(default, default + "\n(deny file-write*)\n(allow file-write* (literal \"/dev/null\"))").replace(
+        broad, replacement) + """
 (deny file-read* file-write* (subpath (param "POOL_CLAIM")))
 (allow file-read* file-write* (subpath (param "POOL_TEMP")))
 (deny file-write* (subpath (string-append (param "POOL_WORKSPACE") "/.git")))
 """
+
+
+def sandbox_command(sandbox, ws, claim, temp, profile_path):
+    return [str(sandbox), "-D", f"POOL_WORKSPACE={ws}", "-D", f"POOL_CLAIM={claim}",
+            "-D", f"POOL_TEMP={temp}", "-f", str(profile_path)]
 
 
 def exists_group(pgid):
@@ -158,12 +171,12 @@ def stop_group(child, grace=2):
     return not exists_group(child.pid)
 
 
-def supervise(command, ws, env, prompt, output, deadline, cancelled, **kwargs):
+def supervise(command, ws, env, prompt, output, deadline, cancelled, *, stderr=subprocess.DEVNULL, **kwargs):
     with tempfile.TemporaryFile() as stdin:
         stdin.write(prompt.encode())
         stdin.seek(0)
         child = subprocess.Popen(command, cwd=ws, env=env, stdin=stdin, stdout=output,
-                                 stderr=subprocess.DEVNULL, start_new_session=True, **kwargs)
+                                 stderr=stderr, start_new_session=True, **kwargs)
         while True:
             rc = child.poll()
             if rc is not None and not exists_group(child.pid):
@@ -187,22 +200,22 @@ def snapshot_refs():
     return {row["name"]: row["sha256"] for row in manifest["files"]}
 
 
-def flash_guard(r, home, guards):
-    if any(not (REVIEW / name).is_file() or not (guards / name).is_file()
-           or (guards / name).is_symlink()
-           for name in ("devin_flash_lane.py", "devin-overage-stop.py", "agent.sb")):
+def flash_guard(r, home, runs, refs):
+    guards = runs / "bin"
+    names = ("devin_flash_lane.py", "devin-overage-stop.py", "agent.sb")
+    if any(not (guards / name).is_file() or (guards / name).is_symlink()
+           for name in (*names, *FLASH_PRESSURE, "launch.sh")):
         raise Held("guard-source-missing")
-    refs = snapshot_refs()
-    if not {"devin-overage-stop.py", "agent.sb"} <= refs.keys():
-        raise Held("guard-source-unreviewed")
-    for name in ("devin_flash_lane.py", "devin-overage-stop.py", "agent.sb"):
-        pinned(guards / name, refs[name])
-    env = {"HOME": str(home), "PATH": SAFE_PATH}
-    if (helper(["/usr/bin/python3", "-I", str(guards / "devin-overage-stop.py"), "check"], env)
-            or helper(["/usr/bin/python3", "-I", str(guards / "devin_flash_lane.py"),
-                       "check-launch", r["model"]], env)):
+    verified = {name: pinned(guards / name, refs[name]) for name in (*names, "launch.sh")}
+    for name, digest in FLASH_PRESSURE.items():
+        pinned(guards / name, digest)
+    env = {"HOME": str(home), "PATH": SAFE_PATH, "ASHLR_RUNS": str(runs)}
+    stop = ["/usr/bin/python3", "-I", str(guards / "devin-overage-stop.py")]
+    if (helper([*stop, "check"], env)
+            or helper(["/usr/bin/python3", "-I", str(guards / "host_pressure_admission.py")], env)
+            or helper(["/usr/bin/python3", "-I", str(guards / "devin_flash_lane.py"), "check-launch", r["model"]], env)):
         raise Held("devin-flash-refused")
-    raise Held("bridge-not-commissioned")
+    return verified["agent.sb"], stop, env
 
 
 def replay_guard(state, r):
@@ -224,12 +237,106 @@ def evidence_check(r, evidence_path, fresh):
     evidence = json.loads(data)
     now = clock()
     if (sha(data) != r["evidenceSha256"] or not isinstance(evidence, dict)
-            or any(evidence.get(k) != fresh[k] for k in ("schema", "lane", "model", "accountDigest", "executableSha256"))
+            or any(evidence.get(k) != fresh.get(k) for k in
+                   ("schema", "lane", "model", "accountDigest", "executableSha256", "billing", "reservationCap"))
             or r["accountDigest"] != fresh["accountDigest"]
             or type(evidence.get("observedAt")) is not int or type(evidence.get("expiresAt")) is not int
             or not now - MAX_AGE <= evidence["observedAt"] <= now < evidence["expiresAt"]
             <= evidence["observedAt"] + MAX_AGE):
         raise Held("bridge-evidence-unverified")
+    return evidence["expiresAt"]
+
+
+def update_flash_cap(state, r, cap, *, release=False):
+    account = state / (".flash-" + r["accountDigest"])
+    account.mkdir(mode=0o700, exist_ok=True)
+    if not private(account, 0o700):
+        raise Held("devin-reservation-cap-unverified")
+    lock = account / "lock"
+    ledger = account / "cap.json"
+    with os.fdopen(os.open(lock, os.O_CREAT | os.O_NOFOLLOW | os.O_RDWR, 0o600), "rb+") as fd:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        now = clock()
+        rows = json.loads(snapshot(ledger, 2 << 20, 0o600)[0]) if ledger.exists() else {}
+        if not isinstance(rows, dict) or any(
+                not ID.fullmatch(key) or not isinstance(row, list) or len(row) != 2
+                or type(row[0]) is not int or not 0 <= row[0] <= now or type(row[1]) is not bool
+                for key, row in rows.items()):
+            raise Held("devin-reservation-cap-unverified")
+        rows = {key: row for key, row in rows.items() if row[1] or row[0] > now - 3_600_000}
+        if release and r["id"] not in rows:
+            raise Held("devin-reservation-cap-unverified")
+        if release:
+            rows[r["id"]][1] = False
+        else:
+            if (r["id"] in rows or sum(row[1] for row in rows.values()) >= cap[0]
+                    or sum(row[0] > now - 3_600_000 for row in rows.values()) >= cap[1]):
+                raise Held("devin-reservation-cap-held")
+            rows[r["id"]] = [now, True]
+        publish(ledger, rows)
+
+
+@contextmanager
+def prepare_flash(r, home, ws, claim, evidence_path, sandbox, runs):
+    refs = snapshot_refs()
+    profile, stop, guard_env = flash_guard(r, home, runs, refs)
+    data, _ = snapshot(evidence_path, 4096, 0o600)
+    proof = json.loads(data)
+    cap = proof.get("reservationCap") if isinstance(proof, dict) else None
+    if sha(data) != r["evidenceSha256"] or not isinstance(cap, dict):
+        raise Held("bridge-evidence-unverified")
+    cap = cap.get("maxConcurrent"), cap.get("maxPerHour")
+    data_home = home / ".local" / "share"
+    native, identity, digest = executable(DEVIN)
+    fresh = devin_evidence(DEVIN, home, data_home, r["model"], cap)
+    expires = min(fresh["expiresAt"], evidence_check(r, evidence_path, fresh))
+    if executable(DEVIN) != (native, identity, digest) or digest != fresh["executableSha256"]:
+        raise Held("executable-unverified")
+    temp = claim / "tmp"
+    temp.mkdir(mode=0o700)
+    prompt = temp / "prompt"
+    profile = derive_profile(profile.decode(), r["mode"] == "write").encode()
+    profile_path = claim / "profile.sb"
+    profile_path.write_bytes(profile)
+    publish(claim / "evidence.json", fresh)
+    env = {"HOME": str(home), "PATH": SAFE_PATH, "TMPDIR": str(temp), "XDG_DATA_HOME": str(data_home),
+           "LANG": "en_US.UTF-8"}
+    command = [*sandbox_command(sandbox, ws, claim, temp, profile_path), str(native),
+               "--permission-mode", "dangerous", "--respect-workspace-trust", "false",
+               "--model", r["model"], "-p", "--prompt-file", str(prompt)]
+    update_flash_cap(claim.parent, r, cap)
+    finished = {"confirmed": False}
+    try:
+        if helper([*stop, "check"], guard_env):
+            update_flash_cap(claim.parent, r, cap, release=True)
+            raise Held("devin-flash-refused")
+        if clock() >= expires:
+            update_flash_cap(claim.parent, r, cap, release=True)
+            raise Held("bridge-evidence-unverified")
+        with prompt.open("x", encoding="utf-8") as out:
+            out.write(r["prompt"])
+        with tempfile.TemporaryFile(dir=claim) as log:
+            yield command, env, digest, sha(profile), finished, (), log, subprocess.STDOUT
+            if not finished["confirmed"]:
+                return
+            if finished.get("contacted"):
+                with tempfile.NamedTemporaryFile(dir=claim) as scan_log:
+                    end = log.seek(0, os.SEEK_END)
+                    log.seek(max(0, end - 65536))
+                    scan_log.write(log.read(65536))
+                    scan_log.flush()
+                    try:
+                        status = helper([*stop, "scan", r["id"], str(finished["rc"]), scan_log.name], guard_env)
+                    except (OSError, subprocess.SubprocessError):
+                        return
+                if status not in (0, 4):
+                    return
+                if status == 4:
+                    finished["refusal"] = "devin-overage-held"
+            update_flash_cap(claim.parent, r, cap, release=True)
+            finished["recorded"] = True
+    finally:
+        prompt.unlink(missing_ok=True)
 
 
 @contextmanager
@@ -266,8 +373,7 @@ def prepare_zai(r, home, ws, claim, evidence_path, attestation, sandbox, binary,
            "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.3", "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.3",
            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-5.3-flash", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
            "DISABLE_TELEMETRY": "1", "DISABLE_ERROR_REPORTING": "1", "DISABLE_AUTOUPDATER": "1"}
-    command = [str(sandbox), "-D", f"POOL_WORKSPACE={ws}", "-D", f"POOL_CLAIM={claim}",
-               "-D", f"POOL_TEMP={temp}", "-f", str(profile_path), str(native),
+    command = [*sandbox_command(sandbox, ws, claim, temp, profile_path), str(native),
                "-p", "--dangerously-skip-permissions", "--setting-sources", "user",
                "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
                "--max-turns", ZAI_MODELS[r["tier"]][1], "--model", r["model"], "--output-format", "json"]
@@ -290,14 +396,14 @@ def prepare_zai(r, home, ws, claim, evidence_path, attestation, sandbox, binary,
                       '[[ "$1" =~ ^[0-9]+$ ]] || exit 5; eval "exec $1<&-"; '
                       'export ANTHROPIC_AUTH_TOKEN; shift; exec "$@"',
                       "zai", str(credential.fileno()), *command]
-            yield launch, env, digest, sha(profile), finished, (credential.fileno(),)
+            yield launch, env, digest, sha(profile), finished, (credential.fileno(),), subprocess.DEVNULL, subprocess.DEVNULL
     finally:
         if finished["confirmed"]:
             # If no trusted usage is available, the existing pacer charges the full reservation.
             try:
-                finished["paceRecorded"] = helper([*pace_cmd, "record", job, "1", "", ""], pace_env) == 0
+                finished["recorded"] = helper([*pace_cmd, "record", job, "1", "", ""], pace_env) == 0
             except (OSError, subprocess.SubprocessError):
-                finished["paceRecorded"] = False
+                finished["recorded"] = False
 
 
 def run(r, state, home, evidence_path, attestation, cancelled, *, projects=PROJECTS,
@@ -325,36 +431,43 @@ def run(r, state, home, evidence_path, attestation, cancelled, *, projects=PROJE
             read_quota(runs / "queue" / "resources.json", "agy", clock())
             parse_pinned_agy_help()
             raise Held("agy-identity-unverified")
-        if r["lane"] == "devin-flash":
-            flash_guard(r, home, runs / "bin")
         ws = workspace_for(r, projects)
         if state.is_relative_to(ws):
             raise Held("state-unverified")
         base = clean_baseline(ws)
-        binary = shutil.which("claude", path=SAFE_PATH)
-        if not binary:
-            raise Held("executable-unverified")
-        with prepare_zai(r, home, ws, claim, evidence_path, attestation, sandbox, Path(binary), runs) as prepared:
-            command, env, digest, profile, finished, pass_fds = prepared
+        flash = r["lane"] == "devin-flash"
+        if flash:
+            preparation = prepare_flash(r, home, ws, claim, evidence_path, sandbox, runs)
+        else:
+            binary = shutil.which("claude", path=SAFE_PATH)
+            if not binary:
+                raise Held("executable-unverified")
+            preparation = prepare_zai(r, home, ws, claim, evidence_path, attestation, sandbox, Path(binary), runs)
+        with preparation as prepared:
+            command, env, digest, profile, finished, pass_fds, output, stderr = prepared
             if cancelled():
                 finished["confirmed"] = True
-                raise Held("cancelled")
-            row.update(startedAt=clock(), executableSha256=digest, profileSha256=profile,
-                       groupState="unconfirmed", reason="cancel-unconfirmed", contacted=True)
-            publish(settlement, row)
-            rc, reason, confirmed = supervise(command, ws, env, r["prompt"], subprocess.DEVNULL,
-                                               time.monotonic() + r["timeoutSeconds"], cancelled, pass_fds=pass_fds)
-            finished["confirmed"] = confirmed
-            row.update(exitStatus=rc, reason=reason, groupState="exited" if confirmed else "unconfirmed")
-            if confirmed:
-                try:
-                    check_scope(ws, base, r)
-                except (Held, OSError, subprocess.SubprocessError):
-                    if reason == "completed":
-                        row["reason"] = "scope-violation"
-                    row["scopeRejected"] = True
-        if finished["confirmed"] and not finished.get("paceRecorded"):
-            row["reason"] = "pacing-settlement-unconfirmed"
+                row["reason"] = "cancelled"
+            else:
+                row.update(startedAt=clock(), executableSha256=digest, profileSha256=profile,
+                           groupState="unconfirmed", reason="cancel-unconfirmed", contacted=True)
+                publish(settlement, row)
+                rc, reason, confirmed = supervise(command, ws, env, "" if flash else r["prompt"], output,
+                                                   time.monotonic() + r["timeoutSeconds"], cancelled,
+                                                   pass_fds=pass_fds, stderr=stderr)
+                finished.update(confirmed=confirmed, contacted=True, rc=rc if rc is not None else 1)
+                row.update(exitStatus=rc, reason=reason, groupState="exited" if confirmed else "unconfirmed")
+                if confirmed:
+                    try:
+                        check_scope(ws, base, r)
+                    except (Held, OSError, subprocess.SubprocessError):
+                        if reason == "completed":
+                            row["reason"] = "scope-violation"
+                        row["scopeRejected"] = True
+        if finished["confirmed"] and not finished.get("recorded"):
+            row["reason"] = "flash-settlement-unconfirmed" if flash else "pacing-settlement-unconfirmed"
+        if "refusal" in finished:
+            row["reason"] = finished["refusal"]
     except Held as exc:
         row["reason"] = str(exc)
     except (OSError, ValueError, subprocess.SubprocessError):

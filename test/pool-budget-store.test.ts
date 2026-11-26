@@ -8,7 +8,7 @@ import type { BudgetReading } from '../src/core/fleet/pool-budget.js';
 const state = vi.hoisted(() => ({ home: '' }));
 vi.mock('node:os', async importOriginal => ({ ...await importOriginal<typeof import('node:os')>(), homedir: () => state.home }));
 let directory: string;
-const sample: BudgetReading = { pool: 'codex-cmp', bucket: 'credits', remaining: 42,
+const sample: BudgetReading = { pool: 'codex-personal', bucket: 'credits', remaining: 42,
   timestamp: '2026-10-25T10:00:00.000Z', resetAt: null, source: 'manual' };
 beforeEach(async () => {
   state.home = await mkdtemp(join(tmpdir(), 'pool-budget-'));
@@ -17,7 +17,7 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); await rm(state.home, { recursive: true, force: true }); });
 describe('immutable budget storage and CLI', () => {
   it('missing store reports unknown without writing directories', async () => {
-    expect((await readPoolBudgets(directory)).pools['codex-cmp'].remainingCredits).toBeNull();
+    expect((await readPoolBudgets(directory)).pools['codex-personal'].remainingCredits).toBeNull();
     expect(await readdir(state.home)).toEqual([]);
   });
   it('preserves concurrent appends and strips unknown fields', async () => {
@@ -26,7 +26,7 @@ describe('immutable budget storage and CLI', () => {
       addBudgetReadings([{ ...sample, pool: 'devin', bucket: 'acus', remaining: 12 }], directory),
     ]);
     const snapshot = await readPoolBudgets(directory);
-    expect(snapshot.pools['codex-cmp'].remainingCredits).toBe(42);
+    expect(snapshot.pools['codex-personal'].remainingCredits).toBe(42);
     expect(snapshot.pools.devin.buckets.acus?.remaining).toBe(12);
     const files = await readdir(directory);
     expect(files).toHaveLength(2);
@@ -36,7 +36,7 @@ describe('immutable budget storage and CLI', () => {
     await addBudgetReadings([sample], directory);
     const [file] = await readdir(directory);
     await writeFile(join(directory, file!), 'invalid json');
-    expect(await readPoolBudgets(directory)).toMatchObject({ sourceState: 'unavailable', pools: { 'codex-cmp': { remainingCredits: null } } });
+    expect(await readPoolBudgets(directory)).toMatchObject({ sourceState: 'unavailable', pools: { 'codex-personal': { remainingCredits: null } } });
   });
   it('validates the entire batch before writing and refuses future observations', async () => {
     await expect(addBudgetReadings([sample, { ...sample, remaining: -1 }], directory)).rejects.toThrow();
@@ -45,9 +45,9 @@ describe('immutable budget storage and CLI', () => {
   });
   it('CLI add/show emits one JSON object and preserves the manual source', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    expect(await cmdBudget(['add', 'codex-cmp', '--bucket', 'credits', '--remaining', '42', '--json'])).toBe(0);
+    expect(await cmdBudget(['add', 'codex-personal', '--bucket', 'credits', '--remaining', '42', '--json'])).toBe(0);
     expect(log).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(log.mock.calls[0]![0] as string).budgets.pools['codex-cmp'].buckets.credits).toMatchObject({ remaining: 42, source: 'manual' });
+    expect(JSON.parse(log.mock.calls[0]![0] as string).budgets.pools['codex-personal'].buckets.credits).toMatchObject({ remaining: 42, source: 'manual' });
     log.mockClear();
     expect(await cmdBudget(['show', '--json'])).toBe(0);
     expect(log).toHaveBeenCalledTimes(1);
@@ -63,9 +63,9 @@ describe('immutable budget storage and CLI', () => {
   });
   it.each([
     ['add', 'unknown', '--remaining', '1'],
-    ['add', 'codex-cmp', '--bucket', 'weeklyPct', '--remaining', '101'],
-    ['add', 'codex-cmp', '--bucket', 'credits', '--remaining', ''],
-    ['add', 'codex-cmp', '--source', 'cli', '--input', 'missing-private-file'],
+    ['add', 'codex-personal', '--bucket', 'weeklyPct', '--remaining', '101'],
+    ['add', 'codex-personal', '--bucket', 'credits', '--remaining', ''],
+    ['add', 'codex-personal', '--source', 'cli', '--input', 'missing-private-file'],
     ['show', '--remaining', '1'], ['add', 'claude', '--bucket', 'credits', '--remaining', '2'],
     ['show', '--wat'],
   ])('rejects invalid command %j without exposing input (%#)', async (...args) => {
@@ -78,7 +78,7 @@ describe('immutable budget storage and CLI', () => {
   });
   it('help does not mutate even when add flags are present', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    expect(await cmdBudget(['add', 'codex-cmp', '--help'])).toBe(0);
+    expect(await cmdBudget(['add', 'codex-personal', '--help'])).toBe(0);
     expect(await readdir(state.home)).toEqual([]);
   });
 });

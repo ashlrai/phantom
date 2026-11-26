@@ -137,14 +137,14 @@ function codexWindow(usage: CodexSessionUsage): { pct: number; resetsAt: string 
   return fullest ?? null;
 }
 
-/** Both codex rows read the same scan; collect it lazily, once per aggregate. */
+/** Collect Codex usage lazily, once per aggregate. */
 function codexUsages(deps: UsageResourceReaderDeps): () => CodexSessionUsage[] {
   const collect = deps.collectCodex ?? collectCodexSessionUsages;
   let cached: CodexSessionUsage[] | null = null;
   return () => cached ??= collect({ env: deps.env ?? process.env, homeDir: deps.homeDir });
 }
 
-function codexReader(accountId: 'codex-cmp' | 'codex-personal', deps: UsageResourceReaderDeps,
+function codexReader(accountId: 'codex-personal', deps: UsageResourceReaderDeps,
   usages: () => CodexSessionUsage[]): UsageResourceReader {
   return () => {
     const usage = usages().find((u) => u.accountId === accountId) ?? null;
@@ -283,7 +283,6 @@ export function usageResourceReaders(
     'claude-max': claudeMaxReader(deps),
     'claude-api-gift': claudeApiGiftReader(deps),
     'claude-api-monthly': claudeApiMonthlyReader(deps),
-    'codex-cmp': codexReader('codex-cmp', deps, codex),
     'codex-personal': codexReader('codex-personal', deps, codex),
     devin: devinReader(deps),
     zai: () => (deps.readZai ?? (() => readZaiUsage({ env: deps.env, homeDir: deps.homeDir })))(),

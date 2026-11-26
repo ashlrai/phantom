@@ -36,8 +36,8 @@ const guardian = (red: string[] = []) => [`# Main guardian status (${local(at(5)
   ...REPOS.map((repo, i) => `| ${repo} | main | abcdef${i} | ${red.includes(repo) ? 'red' : 'green'} | ${local(at(5))} | ${red.includes(repo) ? 'lint' : ''} | | |`)].join('\n');
 const main = (red: string[] = []) => ({ ...parseMainGuardianStatus(guardian(red), NOW), source: 'ok' as const, guardianOff: false });
 const pace = (used: number, burn: number) => ({ use_it_all: { known: true, stale: false, used_pct: used, burn_pct_per_hour: burn, reset_at: new Date(NOW + 10 * HOUR).toISOString() } });
-/** claude: 40% used, 5%/h for 10 h, so 10% unused. codex-cmp and zai finish on time. */
-const STATUS = { schema: 'dispatchd.status.v1', last_tick: at(1), budget: { claude: pace(40, 5), 'codex-cmp': pace(50, 6), zai: pace(90, 2) } };
+/** claude: 40% used, 5%/h for 10 h, so 10% unused. Personal Codex and zai finish on time. */
+const STATUS = { schema: 'dispatchd.status.v1', last_tick: at(1), budget: { claude: pace(40, 5), 'codex-personal': pace(50, 6), 'codex-cmp': pace(50, 6), zai: pace(90, 2) } };
 const releases = REPOS.map((repo, i) => ({ repo, tag: `v1.${i}.0`, publishedAt: new Date(NOW - (i + 1) * DAY - HOUR).toISOString() }));
 const normal = (): PulseInputs => ({ jobs: jobs(LEDGER), main: main(), releases, spend: projectUsageSpend(STATUS, NOW) });
 const EMPTY: PulseInputs = { jobs: null, main: null, releases: null, spend: null };

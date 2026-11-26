@@ -31,14 +31,14 @@ describe('parseClaudeUsage fixtures', () => {
 
 describe('statusReaders', () => {
   it('covers only the two documented pools and emits numeric fields only', async () => {
-    expect(STATUS_READER_POOLS).toEqual(['codex-cmp', 'claude-max']);
+    expect(STATUS_READER_POOLS).toEqual(['codex-personal', 'claude-max']);
     const readers = statusReaders({
-      now: () => NOW, codexHome: '/pool/home',
+      now: () => NOW, codexPersonalHome: '/pool/home',
       readCodex: async home => { expect(home).toBe('/pool/home'); return { pctUsed: 12, resetAt: '2026-11-02T15:00:00.000Z', raw: SECRET } as never; },
       readClaudeEvent: () => ({ utilization: 0.5, resetsAt: future, status: SECRET } as never),
     });
-    expect(Object.keys(readers)).toEqual(['codex-cmp', 'claude-max']);
-    const out = [await readers['codex-cmp'](), await readers['claude-max']()];
+    expect(Object.keys(readers)).toEqual(['codex-personal', 'claude-max']);
+    const out = [await readers['codex-personal'](), await readers['claude-max']()];
     expect(JSON.stringify(out)).not.toContain(SECRET);
     for (const row of out) expect(usageReadingV1Schema.safeParse(row).success).toBe(true);
   });
@@ -53,7 +53,7 @@ describe('dry-run and append through the journal writer', () => {
   });
   it('dry run previews rows and writes no journal or snapshot', async () => {
     const result = await run(true);
-    expect(result.preview?.map(r => [r.pool, r.pctUsed])).toEqual([['codex-cmp', 30], ['claude-max', 25]]);
+    expect(result.preview?.map(r => [r.pool, r.pctUsed])).toEqual([['codex-personal', 30], ['claude-max', 25]]);
     expect(existsSync(join(dir, 'usage-readings.log'))).toBe(false);
     expect(existsSync(join(dir, 'fleet.json'))).toBe(false);
   });
@@ -61,11 +61,11 @@ describe('dry-run and append through the journal writer', () => {
     const result = await run(false);
     expect(result.preview).toBeUndefined();
     const lines = readFileSync(join(dir, 'usage-readings.log'), 'utf8').trimEnd().split('\n').map(l => JSON.parse(l));
-    expect(lines.map(l => [l.pool, l.pctUsed, l.source])).toEqual([['codex-cmp', 30, 'codex-cmp-reader'], ['claude-max', 25, 'claude-max-reader']]);
+    expect(lines.map(l => [l.pool, l.pctUsed, l.source])).toEqual([['codex-personal', 30, 'codex-personal-reader'], ['claude-max', 25, 'claude-max-reader']]);
     for (const l of lines) expect(usageReadingV1Schema.safeParse(l).success).toBe(true);
   });
   it('unreadable sources log null, not zero', async () => {
-    await writeUsageSignal({ directory: dir, event: 'manual-reading', now: () => NOW, pools: ['codex-cmp'],
+    await writeUsageSignal({ directory: dir, event: 'manual-reading', now: () => NOW, pools: ['codex-personal'],
       readers: statusReaders({ now: () => NOW, readCodex: async () => { throw new Error(SECRET); } }) });
     const row = JSON.parse(readFileSync(join(dir, 'usage-readings.log'), 'utf8'));
     expect(row.pctUsed).toBeNull();
@@ -76,7 +76,7 @@ describe('dry-run and append through the journal writer', () => {
 describe('usage-signal CLI flags', () => {
   it('rejects status-reader flag combinations that could smuggle other commands', async () => {
     const { runUsageSignal } = await import('../src/cli/usage-signal.js');
-    await expect(runUsageSignal(['--directory', dir, '--event', 'manual-reading', '--codex-home', '/x'])).rejects.toThrow();
+    await expect(runUsageSignal(['--directory', dir, '--event', 'manual-reading', '--status-readers', '--codex-home', '/x'])).rejects.toThrow();
     await expect(runUsageSignal(['--directory', dir, '--event', 'manual-reading', '--status-readers',
       '--readers', join(dir, 'r.json')])).rejects.toThrow();
   });

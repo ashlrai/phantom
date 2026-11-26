@@ -85,7 +85,7 @@ const healthyDeps = (spec: FakeSpec, options: FakeOptions = {}): SessionAuditDep
   };
 };
 
-const codexRollout = (cwd: string, id = 'thread-1') =>
+const codexRollout = (cwd: string, _id = 'thread-1') =>
   `${JSON.stringify({ timestamp: iso(NOW - 60 * DAY), type: 'session_meta', payload: { originator: 'codex_cli_rs', cli_version: '0.55.0', cwd } })}\n`
   + `${JSON.stringify({ timestamp: iso(NOW - 60 * DAY), type: 'event_msg', payload: { type: 'task_started' } })}\n`;
 
@@ -289,9 +289,11 @@ describe('readSessionAudit', () => {
       head: async (path, max) => { heads.push(path); return fs.head(path, max); },
     };
     const report = await readSessionAudit(base);
-    const cmp = lane(report, 'codex-cmp')!;
-    expect(cmp.sessions).toBe(3);
-    expect(cmp.bytes).toBe(24_000);
+    const retired = lane(report, 'codex-cmp')!;
+    expect(retired.sessions).toBe(3);
+    expect(retired.bytes).toBe(24_000);
+    expect(lane(report, 'codex-personal')!.sessions).toBe(0);
+    expect(formatSessionAudit(report).join('\n')).toContain('codex-cmp (retired)');
     // Heads are only opened for sessions old enough to prune.
     expect(heads.map(h => h.split('/').pop()!)).toEqual([
       'rollout-2026-09-10T12-00-00-t1.jsonl', 'rollout-2026-09-11T00-00-00-t3.jsonl',
@@ -302,7 +304,7 @@ describe('readSessionAudit', () => {
     expect(plan.count).toBe(1);
     expect(plan.entries[0]).toMatchObject({ job: 'RQ-CX-9', evidence: 'published-pr', rel: 'sessions/2026/09/10/rollout-2026-09-10T12-00-00-t1.jsonl' });
     // auth.json / config.toml are never session entries.
-    expect(cmp.sessions).toBe(3);
+    expect(retired.sessions).toBe(3);
   });
 
   it('scans grok session dirs and decodes the percent-encoded cwd', async () => {
@@ -417,18 +419,18 @@ describe('readSessionAudit', () => {
   it('missing homes report state missing and degrade nothing', async () => {
     const report = await readSessionAudit(healthyDeps({}));
     expect(report.totals.sessions).toBe(0);
-    expect(report.totals.lanes).toBe(4); // devin, codex-cmp, claude, codex-personal
+    expect(report.totals.lanes).toBe(4); // devin, claude, personal, retired CMP
     expect(report.lanes.every(l => l.state === 'missing')).toBe(true);
     expect(report.sources.profiles).toBe('healthy');
   });
 
   it('dedupes a pool home that is also a native-profile seat', async () => {
-    const codex = `${HOME}/.codex`;
+    const codex = `${HOME}/.codex-2`;
     const dayDir = `${codex}/sessions/2026/09/01`;
     const report = await readSessionAudit(healthyDeps({
       entries: {
-        [PROFILES]: [dir('codex-cmp')],
-        [`${PROFILES}/codex-cmp`]: [dir('native-state'), file('profile.json')],
+        [PROFILES]: [dir('codex-personal')],
+        [`${PROFILES}/codex-personal`]: [dir('native-state'), file('profile.json')],
         [codex]: [dir('sessions')],
         [`${codex}/sessions`]: [dir('2026')],
         [`${codex}/sessions/2026`]: [dir('09')],
@@ -438,12 +440,12 @@ describe('readSessionAudit', () => {
       stats: { [`${dayDir}/rollout-2026-09-01T00-00-00-t.jsonl`]: st(60, 100) },
       files: {
         // The profile's native-state IS the pool home.
-        [`${PROFILES}/codex-cmp/profile.json`]: JSON.stringify({
-          schemaVersion: 1, provider: 'codex', directory: `${PROFILES}/codex-cmp`, nativeStatePath: codex,
+        [`${PROFILES}/codex-personal/profile.json`]: JSON.stringify({
+          schemaVersion: 1, provider: 'codex', directory: `${PROFILES}/codex-personal`, nativeStatePath: codex,
         }),
       },
     }));
-    expect(lane(report, 'codex-cmp')!.sessions).toBe(1);
+    expect(lane(report, 'codex-personal')!.sessions).toBe(1);
     expect(report.totals.sessions).toBe(1);
     expect(report.lanes.filter(l => l.home === codex)).toHaveLength(1);
   });

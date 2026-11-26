@@ -1,6 +1,6 @@
 import { DROP_JOB_LANES } from '../fleet/drop-job-writer.js';
 
-const LANES = new Set<string>([...DROP_JOB_LANES, 'codex-cmp', 'claude-api']);
+const LANES = new Set<string>([...DROP_JOB_LANES, 'claude-api']);
 
 export function parseReleaseCommand(text: string): { lane: string } | null {
   const match = /^\s*\/release(?:@\w+)?\s+([a-z0-9-]{3,40})\s*$/i.exec(text);
