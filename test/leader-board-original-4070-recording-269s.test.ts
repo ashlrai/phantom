@@ -92,6 +92,27 @@ it('counts lane-open work by tier without attributing it to a lane', async () =>
   expect(board?.lanes.find((lane) => lane.lane === 'codex')?.ready).toBe(1);
 });
 
+it('uses distinct earlier observations for the conflict trend after retries and clock rollback', async () => {
+  const oneConflict = row('READY', 'RQ-REBASE-PHANTOM-1234-abc1234', 'devin', 'work');
+  const twoConflicts = [oneConflict, row('READY', 'RQ-REBASE-PHANTOM-2000-aaa0001', 'codex', 'work')].join('\n');
+  const sample = async (offsetMinutes: number, ready: string) => {
+    await writeFile(join(queueDir, 'ready.tsv'), ready);
+    const nowMs = NOW_MS + offsetMinutes * 60_000;
+    expect((await recordLeaderBoard({ runsDir: root, nowMs })).wrote).toBe(true);
+    return (await readFleetBoard({ runsDir: root })).board?.conflictingPrs;
+  };
+
+  await sample(0, oneConflict);
+  expect(await sample(0, '')).toEqual({
+    count: 0, delta: null, trend: 'unknown', history: [{ at: minutesAgo(0), count: 0 }],
+  });
+  await sample(2, twoConflicts);
+  expect(await sample(1, oneConflict)).toEqual({
+    count: 1, delta: 1, trend: 'rising',
+    history: [{ at: minutesAgo(0), count: 0 }, { at: minutesAgo(-1), count: 1 }],
+  });
+});
+
 it('reports honest failures for hostile paths and the reader stays truthful', async () => {
   expect(await recordLeaderBoard({ runsDir: 'relative/path', nowMs: NOW_MS })).toMatchObject({ wrote: false });
   expect(await recordLeaderBoard({ runsDir: '/dev/null/impossible', nowMs: NOW_MS })).toMatchObject({ wrote: false });
