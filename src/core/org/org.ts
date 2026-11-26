@@ -106,10 +106,13 @@ const INIT_HEADER = '# org.toml — declarative org model: member and machine id
 
 /**
  * `phm org init`: write a starter org.toml declaring `member` as leader (founder) of a new org
- * on one machine, with the given lane contributions. The document is validated before anything
- * is written, and an existing file is never overwritten.
+ * on one machine, with the given lane contributions. `agents` declares implementer agents on
+ * that machine, one lane each, reporting to the founder — without them `phm org plan` can never
+ * assign work (every job reads "no implementer agent declared"). The document is validated
+ * before anything is written, and an existing file is never overwritten.
  */
-export function initOrg(req: { member: string; machine: string; name?: string; lanes: { lane: string; share: number }[] },
+export function initOrg(req: { member: string; machine: string; name?: string; lanes: { lane: string; share: number }[];
+  agents?: { id: string; lane: string }[] },
   file = orgFile()): { file: string; org: Org } {
   // Empty arrays stay out of the file: the schema defaults fill them on read.
   const doc = {
@@ -119,6 +122,8 @@ export function initOrg(req: { member: string; machine: string; name?: string; l
       id: req.member, name: req.name ?? req.member, role: 'founder' as const,
       machines: [{ id: req.machine }],
       ...(req.lanes.length ? { contributions: req.lanes.map((l) => ({ lane: l.lane, share: l.share })) } : {}),
+      ...(req.agents?.length ? { agents: req.agents.map((a) => ({ id: a.id, lane: a.lane, machine: req.machine,
+        roles: ['implementer' as const], reports_to: req.member })) } : {}),
     }],
   };
   const org = validateOrg(doc);

@@ -371,10 +371,13 @@ roles (`leader`, `implementer`, `reviewer`, `researcher`) and `reports_to` lines
 holds ids and numbers only, never tokens, mail or messages, and secret-shaped values
 are refused. Spending stays with each member; nothing here changes billing.
 
-- `phm org init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]... --json`
+- `phm org init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]... [--agent <id>:<lane>]... --json`
   writes a starter `org.toml` (default `~/.ashlr/org.toml`, or `--file`) declaring the
   member as leader (founder) of a new org on that machine. A bare `--lane` declares
-  share 100; `=<share>` sets 0-100. It refuses to overwrite an existing file — add the
+  share 100; `=<share>` sets 0-100. Each `--agent` declares an implementer agent on
+  that machine for the named lane, reporting to the founder — declare at least one
+  per contributed lane or `phm org plan` can assign nothing ("no implementer agent
+  declared"). It refuses to overwrite an existing file — add the
   other members, their machines, agents and lanes by editing it, then share a copy with
   each member (ids and shares only, never credentials).
 - `phm org show --json` prints the org and which lanes each member has opted into.
@@ -404,8 +407,8 @@ are refused. Spending stays with each member; nothing here changes billing.
   lane with no telemetry is planned with a conservative 25 points of headroom.
   Leftover work is returned in `unassigned` with a reason naming the blocker:
   no opted-in contribution on the job's lane, no implementer agent declared on
-  the covering lanes (a fresh `phm org init` writes none — add `agents` entries
-  to org.toml), or no contributed budget left. Text output also lists each held lane
+  the covering lanes (`phm org init` writes none unless `--agent` names them —
+  add `agents` entries to org.toml), or no contributed budget left. Text output also lists each held lane
   (`held <member>/<lane>: <reason>`) with the `phm org join` command that opts it
   in on that member's machine, so a member can see why a contribution is unused.
   Because a re-join replaces the machine's whole record, the printed command
