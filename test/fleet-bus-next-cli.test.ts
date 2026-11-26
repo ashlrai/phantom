@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { cmdFleetBusNext } from '../src/cli/fleet-bus-next.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { createAgentChannel, registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 
 vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
 
@@ -63,6 +64,43 @@ it('applies contains, since and priority filters to the claimable scan', async (
   // receipt's arrival empties the same filtered scan.
   expect(await run([...args(), '--before', '1']))
     .toEqual({ code: 0, status: 'empty', candidates: 0, held: 0 });
+});
+
+it('applies the topic filter to the claimable scan', async () => {
+  expect(registerAgentIdentity({ handle: 'worker-a' }, { root }).status).toBe('created');
+  expect(createAgentChannel({ name: 'eng', createdBy: 'worker-a' }, { root }).status).toBe('created');
+  expect(createAgentChannel({ name: 'ops', createdBy: 'worker-a' }, { root }).status).toBe('created');
+  for (const [id, to, priority] of [
+    ['tp-eng-deploy', 'group:eng:deploy', 'P0'],
+    ['tp-eng-general', 'group:eng:general', 'P1'],
+    ['tp-ops-deploy', 'group:ops:deploy', 'P2'],
+    ['tp-direct', 'worker-a', 'P3'],
+  ] as const) {
+    expect(appendBusInbox({ id, from: 'fake', to, priority, ttl: 120_000, body: { kind: 'work' } }, { root }).status).toBe('posted');
+  }
+  // --topic keeps the exact topic component across every member room: the
+  // P0 eng deploy claims first, then the P2 ops deploy under its own lease.
+  const first = await run([...args(), '--topic', 'deploy']);
+  expect(first).toMatchObject({ code: 0, status: 'acquired',
+    receipt: { envelope: { id: 'tp-eng-deploy' } } });
+  const second = await run([...args(), '--topic', 'deploy']);
+  expect(second).toMatchObject({ code: 0, status: 'acquired',
+    receipt: { envelope: { id: 'tp-ops-deploy' } } });
+  // Both deploy receipts are held by worker-a's own live leases; the
+  // general post and the direct mail never enter the filtered scan.
+  expect(await run([...args(), '--topic', 'deploy']))
+    .toEqual({ code: 0, status: 'empty', candidates: 2, held: 2 });
+  // --channel composes into one room AND one topic.
+  expect(await run([...args(), '--channel', 'eng', '--topic', 'deploy']))
+    .toEqual({ code: 0, status: 'empty', candidates: 1, held: 1 });
+  expect(await run([...args(), '--channel', 'ops', '--topic', 'deploy']))
+    .toEqual({ code: 0, status: 'empty', candidates: 1, held: 1 });
+  // A well-formed topic nothing addresses is an honest empty match.
+  expect(await run([...args(), '--topic', 'absent']))
+    .toEqual({ code: 0, status: 'empty', candidates: 0, held: 0 });
+  // A topic outside the channel grammar is a usage error, never a widened claim.
+  expect(await run([...args(), '--topic', 'Bad Name'])).toEqual({ code: 2, status: 'invalid' });
+  expect(await run([...args(), '--topic', 'deploy:extra'])).toEqual({ code: 2, status: 'invalid' });
 });
 
 it('validates all flags without returning bodies or tokens', async () => {

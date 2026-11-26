@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { redactHomePaths, scrubSecrets } from '../util/scrub.js';
@@ -12,7 +12,19 @@ export { WORKLOG_KINDS, type WorklogKind, type WorklogEntry, type WorklogRow, ty
 
 export interface WorklogExtra { rows?: WorklogRow[]; sources?: Partial<WorklogSources>; emptyReasons?: ReadonlyMap<string, string>; hours?: number }
 const unknown = (reason: string): WorklogSource => ({ state: 'unknown', reason });
-const plain = (text: string, max = 160): string => redactHomePaths(scrubSecrets(text)).replace(/\s+/g, ' ').trim().slice(0, max);
+/** Ledger text repeats (one model name, one notice per tick): scrubbed lines are memoized, bounded. */
+const plainMemo = new Map<string, string>();
+const PLAIN_MEMO_MAX = 20_000;
+const plain = (text: string, max = 160): string => {
+  const key = `${max}\u0000${text}`;
+  let out = plainMemo.get(key);
+  if (out === undefined) {
+    out = redactHomePaths(scrubSecrets(text)).replace(/\s+/g, ' ').trim().slice(0, max);
+    if (plainMemo.size >= PLAIN_MEMO_MAX) plainMemo.clear();
+    plainMemo.set(key, out);
+  }
+  return out;
+};
 const ROW_KIND: Record<WorklogEntry['kind'], WorklogKind> = { launch: 'launched', finished: 'finished', pr: 'finished', empty: 'empty', failed: 'incident', merged: 'merged', closed: 'finished' };
 export function duration(seconds: number): string {
   const s = Math.round(seconds), m = Math.floor(s / 60), h = Math.floor(m / 60);
@@ -91,40 +103,106 @@ export function worklogHours(value: string = String(WORKLOG_DEFAULT_HOURS)): num
  * `extra` carries rows and source states from the other readers, so this stays pure.
  */
 export function worklog(text: string, since: number, now: number, extra: WorklogExtra = {}): WorklogReport {
-  const rows: Row[] = []; let malformedLines = 0;
+  return worklogOf(parseLedger(text), since, now, extra);
+}
+
+/** jobs.jsonl parsed once: its object rows, the lines that were not one, and whether any mentions "empty". */
+export interface ParsedLedger {
+  rows: Row[];
+  /** Each row's recorded time (NaN when it has none), so a window read skips rows without parsing dates. */
+  times: number[];
+  malformed: number;
+  mentionsEmpty: boolean;
+  /** Launch rows by job, in ledger order, and the last publish row per PR URL (lowercased). */
+  launches: Map<string, { row: Row; at: number }[]>;
+  publications: Map<string, Row>;
+}
+export const emptyLedger = (): ParsedLedger => ({ rows: [], times: [], malformed: 0, mentionsEmpty: false, launches: new Map(), publications: new Map() });
+export function parseLedger(text: string, into: ParsedLedger = emptyLedger()): ParsedLedger {
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
+    if (!into.mentionsEmpty && line.includes('"empty"')) into.mentionsEmpty = true;
+    let row: Row;
     try {
-      const row: unknown = JSON.parse(line);
-      if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error();
-      rows.push(row as Row);
-    } catch { malformedLines++; }
-  }
-  const launches = new Map<string, Row[]>();
-  const publications = new Map<string, Row>();
-  for (const row of rows) {
+      const value: unknown = JSON.parse(line);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+      row = value as Row;
+    } catch { into.malformed++; continue; }
+    into.rows.push(row);
+    const recordedAt = timestamp(row);
+    const at = recordedAt ? Date.parse(recordedAt) : NaN;
+    into.times.push(at);
     const id = jobId(row);
-    if (id && eventName(row) === 'launch') launches.set(id, [...(launches.get(id) ?? []), row]);
+    if (id && eventName(row) === 'launch' && Number.isFinite(at)) {
+      const list = into.launches.get(id);
+      if (list) list.push({ row, at }); else into.launches.set(id, [{ row, at }]);
+    }
     const url = prUrl(row);
-    if (id && url && eventName(row) === 'publish') publications.set(url.toLowerCase(), row);
+    if (id && url && eventName(row) === 'publish') into.publications.set(url.toLowerCase(), row);
   }
+  return into;
+}
+
+interface LedgerCache { path: string; dev: number; ino: number; size: number; mtimeMs: number; offset: number; parsed: ParsedLedger }
+let ledgerCache: LedgerCache | null = null;
+
+/**
+ * jobs.jsonl, parsed incrementally. The ledger is append-only, so an unchanged
+ * file (same inode, size and mtime) costs one stat, and a grown one parses only
+ * the complete lines appended since the last read. A shrunk or replaced file
+ * (rotation, truncation) is parsed again from the start. Every caller shares
+ * the parsed rows and must not mutate them.
+ */
+export async function readLedger(path: string): Promise<ParsedLedger> {
+  const handle = await open(path, 'r');
+  try {
+    const stat = await handle.stat();
+    let cache = ledgerCache;
+    if (!cache || cache.path !== path || cache.dev !== stat.dev || cache.ino !== stat.ino || stat.size < cache.offset) {
+      cache = { path, dev: stat.dev, ino: stat.ino, size: 0, mtimeMs: 0, offset: 0, parsed: emptyLedger() };
+    } else if (cache.size === stat.size && cache.mtimeMs === stat.mtimeMs) {
+      return cache.parsed;
+    }
+    if (stat.size > cache.offset) {
+      const buffer = Buffer.alloc(stat.size - cache.offset);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, cache.offset);
+      // Only complete lines: a writer mid-append leaves its partial last line for the next read.
+      const end = buffer.subarray(0, bytesRead).lastIndexOf(0x0a) + 1;
+      if (end > 0) {
+        parseLedger(buffer.subarray(0, end).toString('utf8'), cache.parsed);
+        cache.offset += end;
+      }
+    }
+    cache.size = stat.size;
+    cache.mtimeMs = stat.mtimeMs;
+    ledgerCache = cache;
+    return cache.parsed;
+  } finally { await handle.close(); }
+}
+
+function worklogOf(ledger: ParsedLedger, since: number, now: number, extra: WorklogExtra): WorklogReport {
+  const { rows, times, launches, publications } = ledger; let malformedLines = ledger.malformed;
   const entries: WorklogEntry[] = [];
   const texts = new Map<WorklogEntry, string>();
-  for (const row of rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!, at = times[i]!;
+    // Out-of-window rows are skipped before any per-row work.
+    if (at < since || at > now) continue;
     const kind = eventKind(row);
     if (!kind) continue;
-    const recordedAt = timestamp(row); const at = recordedAt ? Date.parse(recordedAt) : NaN;
+    const recordedAt = timestamp(row);
     if (!recordedAt || !Number.isFinite(at)) { malformedLines++; continue; }
-    if (at < since || at > now) continue;
     const url = prUrl(row);
     const publication = url ? publications.get(url.toLowerCase()) : undefined;
     const job = jobId(row) ?? (publication && Date.parse(timestamp(publication) ?? '') <= at ? jobId(publication) : null);
     // A retry launched while a PR waited to merge belongs to a later attempt.
     const publishedAt = publication ? Date.parse(timestamp(publication) ?? '') : NaN;
     const launchBefore = kind === 'merged' && publication && jobId(publication) === job && publishedAt <= at ? publishedAt : at;
-    const launch = job ? (launches.get(job) ?? []).filter(r => {
-      const time = timestamp(r); return time && Number.isFinite(Date.parse(time)) && Date.parse(time) <= launchBefore;
-    }).sort((a, b) => Date.parse(timestamp(b)!) - Date.parse(timestamp(a)!))[0] : undefined;
+    // The latest launch at or before launchBefore (the first one in ledger order on a tie).
+    let launch: Row | undefined; let launchAt = -Infinity;
+    for (const candidate of job ? launches.get(job) ?? [] : []) {
+      if (candidate.at <= launchBefore && candidate.at > launchAt) { launch = candidate.row; launchAt = candidate.at; }
+    }
     const repo = str(row.repo ?? launch?.repo) ?? (url ? new URL(url).pathname.split('/')[2] ?? null : null);
     const seconds = row.ttm_s;
     const title = str(row.title ?? publication?.title ?? launch?.title ?? launch?.goal), reason = job ? extra.emptyReasons?.get(job) : undefined;
@@ -137,7 +215,8 @@ export function worklog(text: string, since: number, now: number, extra: Worklog
     entries.push(entry);
     texts.set(entry, plain(words(entry, row, title && plain(title, 60), reason)));
   }
-  entries.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const entryTime = new Map(entries.map(entry => [entry, Date.parse(entry.at)]));
+  entries.sort((a, b) => entryTime.get(b)! - entryTime.get(a)!);
   const seen = new Set<string>();
   const unique = entries.filter(entry => {
     if (!entry.url || !['merged', 'pr', 'closed'].includes(entry.kind)) return true;
@@ -150,8 +229,11 @@ export function worklog(text: string, since: number, now: number, extra: Worklog
     ...(extra.rows ?? []).filter(row => Date.parse(row.at) >= since && Date.parse(row.at) <= now),
   ];
   // Total order, so the same events always serialize the same way whatever order the sources were read in.
-  const key = (row: WorklogRow) => `${WORKLOG_KINDS.indexOf(row.kind)} ${row.job ?? ''} ${row.text}`;
-  all.sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  const keyed = new Map(all.map(row => [row, { at: Date.parse(row.at), key: `${WORKLOG_KINDS.indexOf(row.kind)} ${row.job ?? ''} ${row.text}` }]));
+  all.sort((a, b) => {
+    const x = keyed.get(a)!, y = keyed.get(b)!;
+    return y.at - x.at || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0);
+  });
   const feed: WorklogRow[] = [];
   for (const row of all) {
     const last = feed.at(-1);
@@ -170,8 +252,8 @@ export async function readWorklog(hours = WORKLOG_DEFAULT_HOURS, opts: ReadWorkl
   const now = opts.now ?? Date.now();
   const sources: Partial<WorklogSources> = {};
   const rows: WorklogRow[] = [];
-  let text = '';
-  try { text = await readFile(join(runsDir, 'metrics', 'jobs.jsonl'), 'utf8'); }
+  let ledger: ParsedLedger = emptyLedger();
+  try { ledger = await readLedger(join(runsDir, 'metrics', 'jobs.jsonl')); }
   catch (error) { sources.jobs = unknown((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'No jobs ledger has been written yet.' : 'The jobs ledger could not be read.'); }
   try {
     let state = 'missing';
@@ -192,11 +274,11 @@ export async function readWorklog(hours = WORKLOG_DEFAULT_HOURS, opts: ReadWorkl
     if (replies.sourceState !== 'healthy') sources.leader = unknown(replies.sourceState === 'missing' ? 'No leader plan log has been written yet.' : 'The leader plan log could not be read.');
   } catch { sources.leader = unknown('The leader plan log could not be read.'); }
   const emptyReasons = new Map<string, string>();
-  if (text.includes('"empty"')) {
+  if (ledger.mentionsEmpty) {
     const empties = await readEmptyJobs(hours, runsDir, opts.worktreesDir, now).catch(() => null);
     for (const job of empties?.jobs ?? []) if (job.class !== 'other') emptyReasons.set(job.id, job.reason.charAt(0).toLowerCase() + job.reason.slice(1).replace(/\.$/, ''));
   }
-  return worklog(text, now - hours * 3600000, now, { rows, sources, emptyReasons, hours });
+  return worklogOf(ledger, now - hours * 3600000, now, { rows, sources, emptyReasons, hours });
 }
 
 /** One filter for rows and ledger entries, shared by the CLI and the API. */

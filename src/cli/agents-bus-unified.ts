@@ -64,7 +64,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
-ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]
+ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
@@ -511,11 +511,13 @@ receipts work mine's next section lists, walked in bus-next order
 of the resolved identity or a member channel's group:<channel>:<topic>
 address, minus the agent's own channel posts. <agent> defaults to
 PHM_AGENT_ID and --owner to PHM_AGENT_ID then the agent ref; --contains,
---since, --before, --priority, --channel, --from and --exclude-from narrow
+--since, --before, --priority, --channel, --topic, --from and --exclude-from narrow
 the claimable set under the same rules the bus reads apply — the scrubbed
 one-line summary substring, the inclusive receivedAt cutoff, the exclusive
 receivedAt ceiling composing with --since into one [since, before) window,
-the exact P0..P3 band, the group:<name>:* room prefix, and the sender
+the exact P0..P3 band, the group:<name>:* room prefix, the exact topic
+component of a well-formed group:<room>:<topic> address — composing with
+--channel into one room and one topic — and the sender
 identity-label match —
 so "claim the next work
 about X" or "claim the next urgent one" is one atomic step, and empty's
@@ -1205,6 +1207,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (channel !== undefined && !agentChannelNameSchema.safeParse(channel).success) {
         throw new UsageError('--channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).');
       }
+      const topic = one('--topic');
+      if (topic !== undefined && !agentChannelNameSchema.safeParse(topic).success) {
+        throw new UsageError('--topic takes a bus channel topic (a-z, 0-9, _ -; 1-32 chars).');
+      }
       const senderArg = (flag: '--from' | '--exclude-from'): string | undefined => {
         const value = one(flag);
         if (value !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(value)) {
@@ -1214,7 +1220,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       };
       const result = claimNextBusWork({ to: agent, owner, leaseMs, root: options.root,
         contains: one('--contains'), since: sinceArg(), before: beforeArg(), priority: priorityArg(),
-        channel, from: senderArg('--from'), excludeFrom: senderArg('--exclude-from') });
+        channel, topic, from: senderArg('--from'), excludeFrom: senderArg('--exclude-from') });
       out(json ? JSON.stringify(result) : workNextHuman(result, owner));
       return result.status === 'acquired' || result.status === 'empty' ? 0 :
         result.status === 'invalid' ? 2 : 1;
