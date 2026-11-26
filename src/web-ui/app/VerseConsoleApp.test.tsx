@@ -97,6 +97,7 @@ afterEach(() => {
 
 describe('PhantomConsoleApp', () => {
   it('opens the decision inbox by desktop deep link and returns to the workspace', async () => {
+    await import('../routes/verse/inbox/DecisionInbox.js');
     window.history.replaceState(null, '', '/verse/#/inbox');
     const net = verseFetch();
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
