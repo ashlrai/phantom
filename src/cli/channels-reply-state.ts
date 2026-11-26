@@ -3,6 +3,7 @@
 import { join } from 'node:path';
 import { ashlrHome } from '../core/cloud/store.js';
 import { readReplyState } from '../core/comms/reply-state.js';
+import { scrubSecrets } from '../core/util/scrub.js';
 
 const USAGE = 'usage: phm channels reply-state <request-id> [--json]';
 
@@ -13,6 +14,14 @@ export async function cmdChannelsReplyState(args: string[]): Promise<number> {
   const id = rest[0];
   if (rest.length !== 1 || !id || id.startsWith('-') || !id.trim()) { console.error(USAGE); return 2; }
   const state = readReplyState(id, { root: join(ashlrHome(), 'fleet'), now: Date.now() });
-  console.log(json ? JSON.stringify(state, null, 2) : `${state.text}\nEvidence as of: ${state.asOf}`);
+  let text = `${state.text}\nEvidence as of: ${state.asOf}`;
+  if (!json && state.state === 'VERIFIED' && state.evidence.verified) {
+    const proof = state.evidence.verified;
+    const fields = [['PR', proof.pr], ['Head', proof.head], ['Tests', proof.tests], ['Artifact', proof.artifact]] as const;
+    const lines = fields.filter(([, value]) => value != null && value !== '')
+      .map(([label, value]) => `${label}: ${scrubSecrets(String(value).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' '))}`);
+    if (lines.length) text += `\nVerification details:\n${lines.join('\n')}`;
+  }
+  console.log(json ? JSON.stringify(state, null, 2) : text);
   return 0;
 }
