@@ -1303,6 +1303,26 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   or truncated runs log, degraded trajectory sources) or a failed
   knowledge read emits nothing, and another repository emits nothing
   since the ledger describes this install's injection machinery —
+  and the approved-knowledge consumption gap, the learn store's
+  approved-note corpus (readKnowledge over knowledge.json) joined to
+  the injection hits log (readKnowledgeHits over
+  knowledge-hits.jsonl) — the counters every rendered
+  knowledgeBlockFor/withApprovedKnowledge injection records, reaching
+  until now only the Verse Lessons panel's per-note numbers, so
+  approved notes that never reached a task prompt or whose recorded
+  injections went quiet never became work (knowledgeServeBacklogItems).
+  A never-served cell becomes an item at the population bar of
+  qualifying notes — approved at least seven days with zero recorded
+  hits — or for a single note approved past the thirty-day long bar,
+  and a stale-served cell at its own higher bar of notes whose newest
+  recorded hit is thirty-plus days old; only 'approved' notes count
+  since pending was never injected by design and rejected was already
+  handled, the approval clock is decidedAt falling back to createdAt
+  with unparseable dates skipped and disclosed, stored and logged hits
+  sum exactly as the Lessons view publishes them, a failed notes or
+  hits read withholds rather than guesses, and another repository
+  emits nothing since the store describes this install's lesson
+  machinery —
   and the playbook-version trajectory outcome tallies' recurring
   adverse evidence, the per-version {merged, refused, reverted,
   failed, total} buckets countPlaybookOutcomes
@@ -1517,7 +1537,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost, knowledge-outcome, playbook-outcome, landed-close, live-config, delivery-receipts, postrun, git-contention, job-latency, job-reissue and route-shadow items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome, knowledge-serve, playbook-outcome, landed-close, live-config, delivery-receipts, postrun, git-contention, job-latency, job-reissue and route-shadow items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
