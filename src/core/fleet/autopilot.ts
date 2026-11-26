@@ -31,6 +31,8 @@ import { clampLocalTarget, LOCAL_LANE } from './local-capacity.js';
 import { readLaneTargets, type LaneTargetsV1 } from './runs-lane-targets.js';
 import { readRebaseStatus } from './rebase-status.js';
 
+const DISPATCHER_MAX_AGE_MS = 60_000; // Two 30-second dispatcher ticks.
+
 export const FLEET_AUTOPILOT_SCHEMA = 'fleet.autopilot.v1';
 /** A lane is over-deep (holdable at the cap) when its READY depth exceeds target × this factor. */
 export const AUTOPILOT_OVER_DEEP_FACTOR = 3;
@@ -81,11 +83,13 @@ export async function readFleetAutopilotState(
 ): Promise<FleetAutopilotState> {
   const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const now = opts.now ?? (() => new Date());
-  const [status, queue, slots, rebase] = await Promise.all([
-    (async (): Promise<{ source: Source; report: FleetAdmissionReport | null }> => {
+  const [status, queue, slots, rebase, localWorkers] = await Promise.all([
+    (async (): Promise<{ source: Source; report: FleetAdmissionReport | null; tick?: number }> => {
       try {
         const text = await (opts.statusText ?? ((path) => readFile(path, 'utf8')))(join(runsDir, 'queue', 'status.json'));
-        return { source: 'healthy', report: explainFleetAdmission(JSON.parse(text)) };
+        const snapshot = JSON.parse(text);
+        const tick = typeof snapshot?.last_tick === 'string' ? Date.parse(snapshot.last_tick) : NaN;
+        return { source: 'healthy', report: explainFleetAdmission(snapshot), tick };
       } catch (error) {
         return { source: (error as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'missing' : 'degraded', report: null };
       }
@@ -118,12 +122,16 @@ export async function readFleetAutopilotState(
         return { source: 'degraded', repos: null };
       }
     })(),
+    opts.localWorkers?.().catch(() => null),
   ]);
+  const generatedAt = now();
+  const age = generatedAt.getTime() - (status.tick ?? NaN);
+  const fresh = age >= 0 && age <= DISPATCHER_MAX_AGE_MS;
   return {
-    generatedAt: now().toISOString(),
-    sources: { status: status.source, queue: queue.source, slots: slots.source, rebase: rebase.source },
-    admission: status.report, queue: queue.view, slots: slots.view, rebase: rebase.repos,
-    ...(opts.localWorkers ? { localWorkers: await opts.localWorkers().catch(() => null) } : {}),
+    generatedAt: generatedAt.toISOString(),
+    sources: { status: status.source === 'healthy' && !fresh ? 'degraded' : status.source, queue: queue.source, slots: slots.source, rebase: rebase.source },
+    admission: fresh ? status.report : null, queue: queue.view, slots: slots.view, rebase: rebase.repos,
+    ...(opts.localWorkers ? { localWorkers: localWorkers ?? null } : {}),
   };
 }
 
@@ -332,7 +340,9 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
     action = { kind: 'no-op', reason: 'state-unreadable', detail: 'No local queue, slots or admission source was readable; nothing safe to propose.' };
   } else if (topGap === null) {
     action = { kind: 'no-op', reason: 'fleet-healthy', detail: state.sources.queue === 'healthy'
-      ? 'No gap measured: every lane is held, at target, or fed to its queue.'
+      ? admission === null
+        ? 'No gap measured with the available evidence; current dispatcher capacity is unknown.'
+        : 'No gap measured: every lane is held, at target, or fed to its queue.'
       : 'No gap measured with the available evidence; ready queue supply is unknown.' };
   } else {
     switch (topGap.kind) {
