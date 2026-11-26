@@ -46,6 +46,7 @@ function pendingVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
   const verdicted = new Set<string>();
   const fired = new Map<string, Entry>();
   for (const e of entries) {
+    if (Date.parse(e.at) > nowMs) continue;
     const key = rerunKey(e);
     if (e.outcome === 'verdict') verdicted.add(key);
     else if (e.outcome === 'ok') {
@@ -56,6 +57,14 @@ function pendingVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
   return [...fired.values()]
     .filter(e => !verdicted.has(rerunKey(e)) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
     .sort(compareVerdictPosition);
+}
+
+function hourlyAttempts(entries: readonly Entry[], nowMs: number): number {
+  return entries.filter(e => {
+    if (e.outcome !== 'attempt') return false;
+    const at = Date.parse(e.at);
+    return at > nowMs - 3_600_000 && at <= nowMs;
+  }).length;
 }
 
 /** Map a workflow-run API payload to a verdict; null means not yet resolvable. */
@@ -113,11 +122,27 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
       }
     } finally { closeSync(fd); }
   } catch { /* absent journal */ }
-  const attempts = entries.filter(e => e.outcome === 'attempt');
+  const observed = entries.filter(e => Date.parse(e.at) <= now);
+  const attempts = observed.filter(e => e.outcome === 'attempt');
   const verdictTally = { pass: 0, fail: 0, inconclusive: 0 };
-  for (const e of entries) if (e.outcome === 'verdict' && e.verdict) verdictTally[e.verdict]++;
+  for (const e of observed) if (e.outcome === 'verdict' && e.verdict) verdictTally[e.verdict]++;
   const resolved = verdictTally.pass + verdictTally.fail;
-  return { entries, recent: entries.slice(-100), counts: { attempted: attempts.length, ok: entries.filter(e => e.outcome === 'ok').length, failed: entries.filter(e => e.outcome === 'failed').length }, lastHour: attempts.filter(e => Date.parse(e.at) > now - 3_600_000).length, recurringFlakes: summarizeFlakes(entries, now), verdicts: { ...verdictTally, pending: pendingVerdicts(entries, now).length, resolutionRate: resolved > 0 ? verdictTally.pass / resolved : null } };
+  return {
+    entries,
+    recent: observed.slice(-100),
+    counts: {
+      attempted: attempts.length,
+      ok: observed.filter(e => e.outcome === 'ok').length,
+      failed: observed.filter(e => e.outcome === 'failed').length,
+    },
+    lastHour: hourlyAttempts(attempts, now),
+    recurringFlakes: summarizeFlakes(observed, now),
+    verdicts: {
+      ...verdictTally,
+      pending: pendingVerdicts(observed, now).length,
+      resolutionRate: resolved > 0 ? verdictTally.pass / resolved : null,
+    },
+  };
 }
 
 export function readCiRerunStatus(path = ciRerunPaths().statusPath): { lastRunAt: string; status: string; repos: Record<string, RepoStatus> } | null {
@@ -189,7 +214,7 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
             opts.signal.throwIfAborted();
             if (journal.some(e => e.repo === repo && e.head === run.head && e.runId === run.runId)) { s.skippedDuplicate++; continue; }
             const cap = opts.maxPerHour ?? 10;
-            if (!Number.isFinite(cap) || journal.filter(e => e.outcome === 'attempt' && Date.parse(e.at) > now() - 3_600_000).length >= Math.max(0, cap)) { s.skippedCap++; continue; }
+            if (!Number.isFinite(cap) || hourlyAttempts(journal, now()) >= Math.max(0, cap)) { s.skippedCap++; continue; }
             const entry: Entry = { at: new Date(now()).toISOString(), repo, ...run, outcome: 'attempt' };
             const tests = [...(testsByRun.get(rerunKey(entry)) ?? [])];
             if (tests.length === 1) entry.test = tests[0];
@@ -221,7 +246,10 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
         }
         const pending = pendingVerdicts(journal.filter(e => e.repo === repo), now());
         s.verdictsPending = pending.length;
-        const eligible = pending.filter(e => Date.parse(e.at) <= now() - VERDICT_MIN_AGE_MS);
+        // A future-dated verdict is invisible to the tally but still deduplicates writes.
+        const recordedVerdicts = new Set(journal.filter(e => e.outcome === 'verdict').map(rerunKey));
+        const eligible = pending.filter(e =>
+          !recordedVerdicts.has(rerunKey(e)) && Date.parse(e.at) <= now() - VERDICT_MIN_AGE_MS);
         const cursor = s.verdictCursor;
         const next = cursor ? eligible.findIndex(e => compareVerdictPosition(e, cursor) > 0) : 0;
         const start = Math.max(0, next);

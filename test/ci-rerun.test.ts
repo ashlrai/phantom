@@ -43,6 +43,44 @@ describe('resident CI reruns', () => {
     await runCiRerunMaintenance(opts);
     expect(reruns()).toHaveLength(2);
   });
+  it('excludes future attempts from the hourly cap while preserving deduplication', async () => {
+    const { opts, gh, report } = setup();
+    opts.maxPerHour = 1;
+    const future = report.groups[0]!.runs[0]!;
+    report.groups[0]!.runs.push({ pr: 2, head: 'c'.repeat(40), runId: 124 });
+    appendFileSync(opts.journalPath!, JSON.stringify({
+      ...future, repo: 'org/repo', at: '2026-01-01T12:01:00Z', outcome: 'attempt',
+    }) + '\n');
+
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos['org/repo']).toMatchObject({ skippedDuplicate: 1, attempted: 1 });
+    expect(gh.mock.calls).toEqual([[['run', 'rerun', '124', '--failed', '--repo', 'org/repo']]]);
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.lastHour).toBe(1);
+    expect(read.counts).toEqual({ attempted: 1, ok: 1, failed: 0 });
+    expect(read.recent.map(row => row.runId)).toEqual([124, 124]);
+  });
+
+  it('keeps a future verdict out of the report until its timestamp without polling again', async () => {
+    const { opts, gh, report } = setup();
+    await runCiRerunMaintenance(opts);
+    appendFileSync(opts.journalPath!, JSON.stringify({
+      ...report.groups[0]!.runs[0]!, repo: 'org/repo', at: '2026-01-01T12:11:00Z',
+      outcome: 'verdict', verdict: 'pass',
+    }) + '\n');
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    gh.mockClear();
+
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos['org/repo']).toMatchObject({ verdictsPending: 1, verdictsResolved: 0 });
+    expect(gh).not.toHaveBeenCalled();
+    expect(readCiReruns(opts.journalPath!, opts.now()).verdicts).toMatchObject({
+      pass: 0, pending: 1, resolutionRate: null,
+    });
+    expect(readCiReruns(opts.journalPath!, Date.parse('2026-01-01T12:11:00Z')).verdicts).toMatchObject({
+      pass: 1, pending: 0, resolutionRate: 1,
+    });
+  });
   it.each(['pr-caused', 'shared-baseline', 'unknown'])('never reruns %s', async kind => {
     const { opts, gh } = setup(kind);
     await runCiRerunMaintenance(opts);
