@@ -2408,6 +2408,14 @@ merges these tallies under any explicit `--outcomes` file (file wins per
 provider) and reports `outcomes_ledger` state in its JSON plan. See
 [measured capacity and routing](docs/NODE-ROUTER.md#measured-capacity-and-node-provider-model-routing).
 
+## Trajectory ledger read budgets
+
+`trajectoryLedgerFileLimit(windowHours)` returns the daily UTC partition
+allowance for a normalized positive window in hours. It rounds up to whole
+days and adds one for the boundary day, with a minimum of three and a maximum
+of 31. Trajectory reconstruction, join diagnostics and the skill-outcome
+snapshot share this allowance. Existing per-ledger row and byte limits apply.
+
 ## Router calibration
 
 `src/core/routing/calibration.ts` returns schema-version-1 calibration reports.
