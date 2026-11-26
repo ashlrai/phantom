@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { z } from 'zod';
+import { asPlainObject as object } from '../runway.js';
 import { readPrivateJson, readResourceEvidenceFile, updateEvidence } from './store.js';
 import {
   CODEX_RESET_BANK_MIN_VERSION, CODEX_RESET_BANK_TOO_OLD, CODEX_RESET_BANK_UNKNOWN_REASONS, RESOURCE_LIVE_STALE_MS,
@@ -44,8 +45,6 @@ export async function publishCodexResetBank(runsDir: string, observedAt: string,
 
 interface ResetInputs { observed_at: string | null; grants: BankedResetGrant[] | null; queued: number | null;
   unknown_reason?: CodexResetBankUnknownReason }
-const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
-  ? value as Record<string, unknown> : {};
 
 export async function readBankedResets(runsDir: string, now: number): Promise<ResetInputs> {
   const [evidence, status] = await Promise.all([

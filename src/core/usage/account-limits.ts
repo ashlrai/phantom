@@ -10,7 +10,7 @@
  */
 import { visibleWindows } from './provider-windows.js';
 
-export const USAGE_LIMITS_SCHEMA = 'usage.limits.v1';
+const USAGE_LIMITS_SCHEMA = 'usage.limits.v1' as const;
 
 type AccountState = 'checking' | 'observed' | 'signed-out' | 'unavailable';
 

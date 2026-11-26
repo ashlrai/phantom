@@ -4,6 +4,7 @@ import { defaultNodesViewDeps, readNodesView, type NodeRow } from '../../fleet/n
 import { readJobsTail, type JobsTailRead } from '../../fleet/report-ledger.js';
 import { readResourceQueue } from '../../fleet/resource-queue.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
+import { asPlainObject as object, nonNegativeFinite as number } from '../runway.js';
 import { ANTIGRAVITY_EXHAUSTION, antigravityQuota } from './antigravity-quota.js';
 import { planBurnDown } from './burn-down.js';
 import { codexResetBankUpgradeHint, planBankedReset, readBankedResets } from './banked-resets.js';
@@ -11,11 +12,8 @@ import { readCustomResources } from './custom.js';
 import { parseResourceLiveSidecar, readPrivateJson, readResourceLiveFile, unverified } from './store.js';
 import { RESOURCE_LIVE_ALLOWANCES, type ResourceLiveAllowance } from './types.js';
 
-export const FLEET_RESOURCE_PLAN_SCHEMA = 'phantom.fleet-resource-plan.v1';
+const FLEET_RESOURCE_PLAN_SCHEMA = 'phantom.fleet-resource-plan.v1';
 const MINUTE = 60_000;
-const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
-  ? value as Record<string, unknown> : {};
-const number = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 const count = (value: unknown): number | null => Number.isSafeInteger(value) ? number(value) : null;
 const time = (value: unknown): number => typeof value === 'string' ? Date.parse(value) : NaN;
 const round = (n: number): number => Number(n.toFixed(3));

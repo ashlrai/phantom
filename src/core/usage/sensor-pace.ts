@@ -10,7 +10,7 @@ import { budgetFor, spendAllowsPayPerUse } from '../spend/budget-policy.js';
 import { readSpendBudget } from '../spend/budget-store.js';
 import type { UsageSensorLaneView, UsageSensorReport } from './sensor-reading.js';
 
-export const PACE_SAFETY_MARGIN = 0.15;
+const PACE_SAFETY_MARGIN = 0.15;
 
 export type PaceReason = 'kill' | 'pay-per-use' | 'unknown' | 'paced' | 'uncapped' | 'exhausted';
 

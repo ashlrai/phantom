@@ -13,11 +13,11 @@
  */
 import { join } from 'node:path';
 import type { PoolUsageSeries } from '../fleet/usage-history.js';
-import { poolLabel } from './runway.js';
+import { isFiniteNumber, isPlainObject, poolLabel, round1 } from './runway.js';
 
-export const PLAN_PACE_SCHEMA = 'usage.plan-pace.v1' as const;
-export const TOO_FAST_HOURS = 6;
-export const TOO_SLOW_UNSPENT_PCT = 15;
+const PLAN_PACE_SCHEMA = 'usage.plan-pace.v1' as const;
+const TOO_FAST_HOURS = 6;
+const TOO_SLOW_UNSPENT_PCT = 15;
 export const PACE_ALERT_GAP_MS = 2 * 3_600_000;
 const STATE_MAX_BYTES = 8 * 1024;
 
@@ -42,8 +42,6 @@ export interface PlanPaceRow {
 }
 
 export interface PlanPaceV1 { schema: typeof PLAN_PACE_SCHEMA; v: 1; generated_at: string; plans: PlanPaceRow[] }
-
-const round1 = (n: number): number => Math.round(n * 10) / 10;
 
 /** Pure verdict from numbers the runway report already measured. */
 export function paceVerdict(hoursEarly: number | null, unspentPct: number | null): PlanPaceVerdict {
@@ -81,19 +79,17 @@ export async function readPlanPace(opts: { runsDir?: string; now?: () => number 
   return { schema: PLAN_PACE_SCHEMA, v: 1, generated_at: new Date(nowMs).toISOString(), plans: planPaceRows(history.pools) };
 }
 
-const num = (n: number): string => String(Math.round(n * 10) / 10);
-
 /** The one plain line for a plan that is too fast or too slow; null otherwise. */
 export function paceAlertLine(row: PlanPaceRow, nowMs: number, timeZone?: string): string | null {
   const name = poolLabel(row.plan);
   if (row.verdict === 'too fast' && row.points_per_hour !== null && row.runs_out_in_hours !== null && row.hours_early !== null) {
     const when = new Date(nowMs + row.runs_out_in_hours * 3_600_000)
       .toLocaleString('en-US', { weekday: 'long', hour: 'numeric', ...(timeZone ? { timeZone } : {}) }).replace(',', '');
-    return `${name} is burning ${num(row.points_per_hour)} points an hour; at this rate it runs out ${when}, ${Math.round(row.hours_early)} hours before its reset.`;
+    return `${name} is burning ${round1(row.points_per_hour)} points an hour; at this rate it runs out ${when}, ${Math.round(row.hours_early)} hours before its reset.`;
   }
   if (row.verdict === 'too slow' && row.points_per_hour !== null && row.unspent_percent !== null) {
-    const speed = row.even_pace_points_per_hour === null ? '' : ` Speed up to ${num(row.even_pace_points_per_hour)} points an hour to use it all.`;
-    return `${name} is burning only ${num(row.points_per_hour)} points an hour; at this rate ${Math.round(row.unspent_percent)}% goes unused at its reset.${speed}`;
+    const speed = row.even_pace_points_per_hour === null ? '' : ` Speed up to ${round1(row.even_pace_points_per_hour)} points an hour to use it all.`;
+    return `${name} is burning only ${round1(row.points_per_hour)} points an hour; at this rate ${Math.round(row.unspent_percent)}% goes unused at its reset.${speed}`;
   }
   return null;
 }
@@ -117,13 +113,13 @@ export function planPaceAlerts(rows: readonly PlanPaceRow[], state: PaceAlertSta
   return { posts, state: next };
 }
 
-export function parsePaceAlertState(text: string | null): PaceAlertState {
+function parsePaceAlertState(text: string | null): PaceAlertState {
   const out: PaceAlertState = {};
   if (text === null) return out;
   try {
     const raw: unknown = JSON.parse(text);
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-      for (const [plan, at] of Object.entries(raw)) if (typeof at === 'number' && Number.isFinite(at) && /^[a-z0-9][a-z0-9._-]{0,39}$/.test(plan)) out[plan] = at;
+    if (isPlainObject(raw)) {
+      for (const [plan, at] of Object.entries(raw)) if (isFiniteNumber(at) && /^[a-z0-9][a-z0-9._-]{0,39}$/.test(plan)) out[plan] = at;
     }
   } catch { /* damaged state: start over, worst case one repeat line */ }
   return out;

@@ -17,10 +17,16 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { burnRate, type BurnSample } from './burn-rate.js';
 import { readDispatchStatus } from './spend.js';
+import {
+  isFiniteNumber as num,
+  isPlainObject as object,
+  parseEpochSecondsOrIsoMs,
+  round1,
+} from './runway.js';
 import { localTimestamp, readSource } from '../fleet/runs-parked-queue.js';
 
-export const BURN_WHO_SCHEMA = 'usage.burn.v1' as const;
-export const BURN_POOL = 'claude';
+const BURN_WHO_SCHEMA = 'usage.burn.v1' as const;
+const BURN_POOL = 'claude' as const;
 const HOUR_MS = 3_600_000;
 const WEEK_HOURS = 168;
 const SHARE_WINDOW_HOURS = 6;
@@ -68,10 +74,6 @@ export interface BurnWhoInputs {
   /** Time zone for the "empty about" wording; the local one by default. */
   timeZone?: string;
 }
-
-const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
-const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-const round1 = (n: number): number => Math.round(n * 10) / 10;
 
 function stamp(v: unknown): number {
   if (typeof v === 'string') return Date.parse(v);
@@ -163,7 +165,7 @@ export function whoIsBurning(input: BurnWhoInputs): BurnWho {
 
   const statusUsed = num(pace.used_pct) && pace.used_pct >= 0 && pace.used_pct <= 1000 ? pace.used_pct : null;
   const used = newest ? newest.used_pct : statusUsed;
-  const resetMs = typeof pace.reset_at === 'string' ? Date.parse(pace.reset_at) : num(pace.reset_at) ? pace.reset_at * 1000 : NaN;
+  const resetMs = parseEpochSecondsOrIsoMs(pace.reset_at);
   const hoursToReset = Number.isFinite(resetMs) && resetMs > now ? (resetMs - now) / HOUR_MS : num(pace.hours_to_reset) && pace.hours_to_reset > 0 ? pace.hours_to_reset : null;
 
   const pace1h = burnRate(samples.filter(s => Date.parse(s.at) >= now - HOUR_MS), now).points_per_hour;

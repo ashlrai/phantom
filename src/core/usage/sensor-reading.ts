@@ -12,19 +12,20 @@
  * None of the twelve carried observedAt, source and staleAfter together.
  */
 import { z } from 'zod';
+import { isCanonicalIsoTimestamp, isPlainObject } from './runway.js';
 
 export const USAGE_SENSOR_SCHEMA = 'usage.sensors.v1' as const;
 /** Same bound routing headroom uses. A reading this old is not room. */
 export const USAGE_SENSOR_STALE_MS = 15 * 60_000;
 export const SENSOR_TIMESTAMP_BASELINE = { timestamped: 9, total: 12 } as const;
 /** How many prior points the burn slope may use. */
-export const SENSOR_BURN_SAMPLES = 4;
+const SENSOR_BURN_SAMPLES = 4;
 /** Included-usage forecast is on pace when exhaustion lands within this share of the time left. */
-export const FORECAST_ON_PACE_FRACTION = 0.15;
+const FORECAST_ON_PACE_FRACTION = 0.15;
 
 export type ForecastVsReset = 'early' | 'on-pace' | 'underuse' | 'unknown';
 
-export const USAGE_SENSOR_LANES = [
+const USAGE_SENSOR_LANES = [
   'devin',
   'devin-swe-flash',
   'devin-weekly',
@@ -47,7 +48,7 @@ export type UsageSensorLane = (typeof USAGE_SENSOR_LANES)[number];
 
 export const ACTIVE_USAGE_SENSOR_LANES = USAGE_SENSOR_LANES.filter(lane => lane !== 'codex-cmp');
 
-export const USAGE_SENSOR_SOURCES = [
+const USAGE_SENSOR_SOURCES = [
   'anthropic-admin-cost',
   'devin-api-v3-daily',
   'devin-api-v3-org-cycle',
@@ -72,10 +73,7 @@ export const USAGE_SENSOR_SOURCES = [
 export type UsageSensorSource = (typeof USAGE_SENSOR_SOURCES)[number];
 export type UsageSensorUnit = 'percent' | 'acu';
 
-const timestamp = z.string().refine(value => {
-  const time = Date.parse(value);
-  return Number.isFinite(time) && new Date(time).toISOString() === value;
-});
+const timestamp = z.string().refine(isCanonicalIsoTimestamp);
 
 export const usageSensorReadingSchema = z.object({
   lane: z.enum(USAGE_SENSOR_LANES),
@@ -192,7 +190,7 @@ function viewLane(samples: readonly UsageSensorReading[], nowMs: number): UsageS
   const room = measured ? latest.limit! - latest.used! : null;
   const headroom = room === null || !Number.isFinite(room) ? null : Math.max(0, room);
   const burn = fresh ? burnFrom(samples, latest) : null;
-  const remaining = measured ? Math.max(0, latest.limit! - latest.used!) : null;
+  const remaining = headroom;
   const resetMs = latest.resetAt ? Date.parse(latest.resetAt) : NaN;
   const hoursLeft = Number.isFinite(resetMs) ? (resetMs - nowMs) / 3_600_000 : NaN;
   let forecastExhaustAt: string | null = null;
@@ -266,8 +264,8 @@ export function presentUsageSensors(readings: readonly unknown[], nowMs: number)
 
 /** Snapshot file: `{ schema, readings }`. Bad rows are omitted, never echoed. */
 export function parseUsageSensorSnapshot(raw: unknown): UsageSensorReading[] {
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return [];
-  const readings = (raw as { readings?: unknown }).readings;
+  if (!isPlainObject(raw)) return [];
+  const readings = raw['readings'];
   if (!Array.isArray(readings)) return [];
   const parsed: UsageSensorReading[] = [];
   for (const row of readings) {

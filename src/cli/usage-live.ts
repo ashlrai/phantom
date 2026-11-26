@@ -3,16 +3,22 @@
  * dedicated-browser fallback, budgets, alerts and first readings. One pass by
  * default; `--watch` repeats and wakes just after each reset_at.
  */
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { access, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { playwrightLauncher, profileDirAllowed, usageBrowserDir, type BrowserSession } from '../core/usage/live/browser.js';
+import {
+  openUsageBrowserSession,
+  optionalAbsolutePath,
+  type BrowserLauncher,
+  type BrowserSession,
+} from '../core/usage/live/browser.js';
 import { renderFirstReadings, runLiveUsageTick, type LiveTickResult } from '../core/usage/live/engine.js';
+import { hasCodexHomeSegment } from '../core/usage/runway.js';
 
 const USAGE = 'Usage: phm usage live [--json] [--watch] [--browser [--headed]] [--interval <seconds>] [--queue-dir <abs>] [--bus-dir <abs>]';
 
 export interface UsageLiveDeps {
-  launch?: typeof playwrightLauncher;
+  launch?: BrowserLauncher;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   home?: string;
@@ -22,7 +28,7 @@ export interface UsageLiveDeps {
 
 export async function cmdUsageLive(args: string[], deps: UsageLiveDeps = {}): Promise<number> {
   const home = deps.home ?? homedir();
-  const runs = join(process.env['ASHLR_RUNS_DIR'] && isAbsolute(process.env['ASHLR_RUNS_DIR']) ? process.env['ASHLR_RUNS_DIR'] : join(home, '.ashlr-runs'));
+  const runs = join(optionalAbsolutePath(process.env['ASHLR_RUNS_DIR']) ?? join(home, '.ashlr-runs'));
   let queueDir = join(runs, 'queue'), busDir = join(runs, 'bus');
   let json = false, watch = false, browser = false, headed = false, intervalMs = 5 * 60_000;
   for (let i = 0; i < args.length; i += 1) {
@@ -39,7 +45,7 @@ export async function cmdUsageLive(args: string[], deps: UsageLiveDeps = {}): Pr
         const s = Number(value);
         if (!Number.isFinite(s) || s < 60 || s > 3600) { console.error('--interval must be 60 to 3600 seconds'); return 2; }
         intervalMs = s * 1000;
-      } else if (!isAbsolute(value) || /(?:^|\/)\.codex[^/]*(?:\/|$)/.test(value)) { console.error(USAGE); return 2; }
+      } else if (!isAbsolute(value) || hasCodexHomeSegment(value)) { console.error(USAGE); return 2; }
       else if (arg === '--queue-dir') queueDir = value; else busDir = value;
     } else { console.error(USAGE); return 2; }
   }
@@ -47,14 +53,10 @@ export async function cmdUsageLive(args: string[], deps: UsageLiveDeps = {}): Pr
 
   let session: BrowserSession | null = null;
   if (browser) {
-    const dir = usageBrowserDir(home);
-    if (!profileDirAllowed(dir, home)) { console.error('Usage browser profile path refused.'); return 1; }
-    try {
-      await mkdir(dir, { recursive: true, mode: 0o700 });
-      session = await (deps.launch ?? playwrightLauncher)(dir, { headless: !headed });
-    } catch {
-      console.error('Usage browser is unavailable (Playwright is not installed or the profile could not open). Official readouts only.');
-    }
+    const opened = await openUsageBrowserSession({ home, headed, launch: deps.launch });
+    if (opened.status === 'refused') { console.error('Usage browser profile path refused.'); return 1; }
+    if (opened.status === 'opened') session = opened.session;
+    else console.error('Usage browser is unavailable (Playwright is not installed or the profile could not open). Official readouts only.');
   }
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
@@ -64,7 +66,7 @@ export async function cmdUsageLive(args: string[], deps: UsageLiveDeps = {}): Pr
     do {
       last = await runLiveUsageTick({ nowMs: now(), queueDir, busDir, intervalMs, browser: session,
         official: {
-          codexPersonalHome: abs(process.env['PHANTOM_SENSOR_CODEX_PERSONAL_HOME']),
+          codexPersonalHome: optionalAbsolutePath(process.env['PHANTOM_SENSOR_CODEX_PERSONAL_HOME']),
         } });
       if (!(await exists(firstPath))) await writeFile(firstPath, renderFirstReadings(last), { mode: 0o600 });
       if (json) console.log(JSON.stringify({ generatedAt: last.generatedAt, budget: last.budget, needsSignin: last.needsSignin,
@@ -84,5 +86,4 @@ export async function cmdUsageLive(args: string[], deps: UsageLiveDeps = {}): Pr
   return 0;
 }
 
-function abs(value: string | undefined): string | undefined { return typeof value === 'string' && isAbsolute(value) ? value : undefined; }
 async function exists(path: string): Promise<boolean> { try { await access(path); return true; } catch { return false; } }

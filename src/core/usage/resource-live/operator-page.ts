@@ -3,7 +3,7 @@ import type { ResourceLiveObservation, ResourceLiveSource } from './source-types
 export interface OperatorUsagePageReader {
   read(provider: 'claude' | 'codex-personal', usageUrl: string): Promise<ResourceLiveObservation | null>;
 }
-export const stubOperatorUsagePageReader: OperatorUsagePageReader = { read: async () => null };
+const stubOperatorUsagePageReader: OperatorUsagePageReader = { read: async () => null };
 
 export function operatorPageSources(enabled: boolean | undefined, provider: 'claude' | 'codex-personal',
   reader: OperatorUsagePageReader = stubOperatorUsagePageReader): ResourceLiveSource[] {

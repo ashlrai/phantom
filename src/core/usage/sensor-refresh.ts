@@ -7,6 +7,7 @@ import { parseDevinDailyConsumption } from '../devin/client.js';
 import { parseCodexUsage } from '../fabric/readers/codex-usage.js';
 import { parseClaudeUsage } from '../fabric/status-readings.js';
 import { parseClaudeNativeUsage, parseClaudeNativeUsageStream } from '../resources/claude-account-usage.js';
+import { isPlainObject, nonNegativeFinite } from './runway.js';
 import {
   USAGE_SENSOR_STALE_MS,
   unmeasuredSensor,
@@ -15,10 +16,6 @@ import {
   type UsageSensorSource,
   type UsageSensorUnit,
 } from './sensor-reading.js';
-
-function finite(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
-}
 
 function stamp(
   lane: UsageSensorLane,
@@ -43,14 +40,12 @@ function stamp(
 }
 
 function orgAcuLimit(value: unknown): number | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const row = value as Record<string, unknown>;
-  if (row['scope'] !== 'org' || !finite(row['cycle_acu_limit'])) return null;
-  return row['cycle_acu_limit'];
+  if (!isPlainObject(value) || value['scope'] !== 'org') return null;
+  return nonNegativeFinite(value['cycle_acu_limit']);
 }
 
 /** Official org ACU limit object, or a one-item list of that object. */
-export function parseDevinAcuLimit(value: unknown): number | null {
+function parseDevinAcuLimit(value: unknown): number | null {
   if (Array.isArray(value)) return value.length === 1 ? orgAcuLimit(value[0]) : null;
   return orgAcuLimit(value);
 }
@@ -105,34 +100,24 @@ export function parseClaudeSensor(payload: unknown, nowMs: number): UsageSensorR
     const window = claudeWindow(payload, nowMs);
     return window ? stamp('claude-max', 'claude-usage', window.used, 100, 'percent', window.resetAt, nowMs) : null;
   }
-  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const row = payload as Record<string, unknown>;
+  if (!isPlainObject(payload)) return null;
+  const row = payload;
   if (typeof row['utilization'] !== 'number') return null;
   const parsed = parseClaudeUsage(payload, nowMs);
   if (parsed.pctUsed === null) return null;
   const captured = typeof row['capturedAt'] === 'string' ? Date.parse(row['capturedAt']) : NaN;
   const observedMs = Number.isFinite(captured) && captured <= nowMs ? captured : nowMs;
-  const observedAt = new Date(observedMs).toISOString();
-  return {
-    lane: 'claude-max',
-    observedAt,
-    source: 'claude-rate-limit-event',
-    staleAfter: new Date(observedMs + USAGE_SENSOR_STALE_MS).toISOString(),
-    used: parsed.pctUsed,
-    limit: 100,
-    unit: 'percent',
-    resetAt: parsed.resetAt,
-  };
+  return stamp('claude-max', 'claude-rate-limit-event', parsed.pctUsed, 100, 'percent', parsed.resetAt, observedMs);
 }
 
 /** Official status object `{ pctUsed, resetAt }`. Page text and cookies are not accepted. */
 export function parseGrokSensor(payload: unknown, nowMs: number): UsageSensorReading | null {
-  if (!Number.isFinite(nowMs) || payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const row = payload as Record<string, unknown>;
-  if (!finite(row['pctUsed']) || row['pctUsed'] > 100 || typeof row['resetAt'] !== 'string') return null;
-  const resetMs = Date.parse(row['resetAt']);
+  if (!Number.isFinite(nowMs) || !isPlainObject(payload)) return null;
+  const pctUsed = nonNegativeFinite(payload['pctUsed']);
+  if (pctUsed === null || pctUsed > 100 || typeof payload['resetAt'] !== 'string') return null;
+  const resetMs = Date.parse(payload['resetAt']);
   if (!Number.isFinite(resetMs) || resetMs <= nowMs) return null;
-  return stamp('grok-ultra', 'grok-status', row['pctUsed'], 100, 'percent', new Date(resetMs).toISOString(), nowMs);
+  return stamp('grok-ultra', 'grok-status', pctUsed, 100, 'percent', new Date(resetMs).toISOString(), nowMs);
 }
 
 /** Included Devin allowance. This does not read or change the ACU cap. */
@@ -141,20 +126,19 @@ export function parseDevinIncluded(
   payload: unknown,
   nowMs: number,
 ): UsageSensorReading | null {
-  if (!Number.isFinite(nowMs) || payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const row = payload as Record<string, unknown>;
-  if (!finite(row['used']) || !finite(row['limit']) || typeof row['resetAt'] !== 'string') return null;
-  const resetMs = Date.parse(row['resetAt']);
+  if (!Number.isFinite(nowMs) || !isPlainObject(payload)) return null;
+  const used = nonNegativeFinite(payload['used']);
+  const limit = nonNegativeFinite(payload['limit']);
+  if (used === null || limit === null || typeof payload['resetAt'] !== 'string') return null;
+  const resetMs = Date.parse(payload['resetAt']);
   if (!Number.isFinite(resetMs) || resetMs <= nowMs) return null;
-  const unit = row['unit'] === 'acu' || row['unit'] === 'percent' ? row['unit'] : null;
+  const unit = payload['unit'] === 'acu' || payload['unit'] === 'percent' ? payload['unit'] : null;
   if (!unit) return null;
-  return {
-    ...stamp(lane, 'devin-included-allowance', row['used'], row['limit'], unit, new Date(resetMs).toISOString(), nowMs),
-  };
+  return stamp(lane, 'devin-included-allowance', used, limit, unit, new Date(resetMs).toISOString(), nowMs);
 }
 
 /** Official status object `{ pctUsed, resetAt }` for Dot, Cursor cloud, or Grok Bot. */
-export function parseOfficialPercent(lane: 'dot' | 'cursor-cloud' | 'grok-bot', payload: unknown, nowMs: number): UsageSensorReading | null {
+function parseOfficialPercent(lane: 'dot' | 'cursor-cloud' | 'grok-bot', payload: unknown, nowMs: number): UsageSensorReading | null {
   const parsed = parseGrokSensor(payload, nowMs);
   if (!parsed) return null;
   const source = lane === 'dot' ? 'dot-status' : lane === 'cursor-cloud' ? 'cursor-status' : 'grok-status';
@@ -162,10 +146,10 @@ export function parseOfficialPercent(lane: 'dot' | 'cursor-cloud' | 'grok-bot', 
 }
 
 /** Local throughput. There is no allowance, so limit and headroom stay empty. */
-export function parseLocalThroughput(payload: unknown, nowMs: number): UsageSensorReading | null {
-  if (!Number.isFinite(nowMs) || payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const completed = (payload as Record<string, unknown>)['completed'];
-  if (!finite(completed)) return null;
+function parseLocalThroughput(payload: unknown, nowMs: number): UsageSensorReading | null {
+  if (!Number.isFinite(nowMs) || !isPlainObject(payload)) return null;
+  const completed = nonNegativeFinite(payload['completed']);
+  if (completed === null) return null;
   const observedAt = new Date(nowMs).toISOString();
   return {
     lane: 'local', observedAt, source: 'local-throughput',
@@ -175,11 +159,12 @@ export function parseLocalThroughput(payload: unknown, nowMs: number): UsageSens
 }
 
 /** Claude API balance. A balance is not spend approval. */
-export function parseClaudeApiBalance(payload: unknown, nowMs: number): UsageSensorReading | null {
-  if (!Number.isFinite(nowMs) || payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const row = payload as Record<string, unknown>;
-  if (!finite(row['spent']) || !finite(row['balance'])) return null;
-  return stamp('claude-api', 'claude-api-balance', row['spent'], row['spent'] + row['balance'], 'acu', null, nowMs);
+function parseClaudeApiBalance(payload: unknown, nowMs: number): UsageSensorReading | null {
+  if (!Number.isFinite(nowMs) || !isPlainObject(payload)) return null;
+  const spent = nonNegativeFinite(payload['spent']);
+  const balance = nonNegativeFinite(payload['balance']);
+  if (spent === null || balance === null) return null;
+  return stamp('claude-api', 'claude-api-balance', spent, spent + balance, 'acu', null, nowMs);
 }
 
 export interface UsageSensorRefreshInput {

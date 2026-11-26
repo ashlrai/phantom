@@ -6,13 +6,14 @@
  * browser databases or any ~/.codex* path; the profile directory is only
  * handed to the injected driver as an opaque path.
  */
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { writeUsageFileAtomic } from '../live/browser.js';
 import { BROWSER_PROVIDERS, parseUsagePage, type BrowserProvider, type BrowserUsageRecord, type ParseRefusal } from './parsers.js';
 
 /** Default pages. Configurable: provider UIs move, the parsers do not follow URLs. */
-export const BROWSER_USAGE_URLS: Record<BrowserProvider, string> = {
+const BROWSER_USAGE_URLS: Record<BrowserProvider, string> = {
   claude: 'https://claude.ai/settings/usage',
   chatgpt: 'https://chatgpt.com/codex/settings/usage',
   devin: 'https://app.devin.ai/settings/billing',
@@ -63,9 +64,7 @@ export async function writeBusRecords(results: readonly BrowserUsageResult[], bu
   for (const r of results) {
     if (!r.ok) continue;
     const path = join(busDir, `usage-browser-${r.provider}.json`);
-    const tmp = `${path}.${process.pid}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(r.record, null, 2)}\n`, { mode: 0o600 });
-    await rename(tmp, path);
+    await writeUsageFileAtomic(path, `${JSON.stringify(r.record, null, 2)}\n`);
     written.push(path);
   }
   return written;
