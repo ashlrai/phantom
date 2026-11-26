@@ -4,7 +4,7 @@
  */
 import type { LaneFacts } from './autofill-lanes.js';
 
-export async function readLiveLaneFacts(runsDir: string): Promise<{ lanes: LaneFacts[] }> {
+export async function readLiveLaneFacts(runsDir: string): Promise<{ lanes: LaneFacts[]; openRows: number | null }> {
   const { getFleetLaneSnapshot } = await import('./lane-console.js');
   const snapshot = await getFleetLaneSnapshot();
   // Clamp only the local lane to available memory, retaining the shared lane eligibility facts.
@@ -17,5 +17,8 @@ export async function readLiveLaneFacts(runsDir: string): Promise<{ lanes: LaneF
       queued: view.queueDepth ?? null,
       held: view.hold?.held === true, remainingPct: view.credit.remainingPct, resetAt: view.credit.resetAt,
     })),
+    // The same lane-open READY rows fleet.starved reports as open_rows: shared
+    // supply the market may place on any lane, null when ready.tsv was not read.
+    openRows: snapshot.starved.open_rows,
   };
 }

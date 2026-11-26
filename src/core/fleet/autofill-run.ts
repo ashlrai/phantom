@@ -215,7 +215,17 @@ export function autofillStatusLines(s: AutofillStatus): string[] {
 }
 
 /** What the tick needs to know about the lanes (the facts, not a verdict); null where the snapshot could not be read. */
-export interface LaneSnapshotView { lanes: readonly LaneFacts[] }
+export interface LaneSnapshotView {
+  lanes: readonly LaneFacts[];
+  /**
+   * Lane-open READY rows — shared supply the market may place on any lane.
+   * A positive count keeps a lane from reading as starved (the same rows
+   * fleet.starved reports as open_rows) and counts toward the supply floor's
+   * waiting depth. Null when the queue read could not say; absent on views
+   * built before the field existed, which credits nothing.
+   */
+  openRows?: number | null;
+}
 
 export interface AutofillTickOptions {
   runsDir: string;
@@ -313,7 +323,7 @@ export async function runAutofillTick(o: AutofillTickOptions): Promise<AutofillT
   const view = await o.readLanes().catch(() => null);
   Object.assign(report, await harvestStep(o, nowMs, off, pace, view));
   if (view === null) return { ...report, reason: 'Lane snapshot is unknown.' };
-  const verdicts = judgeLanes(view.lanes.filter(f => LANE_NAME.test(f.lane)));
+  const verdicts = judgeLanes(view.lanes.filter(f => LANE_NAME.test(f.lane)), view.openRows ?? null);
   const byLane = new Map<string, LaneVerdict>(verdicts.map(v => [v.lane, v]));
   const facts = new Map(view.lanes.map(f => [f.lane, f]));
   // A pool ahead of pace gets no new rows; a pool behind pace is fed first (the hourly cap is shared). Unknown changes nothing.
