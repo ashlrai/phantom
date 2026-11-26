@@ -417,8 +417,9 @@ when the PAUSE file, disk guard or load gate kept the market from running,
 `global_admission` when the launch budget or fleet cap was spent — or `null`
 when the market ran normally. For a derived report the verdict comes from
 status.json's own `paused` and `admission` fields and replaces the per-lane
-codes, which were never the binding constraint; for a dispatcher report it is
-read back from the published `blocked` codes.
+codes, which were never the binding constraint. A dispatcher report uses the
+published `blocked` codes first and falls back to the snapshot's admission
+verdict when no lane recorded a fleet stop, including ticks with no unfed lanes.
 `--json` also carries `statusAsOf` (status.json's `last_tick` as ISO-8601, or
 null) and `statusFresh`: the snapshot is fresh only when `last_tick` parses,
 is not in the future, and is within the same two-minute window the spend

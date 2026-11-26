@@ -920,6 +920,7 @@ describe('fleet stop verdicts', () => {
   it('reads the stop code back from dispatcher-published blocked reasons', () => {
     const status = JSON.stringify({
       lanes: STOP_LANES,
+      admission: { running: 1, cap: 1 },
       unfed_capacity: {
         waiting: 2,
         lanes: {
@@ -931,6 +932,28 @@ describe('fleet stop verdicts', () => {
     const report = currentUnfed(status, TWO_WAITING);
     expect(report.source).toBe('dispatcher');
     expect(report.fleetStop).toBe('admission_stopped');
+  });
+
+  it.each([
+    ['admission_stopped', { paused: 'maintenance window' }],
+    ['admission_stopped', { admission: { gate_reason: 'load gate tripped' } }],
+    ['global_admission', { admission: { running: 1, cap: 1 } }],
+    [null, { admission: { running: 1, cap: 2, admit: true } }],
+  ] as const)('reports %s when no published lane records a stop', (expected, admissionState) => {
+    const status = JSON.stringify({
+      ...admissionState,
+      lanes: STOP_LANES,
+      unfed_capacity: {
+        waiting: 0,
+        lanes: {
+          a: { waiting_elsewhere: 0, blocked: {} },
+          b: { waiting_elsewhere: 0, blocked: {} },
+        },
+      },
+    });
+    const report = currentUnfed(status, '');
+    expect(report).toMatchObject({ source: 'dispatcher', fleetStop: expected, unfedLanes: [], unfedSlots: 0 });
+    expect(report.resources.every(resource => Object.keys(resource.blocked).length === 0)).toBe(true);
   });
 
   it('prints the fleet stop line in text output', async () => {

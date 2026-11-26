@@ -217,8 +217,8 @@ export interface UnfedReport {
    * `admission_stopped` when the launch gate (pause, disk hard stop or a
    * tripped load gate) kept the market from running, `global_admission` when
    * the per-tick launch budget or fleet-wide cap was spent. Read back from
-   * published blocked codes for a dispatcher report, or from status.json's
-   * own admission verdict for a derived one. Null when the market ran
+   * published blocked codes when present, otherwise from status.json's
+   * own admission verdict. Null when the market ran
    * normally or no verdict exists.
    */
   fleetStop: FleetStopCode | null;
@@ -401,7 +401,7 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
     derivedReasons: ctx !== null,
     statusAsOf,
     statusFresh,
-    fleetStop: stop ?? publishedFleetStop(resources),
+    fleetStop: published === null ? stop : publishedFleetStop(resources) ?? fleetStopVerdict(data),
     waiting,
     invalidRows: strict.invalid,
     unfedLanes: unfed.map(r => r.lane),
