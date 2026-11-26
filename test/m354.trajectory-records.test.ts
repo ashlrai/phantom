@@ -2504,6 +2504,42 @@ describe('Trajectory records', () => {
     expect(published.skillOutcomes).toBeDefined();
   });
 
+  it('excludes future dispatches from the skill outcome sample', () => {
+    const at = (ms: number) => new Date(ms).toISOString();
+    const trajectoryIds = ['traj-a', 'traj-b', 'traj-c'];
+    const readRecords = (thirdDispatchMs: number) => listTrajectoryRecords({
+      asOfMs: TEST_NOW_MS,
+      deps: deps({
+        readDispatchProductionEvents: () => trajectoryIds.map((trajectoryId, index) => dispatch({
+          ts: at(index === 2 ? thirdDispatchMs : TEST_NOW_MS - 1),
+          itemId: trajectoryId,
+          outcome: 'engine-failed',
+          proposalCreated: false,
+          proposalId: undefined,
+          runEventSummary: undefined,
+          runId: trajectoryId,
+          trajectoryId,
+        })),
+        listOutcomeRecords: () => [],
+        readAgentActions: () => [],
+        readSkillUseEvents: () => trajectoryIds.map((trajectoryId) => skillUse({
+          eventId: `use-${trajectoryId}`,
+          ts: at(TEST_NOW_MS),
+          proposalId: undefined,
+          runId: trajectoryId,
+          trajectoryId,
+        })),
+      }),
+    });
+
+    const records = readRecords(TEST_NOW_MS + 1);
+    expect(records.map((record) => record.trajectoryId).sort()).toEqual(['traj-a', 'traj-b']);
+    expect(summarizeTrajectoryLearning(records, 24).skillOutcomes).toBeUndefined();
+    const atCutoff = summarizeTrajectoryLearning(readRecords(TEST_NOW_MS), 24);
+    expect(atCutoff.coverage.skillUse).toEqual({ count: 3, rate: 1 });
+    expect(atCutoff.skillOutcomes).toBeDefined();
+  });
+
   it('keeps the skill outcome window fixed while reading the ledger', () => {
     const windowHours = 24;
     const start = TEST_NOW_MS - windowHours * 60 * 60 * 1000;
