@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { launchOffTickJob, offTickJobsSnapshot, cancelOffTickJobs, resetOffTickJobsForTests } from '../src/core/daemon/off-tick-jobs.js';
-import { beginTickPhases, endTickPhases, runTickPhase, skipTickPhase, tickPhasesSnapshot, deriveTickOutcome, resetTickPhasesForTests } from '../src/core/daemon/tick-phases.js';
+import { beginTickPhases, endTickPhases, runTickPhase, skipTickPhase, tickPhasesSnapshot, deriveTickOutcome, resetTickPhasesForTests, TICK_PHASE_NODE_BRIDGE_MS } from '../src/core/daemon/tick-phases.js';
 import { freshDaemonState, saveDaemonState, loadDaemonState } from '../src/core/daemon/state.js';
 
 afterEach(() => {
@@ -55,6 +55,25 @@ describe('resident off-tick jobs', () => {
     expect(launchOffTickJob('bad', async () => undefined, { deadlineMs: 10 }).offTick).toMatchObject({ lastStatus: 'degraded', lastError: 'broken' });
     expect(log).toHaveBeenCalledWith(expect.stringContaining('degraded'));
     await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it('cancels the node bridge at 30 seconds without waiting for child cleanup', async () => {
+    vi.useFakeTimers();
+    let signal!: AbortSignal;
+    let finish!: () => void;
+    const run = (s: AbortSignal) => { signal = s; return new Promise<void>(resolve => { finish = resolve; }); };
+    const log = vi.fn();
+    launchOffTickJob('node-bridge', run, { deadlineMs: TICK_PHASE_NODE_BRIDGE_MS, graceMs: 0, log });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signal.aborted).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('deadline; cancelled and left running detached'));
+    expect(offTickJobsSnapshot()[0]?.running).toBe(true);
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(offTickJobsSnapshot()[0]).toMatchObject({ running: false, lastStatus: 'timeout' });
   });
 
   it('cascades parent and shutdown abort, bounding shutdown for uncooperative work', async () => {

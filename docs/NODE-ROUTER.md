@@ -275,11 +275,15 @@ projection does not enqueue production jobs twice or install any fleet scripts.
 the row would go to a node, and gives a reason code for each row that stays
 local. `phm node bridge --apply --json` runs one claim and reconcile pass. When
 `~/.ashlr/node-bridge.json` holds `{"enabled": true, "owner": "<scope>"}`, the
-resident daemon runs the same pass as the bounded `node-bridge` tick phase
-(30 s deadline, AbortSignal, status record). The phase spawns
+resident daemon runs the same pass as a single-flight `node-bridge`
+background job. The tick records the handoff and continues without waiting.
+The job spawns
 `src/core/drive/nodes/ready-bridge-child.ts` by path and does not import it,
-so the bridge stays out of the daemon's Tier-1 import closure. On abort the
-phase sends SIGTERM, then SIGKILL after 2 s. Optional settings are `maxPerPass`
+so the bridge stays out of the daemon's Tier-1 import closure. At its 30 s
+deadline (or on daemon shutdown) it sends SIGTERM, then SIGKILL after 2 s
+if the child has not exited. The tick does not wait for this cleanup, and
+the next pass cannot start until the previous child closes. Direct live
+ticks wait at most for the deadline, with no abort grace. Optional settings are `maxPerPass`
 (default 4) and `pendingTtlMs` (default 300000).
 
 The bridge uses the claim that dispatchd already honors, so the pinned

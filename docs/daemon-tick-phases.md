@@ -169,6 +169,7 @@ and persists the outcome in a `finally`, whatever `tick()` did.
 | `ci-rerun`       | 5 min            | `TICK_PHASE_CI_RERUN_MS`; optional resident off-tick flake maintenance |
 | `auto-merge`, `proposal-repair` | 5 min | `TICK_PHASE_MAINTENANCE_MS`                   |
 | `capacity`       | 30 s             | `TICK_PHASE_CAPACITY_MS`; internally probed             |
+| `node-bridge`    | 30 s             | `TICK_PHASE_NODE_BRIDGE_MS`; resident single-flight background job, no abort grace |
 | `dispatch-plan`  | 60 s             | `TICK_PHASE_DISPATCH_PLAN_MS`                           |
 | `dispatch`       | worst-case turns | `tasks / slots` × (turn watchdog + grace)               |
 | `dispatch-hook`  | 60 s             | per-item `afterDispatch` hooks                          |
