@@ -27,6 +27,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AshlrConfig } from '../src/core/types.js';
 import type { FleetCommand } from '../src/core/integrations/pulse-exporter.js';
+import { PRIVATE_STORAGE_TEST_CONTROL, _setPrivateStorageTestControlForTest } from '../src/core/util/private-storage.js';
+import { createSemanticPrivateStorageHarness, trustedWindowsSystemRootForTest } from './helpers/semantic-private-storage.js';
 
 // ---------------------------------------------------------------------------
 // Module mocks — exporter (network) + four local executors + side modules.
@@ -129,6 +131,10 @@ function queueCommands(commands: FleetCommand[]): void {
 }
 
 beforeEach(() => {
+  if (process.platform === 'win32') {
+    const { runner } = createSemanticPrivateStorageHarness({ systemRoot: trustedWindowsSystemRootForTest() });
+    _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, { runner });
+  }
   vi.clearAllMocks();
   for (const k of PULSE_ENV) delete process.env[k];
   // Restore default mock return values cleared by clearAllMocks().
@@ -142,6 +148,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (process.platform === 'win32') {
+    _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, undefined);
+  }
   for (const k of PULSE_ENV) delete process.env[k];
 });
 
