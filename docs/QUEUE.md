@@ -1099,6 +1099,10 @@ schema, and the command exits 1 when a lane is starved. The same data is the `st
 `free_slots` (slot target minus running, 0 when held), `ready_rows` and `starved_since`,
 plus read-level `open_rows` — the lane-open READY rows (no lane hint) the market
 may place on any lane. Open supply keeps a free lane from reading as starved.
+Usage-journal quota expires at its recorded reset even if the reading's
+freshness deadline is later. Once it expires, remaining quota stays unknown
+unless another source supplies a usable reading, and the expired reading no
+longer suppresses starvation as drained.
 Both ready counts come from a healthy `ready.tsv` read. For dispatcher rows
 without a requirements cell, the lane view resolves the hint from the matching
 `router-queue.md` envelope when present. If the envelope file is absent, it uses

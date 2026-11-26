@@ -485,6 +485,38 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(JSON.stringify(snapshot)).not.toContain(scratch);
   });
 
+  it.each([
+    { resetOffset: 1, remaining: 0, starved: false },
+    { resetOffset: 0, remaining: null, starved: true },
+    { resetOffset: -1, remaining: null, starved: true },
+    { resetOffset: null, remaining: 0, starved: false },
+  ])('expires usage-journal quota at its recorded reset (%j)', async ({ resetOffset, remaining, starved }) => {
+    const queueDir = join(scratch, 'queue');
+    await mkdir(queueDir);
+    const usagePath = join(queueDir, 'usage-readings.jsonl');
+    const nowMs = ANCHOR.getTime();
+    const resetAt = resetOffset === null ? null : new Date(nowMs + resetOffset).toISOString();
+    await writeFile(usagePath, JSON.stringify({
+      pool: 'claude', pctUsed: 100, resetAt, observedAt: new Date(nowMs - 60_000).toISOString(),
+      staleAfter: new Date(nowMs + 60_000).toISOString(),
+    }));
+    await writeFile(join(queueDir, 'ready.tsv'), '');
+    await writeFile(join(queueDir, 'status.json'), JSON.stringify({
+      last_tick: ANCHOR.toISOString(),
+      lanes: { claude: { running: 0, target: 2, queued: 0, held: false } },
+    }));
+
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [usagePath],
+      now: () => ANCHOR, starvedStateDir: scratch,
+    });
+    expect(snapshot.lanes.find(lane => lane.lane === 'claude')).toMatchObject({
+      credit: { remainingPct: remaining, resetAt, state: remaining === null ? 'unknown' : 'observed' },
+      health: { state: starved ? 'starved' : 'drained' },
+    });
+    expect(snapshot.starved.lanes.claude?.starved).toBe(starved);
+  });
+
   it('attaches injected emptyNotes to lane health tooltips', async () => {
     const seen: Array<readonly [string, number]> = [];
     const snapshot = await getFleetLaneSnapshot({

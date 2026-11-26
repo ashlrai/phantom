@@ -727,7 +727,7 @@ function budgetCredit(view: PoolBudgetView): FleetLaneCreditView {
 }
 
 function usageCredit(row: UsageJournalRow, nowMs: number): FleetLaneCreditView {
-  const fresh = row.pctUsed !== null && readingIsFresh({
+  const fresh = row.pctUsed !== null && (row.resetAt === null || Date.parse(row.resetAt) > nowMs) && readingIsFresh({
     observedAt: row.observedAt, staleAfter: row.staleAfter, nowMs,
   });
   return {
