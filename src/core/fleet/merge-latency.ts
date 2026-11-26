@@ -9,7 +9,8 @@
  * A PR missing either time is unknown for that timing, never zero and never
  * guessed from the other one. Pure: the CLI and the status digest read the file.
  */
-import { ledgerRows, readText } from './empty-cause.js';
+import { ledgerRows, ledgerStateTokens, readText } from './empty-cause.js';
+import { ledgerLifecycleEvent } from './jobs-ledger-dialect.js';
 import { outcomePercentile } from './outcome-metrics.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 
@@ -71,24 +72,29 @@ export function spanText(seconds: number | null): string {
 
 /** Pure: one record per merged PR, with the PR's own times when an outcome row carried them. */
 function mergedPrs(ledger: string, now: number, hours: number): { prs: Pr[]; malformed: number } {
-  const { rows, malformed } = ledgerRows(ledger, now, hours + LOOKBACK_HOURS, true);
+  const { rows: retained, malformed } = ledgerRows(ledger, now, hours + LOOKBACK_HOURS, true);
+  const rows = retained.map(entry => {
+    const states = ledgerStateTokens(entry.row);
+    // The reconciler can copy a publish event onto a terminal receipt.
+    const terminal = states.find(state => state === 'MERGED' || state === 'CLOSED');
+    const event = terminal?.toLowerCase() ?? ledgerLifecycleEvent(entry.row, states.includes('PUBLISHED') ? 'PUBLISHED' : null);
+    return { ...entry, event };
+  });
   const lanes = new Map<string, string>(), jobOfUrl = new Map<string, string>(), published = new Map<string, number>();
   const urlOf = (row: Record<string, unknown>) => PR_URL.exec(String([row.url, row.prUrl, row.pr_url, row.pr, row.html_url].find((v): v is string => typeof v === 'string') ?? ''));
-  for (const { row, id, at } of rows) {
-    const lane = label(row.lane) ?? label(row.pool) ?? label(row.arm), event = [row.event, row.type, row.kind].find((v): v is string => typeof v === 'string');
+  for (const { row, id, at, event } of rows) {
+    const lane = label(row.lane) ?? label(row.pool) ?? label(row.arm);
     // The launch row decides a job's lane; other rows only fill gaps.
     if (id && lane && (event === 'launch' || !lanes.has(id))) lanes.set(id, lane);
     const url = urlOf(row);
     if (!url) continue;
     const key = `${url[1]}#${url[2]}`.toLowerCase();
     if (id) jobOfUrl.set(key, id);
-    if (event === 'publish' || event === 'published') published.set(key, Math.min(published.get(key) ?? Infinity, at));
+    if (event === 'publish') published.set(key, Math.min(published.get(key) ?? Infinity, at));
   }
   const prs = new Map<string, Pr>();
-  for (const { row, id, at } of rows) {
-    const event = [row.event, row.type, row.kind].find((v): v is string => typeof v === 'string');
-    const merged = event === 'merged' || ((event === 'outcome' || row.source === 'metrics-outcomes-reconciler') && (row.state ?? row.outcome ?? row.status ?? row.phase ?? row.result ?? row.conclusion) === 'MERGED');
-    const url = merged ? urlOf(row) : null;
+  for (const { row, id, at, event } of rows) {
+    const url = event === 'merged' ? urlOf(row) : null;
     if (!url) continue;
     const key = `${url[1]}#${url[2]}`.toLowerCase();
     const created = parseLedgerTs(row.createdAt ?? row.prCreatedAt ?? row.pr_created_at);
