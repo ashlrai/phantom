@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
+import { nodeCapacityView } from '../src/core/drive/nodes/router.js';
 import { versionFromCaps } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNodeFleet } from '../src/cli/node-fleet.js';
 
@@ -287,6 +288,31 @@ describe('drive node leases', () => {
     const again = f.a.join('worker', { owners: ['o'], slots: 1 })!;
     f.a.heartbeat(again);
     expect(f.a.pull(again)!.claim.jobId).toBe('job2');
+  });
+
+  it.each(['pull', 'direct claim'])('frees a live worker slot for %s after its leader expires', mode => {
+    const f = fixture();
+    const worker = f.b.join('worker', { owners: ['o'], slots: 1 })!;
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.b.heartbeat(worker, { capacity: { hostId: 'worker-host', sampledAtMs: 1_000,
+      ramBytes: 8 * 1024 ** 3, slots: 1, held: null } });
+    f.a.enqueue('job1', { owner: 'o' });
+    f.a.enqueue('job2', { owner: 'o' });
+    const first = f.a.claim(leader, worker, 'job1')!;
+    const host = (now: number) => nodeCapacityView(f.a.snapshot(), now).find(h => h.hostId === 'worker-host');
+    expect(host(1_000)).toMatchObject({ running: 1, freeSlots: 0 });
+    expect(f.a.jobOutcome('job1', 'o')).toEqual({ state: 'running', claimedBy: 'worker' });
+
+    f.advance(20);
+    expect(host(1_020)).toMatchObject({ running: 0, freeSlots: 1 });
+    expect(f.a.jobOutcome('job1', 'o')).toEqual({ state: 'running' });
+    const nextLeader = f.b.heartbeat(f.bob)!.leader!;
+    expect(nextLeader.token).toBeGreaterThan(leader.token);
+    expect(f.a.plan()).toEqual([{ jobId: 'job2', owner: 'o', nodeId: 'worker' }]);
+    const next = mode === 'pull' ? f.b.pull(worker)?.claim : f.b.claim(nextLeader, worker, 'job2');
+    expect(next).toMatchObject({ jobId: 'job2', leaderToken: nextLeader.token });
+    expect(host(1_020)).toMatchObject({ running: 1, freeSlots: 0 });
+    expect(f.b.complete(first, 'late')).toBe(false);
   });
 });
 

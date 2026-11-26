@@ -353,8 +353,8 @@ export class DriveNodes implements QueueV1 {
           !this.liveNode(state, worker, now)) return null;
       const node = state.nodes.find(n => sameSession(n, worker))!;
       if (!nodeCanAcceptWork(node, now)) return null;
-      const active = state.jobs.filter(j => j.state === 'running' && j.claim &&
-        j.claim.expiresAt > now && j.claim.nodeId === worker.nodeId && j.claim.session === worker.session).length;
+      const active = state.jobs.filter(j => j.claim && sameSession(j.claim, worker) &&
+        actionableClaim(state, j, now)).length;
       if (node.slots !== undefined && active >= node.slots) return null;
       if (state.pool && !nodeCapacityView(state, now).some(h => h.eligibleNodeIds.includes(node.nodeId) && (h.freeSlots ?? 0) > 0)) return null;
       const job = state.jobs.find(j => j.id === jobId);
