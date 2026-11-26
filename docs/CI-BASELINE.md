@@ -511,6 +511,32 @@ job-memory, lifecycle (`started`/`exited`), aggregate
 unparsed: `exited` lines fire on ordinary test failures and on the
 stop-others SIGTERM cascade, so they can never be runner identities.
 
+The per-OS fast gates -- `fast-windows` and `fast-macos` in `ci.yml` --
+run `.github/scripts/ci-fast-run.mjs` with `CI_FAST_BAIL=1`, so the
+runner captures each test command's output instead of echoing it: a
+failing shard reaches the job log as an optional
+`::error file=<file>,line=<n>::<message>` annotation for the first
+located failure, `fast-gate tests failed: <file>, ...` naming every
+failed test file (or `fast-gate tests failed (no file name parsed)`
+when the failing command named none, e.g. a `node --test` TAP run),
+and the runner's exit marker. No vitest `FAIL`, TAP `not ok` or tsc
+line survives into those logs, so the analyzer attributes the step
+with the same `##[group]Run` tracking as the helper gates -- a step
+qualifies only when every script line invokes `ci-fast-run.mjs` -- and
+each file the summary names groups under `<file> > (fast-run)`. These
+are file-level test identities: the file's import closure and the
+vitest harness ambient set decide `touched`, and a green master module
+(`✓ file (N tests)` or any pass line inside the file) resolves a
+one-off flake like `(suite)` does.
+`fast-gate tests failed (no file name parsed)` stays unparsed -- the
+failing test is genuinely unknown -- while a step that fails before
+the summary prints (plan read, module load) groups under
+`.github/scripts/ci-fast-run.mjs > (fast-run)` with the workflow step,
+the `ci-fast-select` plan producer and the script's import closure as
+its closed inputs and no harness ambient set. A step whose own output
+carries vitest, TAP or tsc failure lines is the non-bail echo (the
+ubuntu fast gate) and stays with those parsers.
+
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit test pass on master's current run produces

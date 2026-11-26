@@ -1,0 +1,15 @@
+##[group]Run node .github/scripts/ci-fast-run.mjs
+node .github/scripts/ci-fast-run.mjs
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+node:fs:440
+    return binding.readFileUtf8(path, stringToFlags(options.flag));
+                   ^
+
+Error: ENOENT: no such file or directory, open '/home/runner/work/_temp/fast-gate-plan.json'
+    at readFileSync (node:fs:440:20)
+    at main (file:///home/runner/work/repo/repo/.github/scripts/ci-fast-run.mjs:139:29)
+    at file:///home/runner/work/repo/repo/.github/scripts/ci-fast-run.mjs:164:34
+
+Node.js v22.22.3
+##[error]Process completed with exit code 1.
