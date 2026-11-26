@@ -2,7 +2,7 @@ import { act, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LaneAllowanceRow, LaneAllowanceSnapshot } from '../../../../core/usage/lane-allowance.js';
 import { apiGet } from '../../../data/client.js';
-import { LaneAllowanceCard, LaneAllowanceCards } from './LaneAllowanceCards.js';
+import { LaneAllowanceCard, LaneAllowanceCards, PoolAllowanceBar } from './LaneAllowanceCards.js';
 
 vi.mock('../../../data/client.js', () => ({ apiGet: vi.fn() }));
 let poll: (() => void) | null = null;
@@ -22,6 +22,27 @@ const part = (meter: HTMLElement, name: string) => meter.querySelector<HTMLEleme
 afterEach(() => { vi.resetAllMocks(); poll = null; });
 
 describe('lane allowance card bar', () => {
+  it('renders owner pools with their provider mark and keeps unmeasured quota hatched', () => {
+    const lanes = [row({ lane: 'agy', label: 'Google AI Ultra · Antigravity',
+      measuredAt: null, used: null, limit: null, left: null, usedPct: null, freshness: 'unknown',
+      resource: { source: null, sourceTier: null, expiresAt: null, burnPerHour: null, projectedUnused: null },
+    })];
+    const { container } = render(<PoolAllowanceBar lanes={lanes} expanded now={now} />);
+    expect(screen.getByRole('meter', { name: 'Google AI Ultra · Antigravity used' })).toHaveAttribute('data-unread', 'true');
+    expect(container.querySelector('[data-provider="gemini"]')).toBeInTheDocument();
+    expect(screen.getByText(/Usage unknown · .*Source unknown · Not measured/)).toBeVisible();
+  });
+  it('renders a custom provider fallback and the measured usage in both resource views', () => {
+    const custom = row({ lane: 'custom:studio', label: 'Studio agents',
+      resource: { provider: 'Example AI', source: 'cli-status', sourceTier: 'official',
+        expiresAt: null, burnPerHour: 2, projectedUnused: 36 },
+    });
+    const { container } = render(<><PoolAllowanceBar lanes={[custom]} expanded now={now} />
+      <ul><LaneAllowanceCard row={custom} now={now} /></ul></>);
+    expect(screen.getAllByRole('meter', { name: 'Studio agents used' })).toHaveLength(2);
+    expect(container.querySelectorAll('[data-provider="unknown"]')).toHaveLength(2);
+    expect(screen.getAllByText(/cli-status/)).toHaveLength(2);
+  });
   it('draws the measured share on the shared bar, named for the lane, beside its provider mark', () => {
     render(<LaneAllowanceCard row={row()} now={now} />);
     const meter = screen.getByRole('meter', { name: 'Claude used' });

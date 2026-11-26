@@ -4,7 +4,9 @@ import { postureEvidence } from '../queue/route-explain.js';
 import { readPublishedDevinWeekly, type DevinWeeklyCapacity } from '../devin/weekly-capacity.js';
 import { parseResourceLiveSidecar, readResourceLiveFile, readResourceHistoryFile } from './resource-live/store.js';
 import { projectLaneHistory } from './resource-live/history.js';
-import { DEVIN_FLASH_EXPIRES_AT, RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_STALE_MS, type LaneHistory, type ResourceLiveUnit } from './resource-live/types.js';
+import { planBurnDown } from './resource-live/burn-down.js';
+import { readCustomResources, type CustomResource } from './resource-live/custom.js';
+import { DEVIN_FLASH_EXPIRES_AT, RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_STALE_MS, type LaneHistory, type ResourceLiveTier, type ResourceLiveUnit } from './resource-live/types.js';
 
 type Posture = NonNullable<Awaited<ReturnType<typeof postureEvidence>>>;
 export interface LaneAllowanceInputs {
@@ -12,6 +14,7 @@ export interface LaneAllowanceInputs {
   history?: unknown;
   posture?: Posture | null;
   weekly?: DevinWeeklyCapacity | null;
+  custom?: readonly CustomResource[];
 }
 export interface LaneAllowanceRow {
   lane: string; label: string; used: number | null; limit: number | null; left: number | null;
@@ -22,6 +25,8 @@ export interface LaneAllowanceRow {
   posture: 'burn' | 'balanced' | 'preserve' | 'unknown'; postureReason: string | null;
   costClass: 'included' | 'metered' | 'api-credit' | 'unknown'; projectedUnusedPct: number | null;
   history: LaneHistory | null; reason: string | null;
+  resource?: { source: string | null; sourceTier: ResourceLiveTier | null; expiresAt: string | null;
+    burnPerHour: number | null; projectedUnused: number | null; provider?: string };
   devin: { weeklyUsedAcu: number | null; weeklyAllowanceAcu: number | null; inFlightReservations: number | null;
     preview: { models: string[]; expiresAt: string; expired: boolean; free: boolean | null;
       evidence?: { observedAt: string; accountId: string; model: string } } | null } | null;
@@ -35,12 +40,15 @@ const fresh = (at: string | null | undefined, now: number): boolean => {
 };
 
 export function projectLaneAllowance(inputs: LaneAllowanceInputs, nowMs: number): LaneAllowanceSnapshot {
-  const readings = parseResourceLiveSidecar(inputs.resourceLive).readings;
+  const catalog = [...RESOURCE_LIVE_ALLOWANCES, ...(inputs.custom ?? [])];
+  const { readings, history } = parseResourceLiveSidecar(inputs.resourceLive, inputs.custom);
+  const plan = planBurnDown(readings, history, nowMs);
   const histories = projectLaneHistory(inputs.history, nowMs);
-  const names = new Set([...RESOURCE_LIVE_ALLOWANCES.map(a => a.lane).filter((n): n is NonNullable<typeof n> => n !== null), ...Object.keys(inputs.posture?.lanes ?? {})]);
+  const names = new Set([...catalog.map(a => a.lane ?? a.id), ...Object.keys(inputs.posture?.lanes ?? {})]);
   const lanes = [...names].map((lane): LaneAllowanceRow => {
-    const allowance = RESOURCE_LIVE_ALLOWANCES.find(a => a.lane === lane);
+    const allowance = catalog.find(a => (a.lane ?? a.id) === lane);
     const reading = readings.find(r => r.id === allowance?.id);
+    const projection = plan.allowances.find(r => r.id === allowance?.id);
     const weekly = lane === 'devin' ? inputs.weekly : null;
     const useWeekly = weekly != null && weekly.state !== 'unmeasured';
     const scope = useWeekly ? weekly : reading;
@@ -88,13 +96,22 @@ export function projectLaneAllowance(inputs: LaneAllowanceInputs, nowMs: number)
       ? { observedAt: previewReading.observed_at!, accountId: previewReading.account_id, model: previewReading.model } : undefined;
     const free = expired ? false : previewEvidence && p?.freePreview !== false ? true : null;
     return { lane, label: allowance?.label ?? lane, used, limit, unit,
+      ...(allowance ? { resource: {
+        ...('custom' in allowance ? { provider: allowance.custom.provider } : {}),
+        source: measured ? (useWeekly ? weekly.source : reading?.source ?? null) : null,
+        sourceTier: measured ? (useWeekly ? 'official' : reading?.source_tier ?? null) : null,
+        expiresAt: reading?.expires_at ?? allowance.expires_at,
+        burnPerHour: measured && !useWeekly && !stale ? projection?.observed_rate_per_hour ?? null : null,
+        projectedUnused: measured && !useWeekly && !stale ? projection?.projected_unused ?? null : null,
+      } } : {}),
       left: used !== null && limit !== null ? Math.max(0, limit - used) : null,
       usedPct: used !== null && limit !== null && limit > 0 ? used / limit * 100 : null,
       resetAt, resetsInHours: Number.isFinite(reset) ? Math.max(0, (reset - nowMs) / 3_600_000) : null,
       windowStart: measured && windowStart !== undefined && Number.isFinite(reset) && Date.parse(windowStart) < reset ? windowStart : null,
       measuredAt, ageSeconds, freshness: future ? 'invalid-future' : !measured ? 'unknown' : stale ? 'stale' : 'live', posture,
       postureReason: posture === 'unknown' ? 'posture-unmeasured' : p?.postureReason ?? 'posture-unmeasured',
-      costClass: measured && !stale && unit === 'usd' ? 'api-credit'
+      costClass: allowance && 'custom' in allowance && allowance.custom.kind === 'metered' ? 'metered'
+        : measured && !stale && unit === 'usd' ? 'api-credit'
         : p?.costClass === 'included' || p?.costClass === 'metered' ? p.costClass : 'unknown',
       projectedUnusedPct: posture === 'unknown' ? null : p?.projectedUnusedPct ?? null, history: histories[allowance?.sensor_lane ?? lane] ?? null,
       reason: future ? 'invalid-future' : !measured ? 'reading-missing' : stale ? 'reading-stale' : used === null || limit === null ? 'reading-incomplete' : !Number.isFinite(reset) ? 'reset-unknown' : reset <= nowMs ? 'reset-passed' : null,
@@ -109,7 +126,7 @@ export function projectLaneAllowance(inputs: LaneAllowanceInputs, nowMs: number)
 export async function readLaneAllowance(deps: { runsDir?: string; weeklyFile?: string; nowMs?: number } = {}): Promise<LaneAllowanceSnapshot> {
   const runs = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const now = deps.nowMs ?? Date.now();
-  const [resourceLive, history, posture] = await Promise.all([readResourceLiveFile(runs), readResourceHistoryFile(runs), postureEvidence(runs)]);
+  const [resourceLive, history, posture, custom] = await Promise.all([readResourceLiveFile(runs), readResourceHistoryFile(runs), postureEvidence(runs), readCustomResources()]);
   const weekly = readPublishedDevinWeekly(now, deps.weeklyFile);
-  return projectLaneAllowance({ resourceLive, history, posture, weekly }, now);
+  return projectLaneAllowance({ resourceLive, history, posture, weekly, custom }, now);
 }

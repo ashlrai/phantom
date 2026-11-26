@@ -45,6 +45,108 @@ prove that no provider work occurred. Native Windows workers report
 `worker-kill-cancellation-unsupported` before launch because owned cancellation
 is not implemented there; the local HTTP worker remains supported.
 
+## Live resource inventory and evidence
+
+`phm usage resource-live --json` collects readings into
+`<runs>/state/resource-live.json`; `phm usage resource-live --show --json`
+reads the last snapshot. The Resources sidebar and bar show the measured
+balance, reset or expiry, source and freshness. Burn rate and projected waste
+stay unknown until there are at least two observations of the same deadline.
+The burn-down order is advisory: measured unused capacity goes first by
+deadline; a measured Antigravity window or promotional grant with a deadline
+and capacity left can be prioritized before a burn rate is available.
+This does not enroll a worker, authorize overage, or reserve spend.
+
+| Resource | Evidence used by Phantom | Provider source and limitations |
+| --- | --- | --- |
+| Claude Max (Code CLI and desktop) | Official weekly status observation, then recorded own-call or signed-in display | [Claude Code status-line rate limits](https://code.claude.com/docs/en/statusline) and [Claude Code interactive commands](https://code.claude.com/docs/en/interactive-mode). Desktop shares Max, not a second allowance. |
+| Claude promotional API credit | Official cost inputs combined with an explicitly configured grant; alternatively recorded grant or agent check | [Anthropic Usage and Cost API](https://platform.claude.com/docs/en/build-with-claude/usage-cost-api) and the [credit balance console](https://platform.claude.com/settings/billing). Costs do not enumerate grants; only configure `usage.liveSources.anthropicCost.expiresAt` with a verified expiry, matching grant scope and window start. A grant-store cutoff may be conservative when only an expiry date is known. |
+| ChatGPT / Codex personal | Official native App Server reading on an explicitly configured pool home, then capacity receipts or signed-in display | [Codex App Server account limits](https://developers.openai.com/codex/app-server#account), [Codex slash commands](https://developers.openai.com/codex/cli/slash-commands) (`/status`). Not the OpenAI API balance. |
+| OpenAI promotional API credit | Agent check of the signed-in credit-grant view | [OpenAI organization usage and costs](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage) reports consumption, not promotional grant expiry. Verify the grant in [OpenAI billing](https://platform.openai.com/settings/organization/billing/credit-grants); do not use undocumented billing endpoints or infer grant balance from organization spend. |
+| OpenAI Dot (iMessage) | Agent check only when a numeric quota is actually visible | No documented quota source established. Inspect the owner-approved Dot conversation's own quota display; do not send messages or use Codex's quota as a proxy. |
+| Google AI Ultra (personal Antigravity) | Agent captures the official interactive Antigravity CLI quota | [Antigravity `/usage` (`/quota`)](https://antigravity.google/docs/cli/commands/usage) refreshes from the backend and displays five-hour and weekly windows per model group. Record the five-hour Gemini group window applicable to the enrolled model and actual reset displayed; do not derive a reset from the clock. [`/credits`](https://antigravity.google/docs/cli/commands/credits) is a separate balance. |
+| Google Workspace Business (Antigravity) | Separate agent check of the signed-in Workspace starter quota | [Antigravity for Workspace](https://antigravity.google/docs/workspace) describes starter access but not a paid-plan refresh entitlement. Do not copy the Ultra window to this account. |
+| Cursor | Agent check of personal usage and cycle | [Cursor Dashboard](https://cursor.com/dashboard?tab=usage); the [Cursor Admin API](https://cursor.com/docs/account/teams/admin-api) documents team usage and is not proof of this personal entitlement. |
+| Grok Bot desktop | Agent check of the separate Bot allowance and reset | [Grok Bot FAQ](https://docs.x.ai/grok-bot/faq). Do not copy the Grok Build allowance or assume a link grants a Bot balance. |
+| Devin Cloud / Devin CLI SWE-2 Flash | Official org usage and sessions, and a separate native model catalog reading for the CLI preview | [Devin API overview](https://docs.devin.ai/api-reference/overview) and [Devin CLI models](https://docs.devin.ai/cli/models). Preview availability is not a Cloud ACU balance. |
+| Z.ai GLM Coding Lite | Derived from the lane's own recorded calls; signed-in page fallback | [GLM Coding Plan](https://docs.z.ai/devpack/overview) and [subscription management](https://z.ai/manage-apikey/subscription). |
+| LM Studio and Ollama | Official loopback model inventories | [LM Studio `GET /v1/models`](https://lmstudio.ai/docs/developer/openai-compat/models) and [Ollama `GET /api/tags`](https://docs.ollama.com/api/tags). Model counts, not token caps; no request generates model output. |
+
+For an agent check, give the operator or a designated agent one read-only task:
+inspect only the named, already signed-in usage surface (or use the
+[desktop operator's read action](DESKTOP-OPERATOR.md)), then record only the
+measured allowance and UTC observation time. Don't sign in, switch the active
+dispatch account, send messages, capture credentials or make purchases. Stop if
+the account, model group or numbers cannot be established. A quota shown as
+percent remaining is recorded as `100 - remaining` with limit `100`.
+
+Write observations atomically to `<runs>/state/resource-evidence.json` as
+`{"schema":"resource-evidence.v1","readings":{…}}`, keyed by `antigravity`,
+`google-workspace`, `dot`, `cursor`, `grok-bot`, `claude-api`, or `openai-api`.
+Each reading contains only `used`, `limit`, `observed_at`, and `reset_at`
+(UTC ISO timestamp or null for unknown reset). API credits use USD and require
+`expires_at`; all other keys use percent. Missing, expired, future or
+over-15-minute-old agent-check evidence is not used as a current measurement.
+Refresh from the actual surface rather than changing only the timestamp.
+For Antigravity's five-hour window, record `window_start` alongside the reset
+when the surface identifies that window (the reset minus five hours). A
+weekly window must not be recorded as a five-hour window.
+There is no automatic desktop or browser session launch.
+
+### Custom resources
+
+Add or remove entries in `$ASHLR_HOME/custom-resources.json` (default
+`~/.ashlr/custom-resources.json`, up to 32 entries). For example:
+
+```json
+{
+  "schema": "custom-resources.v1",
+  "resources": [{
+    "id": "studio",
+    "name": "Studio agents",
+    "provider": "Example AI",
+    "kind": "subscription",
+    "unit": "points",
+    "limit": 100,
+    "window_hours": 5,
+    "source": "cli-status"
+  }]
+}
+```
+
+Kinds are `subscription`, `promo-credit`, `metered`, `local`, and `bot`.
+Provider names resolve to a bundled logo when known or a monogram otherwise.
+Supported units are `percent`, `acu`, `usd`, `points`, and `models`.
+Optional `limit`, `window_hours`, `reset_at`, and `expires_at` describe
+the allowance; window length alone never implies a reset timestamp.
+
+An operator-controlled adapter runs the official API or CLI and writes an
+observation, or an agent check supplies one when no official source exists.
+Choose `official-endpoint`, `cli-status`, or `agent-check` as the source.
+Using the example registry, add this entry to the existing evidence readings:
+
+```json
+{
+  "custom:studio": {
+    "source": "cli-status",
+    "used": 21,
+    "limit": 100,
+    "observed_at": "2026-11-25T15:15:00.000Z",
+    "reset_at": "2026-11-25T20:00:00.000Z"
+  }
+}
+```
+
+Use current timestamps and include `expires_at` on promotional credit if
+not set in the registry. Missing or rejected observations keep usage unknown.
+Run `phm usage resource-live --force` to refresh the sidecar without waiting
+for the normal poll. The registry is read-only to Phantom: it does not
+execute command strings, fetch configured URLs, or store adapter credentials.
+Registered resources appear in both Resources views and the burn-down plan.
+Metered entries are held unless marked `metered_opt_in: true`, and still rank
+as reserve when opted in. Registration alone does not enroll a dispatch
+executor or authorize purchases.
+
 ## Account and worker capacity
 
 Pool membership has no fixed account or worker count ceiling. All enrolled
