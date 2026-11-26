@@ -469,7 +469,9 @@ It also reduces measured runnable counts to zero, including in fleet totals
 that read older capacity documents. Unmeasured harness counts remain null.
 Kernel pressure above normal or swap growth stop placements and reduce
 measured runnable counts to zero in fleet totals. Both reads honor direct
-measurements and recorded limiter labels. Without a known stop, a node needs
+measurements and recorded limiter labels. The capacity sample computes and
+reports the swapout rate without rounding before applying the growth threshold.
+Without a known stop, a node needs
 measured normal pressure and measured memory headroom to accept placements
 or contribute runnable counts to fleet totals. Missing memory evidence
 produces `node-unmeasured` in the placement plan. A cloud

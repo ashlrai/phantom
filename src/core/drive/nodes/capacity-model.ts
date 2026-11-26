@@ -98,7 +98,7 @@ function rates(s: NodeSnapshot, prev: NodeCapacityDoc | null): { swapoutsPerMin:
   const minutes = elapsed / 60_000;
   const outs = s.swap.swapoutsTotal, prevOuts = prev.swap.swapouts_total;
   // A counter that went backwards means a reboot: no rate rather than a negative one.
-  const swapoutsPerMin = finite(outs) && finite(prevOuts) && outs >= prevOuts ? round((outs - prevOuts) / minutes) : null;
+  const swapoutsPerMin = finite(outs) && finite(prevOuts) && outs >= prevOuts ? (outs - prevOuts) * 60_000 / elapsed : null;
   const used = s.swap.usedBytes, prevUsed = prev.swap.used_bytes;
   const growthPerMin = finite(used) && finite(prevUsed) ? Math.round((used - prevUsed) / minutes) : null;
   return { swapoutsPerMin, growthPerMin };
