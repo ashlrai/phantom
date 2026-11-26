@@ -269,6 +269,13 @@ function starvedAction(lane: AutopilotLane, lanes: AutopilotLane[], global: Flee
     // A hold lets existing work drain. The candidate must be able to bring
     // running strictly below the cap, even after a global cap reduction.
     const slotsNeeded = global.running - global.cap + 1;
+    const heldRunning = new Map(lanes.flatMap(row =>
+      row.held && row.running !== null ? [[row.lane, row.running] as const] : []));
+    const draining = [...heldRunning.values()].reduce((sum, running) => sum + running, 0);
+    if (draining > 0 && draining >= slotsNeeded) {
+      return { kind: 'no-op', reason: 'capacity-bound',
+        detail: `'${lane.lane}' is waiting at the fleet cap. Running jobs on held lanes can free a slot as they finish.` };
+    }
     const holdable = lanes
       .filter((row) => row.lane !== lane.lane && !row.held && row.running !== null && row.running >= slotsNeeded &&
         (row.target ?? 0) > 0 && (row.ready ?? 0) > (row.target ?? 0) * AUTOPILOT_OVER_DEEP_FACTOR)
