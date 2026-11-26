@@ -632,6 +632,24 @@ describe('foldDecisionOutcomes', () => {
     });
   });
 
+  it('joins only verdicts dated at or after each job’s latest decision', () => {
+    const market = [
+      decision('RQ-REQUEUED', t - 200),
+      decision('RQ-REQUEUED', t - 100),
+      decision('RQ-BOUNDARY', t - 50),
+      decision('RQ-LATER', t - 40),
+    ].join('\n');
+    const jobs = [
+      outcome('RQ-REQUEUED', { phase: 'CLOSED', closedAt: iso(now - 100_001) }),
+      outcome('RQ-BOUNDARY', { mergedAt: iso(now - 50_000), revertedAt: iso(now - 50_001) }),
+      outcome('RQ-LATER', { mergedAt: iso(now - 39_999), revertedAt: iso(now - 39_998) }),
+    ].join('\n');
+
+    expect(foldDecisionOutcomes(market, jobs, now, 24).overridden).toEqual({
+      decided: 3, known: 2, merged: 2, unmerged: 0, reverted: 1, unresolved: 1,
+    });
+  });
+
   it('says when there is no market journal', () => {
     expect(foldDecisionOutcomes(null, outcome('RQ-A'), now, 24)).toMatchObject({
       available: false, jobsAvailable: true, decided: 0,

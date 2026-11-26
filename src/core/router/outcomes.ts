@@ -1660,8 +1660,10 @@ export interface RouterOutcomeFold {
 }
 
 export interface RouterOutcomeFoldOptions {
-  /** Require dated jobs-ledger merge and revert verdicts at or before this time. */
+  /** Require dated jobs-ledger merge, close and revert verdicts at or before this time. */
   verdictAsOfMs?: number;
+  /** Inclusive lower bound on dated jobs-ledger verdicts for a job. */
+  verdictSinceMsFor?: (job: string) => number | undefined;
   /** Resolve the advisory pass^k score for a (lane, model) pair; absent or null stays null. */
   passkFor?: (lane: string, model: string) => number | null;
   /**
@@ -1956,12 +1958,14 @@ function foldRouterOutcomesWithCiCoverage(
         }
       }
     }
+    const verdictSince = opts.verdictSinceMsFor?.(j);
     const state = mergePhase(r);
     const merged = state === 'MERGED' ? true : state === 'CLOSED' ? false : typeof r['merged'] === 'boolean' ? r['merged'] : null;
     if (merged !== null) {
       const verdictAt = ledgerEventTs(r, merged ? 'MERGED' : 'CLOSED');
       const ts = verdictAt ?? Number.NEGATIVE_INFINITY;
-      if ((opts.verdictAsOfMs === undefined || (verdictAt !== null && verdictAt <= opts.verdictAsOfMs))
+      if ((verdictSince === undefined || (verdictAt !== null && verdictAt >= verdictSince))
+        && (opts.verdictAsOfMs === undefined || (verdictAt !== null && verdictAt <= opts.verdictAsOfMs))
         && ts >= (mergedAt.get(j) ?? Number.NEGATIVE_INFINITY)) {
         o.merged = merged;
         mergedAt.set(j, ts);
@@ -1977,9 +1981,10 @@ function foldRouterOutcomesWithCiCoverage(
     // Sticky-true, matching metrics-ingest: any recorded revert evidence wins
     // and a later reverted:false cannot undo it; explicit false only stands
     // when no positive evidence exists anywhere in the job's rows.
-    const revertAt = opts.verdictAsOfMs === undefined ? null
+    const revertAt = opts.verdictAsOfMs === undefined && verdictSince === undefined ? null
       : parseLedgerTs(r['reverted_at']) ?? parseLedgerTs(r['revertedAt']) ?? ledgerEventTs(r, null);
-    if (o.reverted !== true && (opts.verdictAsOfMs === undefined
+    if (o.reverted !== true && (verdictSince === undefined || (revertAt !== null && revertAt >= verdictSince))
+      && (opts.verdictAsOfMs === undefined
       || (revertAt !== null && revertAt <= opts.verdictAsOfMs))) {
       if (r['reverted'] === true || hasRevertStamp(r) || hasRevertName(r, EVENT_NAME_KEYS) || hasRevertName(r, PHASE_KEYS)) {
         o.reverted = true;

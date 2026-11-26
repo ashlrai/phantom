@@ -698,7 +698,8 @@ const tallyOutcome = (
  * outcome correlation for market routing. Each waiting job counts once, by
  * its latest in-window decision (the same collapse foldMarketOverrides
  * uses), then joins the job id to the newest recorded outcome — merged,
- * closed-unmerged or unresolved — through the router outcome fold, so revert
+ * closed-unmerged or unresolved — dated from that decision through report
+ * time via the router outcome fold, so revert
  * evidence keeps the same sticky-true semantics as `phm router outcomes`.
  * Groups partition the decided jobs: `hinted` chose the declared preferred
  * lane, `overridden` recorded a well-formed lane_override, `open` chose a
@@ -733,9 +734,16 @@ export function foldDecisionOutcomes(
     byClass: {},
   };
   if (marketJsonl === null) return report;
+  const decisions = latestRouteDecisions(marketJsonl, nowMs, windowHours);
   const outcomes = new Map<string, { merged: boolean | null; reverted: boolean | null }>();
-  if (jobsJsonl !== null) {
-    for (const outcome of foldRouterOutcomes(jobsJsonl, { verdictAsOfMs: nowMs }).outcomes) {
+  if (jobsJsonl !== null && decisions.size > 0) {
+    for (const outcome of foldRouterOutcomes(jobsJsonl, {
+      verdictAsOfMs: nowMs,
+      verdictSinceMsFor: job => {
+        const decision = decisions.get(job);
+        return decision === undefined ? undefined : decision.ts * 1000;
+      },
+    }).outcomes) {
       outcomes.set(outcome.job_id, { merged: outcome.merged, reverted: outcome.reverted });
     }
   }
@@ -745,7 +753,7 @@ export function foldDecisionOutcomes(
     const tally = report.byClass[key] ??= emptyOutcomeTally();
     tallyOutcome(tally, outcome);
   };
-  for (const [job, decision] of latestRouteDecisions(marketJsonl, nowMs, windowHours)) {
+  for (const [job, decision] of decisions) {
     report.decided++;
     const outcome = outcomes.get(job);
     const group = decision.chosen === null
