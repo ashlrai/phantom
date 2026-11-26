@@ -229,6 +229,83 @@ it('leaves an unparseable requirements cell byte-identical', async () => {
   expect((await ready())[0]).toBe(row('RQ-PHX-BADSPE1', 'devin', 'work', 'phantom', '\tnot-json'));
 });
 
+it('moves a spec-less row by its router-queue envelope and writes the resolved spec', async () => {
+  await writeFile(join(queueDir, 'router-queue.md'),
+    '- READY phantom RQ-PHX-ENV001 (preferred_lane=codex-personal needs=git|gh): envelope job\n');
+  await writeFile(readyPath, `${row('RQ-PHX-ENV001', 'devin')}\n`);
+  const report = await reassignQueuedJobs({ fromLane: 'codex-personal', lane: 'claude', apply: true }, { runsDir, ...opts });
+  expect(report.moved).toEqual([{ id: 'RQ-PHX-ENV001', fromLane: 'codex-personal', toLane: 'claude', fromTier: 'work', toTier: 'work' }]);
+  // The envelope's other fields ride along; without the cell the next tick
+  // would materialize preferred_lane=codex-personal and undo the move.
+  expect((await ready())[0]).toBe(`${row('RQ-PHX-ENV001', 'claude')}\t{"preferred_lane":"claude","needs":["git","gh"]}`);
+});
+
+it('a lane column that already says the target does not mask an envelope pinning elsewhere', async () => {
+  await writeFile(join(queueDir, 'router-queue.md'),
+    '- READY phantom RQ-PHX-ENV002 (preferred_lane=claude): pinned elsewhere\n');
+  await writeFile(readyPath, `${row('RQ-PHX-ENV002', 'devin')}\n`);
+  const report = await reassignQueuedJobs({ job: 'RQ-PHX-ENV002', lane: 'devin', apply: true }, { runsDir, ...opts });
+  expect(report.moved).toEqual([{ id: 'RQ-PHX-ENV002', fromLane: 'claude', toLane: 'devin', fromTier: 'work', toTier: 'work' }]);
+  expect((await ready())[0]).toBe(`${row('RQ-PHX-ENV002', 'devin')}\t{"preferred_lane":"devin"}`);
+});
+
+it('from-lane mode drains only the rows whose envelope resolves to that lane', async () => {
+  await writeFile(join(queueDir, 'router-queue.md'), [
+    '- READY phantom RQ-PHX-ENV006 (preferred_lane=codex-personal): pinned work',
+    '- READY phantom RQ-PHX-ENV007 (lane=devin): lane attr fallback',
+    '- READY phantom RQ-PHX-ENV008 (): no lane named, open',
+  ].join('\n') + '\n');
+  await writeFile(readyPath, [
+    row('RQ-PHX-ENV006', 'claude'),
+    row('RQ-PHX-ENV007', 'claude'),
+    row('RQ-PHX-ENV008', 'claude'),
+    row('RQ-PHX-PLAIN09', 'claude'),
+  ].join('\n') + '\n');
+  const report = await reassignQueuedJobs({ fromLane: 'codex-personal', lane: 'devin', apply: true }, { runsDir, ...opts });
+  expect(report.moved).toEqual([{ id: 'RQ-PHX-ENV006', fromLane: 'codex-personal', toLane: 'devin', fromTier: 'work', toTier: 'work' }]);
+  const after = await ready();
+  expect(after[0]).toBe(`${row('RQ-PHX-ENV006', 'devin')}\t{"preferred_lane":"devin"}`);
+  expect(after[1]).toBe(row('RQ-PHX-ENV007', 'claude'));
+  expect(after[2]).toBe(row('RQ-PHX-ENV008', 'claude'));
+  expect(after[3]).toBe(row('RQ-PHX-PLAIN09', 'claude'));
+});
+
+it('an envelope naming no lane leaves the column as the hint and pins the target', async () => {
+  await writeFile(join(queueDir, 'router-queue.md'),
+    '- READY phantom RQ-PHX-ENV003 (P2): no lane named\n');
+  await writeFile(readyPath, `${row('RQ-PHX-ENV003', 'codex-personal')}\n`);
+  const report = await reassignQueuedJobs({ fromLane: 'codex-personal', lane: 'devin', apply: true }, { runsDir, ...opts });
+  expect(report.moved).toEqual([{ id: 'RQ-PHX-ENV003', fromLane: 'codex-personal', toLane: 'devin', fromTier: 'work', toTier: 'work' }]);
+  expect((await ready())[0]).toBe(`${row('RQ-PHX-ENV003', 'devin')}\t{"preferred_lane":"devin","priority":"P2"}`);
+});
+
+it('a malformed envelope leaves the spec-less row on its column', async () => {
+  await writeFile(join(queueDir, 'router-queue.md'),
+    '- READY phantom RQ-PHX-ENV004 (exclusive=maybe): malformed\n');
+  await writeFile(readyPath, `${row('RQ-PHX-ENV004', 'codex-personal')}\n`);
+  const report = await reassignQueuedJobs({ job: 'RQ-PHX-ENV004', lane: 'devin', apply: true }, { runsDir, ...opts });
+  expect(report.moved.map((move) => move.id)).toEqual(['RQ-PHX-ENV004']);
+  expect((await ready())[0]).toBe(row('RQ-PHX-ENV004', 'devin'));
+});
+
+it('a parked row never resolves an envelope', async () => {
+  await writeFile(join(queueDir, 'router-queue.md'),
+    '- READY phantom RQ-PHX-PARKED33 (preferred_lane=codex-personal): parked\n');
+  const report = await reassignQueuedJobs({ fromLane: 'codex-personal', lane: 'devin', apply: true }, { runsDir, ...opts });
+  expect(report.moved.map((move) => move.id)).not.toContain('RQ-PHX-PARKED33');
+  expect(report.skipped.map((skip) => skip.id)).not.toContain('RQ-PHX-PARKED33');
+  expect((await ready())[3]).toBe(row('RQ-PHX-PARKED33', 'PARKED-BYHAND.codex-local'));
+});
+
+it('leaves a spec-less row spec-less when the envelope already names the target', async () => {
+  await writeFile(join(queueDir, 'router-queue.md'),
+    '- READY phantom RQ-PHX-ENV005 (preferred_lane=devin): already there\n');
+  await writeFile(readyPath, `${row('RQ-PHX-ENV005', 'codex-personal')}\n`);
+  const report = await reassignQueuedJobs({ job: 'RQ-PHX-ENV005', lane: 'devin', apply: true }, { runsDir, ...opts });
+  expect(report.moved).toEqual([{ id: 'RQ-PHX-ENV005', fromLane: 'devin', toLane: 'devin', fromTier: 'work', toTier: 'work' }]);
+  expect((await ready())[0]).toBe(row('RQ-PHX-ENV005', 'devin'));
+});
+
 it('throws ReassignError with name and status', async () => {
   const error = await reassignQueuedJobs({ job: 'RQ-PHX-NOPE9999', lane: 'devin', apply: false }, { runsDir, ...opts }).catch((e) => e);
   expect(error).toBeInstanceOf(ReassignError);
