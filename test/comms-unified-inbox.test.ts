@@ -2976,6 +2976,76 @@ describe('readUnifiedInbox contains filter', () => {
   });
 });
 
+describe('readUnifiedInbox priority filter', () => {
+  it('keeps only items at the filtered urgency while source reports stay unfiltered', async () => {
+    postWork('flt-pri-p0', { priority: 'P0' });                    // high → now
+    postWork('flt-pri-p2', { ttl: 12 * 3_600_000 });                // info, expires in 12h → today
+    postWork('flt-pri-p3', { priority: 'P3' });                    // info, expires in 48h → this-week
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Rotate the deploy secret for the example app\n');  // blocking → now
+    recordTeammateText({ rowid: 93, handle: '+1555fake', text: 'status?' }, runsDir, new Date(now - 60_000));  // info → this-week
+
+    const all = await read();
+    expect(all.total).toBe(5);
+    const byId = new Map(all.items.map(i => [i.id, i]));
+    expect(byId.get('bus:flt-pri-p0')!.priority).toBe('now');
+    expect(byId.get('bus:flt-pri-p2')!.priority).toBe('today');
+    expect(byId.get('bus:flt-pri-p3')!.priority).toBe('this-week');
+    expect(byId.get('imessage:teammate-93')!.priority).toBe('this-week');
+    expect(all.items.find(i => i.source === 'needs-you')!.priority).toBe('now');
+
+    const nowOnly = await read({ filter: { priority: 'now' } });
+    expect(nowOnly.filter).toEqual({ priority: 'now' });
+    expect(nowOnly.items.map(i => i.source).sort()).toEqual(['bus', 'needs-you']);
+    expect(nowOnly.items.find(i => i.source === 'bus')!.id).toBe('bus:flt-pri-p0');
+    expect(nowOnly.items.every(i => i.priority === 'now')).toBe(true);
+    // Per-source reports stay the unfiltered store truth.
+    expect(nowOnly.sources.bus.pending).toBe(3);
+    expect(nowOnly.sources.imessage.pending).toBe(1);
+    expect(nowOnly.sources['needs-you'].pending).toBe(1);
+
+    const today = await read({ filter: { priority: 'today' } });
+    expect(today.items.map(i => i.id)).toEqual(['bus:flt-pri-p2']);
+
+    const week = await read({ filter: { priority: 'this-week' } });
+    expect(week.items.map(i => i.id).sort()).toEqual(['bus:flt-pri-p3', 'imessage:teammate-93']);
+
+    // 'whenever' is in the vocabulary but the urgency heuristic never assigns
+    // it in this projection — an honest empty match, not an error.
+    const whenever = await read({ filter: { priority: 'whenever' } });
+    expect(whenever.filter).toEqual({ priority: 'whenever' });
+    expect(whenever.total).toBe(0);
+    expect(whenever.items).toEqual([]);
+    expect(whenever.sources.bus.pending).toBe(3);
+  });
+
+  it('ANDs priority with the other view dimensions', async () => {
+    postWork('flt-pri-and-p0', { priority: 'P0' });   // bus: now
+    postWork('flt-pri-and-p2');                        // bus: this-week
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');  // needs-you: today (auto, warn)
+
+    const busNow = await read({ filter: { priority: 'now', source: 'bus' } });
+    expect(busNow.items.map(i => i.id)).toEqual(['bus:flt-pri-and-p0']);
+
+    // The needs-you line is 'today', so 'now' on its source is an honest empty.
+    const needsNow = await read({ filter: { priority: 'now', source: 'needs-you' } });
+    expect(needsNow.total).toBe(0);
+    expect(needsNow.items).toEqual([]);
+    expect(needsNow.sources['needs-you'].pending).toBe(1);
+
+    const needsToday = await read({ filter: { priority: 'today', source: 'needs-you' } });
+    expect(needsToday.items).toHaveLength(1);
+    expect(needsToday.items[0]!.source).toBe('needs-you');
+
+    const weekWork = await read({ filter: { priority: 'this-week', kind: 'bus-work' } });
+    expect(weekWork.items.map(i => i.id)).toEqual(['bus:flt-pri-and-p2']);
+
+    // priority ANDs with blocking like every other dimension.
+    const blockingNow = await read({ filter: { priority: 'now', blocking: true } });
+    expect(blockingNow.total).toBe(0);
+    expect(blockingNow.items).toEqual([]);
+  });
+});
+
 describe('phm comms inbox cli', () => {
   const setupCli = () => {
     const command = createCommsInboxCommand({ runsDir, busRoot });
@@ -3012,7 +3082,7 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--priority <now|today|this-week|whenever>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
     for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
@@ -3193,6 +3263,51 @@ describe('phm comms inbox cli', () => {
     expect(report.items).toEqual([]);
   });
 
+  it('filters the unified JSON view by --priority', async () => {
+    const { command, json, lines } = setupCli();
+    postWork('cli-pri-p0', { priority: 'P0' });
+    postWork('cli-pri-p2');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Rotate the deploy secret for the example app\n');
+
+    expect(await command(['--priority', 'now', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ priority: 'now' });
+    expect(report.items.map(i => i.source).sort()).toEqual(['bus', 'needs-you']);
+    expect(report.items.find(i => i.source === 'bus')!.id).toBe('bus:cli-pri-p0');
+    expect(report.items.every(i => i.priority === 'now')).toBe(true);
+    // The per-source counts stay the unfiltered store truth.
+    expect(report.sources.bus.pending).toBe(2);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    expect(await command(['--priority', 'this-week', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ priority: 'this-week' });
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-pri-p2']);
+
+    // 'whenever' is accepted vocabulary; the heuristic never assigns it, so
+    // the match is honestly empty rather than an error.
+    expect(await command(['--priority', 'whenever', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+
+    // --priority ANDs with the other view filters.
+    expect(await command(['--priority', 'now', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ priority: 'now', source: 'needs-you' });
+    expect(report.total).toBe(1);
+    expect(report.items[0]!.source).toBe('needs-you');
+    expect(await command(['--priority', 'this-week', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+
+    // The human footer labels the urgency verbatim like every other dimension.
+    expect(await command(['--priority', 'now'])).toBe(0);
+    expect(lines().join('\n')).toContain('2 pending matching priority=now');
+    expect(await command(['--priority', 'today'])).toBe(0);
+    expect(lines().at(-1)).toBe('Nothing pending matching priority=today.');
+  });
+
   it('filters the unified JSON view by --kind', async () => {
     const { command, json } = setupCli();
     postWork('cli-kind-work');
@@ -3273,6 +3388,9 @@ describe('phm comms inbox cli', () => {
     for (const args of [
       ['--source'], ['--source', 'bogus'], ['--source', 'bus', '--source', 'bus'],
       ['--severity'], ['--severity', 'P0'], ['--severity', 'warn', '--severity', 'info'],
+      ['--priority'], ['--priority', 'P0'], ['--priority', 'urgent'], ['--priority', 'NOW'],
+      ['--priority', 'now', '--priority', 'today'], ['--priority', '--json'], ['--json', '--priority'],
+      ['--priority', 'now', '--job'], ['--priority', 'read'],
       ['--blocking', '--blocking'], ['--json', '--source'], ['--source', '--json'],
       ['--source', 'read'], ['--blocking', 'true'],
       ['--job'], ['--job', ''], ['--job', '--json'], ['--job', 'bad job'],

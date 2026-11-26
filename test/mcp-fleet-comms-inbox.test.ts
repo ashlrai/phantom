@@ -32,6 +32,10 @@ describe('fleet comms inbox', () => {
       .toEqual({ limit: 50, filter: { kind: 'bus-handoff' } });
     expect(parseFleetCommsInboxArgs({ severity: 'high', blocking: true }))
       .toEqual({ limit: 50, filter: { severity: 'high', blocking: true } });
+    expect(parseFleetCommsInboxArgs({ priority: 'now' }))
+      .toEqual({ limit: 50, filter: { priority: 'now' } });
+    expect(parseFleetCommsInboxArgs({ priority: 'this-week' }))
+      .toEqual({ limit: 50, filter: { priority: 'this-week' } });
     expect(parseFleetCommsInboxArgs({ blocking: false }))
       .toEqual({ limit: 50, filter: { blocking: false } });
     expect(parseFleetCommsInboxArgs({ job: 'RQ-ABC-1' }))
@@ -42,14 +46,15 @@ describe('fleet comms inbox', () => {
       .toEqual({ limit: 50, filter: { before: 1735689600000 } });
     expect(parseFleetCommsInboxArgs({ contains: 'fake' }))
       .toEqual({ limit: 50, filter: { contains: 'fake' } });
-    expect(parseFleetCommsInboxArgs({ source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: '2h', before: '1h', contains: 'x', limit: 10 }))
-      .toEqual({ limit: 10, filter: { source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: expect.any(Number), before: expect.any(Number), contains: 'x' } });
+    expect(parseFleetCommsInboxArgs({ source: 'bus', kind: 'bus-work', severity: 'warn', priority: 'today', blocking: true, job: 'J1', since: '2h', before: '1h', contains: 'x', limit: 10 }))
+      .toEqual({ limit: 10, filter: { source: 'bus', kind: 'bus-work', severity: 'warn', priority: 'today', blocking: true, job: 'J1', since: expect.any(Number), before: expect.any(Number), contains: 'x' } });
   });
 
   it('rejects malformed filter values', () => {
     for (const bad of [
       { source: 'not-a-source' }, { source: 5 }, { kind: 'not-a-kind' }, { kind: 'BUS-WORK' }, { kind: 5 },
       { severity: 'critical' }, { severity: true },
+      { priority: 'P0' }, { priority: 'urgent' }, { priority: 'NOW' }, { priority: 5 }, { priority: true },
       { blocking: 'yes' }, { blocking: 1 }, { job: '' }, { job: 'has space' }, { job: 'x'.repeat(129) },
       { since: 'not-a-time' }, { since: '' }, { since: 1735689600000 },
       { before: 'not-a-time' }, { before: '' }, { before: 1735689600000 }, { before: true },
@@ -94,7 +99,7 @@ it('lists and routes the tool through the fleet server', async () => {
   const tool = (await client.listTools()).tools.find(tool => tool.name === 'fleet_comms_inbox');
   expect(tool).toBeDefined();
   expect(Object.keys((tool!.inputSchema as { properties: Record<string, unknown> }).properties))
-    .toEqual(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains']);
+    .toEqual(['limit', 'source', 'kind', 'severity', 'priority', 'blocking', 'job', 'since', 'before', 'contains']);
   const result = await client.callTool({ name: 'fleet_comms_inbox', arguments: { limit: 1 } });
   expect(JSON.parse((result.content as Array<{ text: string }>)[0].text)).toMatchObject({ items: [item], omitted: 2 });
   const filtered = await client.callTool({ name: 'fleet_comms_inbox',

@@ -8,7 +8,7 @@
  * empty view.
  */
 import {
-  isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource,
+  isUnifiedInboxKind, isUnifiedInboxPriority, isUnifiedInboxSeverity, isUnifiedInboxSource,
   UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_SOURCES, UNIFIED_INBOX_KINDS,
   type UnifiedInboxFilter,
 } from './unified-inbox.js';
@@ -20,7 +20,7 @@ export const UNIFIED_INBOX_QUERY_LIMIT_DEFAULT = 50;
 
 /** The query keys the read accepts — the CLI/MCP filter dimensions plus `limit`. */
 export const UNIFIED_INBOX_QUERY_PARAMS = [
-  'limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains',
+  'limit', 'source', 'kind', 'severity', 'priority', 'blocking', 'job', 'since', 'before', 'contains',
 ] as const;
 
 export interface UnifiedInboxQuery {
@@ -40,8 +40,10 @@ const invalid = (error: string): UnifiedInboxQueryResult => ({ ok: false, error 
 
 /**
  * Validate one comms-inbox query into the item slice and the view filter
- * set. `source`, `kind` and `severity` take exactly the stored vocabularies
- * (`UNIFIED_INBOX_SOURCES`, `UNIFIED_INBOX_KINDS`, `info|warn|high`),
+ * set. `source`, `kind`, `severity` and `priority` take exactly the stored
+ * vocabularies (`UNIFIED_INBOX_SOURCES`, `UNIFIED_INBOX_KINDS`,
+ * `info|warn|high`, `now|today|this-week|whenever` — the item's computed
+ * urgency `UnifiedInboxItem.priority` carries),
  * `blocking` takes the literals `true` or `false` — the two states
  * `UnifiedInboxFilter.blocking` distinguishes — `job` the shared printable
  * label rule, `since` and `before` the shared `parseSince` grammar (15m, 2h,
@@ -90,6 +92,13 @@ export function parseUnifiedInboxQuery(
       return invalid('severity takes info, warn or high.');
     }
     filter.severity = severity;
+  }
+  const priority = params.get('priority');
+  if (priority !== null) {
+    if (!isUnifiedInboxPriority(priority)) {
+      return invalid('priority takes now, today, this-week or whenever.');
+    }
+    filter.priority = priority;
   }
   const blocking = params.get('blocking');
   if (blocking !== null) {

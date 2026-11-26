@@ -218,7 +218,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]`
+`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--priority <now|today|this-week|whenever>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -417,7 +417,9 @@ the item's own classification, finer than `--source` where one source emits
 several kinds (the `bus` source's `bus-work`/`bus-handoff` split, the
 `board` source's `board-delivery`/`board-task` split) — `--severity
 <info|warn|high>` one
-severity band, `--blocking` only items that block, `--job <id>` only items
+severity band, `--priority <now|today|this-week|whenever>` one urgency —
+the item's own computed priority, the same vocabulary the row prints, so
+"what needs me now" is one filtered read — `--blocking` only items that block, `--job <id>` only items
 that provably name that job — a bus or mailbox body's `busBodyJobMatch`
 citation, a feed job's id, a board task's fleet item or a delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
@@ -443,7 +445,8 @@ keeps every store's real unfiltered pending count — `null` when a source
 could not be read, never a fabricated 0 — a filtered view never
 reports a busy or degraded source as empty. `GET /api/verse/comms/inbox` —
 the desktop and agent read of the same report — accepts the same dimensions
-as query parameters (`source`, `kind`, `severity`, `blocking=true|false`,
+as query parameters (`source`, `kind`, `severity`, `priority`,
+`blocking=true|false`,
 `job`, `since`, `before`, `contains`, each at most once, plus `limit` 1–200 default
 50), validated by `parseUnifiedInboxQuery` — the same value rules `phm
 comms inbox` and `fleet_comms_inbox` apply — and echoes the applied
