@@ -127,6 +127,8 @@ import { FLEET_WORK_FEED_LIMIT_DEFAULT, FLEET_WORK_FEED_LIMIT_MAX, parseFleetWor
 import { BUS_WORK_FEED_CONTAINS_MAX } from '../core/agents/bus-work-feed-read.js';
 import { PROVIDERS, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS } from '../core/agents/bus-v2-schema.js';
 import { COORDINATION_ORIGINS } from '../core/agents/claim-store.js';
+import { HANDOFF_SIGNAL_KINDS } from '../core/agents/session-handoff-schema.js';
+import type { SessionHandoffListFilter } from '../core/agents/session-handoff.js';
 import { UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_KINDS, UNIFIED_INBOX_SOURCES } from '../core/comms/unified-inbox.js';
 import { BUS_PRIORITIES } from '../core/fleet/bus-envelope.js';
 import { BUS_PROTOCOL_KINDS } from '../core/fleet/bus-protocol.js';
@@ -363,7 +365,7 @@ export interface FleetReaders {
   runtime?: () => Promise<unknown>;
   peerLedger?: (input: FleetPeerLedgerArgs) => unknown;
   sessionHandoff?: (input: { job: string }) => unknown;
-  sessionHandoffs?: (input: Record<string, never>) => unknown;
+  sessionHandoffs?: (input: SessionHandoffListFilter) => unknown;
   surfaceOwner?: (surface: string) => Promise<unknown>;
   claimExecution?: () => Promise<unknown>;
   runtimeIdentity?: () => Promise<unknown>;
@@ -940,7 +942,16 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     {
       name: 'fleet_session_handoffs',
       description: SESSION_HANDOFFS_NOTE,
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      inputSchema: { type: 'object', properties: {
+        state: { type: 'string', enum: ['open', 'completed'], description: 'Keep only entries whose projected state is this — open awaits resume or failover, completed is retained history.' },
+        job: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$', description: 'Keep only the journal for this job id — the same id grammar fleet_session_handoff takes.' },
+        lane: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$', description: 'Keep only checkpoints taken on this lane label.' },
+        repo: { type: 'string', pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$', description: 'Keep only checkpoints for this owner/name repo — matched case-insensitively.' },
+        signal: { type: 'string', enum: [...HANDOFF_SIGNAL_KINDS], description: 'Keep only checkpoints whose latest signal kind is this — checkpoint, rate-limit, quota-exhausted, budget or completed.' },
+        pressure: { type: 'boolean', description: 'Keep only checkpoints whose latest signal asks for failover (true) or does not (false) — the same handoffPressure verdict planSessionFailover applies.' },
+        since: { type: 'string', description: 'Keep only checkpoints whose latest revision time is at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time.' },
+        before: { type: 'string', description: 'Keep only checkpoints whose latest revision time is strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with since into one [since, before) window.' },
+      }, additionalProperties: false },
       annotations,
     },
     {
