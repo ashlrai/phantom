@@ -89,7 +89,7 @@ export function findStarvedLanes(statusJson: string, readyTsv: string): StarvedL
     }
     // A shed lane at its launch ceiling has no free capacity.
     const target = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
-    if (value.running >= target || value.queued === 0) continue;
+    if (value.held === true || value.running >= target || value.queued === 0) continue;
     const { filler, real } = split.get(lane) ?? { filler: 0, real: 0 };
     out.push({ lane, running: value.running, target, queued: value.queued, ready: filler + real, filler, real });
   }
