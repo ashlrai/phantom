@@ -1,12 +1,12 @@
 import { describe, test, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { computeRank, SEEDS, updateRank, readRank, validRank, localMerges } from '../src/core/fleet/repo-rank.js';
 import { allocateRepos, readRepoPriority, setRepoPriority, type RepoMarketEvidence } from '../src/core/fleet/repo-market.js';
-import { managedRepoCatalog, parseRepoMarketFacts, planRepoChange } from '../src/core/fleet/repos-manager.js';
+import { listManagedRepos, managedRepoCatalog, parseRepoMarketFacts, planRepoChange } from '../src/core/fleet/repos-manager.js';
 const now = new Date('2026-11-04T12:00:00Z');
 
 test('repository management distinguishes unknown metrics and routes scope changes to grant review', () => {
@@ -162,4 +162,26 @@ test('configured weights can promote recent leverage over the seed prior', () =>
   const input = [{ repo: 'ashlr-md', mergedAt: now.toISOString(), title: 'radar' }];
   expect(computeRank(input, now, previous).rankings[0].repo).toBe('ashlr-md');
   expect(computeRank(input, now, previous)).toEqual(computeRank(input, now, previous));
+});
+
+test('ready depth resolves spec-less rows through router-queue envelopes like the market', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'repos-depth-'));
+  try {
+    const queue = join(dir, 'queue');
+    mkdirSync(queue, { recursive: true });
+    writeFileSync(join(queue, 'ready.tsv'), [
+      'RQ-DEPTH-A\tashlrai/phantom\tcodex-personal\twork\tprompts/a.md',
+      'RQ-DEPTH-B\tashlrai/phantom\tcodex-personal\twork\tprompts/b.md',
+      'RQ-DEPTH-C\tashlrai/phantom\tcodex-personal\twork\tprompts/c.md',
+      '',
+    ].join('\n'));
+    writeFileSync(join(queue, 'router-queue.md'),
+      '- READY RQ-DEPTH-B (impact=abc):\n- READY RQ-DEPTH-C (preferred_lane=claude):\n');
+    const run = async () => ({ code: 0, stdout: '{"data":{}}', stderr: '', timedOut: false, truncated: false, missing: false });
+    const result = await listManagedRepos({ runsDir: dir, run });
+    // RQ-DEPTH-A has no envelope and keeps its lane-column hint; RQ-DEPTH-B's
+    // malformed envelope makes it invalid_requirements (dead work, not ready);
+    // RQ-DEPTH-C resolves through its valid envelope. Depth is 2, not 3.
+    expect(result.repos.find(row => row.repo === 'ashlrai/phantom')?.queueDepth).toBe(2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

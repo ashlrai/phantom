@@ -71,10 +71,17 @@ async function fetchRepoFacts(repos: readonly string[], now: number, run: GitRun
 const root = () => process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
 let factsCache: { key: string; at: number; facts: Promise<Map<string, RepoFacts>> } | undefined;
 
+/** router-queue.md is append-mostly Markdown history; same bound the unfed read uses. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
+
 async function readyDepth(runsDir: string): Promise<Map<string, number> | null> {
   const source = await readSource(join(runsDir, 'queue', 'ready.tsv'), 2 * 1024 * 1024, false);
   if (source.state !== 'healthy') return null;
-  const parsed = parseReadyTsv(source.text);
+  // Spec-less rows inherit their requirements from router-queue.md `(attrs)`
+  // envelopes; without it the lane-column fallback counts rows the market
+  // would reject as ready work and skews the repo share allocation.
+  const router = await readSource(join(runsDir, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false);
+  const parsed = parseReadyTsv(source.text, router.state === 'healthy' ? router.text : null);
   const depths = new Map<string, number>();
   const rows = [...parsed.rows.filter(row => row.status === 'READY'), ...parsed.unhintedRows];
   for (const row of rows) {
