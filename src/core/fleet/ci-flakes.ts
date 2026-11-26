@@ -31,7 +31,7 @@ import { nextFixGeneration } from './ci-fix-generations.js';
 export const RECURRING_FLAKE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** Distinct heads a test must flake on before it is recurring work, not noise. */
 export const RECURRING_FLAKE_MIN_HEADS = 3;
-/** Bound on the journal `test` payload; truncation is deterministic so grouping is stable. */
+/** Maximum length of a complete test ID written to the rerun journal. */
 export const JOURNAL_TEST_MAX = 400;
 /** New stabilization rows appended per maintenance run. */
 export const MAX_FLAKE_FIX_ROWS = 10;

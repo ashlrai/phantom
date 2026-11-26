@@ -386,8 +386,10 @@ only the failed job evidence to its workflow run and current PR head.
 `runCiRerunMaintenance(opts)`: injectable repositories, cancellation, GitHub,
 analyzer, clock, authority/KILL readers, queue and journal/status paths. Only
 probable flakes are rerun, with durable pre-attempt deduplication and a global
-hourly cap (default ten). Rerun attempt rows carry the failing test id (bounded
-to 400 chars). Successful rerun calls are later resolved to `verdict` journal
+hourly cap (default ten). Rerun attempt rows carry complete, secret-scrub-safe
+test IDs of up to 400 characters. A run with an omitted test ID can still
+produce a workflow verdict, with per-test attribution withheld. Successful
+rerun calls are later resolved to `verdict` journal
 rows (`pass`/`fail`/`inconclusive`) by reading the workflow run once it has
 settled: attempts younger than five minutes are not trusted yet, unresolved
 attempts older than 24 hours stop being polled, and each pass checks at most
