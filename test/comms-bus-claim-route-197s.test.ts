@@ -208,6 +208,36 @@ it('returns the established invalid code for bad claim arguments', async () => {
   expect(last().status).toBe('missing');
 });
 
+it('waits for claimable work under --wait-ms and reports timeout on a dry well', async () => {
+  const { root, last } = setup();
+  const options = { root };
+  const task = (id: string, to: string, priority: string): string => postTask(root, {
+    id, from: 'fake-sender', to, priority, ttl: 600_000,
+    body: { kind: 'work', text: id },
+  });
+
+  // A malformed or out-of-range wait is invalid, never a widened or unbounded wait.
+  for (const wait of ['abc', '0', '300001']) {
+    expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--wait-ms', wait], options), wait).toBe(2);
+    expect(last(), wait).toEqual({ status: 'invalid' });
+  }
+
+  // An empty bus times out honestly — the wait's own end state carries no stale scan counts.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--wait-ms', '300'], options)).toBe(1);
+  expect(last()).toEqual({ status: 'timeout' });
+
+  // Work already claimable is taken on the first poll — the wait never delays a hit.
+  expect(await cmdCommsBus(['post', '--file', task('wait-ready', 'worker-a', 'P1')], options)).toBe(0);
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--wait-ms', '5000'], options)).toBe(0);
+  expect(last()).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'wait-ready' } } });
+
+  // Work posted mid-wait claims the moment it lands under the same filters.
+  const pending = cmdCommsBus(['next', '--to', 'worker-b', '--owner', 'worker-b', '--lease-ms', '60000', '--wait-ms', '10000'], options);
+  await cmdCommsBus(['post', '--file', task('wait-mid', 'worker-b', 'P2')], options);
+  expect(await pending).toBe(0);
+  expect(last()).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'wait-mid' } } });
+});
+
 it('help documents next and claim without revealing tokens', async () => {
   const { root, log } = setup();
   const options = { root };
