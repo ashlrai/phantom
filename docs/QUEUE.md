@@ -491,8 +491,11 @@ projection applies; with no evaluation clock freshness stays `null` (unknown),
 and a stale or untimestamped snapshot is still reported — flagged, never
 hidden — as the dispatcher's last published state. Text output prints the same
 caveat after the utilization summary.
-It exits 1 when any lane is unfed now and 2 when status.json is unreadable. It
-is read-only: no writes or provider calls. The resource plan uses the same
+It exits 1 when fresh status shows at least one unfed lane and 0 when fresh
+status establishes that none are unfed. Exit 2 means the current verdict is
+unknown because status is unreadable or stale, or because the report has
+unknown lane verdicts and no confirmed unfed lane. The report is read-only.
+The resource plan uses the same
 bounded local host and Tailnet evidence as the resource planning command. The isolated fleet
 MCP server's `fleet_unfed` tool serves the same `fleet.unfed.v1` assembly —
 the same `readUnfedReport` read this command and the tool share — with

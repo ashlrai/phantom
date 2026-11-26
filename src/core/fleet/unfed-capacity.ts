@@ -415,6 +415,13 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
   };
 }
 
+/** Exit status for the live verdict in a successfully read unfed report. */
+export function unfedExitCode(report: UnfedReport): 0 | 1 | 2 {
+  if (report.statusFresh !== true) return 2;
+  if (report.unfedLanes.length > 0) return 1;
+  return report.unfedSlots === null ? 2 : 0;
+}
+
 /**
  * Fold `unfed_capacity` rows from metrics/work-market.jsonl over a window.
  * Null text means the file was absent or unreadable. Malformed rows are skipped.

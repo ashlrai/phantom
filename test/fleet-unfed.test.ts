@@ -659,9 +659,9 @@ describe('phm fleet unfed', () => {
     if (unavailable === 'unreadable') mkdirSync(ready);
 
     const result = await run();
-    expect(result.code).toBe(0);
+    expect(result.code).toBe(2);
     expect(JSON.parse(result.lines[0]!)).toMatchObject({
-      waiting: null, invalidRows: null, unfedSlots: null, unfedLanes: [],
+      statusFresh: true, waiting: null, invalidRows: null, unfedSlots: null, unfedLanes: [],
       resources: expect.arrayContaining([
         expect.objectContaining({ lane: 'codex-cmp', headroom: 3, readyHinted: null, waitingElsewhere: null, unfed: null }),
         expect.objectContaining({ lane: 'devin', unfed: false }),
@@ -822,21 +822,45 @@ describe('phm fleet unfed', () => {
     ]);
   });
 
-  it('flags a stale status snapshot in json and text without hiding the counts', async () => {
+  it('returns an unknown live verdict for stale status and preserves counts in both formats', async () => {
     const staleTick = new Date(Date.now() - 10 * 60_000).toISOString();
     writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
       schema: 'dispatchd.status.v1', last_tick: staleTick, lanes: LANES,
     }));
     writeFileSync(join(dir, 'queue', 'ready.tsv'), READY);
     const json = await run(['--json']);
-    expect(json.code).toBe(1);
+    expect(json.code).toBe(2);
     const report = JSON.parse(json.lines[0]!);
     expect(report).toMatchObject({ statusAsOf: staleTick, statusFresh: false, unfedLanes: ['codex-cmp'] });
     vi.restoreAllMocks();
     const text = await run([]);
-    expect(text.code).toBe(1);
+    expect(text.code).toBe(2);
     expect(text.lines.join('\n')).toContain(`Status snapshot is stale: last dispatcher tick ${staleTick}`);
     expect(text.lines.join('\n')).toContain('Up to 3 unfed slot(s) across codex-cmp');
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['future', new Date(Date.now() + 60_000).toISOString()],
+  ])('returns an unknown live verdict for a %s tick even with no waiting work', async (_kind, lastTick) => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: lastTick, lanes: LANES,
+    }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), '');
+    const result = await run();
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.lines[0]!)).toMatchObject({ statusFresh: false, unfedSlots: 0 });
+  });
+
+  it('signals a confirmed unfed lane even when the fleet-wide bound is unknown', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(),
+      lanes: { a: { running: 0, target: 2 }, b: { running: 0, target: 2 } },
+      unfed_capacity: { waiting: 2, lanes: { a: { waiting_elsewhere: 1 } } },
+    }));
+    const result = await run();
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.lines[0]!)).toMatchObject({ statusFresh: true, unfedSlots: null, unfedLanes: ['a'] });
   });
 });
 
