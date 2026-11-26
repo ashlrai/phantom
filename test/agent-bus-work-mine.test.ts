@@ -3897,6 +3897,197 @@ describe('readBusWorkMine', () => {
     expect(readBusWorkMine('atlas', { ...options, result: 'bogus' as never }))
       .toEqual({ status: 'invalid', reason: 'invalid-result' });
   });
+
+  it('filters the digest to pending items tied to one v2 conversation thread label', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova', 'ghost');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'ghost', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    const post = (id: string, from: string, to: string, body: Record<string, unknown>,
+      priority: 'P0' | 'P2' = 'P2'): void => {
+      const posted = appendBusInbox({ id, from, to, priority, ttl: 120_000, body },
+        { root: options.root, now: options.now });
+      expect(posted.status).toBe('posted');
+    };
+
+    // Pending work of the kinds --thread can never keep: claimable work
+    // and a worker-handoff assignment declare no thread label.
+    postClaimable(options, 'work-free');
+    post('ho-plain', 'agent:nova', 'agent:atlas',
+      { kind: 'worker-handoff', taskId: 'RQ-TH-H', prompt: 'plain handoff' }, 'P2');
+    // Two labelled threads plus unlabelled mail: slice-1 carries a reply
+    // and its unanswered ask tail, slice-2 one ask, note-free no label at
+    // all (the synthesized pair bucket). Every note is addressed to atlas.
+    post('th-1-note', 'agent:nova', 'agent:atlas',
+      { kind: 'note', text: 'context in slice', thread: 'slice-1', inReplyTo: 'work-free' });
+    post('th-2-ask', 'agent:nova', 'agent:atlas',
+      { kind: 'note', text: 'still there?', thread: 'slice-1' });
+    post('th-other', 'agent:nova', 'agent:atlas',
+      { kind: 'note', text: 'other slice still open?', thread: 'slice-2' });
+    post('note-free', 'agent:nova', 'agent:atlas',
+      { kind: 'note', text: 'no thread label' });
+    // Legacy mailbox mail in the same shapes.
+    const mailboxSend = (id: string, body: Record<string, unknown>): void => {
+      expect(createBusMailbox(dirname(options.root), options.now).send({ id, from: 'agent:nova',
+        to: 'atlas', priority: 'P2', ttl: 120_000, body }).replayed).toBe(false);
+    };
+    mailboxSend('mb-t1', { kind: 'note', text: 'legacy slice', thread: 'slice-1' });
+    mailboxSend('mb-free', { text: 'legacy plain' });
+    // Feed announcements carry no thread label in their projections —
+    // one ghost job atlas can claim, one atlas announced to nova.
+    await announce(options, 'ghost', 'RQ-T-R', ['queue:RQ-T-R'], 'agent:atlas');
+    await announce(options, 'atlas', 'RQ-T-MINE', ['queue:RQ-T-MINE'], 'agent:nova');
+    // Message claims on the labelled and unlabelled envelopes plus a
+    // scope claim — only a resolved leased envelope whose body carries
+    // the filtered label may list.
+    takeWork(options, 'th-1-note', 'atlas');
+    takeWork(options, 'th-other', 'atlas');
+    takeWork(options, 'work-free', 'atlas');
+    takeWork(options, 'note-free', 'atlas');
+    claim(options, 'repo:a/b', 'atlas', 'test:th-scope', options.clock.now);
+    // Wake hints whose bus.send ids are the envelopes they refer to.
+    const wake = (id: string): void => {
+      expect(enqueueBusWake({ kind: 'bus.send', id, from: 'agent:nova', to: 'agent:atlas' },
+        { root: options.runsRoot, now: options.now })).toBe('queued');
+    };
+    wake('th-1-note');
+    wake('th-2-ask');
+    wake('th-other');
+    wake('work-free');
+    wake('note-free');
+
+    const all = readBusWorkMine('atlas', options);
+    expect(all.status).toBe('ok');
+    if (all.status !== 'ok') throw new Error('unreachable');
+    if (all.next.status !== 'ok' || all.handoffs.status !== 'ok' || all.wakes.status !== 'ok' ||
+        all.claims.status !== 'ok' || all.jobs.status !== 'ok' || all.announced.status !== 'ok' ||
+        all.inbox.status !== 'ok' || all.mailbox.status !== 'ok' || all.threads.status !== 'ok') {
+      throw new Error('unreachable');
+    }
+    expect(all.next.matched).toBe(1);
+    expect(all.handoffs.matched).toBe(1);
+    expect(all.wakes.matched).toBe(5);
+    // work-free, ho-plain, the four notes and the ghost announcement all
+    // land in atlas's inbox; the atlas announcement goes to nova.
+    expect(all.inbox.matched).toBe(7);
+    expect(all.mailbox.matched).toBe(2);
+    // slice-1 and slice-2 wait on atlas's answer, the worker-handoff
+    // assignment waits on its recipient and the ghost announcement's
+    // work.post reads as an ask — four waiting threads.
+    expect(all.threads.matched).toBe(4);
+    expect(all.jobs.open).toBe(2);
+    expect(all.announced.matched).toBe(1);
+
+    // thread=slice-1 keeps only pending items tied to that v2 thread
+    // label — the same kind-scoped busBodyThread own-field match every
+    // bus --thread read applies.
+    const result = readBusWorkMine('atlas', { ...options, thread: 'slice-1' });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.thread).toBe('slice-1');
+    expect(result.result).toBeUndefined();
+    expect(formatBusWorkMine(result)[0]).toContain('thread=slice-1');
+    // Claimable work and worker-handoff bodies declare no thread label,
+    // so the pending-work sections are provably empty under the filter.
+    expect(result.next).toMatchObject({ status: 'ok', matched: 0 });
+    expect(result.handoffs).toMatchObject({ status: 'ok', matched: 0 });
+    // claims keep only the message claim whose resolved leased envelope
+    // carries slice-1; the slice-2, work and unlabelled-note claims name
+    // no provable slice-1 thread and never list.
+    expect(result.claims.status).toBe('ok');
+    if (result.claims.status !== 'ok') throw new Error('unreachable');
+    expect(result.claims.claims.map(row => row.key)).toEqual(['queue:th-1-note']);
+    const leased = result.claims.claims[0]!.message;
+    expect(leased?.status === 'resolved' ? leased.thread : null).toBe('slice-1');
+    // Feed jobs and announced jobs carry no per-item thread label in
+    // their projections, so both stay whole under the filter.
+    expect(result.jobs).toMatchObject({ status: 'ok', open: 2 });
+    expect(result.announced).toMatchObject({ status: 'ok', matched: 1 });
+    // The conversations read keeps only threads with a member message
+    // whose declared conversation bucket equals slice-1: the labelled
+    // thread survives on its unanswered ask tail while the slice-2,
+    // pair-bucket and job-bucket threads drop.
+    expect(result.threads).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.threads.status !== 'ok') throw new Error('unreachable');
+    expect(result.threads.items.map(item => item.id)).toEqual(['slice-1']);
+    expect(result.threads.items.map(item => item.messageId)).toEqual(['th-2-ask']);
+    expect(result.awaiting).toMatchObject({ status: 'ok', matched: 0 });
+    expect(result.blocked).toMatchObject({ status: 'ok', matched: 0 });
+    // wakes keep only the hints whose resolved referent is a note/context
+    // body carrying slice-1.
+    expect(result.wakes).toMatchObject({ status: 'ok', matched: 2 });
+    if (result.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(result.wakes.wakes.map(row => row.id).sort()).toEqual(['th-1-note', 'th-2-ask']);
+    // inbox and mailbox keep only mail whose body carries slice-1.
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.matched).toBe(2);
+    expect(result.inbox.messages.map(message => message.id).sort())
+      .toEqual(['th-1-note', 'th-2-ask']);
+    expect(result.mailbox).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.mailbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.mailbox.messages.map(message => message.id)).toEqual(['mb-t1']);
+    // Board, channels and seats carry no per-item thread label and stay
+    // whole.
+    expect(result.board).toEqual(all.board);
+    expect(result.channels).toEqual(all.channels);
+
+    // thread=slice-2 keeps the mirror image: its own claim, mail, wake
+    // and waiting thread — nothing from slice-1 or the unlabelled mail.
+    const other = readBusWorkMine('atlas', { ...options, thread: 'slice-2' });
+    expect(other.status).toBe('ok');
+    if (other.status !== 'ok') throw new Error('unreachable');
+    expect(other.claims.status).toBe('ok');
+    if (other.claims.status !== 'ok') throw new Error('unreachable');
+    expect(other.claims.claims.map(row => row.key)).toEqual(['queue:th-other']);
+    expect(other.threads).toMatchObject({ status: 'ok', matched: 1 });
+    if (other.threads.status !== 'ok') throw new Error('unreachable');
+    expect(other.threads.items.map(item => item.id)).toEqual(['slice-2']);
+    expect(other.wakes).toMatchObject({ status: 'ok', matched: 1 });
+    if (other.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(other.wakes.wakes.map(row => row.id)).toEqual(['th-other']);
+    expect(other.inbox.status).toBe('ok');
+    if (other.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(other.inbox.messages.map(message => message.id)).toEqual(['th-other']);
+    expect(other.mailbox).toMatchObject({ status: 'ok', matched: 0 });
+    expect(other.next).toMatchObject({ status: 'ok', matched: 0 });
+    expect(other.handoffs).toMatchObject({ status: 'ok', matched: 0 });
+    expect(other.awaiting).toMatchObject({ status: 'ok', matched: 0 });
+    expect(other.blocked).toMatchObject({ status: 'ok', matched: 0 });
+    expect(other.jobs).toMatchObject({ status: 'ok', open: 2 });
+    expect(other.announced).toMatchObject({ status: 'ok', matched: 1 });
+    expect(other.board).toEqual(all.board);
+    expect(other.channels).toEqual(all.channels);
+
+    // A label nothing on the bus carries is an honest empty match on the
+    // thread-bearing sections while the unfiltered feed sections still
+    // report their own totals.
+    const none = readBusWorkMine('atlas', { ...options, thread: 'no-such-thread' });
+    expect(none.status).toBe('ok');
+    if (none.status !== 'ok') throw new Error('unreachable');
+    if (none.next.status !== 'ok' || none.jobs.status !== 'ok' || none.announced.status !== 'ok' ||
+        none.threads.status !== 'ok' || none.awaiting.status !== 'ok' || none.blocked.status !== 'ok' ||
+        none.wakes.status !== 'ok' || none.inbox.status !== 'ok' || none.mailbox.status !== 'ok' ||
+        none.claims.status !== 'ok') throw new Error('unreachable');
+    expect(none.next.matched).toBe(0);
+    expect(none.handoffs.matched).toBe(0);
+    expect(none.threads.matched).toBe(0);
+    expect(none.awaiting.matched).toBe(0);
+    expect(none.blocked.matched).toBe(0);
+    expect(none.wakes.matched).toBe(0);
+    expect(none.inbox.matched).toBe(0);
+    expect(none.mailbox.matched).toBe(0);
+    expect(none.claims.claims).toEqual([]);
+    expect(none.jobs.open).toBe(2);
+    expect(none.announced.matched).toBe(1);
+    expect(none.board).toEqual(all.board);
+    expect(none.channels).toEqual(all.channels);
+
+    // A value outside the printable-label bound is invalid, never a read.
+    expect(readBusWorkMine('atlas', { ...options, thread: 'bad id' }))
+      .toEqual({ status: 'invalid', reason: 'invalid-thread' });
+  });
 });
 
 describe('mailbox section', () => {
@@ -4608,6 +4799,19 @@ describe('phm agents bus work mine', () => {
     const bad = await run(['work', 'mine', '--result', 'bogus'], env);
     expect(bad.code).toBe(2);
     expect(bad.json).toMatchObject({ error: 'invalid-argument' });
+  });
+
+  it('accepts --thread, echoes the applied label and rejects a bad value', async () => {
+    const env = { PHM_AGENT_ID: 'atlas' };
+    await run(['id', 'register', 'atlas', '--cli', 'claude'], env);
+    const result = await run(['work', 'mine', '--thread', 'eng-slice'], env);
+    expect(result.code).toBe(0);
+    expect(result.json).toMatchObject({ status: 'ok', thread: 'eng-slice',
+      next: { status: 'ok', matched: 0 },
+      jobs: { status: 'ok', open: 0 } });
+    const bad = await run(['work', 'mine', '--thread', 'bad id'], env);
+    expect(bad.code).toBe(2);
+    expect(bad.json).toMatchObject({ status: 'invalid', reason: 'invalid-thread' });
   });
 });
 
