@@ -125,7 +125,10 @@ expiry, prints the keep-alive `beat --watch` command (or, with `--watch` on the
 join itself, already holds the new session live — standalone only, refused on a
 pool-configured Mac) and says the registry is
 local to this machine — only jobs enqueued on this computer reach the node
-(`"registry":"local"` in `--json`); `status`/`list` name
+(`"registry":"local"` in `--json`); `beat` answers one line —
+`Heartbeat recorded for <node>` with `(leader)` while the node holds the
+leader lease and `; auth <state>` when the beat carried `--probe-auth` or
+`--auth` — so the `beat --watch` keep-alive stays readable; `status`/`list` name
 the node holding each running claim (`claimed by`, or `no live claim` once the
 claim lapsed or was fenced), show each node's advertised slot bound (`slots=N`,
 or `slots=unbounded` when no bound was ever reported — an absent bound is

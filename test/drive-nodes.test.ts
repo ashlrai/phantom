@@ -788,6 +788,22 @@ describe('text output names outcomes in plain words', () => {
       expect(last(lines)).toBe('Node box left the registry.');
     } finally { vi.restoreAllMocks(); }
   });
+  it('beat confirms the heartbeat in plain words, naming auth only when probed', async () => {
+    const { deps, nodes, lines } = harness();
+    try {
+      const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
+      // A bare beat names the node and leadership; no auth was reported.
+      expect(await cmdNodeFleet('beat', ['--node', 'box', '--session', session], deps)).toBe(0);
+      expect(last(lines)).toBe('Heartbeat recorded for box (leader).');
+      // A probed beat adds the reported auth — 'ok' is what gh work routes on.
+      expect(await cmdNodeFleet('beat', ['--node', 'box', '--session', session, '--probe-auth'],
+        { ...deps, probeAuth: () => 'ok' })).toBe(0);
+      expect(last(lines)).toBe('Heartbeat recorded for box (leader); auth ok.');
+      // --json keeps the bare envelope.
+      expect(await cmdNodeFleet('beat', ['--node', 'box', '--session', session, '--json'], deps)).toBe(0);
+      expect(JSON.parse(last(lines))).toMatchObject({ command: 'beat', nodeId: 'box', leader: true });
+    } finally { vi.restoreAllMocks(); }
+  });
   it('status names why a waiting job has no taker', async () => {
     const { deps, nodes, lines } = harness();
     try {
