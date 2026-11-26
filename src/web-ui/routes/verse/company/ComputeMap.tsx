@@ -185,7 +185,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
   const nodes = data?.nodes ?? [];
   const jobs = sessions.data?.mapSessions ?? [];
   const location = (job: MapSession) => job.nodeId;
-  const selected = jobs.find(j => j.job === selection) ?? sessions.data?.mapRecent.find(j => j.job === selection);
+  const selected = jobs.find(j => j.job === selection) ?? sessions.data?.mapRecent?.find(j => j.job === selection);
   const maxCores = Math.max(1, ...nodes.map(n => n.stats?.cores.length ?? 0));
   function tokens(rows: MapSession[]) {
     const groups = group ? [...new Set(rows.map(s => s.lane ?? 'Lane unknown'))] : ['All lanes'];
