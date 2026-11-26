@@ -1129,9 +1129,12 @@ without a requirements cell, the lane view resolves the hint from the matching
 the lane column. A missing or degraded `ready.tsv` read or an unreadable
 `router-queue.md` leaves both counts null and suppresses the starvation verdict. The lane's
 separate queue depth can include parked work from dispatcher totals. A lane
-must be unheld and below its slot target to be starved. A hold from either the
-configured slots or a fresh dispatcher tick suppresses starvation and its
-Leader notice. A configured hold retains its recorded reason. The lane view
+must be unheld and below its slot target to be starved. A hold from configured
+slots, a fresh dispatcher tick, or the runs root's whitespace-separated `HOLD`
+file suppresses starvation and its Leader notice. The lane view reads `HOLD`
+directly so new operator holds take effect between ticks. A configured hold
+retains its recorded reason. An unreadable `HOLD` file adds a degraded source
+note, and the other hold sources still apply. The lane view
 uses the lowest known ceiling from the configured target and the fresh
 dispatcher's `target` and `effective_target`. A configured decrease takes
 effect immediately, while an increase waits for the dispatcher to catch up.
