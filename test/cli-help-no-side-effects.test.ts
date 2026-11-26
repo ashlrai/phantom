@@ -99,6 +99,7 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   improve: '`improve` only has the `propose` verb; anything else prints its Usage line and exits 2 (src/cli/improve.ts)',
   'desktop install': 'release installer with an exact grammar; an unrecognized token is a usage error before any download or stage',
   'desktop-update inspect': 'release updater with an exact grammar; an unrecognized token is a usage error before any stage is read',
+  'desktop-update prepare': 'release updater with an exact grammar; an unrecognized token is a usage error before any stage is prepared',
   'desktop-update apply': 'release updater with an exact grammar; an unrecognized token is a usage error before any stage is applied',
   'fleet automerge-canary prepare-shadow': 'auto-merge canary custody verbs accept only their exact flags; anything else prints the canary usage and exits 2',
   'fleet automerge-canary activate-shadow': 'auto-merge canary custody verbs accept only their exact flags; anything else prints the canary usage and exits 2',

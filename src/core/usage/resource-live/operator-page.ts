@@ -1,11 +1,11 @@
 import type { ResourceLiveObservation, ResourceLiveSource } from './source-types.js';
 
 export interface OperatorUsagePageReader {
-  read(provider: 'claude' | 'codex-personal' | 'codex-cmp', usageUrl: string): Promise<ResourceLiveObservation | null>;
+  read(provider: 'claude' | 'codex-personal', usageUrl: string): Promise<ResourceLiveObservation | null>;
 }
 export const stubOperatorUsagePageReader: OperatorUsagePageReader = { read: async () => null };
 
-export function operatorPageSources(enabled: boolean | undefined, provider: 'claude' | 'codex-personal' | 'codex-cmp',
+export function operatorPageSources(enabled: boolean | undefined, provider: 'claude' | 'codex-personal',
   reader: OperatorUsagePageReader = stubOperatorUsagePageReader): ResourceLiveSource[] {
   if (enabled !== true) return [];
   return [{ tier: 'visible-window', read: async () => {

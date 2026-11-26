@@ -13,7 +13,7 @@ const MAX_POOLS = 24;
 /** The fixed core pools first, then every other budgeted lane with a use_it_all object, by name. */
 function paceLaneNames(budget: Record<string, unknown>): string[] {
   const core: readonly string[] = PACE_POOLS;
-  const extra = Object.keys(budget).filter(name => !core.includes(name) && POOL_NAME.test(name)
+  const extra = Object.keys(budget).filter(name => name !== 'codex-cmp' && !core.includes(name) && POOL_NAME.test(name)
     && object(budget[name]) && object((budget[name] as Record<string, unknown>).use_it_all)).sort();
   return [...core, ...extra].slice(0, MAX_POOLS);
 }
@@ -80,7 +80,7 @@ export function projectUsagePace(raw: unknown, now = Date.now()): PaceSnapshot {
   const admission = object(status.admission) ? status.admission : {};
   const asOf = Number.isFinite(tick) ? new Date(tick).toISOString() : null;
   const names = fresh ? paceLaneNames(budget) : [...PACE_POOLS];
-  const shareNames = [...new Set([...PACE_POOLS, 'codex-cmp', 'claude-api', ...Object.keys(budget).filter(name => POOL_NAME.test(name)).sort()])].slice(0, MAX_POOLS);
+  const shareNames = [...new Set([...PACE_POOLS, 'claude-api', ...Object.keys(budget).filter(name => name !== 'codex-cmp' && POOL_NAME.test(name)).sort()])].slice(0, MAX_POOLS);
   const shares = poolShareSnapshot(shareNames.map(pool => shareInput(pool, budget[pool], now, fresh)), asOf);
   return { v: 1, asOf, shares, pools: names.map(pool => {
     const lane = object(budget[pool]) ? budget[pool] : {};

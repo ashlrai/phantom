@@ -52,7 +52,7 @@ export interface SpendSnapshot {
 
 const HOUR_MS = 3_600_000;
 /** Keep absent pools visible; legacy and additional recorded pools remain supported. */
-const SPEND_POOLS = ['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'zai', 'local', ...PACE_POOLS];
+const SPEND_POOLS = ['codex-personal', 'claude', 'claude-api', 'devin', 'zai', 'local', ...PACE_POOLS];
 /** A gift or credit reading older than a day is stale (matches TYPED_MAX_AGE_MS in resources/lane-autopilot.ts). */
 const GIFT_MAX_AGE_MS = 24 * HOUR_MS;
 /** Overage readings above this are malformed, not measured. */
@@ -164,7 +164,7 @@ export function projectUsageSpend(raw: unknown, now = Date.now()): SpendSnapshot
   const tick = typeof status.last_tick === 'string' ? Date.parse(status.last_tick) : NaN;
   const fresh = status.schema === 'dispatchd.status.v1' && Number.isFinite(tick) && now >= tick && now - tick <= 120_000;
   const budget = object(status.budget) ? status.budget : {};
-  const names = [...new Set([...SPEND_POOLS, ...Object.keys(budget).filter(k => /^[a-z0-9][a-z0-9-]{0,63}$/.test(k))])];
+  const names = [...new Set([...SPEND_POOLS, ...Object.keys(budget).filter(k => k !== 'codex-cmp' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(k))])];
   const pools = names.map(pool => {
     const lane = object(budget[pool]) ? budget[pool] : {};
     return object(lane.gift) || pool === 'claude-api'

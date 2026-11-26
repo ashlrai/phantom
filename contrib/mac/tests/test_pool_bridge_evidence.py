@@ -76,7 +76,7 @@ class BridgeEvidenceTest(unittest.TestCase):
     def plan_inputs(self, lane="zai"):
         synthetic_key = b"test-key-material"
         self.put(".zai-lane/api_key", synthetic_key + b"\n")
-        launcher = Path(bridge.__file__).parent / "host-integration/launch.candidate.sh"
+        launcher = Path(bridge.__file__).parent / "host-integration/launch.sh"
         pin = hashlib.sha256(synthetic_key).hexdigest()[:32]
         a = {"accountDigest": pin if lane == "zai" else "a" * 64, "attestedAt": self.now - 1000,
              "attestationExpiresAt": self.now + 100_000}

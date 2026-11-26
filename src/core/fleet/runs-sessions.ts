@@ -435,6 +435,7 @@ export interface JobMetricFacts {
   launchTsMs: number | null;
   launchModel: string | null;
   finishTsMs: number | null;
+  retiredFinish?: { repo: string | null; tier: string | null };
   tokensTotal: number | null;
   wallSeconds: number | null;
   diffLines: number | null;
@@ -491,7 +492,13 @@ export function parseSessionMetrics(text: string): { facts: Map<string, JobMetri
         break;
       }
       case 'finish': {
-        if (ts !== null) f.finishTsMs = ts;
+        if (ts !== null) {
+          f.finishTsMs = ts;
+          f.retiredFinish = row.lane === 'codex-cmp' ? {
+            repo: typeof row.repo === 'string' && REPO_ID.test(row.repo) ? cleanField(row.repo) : null,
+            tier: typeof row.tier === 'string' && TIERS.has(row.tier) ? row.tier : null,
+          } : undefined;
+        }
         f.tokensTotal = nonNegInt(row.tokens_total);
         f.wallSeconds = typeof row.wall_s === 'number' && Number.isFinite(row.wall_s) && row.wall_s >= 0
           ? Math.floor(row.wall_s) : null;
@@ -912,6 +919,23 @@ export async function getFleetSessions(options: FleetSessionsOptions = {}): Prom
       ? Math.max(0, Math.round((Date.parse(session.claimedAt) - Date.parse(session.enqueuedAt)) / 1000)) : null;
     counts[session.status as keyof typeof counts]++;
     sessions.push(session);
+  }
+
+  const evidencedJobs = new Set(drafts.map(draft => draft.job));
+  for (const [job, facts] of metricFacts) {
+    if (!facts.retiredFinish || facts.finishTsMs === null || evidencedJobs.has(job)) continue;
+    const session = emptySession(job);
+    session.lane = 'codex-cmp';
+    session.repo = facts.retiredFinish.repo;
+    session.tier = facts.retiredFinish.tier;
+    session.status = 'finished';
+    session.finishedAt = iso(facts.finishTsMs);
+    session.exitCode = facts.exitCode;
+    session.tokensTotal = facts.tokensTotal;
+    session.wallSeconds = facts.wallSeconds;
+    session.diffLines = facts.diffLines;
+    session.durationSeconds = facts.wallSeconds;
+    recent.push(session);
   }
 
   // Sort: in-flight work first (running → launching → publishing → exited →

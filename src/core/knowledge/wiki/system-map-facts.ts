@@ -15,6 +15,7 @@ export const mapFactsSchema = z.object({
   lines: z.number().int().nonnegative(),
   marks: z.array(z.tuple([kind, z.string(), z.number().int().positive()])),
   imports: z.array(z.tuple([z.string(), z.number().int().positive()])),
+  packageImports: z.array(z.tuple([z.string(), z.number().int().positive()])),
   limited: z.boolean(),
 });
 type Facts = z.infer<typeof mapFactsSchema>;
@@ -58,13 +59,18 @@ export function extractMapFacts(source: string, file: string): Facts {
     }
     if (verse) add('route', /^export const \w+_PATH\s*=\s*['"](\/api\/[\w/:{}.-]+)['"]/.exec(row)?.[1], i + 1);
   }
-  const imports = extractImportReferences(text, file)
-    .filter(({ specifier }) => /^(?:\.{1,2}\/|[@~]\/)[\w./@+-]+$/.test(specifier) && safeLabel(specifier));
+  const references = extractImportReferences(text, file).filter(({ specifier }) => safeLabel(specifier));
+  const imports = references.filter(({ specifier }) => /^(?:\.{1,2}\/|[@~]\/)[\w./@+-]+$/.test(specifier));
+  const packageImports = references.flatMap(({ specifier, line }) => {
+    const name = /^((?:@[a-z0-9_.-]+\/)?[a-z0-9_.-]+)(?:\/|$)/.exec(specifier)?.[1];
+    return name && !name.startsWith('.') ? [[name, line] as [string, number]] : [];
+  });
   return {
     lines,
     marks,
     imports: imports.slice(0, LIMIT).map(({ specifier, line }) => [specifier, line]),
-    limited: limited || imports.length > LIMIT,
+    packageImports: packageImports.slice(0, LIMIT),
+    limited: limited || imports.length > LIMIT || packageImports.length > LIMIT,
   };
 }
 

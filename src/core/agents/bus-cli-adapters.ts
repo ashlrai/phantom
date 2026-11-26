@@ -39,10 +39,10 @@ const ADAPTERS: Readonly<Record<BusCli, BusCliAdapter>> = Object.freeze({
     note: 'The live session reads its inbox on wake; no separate engine runner. The zai lane runs this CLI against GLM, so it attaches with provider glm.',
   },
   codex: {
-    cli: 'codex', displayName: 'Codex CLI', providers: ['codex-personal', 'codex-cmp', 'local'],
+    cli: 'codex', displayName: 'Codex CLI', providers: ['codex-personal', 'local'],
     envMarkers: ['CODEX_SANDBOX', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID'],
     engine: { module: 'src/core/fleet/bus-adapters/codex.ts', entry: 'runCodexBusAdapter' },
-    note: 'Lane chooses codex-personal or codex-cmp (provider local for codex-local); the runner uses a read-only sandbox.',
+    note: 'Lane chooses codex-personal (provider local for codex-local); the runner uses a read-only sandbox.',
   },
   devin: {
     cli: 'devin', displayName: 'Devin CLI', providers: ['devin'], envMarkers: [],

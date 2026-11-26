@@ -209,6 +209,12 @@ describe('resolving the GGUF out of an Ollama store', () => {
     expect(resolveOllamaRefForBlobPath(blob, root)).toBe('qwen3.8:27b-ctx64k');
   });
 
+  it('recovers the reference from a Windows-style blob path', () => {
+    const root = seedStore({ withBlob: true });
+    const blob = 'C:\\models\\blobs\\' + MODEL_DIGEST.replace(':', '-');
+    expect(resolveOllamaRefForBlobPath(blob, root)).toBe('qwen3.8:27b-ctx64k');
+  });
+
   it('returns null rather than guessing when the digest matches no manifest', () => {
     const root = seedStore({ withBlob: true });
     expect(resolveOllamaRefForBlobPath(

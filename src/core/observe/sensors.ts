@@ -5,7 +5,7 @@
  */
 import type { UsageWindow } from './types.js';
 
-const LANES = ['devin', 'codex-cmp', 'codex-personal', 'claude-max', 'grok-ultra', 'terra'] as const;
+const LANES = ['devin', 'codex-personal', 'claude-max', 'grok-ultra', 'terra'] as const;
 const STALE_MS = 15 * 60_000;
 
 function record(value: unknown): Record<string, unknown> | null {

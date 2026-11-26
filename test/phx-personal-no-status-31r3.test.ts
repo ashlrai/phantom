@@ -102,7 +102,7 @@ describe('personal usage without a dispatch status lane', () => {
     expect(ledger.lanes[0]?.usedPct).toBe(73);
     expect(collect).toHaveBeenCalledOnce();
     expect(collect).toHaveBeenCalledWith(expect.objectContaining({
-      env: { CODEX_HOME: opts.personalCodexHome, CODEX_HOME_ALT: opts.personalCodexHome },
+      env: { CODEX_HOME: fakeCmp, CODEX_HOME_ALT: opts.personalCodexHome },
     }));
   });
 });

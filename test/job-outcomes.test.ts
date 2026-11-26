@@ -11,6 +11,7 @@ describe('parseJobOutcomeRows', () => {
       row({ job: 'RQ-A', event: 'finish', empty: true, diff_lines: 0 }),
       row({ job: 'RQ-B', event: 'outcome', state: 'MERGED' }),
       row({ job: 'RQ-C', empty: false }),
+      row({ job: 'RQ-WIKI', event: 'wiki_slice', wikiSlice: { bytes: 220 } }),
       '{broken', 'not json',
       JSON.stringify({ job: 'RQ-NODATE' }),
       JSON.stringify({ ts: '2026-11-01T00:00:00Z', job: 'RQ-OLD', empty: true }),

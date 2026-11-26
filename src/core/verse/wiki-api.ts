@@ -35,6 +35,7 @@ import type { VerseApiContext } from './verse-api.js';
 import type { AshlrConfig } from '../types.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { askWiki, type AskWikiOptions } from '../knowledge/wiki/ask.js';
+import { queryWikiEcosystem } from '../knowledge/wiki/ecosystem.js';
 import { buildWikiGraph } from '../knowledge/wiki/graph.js';
 import { startWikiJob, wikiJob, type WikiJob } from '../knowledge/wiki/jobs.js';
 import { githubNameWithOwner, isWikiReadable } from '../knowledge/wiki/scan.js';
@@ -220,6 +221,15 @@ export function createWikiApi(deps: WikiApiDeps = DEFAULT_WIKI_API_DEPS): ApiMod
             .sort((a, b) => Number(b.exists) - Number(a.exists) || a.name.localeCompare(b.name)),
         };
         sendJson(res, 200, view);
+        return true;
+      }
+
+      if (p === `${VERSE_WIKI_PATH}/ecosystem`) {
+        if (method !== 'GET') return (sendNotFound(res, `${method} ${p}`), true);
+        if (!hasNoQuery(req, res)) return true;
+        const graph = await queryWikiEcosystem();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+        res.end(JSON.stringify(graph));
         return true;
       }
 
