@@ -47,6 +47,9 @@ The reward feed attributes a resolved job to the latest dispatch timestamp
 at or before its outcome bound. Conflicting pool receipts at that timestamp
 leave the reward's pool null. A single observed pool is retained when other
 receipts at that timestamp carry missing or unknown pool labels.
+Revert receipts can supply their effective time through `revertedAt` or
+`reverted_at` alone. That timestamp dates the revert, while dispatch and
+CI boundaries still require their own timestamp evidence.
 For a merge or close verdict, a single repository identified by its GitHub
 PR URL fields takes precedence over the receipt and dispatch repository
 labels. If those URLs identify different repositories, the reward keeps

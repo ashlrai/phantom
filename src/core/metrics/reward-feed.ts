@@ -300,7 +300,9 @@ export function foldJobsLedgerRewards(
     const resolvedAt = isMerge ? timestampOf(row, MERGED_AT_KEYS)
       : isClose ? timestampOf(row, CLOSED_AT_KEYS) : null;
     const at = timestampOf(row, TS_KEYS) ?? resolvedAt;
-    if (at !== null && at > nowMs) continue;
+    const explicitRevertMs = timestampOf(row, REVERTED_AT_KEYS);
+    const receiptAt = at ?? explicitRevertMs;
+    if (receiptAt !== null && receiptAt > nowMs) continue;
     // A future verdict cannot establish PR ownership or supply other evidence yet.
     if (resolvedAt !== null && resolvedAt > nowMs) continue;
     const prKeys = receiptPrKeys(row);
@@ -315,7 +317,7 @@ export function foldJobsLedgerRewards(
     const name = firstString(row, EVENT_KEYS)?.toLowerCase();
     const dispatch = name !== undefined && DISPATCH_EVENTS.has(name);
     const ciBoundary = name === 'ci_start' || name === 'ci_complete';
-    if (at === null && !dispatch && !ciBoundary) continue;
+    if (receiptAt === null && !dispatch && !ciBoundary) continue;
     let acc = jobs.get(id);
     if (!acc) {
       acc = newAccum();
@@ -324,25 +326,21 @@ export function foldJobsLedgerRewards(
     if (at === null) {
       if (dispatch) acc.dispatchUndated = true;
       if (ciBoundary) acc.ciBoundaryUndated = true;
-      continue;
-    }
-    if (dispatch) {
+    } else if (dispatch) {
       acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row, prKeys) ?? null });
       if (name === 'batch_claim') acc.batchClaims.add(at);
     } else if (ciBoundary) {
       noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at, prKeys);
     }
-    const explicitRevertMs = timestampOf(row, REVERTED_AT_KEYS);
-    if (explicitRevertMs !== null || hasRevertEvidence(row)) {
-      const revertedAtMs = explicitRevertMs ?? at;
-      if (revertedAtMs <= nowMs) {
-        // Only a receipt without a PR reference can apply job-wide.
-        const key = prKeys.length === 1 ? prKeys[0]! : null;
-        if (key !== null || firstString(row, URL_KEYS) === null) {
-          acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
-        }
+    const revertedAtMs = explicitRevertMs ?? (hasRevertEvidence(row) ? at : null);
+    if (revertedAtMs !== null && revertedAtMs <= nowMs) {
+      // Only a receipt without a PR reference can apply job-wide.
+      const key = prKeys.length === 1 ? prKeys[0]! : null;
+      if (key !== null || firstString(row, URL_KEYS) === null) {
+        acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
       }
     }
+    if (at === null) continue;
     if (isMerge) {
       const mergedAtMs = resolvedAt ?? at;
       if (acc.merge === null || mergedAtMs > acc.merge.resolvedMs ||
