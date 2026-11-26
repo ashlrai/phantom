@@ -75,6 +75,22 @@ describe('buildQueueSupply', () => {
     expect(row(data, 'grok')).toMatchObject({ state: 'empty', at_risk: false, supply_low: false });
   });
 
+  it('uses observed counts for queue coverage on both sides of the one-hour threshold', () => {
+    const pools = [lane('claude', { usedPct: 72, resetAt: at(31), burnPctPerHour: 0.3 })];
+    const short = supply(pools, { claude: 6 }, { claude: 37 });
+    expect(row(short, 'claude')).toMatchObject({
+      state: 'low', supply_low: true, starts_per_hour: 37 / 6, hours_queued: 36 / 37,
+    });
+    expect(supplyLowLine(short)).toBe('supply_low: Claude (6 queued, about 58 min of work, 28% left): add work');
+
+    const exact = supply(pools, { claude: 6 }, { claude: 36 });
+    expect(row(exact, 'claude')).toMatchObject({ state: 'healthy', supply_low: false, hours_queued: 1 });
+    expect(supplyLowLine(exact)).toBeNull();
+
+    const above = supply(pools, { claude: 6 }, { claude: 35 });
+    expect(row(above, 'claude')).toMatchObject({ state: 'healthy', supply_low: false, hours_queued: 36 / 35 });
+  });
+
   it('puts pools that need work first and renders one line each', () => {
     const data = supply([lane('a-healthy', { usedPct: 40, burnPctPerHour: 0.6 }), lane('b-empty', { usedPct: 72, resetAt: at(31), burnPctPerHour: 0.3 })],
       { 'a-healthy': 8, 'b-empty': 0 }, { 'a-healthy': 6, 'b-empty': 6 });

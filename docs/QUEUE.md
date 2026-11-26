@@ -1285,7 +1285,8 @@ spec or its router-queue.md envelope when the row carries no spec, else the lane
 lane-open, or one it would reject, is not counted.
 
 The hourly digest adds a `supply_low` line, naming the pool, when a pool that is behind (or has waste risk high or
-medium) has under an hour of work queued.
+medium) has under an hour of work queued. The alert uses the observed ready and launch counts at full precision.
+JSON retains that precision for `starts_per_hour` and `hours_queued`. Text rounds estimated durations for display.
 
 ## Which producer earns its slots?
 
