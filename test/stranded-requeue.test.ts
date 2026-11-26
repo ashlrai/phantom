@@ -118,6 +118,19 @@ it('never puts gh work on a lane without gh', async () => {
   expect(await readyOf(dir)).toContain('FIXUP-CI-ONER2\tphantom\tcodex-personal\twork\t');
 });
 
+it('declares needs gh on gh recovery rows so the market cannot route them to a gh-less lane', async () => {
+  const dir = await setup({ 'FIXUP-CI-ONE': 'result-abort' });
+  await planStrandedRequeue(dir, { apply: true, ready: fast, ghSlots: async () => 1 });
+  const row = (await readyOf(dir)).split('\n').find(l => l.startsWith('FIXUP-CI-ONER2'))!;
+  const cells = row.split('\t');
+  expect(cells).toHaveLength(6);
+  expect(JSON.parse(cells[5]!)).toEqual({ needs: ['gh'] });
+  const { parseReadyMarketRows } = await import('../src/core/fleet/unfed-market.js');
+  const resolved = parseReadyMarketRows(`${row}\n`, null).rows;
+  expect(resolved).toHaveLength(1);
+  expect(resolved[0]).toMatchObject({ hint: 'codex-personal', needs: ['gh'] });
+});
+
 it('sends a job whose prompt calls gh to the gh lane only, and caps at three', async () => {
   const dir = await setup({ 'RQ-A': 'result-abort', 'RQ-B': 'result-abort', 'RQ-C': 'result-abort', 'RQ-D': 'result-abort' });
   await writeFile(join(dir, 'queue', 'prompts', 'RQ-A.md'), 'Run gh pr list and fix it.\n');
