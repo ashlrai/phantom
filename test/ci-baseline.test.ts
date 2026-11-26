@@ -166,6 +166,34 @@ describe('CI baseline evidence', () => {
     });
     expect(report.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
   });
+  it.each([
+    ['master', 10, master, false],
+    ['PR', 20, head, true],
+  ] as const)('rejects conflicting explicit checkout receipts on %s', async (_ref, job, revision, masterKnown) => {
+    const { gh } = github({ count: 1, pass: true });
+    for (const receipt of [
+      `/usr/bin/git log -1 --format=%H\n${'f'.repeat(40)}`,
+      `Bound candidate ${'f'.repeat(40)} to event tree ${'e'.repeat(40)}`,
+      '/usr/bin/git log -1 --format=%H',
+    ]) {
+      const report = await analyzeCiBaseline('owner/repo', async args => {
+        const result = await gh(args);
+        return args[1]?.endsWith(`/jobs/${job}/logs`)
+          ? { ...result, stdout: `${result.stdout.trimEnd()}\n${receipt}\n` }
+          : result;
+      });
+      expect(report.master.known).toBe(masterKnown);
+      expect(report.freshness[0]?.state).toBe(job === 20 ? 'unknown' : 'fresh');
+      expect(report.groups.map(group => group.action)).toEqual(job === 20 ? [] : ['unknown']);
+    }
+    const matching = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      return args[1]?.endsWith(`/jobs/${job}/logs`)
+        ? { ...result, stdout: `${result.stdout.trimEnd()}\nBound candidate ${revision} to event tree ${'e'.repeat(40)}\n` }
+        : result;
+    });
+    expect(matching.groups[0]?.action).toBe('rerun-failed');
+  });
   it('excludes stale and unreadable or unrecognized logs', async () => {
     for (const options of [{ stale: true }, { unknown: true }, { unreadable: true }]) {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);

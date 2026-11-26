@@ -2206,18 +2206,14 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
         return null;
       }
       const output = lines(r.stdout);
-      const checkout = output.findIndex(line => /(?:^|\/)git log -1 --format=%H$/.test(line));
-      if (checkout >= 0) {
-        if (output[checkout + 1] !== head) return null;
-        result.push({ conclusion: job.conclusion, text: r.stdout });
-        continue;
-      }
-      // Bound CI jobs prove the checkout through the source-binding receipt
-      // instead of a raw `git log -1` echo; the bound revision must equal the
-      // analyzed head exactly like the marker's following line does.
-      const bound = output.find(line => BOUND_LINE.test(line));
-      if (bound !== undefined) {
-        if (BOUND_LINE.exec(bound)![1] !== head) return null;
+      // All explicit checkout receipts must agree with the analyzed head.
+      const revisions = output.flatMap((line, index) => {
+        if (/(?:^|\/)git log -1 --format=%H$/.test(line)) return [output[index + 1]];
+        const bound = BOUND_LINE.exec(line);
+        return bound ? [bound[1]] : [];
+      });
+      if (revisions.length > 0) {
+        if (revisions.some(revision => revision !== head)) return null;
         result.push({ conclusion: job.conclusion, text: r.stdout });
         continue;
       }
