@@ -233,8 +233,12 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
     let best: Cand | null = null, bestScore = -1;
     for (const c of cands) {
       const score = (c.perMTok / bestTok) ** w * (c.perHour / bestHour) ** (1 - w);
-      // Strictly greater keeps the first candidate in (provider, model, node) order on ties.
-      if (score > bestScore + 1e-12) { best = c; bestScore = score; }
+      // For equal scores, preserve headroom by avoiding redundant model loads.
+      // Equal loads keep the first candidate in (provider, model, node) order.
+      if (best === null || score > bestScore + 1e-12 || (score === bestScore && c.load < best.load)) {
+        best = c;
+        bestScore = score;
+      }
     }
     best!.state.bytes -= best!.fp.mem_bytes_max + best!.load;
     if (best!.localModelKey !== null) best!.state.loaded.add(best!.localModelKey);
