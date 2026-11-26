@@ -22,6 +22,18 @@ import {getDesktopUpdateProfile, type DesktopUpdateProfileName, type CompatibleU
 const roots: string[] = [];
 describe('local desktop update interlock', () => {
   it.each([true, false])('preserves independent operator Stop (already active: %s)', operatorFirst => {
+    if (process.getuid === undefined) {
+      const home = fs.mkdtempSync(join(tmpdir(), 'update-interlock-'));
+      roots.push(home);
+      const operator = join(home, '.ashlr', 'KILL');
+      fs.mkdirSync(join(home, '.ashlr'), {mode: 0o700});
+      if (operatorFirst) fs.writeFileSync(operator, 'operator stop\n', {mode: 0o600});
+      expect(beginDesktopUpdateInterlock(home, 'a'.repeat(32), 'b'.repeat(64), 42)).toBeNull();
+      expect(fs.existsSync(desktopUpdateInterlockPath(home))).toBe(false);
+      if (operatorFirst) expect(fs.readFileSync(operator, 'utf8')).toBe('operator stop\n');
+      else expect(fs.existsSync(operator)).toBe(false);
+      return;
+    }
     const home = process.env.HOME!;
     fs.mkdirSync(join(home, '.ashlr'), {mode: 0o700, recursive: true});
     if (operatorFirst) expect(setKill(true).ok).toBe(true);
