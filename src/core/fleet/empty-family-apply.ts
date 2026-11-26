@@ -59,12 +59,24 @@ const bareFamily = (name: string): boolean => name === 'leader';
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const READY_LINE = /^- READY ([A-Za-z0-9][A-Za-z0-9._-]*)(.*)$/;
+const ENVELOPE_ATTRS = /\(([^)\n]*)\)/;
 
-/** Pure: the READY ids in router-queue.md text with the pool each names, when it names one. */
+/** The lane a router-queue envelope names, in work_market.from_envelope's order: preferred_lane, else lane, else pool. `any` names no lane. */
+function envelopeLane(attrs: string): string | null {
+  for (const name of ['preferred_lane', 'lane', 'pool'] as const) {
+    const value = new RegExp(`(?:^|[,;\\s])${name}=([^,;\\s]+)`).exec(attrs)?.[1];
+    if (value !== undefined) return value === 'any' ? null : value;
+  }
+  return null;
+}
+
+/** Pure: the READY ids in router-queue.md text with the lane hint each names, when it names one. */
 export function readyJobs(routerText: string): Array<{ id: string; pool: string | null }> {
   return routerText.split(/\r?\n/).flatMap(line => {
     const m = READY_LINE.exec(line);
-    return m ? [{ id: m[1]!, pool: /\bpool=([A-Za-z0-9._-]+)/.exec(m[2]!)?.[1] ?? null }] : [];
+    if (!m) return [];
+    const attrs = ENVELOPE_ATTRS.exec(m[2]!)?.[1] ?? '';
+    return [{ id: m[1]!, pool: envelopeLane(attrs) }];
   });
 }
 
