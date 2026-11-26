@@ -18,6 +18,7 @@
  * shape, or when the runs-dir source is not healthy/degraded — then the
  * Fleet and All splits may never claim "All clear" on its behalf.
  */
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import { formatDateTime } from '../../../components/format/locale-format.js';
 import { newestLeaderPassMs, parseInboxAt } from '../fleet/interject-ack-model.js';
 import { derivePulse, readPulseInput } from '../ops/merge-pulse-model.js';
@@ -69,7 +70,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
       .sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0))
       .slice(0, 3).map(({ job, at }) => {
         const published = Date.parse(at);
-        const age = Number.isFinite(published) ? `${Math.max(0, Math.floor((nowMs - published) / 60_000))}m ago` : 'age unknown';
+        const age = Number.isFinite(published) ? ageInSeconds((nowMs - published) / 1000) : 'age unknown';
         return `${job} (${age})`;
       }).join(' · ');
     items.push({

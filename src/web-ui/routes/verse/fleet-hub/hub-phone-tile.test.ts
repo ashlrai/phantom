@@ -26,7 +26,7 @@ describe('phoneTile', () => {
       .toMatchObject({ reading: '2 paired · last read 59 m ago', tone: 'ok' });
     expect(phoneTile(snapshot(device(60)), pending, now)?.tone).toBe('neutral');
     expect(phoneTile(snapshot(device(1440)), pending, now)?.tone).toBe('neutral');
-    expect(phoneTile(snapshot(device(1500)), pending, now)).toMatchObject({ reading: '1 paired · last read 1 d ago', tone: 'warn' });
+    expect(phoneTile(snapshot(device(1500)), pending, now)).toMatchObject({ reading: '1 paired · last read 1 d 1 h ago', tone: 'warn' });
     expect(phoneTile(snapshot(device(null)), pending, now)).toMatchObject({ reading: '1 paired · last read never', tone: 'neutral' });
   });
   it('prioritizes approvals and uses the Needs-you wording in the tooltip', () => {

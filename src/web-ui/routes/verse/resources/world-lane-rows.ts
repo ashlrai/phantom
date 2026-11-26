@@ -9,13 +9,14 @@
  */
 import { laneBar, sameLaneBar, type LaneBar } from './world-lane-bar.js';
 import { USAGE_SENSOR_STALE_MS } from '../../../../core/usage/sensor-reading.js';
+import { relativeTime } from '../../../lib/relative-time.js';
 
 /** Same bound as usage.sensors.v1. A reading this old is not current. */
 export const WORLD_LANE_STALE_MS = USAGE_SENSOR_STALE_MS;
 
 export type LaneFreshness = 'fresh' | 'stale' | 'unknown';
 export type LaneForecast = 'early' | 'on-pace' | 'underuse' | 'unknown';
-export type LaneEngine = 'claude' | 'codex' | 'grok' | 'local' | 'devin' | 'cursor' | 'dot' | 'other';
+export type LaneEngine = 'claude' | 'codex' | 'grok' | 'local' | 'devin' | 'cursor' | 'gemini' | 'dot' | 'other';
 
 export interface WorldLaneRow {
   history: { points: { t: number; fraction: number; gapBefore: boolean }[];
@@ -76,8 +77,8 @@ const EXTRA: Readonly<Record<string, { label: string; engine: LaneEngine }>> = {
   'grok-bot': { label: 'Grok Bot', engine: 'grok' },
   terra: { label: 'Terra', engine: 'other' },
   zai: { label: 'GLM Lite', engine: 'other' },
-  gemini: { label: 'Gemini', engine: 'other' },
-  agy: { label: 'Antigravity', engine: 'other' },
+  gemini: { label: 'Gemini', engine: 'gemini' },
+  agy: { label: 'Antigravity', engine: 'gemini' },
   instinct: { label: 'Instinct', engine: 'other' },
   omlx: { label: 'oMLX', engine: 'local' },
   ollama: { label: 'Ollama', engine: 'local' },
@@ -125,15 +126,8 @@ function safeUnit(value: string): string | null {
 }
 
 export function observationAge(observedAt: string | null, nowMs: number): string {
-  if (!observedAt) return 'unknown';
-  const age = clock(nowMs) - Date.parse(observedAt);
-  if (!Number.isFinite(age) || age < 0) return 'unknown';
-  if (age < 60_000) return 'just now';
-  const minutes = Math.floor(age / 60_000);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 48) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  const reading = relativeTime(observedAt, clock(nowMs));
+  return reading ? reading.seconds < 60 ? 'just now' : reading.text : 'unknown';
 }
 
 function isoLabel(value: string): string | null {

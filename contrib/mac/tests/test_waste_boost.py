@@ -2,11 +2,13 @@ import ast
 import json
 from pathlib import Path
 import unittest
+from test_work_market import market
 
 source = Path(__file__).resolve().parents[1] / 'dispatchd.py'
 nodes = [n for n in ast.parse(source.read_text()).body
-         if isinstance(n, ast.FunctionDef) and n.name in ('waste_risk', 'waste_boost', 'pace_behind')]
-namespace = {}
+         if isinstance(n, ast.FunctionDef) and n.name in
+         ('waste_risk', 'waste_boost', 'pace_behind', 'live_allowance', 'antigravity_window', 'promo_window')]
+namespace = {'work_market': market}
 exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), namespace)
 EXECUTOR = {'cost_class': 'included', 'tiers': ['fast', 'mid', 'work', 'frontier']}
 
@@ -16,6 +18,28 @@ def boost(projection, lane, tier, executor=EXECUTOR):
 
 
 class WasteBoost(unittest.TestCase):
+    def test_ultra_short_window_requires_a_matching_fresh_personal_seat(self):
+        scope = {'agy': {'account_kind': 'personal', 'plan': 'google-ai-ultra'}}
+        row = {'id': 'antigravity', 'verified': True, 'unit': 'percent', 'lane': 'agy',
+               'observed_at': 10000, 'stale_after': 10900, 'window_start': 9000, 'reset_at': 27000, 'used_pct': 42}
+        read = namespace['antigravity_window']
+        payload = {'schema': 'resource-live.v1', 'readings': [row]}
+        reading = read(payload, scope, 10001)
+        self.assertEqual(market.deadline_priority(reading, 10001, short_window=True), 27000)
+        self.assertIsNone(read(payload, {'agy': {'account_kind': 'workspace', 'plan': 'workspace'}}, 10001))
+        self.assertIsNone(read(payload, scope, 10900))
+        self.assertIsNone(read(dict(payload, readings=[dict(row, reset_at=30000)]), scope, 10001))
+
+    def test_promotional_priority_needs_fresh_unspent_credit_and_an_expiry(self):
+        read = namespace['promo_window']
+        row = {'id': 'claude-api', 'verified': True, 'unit': 'usd', 'class': 'metered-included',
+               'observed_at': 10000, 'stale_after': 10900, 'expires_at': 27000, 'used': 42, 'limit': 200}
+        payload = lambda reading: {'schema': 'resource-live.v1', 'readings': [reading]}
+        self.assertEqual(market.deadline_priority(read(payload(row), 'claude-api', 10001), 10001, promotional=True), 27000)
+        self.assertIsNone(read(payload(dict(row, used=200)), 'claude-api', 10001))
+        self.assertIsNone(read(payload(dict(row, expires_at=None)), 'claude-api', 10001))
+        self.assertIsNone(read(payload(row), 'claude-api', 10900))
+
     def test_risk_and_tier_table(self):
         for risk, expected in [('low', None), ('medium', 'work'), ('high', 'work'), ('unknown', None)]:
             for known in (True, False):

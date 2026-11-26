@@ -7,6 +7,7 @@
  * A missing fact stays null and the state reads honestly — numbers are never
  * invented, and Dot's own usage allowance is never read or estimated.
  */
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import type { CommsStatus } from '../fleet-inbox/comms-status-model.js';
 
 /** An unanswered inbound older than this counts as waiting on the fleet. */
@@ -39,10 +40,7 @@ export interface DotResourceView {
 }
 
 function agoText(minutes: number): string {
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
-  return `${Math.floor(minutes / 1440)}d ago`;
+  return minutes < 1 ? 'just now' : ageInSeconds(minutes * 60);
 }
 
 const ageMinutes = (iso: string, now: number): number => Math.max(0, Math.floor((now - Date.parse(iso)) / 60_000));

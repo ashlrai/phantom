@@ -30,6 +30,11 @@ Without `--json` the command prints one line per lane, for example
 - **Commit**: the git commit of the Phantom build serving the view. It is
   `null` ("unknown") for an install with no git checkout; it is never guessed.
 
+Error rate and latency use runs with a recorded outcome and a readable end
+timestamp between their start and the end of the report window, inclusive.
+A run with a valid start in the window still counts as a call if its
+completion evidence is missing or invalid.
+
 Both the screen and the CLI derive these from the same live snapshot as
 `GET /api/verse/fleet/live`, so they agree. Nothing shown is a credential, and
 output goes through the public-JSON scrubber.

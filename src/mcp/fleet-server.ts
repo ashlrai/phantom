@@ -59,6 +59,7 @@ import { parseFleetChannelsOverviewArgs, readFleetChannelsOverview } from './fle
 import { parseFleetRuntimeArgs, readFleetRuntime } from './fleet-runtime.js';
 import { SURFACES } from '../core/fleet/surface-owner.js';
 import { NOTE as SESSION_HANDOFF_NOTE, parseFleetSessionHandoffArgs, readFleetSessionHandoff } from './fleet-session-handoff.js';
+import { NOTE as SESSION_HANDOFFS_NOTE, parseFleetSessionHandoffsArgs, readFleetSessionHandoffs } from './fleet-session-handoffs.js';
 import { NOTE as PEER_LEDGER_NOTE, parseFleetPeerLedgerArgs, readFleetPeerLedger, type FleetPeerLedgerArgs } from './fleet-peer-ledger.js';
 import { NOTE as BRIDGE_CHECK_NOTE, parseFleetBridgeCheckArgs, readFleetBridgeCheck } from './fleet-bridge-check.js';
 import { parseFleetSurfaceOwnerArgs, readFleetSurfaceOwner } from './fleet-surface-owner.js';
@@ -362,6 +363,7 @@ export interface FleetReaders {
   runtime?: () => Promise<unknown>;
   peerLedger?: (input: FleetPeerLedgerArgs) => unknown;
   sessionHandoff?: (input: { job: string }) => unknown;
+  sessionHandoffs?: (input: Record<string, never>) => unknown;
   surfaceOwner?: (surface: string) => Promise<unknown>;
   claimExecution?: () => Promise<unknown>;
   runtimeIdentity?: () => Promise<unknown>;
@@ -933,6 +935,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_session_handoffs',
+      description: SESSION_HANDOFFS_NOTE,
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
       name: 'fleet_claim_execution',
       description: 'Read-only sanitized claim execution evidence: which live advisory claims have a matching worker process on this computer. RUNNING requires a matched worker; otherwise CLAIMED_NO_WORKER or UNKNOWN. Grants no dispatch, claim or merge authority. Accepts no arguments and never writes.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -1016,7 +1024,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_unfed',
-      description: 'Read the shared work queue\'s per-resource utilization and unfed capacity — the same readUnfedReport assembly `phm fleet unfed --json` serves, where fleet_lanes reports each lane\'s posture (running/target/hold/usage) and fleet_work_feed lists the jobs themselves but neither answers "which lanes have free slots while runnable rows wait under another lane\'s hint, and why". The result is the fleet.unfed.v1 report: per lane running, target, held, utilization, headroom, readyHinted, waitingElsewhere, unfed and the blocked reason-code counts, plus waiting, invalidRows, unfedLanes, unfedSlots, the fleetStop verdict (admission_stopped, global_admission or null), source (dispatcher or derived), derivedReasons, statusAsOf and statusFresh — a stale or untimestamped snapshot is reported flagged, never hidden. The window folds cover the last windowHours (default 24, at most 168 — the same bound --window enforces): history (unfed ticks, slot-ticks lost and leading blocked reasons per lane), overrides (route decisions that left the hinted lane, by reason and hinted-to-chosen lane), rejections (per-lane refusal codes), claims (jobs.jsonl launches that left their hint — events, not distinct jobs) and decisionOutcomes (each decided job joined to its recorded merge outcome by how the hint fared). Honesty is the report\'s own: each fold keeps available/truncated/jobsAvailable flags so a missing market log or tail-truncated ledger stays a lower bound or unknown — never an invented zero — and an absent or unreadable queue/status.json reports { status: "unavailable" }, never an invented all-fed fleet. `windowHours` is the only argument; every store root stays server-owned — no caller root, path, cwd or runsDir is accepted — and the tool never writes, launches, holds, releases, claims or dispatches anything; counts, lane names and reason codes only, never job ids, task text or credentials.',
+      description: 'Read the shared work queue\'s per-resource utilization and unfed capacity — the same readUnfedReport assembly `phm fleet unfed --json` serves, where fleet_lanes reports each lane\'s posture (running/target/hold/usage) and fleet_work_feed lists the jobs themselves but neither answers "which lanes have free slots while runnable rows wait under another lane\'s hint, and why". The result is the fleet.unfed.v1 report: per lane running, target, held, utilization, headroom, readyHinted, waitingElsewhere, unfed and the blocked reason-code counts, plus waiting, invalidRows, unfedLanes, unfedSlots, the fleetStop verdict (admission_stopped, global_admission or null), source (dispatcher or derived), derivedReasons, statusAsOf and statusFresh — a stale or untimestamped snapshot is reported flagged, never hidden. The window folds cover the last windowHours (default 24, at most 168 — the same bound --window enforces): history (unfed ticks, slot-ticks lost and leading blocked reasons per lane), overrides (route decisions that left the hinted lane, by reason and hinted-to-chosen lane), rejections (per-lane refusal codes), claims (jobs.jsonl launches that left their hint — events, not distinct jobs) and decisionOutcomes (each decided job joined to its recorded merge outcome by how the hint fared). The marketTruncated flag marks market folds that may be incomplete for the requested window. The folds expose available, truncated, jobsAvailable and jobsTruncated flags for their respective evidence — and an absent or unreadable queue/status.json reports { status: "unavailable" }, never an invented all-fed fleet. `windowHours` is the only argument; every store root stays server-owned — no caller root, path, cwd or runsDir is accepted — and the tool never writes, launches, holds, releases, claims or dispatches anything; counts, lane names and reason codes only, never job ids, task text or credentials.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1572,6 +1580,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_desktop_update_status',
+      description: 'Read the local desktop app’s last native update phase, fixed hold reason and remedy. No arguments; does not check for, apply, or authorize an update.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
       name: 'fleet_bridge_check',
       description: BRIDGE_CHECK_NOTE,
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -1581,7 +1595,14 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_agent_inbox' && name !== 'fleet_agent_work' && name !== 'fleet_agent_wakes' && name !== 'fleet_agent_messages' && name !== 'fleet_agent_channels' && name !== 'fleet_agent_identity' && name !== 'fleet_agent_conversations' && name !== 'fleet_agent_roster' && name !== 'fleet_bus_channel' && name !== 'fleet_bus_show' && name !== 'fleet_bus_thread' && name !== 'fleet_bus_status' && name !== 'fleet_bus_claims' && name !== 'fleet_bus_board' && name !== 'fleet_seat_handoffs' && name !== 'fleet_bot_seats' && name !== 'fleet_work_feed' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_coordination_inbox' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_channels_overview' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_slack_status' && name !== 'fleet_lanes' && name !== 'fleet_unfed' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_status' && name !== 'fleet_comms_thread' && name !== 'fleet_owner_history' && name !== 'fleet_comms_health' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
+    if (name === 'fleet_desktop_update_status') {
+      if (args == null || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length !== 0) {
+        throw new McpError(ErrorCode.InvalidParams, 'Invalid desktop update status arguments.');
+      }
+      const { readNativeUpdateStatus } = await import('../core/desktop/native-update-status.js');
+      return { content: [{ type: 'text', text: JSON.stringify(readNativeUpdateStatus()) }] };
+    }
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_agent_inbox' && name !== 'fleet_agent_work' && name !== 'fleet_agent_wakes' && name !== 'fleet_agent_messages' && name !== 'fleet_agent_channels' && name !== 'fleet_agent_identity' && name !== 'fleet_agent_conversations' && name !== 'fleet_agent_roster' && name !== 'fleet_bus_channel' && name !== 'fleet_bus_show' && name !== 'fleet_bus_thread' && name !== 'fleet_bus_status' && name !== 'fleet_bus_claims' && name !== 'fleet_bus_board' && name !== 'fleet_seat_handoffs' && name !== 'fleet_bot_seats' && name !== 'fleet_work_feed' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_coordination_inbox' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_session_handoffs' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_channels_overview' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_slack_status' && name !== 'fleet_lanes' && name !== 'fleet_unfed' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_status' && name !== 'fleet_comms_thread' && name !== 'fleet_owner_history' && name !== 'fleet_comms_health' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -1662,6 +1683,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const selfTickLastArgs = name === 'fleet_self_tick_last' ? parseFleetSelfTickLastArgs(args) : null;
     const unfedArgs = name === 'fleet_unfed' ? parseFleetUnfedArgs(args) : null;
     const sessionHandoffArgs = name === 'fleet_session_handoff' ? parseFleetSessionHandoffArgs(args) : null;
+    const sessionHandoffsArgs = name === 'fleet_session_handoffs' ? parseFleetSessionHandoffsArgs(args) : null;
     const peerLedgerArgs = name === 'fleet_peer_ledger' ? parseFleetPeerLedgerArgs(args) : null;
     const recheckArgs = name === 'fleet_recheck' ? parseFleetRecheckArgs(args) : null;
     const recheckHistory = name === 'fleet_recheck_history' ? parseFleetRecheckHistoryArgs(args) : null;
@@ -1677,6 +1699,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_runtime' ? parseFleetRuntimeArgs(args) === null :
         name === 'fleet_peer_ledger' ? peerLedgerArgs === null :
         name === 'fleet_session_handoff' ? sessionHandoffArgs === null :
+        name === 'fleet_session_handoffs' ? sessionHandoffsArgs === null :
         name === 'fleet_surface_owner' ? surfaceOwner === null :
         name === 'fleet_claim_execution' ? claimExecution === null :
         name === 'fleet_recheck' ? recheckArgs === null :
@@ -1764,6 +1787,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_runtime' ? await (readers.runtime ?? readFleetRuntime)()
         : name === 'fleet_peer_ledger' ? (readers.peerLedger ?? readFleetPeerLedger)(peerLedgerArgs as FleetPeerLedgerArgs)
         : name === 'fleet_session_handoff' ? (readers.sessionHandoff ?? readFleetSessionHandoff)(sessionHandoffArgs!)
+        : name === 'fleet_session_handoffs' ? (readers.sessionHandoffs ?? readFleetSessionHandoffs)(sessionHandoffsArgs!)
         : name === 'fleet_surface_owner' ? await (readers.surfaceOwner ?? readFleetSurfaceOwner)(surfaceOwner!.surface)
         : name === 'fleet_claim_execution' ? await (readers.claimExecution ?? readFleetClaimExecution)()
         : name === 'fleet_runtime_identity' ? await (readers.runtimeIdentity ?? readFleetRuntimeIdentity)()

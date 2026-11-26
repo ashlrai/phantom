@@ -1,3 +1,4 @@
+import { ageInSeconds } from '../../../lib/relative-time.js';
 export const lanes = ['claude', 'codex-personal', 'devin', 'codex-local'] as const;
 export const tiers = ['frontier', 'work', 'mid', 'fast'] as const;
 export interface DropJobDraft { id: string; lane: string; tier: string; body: string }
@@ -38,7 +39,7 @@ export function outcomeText(status: string | number, payload: unknown): string {
 export function waitingRows(items: readonly DropJobItem[], _nowMs: number) {
   return [...items].sort((a, b) => b.ageSeconds - a.ageSeconds).map(item => {
     const seconds = Math.max(0, Math.floor(item.ageSeconds));
-    const age = seconds < 60 ? `${seconds} s ago` : seconds < 3600 ? `${Math.floor(seconds / 60)} min ago` : `${Math.floor(seconds / 3600)} h ago`;
+    const age = ageInSeconds(seconds, 'spaced');
     return { ...item, age };
   });
 }

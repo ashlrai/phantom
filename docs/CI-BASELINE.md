@@ -601,10 +601,11 @@ An `ok` journal row only proves the `gh run rerun` call succeeded, not that the
 flake passed. On each maintenance pass, after queueing work, the loop resolves
 pending reruns by reading `repos/<repo>/actions/runs/<runId>`: a completed run
 with conclusion `success` journals a `pass` verdict, `failure` or `timed_out`
-a `fail`, and any other completed conclusion (cancelled, skipped, neutral,
-startup failure, stale) an `inconclusive` one. A run still in progress, a read
-whose `updated_at` predates the rerun call, or a head SHA mismatch stays
-pending for a later pass. Attempts younger than five minutes are not checked
+a `fail`, and any other reported conclusion (cancelled, skipped, neutral,
+startup failure, stale) an `inconclusive` one. Verdicts require a matching run
+ID and head SHA, a nonempty conclusion, and a parseable `updated_at` no earlier
+than one minute before the successful rerun call was journaled. In-progress
+runs and incomplete, mismatched or stale reads stay pending for a later pass. Attempts younger than five minutes are not checked
 yet so a stale pre-rerun read cannot be mistaken for the new attempt's result;
 unresolved attempts older than 24 hours stop being polled. Each pass performs
 at most eight verdict reads per repository inside the same five-minute

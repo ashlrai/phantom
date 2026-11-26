@@ -47,6 +47,26 @@ it('counts only runs started inside the window: a future stamp is not a call', (
   expect(codex.latencyP50Ms).toBe(5 * 60_000);
 });
 
+it('requires valid completion evidence for error rate and latency', () => {
+  const incomplete = [
+    run({ id: 'malformed', endedAt: 'invalid', outcome: 'failed' }),
+    run({ id: 'reversed', endedAt: at(6), outcome: 'failed' }),
+    run({ id: 'future-end', endedAt: at(-1), outcome: 'failed' }),
+    run({ id: 'missing-end', outcome: 'failed' }),
+    run({ id: 'missing-outcome', endedAt: at(1) }),
+  ];
+  expect(computeLaneHealth(snap(incomplete)).lanes[0]).toMatchObject({
+    calls: 5, errorRate: null, latencyP50Ms: null, latencyP95Ms: null,
+  });
+  const finished = [
+    run({ id: 'instant-failure', endedAt: at(5), outcome: 'failed' }),
+    run({ id: 'at-cutoff', endedAt: at(0), outcome: 'merged' }),
+  ];
+  expect(computeLaneHealth(snap([...incomplete, ...finished])).lanes[0]).toMatchObject({
+    calls: 7, errorRate: 0.5, latencyP50Ms: 0, latencyP95Ms: 300_000,
+  });
+});
+
 it('flags a run past its phase timeout with phase age, not one within it or one that waits by design', () => {
   const h = computeLaneHealth(snap([
     run({ id: 'hung', phaseStartedAt: at(47) }),

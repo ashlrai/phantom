@@ -18,7 +18,7 @@ describe('Fleet workers', () => {
     const workers = Array.from({ length: 22 }, (_, i) => ({ job: `RQ-FAKE-${i}`, lane: 'fake-lane', tier: 'work', ageSeconds: i * 200, repo: 'private-repo-fixture' }));
     const fetch = stubFetch({ 'GET /api/verse/fleet/runs': { workers, inbox: [{ text: 'private-inbox-fixture' }] } });
     renderMobile(<WorkersSection />);
-    expect(await screen.findByText('22 running · oldest RQ-FAKE-21 1 h')).toBeInTheDocument();
+    expect(await screen.findByText('22 running · oldest RQ-FAKE-21 1 h 10 min')).toBeInTheDocument();
     const oldest = screen.getByText('RQ-FAKE-21').closest('div');
     expect(oldest).toHaveTextContent('fake-lane · work');
     expect(oldest?.querySelector('[data-tone="bad"]')).toBeInTheDocument();

@@ -1343,27 +1343,7 @@ if DRIP:
     try: drecent = [float(x) for x in rd(DRIPLOG).split() if NOW - float(x) < 300]
     except Exception: drecent = []
     drip_budget = 0 if dq >= 150 else max(0, 10 - len(drecent))
-REPO_RANK = {r: i for i, r in enumerate(("phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-stack", "ashlr-plugin"))}
-def _ready_repo_ranks():
-    """Read a complete rank snapshot; invalid snapshots leave legacy ordering intact."""
-    try:
-        with open(H + "/.ashlr/repo-rank.json") as f: state = json.load(f)
-        enrolled, rows = state["enrolled"], state["rankings"]
-        weights = [state["weights"][k] for k in ("prior", "recency", "leverage")]
-        number = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
-        datetime.datetime.fromisoformat(state["generatedAt"].replace("Z", "+00:00"))
-        if (type(state["schemaVersion"]) is not int or state["schemaVersion"] != 1 or not isinstance(enrolled, list) or not enrolled
-                or any(not isinstance(r, str) or not re.fullmatch(r"[a-z0-9-]+", r) for r in enrolled)
-                or len(set(enrolled)) != len(enrolled) or not isinstance(rows, list) or len(rows) != len(enrolled)
-                or any(not number(w) or w < 0 for w in weights) or not math.isfinite(sum(weights)) or sum(weights) <= 0
-                or not isinstance(state["proposals"], list) or not isinstance(state["history"], list)
-                or any(not isinstance(r, dict) or r.get("repo") not in enrolled
-                       or not number(r.get("weight")) or r["weight"] <= 0 or not number(r.get("score")) for r in rows)
-                or len({r["repo"] for r in rows}) != len(enrolled)):
-            return {}
-        return {r["repo"]: i for i, r in enumerate(rows)}
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError): return {}
-
+PUBLISH_REPO_ORDER = {r: i for i, r in enumerate(("phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-stack", "ashlr-plugin"))}
 PRIORITY_QUEUE = rd(Q + "/router-queue.md"); _sizes = {}
 def _bucket(j):
     return (0 if j.startswith("RQ-FIX-MAIN-") else 1 if j.startswith("RQ-REL-") else
@@ -1387,11 +1367,11 @@ def _size_hint(j, prompt=None):
         try: _sizes[key] = int(hint.group(1)) if hint else math.inf
         except ValueError: _sizes[key] = math.inf
     return _sizes[key]
-def _job_priority(j, repo, path, prompt=None): return (_bucket(j), REPO_RANK.get(repo, 9), _size_hint(j, prompt), path)
 def _prio(bp):
     j = os.path.basename(bp)[:-5]
     f = rd(RUN + "/" + j + ".line").strip().split("\t")
-    return _job_priority(j, _job_repo(j), bp, f[4] if len(f) >= 5 else None)
+    return (_bucket(j), PUBLISH_REPO_ORDER.get(_job_repo(j), len(PUBLISH_REPO_ORDER) + 2),
+            _size_hint(j, f[4] if len(f) >= 5 else None), bp)
 
 # A launch can still be fetching before its .base exists. Include the grace set,
 # but release the repo as soon as the worker has an explicit terminal outcome.
@@ -1747,6 +1727,61 @@ try:
             and isinstance(projection.get("lanes"), dict)):
         UIA = projection["lanes"]
 except (OSError, ValueError, subprocess.SubprocessError): pass
+
+def live_allowance(sidecar, resource_id, now):
+    if not isinstance(sidecar, dict) or sidecar.get("schema") != "resource-live.v1":
+        return None
+    readings = sidecar.get("readings")
+    if not isinstance(readings, list):
+        return None
+    row = next((r for r in readings if isinstance(r, dict) and r.get("id") == resource_id), None)
+    if not row or row.get("verified") is not True:
+        return None
+    obs, stale = (work_market._epoch(row.get(k)) for k in ("observed_at", "stale_after"))
+    if obs is None or stale is None or not 0 <= now - obs < 900 or not now < stale:
+        return None
+    return row
+
+def antigravity_window(sidecar, seats, now):
+    seat = seats.get("agy") if isinstance(seats, dict) else None
+    if seat != {"account_kind": "personal", "plan": "google-ai-ultra"}:
+        return None
+    row = live_allowance(sidecar, "antigravity", now)
+    if not row or row.get("unit") != "percent" or row.get("lane") != "agy":
+        return None
+    obs, start, reset = (work_market._epoch(row.get(k)) for k in ("observed_at", "window_start", "reset_at"))
+    if start is None or reset is None or not start <= obs <= now < reset or reset - start != 18000:
+        return None
+    plan = sidecar.get("burn_down")
+    entries = plan.get("allowances") if isinstance(plan, dict) else None
+    projected = next((r.get("projected_unused") for r in entries if isinstance(r, dict)
+                      and r.get("id") == "antigravity" and r.get("deadline_at") == row["reset_at"]), None) if isinstance(entries, list) else None
+    return dict(known=True, stale=False, used_pct=row.get("used_pct"), reset_at=reset, projected_unused_pct=projected)
+
+def promo_window(sidecar, lane, now):
+    row = live_allowance(sidecar, lane, now)
+    if not row or row.get("class") != "metered-included" or row.get("unit") != "usd":
+        return None
+    expiry = work_market._epoch(row.get("expires_at"))
+    used, limit = work_market.number(row.get("used")), work_market.number(row.get("limit"))
+    if expiry is None or expiry <= now or used is None or limit is None or not 0 <= used < limit:
+        return None
+    return dict(known=True, stale=False, used_pct=used / limit * 100, expires_at=expiry, reset_at=row.get("reset_at"))
+
+_RESOURCE_LIVE = jload(R + "/state/resource-live.json", {})
+if "agy" in LANES and "agy" not in UIA:
+    agy = antigravity_window(_RESOURCE_LIVE, jload(Q + "/subscription-seats.json", {}), NOW)
+    if agy is not None: UIA["agy"] = agy
+_API_LANES = {"claude-api", "openai-api"}.intersection(LANES)
+_PROMOS = {lane: promo_window(_RESOURCE_LIVE, lane, NOW) for lane in _API_LANES}
+_RESOURCE_TARGETS = work_market.advisory_targets(jload(Q + "/resource-capacity-advice.json", {}), NOW)
+
+def dispatch_deadline(lane, executor):
+    cost = executor.get("cost_class")
+    if lane in _API_LANES:
+        return work_market.deadline_priority(_PROMOS[lane], NOW, promotional=True)
+    if cost != "included": return None
+    return work_market.deadline_priority(UIA.get(lane), NOW, short_window=lane == "agy")
 
 tick_phase("restock", 5)
 # ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
@@ -2104,12 +2139,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     market_specs = {f[0]: work_market.requirements(f) for f in cand}
     # The key is global across pools; blocked jobs are retained below while
     # scanning continues, so a capped FIX-MAIN sibling cannot consume a claim.
-    ready_ranks = _ready_repo_ranks()
     yield_groups, pr_states = admission_history(JOBS, NOW)
     admission = {f[0]: admission_rank(f[0], f[3], f[2], yield_groups) for f in cand}
     cand.sort(key=lambda f: (*work_market.priority(market_specs[f[0]]), -admission[f[0]]["score"], not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]),
-                             ready_ranks.get(f[1], len(ready_ranks)),
-                             *_job_priority(f[0], f[1], f[4], f[4])[1:]))
+                             _size_hint(f[0], f[4]), f[4]))
     completed = merged_jobs(JOBS)
     recuts = RecutAdmission(batcher.parse_rows(Q + '/recut-loop.jsonl'), completed, alive)
     for recut_job in recuts.identities:
@@ -2123,6 +2156,23 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             ev("DONE-NOOP %s [%s]" % (f[0], reason))
     jsave(Q + "/ranking.json", {"at": NOW, "decisions": list(admission[f[0]] for f in cand)})
     cand = [f for f in cand if admission[f[0]]["outcome"] != "DONE-NOOP"]
+    repo_shares = work_market.repo_shares(
+        ((work_market.repo_key(f[1]), f[0], market_specs[f[0]], admission[f[0]]["mergeRate"]) for f in cand), H)
+    last_shares = jload(Q + "/repo-shares.json", {})
+    if not isinstance(last_shares, dict) or last_shares.get("repos") != repo_shares:
+        for share in repo_shares.values(): market_metric(share)
+    jsave(Q + "/repo-shares.json", {"at": NOW, "repos": repo_shares})
+    repo_turns = {}
+    def repo_claim_key(f):
+        # Keep explicit job urgency, then apportion that urgency band across repos.
+        band = work_market.priority(market_specs[f[0]])[0]
+        repo = work_market.repo_key(f[1])
+        bucket = _bucket(f[0])
+        key = (band, bucket, repo)
+        repo_turns[key] = repo_turns.get(key, 0) + 1
+        share = repo_shares.get(repo, {}).get("share", 0)
+        return (band, bucket, repo_turns[key] / share if share else math.inf)
+    cand.sort(key=repo_claim_key)
     seen = set(); pc_n = 0; local_ok = None; market_rejects = {}
     claimed_requests = {}
     active_claims = {row['job']: row for row in JOBS if isinstance(row, dict)
@@ -2233,6 +2283,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         res = result(j)
         if j in seen: continue  # duplicate line
+        if work_market.repo_priority(H, work_market.repo_key(repo)) == "pause":
+            rest.append(line); seen.add(j); continue
         parent = recovery_children.get(j)
         if j in recoveries or (parent and recoveries[parent]['done']): continue
         if parent and (parent in alive | reaping | publishing | ACTIVE_LAUNCHES or os.path.isdir(WTROOT + '/' + parent)):
@@ -2279,6 +2331,16 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                                          market_models, BUS["quota"], JOBS_RAW, now=NOW,
                                          allowance=market_allowance, tier=tier))
         for dest in LANES:
+            view[dest]["deadline_priority"] = dispatch_deadline(dest, view[dest])
+            if dest in _RESOURCE_TARGETS:
+                advisory = min(_RESOURCE_TARGETS[dest], tgt(dest))
+                view[dest]["advisory_target"] = advisory
+                view[dest]["below_advisory_target"] = running[dest] < advisory
+            if dest in _API_LANES and _PROMOS[dest] is None and view[dest]["cost_class"] == "included":
+                view[dest]["cost_class"] = "metered"
+            view[dest]["is_metered_api"] = dest in _API_LANES and view[dest]["cost_class"] == "metered"
+            if view[dest]["is_metered_api"] and spec.get("max_cost_class") != "metered":
+                view[dest]["unavailable"] = "metered_api_opt_in_required"
             if parent and (dest in ('claude', 'claude-api') or view[dest]['cost_class'] == 'metered'):
                 view[dest]['unavailable'] = 'claude_recovery_lane_excluded'
             if dest == "devin":

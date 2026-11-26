@@ -1,4 +1,5 @@
 import type { RuntimeSnapshotResponse } from './fleet-host/runtime-snapshot-query.js';
+import { ageInSeconds } from '../../lib/relative-time.js';
 
 export interface RuntimeIdentityRow {
   tone: 'ok' | 'stale' | 'down';
@@ -9,13 +10,6 @@ export interface RuntimeIdentityRow {
 export const RUNTIME_STALE_MS = 5 * 60_000;
 
 const known = (v: unknown): string => (typeof v === 'string' && v.trim() !== '' && v !== 'UNKNOWN' ? v.trim() : 'unknown');
-
-function ago(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  return `${Math.floor(seconds / 86400)}d`;
-}
 
 /**
  * One-line runtime identity for the sidebar. Pure: `now` is epoch ms. A fetch
@@ -37,6 +31,6 @@ export function describeRuntimeIdentity(
   const age = valid ? Math.max(0, now - readAt) : null;
   return {
     tone: age !== null && age <= RUNTIME_STALE_MS ? 'ok' : 'stale',
-    text: `runtime ${known(snap.host)} · v${version === 'unknown' ? version : version.replace(/^v/, '')} · read ${age === null ? 'unknown' : `${ago(Math.floor(age / 1000))} ago`}`,
+    text: `runtime ${known(snap.host)} · v${version === 'unknown' ? version : version.replace(/^v/, '')} · read ${age === null ? 'unknown' : ageInSeconds(age / 1000)}`,
   };
 }

@@ -16,6 +16,7 @@
  *    ISO instant inside it ("resets 2026-09-26T03:46:56.000Z") is shown in
  *    local time, and ".;" joins read as ";" (autonomy/format `tidyProse`).
  */
+import { relativeTime, ageInSeconds } from '../../../lib/relative-time.js';
 import {
   MODE_DESCRIPTIONS,
   type BudgetEngine,
@@ -196,12 +197,8 @@ export function budgetSummary(rows: readonly BudgetSeatRow[]): { eligible: numbe
 
 /** Human age of the readings, e.g. "just now", "4 min ago". */
 export function readingAge(sampledAt: string, nowMs: number): string {
-  const t = Date.parse(sampledAt);
-  if (!Number.isFinite(t)) return 'unknown';
-  const minutes = Math.max(0, Math.round((nowMs - t) / 60_000));
-  if (minutes < 1) return 'just now';
-  if (minutes < 120) return `${minutes} min ago`;
-  return `${Math.round(minutes / 60)} h ago`;
+  const reading = relativeTime(sampledAt, nowMs);
+  return reading ? reading.seconds < 60 ? 'just now' : ageInSeconds(reading.seconds, 'spaced') : 'unknown';
 }
 
 /** Clamp a slider value to the range the API accepts. */

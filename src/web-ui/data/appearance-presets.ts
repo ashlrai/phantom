@@ -37,6 +37,7 @@ export const ACCENT_PRESETS: readonly AccentPreset[] = [
 export function isDefaultAppearance(value: Appearance = getAppearance()): boolean {
   const base = defaultAppearance();
   return (
+    value.brand === base.brand &&
     value.theme === base.theme &&
     value.accentH === base.accentH &&
     value.accentS === base.accentS &&
