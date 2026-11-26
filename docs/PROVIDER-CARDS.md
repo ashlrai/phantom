@@ -42,3 +42,19 @@ The web console reads the same `resource.v1` data (`GET /api/resource`) and
 groups it with the same code (`src/core/fabric/provider-cards.ts`), so the CLI
 and the UI always agree. The desktop mission-control view (bc-124196c5) is not
 part of this change.
+
+## Storage and isolation
+
+`phm resource` reads and refreshes `$ASHLR_HOME/fleet.json` (default
+`~/.ashlr/fleet.json`), or the directory passed with `--directory`. To try it
+without touching real Phantom state, set `ASHLR_HOME=$(mktemp -d)` or
+`HOME=$(mktemp -d)`:
+
+```bash
+ASHLR_HOME=$(mktemp -d) phm resource --cards --json
+```
+
+OS ancestor symlinks in a scratch home (such as `/var` on macOS) resolve safely,
+while a symlinked leaf directory or a non-private directory mode is still
+refused. With `--json`, usage errors (exit 2) and storage refusals (exit 1)
+print one `{ "ok": false, "error": { "code", "message" } }` object on stdout.
