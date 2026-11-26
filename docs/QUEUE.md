@@ -1188,7 +1188,10 @@ reason. Dry runs expose `trace` in their JSON without writing metrics.
 Drafted means accepted for queueing; an hourly cap is a rejection. Duplicate
 and completed targets retain their source; targets without an ID use a title
 hash. Counts deduplicate by source and target within the window; stages can
-overlap. Only draft evidence attributes later launches and PRs to that source.
+overlap. The latest explicit `src` on a job receipt takes precedence over draft
+evidence. Without an explicit job source, a single recorded draft source receives
+credit for the job's launches and PRs. Competing draft sources leave that credit
+under `unknown`, while each source retains its own draft count.
 Rejections never claim another generator's results. `generationKnown: false`
 means the generation ledger is unavailable; `jobsKnown` does the same for the
 jobs ledger. If either journal is missing or unreadable, the report still
