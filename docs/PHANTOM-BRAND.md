@@ -42,7 +42,9 @@ The native window, menus and About identify Phantom. Published 3.25.1 uses `Phan
 
 ## Mark provenance
 
-The blue ghost mark is reused from the first-party `ashlrai/phantom-secrets` repository, clean source commit `bf4b06edd12bbac772d8b56b6001778bb0f910a6`, file `apps/web/public/favicon.svg`, SHA-256 `8cfd1f86237a521ee43e74394712b489ff0cc2adfe70dcf8ac500056314c4269`. Its MIT license copyright notice is preserved next to the SVG copies. It does not replace provider marks or imply provider endorsement.
+The Phantom workbench uses the official [Phantom P](https://ashlr.ai/logos/phantom-workbench-logo.svg) for product branding. AshlrAI's [Phantom Secrets ghost](https://ashlr.ai/logos/phantom-logo.svg) identifies the separate vault product. Agent avatars and historical illustrations are not workbench logos.
+
+The [ecosystem registry](https://github.com/ashlrai/phantom/blob/master/src/core/brand/ecosystem.ts) gives each project one shared mark. README and documentation use those same [bundled assets and source credits](https://github.com/ashlrai/phantom/tree/master/src/web-ui/public/logos). Use text for entries without a registered mark, not another project's artwork. Project marks do not imply provider endorsement.
 
 The current README and landing-page screenshots come from a compiled Phantom build using explicitly labeled sample accounts. They demonstrate the interface and do not establish provider execution or resident autonomy. Existing screenshot filenames and historical package/URL identities are retained.
 
