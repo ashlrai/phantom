@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { localTimestamp } from '../core/fleet/runs-parked-queue.js';
@@ -6,8 +7,21 @@ import { localTimestamp } from '../core/fleet/runs-parked-queue.js';
 const usage = `Usage: phm fleet idle-slots [--hours N] [--json]
 Per lane, over the last N hours (default 2) of dispatchd.log ticks: average running,
 target from queue/slots.json, and idle slot-hours (target minus running, summed over tick gaps).
-Gaps over 15 minutes are skipped as dispatcher downtime. ASHLR_RUNS_DIR overrides the root.`;
+Gaps over 15 minutes are skipped as dispatcher downtime. dispatchd.log is read as a bounded
+tail sized to the window; --json reports logTruncated/windowTruncated/coveredFrom when the
+tail cannot reach the window start. ASHLR_RUNS_DIR overrides the root.`;
 const MAX_GAP_MS = 15 * 60_000;
+
+/**
+ * dispatchd.log is append-only and never rotated, so an unbounded read grows with uptime.
+ * The tail is sized to the window — a tick line is a few hundred bytes and 512 KiB/hour
+ * leaves an order of magnitude of headroom for event lines — clamped so --hours cannot
+ * force a multi-hundred-megabyte read. When the cap cuts into the window the report says
+ * so (logTruncated/windowTruncated) instead of silently shortening it.
+ */
+export const IDLE_SLOTS_LOG_TAIL_MIN_BYTES = 4 * 1024 * 1024;
+export const IDLE_SLOTS_LOG_TAIL_MAX_BYTES = 64 * 1024 * 1024;
+export const IDLE_SLOTS_LOG_TAIL_BYTES_PER_HOUR = 512 * 1024;
 
 export interface FleetIdleSlotsLane {
   lane: string;
@@ -22,6 +36,12 @@ export interface FleetIdleSlots {
   windowEnd: string;
   ticks: number;
   skippedGaps: number;
+  /** True when dispatchd.log exceeded the bounded tail read; older ticks were not read. */
+  logTruncated: boolean;
+  /** True when the retained tail cannot prove tick coverage back to windowStart. */
+  windowTruncated: boolean;
+  /** Earliest tick line retained in dispatchd.log (ISO), or null when none was read; may precede windowStart. */
+  coveredFrom: string | null;
   lanes: FleetIdleSlotsLane[];
   totalIdleSlotHours: number | null;
 }
@@ -32,6 +52,22 @@ export interface FleetIdleSlotsOptions {
 }
 
 const round = (n: number) => Math.round(n * 100) / 100;
+
+/** Bounded tail of a regular file (no symlink follow); null when absent or unreadable. */
+async function readLogTail(path: string, maxBytes: number): Promise<{ text: string; truncated: boolean } | null> {
+  let file;
+  try {
+    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const info = await file.stat();
+    if (!info.isFile()) return null;
+    const length = Math.min(info.size, maxBytes);
+    const bytes = Buffer.alloc(length);
+    const { bytesRead } = await file.read(bytes, 0, length, info.size - length);
+    let text = bytes.subarray(0, bytesRead).toString('utf8');
+    if (info.size > maxBytes) text = text.slice(text.indexOf('\n') + 1);
+    return { text, truncated: info.size > maxBytes };
+  } catch { return null; } finally { await file?.close(); }
+}
 
 function parseTargets(raw: unknown): Map<string, number> {
   const out = new Map<string, number>();
@@ -51,17 +87,22 @@ export async function readFleetIdleSlots(opts: FleetIdleSlotsOptions = {}): Prom
   const hours = opts.hours ?? 2;
   const now = opts.now ?? Date.now();
   const since = now - hours * 3_600_000;
-  let log: string;
-  try { log = await readFile(join(root, 'dispatchd.log'), 'utf8'); } catch { return null; }
+  const tailBytes = Math.min(IDLE_SLOTS_LOG_TAIL_MAX_BYTES,
+    Math.max(IDLE_SLOTS_LOG_TAIL_MIN_BYTES, Math.ceil(hours * IDLE_SLOTS_LOG_TAIL_BYTES_PER_HOUR)));
+  const log = await readLogTail(join(root, 'dispatchd.log'), tailBytes);
+  if (!log) return null;
   let targets = new Map<string, number>();
   try { targets = parseTargets(JSON.parse(await readFile(join(root, 'queue', 'slots.json'), 'utf8'))); } catch { /* targets unknown */ }
 
   const ticks: { ms: number; run: Record<string, number> }[] = [];
-  for (const line of log.split(/\r?\n/)) {
+  let earliestTickMs: number | null = null;
+  for (const line of log.text.split(/\r?\n/)) {
     const m = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) tick run=(\{.*?\}) q=\d+ launched=\d+/.exec(line);
     if (!m) continue;
     const ms = localTimestamp(m[1]!).ms;
-    if (!Number.isFinite(ms) || ms < since || ms > now) continue;
+    if (!Number.isFinite(ms)) continue;
+    if (earliestTickMs === null || ms < earliestTickMs) earliestTickMs = ms;
+    if (ms < since || ms > now) continue;
     let parsed: unknown;
     try { parsed = JSON.parse(m[2]!); } catch { continue; }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
@@ -93,9 +134,12 @@ export async function readFleetIdleSlots(opts: FleetIdleSlotsOptions = {}): Prom
       idleSlotHours: a && target !== null ? round(a.idleMs / 3_600_000) : null };
   });
   const known = lanes.filter(l => l.idleSlotHours !== null);
+  const logTruncated = log.truncated;
+  const windowTruncated = logTruncated && !(earliestTickMs !== null && earliestTickMs <= since);
   return { schema: 'fleet.idle-slots.v1', hours, windowStart: new Date(since).toISOString(), windowEnd: new Date(now).toISOString(),
-    ticks: ticks.length, skippedGaps, lanes,
-    totalIdleSlotHours: known.length ? round(known.reduce((s, l) => s + l.idleSlotHours!, 0)) : null };
+    ticks: ticks.length, skippedGaps, logTruncated, windowTruncated,
+    coveredFrom: earliestTickMs === null ? null : new Date(earliestTickMs).toISOString(),
+    lanes, totalIdleSlotHours: known.length ? round(known.reduce((s, l) => s + l.idleSlotHours!, 0)) : null };
 }
 
 export async function cmdFleetIdleSlots(args: string[], opts: FleetIdleSlotsOptions = {}): Promise<number> {
@@ -111,8 +155,14 @@ export async function cmdFleetIdleSlots(args: string[], opts: FleetIdleSlotsOpti
   if (!report) { console.error('Unable to read dispatchd.log.'); return 1; }
   if (json) { console.log(JSON.stringify(report)); return 0; }
   const cell = (n: number | null) => n === null ? 'unknown' : String(n);
+  const note = report.windowTruncated
+    ? report.coveredFrom === null
+      ? 'Note: dispatchd.log exceeded the read cap and the retained tail has no tick lines; coverage is unknown.'
+      : `Note: dispatchd.log exceeded the read cap; tick coverage starts at ${report.coveredFrom}, inside the ${hours} hour window.`
+    : null;
   console.log([`Idle slots over the last ${hours} hours (${report.ticks} ticks):`,
     ...report.lanes.map(l => `${l.lane}: average running ${cell(l.averageRunning)}, target ${cell(l.target)}, idle ${cell(l.idleSlotHours)} slot-hours`),
-    `Total idle: ${cell(report.totalIdleSlotHours)} slot-hours`].join('\n'));
+    `Total idle: ${cell(report.totalIdleSlotHours)} slot-hours`,
+    ...(note ? [note] : [])].join('\n'));
   return 0;
 }
