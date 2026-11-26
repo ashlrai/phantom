@@ -266,25 +266,27 @@ function starvedAction(lane: AutopilotLane, lanes: AutopilotLane[], global: Flee
     return { kind: 'no-op', reason: 'admission-closed', detail: `'${lane.lane}' has launchable work and free slots, but fleet admission is closed${admitReason ? ` (${admitReason})` : ''}; nothing launches until it reopens.` };
   }
   if (global.at_cap) {
-    // A hold lets existing work drain. The candidate must be able to bring
-    // running strictly below the cap, even after a global cap reduction.
+    // Existing and proposed holds drain together. Their combined running
+    // count must bring the fleet strictly below the cap.
     const slotsNeeded = global.running - global.cap + 1;
     const heldRunning = new Map(lanes.flatMap(row =>
       row.held && row.running !== null ? [[row.lane, row.running] as const] : []));
     const draining = [...heldRunning.values()].reduce((sum, running) => sum + running, 0);
-    if (draining > 0 && draining >= slotsNeeded) {
+    const remaining = slotsNeeded - draining;
+    if (remaining <= 0) {
       return { kind: 'no-op', reason: 'capacity-bound',
         detail: `'${lane.lane}' is waiting at the fleet cap. Running jobs on held lanes can free a slot as they finish.` };
     }
     const holdable = lanes
-      .filter((row) => row.lane !== lane.lane && !row.held && row.running !== null && row.running >= slotsNeeded &&
+      .filter((row) => row.lane !== lane.lane && !row.held && row.running !== null && row.running >= remaining &&
         (row.target ?? 0) > 0 && (row.ready ?? 0) > (row.target ?? 0) * AUTOPILOT_OVER_DEEP_FACTOR)
       .sort((a, b) => (b.ready ?? 0) / (b.target || 1) - (a.ready ?? 0) / (a.target || 1) || a.lane.localeCompare(b.lane));
     if (holdable.length > 0) {
       const target = holdable[0]!;
+      const dependency = draining > 0 ? ' This also relies on jobs on already-held lanes finishing.' : '';
       return {
         kind: 'hold-lane', lane: target.lane,
-        detail: `Hold '${target.lane}' (ready ${target.ready} > ${AUTOPILOT_OVER_DEEP_FACTOR}x target ${target.target}) so '${lane.lane}' queued work can reach the freed cap.`,
+        detail: `Hold '${target.lane}' (ready ${target.ready} > ${AUTOPILOT_OVER_DEEP_FACTOR}x target ${target.target}) so '${lane.lane}' queued work can reach the freed cap.${dependency}`,
       };
     }
     return { kind: 'no-op', reason: 'capacity-bound', detail: `'${lane.lane}' has queued work under target but the global cap is full; no eligible sibling can drain enough running jobs to free a slot.` };
