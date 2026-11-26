@@ -194,8 +194,13 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
         const load = cost.local && !state.loaded.has(cost.model) ? cost.modelBytes : 0;
         if (!finite(load) || load < 0) { reject('model-not-served'); continue; }
         const own = state.node.doc.per_harness_footprint[cost.harness];
-        const fp = own ?? fleet[cost.harness];
-        if (!fp) { reject('footprint-unmeasured'); continue; }
+        const borrowed = fleet[cost.harness];
+        const memory = own ?? borrowed;
+        if (!memory) { reject('footprint-unmeasured'); continue; }
+        const fp = {
+          mem_bytes_max: memory.mem_bytes_max,
+          cpu_cores_per_session: own?.cpu_cores_per_session ?? borrowed?.cpu_cores_per_session ?? null,
+        };
         if (fp.mem_bytes_max + load > state.bytes) { reject('memory'); continue; }
         if (state.cores === 0 || (state.cores !== null && fp.cpu_cores_per_session !== null &&
           fp.cpu_cores_per_session - state.cores > state.cpuRoundoff)) { reject('cpu'); continue; }

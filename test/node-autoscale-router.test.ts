@@ -124,6 +124,27 @@ describe('autoscale router scoring', () => {
     }
   });
 
+  it('borrows a fresh CPU cost when the node measured only harness memory', () => {
+    const target = node(mbp8({
+      sessions: [{ harness: 'codex', rootPid: 1, processes: 1, memBytes: 300 * MIB, cpuPercent: null }],
+    }));
+    // An imported snapshot can have host CPU headroom without a harness CPU cost.
+    target.doc.per_harness_footprint.codex!.cpu_cores_per_session = null;
+    target.doc.cpu.headroom_cores = 1;
+    const donor = node(mbp({
+      sessions: [{ harness: 'codex', rootPid: 1, processes: 1, memBytes: 3 * GIB, cpuPercent: 75 }],
+    }), { providers: [] });
+    const input = { nodes: [target, donor], costs: [COSTS[0]!], outcomes: {}, nowMs: T0,
+      jobs: [{ id: 'fits' }, { id: 'cpu-full' }] };
+
+    const [first, second] = planAutoscaleRoutes(input);
+    expect(first).toMatchObject({ nodeId: target.doc.node, footprint: 'node' });
+    expect(second).toMatchObject({ nodeId: null, rejected: { cpu: 1 } });
+
+    donor.doc.measured_at = new Date(T0 - 120_001).toISOString();
+    expect(planAutoscaleRoutes(input).map(p => p.nodeId)).toEqual([target.doc.node, target.doc.node]);
+  });
+
   it('never routes to a stale node, an exhausted provider, a provider not on the node, or an unserved local model', () => {
     const costs: HarnessModelCost[] = [...COSTS, { provider: 'local', model: 'qwen3-32b', harness: 'codex', tokensPerJob: 1, minutesPerJob: 60, local: true }];
     const stale = planAutoscaleRoutes({ nodes: [node(mbp())], costs, outcomes: {}, nowMs: T0 + 10 * 60_000, jobs: [{ id: 'j' }] });
