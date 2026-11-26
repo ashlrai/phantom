@@ -28,6 +28,8 @@ runs on two nodes.
   still act on consumes capacity: a lapsed claim is re-routable, and a claim
   fenced by a rejoin or departure frees the node's slot and host budget at
   once even though the job itself stays fenced until the claim expires.
+  Renewing a live node, leader or job lease preserves its current deadline
+  when the renewing instance's configured TTL would produce an earlier one.
 - **Handing a claim back.** A node that pulls a job it will not run releases
   the claim at once with `phm node release`, so the job returns to pending
   instead of showing as running until the lease lapses. A pool worker

@@ -208,7 +208,7 @@ export class DriveNodes implements QueueV1 {
       // Check before extending node liveness, so expired authority never revives.
       const previous = this.liveLeader(state, now);
       node.heartbeatAt = now;
-      node.expiresAt = now + this.nodeTtl;
+      node.expiresAt = Math.max(node.expiresAt, now + this.nodeTtl);
       if (report?.usage !== undefined) node.usage = report.usage;
       if (report?.slots !== undefined) node.slots = report.slots;
       if (report?.capacity !== undefined) { node.capacity = structuredClone(report.capacity); node.slots = report.capacity.slots; }
@@ -217,7 +217,7 @@ export class DriveNodes implements QueueV1 {
       if (!previous) {
         state.leader = { ...session, token: nextToken(state), expiresAt: now + this.leaderTtl };
       } else if (sameSession(previous, session)) {
-        previous.expiresAt = now + this.leaderTtl;
+        previous.expiresAt = Math.max(previous.expiresAt, now + this.leaderTtl);
       }
       return { leader: state.leader };
     });
@@ -374,7 +374,7 @@ export class DriveNodes implements QueueV1 {
     return this.transaction((state, now) => {
       if (!this.currentClaim(state, claim, now)) return null;
       const stored = state.jobs.find(j => j.id === claim.jobId)!.claim!;
-      stored.expiresAt = now + this.claimTtl;
+      stored.expiresAt = Math.max(stored.expiresAt, now + this.claimTtl);
       return stored;
     });
   }
