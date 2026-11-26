@@ -163,9 +163,10 @@ function liveSession(nodes: DriveNodes, nodeId: string): number | null {
 }
 
 /** The owner scopes a store already knows — node profiles and job owners —
- * deduped and sorted, for the missing --owner refusal. null when the store
- * cannot be read, so the fix never claims scopes it could not see. */
-function knownOwnerScopes(nodes: DriveNodes): string[] | null {
+ * deduped and sorted, for the missing --owner refusal and the empty-scope
+ * status/list hint. null when the store cannot be read, so a fix never
+ * claims scopes it could not see. */
+export function knownOwnerScopes(nodes: DriveNodes): string[] | null {
   try {
     const state = nodes.snapshot();
     const scopes = new Set<string>();
