@@ -89,11 +89,14 @@ describe('readResourceView independent live Devin read', () => {
     vi.useFakeTimers();
     try {
       const f = fixture();
-      const read = vi.fn(() => new Promise<DevinUsageResult>(() => {}));
-      let settled = false;
-      const pending = readResourceView(f.fleet, NOW, f.runs, read).then(view => { settled = true; return view; });
-      for (let i = 0; i < 8 && !settled; i += 1) await vi.advanceTimersByTimeAsync(30_000);
-      expect(settled).toBe(true);
+      const started = Promise.withResolvers<void>();
+      const read = vi.fn(() => {
+        started.resolve();
+        return new Promise<DevinUsageResult>(() => {});
+      });
+      const pending = readResourceView(f.fleet, NOW, f.runs, read);
+      await started.promise;
+      await vi.advanceTimersByTimeAsync(30_000);
       expect(read).toHaveBeenCalledTimes(1);
       expect(devinPool(await pending)).toMatchObject({ pctUsed: null, status: 'unknown' });
     } finally { vi.useRealTimers(); }
