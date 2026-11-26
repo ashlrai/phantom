@@ -106,6 +106,14 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       'This registry is local to this machine — the node sees only jobs enqueued on this computer; other machines cannot see it. A shared queue needs the SSH pool (docs/NODES.md; join commands: docs/AGENT-NETWORK.md).',
     ].join('\n');
   }
+  if (verb === 'beat') {
+    // Beat is the keep-alive `join --watch` and `beat --watch` print every pass,
+    // so its text answer is one sentence like the other verbs', not the
+    // key:value dump. auth appears only when the beat carried --probe-auth or
+    // --auth; 'ok' is the only report that lets gh work route to the node.
+    const auth = typeof out['auth'] === 'string' ? `; auth ${out['auth']}` : '';
+    return `Heartbeat recorded for ${String(out['nodeId'])}${out['leader'] === true ? ' (leader)' : ''}${auth}.`;
+  }
   if (verb === 'plan') {
     const routes = out['routes'] as { jobId: string; nodeId: string | null; fix?: string }[];
     return routes.length ? routes.map(r => `${r.jobId} -> ${r.nodeId ?? `nobody. ${r.fix}`}`).join('\n') : notes?.planEmpty ?? 'No routable jobs.';
