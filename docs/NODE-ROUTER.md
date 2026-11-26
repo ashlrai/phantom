@@ -310,10 +310,12 @@ A row stays local with one of these reasons: `invalid_row`,
 work_market gives remote built-ins), `requirement_unverifiable` (`min_tier`,
 `max_tier` or `max_cost_class`, which no node reports), `need_not_routable`,
 `no_live_node`, `lane_mismatch`, `pack_inert`, `node_pack_unsupported`,
-`caps_missing`, `slots_unknown` (a node sent no slot telemetry, which is
+`caps_missing`, `gh_auth_unavailable` (no capable node reports local `gh`
+auth as `ok`), `slots_unknown` (a node sent no slot telemetry, which is
 unknown, not zero), `pass_limit` or `no_free_slot`. Free slots are a node's
 `slots` minus its running claims, after router jobs that are still waiting have
-been placed.
+been placed. Waiting jobs that require `gh` reserve slots only on nodes
+reporting working local auth.
 
 ### Capabilities come from a local probe
 

@@ -136,14 +136,21 @@ export function planNodeBridge(input: {
   const live = input.nodes.filter(n => n.live).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const running = (id: string) => input.jobs.filter(j => j.state === 'running' && j.claimedBy === id).length;
   const free = new Map<string, number | null>(live.map(n => [n.nodeId, n.slots === undefined ? null : Math.max(0, n.slots - running(n.nodeId))]));
-  const take = (requires: string[]): NodeView | null => {
-    const fits = live.filter(n => requires.every(c => n.caps.includes(c)) && (free.get(n.nodeId) ?? 0) > 0)
+  const capableNodes = (requires: string[]) => live.filter(n => requires.every(c => n.caps.includes(c)));
+  const authenticatedNodes = (nodes: NodeView[], requires: string[]) =>
+    requires.includes('gh') ? nodes.filter(n => n.auth === 'ok') : nodes;
+  const take = (candidates: NodeView[]): NodeView | null => {
+    const fits = candidates.filter(n => (free.get(n.nodeId) ?? 0) > 0)
       .sort((a, b) => (free.get(b.nodeId)! - free.get(a.nodeId)!) || (a.nodeId < b.nodeId ? -1 : 1));
     if (fits[0]) free.set(fits[0].nodeId, free.get(fits[0].nodeId)! - 1);
     return fits[0] ?? null;
   };
   // Router jobs still waiting (or held by an unreported node) reserve a slot before any new row.
-  for (const job of input.jobs) if (job.state === 'pending' || (job.state === 'running' && !job.claimedBy)) take(job.requires);
+  for (const job of input.jobs) {
+    if (job.state === 'pending' || (job.state === 'running' && !job.claimedBy)) {
+      take(authenticatedNodes(capableNodes(job.requires), job.requires));
+    }
+  }
   const nodes = live.map(n => ({ nodeId: n.nodeId, lanes: n.lanes, slots: n.slots ?? null, running: running(n.nodeId), freeSlots: free.get(n.nodeId) ?? null }));
   const limit = input.maxPerPass ?? NODE_BRIDGE_MAX_PER_PASS;
   const seen = new Set<string>();
@@ -176,15 +183,17 @@ export function planNodeBridge(input: {
     seen.add(row.job);
     let nodeId: string | null = null;
     if (!reasons.length) {
-      const capable = live.filter(n => requires.every(c => n.caps.includes(c)));
+      const capable = capableNodes(requires);
+      const eligible = authenticatedNodes(capable, requires);
       if (!live.length) reasons.push('no_live_node');
       else if (!live.some(n => cap && n.caps.includes(cap))) reasons.push('lane_mismatch');
       else if (target!.writes && !NODE_BRIDGE_WORKTREE_PACK_ENABLED) reasons.push('pack_inert');
       else if (!live.some(n => n.caps.includes(`pack:${target!.pack}`))) reasons.push('node_pack_unsupported');
       else if (!capable.length) reasons.push('caps_missing');
-      else if (capable.every(n => free.get(n.nodeId) === null)) reasons.push('slots_unknown');
+      else if (!eligible.length) reasons.push('gh_auth_unavailable');
+      else if (eligible.every(n => free.get(n.nodeId) === null)) reasons.push('slots_unknown');
       else if (planned >= limit) reasons.push('pass_limit');
-      else nodeId = take(requires)?.nodeId ?? null;
+      else nodeId = take(eligible)?.nodeId ?? null;
       if (!reasons.length && !nodeId) reasons.push('no_free_slot');
     }
     if (nodeId) planned++;

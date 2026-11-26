@@ -158,6 +158,34 @@ describe('ready.tsv -> node router bridge', () => {
     expect(r2.rows[0]!.reasons).toEqual(['slots_unknown']);
   });
 
+  it('keeps gh work in ready until a capable node reports working auth', async () => {
+    const job = 'RQ-REVIEW-GH';
+    const f = fixture([row(job, 'codex-cmp', { needs: ['gh'] })], [
+      { id: 'air-w4', caps: [...READ, 'gh'], slots: 2 },
+      { id: 'muse-w2', caps: [...READ, 'gh'], slots: 1 },
+    ]);
+    f.nodes.heartbeat(f.sessions.get('air-w4')!, { auth: 'missing' });
+    const refused = await f.pass();
+    expect(refused.rows[0]?.reasons).toEqual(['gh_auth_unavailable']);
+    expect(refused.claimed).toEqual([]);
+    expect(f.ready()).toBe(f.line(job) + '\n');
+    expect(existsSync(f.lease(job))).toBe(false);
+
+    const worker = f.sessions.get('muse-w2')!;
+    f.nodes.heartbeat(worker, { auth: 'ok' });
+    const applied = await f.pass();
+    expect(applied.rows[0]).toMatchObject({ nodeId: worker.nodeId, offload: true });
+    expect(applied.claimed).toEqual([job]);
+    expect(f.nodes.pull(worker)?.job.id).toBe(`ready:${job}:1`);
+  });
+
+  it('leaves slots usable by ordinary rows when waiting gh work cannot run', async () => {
+    const f = fixture([row('RQ-REVIEW-A')], [{ id: 'air-w4', caps: [...READ, 'gh'], slots: 1 }]);
+    f.nodes.enqueue('waiting-gh', { owner: 'ashlr', requires: ['gh'] });
+    expect((await f.pass()).claimed).toEqual(['RQ-REVIEW-A']);
+    expect(f.nodes.pull(f.sessions.get('air-w4')!)?.job.id).toBe('ready:RQ-REVIEW-A:1');
+  });
+
   it('never offers a job to a node whose local capability probe failed', async () => {
     // air-w4 has no codex binary: the local probe drops the cap, whatever its config says.
     const run = (() => ({ status: null, error: Object.assign(new Error('missing'), { code: 'ENOENT' }) })) as unknown as typeof spawnSync;
