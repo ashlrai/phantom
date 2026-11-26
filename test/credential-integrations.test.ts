@@ -23,6 +23,8 @@ beforeEach(() => {
   phantom = join(root, process.platform === 'win32' ? 'phantom.exe' : 'phantom');
   writeFileSync(phantom, 'synthetic executable; all subprocess calls are mocked');
   chmodSync(phantom, 0o700);
+  // phantom exec only runs inside an initialized project; the wrap tests need one.
+  writeFileSync(join(root, '.phantom.toml'), '[phantom]\n');
   vi.stubEnv('PATH', root);
   child.execFileSync.mockImplementation((file: string, args: string[]) => {
     if ((file === 'which' || file === 'where') && args[0] === 'phantom') return phantom;
@@ -64,5 +66,19 @@ describe('credential transport integration', () => {
     expect(listPrs(root)).toEqual([]);
     expect(child.spawnSync).toHaveBeenCalledOnce();
     expect(child.spawnSync.mock.calls[0]![0]).toBe(phantom);
+  });
+
+  it('runs the CLI directly when the working directory has no .phantom.toml', () => {
+    // phantom exec exits before running anything outside an initialized
+    // project, so the boundary must not wrap there: the call falls back to a
+    // direct spawn exactly as it does when Secrets is not installed.
+    rmSync(join(root, '.phantom.toml'));
+    const warning = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    respond(JSON.stringify([{ number: 7, title: 'Fixture', url: 'https://github.com/example/repo/pull/7', state: 'OPEN', author: { login: 'fixture' } }]));
+    expect(listPrs(root)).toMatchObject([{ number: 7, title: 'Fixture' }]);
+    expect(child.spawnSync).toHaveBeenCalledOnce();
+    expect(child.spawnSync.mock.calls[0]![0]).toBe('gh');
+    expect(String(warning.mock.calls[0]?.[0])).toContain('without phantom exec');
+    warning.mockRestore();
   });
 });
