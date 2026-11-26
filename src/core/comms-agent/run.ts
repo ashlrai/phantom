@@ -298,7 +298,13 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
       messageId: draft.messageId,
     });
     sends.push({ transport: attempt.transport, recipient: attempt.recipient, status: outcome.status, reason: outcome.reason });
-    if (outcome.status === 'sent') resolved.add(draft.messageId);
+    if (outcome.status === 'sent') {
+      resolved.add(draft.messageId);
+      // The sent mark lands inside executeSend, but this pass's snapshot
+      // predates it: without the add, a second inbox row drafting the same
+      // unique reply would deliver it again before the pass ends.
+      sentDraftIds.add(draftId(attempt));
+    }
   }
   // A delivered reply answers its message: the row moves to the archive —
   // nothing is deleted — and leaves the pending inbox, so `status` depth
