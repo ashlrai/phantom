@@ -77,17 +77,20 @@ function summarizeFlakes(attempts: readonly Entry[], nowMs: number, verdicts: re
 function pendingVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
   const verdicted = new Set<string>();
   const fired = new Map<string, Entry>();
+  const testConflicts = new Set<string>();
   for (const e of entries) {
     if (Date.parse(e.at) > nowMs) continue;
     const key = rerunKey(e);
     if (e.outcome === 'verdict') verdicted.add(key);
     else if (e.outcome === 'ok') {
       const prev = fired.get(key);
-      if (!prev || Date.parse(e.at) >= Date.parse(prev.at)) fired.set(key, e);
+      if (prev && prev.test !== e.test) testConflicts.add(key);
+      if (!prev || Date.parse(e.at) < Date.parse(prev.at)) fired.set(key, e);
     }
   }
-  return [...fired.values()]
-    .filter(e => !verdicted.has(rerunKey(e)) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
+  return [...fired]
+    .filter(([key, e]) => !verdicted.has(key) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
+    .map(([key, entry]) => testConflicts.has(key) ? { ...entry, test: undefined } : entry)
     .sort(compareVerdictPosition);
 }
 

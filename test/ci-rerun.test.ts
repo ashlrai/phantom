@@ -90,6 +90,44 @@ describe('resident CI reruns', () => {
     expect(read.recent.map(row => row.runId)).toEqual([124, 124]);
   });
 
+  it.each([false, true])('polls from the original successful call despite a replay (test conflict: %s)', async conflict => {
+    const { opts, gh, report } = setup();
+    await runCiRerunMaintenance(opts);
+    const original = readCiReruns(opts.journalPath!, opts.now!()).recent.find(row => row.outcome === 'ok')!;
+    appendFileSync(opts.journalPath!, JSON.stringify({
+      ...original, at: '2026-01-01T12:09:00Z',
+      test: conflict ? 'test/b.test.ts > b' : original.test,
+    }) + '\n');
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    gh.mockClear();
+    gh.mockResolvedValue({ ok: true, stdout: JSON.stringify({
+      id: original.runId, head_sha: original.head, status: 'completed', conclusion: 'success',
+      run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z', updated_at: '2026-01-01T12:08:00Z',
+    }), stderr: '' });
+
+    await runCiRerunMaintenance(opts);
+
+    expect(gh.mock.calls).toEqual([[['api', 'repos/org/repo/actions/runs/123']]]);
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.verdicts).toMatchObject({ pass: 1, pending: 0 });
+    expect(read.recent.at(-1)?.test).toBe(conflict ? undefined : report.groups[0]!.testId);
+  });
+
+  it('does not reopen the pending window when an expired successful call is replayed', async () => {
+    const { opts, gh } = setup();
+    await runCiRerunMaintenance(opts);
+    const original = readCiReruns(opts.journalPath!, opts.now!()).recent.find(row => row.outcome === 'ok')!;
+    appendFileSync(opts.journalPath!, JSON.stringify({ ...original, at: '2026-01-02T12:00:00Z' }) + '\n');
+    opts.now = () => Date.parse('2026-01-02T12:10:00Z');
+    gh.mockClear();
+
+    const status = await runCiRerunMaintenance(opts);
+
+    expect(status.repos['org/repo']?.verdictsPending).toBe(0);
+    expect(readCiReruns(opts.journalPath!, opts.now!()).verdicts.pending).toBe(0);
+    expect(gh).not.toHaveBeenCalled();
+  });
+
   it('keeps a future verdict out of the report until its timestamp without polling again', async () => {
     const { opts, gh, report } = setup();
     await runCiRerunMaintenance(opts);
