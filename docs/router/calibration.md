@@ -14,8 +14,11 @@ Eventless `MERGED` or `CLOSED` verdicts and those carried on reconciler publish
 rows resolve the job. An ordinary publish claim alone leaves it unresolved.
 Supply a launch, a `batch_claim`, or a reward signal for each included job.
 A batch member's recorded claim lane supplies the arm when neither a launch
-nor a reward signal supplies one. Missing or conflicting claim lanes use
-the `unknown` arm. Claim timestamps provide no execution timing. Batch
+nor a reward signal supplies one. Arm lookup skips blank values and
+case-insensitive `unknown` placeholders, so a later alias or a recorded
+reward pool can supply the arm. Jobs with no usable arm and jobs with
+conflicting claim lanes alone use the `unknown` arm. Conflicting known
+launch and reward arms still cause an error. Claim timestamps provide no execution timing. Batch
 session wrappers and node-pool telemetry are excluded.
 
 The jobs input also accepts reward-signal rows. Each supplies the resolved

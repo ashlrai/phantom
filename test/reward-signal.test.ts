@@ -238,6 +238,18 @@ describe('router consumption', () => {
     expect(report.arms[0]).toMatchObject({ arm: 'unknown', jobs: 1, resolved: 1 });
   });
 
+  it.each([false, true])('uses a recorded reward pool with an unknown launch arm (reward first: %s)', (rewardFirst) => {
+    const input = fixture();
+    run(input);
+    const reward = readFileSync(path, 'utf8').trim();
+    const launch = JSON.stringify({ event: 'launch', job: input.jobId, arm: 'unknown',
+      predicted_merge_rate: 0.4 });
+    const rows = rewardFirst ? [reward, launch] : [launch, reward];
+    expect(calibrateRouting(rows.join('\n')).arms).toMatchObject([
+      { arm: input.pool, jobs: 1, resolved: 1, mergeRate: { predicted: 0.4, actual: 1, paired: 1 } },
+    ]);
+  });
+
   it('fails closed when a reward outcome conflicts with a recorded launch', () => {
     run(fixture());
     const launch = JSON.stringify({ event: 'launch', job_id: 'RQ-SELFOPT-REWARD-SIGNALS', arm: 'codex',
