@@ -25,7 +25,7 @@ export async function cmdFleetReceipt(args: string[]): Promise<number> {
       if (!runId) { process.stderr.write(`${USAGE}\n`); return 2; }
       const t = buildReceiptTimeline(runId);
       out(t, formatReceiptTimeline(t));
-      return t.found && t.verified ? 0 : 1;
+      return t.found ? 0 : 1;
     }
     case 'show':
     case 'verify': {
