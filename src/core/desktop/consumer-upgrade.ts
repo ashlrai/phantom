@@ -50,6 +50,18 @@ interface Admission {
   deps:ConsumerUpgradeDependencies; helper:ConsumerTransaction; io:ConsumerInstallIo; before:Pointer;
   aliases:ReturnType<ConsumerTransaction['inspectLocalAliases']>; destination:string; manifest?:CompatibleUpdateManifest;
   pins?:PinnedRuntimeArchiveOptions; journal?:Journal; attempted:boolean;
+  selected?:NonNullable<ReturnType<ConsumerTransaction['selectLocalApp']>>;
+  source?:ReturnType<ConsumerTransaction['inspectLocalApp']>;
+}
+const appPaths=['/Applications/Phantom.app','/Applications/Ashlr.app'];
+function appPresent(io:ConsumerInstallIo):boolean {
+  return appPaths.some(path=>io.exists(path));
+}
+function requireOlderApp(selected:NonNullable<Admission['selected']>, version:string, io:ConsumerInstallIo):void {
+  const read=io.exec('/usr/bin/plutil',['-extract','CFBundleShortVersionString','raw','-o','-',join(selected.path,'Contents/Info.plist')]);
+  const installed=read.stdout.trim();
+  need(read.status===0&&semver.test(installed),'app-version-unverified');
+  need(compare(installed,version)<0,'app-not-older');
 }
 type Journal={schema:'desktop-upgrade-journal.v1'; previous:Release; current:Release};
 const admissions=new WeakMap<ConsumerUpgradeResult,Admission>();
@@ -86,6 +98,7 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
     const releases=join(deps.home,'.local/share/ashlr/releases');
     const a:Admission={deps,helper,io,before,aliases,destination:'',attempted:false};
     if(options.mode==='rollback') {
+      need(!appPresent(io),'paired-rollback-required');
       let journal:Journal;
       try {journal=JSON.parse(owned(join(deps.home,'.local/share/ashlr/upgrade.json'),8192).data.toString());}catch {throw new Held('no-rollback');}
       need(journal.schema==='desktop-upgrade-journal.v1' && [journal.previous,journal.current].every(x=>x&&releasePattern.test(x.release)&&semver.test(x.version)),'no-rollback');
@@ -104,9 +117,20 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
       need(m.schemaVersion===2 && (!options.to||m.version===options.to),'release-mismatch');
       need(canonicalJson(latest)===canonicalJson({version:m.version,platforms:{'darwin-aarch64':{url:m.app.url,signature:m.app.signature}},phantom:latest.phantom}),'discovery-mismatch');
       r.candidate={version:m.version,release:m.source.revision};r.previous=r.installed;
-      const order=compare(m.version,r.installed.version);if(order===0){r.state='current';r.reason='already-current';return freeze(r);}need(order>0,'downgrade-refused');
+      const order=compare(m.version,r.installed.version);need(order>=0,'downgrade-refused');
+      try {
+        const selected=helper.selectLocalApp(m.app.signer,io);
+        if(selected) {
+          a.selected=selected;
+          r.app=selected.inventory===m.app.inventorySha256?{state:'current',reason:null}:{state:'update-available',reason:'native-signed-update'};
+        } else r.app={state:'absent',reason:null};
+      } catch {r.app={state:'needs-owner',reason:'app-identity-unverified'};}
+      need(r.app.state!=='needs-owner'&&(!options.requireApp||r.app.state!=='absent'),'app-needs-owner');
+      if(r.app.state==='update-available')requireOlderApp(a.selected!,m.version,io);
+      if(order===0&&r.app.state==='absent'){r.state='current';r.reason='already-current';return freeze(r);}
       a.destination=join(releases,m.source.revision);
-      try {fs.lstatSync(a.destination);throw new Held('release-exists');}catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+      if(order===0) need(a.destination===before.target,'installed-current-unverified');
+      else try {fs.lstatSync(a.destination);throw new Held('release-exists');}catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
       const downloaded=await Promise.all([deps.download(m.app.url,m.app.bytes),deps.download(m.cli.url,m.cli.bytes)]);
       for(const [i,artifact] of [m.app,m.cli].entries()) {
         try {need(downloaded[i]!.length===artifact.bytes&&sha(downloaded[i]!)===artifact.sha256,'artifact-mismatch');verifyMinisign(downloaded[i]!,artifact.signature,deps.trust.publicKey);}catch {throw new Held('artifact-mismatch');}
@@ -115,17 +139,20 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
       write(join(stage,'app.tar.gz'),downloaded[0]!);write(join(stage,'package.tgz'),downloaded[1]!);
       try {
         const appStage=join(stage,'app');fs.mkdirSync(appStage,{mode:0o700});const appRoot=extractSignedAppArchive(downloaded[0]!,appStage);
-        need(helper.inspectLocalApp(appRoot,m.app.signer,io).inventory===m.app.inventorySha256,'app-artifact');verifyUpdateBundleRecord(ioRead(appRoot),m);
+        const source=helper.inspectLocalApp(appRoot,m.app.signer,io);
+        need(source.inventory===m.app.inventorySha256,'app-artifact');verifyUpdateBundleRecord(ioRead(appRoot),m);a.source=source;
       }catch {throw new Held('app-artifact');}
       const pins:PinnedRuntimeArchiveOptions={artifactPath:join(stage,'package.tgz'),sha256:m.cli.sha256,revision:m.source.revision,version:m.version,identityProfile:'canonical-v2'};
-      const archive=await readPinnedRuntimeArchive(pins),pkg=join(stage,'package');fs.mkdirSync(pkg,{mode:0o700});extractPinnedRuntimeArchive(archive,pkg);await packageReady(pkg,{pins,manifest:m});
+      const archive=await readPinnedRuntimeArchive(pins),pkg=order===0?before.target:join(stage,'package');
+      if(order>0){fs.mkdirSync(pkg,{mode:0o700});extractPinnedRuntimeArchive(archive,pkg);}
+      await packageReady(pkg,{pins,manifest:m});
       need(regular(join(pkg,'bin/ashlr'),65536).data.equals(regular(join(deps.packageRoot,'bin/ashlr'),65536).data),'launcher-identity');a.pins=pins;a.manifest=m;
-      try {const app=helper.selectLocalApp(m.app.signer,io);r.app=app?{state:app.inventory===m.app.inventorySha256?'current':'update-available',reason:app.inventory===m.app.inventorySha256?null:'native-signed-update'}:{state:'absent',reason:null};}
-      catch {r.app={state:'needs-owner',reason:'app-identity-unverified'};}
-      need(!options.requireApp||!['absent','needs-owner'].includes(r.app.state),'app-needs-owner');touchId(r,before.target,m.authoritySurfaceDigest);
+      if(r.app.state==='current')verifyUpdateBundleRecord(io.readBoundedFile(join(a.selected!.path,'Contents/Resources/phantom-release.json'),8192),m);
+      if(order===0&&r.app.state==='current'){r.state='current';r.reason='already-current';return freeze(r);}
+      touchId(r,before.target,m.authoritySurfaceDigest);
     }
     await quiescence(a,r);r.steps=['phm authority stop','Close Phantom normally and drain work','phm authority resident stop','Switch managed CLI release; keep previous release'];
-    if(r.app.state==='needs-owner')r.steps.push('Owner: reinstall the signed Phantom.app');
+    if(r.app.state==='update-available')r.steps.push('Install the paired signed Phantom.app');
     if(r.daemon.restart.touchId===true)r.steps.push('phm authority grant (Touch ID)');
     r.steps.push('phm authority resident start (owner confirmation)');
     r.state='ready';const observed=freeze(r);admissions.set(observed,a);return observed;
@@ -140,12 +167,14 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
   const a=admissions.get(observed),r:ConsumerUpgradeResult=structuredClone(observed);
   if(!a||a.attempted||observed.state!=='ready')return freeze({...r,state:'held',reason:'inspection-required'});a.attempted=true;
   const {deps,helper,io}=a,current=join(deps.home,'.local/share/ashlr/current');let created:fs.Stats|undefined,switched:Pointer|undefined;
+  const repair=a.destination===a.before.target;
   try {
     deps.assertRunning();need(await quiescence(a,r),'stop-required');
     need(canonicalJson(io.readCurrentPointer(current))===canonicalJson(a.before),'current-changed');assert.deepEqual(helper.inspectLocalAliases(io),a.aliases);
     if(a.manifest&&a.pins) {
       const archive=await readPinnedRuntimeArchive(a.pins);parents(deps.home,join(deps.home,'.local/share/ashlr/releases'),false);
-      fs.mkdirSync(a.destination,{mode:0o700});created=directory(a.destination);extractPinnedRuntimeArchive(archive,a.destination);await packageReady(a.destination,{pins:a.pins,manifest:a.manifest});
+      if(!repair){fs.mkdirSync(a.destination,{mode:0o700});created=directory(a.destination);extractPinnedRuntimeArchive(archive,a.destination);}
+      await packageReady(a.destination,{pins:a.pins,manifest:a.manifest});
     } else {
       parents(deps.home,a.destination,false);need(versionAt(a.destination)===r.candidate!.version,'no-rollback');
       need(io.isCanonicalLauncher(join(a.destination,'bin/ashlr')),'launcher-identity');
@@ -155,6 +184,55 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
     need(await quiescence(a,r),'stop-required');deps.assertRunning();assert.deepEqual(io.readCurrentPointer(current),a.before);assert.deepEqual(helper.inspectLocalAliases(io),a.aliases);
     try {need((await deps.residentStop()).ok,'resident-stop-failed');}catch {throw new Held('resident-stop-failed');}r.daemon.stop.performed=true;
     need(await quiescence(a,r),'stop-required');assert.deepEqual(io.readCurrentPointer(current),a.before);
+    if(a.manifest&&a.pins&&a.source&&a.selected&&r.app.state==='update-available') {
+      const {manifest,pins,source,selected}=a;
+      let phase:string|undefined;
+      const writeInstallJournal=io.writeInstallJournal.bind(io);
+      const installIo={...io,writeInstallJournal:(owner:string,value:{phase:string})=>{writeInstallJournal(owner,value);phase=value.phase;}};
+      const before=async(afterAppMove:boolean)=> {
+        deps.assertRunning();await packageReady(a.destination,{pins,manifest});
+        assert.deepEqual(io.readCurrentPointer(current),a.before);assert.deepEqual(helper.inspectLocalAliases(io),a.aliases);
+        assert.deepEqual(helper.inspectLocalApp(source.path,manifest.app.signer,io),source);verifyUpdateBundleRecord(ioRead(source.path),manifest);
+        const active=helper.selectLocalApp(manifest.app.signer,io);
+        if(afterAppMove) need(active?.inventory===source.inventory,'installed-app-changed');
+        else {assert.deepEqual(active,selected);requireOlderApp(selected,manifest.version,io);}
+        need(await quiescence(a,r),'stop-required');
+      };
+      try {
+        await helper.installLocalApp({selected,source:source.path,sourceProof:source,signer:manifest.app.signer,version:manifest.version,native:true,preserveSigned:true,previousCurrent:a.before.target,
+          beforeSwitch:()=>before(false),
+          commitPointer:async()=>{await before(true);if(!repair)switched=io.switchCurrentPointer(current,a.before,a.destination);},
+          rollbackPointer:async()=>{
+            if(switched){io.restoreCurrentPointer(current,a.before,switched);switched=undefined;}
+            else assert.deepEqual(io.readCurrentPointer(current),a.before);
+          },
+          health:async()=>{
+            const deadline=io.clock()+30_000;
+            while(io.clock()<deadline) {
+              if(helper.launchedAppIsOwned(io)&&await io.fetchStatus('http://127.0.0.1:7777/verse/')===200) {
+                await packageReady(a.destination,{pins,manifest});assert.deepEqual(io.readCurrentPointer(current),switched??a.before);
+                need(await deps.smokeVersion(join(current,'bin/ashlr'))===manifest.version,'post-switch-smoke');return true;
+              }
+              await io.sleep(1000);
+            }
+            return false;
+          }},installIo);
+      } catch(error) {
+        if(phase==='rollback-held'){created=undefined;throw new Held('rollback-held');}
+        if(phase==='rolled-back'){r.state='rolled-back';r.reason=heldReason(error)??'app-install-failed';}
+        throw error;
+      }
+      r.app={state:'current',reason:null};
+      if(!repair) {
+        try {writeJournal(deps.home,{schema:'desktop-upgrade-journal.v1',previous:r.installed!,current:r.candidate!});}
+        catch {r.state='upgraded';r.applied=true;r.reason='journal-failed';return freeze(r);}
+      }
+      r.state='upgraded';r.applied=true;r.reason=null;return freeze(r);
+    }
+    if(a.manifest) {
+      if(a.selected) assert.deepEqual(helper.selectLocalApp(a.manifest.app.signer,io),a.selected);
+      else need(!appPresent(io),'app-identity-changed');
+    } else need(!appPresent(io),'paired-rollback-required');
     switched=io.switchCurrentPointer(current,a.before,a.destination);
     try {assert.deepEqual(helper.inspectLocalAliases(io),a.aliases);need(await deps.smokeVersion(join(current,'bin/ashlr'))===r.candidate!.version,'post-switch-smoke');}
     catch {
@@ -171,6 +249,7 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
     if(created&&!switched) {
       try {const now=directory(a.destination);if(now.dev===created.dev&&now.ino===created.ino)fs.rmSync(a.destination,{recursive:true,force:true});}catch { /* Preserve uncertain ownership. */ }
     }
+    if(r.state==='rolled-back')return freeze(r);
     r.state='held';r.reason=heldReason(error)??'upgrade-unavailable';return freeze(r);
   }
 }
