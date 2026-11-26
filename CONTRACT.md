@@ -22,6 +22,13 @@ and the dates quoted in discovery briefs.
 
 ## Fleet lane ledger
 
+`unfedTickLanes(row)` (`src/core/fleet/unfed-market.ts`) reads a decoded
+`unfed_capacity` snapshot and returns its usable lane observations as
+`{ lane, slots, blocked }`. Each observation requires positive headroom
+and waiting work, and must agree with any recorded queue total and paired
+running and target counts. Held lanes are excluded. Callers validate the
+journal envelope and use the last usable snapshot for each tick timestamp.
+
 `foldLaneRewardAttempts(text, asOfMs?)` (`src/core/fleet/lane-reward.ts`)
 accepts an inclusive millisecond cutoff for receipts and terminal timestamps.
 The cutoff also applies to PR URL claims before ownership is resolved. Omitting

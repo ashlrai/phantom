@@ -21,6 +21,42 @@
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+/** Reason codes are short lowercase identifiers written by the dispatcher. */
+export const MARKET_REASON_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+export const MARKET_RECORDED_LANE = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
+export const MAX_MARKET_CODES = 32;
+
+const count = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+
+/** Keep only well-formed reason codes with nonnegative counts. */
+export function marketBlockedCodes(value: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!isRecord(value)) return out;
+  for (const [code, n] of Object.entries(value)) {
+    if (Object.keys(out).length >= MAX_MARKET_CODES) break;
+    if (MARKET_REASON_CODE.test(code) && count(n) && n > 0) out[code] = n;
+  }
+  return out;
+}
+
+/** Usable lane observations in a decoded unfed_capacity row. */
+export function unfedTickLanes(row: Record<string, unknown>): { lane: string; slots: number; blocked: Record<string, number> }[] {
+  if (!isRecord(row.lanes)) return [];
+  const waiting = count(row.waiting) ? row.waiting : null;
+  const snapshot = [];
+  for (const [lane, value] of Object.entries(row.lanes)) {
+    if (!MARKET_RECORDED_LANE.test(lane) || !isRecord(value) || value.unfed !== true || value.held === true
+      || !count(value.headroom) || value.headroom === 0
+      || !count(value.waiting_elsewhere) || value.waiting_elsewhere === 0) continue;
+    if (waiting !== null && value.waiting_elsewhere > waiting) continue;
+    if (count(value.running) && count(value.target) &&
+        value.headroom !== Math.max(0, value.target - value.running)) continue;
+    snapshot.push({ lane, slots: Math.min(value.headroom, value.waiting_elsewhere), blocked: marketBlockedCodes(value.blocked) });
+  }
+  return snapshot;
+}
+
 const finite = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
 
