@@ -21,14 +21,14 @@ import { parseReadyRows } from '../fleet/ready-row-edit.js';
 import { globalCap } from '../queue/admission.js';
 import { betsCounts, betsShare, foldBets, isBetRow, type BetsShare, type BetsShareConfig } from './bets.js';
 import {
-  dayStamp, feedbackLoop, ideaToMerged, isMissing, jobTimelines, laneRows, LOOP_SCHEMA, mergedToInstalled, mergeMorning,
+  dayStamp, feedbackLoop, ideaToMerged, isMissing, isPlainRecord, jobTimelines, laneRows, LOOP_SCHEMA, mergedToInstalled, mergeMorning,
   missing, morningFields, nodeCapacityRow, selectionHints, slotLanes, throughput,
   type InstalledBundle, type LoopReport, type MergedPr, type Missing, type NodeCapacityRow, type ReleaseRef, type ResourceRow, type SelectionHints,
 } from './loop.js';
 import { buildLoopStages, LOOP_STAGES_DEFAULT_SINCE_MS, type LoopStagesReport } from './loop-stages.js';
 
 const execFileAsync = promisify(execFile);
-export const LOOP_REPO = 'ashlrai/phantom';
+const LOOP_REPO = 'ashlrai/phantom';
 const JOBS_TAIL_BYTES = 16 * 1024 * 1024;
 const SMALL_BYTES = 2 * 1024 * 1024;
 const INFO_PLIST = '/Applications/Phantom.app/Contents/Info.plist';
@@ -104,7 +104,6 @@ export function defaultLoopReaders(env: NodeJS.ProcessEnv = process.env): LoopRe
 }
 
 const json = (text: string | null): unknown => { if (text === null) return null; try { return JSON.parse(text); } catch { return null; } };
-const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
 /** Latest cost-per-merged-PR reading from growth-cost-hourly.jsonl within 24h (the existing spend feed). */
 export function latestCost(text: string | null, now: number): LoopReport['cost_per_merged_pr'] {
@@ -112,7 +111,7 @@ export function latestCost(text: string | null, now: number): LoopReport['cost_p
   let best: { at: number; usd: number } | null = null;
   for (const line of text.split(/\r?\n/)) {
     const row = json(line.trim() || null);
-    if (!isObj(row)) continue;
+    if (!isPlainRecord(row)) continue;
     const stamp = [row.t, row.ts, row.at, row.hour, row.time].find(v => typeof v === 'string' || typeof v === 'number');
     const at = typeof stamp === 'number' ? (stamp < 1e12 ? stamp * 1000 : stamp) : typeof stamp === 'string' ? Date.parse(stamp) : NaN;
     const usd = row.costPerMergedPrUsd;
@@ -127,14 +126,14 @@ export function latestCost(text: string | null, now: number): LoopReport['cost_p
 export function parseReleases(text: string | null): ReleaseRef[] | null {
   const rows = json(text);
   if (!Array.isArray(rows)) return null;
-  return rows.filter(isObj).filter(r => r.draft !== true && r.prerelease !== true && typeof r.tag_name === 'string')
+  return rows.filter(isPlainRecord).filter(r => r.draft !== true && r.prerelease !== true && typeof r.tag_name === 'string')
     .map(r => ({ tag: r.tag_name as string, createdAt: Date.parse(String(r.created_at)) })).filter(r => Number.isFinite(r.createdAt));
 }
 
 export function parseMergedPrs(text: string | null): MergedPr[] | null {
   const rows = json(text);
   if (!Array.isArray(rows)) return null;
-  return rows.filter(isObj).map(r => ({ number: Number(r.number), mergedAt: Date.parse(String(r.mergedAt)) }))
+  return rows.filter(isPlainRecord).map(r => ({ number: Number(r.number), mergedAt: Date.parse(String(r.mergedAt)) }))
     .filter(r => Number.isSafeInteger(r.number) && Number.isFinite(r.mergedAt));
 }
 
@@ -149,7 +148,7 @@ export async function readLoopReleases(gh: LoopReaders['gh']): Promise<LoopRelea
   return releases.length ? { releases, reason: null } : { releases: null, reason: 'GitHub has no releases for this repo yet' };
 }
 
-export const LOOP_RELEASES_FRESH_MS = 10 * 60_000;
+const LOOP_RELEASES_FRESH_MS = 10 * 60_000;
 const FAILED_RETRY_MS = 60_000;
 const releaseCache = new WeakMap<LoopReaders['gh'], { at: number; read: LoopReleases }>();
 
@@ -195,9 +194,9 @@ export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareCo
   const rawSlots = json(slotsText);
   const slots = slotLanes(rawSlots);
   const status = json(statusText);
-  const statusLanes = isObj(status) && isObj(status.lanes) ? status.lanes : null;
+  const statusLanes = isPlainRecord(status) && isPlainRecord(status.lanes) ? status.lanes : null;
   const running: Record<string, number> | null = statusLanes ? Object.fromEntries(Object.entries(statusLanes)
-    .map(([lane, r]) => [lane, isObj(r) && Number.isSafeInteger(r.running) ? r.running as number : 0])) : null;
+    .map(([lane, r]) => [lane, isPlainRecord(r) && Number.isSafeInteger(r.running) ? r.running as number : 0])) : null;
 
   // GitHub: releases first, so the merged-PR search is bounded by the release before the installed one.
   const installed = await readers.installed();
@@ -210,13 +209,15 @@ export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareCo
     merged = parseMergedPrs(await readers.gh(['pr', 'list', '--repo', LOOP_REPO, '--state', 'merged', '--limit', '1000', '--search', `merged:>=${since}`, '--json', 'number,mergedAt']));
   }
   sources['gh merged prs'] = merged ? 'read' : 'missing';
-  const m2i = merged === null ? missing('gh merged-PR or release read failed') : releases ? mergedToInstalled(merged, releases, installed) : missing('gh releases unreadable');
+  const m2i = releases && merged !== null
+    ? mergedToInstalled(merged, releases, installed)
+    : missing('gh merged-PR or release read failed');
 
   // Capacity: the local dispatcher cap and live running, then every inventory node.
   const capacity: NodeCapacityRow[] = [];
   const concurrency = json(concurrencyText);
-  const adaptive = isObj(concurrency) && concurrency.schema === 'dispatchd.concurrency.v1' && Number.isSafeInteger(concurrency.cap) ? concurrency.cap as number : null;
-  const localCap = isObj(rawSlots) ? globalCap(isObj(rawSlots.lanes) ? { ...rawSlots.lanes, ...(rawSlots.hard_cap !== undefined ? { hard_cap: rawSlots.hard_cap } : {}) } : rawSlots, readers.ncpu(), adaptive).cap : null;
+  const adaptive = isPlainRecord(concurrency) && concurrency.schema === 'dispatchd.concurrency.v1' && Number.isSafeInteger(concurrency.cap) ? concurrency.cap as number : null;
+  const localCap = isPlainRecord(rawSlots) ? globalCap(isPlainRecord(rawSlots.lanes) ? { ...rawSlots.lanes, ...(rawSlots.hard_cap !== undefined ? { hard_cap: rawSlots.hard_cap } : {}) } : rawSlots, readers.ncpu(), adaptive).cap : null;
   const localRunning = running ? Object.values(running).reduce((a, b) => a + b, 0) : null;
   capacity.push(nodeCapacityRow('local', 'local', 'dispatcher', localCap, localRunning, { max: 'queue/slots.json unreadable', live: 'queue/status.json unreadable' }));
   const nodes = readers.nodes();

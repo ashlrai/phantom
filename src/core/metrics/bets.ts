@@ -10,9 +10,9 @@
  */
 
 export const BETS_LEDGER_SCHEMA = 'bets.ledger.v1';
-export const BETS_SHARE_SCHEMA = 'bets.share.v1';
-export const BET_ID_PREFIX = 'RQ-BET-';
-export const BET_TIER_PREFIX = 'bet:';
+const BETS_SHARE_SCHEMA = 'bets.share.v1' as const;
+const BET_ID_PREFIX = 'RQ-BET-';
+const BET_TIER_PREFIX = 'bet:';
 
 export type BetStatus = 'launched' | 'kept' | 'killed';
 export type BetDirection = 'up' | 'down';
@@ -233,7 +233,7 @@ export interface BetsCapacity {
   readyBetRows?: number | null;
 }
 export interface BetsShare {
-  schema: typeof BETS_SHARE_SCHEMA;
+  schema: 'bets.share.v1';
   share: number;
   minWhenFree: number;
   enabled: boolean;
@@ -246,7 +246,7 @@ export interface BetsShare {
   reason: string;
 }
 
-export const DEFAULT_BETS_SHARE = 0.1;
+const DEFAULT_BETS_SHARE = 0.1;
 
 /**
  * Reserve a share of free slots for bet rows: floor(free * share), at least

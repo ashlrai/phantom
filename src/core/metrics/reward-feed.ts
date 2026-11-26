@@ -64,12 +64,15 @@ import {
   ROUTER_OUTCOME_LEDGER_RELATIVE, ROUTER_SPEND_LEDGER_RELATIVE,
   type LedgerReadState, type LedgerTailRead,
 } from '../router/outcomes.js';
-import { parseLedgerTs } from './loop.js';
 import {
-  latestRewardSignals, rewardSignalPath, writeRewardSignals, type RewardSignalInput,
+  firstLedgerString, isPlainRecord, LEDGER_EVENT_KEYS, LEDGER_JOB_KEYS,
+  LEDGER_LANE_KEYS, LEDGER_URL_KEYS, parseLedgerTs,
+} from './loop.js';
+import {
+  latestRewardSignals, REWARD_JOB_ID_PATTERN, REWARD_POOL_PATTERN, REWARD_REPO_PATTERN,
+  rewardSignalPath, writeRewardSignals, type RewardSignalInput,
 } from './reward-signal.js';
 
-const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
 // Terminal timestamps belong to the matching verdict. Generic receipt timestamps
 // can date any row and independently bound when a verdict becomes observable.
@@ -77,14 +80,7 @@ const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'recordedAt', 'updatedAt'] as 
 const MERGED_AT_KEYS = ['mergedAt', 'merged_at'] as const;
 const CLOSED_AT_KEYS = ['closedAt', 'closed_at'] as const;
 const REVERTED_AT_KEYS = ['revertedAt', 'reverted_at'] as const;
-const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
-const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
-const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 
-/** Same id alphabet the reward writer accepts (JOB_ID in reward-signal.ts). */
-const JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const REPO_PATTERN = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
-const POOL_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,63}$/;
 /** Batch session wrappers carry aggregate telemetry. Members have their own job ids. */
 const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
 /** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
@@ -95,21 +91,13 @@ const DISPATCH_EVENTS: ReadonlySet<string> = new Set(['claim', 'batch_claim', 'l
 const MERGE_STATES: ReadonlySet<string> = new Set(['MERGED']);
 const CLOSED_STATES: ReadonlySet<string> = new Set(['CLOSED']);
 
-function firstString(row: Record<string, unknown>, keys: readonly string[]): string | null {
-  for (const key of keys) {
-    const value = row[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return null;
-}
-
 /** The first observed lane in the dispatch receipt's alias order. */
 function dispatchLane(row: Record<string, unknown>): string | null {
-  for (const key of LANE_KEYS) {
+  for (const key of LEDGER_LANE_KEYS) {
     const value = row[key];
     if (typeof value !== 'string') continue;
     const lane = value.trim();
-    if (lane.toLowerCase() !== 'unknown' && POOL_PATTERN.test(lane)) return lane;
+    if (lane.toLowerCase() !== 'unknown' && REWARD_POOL_PATTERN.test(lane)) return lane;
   }
   return null;
 }
@@ -129,7 +117,7 @@ function outcomeStateOf(row: Record<string, unknown>): string {
     if (MERGE_STATES.has(state) || CLOSED_STATES.has(state)) return state;
     if (state !== '' && state !== 'UNKNOWN') observedPhase = true;
   }
-  return observedPhase ? '' : firstString(row, EVENT_KEYS)?.toUpperCase() ?? '';
+  return observedPhase ? '' : firstLedgerString(row, LEDGER_EVENT_KEYS)?.toUpperCase() ?? '';
 }
 
 /** The first parseable ISO or epoch-millisecond stamp among the given aliases. */
@@ -146,11 +134,11 @@ function timestampOf(row: Record<string, unknown>, keys: readonly string[]): num
 /** A unique PR repository takes precedence over the receipt's repo label. */
 function repoOf(row: Record<string, unknown>, prKeys: readonly string[]): string | null | undefined {
   const repos = new Set(prKeys.map((key) => key.slice(0, key.lastIndexOf('#')))
-    .filter((repo) => REPO_PATTERN.test(repo)));
+    .filter((repo) => REWARD_REPO_PATTERN.test(repo)));
   if (repos.size > 1) return null;
   if (repos.size === 1) return [...repos][0];
-  const repo = firstString(row, ['repo']);
-  return repo !== null && REPO_PATTERN.test(repo) ? repo.toLowerCase() : undefined;
+  const repo = firstLedgerString(row, ['repo']);
+  return repo !== null && REWARD_REPO_PATTERN.test(repo) ? repo.toLowerCase() : undefined;
 }
 
 /** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
@@ -194,7 +182,7 @@ interface ResolutionMark {
 
 function receiptPrKeys(row: Record<string, unknown>): string[] {
   const keys = new Set<string>();
-  for (const field of URL_KEYS) {
+  for (const field of LEDGER_URL_KEYS) {
     const value = row[field];
     const key = typeof value === 'string' ? pullRequestKey(value.trim()) : null;
     if (key !== null) keys.add(key);
@@ -313,11 +301,11 @@ export function foldJobsLedgerRewards(
     let row: Record<string, unknown>;
     try {
       const parsed: unknown = JSON.parse(line);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-      row = parsed as Record<string, unknown>;
+      if (!isPlainRecord(parsed)) continue;
+      row = parsed;
     } catch { continue; }
     if (row['launched'] === false) continue;
-    const id = firstString(row, JOB_ID_KEYS);
+    const id = firstLedgerString(row, LEDGER_JOB_KEYS);
     if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
     const state = outcomeStateOf(row);
     const isMerge = row['merged'] === true || MERGE_STATES.has(state);
@@ -338,8 +326,8 @@ export function foldJobsLedgerRewards(
         claims.set(key, set);
       }
     }
-    if (!JOB_ID_PATTERN.test(id)) continue;
-    const name = firstString(row, EVENT_KEYS)?.toLowerCase();
+    if (!REWARD_JOB_ID_PATTERN.test(id)) continue;
+    const name = firstLedgerString(row, LEDGER_EVENT_KEYS)?.toLowerCase();
     const dispatch = name !== undefined && DISPATCH_EVENTS.has(name);
     const ciBoundary = name === 'ci_start' || name === 'ci_complete';
     if (receiptAt === null && !dispatch && !ciBoundary) continue;
@@ -361,7 +349,7 @@ export function foldJobsLedgerRewards(
     if (revertedAtMs !== null && revertedAtMs <= nowMs) {
       // Only a receipt without a PR reference can apply job-wide.
       const key = prKeys.length === 1 ? prKeys[0]! : null;
-      if (key !== null || firstString(row, URL_KEYS) === null) {
+      if (key !== null || firstLedgerString(row, LEDGER_URL_KEYS) === null) {
         acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
       }
     }
@@ -550,7 +538,7 @@ export async function syncRewardSignalsFromJobsLedger(
     }
 
     const spend = await tailOrInjected(opts.spendText, join(runsDir, ROUTER_SPEND_LEDGER_RELATIVE));
-    const spendState: RewardFeedResult['spendState'] = spend.state === 'read' ? 'read' : spend.state;
+    const spendState: RewardFeedResult['spendState'] = spend.state;
     // Reward rows are first-write-wins and carry no coverage flag for USD.
     const costs = spend.state === 'read' && !spend.truncated ? foldSpendCosts(spend.text, nowMs) : undefined;
 
