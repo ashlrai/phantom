@@ -116,6 +116,14 @@ receipt proves coordination, not job execution.
 
 ## Leader
 
+The Leader board tracks distinct PRs in the local rebase queue. Its conflict
+delta compares the current count with the latest earlier observation. The
+trend compares the current count with the oldest retained earlier observation.
+History keeps one observation per timestamp in chronological order, so a
+retried tick replaces its sample and future observations are discarded after a
+clock rollback. Without an earlier observation or a readable current queue,
+the delta is null and the trend is unknown.
+
 | Method | Path | Query | Response type / source | Handler | Curl example |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/verse/leader` | none | [LeaderStateV1](../src/core/vision/leader-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader'` |
