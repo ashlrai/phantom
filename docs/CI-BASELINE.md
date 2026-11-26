@@ -58,12 +58,16 @@ on stderr. `<file>` is the report's repo-relative module path under
 ancestor titles plus the case title, not the default reporter's ` > `
 chain, so the group keys on the identity the evidence itself printed.
 Because it names a real test, the usual dependency closure and pass
-evidence apply: a green master module resolves a one-off flake on an
+evidence apply: a green master module without case failures in any verified
+master log for that file resolves a one-off flake on an
 unaffected singleton to `probable-flake`/`rerun-failed`, while a flake
 repeated across distinct unaffected PR heads -- or printed by master itself -- groups
 `shared-baseline` for a stabilization fix. Verdicts naming paths outside
 the suite roots, missing case names and near-miss wording stay unparsed,
 so an unrecognized lane failure still reads unknown rather than guessed.
+When verified master logs include a case failure in the same file, a
+green module summary alone cannot establish a named test pass. Different
+jobs may run different subsets or render the same case title differently.
 TypeScript diagnostics from `tsc`/`tsgo` non-pretty output
 (`src/core/foo.ts(41,9): error TS2322: ...`) group per file under a
 `<file> > (typecheck)` identity: a typecheck or build break prints no vitest
