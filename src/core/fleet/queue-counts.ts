@@ -37,7 +37,7 @@ export interface LaneQueueCountsReport {
   lanes: LaneQueueCountsRow[];
 }
 
-const sum = (rows: readonly LaneQueueCountsRow[], key: 'ready' | 'parked' | 'running' | 'merges' | 'stale'): number =>
+const sum = (rows: readonly LaneQueueCountsRow[], key: 'parked' | 'running' | 'merges' | 'stale'): number =>
   rows.reduce((total, row) => total + (row[key] ?? 0), 0);
 
 const rankReasons = (counts: ReadonlyMap<string, number>) => [...counts]
@@ -176,7 +176,7 @@ export async function getLaneQueueCounts(
     generatedAt: at.toISOString(),
     windowMinutes: 60,
     totals: {
-      ready: readyKnown ? sum(rows, 'ready') : null,
+      ready: queue.health?.counts.ready ?? null,
       parked: readyKnown ? sum(rows, 'parked') : null,
       running: (snapshot.sources.queueState.state === 'healthy' || snapshot.sources.queue.state === 'healthy') && rows.every(r => r.running !== null) ? sum(rows, 'running') : null,
       merges: snapshot.sources.ledger.state === 'healthy' && rows.every(r => r.merges !== null) ? sum(rows, 'merges') : null,

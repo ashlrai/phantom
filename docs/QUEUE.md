@@ -1175,7 +1175,9 @@ Add `--json` for `{ v, failed, groups: [{ error, count, samples, jobs }] }`, or
 # Lane queue counts
 
 Run `phm fleet queue-counts --json` for ready, parked and running counts and
-the oldest wait per lane. `oldestWaitSeconds` covers ready and parked jobs and
+the oldest wait per lane. The fleet-wide `totals.ready` includes lane-open jobs.
+Per-lane ready counts reflect the lane hint on each job's first valid READY row.
+`oldestWaitSeconds` covers ready and parked jobs and
 measures each job's current queue dwell in `~/.ashlr-runs/metrics/jobs.jsonl`:
 `enqueue`/`queued` rows, `launch_failed` retries and retried `task_outcome`
 rows are arrivals, while `claim`, `batch_claim` and `launch` end a dwell, so a
