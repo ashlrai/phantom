@@ -362,7 +362,10 @@ phm fleet unfed --window 6 --json
 ```
 
 `phm fleet unfed` prints each resource's utilization and its unfed capacity
-now. The fleet-wide `unfedSlots` upper bound sums each unfed lane's smaller
+now. Lane headroom uses the configured target, tightened by any valid lower
+`effective_target` reported in the same tick. A missing or invalid configured
+target makes the snapshot unusable for this calculation.
+The fleet-wide `unfedSlots` upper bound sums each unfed lane's smaller
 count of headroom and rows waiting elsewhere, capped by total waiting rows
 because lanes can see the same work. If `ready.tsv` is unavailable, queue-derived
 counts show as unknown. Published dispatcher counts still apply, and a free

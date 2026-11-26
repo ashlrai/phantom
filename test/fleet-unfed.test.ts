@@ -73,6 +73,22 @@ describe('currentUnfed', () => {
     expect(byLane.claude).toMatchObject({ utilization: null, unfed: false });
   });
 
+  it.each(['derived', 'dispatcher'] as const)('caps %s headroom at the configured target', (source) => {
+    const lanes = { a: { running: 2, target: 2, effective_target: 4 } };
+    const unfed_capacity = source === 'dispatcher'
+      ? { waiting: 1, lanes: { a: { waiting_elsewhere: 1 } } }
+      : undefined;
+    const report = currentUnfed(JSON.stringify({ lanes, unfed_capacity }), row('RQ-A', 'elsewhere'));
+
+    expect(report).toMatchObject({ source, unfedLanes: [], unfedSlots: 0 });
+    expect(report.resources[0]).toMatchObject({ target: 2, headroom: 0, utilization: 1, unfed: false });
+  });
+
+  it('rejects a lane whose configured target is missing even when an effective target is present', () => {
+    const status = JSON.stringify({ lanes: { a: { running: 0, effective_target: 2 } } });
+    expect(() => currentUnfed(status, '')).toThrow('invalid lane');
+  });
+
   it('prefers the dispatcher verdict and keeps only well-formed reason codes', () => {
     const status = JSON.stringify({
       lanes: LANES,
