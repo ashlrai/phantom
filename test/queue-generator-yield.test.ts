@@ -49,6 +49,25 @@ describe('generator yield', () => {
       { generator: 'filler', jobs: 1, prs: 1, merged: 1, drafted: 0, rejected: 0, launched: 0, rejections: {}, emptyRate: 1, medianDiffLines: null, tokensPerMergedPr: null },
     ]);
   });
+  it('counts launched batch members once and excludes worker telemetry from generator totals', () => {
+    const batch = 'RQ-BATCH-X';
+    const member = 'RQ-FOOA123Q8';
+    const report = generatorYield([
+      row({ job: batch, event: 'launch', src: 'filler' }),
+      row({ job: member, event: 'batch_claim', batch }),
+      row({ job: member, event: 'batch_claim', batch }),
+      row({ job: 'RQ-DRAIN-1', event: 'batch_claim', batch }),
+      row({ job: 'RQ-DRAIN-2', event: 'batch_claim', batch: 'RQ-BATCH-UNLAUNCHED' }),
+      row({ job: batch, event: 'finish', src: 'filler', empty: true, tokens_total: 500, diff_lines: 100 }),
+      row({ job: member, state: 'MERGED', empty: false, tokens_total: 20, diff_lines: 6 }),
+      row({ job: 'RQ-DRAIN-1:1', jobId: 'RQ-DRAIN-1', schema: 'fleet.session-pool.v1', event: 'launch' }),
+      row({ job: 'RQ-DRAIN-2:1', jobId: 'RQ-DRAIN-2', schema: 'phm-node-runner.v1', event: 'launch' }),
+    ].join('\n'), 24, now);
+    expect(report.generators).toMatchObject([
+      { generator: 'drain', jobs: 2, launched: 1, prs: 0 },
+      { generator: 'filler', jobs: 1, launched: 1, merged: 1, emptyRate: 0, medianDiffLines: 6, tokensPerMergedPr: 20 },
+    ]);
+  });
   it('counts each decision once per source without crediting a duplicate generator for another source PR', () => {
     const decisions = [
       row({ job: 'RQ-X', src: 'ideas', event: 'drafted' }),

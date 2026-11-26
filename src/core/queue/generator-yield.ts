@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isNodePoolLedgerRow } from '../fleet/jobs-ledger-dialect.js';
 
 export interface GenerationDecision {
   job: string; src: string; event: 'drafted' | 'rejected';
@@ -47,6 +48,8 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   const jobs = new Map<string, Job>(); let malformedLines = 0;
   const drafts = new Map<string, Set<string>>();
   const generation = new Map<string, Map<string, { drafted: boolean; reasons: Set<string> }>>();
+  const launchedBatches = new Set<string>();
+  const memberBatches = new Map<string, Set<string>>();
   const rows: { id: string; at: number; row: Record<string, unknown> }[] = [];
   const since = now - hours * 3600000;
   for (const line of `${raw}\n${decisions}`.split(/\r?\n/)) {
@@ -55,6 +58,7 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     try { value = JSON.parse(line); } catch { malformedLines++; continue; }
     if (!value || typeof value !== 'object' || Array.isArray(value)) { malformedLines++; continue; }
     const r = value as Record<string, unknown>;
+    if (isNodePoolLedgerRow(r)) continue;
     const id = pickString(r, JOB_ID_KEYS);
     const timestamp = pickString(r, TS_KEYS);
     const at = timestamp ? Date.parse(timestamp) : NaN;
@@ -66,6 +70,11 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   // ledger order when receipts share a timestamp.
   for (const { id, row: r } of rows.sort((a, b) => a.at - b.at)) {
     const event = pickString(r, EVENT_KEYS)?.toLowerCase();
+    const launch = event === 'launch' || event === 'launched';
+    if (id.startsWith('RQ-BATCH-')) {
+      if (launch) launchedBatches.add(id);
+      continue;
+    }
     if (event === 'drafted' || event === 'rejected') {
       const source = string(r.src) ?? 'unknown', group = generation.get(source) ?? new Map<string, { drafted: boolean; reasons: Set<string> }>();
       const decision = group.get(id) ?? { drafted: false, reasons: new Set<string>() };
@@ -83,7 +92,15 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     if (src) { job.generator = src; job.explicit = true; }
     else if (!job.explicit) job.generator = generator(id);
     const phase = pickString(r, PHASE_KEYS);
-    if (event === 'launch' || event === 'launched') job.launched = true;
+    if (launch) job.launched = true;
+    if (event === 'batch_claim') {
+      const batch = pickString(r, ['batch', 'batch_id', 'batchId']);
+      if (batch?.startsWith('RQ-BATCH-')) {
+        const batches = memberBatches.get(id) ?? new Set<string>();
+        batches.add(batch);
+        memberBatches.set(id, batches);
+      }
+    }
     if (typeof r.empty === 'boolean') job.empty = r.empty;
     if (phase?.toLowerCase() === 'empty') job.empty = true;
     if (pickString(r, PR_KEYS) !== null) job.pr = true;
@@ -94,6 +111,12 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   }
   const groups = new Map<string, Job[]>();
   for (const [id, job] of jobs) {
+    for (const batch of memberBatches.get(id) ?? []) {
+      if (launchedBatches.has(batch)) {
+        job.launched = true;
+        break;
+      }
+    }
     const sources = drafts.get(id);
     let name = job.generator ?? 'unknown';
     if (!job.explicit && sources) {
