@@ -84,7 +84,7 @@ const SPEC: Record<SelfLane, Spec> = {
   omlx: { periodMs: null, unit: 'none' },                  // local capacity, nothing resets
 };
 /** docs/lanes/zai.md "Included allowance": weekly bucket, resets Monday 00:00 UTC. */
-export const ZAI_WEEKLY_CREDITS = 10_000;
+const ZAI_WEEKLY_CREDITS = 10_000;
 
 const isoOf = (ms: number): string => new Date(ms).toISOString();
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -164,7 +164,7 @@ export function calibrate(lane: SelfLane, reading: SanctionedReading, rows: read
 }
 
 /** Build the budget entry for a sanctioned reading. */
-export function entryFromReading(reading: SanctionedReading, nowMs: number): BudgetEntry {
+function entryFromReading(reading: SanctionedReading, nowMs: number): BudgetEntry {
   return {
     ...(reading.account_id ? { account_id: reading.account_id } : {}),
     weekly_used_pct: reading.pctUsed === null ? null : clampPct(reading.pctUsed),

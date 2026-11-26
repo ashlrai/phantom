@@ -35,7 +35,7 @@ export type DispatchEventParseResult =
   | { ok: false; reason: 'empty' | 'invalid-format' | 'invalid-timestamp' };
 
 /** Most recent events a single read keeps; older matches are counted in `truncated`. */
-export const DISPATCH_EVENTS_MAX = 5000;
+const DISPATCH_EVENTS_MAX = 5000;
 
 const ISO_INSTANT = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
 const LOCAL_CLOCK = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
