@@ -13,7 +13,7 @@ import {
   laneFromKey, launchdLabelFromKey, parseIncidentFilename, readIncidentStatuses,
   securityReportForHold, slotsTarget, supersededReason, tagFromIncidentKey, terminalIncident,
 } from './incidents.js';
-import { fixLaunchdCrashloop, type FixContext } from './launchd.js';
+import { fixLaunchdCrashloop, launchAgentsDir, newestRollbackMtime, type FixContext } from './launchd.js';
 import {
   DEFAULT_STUCK_MIN, FIXER_IDS,
   type AutofixHost, type AutofixSnapshot, type FixerId, type IncidentStatusLine, type LaneView, type LedgerLine,
@@ -24,7 +24,6 @@ export interface RunAutofixOptions {
   snapshot: AutofixSnapshot;
   dryRun: boolean;
   only?: readonly FixerId[];
-  olderThanMin?: number;
   stuckMinutes?: number;
 }
 
@@ -42,9 +41,8 @@ function selected(only: readonly FixerId[] | undefined, id: FixerId): boolean {
 function statusOf(lines: readonly LedgerLine[]): { status: IncidentStatusLine['status']; reason: string } {
   const intentional = lines.find((line) => line.action === 'superseded' || line.action === 'lane-target-off');
   if (intentional) return { status: 'intentional', reason: intentional.action };
-  if (lines.some((line) => line.result === 'failed')) {
-    return { status: 'failed', reason: lines.find((line) => line.result === 'failed')?.action ?? 'failed' };
-  }
+  const failed = lines.find((line) => line.result === 'failed');
+  if (failed) return { status: 'failed', reason: failed.action };
   const applied = lines.find((line) => line.result === 'applied' || line.result === 'dry-run');
   if (applied) return { status: 'fixed', reason: applied.action };
   const refused = lines.find((line) => line.result === 'refused' || line.result === 'refused_admitted'
@@ -160,15 +158,8 @@ function runLaunchd(key: string, opts: RunAutofixOptions, ctx: FixContext, push:
     push({ ts, fixer: 'launchd-crashloop', target: key, action: 'refuse-label', before: { key }, after: {}, result: 'refused' });
     return;
   }
-  const plist = join(opts.host.homeDir(), 'Library', 'LaunchAgents', `${label}.plist`);
-  const dir = join(opts.host.homeDir(), 'Library', 'LaunchAgents');
-  let rollback: number | null = null;
-  for (const name of opts.host.listDir(dir)) {
-    if (!name.includes('.rollback.') || !name.startsWith(label)) continue;
-    const mtime = opts.host.statMtime(join(dir, name));
-    if (mtime !== null && (rollback === null || mtime > rollback)) rollback = mtime;
-  }
-  const job = jobForLabel(opts.snapshot, label, opts.host.statMtime(plist), rollback);
+  const plist = join(launchAgentsDir(opts.host), `${label}.plist`);
+  const job = jobForLabel(opts.snapshot, label, opts.host.statMtime(plist), newestRollbackMtime(opts.host, label));
   const line = fixLaunchdCrashloop(job, ctx);
   if (line === null) {
     push({ ts, fixer: 'launchd-crashloop', target: label, action: 'refuse-stale-runs', before: { label }, after: { disabled: job.disabled }, result: 'refused_stale' });
