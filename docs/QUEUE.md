@@ -1347,8 +1347,10 @@ when the window contains its `batch_claim` and the matching worker's launch
 receipt has an equal or later recorded timestamp. Each member counts once.
 Batch worker totals and node-pool attempt
 telemetry are excluded from generator yield. Empty rate uses jobs with a recorded
-empty result. Median diff lines uses recorded `diff_lines`. Tokens per merged PR
-is the sum of recorded job tokens divided by merged PRs; it is unknown if any
+empty or nonempty result on their latest observed attempt. A launch or batch
+claim supersedes earlier results. Exact receipt replays keep their first
+position when timestamps tie. Median diff lines uses recorded `diff_lines`.
+Tokens per merged PR is the sum of recorded job tokens divided by merged PRs; it is unknown if any
 job in the group lacks a token total or no PR merged. Missing measurements are
 unknown, and malformed lines are skipped and counted. The report describes
 recorded evidence, not necessarily every job or PR.
