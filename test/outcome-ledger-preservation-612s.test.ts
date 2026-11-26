@@ -2007,6 +2007,37 @@ describe('router outcome merge-events join', () => {
     expect(bare.outcomes[0]?.merge_queue).toBeNull();
   });
 
+  it.each([
+    { name: 'winning verdict with out-of-order receipts', verdictPr: 42, expectedPr: 42 },
+    { name: 'winning verdict with a contested PR', verdictPr: 42, contested: true, expectedPr: null },
+    { name: 'URL-less verdict with multiple claims', verdictPr: null, expectedPr: null },
+    { name: 'URL-less verdict with a sole claim', verdictPr: null, singleClaim: true, expectedPr: 77 },
+  ])('binds queue and review evidence to the $name', ({ verdictPr, contested, singleClaim, expectedPr }) => {
+    const url = (pr: number) => `https://github.com/ashlrai/phantom/pull/${pr}`;
+    const rows = [
+      { job: 'J1', phase: 'MERGED', mergedAt: '2026-11-22T00:00:00Z', ...(verdictPr ? { url: url(verdictPr) } : {}) },
+      { job: 'J1', phase: 'PUBLISHED', url: url(77) },
+      ...(!singleClaim ? [{ job: 'J1', phase: 'CLOSED', closedAt: '2026-11-21T00:00:00Z', url: url(verdictPr ? 77 : 42) }] : []),
+      ...(contested ? [{ job: 'J2', phase: 'PUBLISHED', url: url(42) }] : []),
+    ];
+    const mergeEvents = foldMergeEvents([
+      mergeEvent(42, 'check_observed', { conclusion: 'failure', required: true }),
+      mergeEvent(77, 'checks_passed'),
+    ].map(row => JSON.stringify(row)).join('\n'));
+    const crossReviews = new Map<string, CrossReviewEvidence>([
+      ['ashlrai/phantom#42', { outcome: 'reject', at: null }],
+      ['ashlrai/phantom#77', { outcome: 'approve', at: null }],
+    ]);
+    const { outcomes } = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n'), { mergeEvents, crossReviews });
+    const expectedKey = `ashlrai/phantom#${expectedPr}`;
+    expect(outcomes[0]).toMatchObject({
+      merged: true,
+      merge_queue: mergeEvents.get(expectedKey) ?? null,
+      cross_review: crossReviews.get(expectedKey) ?? null,
+      ci_first_pass: expectedPr === null ? null : expectedPr === 77,
+    });
+  });
+
   it('joins recorded merge-queue evidence onto outcomes and never creates outcomes for event-only PRs', async () => {
     const root = runsDir([
       '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-01T00:00:00Z"}',
