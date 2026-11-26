@@ -70,7 +70,7 @@ export function CommsLimitsRow() {
 
   return (
     <Panel title="Comms limits">
-      <SettingRow label="Confirmed by Mason" description={description}>
+      <SettingRow label="Confirmed by the owner" description={description}>
         <Tag size="sm" dot>{tag}</Tag>
       </SettingRow>
     </Panel>

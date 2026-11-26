@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OperatorRequest, OperatorResult } from '../src/core/desktop/operator.js';
 import { collectResourceEvidence } from '../src/core/usage/resource-live/evidence-collector.js';
-import { defaultResourceLiveSources } from '../src/core/usage/resource-live/sources.js';
+import { antigravityAgentCheck, defaultResourceLiveSources } from '../src/core/usage/resource-live/sources.js';
 import { readResourceEvidenceFile } from '../src/core/usage/resource-live/store.js';
 import { cmdResourcesEvidence } from '../src/cli/resources-evidence.js';
 
@@ -92,7 +92,7 @@ describe('scheduled desktop resource evidence', () => {
       },
     });
     const sources = defaultResourceLiveSources({ runsDir });
-    expect(await sources.antigravity![0]!.read(now)).toMatchObject({ used: 20, unit: 'percent' });
+    expect(await antigravityAgentCheck(runsDir).read(now)).toMatchObject({ used: 20, unit: 'percent' });
     expect(await sources['openai-api']![0]!.read(now)).toMatchObject({ used: 43, unit: 'usd' });
   });
 

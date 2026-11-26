@@ -608,8 +608,10 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   join — reports and joins someone had to run and read, so a dispatch
   pool whose resolved work kept not holding never became work even
   though the ledger exists to score which arm deserves the next
-  dispatch). A pool becomes an item while its in-window resolved rows
-  reach the recurring bars — enough rows, enough not-held rows, a
+  dispatch). Discovery uses the first valid retained row for each job ID
+  before applying the time window, so replays cannot inflate counts or
+  make an older resolution recent. A pool becomes an item while its
+  in-window resolved jobs reach the recurring bars — enough jobs, enough not-held jobs, a
   strict majority not held and evidence spanning distinct UTC days
   inside the 7-day window — with rows whose pool field went unrecorded
   grouping as the calibration arm's own 'unknown' cell, in-flight jobs
@@ -1392,7 +1394,28 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   off-contract rows drop like the sibling jobs-ledger readers' own
   parse, truncated tails are stated as lower bounds, and items emit
   only for the fleet's own repository since the rows describe this
-  install's hosts and lanes and carry no repository column.
+  install's hosts and lanes and carry no repository column —
+  and the job-reissue audit ledger's recurring rescue cells, the
+  {at, from, to, lane, tier, file} rows reissueJob (src/core/fleet/
+  job-reissue.ts) appends to queue/job-reissues.jsonl under the fleet
+  runs directory for POST /api/verse/outcomes/fleet-reissue and the
+  Fleet Outcomes pane's Reissue button — one per successful re-drop of
+  a finished job's prompt under the next <stem>R<n> id, published as
+  RQ-PHX-<to> under leader/drop/<lane>/ (otherwise only visible as
+  unrelated R-suffix generations scattered across jobs.jsonl — the
+  ledger had no reader at all, so a job family that kept needing
+  manual rescue never became work). A family emits only at the
+  recurring bars of two rescue rows across two distinct UTC days
+  inside the 7-day window, a wave cell emits only at three distinct
+  rescued families across two days, lane/tier tallies ride inside the
+  prompts while the local `file` path is never quoted, a missing or
+  unreadable ledger emits nothing, malformed lines and off-contract
+  ids drop like the sibling queue-ledger readers' own parse, whether a
+  rescue landed is left to the RQ-PHX-<to> generations' own jobs.jsonl
+  rows rather than claimed, truncated tails are stated as lower
+  bounds, and items emit only for the fleet's own repository since
+  the ledger is this install's rescue record and carries no
+  repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   claude-recovery, memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1403,7 +1426,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts, postrun and git-contention items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts, postrun, git-contention and job-reissue items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name

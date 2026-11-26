@@ -38,6 +38,7 @@ interface Row {
   pr: number;
   outcome: 'attempt' | 'ok' | 'failed' | 'verdict';
   test?: string;
+  tests?: string[];
   verdict?: 'pass' | 'fail' | 'inconclusive';
 }
 
@@ -95,6 +96,22 @@ describe('ciRerunBacklogItems', () => {
     expect(item.prompt).toContain('RQ-CIFLAKE');
     expect(item.prompt).toContain('no-change');
     expect(item.prompt).toContain('ci-reruns/journal.jsonl');
+  });
+
+  it('counts shared attempt evidence once per triggering test without attributing the workflow verdict', async () => {
+    const shared = { at: daysAgo(1), repo: REPO, head: sha(7), runId: 7, pr: 7 };
+    const items = await ciRerunBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        ...failingVerdicts(),
+        { ...shared, outcome: 'attempt', tests: [TEST_A, TEST_B, TEST_A] },
+        { ...shared, outcome: 'ok' },
+        { ...shared, outcome: 'verdict', verdict: 'fail' },
+      ]),
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('6 rerun attempt rows');
+    expect(items[0]?.prompt).toContain('3 recorded rerun verdicts concluded failure');
   });
 
   it('stays quiet below the recurring bar, on a single head, or outside the window', async () => {

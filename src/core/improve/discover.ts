@@ -993,6 +993,21 @@
  *     as lower bounds, and only the fleet's own repository inherits
  *     the items since the rows describe this install's hosts and
  *     lanes and carry no repository column;
+ *   - the job-reissue audit ledger's recurring rescue cells: the
+ *     {at, from, to, lane, tier, file} rows reissueJob appends to
+ *     queue/job-reissues.jsonl under the fleet runs directory for
+ *     POST /api/verse/outcomes/fleet-reissue and the Fleet Outcomes
+ *     pane's Reissue button — one per successful re-drop of a
+ *     finished job's prompt under the next <stem>R<n> id
+ *     (jobReissueBacklogItems below). Until now the ledger had no
+ *     reader at all, so a job family that kept needing manual rescue
+ *     looked like unrelated R-suffix generations scattered across
+ *     jobs.jsonl. A family emits only at the recurring bars of rescue
+ *     rows across distinct UTC days inside the 7-day window, a wave
+ *     cell emits only at the distinct-family bar, truncated tails are
+ *     stated as lower bounds, and only the fleet's own repository
+ *     inherits the items since the ledger is this install's rescue
+ *     record and carries no repository column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -1099,6 +1114,7 @@ import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
 import { efficiencyBacklogItems } from './efficiency-backlog.js';
 import { landingsBacklogItems } from './landings-backlog.js';
 import { gitContentionBacklogItems } from './git-contention-backlog.js';
+import { jobReissueBacklogItems } from './job-reissue-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2405,6 +2421,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // own repository inherits the items since the rows carry no repo
   // column.
   items.push(...await gitContentionBacklogItems({ repo }));
+
+  // Job-reissue audit ledger: the {at, from, to, lane, tier, file} rows
+  // reissueJob appends to queue/job-reissues.jsonl under the fleet runs
+  // directory for POST /api/verse/outcomes/fleet-reissue and the Fleet
+  // Outcomes pane's Reissue button — one per successful re-drop of a
+  // finished job's prompt under the next <stem>R<n> id. Until now the
+  // ledger had no reader at all, so a job family that kept needing
+  // manual rescue looked like unrelated R-suffix generations scattered
+  // across jobs.jsonl. A family emits only at the recurring bars of
+  // rescue rows across distinct UTC days inside the 7-day window, a
+  // wave cell emits only at the distinct-family bar, truncated tails
+  // are stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the ledger is this install's rescue
+  // record and carries no repository column.
+  items.push(...await jobReissueBacklogItems({ repo }));
   return { items, errors };
 }
 

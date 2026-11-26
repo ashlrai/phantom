@@ -941,7 +941,7 @@ export function buildReapprovalGrantPayload(
 }
 
 /** Plain-language lines describing a grant's scope (CLI confirmation, the Touch ID sheet, logs). */
-export function describeGrantScope(grant: StandingGrantV1): string[] {
+export function describeGrantScope(grant: StandingGrantV1, owner = 'the owner'): string[] {
   const lines = [
     `Grant #${grant.grantSeq} (${grant.grantId.slice(0, 8)}), key ${grant.keyId}, valid ${grant.issuedAt} → ${grant.expiresAt}`,
     `Engines: ${grant.engines.join(', ')} · budget up to ${grant.spend.maxMode} · metered spend $${grant.spend.meteredUsdPerDay}/day`,
@@ -958,10 +958,10 @@ export function describeGrantScope(grant: StandingGrantV1): string[] {
   for (const [seatId, seat] of Object.entries(grant.spend.seats)) {
     if (engineOfSeatId(seatId) === 'devin') {
       // No window to keep a percentage of: say where Devin's limits live.
-      lines.push(`  seat ${seatId}: ${seat.enabled ? 'on' : 'off'}, Devin sessions (${seat.roles.join('/')} only, never a judge) within the Devin ACU budget and its reserve for the owner`);
+      lines.push(`  seat ${seatId}: ${seat.enabled ? 'on' : 'off'}, Devin sessions (${seat.roles.join('/')} only, never a judge) within the Devin ACU budget and its reserve for ${owner}`);
       continue;
     }
-    lines.push(`  seat ${seatId}: ${seat.enabled ? 'on' : 'off'}, keep ${seat.reserveFloorPercent}% for the owner${seat.maxSessionWindowPercent !== undefined ? `, idle while 5 h > ${seat.maxSessionWindowPercent}%` : ''}, ${seat.roles.join('/')}`);
+    lines.push(`  seat ${seatId}: ${seat.enabled ? 'on' : 'off'}, keep ${seat.reserveFloorPercent}% for ${owner}${seat.maxSessionWindowPercent !== undefined ? `, idle while 5 h > ${seat.maxSessionWindowPercent}%` : ''}, ${seat.roles.join('/')}`);
   }
   grant.rollout.stages.forEach((stage, i) => {
     lines.push(`  stage ${i + 1} ${stage.id} Leader: ${stage.leaderClasses.length ? stage.leaderClasses.join('+') : 'advisory only'}`);

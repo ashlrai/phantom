@@ -45,6 +45,8 @@ function verifiedReading(allowance: ResourceLiveAllowance, seen: ResourceLiveObs
     expires_at: seen.expires_at === undefined ? undefined : normalizeInstant(seen.expires_at),
     source: seen.source, source_tier: seen.tier ?? tier, observed_at: normalizeInstant(seen.observed_at),
     stale_after: seen.stale_after,
+    groups: seen.groups,
+    execution_context: seen.execution_context,
     account_id: seen.account_id, model: seen.model,
     window_start: seen.window_start === undefined ? undefined : normalizeInstant(seen.window_start),
   });
@@ -80,18 +82,24 @@ async function readAllowance(allowance: ResourceLiveAllowance, sources: readonly
   if (sources.length === 0) return unverified(allowance, 'no-supported-source');
   let reason: ResourceLiveReason = 'source-returned-nothing';
   let older: ResourceLiveReading | null = null;
+  let context: ResourceLiveReading['execution_context'];
   for (const source of sources) {
-    const outcome = await runSource(source, nowMs, deadlineMs);
+    const outcome = await runSource(source, nowMs, source.deadlineMs ?? deadlineMs);
     if (outcome.kind === 'error') { reason = 'source-error'; continue; }
     if (outcome.kind === 'timeout') { reason = 'source-timeout'; continue; }
     if (outcome.value === null) continue;
     if (outcome.value === NEEDS_SIGNIN || 'needs_signin' in outcome.value) { reason = 'needs-signin'; continue; }
+    if ('reason' in outcome.value) {
+      reason = outcome.value.reason;
+      context = outcome.value.execution_context;
+      continue;
+    }
     const reading = verifiedReading(allowance, outcome.value, source.tier, nowMs);
     if (!reading) { reason = 'invalid-reading'; continue; }
     if (nowMs < Date.parse(reading.stale_after!)) return reading;
     older ??= reading;
   }
-  return older ?? unverified(allowance, reason);
+  return older ?? { ...unverified(allowance, reason), ...(context ? { execution_context: context } : {}) };
 }
 
 async function writePrivate(path: string, body: string): Promise<void> {
@@ -191,7 +199,7 @@ export async function runResourceLiveTick(options: ResourceLiveTickOptions): Pro
       let reading: ResourceLiveReading;
       if (due) {
         reading = await readAllowance(allowance, entry ? customSources(entry) : options.sources[id] ?? [], nowMs, options.deadlineMs ?? SOURCE_DEADLINE_MS);
-        if (!reading.verified && windowOver) reading = unverified(allowance, 'window-reset');
+        if (!reading.verified && windowOver && id !== 'antigravity') reading = unverified(allowance, 'window-reset');
         polled.push(id);
         poll[id] = nextPollState(prior.poll[id], readingFingerprint(reading), laneActive, nowMs);
       } else {

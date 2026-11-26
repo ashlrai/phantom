@@ -49,7 +49,7 @@ export function deriveFleetMergeNotifications(data: unknown, _now: number): AppN
       releases.push({ category: common.category, severity: 'high', ts: common.ts,
         actionLabel: 'Update', actionRun: openUpdates, id: `fleet-release:${item.repo}:${version}`,
         title: `${item.repo?.split('/').at(-1) ?? 'Desktop'} ${version} shipped`,
-        detail: `Release${item.number === undefined ? '' : ` PR #${item.number}`} merged. The desktop app can update from Settings ▸ Desktop ▸ Updates.` });
+        detail: `Release${item.number === undefined ? '' : ` PR #${item.number}`} merged. The desktop app can update from Settings ▸ Updates.` });
     }
   }
   if (remaining.length > 5) {

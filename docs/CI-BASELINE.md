@@ -610,8 +610,10 @@ toward each test's recurrence and consumes one slot in the hourly cap. A test th
 rerun-attempted on at least three distinct heads within the last seven days is
 a recurring flake: maintenance appends one `RQ-CIFLAKE-*`
 stabilization brief (tier `work`) per (repository, test) to the router queue,
-capped at ten new rows per run, under the same standing-authority and KILL
-gates as shared-baseline fixes. Deduplication is generation-aware like the
+capped at ten new rows per repository per maintenance pass, under the same
+standing-authority and KILL gates as shared-baseline fixes. Suppressed
+candidates do not consume the cap, so later eligible flakes can enter the
+queue on subsequent passes. Deduplication is generation-aware like the
 master fixes: an open row suppresses queueing, dropped or retired rows stay
 suppressed, and a flake that keeps recurring after earlier stabilization
 generations reached DONE re-queues as the next `RQ-CIFLAKE-*-G<n>` id (at
@@ -650,7 +652,10 @@ pass+fail, null when nothing has resolved). Recurring-flake entries carry the
 same per-test verdict tallies and the `RQ-CIFLAKE-*` brief names them. Shared
 reruns contribute a workflow verdict only, since the run conclusion does
 not identify which test passed or failed. For singleton reruns, the per-test tally includes the workflow verdict. A `fail` verdict is evidence the classification may be wrong, not proof;
-rerun firing rules are unchanged.
+rerun firing rules are unchanged. In recurring-failure briefs from
+`phm improve discover`, a shared attempt counts once for each recorded
+triggering test. The shared workflow verdict does not count toward any
+test's recurring-failure threshold.
 `ci-reruns/status.json` contains the last
 maintenance time, per-repository counts (including `recurringFlakes` detected,
 `flakeFixesQueued` appended, `verdictsPending` and `verdictsResolved`), errors
