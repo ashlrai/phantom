@@ -67,7 +67,7 @@ describe('LeaderScreen — states', () => {
   });
 
   it('shows a skeleton while the thread loads', () => {
-    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => undefined)));
+    stubLeader();
     renderMobile(<LeaderScreen />);
     expect(screen.getByRole('status', { name: 'Loading the conversation' })).toBeInTheDocument();
   });

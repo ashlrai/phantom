@@ -102,6 +102,8 @@ export interface CloudTaskReport {
 export interface CloudTaskLessons {
   arm: 'served' | 'holdout';
   noteIds: string[];
+  /** Evaluation cohort label; absent when the task has not been classified. */
+  family?: string;
 }
 
 /**

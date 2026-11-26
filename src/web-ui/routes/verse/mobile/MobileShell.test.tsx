@@ -20,6 +20,25 @@ import { activityResponse, json, needsItem, runningRow, stubFetch, TOKEN } from 
 import { resetMobileToastsForTest } from './mobile-toast.js';
 import { ReachStrip } from './MobileRuntime.js';
 import { ChunkBoundary, MobileShell } from './MobileShell.js';
+import './MobileGuardSheet.js';
+import './QueueSection.js';
+import './ScreenHost.js';
+import './screens/AgentDetailScreen.js';
+import './screens/AgentsScreen.js';
+import './screens/DropJobScreen.js';
+import './screens/FeedScreen.js';
+import './screens/FleetScreen.js';
+import './screens/GoalsScreen.js';
+import './screens/HomeGlance.js';
+import './screens/IdeasScreen.js';
+import './screens/InboxScreen.js';
+import './screens/LeaderScreen.js';
+import './screens/MoreScreen.js';
+import './screens/NeedsYouScreen.js';
+import './screens/NewAgentScreen.js';
+import './screens/RunsScreen.js';
+import './screens/WatchScreen.js';
+import './screens/WorkerScreen.js';
 
 function control(over: { paused?: boolean; running?: boolean; kill?: boolean; todayUsd?: number | null } = {}): VerseControlSnapshot {
   return {
@@ -127,6 +146,7 @@ describe('the shell', () => {
     act(() => {
       window.location.hash = '#/fleet';
     });
+    expect(await screen.findByRole('heading', { name: 'Fleet', level: 1 })).toBeInTheDocument();
     await waitFor(() => expect(within(tabs).getByRole('button', { name: /^More/ })).toHaveAttribute('aria-current', 'page'));
     fireEvent.click(within(tabs).getByRole('button', { name: /^More/ }));
     await waitFor(() => expect(window.location.hash).toBe('#/more'));
@@ -183,7 +203,7 @@ describe('ReachStrip', () => {
 
 describe('Home', () => {
   it('shows skeletons before the Mac answers', () => {
-    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => undefined)));
+    mac();
     render(<MobileShell />);
     expect(screen.getByRole('heading', { name: 'Phantom', level: 1 })).toBeInTheDocument();
     expect(screen.getAllByRole('status', { name: /Loading/ }).length).toBeGreaterThan(0);
@@ -197,6 +217,7 @@ describe('Home', () => {
     const tabs = screen.getByRole('navigation', { name: 'Phantom' });
     fireEvent.click(within(tabs).getByRole('button', { name: /^Needs you/ }));
     await waitFor(() => expect(window.location.hash).toBe('#/needs'));
+    expect(await screen.findByRole('heading', { name: 'Needs you', level: 1 })).toBeInTheDocument();
     fireEvent.click(within(tabs).getByRole('button', { name: /^Agents/ }));
     fireEvent.click(await screen.findByRole('button', { name: /Ship the phone app/ }));
     await waitFor(() => expect(window.location.hash).toBe('#/agents/vs_9'));
@@ -206,16 +227,16 @@ describe('Home', () => {
     mac();
     render(<MobileShell />);
     await openFleet();
-    expect(screen.getByText('$3.20')).toBeInTheDocument();
-    expect(screen.getByText('of $25.00')).toBeInTheDocument();
+    expect(await screen.findByText('$3.20')).toBeInTheDocument();
+    expect(await screen.findByText('of $25.00')).toBeInTheDocument();
   });
 
   it('an unreadable figure is a dash, never zero', async () => {
     mac({ control: json({ error: 'ledger unreadable' }, 503) });
     render(<MobileShell />);
     await openFleet();
-    const spent = screen.getByText('Spent today').closest('div')!;
-    expect(within(spent).getByText('—')).toBeInTheDocument();
+    const spent = (await screen.findByText('Spent today')).closest('div')!;
+    expect(await within(spent).findByText('—')).toBeInTheDocument();
   });
 
   it('Pause runs at once (no sheet) with the held token, then says so', async () => {
@@ -223,7 +244,7 @@ describe('Home', () => {
     const fetches = mac();
     render(<MobileShell />);
     await openFleet();
-    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Pause' }));
     await waitFor(() => expect(fetches.posts()).toHaveLength(1));
     const post = fetches.posts()[0]!;
     expect(post.url).toBe('/api/verse/daemon');
@@ -239,7 +260,7 @@ describe('Home', () => {
     render(<MobileShell />);
     await openFleet();
     await screen.findByText('Paused');
-    fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Resume' }));
     const sheet = await screen.findByRole('alertdialog', { name: 'Resume the fleet?' });
     expect(within(sheet).getByText(/spends from your seats/)).toBeInTheDocument();
     fireEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }));
@@ -254,7 +275,7 @@ describe('Home', () => {
     const fetches = mac();
     render(<MobileShell />);
     await openFleet();
-    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Pause' }));
     const sheet = await screen.findByRole('dialog', { name: 'Unlock actions' });
     const field = within(sheet).getByLabelText('Mutation token');
     fireEvent.change(field, { target: { value: 'not-a-token' } });

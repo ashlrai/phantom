@@ -30,6 +30,7 @@ import type { BudgetMode, BudgetPolicy } from '../routing/types.js';
 import type { GoalStatus } from '../types.js';
 import type { MissionGraphNodeInput } from './mission-graph.js';
 import type { FleetTaskInput, RepoHold } from '../fleet/fleet-types.js';
+import type { LeaderChip, LeaderSeatChoice } from '../fleet/leader-seat.js';
 import type { HarnessHypothesis, HarnessRoutingWeights } from '../learn/harness-types.js';
 
 export const VERSE_LEADER_PATH = '/api/verse/leader';
@@ -592,7 +593,7 @@ export interface LeaderStateV1 {
   /** 3.14 (additive): run health for the UI / Telegram. */
   health?: LeaderHealth;
   /** Additive: the seat `leader run --seat auto` would use, its fallback, and one plain line for the card. Absent = unknown. */
-  seat?: import('../fleet/leader-seat.js').LeaderSeatChoice & { line: string; chip?: import('../fleet/leader-seat.js').LeaderChip };
+  seat?: LeaderSeatChoice & { line: string; chip?: LeaderChip };
 }
 
 /** POST /api/verse/leader — exactly one form per request. */

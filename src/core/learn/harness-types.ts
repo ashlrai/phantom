@@ -18,6 +18,7 @@
  */
 import type { RoutingDifficulty } from '../routing/types.js';
 import type { FleetEngine } from '../fleet/fleet-types.js';
+import type { FamilyEvidence } from '../improve/lesson-trial.js';
 
 export const VERSE_LEARNING_PATH = '/api/verse/learning';
 
@@ -159,6 +160,8 @@ export interface ExperimentResultV1 {
   claimedChangeNoneMadeDelta: number | null;
   /** Wall-time / cost change in percent; must be ≤ +20 to adopt. */
   costDeltaPct: number | null;
+  /** Verified pairs by task expectation; null or absent on legacy records means unmeasured. */
+  families?: FamilyEvidence[] | null;
   /** null while running. */
   verdict: ExperimentVerdict | null;
   /** Specific sentences behind the verdict. */
@@ -170,8 +173,9 @@ export interface ExperimentResultV1 {
 /**
  * The adoption gate (SPEC-310B §5) — frozen numbers. Adoption is a Leader
  * class-B action and requires ALL of: pairs ≥ minPairs, lift.ciLow >
- * minLiftCiLow, no refuse regression, claimedChangeNoneMadeDelta ≤ 0, and
- * costDeltaPct ≤ maxCostIncreasePct.
+ * minLiftCiLow, no refuse regression, claimedChangeNoneMadeDelta ≤ 0,
+ * costDeltaPct ≤ maxCostIncreasePct, and at least MIN_FAMILY_PAIRED pairs
+ * with no observed drop in each task family's pass rate.
  */
 export const HARNESS_ADOPTION_GATE = Object.freeze({
   minPairs: 8,

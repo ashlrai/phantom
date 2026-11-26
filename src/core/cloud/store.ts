@@ -222,6 +222,7 @@ function isLessons(v: unknown): boolean {
   if (!v || typeof v !== 'object') return false;
   const l = v as Record<string, unknown>;
   return (l['arm'] === 'served' || l['arm'] === 'holdout')
+    && (l['family'] === undefined || (typeof l['family'] === 'string' && /^[a-z0-9][a-z0-9_-]{0,79}$/.test(l['family'])))
     && Array.isArray(l['noteIds']) && l['noteIds'].length <= 64
     && l['noteIds'].every((id) => typeof id === 'string' && id.length > 0 && id.length <= 80);
 }

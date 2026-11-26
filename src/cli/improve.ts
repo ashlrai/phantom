@@ -277,12 +277,14 @@ async function promote(id: string | undefined, repo: string | undefined, dryRun:
 async function lessons(json: boolean): Promise<number> {
   const [{ listCloudTasks }, { revertedPrKeys }, trial] = await Promise.all([
     import('../core/cloud/store.js'), import('../core/improve/reverted.js'), import('../core/improve/lesson-trial.js')]);
-  const report = trial.lessonTrial(listCloudTasks(Number.MAX_SAFE_INTEGER), revertedPrKeys());
+  const tasks = listCloudTasks(Number.MAX_SAFE_INTEGER);
+  const report = trial.lessonTrial(tasks, revertedPrKeys(tasks));
   if (json) { console.log(JSON.stringify(report, null, 2)); return 0; }
   console.log(`Lessons trial (holdout ${Math.round(report.holdout * 100)}% of eligible cloud launches run without lessons)`);
   console.log(trial.renderLessonEffect(report.overall));
   for (const e of report.byNote) console.log(`  ${trial.renderLessonEffect(e)}`);
   if (report.excluded.launchFailed || report.excluded.unfinished) console.log(`Not counted: ${report.excluded.launchFailed} launch failure(s), ${report.excluded.unfinished} still running.`);
+  console.log(trial.renderFamilyPromotion(report.byFamily));
   return 0;
 }
 

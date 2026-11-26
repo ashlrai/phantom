@@ -14,7 +14,7 @@ import {
   readUserBacklogItems,
   validBacklogItem,
 } from '../src/core/cloud/backlog.js';
-import type { LessonEffect, LessonTrialReport } from '../src/core/improve/lesson-trial.js';
+import { familyPromotionGate, type LessonEffect, type LessonTrialReport } from '../src/core/improve/lesson-trial.js';
 import type { KnowledgeNoteV1 } from '../src/core/learn/retro/types.js';
 
 vi.mock('../src/core/improve/lesson-trial-backlog.js', async (importOriginal) => {
@@ -46,6 +46,7 @@ function report(overrides: Partial<LessonTrialReport> = {}): LessonTrialReport {
     holdout: 0.2,
     overall: effect(),
     byNote: [],
+    byFamily: familyPromotionGate([]),
     excluded: { launchFailed: 1, unfinished: 2 },
     ...overrides,
   };

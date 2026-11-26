@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lessonArm, lessonHoldoutFraction, lessonTrial, prKey, renderLessonEffect, DEFAULT_LESSON_HOLDOUT, MAX_LESSON_HOLDOUT } from '../src/core/improve/lesson-trial.js';
+import { familyPromotionGate, lessonArm, lessonHoldoutFraction, lessonTrial, prKey, renderFamilyPromotion, renderLessonEffect, DEFAULT_LESSON_HOLDOUT, MAX_LESSON_HOLDOUT } from '../src/core/improve/lesson-trial.js';
 import type { CloudTaskV1 } from '../src/core/cloud/types.js';
 
 let n = 0;
@@ -9,6 +9,67 @@ function task(state: CloudTaskV1['state'], arm: 'served' | 'holdout', noteIds: s
     pr: pr === null ? null : { number: pr, url: `https://github.com/ashlrai/phantom/pull/${pr}`, state: 'merged', draft: false, title: 'x' } } as unknown as CloudTaskV1;
 }
 const many = (count: number, state: CloudTaskV1['state'], arm: 'served' | 'holdout', noteIds?: string[]) => Array.from({ length: count }, () => task(state, arm, noteIds));
+
+const comparison = (family: string, candidate: boolean[], incumbent: boolean[]) => [
+  ...candidate.map((passed) => ({ family, arm: 'candidate' as const, passed })),
+  ...incumbent.map((passed) => ({ family, arm: 'incumbent' as const, passed })),
+];
+
+describe('family promotion gate', () => {
+  it('retains the incumbent on any regression, even in an extra family when the aggregate wins', () => {
+    const gate = familyPromotionGate([
+      ...comparison('repair', [true, true, true], [false, false, false]),
+      ...comparison('test-writing', [true, true, true], [false, false, false]),
+      ...comparison('refactor', [true, true, true], [true, true, true]),
+      ...comparison('documentation', [true, true, false], [true, true, true]),
+    ]);
+    expect(gate.aggregate.delta).toBeGreaterThan(0);
+    expect(gate).toMatchObject({ promote: false, retained: 'incumbent', refusals: [{ family: 'documentation', reason: 'regressed' }] });
+    expect(gate.families[3]).toMatchObject({
+      family: 'documentation', verdict: 'regresses',
+      candidate: { tasks: 3, landed: 2 }, incumbent: { tasks: 3, landed: 3 },
+    });
+    expect(renderFamilyPromotion(gate)).toContain('documentation: candidate 2/3 landed (67%), incumbent 3/3 landed (100%); regresses (-33 points)');
+  });
+
+  it('withholds deltas for undersampled or absent families even when the aggregate is measured', () => {
+    const gate = familyPromotionGate([
+      ...comparison('repair', [true, true, true], [true, true, true]),
+      ...comparison('test-writing', [true, true, true], [false, false]),
+    ]);
+    expect(gate.aggregate.delta).not.toBeNull();
+    expect(gate).toMatchObject({
+      promote: false, retained: 'incumbent',
+      families: [
+        { family: 'repair', delta: 0, verdict: 'holds' },
+        { family: 'test-writing', delta: null, verdict: 'unknown' },
+        { family: 'refactor', delta: null, verdict: 'unknown', incumbent: { rate: null }, candidate: { rate: null } },
+      ],
+      refusals: [
+        { family: 'test-writing', reason: 'insufficient-samples' },
+        { family: 'refactor', reason: 'insufficient-samples' },
+      ],
+    });
+  });
+
+  it('passes the family gate only when every configured cohort improves or holds', () => {
+    const gate = familyPromotionGate([
+      ...comparison('repair', [true], [false]),
+      ...comparison('refactor', [false], [false]),
+    ], { families: ['repair', 'refactor'], minPerArm: 1 });
+    expect(gate).toMatchObject({
+      promote: true, retained: 'candidate', refusals: [],
+      families: [{ verdict: 'improves', delta: 1 }, { verdict: 'holds', delta: 0 }],
+    });
+  });
+
+  it('never promotes an empty evaluation and rejects invalid sample floors', () => {
+    expect(familyPromotionGate([], { families: [] })).toMatchObject({
+      families: [], aggregate: { delta: null }, promote: false, retained: 'incumbent',
+    });
+    expect(() => familyPromotionGate([], { minPerArm: Number.NaN })).toThrow(RangeError);
+  });
+});
 
 describe('lessons trial', () => {
   it('assigns arms deterministically at about the holdout rate, and never holds out at 0', () => {
@@ -50,6 +111,21 @@ describe('lessons trial', () => {
     const r = lessonTrial([reverted, task('failed', 'holdout'), task('running', 'served'), task('merged', 'served', [])], new Set([prKey('AshlrAI/Phantom', 42)]));
     expect(r.overall.served).toEqual({ tasks: 1, landed: 0, rate: 0 });
     expect(r.excluded).toEqual({ launchFailed: 1, unfinished: 1 });
+  });
+
+  it('records classified and unclassified lesson evidence using the same landing fold', () => {
+    const reverted = task('merged', 'served', ['n1'], 42);
+    reverted.lessons!.family = 'repair';
+    const report = lessonTrial([reverted, task('merged', 'holdout'), task('running', 'served')], new Set([prKey('AshlrAI/Phantom', 42)]));
+    expect(report.byFamily).toMatchObject({
+      promote: false, retained: 'incumbent',
+      families: [
+        { family: 'repair', candidate: { tasks: 1, landed: 0 }, verdict: 'unknown' },
+        { family: 'test-writing', verdict: 'unknown' },
+        { family: 'refactor', verdict: 'unknown' },
+        { family: 'unclassified', candidate: { tasks: 0 }, incumbent: { tasks: 1, landed: 1 }, verdict: 'unknown' },
+      ],
+    });
   });
 
   it('a cloud task that records its own revert did not land', () => {
