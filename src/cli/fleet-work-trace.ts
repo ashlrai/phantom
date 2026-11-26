@@ -5,10 +5,11 @@
 import { isAbsolute, join } from 'node:path';
 import { ashlrHome } from '../core/cloud/store.js';
 import { collectBusWorkItemEvidence } from '../core/comms/work-item-bus-evidence.js';
-import { classifyWorkItem } from '../core/comms/work-item-state.js';
+import { classifyWorkItem, type WorkItemEvidence } from '../core/comms/work-item-state.js';
+import { scrubSecrets } from '../core/util/scrub.js';
 
 const usage = 'Usage: ashlr fleet work-trace --id <bus-message-id> [--root <absolute>] [--json]\n'
-  + 'Prints one line: ID STATE as-of=... source=... missing=... inbox=<found|missing|unavailable> claims=<available|missing|unavailable>.\n'
+  + 'Prints the state and available blocker or verification proof.\n'
   + 'State comes only from the durable stores; an unknown id is RECEIVED with as-of=unknown. Read-only.';
 
 export async function cmdFleetWorkTrace(args: string[]): Promise<number> {
@@ -27,11 +28,20 @@ export async function cmdFleetWorkTrace(args: string[]): Promise<number> {
   if (!id || !id.trim() || (root !== undefined && (!isAbsolute(root) || root.includes('\0')))) { console.error(usage); return 2; }
   const now = Date.now();
   const { evidence, sources } = collectBusWorkItemEvidence(id, { root: root ?? join(ashlrHome(), 'fleet'), now });
-  const result = { id, ...classifyWorkItem(evidence, new Date(now).toISOString()), inbox: sources.inbox, claims: sources.claims,
+  const classification = classifyWorkItem(evidence, new Date(now).toISOString());
+  const proof: WorkItemEvidence['blocker'] | WorkItemEvidence['verified'] = classification.state === 'BLOCKED' ? evidence.blocker
+    : classification.state === 'VERIFIED' ? evidence.verified : undefined;
+  const result = { id, ...classification, ...(proof ? { proof } : {}), inbox: sources.inbox, claims: sources.claims,
     coordination: sources.coordination, owner: evidence.owner ?? null, claimReceipt: evidence.claimReceipt ?? null };
   if (json) console.log(JSON.stringify(result));
-  else console.log(`${result.id} ${result.state} as-of=${result.asOf} source=${result.source} `
+  else {
+    const safe = (value: string) => scrubSecrets(value).replace(/[\r\n\p{Cc}\p{Zl}\p{Zp}]/gu, ' ');
+    console.log(safe(`${result.id} ${result.state} as-of=${result.asOf} source=${result.source} `
     + `missing=${result.missing.length ? result.missing.join(',') : 'none'} inbox=${result.inbox} claims=${result.claims} `
-    + `coordination=${result.coordination} owner=${result.owner ?? 'null'} claimReceipt=${result.claimReceipt ?? 'null'}`);
+    + `coordination=${result.coordination} owner=${result.owner ?? 'null'} claimReceipt=${result.claimReceipt ?? 'null'}`));
+    if (proof) for (const [label, value] of Object.entries(proof)) {
+      if (value !== undefined) console.log(`${label}: ${safe(String(value))}`);
+    }
+  }
   return 0;
 }
