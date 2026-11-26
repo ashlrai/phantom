@@ -1459,6 +1459,11 @@ observed quota per token times measured tokens per job, or observed quota per
 finish when token coverage is incomplete. It is a projection, not billing
 attribution: shared accounts can have usage outside Phantom. Missing data stays
 `null`. A fresh snapshot does not guarantee the same resource headroom later.
+The quota sample count is zero only when a covered interval contains no
+matching finishes. It stays `null` without two distinct observation times,
+when the interval starts outside the seven-day finish window, or when the
+retained ledger tail cannot establish coverage back to the first observation.
+These cases also leave quota per job unknown.
 
 `phm resources plan --json --write-advice` explicitly publishes a private
 queue sidecar. The dispatcher uses it for five minutes as a tie-break among
