@@ -92,6 +92,34 @@ describe('ready.tsv -> node router bridge', () => {
     expect(report.claimed).toEqual([]);
   });
 
+  it('claims and restores a valid row after a malformed copy of the same job', async () => {
+    const job = 'RQ-REVIEW-DUP';
+    const malformed = `${job}\tphantom`;
+    const f = fixture([malformed, row(job)]);
+    const dry = await f.pass(false);
+    expect(dry.rows.map(r => r.reasons)).toEqual([['invalid_row'], []]);
+    expect(dry.rows[1]?.offload).toBe(true);
+
+    expect((await f.pass()).claimed).toEqual([job]);
+    expect(f.ready()).toBe(malformed + '\n');
+    expect(f.nodes.view(['ashlr']).jobs.map(j => j.id)).toEqual([`ready:${job}:1`]);
+
+    f.advance(61_000);
+    expect((await f.pass()).requeued).toEqual([job]);
+    expect(f.ready()).toBe(`${malformed}\n${f.line(job)}\n`);
+  });
+
+  it('keeps an earlier parked or valid row authoritative for its job id', async () => {
+    const parked = 'RQ-REVIEW-PARKED-DUP';
+    const local = 'RQ-REVIEW-LOCAL-DUP';
+    const f = fixture([row(parked, 'PARKED-DEP.codex'), row(parked), row(local, 'codex-local'), row(local)]);
+    const report = await f.pass();
+    expect(report.rows.map(r => r.reasons)).toEqual([
+      ['parked_row'], ['duplicate_row'], ['local_execution_required'], ['duplicate_row'],
+    ]);
+    expect(report.claimed).toEqual([]);
+  });
+
   it('never offloads a parked row, even when its spec still names a remote lane', async () => {
     const spec = JSON.stringify({ preferred_lane: 'codex' });
     const f = fixture([

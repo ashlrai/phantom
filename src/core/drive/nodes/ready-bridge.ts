@@ -150,6 +150,10 @@ function routerJobId(job: string, jobs: JobView[]): string {
   return `${prefix}${attempts.length ? Math.max(...attempts) + 1 : 1}`;
 }
 
+function reservesReadyId(row: ReadyRow): boolean {
+  return row.invalid === null || row.invalid === 'parked_row';
+}
+
 /** Pure eligibility plan. Unknown slot telemetry is `null` and never admits a row. */
 export function planNodeBridge(input: BridgeRouterView & {
   rows: ReadyRow[]; claimed: (job: string) => boolean; maxPerPass?: number;
@@ -232,7 +236,7 @@ export function planNodeBridge(input: BridgeRouterView & {
       if (!needsValid) reasons.push('needs_invalid');
       if (needs.some(n => !validCap(n))) reasons.push('need_not_routable');
     }
-    seen.add(row.job);
+    if (reservesReadyId(row)) seen.add(row.job);
     let nodeId: string | null = null;
     if (!reasons.length) {
       const capable = live.filter(n => requires.every(c => n.caps.includes(c)));
@@ -523,13 +527,17 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
 
     const lines = fresh.text.split('\n');
     if (lines.at(-1) === '') lines.pop();
+    const queuedIds = new Set(fresh.rows.filter(reservesReadyId).map(r => r.job));
     const toRequeue: Manifest[] = [];
     for (const m of safeRequeue) {
       if (!leaseHeldBy(host, m.job, m.id)) {
         try { unlinkSync(join(batchesDir(host), `${m.id}.json`)); } catch { /* gone */ }
         continue;
       }
-      if (!lines.some(l => l.split('\t')[0] === m.job)) lines.push(m.line);
+      if (!queuedIds.has(m.job)) {
+        lines.push(m.line);
+        queuedIds.add(m.job);
+      }
       toRequeue.push(m);
     }
     if (toRequeue.length) writeAtomic(join(queueDir(host), 'ready.tsv'), lines.map(l => l + '\n').join(''));
@@ -554,7 +562,7 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
     }
     const staged: { decision: BridgeRowDecision; manifest: Manifest; task?: EmbeddedNodeTask }[] = [];
     for (const decision of claims) {
-      const row = fresh.rows.find(r => r.job === decision.job);
+      const row = fresh.rows.find(r => r.job === decision.job && r.invalid === null);
       const id = bridgeLeaseOwner(decision.job);
       if (!row || claimedLocally(host, decision.job) || existsSync(join(batchesDir(host), `${id}.json`))) { report.lostRace.push(decision.job); continue; }
       let task: EmbeddedNodeTask | undefined;
