@@ -44,6 +44,20 @@ const COSTS: HarnessModelCost[] = [
 ];
 
 describe('autoscale router scoring', () => {
+  it.each(['pressure', 'swap-growth'] as const)('honors measured %s when limiter labels are absent', hold => {
+    const { doc } = node(mbp());
+    doc.basis.limiting = {};
+    if (hold === 'pressure') doc.mem_free.pressure_level = 2;
+    else doc.swap.growing = true;
+    expect(doc.agents_runnable_now.codex).toBeGreaterThan(0);
+
+    const [placement] = planAutoscaleRoutes({
+      nodes: [{ doc }], costs: [COSTS[0]!], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }],
+    });
+    expect(placement).toMatchObject({ nodeId: null, rejected: { [`node-${hold}`]: 1 } });
+    expect(fleetRunnable([doc], T0)).toMatchObject({ codex: 0, devin: null });
+  });
+
   it('uses a Laplace-smoothed learned merge rate', () => {
     expect(mergeRate(undefined)).toBe(0.5);
     expect(mergeRate({ attempts: 8, merged: 6 })).toBe(0.7);
