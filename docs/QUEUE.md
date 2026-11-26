@@ -1163,6 +1163,9 @@ re-queued job's wait restarts at its re-arrival rather than its first-ever
 enqueue. It is `null` when there are no waiting jobs, the queue or metrics are
 unavailable, or any waiting job's arrival is unevidenced — including silent
 requeues (deferred launches, released batches) that leave no ledger row. The
+departure still ends a dwell when its timestamp is missing or unreadable.
+An arrival or retry that starts a dwell without a readable timestamp leaves
+its age unknown until a later evidenced re-arrival. The
 command reads up to 2 MiB at each end of the metrics ledger — the oldest
 events near the head and the newest at the tail — so a job whose arrival
 event falls between the windows counts as missing evidence, never as a

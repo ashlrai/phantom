@@ -85,7 +85,9 @@ export async function getLaneQueueCounts(
   // requeues (deferred launches, released batches, spawn failures) leave no
   // row, so a job whose last mark is a departure has unknown wait and the
   // lane reports null rather than a fabricated one.
-  const marks = new Map<string, { at: number; entry: boolean; restart: boolean }[]>();
+  // An absent key means no open dwell. A null value means a dwell began
+  // without a usable timestamp, so repeat sightings cannot date its start.
+  const arrivals = new Map<string, number | null>();
   for (const line of metrics.text.split('\n')) {
     let row: Record<string, unknown>;
     try {
@@ -105,20 +107,13 @@ export async function getLaneQueueCounts(
     const id = row.job ?? row.job_id ?? row.jobId ?? row.id;
     const raw = row.ts ?? row.timestamp ?? row.at ?? row.time ?? row.mergedAt ?? row.closedAt ?? row.recordedAt ?? row.updatedAt;
     const time = typeof raw === 'string' ? Date.parse(raw) : NaN;
-    if (typeof id !== 'string' || !Number.isFinite(time) || time > at.getTime()) continue;
-    const list = marks.get(id) ?? [];
-    list.push({ at: time, ...mark });
-    marks.set(id, list);
-  }
-  /** Current queue-dwell start for one job: the first entry mark after its last departure. */
-  const arrivalOf = (id: string): number | null => {
-    let arrival: number | null = null;
-    for (const mark of marks.get(id) ?? []) {
-      if (!mark.entry) arrival = null;
-      else if (mark.restart || arrival === null) arrival = mark.at;
+    if (typeof id !== 'string' || time > at.getTime()) continue;
+    if (!mark.entry) {
+      arrivals.delete(id);
+    } else if (mark.restart || !arrivals.has(id)) {
+      arrivals.set(id, Number.isFinite(time) ? time : null);
     }
-    return arrival;
-  };
+  }
   const byLane = new Map(queue.byLane.map(row => [row.lane, row]));
   const readyKnown = queue.sources.ready !== 'missing';
   // Budget- and hold-only lanes carry no queue activity; leave them out.
@@ -135,7 +130,7 @@ export async function getLaneQueueCounts(
     let oldestArrival: number | null = null;
     let waitUnknown = jobs.length === 0;
     for (const id of jobs) {
-      const arrival = arrivalOf(id);
+      const arrival = arrivals.get(id) ?? null;
       if (arrival === null) { waitUnknown = true; break; }
       if (oldestArrival === null || arrival < oldestArrival) oldestArrival = arrival;
     }
