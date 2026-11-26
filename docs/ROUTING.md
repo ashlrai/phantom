@@ -867,8 +867,12 @@ review informed; `foldCrossReviews` keeps only `kind:'review'` rows
 under the producer's closed contract (`schemaVersion` 1, an
 `owner/repo`-shaped `repo`, a positive integral `pr`, the
 `approve`/`reject`/`failed`/`skipped` outcome vocabulary and a
-bounded `at` stamp) and collapses them to each PR's newest verdict —
-decision rows, wrong-schema rows, malformed rows and foreign kinds
+parseable `at` stamp when available) and collapses them to each PR's latest
+recorded review time. Replays of older reviews leave the newer verdict in
+place. If verdicts disagree at the latest time, the PR's review evidence is
+withheld until a later dated review resolves it. If every receipt for a PR
+is undated, the last appended verdict stands with a null timestamp.
+Decision rows, wrong-schema rows, malformed rows and foreign kinds
 are skipped, never counted, and the reviewer's pool/family, reasons
 and semantic detail stay audit-side rather than joining. The join
 resolves each outcome's `cross_review` through the same PR identity as

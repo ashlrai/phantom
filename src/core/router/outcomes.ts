@@ -3059,7 +3059,7 @@ const CROSS_REVIEW_SCHEMA = 1;
 
 /**
  * The per-PR cross-model review evidence one outcome's `cross_review`
- * carries — the newest `kind:'review'` row's recorded verdict for the
+ * carries — the latest recorded `kind:'review'` verdict for the
  * job's standing pull request. Every figure is the row's own recorded
  * value; nothing is derived.
  */
@@ -3084,14 +3084,18 @@ export interface CrossReviewEvidence {
  * evidence, never review verdicts, and foreign or version-mismatched
  * rows are skipped. A row counts only with a bounded `owner/repo` repo
  * label, a safe-integer `pr` >= 1 and an in-vocabulary `outcome`;
- * anything else is skipped, never recorded raw, never guessed. The last
- * appended review row for a PR wins — the ledger's own append order is
- * its chronology, matching latestCrossReview's newest-wins rule. Rows
+ * anything else is skipped. The latest recorded timestamp wins. Conflicting
+ * verdicts at that time withhold the PR's evidence. With only undated
+ * receipts, the last appended review stands with a null timestamp. Rows
  * for PRs no jobs outcome claims unambiguously join nothing — the map
  * itself never creates outcomes.
  */
 export function foldCrossReviews(text: string): Map<string, CrossReviewEvidence> {
-  const reviews = new Map<string, CrossReviewEvidence>();
+  const latest = new Map<string, {
+    evidence: CrossReviewEvidence;
+    timestamp: number;
+    conflicting: boolean;
+  }>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     let value: unknown;
@@ -3109,11 +3113,24 @@ export function foldCrossReviews(text: string): Map<string, CrossReviewEvidence>
     if (typeof repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(repo) ||
         typeof pr !== 'number' || !Number.isSafeInteger(pr) || pr < 1 ||
         typeof outcome !== 'string' || !CROSS_REVIEW_VERDICTS.has(outcome)) continue;
-    const at = row['at'];
-    reviews.set(`${repo.toLowerCase()}#${pr}`, {
-      outcome: outcome as CrossReviewVerdict,
-      at: typeof at === 'string' && Number.isFinite(Date.parse(at)) ? at : null,
-    });
+    const at = typeof row['at'] === 'string' ? row['at'] : null;
+    const parsedAt = at === null ? NaN : Date.parse(at);
+    const timestamp = Number.isFinite(parsedAt) ? parsedAt : -Infinity;
+    const key = `${repo.toLowerCase()}#${pr}`;
+    const previous = latest.get(key);
+    if (!previous || timestamp > previous.timestamp || (timestamp === -Infinity && previous.timestamp === -Infinity)) {
+      latest.set(key, {
+        evidence: { outcome: outcome as CrossReviewVerdict, at: timestamp === -Infinity ? null : at },
+        timestamp,
+        conflicting: false,
+      });
+    } else if (timestamp === previous.timestamp && outcome !== previous.evidence.outcome) {
+      previous.conflicting = true;
+    }
+  }
+  const reviews = new Map<string, CrossReviewEvidence>();
+  for (const [key, review] of latest) {
+    if (!review.conflicting) reviews.set(key, review.evidence);
   }
   return reviews;
 }
@@ -3381,8 +3398,8 @@ function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: Reado
  * the producer's schema version with a bounded repo label, a
  * safe-integer `pr` and an in-vocabulary `outcome`
  * (`approve`/`reject`/`failed`/`skipped`); `kind:'decision'` rows are
- * merge-action evidence and never join, and the last appended review
- * row for a PR stands. The fold's `crossReviews` option joins each
+ * merge-action evidence and never join. The latest recorded review time
+ * determines the standing verdict. The fold's `crossReviews` option joins each
  * outcome's `cross_review` through the job's standing PR claim — shared with
  * `mergeEvents` — so a contested or foreign URL never resolves
  * — carrying the verdict and the review record's `at` timestamp.
