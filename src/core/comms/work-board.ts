@@ -10,6 +10,7 @@
  * evidence projection even while the fleet churns; nothing is cached across
  * calls. */
 import { isGroupPresenceBody } from '../fleet/bus-group.js';
+import type { BusPriority } from '../fleet/bus-envelope.js';
 import { inspectBusWorkClaims, type BusWorkClaimView, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { deriveBusWorkItemEvidence, readBusClaimAuthority, readBusInboxEvidence,
@@ -25,6 +26,9 @@ export interface WorkBoardItem {
   channel: string;
   /** Exact channel_ref (e.g. a Slack '<team>/<channel>/<threadTs>'), or null. */
   channelRef: string | null;
+  /** The request envelope's own P0..P3 band — required on every validated
+   * envelope, so this is always a real stamp, never a guessed default. */
+  priority: BusPriority;
   receivedAt: string;
   state: WorkItemState;
   asOf: string;
@@ -82,9 +86,11 @@ export interface WorkBoardResult {
   state?: WorkItemState;
   /** The true filtered total across the whole settled scan before the
    * display cap: requests passing every applied filter — the channel_ref
-   * scope, the `since`/`before` receivedAt window and the `state` match —
+   * scope, the `id`/`priority` envelope match, the `since`/`before`
+   * receivedAt window and the `state` match —
    * counted before the newest-first slice, so `items` may be a slice of it.
-   * Present whenever `state` or a `since`/`before` bound narrowed the read;
+   * Present whenever `state`, an `id`/`priority` match or a `since`/`before`
+   * bound narrowed the read;
    * a `channelRef`-only read keeps the unfiltered shape. Never a count of
    * just the shown window. */
   matched?: number;
@@ -113,6 +119,14 @@ function limit(opts: { limit?: number }): number {
 
 export function listWorkBoard(opts: {
   root: string; now: number; limit?: number; channelRef?: string; state?: WorkItemState;
+  /** Exact retained-envelope id — the same `--id` rule every bus read
+   * shares: only the request whose envelope carries this wire id survives,
+   * so the board answers "where did request X land" without a second scan. */
+  id?: string;
+  /** Exact P0..P3 band — the same `--priority` rule every bus read shares:
+   * only requests stamped with this priority survive, so "which requests
+   * are urgent" is one filtered board read, never a client-side scan. */
+  priority?: BusPriority;
   /** Epoch-ms floor on the request's recorded receivedAt — the same
    * inclusive `receivedAt >= since` rule every bus read's `--since` applies.
    * Epoch-ms bounds are self-consistent under plain comparison: a bound at
@@ -161,6 +175,8 @@ export function listWorkBoard(opts: {
     for (const row of read.receipts) {
       if (!isRequest(row)) continue;
       if (opts.channelRef !== undefined && row.envelope.channel_ref !== opts.channelRef) continue;
+      if (opts.id !== undefined && row.envelope.id !== opts.id) continue;
+      if (opts.priority !== undefined && row.envelope.priority !== opts.priority) continue;
       // The same [since, before) window on receivedAt every bus read applies:
       // `since` keeps rows at or after the cutoff, `before` keeps rows
       // strictly before its own — a request exactly on `before` is outside.
@@ -178,6 +194,7 @@ export function listWorkBoard(opts: {
         id: row.envelope.id,
         channel: row.envelope.channel ?? 'bus',
         channelRef: row.envelope.channel_ref ?? null,
+        priority: row.envelope.priority,
         receivedAt: new Date(row.receivedAt).toISOString(),
         state: classified.state,
         asOf: classified.asOf,
@@ -188,15 +205,17 @@ export function listWorkBoard(opts: {
         ...(result ? { result } : {}),
       };
     };
-    // A time bound narrows the read exactly like a state filter does, so it
-    // earns the same `matched` total: the count of requests inside the
-    // window before the display cap, never just the shown slice.
-    const bounded = opts.since !== undefined || opts.before !== undefined;
+    // A narrowing filter reports the true filtered total exactly like a
+    // state filter does: an id/priority match or a time bound counts every
+    // request that passed every applied filter before the display cap,
+    // never just the shown slice.
+    const narrowed = opts.since !== undefined || opts.before !== undefined
+      || opts.id !== undefined || opts.priority !== undefined;
     if (opts.state === undefined) {
       const kept = requests.slice(0, limit(opts));
       return { items: kept.map(toItem), inbox: 'ok', truncated: requests.length > kept.length,
         claims: claimsSource, ...(authority === undefined ? {} : { coordination: authority.source }),
-        ...(bounded ? { matched: requests.length } : {}) };
+        ...(narrowed ? { matched: requests.length } : {}) };
     }
     // A state filter must classify every request before the display cap so
     // `matched` is the true filtered total across the settled scan, never a

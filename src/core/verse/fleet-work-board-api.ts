@@ -24,7 +24,10 @@
  * inside the `[since, before)` window — since inclusive, before exclusive,
  * the same bound every bus read applies — resolved through the shared
  * `15m|2h|1d|epoch-ms|ISO` grammar against this server's clock; under a time
- * bound the board reports `matched` the same way `state` does. */
+ * bound the board reports `matched` the same way `state` does. `?id=` keeps
+ * only the request whose envelope carries that wire id and `?priority=`
+ * keeps only requests stamped with that P0..P3 band — the same envelope
+ * filters every bus read shares, each earning the same `matched` total. */
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ApiModule } from './api-modules.js';
@@ -36,6 +39,7 @@ import {
   WORK_BOARD_MAX_LIMIT,
   type WorkBoardResult,
 } from '../comms/work-board.js';
+import { BUS_PRIORITIES, type BusPriority } from '../fleet/bus-envelope.js';
 import { WORK_ITEM_STATES, type WorkItemState } from '../comms/work-item-state.js';
 import { parseSince } from '../fleet/agent-messages.js';
 import { workResultBody, type WorkResultBody } from '../comms/work-result-body.js';
@@ -54,7 +58,7 @@ const MAX_THREAD_CHARS = 200;
 export interface FleetWorkBoardApiDeps {
   /** Reader seam for tests. Default: listWorkBoard() at the server fleet root. */
   read?: (opts: { root: string; now: number; limit?: number; channelRef?: string; state?: WorkItemState;
-    since?: number; before?: number }) => WorkBoardResult;
+    id?: string; priority?: BusPriority; since?: number; before?: number }) => WorkBoardResult;
   /** Clock seam for tests; stamps asOf and feeds the classifier. */
   now?: () => Date;
   /** Poster seam for tests. Default: postBusReply() at the default fleet root, as the CLI. */
@@ -171,6 +175,16 @@ export function createFleetWorkBoardApi(deps: FleetWorkBoardApiDeps = {}): ApiMo
       sendJson(res, 400, { error: `state must be one of ${WORK_ITEM_STATES.join(', ')}.` });
       return true;
     }
+    const id = params.get('id');
+    if (id !== null && (id.length === 0 || id.length > MAX_ID_CHARS || CONTROL.test(id))) {
+      sendJson(res, 400, { error: `id must be a non-empty string of at most ${MAX_ID_CHARS} chars without control characters.` });
+      return true;
+    }
+    const priority = params.get('priority');
+    if (priority !== null && !(BUS_PRIORITIES as readonly string[]).includes(priority)) {
+      sendJson(res, 400, { error: `priority must be one of ${BUS_PRIORITIES.join(', ')}.` });
+      return true;
+    }
     const ms = now().getTime();
     const at = Number.isSafeInteger(ms) && ms >= 0 ? ms : 0;
     const asOf = new Date(at).toISOString();
@@ -205,6 +219,8 @@ export function createFleetWorkBoardApi(deps: FleetWorkBoardApiDeps = {}): ApiMo
         limit,
         ...(thread !== null ? { channelRef: thread } : {}),
         ...(state !== null ? { state: state as WorkItemState } : {}),
+        ...(id !== null ? { id } : {}),
+        ...(priority !== null ? { priority: priority as BusPriority } : {}),
         ...(since === undefined ? {} : { since }),
         ...(before === undefined ? {} : { before }),
       });
