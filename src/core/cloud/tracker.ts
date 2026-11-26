@@ -278,17 +278,43 @@ export async function readSupersedingState(
 /**
  * Follow the fleet App PR that superseded the task's cloud PR. An unreadable
  * or foreign answer changes nothing (the task keeps its last verified state).
+ *
+ * The fleet PR's own merge/CI/review verdict is kept on `outcome` exactly as
+ * the direct path keeps the cloud PR's — it describes the PR that actually
+ * landed, which is what outcome consumers (improve observe-sync, retros)
+ * read. The read runs on the transition into a terminal state and again
+ * while a watched terminal task still has none, so a failed read retries on
+ * the next refresh instead of staying unknown forever; `pr-open` clears a
+ * stale verdict the same way the direct path does.
  */
 async function followSupersedingPr(
   task: CloudTaskV1,
   gh: NonNullable<CloudTrackerDeps['gh']>,
+  nowMs: number,
 ): Promise<boolean> {
+  const by = task.supersededBy;
+  if (!by) return false;
   const next = await readSupersedingState(task, gh);
   if (!next) return false;
   const { state, reason } = next;
-  if (state === task.state && reason === task.stateReason) return false;
+  const terminal = state === 'merged' || state === 'closed';
+  const wantsOutcome = terminal && (state !== task.state || task.outcome === undefined);
+  const outcome = wantsOutcome ? await readOutcome(task, by.number, gh, new Date(nowMs).toISOString()) : null;
+  // `revertedBy` is written later by `phm improve observe`; keep it across
+  // outcome refreshes rather than letting a re-read clobber the revert verdict.
+  const priorRevertedBy = task.outcome?.revertedBy ?? null;
+  let nextOutcome = task.outcome;
+  if (outcome) nextOutcome = priorRevertedBy ? { ...outcome, revertedBy: priorRevertedBy } : outcome;
+  else if (state === 'pr-open') nextOutcome = undefined;
+  const changed = state !== task.state || reason !== task.stateReason
+    || (nextOutcome !== undefined && !same(nextOutcome, task.outcome))
+    || (nextOutcome === undefined && task.outcome !== undefined);
+  if (!changed) return false;
+  const patch: CloudTaskV1 = { ...task, state, stateReason: reason, failure: null };
+  if (nextOutcome === undefined) delete patch.outcome;
+  else patch.outcome = nextOutcome;
   try {
-    return commit(task, { ...task, state, stateReason: reason, failure: null });
+    return commit(task, patch);
   } catch {
     return false;
   }
@@ -337,7 +363,7 @@ export async function refreshCloudTasks(deps: CloudTrackerDeps = {}): Promise<{ 
   for (const task of watchedForRefresh(tasks, nowMs)) {
     checked += 1;
     if (task.supersededBy) {
-      if (await followSupersedingPr(task, gh)) updated += 1;
+      if (await followSupersedingPr(task, gh, nowMs)) updated += 1;
       continue;
     }
     let result: { ok: boolean; stdout: string; stderr: string };
