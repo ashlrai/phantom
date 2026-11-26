@@ -68,7 +68,9 @@ describe('Settings ▸ Appearance renders in every theme at every width', () => 
     request.mockImplementation(async (path, init) => {
       if (!String(path).endsWith('/brand-image')) return new Response('{}');
       if (init?.method === 'POST') return Response.json({ revision: 1, appearance: { brand: 'upload', brandAsset } });
-      return new Response(serverSvg, { headers: { 'Content-Type': 'image/svg+xml' } });
+      const response = new Response(serverSvg, { headers: { 'Content-Type': 'image/svg+xml' } });
+      vi.spyOn(response, 'blob').mockResolvedValue(new window.Blob([serverSvg], { type: 'image/svg+xml' }));
+      return response;
     });
     const { container } = render(<SidebarBrandMark />);
     const sidebarMark = () => container.querySelector('img');
