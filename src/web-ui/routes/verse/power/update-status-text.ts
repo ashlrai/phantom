@@ -3,7 +3,7 @@ import type { DesktopUpdateState } from '../../../app/desktop-updates.js';
 const labels: Record<DesktopUpdateState['phase'], string> = {
   uncommissioned: 'Updates unavailable', disabled: 'Automatic updates off', checking: 'Checking updates',
   idle: 'No update found', available: 'Update available', downloading: 'Downloading update', staged: 'Update prepared',
-  'waiting-for-idle': 'Update waits for idle', 'waiting-for-app-quit': 'Update ready on quit',
+  'waiting-for-idle': 'Update waits for idle', 'waiting-for-app-quit': 'Update ready to install',
   'adoption-held': 'Update needs attention', installing: 'Installing update', installed: 'Update installed',
   current: 'Up to date', failed: 'Update check failed',
 };

@@ -720,6 +720,7 @@ pub struct HostResult {
 const HOST_REASONS: &[&str] = &[
     "app-inventory-mismatch",
     "app-source-unverified",
+    "app-version-unverified",
     "applied",
     "artifact-mismatch",
     "artifact-size-refused",
@@ -747,6 +748,7 @@ const HOST_REASONS: &[&str] = &[
     "package-archive-refused",
     "pointer-recovery-unknown",
     "result-persistence-unknown",
+    "resident-stop-failed",
     "running-current-mismatch",
     "stage-changed",
     "stop-required",

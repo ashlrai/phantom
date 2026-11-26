@@ -5,10 +5,9 @@ import { applyQualifiedDesktopUpdate, createDesktopUpdateDependencies, inspectQu
 
 const USAGE = `usage: phm desktop-update inspect|apply --stage <32 lowercase hex> --json
 
-Inspect a publisher-signed paired app/CLI stage or apply it after normal native
-exit, prior Stop/drain and a fresh equal-surface grant. No URL, path, shell,
-credential operation, Stop release or resident restart is accepted.
-Changed authority requires the existing manual update and approval flow.
+Inspect a publisher-signed app/CLI stage or apply it after verified native
+exit and prior Stop/drain. No URL, path, shell, credential operation, Stop
+release or resident restart is accepted. Authority approval remains separate.
 `;
 export function parseDesktopUpdateArgs(args: string[]): {verb: 'inspect'|'apply'; stage: string} | null {
   if (!args.length || args.length === 1 && ['help', '--help', '-h'].includes(args[0]!)) return null;
