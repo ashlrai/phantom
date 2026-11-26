@@ -195,6 +195,21 @@ describe('gitContentionBacklogItems', () => {
     expect(push.prompt).toContain('7 retries recorded'); // 4 + 1 + 2 + 0
   });
 
+  it('requires distinct receipts to clear the recurring threshold', async () => {
+    const first = gitRow('fetch', DAY1, { elapsed_ms: 900, retries: 2 });
+    const second = gitRow('fetch', DAY2, { elapsed_ms: 1000, retries: 1 });
+    const distinct = gitRow('fetch', DAY1, { elapsed_ms: 950, retries: 2 });
+    const repo = 'ashlrai/phantom';
+    const now = new Date(NOW);
+    const replayed = await runsDir('runs-replayed', [first, second, ` ${first} `]);
+    expect(await gitContentionBacklogItems({ repo, now, runsDir: replayed })).toEqual([]);
+
+    const recurring = await runsDir('runs-distinct', [first, second, first, distinct]);
+    const items = await gitContentionBacklogItems({ repo, now, runsDir: recurring });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.prompt).toContain('5 retries recorded');
+  });
+
   it('emits nothing below the recurring bars of rows and days', async () => {
     // Three adverse rows but all on one UTC day — under the days bar.
     const sameDay = await runsDir('runs-sameday', [
@@ -224,16 +239,16 @@ describe('gitContentionBacklogItems', () => {
     const empty = await runsDir('runs-empty', []);
     expect(await gitContentionBacklogItems({ repo: 'ashlrai/phantom', runsDir: empty, now: new Date(NOW) })).toEqual([]);
 
-    const dir = await runsDir('runs-repo', [lockRow(DAY1), lockRow(DAY2), lockRow(DAY2)]);
+    const dir = await runsDir('runs-repo', [lockRow(DAY1), lockRow(DAY2), lockRow(DAY2, { lane: 'safe-git' })]);
     expect(await gitContentionBacklogItems({ repo: 'ashlrai/other', runsDir: dir, now: new Date(NOW) })).toEqual([]);
     expect(await gitContentionBacklogItems({ repo: 'AshlrAI/Phantom', runsDir: dir, now: new Date(NOW) })).toHaveLength(1);
   });
 
   it('states truncation as a lower bound in the prompt', async () => {
-    const dir = await runsDir('runs-trunc', [lockRow(DAY1), lockRow(DAY2), lockRow(DAY2)]);
+    const dir = await runsDir('runs-trunc', [lockRow(DAY1), lockRow(DAY2), lockRow(DAY2, { lane: 'safe-git' })]);
     // Pad the ledger past the 16 MiB tail bound so the read reports truncated.
     const pad = 'x'.repeat(17 * 1024 * 1024);
-    await writeFile(join(dir, 'metrics', 'jobs.jsonl'), pad + '\n' + [lockRow(DAY1), lockRow(DAY2), lockRow(DAY2)].join('\n') + '\n');
+    await writeFile(join(dir, 'metrics', 'jobs.jsonl'), pad + '\n' + [lockRow(DAY1), lockRow(DAY2), lockRow(DAY2, { lane: 'safe-git' })].join('\n') + '\n');
     const items = await gitContentionBacklogItems({ repo: 'ashlrai/phantom', runsDir: dir, now: new Date(NOW) });
     expect(items).toHaveLength(1);
     expect(items[0]!.prompt).toContain('lower bound');
@@ -243,7 +258,7 @@ describe('gitContentionBacklogItems', () => {
     const runs = join(home, '.ashlr-runs');
     await mkdir(join(runs, 'metrics'), { recursive: true });
     await writeFile(join(runs, 'metrics', 'jobs.jsonl'),
-      [lockRow(DAY1), lockRow(DAY2), lockRow(DAY2)].join('\n') + '\n');
+      [lockRow(DAY1), lockRow(DAY2), lockRow(DAY2, { lane: 'safe-git' })].join('\n') + '\n');
     const savedRuns = process.env.ASHLR_RUNS_DIR;
     process.env.ASHLR_RUNS_DIR = runs;
     try {
