@@ -1421,6 +1421,27 @@
  *     reply-latency report and the teammate-overdue owner notice —
  *     so a responder path that kept not reaching texts never became
  *     work;
+ *   - the GenAI telemetry span journal's recurring failed/aborted
+ *     lane cells: every completed run and swarm task that carries
+ *     usage appends one metadata-only GenAiSpan per task to
+ *     telemetry-YYYY-MM-DD.jsonl under ~/.ashlr/telemetry through
+ *     LocalFileSink — spansFromRun/spansFromSwarm in
+ *     src/core/observability/otlp.ts derive them and the
+ *     orchestrator and swarm runner emit through getSink — folded
+ *     per provider/model/tier lane across distinct UTC days inside
+ *     the 7-day window, 'failed' and 'aborted' counting as adverse
+ *     under the same status mapping otlp.ts's statusCode applies to
+ *     OTLP error, 'done'/'skipped'/'cancelled' and unrecognized
+ *     statuses counted as delivered and designed-stop context,
+ *     truncated tails stated as lower bounds, unreadable daily files
+ *     named in the prompts, recorded estCostUsd summed only over
+ *     adverse spans with cost-unknown rows counted separately, and
+ *     only the fleet's own repository inheriting the items since the
+ *     journal carries no repo column (telemetrySpanBacklogItems
+ *     below). Until now the journal's only reader was `ashlr
+ *     telemetry status` counting the daily files — no reader ever
+ *     parsed a span — so a model lane that kept failing inside
+ *     otherwise successful runs never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1555,6 +1576,7 @@ import { queueRerouteBacklogItems } from './queue-reroute-backlog.js';
 import { backoffSkipBacklogItems } from './backoff-skip-backlog.js';
 import { evalGateBacklogItems } from './eval-gate-backlog.js';
 import { teammateInboxBacklogItems } from './teammate-inbox-backlog.js';
+import { telemetrySpanBacklogItems } from './telemetry-span-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -3322,6 +3344,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // describes this install's comms machinery and carries no
   // repository column.
   items.push(...await teammateInboxBacklogItems({ repo }));
+
+  // GenAI telemetry span journal: every completed run and swarm task
+  // carrying usage appends one metadata-only GenAiSpan per task to
+  // telemetry-YYYY-MM-DD.jsonl under ~/.ashlr/telemetry through
+  // LocalFileSink — the per-task terminal outcome ('done', 'failed',
+  // 'skipped', 'cancelled', 'aborted', …) keyed by provider/model/
+  // tier. Until now the journal's only reader was `ashlr telemetry
+  // status` counting the daily files — no reader ever parsed a span
+  // — so a model lane that kept failing inside otherwise successful
+  // runs never became work. Cells emit only at the recurring bars of
+  // failed/aborted spans (the otlp.ts statusCode error mapping)
+  // across distinct UTC days inside the 7-day window; done and
+  // other-status spans count as delivered and designed-stop context,
+  // truncated tails are stated as lower bounds, unreadable daily
+  // files are named in the prompts, recorded estCostUsd is summed
+  // only over adverse spans with cost-unknown rows counted
+  // separately, and only the fleet's own repository inherits the
+  // items since the journal carries no repository column.
+  items.push(...await telemetrySpanBacklogItems({ repo }));
   return { items, errors };
 }
 
