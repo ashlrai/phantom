@@ -54,6 +54,15 @@ describe('readSkillTrajectoryOutcomes', () => {
     expect(summarize).toHaveBeenCalledWith([], 24);
   });
 
+  it('includes all eight daily partitions that can overlap the weekly window', () => {
+    const readEvents = vi.fn(() => skillRead());
+    readSkillTrajectoryOutcomes({ windowHours: 168, limit: 500 }, {
+      readSkillUseEvents: readEvents,
+      listRecords: () => [],
+    });
+    expect(readEvents).toHaveBeenCalledWith(expect.objectContaining({ maxFiles: 8, limit: 4000 }));
+  });
+
   it('withholds everything when the skill-use ledger is degraded', () => {
     const listRecords = vi.fn(() => [] as TrajectoryRecord[]);
     const summarize = vi.fn(() => learningStatus(summary));
