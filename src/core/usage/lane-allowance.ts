@@ -26,7 +26,7 @@ export interface LaneAllowanceRow {
   costClass: 'included' | 'metered' | 'api-credit' | 'unknown'; projectedUnusedPct: number | null;
   history: LaneHistory | null; reason: string | null;
   resource?: { source: string | null; sourceTier: ResourceLiveTier | null; expiresAt: string | null;
-    burnPerHour: number | null; projectedUnused: number | null; provider?: string };
+    burnPerHour: number | null; projectedUnused: number | null; provider?: string; logo?: string };
   devin: { weeklyUsedAcu: number | null; weeklyAllowanceAcu: number | null; inFlightReservations: number | null;
     preview: { models: string[]; expiresAt: string; expired: boolean; free: boolean | null;
       evidence?: { observedAt: string; accountId: string; model: string } } | null } | null;
@@ -97,7 +97,8 @@ export function projectLaneAllowance(inputs: LaneAllowanceInputs, nowMs: number)
     const free = expired ? false : previewEvidence && p?.freePreview !== false ? true : null;
     return { lane, label: allowance?.label ?? lane, used, limit, unit,
       ...(allowance ? { resource: {
-        ...('custom' in allowance ? { provider: allowance.custom.provider } : {}),
+        ...('custom' in allowance ? { provider: allowance.custom.provider,
+          ...(allowance.custom.logo ? { logo: allowance.custom.logo } : {}) } : {}),
         source: measured ? (useWeekly ? weekly.source : reading?.source ?? null) : null,
         sourceTier: measured ? (useWeekly ? 'official' : reading?.source_tier ?? null) : null,
         expiresAt: reading?.expires_at ?? allowance.expires_at,

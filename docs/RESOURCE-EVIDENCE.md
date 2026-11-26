@@ -26,6 +26,11 @@ in-flight reservations from the Lightning/Flash preview expiry; absent preview
 pricing evidence is unknown, never assumed free. API USD credit pools are
 tagged `api-credit`; local or unrecognized router cost classes stay unknown.
 
+Custom resource cards use the provider's mark from the brand catalog. A
+`custom-resources.v1` entry can override it with a `logo` containing an embedded
+PNG data URL (at most 4,096 characters). Remote URLs and SVGs are ignored; the
+card falls back to the catalog mark, or to a monogram for an unknown provider.
+
 ## Lane history
 
 `phm usage history --lane devin --json` reads full-resolution measured points;

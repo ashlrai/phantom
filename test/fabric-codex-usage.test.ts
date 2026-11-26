@@ -70,6 +70,7 @@ describe('personal Codex isolated status and log pipeline', () => {
   let sent: Record<string, unknown>[];
   let child: EventEmitter & { stdin: Writable; stdout: PassThrough; stderr: PassThrough; kill: ReturnType<typeof vi.fn> };
   let nativePayload: unknown;
+  let userAgent: string | undefined;
   let mode: string;
   let privateDiagnostic: string;
 
@@ -78,7 +79,7 @@ describe('personal Codex isolated status and log pipeline', () => {
     root = await mkdtemp(join(await realpath(tmpdir()), 'phantom-cmp-usage-test-'));
     home = join(root, 'cmp');
     await mkdir(join(home, '.codex'), { recursive: true });
-    sent = []; mode = 'ok'; nativePayload = payload();
+    sent = []; mode = 'ok'; nativePayload = payload(); userAgent = undefined;
     // Secret-shaped fixtures are constructed at runtime and never printed.
     privateDiagnostic = ['sk', 'TEST', 'x'.repeat(48)].join('-');
     vi.mocked(spawn).mockImplementation((_command, _args, options) => {
@@ -97,7 +98,7 @@ describe('personal Codex isolated status and log pipeline', () => {
               if (request.method === 'initialize') {
                 const env = options!.env!;
                 const codexHome = mode === 'wrong-home' ? join(root, 'other') : env.CODEX_HOME;
-                child.stdout.write(JSON.stringify({ id: 1, result: { codexHome } }) + '\n');
+                child.stdout.write(JSON.stringify({ id: 1, result: { codexHome, userAgent } }) + '\n');
               } else if (request.method === 'account/rateLimits/read') {
                 child.stderr.write(privateDiagnostic);
                 if (mode === 'account-change') {
@@ -150,6 +151,45 @@ describe('personal Codex isolated status and log pipeline', () => {
     expect(log.includes(home)).toBe(false);
     if (process.platform !== 'win32') expect((await stat(logPath)).mode & 0o777).toBe(0o600);
     expect(stdout).not.toHaveBeenCalled(); expect(stderr).not.toHaveBeenCalled();
+  });
+
+  it('reads expiring full resets through the existing metadata exchange without retaining provider IDs', async () => {
+    const credits = [
+      { id: 'credit-one', resetType: 'codexRateLimits', status: 'available', expiresAt: RESET },
+      { id: 'credit-two', resetType: 'codexRateLimits', status: 'available', expiresAt: RESET + 86_400 },
+    ];
+    nativePayload = { ...payload(), rateLimitResetCredits: { availableCount: 2, credits } };
+    const reading = await readCodexUsage({ personalHome: home, includeResetBank: true });
+    expect(reading.resetBank).toEqual(credits.map(credit => ({
+      count: 1, kind: 'full', source: 'codex-app-server', expires_at: new Date(credit.expiresAt * 1000).toISOString(),
+    })));
+    expect(sent.map(row => row.method)).toEqual(['initialize', 'initialized', 'account/rateLimits/read']);
+    expect((await readCodexUsage({ personalHome: home })).resetBank).toBeUndefined();
+  });
+
+  it('preserves an explicitly empty bank but does not infer counts or expiries from incomplete details', async () => {
+    const credit = { id: 'credit-one', resetType: 'codexRateLimits', status: 'available', expiresAt: RESET };
+    nativePayload = payload();
+    expect((await readCodexUsage({ personalHome: home, includeResetBank: true })).resetBank).toBeNull();
+    nativePayload = { ...payload(), rateLimitResetCredits: { availableCount: 0, credits: [] } };
+    expect((await readCodexUsage({ personalHome: home, includeResetBank: true })).resetBank).toEqual([]);
+    for (const credits of [null, [credit], [credit, credit], [credit, { ...credit, id: 'other', expiresAt: null }]]) {
+      nativePayload = { ...payload(), rateLimitResetCredits: { availableCount: 2, credits } };
+      expect((await readCodexUsage({ personalHome: home, includeResetBank: true })).resetBank).toBeNull();
+    }
+  });
+
+  it.each([
+    ['codex_cli_rs/0.169.0 (Mac OS 15; arm64) fixture', 'codex-cli-too-old (<0.172.0)'],
+    ['codex_cli_rs/0.172.0-alpha.1 (Mac OS 15; arm64) fixture', 'codex-cli-too-old (<0.172.0)'],
+    ['codex_cli_rs/0.172.0 (Mac OS 15; arm64) fixture', 'codex-reset-bank-unavailable'],
+    ['unrecognized 0.169.0', 'codex-cli-version-unknown'],
+    [undefined, 'codex-cli-version-unknown'],
+  ])('distinguishes a missing reset bank with App Server agent %s', async (agent, reason) => {
+    userAgent = agent;
+    expect(await readCodexUsage({ personalHome: home, includeResetBank: true })).toMatchObject({
+      resetBank: null, resetBankUnknownReason: reason, pctUsed: 25,
+    });
   });
 
   it('reports each personal window by duration without changing the binding percentage', async () => {

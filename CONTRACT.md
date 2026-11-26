@@ -298,6 +298,8 @@ classes require fresh matching provenance, and unrecognized classes stay unknown
 `recordResetEvidence(runsDir, count, expiries, kind, observedAt, now?)`
 atomically stores a complete, timestamped owner observation in
 `resource-evidence.v1`; older observations cannot replace newer ones.
+The personal Resource Live App Server poll records complete native reset-bank
+observations in the same evidence row; missing details do not overwrite it.
 `buildFleetResourcePlan(raw, nodes, status, ledger, now, custom?, resets?)`
 returns allowance labels and a nullable `reset_proposal` from the recent
 reset-bank and usage evidence. `GET /api/verse/world?resourcePools=1` exposes
@@ -2349,6 +2351,17 @@ report unusable evidence. `phm node route --outcomes-ledger [--runs-dir <dir>]`
 merges these tallies under any explicit `--outcomes` file (file wins per
 provider) and reports `outcomes_ledger` state in its JSON plan. See
 [measured capacity and routing](docs/NODE-ROUTER.md#measured-capacity-and-node-provider-model-routing).
+
+## Router queue generation
+
+`runQueuegenCycle` takes explicit repository scope in `QueuegenOptions.repos`.
+Omitted scope is empty. In the dispatch adapter, `signedQueueRepos` projects
+AshlrAI repositories from the effective signed rollout policy.
+`QueuegenIo.appendQueueLine(line, repo)` receives the qualified repository
+identity so the adapter can check active scope again before writing.
+The adapter enables `QueuegenOptions.freshness` and implements
+`QueuegenIo.readActiveFreshnessIds` to prevent duplicate work across weekly
+windows. Existing repair and freshness emissions share the configured cycle cap.
 
 ## Ready queue to node bridge (`phantom.node-bridge.v1`)
 

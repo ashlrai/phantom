@@ -24,6 +24,15 @@ const ledger = { missing: false, truncated: false, text: lanes.flatMap(lane => [
   JSON.stringify({ event: 'finish', lane, ts: iso(now - (i + 1) * hr / 4), wall_s: 1200, tokens_total }))).join('\n') };
 
 describe('fleet resource plan', () => {
+  it('suggests upgrading an old Codex CLI without reporting an empty bank', () => {
+    const plan = buildFleetResourcePlan(live, [node], status(), ledger, now, [], {
+      observed_at: null, grants: null, queued: null, unknown_reason: 'codex-cli-too-old (<0.172.0)',
+    });
+    expect(plan.codex_reset_bank).toEqual({ count: null, unknown_reason: 'codex-cli-too-old (<0.172.0)',
+      hint: 'Upgrade codex-cli to 0.172.0 or newer to read the reset bank.' });
+    expect(plan.reset_proposal).toBeNull();
+  });
+
   it('joins measured quota and job throughput with each lane cap and shared machine slots', async () => {
     const plan = buildFleetResourcePlan(live, [node], status(), ledger, now);
     expect(plan.machines).toEqual([{ name: 'fixture', lanes, cpu_headroom_pct: 75, memory_headroom_pct: 60,

@@ -18,8 +18,8 @@ const lane = (name: string, running: number, target: number, extra: object = {})
 const messages = (edges: { from: string; to: string; minutes: number }[]): FleetEdges => ({ schema: 'fleet.edges.v1', source: 'available',
   edges: edges.map(edge => ({ from: { address: edge.from, provider: null }, to: { address: edge.to, provider: null }, messages: 1, messagesLastHour: 1, lastAt: NOW - edge.minutes * 60_000 })) } as unknown as FleetEdges);
 
-function fleet(input: { sessions: object[]; lanes: object[]; events?: object[]; edges?: FleetEdges; snapshot?: FleetLiveSnapshotV1 }): FleetOrgTree {
-  const map = fleetOrgMap(input.snapshot ?? null, { now: NOW, messages: input.edges ?? messages([]),
+function fleet(input: { sessions: object[]; lanes: Array<{ lane: string }>; events?: object[]; edges?: FleetEdges; snapshot?: FleetLiveSnapshotV1 }): FleetOrgTree {
+  const map = fleetOrgMap(input.snapshot ?? null, { now: NOW, messages: input.edges ?? messages([]), observedLanes: input.lanes.map(row => row.lane),
     sessions: { generatedAt: AT, sourceState: 'healthy', truncated: false, recent: [], sessions: input.sessions } as unknown as FleetSessionsV1 });
   const runs = { lanes: input.lanes, events: input.events ?? [], lastTick: AT, paused: false, sources: { status: 'healthy', events: 'healthy' } } as unknown as FleetRunsDirState;
   // The JSON round trip is what `phm org --json` and the API send.
@@ -63,7 +63,7 @@ describe('org chart', () => {
     expect(find(tree, 'claude').jobs).toEqual([expect.objectContaining({ id: 'RQ-A', repo: 'phantom', tier: 'frontier', ageSeconds: 720, goal: 'Fix the login redirect', state: 'running' })]);
     // A session row never carries its prompt, so a job with no engine title has an unknown goal.
     expect(find(tree, 'codex-personal').jobs[0]).toMatchObject({ id: 'RQ-B', tier: 'work', ageSeconds: 5400, goal: null });
-    expect(tree.lanes.slice(0, 3).map(row => row.lane)).toEqual(['codex-personal', 'claude', 'claude-api']);
+    expect(tree.lanes.map(row => row.lane)).toEqual(['claude', 'codex-personal']);
     const text = renderOrgTreeText(tree, NOW);
     expect(text).toContain('Executor: running. Active. Last sign 3m ago.');
     expect(text).toContain('Main guardian: running. Active. Last sign 4m ago.');

@@ -477,6 +477,31 @@ vitest harness ambient set, so a PR touching any of them is
 `pr-caused` and the rest classify `shared-baseline`, `pr-caused` or
 `unknown` -- never `probable-flake`.
 
+The install-smoke jobs' "Install this commit" and "Install the
+published release" steps run `node
+.github/scripts/ci-install-smoke.mjs <verb>` on the linux lane whenever
+a pull request or merge group trips the `xplat_install` path filter (and
+on the daily schedule and dispatch). The script funnels every refusal --
+an npm pack/install exit, a missing packed tarball or `phm` shim, a
+version mismatch, a bad published-release checksum or download -- through
+one `console.error` line plus the runner's step-failure marker, so the
+analyzer tracks the same `##[group]Run` step boundaries and attributes
+the marker when every script line is the same install-smoke invocation.
+The two verbs are different gates with different closed input lists:
+`commit` builds, packs and installs this checkout, so `package.json`
+(version, files, bin), `package-lock.json`, the packed `bin/ashlr` shim
+and `.github/workflows/ci.yml` count as inputs and group under
+`.github/scripts/ci-install-smoke.mjs > (install-smoke-commit)`;
+`release` fetches and installs the published npm artifact, which no diff
+can change, so only the script and the workflow step count and failures
+group under `> (install-smoke-release)`. Build diagnostics the step's own
+`npm run build`/`npm pack` prints still belong to the typecheck and
+build-step parsers. Mixed bash, `uses:` actions, other scripts,
+ambiguous multi-command steps and cancelled steps stay unattributed, and
+like the other non-test identities these groups can never resolve
+through a vitest pass line: `shared-baseline`, `pr-caused` or `unknown`
+-- never `probable-flake`.
+
 The test runners' own watchdog verdicts get the same treatment.
 `scripts/test-ci.mjs` wraps every `npm run test:ci` invocation -- the
 fast-gate affected-test shards (through `ci-fast-run.mjs`), the quick

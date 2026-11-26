@@ -23,6 +23,8 @@ export async function cmdResourcesPlan(args: string[]): Promise<number> {
   else {
     for (const lane of plan.lanes) console.log(`${lane.lane}: target=${lane.target_concurrency ?? 'unknown'} (advisory)`);
     for (const row of plan.allowances) console.log(`${row.id}: projected waste=${row.projected_waste_at_deadline ?? 'unknown'} ${row.unit ?? ''}`.trimEnd());
+    const bank = plan.codex_reset_bank;
+    if (bank) console.log(`Codex reset bank: unknown (${bank.unknown_reason})${bank.hint ? `. ${bank.hint}` : ''}`);
   }
   return 0;
 }

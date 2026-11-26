@@ -39,7 +39,7 @@
  *
  * Amendments in force: no --rebase/force-push/--admin/auto-merge/check
  * skipping anywhere; hold list read from its canonical file and held PRs are
- * never touched; only the seven repos and fleet-authored PRs; any gh error
+ * never touched; only signed fleet scope and fleet-authored PRs; any gh error
  * aborts the cycle with no retry (a local git or log-tail failure skips only
  * that PR); at most `cycleCap` new lines per cycle; `tier` must be one of
  * the queue tiers (queue-tier.ts) — any other value throws before any read
@@ -62,13 +62,7 @@ export const QUEUEGEN_TEXT_CAP = 560;
 export const QUEUEGEN_EMPTY_STREAK = 2;
 /** Emission records kept per PR; oldest fall off first. */
 export const QUEUEGEN_HISTORY_CAP = 8;
-
-/** The seven approved repos; no discovery or expansion. */
-export const QUEUEGEN_REPOS = [
-  'ashlrai/phantom', 'ashlrai/phantom-secrets', 'ashlrai/locus',
-  'ashlrai/lexicon', 'ashlrai/ashlr-md', 'ashlrai/ashlr-stack',
-  'ashlrai/ashlr-plugin',
-] as const;
+export const QUEUEGEN_FRESHNESS_PERIOD_MS = 7 * 24 * 60 * 60 * 1_000;
 
 export interface QueuegenPr {
   number: number;
@@ -128,9 +122,11 @@ export interface QueuegenIo {
   conflictFiles(repo: string, pr: QueuegenPr): string[];
   /** Existing queue job ids; a malformed line must throw (fail closed). */
   readQueueIds(): Set<string>;
+  /** Active job ids guard against overlapping freshness work across periods. */
+  readActiveFreshnessIds?(): ReadonlySet<string>;
   /** Repo#PR keys occupied by live rebases, plus terminal failed/cancelled job ids. */
   readRebaseWork(): { active: ReadonlySet<string>; failed: ReadonlySet<string> };
-  appendQueueLine(line: string): void;
+  appendQueueLine(line: string, repo: string): void;
   /** Canonical hold list as "<short>#<n>" entries; must throw if unreadable. */
   readHoldList(): Set<string>;
   /**
@@ -149,6 +145,7 @@ export interface QueuegenIo {
 
 export interface QueuegenOptions {
   repos?: readonly string[];
+  freshness?: boolean;
   cycleCap?: number;
   windowMs?: number;
   fleetAuthors?: readonly string[];
@@ -169,6 +166,44 @@ export interface QueuegenSummary {
 
 const FAILING = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale']);
 const shortName = (repo: string): string => repo.split('/').pop() ?? repo;
+
+const FRESHNESS_WORK = {
+  DOCS: 'Check docs, generated navigation, and README examples against current code and CLI help. Verify commands and flags with the project docs checks. Report evidence and propose a focused docs update only for confirmed drift.',
+  SITE: 'Check configured production deployment revision and public endpoint health against the default branch. Use existing deployment evidence and read-only probes. Record healthy, stale, unhealthy, unknown, or no site configured in BRIDGE_NOTES.md. Keep private evidence local and route any repair through existing review and deployment gates.',
+};
+
+function enqueueFreshness(
+  io: QueuegenIo,
+  repos: readonly string[],
+  now: number,
+  cycleCap: number,
+  queueIds: Set<string>,
+  summary: QueuegenSummary,
+): void {
+  const period = Math.floor(now / QUEUEGEN_FRESHNESS_PERIOD_MS);
+  const active = new Set([...(io.readActiveFreshnessIds?.() ?? [])].map((id) => id.replace(/-\d+$/u, '')));
+  for (const repo of repos) {
+    const short = shortName(repo);
+    for (const [kind, goal] of Object.entries(FRESHNESS_WORK)) {
+      const family = `RQ-${kind}-FRESHNESS-${short}`;
+      const id = `${family}-${period}`;
+      if (queueIds.has(id) || active.has(family)) {
+        summary.deduped++;
+        continue;
+      }
+      if (summary.emitted >= cycleCap) {
+        summary.capped = true;
+        return;
+      }
+      const { maxFiles, maxLines } = QUEUE_TIER_SCOPE.work;
+      const tools = kind === 'SITE' ? 'git|gh' : 'git';
+      io.appendQueueLine(`- READY ${id} (P2, pool=any, tier=work, repo=${short}, needs=${tools}, data_class=internal, max_cost_class=included, max-files=${maxFiles}, size<=${maxLines}): ${goal}`, repo);
+      queueIds.add(id);
+      summary.emitted++;
+      io.log(`QUEUEGEN_FRESHNESS ${id}`);
+    }
+  }
+}
 export const isFailing = (check: QueuegenCheck): boolean =>
   check.status === 'completed' && check.conclusion !== null && FAILING.has(check.conclusion);
 
@@ -382,7 +417,7 @@ function countEmptyStreak(
  * checkLogTail failure skips only its PR. State is still saved.
  */
 export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}): QueuegenSummary {
-  const repos = options.repos ?? QUEUEGEN_REPOS;
+  const repos = options.repos ?? [];
   const cycleCap = options.cycleCap ?? QUEUEGEN_CYCLE_CAP;
   const windowMs = options.windowMs ?? QUEUEGEN_PR_WINDOW_MS;
   const authors = options.fleetAuthors ?? [QUEUEGEN_FLEET_AUTHOR];
@@ -434,8 +469,10 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
     return outcomes;
   };
   try {
+    if (options.freshness) enqueueFreshness(io, repos, now, cycleCap, queueIds, summary);
     outer:
     for (const repo of repos) {
+      if (summary.capped) break;
       let prs: QueuegenPr[];
       try {
         prs = io.listPullRequests(repo).slice().sort((a, b) => a.number - b.number);
@@ -526,7 +563,7 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
           io.log(`QUEUEGEN_EMPTY_STREAK ${key}`);
           continue;
         }
-        io.appendQueueLine(line);
+        io.appendQueueLine(line, repo);
         if (dirty) activeRebases.add(key);
         history.unshift({ id, at: now, headSha: pr.headSha, check: checkName, file });
         state.emitted[key] = history;

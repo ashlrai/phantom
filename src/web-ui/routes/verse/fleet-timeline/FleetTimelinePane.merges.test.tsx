@@ -19,7 +19,7 @@ it('shows merges below Mason, opens the PR, and retains the lane when grouped', 
   const open = vi.spyOn(window, 'open').mockImplementation(() => null);
   const { container } = render(<FleetTimelinePane visible />);
   const button = await screen.findByRole('button', { name: 'Merges: #42 RQ-PHX-EXAMPLE31' });
-  await screen.findByRole('button', { name: 'Mason: hello' });
+  await screen.findByRole('button', { name: 'Operator: hello' });
   expect([...container.querySelectorAll('g[data-lane]')].slice(0, 2).map((lane) => lane.getAttribute('data-lane'))).toEqual(['mason', 'merges']);
   expect(container.querySelector('rect[data-status="merged"]')).toHaveAttribute('fill', toneColor('success'));
   expect(screen.getByText('1 merges without a time in this snapshot')).toBeInTheDocument();

@@ -181,6 +181,35 @@ describe('agent chat', () => {
   ] as Partial<Parameters<typeof readAgentChat>[0]>[])('rejects malformed filter %j', query => {
     expect(readAgentChat({ channel: 'engineering', thread: 'run:one', ...query }, setup()).status).toBe('invalid');
   });
+  it('narrows the read and thread index to one room topic, the same match channel read --topic applies', () => {
+    const options = setup();
+    const room = (topic: string) => ({ to: `group:engineering:${topic}`, channel_ref: `group:engineering:${topic}` });
+    add(options, envelope('g1', room('general')));
+    add(options, envelope('s1', { ...room('standup'), body: { kind: 'note', thread: 'run:two', text: 'sync' } }));
+    add(options, envelope('s2', { ...room('standup'), body: { kind: 'note', thread: 'run:two', text: 'notes' } }));
+    const all = readAgentChat({ channel: 'engineering' }, options);
+    expect(all.status === 'ok' && all.threads.map(t => t.id)).toEqual(['run:two', 'run:one']);
+    const standup = readAgentChat({ channel: 'engineering', topic: 'standup' }, options);
+    expect(standup.status === 'ok'); if (standup.status !== 'ok') return;
+    expect(standup.threads.map(t => t.id)).toEqual(['run:two']);
+    expect(standup.threads[0]).toMatchObject({ messageCount: 2 });
+    const read = readAgentChat({ channel: 'engineering', topic: 'standup', thread: 'run:two' }, options);
+    expect(read.status === 'ok' && read.messages.map(m => m.id)).toEqual(['s1', 's2']);
+    const empty = readAgentChat({ channel: 'engineering', topic: 'missing' }, options);
+    expect(empty.status === 'ok' && empty.threads).toEqual([]);
+    expect(readAgentChat({ channel: 'engineering', topic: 'Bad Topic' }, options).status).toBe('invalid');
+    expect(readAgentChat({ channel: 'engineering', topic: 'a'.repeat(33) }, options).status).toBe('invalid');
+  });
+  it('CLI and HTTP accept the topic filter and reject a bad value', () => {
+    let seen: Parameters<typeof readAgentChat>[0] | undefined;
+    const read = (q: Parameters<typeof readAgentChat>[0]) => { seen = q; return { status: 'ok' as const, schema: 'agent-chat.v1' as const, channel: 'engineering', asOf: 0, participants: [], threads: [], messages: [], nextCursor: 0, hasMore: false, retention: 'live-retained-only' as const }; };
+    const output: string[] = [];
+    expect(runAgentsChat(['list', '--channel', 'engineering', '--topic', 'standup', '--json'], s => output.push(s), () => {}, read)).toBe(0);
+    expect(seen).toMatchObject({ channel: 'engineering', topic: 'standup' });
+    expect(agentChatResponse('GET', '/api/agents/chat?channel=engineering&topic=standup', read).code).toBe(200);
+    expect(seen).toMatchObject({ topic: 'standup' });
+    expect(agentChatResponse('GET', '/api/agents/chat?channel=engineering&topic=a&topic=b', read).code).toBe(400);
+  });
   it('CLI and HTTP accept the shared filters and reject bad values', () => {
     let seen: Parameters<typeof readAgentChat>[0] | undefined;
     const read = (q: Parameters<typeof readAgentChat>[0]) => { seen = q; return { status: 'ok' as const, schema: 'agent-chat.v1' as const, channel: 'engineering', asOf: 0, participants: [], threads: [], messages: [], nextCursor: 0, hasMore: false, retention: 'live-retained-only' as const }; };

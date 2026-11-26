@@ -1,7 +1,7 @@
 /** Hermetic tests for `phm worktrees`: the real audit runs over an in-memory host; Git is never called. */
 import { describe, expect, it, vi } from 'vitest';
 import { cmdWorktrees } from '../src/cli/worktrees.js';
-import { WORKTREES_SAFE_AGE_HOURS, formatWorktrees, readWorktrees, worktreeRemoveCommands, type WorktreesDeps, type WorktreesReport } from '../src/core/fleet/worktrees.js';
+import { WORKTREES_SAFE_AGE_HOURS, createWorktreeInspectionIndex, formatWorktrees, readWorktrees, worktreeRemoveCommands, type WorktreesDeps, type WorktreesReport } from '../src/core/fleet/worktrees.js';
 import type { WtAuditFs } from '../src/core/fleet/wt-audit.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z');
@@ -57,6 +57,24 @@ export function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty 
 const row = (report: WorktreesReport, job: string) => report.rows.find(r => r.job === job)!;
 
 describe('phm worktrees list', () => {
+  it('bounds Git and size scans on a leader-sized sidecar poll and resumes without repeating them', async () => {
+    const jobs = Object.fromEntries(Array.from({ length: 846 }, (_, i) => {
+      const job = `RQ-LARGE-${String(i).padStart(3, '0')}`;
+      return [job, { rows: merged(job) }];
+    }));
+    const deps = host({ jobs });
+    const index = createWorktreeInspectionIndex();
+    const first = await readWorktrees('list', { ...deps, inspectionIndex: index });
+    const second = await readWorktrees('list', { ...deps, inspectionIndex: index });
+    expect(first.counts.total).toBe(846);
+    expect(first.reclaimableComplete).toBe(false);
+    expect(deps.isClean.mock.calls.length).toBeGreaterThan(0);
+    expect(deps.isClean.mock.calls.length).toBeLessThanOrEqual(32);
+    expect(new Set(deps.isClean.mock.calls.map(([path]) => path)).size).toBe(deps.isClean.mock.calls.length);
+    expect(deps.measure.mock.calls.length).toBe(deps.isClean.mock.calls.length);
+    expect(second.counts.safe).toBeGreaterThan(first.counts.safe);
+  });
+
   it('gives every job worktree one of six states and marks only merged or empty rows safe', async () => {
     const deps = host();
     const report = await readWorktrees('list', deps);

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { buildPlannerBrief, type PlannerBriefGit } from '../src/core/fleet/planner-brief.js';
 import {
   collectRealSupply,
+  COMPANION_PROBE_REPOS,
   rankRealSupply,
   realSupplyBriefLines,
   REAL_SUPPLY_BRIEF_CAP,
@@ -14,7 +15,6 @@ import {
   type RealSupplyV1,
 } from '../src/core/fleet/planner-real-supply.js';
 import type { CloudGh } from '../src/core/cloud/pr-actions.js';
-import { QUEUEGEN_REPOS } from '../src/core/drive/queuegen.js';
 
 const NOW = new Date('2026-11-01T12:00:00.000Z');
 const clock = () => NOW;
@@ -57,7 +57,7 @@ function fakeGh(responses: Record<string, unknown>): { gh: CloudGh; calls: strin
 
 /** All seven repos stubbed clean (master branch, no alerts/runs/issues), plus overrides. */
 const cleanRepos = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
-  ...Object.fromEntries(QUEUEGEN_REPOS.flatMap(repo => [
+  ...Object.fromEntries(COMPANION_PROBE_REPOS.flatMap(repo => [
     [`repos/${repo}`, { default_branch: 'master' }],
     [`repos/${repo}/dependabot/alerts`, []],
     [`repos/${repo}/actions/runs`, { workflow_runs: [] }],
@@ -142,7 +142,7 @@ describe('collectRealSupply', () => {
     }));
     const supply = await collectRealSupply({ gh, now: clock, local: false });
     expect(supply).toMatchObject({ v: 1, generatedAt: NOW.toISOString(), local: { status: 'skipped' } });
-    expect(supply.repos).toEqual(QUEUEGEN_REPOS.map(repo => ({ repo, status: 'ok' })));
+    expect(supply.repos).toEqual(COMPANION_PROBE_REPOS.map(repo => ({ repo, status: 'ok' })));
     expect(supply.candidates.map(c => `${c.kind}:${c.repo}:${c.target}`)).toEqual([
       'dependabot-critical:ashlrai/phantom:package-lock.json (crit-dep -> 7.7.7)',
       'scheduled-red:ashlrai/locus:Nightly',
@@ -160,7 +160,7 @@ describe('collectRealSupply', () => {
     };
     const supply = await collectRealSupply({ reader, now: clock, local: false });
     expect(supply.candidates).toEqual([]);
-    expect(supply.repos).toHaveLength(QUEUEGEN_REPOS.length);
+    expect(supply.repos).toHaveLength(COMPANION_PROBE_REPOS.length);
     const lexicon = supply.repos.find(r => r.repo === 'ashlrai/lexicon')!;
     const locus = supply.repos.find(r => r.repo === 'ashlrai/locus')!;
     expect(lexicon).toMatchObject({ status: 'unknown' });

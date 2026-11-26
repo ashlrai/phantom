@@ -1,0 +1,31 @@
+##[group]Run actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+with:
+  node-version: '22.22.3'
+  cache: npm
+##[endgroup]
+##[group]Run npm ci --ignore-scripts --no-audit --no-fund
+npm ci --ignore-scripts --no-audit --no-fund
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+added 418 packages in 12s
+##[group]Run node .github/scripts/ci-install-smoke.mjs commit
+node .github/scripts/ci-install-smoke.mjs commit
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+npm warn deprecated inflight@1.0.6: This module is not supported
+vite v7.1.0 building for production...
+✓ 182 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/web-ui/index.html                     0.62 kB │ gzip:   0.38 kB
+phm --version 0.0.0
+dist/web-ui/assets/index-D4e5f6a2.js      412.30 kB │ gzip: 118.77 kB
+✓ built in 4.13s
+::error file=.github/scripts/ci-install-smoke.mjs,line=73::installed phm version 0.0.0, expected 3.30.71
+##[error]Process completed with exit code 1.
+##[group]Run node .github/scripts/ci-install-smoke.mjs release
+node .github/scripts/ci-install-smoke.mjs release
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+published release checksum mismatch
+##[error]Process completed with exit code 1.

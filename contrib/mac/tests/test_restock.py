@@ -4,7 +4,7 @@ RQ-DEVINROUTEDEFAULTQ7).
 Every case builds a synthetic ~/.ashlr-runs/queue in a temp HOME and invokes
 restock.py as a subprocess; nothing touches the real ~/.ashlr-runs or the live
 router queue. Covers: the >=30% bet=bold READY floor and preference, non-fleet
-repo exclusion (GS_REPOS), hold-list PR exclusion, HOLD-SECURITY parking with the
+signed repo exclusion, hold-list PR exclusion, HOLD-SECURITY parking with the
 [Security pin required] tag, and the DEVIN-LEVERAGE-20261026 defaults: open-pool
 tier=frontier and long-horizon lines route to pool=devin, the devin target
 defaults to 10, and its restock need is clamped at the ceiling 16.
@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'restock.py'
+AUTHORITY_BIN = SCRIPT.parent / 'tests/fixtures/restock-authority'
 LANES = ['codex-personal', 'devin', 'codex-local', 'claude-api']
 
 
@@ -51,7 +52,7 @@ def build(md, repos=('phantom',), running=0, queued=0, slots=None, lanes_status=
 
 
 def restock(home, *args):
-    env = {'HOME': str(home), 'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
+    env = {'HOME': str(home), 'PATH': str(AUTHORITY_BIN) + ':' + os.environ.get('PATH', '/usr/bin:/bin')}
     return subprocess.run([sys.executable, '-B', str(SCRIPT), *args],
                           env=env, capture_output=True, text=True, timeout=60)
 
@@ -229,8 +230,40 @@ class BoldFloorTests(unittest.TestCase):
 
 
 class ExclusionTests(unittest.TestCase):
+    def test_current_signed_scope_admits_new_checkouts_and_parks_out_of_scope_work(self):
+        rows = [
+            line('RQ-DOCS-FRESHNESS-morphkit-42', repo='AshlrAI/MorphKit'),
+            line('RQ-SITE-FRESHNESS-binshield-42', repo='binshield'),
+            line('RQ-FOREIGN', repo='other/morphkit'),
+            line('RQ-REVOKED', repo='phantom'),
+            line('RQ-NOCHECKOUT', repo='ashlr-md'),
+        ]
+        with build('\n'.join(rows) + '\n', repos=('phantom', 'morphkit', 'binshield')) as tmp:
+            home = Path(tmp)
+            fixture = home / '.fixture-restock-authority.json'
+            policy = {"repos": [
+                {"nameWithOwner": "AshlrAI/MorphKit", "stage": "merge"},
+                {"nameWithOwner": "ashlrai/binshield", "stage": "propose"},
+                {"nameWithOwner": "ashlrai/ashlr-md", "stage": "propose"},
+                {"nameWithOwner": "other/phantom", "stage": "merge"},
+            ]}
+            status = {"v": 1, "kill": False, "effectiveSwitch": "propose", "policy": policy}
+            fixture.write_text(json.dumps(status))
+            result = restock(home, '--dry-run')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertCountEqual(dry_ids(result.stdout),
+                                  ['RQ-DOCS-FRESHNESS-morphkit-42', 'RQ-SITE-FRESHNESS-binshield-42'])
+            self.assertEqual(skips(result.stdout).get('non-fleet-repo'), 2)
+            self.assertEqual(skips(result.stdout).get('no-repo'), 1)
+            for invalid in ('{', json.dumps(dict(status, policy=None)), json.dumps(dict(status, kill=True))):
+                fixture.write_text(invalid)
+                result = restock(home, '--dry-run')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(dry_ids(result.stdout), [])
+                self.assertIn('RESTOCK_SCOPE_UNAVAILABLE', result.stderr)
+
     def test_non_fleet_repos_never_selected(self):
-        # measurably and ashlr-landing exist as local dirs but sit outside GS_REPOS.
+        # Local checkouts outside the active signed scope stay ineligible.
         rows = [
             line('RQ-NF-MEAS', P=1, pool='devin', tier='mid', repo='measurably', text='measurably fix'),
             line('RQ-NF-LAND', P=1, pool='devin', tier='mid', repo='ashlr-landing', text='landing fix'),
@@ -960,7 +993,7 @@ class MergeRateRecoveryTests(unittest.TestCase):
         self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
         self.assertEqual((q / 'ready.tsv').read_text(), before)
         cache.write_text(f'{time.time()} 148\n')
-        env = {'HOME': str(home), 'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
+        env = {'HOME': str(home), 'PATH': str(AUTHORITY_BIN) + ':' + os.environ.get('PATH', '/usr/bin:/bin')}
         processes = [subprocess.Popen([sys.executable, '-B', str(SCRIPT), '--per-lane', '0'],
                                       env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                      for _ in range(4)]
@@ -1038,7 +1071,7 @@ class MergeRateRecoveryTests(unittest.TestCase):
             rows.append(f'PARKED-MERGERATE.devin\tRQ-RACE-{n}\tdevin\twork\tphantom\t{pf}')
         (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
         (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 149\n')
-        env = {'HOME': str(home), 'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
+        env = {'HOME': str(home), 'PATH': str(AUTHORITY_BIN) + ':' + os.environ.get('PATH', '/usr/bin:/bin')}
         processes = [subprocess.Popen([sys.executable, '-B', str(SCRIPT), '--per-lane', '0'],
                                       env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                      for _ in range(4)]
