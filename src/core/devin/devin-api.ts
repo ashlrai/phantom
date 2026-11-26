@@ -71,6 +71,7 @@ import { listDevinTasks, readDevinTaskInventory, readDevinTask, updateDevinBudge
 import { devinTaskNeedsObservation, refreshDevinTasks } from './tracker.js';
 import {
   DEVIN_TASK_ID_PATTERN,
+  errorMessageText,
   VERSE_DEVIN_BUDGET_PATH,
   VERSE_DEVIN_LAUNCH_PATH,
   VERSE_DEVIN_PATH,
@@ -84,7 +85,7 @@ import { loadConfigReadOnly } from '../config.js';
 import { displayStandingPolicy, displayStandingPolicyReadiness } from '../verse/display-standing-policy.js';
 
 export const VERSE_DEVIN_PREVIEWS_PATH = '/api/verse/devin/previews' as const;
-export const VERSE_DEVIN_CONSUMPTION_REFRESH_PATH = '/api/verse/devin/consumption/refresh' as const;
+const VERSE_DEVIN_CONSUMPTION_REFRESH_PATH = '/api/verse/devin/consumption/refresh' as const;
 
 const LAUNCH_BODY_MAX_BYTES = 128 * 1024;
 const SMALL_BODY_MAX_BYTES = 4 * 1024;
@@ -156,7 +157,7 @@ export function parseDevinMessageBody(body: Record<string, unknown>): { message:
 // Dismiss (local visibility only; remote exposure remains reserved)
 // ---------------------------------------------------------------------------
 
-export const DEVIN_DISMISS_REASON = 'Dismissed in Phantom.';
+const DEVIN_DISMISS_REASON = 'Dismissed in Phantom.';
 
 export function dismissDevinTask(id: string, now: Date = new Date()): { ok: true; task: DevinTaskV1 } | { ok: false; status: 404 | 409; error: string } {
   const task = readDevinTask(id);
@@ -203,7 +204,7 @@ const TRIAGE: Readonly<Record<string, (id: string, headSha: string, deps: CloudP
 // Needs-you producer
 // ---------------------------------------------------------------------------
 
-export const DEVIN_FAILED_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DEVIN_FAILED_WINDOW_MS = 24 * 60 * 60 * 1000;
 const NEEDS_YOU_CACHE_MS = 15_000;
 const PREVIEW_RETRY_MS = 60_000;
 
@@ -292,7 +293,7 @@ export function devinNeedsYouItems(tasks: readonly DevinTaskV1[], now: Date, pre
   return out;
 }
 
-export const VERSE_DEVIN_CLI_PRS_PATH = '/api/verse/devin/cli-prs' as const;
+const VERSE_DEVIN_CLI_PRS_PATH = '/api/verse/devin/cli-prs' as const;
 
 /**
  * PURE: a Devin (CLI) chat's pull requests as Needs-you items — the same
@@ -397,7 +398,7 @@ function guarded<T>(name: JobName, run: () => Promise<T>): Promise<T> {
   return next;
 }
 
-export function refreshDevinTasksGuarded(): Promise<import('./types.js').DevinRefreshResult> {
+function refreshDevinTasksGuarded(): Promise<import('./types.js').DevinRefreshResult> {
   return guarded('refresh', () => refreshDevinTasks({ ...serviceDeps, ...(prActionDeps.gh ? { gh: prActionDeps.gh } : {}) }));
 }
 
@@ -406,7 +407,7 @@ export const DEVIN_REFRESH_EVERY_MS = 60_000;
 /** Idle tasks (a PR waiting for review) are re-read less often. */
 export const DEVIN_IDLE_REFRESH_EVERY_MS = 10 * 60_000;
 
-export function devinSchedulerRefusal(env: NodeJS.ProcessEnv = process.env): string | null {
+function devinSchedulerRefusal(env: NodeJS.ProcessEnv = process.env): string | null {
   if (env['VITEST'] || env['NODE_ENV'] === 'test') return 'test process';
   if (env['ASHLR_DEVIN_AUTO'] === '0') return 'disabled by ASHLR_DEVIN_AUTO=0';
   return null;
@@ -442,7 +443,7 @@ export function startDevinScheduler(env: NodeJS.ProcessEnv = process.env): boole
     void refreshDevinTasksGuarded()
       .then(() => { lastError = null; })
       .catch((err: unknown) => {
-        const text = scrubSecrets(err instanceof Error ? err.message : String(err)).slice(0, 300);
+        const text = scrubSecrets(errorMessageText(err)).slice(0, 300);
         if (text !== lastError) {
           lastError = text;
           try { console.warn(`[ashlr] devin refresh failed (${text}); retrying on the next tick`); } catch { /* never throws */ }

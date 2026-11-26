@@ -61,6 +61,7 @@ import {
   DEVIN_ORG_ID_PATTERN,
   DEVIN_PLAYBOOK_ID_PATTERN,
   isDevinOpaqueSelfId,
+  isTerminalDevinTaskState,
   DEVIN_PR_TITLE_PREFIX,
   DEVIN_PROMPT_MAX_CHARS,
   DEVIN_SESSION_TAG,
@@ -77,7 +78,7 @@ import {
   type DevinTaskV1,
 } from './types.js';
 
-export type DevinMode = NonNullable<NonNullable<AshlrConfig['devin']>['mode']>;
+type DevinMode = NonNullable<NonNullable<AshlrConfig['devin']>['mode']>;
 const DEVIN_MODES: readonly DevinMode[] = ['normal', 'fast', 'lite', 'ultra'];
 
 export interface DevinServiceDeps {
@@ -114,7 +115,7 @@ export type DevinInternalLaunch = Omit<DevinLaunchRequest, 'origin'> & { origin:
  */
 export type DevinChatLaunch = Omit<DevinLaunchRequest, 'origin'> & { origin: 'chat'; contract: 'chat'; verseSessionId: string; planOnly?: boolean };
 
-export const DEVIN_TITLE_MAX_CHARS = 80;
+const DEVIN_TITLE_MAX_CHARS = 80;
 const OVERVIEW_TASK_LIMIT = 100;
 const FALLBACK_BASE_BRANCH = 'main';
 const REF_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
@@ -141,7 +142,7 @@ export function devinFleetOptIn(section: AshlrConfig['devin'] | undefined): bool
   return section?.fleet === true;
 }
 
-export function devinModeOf(section: AshlrConfig['devin'] | undefined): DevinMode {
+function devinModeOf(section: AshlrConfig['devin'] | undefined): DevinMode {
   const mode = section?.mode;
   return typeof mode === 'string' && (DEVIN_MODES as readonly string[]).includes(mode) ? mode : 'normal';
 }
@@ -193,7 +194,7 @@ const commandFix = (label: string, command: string): ReadinessFix => ({ kind: 'c
  * and connected. New sessions also need the existing operator budget gate;
  * this verdict does not govern continuation of an existing Devin session.
  */
-export function devinChatVerdict(state: DevinStatus['state'], newSessionGate?: DevinGate): ReadinessVerdict {
+function devinChatVerdict(state: DevinStatus['state'], newSessionGate?: DevinGate): ReadinessVerdict {
   if (state === 'ready') {
     if (newSessionGate && !newSessionGate.ok) {
       return { ready: false, tone: 'warn', word: 'New chats paused', detail: newSessionGate.reason ?? 'The Devin budget refused another session.', fix: null } as ReadinessVerdict;
@@ -253,7 +254,7 @@ export function devinFleetVerdict(input: {
 }
 
 /** "Fleet: Ready — …" for the CLI. */
-export function devinFleetLine(verdict: FleetReadinessVerdict): string {
+function devinFleetLine(verdict: FleetReadinessVerdict): string {
   return verdict.detail ? `Fleet: ${verdict.word} — ${verdict.detail}` : `Fleet: ${verdict.word}`;
 }
 
@@ -490,7 +491,7 @@ export function refreshDevinConsumption(deps: DevinServiceDeps = {}, force = fal
 // Launch
 // ---------------------------------------------------------------------------
 
-export function deriveDevinTitle(text: string): string {
+function deriveDevinTitle(text: string): string {
   const line = (text.split(/\r?\n/).find((l) => l.trim() !== '') ?? '').replace(/\s+/g, ' ').trim();
   if (line.length <= DEVIN_TITLE_MAX_CHARS) return line;
   const room = line.slice(0, DEVIN_TITLE_MAX_CHARS - 1);
@@ -832,7 +833,7 @@ export type DevinMessageResult = { ok: true; task: DevinTaskV1 } | { ok: false; 
 export async function messageDevinTask(taskId: string, message: string, deps: DevinServiceDeps = {}): Promise<DevinMessageResult> {
   const task = readDevinTask(taskId);
   if (!task) return { ok: false, status: 404, error: 'No Devin task with that id.' };
-  if (!task.sessionId || ['merged', 'closed', 'failed', 'expired'].includes(task.state)) {
+  if (!task.sessionId || isTerminalDevinTaskState(task.state)) {
     return { ok: false, status: 409, error: 'This Devin task has no live session to message.' };
   }
   const text = typeof message === 'string' ? message.replace(/\0/g, '').trim() : '';

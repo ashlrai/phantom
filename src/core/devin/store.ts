@@ -29,6 +29,10 @@ import {
   DEVIN_PLAYBOOK_ID_PATTERN,
   isDevinOpaqueSelfId,
   isDevinSelfIdentity,
+  isIsoTimestamp,
+  isNonNegativeFiniteNumber,
+  isRecord,
+  round2,
   DEVIN_SESSION_ID_PATTERN,
   DEVIN_TASK_ID_PATTERN,
   DEVIN_TASK_SCHEMA_VERSION,
@@ -42,10 +46,10 @@ import {
   type DevinTaskV1,
 } from './types.js';
 
-export const DEVIN_DIR = 'devin';
-export const DEVIN_TASKS_DIR = 'tasks';
-export const DEVIN_BUDGET_FILE = 'budget.json';
-export const DEVIN_CONNECTION_FILE = 'connection.json';
+const DEVIN_DIR = 'devin';
+const DEVIN_TASKS_DIR = 'tasks';
+const DEVIN_BUDGET_FILE = 'budget.json';
+const DEVIN_CONNECTION_FILE = 'connection.json';
 
 const DEFAULT_LIST_LIMIT = 500;
 const MAX_TASK_BYTES = 256 * 1024;
@@ -64,7 +68,7 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 const PROPOSAL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 /** Financial bounds; operator session-count preferences have no product ceiling. */
-export const DEVIN_BUDGET_LIMITS = Object.freeze({
+const DEVIN_BUDGET_LIMITS = Object.freeze({
   maxAcu: 100_000,
   maxAcuPerSession: 1_000,
   maxUsdPerAcu: 100,
@@ -91,11 +95,11 @@ export function devinTasksDir(): string {
   return join(devinHome(), DEVIN_TASKS_DIR);
 }
 
-export function devinBudgetPath(): string {
+function devinBudgetPath(): string {
   return join(devinHome(), DEVIN_BUDGET_FILE);
 }
 
-export function devinConnectionPath(): string {
+function devinConnectionPath(): string {
   return join(devinHome(), DEVIN_CONNECTION_FILE);
 }
 
@@ -110,7 +114,7 @@ export function ensureDevinDirectory(...sub: string[]): string {
   return dir;
 }
 
-function readJsonFile(path: string, maxBytes: number): unknown {
+export function readDevinJsonFile(path: string, maxBytes: number): unknown {
   const file = readPrivateFileCapped(path, maxBytes);
   if (!file || file.truncated) return undefined;
   try {
@@ -124,12 +128,9 @@ function readJsonFile(path: string, maxBytes: number): unknown {
 // Validation
 // ---------------------------------------------------------------------------
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 const isString = (value: unknown): value is string => typeof value === 'string';
 const isNullableString = (value: unknown): value is string | null => value === null || typeof value === 'string';
 const isStringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every(isString);
-const isIso = (value: unknown): boolean => isString(value) && Number.isFinite(Date.parse(value));
 
 function isReport(value: unknown): value is CloudTaskReport {
   return isRecord(value)
@@ -153,9 +154,9 @@ function isSession(value: unknown): value is DevinSessionSnapshot {
   return isRecord(value)
     && SESSION_STATUSES.includes(value['status'] as string)
     && isNullableString(value['statusDetail'])
-    && (value['acusConsumed'] === null || (typeof value['acusConsumed'] === 'number' && Number.isFinite(value['acusConsumed']) && value['acusConsumed'] >= 0))
+    && (value['acusConsumed'] === null || isNonNegativeFiniteNumber(value['acusConsumed']))
     && isStringArray(value['prUrls'])
-    && isIso(value['readAt']);
+    && isIsoTimestamp(value['readAt']);
 }
 
 function isPin(value: unknown, repo: string): boolean {
@@ -169,7 +170,7 @@ function isSupersededBy(value: unknown, repo: string): boolean {
 }
 
 function isIntakeMemo(value: unknown): boolean {
-  if (!isRecord(value) || !isString(value['headSha']) || !SHA1_HEX.test(value['headSha']) || !isIso(value['at'])) return false;
+  if (!isRecord(value) || !isString(value['headSha']) || !SHA1_HEX.test(value['headSha']) || !isIsoTimestamp(value['at'])) return false;
   const { proposalId, diffHash, refused } = value;
   const filed = isString(proposalId) && PROPOSAL_ID.test(proposalId) && isString(diffHash) && SHA256_HEX.test(diffHash) && refused === null;
   const declined = proposalId === null && diffHash === null && isString(refused) && refused.length > 0 && refused.length <= 200;
@@ -195,7 +196,7 @@ export function isDevinTask(value: unknown): value is DevinTaskV1 {
     && TASK_STATES.includes(value['state'] as DevinTaskState)
     && isNullableString(value['stateReason'])
     && (value['failure'] === null || FAILURE_CODES.includes(value['failure'] as DevinFailureCode))
-    && isIso(value['createdAt'])
+    && isIsoTimestamp(value['createdAt'])
     && isNullableString(value['launchedAt'])
     && isString(value['updatedAt'])
     && (value['session'] === null || isSession(value['session']))
@@ -220,6 +221,10 @@ export function isDevinTask(value: unknown): value is DevinTaskV1 {
 
 function taskPath(id: string): string {
   return join(devinTasksDir(), `${id}.json`);
+}
+
+function compareDevinTasksNewestFirst(a: DevinTaskV1, b: DevinTaskV1): number {
+  return Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id);
 }
 
 export interface DevinTaskInventory {
@@ -268,7 +273,7 @@ export function readDevinTaskInventory(): DevinTaskInventory {
       || JSON.stringify([...names].sort()) !== JSON.stringify(readdirSync(directory).sort())) complete = false;
     for (const row of observed) if (!sameFile(row.stat, lstatSync(row.path))) complete = false;
   } catch { complete = false; }
-  tasks.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id));
+  tasks.sort(compareDevinTasksNewestFirst);
   return { tasks, sourceState: complete ? 'ready' : 'unavailable' };
 }
 
@@ -289,13 +294,13 @@ export function listDevinTasks(limit: number = DEFAULT_LIST_LIMIT): DevinTaskV1[
     const task = readDevinTask(id);
     if (task) tasks.push(task);
   }
-  tasks.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id));
+  tasks.sort(compareDevinTasksNewestFirst);
   return tasks.slice(0, cap);
 }
 
 export function readDevinTask(id: string): DevinTaskV1 | null {
   if (typeof id !== 'string' || !DEVIN_TASK_ID_PATTERN.test(id)) return null;
-  const value = readJsonFile(taskPath(id), MAX_TASK_BYTES);
+  const value = readDevinJsonFile(taskPath(id), MAX_TASK_BYTES);
   return isDevinTask(value) && value.id === id ? value : null;
 }
 
@@ -326,8 +331,6 @@ export function newDevinTaskId(now: Date): string {
 // ---------------------------------------------------------------------------
 // Budget
 // ---------------------------------------------------------------------------
-
-const round2 = (value: number): number => Math.round(value * 100) / 100;
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
@@ -369,12 +372,12 @@ function mergeBudget(base: DevinBudgetV1, input: unknown): DevinBudgetV1 {
     // 0 is a valid choice for both: "the fleet launches no Devin sessions".
     fleetMaxConcurrent: operatorCount(src['fleetMaxConcurrent'], base.fleetMaxConcurrent, 0),
     fleetMaxSessionsPerDay: operatorCount(src['fleetMaxSessionsPerDay'], base.fleetMaxSessionsPerDay, 0),
-    updatedAt: isIso(src['updatedAt']) ? (src['updatedAt'] as string) : base.updatedAt,
+    updatedAt: isIsoTimestamp(src['updatedAt']) ? src['updatedAt'] : base.updatedAt,
   };
 }
 
 export function readDevinBudget(): DevinBudgetV1 {
-  const value = readJsonFile(devinBudgetPath(), MAX_SMALL_BYTES);
+  const value = readDevinJsonFile(devinBudgetPath(), MAX_SMALL_BYTES);
   if (!isRecord(value) || value['v'] !== DEVIN_BUDGET_SCHEMA_VERSION) return defaultBudget();
   return mergeBudget(defaultBudget(), value);
 }
@@ -432,15 +435,15 @@ function isDevinConnectionBase(value: unknown): value is DevinConnectionV1 {
     && ['service_user', 'pat_user', 'other'].includes(value['principal'] as string)
     && isNullableString(value['principalName'])
     && (value['keyStore'] === 'custody' || value['keyStore'] === 'keychain')
-    && isIso(value['connectedAt'])
-    && isIso(value['updatedAt'])
+    && isIsoTimestamp(value['connectedAt'])
+    && isIsoTimestamp(value['updatedAt'])
     && (value['humanSeat'] === undefined || (value['principal'] === 'service_user'
       && isRecord(value['humanSeat'])
       && Object.keys(value['humanSeat']).length === 3
       && isDevinOpaqueSelfId(value['humanSeat']['userId'])
       && typeof value['humanSeat']['email'] === 'string'
       && /^[^\s@]{1,128}@[^\s@]{1,255}$/.test(value['humanSeat']['email'])
-      && isIso(value['humanSeat']['selectedAt'])));
+      && isIsoTimestamp(value['humanSeat']['selectedAt'])));
 }
 
 function validSelfIdentity(connection: DevinConnectionV1): boolean {
@@ -448,7 +451,7 @@ function validSelfIdentity(connection: DevinConnectionV1): boolean {
   const row = connection.selfIdentity;
   const keys = ['source', 'observedAt', 'principal', 'serviceUserId', 'userId', 'apiKeyId', 'orgId', 'devinSessionsOrgId'];
   return isRecord(row) && Object.keys(row).length === keys.length && keys.every(key => Object.prototype.hasOwnProperty.call(row, key)) &&
-    row.source === 'devin-v3-self' && isIso(row.observedAt) &&
+    row.source === 'devin-v3-self' && isIsoTimestamp(row.observedAt) &&
     isDevinSelfIdentity(row) && row.principal === connection.principal;
 }
 export function isDevinConnection(value: unknown): value is DevinConnectionV1 {
@@ -456,7 +459,7 @@ export function isDevinConnection(value: unknown): value is DevinConnectionV1 {
 }
 
 export function readDevinConnection(): DevinConnectionV1 | null {
-  const value = readJsonFile(devinConnectionPath(), MAX_SMALL_BYTES);
+  const value = readDevinJsonFile(devinConnectionPath(), MAX_SMALL_BYTES);
   if (!isDevinConnectionBase(value)) return null;
   if (validSelfIdentity(value)) return value;
   // Optional observation corruption does not change a legacy usable lane.

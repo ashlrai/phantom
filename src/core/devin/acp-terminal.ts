@@ -15,11 +15,11 @@
  * bearer token from its stdin payload).
  */
 import type { DevinTurnVerseMcp } from './turn-protocol.js';
+import { errorMessageText, isRecord } from './types.js';
 
 type Json = Record<string, unknown>;
-const isRecord = (value: unknown): value is Json => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-export const ACP_TERMINAL_METHODS = ['terminal/create', 'terminal/output', 'terminal/wait_for_exit', 'terminal/kill', 'terminal/release'] as const;
+const ACP_TERMINAL_METHODS = ['terminal/create', 'terminal/output', 'terminal/wait_for_exit', 'terminal/kill', 'terminal/release'] as const;
 const POLL_MS = 500;
 const MAX_WAIT_MS = 4 * 60 * 60 * 1000;
 
@@ -43,7 +43,7 @@ export function parseVerseToolText(text: string, isError: boolean): VerseToolAns
   return { header, body: framed ? framed[2]! : '', isError, text };
 }
 
-export async function callVerseTool(mcp: Pick<DevinTurnVerseMcp, 'url' | 'token'>, name: string, args: Json, opts: { fetch?: typeof fetch; signal?: AbortSignal } = {}): Promise<VerseToolAnswer> {
+async function callVerseTool(mcp: Pick<DevinTurnVerseMcp, 'url' | 'token'>, name: string, args: Json, opts: { fetch?: typeof fetch; signal?: AbortSignal } = {}): Promise<VerseToolAnswer> {
   const doFetch = opts.fetch ?? globalThis.fetch.bind(globalThis);
   const response = await doFetch(mcp.url, {
     method: 'POST',
@@ -176,7 +176,7 @@ export function createAcpTerminalRouter(mcp: DevinTurnVerseMcp, opts: { fetch?: 
             return { error: { code: -32601, message: 'Method not found' } };
         }
       } catch (err) {
-        return fail(err instanceof Error ? err.message : String(err));
+        return fail(errorMessageText(err));
       }
     },
   };

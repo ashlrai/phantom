@@ -62,11 +62,11 @@
  */
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 
-import { scrubSecrets } from '../util/scrub.js';
 import { findGithubPrUrls, recordDevinCliPrs, type DevinCliPr } from './cli-prs.js';
-import type { DevinTurnLine, DevinTurnPayload } from './turn-protocol.js';
+import { scrubDevinTurnText, type DevinTurnLine, type DevinTurnPayload } from './turn-protocol.js';
 import { DEVIN_TURN_EXIT, type DevinTurnIo } from './chat-runner.js';
 import { acpMcpServers, createAcpTerminalRouter } from './acp-terminal.js';
+import { isRecord } from './types.js';
 
 export interface DevinAcpDeps {
   spawn?: typeof nodeSpawn;
@@ -87,18 +87,11 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_CANCEL_GRACE_MS = 3_000;
 const MAX_LINE_CHARS = 4 * 1024 * 1024;
 const MAX_TOOL_OUTPUT = 8_000;
-const MAX_TEXT = 60_000;
 
 /** ACP tool kinds that only read (https://agentclientprotocol.com — ToolKind). */
 const READ_ONLY_KINDS = new Set(['read', 'search', 'think', 'fetch']);
 
 type Json = Record<string, unknown>;
-const isRecord = (value: unknown): value is Json => value !== null && typeof value === 'object' && !Array.isArray(value);
-
-function clean(text: string, max = MAX_TEXT): string {
-  const scrubbed = scrubSecrets(text).replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]');
-  return scrubbed.length > max ? `${scrubbed.slice(0, max - 1)}…` : scrubbed;
-}
 
 /** The CLI's root flags for this chat (before `acp`). Exported for tests. */
 export function devinAcpArgs(payload: Pick<DevinTurnPayload, 'permissionMode' | 'model'>): string[] {
@@ -258,7 +251,7 @@ function toolOutputOf(update: Json): string {
       parts.push(typeof update['rawOutput'] === 'string' ? update['rawOutput'] : JSON.stringify(update['rawOutput']));
     } catch { /* unserialisable output is dropped */ }
   }
-  return clean(parts.filter(Boolean).join('\n'), MAX_TOOL_OUTPUT);
+  return scrubDevinTurnText(parts.filter(Boolean).join('\n'), MAX_TOOL_OUTPUT);
 }
 
 interface Pending {
@@ -333,14 +326,14 @@ export async function runDevinCliTurn(payload: DevinTurnPayload, io: DevinTurnIo
     for (const pr of added) emit({ type: 'remote-pr', url: pr.url, state: null });
   };
   const flushMessage = (): void => {
-    const text = clean(message).trim();
+    const text = scrubDevinTurnText(message).trim();
     message = '';
     if (!text) return;
     emit({ type: 'assistant-message', text });
     notePrs(text);
   };
   const flushThought = (): void => {
-    const text = clean(thought).trim();
+    const text = scrubDevinTurnText(thought).trim();
     thought = '';
     if (text) emit({ type: 'thinking', text });
   };
@@ -386,14 +379,14 @@ export async function runDevinCliTurn(payload: DevinTurnPayload, io: DevinTurnIo
         if (!text) return;
         if (thought) flushThought();
         message += text;
-        emit({ type: 'text-delta', text: clean(text, 8_000) });
+        emit({ type: 'text-delta', text: scrubDevinTurnText(text, 8_000) });
         return;
       }
       case 'agent_thought_chunk': {
         const text = textOf(update['content']);
         if (!text) return;
         thought += text;
-        emit({ type: 'thinking-delta', text: clean(text, 8_000) });
+        emit({ type: 'thinking-delta', text: scrubDevinTurnText(text, 8_000) });
         return;
       }
       case 'tool_call': {
@@ -405,7 +398,7 @@ export async function runDevinCliTurn(payload: DevinTurnPayload, io: DevinTurnIo
         openTools.add(id);
         let input: unknown = update['rawInput'] ?? (title ? { title } : {});
         try {
-          input = JSON.parse(clean(JSON.stringify(input ?? {}), MAX_TOOL_OUTPUT));
+          input = JSON.parse(scrubDevinTurnText(JSON.stringify(input ?? {}), MAX_TOOL_OUTPUT));
         } catch {
           input = title ? { title } : {};
         }
@@ -520,7 +513,7 @@ export async function runDevinCliTurn(payload: DevinTurnPayload, io: DevinTurnIo
   const failWith = async (message: string, code?: string): Promise<number> => {
     flushThought();
     flushMessage();
-    emit({ type: 'error', message: clean(message, 2_000), ...(code ? { code } : {}) });
+    emit({ type: 'error', message: scrubDevinTurnText(message, 2_000), ...(code ? { code } : {}) });
     await stop();
     return DEVIN_TURN_EXIT.failed;
   };

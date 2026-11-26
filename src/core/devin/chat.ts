@@ -22,10 +22,10 @@ import { scrubSecrets } from '../util/scrub.js';
 import { devinBudgetView, DEVIN_ACCOUNTING_UNAVAILABLE } from './budget.js';
 import { DevinApiError, devinFailureSentence, type DevinSession } from './client.js';
 import { connectedClient, recordDevinApiOutcome, snapshotOf, type DevinServiceDeps } from './service.js';
-import { devinHome, ensureDevinDirectory, readDevinTaskInventory, readDevinBudget, readDevinTask, writeDevinTask } from './store.js';
+import { devinHome, ensureDevinDirectory, readDevinJsonFile, readDevinTaskInventory, readDevinBudget, readDevinTask, writeDevinTask } from './store.js';
 import { stateFromSession } from './session-state.js';
-import { DEVIN_TASK_ID_PATTERN, type DevinFailureCode, type DevinGate, type DevinTaskV1 } from './types.js';
-import { readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
+import { DEVIN_TASK_ID_PATTERN, isRecord, type DevinFailureCode, type DevinGate, type DevinTaskV1 } from './types.js';
+import { writePrivateFileAtomic } from '../verse/preferences.js';
 
 /** The cloud seat's id — the same `devin` the fleet's engine identity uses. */
 export const DEVIN_CLOUD_SEAT_ID = 'devin';
@@ -33,7 +33,7 @@ export const DEVIN_CLOUD_SEAT_ID = 'devin';
 export const DEVIN_CLI_SEAT_ID = 'devin-cli';
 
 /** Devin's documented message limit (client.ts sendMessage). */
-export const DEVIN_CHAT_MESSAGE_MAX_CHARS = 20_000;
+const DEVIN_CHAT_MESSAGE_MAX_CHARS = 20_000;
 
 const CHAT_DIR = 'chat';
 const STATE_MAX_BYTES = 64 * 1024;
@@ -60,30 +60,25 @@ function statePath(taskId: string): string {
   return join(devinHome(), CHAT_DIR, `${taskId}.json`);
 }
 
-export function emptyDevinChatState(taskId: string): DevinChatStateV1 {
+function emptyDevinChatState(taskId: string): DevinChatStateV1 {
   return { v: 1, taskId, cursor: null, seen: [], prUrls: [], updatedAt: new Date(0).toISOString() };
 }
 
 /** Total: a missing or corrupt sidecar reads as "from the start". */
 export function readDevinChatState(taskId: string): DevinChatStateV1 {
   if (!DEVIN_TASK_ID_PATTERN.test(taskId)) return emptyDevinChatState(taskId);
-  try {
-    const file = readPrivateFileCapped(statePath(taskId), STATE_MAX_BYTES);
-    if (!file || file.truncated) return emptyDevinChatState(taskId);
-    const raw = JSON.parse(file.text) as Record<string, unknown>;
-    const strings = (value: unknown, max: number): string[] =>
-      Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string' && v.length <= 2048).slice(-max) : [];
-    return {
-      v: 1,
-      taskId,
-      cursor: typeof raw['cursor'] === 'string' && raw['cursor'].length <= 512 ? raw['cursor'] : null,
-      seen: strings(raw['seen'], SEEN_KEEP),
-      prUrls: strings(raw['prUrls'], PRS_KEEP),
-      updatedAt: typeof raw['updatedAt'] === 'string' ? raw['updatedAt'] : new Date(0).toISOString(),
-    };
-  } catch {
-    return emptyDevinChatState(taskId);
-  }
+  const raw = readDevinJsonFile(statePath(taskId), STATE_MAX_BYTES);
+  if (!isRecord(raw)) return emptyDevinChatState(taskId);
+  const strings = (value: unknown, max: number): string[] =>
+    Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string' && v.length <= 2048).slice(-max) : [];
+  return {
+    v: 1,
+    taskId,
+    cursor: typeof raw['cursor'] === 'string' && raw['cursor'].length <= 512 ? raw['cursor'] : null,
+    seen: strings(raw['seen'], SEEN_KEEP),
+    prUrls: strings(raw['prUrls'], PRS_KEEP),
+    updatedAt: typeof raw['updatedAt'] === 'string' ? raw['updatedAt'] : new Date(0).toISOString(),
+  };
 }
 
 export function writeDevinChatState(state: DevinChatStateV1): void {
