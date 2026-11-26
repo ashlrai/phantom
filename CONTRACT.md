@@ -745,7 +745,7 @@ matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusio
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
 `router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?, mergeEventsTruncated?, verdictAsOfMs?, verdictSinceMsFor?})`,
-`authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
+`authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text, asOfMs?)`,
 `foldRouteDecisionWorkClasses(text)`, `foldRouteDecisions(text)`,
 `foldMarketHandoffAdvisories(text)`,
 `foldEmptyTags(text)`, `foldMergeEvents(text)`, `foldRewardSignals(text)`,
@@ -754,6 +754,8 @@ decisions only) and `fallback_used` (job receipts). See [gates and inert status]
 `readLedgerTail(path, maxBytes?)` and
 `readRouterOutcomes({runsDir?, lane?, ashlarDir?, authorityEvidence?})`,
 producing `router.outcome.v1` records folded from `metrics/jobs.jsonl`.
+`foldSpendCosts` defaults to an open time bound. A supplied epoch-millisecond
+bound includes receipts at that instant and retains undated receipts.
 `verdictSinceMsFor(job)` sets an inclusive lower timestamp bound for that job's
 merge, close and revert ledger verdicts. An undefined return leaves the lower
 bound open. `verdictAsOfMs` supplies an inclusive upper bound. If either bound

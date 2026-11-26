@@ -2276,12 +2276,9 @@ function foldRouterOutcomesWithCiCoverage(
  * Rows that are not objects or name no job are skipped. A job with any
  * attributed call that lacks a usable price stays absent from the map.
  * Estimated costs (cost_estimated) report a USD figure and count toward the sum.
+ * Dated receipts after asOfMs are excluded before checking price coverage.
  */
-export function foldSpendCosts(text: string): Map<string, number> {
-  return foldSpendCostsThrough(text, Infinity);
-}
-
-function foldSpendCostsThrough(text: string, asOfMs: number): Map<string, number> {
+export function foldSpendCosts(text: string, asOfMs = Infinity): Map<string, number> {
   const costs = new Map<string, number>();
   const incomplete = new Set<string>();
   for (const line of text.split('\n')) {
@@ -3549,7 +3546,7 @@ export async function readRouterOutcomes(opts: {
       : undefined,
   }, ambiguousCiJobs, mergeEvents?.coverage, rewards);
   if (spendRead.state === 'read' && !spendTruncated) {
-    const costs = foldSpendCostsThrough(spendRead.text, reportStartedAt);
+    const costs = foldSpendCosts(spendRead.text, reportStartedAt);
     for (const o of folded.outcomes) {
       if (o.cost_usd !== null) continue;
       const sum = costs.get(o.job_id);
