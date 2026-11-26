@@ -103,6 +103,30 @@ it('applies the topic filter to the claimable scan', async () => {
   expect(await run([...args(), '--topic', 'deploy:extra'])).toEqual({ code: 2, status: 'invalid' });
 });
 
+it('claims the named envelope under --id and refuses ids outside the claim rules', async () => {
+  for (const [id, to, priority, body] of [
+    ['named-target', 'worker-a', 'P3', { kind: 'work' }],
+    ['named-decoy', 'worker-a', 'P0', { kind: 'work' }],
+    ['named-foreign', 'worker-b', 'P0', { kind: 'work' }],
+    ['named-chat', 'worker-a', 'P0', { kind: 'chat' }],
+  ] as const) {
+    expect(appendBusInbox({ id, from: 'fake', to, priority, ttl: 120_000, body }, { root }).status).toBe('posted');
+  }
+  // --id claims the named P3 receipt even though a P0 claimable receipt exists.
+  const first = await run([...args(), '--id', 'named-target']);
+  expect(first).toMatchObject({ code: 0, status: 'acquired',
+    receipt: { envelope: { id: 'named-target' } } });
+  // The held named receipt reports held work, not a dry well.
+  expect(await run([...args(), '--id', 'named-target']))
+    .toEqual({ code: 0, status: 'empty', candidates: 1, held: 1 });
+  // Foreign, non-work and absent ids are honest empty matches.
+  for (const id of ['named-foreign', 'named-chat', 'named-missing']) {
+    expect(await run([...args(), '--id', id])).toEqual({ code: 0, status: 'empty', candidates: 0, held: 0 });
+  }
+  // A malformed id is a usage error, never a widened claim.
+  expect(await run([...args(), '--id', 'has space'])).toEqual({ code: 2, status: 'invalid' });
+});
+
 it('validates all flags without returning bodies or tokens', async () => {
   for (const bad of [[], ['--help', '--json'], args().slice(0, -1), [...args(), '--json'],
     [...args(), '--owner', 'duplicate'], args().map(x => x === '60000' ? '0' : x),

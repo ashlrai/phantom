@@ -53,12 +53,20 @@ export interface BusNextRequest {
    * applies; it composes with `from` (a sender both included and excluded
    * matches nothing). */
   excludeFrom?: string;
+  /** Keep only the receipt whose own wire id is strictly equal — the same
+   * exact-envelope match every bus read's `--id` applies. With `--id` the
+   * candidate set is at most one receipt, so `empty`'s `candidates` is 0 or
+   * 1: the named envelope is absent or expired, not claimable work, not
+   * addressed to `--to`, fails another filter, or is held by a live claim.
+   * It composes with every other filter — a targeted claim still cannot
+   * pick work the matching read would hide. */
+  id?: string;
 }
 /** `empty` still means no receipt could be claimed, but now carries the honest
  * scan totals so a caller can tell a dry well from held work without a second
  * read: `candidates` is every live claimable envelope addressed to `--to` the
  * bounded scan found that also satisfies the request's `contains`/`since`/
- * `before`/`priority`/`channel`/`topic`/`from`/`excludeFrom` filters, and `held` is how many of those answered `conflict` — a
+ * `before`/`priority`/`channel`/`topic`/`from`/`excludeFrom`/`id` filters, and `held` is how many of those answered `conflict` — a
  * live claim on the message id or an overlapping coordination key, which may
  * be the requester's own prior claim. `candidates - held` failed acquire for
  * other reasons (completed, expired, lost, missing, or a receipt that changed
@@ -128,6 +136,7 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
   if (request.topic !== undefined && !agentChannelNameSchema.safeParse(request.topic).success) return { status: 'invalid' };
   if (request.from !== undefined && !label(request.from)) return { status: 'invalid' };
   if (request.excludeFrom !== undefined && !label(request.excludeFrom)) return { status: 'invalid' };
+  if (request.id !== undefined && !label(request.id)) return { status: 'invalid' };
   const matchers = claimAddressMatchers(request);
   const channelPrefix = request.channel === undefined ? undefined : `group:${request.channel}:`;
   const candidates: BusInboxReceipt[] = [];
@@ -145,13 +154,14 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
       // window, `priority` the exact band, `channel` the raw group:<name>:
       // to-prefix, `topic` the exact topic component of a well-formed
       // group:<room>:<topic> address, `from`/`excludeFrom` the sender
-      // identity-label match, and
-      // `contains` the scrubbed one-line summary — so a filtered claim can
+      // identity-label match, `contains` the scrubbed one-line summary and
+      // `id` the exact wire id — so a filtered claim can
       // never pick work the matching read would hide, including work newer
       // than its window. Body-citation filters (job, thread, in-reply-to,
       // protocol kind/topic) stay off: claimable bodies carry none of those
       // citations, so they could only ever narrow to nothing.
       if (matchers.addressedTo(receipt.envelope.to, receipt.envelope.from) && isClaimableWork(receipt.envelope.body) &&
+          (request.id === undefined || receipt.envelope.id === request.id) &&
           (request.since === undefined || receipt.receivedAt >= request.since) &&
           (request.before === undefined || receipt.receivedAt < request.before) &&
           (request.priority === undefined || receipt.envelope.priority === request.priority) &&

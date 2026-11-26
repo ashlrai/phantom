@@ -64,7 +64,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>]
-ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]
+ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
@@ -535,7 +535,10 @@ receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
 of the resolved identity or a member channel's group:<channel>:<topic>
 address, minus the agent's own channel posts. <agent> defaults to
-PHM_AGENT_ID and --owner to PHM_AGENT_ID then the agent ref; --contains,
+PHM_AGENT_ID and --owner to PHM_AGENT_ID then the agent ref; --id keeps only
+the receipt whose own wire id is strictly equal, so a hinted or listed
+envelope claims in one step under the same addressed-to, claimable-work and
+filter rules; --contains,
 --since, --before, --priority, --channel, --topic, --from and --exclude-from narrow
 the claimable set under the same rules the bus reads apply — the scrubbed
 one-line summary substring, the inclusive receivedAt cutoff, the exclusive
@@ -545,7 +548,7 @@ component of a well-formed group:<room>:<topic> address — composing with
 --channel into one room and one topic — and the sender
 identity-label match —
 so "claim the next work
-about X" or "claim the next urgent one" is one atomic step, and empty's
+about X", "claim the next urgent one" or "claim this hinted envelope" is one atomic step, and empty's
 {candidates, held} totals count only the filtered scan. acquired
 returns the live receipt with its fencing token and lease expiry — the
 token feeds the message-claim verbs claim message renew|release|complete
@@ -1261,8 +1264,12 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         }
         return value;
       };
+      const envelopeId = one('--id');
+      if (envelopeId !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(envelopeId)) {
+        throw new UsageError('--id must be a printable routing label of 1-128 characters.');
+      }
       const result = claimNextBusWork({ to: agent, owner, leaseMs, root: options.root,
-        contains: one('--contains'), since: sinceArg(), before: beforeArg(), priority: priorityArg(),
+        contains: one('--contains'), since: sinceArg(), before: beforeArg(), priority: priorityArg(), id: envelopeId,
         channel, topic, from: senderArg('--from'), excludeFrom: senderArg('--exclude-from') });
       out(json ? JSON.stringify(result) : workNextHuman(result, owner));
       return result.status === 'acquired' || result.status === 'empty' ? 0 :
