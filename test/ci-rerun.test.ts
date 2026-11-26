@@ -43,6 +43,35 @@ describe('resident CI reruns', () => {
     await runCiRerunMaintenance(opts);
     expect(reruns()).toHaveLength(2);
   });
+  it('counts replayed attempts once and preserves the original hourly boundary', async () => {
+    const { opts, gh, report } = setup();
+    opts.maxPerHour = 2;
+    const attempt = {
+      ...report.groups[0]!.runs[0]!, repo: report.repo, outcome: 'attempt',
+      tests: [report.groups[0]!.testId, 'test/b.test.ts > b'],
+    };
+    const rows = [
+      { ...attempt, at: '2026-01-01T11:59:00Z' },
+      { ...attempt, at: '2026-01-01T10:00:00Z' },
+      { ...attempt, at: '2026-01-01T10:00:00Z' },
+      { ...attempt, head: 'b'.repeat(40), runId: 124, at: '2026-01-01T11:30:00Z' },
+      { ...attempt, head: 'c'.repeat(40), runId: 125, at: '2026-01-01T10:30:00Z' },
+    ];
+    appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.counts.attempted).toBe(3);
+    expect(read.lastHour).toBe(1);
+    expect(read.recent).toHaveLength(5);
+    expect(read.recurringFlakes.map(flake => [flake.test, flake.attempts])).toEqual([
+      [report.groups[0]!.testId, 3],
+      ['test/b.test.ts > b', 3],
+    ]);
+
+    report.groups[0]!.runs.push({ pr: 2, head: 'd'.repeat(40), runId: 126 });
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos[report.repo]).toMatchObject({ attempted: 1, skippedDuplicate: 1, skippedCap: 0 });
+    expect(gh.mock.calls).toEqual([[['run', 'rerun', '126', '--failed', '--repo', report.repo]]]);
+  });
   it('excludes future attempts from the hourly cap while preserving deduplication', async () => {
     const { opts, gh, report } = setup();
     opts.maxPerHour = 1;

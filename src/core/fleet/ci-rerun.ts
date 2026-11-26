@@ -51,14 +51,26 @@ function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
     .map(({ first, testConflict }) => testConflict ? { ...first, test: undefined } : first);
 }
 
-/** Expand attempt evidence for recurrence and use reconciled verdicts for attribution. */
-function summarizeFlakes(entries: readonly Entry[], nowMs: number, verdicts = observedVerdicts(entries, nowMs)) {
-  const attempts = entries.filter(entry => entry.outcome === 'attempt').flatMap(entry => {
+/** Count the first durable attempt for each rerun identity in the retained journal. */
+function observedAttempts(entries: readonly Entry[], nowMs: number): Entry[] {
+  const attempts = new Map<string, Entry>();
+  for (const entry of entries) {
+    if (entry.outcome !== 'attempt' || Date.parse(entry.at) > nowMs) continue;
+    const key = rerunKey(entry);
+    const first = attempts.get(key);
+    if (!first || Date.parse(entry.at) < Date.parse(first.at)) attempts.set(key, entry);
+  }
+  return [...attempts.values()];
+}
+
+/** Expand each observed attempt once for each triggering test. */
+function summarizeFlakes(attempts: readonly Entry[], nowMs: number, verdicts: readonly Entry[]) {
+  const testsByAttempt = attempts.flatMap(entry => {
     if (!Array.isArray(entry.tests)) return [entry];
     const tests = new Set(entry.tests.filter(test => typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX));
     return [...tests].map(test => ({ ...entry, test }));
   });
-  return recurringFlakes([...attempts, ...verdicts], { nowMs });
+  return recurringFlakes([...testsByAttempt, ...verdicts], { nowMs });
 }
 
 /** Fired reruns (ok call rows) still awaiting a run verdict, oldest first. */
@@ -80,11 +92,7 @@ function pendingVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
 }
 
 function hourlyAttempts(entries: readonly Entry[], nowMs: number): number {
-  return entries.filter(e => {
-    if (e.outcome !== 'attempt') return false;
-    const at = Date.parse(e.at);
-    return at > nowMs - 3_600_000 && at <= nowMs;
-  }).length;
+  return entries.filter(e => Date.parse(e.at) > nowMs - 3_600_000).length;
 }
 
 /** Map a workflow-run API payload to a verdict; null means not yet resolvable. */
@@ -143,7 +151,7 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
     } finally { closeSync(fd); }
   } catch { /* absent journal */ }
   const observed = entries.filter(e => Date.parse(e.at) <= now);
-  const attempts = observed.filter(e => e.outcome === 'attempt');
+  const attempts = observedAttempts(observed, now);
   const verdicts = observedVerdicts(observed, now);
   const verdictTally = { pass: 0, fail: 0, inconclusive: 0 };
   for (const e of verdicts) if (e.verdict) verdictTally[e.verdict]++;
@@ -157,7 +165,7 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
       failed: observed.filter(e => e.outcome === 'failed').length,
     },
     lastHour: hourlyAttempts(attempts, now),
-    recurringFlakes: summarizeFlakes(observed, now, verdicts),
+    recurringFlakes: summarizeFlakes(attempts, now, verdicts),
     verdicts: {
       ...verdictTally,
       pending: pendingVerdicts(observed, now).length,
@@ -235,7 +243,8 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
             opts.signal.throwIfAborted();
             if (journal.some(e => e.repo === repo && e.head === run.head && e.runId === run.runId)) { s.skippedDuplicate++; continue; }
             const cap = opts.maxPerHour ?? 10;
-            if (!Number.isFinite(cap) || hourlyAttempts(journal, now()) >= Math.max(0, cap)) { s.skippedCap++; continue; }
+            const evaluatedAt = now();
+            if (!Number.isFinite(cap) || hourlyAttempts(observedAttempts(journal, evaluatedAt), evaluatedAt) >= Math.max(0, cap)) { s.skippedCap++; continue; }
             const entry: Entry = { at: new Date(now()).toISOString(), repo, ...run, outcome: 'attempt' };
             const tests = [...(testsByRun.get(rerunKey(entry)) ?? [])];
             if (tests.length === 1) entry.test = tests[0];
@@ -252,7 +261,9 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
           }
         }
         opts.signal.throwIfAborted();
-        const flakes = summarizeFlakes(journal.filter(e => e.repo === repo), now());
+        const repoEntries = journal.filter(e => e.repo === repo);
+        const evaluatedAt = now();
+        const flakes = summarizeFlakes(observedAttempts(repoEntries, evaluatedAt), evaluatedAt, observedVerdicts(repoEntries, evaluatedAt));
         s.recurringFlakes = flakes.length;
         const sharedBaseline = report.groups.some(g => g.classification === 'shared-baseline');
         if (sharedBaseline || flakes.length > 0) {
