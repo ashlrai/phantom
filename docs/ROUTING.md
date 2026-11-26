@@ -769,7 +769,9 @@ per terminal job (`jobId`, resolved `merged` verdict,
 pool readings). The router uses the first usable receipt per job in the
 retained ledger, so duplicate receipts cannot replace its verdict or
 measurements. The daemon excludes batch session wrappers (`RQ-BATCH-*`)
-and node-pool attempt telemetry from the reward fold. Batch members still
+and node-pool attempt telemetry from the reward fold. Receipts marked
+`launched: false` supply no dispatch, PR claim, verdict or timing evidence.
+Batch members still
 use their own `batch_claim` rows and PR verdicts. The daemon records
 `ciWallMs` when the rewarded dispatch
 and resolution window contains exactly one distinct CI start and one distinct
