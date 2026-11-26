@@ -936,7 +936,11 @@ change batches related ready tasks into one agent session. See
 uses the same reader through `GET /api/verse/fleet/admission`. `--json` returns
 the typed measurements, `nextStartSeconds` and `startsPerHourCap` (`3600 / settle_s`;
 null for zero settle, which imposes no pacing cap). Missing, invalid or older-than-five-minute
-observations are unknown. Host blocks show the pacing window separately: its
+observations are unknown. The guard timestamp may be Unix seconds or ISO 8601
+with an explicit time zone (including offsets such as `-0500`). The dispatcher
+writes a different report to `queue/admission.json`; use `phm pool admission`
+for the dispatcher load gate, not `ASHLR_ADMISSION_CTL_PATH` pointed at that file.
+Host blocks show the pacing window separately: its
 expiry does not promise a launch while the host remains busy. Exit codes are
 0 open, 1 blocked or settling, 2 unknown or bad arguments.
 `ASHLR_ADMISSION_CTL_PATH` overrides the admission file; `ASHLR_RUNS_DIR`

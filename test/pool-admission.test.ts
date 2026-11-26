@@ -150,9 +150,9 @@ describe('readAdmission and phm pool admission', () => {
     });
     expect(report.reason).toMatch(/loadavg 500\.0 >/);
   });
-  it('maps the v2 adaptive cap and an absent operator hard_cap', async () => {
+  it.each(['2026-11-02T11:58:00+0000', '2026-11-02T06:58:00-0500'])('maps the v2 adaptive cap and an absent operator hard_cap at %s', async ts => {
     await writeFile(join(queue, 'admission.json'), JSON.stringify({ schema: 'dispatchd.admission.v2', admit: true,
-      cap: 22, hard_cap: null, concurrency_cap: 22, running: 3, ts: '2026-11-02T11:58:00+0000' }));
+      cap: 22, hard_cap: null, concurrency_cap: 22, running: 3, ts }));
     expect(await readAdmission(probes())).toMatchObject({ cap: 22, hardCap: null, adaptiveCap: 22 });
   });
   it('a v2 snapshot dispatchd stopped refreshing is not reported as the live decision', async () => {

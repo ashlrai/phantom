@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -424,6 +424,27 @@ describe('cmdOrg', () => {
     expect(errs.join('\n')).toContain(`phm org: No org file at ${missing}`);
     expect(logs).toEqual([]);
     vi.unstubAllEnvs();
+  });
+
+  it('plans without evidence or market files and distinguishes missing org configuration', async () => {
+    const home = tmp(), runs = tmp();
+    vi.stubEnv('ASHLR_HOME', home);
+    vi.stubEnv('ASHLR_RUNS_DIR', runs);
+    try {
+      mkdirSync(join(runs, 'queue'));
+      writeFileSync(join(runs, 'queue', 'status.json'), JSON.stringify({
+        schema: 'dispatchd.status.v1', last_tick: '2026-11-26T02:26:30-0500', paused: false,
+        lanes: { 'codex-personal': { running: 1, target: 20, queued: 59, held: false } },
+      }));
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      expect(await cmdOrg(['plan', '--json'])).toBe(1);
+      expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ schema: 'org.error.v1', command: 'plan',
+        error: { code: 'rejected', message: expect.stringContaining('No org file') } });
+      expect(await cmdOrg(['plan', '--file', 'docs/examples/org.toml', '--json'])).toBe(0);
+      expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ schema: 'org.plan.v1', assignments: [] });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('plan text names each held lane and the join that opts it in', async () => {
