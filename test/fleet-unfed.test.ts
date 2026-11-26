@@ -135,6 +135,23 @@ describe('foldUnfedHistory', () => {
 describe('foldMarketOverrides', () => {
   const now = 1_800_000_000_000;
   const t = now / 1000;
+  it('requires recorded lane fields across all decision folds', () => {
+    const text = [
+      decision('RQ-A', t - 90),
+      decision('RQ-A', t - 30, { chosen_lane: undefined }),
+      decision('RQ-B', t - 30, { preferred_lane: undefined }),
+      decision('RQ-C', t - 30, { chosen_lane: 'invalid lane' }),
+      decision('RQ-D', t - 30, { preferred_lane: false }),
+      decision('RQ-E', t - 30, { preferred_lane: null, override: null }),
+      decision('RQ-F', t - 30, { chosen_lane: null, override: null }),
+    ].join('\n');
+
+    expect(foldMarketOverrides(text, now, 24)).toMatchObject({ decided: 3, overridden: 1 });
+    expect(foldRouteRejections(text, now, 24)).toMatchObject({ decided: 3, unrouted: 1 });
+    expect(foldDecisionOutcomes(text, null, now, 24)).toMatchObject({
+      decided: 3, overridden: { decided: 1 }, open: { decided: 1 }, unrouted: { decided: 1 },
+    });
+  });
   const decision = (job: string, ts: number, extra: Record<string, unknown> = {}) =>
     JSON.stringify({
       schema: 'work-market.v1', event: 'route_decision', job, ts,

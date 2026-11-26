@@ -173,7 +173,13 @@ function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<s
       `Lease token ${claim.token}, leader-token ${claim.leaderToken}; expires ${new Date(claim.expiresAt).toISOString()}. Renew before expiry; pass the token to every effect.`,
     ];
     if (typeof job?.task?.text === 'string' && job.task.text.length) lines.push('', 'Task:', job.task.text);
-    lines.push('', `Run: phm node renew ${lease}`, `Done? Run: phm node complete ${lease} --result <text>`);
+    // The third lifecycle verb matters as much as renew/complete here: a manual
+    // runner that cannot do the job (missing secret, wrong pack, out of its
+    // depth) must hand the claim back at once instead of stranding it until the
+    // lease lapses. --decline stays optional — only a permanent inability bars
+    // this session; a temporary one releases plainly and stays retryable.
+    lines.push('', `Run: phm node renew ${lease}`, `Done? Run: phm node complete ${lease} --result <text>`,
+      `Cannot run it? Run: phm node release ${lease} (add --decline if this node can never run it)`);
     return lines.join('\n');
   }
   if (verb === 'result') {

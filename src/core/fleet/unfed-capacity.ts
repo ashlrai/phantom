@@ -504,7 +504,8 @@ const rejectedLanes = (value: unknown): { lane: string; codes: string[] }[] => {
  * in-window decision. The dispatcher re-decides every waiting job each tick,
  * so rows collapse before counting — a job that waited for hours counts once,
  * by where the market currently sends it. Rows outside the window, malformed
- * JSON, non-route_decision events and missing job/timestamps are skipped.
+ * JSON, non-route_decision events and missing or malformed decision fields
+ * are skipped. An explicit null lane is valid evidence.
  */
 function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number): Map<string, LatestRouteDecision> {
   const since = nowMs / 1000 - windowHours * 3600;
@@ -523,6 +524,8 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     if (prev !== undefined && prev.ts >= ts) continue;
     const preferred = laneField(row.preferred_lane);
     const chosen = laneField(row.chosen_lane);
+    if (preferred === null && row.preferred_lane !== null) continue;
+    if (chosen === null && row.chosen_lane !== null) continue;
     let override: LatestRouteDecision['override'] = null;
     if (preferred !== null && chosen !== null && preferred !== chosen && isRecord(row.override)) {
       const { from, to, reason } = row.override;

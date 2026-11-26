@@ -61,7 +61,7 @@ it('answers the verified owner once in the inbound thread and records delivery',
     'App: installed 3.30.36 · published 3.30.37 · update pending',
     'Merges: 1 in the last hour · 1 in the last 24h',
     'Lanes: unknown (queue/status.json missing or invalid)',
-    'Needs Mason: none waiting',
+    'Needs the owner: none waiting',
     'Top P0: Phantom status (0m ago)',
   ]);
   await vi.waitFor(() => {

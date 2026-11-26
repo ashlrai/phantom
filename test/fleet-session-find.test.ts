@@ -105,7 +105,7 @@ describe('fleet.session-find.v1', () => {
   it('says what it could not look through, and never reads an unreadable list as nothing found', async () => {
     const down = await find('pass', { bus: null, owner: null, orders: null, activity: new Map([['RQ-A', null]]) });
     expect(down.sources).toEqual({ sessions: 'available', bus: 'unavailable', owner: 'unavailable', orders: 'unavailable' });
-    expect(down.gaps).toEqual([LEADER_GAP, 'Bus messages not searched: the agent bus could not be read.', 'Messages from Mason not searched: the Leader inbox could not be read.',
+    expect(down.gaps).toEqual([LEADER_GAP, 'Bus messages not searched: the agent bus could not be read.', 'Messages from the owner not searched: the Leader inbox could not be read.',
       'Routing not searched: the order trace could not be read.', 'Some sessions\' recorded steps not searched: their activity could not be read.']);
     expect((await find('a')).gaps).toEqual([LEADER_GAP, 'Nothing to search for: give at least one word of two characters or more.']);
     const unread = buildSessionFind(buildLiveSessions(null, NOW), { sessionsRead: false, bus: null, activity: new Map() }, ['pass'], NOW);
