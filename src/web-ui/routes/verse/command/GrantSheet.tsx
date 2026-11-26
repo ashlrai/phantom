@@ -155,10 +155,12 @@ export function DraftScope({ draft }: { draft: AuthorityGrantDraft }) {
           {Object.entries(g.spend.seats).map(([seatId, seat]) => (
             <li key={seatId}>
               <span className={styles.mono}>{seatId}</span>
-              {seat.enabled ? `: keeps ${seat.reserveFloorPercent}% for you` : ': not used by autonomy'}
+              {seat.enabled ? engineOfSeatId(seatId) === 'devin'
+                ? ': within the Devin ACU budget and its reserve for the owner'
+                : `: keep ${seat.reserveFloorPercent}% for the owner` : ': not used by autonomy'}
               {seat.enabled && !isClaudeProvider(engineOfSeatId(seatId)) && seat.maxSessionWindowPercent !== undefined ? `, never above ${seat.maxSessionWindowPercent}% of its 5-hour window` : ''}
               {` · permitted roles: ${seat.roles.join(', ')}`}
-              {seat.enabled && seat.maxSessionWindowPercent === undefined ? ', no session ceiling' : ''}
+              {seat.enabled && engineOfSeatId(seatId) !== 'devin' && seat.maxSessionWindowPercent === undefined ? ', no session ceiling' : ''}
             </li>
           ))}
         </ul>
