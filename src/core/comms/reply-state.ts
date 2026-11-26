@@ -90,7 +90,7 @@ function line(r: Omit<ReplyState, 'text'>): string {
 function firstInThread(id: string, receipts: readonly BusInboxReceipt[]): string {
   const own = receipts.find(row => row.envelope.id === id);
   const ref = own?.envelope.channel_ref;
-  if (!own || ref === undefined || !isRequest(own)) return id;
+  if (!own || ref === undefined || ref.trim() === '' || !isRequest(own)) return id;
   const channel = own.envelope.channel ?? 'bus';
   let first = own;
   for (const row of receipts) {
