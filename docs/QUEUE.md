@@ -1313,7 +1313,12 @@ slots, dispatcher lane caps and ready counts, and recent finishes in
 `metrics/jobs.jsonl`. It models **additional** work: already-running jobs
 occupy slots but are not credited with future quota spend. Headroom must be
 observed and positive for a machine to offer extra slots; a shared slot can
-only be allocated once. Unhinted work and future arrivals are not counted.
+only be allocated once. The live planner counts ready jobs eligible for each
+included lane, including eligible unhinted jobs with explicit routing specs.
+Future arrivals are excluded. If queue or admission evidence is unavailable,
+or lane eligibility cannot be established, eligible demand stays `null`.
+Positive concurrency advice and reset proposals require verified eligible
+demand. A readable, evaluated lane with no eligible jobs reports zero demand.
 
 Waste is in the allowance's own units. Where there is a quota change and
 matching finishes inside the observation interval, the estimate uses the

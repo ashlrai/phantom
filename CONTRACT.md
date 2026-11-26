@@ -1546,6 +1546,13 @@ nowMs, windowHours)`, `foldMarketOverrides(jsonl, nowMs, windowHours)`,
 jobsTruncated?)`,
 `foldRouteRejections(marketJsonl, nowMs, windowHours)` and
 `renderUnfed(report)` in
+`buildFleetResourcePlan` in `src/core/usage/resource-live/fleet-plan.ts` accepts
+an optional eligible-demand map. An omitted argument uses dispatcher counts
+and the supplied reset-bank queue count. Explicit `null` means eligible
+demand is unavailable. In a supplied map, an absent lane is unknown and an
+empty lane list is measured zero. The live reader always supplies a map or
+`null`, so raw dispatcher totals cannot supply eligible demand.
+
 `src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
 `phm fleet unfed` (`fleet.unfed.v1`). `currentUnfed` accepts `null` for an
 unavailable ready queue, distinct from an empty string. In that case
