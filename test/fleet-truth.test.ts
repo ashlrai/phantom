@@ -188,6 +188,26 @@ describe('getFleetTruth', () => {
     expect(truth.queued).toBe(2);
   });
 
+  it('counts queued rows the market can run: hinted, lane-open, never dead envelopes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'), [
+      'RQ-LIVE\tphantom\tdevin\twork\t/p/l',
+      'RQ-OPEN\tphantom\tdevin\twork\t/p/o',
+      'RQ-BLANK\tphantom\t\twork\t/p/b',
+      'RQ-DEAD\tphantom\tdevin\twork\t/p/d',
+    ].join('\n'));
+    writeFileSync(join(root, 'queue', 'router-queue.md'), [
+      '- READY phantom RQ-LIVE (preferred_lane=codex): hinted work',
+      '- READY phantom RQ-OPEN (P2): open supply',
+      '- READY phantom RQ-DEAD (exclusive=maybe): malformed envelope',
+    ].join('\n'));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root });
+    // RQ-LIVE counts under its envelope lane, RQ-OPEN and RQ-BLANK are
+    // lane-open supply, and RQ-DEAD's malformed envelope makes it dead work.
+    expect(truth.queued).toBe(3);
+  });
+
   it('falls back to live job pids when admission.json is stale', async () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
     mkdirSync(join(root, 'queue'));

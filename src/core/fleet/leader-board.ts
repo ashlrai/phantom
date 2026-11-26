@@ -42,6 +42,8 @@ export const LEADER_BOARD_SCHEMA = 'fleet.leader-board.v1' as const;
 export const LEADER_BOARD_FILE = 'leader-board.json';
 
 const MAX_READY_BYTES = 2 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; same bound the unfed read uses. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_BOARD_BYTES = 256 * 1024;
 /** Rolling conflict observations kept on the board (a few hours of ticks). */
 const MAX_HISTORY = 96;
@@ -150,13 +152,13 @@ export function queueDepthByTier(rows: readonly { status: string; tier?: string 
  * depth — left in, a PARKED cell lands in the positional id or pool slot and
  * would inflate the READY count.
  */
-export function readyRowsForDepth(text: string): { status: string; tier?: string }[] {
+export function readyRowsForDepth(text: string, routerQueue?: string | null): { status: string; tier?: string }[] {
   const kept = text.split('\n').filter((line) => {
     if (!line.trim() || line.trimStart().startsWith('#')) return true;
     const cells = line.split('\t');
     return !parkedCell(cells[0]) && !parkedCell(cells[2]);
   });
-  const { rows, unhintedRows } = parseReadyTsv(kept.join('\n'));
+  const { rows, unhintedRows } = parseReadyTsv(kept.join('\n'), routerQueue);
   return [...rows, ...unhintedRows.map(({ tier }) => ({ status: 'READY', tier }))];
 }
 
@@ -259,8 +261,9 @@ function previousHistory(board: LeaderBoardV1 | null): LeaderBoardConflictSample
 async function buildLeaderBoard(runsDir: string, nowMs: number, previous: LeaderBoardConflictSample[],
   capacity: ReturnType<typeof readFleetResourcePlan>): Promise<LeaderBoardV1> {
   const at = new Date(nowMs);
-  const [readySource, counts, needs, plan] = await Promise.all([
+  const [readySource, routerSource, counts, needs, plan] = await Promise.all([
     readSource(join(runsDir, 'queue', 'ready.tsv'), MAX_READY_BYTES, false),
+    readSource(join(runsDir, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
     getLaneQueueCounts({ runsDir, now: () => at }).then(
       (report) => ({ state: 'ok' as const, report }),
       () => ({ state: 'unavailable' as const, report: null }),
@@ -271,7 +274,9 @@ async function buildLeaderBoard(runsDir: string, nowMs: number, previous: Leader
     capacity.catch(() => null),
   ]);
 
-  const depthRows = readySource.state === 'healthy' ? readyRowsForDepth(readySource.text) : null;
+  const depthRows = readySource.state === 'healthy'
+    ? readyRowsForDepth(readySource.text, routerSource.state === 'healthy' ? routerSource.text : null)
+    : null;
   const lanes: LeaderBoardLane[] = (counts.report?.lanes ?? []).map((row) => ({
     lane: row.lane,
     ready: row.ready,

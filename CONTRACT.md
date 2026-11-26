@@ -33,8 +33,10 @@ reads — `preferred_lane` (or `lane`/`pool`) wins over the lane column, an
 envelope naming no lane stays lane-open, and a malformed envelope or lane
 cell is `invalid_requirements`, never supply. Without it the lane column
 alone decides, exactly as before. `readyRowsForDepth`
-(`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
-`tier` for the tier tally, including lane-open jobs as `READY`.
+(`src/core/fleet/leader-board.ts`) accepts the same optional `routerQueue`
+text and returns rows with a `status` and optional
+`tier` for the tier tally, including lane-open jobs as `READY`; a spec-less
+row the market would reject stays out of the depth.
 `readyTsvHeader(cells)` returns the canonical column map for a recognized
 queue TSV header, or `null` for a data row. `conflictingPrIds(readyTsvText)`
 reads rebase identifiers from the job ID field, including parked rows.
