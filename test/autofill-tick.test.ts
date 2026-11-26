@@ -164,6 +164,35 @@ describe('autofill picks starved lanes from the status facts', () => {
     expect(report.lanes!.find(r => r.lane === 'claude')).toEqual({ lane: 'claude', starved: true, fed: 0, why: 'autofill off' });
     expect(autofillLaneLines(report.lanes!)[0]).toBe('claude: starved, fed 0 (autofill off)');
   });
+
+  it('does not feed a lane while lane-open rows wait for the market to place', async () => {
+    const report = await tick({}, { readLanes: async () => ({ lanes: [{ lane: 'claude', running: 0, target: 7, queued: 0, held: false, remainingPct: 40 }], openRows: 2 }) });
+    expect(report.runs).toEqual([]);
+    expect(report.lanes).toEqual([{ lane: 'claude', starved: false, fed: 0, why: '2 lane-open rows wait for any lane' }]);
+    expect(await queued()).toHaveLength(0);
+  });
+
+  it('credits no open supply when the count is unknown or zero', async () => {
+    const mk = (lane: string, openRows: number | null) => ({ lanes: [{ lane, running: 0, target: 7, queued: 0, held: false, remainingPct: 40 }], openRows });
+    for (const [lane, openRows] of [['claude', null], ['zai', 0]] as const) {
+      const report = await tick({}, { readLanes: async () => mk(lane, openRows) });
+      expect(report.lanes).toEqual([{ lane, starved: true, fed: report.runs[0]?.applied ?? 0, why: `running 0 of 7, 0 queued, pool 60% used` }]);
+      expect(report.runs[0]).toMatchObject({ lane, applied: expect.any(Number) });
+      expect(report.runs[0]!.applied).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps the more specific reason when open supply also waits', async () => {
+    const report = await tick({}, { readLanes: async () => ({ lanes: [
+      { lane: 'claude', running: 0, target: 7, queued: 2, held: false, remainingPct: 40 },
+      { lane: 'zai', running: 0, target: 7, queued: 0, held: true, remainingPct: 40 },
+    ], openRows: 5 }) });
+    expect(report.lanes).toEqual([
+      { lane: 'claude', starved: false, fed: 0, why: '2 ready rows are already queued for it' },
+      { lane: 'zai', starved: false, fed: 0, why: 'held, so it is skipped' },
+    ]);
+    expect(report.runs).toEqual([]);
+  });
 });
 
 describe('phm queue autofill --status', () => {

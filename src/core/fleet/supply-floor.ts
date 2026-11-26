@@ -50,12 +50,16 @@ export async function runSupplyFloor(o: AutofillTickOptions, view: LaneSnapshotV
     const router = await readSource(join(queue, 'router-queue.md'), 2 * 1024 * 1024, false);
     const ready = await readSource(join(queue, 'ready.tsv'), 2 * 1024 * 1024, false);
     if (router.state === 'degraded' || ready.state === 'degraded') return rows;
+    // Lane-open READY rows are shared supply the market may place on any lane;
+    // like fleet.launchable's under-supply check they count toward each lane's
+    // waiting depth. Unknown or absent credits nothing — supply is never invented.
+    const openRows = typeof view.openRows === 'number' && Number.isSafeInteger(view.openRows) && view.openRows > 0 ? view.openRows : 0;
     let existing = router.text + '\n' + ready.text;
     const pending = readyJobs(router.text).filter(job => !ready.text.split('\n').some(line => line.split('\t')[0] === job.id));
     for (const f of view.lanes) {
       if (!LANE_NAME.test(f.lane) || f.held || f.remainingPct === null || f.remainingPct <= 0 || f.target === null || f.running === null || f.queued === null
         || pace.get(f.lane)?.verdict === 'over' || pace.get(f.lane)?.state === 'ahead') continue;
-      const gap = f.target - f.running, min = Math.min(gap, 8), queued = f.queued + pending.filter(job => job.pool === f.lane).length;
+      const gap = f.target - f.running, min = Math.min(gap, 8), queued = f.queued + pending.filter(job => job.pool === f.lane).length + openRows;
       if (queued >= min) continue;
       const result = await (o.fill ?? runQueueAutofill)({ lane: f.lane, counts: { ...f, queued }, min, limit: min - queued, apply: false,
         root: o.root, runsDir: o.runsDir, dir: queue, entries: o.entries, now: o.now(),

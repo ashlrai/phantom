@@ -32,6 +32,32 @@ it('feeds the router floor, counts pending rows, and leaves dry runs unchanged',
   expect(await runSupplyFloor({ ...options, readPace: async () => over }, { lanes: [{ ...lane, lane: 'claude', queued: 0 }] })).toEqual([]);
 });
 
+it('counts lane-open ready rows toward each lane\'s waiting supply', async () => {
+  // The fill seam sees the credited queue depth, like runQueueAutofill does.
+  const fill = async (o: { lane: string; counts: { running: number | null; target: number | null; queued: number | null }; min?: number }) =>
+    planAutofill({ lane: o.lane, min: o.min ?? 8, running: o.counts.running, target: o.counts.target, queued: o.counts.queued,
+      existing: [], proposed: { proposals: [], droppedGoals: [] }, first: Array.from({ length: 8 }, (_, i) => candidate(`open${i}`)) });
+  const options = { runsDir: root, root, apply: true, now: () => now, entries: [], readOff: async () => false, readPace: async () => new Map<string, PaceVerdict>(), fill };
+  // claude: target 20, running 4 → gap 16, floor min 8; queued 2 + 6 lane-open = 8 → nothing to add.
+  const covered = { ...options, readLanes: async () => ({ lanes: [{ ...lane }], openRows: 6 }) };
+  expect(await runSupplyFloor(covered, await covered.readLanes())).toEqual([]);
+  await expect(readFile(join(root, 'queue/router-queue.md'), 'utf8')).rejects.toThrow();
+  // Three lane-open rows cover part of the gap: the floor tops up only the rest.
+  const partial = { ...options, readLanes: async () => ({ lanes: [{ ...lane }], openRows: 3 }) };
+  const report = await runSupplyFloor(partial, await partial.readLanes());
+  expect(report[0]).toMatchObject({ lane: 'claude', added: 3 });
+  expect((await readFile(join(root, 'queue/router-queue.md'), 'utf8')).match(/- READY/g)).toHaveLength(3);
+});
+
+it('credits no open supply when the count is unknown', async () => {
+  const options = { runsDir: root, root, apply: true, now: () => now, entries: [], readOff: async () => false, readPace: async () => new Map<string, PaceVerdict>(),
+    fill: async () => planAutofill({ ...lane, min: 8, existing: [], proposed: { proposals: [], droppedGoals: [] }, first: Array.from({ length: 8 }, (_, i) => candidate(`plain${i}`)) }) };
+  // queued 2 of min 8 with openRows null tops up exactly as before the field existed.
+  const view = { lanes: [{ ...lane }], openRows: null };
+  const report = await runSupplyFloor({ ...options, readLanes: async () => view }, view);
+  expect(report[0]).toMatchObject({ lane: 'claude', added: 6 });
+});
+
 it('ranks measured PR yield, stops weak families, respects stops and retirement, and excludes old launches', async () => {
   const events = ['good', 'weak', 'edge', 'old'].flatMap(name => Array.from({ length: 4 }, (_, i) => {
     const job = `${name}${i}`, ts = new Date(now - (name === 'old' ? 25 : 1) * 3600000).toISOString();

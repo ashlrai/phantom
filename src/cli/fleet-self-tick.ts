@@ -295,7 +295,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       const view = await options.readLanes().catch(() => null);
       const supply = await (await import('../core/fleet/supply-floor.js')).runSupplyFloor(options, view);
       for (const row of supply) if (!json) output(row.line);
-      return { ...await runAutofillTick({ ...options, readLanes: async () => view && ({ lanes: view.lanes.map(f => ({ ...f,
+      return { ...await runAutofillTick({ ...options, readLanes: async () => view && ({ ...view, lanes: view.lanes.map(f => ({ ...f,
         queued: f.queued === null ? null : f.queued + (supply.find(row => row.lane === f.lane)?.added ?? 0) })) }) }), supply };
     } catch (error) {
       return { reason: 'autofill failed', error: error instanceof Error ? error.message.slice(0, 120) : 'unknown error' };
