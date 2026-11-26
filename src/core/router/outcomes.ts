@@ -2,6 +2,7 @@ import { constants } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import { ashlrHome } from '../cloud/store.js';
 import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
@@ -2446,11 +2447,11 @@ const marketRejectedLanes = (v: unknown): MarketRejectedLane[] | null => {
  * list reads as unrecorded (`null`), and a non-empty list whose every
  * entry is malformed reads as unrecorded too. Rows with a missing or
  * non-finite ts, a wrong schema/event, or a malformed job id are
- * skipped, never guessed; a job absent from the map keeps every
- * market_* field null.
+ * skipped. Conflicting verdicts at the newest timestamp leave the job
+ * absent from the map, so every market verdict field stays null.
  */
 export function foldRouteDecisions(text: string): Map<string, MarketRouteDecision> {
-  const latest = new Map<string, { ts: number; decision: MarketRouteDecision }>();
+  const latest = new Map<string, { ts: number; decision: MarketRouteDecision | null }>();
   for (const line of text.split('\n')) {
     // Cheap prefilter: route decisions are the bulk of the file.
     if (!line.includes('"route_decision"')) continue;
@@ -2468,7 +2469,7 @@ export function foldRouteDecisions(text: string): Map<string, MarketRouteDecisio
     const ts = row['ts'];
     if (typeof ts !== 'number' || !Number.isFinite(ts)) continue;
     const prev = latest.get(job);
-    if (prev !== undefined && prev.ts >= ts) continue;
+    if (prev !== undefined && prev.ts > ts) continue;
     const lane = row['chosen_lane'];
     const preferred = row['preferred_lane'];
     const override = row['override'];
@@ -2476,18 +2477,24 @@ export function foldRouteDecisions(text: string): Map<string, MarketRouteDecisio
       ? (override as Row)['reason'] : undefined;
     const reasons = boundedReasonList(row['reason_codes']);
     const rejected = marketRejectedLanes(row['rejected_lanes']);
-    latest.set(job, {
-      ts,
-      decision: {
-        lane: typeof lane === 'string' && LANE_BLOCKED_HINT.test(lane) ? lane : null,
-        preferred: typeof preferred === 'string' && LANE_BLOCKED_HINT.test(preferred) ? preferred : null,
-        override: typeof overrideReason === 'string' && LANE_BLOCKED_CODE.test(overrideReason) ? overrideReason : null,
-        reasons,
-        rejected,
-      },
-    });
+    const decision: MarketRouteDecision = {
+      lane: typeof lane === 'string' && LANE_BLOCKED_HINT.test(lane) ? lane : null,
+      preferred: typeof preferred === 'string' && LANE_BLOCKED_HINT.test(preferred) ? preferred : null,
+      override: typeof overrideReason === 'string' && LANE_BLOCKED_CODE.test(overrideReason) ? overrideReason : null,
+      reasons,
+      rejected,
+    };
+    if (prev?.ts === ts) {
+      if (!isDeepStrictEqual(prev.decision, decision)) prev.decision = null;
+    } else {
+      latest.set(job, { ts, decision });
+    }
   }
-  return new Map([...latest].map(([job, entry]) => [job, entry.decision]));
+  const decisions = new Map<string, MarketRouteDecision>();
+  for (const [job, { decision }] of latest) {
+    if (decision !== null) decisions.set(job, decision);
+  }
+  return decisions;
 }
 
 /**

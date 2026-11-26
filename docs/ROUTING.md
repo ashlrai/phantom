@@ -472,8 +472,11 @@ joining under the same bounded shapes: a recorded empty list stays
 unrecorded `null`, and an entry's `reason_codes` keeps the same
 empty-versus-unrecorded distinction) — under the same `market_state`
 health and newest-decision
-rule: a missing field stays `null`, a recorded empty reason list
-stays `[]`, and decision rows naming jobs outside the jobs window
+rule. A missing field stays `null` and a recorded empty reason list stays
+`[]`. Receipts tied at the newest timestamp must agree on the normalized
+routing verdict. If they disagree, all five verdict fields stay `null`
+until a newer decision supersedes the tie. Work class uses its own
+agreement check. Decision rows naming jobs outside the jobs window
 never create outcomes. `lane_hint_blocked_by` carries the dispatch claim's
 recorded lane-hint blocking codes — the third field of the claim's
 lane-override record: a solo `claim` row that left its hinted lane
