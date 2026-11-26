@@ -339,8 +339,8 @@ export interface RouterOutcome {
   review_findings: { fixed: number; rejected: number; ignored: number } | null;
   /**
    * USD cost recorded for the job: an explicit cost field on a jobs.jsonl row
-   * (cost_usd|usd|cost) wins; otherwise the sum of api-spend.jsonl call costs
-   * naming the job; the reward-signal row's recorded `cost.costUsd` is the
+   * (cost_usd|usd|cost) wins; otherwise an untruncated api-spend.jsonl supplies
+   * the sum of call costs naming the job. The reward-signal row's `cost.costUsd` is the
    * last resort when neither reported one. Null when no source reported a
    * cost — a job whose calls carried no cost is unknown, never zero. May
    * include collector-estimated costs (cost_estimated rows still report a
@@ -3065,8 +3065,8 @@ export interface RouterOutcomeRead extends RouterOutcomeFold {
    */
   spend_state: Exclude<LedgerReadState, 'too-large'>;
   /**
-   * True when the spend ledger exceeded the retained tail: joined per-job
-   * costs cover only the newest bytes and are lower bounds, never totals.
+   * True when the spend ledger exceeded the retained tail and spend-derived
+   * costs were withheld because earlier calls may be missing.
    */
   spend_truncated: boolean;
   /**
@@ -3238,8 +3238,8 @@ function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: Reado
  * empty ledger; a ledger larger than the bound reads its tail and reports
  * truncated:true. The spend, market and empty-tags ledgers degrade
  * independently: spend_state, market_state and empty_tag_state report
- * their health, spend-derived cost_usd fills only outcomes whose explicit
- * ledger cost stayed null, market-derived work_class fills only outcomes
+ * their health, an untruncated spend ledger fills cost_usd where the explicit
+ * jobs-ledger cost stayed null, market-derived work_class fills only outcomes
  * whose jobs rows recorded none, and empty_tag fills only outcomes a
  * job.empty-tag.v1 row named — a missing joined ledger never zeroes,
  * guesses or blocks the jobs fold. The market ledger's newest
@@ -3403,7 +3403,7 @@ export async function readRouterOutcomes(opts: {
     mergeEventsTruncated,
     crossReviews: crossReviewRead.state === 'read' ? foldCrossReviews(crossReviewRead.text) : undefined,
   }, undatedCiJobs);
-  if (spendRead.state === 'read') {
+  if (spendRead.state === 'read' && !spendTruncated) {
     const costs = foldSpendCosts(spendRead.text);
     for (const o of folded.outcomes) {
       if (o.cost_usd !== null) continue;

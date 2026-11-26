@@ -737,7 +737,9 @@ evidence; a job whose calls reported no cost stays `null` — unknown,
 never zero — and `cost_estimated` calls still count because they report a
 USD figure. The spend read degrades independently: the report's
 `spend_state` mirrors the jobs `state` vocabulary and `spend_truncated`
-marks a cut spend tail, in which case joined costs are lower bounds.
+marks a cut spend tail. Phantom withholds spend-derived costs when earlier
+calls may be missing. Explicit jobs-ledger costs and the reward-signal
+fallback still apply.
 The reward-signal ledger joins under the ASHLR home root — the same
 root the eval passk projection resolves — because it persists resolved
 per-job outcome evidence far longer than the bounded jobs tail: the

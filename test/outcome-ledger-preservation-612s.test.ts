@@ -1504,14 +1504,26 @@ describe('router outcome spend join', () => {
     expect(result).toMatchObject({ state: 'missing', spend_state: 'read', spend_truncated: false, outcomes: [] });
   });
 
-  it('flags a cut spend tail so joined costs read as lower bounds', async () => {
-    const root = runsDir('{"job":"J1","phase":"MERGED"}\n');
-    writeSpend(root, '');
-    // Sparse file past the bound: the retained window holds no whole line.
+  it('withholds cut spend sums and preserves independent recorded costs', async () => {
+    const root = runsDir([
+      '{"job":"J1","phase":"MERGED"}',
+      '{"job":"J2","phase":"MERGED","cost_usd":2}',
+      '{"job":"J3","phase":"MERGED"}',
+    ].join('\n'));
+    writeSpend(root, '{"job":"J1","cost_usd":3}\n');
     truncateSync(spendPath(root), ROUTER_OUTCOME_LEDGER_LIMIT + 1);
-    const result = await readRouterOutcomes({ runsDir: root });
+    appendFileSync(spendPath(root), '\n' + [
+      '{"job":"J1","cost_usd":1}',
+      '{"job":"J2","cost_usd":9}',
+      '{"job":"J3","cost_usd":0.25}',
+      '',
+    ].join('\n'));
+
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: rewardLedger([rewardRow('J3', true)]) });
     expect(result).toMatchObject({ state: 'read', spend_state: 'read', spend_truncated: true });
-    expect(result.outcomes[0]?.cost_usd).toBeNull();
+    expect(result.outcomes.map(({ job_id, cost_usd }) => [job_id, cost_usd])).toEqual([
+      ['J1', null], ['J2', 2], ['J3', 0.75],
+    ]);
   });
 });
 
