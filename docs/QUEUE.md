@@ -453,6 +453,9 @@ The Leader board's `queueDepthByTier` counts READY work across the fleet,
 including rows with an empty lane column or an explicit
 `"preferred_lane": null` in the requirements. These open jobs have no
 per-lane attribution.
+The board groups parsed READY rows under `frontier`, `work`, `mid`, or
+`fast`, accepting case variants for reporting. Missing and unsupported tier
+labels share the `unknown` bucket.
 
 `phm queue` owns the separate `queue.v1` coordination snapshot at
 `~/.ashlr-runs/queue/queue.v1.json`. `--dir <directory>` selects an isolated store.
