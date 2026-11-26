@@ -25,7 +25,7 @@ const VERDICT_SKEW_MS = 60_000;
 const VERDICTS = ['pass', 'fail', 'inconclusive'] as const;
 
 function rerunKey(e: Pick<Entry, 'repo' | 'head' | 'runId'>): string {
-  return JSON.stringify([e.repo, e.head, e.runId]);
+  return JSON.stringify([e.repo.toLowerCase(), e.head, e.runId]);
 }
 
 function compareVerdictPosition(a: VerdictCursor, b: VerdictCursor): number {
@@ -37,7 +37,7 @@ function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
   const runs = new Map<string, { first: Entry; verdictConflict: boolean; testConflict: boolean }>();
   for (const entry of entries) {
     if (entry.outcome !== 'verdict' || Date.parse(entry.at) > nowMs) continue;
-    const key = JSON.stringify([entry.repo, entry.runId]);
+    const key = JSON.stringify([entry.repo.toLowerCase(), entry.runId]);
     const run = runs.get(key);
     if (!run) {
       runs.set(key, { first: entry, verdictConflict: false, testConflict: false });
@@ -217,8 +217,10 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
   try {
     for (const repo of opts.repos) {
       opts.signal.throwIfAborted();
+      const repoKey = repo.toLowerCase();
       const s: RepoStatus = { groups: 0, attempted: 0, ok: 0, failed: 0, skippedDuplicate: 0, skippedCap: 0, queued: 0, flakeFixesQueued: 0, recurringFlakes: 0, verdictsPending: 0, verdictsResolved: 0, queueBlocked: null, errors: [] };
-      s.verdictCursor = previous?.repos?.[repo]?.verdictCursor;
+      const previousRepo = Object.keys(previous?.repos ?? {}).find(name => name.toLowerCase() === repoKey);
+      s.verdictCursor = previousRepo === undefined ? undefined : previous?.repos[previousRepo]?.verdictCursor;
       status.repos[repo] = s;
       try {
         const report = await (opts.analyzer ?? analyzeCiBaseline)(repo, gh);
@@ -251,12 +253,13 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
           opts.signal.throwIfAborted();
           for (const run of group.runs) {
             opts.signal.throwIfAborted();
-            if (journal.some(e => e.repo === repo && e.head === run.head && e.runId === run.runId)) { s.skippedDuplicate++; continue; }
+            const key = rerunKey({ repo, ...run });
+            if (journal.some(e => rerunKey(e) === key)) { s.skippedDuplicate++; continue; }
             const cap = opts.maxPerHour ?? 10;
             const evaluatedAt = now();
             if (!Number.isFinite(cap) || hourlyAttempts(observedAttempts(journal, evaluatedAt), evaluatedAt) >= Math.max(0, cap)) { s.skippedCap++; continue; }
             const entry: Entry = { at: new Date(now()).toISOString(), repo, ...run, outcome: 'attempt' };
-            const tests = [...(testsByRun.get(rerunKey(entry)) ?? [])];
+            const tests = [...(testsByRun.get(key) ?? [])];
             if (tests.length === 1) entry.test = tests[0];
             else if (tests.length > 1) entry.tests = tests;
             append(entry);
@@ -265,13 +268,13 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
             try { ok = (await gh(['run', 'rerun', String(run.runId), '--failed', '--repo', repo])).ok; }
             catch (error) { if (opts.signal.aborted) throw error; }
             // A failed-job rerun can include failures outside the triggering flakes.
-            const test = runsWithOtherFailures.has(rerunKey(entry)) ? undefined : entry.test;
+            const test = runsWithOtherFailures.has(key) ? undefined : entry.test;
             append({ ...entry, test, tests: undefined, at: new Date(now()).toISOString(), outcome: ok ? 'ok' : 'failed' });
             if (ok) s.ok++; else s.failed++;
           }
         }
         opts.signal.throwIfAborted();
-        const repoEntries = journal.filter(e => e.repo === repo);
+        const repoEntries = journal.filter(e => e.repo.toLowerCase() === repoKey);
         const evaluatedAt = now();
         const flakes = summarizeFlakes(observedAttempts(repoEntries, evaluatedAt), evaluatedAt, observedVerdicts(repoEntries, evaluatedAt));
         s.recurringFlakes = flakes.length;
