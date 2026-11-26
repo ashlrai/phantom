@@ -680,6 +680,102 @@ describe('standalone join node id default', () => {
   });
 });
 
+describe('join dropped-profile report', () => {
+  it('names the owners, caps and slot bound a re-join stops advertising', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      let now = 1_000_000;
+      const deps = { store, now: () => now, phmVersion: () => '9.9.9' };
+      // First join: nothing to drop, so the reply carries no `dropped` key.
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme,beta',
+        '--caps', 'build,gh', '--slots', '2', '--json'], deps)).toBe(0);
+      expect(JSON.parse(lines.at(-1)!)).not.toHaveProperty('dropped');
+      // Past the 30 s node TTL the record is expired; a narrower re-join
+      // replaces it wholesale, and the reply names what it dropped plus the
+      // re-join that keeps this join's profile and adds the drops back.
+      now += 31_000;
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme',
+        '--caps', 'build', '--json'], deps)).toBe(0);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out).toMatchObject({ owners: ['acme'], caps: ['build', 'phm-9.9.9'] });
+      expect(out).not.toHaveProperty('slots');
+      expect(out['dropped']).toEqual({
+        owners: ['beta'], caps: ['gh'], slots: 2,
+        restore: 'phm node join --node laptop --owner acme,beta --caps build,gh --slots 2 --watch',
+      });
+      // The stored profile really is the narrower one — the report is honest.
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')).toMatchObject({ owners: ['acme'], caps: ['build', 'phm-9.9.9'] });
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.slots).toBeUndefined();
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('stays silent when nothing was dropped: first join, leave, and identical re-join', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      let now = 1_000_000;
+      const deps = { store, now: () => now, phmVersion: () => '9.9.9' };
+      const join = (extra: string[] = []) => cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme',
+        '--caps', 'build', ...extra, '--json'], deps);
+      await join(['--slots', '2']);
+      // Same profile re-joined after expiry drops nothing.
+      now += 31_000;
+      await join(['--slots', '2']);
+      expect(JSON.parse(lines.at(-1)!)).not.toHaveProperty('dropped');
+      // A leave removes the record entirely, so the next join has no prior.
+      const session = String(JSON.parse(lines.at(-1)!)['session']);
+      expect(await cmdNodeFleet('leave', ['--node', 'laptop', '--session', session, '--json'], deps)).toBe(0);
+      await join();
+      expect(JSON.parse(lines.at(-1)!)).not.toHaveProperty('dropped');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('never counts the join-managed phm-<version> cap as dropped', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      let now = 1_000_000;
+      let version = '1.0.0';
+      const deps = { store, now: () => now, phmVersion: () => version };
+      await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build', '--json'], deps);
+      now += 31_000;
+      // The build marker rolls over on its own; only real caps count as drops.
+      version = '2.0.0';
+      await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build', '--json'], deps);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out['caps']).toEqual(['build', 'phm-2.0.0']);
+      expect(out).not.toHaveProperty('dropped');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('prints the drop note and restore command in text mode', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      let now = 1_000_000;
+      const deps = { store, now: () => now, phmVersion: () => '9.9.9' };
+      await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme,beta', '--caps', 'build,gh', '--json'], deps);
+      now += 31_000;
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build'], deps)).toBe(0);
+      const text = lines.at(-1)!;
+      expect(text).toContain('drops owner scopes beta; caps gh');
+      expect(text).toContain('phm node join --node laptop --owner acme,beta --caps build,gh --watch');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('the SSH endpoint reports the same drops with a pool-shaped restore (no --watch)', () => {
+    const f = fixture();
+    executeNodeFleet('join', ['--node', 'box', '--owner', 'acme,beta', '--caps', 'build,gh', '--slots', '2'], f.a);
+    f.advance(101); // past the fixture's 100 ms node TTL
+    const out = executeNodeFleet('join', ['--node', 'box', '--owner', 'acme', '--caps', 'build'], f.a);
+    expect(out['dropped']).toEqual({
+      owners: ['beta'], caps: ['gh'], slots: 2,
+      restore: 'phm node join --node box --owner acme,beta --caps build,gh --slots 2',
+    });
+  });
+});
+
 describe('result: read-only owner-scoped outcome', () => {
   const resultArgs = (jobId: string, owner: string) => ['--job', jobId, '--owner', owner];
   const leaseArgs = (claim: { nodeId: string; session: number; jobId: string; token: number; leaderToken: number }, result?: string) =>

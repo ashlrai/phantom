@@ -117,6 +117,21 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       const fix = typeof lanes.fix === 'string' ? lanes.fix : 'Run: phm node lanes';
       lines.push(`Local model lanes not advertised: ${lanes.error}. ${fix}`);
     }
+    // A re-join replaces the whole advertised profile, so owners, caps or the
+    // --slots bound the last join carried but this one did not are gone —
+    // silently, unless the reply names them. `dropped` rides the reply only
+    // when something was actually lost; `restore` is the re-join that keeps
+    // this join's profile and adds the dropped pieces back.
+    const dropped = out['dropped'] as { owners?: string[]; caps?: string[]; slots?: number; restore?: string } | undefined;
+    if (dropped !== undefined) {
+      const lost = [
+        dropped.owners?.length ? `owner scopes ${dropped.owners.join(', ')}` : null,
+        dropped.caps?.length ? `caps ${dropped.caps.join(', ')}` : null,
+        dropped.slots !== undefined ? `the --slots ${dropped.slots} bound` : null,
+      ].filter((part): part is string => part !== null);
+      lines.push(`This join replaces the profile the node last advertised and drops ${lost.join('; ')}. Name them again to keep them:`,
+        `  ${String(dropped.restore)}`);
+    }
     return lines.join('\n');
   }
   if (verb === 'beat') {
