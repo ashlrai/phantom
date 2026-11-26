@@ -142,6 +142,29 @@ describe('CI baseline evidence', () => {
     const suite = await analyzeCiBaseline('owner/repo', github({ suite: true, pass: true, filePass: true, count: 1 }).gh);
     expect(suite.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
   });
+  it.each(['4 tests | 1 skipped', '4 tests | 1 todo', '4 tests | 1 skipped | 1 todo', '0 test'])(
+    'withholds named master pass evidence from a green module with %s',
+    async summary => {
+      const { gh } = github({ count: 1, pass: true, filePass: true });
+      const report = await analyzeCiBaseline('owner/repo', async args => {
+        const result = await gh(args);
+        return args[1]?.endsWith('/jobs/10/logs')
+          ? { ...result, stdout: result.stdout.replace('(4 tests)', `(${summary})`) }
+          : result;
+      });
+      expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+    },
+  );
+  it('uses a partially executed green module to resolve a suite-load failure', async () => {
+    const { gh } = github({ count: 1, suite: true, pass: true, filePass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      return args[1]?.endsWith('/jobs/10/logs')
+        ? { ...result, stdout: result.stdout.replace('(4 tests)', '(4 tests | 1 skipped | 1 todo)') }
+        : result;
+    });
+    expect(report.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
+  });
   it('excludes stale and unreadable or unrecognized logs', async () => {
     for (const options of [{ stale: true }, { unknown: true }, { unreadable: true }]) {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);
