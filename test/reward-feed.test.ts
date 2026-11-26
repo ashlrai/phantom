@@ -271,6 +271,32 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs).toHaveLength(1);
     expect(inputs[0]).toMatchObject({ ciWallMs: 900_000 });
   });
+
+  it.each([merged, closed])('omits CI timing outside the rewarded dispatch and resolution (%o)', (resolve) => {
+    const job = 'RQ-LIFECYCLE-CI';
+    const rows = [
+      launch(job),
+      launch(job, 'omlx', '2026-10-28T15:00:00.000Z'),
+      resolve(job, '2026-10-28T15:30:00.000Z'),
+    ];
+    const outsidePairs = [
+      ['14:10:00', '14:25:00'], // previous attempt
+      ['14:55:00', '15:25:00'], // spans the retry
+      ['15:10:00', '15:30:30'], // completes after resolution, before the merge receipt
+      ['15:35:00', '15:45:00'], // subsequent CI
+    ] as const;
+    for (const [start, complete] of outsidePairs) {
+      const text = [
+        ...rows,
+        ciStart(job, `2026-10-28T${start}.000Z`),
+        ciComplete(job, `2026-10-28T${complete}.000Z`),
+      ].join('\n');
+      const inputs = foldJobsLedgerRewards(text, NOW_MS);
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0]).toMatchObject({ pool: 'omlx', dispatchedAt: '2026-10-28T15:00:00.000Z' });
+      expect(inputs[0]).not.toHaveProperty('ciWallMs');
+    }
+  });
 });
 
 describe('writeRewardSignals', () => {

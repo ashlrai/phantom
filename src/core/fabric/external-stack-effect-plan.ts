@@ -8,23 +8,33 @@
  * digests. V1 is pinned to the audited stable Stack 0.2.x producer family.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import {
+  SHA256_PREFIXED_DIGEST_RE as DIGEST_RE,
+  canonicalJsonBytes,
+  decodeStrictUtf8JsonBytes,
+  deepFreeze as immutable,
+  exactKeys,
+  isCanonicalIsoTimestamp as canonicalIso,
+  isEnumValue as enumValue,
+  isSafeIntegerInRange as integer,
+  isUnsupportedStackSourceVersionV1 as unsupportedSourceVersion,
+  isValidStackSourceV1 as validSource,
+  sha256Prefixed as sha,
+  strictPlainRecord as record,
+  timingSafeUtf8Equal as sameText,
+  type StackSourceMetadataV1,
+} from './external-contract-codec.js';
 
 export const STACK_PLANNED_EFFECT_MANIFEST_PROTOCOL = 'ashlr-stack-planned-effect-manifest-v1' as const;
-export const EXTERNAL_STACK_EFFECT_PLAN_PROTOCOL = 'ashlr-external-stack-effect-plan-v1' as const;
+const EXTERNAL_STACK_EFFECT_PLAN_PROTOCOL = 'ashlr-external-stack-effect-plan-v1' as const;
 export const STACK_PLANNED_EFFECT_MAX_BYTES = 64 * 1024;
-export const STACK_PLANNED_EFFECT_MAX_LIFETIME_MS = 10 * 60_000;
-export const STACK_PLANNED_EFFECT_MAX_FUTURE_SKEW_MS = 60_000;
+const STACK_PLANNED_EFFECT_MAX_LIFETIME_MS = 10 * 60_000;
+const STACK_PLANNED_EFFECT_MAX_FUTURE_SKEW_MS = 60_000;
 
-const MAX_CANONICAL_DEPTH = 12;
-const MAX_CANONICAL_NODES = 2_000;
+const CANONICAL_BOUNDS = { maxDepth: 12, maxNodes: 2_000, maxBytes: STACK_PLANNED_EFFECT_MAX_BYTES };
 const MAX_ESTIMATED_COST_MICRO_UNITS = 1_000_000_000_000;
-const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
-const COMMIT_RE = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
-const SEMVER_RE = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-const STACK_SOURCE_VERSION_RE = /^0\.2\.(?:0|[1-9][0-9]*)$/;
 
-export const STACK_EFFECT_CLASSES_V1 = [
+const STACK_EFFECT_CLASSES_V1 = [
   'configuration',
   'deployment',
   'filesystem',
@@ -33,7 +43,7 @@ export const STACK_EFFECT_CLASSES_V1 = [
   'source-control',
 ] as const;
 
-export const STACK_EFFECT_VERBS_V1 = [
+const STACK_EFFECT_VERBS_V1 = [
   'apply',
   'create',
   'delete',
@@ -69,11 +79,7 @@ export interface StackPlannedEffectManifestV1 {
   schemaVersion: 1;
   protocol: typeof STACK_PLANNED_EFFECT_MANIFEST_PROTOCOL;
   artifactClass: 'effect-proposal';
-  source: {
-    product: 'stack';
-    version: string;
-    commit: string;
-  };
+  source: StackSourceMetadataV1;
   generatedAt: string;
   expiresAt: string;
   targetDigest: string;
@@ -97,7 +103,7 @@ export interface StackPlannedEffectManifestV1 {
 
 export interface ExternalStackEffectPlanV1 {
   schemaVersion: 1;
-  protocol: typeof EXTERNAL_STACK_EFFECT_PLAN_PROTOCOL;
+  protocol: 'ashlr-external-stack-effect-plan-v1';
   recordType: 'external-stack-effect-plan';
   artifactClass: 'effect-proposal';
   verification: 'local-unverified';
@@ -165,7 +171,6 @@ const MANIFEST_KEYS = [
   'protocol', 'requiredSecretCapabilityClass', 'rollback', 'schemaVersion', 'source', 'targetDigest',
 ] as const;
 const UNSIGNED_MANIFEST_KEYS = MANIFEST_KEYS.filter((key) => key !== 'manifestDigest');
-const SOURCE_KEYS = ['commit', 'product', 'version'] as const;
 const EFFECT_KEYS = ['class', 'verb'] as const;
 const COST_KEYS = ['amountMicroUnits', 'currency', 'known'] as const;
 const ROLLBACK_KEYS = ['class', 'planDigest'] as const;
@@ -179,129 +184,22 @@ const VERBS_BY_CLASS: Readonly<Record<StackEffectClassV1, readonly StackEffectVe
   'source-control': ['apply', 'revert'],
 };
 
-type Canonical = null | boolean | number | string | Canonical[] | { [key: string]: Canonical };
-
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const keys = Reflect.ownKeys(value);
-    if (keys.some((key) => typeof key !== 'string' || !descriptors[String(key)]?.enumerable ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const sorted = [...expected].sort();
-  return actual.length === sorted.length && actual.every((key, index) => key === sorted[index]);
-}
-
-function canonicalize(
-  value: unknown,
-  state = { depth: 0, nodes: 0, ancestors: new Set<object>() },
-): Canonical {
-  state.nodes += 1;
-  if (state.nodes > MAX_CANONICAL_NODES || state.depth > MAX_CANONICAL_DEPTH) throw new TypeError('value exceeds bounds');
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new TypeError('non-finite number');
-    return Object.is(value, -0) ? 0 : value;
-  }
-  if (typeof value !== 'object' || state.ancestors.has(value)) throw new TypeError('non-json value');
-  state.ancestors.add(value);
-  state.depth += 1;
-  try {
-    if (Array.isArray(value)) {
-      if (Reflect.ownKeys(value).some((key) => typeof key === 'symbol' ||
-        (key !== 'length' && !/^(?:0|[1-9][0-9]*)$/.test(key)))) throw new TypeError('invalid array');
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse array');
-        return canonicalize(entry, state);
-      });
-    }
-    const row = record(value);
-    if (!row) throw new TypeError('non-plain object');
-    const output: { [key: string]: Canonical } = Object.create(null) as { [key: string]: Canonical };
-    for (const key of Object.keys(row).sort()) output[key] = canonicalize(row[key], state);
-    return output;
-  } finally {
-    state.depth -= 1;
-    state.ancestors.delete(value);
-  }
-}
-
 function canonicalBytes(value: unknown): Buffer | null {
-  try {
-    const bytes = Buffer.from(JSON.stringify(canonicalize(value)), 'utf8');
-    return bytes.length <= STACK_PLANNED_EFFECT_MAX_BYTES ? bytes : null;
-  } catch {
-    return null;
-  }
-}
-
-function sha(domain: string, value: Uint8Array): string {
-  return `sha256:${createHash('sha256').update(domain, 'utf8').update('\0').update(value).digest('hex')}`;
-}
-
-function sameText(left: unknown, right: unknown): boolean {
-  if (typeof left !== 'string' || typeof right !== 'string') return false;
-  const leftBytes = Buffer.from(left, 'utf8');
-  const rightBytes = Buffer.from(right, 'utf8');
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
-}
-
-function immutable<T>(value: T, seen = new WeakSet<object>()): T {
-  if (value === null || typeof value !== 'object' || seen.has(value)) return value;
-  seen.add(value);
-  for (const nested of Object.values(value as Record<string, unknown>)) immutable(nested, seen);
-  return Object.freeze(value);
-}
-
-function canonicalIso(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > 40) return false;
-  const milliseconds = Date.parse(value);
-  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
-}
-
-function enumValue(value: unknown, values: readonly string[]): value is string {
-  return typeof value === 'string' && values.includes(value);
-}
-
-function validSource(value: unknown): value is StackPlannedEffectManifestV1['source'] {
-  const source = record(value);
-  return Boolean(source && exactKeys(source, SOURCE_KEYS) && source['product'] === 'stack' &&
-    typeof source['version'] === 'string' && source['version'].length <= 80 &&
-    STACK_SOURCE_VERSION_RE.test(source['version']) && typeof source['commit'] === 'string' &&
-    COMMIT_RE.test(source['commit']));
-}
-
-function unsupportedSourceVersion(value: unknown): boolean {
-  const source = record(value);
-  return Boolean(source && exactKeys(source, SOURCE_KEYS) && source['product'] === 'stack' &&
-    typeof source['version'] === 'string' && source['version'].length <= 80 && SEMVER_RE.test(source['version']) &&
-    !STACK_SOURCE_VERSION_RE.test(source['version']) && typeof source['commit'] === 'string' &&
-    COMMIT_RE.test(source['commit']));
+  return canonicalJsonBytes(value, CANONICAL_BOUNDS);
 }
 
 function validEffect(value: unknown): value is StackPlannedEffectManifestV1['effect'] {
   const effect = record(value);
   if (!effect || !exactKeys(effect, EFFECT_KEYS) || !enumValue(effect['class'], STACK_EFFECT_CLASSES_V1) ||
     !enumValue(effect['verb'], STACK_EFFECT_VERBS_V1)) return false;
-  return VERBS_BY_CLASS[effect['class'] as StackEffectClassV1].includes(effect['verb'] as StackEffectVerbV1);
+  return VERBS_BY_CLASS[effect['class']].includes(effect['verb']);
 }
 
 function validCost(value: unknown): value is StackEstimatedCostV1 {
   const cost = record(value);
   if (!cost || !exactKeys(cost, COST_KEYS) || typeof cost['known'] !== 'boolean') return false;
   if (!cost['known']) return cost['amountMicroUnits'] === null && cost['currency'] === null;
-  return Number.isSafeInteger(cost['amountMicroUnits']) && Number(cost['amountMicroUnits']) >= 0 &&
-    Number(cost['amountMicroUnits']) <= MAX_ESTIMATED_COST_MICRO_UNITS && enumValue(cost['currency'], CURRENCIES);
+  return integer(cost['amountMicroUnits'], 0, MAX_ESTIMATED_COST_MICRO_UNITS) && enumValue(cost['currency'], CURRENCIES);
 }
 
 function validRollback(value: unknown): value is StackPlannedEffectManifestV1['rollback'] {
@@ -413,14 +311,11 @@ export function compileExternalStackEffectPlanV1(
   now: Date = new Date(),
 ): ExternalStackEffectPlanResultV1 {
   try {
-    if (!(bytes instanceof Uint8Array)) return fail('invalid-bytes');
-    if (bytes.byteLength > STACK_PLANNED_EFFECT_MAX_BYTES) return fail('oversized-manifest');
-    if (bytes.byteLength < 2 || !(now instanceof Date) || !Number.isFinite(now.getTime())) return fail('invalid-bytes');
-    const copied = Buffer.from(bytes);
-    const text = copied.toString('utf8');
-    if (!copied.equals(Buffer.from(text, 'utf8'))) return fail('invalid-bytes');
-    let parsed: unknown;
-    try { parsed = JSON.parse(text) as unknown; } catch { return fail('non-canonical-json'); }
+    const decoded = decodeStrictUtf8JsonBytes(bytes, STACK_PLANNED_EFFECT_MAX_BYTES, now);
+    if (!decoded.ok) {
+      return fail(decoded.reason === 'oversized' ? 'oversized-manifest' : decoded.reason);
+    }
+    const { copied, parsed } = decoded;
     const canonical = canonicalStackPlannedEffectManifestBytesV1(parsed);
     if (!canonical) {
       const row = record(parsed);

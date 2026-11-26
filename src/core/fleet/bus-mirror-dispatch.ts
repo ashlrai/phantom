@@ -23,7 +23,7 @@ export const BUS_MIRROR_JOB_RE = /\bRQ-PHX-[A-Z0-9]+/;
 /** Lane names the dispatch log has ever used: the dispatcher's lanes plus the
  * current fleet engine ids. A whitespace-delimited token must match exactly. */
 export const BUS_MIRROR_KNOWN_LANES: ReadonlySet<string> = new Set([
-  'codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local',
+  'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local',
   'local', 'grok-cli', 'claude-cli', 'codex', 'devin-cli',
 ]);
 export interface BusMirrorCursor { at: string; key: string }

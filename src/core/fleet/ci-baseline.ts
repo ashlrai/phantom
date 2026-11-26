@@ -20,11 +20,7 @@ type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: n
 // cannot prove the ref's checks and reads unknown, never clean. `skipped`
 // and `neutral` are deliberate non-verdicts (path filters, `if:` gates,
 // required-check-neutral), not incomplete checks, and stay ignored.
-const INCOMPLETE_JOB_CONCLUSIONS = new Set(['cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
-// The same set plus `failure` for the run level: a completed run that
-// produced no jobs at all and did not succeed (startup_failure and
-// friends) carries no verifiable job evidence either.
-const INCOMPLETE_RUN_CONCLUSIONS = new Set([...INCOMPLETE_JOB_CONCLUSIONS, 'failure']);
+const INCOMPLETE_CONCLUSIONS = new Set(['cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
 
 const clean = (s: string) => scrubSecrets(stripVTControlCharacters(s)).slice(0, 2000);
 const lines = (s: string) => stripVTControlCharacters(s).split('\n').map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+\s+/, '').trim());
@@ -2193,7 +2189,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     // than clean. The flag is computed from the job list itself, so a
     // never-started job counts the same as one whose partial log would
     // otherwise verify or drop silently.
-    let incomplete = data.jobs.some(job => INCOMPLETE_JOB_CONCLUSIONS.has(job.conclusion));
+    // The workflow can stop before starting other jobs. Its conclusion
+    // still applies when every listed job reached a verdict.
+    const incomplete = data.jobs.some(job => INCOMPLETE_CONCLUSIONS.has(job.conclusion)) ||
+      (run.conclusion !== undefined && INCOMPLETE_CONCLUSIONS.has(run.conclusion)) ||
+      (data.jobs.length === 0 && run.conclusion === 'failure');
     const result: { conclusion: string; text: string }[] = [];
     for (const job of data.jobs) {
       if (job.conclusion === 'skipped') continue;
@@ -2203,7 +2203,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       if (!r?.ok) {
         // The job list already marks this run incomplete. A job that
         // never started may have no log, while its siblings still do.
-        if (INCOMPLETE_JOB_CONCLUSIONS.has(job.conclusion)) continue;
+        if (INCOMPLETE_CONCLUSIONS.has(job.conclusion)) continue;
         return null;
       }
       const output = lines(r.stdout);
@@ -2237,12 +2237,6 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // an unverifiable log keeps the whole run unknown rather than letting
       // unattributed evidence pass as head-verified.
       if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
-    }
-    // A completed run that instantiated no jobs at all and did not
-    // succeed — startup_failure and friends — has no job list to mark
-    // incomplete, so the run's own conclusion carries the verdict.
-    if (!incomplete && data.jobs.length === 0 && run.conclusion !== undefined && INCOMPLETE_RUN_CONCLUSIONS.has(run.conclusion)) {
-      incomplete = true;
     }
     return { entries: result, incomplete };
   }

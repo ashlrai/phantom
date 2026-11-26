@@ -13,7 +13,7 @@ function laneFor(row: HeadroomRow): string | null {
   if (row.engine === 'devin') return 'devin';
   if (row.engine === 'claude') return 'claude-max';
   if (row.engine === 'grok') return 'grok-ultra';
-  if (row.engine === 'codex') return /personal/i.test(row.name) ? 'codex-personal' : 'codex-cmp';
+  if (row.engine === 'codex') return /personal/i.test(row.name) ? 'codex-personal' : null;
   return null;
 }
 

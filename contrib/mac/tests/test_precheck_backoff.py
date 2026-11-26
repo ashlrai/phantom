@@ -29,12 +29,12 @@ class PrecheckBackoff(unittest.TestCase):
         self.assertEqual(state['blocked']['retry_at'], now + 60)
 
     def test_real_ticks_keep_blocked_and_launch_runnable(self):
-        with build(slots={'codex-cmp': lane_slot()}) as tmp:
+        with build(slots={'codex-personal': lane_slot()}) as tmp:
             home = Path(tmp).resolve()
             env = launch_stubs(home)
             q = home / '.ashlr-runs/queue'
             for job in ('BLOCKED', 'RUNNABLE'):
-                queue_job(home, job, 'codex-cmp')
+                queue_job(home, job, 'codex-personal')
                 (q / f'prompts/{job}.md').write_text(f'{job} (P0): task')
             script = home / '.ashlr-runs/bin/precheck.sh'
             script.write_text('echo "$1" >> "$HOME/checks"\ncase "$1" in BLOCKED*) echo "SKIP BLOCKED code=13 reason=files_and_tests_exist"; exit 13;; esac\n')

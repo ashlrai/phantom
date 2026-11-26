@@ -14,7 +14,7 @@ Python 3.9+ available on its trusted PATH. Invoke the existing launcher through
 the adapter, retaining its usual arguments and stdin prompt:
 
 ```bash
-/path/to/with-memory.sh --job JOB -- /path/to/launch.sh JOB phantom codex-cmp frontier < JOB.prompt
+/path/to/with-memory.sh --job JOB -- /path/to/launch.sh JOB phantom codex-personal frontier < JOB.prompt
 ```
 
 Every launcher and heavy step on the host must use the same state directory.
