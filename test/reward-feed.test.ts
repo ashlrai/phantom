@@ -219,6 +219,20 @@ describe('foldJobsLedgerRewards', () => {
     ]);
   });
 
+  it.each([
+    [merged, { event: 'launch' }],
+    [closed, { type: 'claim', ts: 'unknown' }],
+    [merged, { kind: 'batch_claim', ts: null }],
+  ] as const)('withholds rewards when a dispatch cannot be ordered (%o, %j)', (resolve, receipt) => {
+    const job = 'RQ-UNDATED-DISPATCH';
+    const undated = line({ job, lane: 'claude', ...receipt });
+    const other = 'RQ-OTHER';
+    for (const rows of [[undated, launch(job), resolve(job)], [launch(job), resolve(job), undated]]) {
+      expect(foldJobsLedgerRewards([...rows, launch(other), merged(other)].join('\n'), NOW_MS))
+        .toMatchObject([{ jobId: other, pool: 'codex-cmp' }]);
+    }
+  });
+
   it('skips jobs without dispatch evidence or without resolved outcomes', () => {
     const text = [
       merged('RQ-NODISP'),                                  // outcome but never dispatched in window
