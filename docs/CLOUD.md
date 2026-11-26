@@ -1396,6 +1396,24 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   parse, truncated tails are stated as lower bounds, and items emit
   only for the fleet's own repository since the rows describe this
   install's hosts and lanes and carry no repository column —
+  and the jobs ledger's per-phase latency totals, the phases and
+  top_wastes sections of `phm fleet job-latency`
+  (src/core/fleet/job-latency.ts) folded from the same lifecycle
+  boundary rows in `metrics/jobs.jsonl` — queue_wait, checkout,
+  model, worker, publish_wait, ci and merge, each carrying
+  measured_jobs, missing_jobs, total_seconds and the report's own
+  fix_line (otherwise only visible through that report — a report
+  someone had to run and read, so a fleet whose jobs kept piling
+  wall time into one stage never became work). A phase emits only
+  when measured on at least ten job attempts and carrying at least
+  six hours of recorded wait across the bounded tail — enough
+  samples that the total is not one fluke and enough accumulated
+  wait that the phase is a fleet-level bottleneck — with totals and
+  counts quoted only as recorded, missing boundary coverage quoted
+  as the report counts it, truncated tails stated as lower bounds,
+  and items emitting only for the fleet's own repository since the
+  phases describe this install's dispatch, checkout, model, publish,
+  CI and merge path and carry no repository column —
   and the job-reissue audit ledger's recurring rescue cells, the
   {at, from, to, lane, tier, file} rows reissueJob (src/core/fleet/
   job-reissue.ts) appends to queue/job-reissues.jsonl under the fleet
@@ -1452,7 +1470,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts, postrun, git-contention, job-reissue and route-shadow items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts, postrun, git-contention, job-latency, job-reissue and route-shadow items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1793,7 +1811,18 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   quoting recorded lanes, host and day counts without hostnames, with
   the same owner-side no-change escape, and emit only for the fleet's
   own repository since the rows describe this install's hosts and
-  lanes. They
+  lanes. Job-latency items name the jobs-ledger lifecycle boundary
+  rows, `phm fleet job-latency`'s phases/top_wastes fold and the
+  per-phase ownership map in src/core/improve/job-latency-backlog.ts,
+  keep the find-where-this-stage's-wall-time-concentrates framing per
+  phase — dispatch admission, worktree checkout, model execution,
+  publish, the CI critical path or merge-queue dwell this repository
+  owns versus pinned contrib/mac machinery, the .github/workflows
+  files, host capacity or owner-side state only the owner can fix —
+  quoting the report's own fix_line and the recorded totals, counts
+  and mean wait, with the same owner-side no-change escape, and emit
+  only for the fleet's own repository since the phases describe this
+  install's job lifecycle and carry no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

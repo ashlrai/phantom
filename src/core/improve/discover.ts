@@ -1001,6 +1001,20 @@
  *     as lower bounds, and only the fleet's own repository inherits
  *     the items since the rows describe this install's hosts and
  *     lanes and carry no repository column;
+ *   - the jobs ledger's per-phase latency totals: the phases/top_wastes
+ *     section of `phm fleet job-latency` — queue_wait, checkout, model,
+ *     worker, publish_wait, ci and merge — folded from the same
+ *     lifecycle boundary rows in metrics/jobs.jsonl
+ *     (jobLatencyBacklogItems below). Its git_contention sibling
+ *     already folds; until now the phase totals and their fix lines
+ *     only ever reached the report itself, so a fleet whose jobs kept
+ *     piling wall time into one stage never became work. A phase emits
+ *     only when measured on enough attempts and carrying enough
+ *     recorded wait to be a fleet-level bottleneck, truncated tails
+ *     are stated as lower bounds, and only the fleet's own repository
+ *     inherits the items since the phases describe this install's
+ *     dispatch, checkout, model, publish, CI and merge path and carry
+ *     no repository column;
  *   - the job-reissue audit ledger's recurring rescue cells: the
  *     {at, from, to, lane, tier, file} rows reissueJob appends to
  *     queue/job-reissues.jsonl under the fleet runs directory for
@@ -1300,6 +1314,7 @@ import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
 import { efficiencyBacklogItems } from './efficiency-backlog.js';
 import { landingsBacklogItems } from './landings-backlog.js';
 import { gitContentionBacklogItems } from './git-contention-backlog.js';
+import { jobLatencyBacklogItems } from './job-latency-backlog.js';
 import { jobReissueBacklogItems } from './job-reissue-backlog.js';
 import { shadowRouteBacklogItems } from './shadow-route-backlog.js';
 import { feedbackSubmissionsBacklogItems } from './feedback-submissions-backlog.js';
@@ -2645,6 +2660,20 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // own repository inherits the items since the rows carry no repo
   // column.
   items.push(...await gitContentionBacklogItems({ repo }));
+
+  // Jobs-ledger per-phase latency: the phases/top_wastes section of
+  // `phm fleet job-latency` — queue_wait, checkout, model, worker,
+  // publish_wait, ci and merge — folded from the same lifecycle
+  // boundary rows in metrics/jobs.jsonl. Its git_contention sibling
+  // already folds; the phases totals and their fix lines only ever
+  // reached the report itself, so a fleet whose jobs kept piling wall
+  // time into one stage never became work. A phase emits only when it
+  // is measured on enough attempts and accumulates enough recorded
+  // wait to be a fleet-level bottleneck, truncated tails are stated as
+  // lower bounds, and only the fleet's own repository inherits the
+  // items since the phases describe this install's dispatch, checkout,
+  // model, publish, CI and merge path and carry no repo column.
+  items.push(...await jobLatencyBacklogItems({ repo }));
 
   // Job-reissue audit ledger: the {at, from, to, lane, tier, file} rows
   // reissueJob appends to queue/job-reissues.jsonl under the fleet runs
