@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
-import { ledgerPhase } from '../fleet/empty-cause.js';
+import { ledgerPhase, ledgerStateTokens } from '../fleet/empty-cause.js';
 import { isNodePoolLedgerRow, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 import { isRewardSignalV1 } from '../metrics/reward-signal.js';
@@ -143,12 +143,14 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
     }
     const id = ledgerJobId(row);
     if (isNodePoolLedgerRow(row) || id?.startsWith('RQ-BATCH-')) continue;
-    const phase = ledgerPhase(row);
+    const terminalPhases = new Set(ledgerStateTokens(row).filter((value) => value === 'MERGED' || value === 'CLOSED'));
+    const phase = terminalPhases.values().next().value ?? ledgerPhase(row);
     const event = ledgerLifecycleEvent(row, phase);
     const state = ledgerOutcomeState(row, event, phase);
     if (state === null && !['launch', 'batch_claim', 'finish', 'publish', 'outcome'].includes(event ?? '')) continue;
     recognized++;
     if (row['launched'] === false) continue;
+    if (state !== null && terminalPhases.size > 1) throw new Error('Conflicting merged verdicts on a job receipt');
     if (!id) throw new Error('Event is missing job ID');
     const job = jobs.get(id) ?? { launched: false };
     jobs.set(id, job);

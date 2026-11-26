@@ -60,6 +60,18 @@ describe('router calibration', () => {
     expect(() => calibrateRouting(jobs, JSON.stringify([{ job_id: 'TEST-job-2', total_tokens: 999 }]))).toThrow('Conflicting tokens');
     expect(() => calibrateRouting(jobs, '{}')).toThrow('PostHog export');
   });
+  it('finds terminal verdicts behind nonterminal aliases on outcome receipts', () => {
+    const launch = (job: string) => row({ event: 'launch', job, lane: 'codex', predicted_merge_rate: 0.8 });
+    const ledger = launch('RQ-MERGED') + launch('RQ-CLOSED') + launch('RQ-PUBLISH') +
+      row({ jobId: 'RQ-MERGED', phase: 'PUBLISHED', outcome: 'MERGED' }) +
+      row({ jobId: 'RQ-CLOSED', event: 'publish', phase: 'OPEN', outcome: 'CLOSED', source: 'metrics-outcomes-reconciler' }) +
+      row({ jobId: 'RQ-PUBLISH', event: 'publish', phase: 'PUBLISHED', outcome: 'MERGED' });
+    expect(calibrateRouting(ledger).arms).toMatchObject([
+      { arm: 'codex', jobs: 3, resolved: 2, observedMergeRate: 0.5, mergeRate: { actual: 0.5, paired: 2 } },
+    ]);
+    expect(() => calibrateRouting(launch('RQ-CONFLICT') +
+      row({ jobId: 'RQ-CONFLICT', phase: 'MERGED', outcome: 'CLOSED' }))).toThrow('Conflicting merged verdicts');
+  });
   it('excludes dispatcher receipts for work that never launched', () => {
     const skipped = row({ event: 'outcome', state: 'DONE-NOOP', job: 'RQ-SKIP', lane: 'codex', launched: false });
     const exportJson = JSON.stringify([{ job_id: 'RQ-SKIP', total_tokens: 10 }]);
