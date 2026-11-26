@@ -2,9 +2,12 @@ import type { Tone } from '../../../components/primitives/StatusBadge.js';
 
 export const WORK_TRACE_MAX_IDS = 20;
 export type WorkState = 'RECEIVED' | 'ASSIGNED' | 'RUNNING' | 'BLOCKED' | 'VERIFIED';
+export type WorkTraceResult =
+  | { kind: 'blocked'; dependency: string }
+  | { kind: 'verified'; pr: number | null; head: string | null; tests: string | null; artifact: string | null };
 export interface WorkTraceItem {
   id: string; state: WorkState; asOf: string; source: string; missing: string[];
-  owner: string | null; claimReceipt: string | null; inbox: string; claims: string;
+  owner: string | null; claimReceipt: string | null; inbox: string; claims: string; result?: WorkTraceResult;
 }
 export interface WorkTrace { v: 1; authority: 'none'; generatedAt: string; items: WorkTraceItem[] }
 export interface WorkStateChip { label: string; tone: Tone; title: string }
@@ -13,13 +16,20 @@ const record = (x: unknown): x is Record<string, unknown> => typeof x === 'objec
 const states: readonly string[] = ['RECEIVED', 'ASSIGNED', 'RUNNING', 'BLOCKED', 'VERIFIED'];
 const nullableText = (x: unknown) => x === null || typeof x === 'string';
 
+const validResult = (x: unknown): boolean => record(x) && (
+  (x.kind === 'blocked' && typeof x.dependency === 'string') ||
+  (x.kind === 'verified' && (x.pr === null || (typeof x.pr === 'number' && Number.isSafeInteger(x.pr) && x.pr > 0))
+    && nullableText(x.head) && nullableText(x.tests) && nullableText(x.artifact))
+);
+
 /** Bad shape → null. Never trusts a field it did not check. */
 export function parseWorkTrace(x: unknown): WorkTrace | null {
   if (!record(x) || x.v !== 1 || x.authority !== 'none' || typeof x.generatedAt !== 'string' || !Array.isArray(x.items)) return null;
   const ok = x.items.every(i => record(i) && typeof i.id === 'string' && typeof i.state === 'string' && states.includes(i.state)
     && typeof i.asOf === 'string' && typeof i.source === 'string'
     && Array.isArray(i.missing) && i.missing.every(m => typeof m === 'string')
-    && nullableText(i.owner) && nullableText(i.claimReceipt) && typeof i.inbox === 'string' && typeof i.claims === 'string');
+    && nullableText(i.owner) && nullableText(i.claimReceipt) && typeof i.inbox === 'string' && typeof i.claims === 'string'
+    && (!('result' in i) || validResult(i.result)));
   return ok ? x as unknown as WorkTrace : null;
 }
 
@@ -38,6 +48,14 @@ export function workStateChip(item: WorkTraceItem | undefined): WorkStateChip {
   if (item.owner) parts.push(`owner ${item.owner}`);
   if (item.claimReceipt) parts.push(`claim ${item.claimReceipt}`);
   if (item.missing.length) parts.push(`missing: ${item.missing.join(', ')}`);
+  if (item.state === 'BLOCKED' && item.result?.kind === 'blocked') parts.push(`dependency: ${item.result.dependency}`);
+  if (item.state === 'VERIFIED' && item.result?.kind === 'verified') {
+    const { pr, head, tests, artifact } = item.result;
+    if (pr !== null) parts.push(`PR: #${pr}`);
+    if (head !== null) parts.push(`head: ${head}`);
+    if (tests !== null) parts.push(`tests: ${tests}`);
+    if (artifact !== null) parts.push(`artifact: ${artifact}`);
+  }
   return { label: item.state, tone: TONES[item.state], title: parts.join(' · ') };
 }
 
