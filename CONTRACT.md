@@ -12,6 +12,14 @@ with master reason codes and posture evidence; no model calls, dispatch or write
 `cli/bots.ts::runBotsCli(argv, out?, home?)` returns 0 on success, 1 on error/refusal.
 Creation requires `--dry-run` and never calls the writer.
 
+## Skill-use evidence window
+
+`ReadSkillRecordsOptions.asOfMs` supplies an optional inclusive upper
+timestamp bound to bounded `readSkillUseEvents` and
+`readSkillUseEventsWithDiagnostics` reads. Later UTC partitions and
+later receipts are excluded before partition and eligible-event limits
+and replay checks. The option applies only to bounded skill-use reads.
+
 ## Reward backlog evidence
 
 `foldRewardJournal(text, nowMs, windowMs)` and `rewardCells(fold)`

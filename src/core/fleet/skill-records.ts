@@ -83,6 +83,8 @@ const MAX_TEXT = {
 
 export interface ReadSkillRecordsOptions {
   sinceMs?: number;
+  /** Inclusive upper timestamp bound for bounded skill-use reads. */
+  asOfMs?: number;
   limit?: number;
   maxFiles?: number;
   /** Scan every private date partition so lifecycle rows cannot age out. */
@@ -729,6 +731,9 @@ function readRecordsWithDiagnostics<T>(
   const sinceMs = !complete && typeof opts.sinceMs === 'number' && Number.isFinite(opts.sinceMs)
     ? opts.sinceMs
     : undefined;
+  const asOfMs = !complete && checkRowLimit && typeof opts.asOfMs === 'number' && Number.isFinite(opts.asOfMs)
+    ? opts.asOfMs
+    : undefined;
   let sourcePresent = false;
   let filesScanned = 0;
   let unreadableFiles = 0;
@@ -794,10 +799,11 @@ function readRecordsWithDiagnostics<T>(
     limitExceeded ||= listing.limitExceeded;
     if (limitExceeded || (complete && invalidRows > 0)) return result([], 'degraded');
     const completePartitionNames = complete ? [...listing.files] : undefined;
-    const files = sinceMs === undefined
-      ? listing.files
-      : listing.files.filter((file) => fileMayContainSince(file, sinceMs));
-    const partialWindow = checkRowLimit && sinceMs !== undefined && files.length > maxFiles;
+    const files = listing.files.filter((file) =>
+      (sinceMs === undefined || fileMayContainSince(file, sinceMs)) &&
+      (asOfMs === undefined || Date.parse(file.slice(0, 10)) <= asOfMs),
+    );
+    const partialWindow = checkRowLimit && (sinceMs !== undefined || asOfMs !== undefined) && files.length > maxFiles;
     if (!complete) files.splice(maxFiles);
     const out: T[] = [];
     const completeSnapshots: Array<{ filePath: string; snapshot: BigIntStats }> = [];
@@ -845,9 +851,10 @@ function readRecordsWithDiagnostics<T>(
             continue;
           }
           const record = sanitize(parsed);
-          if (sinceMs !== undefined) {
+          if (sinceMs !== undefined || asOfMs !== undefined) {
             const recordMs = Date.parse((record as { ts: string }).ts);
-            if (Number.isFinite(recordMs) && recordMs < sinceMs) continue;
+            if ((sinceMs !== undefined && recordMs < sinceMs) ||
+                (asOfMs !== undefined && recordMs > asOfMs)) continue;
           }
           if (out.length >= limit) {
             limitExceeded = true;
