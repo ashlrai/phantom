@@ -352,7 +352,9 @@ The same window's `route_decision` rows are folded into `overrides`:
 each waiting job counts once, by its latest in-window decision — how many
 jobs the market decided and how many left their hinted lane, by reason
 (`resource_fit`, `preferred_lane_fallback`, `unknown_preference`) and by
-hinted-to-chosen lane. The same collapsed decisions also fold their
+hinted-to-chosen lane. An override counts when its endpoints match the
+decision's declared preference and chosen lane, and those lanes differ.
+The same collapsed decisions also fold their
 `rejected_lanes` into `rejections`: every lane the market refused each job,
 with the reason codes that say why (`missing_capability`, `quota_exhausted`,
 `saturated`, `lower_rank`, ...). `lanes` tallies each rejected lane per job
@@ -366,7 +368,9 @@ launch — by `lane_override` reason and by hinted-to-launched lane. This is
 the launch record the decision fold cannot see: `batch_session` moves a
 combined session makes after each member's own decision appear here and
 nowhere in `overrides`, and a decision overridden on paper but deferred
-before launch never counts. `claims.truncated` is true when the ledger
+before launch never counts. A claim whose hint and launch lane match counts
+as a launch only, even if it carries an override code.
+`claims.truncated` is true when the ledger
 exceeded the retained tail, so those counts are a lower bound.
 The same collapsed decisions also join the retained tail of
 `metrics/jobs.jsonl` into `decisionOutcomes`: each decided job counts once,
@@ -817,6 +821,7 @@ phm fleet launchable --json
 `ready` count splits into `filler` and `real` rows. Parked rows are excluded
 whether the `PARKED` marker is in the first column or the lane column.
 `queued` comes from the status snapshot, so it can differ from `ready`.
+Lanes with `held: true` in the dispatcher snapshot are excluded.
 
 `launchable` compares each lane's `free` slots with ready rows whose prompt
 file exists. A row counts toward the lane its market hint resolves to: the
@@ -830,6 +835,9 @@ jobs marked `drop` or `defer` in `skipped-empty.tsv`, and filler while
 `FILLER_HOLD` exists. Both commands use the launch target described below and
 read `~/.ashlr-runs/queue` (including `router-queue.md` for `launchable`);
 set `ASHLR_RUNS_DIR` to inspect another runs directory.
+
+`launchable` reports zero free slots for a lane with `held: true`, while
+keeping its published occupancy, launch target and ready supply visible.
 
 `lane-starve` exits 1 when it finds a starved lane; `launchable` exits 1 when
 any lane has more free slots than launchable rows plus lane-open supply — a
@@ -1000,6 +1008,10 @@ event falls between the windows counts as missing evidence, never as a
 shorter wait. Without `--json`, the same command prints a plain-language
 report. Use `--root /path` to inspect a different runs directory.
 
+Trailing-hour merge counts use a readable, timezone-qualified `mergedAt` on
+merge ledger rows when available. Older rows and rows with an unreadable
+`mergedAt` use the existing ledger event timestamp.
+
 Blocked jobs are the parked ones. Each lane has `blockedReasons`
 (`[{ reason, count }]`, biggest first, e.g. `DEP` or `HOLD`) and `stale`, the
 parked dependency jobs whose gates all show MERGED but were never unparked
@@ -1094,7 +1106,9 @@ Without `--lane` and `--n`, `fleet supply` retains its batch activity report.
 Run `phm queue yield --since 24h --json` to compare generators from the local
 `metrics/jobs.jsonl` ledger. The Metrics screen shows the same 24-hour report.
 Events in the window are joined by job ID. An explicit `src` takes precedence
-over the job ID pattern; unrecognized sources are `unknown`. PRs and merges
+over the job ID pattern; unrecognized sources are `unknown`. The fold uses
+recorded timestamps, with ledger order breaking ties. Late arrivals with
+older timestamps cannot overwrite newer recorded measurements. PRs and merges
 count jobs with recorded PRs and merges. Empty rate uses jobs with a recorded
 empty result. Median diff lines uses recorded `diff_lines`. Tokens per merged PR
 is the sum of recorded job tokens divided by merged PRs; it is unknown if any

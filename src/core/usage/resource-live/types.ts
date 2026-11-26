@@ -172,7 +172,7 @@ export interface BankedResetGrant {
   count: number;
   kind: 'full' | '5h' | 'weekly';
   expires_at: string;
-  source: 'chatgpt-settings-usage';
+  source: 'chatgpt-settings-usage' | 'owner-screenshot';
 }
 
 export interface BankedResetProposal {

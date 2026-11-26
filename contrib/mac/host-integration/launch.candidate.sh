@@ -71,7 +71,7 @@ F
 [ "$NOWT" = 1 ] && echo "NOTE: this worktree is index-only (no files on disk, by design). Read files with git show HEAD:<path>. Do not change code; this job only decides and closes PRs."
 } | sed "s/REPO_/$REPO/" > $R/$J.prompt
 cd $WT
-case $POOL in codex-local) FAM=codex-local; DM=fast;; codex*) FAM=codex; DM=gpt-6.1-sol;; claude) FAM=claude; DM=opus;; claude-api) FAM=claude-api; DM=sonnet;; gemini) FAM=gemini; DM=gemini-2.5-pro;; zai) FAM=zai; DM=glm-5.3;; agy) FAM=agy; DM=gemini-3.8-flash-high;; grok) FAM=grok; DM=grok-4.7;; cursor) FAM=cursor; DM=auto;; devin-flash) FAM=devin-flash; DM=swe-2-flash-max;; *) FAM=$POOL; DM=swe-2-max;; esac
+case $POOL in codex-local) FAM=codex-local; DM=fast;; codex*) FAM=codex; case $TIER in frontier) DM=gpt-6.2-astra;; fast) DM=gpt-6-luna;; *) DM=gpt-6.2-sol;; esac;; claude) FAM=claude; case $TIER in fast) DM=claude-haiku-5-5;; mid) DM=claude-sonnet-5-5;; *) DM=claude-opus-5-5;; esac;; claude-api) FAM=claude-api; DM=claude-sonnet-5-5;; gemini) FAM=gemini; DM=gemini-2.5-pro;; zai) FAM=zai; DM=glm-5.3;; agy) FAM=agy; DM=gemini-4-neon-xhigh;; grok) FAM=grok; DM=grok-4.7;; cursor) FAM=cursor; DM=auto;; devin-flash) FAM=devin-flash; DM=swe-2-flash-max;; *) FAM=$POOL; DM=swe-2-max;; esac
 M=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(next((str(d[k]) for k in (p+"."+t,p,f+"."+t,f) if d.get(k)),""))' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ "$M" =~ ^[A-Za-z0-9._-]+$ ]] || M=$DM; EF=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(d.get("effort."+p+"."+t) or d.get("effort."+f+"."+t) or "")' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ -z "$EF" || "$EF" =~ ^[a-z]+$ ]] || EF=
 # Paid Devin variants must never reach the launcher, even from models.json.
 if [[ ( "$POOL" == devin || "$POOL" == devin-flash ) && "$M" == *-[lL][iI][gG][hH][tT][nN][iI][nN][gG] ]]; then
@@ -237,7 +237,7 @@ case $POOL in
   AST=$AH/.gemini/antigravity-cli/settings.json; AST_SHA=565e3cb29356f2a2216f840b0cc1931a14977dbc38b3298e8f961a767c8b0ac5
   lm_ok "$AH/.gemini/config/mcp_config.json" a03ca83e924b412844963deac581e0c5b8432f4bfac48b9a62e3fb00d7f5951c9   # LANE-MCP rev1
   { [ -f "$AST" ] && [ ! -L "$AST" ] && [ "$(stat -f %Lp "$AST")" = 444 ] && [ "$(shasum -a 256 "$AST" | cut -d' ' -f1)" = "$AST_SHA" ]; } || { echo "REFUSED: agy settings.json missing, not 444 or sha mismatch"; exit 5; }
-  case "$TIER" in fast) M=gemini-3.8-flash-medium; AT=900s;; work|mid) M=gemini-3.8-flash-high; AT=2400s;; frontier) M=claude-opus-4-6-thinking; AT=2400s;; *) echo "HELD: agy tier must be fast, work or frontier"; exit 3;; esac
+  case "$TIER" in fast) M=gemini-4-hydrogen-medium; AT=900s;; mid) M=gemini-4-hydrogen-high; AT=2400s;; work) M=gemini-4-neon-xhigh; AT=2400s;; frontier) M=gemini-4-carbon-high; AT=2400s;; *) echo "HELD: agy tier must be fast, mid, work or frontier"; exit 3;; esac
   [ "$TIER" = mid ] && TIER=work   # rev1e: mid runs and is paced as work
   AQ=$(python3 "$R/bin/agy-pace.py" gate "$J" "$TIER"); [ $? -eq 0 ] || { echo "${AQ:-HELD: agy gate failed}"; exit 3; }
   echo "AGY $J model=$M timeout=$AT" >> "$R/$J.base.meta"
@@ -266,7 +266,7 @@ case $POOL in
   { [ -f "$GB" ] && [ ! -L "$GB" ] && [ ! -L "${GB%/grok}" ] && [ "$(stat -f %Lp "${GB%/grok}")" = 700 ] && [ "$(stat -f %Lp "$GB")" = 555 ] \
     && [ "$(shasum -a 256 "$GB" | cut -d' ' -f1)" = "$GB_SHA" ]; } || { echo "REFUSED: vendored grok binary missing, symlinked, wrong mode or sha mismatch"; exit 5; }
   { [ -x "$GB" ] && [ ! -L "$GB" ] && [[ "$(env -i HOME="$GH" PATH=/usr/bin:/bin sandbox-exec -f "$KSB" "$GB" --version 2>/dev/null </dev/null)" == "$GV"* ]]; } || { echo "HELD: grok binary is not the pinned version ($GV)"; exit 3; }
-  case "$TIER" in fast) M=grok-4.7-build-fast; GE=; GT=40;; work|mid) M=grok-4.7; GE=; GT=60;; frontier) M=grok-4.7; GE=high; GT=80;; *) echo "HELD: grok tier must be fast, work or frontier"; exit 3;; esac
+  case "$TIER" in fast) M=grok-4.7; GE=; GT=40;; work|mid) M=grok-4.7; GE=; GT=60;; frontier) M=grok-4.7; GE=high; GT=80;; *) echo "HELD: grok tier must be fast, work or frontier"; exit 3;; esac
   [ "$TIER" = mid ] && TIER=work   # rev1e: mid runs and is paced as work
   KQ=$(python3 "$R/bin/grok-pace.py" gate "$J" "$TIER"); [ $? -eq 0 ] || { echo "${KQ:-HELD: grok gate failed}"; exit 3; }
   echo "GROK $J model=$M effort=${GE:-default} max_turns=$GT" >> "$R/$J.base.meta"

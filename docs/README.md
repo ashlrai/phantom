@@ -102,7 +102,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Plan the chat-first assistant delivery sequence | [Chat-first child jobs](https://github.com/ashlrai/phantom/blob/master/docs/plans/CHAT-FIRST-NORTH-STAR.md) |
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
 | Exercise signed graph execution and a deliberately lying candidate | [Firm graph fixture](FIRM-DEMO.md) |
-| Compare an enrolled planner/worker split against a frontier estimate | [Resource-pool swarm pilot](SWARM-PILOT.md) |
+| Compare an enrolled planner/worker split against a frontier estimate | [Resource-pool swarm pilot](https://github.com/ashlrai/phantom/blob/master/docs/SWARM-PILOT.md) |
 | Connect autonomy research to engineering acceptance | [Autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) |
 | Compare recent factory, merge, and feedback research and pick measurable fleet jobs | [November 2026 frontier scan](https://github.com/ashlrai/phantom/blob/master/docs/research/2026-11-frontier-scan.md) |
 | Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
@@ -120,6 +120,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Replay policies over frozen router lines with known outcomes | [Router eval harness](https://github.com/ashlrai/phantom/blob/master/docs/router/eval.md) |
 | Measure lane/model reliability across N clean-worktree trials and feed routing | [pass^k offline eval suite](https://github.com/ashlrai/phantom/blob/master/docs/EVAL-PASSK.md) |
 | Navigate source entry points, subsystems and contracts | [Code map (source guide)](https://github.com/ashlrai/phantom/blob/master/docs/CODEMAP.md) |
+| Query a commit-pinned map of modules, imports, and symbols | [System map](SYSTEM-MAP.md) |
 | A/B test prompt variants per job class and promote only significant winners | [Prompt-variant A/B eval](https://github.com/ashlrai/phantom/blob/master/docs/router/prompt-ab.md) |
 | Use the one-ask scope preflight in code | [One-ask intake boundary — source guide](https://github.com/ashlrai/phantom/blob/master/docs/ONE-ASK-INTAKE.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
