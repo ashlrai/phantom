@@ -290,6 +290,7 @@ import { readPendingProposals, readTeamApprovals, type ProposalApprovalItem, typ
 import { listDrafts, type Draft } from '../cos/drafts.js';
 import { listDrafts as listCommsAgentDrafts, type CommsDraft } from '../comms-agent/store.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
+import { NEEDS_YOU_PRIORITIES } from '../decide/registry.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../fleet/bus-mailbox.js';
 import { readBusBoardPending, type BusBoardPendingRead } from '../fleet/bus-board.js';
@@ -359,6 +360,10 @@ export const UNIFIED_INBOX_KINDS = [
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
   (UNIFIED_INBOX_KINDS as readonly string[]).includes(value);
+/** The urgency vocabulary every item's computed `priority` carries — the
+ * same `NEEDS_YOU_PRIORITIES` labels the decide layer ranks by. */
+export const isUnifiedInboxPriority = (value: string): value is NeedsYouPriority =>
+  (NEEDS_YOU_PRIORITIES as readonly string[]).includes(value);
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -417,6 +422,12 @@ export interface UnifiedInboxFilter {
   kind?: UnifiedInboxKind;
   /** Keep only items at this severity band. */
   severity?: UnifiedInboxSeverity;
+  /** Keep only items at this urgency — the item's own computed `priority`
+   * (`now`/`today`/`this-week`/`whenever`, the same `NEEDS_YOU_PRIORITIES`
+   * vocabulary the ranking heuristic assigns and the row prints). Every
+   * item carries a definite priority, so the match is exact equality —
+   * "what needs me now" is one filtered read. */
+  priority?: NeedsYouPriority;
   /** Keep only blocking items when true, only non-blocking when false. */
   blocking?: boolean;
   /** Keep only items that provably name this job id — the same citation
@@ -2235,7 +2246,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const requested = options.filter;
   const filter = requested !== undefined &&
     (requested.source !== undefined || requested.kind !== undefined ||
-      requested.severity !== undefined ||
+      requested.severity !== undefined || requested.priority !== undefined ||
       requested.blocking !== undefined || requested.job !== undefined ||
       requested.since !== undefined || requested.before !== undefined ||
       requested.contains !== undefined)
@@ -2252,6 +2263,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     (filter.source === undefined || item.source === filter.source) &&
     (filter.kind === undefined || item.kind === filter.kind) &&
     (filter.severity === undefined || item.severity === filter.severity) &&
+    (filter.priority === undefined || item.priority === filter.priority) &&
     (filter.blocking === undefined || item.blocking === filter.blocking) &&
     // A job filter keeps only items whose own citation set names the job —
     // an item with no provable job relation stays out of the match.

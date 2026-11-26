@@ -4088,7 +4088,10 @@ queueId/receiptId never appear in a summary.
 shared validation `GET /api/verse/comms/inbox`
 (`src/core/verse/comms-inbox-api.ts`) applies to its query — `limit`
 (1–200, default 50) plus the `UnifiedInboxFilter` dimensions `source`,
-`kind`, `severity`, `blocking` (`true`/`false`), `job`, `since`, `before`
+`kind`, `severity`, `priority` (`now`/`today`/`this-week`/`whenever` — the
+item's computed urgency `UnifiedInboxItem.priority` carries, validated by
+`isUnifiedInboxPriority` over `NEEDS_YOU_PRIORITIES`), `blocking`
+(`true`/`false`), `job`, `since`, `before`
 and `contains`, each at most once — `since` the inclusive appearance-time
 lower bound, `before` (`UnifiedInboxFilter.before`, `comms inbox --before`)
 the exclusive `<` upper bound composing with it into one

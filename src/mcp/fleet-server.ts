@@ -1348,7 +1348,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_comms_inbox',
-      description: 'Read the ranked unified comms inbox — the same readUnifiedInbox projection `phm comms inbox` serves. Optional source, kind, severity, blocking, job, since, before and contains narrow the item list with the same rules as the CLI flags; the per-source pending reports stay the unfiltered store truth and an applied filter is echoed on the result. limit caps returned items (1–200, default 50). Read-only; items quote private text.',
+      description: 'Read the ranked unified comms inbox — the same readUnifiedInbox projection `phm comms inbox` serves. Optional source, kind, severity, priority, blocking, job, since, before and contains narrow the item list with the same rules as the CLI flags; the per-source pending reports stay the unfiltered store truth and an applied filter is echoed on the result. limit caps returned items (1–200, default 50). Read-only; items quote private text.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1356,6 +1356,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           source: { type: 'string', enum: [...UNIFIED_INBOX_SOURCES], description: 'Keep items from one unified-inbox source.' },
           kind: { type: 'string', enum: [...UNIFIED_INBOX_KINDS], description: 'Keep items of one kind — the item\'s own classification, finer than source where one source emits several kinds (the bus source\'s bus-work/bus-handoff split, the board source\'s board-delivery/board-task split).' },
           severity: { type: 'string', enum: ['info', 'warn', 'high'], description: 'Keep items of one severity.' },
+          priority: { type: 'string', enum: ['now', 'today', 'this-week', 'whenever'], description: 'Keep items at one urgency — the item\'s own computed priority, the same vocabulary the row prints.' },
           blocking: { type: 'boolean', description: 'true keeps only blocking items; false keeps only non-blocking items.' },
           job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only items whose citation set names this job id.' },
           since: { type: 'string', description: 'Keep items whose recorded appearance time reaches the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the same grammar `phm comms inbox --since` takes.' },
