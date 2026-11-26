@@ -53,6 +53,30 @@ it('ignores merge events with missing or invalid timestamps', async () => {
   expect(devin).toMatchObject({ lane: 'devin', merges: 1 });
 });
 
+it('reports zero merges only when the merge ledger is healthy', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    'id\tstatus\tpool\tat',
+    `m-1\tLAND\tdevin\t${minutesAgo(5)}`,
+    'a-1\tREADY\tcodex\t',
+  ].join('\n'));
+  const ledger = join(queueDir, 'jobs.jsonl');
+  const cases = [
+    { contents: null, state: 'missing', codex: null, total: null },
+    { contents: 'malformed\n', state: 'degraded', codex: null, total: null },
+    { contents: '', state: 'healthy', codex: 0, total: 1 },
+  ];
+  for (const { contents, state, codex, total } of cases) {
+    if (contents !== null) await writeFile(ledger, contents);
+    const report = await getLaneQueueCounts({ runsDir: root, now });
+    expect(report.sources.ledger).toBe(state);
+    expect(report.lanes).toMatchObject([
+      { lane: 'codex', merges: codex },
+      { lane: 'devin', merges: 1 },
+    ]);
+    expect(report.totals.merges).toBe(total);
+  }
+});
+
 it('counts a duplicated merge event once, by PR then by job', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
   const pr = 'https://github.com/ashlrai/phantom/pull/42';

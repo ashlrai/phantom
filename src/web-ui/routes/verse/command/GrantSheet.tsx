@@ -30,6 +30,7 @@ import { ActionStatus, type SurfaceActions } from './actions.js';
 import { GrantDiff, GrantScopeEditor, postGrantDraft, type EditableGrantDraft } from './GrantScopeEditor.js';
 import { setVerseResourcesOpen, setVerseSection } from '../verse-ui-store.js';
 import { engineOfSeatId } from '../../../../core/routing/policy.js';
+import { ownerDisplayName } from '../../../../core/owner-display.js';
 import { isClaudeProvider } from '../usage/provider-windows.js';
 import styles from './command.module.css';
 import { formatDateTime } from '../../../components/format/locale-format.js';
@@ -101,6 +102,7 @@ function stageLine(s: RolloutStage, grantedClasses: StandingGrantV1['leader']['c
 
 export function DraftScope({ draft }: { draft: AuthorityGrantDraft }) {
   const g = draft.payload;
+  const owner = ownerDisplayName(draft.ownerDisplayName);
   const days = grantDays(g);
   // The grant ceiling alone does not permit Leader actions. A re-approval
   // preserves its reached rung, which may still allow advisory work only.
@@ -158,8 +160,8 @@ export function DraftScope({ draft }: { draft: AuthorityGrantDraft }) {
             <li key={seatId}>
               <span className={styles.mono}>{seatId}</span>
               {seat.enabled ? engineOfSeatId(seatId) === 'devin'
-                ? ': within the Devin ACU budget and its reserve for the owner'
-                : `: keep ${seat.reserveFloorPercent}% for the owner` : ': not used by autonomy'}
+                ? `: within the Devin ACU budget and its reserve for ${owner}`
+                : `: keep ${seat.reserveFloorPercent}% for ${owner}` : ': not used by autonomy'}
               {seat.enabled && !isClaudeProvider(engineOfSeatId(seatId)) && seat.maxSessionWindowPercent !== undefined ? `, never above ${seat.maxSessionWindowPercent}% of its 5-hour window` : ''}
               {` · permitted roles: ${seat.roles.join(', ')}`}
               {seat.enabled && engineOfSeatId(seatId) !== 'devin' && seat.maxSessionWindowPercent === undefined ? ', no session ceiling' : ''}

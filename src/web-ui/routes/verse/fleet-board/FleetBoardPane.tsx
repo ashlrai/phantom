@@ -88,9 +88,9 @@ function BoardBody({ board }: { board: FleetBoardV1 }) {
           caption={board.conflictingPrs.trend === 'unknown' ? 'no trend yet' : `${board.conflictingPrs.trend} across recorded ticks`}
         />
         <StatTile
-          label="Needs Mason"
+          label="Needs the owner"
           value={String(needs.count)}
-          caption={needs.status === 'available' ? `open item${needs.count === 1 ? '' : 's'}` : `needs-Mason ${needs.status}`}
+          caption={needs.status === 'available' ? `open item${needs.count === 1 ? '' : 's'}` : `owner requests ${needs.status}`}
         />
       </div>
 
@@ -157,13 +157,13 @@ function BoardBody({ board }: { board: FleetBoardV1 }) {
       </section>
 
       <section className={styles.section} aria-labelledby="fb-needs">
-        <h3 id="fb-needs" className={styles.sectionTitle}>Needs Mason</h3>
+        <h3 id="fb-needs" className={styles.sectionTitle}>Needs the owner</h3>
         {needs.status === 'missing' ? (
-          <p className={styles.note}>NEEDS-MASON.md not found — nothing has been recorded as needing Mason.</p>
+          <p className={styles.note}>NEEDS-MASON.md not found — nothing has been recorded as needing the owner.</p>
         ) : needs.status === 'unavailable' ? (
-          <p className={styles.note}>The needs-Mason file could not be read — open items may exist.</p>
+          <p className={styles.note}>The NEEDS-MASON.md could not be read — open items may exist.</p>
         ) : needs.items.length === 0 ? (
-          <p className={styles.note}>Nothing needs Mason right now.</p>
+          <p className={styles.note}>Nothing needs the owner right now.</p>
         ) : (
           <ul className={styles.needs}>
             {needs.items.map((item) => (

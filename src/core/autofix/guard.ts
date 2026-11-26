@@ -15,9 +15,16 @@ const FORBIDDEN = [
   /(?:^|\/)secrets(?:\/|$)/,
 ];
 
+const FORBIDDEN_EXEC_BIN = /^(kill|pkill|killall)$/;
+
 export function forbiddenPath(path: string): boolean {
   const norm = path.replace(/\\/g, '/');
   return FORBIDDEN.some((re) => re.test(norm));
+}
+
+/** Refuse empty commands, forbidden paths, or process-killing binaries. */
+export function isForbiddenExecArgv(argv: readonly string[]): boolean {
+  return argv.length === 0 || argv.some((arg) => forbiddenPath(arg) || FORBIDDEN_EXEC_BIN.test(arg));
 }
 
 export function ledgerPath(runsDir: string): string {
@@ -47,7 +54,7 @@ function sortValue(value: unknown): unknown {
   return value;
 }
 
-export function stable(value: unknown): string {
+function stable(value: unknown): string {
   return JSON.stringify(sortValue(value));
 }
 
@@ -83,7 +90,7 @@ const TERMINAL: ReadonlySet<FixResult> = new Set([
 ]);
 
 /** Same fixer, target, action and before-state already recorded as a terminal result. */
-export function alreadyRecorded(lines: readonly LedgerLine[], line: Pick<LedgerLine, 'fixer' | 'target' | 'action' | 'before'>): LedgerLine | null {
+function alreadyRecorded(lines: readonly LedgerLine[], line: Pick<LedgerLine, 'fixer' | 'target' | 'action' | 'before'>): LedgerLine | null {
   const key = stable(line.before);
   for (let i = lines.length - 1; i >= 0; i--) {
     const prior = lines[i]!;
@@ -91,6 +98,12 @@ export function alreadyRecorded(lines: readonly LedgerLine[], line: Pick<LedgerL
       && TERMINAL.has(prior.result) && stable(prior.before) === key) return prior;
   }
   return null;
+}
+
+/** Return a skipped ledger line carrying the prior outcome when this action was already recorded. */
+export function skipIfRecorded(lines: readonly LedgerLine[], line: LedgerLine): LedgerLine | null {
+  const prior = alreadyRecorded(lines, line);
+  return prior ? ledgerLine(line.ts, line.fixer, line.target, line.action, line.before, prior.after, 'skipped') : null;
 }
 
 export function appendLedger(host: AutofixHost, line: LedgerLine): void {

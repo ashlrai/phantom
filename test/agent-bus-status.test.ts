@@ -59,6 +59,9 @@ describe('readUnifiedBusStatus', () => {
     expect(status.peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
     // A verifiably absent coordination ledger holds no live rows: 0 is proven.
     expect(status.peerLedger).toEqual({ source: 'missing', liveRows: 0 });
+    // A verifiably absent handoff store holds no journals: 0 is the real count.
+    expect(status.sessionHandoffs).toEqual({ source: 'missing', journals: 0, open: 0,
+      awaitingFailover: 0, unreadable: 0, truncated: false });
     expect(Number.isNaN(Date.parse(status.asOf))).toBe(false);
   });
 
@@ -658,6 +661,52 @@ describe('sendGate section', () => {
   });
 });
 
+describe('sessionHandoffs section', () => {
+  const handoffsDir = (options: UnifiedBusStatusOptions) => join(options.runsRoot!, 'handoffs');
+
+  function journalRecord(job: string, signal: unknown = { kind: 'checkpoint' }, planState = 'pending') {
+    return {
+      schema: 'session-handoff.v1', revision: 1, at: '2026-11-20T10:00:00.000Z',
+      signal, job, attempt: 'att-1', repo: 'test/fixture', lane: 'codex-personal', model: 'model-a',
+      minTier: 'work', needs: ['typescript'], goal: 'Do the fake thing',
+      plan: [{ action: 'step 1', state: planState }],
+      filesTouched: ['result'], decisions: ['keep it'], evidence: ['e1'],
+      nextAction: 'do step 1', contextDigest: 'ctx',
+      repoState: { root: '/fake/host/root', head: 'a'.repeat(40), digest: 'b'.repeat(64), entireCheckpoint: null },
+    };
+  }
+
+  function writeJournal(options: UnifiedBusStatusOptions, job: string, records: object[]) {
+    const dir = handoffsDir(options);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, `${job}.jsonl`), records.map(record => JSON.stringify(record)).join('\n') + '\n', { mode: 0o600 });
+  }
+
+  it('counts open and failover-yielded journals while isolating unreadable ones', () => {
+    const options = setup();
+    writeJournal(options, 'parked', [journalRecord('parked')]);
+    writeJournal(options, 'yielded', [journalRecord('yielded', { kind: 'rate-limit', status: 429 })]);
+    writeJournal(options, 'budget-ok', [journalRecord('budget-ok',
+      { kind: 'budget', remainingFraction: 0.5, threshold: 0.2 })]);
+    writeJournal(options, 'done', [journalRecord('done', { kind: 'completed' }, 'done')]);
+    writeFileSync(join(handoffsDir(options), 'corrupt.jsonl'), 'not json\n', { mode: 0o600 });
+    // open: parked, yielded, budget-ok (3); awaitingFailover: yielded only —
+    // budget-ok stays above its threshold; done is retained history.
+    expect(readUnifiedBusStatus(options).sessionHandoffs).toEqual({
+      source: 'available', journals: 5, open: 3, awaitingFailover: 1, unreadable: 1, truncated: false });
+  });
+
+  it('reports unavailable with null counts when the store cannot be read', () => {
+    const options = setup();
+    writeJournal(options, 'job', [journalRecord('job')]);
+    chmodSync(options.runsRoot!, 0);
+    try {
+      expect(readUnifiedBusStatus(options).sessionHandoffs).toEqual({ source: 'unavailable',
+        journals: null, open: null, awaitingFailover: null, unreadable: null, truncated: null });
+    } finally { chmodSync(options.runsRoot!, 0o700); }
+  });
+});
+
 describe('phm agents bus status', () => {
   it('prints one honest line per section in human mode and the object as JSON', async () => {
     const options = setup();
@@ -680,6 +729,8 @@ describe('phm agents bus status', () => {
     expect(json.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0, notices: 0 });
     expect(json.peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
     expect(json.peerLedger).toEqual({ source: 'missing', liveRows: 0 });
+    expect(json.sessionHandoffs).toEqual({ source: 'missing', journals: 0, open: 0,
+      awaitingFailover: 0, unreadable: 0, truncated: false });
     expect(json.sendGate).toEqual({ state: 'open',
       kill: { state: 'inactive', reason: 'missing' },
       pause: { state: 'clear', since: null, reason: null } });
@@ -697,6 +748,7 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('seats missing seats=0 states=0 handoffs=0');
     expect(lines.join('\n')).toContain('peerDispatch missing receipts=0 unpublished=0');
     expect(lines.join('\n')).toContain('peerLedger missing liveRows=0');
+    expect(lines.join('\n')).toContain('sessionHandoffs missing journals=0 open=0 awaitingFailover=0 unreadable=0 truncated=false');
     expect(lines.join('\n')).toContain('sendGate open kill=inactive:missing pause=clear');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
   });

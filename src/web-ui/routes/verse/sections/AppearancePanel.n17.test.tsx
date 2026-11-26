@@ -13,6 +13,7 @@ import { ToastProvider } from '../../../components/primitives/Toast.js';
 import { evictAll } from '../../../data/cache.js';
 import { getAppearance, resetAppearance, setAppearance } from '../../../data/appearance-store.js';
 import { ACCENT_PRESETS } from '../../../data/appearance-presets.js';
+import { setSettingsView } from './settings-groups.js';
 
 const root = () => document.documentElement;
 
@@ -25,6 +26,9 @@ function renderSettings() {
 }
 
 const customDisclosure = () => screen.getByText('Custom color').closest('details')!;
+
+// The long page these suites assert is the "All settings" view.
+beforeEach(() => { setSettingsView('all'); });
 
 describe('Settings > Appearance (n17)', () => {
   beforeEach(() => {

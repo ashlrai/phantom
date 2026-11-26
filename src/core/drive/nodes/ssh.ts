@@ -7,7 +7,7 @@ export function validSshHost(host: unknown): host is string {
 }
 export function sshApprovalStep(host: string): string {
   if (!validSshHost(host)) throw new Error('Invalid SSH host');
-  return `On this Mac, Mason runs: ssh -o ForwardAgent=no -o StrictHostKeyChecking=ask ${host} true. Verify the host fingerprint. To install this Mac's public key once, Mason runs: ssh-copy-id ${host}. Then retry the join. Never copy provider auth directories.`;
+  return `On this computer, run: ssh -o ForwardAgent=no -o StrictHostKeyChecking=ask ${host} true and verify the host fingerprint. To enroll this computer's public key once, run: ssh-copy-id ${host}. ${host} must have Phantom installed with phm on the SSH PATH. Then retry the join. Never copy provider auth directories.`;
 }
 
 /** Fixed remote command; request goes through stdin, not shell or argv. No key exchange,

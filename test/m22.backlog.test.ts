@@ -5,7 +5,7 @@
  *  - HOME is overridden to a tmp dir so the real ~/.ashlr/backlog.json and
  *    ~/.ashlr/enrollment.json are never touched.
  *  - A TMP git repo is created and enrolled only for tests that require it;
- *    unenrolled between tests.
+ *    discarded with its private enrollment store between tests.
  *  - child_process.execFile is mocked so NO real subprocesses run during scans.
  *  - The empty-enrollment invariant is verified explicitly: with nothing
  *    enrolled, buildBacklog MUST return an empty backlog and MUST NOT scan disk.
@@ -174,9 +174,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Unenroll the tmp repo if it's still enrolled
-  try { unenroll(tmpRepo); } catch { /* ignore */ }
-
   try {
     for (const [fixture, dir] of [['tmpHome', tmpHome], ['tmpRepo', tmpRepo]] as const) {
       try {
@@ -512,10 +509,6 @@ describe('M22 buildBacklog — over an enrolled tmp repo', () => {
   beforeEach(() => {
     // Enroll the tmp repo for each test in this suite
     enroll(tmpRepo);
-  });
-
-  afterEach(() => {
-    unenroll(tmpRepo);
   });
 
   it('includes the enrolled repo in backlog.repos', async () => {
