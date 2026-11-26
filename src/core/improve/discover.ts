@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Seventy-nine sources, all of which Phantom
+ * evidence instead of a hand-kept list. Eighty-one sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -1176,6 +1176,20 @@
  *     the fleet's own repository inherits the items since the
  *     ledger describes this install's needs-you machinery and
  *     carries no repo column;
+ *   - the comms request store's recurring expiry cells: the latest-state
+ *     CommsRequest rows requests.jsonl under ~/.ashlr/comms records —
+ *     'expired' rows classified unanswered (sent, TTL lapsed with no
+ *     reply), never-sent (pending, TTL lapsed unsent), send-failures
+ *     (retired after the transport rejected it repeatedly) or
+ *     unclassified (an expiredReason outside the writer's vocabulary),
+ *     folded per (kind, class) across distinct UTC days inside the
+ *     7-day window with answered rows as delivered context and
+ *     'migration:…' retirements never emitting
+ *     (commsRequestsBacklogItems below). Until now the store's only
+ *     readers were the dispatch cycle, `phm comms` listings and the
+ *     unified inbox's point-in-time projection, so a request kind that
+ *     kept expiring — an ask Mason never answered, a queue that never
+ *     drained, a transport that kept refusing — never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1294,6 +1308,7 @@ import { repoShareBacklogItems } from './repo-share-backlog.js';
 import { reasoningInsightBacklogItems } from './reasoning-insight-backlog.js';
 import { fleetGapBacklogItems } from './fleet-gap-backlog.js';
 import { needsYouAutoBacklogItems } from './needs-you-auto-backlog.js';
+import { commsRequestsBacklogItems } from './comms-requests-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2766,6 +2781,28 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the items since the ledger describes this install's needs-you
   // machinery and carries no repo column.
   items.push(...await needsYouAutoBacklogItems({ repo }));
+
+  // Comms request store: every question, approval and report the fleet
+  // raises for Mason is a CommsRequest row in
+  // ~/.ashlr/comms/requests.jsonl — the protocol store behind `phm
+  // comms`. Mutations rewrite the file, so each retained line is one
+  // request's latest state; an 'expired' row is the fleet's own recorded
+  // verdict that a request did not complete. Until now the store's only
+  // readers were the dispatch cycle, `phm comms` listings and the
+  // unified inbox's point-in-time projection — current queue state,
+  // never a trend — so a kind whose requests kept expiring unanswered,
+  // never sent or on send failures never became work. Same bounded
+  // no-follow tail read; cells key (kind, class) — 'unanswered' on a
+  // sent-then-TTL-lapsed row, 'never-sent' on a pending TTL lapse,
+  // 'send-failures' on the writer's recorded rejection reason,
+  // 'unclassified' on any other expiredReason quoted bounded —
+  // emitting only at the recurring bars of rows across distinct UTC
+  // days inside the window, 'migration:…' designed retirements never
+  // counting, truncated tails stated as lower bounds, and only the
+  // fleet's own repository inheriting the items since the store
+  // describes this install's comms traffic and carries no repository
+  // column.
+  items.push(...await commsRequestsBacklogItems({ repo }));
   return { items, errors };
 }
 
