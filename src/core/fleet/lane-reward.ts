@@ -108,11 +108,14 @@ export function foldLaneRewardAttempts(text: string): { attempts: Map<string, La
     if (!row) { dropped++; continue; }
     rows.push(row);
   }
-  // Publish rows bind a job to its PR url; outcome rows may carry only the url.
-  const jobByUrl = new Map<string, string>();
+  // URL-only rows can resolve only against a unique recorded job.
+  const jobByUrl = new Map<string, string | null>();
   for (const row of rows) {
     const job = jobOf(row), url = urlOf(row);
-    if (job && url) jobByUrl.set(url, job);
+    if (job === null || url === null) continue;
+    const previous = jobByUrl.get(url);
+    if (previous === undefined) jobByUrl.set(url, job);
+    else if (previous !== job) jobByUrl.set(url, null);
   }
   const attempts = new Map<string, LaneRewardAttempt>();
   for (const row of rows) {
