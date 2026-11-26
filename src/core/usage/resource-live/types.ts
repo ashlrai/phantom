@@ -230,6 +230,7 @@ export interface PollState {
   /** Whether the lane was active when the interval was chosen. */
   active: boolean;
   fingerprint: string | null;
+  reset_checks?: string[];
 }
 
 export interface HistorySample {

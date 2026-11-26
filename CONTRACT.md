@@ -335,6 +335,10 @@ resource JSON commands expose the `antigravity` projection; untrusted or
 unavailable quota has null groups and a reason. Only current, identity-matched
 GUI quota can set an Antigravity plan target to zero with
 `quota_exhausted_until_reset`; this is advisory, not a dispatcher hold.
+The resident uses the same Resource Live store for scheduled Antigravity
+refreshes, two minutes before and at each reported bucket reset. Optional
+Antigravity poll metadata `reset_checks` retains future UTC reset times for
+scheduling across transient failures, never as quota evidence.
 
 `postureEvidence(root)` is exported from `src/core/queue/route-explain.ts` for
 the shared bounded journal parser. It preserves receipt `ts` (epoch seconds or
