@@ -2551,7 +2551,9 @@ launch boundary. This keeps retries that reuse a job ID from
 joining timestamps across dispatch attempts. Publish, CI and merge boundaries
 also retain canonical GitHub PR identities from their URL aliases. A phase
 is unmeasured when its two boundaries collectively name more than one PR,
-including when equal-timestamp receipts carry conflicting PRs. Boundaries
+including when equal-timestamp receipts carry conflicting PRs. The
+publish-to-merge span also considers PR identities from CI receipts dated
+within the span and CI receipts with no usable timestamp. Boundaries
 without a PR URL remain eligible when the other timing evidence is usable. The
 `git_contention` section reports nearest-rank p90 for paired checkout
 boundaries and the manual recovery rate per 100 measured checkouts that

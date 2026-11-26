@@ -12,7 +12,7 @@ const jobPhases = [
   ['merge', 'ci_complete', 'merged', 'Profile post-CI merge delays and unblock the merge queue.'],
 ] as const;
 
-type Events = Map<string, { times: Set<number>; prs: Set<string> }>;
+type Events = Map<string, { times: Set<number>; prsByTime: Map<number, Set<string>> }>;
 const prBoundaries = new Set(['publish', 'ci_start', 'ci_complete', 'merged']);
 
 /**
@@ -135,13 +135,16 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
     if (id === null || event === undefined) { ignored++; continue; }
     const at = ledgerEventTs(row, event.toUpperCase()) ?? NaN;
     const events: Events = jobs.get(id) ?? new Map();
-    const boundary = events.get(event) ?? { times: new Set<number>(), prs: new Set<string>() };
+    const boundary = events.get(event) ?? { times: new Set<number>(), prsByTime: new Map<number, Set<string>>() };
     if (!Number.isFinite(at)) ignored++;
     boundary.times.add(at);
     if (prBoundaries.has(event)) {
       for (const url of [row.url, row.prUrl, row.pr_url, row.pr, row.html_url]) {
         const pr = prKeyOf(url);
-        if (pr) boundary.prs.add(pr.key);
+        if (!pr) continue;
+        const prs = boundary.prsByTime.get(at) ?? new Set<string>();
+        prs.add(pr.key);
+        boundary.prsByTime.set(at, prs);
       }
     }
     events.set(event, boundary); jobs.set(id, events);
@@ -158,7 +161,17 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
       if (a?.times.size !== 1 || b?.times.size !== 1) continue;
       const [from] = a.times, [to] = b.times;
       if (from === undefined || to === undefined || !Number.isFinite(from) || !Number.isFinite(to) || to < from) continue;
-      if (new Set([...a.prs, ...b.prs]).size > 1) continue;
+      const prs = new Set([...(a.prsByTime.get(from) ?? []), ...(b.prsByTime.get(to) ?? [])]);
+      if (start === 'publish' && end === 'merged') {
+        for (const event of ['ci_start', 'ci_complete']) {
+          for (const [at, claims] of events.get(event)?.prsByTime ?? []) {
+            // An undated CI receipt could belong to this span.
+            if (Number.isFinite(at) && (at < from || at > to)) continue;
+            for (const claim of claims) prs.add(claim);
+          }
+        }
+      }
+      if (prs.size > 1) continue;
       // An undated launch could fall anywhere in the interval.
       if (end !== 'launch' && [...(events.get('launch')?.times ?? [])].some(at => !Number.isFinite(at) || (from < at && at <= to))) continue;
       // A member claim may start another attempt, but does not prove execution.

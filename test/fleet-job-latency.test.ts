@@ -303,6 +303,24 @@ it('retains conflicting PR claims on otherwise duplicate boundaries', () => {
   }
 });
 
+it.each([
+  ['matching CI identity', 'ci_start', end, 1, 180],
+  ['conflicting CI start', 'ci_start', end, 2, null],
+  ['conflicting CI completion', 'ci_complete', end, 2, null],
+  ['undated conflicting CI identity', 'ci_start', null, 2, null],
+  ['conflicting CI identity before publish', 'ci_start', '2025-12-31T23:59:59Z', 2, 180],
+  ['conflicting CI identity after merge', 'ci_complete', '2026-01-01T00:03:01Z', 2, 180],
+] as const)('checks the publish-to-merge span with %s', (_name, stage, at, pr, seconds) => {
+  const text = [
+    { ...event('publish', start), url: 'https://github.com/acme/phantom/pull/1' },
+    { ...event(stage, at), url: `https://github.com/acme/phantom/pull/${pr}` },
+    event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(mergeQueueLatency(text).phases.find(phase => phase.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: seconds, measured_jobs: seconds === null ? 0 : 1 });
+});
+
 it('reads the remaining timestamp aliases and the kind event key', () => {
   const rows = [
     { job: 'attempt-1', kind: 'enqueue', time: '2026-01-01T00:00:00Z' },
