@@ -101,7 +101,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     } else if (endpoint.includes('/actions/runs?')) {
       const isMaster = endpoint.includes(master);
       const conclusion = (isMaster ? options.masterRunConclusion : undefined) ?? options.runConclusion;
-      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : head, ...(conclusion !== undefined ? { conclusion } : {}) }] };
+      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, run_attempt: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : head, ...(conclusion !== undefined ? { conclusion } : {}) }] };
     } else throw new Error(`unexpected call ${args.join(' ')}`);
     return success(JSON.stringify(value));
   };
@@ -109,6 +109,39 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
 }
 
 describe('CI baseline evidence', () => {
+  it('reads the job list for the observed attempt even when a newer attempt has started', async () => {
+    const { gh, calls } = github({ count: 1, pass: true });
+    const race: CloudGh = async args => {
+      const endpoint = args[1];
+      if (endpoint?.includes('/actions/runs?')) {
+        const response = await gh(args);
+        const data = JSON.parse(response.stdout);
+        data.workflow_runs[0].run_attempt = 2;
+        return { ...response, stdout: JSON.stringify(data) };
+      }
+      if (endpoint?.endsWith('/jobs?per_page=100') && !endpoint.includes('/attempts/2/')) {
+        return { ok: false, stdout: '', stderr: 'latest attempt has started' };
+      }
+      return gh(args);
+    };
+    const report = await analyzeCiBaseline('owner/repo', race);
+    expect(report.groups[0]).toMatchObject({ classification: 'probable-flake', master: 'pass' });
+    expect(calls).toContainEqual(['api', 'repos/owner/repo/actions/runs/1/attempts/2/jobs?per_page=100']);
+    expect(calls).toContainEqual(['api', 'repos/owner/repo/actions/runs/2/attempts/2/jobs?per_page=100']);
+  });
+
+  it('keeps evidence unknown when the listed attempt cannot be read', async () => {
+    const { gh, calls } = github();
+    const unavailable: CloudGh = args => args[1]?.includes('/attempts/')
+      ? Promise.resolve({ ok: false, stdout: '', stderr: '404' })
+      : gh(args);
+    const report = await analyzeCiBaseline('owner/repo', unavailable);
+    expect(report.master.known).toBe(false);
+    expect(report.freshness.map(pr => pr.state)).toEqual(['unknown', 'unknown']);
+    expect(report.groups).toEqual([]);
+    expect(calls.some(args => args[1]?.endsWith('/jobs?per_page=100'))).toBe(false);
+  });
+
   it('groups independent failures and keeps analysis read-only', async () => {
     const { gh, calls } = github();
     const report = await analyzeCiBaseline('owner/repo', gh);

@@ -10,7 +10,7 @@ import { nextFixGeneration } from './ci-fix-generations.js';
 
 type Failure = { testId: string; file: string; names: string; excerpt: string };
 type Pr = { number: number; headRefOid: string; headRefName: string; files: { path: string }[] };
-type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string };
+type Run = { id: number; head_sha: string; workflow_id: number; run_attempt: number; status: string; conclusion?: string };
 type Job = { id: number; conclusion: string; head_sha: string };
 type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: number };
 
@@ -2180,7 +2180,9 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     return data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
   }
   async function logs(run: Run, head: string): Promise<{ entries: { conclusion: string; text: string }[]; incomplete: boolean } | null> {
-    const data = await json<{ jobs: Job[]; total_count: number }>(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
+    if (!Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1) return null;
+    // A rerun can advance the latest jobs between the run listing and this read.
+    const data = await json<{ jobs: Job[]; total_count: number }>(`repos/${repo}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`);
     if (!Array.isArray(data?.jobs) || data.total_count > 100) return null;
     // A job that never reached a verdict — cancelled while queued, timed
     // out, awaiting action, failed to start, or marked stale — is
