@@ -1303,6 +1303,9 @@ publish event name. A missing or repeated boundary, reversed stamps
 or publish-before-finish ordering leaves the job absent so its
 outcome keeps `null`, unknown, never a partial guess and never
 another phase's duration.
+Both timings stay unknown when a job records a `batch_claim` at or between
+the paired boundaries, or when that claim lacks a usable timestamp. In
+these cases the router also withholds CI timing from the reward fallback.
 `lane_hint`/`lane_override` are the
 dispatch claim's recorded lane override: a `claim` or `batch_claim` row
 writes the pair when the launch left its hinted lane — `lane_hint` the

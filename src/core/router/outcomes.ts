@@ -1713,7 +1713,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
 }
 
 function foldRouterOutcomesWithCiCoverage(
-  text: string, opts: RouterOutcomeFoldOptions, undatedCiJobs: Set<string>,
+  text: string, opts: RouterOutcomeFoldOptions, ambiguousCiJobs: Set<string>,
   mergeEventsMalformed = false,
 ): RouterOutcomeFold {
   const rows: Row[] = [];
@@ -1771,6 +1771,7 @@ function foldRouterOutcomesWithCiCoverage(
   // arrival at or before it — a requeue's later arrivals never move the
   // first-dispatch wait, and a job with no recorded arrival before its
   // first dispatch stays absent here so its outcome keeps null.
+  const batchClaims = new Map<string, number[]>();
   const queueMarks = new Map<string, { arrivals: number[]; dispatches: number[] }>();
   for (const r of rows) {
     const j = attributedJobId(r);
@@ -1781,6 +1782,12 @@ function foldRouterOutcomesWithCiCoverage(
     const arrival = QUEUE_ARRIVAL_EVENTS.has(name);
     if (!arrival && !QUEUE_DISPATCH_EVENTS.has(name)) continue;
     const at = Date.parse(str(r, ...LEDGER_TS_KEYS) ?? '');
+    if (name === 'batch_claim') {
+      if (!Number.isFinite(at)) ambiguousCiJobs.add(j);
+      const claims = batchClaims.get(j) ?? [];
+      claims.push(at);
+      batchClaims.set(j, claims);
+    }
     if (!Number.isFinite(at)) continue;
     const marks = queueMarks.get(j) ?? { arrivals: [], dispatches: [] };
     (arrival ? marks.arrivals : marks.dispatches).push(at);
@@ -1796,6 +1803,9 @@ function foldRouterOutcomesWithCiCoverage(
     const waitMs = firstDispatch - admission;
     if (waitMs >= 0) queueWaitS.set(j, waitMs / 1000);
   }
+
+  const crossesBatchClaim = (job: string, start: number, end: number) =>
+    batchClaims.get(job)?.some(at => !Number.isFinite(at) || (start <= at && at <= end)) === true;
 
   // CI-boundary evidence, derived once per job from the same ci_start/
   // ci_complete event pair the reward feed's ciWallMs and job-latency's
@@ -1813,7 +1823,7 @@ function foldRouterOutcomesWithCiCoverage(
     if (name !== 'ci_start' && name !== 'ci_complete') continue;
     const at = Date.parse(str(r, ...LEDGER_TS_KEYS) ?? '');
     if (!Number.isFinite(at)) {
-      undatedCiJobs.add(j);
+      ambiguousCiJobs.add(j);
       continue;
     }
     const marks = ciMarks.get(j) ?? { starts: new Set<number>(), completes: new Set<number>() };
@@ -1822,9 +1832,14 @@ function foldRouterOutcomesWithCiCoverage(
   }
   const ciWallS = new Map<string, number>();
   for (const [j, marks] of ciMarks) {
-    if (undatedCiJobs.has(j) || marks.starts.size !== 1 || marks.completes.size !== 1) continue;
-    const wallMs = [...marks.completes][0]! - [...marks.starts][0]!;
-    if (wallMs >= 0) ciWallS.set(j, wallMs / 1000);
+    if (ambiguousCiJobs.has(j) || marks.starts.size !== 1 || marks.completes.size !== 1) continue;
+    const start = [...marks.starts][0]!;
+    const complete = [...marks.completes][0]!;
+    if (crossesBatchClaim(j, start, complete)) {
+      ambiguousCiJobs.add(j);
+      continue;
+    }
+    if (complete >= start) ciWallS.set(j, (complete - start) / 1000);
   }
 
   // Publish-station evidence, derived once per job from the same
@@ -1863,8 +1878,11 @@ function foldRouterOutcomesWithCiCoverage(
   const publishWaitS = new Map<string, number>();
   for (const [j, marks] of publishMarks) {
     if (undatedPublishJobs.has(j) || marks.finishes.size !== 1 || marks.publishes.size !== 1) continue;
-    const waitMs = [...marks.publishes][0]! - [...marks.finishes][0]!;
-    if (waitMs >= 0) publishWaitS.set(j, waitMs / 1000);
+    const finish = [...marks.finishes][0]!;
+    const publish = [...marks.publishes][0]!;
+    if (publish >= finish && !crossesBatchClaim(j, finish, publish)) {
+      publishWaitS.set(j, (publish - finish) / 1000);
+    }
   }
 
   const jobPrKeys = new Map<string, string>();
@@ -3412,7 +3430,7 @@ export async function readRouterOutcomes(opts: {
   const authorityEvidence = opts.authorityEvidence === undefined
     ? await liveAuthorityEvidence()
     : opts.authorityEvidence;
-  const undatedCiJobs = new Set<string>();
+  const ambiguousCiJobs = new Set<string>();
   const mergeEvents = mergeEventsRead.state === 'read' ? parseMergeEvents(mergeEventsRead.text) : undefined;
   const folded = foldRouterOutcomesWithCiCoverage(read.text, {
     passkFor: laneScoreLookup(laneScores),
@@ -3423,7 +3441,7 @@ export async function readRouterOutcomes(opts: {
     mergeEvents: mergeEvents?.evidence,
     mergeEventsTruncated,
     crossReviews: crossReviewRead.state === 'read' ? foldCrossReviews(crossReviewRead.text) : undefined,
-  }, undatedCiJobs, mergeEvents?.malformed);
+  }, ambiguousCiJobs, mergeEvents?.malformed);
   if (spendRead.state === 'read' && !spendTruncated) {
     const costs = foldSpendCosts(spendRead.text);
     for (const o of folded.outcomes) {
@@ -3444,7 +3462,7 @@ export async function readRouterOutcomes(opts: {
       // jobs-ledger dialect applies.
       if (o.merged === null) o.merged = reward.merged;
       if (o.merged === true && o.ttm_s === null) o.ttm_s = reward.ttm_s;
-      if (o.ci_wall_s === null && !undatedCiJobs.has(o.job_id)) o.ci_wall_s = reward.ci_wall_s;
+      if (o.ci_wall_s === null && !ambiguousCiJobs.has(o.job_id)) o.ci_wall_s = reward.ci_wall_s;
       if (o.cost_usd === null) o.cost_usd = reward.cost_usd;
       if (o.repo === null) o.repo = reward.repo;
       o.pool_pct_used = reward.pool_pct_used;
