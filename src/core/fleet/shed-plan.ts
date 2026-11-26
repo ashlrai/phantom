@@ -1,3 +1,5 @@
+import { LOCAL_LANES } from './unfed-market.js';
+
 /** Advisory memory shedding; no dispatcher settings or jobs are changed. */
 export interface ShedLane {
   lane: string;
@@ -45,7 +47,8 @@ export function planFleetShed(input: unknown, nowMs = Date.now()): ShedPlan {
     // Optional total RAM for the lane, in GiB; absent in current dispatcher snapshots.
     const ram = fresh ? nonnegative(row.ram_gb) : null;
     const ramGb = ram !== null && ram > 0 ? ram : null;
-    const kind = lane === 'local' || lane.endsWith('-local') ? 'local' : cloud.has(lane) ? 'cloud' : 'unknown';
+    const kind = LOCAL_LANES.has(lane) || lane === 'local' || lane.endsWith('-local')
+      ? 'local' : cloud.has(lane) ? 'cloud' : 'unknown';
     return { lane, kind, running, merged, ramGb, mergedPerGb: merged !== null && ramGb !== null ? merged / ramGb : null, recommendation: 'unknown' };
   });
   const priority = { local: 0, cloud: 1, unknown: 2 };

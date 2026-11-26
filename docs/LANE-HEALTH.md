@@ -63,6 +63,11 @@ the lane verdict is unknown.
 
 ## Memory shed plan
 
+Both `phm fleet shed-plan` and `phm lanes pressure` classify the work
+market's on-host executors, `codex-local` and `omlx`, as local by default.
+For `phm lanes pressure`, a valid `memory_class` in `queue/slots.json`
+takes precedence.
+
 Run `phm fleet shed-plan` for the next suggested action, or add `--json` for
 `fleet.shed-plan.v1`. The read-only plan uses `~/.ashlr-runs/queue/status.json`:
 free memory at or below 30% is high pressure, matching the dispatcher's fallback.

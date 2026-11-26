@@ -14,6 +14,13 @@ describe('fleet shed plan', () => {
     expect(plan.lanes).toMatchObject([{ lane: 'codex-local', recommendation: 'shed', merged: 4, ramGb: null, mergedPerGb: null }, { lane: 'codex-personal', recommendation: 'keep', merged: 478, running: 0 }]);
     expect(plan.nextAction).toContain('Reduce codex-local admission first');
   });
+  it('prioritizes an active oMLX lane over an active cloud lane', () => {
+    const plan = planFleetShed({ ...fixture, lanes: { omlx: { running: 1 }, claude: { running: 2 } } }, now);
+    expect(plan.lanes).toMatchObject([
+      { lane: 'omlx', kind: 'local', recommendation: 'shed' },
+      { lane: 'claude', kind: 'cloud', recommendation: 'keep' },
+    ]);
+  });
   it('orders measured efficiency within a kind and keeps missing data unknown', () => {
     const plan = planFleetShed({ last_tick: lastTick, mem_free_pct: 30, lanes: { 'a-local': { running: 1, ram_gb: 2 }, 'b-local': { running: 1, ram_gb: 4 }, 'c-local': { running: 1 } }, rollup_24h: { by_lane: { 'a-local': { merged: 4 }, 'b-local': { merged: 4 } } } }, now);
     expect(plan.lanes.map(lane => lane.lane)).toEqual(['b-local', 'a-local', 'c-local']);
