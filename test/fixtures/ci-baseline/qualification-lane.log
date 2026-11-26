@@ -1,0 +1,49 @@
+##[group]Run node .github/scripts/ci-qualification-lane.mjs web
+node .github/scripts/ci-qualification-lane.mjs web
+shell: /usr/bin/bash -e {0}
+env:
+  ASHLR_CI_SOURCE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  ASHLR_CI_EVENT_SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  GITHUB_RUN_ID: '123456789'
+  GITHUB_RUN_ATTEMPT: '1'
+  GITHUB_OUTPUT: /home/runner/work/_temp/_runner_file_commands/set_output_9f8e7d6c
+  RUNNER_TEMP: /home/runner/work/_temp
+##[endgroup]
+ ✓ test/example.test.ts (4 tests) 12ms
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  01:23:45
+   Duration  1.23s
+Missing or extra qualification reports
+##[error]Process completed with exit code 1.
+##[group]Run node .github/scripts/ci-qualification-lane.mjs mac-general-1
+node .github/scripts/ci-qualification-lane.mjs mac-general-1
+shell: /usr/bin/bash -e {0}
+env:
+  ASHLR_CI_SOURCE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  ASHLR_CI_EVENT_SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  GITHUB_RUN_ID: '123456789'
+  GITHUB_RUN_ATTEMPT: '1'
+  GITHUB_OUTPUT: /Users/runner/work/_temp/_runner_file_commands/set_output_1a2b3c4d
+  RUNNER_TEMP: /Users/runner/work/_temp
+##[endgroup]
+[test-ci:sharded] cannot plan balanced shards: duration table is missing 2 test files
+Qualification command failed (1)
+##[error]Process completed with exit code 1.
+##[group]Run node .github/scripts/ci-qualification-lane.mjs mac-isolated
+node .github/scripts/ci-qualification-lane.mjs mac-isolated
+shell: /usr/bin/bash -e {0}
+env:
+  ASHLR_CI_SOURCE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  ASHLR_CI_EVENT_SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  GITHUB_RUN_ID: '123456789'
+  GITHUB_RUN_ATTEMPT: '1'
+  GITHUB_OUTPUT: /Users/runner/work/_temp/_runner_file_commands/set_output_5e6f7a8b
+  RUNNER_TEMP: /Users/runner/work/_temp
+##[endgroup]
+ Test Files  214 passed (214)
+      Tests  5801 passed (5801)
+   Start at  02:34:56
+   Duration  512.34s
+Test case passed only after a failed attempt (flaky): test/example.test.ts > owner status reports delivery
+##[error]Process completed with exit code 1.

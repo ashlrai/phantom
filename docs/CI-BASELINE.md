@@ -61,9 +61,16 @@ Because it names a real test, the usual dependency closure and pass
 evidence apply: a green master module resolves a one-off flake on an
 unaffected singleton to `probable-flake`/`rerun-failed`, while a flake
 repeated across unaffected PRs -- or printed by master itself -- groups
-`shared-baseline` for a stabilization fix. Verdicts naming paths outside
-the suite roots, missing case names and near-miss wording stay unparsed,
-so an unrecognized lane failure still reads unknown rather than guessed.
+`shared-baseline` for a stabilization fix. Flaky verdicts naming paths
+outside the suite roots, missing case names and near-miss wording stay
+unparsed. The lane's other verdicts -- report validation, missing or
+extra reports, unsafe or changed report files, source-identity drift,
+spawn failures -- print only the error line plus the step marker, so
+the helper-gate step attribution below groups them under
+`.github/scripts/ci-qualification-lane.mjs > (qualification-lane)`;
+verdicts naming evidence other parsers own (the flaky refusal, vitest
+`FAIL` lines, `[test-ci]`/`[test-ci:sharded]` wrapper verdicts) stay
+with those parsers.
 TypeScript diagnostics from `tsc`/`tsgo` non-pretty output
 (`src/core/foo.ts(41,9): error TS2322: ...`) group per file under a
 `<file> > (typecheck)` identity: a typecheck or build break prints no vitest
@@ -448,18 +455,28 @@ marker to the step's script when every script line is a `node --test`
 invocation or one whitelisted gate script, all gate lines naming the
 same file: `ci-fetch-range`, `ci-source-binding`, `ci-site-lane`,
 `ci-mac-rotation`, `ci-dep-graph`, `ci-fast-select`, `ci-fast-inputs`,
-`ci-green-reuse` and `ci-mcp-selection` group under
-`.github/scripts/<script> > (<gate>)`. Mixed bash, `uses:` actions,
-non-whitelisted scripts and ambiguous multi-script steps stay
-unattributed, and a `not ok` or vitest `FAIL` line in the step's own
-output means the companion test runner owns the failure -- the gate
-group is suppressed. Each gate's inputs are the script, its import
-closure and `.github/workflows/ci.yml` (the step definition), with no
-vitest harness ambient set; like the other non-test identities these
+`ci-green-reuse`, `ci-mcp-selection` and `ci-qualification-lane` group
+under `.github/scripts/<script> > (<gate>)`. Mixed bash, `uses:`
+actions, non-whitelisted scripts and ambiguous multi-script steps stay
+unattributed, and a `not ok`, vitest `FAIL`, qualification-flake
+verdict or `[test-ci]`/`[test-ci:sharded]` wrapper verdict in the
+step's own output means a companion parser owns the failure -- the
+gate group is suppressed. Each gate's inputs are the script, its
+import closure and `.github/workflows/ci.yml` (the step definition),
+with no vitest harness ambient set; `ci-qualification-lane` instead
+seeds the closed surface that produces and validates the lane's
+Vitest JSON reports -- the workflow wiring, the npm scripts it shells
+to, the web lane's vitest config and the mac lanes' runner chain (the
+shard plan, duration table, per-shard wrapper, reporter and the vitest
+config/setup surface). Like the other non-test identities these
 groups classify `shared-baseline`, `pr-caused` or `unknown` -- never
-`probable-flake`. Scripts whose pure steps only appear in jobs the
-analyzer's evidence never sees (macOS/Windows lanes, release
-pipelines, merge-group-only attribution) are not listed.
+`probable-flake`. The qualification lanes run on the scheduled and
+dispatched full suite (the `ci` job's ubuntu authority shard for
+`web`, the `mac-general`/`mac-isolated` jobs for the mac roles), so
+their verdicts appear in master-side evidence and in dispatch runs on
+analyzed refs. Scripts whose pure steps only appear in jobs the
+analyzer's evidence never sees at all (other macOS/Windows lanes,
+release pipelines, merge-group-only attribution) are not listed.
 
 The `Install dependencies` steps run a bare `npm ci` (with or without
 `--ignore-scripts`/`--no-audit`/`--no-fund`), so a broken manifest or
