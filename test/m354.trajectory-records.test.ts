@@ -15,6 +15,7 @@ import {
 import type { OutcomeRecord } from '../src/core/autonomy/outcome-records.js';
 import type { DispatchProductionEvent } from '../src/core/fleet/dispatch-production-ledger.js';
 import type { AgentActionEvent } from '../src/core/fleet/agent-action-ledger.js';
+import { readSkillTrajectoryOutcomes } from '../src/core/fleet/skill-outcomes.js';
 import type { Proposal, SkillUseEvent } from '../src/core/types.js';
 import { ROUTER_POLICY_VERSION } from '../src/core/learning/causal.js';
 import {
@@ -2501,6 +2502,42 @@ describe('Trajectory records', () => {
     const published = summarizeWithThirdReceipt(at(TEST_NOW_MS));
     expect(published.coverage.skillUse).toEqual({ count: 3, rate: 1 });
     expect(published.skillOutcomes).toBeDefined();
+  });
+
+  it('keeps the skill outcome window fixed while reading the ledger', () => {
+    const windowHours = 24;
+    const start = TEST_NOW_MS - windowHours * 60 * 60 * 1000;
+    const trajectoryIds = ['traj-a', 'traj-b', 'traj-c'];
+    const events = trajectoryIds.map((trajectoryId) => skillUse({
+      eventId: `use-${trajectoryId}`,
+      ts: new Date(start).toISOString(),
+      proposalId: undefined,
+      runId: trajectoryId,
+      trajectoryId,
+    }));
+    const outcomes = readSkillTrajectoryOutcomes({ windowHours }, {
+      readSkillUseEvents: () => {
+        vi.mocked(Date.now).mockReturnValue(TEST_NOW_MS + 1000);
+        return { events, sourcePresent: true, sourceState: 'healthy', eventState: 'present' };
+      },
+      listRecords: (opts) => listTrajectoryRecords({
+        ...opts,
+        deps: deps({
+          ...opts?.deps,
+          readDispatchProductionEvents: () => trajectoryIds.map((trajectoryId) => dispatch({
+            ts: new Date(start + 1000).toISOString(),
+            itemId: trajectoryId,
+            proposalId: undefined,
+            runId: trajectoryId,
+            trajectoryId,
+          })),
+          listOutcomeRecords: () => [],
+          readAgentActions: () => [],
+        }),
+      }),
+    });
+    // Each receipt is needed to clear the three-trajectory publication gate.
+    expect(outcomes).not.toBeNull();
   });
 
   it('suppresses every exact skill metric when the observation source is degraded', () => {

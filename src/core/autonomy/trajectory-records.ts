@@ -358,6 +358,8 @@ export interface TrajectoryRecordReadDeps {
 export interface TrajectoryRecordListOptions {
   windowHours?: number;
   limit?: number;
+  /** Report time in epoch milliseconds. Defaults to the current time. */
+  asOfMs?: number;
   deps?: TrajectoryRecordReadDeps;
 }
 
@@ -1233,7 +1235,7 @@ function evidenceEvent(evidence: OutcomeRecordEvidence, proposalId: string, tsFa
 }
 
 export function listTrajectoryRecords(opts?: TrajectoryRecordListOptions): TrajectoryRecord[] {
-  return listTrajectoryRecordsAt(opts, Date.now());
+  return listTrajectoryRecordsAt(opts, opts?.asOfMs ?? Date.now());
 }
 
 /** Budget for UTC day partitions, including both ends of the read window. */
