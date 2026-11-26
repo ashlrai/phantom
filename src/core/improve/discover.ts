@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Eighty-three sources, all of which Phantom
+ * evidence instead of a hand-kept list. Eighty-four sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -721,6 +721,29 @@
  *     withhold rather than guess, and items emit only for the fleet's
  *     own repository since the store describes this install's lesson
  *     machinery;
+ *   - the learn eval-gate decision journal's recurring adverse cells:
+ *     the {at, candidateId, kind, status, reason, pairs} rows
+ *     promoteWithEval (src/core/learn/eval-gate.ts) appends to
+ *     learn/eval-gate.jsonl under the learn home on every authorized
+ *     learning change's paired held-out evaluation — 'rejected' rows
+ *     for unusable inputs, scorer throws, regressions, apply throws
+ *     and stale-base refusals, 'evaluated' checkpoints written before
+ *     apply runs exactly once, and the 'promoted'/'rejected' rows
+ *     that close them (evalGateBacklogItems below). Until now the
+ *     journal's only reader was the writer's own test suite — a
+ *     write-only audit — so a gate path that kept failing its scorer,
+ *     its apply step or its input contract, and decisions that
+ *     checkpointed and never recorded an outcome, never became work.
+ *     A cell emits only at the recurring bars of three adverse rows
+ *     across two distinct UTC days inside the 7-day window —
+ *     scorer, apply-path, input and unresolved-checkpoint buckets —
+ *     regression rejections and promotions tally as context since
+ *     they are the gate working, an evaluated checkpoint counts only
+ *     when no later row for its candidateId recorded a terminal
+ *     status and it is past the one-hour in-flight grace, truncated
+ *     tails are stated as lower bounds, and items emit only for the
+ *     fleet's own repository since the journal carries no repo
+ *     column;
  *   - the landed-close attempt journal's recurring adverse cells: the
  *     {at, pr, head, outcome, reason?} rows `ashlr fleet landed-close
  *     --apply` appends to <runs>/queue/landed-closes.jsonl — fed every
@@ -1487,6 +1510,7 @@ import { commsRequestsBacklogItems } from './comms-requests-backlog.js';
 import { seatShadowEvidenceBacklogItems } from './seat-shadow-evidence-backlog.js';
 import { queueRerouteBacklogItems } from './queue-reroute-backlog.js';
 import { backoffSkipBacklogItems } from './backoff-skip-backlog.js';
+import { evalGateBacklogItems } from './eval-gate-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2615,6 +2639,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the store describes this install's
   // procedure memory.
   items.push(...await playbookOutcomeBacklogItems({ repo }));
+
+  // Learn eval-gate decision journal (learn/eval-gate.jsonl under the
+  // learn home): the {at, candidateId, kind, status, reason, pairs}
+  // rows promoteWithEval appends per authorized learning change's
+  // paired held-out evaluation — until now a write-only audit whose
+  // only reader was the writer's own test. Same bounded no-follow tail
+  // read every sibling feed shares; rows count only under the writer's
+  // record() contract, 'regression' rejections and 'promoted' rows
+  // tally as context since they are the gate working, an 'evaluated'
+  // checkpoint counts as unresolved evidence only when no later row
+  // for its candidateId recorded a terminal status and it is past the
+  // one-hour in-flight grace, a cell emits only at the recurring bars
+  // of three adverse rows across two distinct UTC days inside the
+  // 7-day window, truncated tails are stated as lower bounds, and only
+  // the fleet's own repository inherits the items since the journal
+  // carries no repo column — every promoteWithEval call site is this
+  // install's learning pipeline.
+  items.push(...await evalGateBacklogItems({ repo }));
 
   // Landed-close attempt journal (queue/landed-closes.jsonl under the
   // runs dir): the {at, pr, head, outcome, reason?} rows `fleet
