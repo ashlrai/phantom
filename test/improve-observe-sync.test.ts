@@ -12,9 +12,11 @@ import {
   syncCloudOutcomeObservations,
 } from '../src/core/improve/observe-sync.js';
 import type { CloudTaskOutcome, CloudTaskV1 } from '../src/core/cloud/types.js';
+import type { FleetMergeStateRead, FleetMergeStateV1 } from '../src/core/fleet/fleet-merge-state.js';
 
 const M1 = 'a'.repeat(40), M2 = 'b'.repeat(40), M3 = 'c'.repeat(40);
 const R1 = 'd'.repeat(40), R2 = 'e'.repeat(40), L1 = 'f'.repeat(40);
+const LAND = '1'.repeat(40);
 const metric: MetricSpec = { name: 'gate-ms', direction: 'decrease', runner: { kind: 'npm', script: 'bench:gate' } };
 const REPO = 'ashlrai/phantom';
 
@@ -39,6 +41,26 @@ const task = (over: { outcome?: Partial<CloudTaskOutcome> } & Record<string, unk
     ...rest,
   } as CloudTaskV1;
 };
+
+/** A task whose cloud PR #5 was superseded by fleet PR #77 (the carrier that lands). */
+const superseded = (over: { outcome?: Partial<CloudTaskOutcome> } & Record<string, unknown> = {}): CloudTaskV1 => task({
+  pr: { number: 5, url: 'https://github.com/ashlrai/phantom/pull/5', state: 'closed', draft: false, title: 't' },
+  supersededBy: { repo: REPO, number: 77 },
+  ...over,
+});
+
+/** The fleet merge-state record cloud intake's proposal produced (only the fields the fold reads). */
+const fleetRecord = (over: Record<string, unknown> = {}): FleetMergeStateV1 => ({
+  v: 1, key: 'prop-1', kind: 'change', proposalId: 'prop-1', revertsLandingId: null,
+  repo: REPO, repoPath: '/m', enforcement: null, createdAt: '2026-11-25T00:00:00Z', updatedAt: '2026-11-25T00:00:00Z',
+  gates: {}, judgeWaitSince: null, baseBranch: 'master', baseSha: null, treeSha: null, diffHash: null, verifyDigest: null,
+  risk: null, files: null, linesAdded: null, linesDeleted: null, producer: null, judgeId: null, openGatesDigest: null,
+  pr: { number: 77, state: 'merged' }, merge: null,
+  landing: { kind: 'merge', mergeSha: LAND },
+  landingLedgered: true, outcome: 'merged', outcomeReason: null,
+  ...over,
+}) as unknown as FleetMergeStateV1;
+const fleetOk = (record: FleetMergeStateV1): FleetMergeStateRead => ({ state: 'ok', record });
 
 const revertRecord = (over: Partial<RevertOutcomeRecord> = {}): RevertOutcomeRecord => ({
   repository: REPO, number: 5, pr: prKey(REPO, 5), mergeSha: M1,
@@ -156,6 +178,57 @@ describe('syncCloudOutcomeObservations', () => {
     // Only 1111111111 pairs registered+pr, but its PR #8 has no evidence.
     expect(res).toMatchObject({ proposals: 1, matched: 0, appended: 0 });
   });
+
+  it('re-keys a proposal to the fleet PR that superseded it, then observes the carrier merge', () => {
+    write(...reg('1111111111')); // pr #5: the cloud PR, closed by the intake
+    const t = superseded(); // outcome.mergeSha M1 describes fleet PR #77
+    const first = sync({ tasks: () => [t] });
+    expect(first).toMatchObject({ proposals: 1, matched: 1, appended: 2, merged: 1, reverted: 0, rekeyed: 1 });
+    const tail = records().slice(-2);
+    expect(tail[0]).toMatchObject({ type: 'pr', proposalId: '1111111111', repository: REPO, number: 77 });
+    expect(tail[1]).toMatchObject({ type: 'observed', proposalId: '1111111111', observation: 'merged', sha: M1 });
+    // The re-keyed ledger now names the fleet PR: the next pass needs no carrier map.
+    expect(sync({ tasks: () => [t] })).toMatchObject({ appended: 0, rekeyed: 0 });
+  });
+
+  it('re-keys even while the fleet PR has no merge evidence yet', () => {
+    write(...reg('1111111111'));
+    const t = superseded({ state: 'pr-open', outcome: { mergeSha: null } });
+    const res = sync({ tasks: () => [t] });
+    expect(res).toMatchObject({ matched: 0, appended: 1, rekeyed: 1 });
+    expect(records().at(-1)).toMatchObject({ type: 'pr', number: 77 });
+  });
+
+  it('takes the merge SHA from the fleet landing record when the task outcome lacks one', () => {
+    write(...reg('1111111111'));
+    const t = superseded({
+      outcome: { mergeSha: null },
+      intake: { headSha: 'a'.repeat(40), proposalId: 'prop-1', diffHash: null, refused: null, at: '2026-11-25T00:00:00Z' },
+    });
+    const fleetState = (key: string): FleetMergeStateRead => (key === 'prop-1' ? fleetOk(fleetRecord()) : { state: 'missing' });
+    const res = sync({ tasks: () => [t], fleetState });
+    expect(res).toMatchObject({ matched: 1, appended: 2, merged: 1, rekeyed: 1 });
+    expect(records().at(-1)).toMatchObject({ observation: 'merged', sha: LAND });
+  });
+
+  it('ignores a fleet record that names a different PR, repo or outcome', () => {
+    write(...reg('1111111111'));
+    const t = superseded({
+      outcome: { mergeSha: null },
+      intake: { headSha: 'a'.repeat(40), proposalId: 'prop-1', diffHash: null, refused: null, at: '2026-11-25T00:00:00Z' },
+    });
+    for (const record of [
+      fleetRecord({ pr: { number: 78, state: 'merged' } }),
+      fleetRecord({ repo: 'ashlrai/locus' }),
+      fleetRecord({ outcome: 'closed' }),
+      fleetRecord({ outcome: null, landing: null, merge: null }),
+    ]) {
+      const res = sync({ tasks: () => [t], fleetState: () => fleetOk(record) });
+      expect(res).toMatchObject({ matched: 0, merged: 0 });
+    }
+    // Only the carrier re-key was appended across all four passes.
+    expect(records().filter((r) => r.type === 'pr' && r.proposalId === '1111111111').map((r) => (r as { number: number }).number)).toEqual([5, 77]);
+  });
 });
 
 describe('observationEvents', () => {
@@ -184,5 +257,18 @@ describe('outcomeObservationEvidence', () => {
     expect(e.revertSha).toBe(R1);
     const journalOnly = outcomeObservationEvidence([], [revertRecord({ mergeSha: M2 })]).get(prKey(REPO, 5))!;
     expect(journalOnly.mergeSha).toBe(M2);
+  });
+
+  it('keys a superseded task under its fleet carrier and fills mergeSha from the landing record', () => {
+    const t = superseded({
+      outcome: { mergeSha: null },
+      intake: { headSha: 'a'.repeat(40), proposalId: 'prop-1', diffHash: null, refused: null, at: '2026-11-25T00:00:00Z' },
+    });
+    const byPr = outcomeObservationEvidence([t], [], () => fleetOk(fleetRecord()));
+    expect(byPr.get(prKey(REPO, 77))?.mergeSha).toBe(LAND);
+    expect(byPr.get(prKey(REPO, 5))).toBeUndefined();
+    // Task outcome still wins when both sources have a SHA.
+    const both = outcomeObservationEvidence([superseded()], [], () => fleetOk(fleetRecord()));
+    expect(both.get(prKey(REPO, 77))?.mergeSha).toBe(M1);
   });
 });

@@ -13,7 +13,7 @@ import { EMPTY_RESET_STATE, evaluateResetRule, renderResetDecision } from '../sr
 import {
   NEEDS_SIGNIN, type ResourceLiveObservation, type ResourceLiveSource, type ResourceLiveSources,
 } from '../src/core/usage/resource-live/source-types.js';
-import { defaultResourceLiveSources } from '../src/core/usage/resource-live/sources.js';
+import { antigravityAgentCheck, defaultResourceLiveSources } from '../src/core/usage/resource-live/sources.js';
 import { parseResourceLiveSidecar, resetDecisionDir, resourceLivePath } from '../src/core/usage/resource-live/store.js';
 import {
   DEVIN_FLASH_EXPIRES_AT, RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_SCHEMA,
@@ -663,7 +663,7 @@ describe('default sources', () => {
     const fetchImpl = vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith('/api/tags') ? { models: [{}] } : { data: [] })));
     const defaults = defaultResourceLiveSources({ runsDir, fetchImpl: fetchImpl as typeof fetch });
     const sources = sourcesOf({});
-    Object.assign(sources, { antigravity: defaults.antigravity, 'google-workspace': defaults['google-workspace'],
+    Object.assign(sources, { antigravity: [antigravityAgentCheck(runsDir)], 'google-workspace': defaults['google-workspace'],
       'openai-api': defaults['openai-api'], cursor: defaults.cursor, 'grok-bot': defaults['grok-bot'],
       'lm-studio': defaults['lm-studio'], ollama: defaults.ollama });
     const { sidecar } = await runResourceLiveTick({ runsDir, sources, nowMs: NOW });
@@ -707,7 +707,8 @@ describe('default sources', () => {
     expect(without.gemini).toEqual([]);
     expect(without['claude-weekly'].some(source => source.tier === 'visible-window')).toBe(false);
     expect(without['devin-flash'].map(source => source.tier)).toEqual(['official']);
-    for (const id of ['antigravity', 'dot', 'cursor'] as const) expect(without[id].map(source => source.tier)).toEqual(['operator-entry']);
+    expect(without.antigravity.map(source => source.tier)).toEqual(['official']);
+    for (const id of ['dot', 'cursor'] as const) expect(without[id].map(source => source.tier)).toEqual(['operator-entry']);
     expect(without.instinct).toEqual([]);
     const page = (text: string, url?: string) => ({ newPage: async () => ({ goto: async () => {}, url: () => url ?? 'https://claude.ai/settings/usage',
       visibleText: async () => text, close: async () => {} }), close: async () => {} });

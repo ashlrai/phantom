@@ -95,5 +95,61 @@ describe('repeatable Mac enrollment', () => {
     deps.call.mockImplementation(() => { throw new Error('offline'); });
     expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--owner', 'mason', '--json'])).toBe(1);
     expect(deps.configure).not.toHaveBeenCalled();
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(out).toMatchObject({ registered: false, approvalSteps: [expect.stringContaining('ssh-copy-id primary-mac'), expect.stringContaining('ssh-copy-id backup-mac')] });
+    expect(out.approvalSteps[0]).toContain('phm on the SSH PATH');
+  });
+  it('refuses repeat join while this node id holds a live pool session', async () => {
+    deps.call.mockImplementation((_config, verb) => verb === 'status'
+      ? { demoted: false, result: { nodes: [{ nodeId: 'air', live: true }, { nodeId: 'other', live: true }] } }
+      : { demoted: false, result: { session: 3 } });
+    expect(await cmdNodePool('join', ['--json'])).toBe(1);
+    expect(deps.call.mock.calls.some(c => c[1] === 'join')).toBe(false);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(out).toMatchObject({ command: 'join', registered: false, error: { code: 'node-live' } });
+    expect(out.error.fix).toContain('phm node status --json');
+  });
+  it('joins when only a different node id holds a live session', async () => {
+    deps.call.mockImplementation((_config, verb) => verb === 'status'
+      ? { demoted: false, result: { nodes: [{ nodeId: 'other', live: true }] } }
+      : { demoted: false, result: verb === 'join' ? { session: 3 } : { left: true } });
+    expect(await cmdNodePool('join', ['--json'])).toBe(0);
+    expect(deps.call).toHaveBeenCalledWith(config, 'join', ['--node', 'air', '--caps', 'codex', '--slots', '2']);
+  });
+  it('falls through to the join attempt when the status pre-check cannot reach the pool', async () => {
+    deps.call.mockImplementation((_config, verb) => {
+      if (verb === 'status') throw new Error('offline');
+      return { demoted: false, result: verb === 'join' ? { session: 3 } : { left: true } };
+    });
+    expect(await cmdNodePool('join', ['--json'])).toBe(0);
+    expect(deps.call).toHaveBeenCalledWith(config, 'join', ['--node', 'air', '--caps', 'codex', '--slots', '2']);
+  });
+  it('reports a held registration without approval steps when the pool answers without a session', async () => {
+    deps.read.mockReturnValue(null);
+    deps.call.mockImplementation((_config, verb) => verb === 'status'
+      ? { demoted: false, result: { nodes: [] } }
+      : { demoted: false, result: {} });
+    expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--owner', 'mason', '--json'])).toBe(1);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(out).toMatchObject({ registered: false, error: { code: 'held' } });
+    expect(out.approvalSteps).toBeUndefined();
+    expect(deps.configure).not.toHaveBeenCalled();
+  });
+  it('still enrolls when releasing the probe session fails, and says so', async () => {
+    deps.call.mockImplementation((_config, verb) => {
+      if (verb === 'leave') throw new Error('offline');
+      return { demoted: false, result: verb === 'join' ? { session: 3 } : { nodes: [] } };
+    });
+    expect(await cmdNodePool('join', ['--json'])).toBe(0);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(out).toMatchObject({ registered: true, session: 3 });
+    expect(out.note).toContain('expires within about 30 seconds');
+  });
+  it('reports a local config write failure after remote registration succeeded', async () => {
+    deps.read.mockReturnValue(null);
+    deps.configure.mockImplementation(() => { throw new Error('EACCES'); });
+    expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--owner', 'mason', '--json'])).toBe(1);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(out).toMatchObject({ registered: true, configured: false, error: { code: 'error' } });
   });
 });

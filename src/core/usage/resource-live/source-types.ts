@@ -2,9 +2,11 @@
  * Source contract for the live resource reader. Types and one sentinel only,
  * so the engine and its tests do not load any provider reader.
  */
-import type { BuiltInResourceLiveId, ResourceLiveId, ResourceLiveTier, ResourceLiveUnit } from './types.js';
+import type { AntigravityExecutionContext, AntigravityUsageGroup, BuiltInResourceLiveId, ResourceLiveId, ResourceLiveReason, ResourceLiveTier, ResourceLiveUnit } from './types.js';
 
 export interface ResourceLiveObservation {
+  groups?: AntigravityUsageGroup[];
+  execution_context?: AntigravityExecutionContext;
   account_id?: string;
   model?: string;
   window_start?: string;
@@ -21,10 +23,12 @@ export interface ResourceLiveObservation {
 }
 
 export const NEEDS_SIGNIN = { needs_signin: true } as const;
-export type ResourceLiveSourceResult = ResourceLiveObservation | typeof NEEDS_SIGNIN | null;
+export type ResourceLiveSourceResult = ResourceLiveObservation | typeof NEEDS_SIGNIN |
+  { reason: ResourceLiveReason; execution_context?: AntigravityExecutionContext } | null;
 
 export interface ResourceLiveSource {
   tier: ResourceLiveTier;
+  deadlineMs?: number;
   read(nowMs: number): Promise<ResourceLiveSourceResult> | ResourceLiveSourceResult;
 }
 

@@ -39,6 +39,11 @@ describe('shadow skill nudges', () => {
     expect(draftSkillNudges([job('retry', { retries: 1 }), job('recut', { recuts: 1 })], ts)).toHaveLength(2);
     expect(draftSkillNudges([job('fail', { outcome: 'failed', retries: 3 })], ts)).toEqual([]);
   });
+  it('withholds drafts without an observed lane', () => {
+    const unknownLane = repeated.map(entry => ({ ...entry, lane: 'unknown' }));
+    expect(draftSkillNudges(unknownLane, ts)).toEqual([]);
+    expect(draftSkillNudges([job('retry', { lane: 'UNKNOWN', retries: 1 })], ts)).toEqual([]);
+  });
   it('collapses duplicate observations, drafts and repeated sweeps', () => {
     expect(draftSkillNudges([repeated[0]!, repeated[0]!, repeated[2]!], ts)).toEqual([]);
     expect(nudgeSkillsFromJobs([...repeated, ...repeated], ts)).toHaveLength(1);
