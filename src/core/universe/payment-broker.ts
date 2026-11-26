@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-export const PAYMENT_BROKER_MAX_ENTRIES = 512;
+const PAYMENT_BROKER_MAX_ENTRIES = 512;
 const DAY_MS = 86_400_000;
 const MAX_CLOCK = 253_402_300_799_999;
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;

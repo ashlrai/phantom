@@ -2,7 +2,7 @@
  * Source contract for the live resource reader. Types and one sentinel only,
  * so the engine and its tests do not load any provider reader.
  */
-import type { ResourceLiveId, ResourceLiveTier, ResourceLiveUnit } from './types.js';
+import type { BuiltInResourceLiveId, ResourceLiveId, ResourceLiveTier, ResourceLiveUnit } from './types.js';
 
 export interface ResourceLiveObservation {
   account_id?: string;
@@ -12,6 +12,7 @@ export interface ResourceLiveObservation {
   limit: number | null;
   unit: ResourceLiveUnit;
   reset_at: string | null;
+  expires_at?: string;
   source: string;
   observed_at: string;
   stale_after?: string;
@@ -27,4 +28,5 @@ export interface ResourceLiveSource {
   read(nowMs: number): Promise<ResourceLiveSourceResult> | ResourceLiveSourceResult;
 }
 
-export type ResourceLiveSources = Record<ResourceLiveId, readonly ResourceLiveSource[]>;
+export type ResourceLiveSources = Record<BuiltInResourceLiveId, readonly ResourceLiveSource[]>
+  & Partial<Record<ResourceLiveId, readonly ResourceLiveSource[]>>;

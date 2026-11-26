@@ -343,6 +343,20 @@ export async function cmdVerse(args: string[], command: VerseCommandName = 'vers
     return parsed.code;
   }
 
+  const controller = new AbortController();
+  let stop!: () => void;
+  const stopped = new Promise<void>(resolve => { stop = resolve; });
+  const onSignal = () => { controller.abort(); stop(); };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  try { return await runVerse(parsed, command, controller.signal, stopped); }
+  finally {
+    process.removeListener('SIGINT', onSignal);
+    process.removeListener('SIGTERM', onSignal);
+  }
+}
+
+async function runVerse(parsed: VerseOptions, command: VerseCommandName, signal: AbortSignal, stopped: Promise<void>): Promise<number> {
   const { port, open, json, accounts, accountsPollSeconds, accountsIdleMinutes, remoteConfig, desktopTokenHandoff } = parsed;
 
   let loadConfig: Awaited<ReturnType<typeof importLoadConfig>>;
@@ -374,7 +388,7 @@ export async function cmdVerse(args: string[], command: VerseCommandName = 'vers
   }
 
   let remote: Awaited<ReturnType<typeof import('../core/web/remote-runtime.js')['startRemoteRuntime']>> | null = null;
-  if (remoteConfig) {
+  if (remoteConfig && !signal.aborted) {
     try {
       const { startRemoteRuntime } = await import('../core/web/remote-runtime.js');
       remote = await startRemoteRuntime(remoteConfig, handle);
@@ -436,11 +450,12 @@ export async function cmdVerse(args: string[], command: VerseCommandName = 'vers
   // client interest so a backgrounded app never spawns processes forever.
   let collectorClose: (() => Promise<void>) | null = null;
   let collectorBanner: string | null = null;
-  if (accounts) {
+  if (accounts && !signal.aborted) {
     try {
       const { startVerseAccountCollector, setVerseAccountCollector } = await import('../core/verse/accounts.js');
       const { resolveAccountsRoot } = await import('../core/verse/seats.js');
       const collector = await startVerseAccountCollector({
+        signal,
         accountsRoot: resolveAccountsRoot(cfg),
         pollIntervalMs: accountsPollSeconds * 1_000,
         idleSuspendMs: accountsIdleMinutes * 60_000,
@@ -466,7 +481,7 @@ export async function cmdVerse(args: string[], command: VerseCommandName = 'vers
   //
   // After the collector, so the first health sweep and the first capacity
   // snapshot read live account telemetry rather than "unknown".
-  const background = await startVerseBackgroundServices(cfg, {
+  const background = signal.aborted ? null : await startVerseBackgroundServices(cfg, {
     accountServices: accounts,
     log: (message) => { if (!json) console.error(dim(`  ${message}`)); },
   });
@@ -548,10 +563,10 @@ export async function cmdVerse(args: string[], command: VerseCommandName = 'vers
 
   // ── Open browser ──────────────────────────────────────────────────────────
 
-  if (open) {
+  if (open && !signal.aborted) {
     try {
-      await openBrowser(verseUrl);
-      if (!json) console.error(dim(`  Opening ${verseUrl} in your browser…`));
+      await Promise.race([openBrowser(verseUrl), stopped]);
+      if (!json && !signal.aborted) console.error(dim(`  Opening ${verseUrl} in your browser…`));
     } catch {
       if (!json) console.error(dim(`  Could not open browser automatically. Navigate to ${verseUrl}`));
     }
@@ -559,38 +574,17 @@ export async function cmdVerse(args: string[], command: VerseCommandName = 'vers
 
   // ── Keep alive until SIGINT ───────────────────────────────────────────────
 
-  await new Promise<void>((resolve) => {
-    const onSignal = async () => {
-      if (!json) {
-        process.stderr.write('\n');
-        console.error(dim('  Stopping server…'));
-      }
-      // Background timers stop first, so no health sweep or capacity tick
-      // fires into a collector or server that is half closed.
-      background.stop();
-      try {
-        // Release the metadata lease BEFORE the HTTP server goes away, so a
-        // waiting `ashlr resource-console` can take ownership immediately.
-        if (collectorClose) await collectorClose();
-      } catch {
-        // `ResourceConnectionMonitor.close()` throws when a sample ended
-        // `uncertain`. That is logged inside the collector; exit cleanly.
-      }
-      try {
-        if (remote) await remote.close();
-        await handle.close();
-      } catch {
-        // ignore close errors on shutdown
-      }
-      // After close(): the engine's own close has settled running turns into
-      // the reasoning tap; this writes whatever is still batched.
-      flushReasoning();
-      resolve();
-    };
-
-    process.once('SIGINT', () => void onSignal());
-    process.once('SIGTERM', () => void onSignal());
-  });
+  await stopped;
+  if (!json) {
+    process.stderr.write('\n');
+    console.error(dim('  Stopping server…'));
+  }
+  background?.stop();
+  // Native children settle before the collector releases its durable lease.
+  try { await collectorClose?.(); } catch { /* Uncertain teardown stays fenced. */ }
+  try { await remote?.close(); } catch { /* Still close the local listener. */ }
+  try { await handle.close(); } catch { /* Best-effort server shutdown. */ }
+  flushReasoning();
 
   uninstallCrashHandlers();
   if (!json) console.error(dim('  Server stopped.'));

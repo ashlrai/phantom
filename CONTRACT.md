@@ -231,6 +231,14 @@ install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
 The install module also exports `ConsumerInstallHeld` for shared error
 classification and the `directory`, `parents`, `owned`, `regular`, `write`,
 `sha`, `ioRead` and `packageReady` guards.
+The default inspection is non-mutating apart from private artifact staging.
+`inspectConsumerDesktopInstall(input, apply = false)` and upgrade inspection
+with `options.apply` can tighten eligible existing private directories and run
+the quota collector's supported recovery before checking quiescence. The
+results can carry `path`, `remedyCommand`, and `tightenedPaths`; upgrade
+inspection puts failed quiescence codes in `stop.reason`, and apply reports
+the code as the hold `reason`. The shared transaction's quiescence refusals
+carry a fixed error `code` in addition to the local operator message.
 
 # Lane allowance evidence
 
@@ -2229,11 +2237,15 @@ burn_rate_per_hour, sessions, source, observed_at, state, reason }`. Unknown fie
 
 `assessNodeCapacity(ramBytes, memory, freeDiskBytes, light?, options?)` and
 `readNodeCapacity(light?, options?)` accept optional `CapacityOptions` with a
-trusted pack name/resource hint (`memory-bound` or `cpu-bound`) and injected CPU
-reader. CPU-bound packs require finite nonnegative load averages and a positive
+trusted pack name/resource hint (`memory-bound` or `cpu-bound`) and injected CPU,
+memory-headroom (`readMemory`) and free-disk (`readDisk`) readers.
+CPU-bound packs require finite nonnegative load averages and a positive
 integer `availableParallelism`; one-minute load plus one must fit parallelism.
 `omlx-chat` opts in; API/probe packs and unspecified hints retain memory-only
 admission. Existing RAM, pressure, disk and light-profile limits are unchanged.
+`readNodeCapacity` samples headroom through `readPlatformHostHeadroom`: macOS
+kernel telemetry or Linux /proc (meminfo plus PSI); other platforms read nothing
+and hold `memory-unmeasured`.
 
 `readNodeCapacity` applies `shareNodeCapacity(capacity, options?)`, with optional
 injected `HostSlots` registry/owned `HostSlotLease`. The physical host's existing
@@ -2246,7 +2258,9 @@ runner close. Full occupancy never revokes an existing lease.
 New `NodeCapacity.held` values are `host-slots-exhausted`,
 `host-slots-unmeasured`, `cpu-pressure`, and `cpu-unmeasured`, always with zero
 slots. Pool `status` includes local `capacity`; worker results report holds.
-The private registry uses native hardware digest/boot identity; missing identity,
+The private registry uses native hardware digest/boot identity (macOS
+IOPlatformUUID and boot-session UUID, or Linux machine-id and kernel boot_id
+under a separate digest domain); missing identity,
 unsafe paths or corrupt state hold admission. Leases have no time-based expiry:
 a crashed worker's reservation remains until verified offline cleanup or reboot.
 See [node admission](docs/NODES.md#small-mac-enrollment-and-admission).
@@ -4127,6 +4141,33 @@ cannot carry — under the same registered-sender, scrub, wake and dedupe rules;
 a `to` that resolves to a registered identity — any of its labels, exact
 first then lowercase — lands in its inbox as
 legacy mail.
+
+`src/core/agents/bus-follow.ts`: `followAgentBus(request, options?, deps)`
+is the bounded streaming watch over one identity's addressed inbox —
+`agents bus follow`'s core. Each poll runs the same `readAgentInbox`
+projection `agents bus inbox` serves (every inbox filter applies
+unchanged, minus the paging fields) and emits one
+`AgentBusFollowRecord` per accepted row: `{type:'message'}` carries the
+`InboxMessage` fields plus `summary`, the same scrubbed one-line text
+`busBodySummary`/`busBodyFallbackSummary` render for the `--frame` read,
+and `{type:'checkpoint', cursor}` marks every advance of the scan
+position, offered only after every preceding message record was
+accepted — so the returned cursor is always a safe at-least-once resume
+point for `--after`. `AgentBusFollowRequest` requires `agent` and a
+mandatory bounded `durationMs` (1..`BUS_FOLLOW_MAX_DURATION_MS`), takes
+optional `after`/`intervalMs` (the shared `fleet bus-follow` bounds) and
+the full inbox filter set; `validAgentBusFollowRequest` is the shared
+validator. A page that fills its row cap re-polls without sleeping so a
+retained backlog drains inside the same deadline; a short page waits one
+interval, and `retryable` pages pause and re-read rather than ending the
+stream. The result is `expired`/`cancelled` on deadline or abort,
+`invalid` on a malformed request, `unknown-agent` for an unregistered
+ref, `source-unavailable` when the store cannot be read and
+`output-unavailable` when the output stream rejects a record — an output
+failure ends the stream rather than skipping rows, and an expired stream
+emits one final checkpoint so the last accepted cursor is always on the
+wire. Read-only local observation: routing labels are data, never
+authenticated identity.
 
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,

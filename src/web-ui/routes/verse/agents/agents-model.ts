@@ -3,6 +3,7 @@
  * keyboard movement, filters, labels, the seat roster for "same task on N
  * seats", and the spawn form's validation. No React, no fetch — table-tested.
  */
+import { relativeTime } from '../../../lib/relative-time.js';
 import {
   AGENT_COLUMNS,
   type AgentCard,
@@ -124,16 +125,8 @@ export function elapsedLabel(fromIso: string | null, now: number): string | null
 }
 
 export function agoLabel(iso: string | null, now: number): string {
-  if (!iso) return '';
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return '';
-  const s = Math.max(0, Math.round((now - t) / 1000));
-  if (s < 45) return 'just now';
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 48) return `${h}h ago`;
-  return `${Math.round(h / 24)}d ago`;
+  const reading = relativeTime(iso, now);
+  return reading ? reading.seconds < 45 ? 'just now' : reading.text : '';
 }
 
 export function usd(n: number): string {

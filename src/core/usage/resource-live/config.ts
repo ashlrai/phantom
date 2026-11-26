@@ -11,6 +11,7 @@ export const liveSourcesSchema = z.object({
     adminKeyHandle: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
     creditUsd: z.number().finite().positive(),
     windowStart: z.string().datetime().refine(v => v.endsWith('T00:00:00.000Z') || v.endsWith('T00:00:00Z')),
+    expiresAt: z.string().datetime().optional(),
   }).strict().optional(),
 }).strict();
 export type LiveSourcesConfig = z.infer<typeof liveSourcesSchema>;

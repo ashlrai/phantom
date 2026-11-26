@@ -277,6 +277,34 @@ describe('Comms role and triage', () => {
     expect((await readInbox(runsDir)).messages).toEqual([]);
     expect(sent.triage).toMatchObject({ kept: 0, archived: 1 });
   });
+
+  it('sends one reply when two inbox messages produce the same unique reply', async () => {
+    const runsDir = temp();
+    // Same sender, transport and subject: both rows draft the identical reply,
+    // so the per-unique-reply dedupe must hold inside one pass, not only across passes.
+    await writeInbox(runsDir, [
+      { id: 'person-1', transport: 'email', from: 'ada@example.com', subject: 'Question', body: 'First copy?' },
+      { id: 'person-2', transport: 'email', from: 'ada@example.com', subject: 'Question', body: 'Second copy?' },
+    ]);
+    const calls: string[] = [];
+    const report = await runCommsAgent({
+      runsDir,
+      lanes: [],
+      teamIdentities: [],
+      approvalsSource: 'injected',
+      approvals: [{ transport: 'email', recipient: 'ada@example.com' }],
+      kill: () => 'inactive',
+      paused: () => false,
+      deliver: async () => { calls.push('sent'); return { status: 'sent' as const, reason: 'accepted by adapter' }; },
+    });
+    expect(calls).toHaveLength(1);
+    expect(report.sends).toEqual([
+      expect.objectContaining({ status: 'sent' }),
+      expect.objectContaining({ status: 'sent', reason: expect.stringContaining('already delivered') }),
+    ]);
+    expect((await readInbox(runsDir)).messages).toEqual([]);
+    expect(report.triage).toMatchObject({ kept: 0, archived: 2, deleted: 0 });
+  });
 });
 
 describe('owner approvals file', () => {

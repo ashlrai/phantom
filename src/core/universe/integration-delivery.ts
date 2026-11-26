@@ -3,7 +3,11 @@ import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
-import { canonical, defaultUniverseRoot, digest, readArtifactSnapshot } from './artifacts.js';
+import {
+  canonical, defaultUniverseRoot, digest, hasExactOwnKeys as exact, isIsoTimestamp as timestamp,
+  isPlainObject as object, readArtifactSnapshot, UNIVERSE_GIT_OID_RE as OID, UNIVERSE_ID_RE as ID,
+  UNIVERSE_SHA256_RE as HASH,
+} from './artifacts.js';
 import { deliveryGit } from './delivery-git.js';
 import { assertUniverseExecution, withUniverseExecution } from './execution.js';
 import { assertUniverseIntegrationEvaluationsSettled, readUniverseIntegrationEvaluation,
@@ -15,26 +19,12 @@ import { assertComparatorUnchanged, manifestRecord, projectUniverse, universePat
 import type { UniverseStoreOptions } from './types.js';
 import { killSwitchOn } from '../sandbox/policy.js';
 
-const HASH = /^[a-f0-9]{64}$/;
-const OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const MAX_DELIVERIES = 128;
 
 type Entry =
   { id: string; kind: 'intent'; request: UniverseIntegrationDeliveryRequest; receipt: UniverseIntegrationDeliveryReceipt } |
   { id: string; kind: 'receipt'; request: UniverseIntegrationDeliveryRequest; receipt: UniverseIntegrationDeliveryReceipt };
 
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-function exact(value: Record<string, unknown>, keys: string[]): boolean {
-  const own = Reflect.ownKeys(value);
-  return own.length === keys.length && own.every((key) => typeof key === 'string' && keys.includes(key));
-}
-function timestamp(value: unknown): value is string {
-  return typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
-}
 function evaluationRequestDigest(request: UniverseIntegrationEvaluationRequest): string {
   return digest(canonical({ domain: 'universe-integration-evaluation-v1', request }));
 }

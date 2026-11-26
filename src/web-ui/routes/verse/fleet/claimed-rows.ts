@@ -1,3 +1,4 @@
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import { ageText, type FleetRuns } from '../ops/ops-runs-model.js';
 
 type ClaimRuns = Pick<FleetRuns, 'claimed' | 'workers' | 'lastTick'>;
@@ -33,7 +34,7 @@ export function claimedTell(rows: ClaimedRow[], runs: ClaimRuns, nowMs: number):
   const tickMs = runs.lastTick === null ? NaN : Date.parse(runs.lastTick);
   const tickAge = Number.isFinite(tickMs) ? Math.max(0, (nowMs - tickMs) / 1000) : null;
   return {
-    text: `Dispatch is not starting claimed jobs (oldest ${minutes(oldest)}, last tick ${tickAge === null ? 'unknown' : `${minutes(tickAge)} ago`})`,
+    text: `Dispatch is not starting claimed jobs (oldest ${minutes(oldest)}, last tick ${tickAge === null ? 'unknown' : ageInSeconds(tickAge, 'spaced')})`,
     tone: oldest > 900 || (tickAge !== null && tickAge > 1200) ? 'bad' : 'warn',
   };
 }

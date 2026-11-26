@@ -7,12 +7,6 @@
  */
 
 import {
-  createHash,
-  createPublicKey,
-  verify as verifySignature,
-  type KeyObject,
-} from 'node:crypto';
-import {
   VERIFIER_EXECUTION_POLICY_APPROVAL_SIGNATURE_ALGORITHM,
   VERIFIER_EXECUTION_POLICY_APPROVAL_TRUST_POLICY,
   VERIFIER_EXECUTION_POLICY_APPROVAL_TRUST_PROTOCOL_V1,
@@ -24,35 +18,39 @@ import {
   type VerifierExecutionPolicyPlatformV1,
 } from './verifier-execution-policy-trust-roots.js';
 import {
+  VERIFIER_EXECUTION_TRUST_PROTOCOL_V1,
   inspectVerifierExecutionAuthorityV2,
+  verifierExecutionAuthorityTrustPolicyDigest,
   type InspectVerifierExecutionAuthorityV2Input,
-  type VerifierExecutionExpectedBindingsV1,
+  type VerifierExecutionTrustPolicyV1,
 } from './verifier-execution-authority.js';
+import {
+  VERIFIER_EXECUTION_ARCHITECTURES as ARCHITECTURES,
+  VERIFIER_EXECUTION_BACKENDS as BACKENDS,
+  VERIFIER_EXECUTION_DIGEST_RE as DIGEST,
+  VERIFIER_EXECUTION_MAX_LIFETIME_MS as MAX_LIFETIME_MS,
+  VERIFIER_EXECUTION_PLATFORMS as PLATFORMS,
+  canonicalBase64Url,
+  canonicalIso,
+  denseArray,
+  ed25519KeyId,
+  exactPlainRecord,
+  plainDataGraph,
+  sha256Domain,
+  sortedEnumArray,
+  verifiedEd25519PublicKey,
+  verifyEd25519Signature,
+} from './verifier-execution-shared.js';
 
 export const VERIFIER_EXECUTION_POLICY_APPROVAL_PROTOCOL_V1 =
   'ashlr-verifier-execution-policy-approval-v1' as const;
 
 const APPROVAL_ASSURANCE = 'externally-approved-verifier-execution-policy' as const;
-const APPROVED_TRUST_PROTOCOL = 'ashlr-verifier-execution-trust-v1' as const;
 const SIGNATURE_DOMAIN = 'ashlr:verifier-execution-policy-approval-signature:v1';
 const KEY_ID_DOMAIN = 'ashlr:verifier-execution-policy-approver-key-id:v1';
-const CAPSULE_KEY_ID_DOMAIN = 'ashlr:verifier-execution-authority-key-id:v1';
-const APPROVED_TRUST_POLICY_DIGEST_DOMAIN = 'ashlr:verifier-execution-trust-policy:v1';
 const TRUST_POLICY_DIGEST_DOMAIN = 'ashlr:verifier-execution-policy-approval-trust-policy:v1';
 const APPROVAL_DIGEST_DOMAIN = 'ashlr:verifier-execution-policy-approval:v1';
-const DIGEST = /^[0-9a-f]{64}$/;
-const BASE64URL = /^[A-Za-z0-9_-]+$/;
-const POLICY_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const MAX_ROOTS = 16;
-const MAX_CAPSULE_KEYS = 16;
-const MAX_LIFETIME_MS = 10 * 60 * 1_000;
-const PLATFORMS = ['darwin', 'linux', 'win32'] as const;
-const ARCHITECTURES = ['arm64', 'x64'] as const;
-const BACKENDS = [
-  'linux-namespace-cgroup-broker',
-  'macos-virtualization-framework-broker',
-  'windows-appcontainer-job-broker',
-] as const;
 
 export const VERIFIER_EXECUTION_POLICY_APPROVAL_BLOCKERS_V1 = Object.freeze([
   'clock-authority-unavailable',
@@ -69,11 +67,6 @@ const SCOPE_KEYS = [
 const INPUT_KEYS = [
   'approval', 'approvedTrustPolicy', 'expectedApprovedTrustPolicyDigest',
   'expectedPolicyGeneration', 'expectedScope', 'nowMs',
-] as const;
-const APPROVED_POLICY_KEYS = ['keys', 'policyVersion', 'protocol', 'schemaVersion'] as const;
-const APPROVED_POLICY_KEY_KEYS = [
-  'allowedArchitectures', 'allowedBackends', 'allowedPlatforms', 'keyId', 'notAfter',
-  'notBefore', 'publicKeySpki', 'role', 'signatureAlgorithm',
 ] as const;
 const ROOT_KEYS = [
   'allowedArchitectures', 'allowedBackends', 'allowedPlatforms', 'environmentDigest', 'fleetDigest',
@@ -111,32 +104,13 @@ export interface VerifierExecutionPolicyApprovalScopeV1 {
   backend: VerifierExecutionPolicyBackendV1;
 }
 
-export interface VerifierExecutionApprovedTrustKeyV1 {
-  keyId: string;
-  signatureAlgorithm: 'ed25519';
-  role: 'verifier-capsule-admission-signer';
-  publicKeySpki: string;
-  notBefore: string;
-  notAfter: string;
-  allowedPlatforms: VerifierExecutionPolicyPlatformV1[];
-  allowedArchitectures: VerifierExecutionPolicyArchitectureV1[];
-  allowedBackends: VerifierExecutionPolicyBackendV1[];
-}
-
-export interface VerifierExecutionApprovedTrustPolicyV1 {
-  schemaVersion: 1;
-  protocol: typeof APPROVED_TRUST_PROTOCOL;
-  policyVersion: string;
-  keys: VerifierExecutionApprovedTrustKeyV1[];
-}
-
 export interface VerifierExecutionPolicyApprovalUnsignedV1
   extends VerifierExecutionPolicyApprovalScopeV1 {
   schemaVersion: 1;
   protocol: typeof VERIFIER_EXECUTION_POLICY_APPROVAL_PROTOCOL_V1;
   assurance: typeof APPROVAL_ASSURANCE;
   approvedTrustPolicyDigest: string;
-  approvedTrustProtocol: typeof APPROVED_TRUST_PROTOCOL;
+  approvedTrustProtocol: typeof VERIFIER_EXECUTION_TRUST_PROTOCOL_V1;
   policyGeneration: number;
   issuedAt: string;
   expiresAt: string;
@@ -160,7 +134,7 @@ export interface VerifierExecutionPolicyApprovalEnvelopeV1
 
 export interface InspectVerifierExecutionPolicyApprovalV1Input {
   approval: VerifierExecutionPolicyApprovalEnvelopeV1;
-  approvedTrustPolicy: VerifierExecutionApprovedTrustPolicyV1;
+  approvedTrustPolicy: VerifierExecutionTrustPolicyV1;
   expectedApprovedTrustPolicyDigest: string;
   expectedPolicyGeneration: number;
   expectedScope: VerifierExecutionPolicyApprovalScopeV1;
@@ -175,11 +149,9 @@ export type VerifierExecutionPolicyApprovalReasonV1 =
   | 'approval-invalid'
   | 'approved-policy-invalid'
   | 'approved-policy-digest-mismatch'
-  | 'approved-policy-protocol-mismatch'
   | 'policy-generation-mismatch'
   | 'policy-generation-downgrade'
   | 'scope-mismatch'
-  | 'approver-role-invalid'
   | 'approver-key-unknown'
   | 'approver-key-invalid'
   | 'approver-key-inactive'
@@ -246,7 +218,7 @@ export type VerifierExecutionPolicyApprovalResultV1 =
  * Reserved input contract for a future independently authenticated clock.
  * V1 accepts only an explicit unavailable observation and grants no authority.
  */
-export interface VerifierExecutionTimeAuthorityObservationV1 {
+interface VerifierExecutionTimeAuthorityObservationV1 {
   schemaVersion: 1;
   protocol: 'ashlr-verifier-execution-time-authority-observation-v1';
   state: 'unavailable';
@@ -307,79 +279,6 @@ export interface VerifierExecutionCompositionResultV1 {
   blockers: typeof VERIFIER_EXECUTION_POLICY_APPROVAL_BLOCKERS_V1;
 }
 
-function sha256(domain: string, value: Uint8Array): string {
-  return createHash('sha256').update(`${domain}\0`, 'utf8').update(value).digest('hex');
-}
-
-function exactPlainRecord(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return false;
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  if (Object.values(descriptors).some((descriptor) => !Object.hasOwn(descriptor, 'value'))) return false;
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
-function plainDataGraph(value: unknown, seen = new Set<object>(), depth = 0): boolean {
-  if (value === null || typeof value !== 'object') return true;
-  if (depth > 8 || seen.size >= 512 || seen.has(value)) return false;
-  seen.add(value);
-  const prototype = Object.getPrototypeOf(value);
-  if (Array.isArray(value)) {
-    if (prototype !== Array.prototype || value.length > 128) return false;
-  } else if (prototype !== Object.prototype && prototype !== null) return false;
-  for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
-    if (!Object.hasOwn(descriptor, 'value') || !plainDataGraph(descriptor.value, seen, depth + 1)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function denseArray(value: unknown, minimum: number, maximum: number): value is unknown[] {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype ||
-    value.length < minimum || value.length > maximum ||
-    Object.getOwnPropertyNames(value).length !== value.length + 1 ||
-    Object.values(Object.getOwnPropertyDescriptors(value)).some(
-      (descriptor) => !Object.hasOwn(descriptor, 'value'),
-    )) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    if (!Object.hasOwn(value, index)) return false;
-  }
-  return true;
-}
-
-function canonicalIso(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length !== 24) return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
-function canonicalBase64Url(value: unknown, expectedBytes?: number): Buffer | null {
-  if (typeof value !== 'string' || value.length === 0 || value.length > 512 || !BASE64URL.test(value)) {
-    return null;
-  }
-  try {
-    const bytes = Buffer.from(value, 'base64url');
-    const validLength = expectedBytes === undefined
-      ? bytes.length >= 32 && bytes.length <= 128
-      : bytes.length === expectedBytes;
-    return validLength && bytes.toString('base64url') === value ? bytes : null;
-  } catch { return null; }
-}
-
-function sortedEnumArray<T extends string>(value: unknown, allowed: readonly T[]): value is readonly T[] {
-  if (!denseArray(value, 1, allowed.length)) return false;
-  let prior = '';
-  for (const entry of value) {
-    if (typeof entry !== 'string' || !allowed.includes(entry as T) || entry <= prior) return false;
-    prior = entry;
-  }
-  return true;
-}
-
 function scopeShape(value: unknown): value is VerifierExecutionPolicyApprovalScopeV1 {
   return exactPlainRecord(value, SCOPE_KEYS) &&
     typeof value['fleetDigest'] === 'string' && DIGEST.test(value['fleetDigest']) &&
@@ -399,16 +298,7 @@ function scopeMatches(
 
 /** Stable role-separated identity for a policy-approver Ed25519 public key. */
 export function verifierExecutionPolicyApproverKeyId(publicKeySpki: unknown): string | null {
-  const bytes = canonicalBase64Url(publicKeySpki);
-  if (!bytes) return null;
-  try {
-    const key = createPublicKey({ key: bytes, format: 'der', type: 'spki' });
-    const canonical = Buffer.from(key.export({ format: 'der', type: 'spki' }));
-    if (key.type !== 'public' || key.asymmetricKeyType !== 'ed25519' || !canonical.equals(bytes)) {
-      return null;
-    }
-    return sha256(KEY_ID_DOMAIN, bytes);
-  } catch { return null; }
+  return ed25519KeyId(KEY_ID_DOMAIN, publicKeySpki);
 }
 
 function rootShape(value: unknown): value is VerifierExecutionPolicyApprovalRootV1 {
@@ -447,7 +337,7 @@ function trustPolicyShape(value: unknown): value is VerifierExecutionPolicyAppro
 }
 
 function trustPolicyDigest(policy: VerifierExecutionPolicyApprovalTrustPolicyV1): string {
-  return sha256(TRUST_POLICY_DIGEST_DOMAIN, Buffer.from(JSON.stringify([
+  return sha256Domain(TRUST_POLICY_DIGEST_DOMAIN, JSON.stringify([
     policy.schemaVersion,
     policy.protocol,
     policy.policyGeneration,
@@ -467,7 +357,7 @@ function trustPolicyDigest(policy: VerifierExecutionPolicyApprovalTrustPolicyV1)
       root.notAfter,
       root.revokedAt,
     ]),
-  ]), 'utf8'));
+  ]));
 }
 
 /** Identity of the code-owned approval policy. There is no caller-supplied variant. */
@@ -485,7 +375,7 @@ function approvalShape(value: unknown): value is VerifierExecutionPolicyApproval
     value['assurance'] === APPROVAL_ASSURANCE &&
     typeof value['approvedTrustPolicyDigest'] === 'string' &&
     DIGEST.test(value['approvedTrustPolicyDigest']) &&
-    value['approvedTrustProtocol'] === APPROVED_TRUST_PROTOCOL &&
+    value['approvedTrustProtocol'] === VERIFIER_EXECUTION_TRUST_PROTOCOL_V1 &&
     Number.isSafeInteger(value['policyGeneration']) && (value['policyGeneration'] as number) >= 0 &&
     typeof value['fleetDigest'] === 'string' && DIGEST.test(value['fleetDigest']) &&
     typeof value['repositoryDigest'] === 'string' && DIGEST.test(value['repositoryDigest']) &&
@@ -541,18 +431,6 @@ export function canonicalVerifierExecutionPolicyApprovalPayloadV1(value: unknown
   } catch { return null; }
 }
 
-function trustedPublicKey(root: VerifierExecutionPolicyApprovalRootV1): KeyObject | null {
-  if (!rootShape(root)) return null;
-  const bytes = canonicalBase64Url(root.publicKeySpki);
-  if (!bytes) return null;
-  try {
-    const key = createPublicKey({ key: bytes, format: 'der', type: 'spki' });
-    const canonical = Buffer.from(key.export({ format: 'der', type: 'spki' }));
-    return key.type === 'public' && key.asymmetricKeyType === 'ed25519' && canonical.equals(bytes)
-      ? key : null;
-  } catch { return null; }
-}
-
 function withheld(
   reason: Exclude<
   VerifierExecutionPolicyApprovalReasonV1,
@@ -591,69 +469,9 @@ function withheld(
   };
 }
 
-function capsuleKeyId(publicKeySpki: unknown): string | null {
-  const bytes = canonicalBase64Url(publicKeySpki);
-  if (!bytes) return null;
-  try {
-    const key = createPublicKey({ key: bytes, format: 'der', type: 'spki' });
-    const canonical = Buffer.from(key.export({ format: 'der', type: 'spki' }));
-    if (key.type !== 'public' || key.asymmetricKeyType !== 'ed25519' || !canonical.equals(bytes)) {
-      return null;
-    }
-    return sha256(CAPSULE_KEY_ID_DOMAIN, bytes);
-  } catch { return null; }
-}
-
-function approvedPolicyKeyShape(value: unknown): value is VerifierExecutionApprovedTrustKeyV1 {
-  return exactPlainRecord(value, APPROVED_POLICY_KEY_KEYS) &&
-    typeof value['keyId'] === 'string' && DIGEST.test(value['keyId']) &&
-    value['signatureAlgorithm'] === 'ed25519' &&
-    value['role'] === 'verifier-capsule-admission-signer' &&
-    typeof value['publicKeySpki'] === 'string' && capsuleKeyId(value['publicKeySpki']) === value['keyId'] &&
-    canonicalIso(value['notBefore']) && canonicalIso(value['notAfter']) &&
-    Date.parse(value['notBefore']) < Date.parse(value['notAfter']) &&
-    sortedEnumArray(value['allowedPlatforms'], PLATFORMS) &&
-    sortedEnumArray(value['allowedArchitectures'], ARCHITECTURES) &&
-    sortedEnumArray(value['allowedBackends'], BACKENDS);
-}
-
-function approvedPolicyShape(value: unknown): value is VerifierExecutionApprovedTrustPolicyV1 {
-  if (!exactPlainRecord(value, APPROVED_POLICY_KEYS) || value['schemaVersion'] !== 1 ||
-    value['protocol'] !== APPROVED_TRUST_PROTOCOL || typeof value['policyVersion'] !== 'string' ||
-    !POLICY_VERSION.test(value['policyVersion']) ||
-    !denseArray(value['keys'], 1, MAX_CAPSULE_KEYS)) return false;
-  let prior = '';
-  for (const key of value['keys']) {
-    if (!approvedPolicyKeyShape(key) || key.keyId <= prior) return false;
-    prior = key.keyId;
-  }
-  return true;
-}
-
 /** Exact canonical identity used by the isolated #202 policy contract. */
 export function verifierExecutionApprovedTrustPolicyDigestV1(value: unknown): string | null {
-  try {
-    if (!plainDataGraph(value)) return null;
-    const policy = structuredClone(value);
-    if (!approvedPolicyShape(policy)) return null;
-    return createHash('sha256').update(JSON.stringify([
-      APPROVED_TRUST_POLICY_DIGEST_DOMAIN,
-      policy.schemaVersion,
-      policy.protocol,
-      policy.policyVersion,
-      policy.keys.map((key) => [
-        key.keyId,
-        key.signatureAlgorithm,
-        key.role,
-        key.publicKeySpki,
-        key.notBefore,
-        key.notAfter,
-        key.allowedPlatforms,
-        key.allowedArchitectures,
-        key.allowedBackends,
-      ]),
-    ])).digest('hex');
-  } catch { return null; }
+  return verifierExecutionAuthorityTrustPolicyDigest(value);
 }
 
 function inspectUnsafe(input: unknown): VerifierExecutionPolicyApprovalResultV1 {
@@ -682,29 +500,25 @@ function inspectUnsafe(input: unknown): VerifierExecutionPolicyApprovalResultV1 
   if (!approvalShape(unsignedValue)) return withheld('approval-invalid');
   const approval = unsignedValue;
 
-  const approvedPolicy = snapshot['approvedTrustPolicy'];
-  if (!approvedPolicyShape(approvedPolicy)) return withheld('approved-policy-invalid');
-  const approvedPolicyDigest = verifierExecutionApprovedTrustPolicyDigestV1(approvedPolicy);
-  if (!approvedPolicyDigest || approval.approvedTrustPolicyDigest !== approvedPolicyDigest ||
+  const approvedPolicyDigest = verifierExecutionAuthorityTrustPolicyDigest(
+    snapshot['approvedTrustPolicy'],
+  );
+  if (!approvedPolicyDigest) return withheld('approved-policy-invalid');
+  const approvedPolicy = snapshot['approvedTrustPolicy'] as VerifierExecutionTrustPolicyV1;
+  if (approval.approvedTrustPolicyDigest !== approvedPolicyDigest ||
     snapshot['expectedApprovedTrustPolicyDigest'] !== approvedPolicyDigest) {
     return withheld('approved-policy-digest-mismatch');
-  }
-  if (approval.approvedTrustProtocol !== approvedPolicy.protocol) {
-    return withheld('approved-policy-protocol-mismatch');
   }
   if (approval.policyGeneration !== snapshot['expectedPolicyGeneration']) {
     return withheld('policy-generation-mismatch');
   }
   if (!scopeMatches(approval, snapshot['expectedScope'])) return withheld('scope-mismatch');
 
-  if (approval.approverRole !== VERIFIER_EXECUTION_POLICY_APPROVER_ROLE) {
-    return withheld('approver-role-invalid');
-  }
   const root = VERIFIER_EXECUTION_POLICY_APPROVAL_TRUST_POLICY.roots.find(
     (candidate) => candidate.keyId === approval.approverKeyId,
   );
   if (!root) return withheld('approver-key-unknown');
-  const publicKey = trustedPublicKey(root);
+  const publicKey = verifiedEd25519PublicKey(KEY_ID_DOMAIN, root.publicKeySpki, root.keyId);
   if (!publicKey) return withheld('approver-key-invalid');
   if (approvedPolicy.keys.some((key) => key.publicKeySpki === root.publicKeySpki)) {
     return withheld('approver-capsule-role-collision');
@@ -732,11 +546,8 @@ function inspectUnsafe(input: unknown): VerifierExecutionPolicyApprovalResultV1 
   }
 
   const payload = canonicalVerifierExecutionPolicyApprovalPayloadV1(approval);
-  const signatureBytes = canonicalBase64Url(signature, 64);
+  const signatureBytes = payload ? verifyEd25519Signature(payload, publicKey, signature) : null;
   if (!payload || !signatureBytes) return withheld('signature-invalid');
-  let signatureVerified = false;
-  try { signatureVerified = verifySignature(null, payload, publicKey, signatureBytes); } catch { /* withheld */ }
-  if (!signatureVerified) return withheld('signature-invalid');
 
   return {
     schemaVersion: 1,
@@ -744,7 +555,7 @@ function inspectUnsafe(input: unknown): VerifierExecutionPolicyApprovalResultV1 
     state: 'cryptographically-verified',
     reason: 'policy-approval-cryptography-verified',
     authority: 'observation-only',
-    approvalDigest: sha256(APPROVAL_DIGEST_DOMAIN, Buffer.concat([payload, signatureBytes])),
+    approvalDigest: sha256Domain(APPROVAL_DIGEST_DOMAIN, payload, signatureBytes),
     approvedTrustPolicyDigest: approvedPolicyDigest,
     approvalTrustPolicyDigest,
     policyGeneration: approval.policyGeneration,
@@ -805,18 +616,11 @@ function compositionIdentityShape(value: unknown): value is VerifierExecutionCom
     BACKENDS.includes(value['backend'] as VerifierExecutionPolicyBackendV1);
 }
 
-function identityMatchesBindings(
+function identityMatches(
   identity: VerifierExecutionCompositionIdentityV1,
-  bindings: VerifierExecutionExpectedBindingsV1,
+  target: VerifierExecutionCompositionIdentityV1,
 ): boolean {
-  return COMPOSITION_IDENTITY_KEYS.every((key) => identity[key] === bindings[key]);
-}
-
-function identityMatchesStatement(
-  identity: VerifierExecutionCompositionIdentityV1,
-  statement: InspectVerifierExecutionAuthorityV2Input['statement'],
-): boolean {
-  return COMPOSITION_IDENTITY_KEYS.every((key) => identity[key] === statement[key]);
+  return COMPOSITION_IDENTITY_KEYS.every((key) => identity[key] === target[key]);
 }
 
 function compositionWithheld(
@@ -881,8 +685,8 @@ function inspectCompositionUnsafe(input: unknown): VerifierExecutionCompositionR
     return compositionWithheld('trust-policy-mismatch');
   }
 
-  if (!identityMatchesBindings(expectedIdentity, executionInput.expectedBindings) ||
-    !identityMatchesStatement(expectedIdentity, executionInput.statement)) {
+  if (!identityMatches(expectedIdentity, executionInput.expectedBindings) ||
+    !identityMatches(expectedIdentity, executionInput.statement)) {
     return compositionWithheld('identity-mismatch');
   }
 
@@ -896,9 +700,9 @@ function inspectCompositionUnsafe(input: unknown): VerifierExecutionCompositionR
     return compositionWithheld('scope-mismatch');
   }
 
-  const bindingDigest = sha256(
+  const bindingDigest = sha256Domain(
     'ashlr:verifier-execution-authority-composition-binding:v1',
-    Buffer.from(JSON.stringify([
+    JSON.stringify([
       statementResult.trustPolicyDigest,
       expectedIdentity.ticketDigest,
       expectedIdentity.candidateDigest,
@@ -917,7 +721,7 @@ function inspectCompositionUnsafe(input: unknown): VerifierExecutionCompositionR
       expectedIdentity.backend,
       policyResult.approvalDigest,
       statementResult.statementDigest,
-    ]), 'utf8'),
+    ]),
   );
 
   return {

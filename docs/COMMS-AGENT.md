@@ -29,7 +29,9 @@ The policy is code, not prompt text. A prompt cannot approve a recipient.
   can show them. Every draft is recorded once per unique reply on the local
   owner thread; a delivered reply resolves its draft to `sent` — every send
   leaves that mark, not only one that was once pending — and resolves the
-  inbox message into the archive without resending. Pending drafts list in
+  inbox message into the archive without resending. Two inbox rows that draft
+  the same unique reply in one pass also deliver once: the second resolves on
+  the first's sent mark. Pending drafts list in
   `phm comms-agent drafts` and the `phm comms inbox` drafts
   source (a Comms email draft already mirrored into `phm drafts` lists only
   there, so one pending reply is one item).

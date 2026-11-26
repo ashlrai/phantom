@@ -12,6 +12,7 @@ import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { deriveBusWorkItemEvidence, readBusClaimAuthority, readBusInboxEvidence } from './work-item-bus-evidence.js';
 import { classifyWorkItem, type WorkItemState } from './work-item-state.js';
 import { isRequest } from './work-board.js';
+import { scrubSecrets } from '../util/scrub.js';
 
 export const REPLY_STATE_SCHEMA = 'phantom.channels.reply-state.v1';
 
@@ -53,9 +54,10 @@ function clock(asOf: string): string {
 
 /** State, UTC evidence time and source, then one line of evidence. */
 function line(r: Omit<ReplyState, 'text'>): string {
+  const safe = (value: string) => scrubSecrets(value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' '));
   const time = clock(r.asOf);
   const date = time === 'unknown' ? '' : `, evidence timestamp: ${new Date(r.asOf).toISOString()}`;
-  const head = `${r.state} (as of ${time}${time === 'unknown' ? '' : ' UTC'}, source: ${r.source}${date})`;
+  const head = `${r.state} (as of ${time}${time === 'unknown' ? '' : ' UTC'}, source: ${safe(r.source)}${date})`;
   const who = r.owner !== null && r.claim !== null ? `owner ${r.owner}, claim ${r.claim}` : 'no owner yet';
   const dup = r.duplicateOf !== null ? `; repeat of ${r.duplicateOf}` : '';
   const e = r.evidence;
@@ -67,7 +69,10 @@ function line(r: Omit<ReplyState, 'text'>): string {
       break;
     }
     case 'BLOCKED': body = `waiting on ${e.blocked?.dependency ?? 'unknown'}`; break;
-    case 'RUNNING': body = who; break;
+    case 'RUNNING': {
+      body = e.running ? `${who}; running evidence: ${safe(e.running.source)}, recorded at ${safe(e.running.at)}` : who;
+      break;
+    }
     case 'ASSIGNED': body = `${who}${r.missing.length ? ` (missing: ${r.missing.join(', ')})` : ''}`; break;
     default: body = `${who}${r.missing.length ? ` (missing: ${r.missing.join(', ')})` : ''}`;
   }

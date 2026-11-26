@@ -50,8 +50,52 @@ describe('bounded local native boot identity', () => {
     expect(readNativeBootIdentity()).toBeNull();
   });
 
-  it.each(['linux', 'win32', 'freebsd'])('does not launch commands on unsupported platform %s', (value) => {
+  it.each(['win32', 'freebsd'])('does not launch commands on unsupported platform %s', (value) => {
     Object.defineProperty(process, 'platform', { ...platform, value });
     expect(readNativeBootIdentity()).toBeNull(); expect(exec).not.toHaveBeenCalled();
+  });
+});
+
+describe('Linux boot identity', () => {
+  const machineId = '0123456789abcdef0123456789abcdef';
+  const files: Record<string, string | null> = {
+    '/proc/sys/kernel/random/boot_id': `${boot}\n`,
+    '/etc/machine-id': `${machineId}\n`,
+    '/var/lib/dbus/machine-id': null,
+  };
+  const read = (map: Record<string, string | null>) => (path: string) => map[path] ?? null;
+  beforeEach(() => { Object.defineProperty(process, 'platform', { ...platform, value: 'linux' }); });
+
+  it('hashes the machine-id under the linux domain with the kernel boot id', () => {
+    expect(readNativeBootIdentity(read(files))).toEqual({ bootId: boot,
+      machineDigest: createHash('sha256').update(`ashlr-native-machine-v1\0linux\0${machineId}`).digest('hex') });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the D-Bus machine-id when /etc/machine-id is absent', () => {
+    const map = { ...files, '/etc/machine-id': null, '/var/lib/dbus/machine-id': `${machineId}\n` };
+    expect(readNativeBootIdentity(read(map))?.bootId).toBe(boot);
+  });
+
+  it('rejects a boot change during the identity read', () => {
+    let calls = 0;
+    const flip = (path: string) => {
+      if (path !== '/proc/sys/kernel/random/boot_id') return files[path] ?? null;
+      calls += 1;
+      return `${calls === 1 ? boot : '66666666-2222-3333-4444-555555555555'}\n`;
+    };
+    expect(readNativeBootIdentity(flip)).toBeNull();
+  });
+
+  it.each([
+    [{ ...files, '/proc/sys/kernel/random/boot_id': null }],
+    [{ ...files, '/proc/sys/kernel/random/boot_id': 'not-a-uuid\n' }],
+    [{ ...files, '/proc/sys/kernel/random/boot_id': '00000000-0000-0000-0000-000000000000\n' }],
+    [{ ...files, '/etc/machine-id': null, '/var/lib/dbus/machine-id': null }],
+    [{ ...files, '/etc/machine-id': 'uninitialized\n' }],
+    [{ ...files, '/etc/machine-id': `${machineId.toUpperCase()}\n` }],
+    [{ ...files, '/etc/machine-id': `${machineId.slice(0, 31)}\n` }],
+  ])('fails closed on missing or malformed Linux identity %#', (map) => {
+    expect(readNativeBootIdentity(read(map))).toBeNull();
   });
 });

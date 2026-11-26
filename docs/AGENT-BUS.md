@@ -649,6 +649,30 @@ feed's own `refused`/`unavailable` state) without a `show` per item; the
 compact `job=<id>:<state>` marker rides inside the frame's bracket and on
 the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
+**Follow.** `phm agents bus follow [<agent>] [--after <cursor>]
+--duration-ms <1..3600000> [--interval-ms <100..60000>]` plus every inbox
+filter above streams the same `readAgentInbox` projection as JSONL —
+each accepted row emits one `{type:'message', ...}` record carrying the
+inbox row's fields and the same scrubbed `summary` the `--frame` read
+renders, and every advance of the scan position emits a
+`{type:'checkpoint', cursor}` record after the messages it covers, so the
+last checkpoint is always a safe at-least-once resume point for
+`--after`. `--duration-ms` is required and bounds the stream's lifetime;
+`--interval-ms` sets the poll cadence (defaults shared with
+`fleet bus-follow`). A page that fills its 100-row cap re-polls without
+sleeping so a retained backlog drains inside the same deadline, while a
+short page waits one interval — the stream never spins on an empty
+store. `SIGINT`/`SIGTERM` cancel cleanly at the next poll boundary, and
+an expired stream emits one final checkpoint so the last accepted cursor
+is always on the wire. Exit status is `0` on `expired`/`cancelled`, `2` on `invalid`
+arguments, `1` on `unknown-agent`, `source-unavailable` or
+`output-unavailable` — an output failure ends the stream rather than
+silently skipping rows. Unlike `fleet bus-follow`, which streams raw
+fleet-wide envelopes for transport-level consumers, `agents bus follow`
+watches one identity's addressed projection — DMs, handoffs, channel
+posts and legacy traffic with the same kind/held/job annotations `inbox`
+reports — so an agent on the unified surface can wait for mail without
+polling `inbox` in a loop or dropping to the raw-envelope stream.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
 [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]

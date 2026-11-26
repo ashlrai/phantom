@@ -3,6 +3,7 @@
  * agent bus page into the short lines the Library shows. All text is
  * untrusted; the pane renders it as plain text only.
  */
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import type { AgentBusPage, AgentBusReceipt } from '../fleet-bus/agent-bus-queries.js';
 
 export const BUS_LINE_MAX_CHARS = 160;
@@ -32,11 +33,8 @@ export function busBodyText(body: unknown): string {
 }
 
 export function busAge(receivedAt: number, now: number): string {
-  const minutes = Math.floor(Math.max(0, now - receivedAt) / 60_000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
+  const seconds = (now - receivedAt) / 1000;
+  return Number.isFinite(seconds) && seconds < 60 ? 'just now' : ageInSeconds(seconds);
 }
 
 /**

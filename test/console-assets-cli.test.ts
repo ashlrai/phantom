@@ -8,6 +8,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 const closeMock = vi.fn(async () => {});
+const collectorClose = vi.fn(async () => {});
+const collectorStart = vi.fn(async () => ({ close: collectorClose, status: () => ({ note: null }) }));
 const startServerMock = vi.fn(async () => ({
   port: 7777, url: 'http://127.0.0.1:7777', readToken: 'fake-read-token', token: 'fake-mutation-token', close: closeMock,
 }));
@@ -19,6 +21,10 @@ vi.mock('../src/core/reasoning/reasoning-api.js', () => ({ scheduleReasoningMain
 vi.mock('../src/core/reasoning/ingest-verse.js', () => ({ flushVerseReasoning: vi.fn() }));
 vi.mock('../src/core/verse/verse-log.js', () => ({ installVerseCrashHandlers: vi.fn(() => () => {}) }));
 vi.mock('../src/core/verse/verse-api.js', () => ({ peekVerseEngine: vi.fn(() => null) }));
+vi.mock('../src/core/verse/accounts.js', () => ({
+  startVerseAccountCollector: () => collectorStart(),
+  setVerseAccountCollector: vi.fn(),
+}));
 
 import { cmdServe } from '../src/cli/serve.js';
 import { cmdVerse } from '../src/cli/verse.js';
@@ -32,6 +38,7 @@ describe('cmdServe and cmdVerse console asset readiness startup output', () => {
     prevPublic = process.env.ASHLR_WEB_PUBLIC;
     process.env.ASHLR_WEB_PUBLIC = tmp;
     closeMock.mockClear();
+    collectorClose.mockClear();
     startServerMock.mockClear();
   });
 
@@ -54,6 +61,20 @@ describe('cmdServe and cmdVerse console asset readiness startup output', () => {
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     return { code: await fn(), out, err };
   }
+
+  it.each(['SIGINT', 'SIGTERM'] as const)('handles %s while the collector starts', async signal => {
+    let handled = false;
+    collectorStart.mockImplementationOnce(async () => {
+      handled = process.emit(signal);
+      return { close: collectorClose, status: () => ({ note: null }) };
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await cmdVerse(['--port', '7777', '--no-open', '--json'])).toBe(0);
+    expect(handled).toBe(true);
+    expect(collectorClose).toHaveBeenCalledOnce();
+    expect(closeMock).toHaveBeenCalledOnce();
+  });
 
   for (const [label, invoke] of [
     ['phm serve --json', () => cmdServe(['--port', '7777', '--json'])],

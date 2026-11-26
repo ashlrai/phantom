@@ -1132,6 +1132,7 @@ export async function startVerseAccountCollector(
   let closed = false;
   /** Set at the top of close(), so an in-flight recovery can bail out at once. */
   let closing = false;
+  let closePromise: Promise<void> | null = null;
 
   /** Bumped every time a NEW collection generation starts behind a discharged fence. */
   let generation = 0;
@@ -1816,9 +1817,16 @@ export async function startVerseAccountCollector(
     identityWitnessesSnapshot: () => readingCache?.identityWitnessesSnapshot() ?? [],
     invalidatedIdentityAccountIdsSnapshot: () => readingCache?.invalidatedIdentityAccountIdsSnapshot() ?? [],
     identitySnapshotRevision: () => readingCache?.identitySnapshotRevision() ?? 0,
-    close: async () => {
-      if (closed) return;
+    close: () => {
+      if (closePromise) return closePromise;
       closing = true;
+      closePromise = Promise.resolve().then(close);
+      return closePromise;
+    },
+  };
+  return collector;
+
+  async function close(): Promise<void> {
       // Revoke before the first await. Worker startup/completion may otherwise
       // race the recovery/lease-retry drain and misclassify normal close as a fault.
       const publicationClose = evidencePublisher?.close();
@@ -1853,9 +1861,7 @@ export async function startVerseAccountCollector(
         log('Phantom account collector: the metadata lease could not be released cleanly; its marker stays durable.');
       }
       lease = null;
-    },
-  };
-  return collector;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2031,4 +2037,3 @@ export function buildVerseAccountsSnapshot(options: {
     notes,
   };
 }
-

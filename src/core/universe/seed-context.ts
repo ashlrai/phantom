@@ -1,20 +1,12 @@
-import { canonical, digest } from './artifacts.js';
+import {
+  canonical, digest, isDataObject as data, isFiniteNumber as finite, isPlainObject as object,
+  UNIVERSE_ID_RE as ID, UNIVERSE_SHA256_RE as HASH,
+} from './artifacts.js';
 import { validateDiagnostics } from './feedback.js';
 import type { UniverseSeedContext, UniverseSeedContextReceipt } from './types.js';
 
-export const MAX_SEED_CONTEXT_BYTES = 16 * 1024;
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
+const MAX_SEED_CONTEXT_BYTES = 16 * 1024;
 function invalid(): never { throw new Error('Invalid Universe seed context: bounded data-only measured seed evidence required'); }
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-function data(value: unknown, required: string[], optional: string[] = []): value is Record<string, unknown> {
-  return object(value) && required.every(key => Object.hasOwn(value, key)) && Reflect.ownKeys(value).every(key =>
-    typeof key === 'string' && [...required, ...optional].includes(key) && 'value' in Object.getOwnPropertyDescriptor(value, key)!);
-}
-function finite(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value); }
 
 /** Getter-free validation before canonicalization; returned evidence shares no mutable references. */
 export function validateUniverseSeedContext(value: unknown): UniverseSeedContext {

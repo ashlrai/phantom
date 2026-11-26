@@ -1,12 +1,11 @@
 /** Closed installed evaluator identities. Seed files never grant host execution authority. */
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolvePreparationGit, assertPreparationGit, type PreparationGitPin } from '../../../scripts/evaluators/preparation-verification-native.mjs';
 import { parsePreparationMeasurementCalibration, preparationCalibrationWorkload } from './preparation-measurement-calibration.js';
-import { canonical } from './artifacts.js';
+import { canonical, digest as sha, hasExactDataKeys, isPlainObject, UNIVERSE_SHA256_RE as HASH } from './artifacts.js';
 import { parsePreparationTypecheckProject } from './preparation-typecheck-project.js';
 
 export const PREPARATION_MEASUREMENT_BUILTIN = 'preparation-measurement-v1' as const;
@@ -15,12 +14,10 @@ export type BuiltinEvaluatorId = typeof PREPARATION_MEASUREMENT_BUILTIN | typeof
 const FILES = ['preparation-bridge.mjs', 'preparation-verification-activity.mjs', 'preparation-verification-child.mjs',
   'preparation-verification-controller.mjs', 'preparation-verification-fixtures.mjs', 'preparation-verification-native.mjs', 'preparation-verification-protocol.mjs',
   'preparation-verification-tool.mjs', 'preparation-verification.mjs'] as const;
-const HASH = /^[a-f0-9]{64}$/;
 export const PREPARATION_SCORE_FILES = Object.freeze(['preparation-score.mjs', 'preparation-typecheck.mjs',
   'preparation-typecheck-project.json', 'calibration.json', 'measurement/manifest.json',
   ...FILES.map(name => `measurement/${name}`)]);
 const TOOLS = ['/bin/ls', '/bin/ps', '/usr/bin/sandbox-exec'] as const;
-const sha = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex');
 const unavailable = (): Error => new Error('Installed built-in evaluator unavailable or changed');
 
 export interface InstalledBuiltinEvaluator {
@@ -34,9 +31,7 @@ export interface InstalledBuiltinEvaluator {
 }
 
 function exact(value: unknown, keys: string[]): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    [Object.prototype, null].includes(Object.getPrototypeOf(value)) && Reflect.ownKeys(value).length === keys.length &&
-    keys.every(key => Object.hasOwn(Object.getOwnPropertyDescriptor(value, key) ?? {}, 'value'));
+  return isPlainObject(value) && hasExactDataKeys(value, keys);
 }
 function same(a: BigIntStats, b: BigIntStats): boolean {
   return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs && a.mode === b.mode && a.nlink === b.nlink;

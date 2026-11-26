@@ -1,4 +1,8 @@
-import { canonical, digest } from './artifacts.js';
+import {
+  canonical, digest, hasExactOwnKeys as exact, isPlainObject as object,
+  isSafeIntegerInRange as integer, isStrictIsoTimestamp, isUniverseId as identifier,
+  UNIVERSE_SHA256_RE as HASH,
+} from './artifacts.js';
 import { readUniverseCampaign, validateUniverseCampaignDefinition } from './campaign-store.js';
 import { buildUniversePortfolioGraph } from './portfolio-frontier.js';
 import type { UniverseCampaignSummary, UniverseStoreOptions } from './types.js';
@@ -6,25 +10,7 @@ import type {
   UniversePortfolioDefinition, UniversePortfolioPlan, UniversePortfolioPlanNode, UniversePortfolioTask,
 } from './portfolio-types.js';
 
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
 const MAX_TASKS = 64;
-
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-
-function exact(value: Record<string, unknown>, keys: string[]): boolean {
-  const own = Reflect.ownKeys(value);
-  return own.length === keys.length && own.every((key) => typeof key === 'string' && keys.includes(key));
-}
-
-function integer(value: unknown, low: number, high: number): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= low && Number(value) <= high;
-}
-
-function identifier(value: unknown): value is string { return typeof value === 'string' && ID.test(value); }
 
 /** Iterative Kahn ordering; every choice prefers the earliest caller-declared task. */
 function topologicalOrder(tasks: UniversePortfolioTask[]): string[] {
@@ -91,8 +77,7 @@ function healthyIdentity(campaign: UniverseCampaignSummary, campaignId: string):
 export function buildUniversePortfolioPlan(input: unknown,
   campaigns: ReadonlyMap<string, UniverseCampaignSummary | null>, sampledAt = new Date().toISOString()): UniversePortfolioPlan {
   const definition = validateUniversePortfolioDefinition(input);
-  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(sampledAt) ||
-      !Number.isFinite(Date.parse(sampledAt)) || new Date(sampledAt).toISOString() !== sampledAt) {
+  if (!isStrictIsoTimestamp(sampledAt)) {
     throw new Error('Invalid Universe portfolio sample time');
   }
   const reasons: string[] = [];

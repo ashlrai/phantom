@@ -68,6 +68,11 @@ function planRow(reading: ResourceLiveReading, samples: readonly HistorySample[]
     pace: 'unknown' as BurnDownPace, projected_unused: null,
   };
   const metered = reading.class === 'metered-included';
+  if (reading.custom?.kind === 'metered' && !reading.custom.metered_opt_in) {
+    return { ...base, action: 'hold', reason: 'Metered use requires explicit opt-in.' };
+  }
+  if (reading.custom && expired) return { ...base, action: 'hold', reason: 'The registered allowance expired.' };
+  if (metered && expired) return { ...base, action: 'hold', reason: 'Included credit expired. Past it every call is new spend.' };
   if (!current(reading, nowMs)) {
     if (metered) return { ...base, action: 'hold', reason: 'Included credit is not verified. Past it every call is new spend.' };
     if (reading.class === 'reserve') return { ...base, action: 'reserve', reason: 'Reserve lane. No verified reading.' };
@@ -80,6 +85,7 @@ function planRow(reading: ResourceLiveReading, samples: readonly HistorySample[]
   const measured = { ...base, remaining: reading.remaining, deadline_at: deadline, hours_to_deadline: hours === null ? null : round(hours) };
   // Local capacity has no allowance: nothing to pace, always worth using first.
   if (reading.remaining === null) {
+    if (metered) return { ...measured, action: 'hold', reason: 'Included balance is unknown. Past it every call is new spend.' };
     if (reading.class === 'free') return { ...measured, action: 'burn', reason: 'Free capacity with no allowance. Use it first.' };
     if (reading.class === 'expiring' && !expired) return { ...measured, action: 'burn', reason: 'Zero-cost until it expires. Use it first.' };
     return { ...measured, action: 'steady', reason: 'Reading carries no remaining amount.' };
@@ -88,7 +94,7 @@ function planRow(reading: ResourceLiveReading, samples: readonly HistorySample[]
     return { ...measured, action: 'hold', target_rate_per_hour: 0,
       reason: metered ? 'Included credit is spent. Past it every call is new spend.' : 'Used up until the reset. Other lanes keep running.' };
   }
-  const rate = observedRate(samples, reading.reset_at);
+  const rate = deadline === null ? null : observedRate(samples, deadline);
   const target = hours === null ? null : reading.remaining / hours;
   let pace: BurnDownPace = 'unknown';
   if (target !== null && rate !== null) {
@@ -124,9 +130,13 @@ export function planBurnDown(
 ): BurnDownPlan {
   const rows = readings.map((reading, index) => {
     const row = planRow(reading, history[reading.id], nowMs);
-    return { row, index, urgency: urgency(row, reading) };
+    const wasteDeadline = row.action === 'burn' && row.deadline_at !== null &&
+      ((row.projected_unused ?? 0) > 0 || (row.projected_unused === null && row.remaining !== null && row.remaining > 0
+        && (reading.id === 'antigravity' || reading.class === 'metered-included' && reading.expires_at !== null)))
+      ? Date.parse(row.deadline_at) : Infinity;
+    return { row, index, wasteDeadline, urgency: urgency(row, reading) };
   });
-  rows.sort((a, b) => a.row.tier - b.row.tier
+  rows.sort((a, b) => a.wasteDeadline - b.wasteDeadline || a.row.tier - b.row.tier
     || ACTION_ORDER[a.row.action] - ACTION_ORDER[b.row.action]
     || (b.urgency ?? -1) - (a.urgency ?? -1)
     || a.index - b.index);

@@ -172,3 +172,15 @@ export async function cmdSwarms(args: string[]): Promise<number>;
   phantom owns secrets; no secrets in env/argv/logs.
 - Wire CLI dispatch + lazy loaders in `src/cli/index.ts` for `spec`, `swarm`,
   `swarms` following existing patterns.
+
+## Resource-pool pilot
+
+- `readSwarmPilotSpec(input: unknown): SwarmPilotSpec` validates operator enrollment.
+- `parseSwarmPilotGraph(output: string, spec: SwarmPilotSpec): SwarmPilotNode[]`
+  validates model-authored task data and returns it in topological order.
+- `runSwarmPilot(input: unknown, runtimePath: string, options?: { apply?: boolean; root?: string })`
+  previews by default; apply returns the persisted run report after held or local delivery.
+- `readSwarmPilotReport(id: string, root?: string, pr?: number)` is read-only;
+  a PR number requests a fresh merge receipt before projecting cost per merge.
+
+See [the resource-pool swarm pilot](../SWARM-PILOT.md) for inputs and evidence semantics.

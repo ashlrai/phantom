@@ -454,6 +454,33 @@ describe('verse accounts — evidence precedence', () => {
 // ---------------------------------------------------------------------------
 
 describe('verse accounts — collector lifecycle', () => {
+  it('all shutdown callers wait for native teardown before the pending marker clears', async () => {
+    fs.rmSync(path.join(root, 'quota-config.json'));
+    let finish!: () => void;
+    const teardown = new Promise<void>(resolve => { finish = resolve; });
+    const nativeClose = vi.fn(() => teardown);
+    const factory = vi.spyOn(connectionMonitor, 'createResourceConnectionMonitor').mockReturnValue({
+      snapshot: () => ({ sampledAt: new Date().toISOString(), refreshing: true, accounts: [] }),
+      isStopped: () => false, close: nativeClose,
+    });
+    try {
+      collector = await startVerseAccountCollector({ accountsRoot: root });
+      const marker = path.join(accountsLedgerRoot(root), '.resource-quota-refresh-pending.json');
+      const first = collector.close();
+      await vi.waitFor(() => expect(nativeClose).toHaveBeenCalledOnce());
+      let secondFinished = false;
+      const second = collector.close().then(() => { secondFinished = true; });
+      await new Promise(resolve => setImmediate(resolve));
+      expect(secondFinished).toBe(false);
+      expect(fs.existsSync(marker)).toBe(true);
+      finish();
+      await Promise.all([first, second]);
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      finish();
+      await collector?.close(); collector = null; factory.mockRestore();
+    }
+  });
   it('reads monitor lifecycle without snapshot/profile-history IO during repeated owned status reads', async () => {
     fs.rmSync(path.join(root, 'quota-config.json'));
     const snapshot = vi.fn(() => ({ sampledAt: new Date().toISOString(), refreshing: true, accounts: [] }));

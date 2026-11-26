@@ -23,6 +23,7 @@
  * keeps it; the stream only carries metadata) and refetched while the
  * command is still running.
  */
+import { RelativeTime } from '../../../components/primitives/RelativeTime.js';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import type { VerseTerminalFixResponse } from '../../../data/api-types.js';
 import { EmptyState } from '../../../components/primitives/EmptyState.js';
@@ -81,18 +82,6 @@ export interface BlockListProps {
 /** Cards open at first: the latest few, and any that failed. */
 const OPEN_LATEST = 3;
 const RUNNING_REFRESH_MS = 1_500;
-
-function relativeTime(iso: string, now: number): string {
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return '';
-  const s = Math.max(0, Math.round((now - t) / 1000));
-  if (s < 60) return `${s}s ago`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return new Date(t).toLocaleDateString();
-}
 
 function folderName(cwd: string | null): string | null {
   if (!cwd) return null;
@@ -195,7 +184,7 @@ const BlockCard = memo(function BlockCard({ block, open, onToggle, loadOutput, o
             {bookmarked ? <span className={extra.bookmarked} aria-label="Bookmarked"><StarGlyph filled size={12} /></span> : null}
             {cwdName ? <span title={block.cwd ?? undefined}>{cwdName}</span> : null}
             {block.durationMs !== null ? <span>{formatDuration(block.durationMs)}</span> : null}
-            <span>{relativeTime(block.startedAt, now)}</span>
+            <RelativeTime value={block.startedAt} now={now} fallback="" />
             <span className={styles.status} data-tone={status.tone}>{status.label}</span>
           </span>
         </button>

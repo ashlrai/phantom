@@ -1,15 +1,13 @@
 //! Making sure the sidecar never outlives the app.
 //!
 //! The app spawns `ashlr verse` as a child. Three exit paths have to leave a
-//! clean machine behind, and only the first of them runs Tauri's event loop:
+//! clean machine behind:
 //!
 //!   1. **Quit** (⌘Q, the app menu, the tray) → `RunEvent::Exit` reaps the
-//!      child. [`kill_tree`] is the fallback there, because
-//!      `CommandChild::kill` only signals the immediate process and the Bun
-//!      sidecar has worker children of its own.
+//!      child through [`terminate_tree`], which gives the sidecar time to
+//!      settle its native workers.
 //!   2. **A signal** (`pkill`, Ctrl-C, a crash handler upstream) → the event
-//!      loop never gets a turn. [`install_signal_handlers`] arms an
-//!      async-signal-safe handler that kills the recorded pid and `_exit`s.
+//!      loop gets the same graceful exit request from [`install_signal_handlers`].
 //!   3. **A hard kill or panic** (SIGKILL, a crash) → nothing of ours runs at
 //!      all. The next launch repairs it: [`reclaim_orphan`] reads the ownership
 //!      record left at spawn time, and if the app that wrote it is gone while
@@ -35,21 +33,21 @@
 //! app bundle. The decision itself is the pure [`should_reclaim`], so all of it
 //! is testable without spawning anything.
 //!
-//! **That claim is scoped to [`reclaim_orphan`], the COLD path.** The warm
-//! paths — [`terminate_tree`] on quit and [`terminate_handler`] on a signal —
-//! cannot perform the argv check: the first acts on a pid this process spawned
-//! and still holds a handle to (so recycling cannot have happened yet), and the
-//! second may make no allocating calls at all. Neither is a guess, but neither
-//! is protected by the four conditions above either.
+//! The warm path acts on the child handle and snapshots its descendant
+//! identities before the parent can exit.
 //!
 //! Nothing here reads, logs, or stores a token: the record holds two pids and a
 //! port number, and argv is only ever compared against a path we already know.
 
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
+use std::path::PathBuf;
+#[cfg(unix)]
 use std::{
-    path::PathBuf,
+    io::Read,
+    os::{fd::AsRawFd, unix::net::UnixStream},
     sync::atomic::{AtomicI32, Ordering},
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
@@ -57,12 +55,8 @@ use serde::{Deserialize, Serialize};
 /// Ownership record written next to the first-run marker in `~/.ashlr`.
 const RECORD_FILE: &str = ".desktop-sidecar.json";
 
-/// The pid the signal handler kills. `0` means "nothing to reap".
-///
-/// An atomic rather than the app's `Mutex<Option<CommandChild>>` because a
-/// signal handler may not lock; loading an atomic and calling `kill(2)` are
-/// both async-signal-safe.
-static SIDECAR_PID: AtomicI32 = AtomicI32::new(0);
+#[cfg(unix)]
+static SIGNAL_FD: AtomicI32 = AtomicI32::new(-1);
 
 /// What the running app recorded about the sidecar it owns.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,15 +132,13 @@ pub fn binary_path_from_argv(argv: &str, args: &[&str]) -> Option<String> {
     }
 }
 
-/// Persist the ownership record and arm the signal handler's pid.
+/// Persist the ownership record.
 ///
 /// `args` is the argument list the sidecar was spawned with; it is used to
 /// recover the binary path from the live process's argv. If that path cannot be
 /// read, no record is written — the app then behaves exactly as it did before
 /// this module existed, rather than recording something it cannot verify later.
 pub fn record(sidecar_pid: u32, port: u16, args: &[&str]) {
-    SIDECAR_PID.store(sidecar_pid as i32, Ordering::SeqCst);
-
     let Some(sidecar_path) = process_argv(sidecar_pid as i32)
         .as_deref()
         .and_then(|argv| binary_path_from_argv(argv, args))
@@ -177,11 +169,10 @@ pub fn record(sidecar_pid: u32, port: u16, args: &[&str]) {
     }
 }
 
-/// Forget the sidecar: clear the armed pid and delete the record.
+/// Forget the sidecar's ownership record.
 ///
 /// Called after a clean reap so the next launch has nothing to reclaim.
 pub fn clear() {
-    SIDECAR_PID.store(0, Ordering::SeqCst);
     let path = record_path();
     if path.exists() {
         let _ = std::fs::remove_file(&path);
@@ -372,55 +363,71 @@ fn kill_pids(pids: &[i32], signal: libc::c_int) {
     }
 }
 
-/// Grace given to the sidecar tree to exit on its own before it is SIGKILLed.
 #[cfg(unix)]
-const TERMINATE_GRACE_MS: u64 = 2_000;
+const TERMINATE_GRACE: Duration = Duration::from_secs(8);
 #[cfg(unix)]
-const TERMINATE_POLL_MS: u64 = 50;
+const WORKER_GRACE: Duration = Duration::from_secs(2);
+#[cfg(unix)]
+const TERMINATE_POLL: Duration = Duration::from_millis(50);
 
 /// Stop `pid` and its descendants, giving them a chance to shut down cleanly.
 ///
-/// SIGKILL alone was a correctness bug, not just a rudeness. `ashlr verse`
-/// installs SIGINT/SIGTERM handlers that `await collector.close()` /
-/// `handle.close()`, and that close is what releases the resource-quota refresh
-/// lease and clears the pending marker. SIGKILL is uncatchable, so none of it
-/// ran: a marker left in a `preparing` reservation is deliberately
-/// unrecoverable, and the resulting refusal is not `collector-owned`, which
-/// drops the collector to `mode = 'unconfigured'` / `state = 'blocked'` on the
-/// NEXT launch — a Usage section reading "unknown" everywhere, with no
-/// indication why, because the operator quit during a collector cycle.
-///
-/// Escalates: enumerate the tree while the parent lives, SIGTERM everything,
-/// poll for up to [`TERMINATE_GRACE_MS`], then SIGKILL whatever is left. The
-/// wait is bounded and runs on the main thread during `RunEvent::ExitRequested`,
-/// where a couple of seconds is acceptable.
+/// Only signal the owner first. Interrupting metadata workers directly can
+/// preempt their teardown/registration and leave quota ownership uncertain.
 pub fn terminate_tree(pid: i32) {
     if pid <= 1 {
         return;
     }
     #[cfg(unix)]
     {
-        // Snapshot BEFORE signalling: a dead parent has no discoverable children.
-        let descendants = descendant_pids(pid);
+        use crate::sidecar_supervisor::read_process_table;
 
-        kill_pids(&descendants, libc::SIGTERM);
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
-        }
-
-        let mut waited = 0;
-        while waited < TERMINATE_GRACE_MS {
-            let alive = process_is_alive(pid) || descendants.iter().any(|p| process_is_alive(*p));
-            if !alive {
-                return;
+        let table = read_process_table();
+        let mut descendants = Vec::new();
+        let mut frontier = vec![pid];
+        for _ in 0..MAX_TREE_DEPTH {
+            let next: Vec<_> = table
+                .iter()
+                .filter(|row| row.pid > 1 && row.pid != pid && frontier.contains(&row.ppid))
+                .collect();
+            if next.is_empty() {
+                break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(TERMINATE_POLL_MS));
-            waited += TERMINATE_POLL_MS;
+            frontier = next.iter().map(|row| row.pid).collect();
+            descendants.extend(next);
+        }
+        kill_pids(&[pid], libc::SIGTERM);
+        let deadline = Instant::now() + TERMINATE_GRACE;
+        while process_is_alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(TERMINATE_POLL);
         }
 
-        kill_pids(&descendants, libc::SIGKILL);
-        unsafe {
-            libc::kill(pid, libc::SIGKILL);
+        // A worker may now be reparented. Verify its start time and argv,
+        // rather than trusting a pid that could have been recycled.
+        let remaining = || {
+            read_process_table()
+                .into_iter()
+                .filter(|now| {
+                    descendants.iter().any(|old| {
+                        now.pid == old.pid && now.started == old.started && now.args == old.args
+                    })
+                })
+                .map(|row| row.pid)
+                .collect::<Vec<_>>()
+        };
+        let alive = remaining();
+        if !alive.is_empty() {
+            kill_pids(&alive, libc::SIGTERM);
+            let deadline = Instant::now() + WORKER_GRACE;
+            while alive.iter().any(|pid| process_is_alive(*pid)) && Instant::now() < deadline {
+                std::thread::sleep(TERMINATE_POLL);
+            }
+            kill_pids(&remaining(), libc::SIGKILL);
+        }
+        if let Some(owner) = table.iter().find(|row| row.pid == pid) {
+            if crate::sidecar_supervisor::still_same_process(owner) {
+                kill_pids(&[pid], libc::SIGKILL);
+            }
         }
     }
 }
@@ -478,46 +485,44 @@ pub fn reclaim_orphan(port: u16) -> Reclaim {
 
 // ── signals ──────────────────────────────────────────────────────────────────
 
-/// Handler for SIGTERM / SIGINT / SIGHUP.
-///
-/// Only async-signal-safe calls: an atomic load, `kill(2)`, and `_exit(2)`.
-/// No allocation, no locking, no `println!` — which is also why this path
-/// cannot do what [`terminate_tree`] does. It cannot enumerate the tree
-/// (that shells out to `pgrep`) and it cannot wait out a grace period, so the
-/// SIGTERM below is best-effort only: the sidecar almost certainly never gets
-/// to run its shutdown before the SIGKILL lands. The clean release of the
-/// resource-quota lease is reliable only on the event-loop path; a sidecar
-/// that survives here is reclaimed by [`reclaim_orphan`] on the next launch.
 #[cfg(unix)]
 extern "C" fn terminate_handler(signum: libc::c_int) {
-    let pid = SIDECAR_PID.load(Ordering::SeqCst);
-    if pid > 1 {
+    let fd = SIGNAL_FD.swap(-1, Ordering::SeqCst);
+    if fd >= 0 {
+        let byte = signum as u8;
         unsafe {
-            libc::kill(pid, libc::SIGTERM);
-            libc::kill(pid, libc::SIGKILL);
+            libc::write(fd, std::ptr::from_ref(&byte).cast(), 1);
         }
-    }
-    unsafe {
-        libc::_exit(128 + signum);
     }
 }
 
-/// Reap the sidecar when the process is signalled rather than quit.
-///
-/// `pkill ashlr-desktop`, a `kill` from a terminal, or Ctrl-C on a foreground
-/// run all bypass Tauri's event loop entirely; without this they leave the
-/// sidecar holding the port.
+/// Forward the first signal to the normal exit path, outside signal context.
 #[cfg(unix)]
-pub fn install_signal_handlers() {
+pub fn install_signal_handlers(request_exit: impl FnOnce(i32) + Send + 'static) -> std::io::Result<()> {
+    let (mut reader, writer) = UnixStream::pair()?;
+    let fd = writer.as_raw_fd();
+    std::thread::Builder::new()
+        .name("desktop-signal".into())
+        .spawn(move || {
+            let _writer = writer;
+            let mut signal = [0];
+            if reader.read_exact(&mut signal).is_ok() {
+                request_exit(128 + i32::from(signal[0]));
+            }
+        })?;
+    SIGNAL_FD.store(fd, Ordering::SeqCst);
     unsafe {
         for signum in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
             libc::signal(signum, terminate_handler as *const () as libc::sighandler_t);
         }
     }
+    Ok(())
 }
 
 #[cfg(not(unix))]
-pub fn install_signal_handlers() {}
+pub fn install_signal_handlers(_request_exit: impl FnOnce(i32) + Send + 'static) -> std::io::Result<()> {
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -697,6 +702,29 @@ mod tests {
         terminate_tree(0);
         terminate_tree(-1);
         terminate_tree(1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminate_tree_leaves_native_workers_to_their_owner_during_grace() {
+        let mut parent = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                "trap 'sleep 0.2; kill -0 \"$child\" 2>/dev/null && echo settled; kill \"$child\" 2>/dev/null; wait \"$child\"; exit 0' TERM; sleep 30 & child=$!; echo ready; wait",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn collector fixture");
+        use std::io::BufRead;
+        let mut output = std::io::BufReader::new(parent.stdout.take().unwrap());
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        assert_eq!(line.trim(), "ready");
+        terminate_tree(parent.id() as i32);
+        let _ = parent.wait();
+        line.clear();
+        output.read_line(&mut line).unwrap();
+        assert_eq!(line.trim(), "settled");
     }
 
     #[cfg(unix)]

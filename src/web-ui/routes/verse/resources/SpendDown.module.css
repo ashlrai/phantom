@@ -2,6 +2,7 @@
 /* The one sentence on top wraps inside a 390 px screen. */
 .headline { margin: 0 0 var(--space-2); font-size: var(--text-sm-size); color: var(--text-primary); overflow-wrap: anywhere; }
 .head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); align-items: baseline; overflow-wrap: anywhere; }
+.providerLabel { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; }
 .facts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2px var(--space-2); margin: var(--space-1) 0; font-size: var(--text-xs-size); color: var(--text-secondary); }
 .facts dt, .facts dd { margin: 0; overflow-wrap: anywhere; }
 .facts dd { text-align: right; font-variant-numeric: tabular-nums; }

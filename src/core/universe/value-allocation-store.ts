@@ -6,7 +6,10 @@ import { loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
-import { canonical, digest, inspectPrivateDirectory } from './artifacts.js';
+import {
+  canonical, digest, inspectPrivateDirectory, isDataObject,
+  UNIVERSE_ID_RE as ID, UNIVERSE_SHA256_RE as HASH,
+} from './artifacts.js';
 import type { DecisionTraceKeyOptions, DecisionTraceV1 } from './decision-trace.js';
 import { verifyValueAllocationReceipt, type ValueAllocationReceiptV1 } from './value-allocation.js';
 
@@ -14,8 +17,6 @@ const DOMAIN = 'ashlr:universe:value-allocation-store:v1\n';
 const MAX_RECORDS = 256;
 const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_RECORD_BYTES = 1024 * 1024;
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
 export interface StoredValueAllocationV1 {
   schemaVersion: 1;
   kind: 'stored-value-allocation';
@@ -34,11 +35,7 @@ export interface ValueAllocationStoreRead {
 interface KeyContext { key: Buffer; options: DecisionTraceKeyOptions; current(): boolean }
 
 function exact(value: unknown, required: string[], optional: string[] = []): value is Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
-  return required.every((key) => Object.hasOwn(value, key)) && Reflect.ownKeys(value).every((key) => {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
-    return typeof key === 'string' && [...required, ...optional].includes(key) && descriptor.enumerable && 'value' in descriptor;
-  });
+  return isDataObject(value, required, optional, true);
 }
 function rootPath(value: unknown): value is string {
   return typeof value === 'string' && value.length <= 4096 && isAbsolute(value) && resolve(value) === value && parse(value).root !== value &&

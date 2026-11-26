@@ -2,13 +2,12 @@
 import { buildPortfolioShadowV1, digestResourceEnvelopeV1, verifyPortfolioShadowV1,
   type OutcomeEvidenceVerifierV1, type PortfolioShadowV1, type ResourceEnvelopeV1,
   type ValueHypothesisV1 } from '../vision/value-portfolio.js';
-import { canonical, digest } from './artifacts.js';
+import { canonical, digest, isDataObject, isSha256Hex as hash } from './artifacts.js';
 import { signDecisionTraceV1, validateDecisionTraceV1, verifyDecisionTraceV1,
   type DecisionTraceKeyOptions, type DecisionTraceV1, type UnsignedDecisionTraceV1 } from './decision-trace.js';
 
 const DOMAIN = 'ashlr:universe:value-allocation:v1\0';
 const MAX_SOURCE_BYTES = 256 * 1024;
-const HASH = /^[a-f0-9]{64}$/;
 type PinnedSource = { content: string; expectedDigest: string };
 export interface ValueAllocationInput {
   schemaVersion: 1;
@@ -45,10 +44,7 @@ export type ValueAllocationResult =
     'resource-envelope-digest-mismatch' | 'hypotheses-digest-mismatch' | 'portfolio-invalid' | 'provenance-unavailable' };
 
 function exact(value: unknown, required: string[], optional: string[] = []): value is Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
-  return required.every((key) => Object.hasOwn(value, key)) && Reflect.ownKeys(value).every((key) =>
-    typeof key === 'string' && [...required, ...optional].includes(key) &&
-    Object.getOwnPropertyDescriptor(value, key)!.enumerable && 'value' in Object.getOwnPropertyDescriptor(value, key)!);
+  return isDataObject(value, required, optional, true);
 }
 /** Snapshot bounded JSON without invoking accessors, toJSON methods or custom prototypes. */
 function detached(value: unknown): unknown {
@@ -80,7 +76,6 @@ function detached(value: unknown): unknown {
   if (Buffer.byteLength(canonical(result)) > 1024 * 1024) throw new Error('Input exceeds bound');
   return result;
 }
-function hash(value: unknown): value is string { return typeof value === 'string' && HASH.test(value); }
 function source(value: unknown): value is PinnedSource {
   return exact(value, ['content', 'expectedDigest']) && typeof value.content === 'string' && value.content.length > 0 &&
     Buffer.byteLength(value.content) <= MAX_SOURCE_BYTES && Buffer.from(value.content).toString('utf8') === value.content && hash(value.expectedDigest);

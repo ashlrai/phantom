@@ -8,7 +8,10 @@ import {
 import { acquireLocalStoreLock, ownsLocalStoreLock, releaseLocalStoreLock, verifiedProcessStartRef } from '../fleet/local-store-lock.js';
 import {
   artifactDigest, canonical, defaultUniverseRoot, digest, ensureUniverseRoot,
-  executable, evaluationExecutableDigest, freezeArtifact, inspectPrivateDirectory, materializeSeed, pinSeed, privateDirectory,
+  executable, evaluationExecutableDigest, freezeArtifact, hasOnlyAllowedKeys as exact,
+  inspectPrivateDirectory, isFiniteNumber as finite, isPlainObject as object,
+  isSafeIntegerInRange as integer, isValidMetricsMap as validMetrics, materializeSeed, pinSeed,
+  privateDirectory, UNIVERSE_GIT_OID_RE, UNIVERSE_ID_RE as ID, UNIVERSE_SHA256_RE as HASH,
 } from './artifacts.js';
 import type { UniverseArtifact, UniverseDiagnostic, UniverseElite, UniverseManifest, UniverseOverview, UniverseRun,
   UniverseStoreOptions, UniverseSummary, UniverseTrial } from './types.js';
@@ -24,25 +27,12 @@ import { buildUniverseFileOperationsContext, fileOperationsContextDigest, verify
 import { resolveBuiltinEvaluator } from './builtin-evaluator-registry.js';
 import { assertSealedIntegrationScenario } from './sealed-integration-scenario.js';
 
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
 const RECORD_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const MAX_RECORDS = 10_000;
 
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-function exact(value: Record<string, unknown>, keys: string[]): boolean {
-  return Object.keys(value).every((key) => keys.includes(key));
-}
 function text(value: unknown, max = 4_000): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= max && !value.includes('\0');
 }
-function integer(value: unknown, min: number, max: number): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= min && (value as number) <= max;
-}
-function finite(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value); }
 function command(value: unknown): value is string[] {
   return Array.isArray(value) && value.length > 0 && value.length <= 64 && value.every((part) =>
     typeof part === 'string' && part.length <= 8_192 && !part.includes('\0')) && text(value[0], 4_096);
@@ -58,7 +48,7 @@ export function validateUniverseManifest(value: unknown): UniverseManifest {
       value.schemaVersion !== 1 || !text(value.id, 64) || !ID.test(value.id) || !text(value.name, 160) ||
       !text(value.objective) || !object(value.seed) || !exact(value.seed, ['repo', 'revision']) ||
       !text(value.seed.repo, 4_096) || !text(value.seed.revision, 64) ||
-      !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.seed.revision) ||
+      !UNIVERSE_GIT_OID_RE.test(value.seed.revision) ||
       !object(value.metric) || !exact(value.metric, ['name', 'direction', 'minImprovement']) || !text(value.metric.name, 120) ||
       !['maximize', 'minimize'].includes(String(value.metric.direction)) || !finite(value.metric.minImprovement) || value.metric.minImprovement < 0 ||
       !object(value.budget) || !exact(value.budget, ['maxTrials', 'maxDurationMs', 'trialTimeoutMs', 'maxParallel', 'workerTimeoutMs']) ||
@@ -128,7 +118,7 @@ function validCampaignDeliveryOrigin(value: unknown, manifest: UniverseManifest,
     ['campaignId', 'universeId'].every(key => typeof value[key] === 'string' && ID.test(value[key] as string) && value[key] !== manifest.id) &&
     ['runId', 'trialId'].every(key => typeof value[key] === 'string' && RECORD_ID.test(value[key] as string)) &&
     typeof value.repo === 'string' && isAbsolute(value.repo) && value.repo === manifest.seed.repo && value.commit === manifest.seed.revision &&
-    typeof value.tree === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.tree) &&
+    typeof value.tree === 'string' && UNIVERSE_GIT_OID_RE.test(value.tree) &&
     (seed === undefined || value.artifactDigest === seed.digest && value.commit === seed.revision);
 }
 
@@ -142,7 +132,7 @@ function validIntegrationOrigin(value: unknown, manifest: UniverseManifest, seed
     typeof value.acceptanceUniverseId === 'string' && ID.test(value.acceptanceUniverseId) && value.acceptanceUniverseId !== manifest.id &&
     typeof value.evaluationId === 'string' && ID.test(value.evaluationId) && value.repo === manifest.seed.repo &&
     typeof value.repo === 'string' && isAbsolute(value.repo) && value.commit === manifest.seed.revision &&
-    typeof value.tree === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.tree) &&
+    typeof value.tree === 'string' && UNIVERSE_GIT_OID_RE.test(value.tree) &&
     (seed === undefined || value.artifactDigest === seed.digest && value.commit === seed.revision);
 }
 export type UniverseRecord = ManifestRecord |
@@ -150,15 +140,10 @@ export type UniverseRecord = ManifestRecord |
   { id: string; kind: 'trial'; runId: string; trial: UniverseTrial } |
   { id: string; kind: 'final'; run: UniverseRun };
 
-function validMetrics(value: unknown): value is Record<string, number> {
-  return object(value) && Object.keys(value).length <= 32 && Object.entries(value).every(([key, item]) =>
-    /^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/.test(key) && finite(item));
-}
-
 function validArtifact(value: unknown): value is UniverseArtifact {
   return object(value) && exact(value, ['path', 'digest', 'revision']) && text(value.path, 4_096) &&
     text(value.digest, 64) && HASH.test(value.digest) && text(value.revision, 64) &&
-    /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.revision);
+    UNIVERSE_GIT_OID_RE.test(value.revision);
 }
 function validDiagnostics(value: unknown): boolean {
   try { validateDiagnostics(value); return true; } catch { return false; }

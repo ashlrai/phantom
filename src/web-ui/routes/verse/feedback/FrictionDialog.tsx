@@ -1,3 +1,4 @@
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import { useCallback, useEffect, useId, useState } from 'react';
 import styles from './FrictionFeedback.module.css';
 import { Dialog } from '../../../components/primitives/Dialog.js';
@@ -47,9 +48,7 @@ function changeRequestMessage(result: ChangeRequestResponse): string {
 }
 
 function ageLabel(seconds: number): string {
-  const age = Math.max(0, seconds);
-  return age < 60 ? 'just now' : age < 3600 ? `${Math.floor(age / 60)}m ago`
-    : age < 86400 ? `${Math.floor(age / 3600)}h ago` : `${Math.floor(age / 86400)}d ago`;
+  return seconds < 60 ? 'just now' : ageInSeconds(seconds);
 }
 
 const safePrUrl = (value: string | null | undefined): string | null =>
