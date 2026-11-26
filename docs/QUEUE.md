@@ -1386,7 +1386,11 @@ JSON retains that precision for `starts_per_hour` and `hours_queued`. Text round
 The launch reader scans at most 2 MiB of the local dispatch log. If that
 cuts off the beginning, the first complete retained event must precede the
 six-hour window. Otherwise the launch rate and the duration of a nonempty
-queue stay unknown. An observed empty ready queue still has zero hours of work.
+queue stay unknown. A nonempty queue with unavailable launch coverage or zero
+observed starts has an `unknown` supply verdict and suppresses the
+`supply_low` alert. If `phm pools waste` flags that pool for quota waste, it
+suggests checking the lane and shows the observed job count. An observed
+empty ready queue still has zero hours of work.
 
 ## Which producer earns its slots?
 

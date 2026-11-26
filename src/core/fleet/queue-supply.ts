@@ -30,7 +30,7 @@ export const SUPPLY_STARTS_WINDOW_H = 6;
 /** The digest speaks when a pool at risk of waste has less work than this queued. */
 export const SUPPLY_LOW_HOURS = 1;
 
-/** empty: usage left, nothing queued. low: under an hour queued. healthy: enough queued. used-up and held: work waits on the pool. unknown: usage or queue could not be read. */
+/** empty: usage left, nothing queued. low: under an hour queued. healthy: at least an hour queued. used-up and held: work waits on the pool. unknown: usage, queue depth, or queue duration is unavailable. */
 export type SupplyState = 'empty' | 'low' | 'healthy' | 'used-up' | 'held' | 'unknown';
 
 export interface SupplyRow {
@@ -138,7 +138,7 @@ function rowFor(pool: PoolRow, input: QueueSupplyInput, nowMs: number, windowH: 
   if (ready === 0) return out('empty', `${label}: 0 jobs queued, ${leftText}${idleText}`, risk);
   if (hoursQueued === null) {
     const explanation = starts === null ? 'launch window unavailable' : 'no recent starts to size the queue';
-    return out('healthy', `${label}: ${queued}, ${leftText}, ${explanation}`);
+    return out('unknown', `${label}: ${queued}, ${leftText}, ${explanation}`);
   }
   if (hoursQueued < SUPPLY_LOW_HOURS) return out('low', `${label}: ${queued}, about ${span(hoursQueued)} of work, ${leftText}${idleText}`, risk);
   return out('healthy', `${label}: ${queued}, about ${span(hoursQueued)} of work, ${leftText}`);
