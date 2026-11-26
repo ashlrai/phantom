@@ -344,12 +344,13 @@ A row stays local with one of these reasons: `invalid_row`,
 work_market gives remote built-ins), `requirement_unverifiable` (`min_tier`,
 `max_tier` or `max_cost_class`, which no node reports), `need_not_routable`,
 `no_live_node`, `lane_mismatch`, `pack_inert`, `node_pack_unsupported`,
-`caps_missing`, `slots_unknown` (a node sent no slot telemetry, which is
+`caps_missing`, `auth_missing` (the row needs `gh` and no capable node reports
+working GitHub auth), `slots_unknown` (a node sent no slot telemetry, which is
 unknown, not zero), `pass_limit` or `no_free_slot`. Free slots are a node's
 `slots` minus its running claims and the reservations in the router's placement
 plan. A waiting router job with no assignment, for example because it needs
 local GitHub auth, uses no slot. Older router views without a placement plan
-use capability matching to estimate reservations. Nodes with a capacity sample
+use capability and auth matching to estimate reservations. Nodes with a capacity sample
 share one physical host's
 measured slots, so their free capacity is counted once per host — the smallest
 advertisement minus every claim on it — the same grouping the router's

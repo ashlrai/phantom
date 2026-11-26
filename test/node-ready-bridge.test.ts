@@ -192,6 +192,24 @@ describe('ready.tsv -> node router bridge', () => {
     expect(assigned.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
   });
 
+  it('keeps gh work local until a capable node reports working auth', async () => {
+    const f = fixture([row('RQ-REVIEW-GH', 'codex-cmp', { needs: ['gh'] })], [
+      { id: 'unknown-auth', caps: [...READ, 'gh'], slots: 2 },
+      { id: 'worker', caps: [...READ, 'gh'], slots: 1 },
+    ]);
+    f.nodes.heartbeat(f.sessions.get('worker')!, { auth: 'missing' });
+    const blocked = await f.pass();
+    expect(blocked.rows[0]).toMatchObject({ offload: false, reasons: ['auth_missing'] });
+    expect(blocked.claimed).toEqual([]);
+    expect(f.ready()).toContain('RQ-REVIEW-GH');
+    expect(existsSync(f.lease('RQ-REVIEW-GH'))).toBe(false);
+
+    f.nodes.heartbeat(f.sessions.get('worker')!, { auth: 'ok' });
+    const assigned = await f.pass();
+    expect(assigned.rows[0]).toMatchObject({ offload: true, nodeId: 'worker' });
+    expect(assigned.claimed).toHaveLength(1);
+  });
+
   it('never offers a job to a node whose local capability probe failed', async () => {
     // air-w4 has no codex binary: the local probe drops the cap, whatever its config says.
     const run = (() => ({ status: null, error: Object.assign(new Error('missing'), { code: 'ENOENT' }) })) as unknown as typeof spawnSync;
