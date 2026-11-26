@@ -25,19 +25,22 @@
  */
 
 import { constants as fsConstants } from 'node:fs';
-import { lstat, open, readdir, readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { lstat, open, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { isRateLimitText, isUsageLimitText } from '../classify/engine-errors.js';
-import { TurnAccumulator, type TurnFeaturesV1 } from './extractors.js';
+import { TurnAccumulator, asString, isReasoningRecord, type TurnFeaturesV1 } from './extractors.js';
 import {
   DAY_MS,
   appendFeatures,
   appendStepsChunked,
   cleanLabel,
-  readStoreState,
+  isPrintableAsciiId,
+  readBoundedJsonRecord,
+  readCursorMap,
   reasoningRoot,
-  writeStoreState,
+  resolveHomeSubdir,
+  utcDay,
+  writeCursorMap,
 } from './store.js';
 import { REASONING_TEXT_RETENTION_DAYS, type ReasoningOutcome, type ReasoningStepKind, type ReasoningStepV1 } from './types.js';
 import { defaultVerseRoot } from './ingest-verse.js';
@@ -83,10 +86,8 @@ export interface CodexIngestResult {
 interface RolloutMeta {
   threadId: string;
   cwd: string | null;
-  originator: string | null;
   interactive: boolean;
   model: string | null;
-  cliVersion: string | null;
 }
 
 interface FileCursor {
@@ -101,17 +102,8 @@ interface FileCursor {
   skipped?: string;
 }
 
-interface CursorState {
-  v: 1;
-  files: Record<string, FileCursor>;
-}
-
 export function codexSessionsRoot(): string {
-  const configured = process.env['CODEX_HOME'];
-  const base = typeof configured === 'string' && configured.trim() !== '' && isAbsolute(configured)
-    ? configured
-    : join(homedir(), '.codex');
-  return join(base, 'sessions');
+  return resolveHomeSubdir('CODEX_HOME', '.codex', 'sessions');
 }
 
 /** Consent switch for interactive Codex conversations (env or cfg). */
@@ -119,14 +111,6 @@ export function codexInteractiveOptIn(cfg?: unknown): boolean {
   if (process.env['ASHLR_REASONING_CODEX_DESKTOP'] === '1') return true;
   const reasoning = (cfg as { reasoning?: { codexDesktop?: unknown } } | undefined)?.reasoning;
   return reasoning?.codexDesktop === true;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +195,6 @@ interface PendingTool {
 
 interface CodexTurn {
   turnId: string;
-  startOffset: number;
   startedAt: string;
   model: string | null;
   acc: TurnAccumulator | null;
@@ -235,7 +218,7 @@ function exitCodeOk(value: unknown): boolean | null {
 /** Tool success from a function_call_output body. Null when the output does not say. */
 function outputOk(output: unknown): boolean | null {
   const text = typeof output === 'string' ? output : Array.isArray(output)
-    ? output.map((part) => (isObject(part) ? str(part['text']) : '')).join('\n')
+    ? output.map((part) => (isReasoningRecord(part) ? asString(part['text']) : '')).join('\n')
     : '';
   if (text === '') return null;
   const head = text.slice(0, 2_000);
@@ -244,7 +227,7 @@ function outputOk(output: unknown): boolean | null {
   if (/^Script failed\b/.test(head)) return false;
   try {
     const parsed = JSON.parse(text) as unknown;
-    if (isObject(parsed) && isObject(parsed['metadata'])) return exitCodeOk(parsed['metadata']['exit_code']);
+    if (isReasoningRecord(parsed) && isReasoningRecord(parsed['metadata'])) return exitCodeOk(parsed['metadata']['exit_code']);
   } catch {
     /* plain text */
   }
@@ -269,18 +252,26 @@ function describeCustomExec(name: string, input: unknown): { name: string; input
   return { name: 'code_exec', input: {} };
 }
 
+function collectTextParts(list: unknown, allowRawStrings = false): string[] {
+  if (!Array.isArray(list)) return [];
+  const out: string[] = [];
+  for (const part of list) {
+    const text = isReasoningRecord(part)
+      ? asString(part['text'])
+      : allowRawStrings ? asString(part) : '';
+    if (text !== '') out.push(text);
+  }
+  return out;
+}
+
 function reasoningText(payload: Record<string, unknown>): { text: string; kind: ReasoningStepKind } | null {
   const raw = Array.isArray(payload['content'])
-    ? payload['content'].map((part) => (isObject(part) ? str(part['text']) : '')).filter((t) => t !== '')
-    : Array.isArray(payload['raw_content'])
-      ? payload['raw_content'].map((part) => (isObject(part) ? str(part['text']) : str(part))).filter((t) => t !== '')
-      : [];
+    ? collectTextParts(payload['content'])
+    : collectTextParts(payload['raw_content'], true);
   if (raw.length > 0) return { text: raw.join('\n\n'), kind: 'thinking' };
   const summary = Array.isArray(payload['summary'])
-    ? payload['summary'].map((part) => (isObject(part) ? str(part['text']) : '')).filter((t) => t !== '')
-    : Array.isArray(payload['summary_text'])
-      ? payload['summary_text'].map((part) => (typeof part === 'string' ? part : isObject(part) ? str(part['text']) : '')).filter((t) => t !== '')
-      : [];
+    ? collectTextParts(payload['summary'])
+    : collectTextParts(payload['summary_text'], true);
   if (summary.length > 0) return { text: summary.join('\n\n'), kind: 'summary' };
   return null;
 }
@@ -314,7 +305,6 @@ class RolloutParser {
     if (this.turn) this.closeTurn(null, at, offset);
     this.turn = {
       turnId: turnId ?? `t${offset}`,
-      startOffset: offset,
       startedAt: at,
       model: this.currentModel,
       acc: null,
@@ -382,7 +372,7 @@ class RolloutParser {
     const found = reasoningText(payload);
     if (!found || !this.meta) return;
     const turn = this.openTurn(null, at, offset);
-    const itemId = str(payload['id']);
+    const itemId = asString(payload['id']);
     const dedupeKey = itemId || found.text;
     // The same reasoning item appears as a response_item AND an item_completed
     // event (and, in older rollouts, as agent_reasoning); keep it once.
@@ -390,7 +380,7 @@ class RolloutParser {
     turn.seenReasoning.add(dedupeKey);
     turn.seenReasoning.add(found.text);
     turn.lastAt = at;
-    const id = `codex:${this.meta.threadId}:${/^[\x21-\x7e]{1,120}$/.test(itemId) ? itemId : `b${offset}`}`;
+    const id = `codex:${this.meta.threadId}:${isPrintableAsciiId(itemId, 120) ? itemId : `b${offset}`}`;
     this.accFor(turn).addThinking(id, at, found.text);
     turn.steps.push({
       v: 1,
@@ -419,23 +409,21 @@ class RolloutParser {
     } catch {
       return true;
     }
-    if (!isObject(row)) return true;
-    const type = str(row['type']);
-    const payload = isObject(row['payload']) ? row['payload'] : {};
-    const at = str(row['timestamp']) || str(payload['timestamp']) || new Date(0).toISOString();
+    if (!isReasoningRecord(row)) return true;
+    const type = asString(row['type']);
+    const payload = isReasoningRecord(row['payload']) ? row['payload'] : {};
+    const at = asString(row['timestamp']) || asString(payload['timestamp']) || new Date(0).toISOString();
 
     if (type === 'session_meta') {
       if (this.meta) return true; // forks carry a second meta line; the first is the thread
-      const originator = str(payload['originator']) || null;
+      const originator = asString(payload['originator']) || null;
       const source = payload['source'];
       const interactive = !(originator === 'codex_exec' || source === 'exec');
       this.meta = {
-        threadId: str(payload['id']) || str(payload['session_id']) || 'unknown',
-        cwd: str(payload['cwd']) || null,
-        originator,
+        threadId: asString(payload['id']) || asString(payload['session_id']) || 'unknown',
+        cwd: asString(payload['cwd']) || null,
         interactive,
         model: null,
-        cliVersion: str(payload['cli_version']) || null,
       };
       this.currentCwd = this.meta.cwd;
       if (!this.include(this.meta)) {
@@ -447,15 +435,15 @@ class RolloutParser {
     if (!this.meta) return true; // nothing attributable before the meta line
 
     if (type === 'turn_context') {
-      this.currentModel = str(payload['model']) || this.currentModel;
-      this.currentCwd = str(payload['cwd']) || this.currentCwd;
+      this.currentModel = asString(payload['model']) || this.currentModel;
+      this.currentCwd = asString(payload['cwd']) || this.currentCwd;
       if (this.meta.model === null && this.currentModel) this.meta.model = this.currentModel;
       if (this.turn && this.turn.model === null) this.turn.model = this.currentModel;
       return true;
     }
 
     if (type === 'response_item') {
-      const kind = str(payload['type']);
+      const kind = asString(payload['type']);
       if (kind === 'reasoning') {
         this.addReasoning(payload, at, offset);
         return true;
@@ -463,12 +451,12 @@ class RolloutParser {
       if (kind === 'function_call' || kind === 'custom_tool_call' || kind === 'local_shell_call') {
         const turn = this.openTurn(null, at, offset);
         turn.lastAt = at;
-        let name = str(payload['name']) || kind;
+        let name = asString(payload['name']) || kind;
         let input: unknown;
         if (kind === 'function_call') input = parseArgs(payload['arguments']);
         else if (kind === 'local_shell_call') {
           name = 'local_shell';
-          input = isObject(payload['action']) ? { command: payload['action']['command'] } : {};
+          input = isReasoningRecord(payload['action']) ? { command: payload['action']['command'] } : {};
         } else {
           const described = describeCustomExec(name, payload['input']);
           name = described.name;
@@ -476,12 +464,12 @@ class RolloutParser {
         }
         const tool: PendingTool = { ref: this.ref(offset), at, name, input, ok: null };
         turn.responseTools.push(tool);
-        const callId = str(payload['call_id']);
+        const callId = asString(payload['call_id']);
         if (callId) turn.callIndex.set(callId, tool);
         return true;
       }
       if (kind === 'function_call_output' || kind === 'custom_tool_call_output' || kind === 'local_shell_call_output') {
-        const tool = this.turn?.callIndex.get(str(payload['call_id']));
+        const tool = this.turn?.callIndex.get(asString(payload['call_id']));
         if (tool && tool.ok === null) tool.ok = outputOk(payload['output']);
         return true;
       }
@@ -489,16 +477,16 @@ class RolloutParser {
     }
 
     if (type === 'event_msg') {
-      const kind = str(payload['type']);
+      const kind = asString(payload['type']);
       switch (kind) {
         case 'task_started':
         case 'turn_started':
-          this.openTurn(str(payload['turn_id']) || null, at, offset);
+          this.openTurn(asString(payload['turn_id']) || null, at, offset);
           return true;
         case 'task_complete':
         case 'turn_complete': {
           const turn = this.turn;
-          const last = str(payload['last_agent_message']);
+          const last = asString(payload['last_agent_message']);
           if (turn && last && !turn.message) turn.message = { ref: this.ref(offset), at, text: last };
           this.closeTurn('ok', at, nextOffset);
           return true;
@@ -506,22 +494,22 @@ class RolloutParser {
         case 'turn_aborted':
           this.closeTurn('cancelled', at, nextOffset);
           return true;
-        case 'error':
-        case 'stream_error': {
-          if (this.turn && kind === 'error') {
+        case 'error': {
+          if (this.turn) {
             this.turn.errored = true;
-            this.turn.errorClass ??= isRateLimitText(str(payload['message'])) || isUsageLimitText(str(payload['message'])) ? 'rate-limit' : 'execution';
+            const message = asString(payload['message']);
+            this.turn.errorClass ??= isRateLimitText(message) || isUsageLimitText(message) ? 'rate-limit' : 'execution';
           }
           return true;
         }
         case 'agent_reasoning':
         case 'agent_reasoning_raw_content': {
-          const text = str(payload['text']);
+          const text = asString(payload['text']);
           if (text) this.addReasoning(kind === 'agent_reasoning' ? { summary: [{ text }] } : { content: [{ text }] }, at, offset);
           return true;
         }
         case 'agent_message': {
-          const text = str(payload['message']);
+          const text = asString(payload['message']);
           if (text) {
             const turn = this.openTurn(null, at, offset);
             turn.message = { ref: this.ref(offset), at, text };
@@ -529,19 +517,19 @@ class RolloutParser {
           return true;
         }
         case 'exec_command_end': {
-          const tool = this.turn?.callIndex.get(str(payload['call_id']));
+          const tool = this.turn?.callIndex.get(asString(payload['call_id']));
           if (tool) tool.ok = exitCodeOk(payload['exit_code']);
           return true;
         }
         case 'patch_apply_end': {
-          const tool = this.turn?.callIndex.get(str(payload['call_id']));
+          const tool = this.turn?.callIndex.get(asString(payload['call_id']));
           if (tool && typeof payload['success'] === 'boolean') tool.ok = payload['success'];
           return true;
         }
         case 'item_completed': {
-          const item = isObject(payload['item']) ? payload['item'] : null;
+          const item = isReasoningRecord(payload['item']) ? payload['item'] : null;
           if (!item) return true;
-          const itemType = str(item['type']);
+          const itemType = asString(item['type']);
           if (itemType === 'Reasoning') {
             this.addReasoning(item, at, offset);
             return true;
@@ -554,25 +542,26 @@ class RolloutParser {
               at,
               name: 'command_execution',
               input: { command: item['command'] },
-              ok: str(item['status']) === 'failed' ? false : exitCodeOk(item['exit_code']),
+              ok: asString(item['status']) === 'failed' ? false : exitCodeOk(item['exit_code']),
             });
           } else if (itemType === 'FileChange') {
+            const status = asString(item['status']);
             turn.itemTools.push({
               ref: this.ref(offset),
               at,
               name: 'file_change',
               input: { changes: item['changes'] },
-              ok: str(item['status']) === 'failed' ? false : str(item['status']) === 'completed' ? true : null,
+              ok: status === 'failed' ? false : status === 'completed' ? true : null,
             });
           } else if (itemType === 'McpToolCall') {
-            const server = str(item['server']) || str(item['appName']);
-            const tool = str(item['tool']) || str(item['actionName']);
-            const status = str(item['status']);
+            const server = asString(item['server']) || asString(item['appName']);
+            const tool = asString(item['tool']) || asString(item['actionName']);
+            const status = asString(item['status']);
             turn.itemTools.push({
               ref: this.ref(offset),
               at,
               name: server && tool ? `mcp:${server}.${tool}` : 'mcp_tool_call',
-              input: isObject(item['arguments']) ? item['arguments'] : {},
+              input: isReasoningRecord(item['arguments']) ? item['arguments'] : {},
               ok: status === 'failed' || item['error'] ? false : status === 'completed' ? true : null,
             });
           }
@@ -630,14 +619,9 @@ async function verseCodexThreads(verseRoot: string): Promise<Set<string>> {
     return ids;
   }
   for (const name of names.slice(0, 5_000)) {
-    try {
-      const path = join(dir, name);
-      const stat = await lstat(path);
-      if (!stat.isFile() || stat.size > 1024 * 1024) continue;
-      const record = JSON.parse(await readFile(path, 'utf8')) as { engine?: unknown; nativeSessionId?: unknown };
-      if (record.engine === 'codex' && typeof record.nativeSessionId === 'string') ids.add(record.nativeSessionId);
-    } catch {
-      /* unreadable record */
+    const record = await readBoundedJsonRecord(join(dir, name));
+    if (record?.['engine'] === 'codex' && typeof record['nativeSessionId'] === 'string') {
+      ids.add(record['nativeSessionId']);
     }
   }
   return ids;
@@ -661,9 +645,8 @@ export async function ingestCodexRollouts(options: CodexIngestOptions = {}): Pro
     filesSeen: 0, filesRead: 0, filesSkipped: 0, bytesRead: 0, steps: 0, features: 0, truncated: false,
   };
   try {
-    const prior = readStoreState<CursorState>(CURSOR_NAME, root);
-    const cursor: CursorState = prior?.v === 1 && isObject(prior.files) ? prior : { v: 1, files: {} };
-    const cutoffDay = new Date(nowMs - lookbackDays * DAY_MS).toISOString().slice(0, 10);
+    const cursorFiles = readCursorMap<FileCursor>(CURSOR_NAME, 'files', root);
+    const cutoffDay = utcDay(nowMs - lookbackDays * DAY_MS);
     const verseThreads = await verseCodexThreads(options.verseRoot ?? defaultVerseRoot());
     const include = (meta: RolloutMeta): boolean =>
       !verseThreads.has(meta.threadId) && (includeInteractive || !meta.interactive);
@@ -685,7 +668,7 @@ export async function ingestCodexRollouts(options: CodexIngestOptions = {}): Pro
       } catch {
         continue;
       }
-      const previous = cursor.files[path];
+      const previous = cursorFiles[path];
       if (previous?.skipped === policy && previous.size === stat.size) {
         result.filesSkipped += 1;
         continue;
@@ -702,7 +685,7 @@ export async function ingestCodexRollouts(options: CodexIngestOptions = {}): Pro
       budget -= consumed;
       result.bytesRead += consumed;
       if (parser.excluded) {
-        cursor.files[path] = { size: stat.size, mtimeMs: stat.mtimeMs, offset: 0, meta: null, skipped: policy };
+        cursorFiles[path] = { size: stat.size, mtimeMs: stat.mtimeMs, offset: 0, meta: null, skipped: policy };
         result.filesSkipped += 1;
         continue;
       }
@@ -712,7 +695,7 @@ export async function ingestCodexRollouts(options: CodexIngestOptions = {}): Pro
       if (nowMs - stat.mtimeMs > STALE_OPEN_TURN_MS && start + consumed >= stat.size) parser.finalizeOpen(start + consumed);
       result.steps += await appendStepsChunked(parser.steps, root);
       result.features += appendFeatures(parser.features, root);
-      cursor.files[path] = {
+      cursorFiles[path] = {
         size: stat.size,
         mtimeMs: stat.mtimeMs,
         offset: parser.safeOffset,
@@ -720,10 +703,7 @@ export async function ingestCodexRollouts(options: CodexIngestOptions = {}): Pro
         meta: parser.meta,
       };
     }
-    for (const path of Object.keys(cursor.files)) {
-      if (!present.has(path)) delete cursor.files[path];
-    }
-    writeStoreState(CURSOR_NAME, cursor, root);
+    writeCursorMap(CURSOR_NAME, 'files', cursorFiles, present, root);
   } catch {
     /* ingest is best-effort maintenance */
   }

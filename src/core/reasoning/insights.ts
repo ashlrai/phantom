@@ -33,16 +33,18 @@ import type {
   ReasoningTrendDay,
 } from './types.js';
 
-export const MAX_INSIGHTS = 50;
+const MAX_INSIGHTS = 50;
 const MAX_EVIDENCE = 5;
 const MAX_TREND_DAYS = 190;
 
 const SEVERITY_RANK: Record<ReasoningSeverity, number> = { high: 3, warn: 2, info: 1 };
 
+type ClusterVariant = 'failure' | 'error' | 'gave-up' | 'loop' | 'uncertainty' | 'backtrack' | 'claim' | 'untested' | 'win';
+
 interface Cluster {
   kind: ReasoningInsightKind;
   /** Sub-kind so one (kind, repo, engine) can hold distinct stories (e.g. claim vs untested). */
-  variant: string;
+  variant: ClusterVariant;
   repo: string | null;
   engine: string | null;
   signature: string | null;
@@ -132,7 +134,7 @@ export class DigestBuilder {
 
   private cluster(
     kind: ReasoningInsightKind,
-    variant: string,
+    variant: ClusterVariant,
     feature: TurnFeaturesV1,
     signature: string | null,
     count: number,
@@ -273,8 +275,6 @@ export class DigestBuilder {
         title = `Tests passed after edits in ${plural(turns, 'turn')}${loc}`;
         break;
       }
-      default:
-        return null;
     }
     const evidence = [...cluster.evidence]
       .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))

@@ -25,13 +25,20 @@
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { agentDiagnosticsDir, classifyAgentDiagnosticError } from '../run/agent-diagnostics.js';
-import { TurnAccumulator, type ToolHandle, type TurnFeaturesV1 } from './extractors.js';
+import {
+  TurnAccumulator,
+  asString,
+  isReasoningRecord,
+  type ToolHandle,
+  type TurnFeaturesV1,
+} from './extractors.js';
 import {
   appendFeatures,
   appendStepsChunked,
-  readStoreState,
+  readCursorMap,
   reasoningRoot,
-  writeStoreState,
+  writeCursorMap,
+  yieldToLoop,
 } from './store.js';
 import type { ReasoningOutcome, ReasoningStepV1 } from './types.js';
 
@@ -50,11 +57,6 @@ interface FileCursor {
   offset?: number;
 }
 
-interface CursorState {
-  v: 1;
-  files: Record<string, FileCursor>;
-}
-
 export interface FleetIngestOptions {
   root?: string;
   logsDir?: string;
@@ -66,14 +68,6 @@ export interface FleetIngestResult {
   invocations: number;
   steps: number;
   features: number;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +143,7 @@ interface InvocationTrace {
  * Analyse one legacy invocation. `runId` is the log's run/attempt id;
  * `fallbackAt` (file mtime) dates sections whose header had no timestamp.
  */
-export function traceLegacyInvocation(inv: LegacyInvocation, runId: string, fallbackAt: string): InvocationTrace {
+function traceLegacyInvocation(inv: LegacyInvocation, runId: string, fallbackAt: string): InvocationTrace {
   const endedAt = inv.at && inv.durationMs !== null
     ? new Date(Date.parse(inv.at) + inv.durationMs).toISOString()
     : inv.at ?? fallbackAt;
@@ -205,55 +199,57 @@ export function traceLegacyInvocation(inv: LegacyInvocation, runId: string, fall
     } catch {
       continue; // truncated stream
     }
-    if (!isObject(row)) continue;
-    const type = str(row['type']);
+    if (!isReasoningRecord(row)) continue;
+    const type = asString(row['type']);
     // claude stream-json
-    if (type === 'system' && str(row['subtype']) === 'init') {
-      model = str(row['model']) || model;
+    if (type === 'system' && asString(row['subtype']) === 'init') {
+      model = asString(row['model']) || model;
       continue;
     }
-    if (type === 'assistant' && isObject(row['message']) && Array.isArray(row['message']['content'])) {
+    if (type === 'assistant' && isReasoningRecord(row['message']) && Array.isArray(row['message']['content'])) {
       for (const block of row['message']['content']) {
-        if (!isObject(block)) continue;
-        const blockType = str(block['type']);
-        if (blockType === 'thinking') thinking(str(block['thinking']), 'thinking');
-        else if (blockType === 'tool_use') tool(str(block['name']) || 'tool', block['input'], null, str(block['id']) || null);
+        if (!isReasoningRecord(block)) continue;
+        const blockType = asString(block['type']);
+        if (blockType === 'thinking') thinking(asString(block['thinking']), 'thinking');
+        else if (blockType === 'tool_use') tool(asString(block['name']) || 'tool', block['input'], null, asString(block['id']) || null);
         else if (blockType === 'text') {
           flush(null);
-          acc.addMessage(`run:${runId}#${n}`, stepAt, str(block['text']));
+          acc.addMessage(`run:${runId}#${n}`, stepAt, asString(block['text']));
         }
       }
       continue;
     }
-    if (type === 'user' && isObject(row['message']) && Array.isArray(row['message']['content'])) {
+    if (type === 'user' && isReasoningRecord(row['message']) && Array.isArray(row['message']['content'])) {
       for (const block of row['message']['content']) {
-        if (!isObject(block) || str(block['type']) !== 'tool_result') continue;
-        const handle = tools.get(str(block['tool_use_id']));
+        if (!isReasoningRecord(block) || asString(block['type']) !== 'tool_result') continue;
+        const handle = tools.get(asString(block['tool_use_id']));
         if (handle !== undefined) acc.resolveTool(handle, block['is_error'] !== true);
       }
       continue;
     }
     if (type === 'result') {
-      resultError = row['is_error'] === true || str(row['subtype']).startsWith('error');
+      resultError = row['is_error'] === true || asString(row['subtype']).startsWith('error');
       continue;
     }
     // codex exec --json
-    if (type === 'item.completed' && isObject(row['item'])) {
+    if (type === 'item.completed' && isReasoningRecord(row['item'])) {
       const item = row['item'];
-      const itemType = str(item['type']);
-      if (itemType === 'reasoning') thinking(str(item['text']), 'summary');
+      const itemType = asString(item['type']);
+      if (itemType === 'reasoning') thinking(asString(item['text']), 'summary');
       else if (itemType === 'command_execution') {
         const code = item['exit_code'];
-        const ok = str(item['status']) === 'failed' ? false : typeof code === 'number' ? code === 0 : null;
+        const ok = asString(item['status']) === 'failed' ? false : typeof code === 'number' ? code === 0 : null;
         tool('command_execution', { command: item['command'] }, ok, null);
       } else if (itemType === 'file_change') {
-        tool('file_change', { changes: item['changes'] }, str(item['status']) === 'failed' ? false : true, null);
+        tool('file_change', { changes: item['changes'] }, asString(item['status']) === 'failed' ? false : true, null);
       } else if (itemType === 'mcp_tool_call') {
-        const name = str(item['server']) && str(item['tool']) ? `mcp:${str(item['server'])}.${str(item['tool'])}` : 'mcp_tool_call';
-        tool(name, item['arguments'] ?? {}, str(item['status']) === 'failed' ? false : null, null);
+        const server = asString(item['server']);
+        const toolName = asString(item['tool']);
+        const name = server && toolName ? `mcp:${server}.${toolName}` : 'mcp_tool_call';
+        tool(name, item['arguments'] ?? {}, asString(item['status']) === 'failed' ? false : null, null);
       } else if (itemType === 'agent_message') {
         flush(null);
-        acc.addMessage(`run:${runId}#${n}`, stepAt, str(item['text']));
+        acc.addMessage(`run:${runId}#${n}`, stepAt, asString(item['text']));
       }
       continue;
     }
@@ -280,24 +276,26 @@ export function traceLegacyInvocation(inv: LegacyInvocation, runId: string, fall
 
 /** One metadata diagnostic row → one text-free feature row (null when malformed). */
 export function featureFromDiagnosticRow(row: unknown): TurnFeaturesV1 | null {
-  if (!isObject(row) || row['schemaVersion'] !== 1) return null;
-  const runRef = str(row['runRef']);
-  const ts = str(row['ts']);
-  const engine = str(row['engine']);
-  if (!/^[0-9a-f]{16,128}$/.test(runRef) || !Number.isFinite(Date.parse(ts)) || engine === '') return null;
+  if (!isReasoningRecord(row) || row['schemaVersion'] !== 1) return null;
+  const runRef = asString(row['runRef']);
+  const ts = asString(row['ts']);
+  const engine = asString(row['engine']);
+  const tsMs = Date.parse(ts);
+  if (!/^[0-9a-f]{16,128}$/.test(runRef) || !Number.isFinite(tsMs) || engine === '') return null;
   // Full 64-hex refs look like secrets to the public-JSON scrubber; a 24-hex
   // prefix is unique enough and survives sanitisation intact.
   const runId = `rr-${runRef.slice(0, 24)}`;
   const attempt = typeof row['attempt'] === 'number' ? row['attempt'] : 1;
   const durationMs = typeof row['durationMs'] === 'number' && row['durationMs'] >= 0 ? row['durationMs'] : null;
-  const endedAt = new Date(Date.parse(ts)).toISOString();
-  const startedAt = durationMs !== null ? new Date(Date.parse(ts) - durationMs).toISOString() : null;
+  const endedAt = new Date(tsMs).toISOString();
+  const startedAt = durationMs !== null ? new Date(tsMs - durationMs).toISOString() : null;
   const ok = row['ok'] === true;
+  const rawErrorClass = asString(row['errorClass']);
   const errorClass = !ok
-    ? (str(row['errorClass']) && str(row['errorClass']) !== 'none' ? str(row['errorClass']) : str(row['terminationReason']) || null)
+    ? (rawErrorClass && rawErrorClass !== 'none' ? rawErrorClass : asString(row['terminationReason']) || null)
     : null;
   const acc = new TurnAccumulator({
-    id: `fleet:${runId}:a${attempt}:${Date.parse(ts)}`,
+    id: `fleet:${runId}:a${attempt}:${tsMs}`,
     source: 'fleet',
     sessionId: null,
     runId,
@@ -322,8 +320,7 @@ export async function ingestFleetAgentLogs(options: FleetIngestOptions = {}): Pr
   const dir = options.logsDir ?? agentDiagnosticsDir();
   const result: FleetIngestResult = { filesSeen: 0, filesRead: 0, invocations: 0, steps: 0, features: 0 };
   try {
-    const prior = readStoreState<CursorState>(CURSOR_NAME, root);
-    const cursor: CursorState = prior?.v === 1 && isObject(prior.files) ? prior : { v: 1, files: {} };
+    const cursorFiles = readCursorMap<FileCursor>(CURSOR_NAME, 'files', root);
     let names: string[];
     try {
       names = await readdir(dir);
@@ -345,7 +342,7 @@ export async function ingestFleetAgentLogs(options: FleetIngestOptions = {}): Pr
       } catch {
         continue;
       }
-      const previous = cursor.files[name];
+      const previous = cursorFiles[name];
       if (previous && previous.size === stat.size && previous.mtimeMs === stat.mtimeMs) continue;
       let text: string;
       try {
@@ -367,10 +364,10 @@ export async function ingestFleetAgentLogs(options: FleetIngestOptions = {}): Pr
           features.push(traced.feature);
           result.invocations += 1;
         }
-        cursor.files[name] = { size: stat.size, mtimeMs: stat.mtimeMs };
+        cursorFiles[name] = { size: stat.size, mtimeMs: stat.mtimeMs };
       } else {
-        const start = previous?.offset !== undefined && previous.offset <= Buffer.byteLength(text, 'utf8') ? previous.offset : 0;
         const bytes = Buffer.from(text, 'utf8');
+        const start = previous?.offset !== undefined && previous.offset <= bytes.length ? previous.offset : 0;
         const tail = bytes.subarray(start).toString('utf8');
         const lastNewline = tail.lastIndexOf('\n');
         const complete = lastNewline === -1 ? '' : tail.slice(0, lastNewline + 1);
@@ -386,16 +383,13 @@ export async function ingestFleetAgentLogs(options: FleetIngestOptions = {}): Pr
             /* torn row */
           }
         }
-        cursor.files[name] = { size: stat.size, mtimeMs: stat.mtimeMs, offset: start + Buffer.byteLength(complete, 'utf8') };
+        cursorFiles[name] = { size: stat.size, mtimeMs: stat.mtimeMs, offset: start + Buffer.byteLength(complete, 'utf8') };
       }
       result.steps += await appendStepsChunked(steps, root);
       result.features += appendFeatures(features, root);
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await yieldToLoop();
     }
-    for (const name of Object.keys(cursor.files)) {
-      if (!present.has(name)) delete cursor.files[name];
-    }
-    writeStoreState(CURSOR_NAME, cursor, root);
+    writeCursorMap(CURSOR_NAME, 'files', cursorFiles, present, root);
   } catch {
     /* best-effort maintenance */
   }
