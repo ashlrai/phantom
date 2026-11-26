@@ -400,7 +400,10 @@ tallies, `pending` unresolved fired reruns inside 24 hours, and
 `resolutionRate` = pass/(pass+fail) or null when none resolved);
 `readCiRerunStatus(path?)` returns the persisted status or null, whose per-repo
 records gain `recurringFlakes`, `flakeFixesQueued`, `verdictsPending` and
-`verdictsResolved` counts.
+`verdictsResolved` counts. An optional `verdictCursor` records the last
+checked rerun (`at` from the successful call row, `repo`, `head`, and
+`runId`). Polling resumes after that position in timestamp and identity
+order and wraps to the oldest eligible rerun.
 Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
 Resident off-tick ticks launch it only with repositories and an elapsed interval.
 Attempt entries use `test` for a singleton or `tests` for multiple eligible
