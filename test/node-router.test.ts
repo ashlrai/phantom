@@ -54,6 +54,21 @@ describe('node router', () => {
     expect(nodes).toEqual(['a', 'b', 'a', 'b']);
   });
 
+  it('keeps a specialized slot available when a flexible job is queued first', () => {
+    const f = fixture();
+    const builder = f.box.join('a-builder', { owners: ['o'], caps: ['build'], slots: 1 })!;
+    const general = f.mac.join('b-general', { owners: ['o'], slots: 1 })!;
+    f.box.enqueue('flexible', { owner: 'o' });
+    f.box.enqueue('specialized', { owner: 'o', requires: ['build'] });
+
+    expect(f.box.plan('o').map(r => [r.jobId, r.nodeId])).toEqual([
+      ['flexible', 'b-general'],
+      ['specialized', 'a-builder'],
+    ]);
+    expect(f.mac.pull(general)?.job.id).toBe('flexible');
+    expect(f.box.pull(builder)?.job.id).toBe('specialized');
+  });
+
   it('requires a live local gh-auth heartbeat for gh jobs and explains the fix', () => {
     const f = fixture();
     const s = f.box.join('n', { owners: ['o'], caps: ['gh'] })!;
