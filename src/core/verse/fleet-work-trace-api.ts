@@ -32,11 +32,13 @@ export function createFleetWorkTraceApi(
       try {
         const { evidence, sources } = collect(id, { root: rootOf(), now });
         return { id, ...classifyWorkItem(evidence, nowIso), owner: evidence.owner ?? null,
-          claimReceipt: evidence.claimReceipt ?? null, inbox: sources.inbox, claims: sources.claims };
+          claimReceipt: evidence.claimReceipt ?? null, inbox: sources.inbox, claims: sources.claims,
+          coordination: sources.coordination };
       } catch {
         // Never send the thrown message; same shape as the CLI's unknown id.
         return { id, state: 'RECEIVED' as const, asOf: 'unknown', source: 'none', missing: ['work-item evidence'],
-          owner: null, claimReceipt: null, inbox: 'unavailable' as const, claims: 'unavailable' as const };
+          owner: null, claimReceipt: null, inbox: 'unavailable' as const, claims: 'unavailable' as const,
+          coordination: 'unavailable' as const };
       }
     });
     sendJson(res, 200, { v: 1, authority: 'none', generatedAt: nowIso, items });
