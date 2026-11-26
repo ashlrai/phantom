@@ -485,6 +485,42 @@ describe('work-feed view filters', () => {
     expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['done-report']);
   });
 
+  it('keeps jobs whose retained envelope citations include the --id wire id', () => {
+    const jobs = [
+      viewJob({ id: 'one', postId: 'm-post-1', statusId: 'm-status-1',
+        result: { id: 'm-res-1', from: 'agent:worker', outcome: 'complete', receivedAt: 150 } }),
+      viewJob({ id: 'two', postId: 'm-post-2', statusId: 'm-status-2' }),
+      viewJob({ id: 'three', postId: 'm-post-3', statusId: null }),
+    ];
+    const result = okResult(jobs);
+    // Every citation slot matches: the work.post announcement, the newest
+    // work.status receipt and the newest work.result receipt.
+    for (const id of ['m-post-1', 'm-status-1', 'm-res-1']) {
+      expect(ids(projectBusWorkFeedView(result, { id }))).toEqual(['one']);
+    }
+    expect(ids(projectBusWorkFeedView(result, { id: 'm-post-2' }))).toEqual(['two']);
+    expect(ids(projectBusWorkFeedView(result, { id: 'm-status-2' }))).toEqual(['two']);
+    // A job with no status or result still matches on its postId; an id
+    // nothing on the feed cites is an honest empty match, never a job.
+    expect(ids(projectBusWorkFeedView(result, { id: 'm-post-3' }))).toEqual(['three']);
+    expect(ids(projectBusWorkFeedView(result, { id: 'm-gone' }))).toEqual([]);
+    // The match is exact wire-id equality — never a substring, a job id or
+    // a body citation.
+    for (const id of ['m-post', 'one', 'm-1']) {
+      expect(ids(projectBusWorkFeedView(result, { id }))).toEqual([]);
+    }
+    // The filter composes with the others and holds still regroup under shown jobs.
+    const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
+      { jobId: 'one', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:x' },
+      { jobId: 'two', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:y' },
+    ] };
+    const view = projectBusWorkFeedView(okResult(jobs, claims), { id: 'm-status-2', status: 'queued' });
+    expect(ids(view)).toEqual(['two']);
+    expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['two']);
+  });
+
   it('matches --to under the pending-work addressed rule: identity labels plus member channels', () => {
     const root = mkdtempSync(join(tmpdir(), 'bus-feed-to-'));
     try {

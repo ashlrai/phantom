@@ -115,7 +115,7 @@ export async function cmdUsageResourceLive(args: string[], deps: UsageResourceLi
           next_poll_at: result.sidecar.next_poll_at }));
       } else {
         printTable(result.sidecar);
-        if (result.decisionFile) console.log(`reset decision drafted for Mason: ${result.decisionFile}`);
+        if (result.decisionFile) console.log(`reset decision drafted for the owner: ${result.decisionFile}`);
       }
       if (!watch || deps.shouldStop?.()) break;
       await sleep(Math.max(1000, Date.parse(result.sidecar.next_poll_at) - now()));

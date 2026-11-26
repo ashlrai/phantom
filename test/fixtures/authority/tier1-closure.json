@@ -1211,6 +1211,7 @@
     "src/core/observe/sensors.ts",
     "src/core/observe/types.ts",
     "src/core/orient.ts",
+    "src/core/owner-display.ts",
     "src/core/phantom.ts",
     "src/core/playbooks/builtins.ts",
     "src/core/playbooks/command-template.ts",

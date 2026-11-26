@@ -38,7 +38,7 @@ export async function cmdFleetNeedsTriage(args: string[], deps: {
   }
   if (json) output(scrubSecrets(JSON.stringify({ v: 1, auto, hardLimit, applied: apply, ...(apply ? { counts } : {}) })));
   else output(scrubSecrets([
-    `${auto.length} auto-resolvable, ${hardLimit.length} need Mason`,
+    `${auto.length} auto-resolvable, ${hardLimit.length} need the owner`,
     ...auto.map(item => `${item.id}  auto: ${item.text} — outside the four hard limits`),
     ...hardLimit.map(item => `${item.id}  hard-limit (${item.limit}): ${item.text} — ${item.reason}`),
     ...(apply ? [`${counts.ok} ok, ${counts.duplicate} duplicate, ${counts.failed} failed`] : []),

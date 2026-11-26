@@ -36,7 +36,7 @@ describe('fleet merge notifications', () => {
     expect(result).toEqual([expect.objectContaining({
       id: 'fleet-release:ashlrai/phantom:3.30.0', category: 'fleet', severity: 'high',
       title: 'phantom 3.30.0 shipped',
-      detail: 'Release PR #1479 merged. The desktop app can update from Settings ▸ Desktop ▸ Updates.',
+      detail: 'Release PR #1479 merged. The desktop app can update from Settings ▸ Updates.',
       ts: data.generatedAt, actionLabel: 'Update',
     })]);
     resetVerseUi();

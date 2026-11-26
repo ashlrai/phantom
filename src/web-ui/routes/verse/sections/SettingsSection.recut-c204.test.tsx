@@ -19,6 +19,7 @@ import { resetAppearance } from '../../../data/appearance-store.js';
 import { clearMutationToken } from '../../../data/auth-store.js';
 import { getVerseUiState, resetVerseUi, VERSE_RESOURCES } from '../verse-ui-store.js';
 import { SettingsSection } from './SettingsSection.js';
+import { setSettingsView } from './settings-groups.js';
 
 function renderSettings() {
   return render(
@@ -27,6 +28,9 @@ function renderSettings() {
     </ToastProvider>,
   );
 }
+
+// The long page these suites assert is the "All settings" view.
+beforeEach(() => { setSettingsView('all'); });
 
 describe('SettingsSection — ui-settings recut (c204)', () => {
   beforeEach(() => {

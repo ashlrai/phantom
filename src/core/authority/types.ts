@@ -868,6 +868,8 @@ export interface AuthorityGrantDraft {
   payload: StandingGrantV1;
   /** sha256 hex of the canonical payload. */
   digest: string;
+  /** Display-only identity, outside the signed payload. */
+  ownerDisplayName?: string;
 }
 
 /**

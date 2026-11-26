@@ -21,6 +21,7 @@ import { getReasoningDisplay, resetReasoningDisplay } from '../chat/reasoning-pr
 import { mockCompactViewport, type ViewportMock } from '../shell/viewport.test-support.js';
 import { resetVerseUi } from '../verse-ui-store.js';
 import { SettingsSection } from './SettingsSection.js';
+import { setSettingsView } from './settings-groups.js';
 
 const TOKEN = 'b'.repeat(64);
 
@@ -100,6 +101,9 @@ afterEach(() => {
   document.documentElement.removeAttribute('data-app-shell');
   document.documentElement.removeAttribute('data-theme');
 });
+
+// The long page these suites assert is the "All settings" view.
+beforeEach(() => { setSettingsView('all'); });
 
 describe('Settings ▸ Chat', () => {
   it('Reasoning writes the transcript’s own preference', async () => {
@@ -245,7 +249,7 @@ describe('Settings ▸ Desktop', () => {
     const desktop = panel('Desktop');
     expect(within(desktop).queryByRole('switch', { name: 'System-wide shortcut' })).not.toBeInTheDocument();
     expect(within(desktop).queryByRole('switch', { name: 'Notifications' })).not.toBeInTheDocument();
-    expect(within(desktop).getByRole('switch', { name: /Update automatically/ })).toBeInTheDocument();
+    expect(within(panel('Updates')).getByRole('switch', { name: /Update automatically/ })).toBeInTheDocument();
     expect(within(desktop).getByText(/available in the Phantom desktop app/)).toBeInTheDocument();
   });
 

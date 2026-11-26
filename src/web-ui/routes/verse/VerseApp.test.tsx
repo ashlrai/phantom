@@ -400,7 +400,7 @@ describe('keep-alive', () => {
 
     key(',', {}, 'Comma');
     expect(getVerseUiState().section).toBe('settings');
-    expect(await screen.findByRole('heading', { name: 'Appearance' })).toBeInTheDocument();
+    expect((await screen.findAllByRole('heading', { name: 'Chat' })).length).toBeGreaterThan(0);
     const chat = surface('chat')!;
     expect(chat).toHaveAttribute('hidden');
     expect(chat.hasAttribute('inert')).toBe(true);
@@ -564,7 +564,7 @@ describe('overlays and keys', () => {
     expect(await screen.findByRole('option', { name: /Open Settings/ })).toBeInTheDocument();
     await user.keyboard('{Enter}');
     await waitFor(() => expect(getVerseUiState().section).toBe('settings'));
-    expect(await screen.findByRole('heading', { name: 'Appearance' })).toBeInTheDocument();
+    expect((await screen.findAllByRole('heading', { name: 'Chat' })).length).toBeGreaterThan(0);
   });
 
   it('marks every key it routes as taken (preventDefault), and leaves other keys alone', async () => {

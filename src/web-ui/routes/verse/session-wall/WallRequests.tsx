@@ -1,5 +1,5 @@
 /**
- * "What Mason asked", above the Conversations wall: one button per message of
+ * "What the owner asked", above the Conversations wall: one button per message of
  * Mason's that a session on screen serves, newest first, with how much of its
  * routing is on screen and what state those sessions are in. Choosing one
  * leaves only its sessions on the wall; choosing it again, "Every session" or
@@ -44,8 +44,8 @@ export function WallRequests({ entries, chosen, onChoose }: WallRequestsProps) {
     all[to].focus();
   };
 
-  return <section className={styles.requests} aria-label="What Mason asked">
-    <h3 className={styles.title}>What Mason asked <span>{requests.length === 1 ? '1 message has' : `${requests.length} messages have`} sessions on screen</span></h3>
+  return <section className={styles.requests} aria-label="What the owner asked">
+    <h3 className={styles.title}>What the owner asked <span>{requests.length === 1 ? '1 message has' : `${requests.length} messages have`} sessions on screen</span></h3>
     <div className={styles.row} role="group" aria-label="Show the sessions serving one message" onKeyDown={onKeyDown}>
       {requests.map(request => <button key={request.key} type="button" className={styles.request} data-request={request.key} aria-pressed={picked === request.key}
         aria-label={`${requestName(request)} (${requestWords(request)})`} onClick={() => onChoose(picked === request.key ? null : request.key)}>
@@ -63,15 +63,15 @@ export function WallRequests({ entries, chosen, onChoose }: WallRequestsProps) {
         title="A job serves a message when its prompt cites it. These cite none: standing work, or work the Leader started on its own."
         aria-label={`No message cited: ${untied} session${untied === 1 ? '' : 's'}`} onClick={() => onChoose(picked === UNTIED ? null : UNTIED)}>
         <span className={styles.when}>No message cited</span>
-        <span className={styles.text} data-known="false">Sessions whose job cites none of Mason's messages.</span>
+        <span className={styles.text} data-known="false">Sessions whose job cites none of the owner's messages.</span>
         <span className={styles.meta}><span>{untied} session{untied === 1 ? '' : 's'}</span></span>
       </button>}
     </div>
     {picked !== null && <p className={styles.chosen} role="status">
-      <span>{open ? <>Showing the {open.sessions.length === 1 ? 'session' : `${open.sessions.length} sessions`} serving Mason's message of {requestTime(open.at)}
+      <span>{open ? <>Showing the {open.sessions.length === 1 ? 'session' : `${open.sessions.length} sessions`} serving the owner's message of {requestTime(open.at)}
         {open.jobs !== null && open.jobs > open.workers && `; ${open.jobs - open.workers} more of its jobs ${open.jobs - open.workers === 1 ? 'is' : 'are'} not on screen`}.
         {open.text && <> <q>{open.text}</q>{open.truncated && ' (cut short)'}</>}</>
-        : <>Showing the {untied === 1 ? 'session' : `${untied} sessions`} whose job cites none of Mason's messages.</>}</span>
+        : <>Showing the {untied === 1 ? 'session' : `${untied} sessions`} whose job cites none of the owner's messages.</>}</span>
       <button type="button" className={styles.all} onClick={() => onChoose(null)}>Every session</button>
     </p>}
   </section>;

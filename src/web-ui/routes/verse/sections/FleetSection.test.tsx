@@ -129,7 +129,7 @@ describe('FleetSection — live', () => {
     await user.click(await screen.findByRole('button', { name: 'Pause ashlrai/binshield' }));
     expect(screen.getByRole('dialog', { name: 'Pause binshield?' })).toBeInTheDocument();
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Pause repo' }));
-    await waitFor(() => expect(posted[0]).toEqual({ url: '/api/verse/fleet/live', body: { action: 'pause-repo', repo: 'ashlrai/binshield', reason: 'Paused by Mason from the Fleet surface' } }));
+    await waitFor(() => expect(posted[0]).toEqual({ url: '/api/verse/fleet/live', body: { action: 'pause-repo', repo: 'ashlrai/binshield', reason: 'Paused by the owner from the Fleet surface' } }));
   });
 
   it('resumes a held repo after confirming', async () => {

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetBoard, cmdFleetLeaderBoard } from '../src/cli/fleet-board.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
+import * as config from '../src/core/config.js';
 import {
   LEADER_BOARD_SCHEMA, conflictingPrIds, queueDepthByTier, readLeaderBoard, readyRowsForDepth, recordLeaderBoard,
 } from '../src/core/fleet/leader-board.js';
@@ -173,7 +174,12 @@ describe('phm fleet board --leader', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const read = { readBoard: async () => ({ status: 'ok' as const, board: recorded.board }), now: () => NOW_MS + 600_000 };
     expect(await cmdFleetLeaderBoard([], read)).toBe(0);
-    expect(log.mock.calls.map((call) => String(call[0])).join('\n')).toContain('needs Mason: 2');
+    expect(log.mock.calls.map((call) => String(call[0])).join('\n')).toContain('needs the owner: 2');
+    vi.spyOn(config, 'loadConfigReadOnly').mockReturnValue({
+      ...config.defaultConfig(), user: { id: 'owner@example.test', name: 'Alex Rivera' },
+    });
+    expect(await cmdFleetLeaderBoard([], read)).toBe(0);
+    expect(log).toHaveBeenCalledWith('needs Alex Rivera: 2 item(s)');
     expect(await cmdFleetLeaderBoard(['--json'], read)).toBe(0);
     const out = JSON.parse(log.mock.calls.at(-1)![0] as string);
     expect(out).toMatchObject({ schema: LEADER_BOARD_SCHEMA, status: 'ok', ageSeconds: 600 });
