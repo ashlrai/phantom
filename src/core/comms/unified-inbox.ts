@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates twenty-two local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates twenty-three local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -185,6 +185,23 @@
  *               belongs to. An absent journal is 'missing' (dispatch never
  *               ran); an unreadable one 'unavailable', never an empty plan
  *               passed off as fact.
+ *   org-outbox  org.membership bus events the org plane still owes the bus —
+ *               `<runsDir>/org/agents.json` ledger entries with
+ *               `busDelivered:false`, the exact set `previewOrgOutbox`
+ *               replays and `phm fleet org-sync --apply` posts (one event
+ *               per distinct `(revision, role)` edit, stable id
+ *               `org-<storeId>-<revision>-<roleId>`). Until the apply pass
+ *               runs, the bus cannot see a staffing change the chart already
+ *               recorded and `org-board` reports only a pending count, so
+ *               each event lists as a warn whose acts are the org-sync apply
+ *               and the org-board inspect. `since` is the ledger entry's
+ *               recorded application time; `expiresAt` stays null — the
+ *               event waits for the next sync pass, never a guessed deadline.
+ *               The read applies `readAgentPlane`'s whole acceptance —
+ *               absent store 'missing', any refusal 'unavailable' — and the
+ *               store schema is mirrored locally for the Tier-1 closure, so
+ *               this source and the org-sync/org-board reads can never
+ *               disagree about whether the store is trustworthy.
  *   gmail       one item per inbox in the saved Gmail archive plan whose unread
  *               count is over its target (`phm fleet gmail-archive-plan`). A
  *               read of the saved plan only: no mail is read, moved or deleted.
@@ -309,7 +326,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { busWorkFeedHoldIndex, BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
 import { busBodyFallbackSummary, busBodyJobIds, busBodySummary, readAllWakes,
   type AgentWakeRow, type AllWakesPage } from '../agents/bus-unified.js';
@@ -329,6 +346,7 @@ import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } from '../fleet/needs-mason-relay.js';
 import { loadConfigReadOnly } from '../config.js';
+import { assertMetadata } from '../connectors/profile.js';
 import { readEmailDropConfig, readEmailDropInbox } from './email-drop-config.js';
 import { probeOutboxDir, readEmailOutbox, type EmailOutboxEntry, type EmailOutboxListing } from './email-outbox.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
@@ -365,7 +383,7 @@ const SUGGESTED_LEASE_MS = 600_000;
 export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats',
-  'peer-dispatch', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
+  'peer-dispatch', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
@@ -384,7 +402,7 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
   'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
-  'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'gmail-over-target',
+  'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'org-membership', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
   'inbox-proposal', 'slack-request', 'slack-send-unconfirmed',
 ] as const;
@@ -532,6 +550,28 @@ export interface MailboxPendingRead {
  * empty list passed off as fact. */
 export type BoardPendingRead = BusBoardPendingRead;
 
+/** One org.membership bus event the org-plane ledger recorded but `phm fleet org-sync --apply` has not yet confirmed posted — the same stable envelope id the apply pass would post. */
+export interface OrgOutboxEvent {
+  /** Stable bus envelope id (`org-<storeId>-<revision>-<roleId>`) the apply pass dedupes on. */
+  readonly id: string;
+  /** Ledger revision the event belongs to (contiguous, 1-based). */
+  readonly revision: number;
+  readonly roleId: string;
+  /** The proposing actor recorded on the ledger entry. */
+  readonly actor: string;
+  /** The role's bus-facing tier and status — `edit.after?.status ?? 'retired'`, the same rule `envelopes` applies. */
+  readonly tier: string;
+  readonly status: string;
+  /** ISO time the ledger entry was applied. */
+  readonly at: string;
+}
+
+/** The resolved org-plane outbox read: 'missing' is a verified-absent store, 'unavailable' any refusal `readAgentPlane` would raise — never an empty backlog passed off as fact. */
+export interface OrgOutboxRead {
+  status: 'missing' | 'unavailable' | 'ok';
+  events: readonly OrgOutboxEvent[];
+}
+
 export interface UnifiedInboxOptions {
   /** Shared runs context (`~/.ashlr-runs`): needs-you, teammate text/task and draft stores. */
   runsDir?: string;
@@ -569,6 +609,8 @@ export interface UnifiedInboxOptions {
   readSeatHandoffs?: typeof planSeatHandoffs;
   /** Peer-dispatch journal seam; default reads `agentnet/work-dispatch.json` under the bus root like `phm agentnet peers dispatch`. */
   readPeerDispatch?: (options: { busRoot?: string }) => WorkDispatchJournal;
+  /** Org-plane outbox seam; default reads `<runsDir>/org/agents.json` like `phm fleet org-sync`/`org-board`. */
+  readOrgOutbox?: (options: { runsDir?: string }) => OrgOutboxRead;
   readRequests?: typeof readCommsRequests;
   /** Test seam: the request TTL `expiresAt` uses; default resolves cfg.comms.requestTtlHours like dispatch. */
   requestTtlMs?: number;
@@ -1907,6 +1949,177 @@ function peerDispatchItems(read: NonNullable<UnifiedInboxOptions['readPeerDispat
   return { report: { state: 'healthy', pending: items.length }, items };
 }
 
+/**
+ * The org-plane store schema, restated locally: the canonical modules
+ * (`src/core/org/agent-plane-schema.ts`, `agent-plane-reader.ts`,
+ * `agent-plane-outbox.ts`) sit outside the Tier-1 authority import closure
+ * and this file cannot import them without growing that closure, so the
+ * `org.agents.v1` shape — role, proposal, edit and ledger rows plus the
+ * chart invariants `validateChart` enforces and the revision contiguity
+ * `readAgentPlane` requires — is mirrored here field for field, the same
+ * way the peer-dispatch journal mirrors its own schema above. A schema or
+ * validation change on the org side must move this mirror too; until then
+ * both reads agree on what the store says.
+ */
+const orgPlaneId = z.string().regex(/^[a-z][a-z0-9-]{0,63}(?![\s\S])/);
+const orgPlaneCount = z.number().int().nonnegative().safe();
+const orgPlaneNeed = z.string().regex(/^[a-z][a-z0-9._-]{0,63}(?![\s\S])/)
+  .refine(value => !/(^|[._-])(secrets?|credentials?|payments?|billing|2fa|mfa|auth|passwords?)([._-]|$)/.test(value), 'Restricted capability scope');
+const orgPlaneRoleSchema = z.object({
+  id: orgPlaneId, title: z.string().trim().min(1).max(120), charter: z.string().trim().min(1).max(2000),
+  tier: z.enum(['LEADER', 'ORCHESTRATOR', 'WORKER_SESSION']), reportsTo: orgPlaneId.nullable(),
+  status: z.enum(['active', 'retired']), scope: z.enum(['engineering', 'research', 'janitor', 'comms-draft']),
+  needs: z.array(orgPlaneNeed).max(32),
+  laneAffinities: z.array(orgPlaneId).max(32),
+  budget: z.object({ tokens: orgPlaneCount.max(1_000_000_000), sessions: orgPlaneCount.max(1000), maxCostClass: z.enum(['local', 'included', 'metered']) }).strict(),
+  sizing: z.object({ batchDepth: orgPlaneCount.min(10).max(1000), fanOut: orgPlaneCount.max(32) }).strict(),
+  sessionId: z.string().regex(/^[a-z][a-z0-9_-]{0,127}(?![\s\S])/).nullable(),
+}).strict();
+const orgPlaneProposalSchema = z.object({
+  actor: orgPlaneId, reason: z.string().trim().min(1).max(1000), expectedRevision: orgPlaneCount,
+  change: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('upsert'), role: orgPlaneRoleSchema }).strict(),
+    z.object({ kind: z.literal('retire'), id: orgPlaneId }).strict(),
+    z.object({ kind: z.literal('revoke'), revision: orgPlaneCount.min(1) }).strict(),
+  ]),
+}).strict();
+const orgPlaneEditSchema = z.object({ before: orgPlaneRoleSchema.nullable(), after: orgPlaneRoleSchema.nullable() }).strict();
+const orgPlaneSchema = z.object({
+  schema: z.literal('org.agents.v1'), storeId: z.string().uuid(), revision: orgPlaneCount,
+  agents: z.array(orgPlaneRoleSchema).max(256),
+  ledger: z.array(z.object({
+    revision: orgPlaneCount.min(1), at: z.string().datetime(), proposal: orgPlaneProposalSchema,
+    applied: z.boolean(), edits: z.array(orgPlaneEditSchema).max(256), busDelivered: z.boolean(),
+  }).strict()).max(2000),
+}).strict();
+type OrgPlaneRole = z.infer<typeof orgPlaneRoleSchema>;
+type OrgPlane = z.infer<typeof orgPlaneSchema>;
+
+/** `validateChart`, mirrored: the same reporting-tier, budget-ceiling, cost-class and session-staffing invariants `readAgentPlane` enforces before any outbox read trusts the store. */
+function orgPlaneValidateChart(agents: OrgPlaneRole[]): void {
+  const roles = new Map(agents.map(role => [role.id, role]));
+  if (roles.size !== agents.length || roles.has('board')) throw new Error('Duplicate or reserved role id.');
+  const leaders = agents.filter(role => role.tier === 'LEADER');
+  if (leaders.length !== 1 || leaders[0]!.id !== 'leader' || leaders[0]!.status !== 'active' || leaders[0]!.reportsTo !== null) throw new Error('One active leader is required.');
+  for (const role of agents) {
+    if (role.sessionId !== null && role.tier !== 'WORKER_SESSION') throw new Error('Only workers bind sessions.');
+    if (role.tier === 'LEADER' || role.status === 'retired') continue;
+    const parent = roles.get(role.reportsTo ?? '');
+    if (!parent || parent.status !== 'active' || parent.tier !== (role.tier === 'ORCHESTRATOR' ? 'LEADER' : 'ORCHESTRATOR')) throw new Error('Invalid reporting tier or inactive parent.');
+    const siblings = agents.filter(other => other.status === 'active' && other.reportsTo === parent.id);
+    if (siblings.reduce((sum, child) => sum + child.budget.tokens, 0) > parent.budget.tokens || siblings.reduce((sum, child) => sum + child.budget.sessions, 0) > parent.budget.sessions) throw new Error('Child budgets exceed parent planning ceiling.');
+    if (['local', 'included', 'metered'].indexOf(role.budget.maxCostClass) > ['local', 'included', 'metered'].indexOf(parent.budget.maxCostClass)) throw new Error('Child cost class exceeds parent.');
+  }
+  const sessions = agents.filter(role => role.status === 'active' && role.sessionId !== null).map(role => role.sessionId);
+  if (new Set(sessions).size !== sessions.length) throw new Error('Session is already staffed.');
+}
+
+/** Storage cap for `org/agents.json`, as in the source PR (`ORG_STORE_MAX_BYTES`). */
+const ORG_STORE_MAX_BYTES = 4 * 1024 * 1024;
+
+/** The runs root the org store lives under: `options.runsDir`, then `ASHLR_RUNS_DIR`, then `~/.ashlr-runs` — the same resolution every other runsDir source here applies, matching `orgRunsRoot`'s own env/home fallback. */
+function orgOutboxRunsDir(runsDir: string | undefined): string {
+  return runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+}
+
+/**
+ * Read `<runsDir>/org/agents.json` and return the org.membership events its
+ * ledger still owes the bus — `busDelivered:false` entries, one event per
+ * distinct `(revision, role)` edit pair, exactly the set `previewOrgOutbox`
+ * would replay. The read applies `readAgentPlane`'s whole acceptance —
+ * absent store is 'missing', symlink/non-file/oversize/unstable/secret-shaped/
+ * schema-invalid/chart-invalid/non-contiguous-ledger is 'unavailable' — so
+ * this source and `phm fleet org-sync`/`org-board` can never disagree about
+ * whether the store is trustworthy. An undelivered edit with neither a
+ * before nor an after role is one `envelopes` cannot form, which the apply
+ * pass would crash on; it reports 'unavailable' here too rather than
+ * listing a partial backlog the real pass refuses.
+ */
+function readOrgPlaneOutbox(options: { runsDir?: string }): OrgOutboxRead {
+  const anchor = resolve(orgOutboxRunsDir(options.runsDir));
+  const file = join(anchor, 'org', 'agents.json');
+  let stat;
+  try { stat = lstatSync(file); }
+  catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? { status: 'missing', events: [] }
+      : { status: 'unavailable', events: [] };
+  }
+  try {
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > ORG_STORE_MAX_BYTES) {
+      throw new Error('org-store-refused');
+    }
+    const read = readStableRegularFile(file, {
+      anchorPath: anchor, maxFileBytes: ORG_STORE_MAX_BYTES, remainingBytes: ORG_STORE_MAX_BYTES,
+    });
+    if (!read.ok) throw new Error('org-store-refused');
+    const raw: unknown = JSON.parse(read.text);
+    // `metadata(planeSchema, raw)`: the secret-shape gate runs on the raw
+    // JSON text before the schema parse, exactly like the canonical read.
+    assertMetadata(JSON.stringify(raw) ?? '');
+    const plane: OrgPlane = orgPlaneSchema.parse(raw);
+    orgPlaneValidateChart(plane.agents);
+    if (plane.revision !== plane.ledger.length ||
+        plane.ledger.some((entry, index) => entry.revision !== index + 1)) {
+      throw new Error('org-ledger-refused');
+    }
+    const events: OrgOutboxEvent[] = [];
+    const seen = new Set<string>();
+    for (const entry of plane.ledger.filter(row => !row.busDelivered)) {
+      for (const edit of entry.edits) {
+        const role = edit.after ?? edit.before;
+        if (role === null) throw new Error('org-event-refused');
+        const id = `org-${plane.storeId}-${entry.revision}-${role.id}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        events.push({
+          id, revision: entry.revision, roleId: role.id,
+          actor: entry.proposal.actor, tier: role.tier,
+          status: edit.after?.status ?? 'retired', at: entry.at,
+        });
+      }
+    }
+    return { status: 'ok', events };
+  } catch { return { status: 'unavailable', events: [] }; }
+}
+
+/**
+ * Org-membership bus events the org plane recorded but `phm fleet org-sync
+ * --apply` has not yet confirmed posted. `org.membership` envelopes are how
+ * the org chart's staffing changes reach the bus — planning metadata that
+ * grants no execution authority — and until the apply pass replays them no
+ * other surface lists them: `org-board` shows only a `pendingBusEvents`
+ * count, and the bus itself cannot see an event it never received. Each
+ * undelivered ledger edit is one pending delivery; items are warn and
+ * non-blocking because the apply pass is ordinary agent work, and `since`
+ * carries the ledger entry's recorded application time. `expiresAt` stays
+ * null — the event waits until the next org-sync pass, never a guessed
+ * deadline. The store keeps actor callsigns, role ids and revisions only —
+ * never role charters, proposals' free-text reasons or member data — so
+ * titles and details stay inside that vocabulary.
+ */
+function orgOutboxItems(read: NonNullable<UnifiedInboxOptions['readOrgOutbox']>,
+  options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: OrgOutboxRead;
+  try { result = read({ runsDir: options.runsDir }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.status === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  if (result.status === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  const items = result.events.map((event): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `org-outbox:${event.id}`,
+    source: 'org-outbox',
+    kind: 'org-membership',
+    severity: 'warn',
+    blocking: false,
+    title: oneLine(`org role ${event.roleId} (${event.tier} ${event.status}) awaits bus delivery`, TITLE_MAX),
+    detail: oneLine(`rev ${event.revision} · proposed by ${event.actor} · event ${event.id}`, DETAIL_MAX) || null,
+    since: event.at,
+    expiresAt: null,
+    act: ['phm fleet org-sync --apply', 'phm fleet org-board'],
+  }));
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
 function gmailItems(read: typeof readGmailArchivePlanLatest, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   let latest: ReturnType<typeof readGmailArchivePlanLatest> = null;
@@ -2378,6 +2591,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const wakes = wakeItems(options.readWakes ?? ((o) => readAllWakes(undefined, { root: o.root, runsRoot: o.runsRoot, now: o.now })), options);
   const seats = await seatItems(options.readSeatHandoffs ?? planSeatHandoffs, now);
   const peerDispatch = peerDispatchItems(options.readPeerDispatch ?? readPeerDispatchJournal, options);
+  const orgOutbox = orgOutboxItems(options.readOrgOutbox ?? readOrgPlaneOutbox, options);
   const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
   const linkedin = linkedInItems(options.readLinkedIn ?? readLinkedInDrop, options.runsDir, now);
   const requests = requestItems(options.readRequests ?? readCommsRequests, now, options.requestTtlMs);
@@ -2407,6 +2621,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     wakes: wakes.report,
     seats: seats.report,
     'peer-dispatch': peerDispatch.report,
+    'org-outbox': orgOutbox.report,
     gmail: gmail.report,
     linkedin: linkedin.report,
     requests: requests.report,
@@ -2417,7 +2632,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     slack: slack.report,
     'slack-sends': slackSends.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
