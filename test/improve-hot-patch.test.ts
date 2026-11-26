@@ -24,4 +24,10 @@ describe('production hot-patch intake', () => {
     writeFileSync(file, 'x'.repeat(300000) + '\nTypeError: hidden\n    at src/a.ts:1:2\n');
     expect(hotPatchItems(readHotPatchLog(file), 'org/repo')).toHaveLength(1);
   });
+  it('reads empty when a truncated tail has no line boundary', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'hot-patch-')), 'log');
+    writeFileSync(file, 'x'.repeat(300000));
+    expect(readHotPatchLog(file)).toBe('');
+    expect(hotPatchItems(readHotPatchLog(file), 'org/repo')).toEqual([]);
+  });
 });
