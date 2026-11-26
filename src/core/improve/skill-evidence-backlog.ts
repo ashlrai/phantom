@@ -236,9 +236,11 @@ export async function skillEvidenceBacklogItems(opts: SkillEvidenceItemsOptions)
     const repo = opts.repo.trim();
     if (repo === '' || fleetRepoName(repo) !== FLEET_REPO_NAME) return [];
     const windowHours = opts.windowHours ?? SKILL_EVIDENCE_WINDOW_HOURS;
+    const asOfMs = (opts.now ?? new Date()).getTime();
     const corpus = opts.corpus ?? readSkillCardCorpus();
     const useEvents = opts.useEvents ?? readSkillUseEventsWithDiagnostics({
-      sinceMs: (opts.now ?? new Date()).getTime() - windowHours * 60 * 60 * 1000,
+      sinceMs: asOfMs - windowHours * 60 * 60 * 1000,
+      asOfMs,
       limit: Math.max((opts.recordLimit ?? SKILL_EVIDENCE_RECORD_LIMIT) * 8, 400),
       maxFiles: trajectoryWindowMaxFiles(windowHours),
     });
