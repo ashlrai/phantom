@@ -1466,6 +1466,11 @@ otherwise eligible lanes at the same deadline, cost posture and fit, favoring
 lanes below their advised concurrency. It cannot raise actual targets or
 bypass holds, spend policy, quota, job constraints, or machine admission.
 
+Expiring-capacity queue reroutes require an admitting dispatcher snapshot.
+When its admission record carries `ts`, it must match the snapshot's
+`last_tick`. A mismatch leaves the ready queue and reroute journal untouched.
+Legacy admission records without `ts` remain usable.
+
 ## Is each pool fed?
 
 Run `phm queue supply` for one plain line per pool: usage left, hours to reset, jobs queued for the pool, its starts
