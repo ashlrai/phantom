@@ -25,10 +25,12 @@
  *    so the fold can say when evidence may be partial instead of
  *    implying silence means health.
  *
- * Honesty rules carried in the rows themselves: `agent`/`model` are
- * always null — gh records only the PR author login, never which agent
- * produced the change — and `reverted: 'unknown'` marks a verdict the
- * revert ledger could not support, never a guess at 'no'.
+ * Honesty rules carried in the rows themselves: `agent` is the product a
+ * recorded branch/login convention attributes the change to (see
+ * outside-pr-outcomes.ts outsidePrAgentAttribution) — a well-formed
+ * lowercase slug or null, never a model/runtime claim — and `model` is
+ * always null because gh records none. `reverted: 'unknown'` marks a
+ * verdict the revert ledger could not support, never a guess at 'no'.
  */
 import { join } from 'node:path';
 
@@ -61,8 +63,13 @@ export interface OutsidePrOutcomeJournalRow {
   title: string;
   /** gh author login, or null for a ghost author. */
   author: string | null;
-  /** gh never records which agent/model produced the change — always null. */
-  agent: null;
+  /**
+   * Agent product the recorded branch/login convention attributes the
+   * change to — a lowercase slug or null (no known convention matched).
+   * Convention attribution only, never a model/runtime claim.
+   */
+  agent: string | null;
+  /** gh never records which model produced the change — always null. */
   model: null;
   mergedAt: string;
   reverted: OutsidePrRevertVerdict;
@@ -92,6 +99,8 @@ export interface OutsidePrScanJournalRow {
 }
 
 const VERDICTS: ReadonlySet<string> = new Set(['yes', 'no', 'unknown']);
+/** Agent attribution is a lowercase product slug; anything else reads as unattributed, never carried raw. */
+const AGENT_SLUG = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SOURCE_STATES: ReadonlySet<string> = new Set(['healthy', 'missing', 'degraded']);
 const REPO_STATES: ReadonlySet<string> = new Set(['healthy', 'degraded']);
 const REVERT_LEDGER_STATES: ReadonlySet<string> = new Set(['read', 'missing', 'unreadable']);
@@ -115,6 +124,7 @@ function parseOutcomeRow(row: Record<string, unknown>): OutsidePrOutcomeJournalR
   if (mergedAt === null || at === null) return null;
   const title = str(row['title']);
   const author = row['author'];
+  const agent = row['agent'];
   return {
     v: 1,
     kind: OUTSIDE_PR_OUTCOME_SCHEMA,
@@ -123,7 +133,7 @@ function parseOutcomeRow(row: Record<string, unknown>): OutsidePrOutcomeJournalR
     number,
     title: title ?? '',
     author: typeof author === 'string' ? author : null,
-    agent: null,
+    agent: typeof agent === 'string' && AGENT_SLUG.test(agent) ? agent : null,
     model: null,
     mergedAt,
     reverted: reverted as OutsidePrRevertVerdict,

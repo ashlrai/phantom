@@ -100,7 +100,10 @@ function outcomeJournalRow(at: string, repo: string, pr: OutsidePrOutcomeV1): st
     number: pr.number,
     title: pr.title,
     author: pr.author,
-    agent: null,
+    // The outcomes read attributes agent by recorded branch/login
+    // convention (outsidePrAgentAttribution); null stays the honest
+    // unattributed bucket. model is never recorded — always null.
+    agent: pr.agent,
     model: null,
     mergedAt: pr.mergedAt,
     reverted: pr.reverted,

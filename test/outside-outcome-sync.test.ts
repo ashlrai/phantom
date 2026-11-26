@@ -18,14 +18,15 @@ const AT = NOW.toISOString();
 
 const pr = (number: number, reverted: OutsidePrOutcomeV1['reverted'], over: Partial<OutsidePrOutcomeV1> = {}): OutsidePrOutcomeV1 => ({
   repo: 'acme/widgets', number, title: `outside fix ${number}`,
-  author: 'ext-dev', head: 'fix/x', mergedAt: '2026-11-15T00:00:00.000Z', reverted, ...over,
+  author: 'ext-dev', head: 'fix/x', mergedAt: '2026-11-15T00:00:00.000Z',
+  agent: null, model: null, reverted, ...over,
 });
 
 const outcomes = (prs: OutsidePrOutcomeV1[], over: Partial<OutsidePrOutcomesV1> = {}): OutsidePrOutcomesV1 => ({
   v: 1, generatedAt: AT, sourceState: 'healthy', windowDays: 30,
   since: '2026-10-21T12:00:00.000Z', revertLedger: 'read',
   repos: [{ repo: 'acme/widgets', state: 'healthy', listed: prs.length, hitLimit: false, prs }],
-  authors: [], ...over,
+  authors: [], agents: [], ...over,
 });
 
 const JOURNAL = join('metrics', OUTSIDE_PR_OUTCOME_JOURNAL_NAME);
@@ -62,6 +63,16 @@ describe('syncOutsidePrOutcomes', () => {
       expect(row).toMatchObject({ v: 1, at: AT, repo: 'acme/widgets', agent: null, model: null, mergedAt: '2026-11-15T00:00:00.000Z' });
     }
     expect(outcomeRows.find((r) => r['number'] === 7)).toMatchObject({ reverted: 'yes', author: 'ext-dev' });
+    // Convention-attributed agent rides the row; unattributed stays null, model always null.
+    const attributed = await syncOutsidePrOutcomes({
+      runsDir: join(directory, 'runs-attributed'), now: () => NOW,
+      list: async () => outcomes([pr(30, 'yes', { agent: 'devin' }), pr(31, 'no')]),
+    });
+    expect(attributed.appended).toBe(2);
+    const attributedRows = readJournal(join(directory, 'runs-attributed'))
+      .filter((r) => r['kind'] === OUTSIDE_PR_OUTCOME_SCHEMA);
+    expect(attributedRows.find((r) => r['number'] === 30)).toMatchObject({ agent: 'devin', model: null });
+    expect(attributedRows.find((r) => r['number'] === 31)).toMatchObject({ agent: null, model: null });
     expect(scanRows[0]).toMatchObject({
       v: 1, at: AT, sourceState: 'healthy', windowDays: 30, revertLedger: 'read',
       repos: [{ repo: 'acme/widgets', state: 'healthy', listed: 3, hitLimit: false, prs: 3 }],
@@ -158,6 +169,20 @@ describe('parseOutsidePrOutcomeJournal', () => {
     expect(parsed.scan).toMatchObject({ sourceState: 'degraded', revertLedger: 'unreadable' });
     expect(parsed.scan?.repos[0]).toMatchObject({ state: 'degraded', hitLimit: true });
     expect(parsed.ignored).toBe(3);
+  });
+
+  it('keeps a well-formed agent slug, nulls malformed ones, and never carries model', () => {
+    const row = (number: number, agent: unknown, model: unknown = null): string => JSON.stringify({
+      v: 1, kind: OUTSIDE_PR_OUTCOME_SCHEMA, at: AT, repo: 'acme/widgets', number,
+      title: 't', author: 'ext-dev', agent, model,
+      mergedAt: '2026-11-15T00:00:00.000Z', reverted: 'yes',
+    });
+    const parsed = parseOutsidePrOutcomeJournal([
+      row(41, 'devin'), row(42, 'Cursor-X'), row(43, 'has space'), row(44, 7), row(45, null, 'gpt-5'),
+    ].join('\n'));
+    expect(parsed.outcomes).toHaveLength(5);
+    expect(parsed.outcomes.map((r) => r.agent)).toEqual(['devin', null, null, null, null]);
+    expect(parsed.outcomes.every((r) => r.model === null)).toBe(true);
   });
 
   it('returns an empty parse for an empty journal', () => {

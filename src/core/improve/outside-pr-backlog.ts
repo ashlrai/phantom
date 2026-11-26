@@ -47,9 +47,10 @@
  *    the prompt when they are not fully healthy, and a truncated tail
  *    or ignored lines make every count a recorded floor ("at least"),
  *    matching the sibling feeds' lower-bound rule.
- *  - Agent/model stay null. gh records only the PR author login; the
- *    rows carry agent: null, model: null and the prompts never guess
- *    which agent produced a change — author tallies are gh logins only.
+ *  - Agent is convention-attributed. Journal rows carry the agent
+ *    product the sync's recorded branch/login convention matched
+ *    (outsidePrAgentAttribution), or null for the unattributed bucket;
+ *    prompts quote that tally and never claim a model — gh records none.
  *  - Dedup is downstream. The item id embeds a stable hash of the repo
  *    identity (never the counts or timestamps), so a refresh
  *    re-derives the same id and appendUserBacklogItems adds only what
@@ -119,6 +120,8 @@ export interface OutsidePrBacklogCell {
   kept: number;
   /** Reverted merges by gh author login (null = ghost author), most reverted first. */
   authors: Array<{ author: string | null; reverted: number }>;
+  /** Reverted merges by journaled agent attribution (null = unattributed), most reverted first. */
+  agents: Array<{ agent: string | null; reverted: number }>;
   /** Up to MAX_EXAMPLES reverted merges, most recent merge first. */
   examples: Array<{ number: number; title: string; author: string | null; mergedAt: string }>;
   /** ISO bounds of the reverted merges' mergedAt; null when none carried a parseable one. */
@@ -159,12 +162,14 @@ export function foldOutsidePrCells(
     let unknown = 0;
     let kept = 0;
     const authorCounts = new Map<string | null, number>();
+    const agentCounts = new Map<string | null, number>();
     const revertedRows: OutsidePrOutcomeJournalRow[] = [];
     for (const row of repoRows) {
       if (row.reverted === 'yes') {
         reverted += 1;
         revertedRows.push(row);
         authorCounts.set(row.author, (authorCounts.get(row.author) ?? 0) + 1);
+        agentCounts.set(row.agent, (agentCounts.get(row.agent) ?? 0) + 1);
       } else if (row.reverted === 'unknown') unknown += 1;
       else kept += 1;
     }
@@ -179,6 +184,10 @@ export function foldOutsidePrCells(
       authors: [...authorCounts.entries()]
         .map(([author, count]) => ({ author, reverted: count }))
         .sort((a, b) => b.reverted - a.reverted || (a.author ?? '').localeCompare(b.author ?? ''))
+        .slice(0, MAX_AUTHORS),
+      agents: [...agentCounts.entries()]
+        .map(([agent, count]) => ({ agent, reverted: count }))
+        .sort((a, b) => b.reverted - a.reverted || (a.agent ?? '').localeCompare(b.agent ?? ''))
         .slice(0, MAX_AUTHORS),
       examples: [...revertedRows]
         .sort((a, b) => mergedMs(b) - mergedMs(a) || b.number - a.number)
@@ -218,7 +227,13 @@ function tallyText(cell: OutsidePrBacklogCell): string {
 function authorsText(cell: OutsidePrBacklogCell): string {
   if (cell.authors.length === 0) return '';
   const parts = cell.authors.map((a) => `${a.author ?? 'an unrecorded author'} (${a.reverted})`);
-  return ` Reverted merges by gh author login: ${parts.join(', ')} — gh never records which agent or model produced a change, so attribution stops at the login.`;
+  return ` Reverted merges by gh author login: ${parts.join(', ')} — one login pushes work for many agents, so the login alone cannot say which produced a change.`;
+}
+
+function agentsText(cell: OutsidePrBacklogCell): string {
+  if (cell.agents.length === 0) return '';
+  const parts = cell.agents.map((a) => `${a.agent ?? 'unattributed'} (${a.reverted})`);
+  return ` Reverted merges by attributed agent (the journal's recorded branch/login convention — 'unattributed' means no known convention matched, and the model is never recorded): ${parts.join(', ')}.`;
 }
 
 function examplesText(cell: OutsidePrBacklogCell): string {
@@ -260,7 +275,7 @@ function outsidePrPrompt(
     : `Outside contributors' pull requests on ${cell.repo} keep being merged and then reverted — ${cell.reverted} of the recorded ${cell.merged} outside merges inside the ${windowHours}-hour window carry a standing revert verdict, the self-improvement work this backlog exists for.`;
   const scope = `The reverts themselves are evidence, not the defect — what is in scope is this repository's outside-PR path: whether review or merge gates treat non-fleet heads differently than fleet work, whether CONTRIBUTING or CI bars outside contributions can realistically pass, whether auto-merge or merge-queue policy lets weak outside PRs land and then get reverted by hand, and whether the fleet's own merge machinery should route outside heads through a different lane. Fix the cause in ${cell.repo}. Run the affected suite. ` + NO_CHANGE;
   const lines = [lead, '',
-    `An "outside" PR is a merged pull request whose head is not a fleet 'codex-bridge/*' branch and whose author is not the fleet App — community work the fleet's own ledgers never record. Each journaled row is one such merge joined to the standing revert set: 'yes' means a revert of that PR is standing, 'no' means none is, 'unknown' means the revert ledger could not be read when the sync ran. ${tallyText(cell)}${seenText(cell)}${authorsText(cell)}${examplesText(cell)}`,
+    `An "outside" PR is a merged pull request whose head is not a fleet 'codex-bridge/*' branch and whose author is not the fleet App — community work the fleet's own ledgers never record. Each journaled row is one such merge joined to the standing revert set: 'yes' means a revert of that PR is standing, 'no' means none is, 'unknown' means the revert ledger could not be read when the sync ran. ${tallyText(cell)}${seenText(cell)}${authorsText(cell)}${agentsText(cell)}${examplesText(cell)}`,
     '', EVIDENCE, '', scope];
   const coverage = coverageText(scan);
   if (coverage.length > 0) lines.push('', ...coverage);
