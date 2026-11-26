@@ -166,7 +166,7 @@ export function appendUsageReadings(rows: readonly UsageReading[], readings: rea
 /** The ledger's current per-pool readings. A pool without a measured share or a reading time is skipped. */
 export function ledgerUsageReadings(ledger: ResourceLedgerV1): UsageReading[] {
   return ledger.lanes.flatMap(lane => {
-    const at = lane.observation?.asOf ?? lane.quotaEvidence?.statusQuota?.observedAt ?? ledger.asOf;
+    const at = lane.observation?.asOf ?? lane.quotaEvidence?.statusQuota?.observedAt;
     if (lane.usedPct === null || !isoTime(at)) return [];
     const reading = { pool: lane.lane, used_pct: lane.usedPct, observed_at: new Date(ms(at)).toISOString(),
       reset_at: lane.resetAt === null ? null : new Date(ms(lane.resetAt)).toISOString(), source: lane.source };

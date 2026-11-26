@@ -134,6 +134,26 @@ describe('ledger recording, CLI and file', () => {
     expect(await readUsageHistory({ runsDir: dir, now: () => NOW, pool: 'nope' })).toMatchObject({ pools: [] });
   });
 
+  it.each([
+    {},
+    { observed_at: iso(NOW), estimated: true },
+    { observed_at: iso(NOW), stale: true },
+  ])('does not turn a dispatcher tick into a measured usage sample (%j)', async (budget) => {
+    const dir = runs(40, iso(NOW - H));
+    await readUsageHistory({ runsDir: dir, now: () => NOW });
+    writeFileSync(join(dir, 'queue/status.json'), JSON.stringify({
+      last_tick: iso(NOW), lanes: { claude: {} },
+      budget: { claude: { weekly_used_pct: 50, reset_at: RESET, ...budget } },
+    }));
+
+    const history = await readUsageHistory({ runsDir: dir, now: () => NOW, pool: 'claude' });
+
+    expect(history.pools).toHaveLength(1);
+    expect(history.pools[0]).toMatchObject({ pace: 'unknown', points: [{ at: iso(NOW - H), used_pct: 40 }] });
+    const stored = JSON.parse(readFileSync(usageHistoryPath(dir), 'utf8')) as { rows: UsageReading[] };
+    expect(stored.rows.filter(row => row.pool === 'claude')).toEqual([read(1, 40)]);
+  });
+
   it('reads an empty runs dir as missing without writing, and a damaged file as degraded without overwriting it', async () => {
     const empty = tmp();
     expect(await readUsageHistory({ runsDir: empty, now: () => NOW })).toMatchObject({ source_state: 'missing', pools: [] });

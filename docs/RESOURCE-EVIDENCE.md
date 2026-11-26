@@ -392,3 +392,8 @@ The free-preview Devin CLI models (SWE-2 Lightning and Flash) are the
 without a grant or fresh reading the projection is unknown. Home's Pools card
 uses these same rows (also on the phone) through the existing runway refresh.
 Solid is used, light is projected use, and the right mark is reset or expiry.
+
+`phm fleet usage-history` requires a quota measurement timestamp for each
+point. Dispatcher ticks can republish cached values. Status quotas with a
+missing measurement timestamp or a stale or estimated flag contribute no
+new point. Prior measured history retains its original timestamps.
