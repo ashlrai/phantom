@@ -206,7 +206,7 @@ export function autopilotLanes(state: FleetAutopilotState): AutopilotLane[] {
     const lane = row.lane ?? '';
     depWaiting.set(lane, (depWaiting.get(lane) ?? 0) + 1);
   }
-  const holds = new Map((state.slots?.lanes ?? []).map((row) => [row.lane, row.held || row.heldReason !== null]));
+  const slotsByLane = new Map((state.slots?.lanes ?? []).map((row) => [row.lane, row]));
   const names = new Set<string>([
     ...(state.admission?.lanes ?? []).map((row) => row.lane),
     ...(state.slots?.lanes ?? []).map((row) => row.lane),
@@ -217,9 +217,12 @@ export function autopilotLanes(state: FleetAutopilotState): AutopilotLane[] {
     const admit = state.admission?.lanes.find((row) => row.lane === lane) ?? null;
     const queuedRow = queueOk ? readyByLane.get(raw) ?? null : null;
     const running = admit?.running ?? null;
-    const rawTarget = admit?.target ?? state.slots?.lanes.find((row) => row.lane === lane)?.target ?? null;
+    const slot = slotsByLane.get(raw) ?? slotsByLane.get(lane);
+    const rawTarget = admit?.target ?? slot?.target ?? null;
     const target = lane === LOCAL_LANE ? clampLocalTarget(rawTarget, { workers: state.localWorkers ?? null }) : rawTarget;
-    const held = admit?.held ?? holds.get(raw) ?? holds.get(lane) ?? false;
+    // A configured hold can arrive before the next dispatcher tick. The
+    // tick can also observe runtime holds absent from slots.json.
+    const held = admit?.held === true || slot?.held === true || (admit === null && slot?.heldReason != null);
     const free = held || running === null || target === null ? null : Math.max(0, target - running);
     return {
       lane,

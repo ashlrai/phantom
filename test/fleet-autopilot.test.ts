@@ -209,6 +209,27 @@ describe('planFleetAutopilot', () => {
     expect(report.action).toMatchObject({ kind: 'no-op', reason: 'fleet-healthy' });
   });
 
+  it.each([0, 5])('honors a new slots hold before dispatcher status catches up with %i ready rows', (ready) => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 0, 2, ready)], 4, 0),
+      queue: queueView({ byLane: [{ lane: 'devin', ready, parked: 0 }] }),
+      slots: slotsView([slotLane('devin', 2, true)]),
+    }));
+    expect(report.lanes[0]).toMatchObject({ held: true, freeSlots: null, ready });
+    expect(report.gaps).toEqual([]);
+    expect(report.action.kind).toBe('no-op');
+  });
+
+  it('skips a sibling already held in slots when looking for a lane to hold', () => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 0, 2, 5), admissionLane('codex', 2, 2, 12)], 2, 2),
+      queue: queueView({ byLane: [{ lane: 'devin', ready: 5, parked: 0 }, { lane: 'codex', ready: 12, parked: 0 }] }),
+      slots: slotsView([slotLane('codex', 2, true)]),
+    }));
+    expect(report.topGap).toMatchObject({ kind: 'starved-lane', lane: 'devin' });
+    expect(report.action).toMatchObject({ kind: 'no-op', reason: 'capacity-bound' });
+  });
+
   it('does not flag a lane whose only queued rows are parked (unmet deps are waiting, not starvation)', () => {
     const report = planFleetAutopilot(state({
       admission: admission([admissionLane('devin', 0, 2, 1)]),
