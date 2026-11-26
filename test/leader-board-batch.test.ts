@@ -25,6 +25,16 @@ describe('leader board rebase members recovered from #7167', () => {
     expect([...conflictingPrIds('RQ-REBASE-BATCH-PHANTOM-7-8-abcdef0')]).toEqual([]);
   });
 
+  it('counts rebase job IDs independently of references in other queue cells', () => {
+    expect([...conflictingPrIds([
+      'RQ-FIX\tphantom\t\twork\tprompts/RQ-REBASE-PHANTOM-90-uabcdef.md',
+      'READY\tRQ-FIX-2\tcodex\twork\tphantom\tReview RQ-REBASE-PHANTOM-91-uabcdef',
+      'RQ-REBASE-PHANTOM-7-uabcdef\tphantom\t\twork\tprompts/RQ-REBASE-BATCH-PHANTOM-90-91-abcdef.md',
+      'PARKED-DEP.codex\tRQ-REBASE-PHANTOM-8-abcdef0\tcodex\twork\tphantom\tNeeds RQ-REBASE-PHANTOM-92-uabcdef',
+      'RQ-REBASE-PHANTOM-93-uabcdef.md\tphantom\tcodex\twork\tprompt.md',
+    ].join('\n'))]).toEqual(['PHANTOM-7', 'PHANTOM-8']);
+  });
+
   it.each([
     'RQ-REBASE-BATCH-PHANTOM-7-8-abcdef-suffix',
     'RQ-REBASE-BATCH-PHANTOM-7-8-abcdefX',

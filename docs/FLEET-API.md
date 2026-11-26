@@ -116,6 +116,12 @@ receipt proves coordination, not job execution.
 
 ## Leader
 
+The Leader board uses rebase job IDs in `ready.tsv` as a proxy for conflicting
+PRs. It counts distinct PRs across ready and parked rows, including each
+member of a batch. References in prompt paths, titles, and other queue fields
+do not contribute to the count. An unreadable queue leaves the count and trend
+unknown.
+
 | Method | Path | Query | Response type / source | Handler | Curl example |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/verse/leader` | none | [LeaderStateV1](../src/core/vision/leader-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader'` |
