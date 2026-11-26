@@ -224,7 +224,11 @@ Standalone legacy queues retain their existing compatibility policy.
 
 Workers reporting the same host share the minimum fresh slot budget. Active
 claims and planned assignments consume it once; a fresh pressure hold blocks
-that host. Placement ranks remaining slots divided by the median accepted
+that host. The pool plans jobs in queue order. When a job can run on several
+hosts, it prefers hosts with room beyond the demand from later jobs that
+can run on only one host at the start of the plan. Multiple workers on one
+host count as one option. If every eligible host has that demand, the job
+still gets placed. Within either group, placement ranks remaining slots divided by the median accepted
 claim-to-completion duration over 24 hours; a producer withdrawal is a fence,
 not an execution, and adds no sample. Missing latency uses the mean of
 measured host medians (equal weights when none exist). Unknown duration is never
