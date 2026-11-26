@@ -54,13 +54,25 @@ phm comms-agent status --json
 phm comms-agent run --lanes claude,local --json
 phm comms-agent drafts --json
 phm comms-agent drafts --status sent --transport email --json
+phm comms-agent inbox --json
+phm comms-agent inbox --class bulk --transport email --limit 20 --json
 ```
 
 `--lanes` is the candidate set. Omit it and the run reports no lane rather
 than picking one. `--dir` selects an isolated runs directory. `drafts`
 takes `--status pending|sent|all` (default `pending`) and `--transport`
-(one of the Comms transports) to narrow the read; the filters apply to the
-`drafts` verb only.
+(one of the Comms transports) to narrow the read. `inbox` lists the mail
+still awaiting triage — the depth `status` counts as `inbox` — with each
+message's id, transport, sender, subject, the class a pass would file it
+under (`owner`, `person`, `bulk`, `bot` or `unknown`, read from the same
+owner file `run` applies), labels and a scrubbed body excerpt, never the
+stored body. `--transport` narrows to one channel, `--class` to one
+triage class, `--contains <text>` keeps messages whose sender, subject or
+body carries the needle case-insensitively, and `--limit <n>` caps the
+page while `pending` still reports the store's full depth. A filter flag
+on the wrong verb is a usage error. The read writes nothing: an absent
+inbox file is a verified-empty read and an unreadable or malformed one
+is an error, never an empty list.
 
 `status` reports the pending inbox depth as `inbox`: a real count of
 messages still awaiting a reply — unanswered mail only, since a delivered
@@ -84,8 +96,8 @@ so a pass may have run and the answer stays unknown rather than reported as
 never-ran. A pass that fails mid-flight appends nothing, so a stale `at` is
 itself the signal that passes are not completing.
 
-MCP tools: `ashlr_comms_agent_status`, `ashlr_comms_agent_drafts`, and
-`ashlr_comms_agent_run`.
+MCP tools: `ashlr_comms_agent_status`, `ashlr_comms_agent_drafts`,
+`ashlr_comms_agent_inbox`, and `ashlr_comms_agent_run`.
 
 The inbox, archive, send log, owner-thread notices and run journal live under
 `~/.ashlr-runs/comms-agent/`

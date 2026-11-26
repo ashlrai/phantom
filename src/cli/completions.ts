@@ -108,7 +108,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   app: ['update', 'status', 'steer', '--text', 'restart', '--json', '--help'],
   radar: ['list', 'run', 'diff', '--json', '--help'],
   mason: ['thread', 'digest', '--since', '--post', '--json', '--help'],
-  'comms-agent': ['status', 'run', 'drafts', '--json', '--dir', '--lanes', '--help'],
+  'comms-agent': ['status', 'run', 'drafts', 'inbox', '--json', '--dir', '--lanes', '--status', '--transport', '--class', '--contains', '--limit', '--help'],
   claim: ['acquire', 'release', '--lane', '--reason', '--json', '--help'],
   usage: ['sensors', 'spend', 'limits', 'live', 'resource-live', 'resource-evidence', 'history', 'validate', '--lane', '--json', '--refresh', '--file', '--watch', '--force', '--show', '--browser', '--headed', '--interval', '--queue-dir', '--bus-dir', '--runs-dir', '--targets', '--help'],
   observe: ['session', '--json', '--human-steps', '--bottlenecks', '--prs', '--days', '--claim-minutes', '--help'],

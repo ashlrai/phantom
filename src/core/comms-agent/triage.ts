@@ -5,7 +5,8 @@
 import { scrubSecrets } from '../util/scrub.js';
 import { isCommsTransport, type CommsTransport } from './policy.js';
 
-export type MailClass = 'owner' | 'person' | 'bulk' | 'bot' | 'unknown';
+export const MAIL_CLASSES = ['owner', 'person', 'bulk', 'bot', 'unknown'] as const;
+export type MailClass = (typeof MAIL_CLASSES)[number];
 
 export interface InboxMessage {
   id: string;

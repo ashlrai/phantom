@@ -11,6 +11,7 @@ import { CHANNEL_IDS, type ChannelAdapter, type ChannelId, type DeliverResult } 
 import { getChannelAdapter, listChannelRegistry } from '../agents/channel-registry.js';
 import { readLocalSendPolicy } from '../agents/send-gate.js';
 import { createDraft } from '../cos/drafts.js';
+import { scrubSecrets } from '../util/scrub.js';
 import { COMMS_AGENT_ROLE } from './role.js';
 import {
   decideSend, readKillState, readPauseState,
@@ -21,7 +22,7 @@ import {
   appendArchive, appendDraft, appendOwnerNotice, appendRunRecord, appendSendLog, listDrafts, readInbox, readOwnerApprovals, readRunJournal, readSendLog, writeInbox,
   type ApprovalsReason, type CommsDraft, type CommsRunRecord, type OwnerApprovals,
 } from './store.js';
-import { triageInbox, type InboxMessage } from './triage.js';
+import { classifyMessage, triageInbox, type InboxMessage, type MailClass } from './triage.js';
 
 export interface LinkedInConnector {
   mode: 'official-api' | 'sanctioned-connector';
@@ -463,6 +464,87 @@ export async function commsDrafts(runsDir: string, filter: CommsDraftsFilter = {
     drafts: (await listDrafts(runsDir))
       .filter(draft => (status === 'all' || draft.status === status)
         && (filter.transport === undefined || draft.transport === filter.transport)),
+  };
+}
+
+/** One pending inbox message as the read reports it: routing identity, the
+ * triage class a pass would file it under, and a scrubbed body excerpt —
+ * never the stored body itself. */
+export interface CommsInboxMessage {
+  id: string;
+  transport: CommsTransport;
+  from: string;
+  subject: string;
+  /** The class `run`'s triage assigns with the owners the standing-approvals
+   * file names — the same classification a pass applies before keeping or
+   * archiving the message. */
+  class: MailClass;
+  labels: readonly string[];
+  /** Whitespace-flattened, secret-scrubbed opening of the body — enough to
+   * judge the mail at a glance, never the stored body. */
+  excerpt: string;
+}
+
+export interface CommsInboxFilter {
+  /** Narrow to one transport (`email`, `imessage`, `linkedin`, `bus`,
+   * `slack`, `telegram`, `handoff`). */
+  transport?: CommsTransport;
+  /** Keep only messages triage files under this class. */
+  class?: MailClass;
+  /** Case-insensitive substring over the sender, subject and body. */
+  contains?: string;
+  /** Cap the returned page; `pending` still reports the store's full depth. */
+  limit?: number;
+}
+
+const INBOX_EXCERPT_MAX = 280;
+
+function inboxExcerpt(body: string): string {
+  const flat = scrubSecrets(body).replace(/\s+/g, ' ').trim();
+  return flat.length > INBOX_EXCERPT_MAX ? `${flat.slice(0, INBOX_EXCERPT_MAX - 1)}…` : flat;
+}
+
+/**
+ * The pending inbox read `status` only counts: every message still awaiting
+ * triage, classified exactly as `run` would file it — same inbox document,
+ * same owner file, same `classifyMessage`. `pending` is the store's depth
+ * before the filter; an absent inbox file is a verified-empty read, and an
+ * unreadable or malformed one throws like every other private store read —
+ * unknown stays an error, never an empty list.
+ */
+export async function commsInbox(
+  runsDir: string,
+  deps: { readApprovals?: () => Promise<OwnerApprovals> } = {},
+  filter: CommsInboxFilter = {},
+): Promise<{ ok: true; schema: 'comms-agent.inbox.v1'; pending: number; messages: CommsInboxMessage[] }> {
+  const owners = (await (deps.readApprovals ?? readOwnerApprovals)()).owners;
+  const { messages } = await readInbox(runsDir);
+  const needle = filter.contains?.trim().toLowerCase();
+  const matched = messages
+    .map(message => ({ message, mailClass: classifyMessage(message, owners) }))
+    .filter(({ message, mailClass }) =>
+      (filter.transport === undefined || message.transport === filter.transport)
+      && (filter.class === undefined || mailClass === filter.class)
+      && (!needle || `${message.from}\n${message.subject}\n${message.body}`.toLowerCase().includes(needle)));
+  const page = filter.limit !== undefined && Number.isInteger(filter.limit) && filter.limit > 0
+    ? matched.slice(0, filter.limit)
+    : matched;
+  return {
+    ok: true,
+    schema: 'comms-agent.inbox.v1',
+    pending: messages.length,
+    messages: page.map(({ message, mailClass }) => ({
+      id: message.id,
+      transport: message.transport,
+      // `from` stays raw like a draft's recipient: it is the routing identity
+      // the reply needs. Subject, labels and excerpt are content — the inbox
+      // document stores them unscrubbed, so the read scrubs them here.
+      from: message.from,
+      subject: scrubSecrets(message.subject),
+      class: mailClass,
+      labels: (message.labels ?? []).map(label => scrubSecrets(label)),
+      excerpt: inboxExcerpt(message.body),
+    })),
   };
 }
 

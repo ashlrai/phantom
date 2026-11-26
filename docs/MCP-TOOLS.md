@@ -121,6 +121,7 @@ or control apps.
 | `ashlr_comms_send_owner` | Fan a leader reply to the channel the owner used and the desktop thread. Refused unless the recipient is the configured owner. KILL halts it. |
 | `ashlr_comms_agent_status` | Comms role status: parent Leader role, unset lane, KILL, pause, draft count and registered channel adapters. Read-only. No send. |
 | `ashlr_comms_agent_drafts` | List Comms reply drafts. Defaults to pending owner approvals; `status=sent\|all` and `transport` narrow the read to delivered replies or one channel. Read-only. Approval is not a send. |
+| `ashlr_comms_agent_inbox` | List pending Comms inbox messages awaiting triage — id, transport, sender, subject, the triage class a pass would file under, labels and a scrubbed body excerpt. `transport`, `class`, `contains` and `limit` narrow the page; `pending` reports the store's full depth. Read-only. |
 | `ashlr_comms_agent_run` | Triage the Comms inbox and draft replies. The router picks a lane only from the lanes argument. Sends follow the Comms send policy. |
 | `ashlr_desktop_open` | Propose a desktop UI action (open a path in editor / Finder / terminal). Creates a PENDING desktop-action proposal — NEVER executes directly. The action runs only after the user explicitly approves via `ashlr inbox`. Requires the repo to be enrolled and the kill switch to be off. |
 

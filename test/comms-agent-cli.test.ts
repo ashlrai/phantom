@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { cmdCommsAgent } from '../src/cli/comms-agent.js';
 import { callNativeTool } from '../src/core/mcp-native.js';
+import { commsInbox } from '../src/core/comms-agent/run.js';
 import { appendDraft, appendRunRecord, readRunJournal, writeInbox, type CommsDraft, type CommsRunRecord } from '../src/core/comms-agent/store.js';
 import type { CommsTransport } from '../src/core/comms-agent/policy.js';
 
@@ -255,7 +256,137 @@ describe('phm comms-agent', () => {
     }
   });
 
-  it('exposes status, drafts and run as native MCP tools', async () => {
+  it('inbox lists pending mail with its triage class and excerpt', async () => {
+    const runsDir = temp();
+    await writeInbox(runsDir, [
+      { id: 'person-1', transport: 'email', from: 'ada@example.com', subject: 'Question', body: 'Line one.\n\nLine two with details.' },
+      { id: 'bulk-1', transport: 'email', from: 'news@example.com', subject: 'News', body: 'Read more', labels: ['bulk'] },
+      { id: 'bot-1', transport: 'imessage', from: '+15550001111', subject: '', body: 'automated notice', labels: ['bot'] },
+      { id: 'unknown-1', transport: 'linkedin', from: '', subject: 'Hello', body: 'no sender' },
+    ]);
+
+    const out = capture();
+    expect(await cmdCommsAgent(['inbox', '--dir', runsDir, '--json'])).toBe(0);
+    const listed = JSON.parse(out.lines.at(-1) ?? '{}') as {
+      ok: boolean; schema: string; pending: number;
+      messages: Array<{ id: string; transport: string; from: string; subject: string; class: string; labels: string[]; excerpt: string }>;
+    };
+    out.restore();
+    expect(listed.ok).toBe(true);
+    expect(listed.schema).toBe('comms-agent.inbox.v1');
+    expect(listed.pending).toBe(4);
+    expect(listed.messages).toHaveLength(4);
+    const byId = new Map(listed.messages.map(row => [row.id, row]));
+    // The test HOME has no standing-approvals file, so owner mail would read
+    // as person — the class is exactly what a pass files under that file.
+    expect(byId.get('person-1')).toMatchObject({ class: 'person', transport: 'email', from: 'ada@example.com' });
+    expect(byId.get('bulk-1')).toMatchObject({ class: 'bulk', labels: ['bulk'] });
+    expect(byId.get('bot-1')).toMatchObject({ class: 'bot', transport: 'imessage' });
+    expect(byId.get('unknown-1')).toMatchObject({ class: 'unknown' });
+    // The excerpt flattens whitespace and never carries the raw body.
+    expect(byId.get('person-1')!.excerpt).toBe('Line one. Line two with details.');
+  });
+
+  it('inbox filters by transport, class, contains and limit while pending keeps the depth', async () => {
+    const runsDir = temp();
+    await writeInbox(runsDir, [
+      { id: 'm-1', transport: 'email', from: 'ada@example.com', subject: 'First', body: 'alpha body' },
+      { id: 'm-2', transport: 'imessage', from: '+15550001111', subject: 'Second', body: 'beta body', labels: ['bulk'] },
+      { id: 'm-3', transport: 'email', from: 'bob@example.com', subject: 'Third', body: 'gamma body' },
+    ]);
+    const ids = async (args: string[]): Promise<{ pending: number; ids: string[] }> => {
+      const out = capture();
+      expect(await cmdCommsAgent([...args, '--dir', runsDir, '--json'])).toBe(0);
+      const parsed = JSON.parse(out.lines.at(-1) ?? '{}') as { pending: number; messages: Array<{ id: string }> };
+      out.restore();
+      return { pending: parsed.pending, ids: parsed.messages.map(row => row.id) };
+    };
+    expect(await ids(['inbox'])).toEqual({ pending: 3, ids: ['m-1', 'm-2', 'm-3'] });
+    expect(await ids(['inbox', '--transport', 'imessage'])).toEqual({ pending: 3, ids: ['m-2'] });
+    expect(await ids(['inbox', '--class', 'bulk'])).toEqual({ pending: 3, ids: ['m-2'] });
+    // contains searches sender, subject and body case-insensitively.
+    expect(await ids(['inbox', '--contains', 'GAMMA'])).toEqual({ pending: 3, ids: ['m-3'] });
+    expect(await ids(['inbox', '--contains', 'bob@example.com'])).toEqual({ pending: 3, ids: ['m-3'] });
+    expect(await ids(['inbox', '--limit', '2'])).toEqual({ pending: 3, ids: ['m-1', 'm-2'] });
+  });
+
+  it('commsInbox classifies owner mail from the approvals read a pass applies', async () => {
+    const runsDir = temp();
+    await writeInbox(runsDir, [
+      { id: 'owner-1', transport: 'email', from: 'boss@example.com', subject: 'Directive', body: 'Ship it' },
+    ]);
+    const approvals = (owners: string[]) => async () => ({ approvals: [], owners, accepted: true as const, reason: 'ok' as const });
+    const withOwner = await commsInbox(runsDir, { readApprovals: approvals(['boss@example.com']) });
+    expect(withOwner.messages[0]).toMatchObject({ id: 'owner-1', class: 'owner' });
+    // The same mail under an owner file naming nobody else is a person —
+    // the read reports the class the next pass would actually file.
+    const without = await commsInbox(runsDir, { readApprovals: approvals([]) });
+    expect(without.messages[0]).toMatchObject({ id: 'owner-1', class: 'person' });
+  });
+
+  it('inbox reports an unreadable store as an error and an absent one as empty', async () => {
+    const runsDir = temp();
+    const empty = capture();
+    expect(await cmdCommsAgent(['inbox', '--dir', runsDir, '--json'])).toBe(0);
+    expect(JSON.parse(empty.lines.at(-1) ?? '{}')).toMatchObject({ ok: true, pending: 0, messages: [] });
+    empty.restore();
+
+    mkdirSync(join(runsDir, 'comms-agent'), { recursive: true });
+    writeFileSync(join(runsDir, 'comms-agent', 'inbox.json'), '{ not json', { mode: 0o600 });
+    const bad = capture();
+    expect(await cmdCommsAgent(['inbox', '--dir', runsDir, '--json'])).toBe(1);
+    const parsed = JSON.parse(bad.lines.at(-1) ?? '{}') as { ok: boolean; error: string };
+    bad.restore();
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain('Inbox file');
+  });
+
+  it('inbox rejects filter flags on the wrong verb and bad values', async () => {
+    const runsDir = temp();
+    expect(await cmdCommsAgent(['status', '--class', 'person', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['run', '--contains', 'x', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['drafts', '--limit', '5', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['drafts', '--class', 'bulk', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['inbox', '--status', 'sent', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['inbox', '--class', 'bogus', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['inbox', '--transport', 'bogus', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['inbox', '--limit', '0', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['inbox', '--limit', '2.5', '--dir', runsDir, '--json'])).toBe(2);
+  });
+
+  it('ashlr_comms_agent_inbox serves the same read and refuses bad filters', async () => {
+    const runsDir = temp();
+    await writeInbox(runsDir, [
+      { id: 'i-person', transport: 'email', from: 'ada@example.com', subject: 'Hi', body: 'hello there' },
+      { id: 'i-bulk', transport: 'email', from: 'news@example.com', subject: 'News', body: 'read more', labels: ['bulk'] },
+    ]);
+    const previous = process.env.ASHLR_RUNS_DIR;
+    process.env.ASHLR_RUNS_DIR = runsDir;
+    try {
+      const text = (result: { content: Array<{ type: string; text?: string }> }): string =>
+        result.content.map(part => part.type === 'text' ? part.text ?? '' : '').join('');
+      const all = await callNativeTool('ashlr_comms_agent_inbox', {});
+      expect(all.isError).toBeUndefined();
+      const parsed = JSON.parse(text(all)) as { pending: number; messages: Array<{ id: string; class: string }> };
+      expect(parsed.pending).toBe(2);
+      expect(parsed.messages.map(row => row.id).sort()).toEqual(['i-bulk', 'i-person']);
+
+      const bulk = await callNativeTool('ashlr_comms_agent_inbox', { class: 'bulk', contains: 'news', limit: 5 });
+      expect(bulk.isError).toBeUndefined();
+      expect((JSON.parse(text(bulk)) as { messages: Array<{ id: string }> }).messages.map(row => row.id)).toEqual(['i-bulk']);
+
+      // The schema enum refuses an unknown class or limit before the handler;
+      // the handler refuses an unknown transport the same way the CLI does.
+      expect((await callNativeTool('ashlr_comms_agent_inbox', { class: 'bogus' })).isError).toBe(true);
+      expect((await callNativeTool('ashlr_comms_agent_inbox', { limit: 0 })).isError).toBe(true);
+      expect((await callNativeTool('ashlr_comms_agent_inbox', { transport: 'bogus' })).isError).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.ASHLR_RUNS_DIR;
+      else process.env.ASHLR_RUNS_DIR = previous;
+    }
+  });
+
+  it('exposes status, drafts, inbox and run as native MCP tools', async () => {
     const runsDir = temp();
     const previous = process.env.ASHLR_RUNS_DIR;
     process.env.ASHLR_RUNS_DIR = runsDir;
@@ -266,6 +397,8 @@ describe('phm comms-agent', () => {
       expect(JSON.parse(text)).toMatchObject({ role: { id: 'comms', lane: null, grokRequired: false } });
       const drafts = await callNativeTool('ashlr_comms_agent_drafts', {});
       expect(drafts.isError).toBeUndefined();
+      const inbox = await callNativeTool('ashlr_comms_agent_inbox', {});
+      expect(inbox.isError).toBeUndefined();
       const ran = await callNativeTool('ashlr_comms_agent_run', { lanes: 'local' });
       expect(ran.isError).toBeUndefined();
     } finally {
