@@ -401,9 +401,13 @@ node or shared host slot budget), `pass_limit` or `no_free_slot`. Free slots are
 `slots` minus its running claims and the reservations in the router's placement
 plan. A waiting router job with no assignment, for example because it needs
 local GitHub auth, uses no slot. Older router views without a placement plan
-use capability and auth matching to estimate reservations. Nodes with a capacity sample
-share one physical host's
-measured slots, so their free capacity is counted once per host — the smallest
+use capability and auth matching to estimate reservations.
+The bridge uses the router status field `routingLive` to exclude nodes with
+a missing, future or at least five-minute-old heartbeat, even while their
+session lease is valid. Older router views that omit `routingLive` use the
+reported session liveness.
+
+Nodes with a capacity sample share one physical host's measured slots, so their free capacity is counted once per host — the smallest
 advertisement minus every claim on it — the same grouping the router's
 `nodeCapacityView` uses. Each node's reported free slots are capped by its
 host's remaining slots after router reservations. These per-node figures can

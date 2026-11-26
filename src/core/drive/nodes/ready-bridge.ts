@@ -158,7 +158,7 @@ function reservesReadyId(row: ReadyRow): boolean {
 export function planNodeBridge(input: BridgeRouterView & {
   rows: ReadyRow[]; claimed: (job: string) => boolean; maxPerPass?: number;
 }): { nodes: BridgeNodeView[]; rows: BridgeRowDecision[] } {
-  const live = input.nodes.filter(n => n.live).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
+  const live = input.nodes.filter(n => n.live && n.routingLive !== false).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const running = (id: string) => input.jobs.filter(j => j.state === 'running' && j.claimedBy === id).length;
   const free = new Map<string, number | null>(live.map(n => [n.nodeId, n.slots === undefined ? null : Math.max(0, n.slots - running(n.nodeId))]));
   // Capacity-reporting nodes on one physical host share its measured slots —

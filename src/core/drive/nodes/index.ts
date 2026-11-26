@@ -90,6 +90,8 @@ export interface NodeView {
   capacity?: NodeCapacitySample;
   nodeId: string;
   live: boolean;
+  /** Unexpired session with a heartbeat that meets the router's freshness rule. */
+  routingLive?: boolean;
   owners: string[];
   caps: string[];
   /** Self-reported permille load; null until a heartbeat reports one — never a fabricated 0. */
@@ -322,8 +324,8 @@ export class DriveNodes implements QueueV1 {
     return this.transaction((state, now) => ({
       owners: [...scope],
       nodes: state.nodes.filter(n => n.owners?.some(o => scope.has(o)))
-        .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
-          caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
+        .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, routingLive: nodeCanAcceptWork(n, now),
+          owners: (n.owners ?? []).filter(o => scope.has(o)), caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
           heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? null, auth: n.auth ?? 'unknown',
           ...(n.capacity ? { capacity: n.capacity } : {}),
           ...(n.slots === undefined ? {} : { slots: n.slots }) }))
