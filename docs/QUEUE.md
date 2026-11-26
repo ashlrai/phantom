@@ -400,6 +400,8 @@ The history includes both endpoints of the trailing window and excludes ticks
 timestamped after the report time.
 Each historical lane needs an unfed flag, positive headroom and waiting work
 elsewhere. A tick counts when at least one lane meets all three conditions.
+If several snapshots share a tick timestamp, the last one with usable unfed
+lane evidence supplies that tick's lane counts, slot-ticks and blocker counts.
 
 When the dispatcher omits its unfed summary, the derived report also honors
 holds in `queue/slots.json` and the operator's `HOLD` file. Held lanes can

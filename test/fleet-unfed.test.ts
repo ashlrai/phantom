@@ -221,6 +221,27 @@ describe('foldUnfedHistory', () => {
     expect(foldUnfedHistory('', now, 24)).toEqual({ windowHours: 24, available: true, ticks: 0, lanes: [] });
   });
 
+  it('counts a replayed tick once and uses the last usable snapshot as a whole', () => {
+    const codex = { unfed: true, headroom: 3, waiting_elsewhere: 3 };
+    const claude = { unfed: true, headroom: 2, waiting_elsewhere: 1, blocked: { missing_capability: 1 } };
+    const replay = unfedRow(t, { claude });
+    const text = [
+      unfedRow(t, { codex }),
+      replay,
+      unfedRow(t - 60, { codex }),
+      replay,
+      unfedRow(t, { codex: { ...codex, headroom: 0 } }),
+    ].join('\n');
+
+    expect(foldUnfedHistory(text, now, 1)).toMatchObject({
+      ticks: 2,
+      lanes: [
+        { lane: 'codex', unfedTicks: 1, slotTicks: 3, lastUnfedAt: new Date(now - 60_000).toISOString(), blocked: {} },
+        { lane: 'claude', unfedTicks: 1, slotTicks: 1, lastUnfedAt: new Date(now).toISOString(), blocked: { missing_capability: 1 } },
+      ],
+    });
+  });
+
   it('counts only lanes with both spare slots and waiting work', () => {
     const full = { unfed: true, headroom: 0, waiting_elsewhere: 2, blocked: { saturated: 2 } };
     const idle = { unfed: true, headroom: 2, waiting_elsewhere: 0 };
