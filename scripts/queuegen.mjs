@@ -172,11 +172,14 @@ function conflictFiles(mirrorsRoot, repo, pr) {
   }
 }
 
-const MD_ID = /^- [A-Z][A-Z-]* ([A-Za-z0-9][A-Za-z0-9._-]+)\b/;
+const MD_ID = /^- ([A-Z][A-Z-]*) ([A-Za-z0-9][A-Za-z0-9._-]+)\b/;
+const FRESHNESS_ID = /^RQ-(?:DOCS|SITE)-FRESHNESS-.+-\d+$/u;
+const ACTIVE_STATUS = /^(?:READY|CLAIMED|QUEUED|STARTING|RUNNING|WORKING|PR-OPEN|PROPOSED|PARKED(?:-[A-Z]+)*|HOLD(?:-[A-Z]+)*)$/u;
 
 function readQueueIds(queuePath) {
   const ids = new Set();
-  if (!existsSync(queuePath)) return ids;
+  const activeFreshness = new Set();
+  if (!existsSync(queuePath)) return { ids, activeFreshness };
   const text = readFileSync(queuePath, 'utf8');
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
@@ -186,15 +189,18 @@ function readQueueIds(queuePath) {
       if (typeof row?.id !== 'string' || !row.id) throw new Error('queue row has no id');
       if (ids.has(row.id)) throw new Error('duplicate queue id');
       ids.add(row.id);
+      if (FRESHNESS_ID.test(row.id) && ACTIVE_STATUS.test(row.status)) activeFreshness.add(row.id);
       continue;
     }
     const match = MD_ID.exec(line);
     if (match) {
-      if (ids.has(match[1])) throw new Error('duplicate queue id');
-      ids.add(match[1]);
+      const [, status, id] = match;
+      if (ids.has(id)) throw new Error('duplicate queue id');
+      ids.add(id);
+      if (FRESHNESS_ID.test(id) && ACTIVE_STATUS.test(status)) activeFreshness.add(id);
     }
   }
-  return ids;
+  return { ids, activeFreshness };
 }
 
 function readHoldList(path) {
@@ -271,22 +277,33 @@ async function main() {
   flags['--mirrors-root'] = resolve(flags['--mirrors-root']);
   flags['--metrics'] = resolve(flags['--metrics']);
 
-  const { runQueuegenCycle, normalizeState, QUEUEGEN_PR_WINDOW_MS, QUEUEGEN_REPOS } =
+  const { runQueuegenCycle, normalizeState, QUEUEGEN_PR_WINDOW_MS } =
     await import('../dist/core/drive/queuegen.js');
+  const { currentStandingPolicy } = await import('../dist/core/authority/effective-config.js');
+  const { signedQueueRepos } = await import('../dist/core/fleet/signed-queue-scope.js');
+  const repos = signedQueueRepos(currentStandingPolicy());
+  if (!repos.length) {
+    console.error('QUEUEGEN_SCOPE_UNAVAILABLE');
+    return 0;
+  }
   const { readRebaseCoverage } = await import('../dist/cli/fleet-rebase-plan.js');
   const { rebaseWorkState } = await import('../dist/core/fleet/rebase-plan.js');
   const coverage = await readRebaseCoverage(dirname(flags['--queue']), async (path) =>
     readFileSync(path === join(dirname(flags['--queue']), 'router-queue.md') ? flags['--queue'] : path, 'utf8'));
 
   mkdirSync(dirname(flags['--queue']), { recursive: true, mode: 0o700 });
+  let queueEvidence;
+  const evidence = () => queueEvidence ??= readQueueIds(flags['--queue']);
   const io = {
     listPullRequests,
     checks,
     checkLogTail,
     conflictFiles: (repo, pr) => conflictFiles(flags['--mirrors-root'], repo, pr),
-    readQueueIds: () => readQueueIds(flags['--queue']),
-    readRebaseWork: () => rebaseWorkState(coverage.jobs, QUEUEGEN_REPOS),
-    appendQueueLine: (line) => {
+    readQueueIds: () => evidence().ids,
+    readActiveFreshnessIds: () => evidence().activeFreshness,
+    readRebaseWork: () => rebaseWorkState(coverage.jobs, repos),
+    appendQueueLine: (line, repo) => {
+      if (!signedQueueRepos(currentStandingPolicy()).includes(repo)) throw new Error('signed scope no longer permits this repo');
       if (dryRun) { console.log(`DRY ${line}`); return; }
       appendFileSync(flags['--queue'], `${line}\n`, { mode: 0o600 });
     },
@@ -300,7 +317,7 @@ async function main() {
     log: (line) => console.error(line),
     now: () => Date.now(),
   };
-  runQueuegenCycle(io);
+  runQueuegenCycle(io, { repos, freshness: true });
   return 0;
 }
 

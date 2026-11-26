@@ -17,7 +17,9 @@ daemon's `skill-nudge` off-tick job folds the tail of the fleet jobs ledger
 uses only recorded evidence: launch and batch-claim attempts, bounded
 launch-failure receipts, finish-row failure classifications, recut-admission
 decisions, revert evidence, and terminal outcome phases (MERGED, CLOSED,
-DONE-NOOP, CANCELLED). The fold reads the fleet jobs-ledger dialect the
+DONE-NOOP, CANCELLED). Batch members contribute their own job evidence.
+Batch session wrappers and node-pool attempt telemetry are excluded from
+recovery evidence. The fold reads the fleet jobs-ledger dialect the
 sibling outcome readers share — job ids `job|job_id|jobId|id`, lanes
 `lane|pool|arm`, events `event|type|kind` (`published` folds to `publish`),
 terminal phases `phase|state|outcome|status|result|conclusion`, and

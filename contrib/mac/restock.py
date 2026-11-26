@@ -32,6 +32,41 @@ def family_paused(job):
         family_skip_logged.add(family)
     return True
 
+REPO_NAME = r"[a-z0-9][a-z0-9._-]{0,99}"
+REPO_ATTR = re.compile(r"(?:^|[,;\s])repo=([^,;\s)]*)", re.I)
+
+
+def signed_repo_names():
+    """Read the verified effective rollout scope, never a local grant file."""
+    try:
+        result = subprocess.run(["phm", "authority", "status", "--json"],
+                                capture_output=True, text=True, timeout=10, check=True)
+        status = json.loads(result.stdout)
+        if status["v"] != 1 or status["kill"] is not False or status["effectiveSwitch"] not in ("propose", "autonomous"):
+            return set()
+        repos = status["policy"]["repos"]
+        if not isinstance(repos, list):
+            return set()
+        return {name.lower().split("/", 1)[1] for row in repos
+                if row["stage"] in ("propose", "merge")
+                and isinstance(name := row["nameWithOwner"], str)
+                and re.fullmatch(r"ashlrai/" + REPO_NAME, name, re.I | re.ASCII)}
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return set()
+
+
+def queue_repo(attrs, job, signed_repos):
+    explicit = REPO_ATTR.findall(attrs)
+    if explicit:
+        if len(explicit) != 1:
+            return ""
+        return explicit[0].lower().removeprefix("ashlrai/")
+    land = re.fullmatch(r"LAND-(?:RECUT-)?([a-z][a-z-]*?)-\d+", job)
+    if land:
+        return land[1]
+    return next((name for token in attrs.split(",") if (name := token.strip()) in signed_repos), None)
+
+
 def semantic_dedupe(lines):
     """Pure admission plan; keep in parity with core/queue/semantic-dedupe.ts."""
     rows, unknown, repeats, marked = [], [], [], {}
@@ -77,10 +112,9 @@ CODEX = ["codex-cmp", "codex-personal", "devin", "codex-local", "omlx"]  # resto
 CODEX.append("claude-api")  # paced by claude-api.py via slots.json target (0 when no credit pool is open)
 CODEX.append("claude")  # shared work can be restocked when only the Claude executor has headroom
 GENERAL = [l for l in CODEX if l not in ("codex-local", "omlx")]  # rev1.1: local models are not a general fallback; only explicitly local pools go there
-# RQ-QUEUEGEN-BOLD-30 (SPEC-AMEND Security #5): GS_REPOS is the fleet allowlist — the core-fleet spine that is
-# checked out under ~/Projects/ashlrai (docs/ECOSYSTEM-MAP.md). measurably and ashlr-landing live there too but
-# are not fleet: a directory existing is never enough to make a line selectable, and restock never creates for them.
-GS_REPOS = {"phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-plugin", "ashlr-stack"}
+signed_repos = signed_repo_names()
+if not signed_repos:
+    print("RESTOCK_SCOPE_UNAVAILABLE", file=sys.stderr)
 BOLD_MIN = 0.30   # keep READY at >=30% bet=bold lines: counted before each restock; under the floor bold picks first
 PIN = "[Security pin required]"
 # Lines touching these surfaces are security-pinned (SPEC-AMEND Security #5): they enter as HOLD-SECURITY carrying
@@ -153,9 +187,10 @@ for i, l in enumerate(lines):
     for j in ids[:1]: status.setdefault(j, m.group(1))
     for j in re.findall(r"\b(?:CLAIMED|DONE|PR-OPEN)[^A-Z]{0,40}?([A-Z][A-Z0-9-]*-[A-Za-z0-9._-]+)", l[:160])[:1]: status[j] = l.split()[1]
     if m.group(1) in ("HOLD", "HOLD-SECURITY"):   # hold-list PRs (amendment #5): (repo|*, pr#) pairs never selectable
-        hr = re.search(r"\brepo=(?:ashlrai/)?([a-z0-9-]+)", l)
-        for n in re.findall(r"(?:pull/|PR=|#)(\d+)", l): held_pr.add((hr.group(1) if hr else "*", n))
-        for rr, n in re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", l): held_pr.add((rr, n))
+        hr = REPO_ATTR.search(l)
+        hold_repo = hr[1].lower().removeprefix("ashlrai/") if hr else "*"
+        for n in re.findall(r"(?:pull/|PR=|#)(\d+)", l, re.I): held_pr.add((hold_repo, n))
+        for rr, n in re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", l): held_pr.add((rr.lower(), n))
     if m2: recs.append((i, m2.group(1), m2.group(2), m2.group(3), l))
 # Match only identical author requests for one explicit test file. File identity
 # alone is not evidence that two requests have the same acceptance criteria.
@@ -197,7 +232,7 @@ for row in ready_raw:
         queue_diagnostics["parked"] += 1
         continue
     valid = (len(f) >= 5 and re.fullmatch(r"[A-Za-z0-9._-]+", f[0]) and f[2] in CODEX
-             and f[3] in ("frontier", "work", "mid", "fast") and "/" not in f[1]
+             and f[3] in ("frontier", "work", "mid", "fast") and f[1] in signed_repos
              and os.path.isdir(H + "/Projects/ashlrai/" + f[1])
              and os.path.realpath(f[4]).startswith(os.path.realpath(Q + "/prompts") + "/") and os.path.isfile(f[4]))
     if not valid:
@@ -318,7 +353,7 @@ for line in ready_raw:
         continue
     j, repo, lane, tier, pf, _raw = parsed
     if (not re.fullmatch(r"[A-Za-z0-9._-]+", j) or lane not in CODEX or tier not in ("frontier", "work", "mid", "fast")
-            or "/" in repo or not os.path.isdir(H + "/Projects/ashlrai/" + repo)
+            or repo not in signed_repos or not os.path.isdir(H + "/Projects/ashlrai/" + repo)
             or not os.path.realpath(pf).startswith(os.path.realpath(Q + "/prompts") + "/") or not os.path.isfile(pf)):
         parked_diagnostics["invalid"] += 1; continue
     if j in parked_seen:
@@ -350,7 +385,7 @@ for line in ready_raw:
     elif m2 and len(f) == 5:
         j, repo, lane, tier, pf = f[0], f[1], m2.group(1), f[3], f[4]
     else: continue
-    if (repo == "phantom" and lane in CODEX and not slots.get(lane, {}).get("held") and lane not in hold
+    if (repo == "phantom" and repo in signed_repos and lane in CODEX and not slots.get(lane, {}).get("held") and lane not in hold
             and re.fullmatch(r"[A-Za-z0-9._-]+", j) and j not in parked_seen
             and tier in ("frontier", "work", "mid", "fast") and os.path.isdir(H + "/Projects/ashlrai/phantom")
             and os.path.realpath(pf).startswith(os.path.realpath(Q + "/prompts") + "/")
@@ -414,18 +449,12 @@ for i, j, attrs, text, raw in ranked_records(recs):
     if not re.match(r"^[A-Z]", j): skip(j, "bad-id"); continue
     if re.search(r"sub of " + re.escape(j) + r"\b", RQ_TXT): skip(j, "split-into-subs"); continue
     if "BASE_OVERRIDE" in attrs: skip(j, "base-override(supervisor)"); continue
-    rm = re.search(r"\brepo=(?:ashlrai/)?([a-z0-9-]+)", attrs)
-    if not rm:
-        lm = re.match(r"^LAND-(?:RECUT-)?([a-z][a-z-]*?)-\d+$", j)
-        if lm: rm = lm
-    if not rm:
-        for tok in [t.strip() for t in attrs.split(",")]:
-            if tok in GS_REPOS: rm = re.match(r"(.*)", tok); break
+    repo = queue_repo(attrs, j, signed_repos)
     pm = re.search(r"pool=([a-z-]+)", attrs); tm = re.search(r"(?:^|[,;\s])tier=([^,;\s]*)", attrs)
     tiers = re.findall(r"(?:^|[,;\s])tier=([^,;\s]*)", attrs)
     if any(t not in SCOPE_BUDGETS for t in tiers) or len(set(tiers)) > 1: skip(j, "unknown-tier"); continue
-    if rm and rm.group(1) not in GS_REPOS: skip(j, "non-fleet-repo"); continue
-    if not rm or not os.path.isdir(H + "/Projects/ashlrai/" + rm.group(1)): skip(j, "no-repo"); continue
+    if repo is not None and repo not in signed_repos: skip(j, "non-fleet-repo"); continue
+    if not repo or not os.path.isdir(H + "/Projects/ashlrai/" + repo): skip(j, "no-repo"); continue
     if family_paused(j): skip(j, "family-paused"); continue
     pool = pm.group(1) if pm and pm.group(1) != "any" else "any"
     if pool not in CODEX: pool = "any"   # unknown enqueue hints never strand shared work
@@ -436,8 +465,9 @@ for i, j, attrs, text, raw in ranked_records(recs):
         if not fits:
             pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
             print("LOCAL_FIT %s: %s; fallback=%s" % (j, reason, pool), file=sys.stderr)
-    prp = set(re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", raw))
-    prp |= {(rm.group(1), n) for n in re.findall(r"(?i)(?:pull/|PR=|#)(\d+)", attrs + " " + text)}
+    prp = {(name.lower(), number) for name, number in
+           re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", raw)}
+    prp |= {(repo, n) for n in re.findall(r"(?i)(?:pull/|PR=|#)(\d+)", attrs + " " + text)}
     if prp & held_pr or any(("*", n) in held_pr for _, n in prp): skip(j, "hold-list-pr"); continue
     deps = []
     for a in re.findall(r"after ([^,]+)", attrs):
@@ -455,7 +485,7 @@ for i, j, attrs, text, raw in ranked_records(recs):
     # instead of silently skipping; restock unparks them once jobs.jsonl shows every id MERGED.
     if any(not re.match(r"^[A-Za-z0-9._-]+$", d) or not landed(d) for d in deps):
         if j in inq or any(x[0] == j for x in dep_parks): skip(j, "after-unlanded"); continue
-        dep_parks.append((j, rm.group(1), pool, tier, attrs, text, i, [d for d in deps if isinstance(d, str)]))
+        dep_parks.append((j, repo, pool, tier, attrs, text, i, [d for d in deps if isinstance(d, str)]))
         picked_specs[j] = spec
         skip(j, "parked-dep"); continue
     b = busy(j)
@@ -464,12 +494,12 @@ for i, j, attrs, text, raw in ranked_records(recs):
     key = park_key(raw, ""); task_keys[j] = key
     quality_group = single_case_group(j, attrs, text)
     # Local terminal evidence retires stale producer work before any network precheck.
-    reason = ("already-merged" if (rm.group(1), j) in completed or (None, j) in completed
-              else terminal_target(j, rm.group(1), f"{j} ({attrs}): {text}", terminal_prs))
+    reason = ("already-merged" if (repo, j) in completed or (None, j) in completed
+              else terminal_target(j, repo, f"{j} ({attrs}): {text}", terminal_prs))
     if not reason and quality_group and quality_group in completed_groups: reason = "acceptance-already-merged"
     if reason:
         checked.add(j); park_state.pop(j, None)
-        done.append((i, j, (10, reason), rm.group(1))); skip(j, reason); continue
+        done.append((i, j, (10, reason), repo)); skip(j, reason); continue
     if noop_parked(noops, j, key, ts): skip(j, "noop-streak"); continue
     if precheck_parked(park_state, j, key, ts): skip(j, "precheck-parked"); continue
     # A target PR identifies the same repair; a file alone does not.
@@ -484,27 +514,27 @@ for i, j, attrs, text, raw in ranked_records(recs):
                and set(spec["needs"]).issubset(work_market.executor_capabilities(l, slots.get(l, {})) or set())]
     if not capable: skip(j, "no-capable-capacity"); continue
     lane = pool if pool in capable else max(capable, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
-    prompt = prompt_body(j, rm.group(1), lane, tier, attrs, text)
-    reason = empty_gate(j, rm.group(1), prompt)
+    prompt = prompt_body(j, repo, lane, tier, attrs, text)
+    reason = empty_gate(j, repo, prompt)
     if reason:
         skip(j, reason)
         if not DRY:
             with open(R + '/metrics/jobs.jsonl', 'a') as stream:
-                stream.write(json.dumps(dict(event='skipped_empty', job=j, repo=rm.group(1),
+                stream.write(json.dumps(dict(event='skipped_empty', job=j, repo=repo,
                                              lane=lane, reason=reason,
                                              ts=time.strftime('%Y-%m-%dT%H:%M:%S%z'))) + '\n')
         continue
     if pc_left <= 0: break
     checked.add(j); pc_left -= 1
-    pc = precheck(j, rm.group(1), prompt, H, R)
+    pc = precheck(j, repo, prompt, H, R)
     if pc and pc[0] in (11, 12, 13):
         # Open PRs and legacy existence heuristics are not acceptance evidence.
         # Keep the author row READY; unchanged retries share dispatch's backoff.
         park(park_state, j, key, ts, pc[0], pc[1]); skip(j, "precheck-parked"); continue
     park_state.pop(j, None)
     if pc:
-        done.append((i, j, pc, rm.group(1))); skip(j, "done-noop"); continue
-    picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
+        done.append((i, j, pc, repo)); skip(j, "done-noop"); continue
+    picks[lane].append((j, repo, lane, tier, attrs, text, i))
     picked_specs[j] = spec
     if quality_group: quality_groups.add(quality_group)
     seen_pr |= prp

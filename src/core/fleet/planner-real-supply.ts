@@ -30,7 +30,12 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { CloudGh } from '../cloud/pr-actions.js';
-import { QUEUEGEN_REPOS } from '../drive/queuegen.js';
+/** Default targets for read-only companion reports, including before enrollment. */
+export const COMPANION_PROBE_REPOS = [
+  'ashlrai/phantom', 'ashlrai/phantom-secrets', 'ashlrai/locus',
+  'ashlrai/lexicon', 'ashlrai/ashlr-md', 'ashlrai/ashlr-stack',
+  'ashlrai/ashlr-plugin',
+] as const;
 
 export type RealSupplyKind = 'dependabot-critical' | 'scheduled-red' | 'dependabot-high' | 'issue'
   | 'undocumented-verb' | 'readme-missing-command';
@@ -453,7 +458,7 @@ export async function collectRealSupply(deps: RealSupplyDeps): Promise<RealSuppl
   const reader = deps.reader ?? (deps.gh !== undefined ? ghRealSupplyReader(deps.gh) : undefined);
   if (reader === undefined) throw new Error('collectRealSupply needs an injected reader or gh');
   const now = (deps.now ?? (() => new Date()))();
-  const repos = deps.repos ?? QUEUEGEN_REPOS;
+  const repos = deps.repos ?? COMPANION_PROBE_REPOS;
   const localReader = deps.local === false ? null
     : (deps.local ?? realSupplyLocalReader(fsRealSupplyLocalIo(), deps.localRoot ?? defaultLocalRoot()));
   const [reads, local] = await Promise.all([

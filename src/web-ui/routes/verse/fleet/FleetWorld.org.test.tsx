@@ -14,8 +14,8 @@ vi.mock('./JobDetailSheet.js', () => ({ JobDetailSheet: ({ job, repo, onClose }:
 
 const AT = '2026-11-18T12:00:00Z';
 /** What GET /api/verse/fleet/control/map sends: the graph and its tree, built by the same functions as `phm org`. */
-function served(sessions: object[], lanes: object[]): FleetOrgMap {
-  const map = fleetOrgMap(null, { now: Date.parse(AT), sessions: { generatedAt: AT, sourceState: 'healthy', truncated: false, recent: [], sessions } as unknown as FleetSessionsV1 });
+function served(sessions: object[], lanes: Array<{ lane: string }>): FleetOrgMap {
+  const map = fleetOrgMap(null, { now: Date.parse(AT), observedLanes: lanes.map(row => row.lane), sessions: { generatedAt: AT, sourceState: 'healthy', truncated: false, recent: [], sessions } as unknown as FleetSessionsV1 });
   return { ...map, tree: fleetOrgTree(map, { runs: { lanes, events: [], lastTick: AT, paused: false, sources: { status: 'healthy', events: 'healthy' } } as unknown as FleetRunsDirState }) };
 }
 const lane = (name: string, running: number, target: number, extra: object = {}) => ({ lane: name, running, target, queued: 0, held: false, heldReason: null, ...extra });

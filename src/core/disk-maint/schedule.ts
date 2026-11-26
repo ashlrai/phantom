@@ -11,14 +11,16 @@ import { dailyUserSchedule, type ScheduleUnit } from '../steward/schedule.js';
 
 export const DISK_MAINT_LABEL = 'ai.ashlr.phm.disk-maint';
 
-export function diskMaintSchedule(opts: { phmPath: string; nodePath?: string; apply: boolean; hour?: number; platform?: NodeJS.Platform; home?: string }): ScheduleUnit[] {
+export function diskMaintSchedule(opts: { phmPath: string; nodePath?: string; apply: boolean; hour?: number; worktrees?: boolean; platform?: NodeJS.Platform; home?: string }): ScheduleUnit[] {
   const home = opts.home ?? homedir();
   return dailyUserSchedule({
-    label: DISK_MAINT_LABEL,
-    fileStem: 'phm-disk-maint',
-    command: ['disk-maint', ...(opts.apply ? ['--apply'] : []), '--json'],
+    label: opts.worktrees ? `${DISK_MAINT_LABEL}-worktrees` : DISK_MAINT_LABEL,
+    fileStem: opts.worktrees ? 'phm-disk-maint-worktrees' : 'phm-disk-maint',
+    command: ['disk-maint', ...(opts.apply ? ['--apply'] : []), '--json',
+      ...(opts.worktrees ? ['--only', 'worktrees-runs,worktrees-jobs'] : [])],
     description: 'Phantom disk maintenance (rebuildable reclaim)',
     minute: 43,
-    log: join(home, '.ashlr', 'logs', 'disk-maint.jsonl'),
+    everyHalfHour: opts.worktrees,
+    log: join(home, '.ashlr', 'logs', opts.worktrees ? 'disk-maint-worktrees.jsonl' : 'disk-maint.jsonl'),
   }, opts);
 }

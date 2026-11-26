@@ -15,11 +15,12 @@
  * beside the mark. Pass `title` only where the mark stands alone.
  */
 import type { CSSProperties } from 'react';
-import { BRANDS, monogramOf, resolveBrand } from '../../../core/brand/registry.js';
+import { BRANDS, isCustomLogo, monogramOf, resolveBrand } from '../../../core/brand/registry.js';
 
 export interface BrandMarkProps {
   /** Lane, pool, engine or provider name; unknown names get a monogram. */
   brand: string | null | undefined;
+  logo?: string;
   size?: number;
   /** Position when nested inside an SVG chart (e.g. a lane label). */
   x?: number;
@@ -39,7 +40,7 @@ export interface BrandMarkProps {
 /** In ems, so the nudge and the gap follow the text the mark is set in. */
 const INLINE_STYLE: CSSProperties = { verticalAlign: '-0.16em', marginInlineEnd: '0.4em' };
 
-export function BrandMark({ brand, size = 16, className, style, title, x, y, inline = false }: BrandMarkProps) {
+export function BrandMark({ brand, logo, size = 16, className, style, title, x, y, inline = false }: BrandMarkProps) {
   const id = resolveBrand(brand);
   const common = {
     x,
@@ -54,6 +55,9 @@ export function BrandMark({ brand, size = 16, className, style, title, x, y, inl
     'aria-label': title,
     focusable: 'false' as const,
   };
+  if (isCustomLogo(logo)) {
+    return <svg viewBox="0 0 24 24" {...common} data-provider="custom"><image href={logo} width="24" height="24" /></svg>;
+  }
   if (!id) {
     const letters = monogramOf(brand);
     return (
