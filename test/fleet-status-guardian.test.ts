@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cmdFleet, formatFleetStatus } from '../src/cli/fleet.js';
+import { cmdFleetHealthAge } from '../src/cli/fleet-health-age.js';
 import { readGuardianStatus } from '../src/core/fleet/guardian-doctor.js';
-import { readGuardianServiceHealth } from '../src/core/fleet/health-age.js';
+import { diagnoseGuardianHealth, readGuardianServiceHealth } from '../src/core/fleet/health-age.js';
 import { fleetStatusApi } from '../src/core/fleet/status-api.js';
 import { buildFleetStatus, type FleetStatus } from '../src/core/fleet/status.js';
 import { loadConfig } from '../src/core/config.js';
@@ -71,6 +72,47 @@ it('keeps unreadable evidence unknown and supports legacy snapshots', async () =
   expect(await readGuardianStatus({ now })).toMatchObject({ level: 'warn',
     age: { status: 'unreadable file', ageSeconds: null }, log: { source: 'degraded', recentErrors: null } });
   expect(formatFleetStatus(snapshot)).toContain('Guardian: unavailable. Next: phm fleet health-age --diagnose --json');
+});
+
+it.each([
+  ['11:59:00', 'loaded', 0, 'normal', 'healthy'],
+  ['11:30:00', 'loaded', 0, 'normal', 'healthy'],
+  ['11:29:59', 'loaded', 0, 'normal', 'stale'],
+  ['11:59:00', 'not-loaded', null, 'normal', 'unloaded'],
+  ['11:59:00', 'loaded', -9, 'normal', 'error'],
+  ['11:59:00', 'loaded', 0, 'ERROR private-detail', 'error'],
+  ['11:59:00', 'loaded', null, 'normal', 'unknown'],
+  ['11:59:00', 'unknown', null, 'normal', 'unknown'],
+  ['12:01:00', 'loaded', 0, 'normal', 'unknown'],
+  ['11:59:00', 'loaded', 0, null, 'unknown'],
+  ['11:59:00', 'loaded', 0, 'normal\nERROR private-detail', 'unknown'],
+  ['11:00:00', 'unknown', null, 'normal', 'stale'],
+  ['11:00:00', 'loaded', 0, 'ERROR private-detail', 'error'],
+  ['11:00:00', 'not-loaded', null, 'ERROR private-detail', 'unloaded'],
+] as const)('names health state for %s, %s/%s and %s as %s', async (stamp, state, lastExitCode, log, healthState) => {
+  writeFileSync(join(root, 'supervisor/status-main-guardian.md'), `# Main guardian status (2026-11-03 ${stamp})\n`);
+  if (log !== null) writeFileSync(join(root, 'guardian/guardian.log'), `2026-11-03 11:59:00 ${log}\n`);
+  const service = async () => ({ state, lastExitCode, diagnostic: 'Check user session.' });
+  vi.mocked(readGuardianServiceHealth).mockImplementation(service);
+  const before = readdirSync(root, { recursive: true });
+  const report = await readGuardianStatus({ runsDir: root, now, service });
+  expect(report.state).toBe(healthState);
+  const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+  expect(await cmdFleetHealthAge(['--diagnose', '--json'], { runsDir: root, now, service })).toBe(healthState === 'healthy' ? 0 : 1);
+  const diagnosis = JSON.parse(output.mock.lastCall![0] as string).diagnosis;
+  expect(diagnosis).toMatchObject({ state: healthState, healthy: healthState === 'healthy' });
+  expect(diagnosis.problems.map((p: { problem: string }) => p.problem).join(' ')).toBe(healthState === 'healthy' ? '' : report.reason);
+  expect(JSON.stringify(report)).not.toContain('private-detail');
+  await cmdFleetHealthAge(['--diagnose'], { runsDir: root, now, service });
+  expect(output).toHaveBeenCalledWith(`Guardian health: ${healthState}.`);
+  expect((await fleetStatusApi(root, now)).guardian.state).toBe(healthState);
+  expect(readdirSync(root, { recursive: true })).toEqual(before);
+});
+
+it('keeps unchecked evidence unknown even with a fresh status', async () => {
+  const report = await readGuardianStatus({ now });
+  expect(diagnoseGuardianHealth({ age: { ...report.age, status: 'fresh' }, service: null, log: null }))
+    .toMatchObject({ state: 'unknown', healthy: false, problems: [{ kind: 'service' }, { kind: 'log' }] });
 });
 
 it('exposes guardian evidence through fleet status text, JSON and the status API', async () => {

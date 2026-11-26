@@ -102,7 +102,8 @@ export async function readGuardianLogHealth(opts: { runsDir?: string; now?: () =
 export type GuardianLogHealth = Awaited<ReturnType<typeof readGuardianLogHealth>>;
 
 export interface GuardianProblem { kind: 'status' | 'service' | 'log'; problem: string; repair: string }
-export interface GuardianDiagnosis { healthy: boolean; problems: GuardianProblem[] }
+export type GuardianHealthState = 'healthy' | 'stale' | 'unloaded' | 'error' | 'unknown';
+export interface GuardianDiagnosis { state: GuardianHealthState; healthy: boolean; problems: GuardianProblem[] }
 
 /**
  * Pure verdict over the three read-only checks. Repairs are instructions for a
@@ -119,6 +120,7 @@ export function diagnoseGuardianHealth(input: {
       ? 'Check the system clock, then re-run this check.'
       : 'Confirm the guardian service is loaded and running; its next pass rewrites supervisor/status-main-guardian.md.' });
   }
+  if (!service) problems.push({ kind: 'service', problem: 'Service was not checked.', repair: 'Run `phm fleet health-age --diagnose --json`.' });
   if (service && service.state !== 'loaded') {
     problems.push({ kind: 'service', problem: service.state === 'not-loaded' ? 'Service is not loaded.' : 'Service state is unknown.',
       repair: service.state === 'not-loaded'
@@ -128,6 +130,7 @@ export function diagnoseGuardianHealth(input: {
     problems.push({ kind: 'service', problem: service.lastExitCode === null ? 'Last exit code was not reported.'
       : `Last exit code was ${service.lastExitCode}.`, repair: 'Read the tail of guardian/guardian.log for the failure; run `phm fleet health-age --log`.' });
   }
+  if (!log) problems.push({ kind: 'log', problem: 'Guardian log was not checked.', repair: 'Run `phm fleet health-age --diagnose --json`.' });
   if (log) {
     if (log.source !== 'healthy') problems.push({ kind: 'log', problem: `Guardian log is ${log.source}.`,
       repair: 'Check that guardian/guardian.log exists under the runs directory and is readable.' });
@@ -136,5 +139,9 @@ export function diagnoseGuardianHealth(input: {
     if (log.source === 'healthy' && log.unparseableErrors) problems.push({ kind: 'log', problem: `${log.unparseableErrors} error lines have no usable timestamp.`,
       repair: 'Inspect those lines in guardian/guardian.log; undated errors cannot be ruled out.' });
   }
-  return { healthy: problems.length === 0, problems };
+  // Preserve every problem; the state names the strongest observed failure.
+  const state: GuardianHealthState = service?.state === 'not-loaded' ? 'unloaded'
+    : (service?.lastExitCode != null && service.lastExitCode !== 0) || (log?.recentErrors ?? 0) > 0 ? 'error'
+    : age.status === 'stale' ? 'stale' : problems.length ? 'unknown' : 'healthy';
+  return { state, healthy: state === 'healthy', problems };
 }

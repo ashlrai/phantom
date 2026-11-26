@@ -28,6 +28,7 @@ export async function cmdFleetHealthAge(
     if (service) console.log(service.diagnostic);
     if (log) console.log(`Guardian log: ${log.source}; recent errors: ${log.recentErrors ?? 'unknown'}; undated errors: ${log.unparseableErrors ?? 'unknown'}.`);
     if (diagnosis) {
+      console.log(`Guardian health: ${diagnosis.state}.`);
       console.log(diagnosis.healthy ? 'Guardian is healthy.' : 'Repairs:');
       for (const p of diagnosis.problems) console.log(`- ${p.problem} ${p.repair}`);
     }
