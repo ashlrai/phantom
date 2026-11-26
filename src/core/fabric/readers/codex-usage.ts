@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { appendFile, realpath, stat } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import type { BankedResetGrant } from '../../usage/resource-live/types.js';
 
 export interface CodexUsageReading {
   pool: 'codex-cmp';
@@ -11,6 +12,7 @@ export interface CodexUsageReading {
   source: 'codex-reader';
   fetchedAt: string;
   windows?: { '5h': CodexWindow | null; weekly: CodexWindow | null };
+  resetBank?: BankedResetGrant[] | null;
 }
 
 interface CodexWindow { pctUsed: number; resetAt: string }
@@ -20,6 +22,7 @@ export interface CodexUsageOptions {
   home?: string;
   /** Append both account aliases to this usage-readings.log. Errors propagate. */
   logPath?: string;
+  includeResetBank?: boolean;
 }
 
 const MAX_OUTPUT_BYTES = 256 * 1024;
@@ -29,6 +32,25 @@ const NATIVE_ARGS = ['app-server', '--stdio', '-c', 'analytics.enabled=false',
 type ObjectValue = Record<string, unknown>;
 function object(value: unknown): value is ObjectValue {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseResetBank(payload: unknown, now: number): BankedResetGrant[] | null {
+  if (!object(payload) || !object(payload.rateLimitResetCredits)) return null;
+  const { availableCount, credits } = payload.rateLimitResetCredits;
+  if (typeof availableCount !== 'number' || !Number.isInteger(availableCount) ||
+      availableCount < 0 || availableCount > 100 || !Array.isArray(credits) || credits.length !== availableCount) return null;
+  const ids = new Set<string>();
+  const grants: BankedResetGrant[] = [];
+  for (const credit of credits) {
+    if (!object(credit) || credit.status !== 'available' || credit.resetType !== 'codexRateLimits' ||
+        typeof credit.id !== 'string' || !credit.id.trim() || ids.has(credit.id) ||
+        typeof credit.expiresAt !== 'number' || !Number.isSafeInteger(credit.expiresAt) ||
+        credit.expiresAt <= now / 1000 || credit.expiresAt > 253_402_300_799) return null;
+    ids.add(credit.id);
+    grants.push({ count: 1, kind: 'full', expires_at: new Date(credit.expiresAt * 1000).toISOString(),
+      source: 'codex-app-server' });
+  }
+  return grants;
 }
 
 /**
@@ -183,5 +205,6 @@ export async function readCodexUsage(options: CodexUsageOptions = {}): Promise<C
     await appendFile(options.logPath, rows.map(row => JSON.stringify({ ...row, used: row.pctUsed ?? 'unknown' }) + '\n').join(''),
       { mode: 0o600 });
   }
+  if (options.includeResetBank) reading.resetBank = parseResetBank(payload, Date.parse(fetchedAt));
   return reading;
 }

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { z } from 'zod';
-import { readPrivateJson, readResourceEvidenceFile } from './store.js';
+import { readPrivateJson, readResourceEvidenceFile, updateEvidence } from './store.js';
 import { RESOURCE_LIVE_STALE_MS, type BankedResetGrant, type BurnDownPlan, type BurnDownRow } from './types.js';
 
 const time = z.iso.datetime().refine(value => Number.isFinite(Date.parse(value)));
@@ -8,10 +8,22 @@ const grantSchema = z.object({
   count: z.number().int().min(1).max(100),
   kind: z.enum(['full', '5h', 'weekly']),
   expires_at: time,
-  source: z.enum(['chatgpt-settings-usage', 'owner-screenshot']),
+  source: z.enum(['codex-app-server', 'chatgpt-settings-usage', 'owner-screenshot']),
 }).strict();
 export const bankSchema = z.object({ observed_at: time, count: z.number().int().min(0).max(100), grants: z.array(grantSchema).max(100) })
   .strict().refine(row => row.grants.reduce((n, grant) => n + grant.count, 0) === row.count);
+
+export async function publishCodexResetBank(runsDir: string, observedAt: string, grants: BankedResetGrant[]): Promise<void> {
+  const bank = bankSchema.safeParse({ observed_at: observedAt, count: grants.length, grants });
+  if (!bank.success) return;
+  await updateEvidence(runsDir, async readings => {
+    const key = 'codex-personal-resets';
+    const previous = bankSchema.safeParse(readings[key]);
+    const changed = !previous.success || Date.parse(previous.data.observed_at) < Date.parse(observedAt);
+    if (changed) readings[key] = bank.data;
+    return { changed, result: undefined };
+  });
+}
 
 interface ResetInputs { observed_at: string | null; grants: BankedResetGrant[] | null; queued: number | null }
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)

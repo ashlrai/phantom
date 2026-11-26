@@ -291,6 +291,8 @@ classes require fresh matching provenance, and unrecognized classes stay unknown
 `recordResetEvidence(runsDir, count, expiries, kind, observedAt, now?)`
 atomically stores a complete, timestamped owner observation in
 `resource-evidence.v1`; older observations cannot replace newer ones.
+The personal Resource Live App Server poll records complete native reset-bank
+observations in the same evidence row; missing details do not overwrite it.
 `buildFleetResourcePlan(raw, nodes, status, ledger, now, custom?, resets?)`
 returns allowance labels and a nullable `reset_proposal` from the recent
 reset-bank and usage evidence. `GET /api/verse/world?resourcePools=1` exposes

@@ -73,6 +73,29 @@ describe('personal Codex resets', () => {
     await expect(sources['codex-personal'][1]!.read(NOW + HOUR)).resolves.toBeNull();
   });
 
+  it('publishes the personal native bank once per poll and leaves newer or unreadable evidence intact', async () => {
+    const runsDir = tmp();
+    const path = join(runsDir, 'state', 'resource-evidence.json');
+    const grant = { count: 1, kind: 'full', expires_at: iso(NOW + HOUR), source: 'codex-app-server' } as const;
+    const readCodex = vi.fn(async () => ({ fetchedAt: iso(NOW), pctUsed: null, resetAt: null,
+      resetBank: [grant] as (typeof grant)[] | null }));
+    const sources = defaultResourceLiveSources({ runsDir, operatorHome: '/Users/op', codexPersonalHome: '/pools/personal', readCodex });
+    const poll = (now: number) => Promise.all([
+      sources['codex-personal'][0]!.read(now), sources['codex-personal-5h'][0]!.read(now),
+    ]);
+    await poll(NOW);
+    expect(readCodex).toHaveBeenCalledExactlyOnceWith('/pools/personal');
+    const observed = JSON.parse(readFileSync(path, 'utf8'));
+    expect(observed).toEqual({ schema: 'resource-evidence.v1', readings: {
+      'codex-personal-resets': { count: 1, observed_at: iso(NOW), grants: [grant] },
+    } });
+    readCodex.mockResolvedValueOnce({ fetchedAt: iso(NOW + 1000), pctUsed: null, resetAt: null, resetBank: null });
+    await poll(NOW + 1000);
+    readCodex.mockResolvedValueOnce({ fetchedAt: iso(NOW - 1000), pctUsed: null, resetAt: null, resetBank: [] });
+    await poll(NOW + 2000);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(observed);
+  });
+
   it('proposes at most one expiring full reset for queued work before measured exhaustion', async () => {
     const runsDir = tmp();
     mkdirSync(join(runsDir, 'state'));

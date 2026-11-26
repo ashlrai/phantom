@@ -152,6 +152,32 @@ describe('CMP isolated status and log pipeline', () => {
     expect(stdout).not.toHaveBeenCalled(); expect(stderr).not.toHaveBeenCalled();
   });
 
+  it('reads expiring full resets through the existing metadata exchange without retaining provider IDs', async () => {
+    const credits = [
+      { id: 'credit-one', resetType: 'codexRateLimits', status: 'available', expiresAt: RESET },
+      { id: 'credit-two', resetType: 'codexRateLimits', status: 'available', expiresAt: RESET + 86_400 },
+    ];
+    nativePayload = { ...payload(), rateLimitResetCredits: { availableCount: 2, credits } };
+    const reading = await readCodexUsage({ home, includeResetBank: true });
+    expect(reading.resetBank).toEqual(credits.map(credit => ({
+      count: 1, kind: 'full', source: 'codex-app-server', expires_at: new Date(credit.expiresAt * 1000).toISOString(),
+    })));
+    expect(sent.map(row => row.method)).toEqual(['initialize', 'initialized', 'account/rateLimits/read']);
+    expect((await readCodexUsage({ home })).resetBank).toBeUndefined();
+  });
+
+  it('preserves an explicitly empty bank but does not infer counts or expiries from incomplete details', async () => {
+    const credit = { id: 'credit-one', resetType: 'codexRateLimits', status: 'available', expiresAt: RESET };
+    nativePayload = payload();
+    expect((await readCodexUsage({ home, includeResetBank: true })).resetBank).toBeNull();
+    nativePayload = { ...payload(), rateLimitResetCredits: { availableCount: 0, credits: [] } };
+    expect((await readCodexUsage({ home, includeResetBank: true })).resetBank).toEqual([]);
+    for (const credits of [null, [credit], [credit, credit], [credit, { ...credit, id: 'other', expiresAt: null }]]) {
+      nativePayload = { ...payload(), rateLimitResetCredits: { availableCount: 2, credits } };
+      expect((await readCodexUsage({ home, includeResetBank: true })).resetBank).toBeNull();
+    }
+  });
+
   it('reports each personal window by duration without changing the binding percentage', async () => {
     nativePayload = payload({ ...window(45, RESET + 86400), windowDurationMins: 10_080 }, window(91));
     const reading = await readCodexUsage({ home, logPath: join(root, 'usage-readings.log') });
