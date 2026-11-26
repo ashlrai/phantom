@@ -714,7 +714,10 @@ check observations split on recorded `required: true`),
 the coverage `check_failures` counts the failure subset of),
 `retries`/`retry_failures` (distinct `at`+`head_sha` pairs, so a
 replayed append counts once), `recuts` and `auto_merge` (the last
-recorded toggle in append order). The evidence is post-publish
+recorded toggle in append order). A timestamped receipt replayed as an
+identical JSONL line counts once at its first position in the retained
+ledger, so a replay cannot change the standing toggle. Untimed receipts
+keep their append order and count. The evidence is post-publish
 queue-side context — it never replaces the jobs ledger's merge
 verdict and never feeds routing by itself. The same joined check
 record also resolves `ci_first_pass`

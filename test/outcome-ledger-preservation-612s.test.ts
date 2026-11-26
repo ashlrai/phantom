@@ -2070,7 +2070,7 @@ describe('router outcome merge-events join', () => {
         mergeEvent(7, 'queued'),
         mergeEvent(7, 'blocked', { reason: 'required_checks' }),
         mergeEvent(7, 'blocked', { reason: 'review' }),
-        mergeEvent(7, 'blocked', { reason: 'required_checks' }),   // repeat reason: distinct once
+        mergeEvent(7, 'blocked', { reason: 'required_checks', at: '2026-11-21T01:00:00Z' }), // repeat reason: distinct once
         mergeEvent(7, 'check_observed', { conclusion: 'failure', required: true }),
         mergeEvent(7, 'check_observed', { conclusion: 'failure' }), // unrelated failure still counts
         mergeEvent(7, 'check_observed', { conclusion: 'success', required: true }),
@@ -2082,7 +2082,7 @@ describe('router outcome merge-events join', () => {
         mergeEvent(7, 'retry_requested', { head_sha: 'def456', at: '2026-11-21T01:00:00Z' }),
         mergeEvent(7, 'retry_failed', { head_sha: 'abc123' }),
         mergeEvent(7, 'recut_requested', { head_sha: 'abc123' }),
-        mergeEvent(7, 'recut_requested', { head_sha: 'abc123' }),   // recuts count rows, not dedupe
+        mergeEvent(7, 'recut_requested', { head_sha: 'abc123', at: '2026-11-21T01:00:00Z' }),
       ],
     ].map(r => typeof r === 'string' ? r : JSON.stringify(r)).join('\n'));
     // The three untimed terminals plus the seventeen timed rows for PR 7 qualify.
@@ -2100,6 +2100,28 @@ describe('router outcome merge-events join', () => {
       auto_merge: 'disabled',
     } satisfies MergeQueueEvidence);
     expect(events.size).toBe(1);
+  });
+
+  it('counts exact timestamped replays once and preserves the latest auto-merge toggle', () => {
+    const enabled = mergeEvent(7, 'auto_merge_enabled');
+    const failed = mergeEvent(7, 'check_observed', { conclusion: 'failure', required: true, head_sha: 'abc123' });
+    const recut = mergeEvent(7, 'recut_requested', { head_sha: 'abc123' });
+    const disabled = mergeEvent(7, 'auto_merge_disabled', { at: '2026-11-21T01:00:00Z' });
+    const untimed = { repo: 'ashlrai/phantom', pr: 7, type: 'closed' };
+    const events = foldMergeEvents([
+      enabled, failed, recut,
+      disabled, { ...failed, head_sha: 'def456' }, { ...recut, at: '2026-11-21T01:00:00Z' },
+      enabled, failed, recut, untimed, untimed,
+    ].map(row => JSON.stringify(row)).join('\n'));
+
+    expect(events.get('ashlrai/phantom#7')).toMatchObject({
+      events: 8,
+      check_failures: 2,
+      required_check_failures: 2,
+      check_observations: 2,
+      recuts: 2,
+      auto_merge: 'disabled',
+    });
   });
 
   it('joins merge_queue through each job\'s newest unambiguous canonical PR claim only', () => {
