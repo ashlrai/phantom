@@ -75,10 +75,12 @@ marked "not joined" with its one join command (`phm node join`, run on that
 computer); `--json` adds `discovered` with the same rows, and every row carries
 `joined` and `joinCommand`. The desktop Computers pane draws not-joined computers
 grey and joined ones in color from the same JSON.
-It is read only: it reads `tailscale status` and the node list already on
-this computer, and changes nothing. A fact it cannot confirm (Tailscale missing,
-the node list on another computer) is `unknown` with the reason. The desktop
-Computers pane shows the same rows as cards.
+It is read only: it reads `tailscale status` — the CLI on PATH, or the copy
+bundled in the macOS app and the usual install locations, so a standard
+Tailscale.app install counts without a PATH entry — and the node list already
+on this computer, and changes nothing. A fact it cannot confirm (Tailscale
+missing, the node list on another computer) is `unknown` with the reason. The
+desktop Computers pane shows the same rows as cards.
 
 Then run one bounded worker batch:
 
