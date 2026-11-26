@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { defaultNodesViewDeps, readNodesView, type NodeRow } from '../../fleet/nodes-view.js';
+import { capServesLane, defaultNodesViewDeps, readNodesView, type NodeRow } from '../../fleet/nodes-view.js';
 import { readJobsTail, type JobsTailRead } from '../../fleet/report-ledger.js';
 import { readResourceQueue } from '../../fleet/resource-queue.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
@@ -122,7 +122,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const candidates = allowances.filter(row => row.lane === name);
     const active = candidates.filter(row => row.action === 'burn' && row.remaining !== null && row.jobs_per_slot !== null &&
       row.jobs_per_slot > 0 && row.estimated_quota_per_job !== null);
-    const eligible = machines.flatMap((row, index) => row.lanes?.includes(name) ? [index] : []);
+    const eligible = machines.flatMap((row, index) => row.lanes?.some(cap => capServesLane(cap, name)) ? [index] : []);
     if (lane.running === null || lane.max_concurrency === null || lane.queued_jobs === null || lane.held === null) continue;
     if (lane.held || lane.queued_jobs === 0 || lane.running >= lane.max_concurrency || candidates.some(row => row.action === 'hold')) {
       lane.target_concurrency = lane.running;

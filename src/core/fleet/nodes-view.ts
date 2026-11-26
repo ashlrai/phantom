@@ -249,10 +249,24 @@ export function buildNodesView(
   return { schema: NODES_SCHEMA, schemaVersion: 1, asOf, self: selfName, registry: registry?.source ?? UNKNOWN, nodes, reasons };
 }
 
+/** The oMLX cap family a node advertises for local-model work: `omlx` plus
+ * per-tier `omlx-<tier>` caps (drive/nodes/local-model-caps.ts). Runner packs
+ * advertise as `pack:<name>`, so the prefix never claims one. */
+const isLocalModelCap = (cap: string): boolean => cap === 'omlx' || cap.startsWith('omlx-');
+
+/** True when an advertised node cap serves `lane`. Provider lanes share their
+ * cap name; `local-model` is the doctor/`--can-take` report name for the oMLX
+ * family the worker actually publishes, so it is served by `omlx` caps —
+ * never by the category name itself or a `pack:*` runner cap. */
+export function capServesLane(cap: string, lane: string): boolean {
+  return lane === 'local-model' ? isLocalModelCap(cap) : cap === lane;
+}
+
 /** Require confirmed reachability, free slots and a live advertisement for the lane. */
 export function nodesThatCanTake(view: NodesView, lane: string): NodeRow[] {
   return view.nodes.filter(node => node.stateCode === 'ready' && node.reachable === true
-    && typeof node.freeSlots === 'number' && node.freeSlots > 0 && node.lanes !== UNKNOWN && node.lanes.includes(lane));
+    && typeof node.freeSlots === 'number' && node.freeSlots > 0 && node.lanes !== UNKNOWN
+    && node.lanes.some(cap => capServesLane(cap, lane)));
 }
 
 export interface NodePlacement {

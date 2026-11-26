@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { binaryCandidates } from '../drive/nodes/provider-binary.js';
 import { aliasMatches } from './pool-reach.js';
 import { UNKNOWN } from './runtime-identity.js';
-import { readNodesRegistry, readNodesView, type NodeRow, type NodesViewDeps } from './nodes-view.js';
+import { capServesLane, readNodesRegistry, readNodesView, type NodeRow, type NodesViewDeps } from './nodes-view.js';
 
 export const NODES_DOCTOR_SCHEMA = 'phantom.nodes-doctor.v1';
 /** Below this the node pool already holds jobs (see drive/nodes/capacity.ts). */
@@ -95,7 +95,8 @@ function laneStatus(lane: DoctorLane, probe: NodeProbeReply | null, caps: string
     return { lane, status: 'unknown', reason: `${lane} is installed but has no sign-in check Phantom can run` };
   }
   // No probe: a lane the node advertised in its heartbeat is installed and signed in.
-  if (caps !== UNKNOWN && caps.includes(lane)) return { lane, status: 'ready' };
+  // `local-model` is the report name; the advertisement is the oMLX cap family.
+  if (caps !== UNKNOWN && caps.some(cap => capServesLane(cap, lane))) return { lane, status: 'ready' };
   return { lane, status: 'unknown', reason: `${lane} is not advertised; installed or signed out is unknown until remote checks exist` };
 }
 

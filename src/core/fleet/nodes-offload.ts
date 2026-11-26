@@ -20,10 +20,10 @@ import type { QueueOrderJob, QueueOrderV1 } from '../queue/order-types.js';
 import { hostLoadTone, type HostLoad } from './host-load.js';
 import type { LoadAdmission } from './load-owners.js';
 import type { EngineAdmissionView } from './engine-admission-view.js';
-import { readNodesDoctor, type NodesDoctor, type NodesDoctorDeps } from './nodes-doctor.js';
+import { readNodesDoctor, type DoctorNode, type NodesDoctor, type NodesDoctorDeps } from './nodes-doctor.js';
 import { PLAN_JOB_LIMIT } from './nodes-plan.js';
 import { UNKNOWN } from './runtime-identity.js';
-import { readNodesView, type NodeRow, type NodesView } from './nodes-view.js';
+import { capServesLane, readNodesView, type NodeRow, type NodesView } from './nodes-view.js';
 
 export const NODES_OFFLOAD_SCHEMA = 'phantom.nodes-offload.v1';
 export const NODES_OFFLOAD_EVENT_SCHEMA = 'phantom.nodes-offload-event.v1';
@@ -101,6 +101,22 @@ export interface OffloadInputs {
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** The job lanes this computer can serve: the advertised caps a doctor-ready
+ * lane vouches for. Provider lanes share their cap name; `local-model` is the
+ * report category for the oMLX family (`omlx`, `omlx-<tier>`), so it serves
+ * exactly the advertised omlx caps — never the category name or a `pack:*`
+ * runner cap. A lane the node did not advertise serves nothing: the worker's
+ * requires check would refuse the job. */
+function servableLanes(row: NodeRow, report: DoctorNode): Set<string> {
+  const lanes = new Set<string>();
+  if (row.lanes === UNKNOWN) return lanes;
+  for (const check of report.lanes) {
+    if (check.status !== 'ready') continue;
+    for (const cap of row.lanes) if (capServesLane(cap, check.lane)) lanes.add(cap);
+  }
+  return lanes;
+}
+
 function candidates(view: NodesView, doctor: NodesDoctor, reasons: string[]): Array<{ row: NodeRow; lanes: Set<string>; slots: number }> {
   const out: Array<{ row: NodeRow; lanes: Set<string>; slots: number }> = [];
   for (const row of view.nodes) {
@@ -110,7 +126,7 @@ function candidates(view: NodesView, doctor: NodesDoctor, reasons: string[]): Ar
     if (!report.ready) { reasons.push(`${row.name} does not pass \`phm nodes doctor\` yet${report.unknowns.length ? ' (some facts are unknown)' : ''}`); continue; }
     if (row.stateCode !== 'ready' || row.reachable !== true) { reasons.push(`${row.name} is not ready: ${row.state}`); continue; }
     if (typeof row.freeSlots !== 'number') { reasons.push(`${row.name}: free slots unknown`); continue; }
-    if (row.freeSlots > 0) out.push({ row, lanes: new Set(report.lanes.filter(l => l.status === 'ready').map(l => l.lane)), slots: row.freeSlots });
+    if (row.freeSlots > 0) out.push({ row, lanes: servableLanes(row, report), slots: row.freeSlots });
   }
   return out;
 }

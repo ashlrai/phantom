@@ -13,7 +13,7 @@
  * counted in `unassigned` and grouped by lane in `unassigned_reasons` with
  * the plain reason, so a starving lane is visible instead of a bare count.
  */
-import { chooseNodeForLane, readNodesView, type NodeRow, type NodesView, type NodesViewDeps } from './nodes-view.js';
+import { capServesLane, chooseNodeForLane, readNodesView, type NodeRow, type NodesView, type NodesViewDeps } from './nodes-view.js';
 import { UNKNOWN } from './runtime-identity.js';
 import type { QueueOrderJob, QueueOrderV1 } from '../queue/order-types.js';
 
@@ -67,7 +67,7 @@ export function planNode(node: NodeRow): PlanNode {
 
 /** Plain words for why no computer could take a job for `lane` at this point in the plan. */
 function noReadyNodeWhy(pool: NodesView, lane: string): string {
-  const advertisers = pool.nodes.filter(node => node.lanes !== UNKNOWN && node.lanes.includes(lane));
+  const advertisers = pool.nodes.filter(node => node.lanes !== UNKNOWN && node.lanes.some(cap => capServesLane(cap, lane)));
   if (advertisers.length === 0) return `no computer advertises the ${lane} lane`;
   const states = new Map<string, number>();
   for (const node of advertisers) {

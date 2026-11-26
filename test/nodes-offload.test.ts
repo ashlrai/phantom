@@ -104,6 +104,25 @@ describe('nodes offload', () => {
     expect(unknown.moves).toEqual([]);
   });
 
+  it('omlx jobs move only to nodes advertising the omlx caps the doctor vouches for', async () => {
+    // The queue lane is `omlx`; `local-model` is the doctor's report name.
+    // node-b advertises the oMLX family, so its two free slots take the two
+    // omlx jobs; the third waits. Without the advertisement the same doctor
+    // answer serves nothing — the worker's requires check would refuse it.
+    const withOmlx = await readNodesOffload(deps(busy, {
+      nodes: [node('node-a'), node('node-b', { caps: ['claude', 'codex', 'omlx', 'omlx-work'] })],
+      jobs: [job('j1', 'omlx', 1), job('j2', 'omlx-work', 2), job('j3', 'omlx', 3)],
+    }), { dryRun: true });
+    expect(withOmlx.moves.map(m => [m.job, m.node])).toEqual([['j1', 'node-b'], ['j2', 'node-b']]);
+    expect(withOmlx.stays).toEqual([{ job: 'j3', lane: 'omlx', why: 'no ready computer has a free omlx slot; waiting here' }]);
+    const without = await readNodesOffload(deps(busy, {
+      nodes: [node('node-a'), node('node-b')],
+      jobs: [job('j1', 'omlx', 1)],
+    }), { dryRun: true });
+    expect(without.moves).toEqual([]);
+    expect(without.stays).toEqual([{ job: 'j1', lane: 'omlx', why: 'no ready computer has a free omlx slot; waiting here' }]);
+  });
+
   it('assessHostGuard: the launch guard speaks first; load ratio only when it is silent', () => {
     const silent = { ...fine, admission: { ...fine.admission, state: 'unknown' as const }, load: { ...fine.load, ratio: 4.5 } };
     expect(assessHostGuard(silent)).toMatchObject({ state: 'busy', reasons: ['load'] });

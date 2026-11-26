@@ -257,6 +257,21 @@ describe('chooseNodeForLane', () => {
     expect(nodesThatCanTake(view, 'phm-3.30.77')).toEqual([]);
     expect(chooseNodeForLane(view, 'phm-3.30.77')).toMatchObject({ node: null, reason: 'no-ready-node' });
   });
+
+  it('local-model is the oMLX cap family: omlx caps serve it, pack caps do not', () => {
+    // Workers advertise `omlx`/`omlx-<tier>` and the queue routes lane `omlx`;
+    // `local-model` is only the report name. A `pack:omlx-chat` runner cap is
+    // not a model lane and must not count.
+    const view = readNodesView(deps(tailnet([peer('node-b', true), peer('node-c', true)]), registry([
+      node('node-a'),
+      node('node-b', { caps: ['omlx', 'omlx-work', 'pack:omlx-chat'] }),
+      node('node-c', { caps: ['pack:omlx-chat'] }),
+    ])));
+    expect(nodesThatCanTake(view, 'local-model').map(row => row.name)).toEqual(['node-b']);
+    expect(nodesThatCanTake(view, 'omlx').map(row => row.name)).toEqual(['node-b']);
+    expect(nodesThatCanTake(view, 'omlx-work').map(row => row.name)).toEqual(['node-b']);
+    expect(chooseNodeForLane(view, 'local-model')).toMatchObject({ node: 'node-b', target: 'remote', reason: 'remote-ready' });
+  });
 });
 
 describe('machines: one, two with one offline, none', () => {
