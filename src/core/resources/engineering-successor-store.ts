@@ -1,25 +1,23 @@
 /** Shared immutable successor journal. Reads never acquire leases or publish records. */
-import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
-import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
-import { canonical, digest } from '../universe/artifacts.js';
+import { basename, dirname, join } from 'node:path';
+import { canonical } from '../universe/artifacts.js';
 import { readImmutablePrivateRecords, type ImmutablePrivateRecordStoreConfig, type ImmutablePrivateRecordReadResult,
   type ImmutablePrivateRecordReadStopReason } from '../util/immutable-private-record-store.js';
 import type { ResourceConsoleProjectBinding } from './console-projects.js';
 import { validateResourceTask, type ResourceTask } from './pool-runtime.js';
 import { ResourceSupervisorError } from './pool-supervisor.js';
+import { cloneCanonicalEngineeringData, engineeringDigest, failResourceSupervisor,
+  hasExactEngineeringOwnKeys as exact, isBoundedEngineeringText as text, isCanonicalAbsoluteNonRootPath,
+  isEngineeringCommit, isEngineeringHash, isEngineeringId, isEngineeringInteger as integer,
+  isEngineeringIsoTimestamp } from './engineering-shared.js';
 import type { ResourceEngineeringSuccessorCoordinatorConfig as Config, ResourceEngineeringSuccessorCoordinatorSnapshot as Snapshot,
   ResourceEngineeringSuccessorEvidence as Evidence, ResourceEngineeringSuccessorProposal as Proposal } from './engineering-successor-coordinator-types.js';
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/; const HASH = /^[a-f0-9]{64}$/; const KEY = /^[a-f0-9]{48}$/;
+const KEY = /^[a-f0-9]{48}$/;
 // Source context also appears inside the escaped canonical task prompt. Keep
 // the record bound above that worst-case representation, not just text bytes.
 const MAX_BYTES = 128 * 1024; const MAX_OUTPUT = 16 * 1024;
-export const hash = (value: unknown) => digest(canonical(value));
-const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value) &&
-  Reflect.ownKeys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
-const integer = (value: unknown, low: number, high: number): value is number => Number.isSafeInteger(value) && Number(value) >= low && Number(value) <= high;
-const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= max &&
-  [...value].every(character => { const code = character.charCodeAt(0); return code === 9 || code === 10 || code === 13 || code >= 32 && code < 127 || code >= 160; });
-function fail(message: string): never { throw new ResourceSupervisorError('UNAVAILABLE', message); }
+export const hash = (value: unknown) => engineeringDigest(value);
+function fail(message: string): never { failResourceSupervisor('UNAVAILABLE', message); }
 /** Read-only retry hint, never authority to recover a writer or use partial records. */
 export class EngineeringSuccessorJournalReadError extends ResourceSupervisorError {
   readonly stopReasons: readonly ImmutablePrivateRecordReadStopReason[];
@@ -35,16 +33,14 @@ export class EngineeringSuccessorJournalReadError extends ResourceSupervisorErro
   }
 }
 export function data<T>(value: unknown): T {
-  const serialized = canonicalEvidencePackJsonV3(value);
-  if (serialized === null || Buffer.byteLength(serialized) > MAX_BYTES) fail('Invalid successor evidence');
-  return JSON.parse(serialized) as T;
+  return cloneCanonicalEngineeringData<T>(value, MAX_BYTES, () => fail('Invalid successor evidence'));
 }
 export function validateResourceEngineeringSuccessorCoordinatorConfig(value: unknown): Config {
   const config = data<Config>(value);
   if (!exact(config, ['schemaVersion', 'supervisionId', 'profileId', 'allowedWorkerIds', 'maxOutputTokens', 'proposalTimeoutMs', 'maxSuccessors', 'pollIntervalMs']) ||
-    config.schemaVersion !== 1 || ![config.supervisionId, config.profileId].every(value => typeof value === 'string' && ID.test(value)) ||
+    config.schemaVersion !== 1 || ![config.supervisionId, config.profileId].every(isEngineeringId) ||
     !Array.isArray(config.allowedWorkerIds) || config.allowedWorkerIds.length < 1 ||
-    config.allowedWorkerIds.some(value => typeof value !== 'string' || !ID.test(value)) || new Set(config.allowedWorkerIds).size !== config.allowedWorkerIds.length ||
+    config.allowedWorkerIds.some(value => !isEngineeringId(value)) || new Set(config.allowedWorkerIds).size !== config.allowedWorkerIds.length ||
     !integer(config.maxOutputTokens, 1, 8192) || !integer(config.proposalTimeoutMs, 1, 900_000) ||
     !integer(config.maxSuccessors, 1, 32) || !integer(config.pollIntervalMs, 100, 60_000)) fail('Invalid successor configuration');
   return config;
@@ -52,9 +48,9 @@ export function validateResourceEngineeringSuccessorCoordinatorConfig(value: unk
 export function evidence(value: unknown): Evidence {
   const source = data<Evidence>(value);
   if (!exact(source, ['enrollmentId', 'enrollmentDigest', 'projectId', 'deliveryDigest', 'commit', 'objective', 'context']) ||
-    ![source.enrollmentId, source.projectId].every(value => typeof value === 'string' && ID.test(value)) ||
-    ![source.enrollmentDigest, source.deliveryDigest].every(value => typeof value === 'string' && HASH.test(value)) ||
-    typeof source.commit !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(source.commit) || !text(source.objective, 4000) || !text(source.context, 8192)) fail('Invalid successor source');
+    ![source.enrollmentId, source.projectId].every(isEngineeringId) ||
+    ![source.enrollmentDigest, source.deliveryDigest].every(isEngineeringHash) ||
+    !isEngineeringCommit(source.commit) || !text(source.objective, 4000) || !text(source.context, 8192)) fail('Invalid successor source');
   return source;
 }
 export function parseResourceEngineeringSuccessorProposal(output: string): Proposal {
@@ -78,8 +74,8 @@ function decode(input: unknown): DurableRecord | null {
     if (!value || typeof value !== 'object') return null;
     if (value.kind === 'enrollment') {
       if (!exact(value, ['id', 'kind', 'configDigest', 'supervisionDigest', 'deadlineAt', 'poolDigest', 'cwd']) || value.id !== 'enrollment' ||
-        ![value.configDigest, value.supervisionDigest, value.poolDigest].every(v => typeof v === 'string' && HASH.test(v)) ||
-        typeof value.deadlineAt !== 'string' || !Number.isFinite(Date.parse(value.deadlineAt)) || new Date(value.deadlineAt).toISOString() !== value.deadlineAt ||
+        ![value.configDigest, value.supervisionDigest, value.poolDigest].every(isEngineeringHash) ||
+        !isEngineeringIsoTimestamp(value.deadlineAt) ||
         !exact(value.cwd, ['id', 'label', 'workspace', 'dev', 'ino']) || !text(value.cwd.workspace, 4096) ||
         ![value.cwd.dev, value.cwd.ino].every(v => typeof v === 'string' && /^\d+$/.test(v))) return null;
       return value;
@@ -89,13 +85,13 @@ function decode(input: unknown): DurableRecord | null {
       if (!exact(value, ['id', 'kind', 'key', 'source', 'task', 'successorId']) || value.successorId !== `successor-${value.key}`) return null;
       evidence(value.source); validateResourceTask(value.task); return value;
     }
-    if (!HASH.test(value.intentDigest)) return null;
-    if (value.kind === 'result' && exact(value, ['id', 'kind', 'key', 'intentDigest', 'receiptDigest', 'output']) && HASH.test(value.receiptDigest)) {
+    if (!isEngineeringHash(value.intentDigest)) return null;
+    if (value.kind === 'result' && exact(value, ['id', 'kind', 'key', 'intentDigest', 'receiptDigest', 'output']) && isEngineeringHash(value.receiptDigest)) {
       parseResourceEngineeringSuccessorProposal(value.output); return value;
     }
     if (value.kind === 'prepared' && exact(value, ['id', 'kind', 'key', 'intentDigest', 'enrollmentId', 'enrollmentDigest', 'projectId']) &&
-      value.enrollmentId === `successor-${value.key}` && HASH.test(value.enrollmentDigest) && ID.test(value.projectId)) return value;
-    if (value.kind === 'admitted' && exact(value, ['id', 'kind', 'key', 'intentDigest', 'enrollmentDigest']) && HASH.test(value.enrollmentDigest)) return value;
+      value.enrollmentId === `successor-${value.key}` && isEngineeringHash(value.enrollmentDigest) && isEngineeringId(value.projectId)) return value;
+    if (value.kind === 'admitted' && exact(value, ['id', 'kind', 'key', 'intentDigest', 'enrollmentDigest']) && isEngineeringHash(value.enrollmentDigest)) return value;
     return null;
   } catch { return null; }
 }
@@ -113,15 +109,13 @@ export interface ResourceEngineeringSuccessorJournalScope { directory: string; c
 export type JournalScope = ResourceEngineeringSuccessorJournalScope;
 function validateScope(input: JournalScope): JournalScope {
   const scope = data<JournalScope>(input);
-  if (!exact(scope, ['directory', 'config', 'expectedEnrollment']) || typeof scope.directory !== 'string' ||
-    !isAbsolute(scope.directory) || resolve(scope.directory) !== scope.directory || parse(scope.directory).root === scope.directory) fail('Invalid successor observation scope');
+  if (!exact(scope, ['directory', 'config', 'expectedEnrollment']) || !isCanonicalAbsoluteNonRootPath(scope.directory)) fail('Invalid successor observation scope');
   const config = validateResourceEngineeringSuccessorCoordinatorConfig(scope.config);
   const expected = decode(scope.expectedEnrollment);
   if (expected?.kind !== 'enrollment' || expected.configDigest !== hash(config) ||
     basename(scope.directory) !== config.supervisionId || basename(dirname(scope.directory)) !== 'engineering-successors' ||
     expected.cwd.id !== 'proposal' || expected.cwd.label !== 'Proposal workspace' ||
-    !isAbsolute(expected.cwd.workspace) || resolve(expected.cwd.workspace) !== expected.cwd.workspace ||
-    parse(expected.cwd.workspace).root === expected.cwd.workspace) fail('Invalid successor observation pins');
+    !isCanonicalAbsoluteNonRootPath(expected.cwd.workspace)) fail('Invalid successor observation pins');
   return { directory: scope.directory, config, expectedEnrollment: expected };
 }
 export function engineeringSuccessorKey(scope: JournalScope, source: Evidence): string { return hash({ configDigest: scope.expectedEnrollment.configDigest, supervisionDigest: scope.expectedEnrollment.supervisionDigest, deadlineAt: scope.expectedEnrollment.deadlineAt, source }).slice(0, 48); }

@@ -1,4 +1,4 @@
-import { resourceCheckOptions, resourceCheckPath, ResourceCheckUsageError } from './resource-check-options.js';
+import { quoteAshlrCommand, reportResourceCheckError, resourceCheckOptions, resourceCheckPath, resourceCheckSha256, ResourceCheckUsageError } from './resource-check-options.js';
 
 const USAGE = `usage: ashlr resources pool engineering setup --recipe ABS --policy ABS --output ABS
        --resource-runtime ABS --workspace ABS --projects ABS
@@ -39,7 +39,6 @@ an installed resident service or a production deployment.
 Exit codes: 0 planned/prepared/help, 1 unavailable/conflict, 2 invalid arguments.
 `;
 const PATHS = ['--recipe', '--policy', '--output', '--resource-runtime', '--workspace', '--projects'];
-const quoteCommand = (args: string[]) => `node bin/ashlr ${args.map(arg => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')}`;
 
 export async function cmdResourceEngineeringSetup(args: string[]): Promise<number> {
   try {
@@ -54,15 +53,14 @@ export async function cmdResourceEngineeringSetup(args: string[]): Promise<numbe
     const paths = { output: resourceCheckPath(parsed.values, '--output'),
       resourceRuntime: resourceCheckPath(parsed.values, '--resource-runtime'),
       workspace: resourceCheckPath(parsed.values, '--workspace'), projectsFile: resourceCheckPath(parsed.values, '--projects') };
-    const expected = parsed.values.get('--expected-plan-digest');
-    if (expected !== undefined && !/^[a-f0-9]{64}$/.test(expected)) throw new ResourceCheckUsageError('Expected a SHA256 setup digest');
+    const expected = resourceCheckSha256(parsed.values, '--expected-plan-digest', 'Expected a SHA256 setup digest');
     const [{ readResourceJson }, backend] = await Promise.all([
       import('../core/resources/pool-runtime.js'), import('../core/resources/engineering-autonomous-setup.js'),
     ]);
     const options = { ...paths, recipe: readResourceJson(recipeFile, 128 * 1024), policy: readResourceJson(policyFile, 16 * 1024) };
-    const plan = await backend.checkResourceEngineeringAutonomousSetup(options);
+    const plan = backend.checkResourceEngineeringAutonomousSetup(options);
     if (expected !== undefined && expected !== plan.planDigest) throw new Error('Setup plan changed');
-    const result = checks ? plan : await backend.prepareResourceEngineeringAutonomousSetup({ ...options,
+    const result = checks ? plan : backend.prepareResourceEngineeringAutonomousSetup({ ...options,
       expectedPlanDigest: expected ?? plan.planDigest });
     const serialized = JSON.stringify(result);
     if (Buffer.byteLength(serialized) > 512 * 1024) throw new Error('Setup report exceeds bound');
@@ -72,16 +70,14 @@ export async function cmdResourceEngineeringSetup(args: string[]): Promise<numbe
       `Output: ${paths.output}`,
       `Known local holds: ${result.holds.join(', ') || 'none observed; capacity is not attested'}`,
       ...(result.status === 'prepared' ? [
-        `Start the foreground console (effectful, from the built source checkout): ${quoteCommand(result.consoleArguments)}`,
+        `Start the foreground console (effectful, from the built source checkout): ${quoteAshlrCommand(result.consoleArguments)}`,
       ] : ['Check only: no artifacts, registration or runtime effects.']),
       'Returned console arguments are not executed. No worker, evaluator, collector, console or service started.',
       'Account reserves, stop state and shared usage history remain unchanged. Setup is not provider commissioning or production activation.',
     ].join('\n'));
     return 0;
   } catch (error) {
-    const message = error instanceof ResourceCheckUsageError ? error.message
-      : 'Autonomous engineering setup unavailable; inspect the selected inputs, console ownership and any retained partial setup';
-    if (args.includes('--json')) console.log(JSON.stringify({ error: message })); else console.error(message);
-    return error instanceof ResourceCheckUsageError ? 2 : 1;
+    return reportResourceCheckError(args, error,
+      'Autonomous engineering setup unavailable; inspect the selected inputs, console ownership and any retained partial setup');
   }
 }

@@ -1,6 +1,5 @@
 /** Fixed, effectful engineering entrypoint. All acquired locks stay in this isolate. */
 import { parentPort, workerData } from 'node:worker_threads';
-import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
 import { createResourceConsoleEngineeringPreparation, ResourceEngineeringAutomaticAdmissionOwnershipError, type ResourceConsoleEngineeringPreparationOwner } from './console-engineering-preparation.js';
 import { createResourceConsoleEngineeringSuccessors } from './console-engineering-successors.js';
 import type { ResourceConsoleEngineeringOwner } from './console-engineering.js';
@@ -8,6 +7,7 @@ import type { ResourcePoolSupervisor } from './pool-supervisor.js';
 import type { ResourceConsoleEngineeringSupervisor } from './console-engineering-supervisor.js';
 import { createEngineeringWorkerRpcClient } from './engineering-worker-rpc.js';
 import { createEngineeringBackgroundHostCalls } from './engineering-background-errors.js';
+import { cloneCanonicalEngineeringData } from './engineering-shared.js';
 import type { EngineeringBackgroundPreparation, EngineeringBackgroundSuccessors } from './engineering-background-types.js';
 
 const port = parentPort;
@@ -30,11 +30,8 @@ let closing = false; let initialized = false; let startRequested = false;
 let sequence = 0; let pending = 0; let queue = Promise.resolve();
 let scheduledStart: ReturnType<typeof setImmediate> | undefined;
 const MAX_BYTES = 2 * 1024 * 1024;
-function data<T>(value: unknown): T {
-  const serialized = canonicalEvidencePackJsonV3(value);
-  if (serialized === null || Buffer.byteLength(serialized) > MAX_BYTES) throw new Error('Invalid engineering worker data');
-  return JSON.parse(serialized) as T;
-}
+const data = <T>(value: unknown): T =>
+  cloneCanonicalEngineeringData<T>(value, MAX_BYTES, () => { throw new Error('Invalid engineering worker data'); });
 function open(): void { if (closing || rpc.isClosed()) throw new Error('Engineering worker closed'); }
 // These are transport capabilities, not fabricated owners: every call executes
 // the original parent's method. No parent lease or prepared handler is copied.

@@ -1,4 +1,4 @@
-import { resourceCheckOptions, resourceCheckPath, ResourceCheckUsageError } from './resource-check-options.js';
+import { reportResourceCheckError, resourceCheckOptions, resourceCheckPath, resourceCheckSha256, ResourceCheckUsageError } from './resource-check-options.js';
 
 const USAGE = `usage: ashlr resources pool engineering mission check --config ABS [--json]
        ashlr resources pool engineering mission status --config ABS [--json]
@@ -35,8 +35,7 @@ export async function cmdResourceEngineeringMission(args: string[]): Promise<num
     const parsed = resourceCheckOptions(['check', ...args.slice(1).filter(value => value !== '--execute')], ['--config', '--expected-config-digest']);
     if (parsed.help) throw new ResourceCheckUsageError('Help must be used alone');
     const file = resourceCheckPath(parsed.values, '--config');
-    const expected = parsed.values.get('--expected-config-digest');
-    if (mode === 'run' && expected === undefined || expected !== undefined && !/^[a-f0-9]{64}$/.test(expected)) throw new ResourceCheckUsageError('Run requires the checked SHA256 configuration digest');
+    const expected = resourceCheckSha256(parsed.values, '--expected-config-digest', 'Run requires the checked SHA256 configuration digest', mode === 'run');
     const [{ readResourceJson }, { validateResourceEngineeringMissionConfig, missionHash, readResourceEngineeringMissionStatus }] = await Promise.all([
       import('../core/resources/pool-runtime.js'), import('../core/resources/engineering-mission-store.js'),
     ]);
@@ -63,8 +62,6 @@ export async function cmdResourceEngineeringMission(args: string[]): Promise<num
       console.log(JSON.stringify(result)); return result.state === 'completed' ? 0 : 1;
     } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
   } catch (error) {
-    const message = error instanceof ResourceCheckUsageError ? error.message : 'Engineering mission unavailable; inspect the selected setup and retained mission records';
-    if (args.includes('--json')) console.log(JSON.stringify({ error: message })); else console.error(message);
-    return error instanceof ResourceCheckUsageError ? 2 : 1;
+    return reportResourceCheckError(args, error, 'Engineering mission unavailable; inspect the selected setup and retained mission records');
   }
 }

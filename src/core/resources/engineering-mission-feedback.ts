@@ -1,7 +1,9 @@
 /** Bounded proposal context, never acceptance, causal credit or routing authority. */
 import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
-import { canonical, digest } from '../universe/artifacts.js';
+import { canonical } from '../universe/artifacts.js';
 import type { ResourceEngineeringOutcomes } from './engineering-outcomes-types.js';
+import { engineeringDigest, isEngineeringCommit, isEngineeringGraphId as id,
+  isEngineeringHash as hash } from './engineering-shared.js';
 
 export const MISSION_MEASURED_FEEDBACK = 'measured-outcomes-v1' as const;
 export const MAX_MISSION_FEEDBACK_BYTES = 16 * 1024;
@@ -25,8 +27,6 @@ export interface EngineeringMissionFeedback {
   availability: 'available' | 'unavailable'; reason: null | 'outcome-evidence-unavailable' | 'feedback-bounds-exceeded';
   campaigns: Campaign[];
 }
-const hash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
-const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value);
 const count = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 function requireFact(value: unknown): asserts value { if (!value) throw new Error('Mission feedback unavailable'); }
@@ -43,7 +43,7 @@ export function projectEngineeringMissionFeedback(input: { tip: Tip; deliveryDig
   const source = JSON.parse(sourceText) as EngineeringMissionFeedback['source'];
   requireFact(Object.keys(source).sort().join(',') === 'commit,deliveryDigest,enrollmentDigest,enrollmentId,projectId' &&
     id(source.enrollmentId) && hash(source.enrollmentDigest) && id(source.projectId) && hash(source.deliveryDigest) &&
-    typeof source.commit === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(source.commit));
+    isEngineeringCommit(source.commit));
   const report: EngineeringMissionFeedback = { schemaVersion: 1, kind: 'engineering-measured-feedback',
     scope: 'latest-delivered-enrollment', authority: 'observation-only', productionAccepted: null, routingChanged: false,
     acceptanceScope: 'fixed-evaluator-and-local-branch-only', attribution: 'campaign-cumulative-not-graph-invocation',
@@ -99,7 +99,7 @@ export function projectEngineeringMissionFeedback(input: { tip: Tip; deliveryDig
     });
     requireFact(campaigns.some(row => row.stages.verifiedLocalDeliveries === 1));
     const projected = { ...report, availability: 'available' as const, reason: null, campaigns,
-      evidenceDigest: digest(canonical({ source, campaigns })) };
+      evidenceDigest: engineeringDigest({ source, campaigns }) };
     // Omitted detail still binds the exact meaningful evidence on restart.
     if (Buffer.byteLength(canonical(projected)) > MAX_MISSION_FEEDBACK_BYTES) return { ...report,
       evidenceDigest: projected.evidenceDigest, reason: 'feedback-bounds-exceeded' };

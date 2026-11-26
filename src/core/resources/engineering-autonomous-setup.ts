@@ -1,11 +1,10 @@
 /** Offline startup preparation. Never constructs an execution owner or modifies accounting policy. */
-import { closeSync, constants, fsyncSync, lstatSync, openSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
-import { canonicalEvidencePackJsonV3, loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock, type LocalStoreLock } from '../fleet/local-store-lock.js';
 import { readKillSwitch } from '../sandbox/policy.js';
-import { canonical, digest, inspectPrivateDirectory } from '../universe/artifacts.js';
-import { fsyncDirectory } from '../util/durability.js';
+import { canonical, inspectPrivateDirectory } from '../universe/artifacts.js';
 import { validateResourceGenerationRuntime } from '../universe/resource-generation.js';
 import { checkResourceEngineeringPreparation } from './engineering-preparation.js';
 import type { ResourceEngineeringRecipe } from './engineering-preparation-types.js';
@@ -15,46 +14,29 @@ import { validateResourceConsoleEngineeringSupervisionConfig } from './console-e
 import { validateResourceEngineeringSuccessorCoordinatorConfig } from './engineering-successor-coordinator.js';
 import { prepareResourceConsoleEngineeringEnrollments, type ResourceConsoleEngineeringCatalog } from './console-engineering.js';
 import { readResourceEngineeringDeliveredRegistration, type ResourceEngineeringDeliveredRegistration } from './engineering-delivered-source.js';
-import { decodeResourceConsoleState, previewResourceConsoleProjects, ResourceSupervisorError } from './pool-supervisor.js';
+import { decodeResourceConsoleState, previewResourceConsoleProjects } from './pool-supervisor.js';
 import { matchesResourceConsoleProject, pinResourceConsoleProject, validateResourceConsoleProjects } from './console-projects.js';
 import { readResourceJson, readResourcePoolHistory, resourcePoolStatus } from './pool-runtime.js';
 import { validateResourcePool } from './pool-policy.js';
 import { validateResourceBindings } from './worker.js';
 import { captureResourceExecutionVeto } from './execution-veto.js';
+import { cloneCanonicalEngineeringData, engineeringDigest as hash, failResourceSupervisor,
+  hasExactEngineeringKeys as exact, isCanonicalEngineeringPath as path, isEngineeringHash, isEngineeringId,
+  pathExistsStrict as present, pathsOverlap, writeExclusivePrivateJson } from './engineering-shared.js';
 import type { ResourceEngineeringAutonomousSetupOptions as Options, ResourceEngineeringAutonomousSetupPolicy as Policy,
   ResourceEngineeringAutonomousSetupPlan as Plan, ResourceEngineeringAutonomousSetupReport as Report } from './engineering-autonomous-setup-types.js';
 export type * from './engineering-autonomous-setup-types.js';
 
-const hash = (value: unknown) => digest(canonical(value));
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
-function fail(message: string): never { throw new ResourceSupervisorError('CONFLICT', message); }
-function data<T>(value: unknown): T {
-  const json = canonicalEvidencePackJsonV3(value);
-  if (json === null || Buffer.byteLength(json) > 256 * 1024) fail('Invalid autonomous setup data');
-  return JSON.parse(json) as T;
-}
-function exact(value: unknown, keys: string[]): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
-}
-function present(file: string): boolean {
-  try { lstatSync(file); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
-}
-function contains(parent: string, child: string): boolean {
-  const part = relative(parent, child); return part === '' || part !== '..' && !part.startsWith(`..${sep}`) && !isAbsolute(part);
-}
-function path(value: unknown): value is string {
-  return typeof value === 'string' && Buffer.byteLength(value) <= 4096 && isAbsolute(value) && resolve(value) === value && parse(value).root !== value &&
-    ![...value].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159);
-}
+function fail(message: string): never { failResourceSupervisor('CONFLICT', message); }
+const data = <T>(value: unknown): T => cloneCanonicalEngineeringData<T>(value, 256 * 1024, () => fail('Invalid autonomous setup data'));
 export function validateResourceEngineeringAutonomousSetupPolicy(input: unknown): Policy {
   const value = data<Policy>(input);
   if (!exact(value, ['schemaVersion', 'id', 'profileId', 'label', 'acceptance', 'maxEnrollments', 'maxConcurrent', 'successors',
     ...(Object.hasOwn(value ?? {}, 'autoAdmitPrepared') ? ['autoAdmitPrepared'] : []),
     ...(Object.hasOwn(value ?? {}, 'registrationScope') ? ['registrationScope'] : [])]) || value.schemaVersion !== 1 ||
-    typeof value.id !== 'string' || !ID.test(value.id) || typeof value.profileId !== 'string' || !ID.test(value.profileId) ||
+    !isEngineeringId(value.id) || !isEngineeringId(value.profileId) ||
     Object.hasOwn(value, 'autoAdmitPrepared') && value.autoAdmitPrepared !== true ||
-    Object.hasOwn(value, 'registrationScope') && (typeof value.registrationScope !== 'string' || !ID.test(value.registrationScope)) ||
+    Object.hasOwn(value, 'registrationScope') && !isEngineeringId(value.registrationScope) ||
     !Number.isSafeInteger(value.maxEnrollments) || value.maxEnrollments < 2 || value.maxEnrollments > 32 ||
     !Number.isSafeInteger(value.maxConcurrent) || value.maxConcurrent < 1 || value.maxConcurrent > 8 ||
     !exact(value.successors, ['allowedWorkerIds', 'maxOutputTokens', 'proposalTimeoutMs', 'maxSuccessors', 'pollIntervalMs'])) fail('Invalid autonomous setup policy');
@@ -68,7 +50,7 @@ function capture(input: Options, internal = false) {
     ![options.output, options.resourceRuntime, options.workspace, options.projectsFile].every(path)) fail('Invalid autonomous setup options');
   const policy = validateResourceEngineeringAutonomousSetupPolicy(options.policy);
   const recipe = options.recipe as ResourceEngineeringRecipe;
-  if (!recipe || typeof recipe.id !== 'string' || !ID.test(recipe.id) || recipe.delivery?.branch !== `codex/${recipe.id}`) fail('Setup requires the exact manager delivery branch');
+  if (!recipe || !isEngineeringId(recipe.id) || recipe.delivery?.branch !== `codex/${recipe.id}`) fail('Setup requires the exact manager delivery branch');
   inspectPrivateDirectory(options.output);
   const outputBinding = pinResourceConsoleProject({ id: 'setup-output', label: 'Setup output', workspace: options.output });
   const runtime = validateResourceGenerationRuntime(readResourceJson(options.resourceRuntime));
@@ -90,7 +72,7 @@ function capture(input: Options, internal = false) {
   const controls = [options.resourceRuntime, options.projectsFile, runtime.poolPath, runtime.bindingsPath, runtime.observationsPath,
     ...(runtime.quotaConfigPath ? [runtime.quotaConfigPath] : [])];
   for (const other of [runtime.root, runtime.workspace, ...preview.bindings.map(row => row.workspace), ...controls]) {
-    if (contains(options.output, other) || contains(other, options.output)) fail('Setup output must be outside projects, runtime and accounting controls');
+    if (pathsOverlap(options.output, other)) fail('Setup output must be outside projects, runtime and accounting controls');
   }
   const profileConfig = validateResourceConsoleEngineeringPreparationConfig({ schemaVersion: 1, outputRoot: options.output, resourceRuntime: options.resourceRuntime,
     ...(policy.registrationScope === undefined ? {} : { registrationScope: policy.registrationScope }),
@@ -138,8 +120,8 @@ function registry(current: ReturnType<typeof capture>) {
 function verified(current: ReturnType<typeof capture>, includeDeliveredSources = false) {
   const saved = readResourceJson(current.paths.receipt, 64 * 1024);
   if (!exact(saved, ['schemaVersion', 'planDigest', 'initialEnrollmentDigest', 'registrationDigest', 'files']) || saved.schemaVersion !== 1 ||
-    saved.planDigest !== current.plan.planDigest || typeof saved.initialEnrollmentDigest !== 'string' || !HASH.test(saved.initialEnrollmentDigest) ||
-    typeof saved.registrationDigest !== 'string' || !HASH.test(saved.registrationDigest)) fail('Setup receipt changed');
+    saved.planDigest !== current.plan.planDigest || !isEngineeringHash(saved.initialEnrollmentDigest) ||
+    !isEngineeringHash(saved.registrationDigest)) fail('Setup receipt changed');
   const expectedFiles = { profiles: current.profileConfig, supervision: current.supervision(saved.initialEnrollmentDigest), successors: current.successorConfig };
   const files = Object.fromEntries(Object.entries(expectedFiles).map(([name, value]) => {
     const file = current.paths[name as keyof typeof expectedFiles]; if (canonical(readResourceJson(file)) !== canonical(value)) fail('Setup configuration changed');
@@ -192,9 +174,7 @@ function report(current: ReturnType<typeof capture>, enrollmentDigest: string, d
       ...(runtime.quotaConfigPath ? ['--quota-config', runtime.quotaConfigPath] : [])] };
 }
 function writePrivate(file: string, value: unknown, guard: () => void): void {
-  guard(); const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  try { writeFileSync(fd, canonical(value) + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
-  fsyncDirectory(dirname(file)); guard();
+  guard(); writeExclusivePrivateJson(file, value); guard();
 }
 export function prepareResourceEngineeringAutonomousSetup(input: Options & { expectedPlanDigest: string },
   host: { isExecutionStopped?: () => boolean; beforePublication?: (locks: readonly LocalStoreLock[]) => void } = {}): Report {
@@ -205,7 +185,7 @@ export function prepareResourceEngineeringAutonomousSetup(input: Options & { exp
   const beforeHostPublication = publication?.value as ((locks: readonly LocalStoreLock[]) => unknown) | undefined;
   const supplied = data<Options & { expectedPlanDigest: string }>(input);
   if (!exact(supplied, ['recipe', 'policy', 'output', 'resourceRuntime', 'workspace', 'projectsFile', 'expectedPlanDigest']) ||
-    typeof supplied.expectedPlanDigest !== 'string' || !HASH.test(supplied.expectedPlanDigest)) fail('Setup requires a checked plan digest');
+    !isEngineeringHash(supplied.expectedPlanDigest)) fail('Setup requires a checked plan digest');
   const { expectedPlanDigest, ...options } = supplied;
   const current = capture(options);
   if (current.plan.planDigest !== expectedPlanDigest) fail('Setup plan changed');

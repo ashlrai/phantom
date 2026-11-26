@@ -30,3 +30,22 @@ export function resourceCheckPath(values: Map<string, string>, key: string): str
   }
   return value;
 }
+const SHA256_RE = /^[a-f0-9]{64}$/;
+export function resourceCheckSha256(values: Map<string, string>, key: string, message: string, required: true): string;
+export function resourceCheckSha256(values: Map<string, string>, key: string, message: string, required?: boolean): string | undefined;
+export function resourceCheckSha256(values: Map<string, string>, key: string, message: string, required = false): string | undefined {
+  const value = values.get(key);
+  if ((required && value === undefined) || (value !== undefined && !SHA256_RE.test(value))) {
+    throw new ResourceCheckUsageError(message);
+  }
+  return value;
+}
+export function quoteAshlrCommand(args: string[]): string {
+  return `node bin/ashlr ${args.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')}`;
+}
+export function reportResourceCheckError(args: string[], error: unknown, fallbackMessage: string): number {
+  const message = error instanceof ResourceCheckUsageError ? error.message : fallbackMessage;
+  if (args.includes('--json')) console.log(JSON.stringify({ error: message }));
+  else console.error(message);
+  return error instanceof ResourceCheckUsageError ? 2 : 1;
+}

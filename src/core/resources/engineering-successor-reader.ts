@@ -1,9 +1,9 @@
 /** Fixed read-only journal transport; never shares the effect worker's queue. */
-import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
 import { isAbsolute, resolve } from 'node:path';
 import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
 import { createBoundedReadWorker, ReadProjectionError } from '../web/bounded-read-worker.js';
+import { hasExactEngineeringKeys as exact, isEngineeringHash, isEngineeringId,
+  isEngineeringIsoTimestamp, resolveTsxWorkerEntrypoint } from './engineering-shared.js';
 import type { ResourceEngineeringSuccessorJournalScope } from './engineering-successor-store.js';
 import type { ResourceEngineeringSuccessorCoordinatorSnapshot } from './engineering-successor-coordinator-types.js';
 
@@ -16,16 +16,13 @@ export interface EngineeringSuccessorReader {
   read(): Promise<EngineeringSuccessorObservation>;
   close(): Promise<void>;
 }
-const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => !!value && typeof value === 'object' &&
-  !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 function observation(value: unknown, scope: ResourceEngineeringSuccessorJournalScope): EngineeringSuccessorObservation {
   const invalid = () => new ReadProjectionError('Successor observation could not be verified');
   const serialized = canonicalEvidencePackJsonV3(value);
   if (serialized === null || Buffer.byteLength(serialized) > 32 * 1024) throw invalid();
   const result = JSON.parse(serialized) as unknown;
-  if (!exact(result, ['snapshot', 'sampledAt', 'recordsDigest']) || typeof result.sampledAt !== 'string' ||
-      !Number.isFinite(Date.parse(result.sampledAt)) || new Date(result.sampledAt).toISOString() !== result.sampledAt ||
-      typeof result.recordsDigest !== 'string' || !/^[a-f0-9]{64}$/.test(result.recordsDigest)) throw invalid();
+  if (!exact(result, ['snapshot', 'sampledAt', 'recordsDigest']) ||
+      !isEngineeringIsoTimestamp(result.sampledAt) || !isEngineeringHash(result.recordsDigest)) throw invalid();
   const snapshot = result.snapshot;
   if (!exact(snapshot, ['schemaVersion', 'supervisionId', 'profileId', 'configDigest', 'deadlineAt', 'state', 'maxSuccessors', 'entries']) ||
       snapshot.schemaVersion !== 1 || snapshot.supervisionId !== scope.config.supervisionId || snapshot.profileId !== scope.config.profileId ||
@@ -35,7 +32,7 @@ function observation(value: unknown, scope: ResourceEngineeringSuccessorJournalS
   const sources = new Set<string>(); const tasks = new Set<string>();
   for (const row of snapshot.entries) {
     if (!exact(row, ['sourceEnrollmentId', 'proposalTaskId', 'successorId', 'state', 'reason']) ||
-        typeof row.sourceEnrollmentId !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(row.sourceEnrollmentId) ||
+        !isEngineeringId(row.sourceEnrollmentId) ||
         typeof row.proposalTaskId !== 'string' || !/^proposal-[a-f0-9]{48}$/.test(row.proposalTaskId) ||
         row.successorId !== `successor-${row.proposalTaskId.slice(9)}` || row.reason !== null ||
         typeof row.state !== 'string' || !['intent-recorded', 'proposed', 'stopped', 'prepared', 'admitted'].includes(row.state) ||
@@ -44,14 +41,8 @@ function observation(value: unknown, scope: ResourceEngineeringSuccessorJournalS
   }
   return result as unknown as EngineeringSuccessorObservation;
 }
-function entrypoint(): URL {
-  if (import.meta.url.endsWith('/engineering-successor-reader.ts')) {
-    const loader = pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm/api')).href;
-    const source = new URL('./engineering-successor-read-worker.ts', import.meta.url).href;
-    return new URL(`data:text/javascript,${encodeURIComponent(`import { register } from ${JSON.stringify(loader)}; register(); await import(${JSON.stringify(source)});`)}`);
-  }
-  return new URL('./engineering-successor-read-worker.js', import.meta.url);
-}
+const entrypoint = (): URL =>
+  resolveTsxWorkerEntrypoint(import.meta.url, '/engineering-successor-reader.ts', 'engineering-successor-read-worker');
 
 export function createEngineeringSuccessorReader(input: {
   scope: ResourceEngineeringSuccessorJournalScope; configFile: string;

@@ -1,7 +1,9 @@
 /** A bounded view of retained proposal intent, not proof it was dispatched or consumed. */
-import { canonical, digest } from '../universe/artifacts.js';
+import { canonical } from '../universe/artifacts.js';
 import { MAX_MISSION_FEEDBACK_PROMPT_BYTES, MISSION_MEASURED_FEEDBACK } from './engineering-mission-feedback.js';
 import type { MissionRecord } from './engineering-mission-store.js';
+import { engineeringDigest, hasExactEngineeringKeys as exact, isEngineeringHash as hash,
+  isEngineeringObject as object } from './engineering-shared.js';
 
 export interface RecordedMissionFeedbackStatus {
   mode: typeof MISSION_MEASURED_FEEDBACK;
@@ -14,10 +16,6 @@ export interface RecordedMissionFeedbackStatus {
   evidenceDigest: string | null;
   campaignCount: number | null;
 }
-const hash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
-const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
-const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => object(value) &&
-  Object.keys(value).sort().join(',') === [...keys].sort().join(',');
 function requireFact(value: unknown): asserts value { if (!value) throw new Error('Recorded feedback unavailable'); }
 
 /** The immutable record reader validates ordering and task shape first. This
@@ -50,7 +48,7 @@ export function readRecordedMissionFeedbackStatus(rows: readonly MissionRecord[]
     requireFact(canonical(tip) === canonical(completion.tip) && Array.isArray(feedback.campaigns));
     if (feedback.availability === 'available') {
       requireFact(feedback.reason === null && feedback.campaigns.length > 0 && feedback.campaigns.length <= 32 && hash(feedback.evidenceDigest) &&
-        feedback.evidenceDigest === digest(canonical({ source: feedback.source, campaigns: feedback.campaigns })));
+        feedback.evidenceDigest === engineeringDigest({ source: feedback.source, campaigns: feedback.campaigns }));
     } else {
       requireFact(feedback.availability === 'unavailable' && feedback.campaigns.length === 0 &&
         (feedback.reason === 'outcome-evidence-unavailable' && feedback.evidenceDigest === null ||

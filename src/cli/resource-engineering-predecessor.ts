@@ -1,4 +1,4 @@
-import { resourceCheckOptions, resourceCheckPath, ResourceCheckUsageError } from './resource-check-options.js';
+import { reportResourceCheckError, resourceCheckOptions, resourceCheckPath, resourceCheckSha256, ResourceCheckUsageError } from './resource-check-options.js';
 
 const USAGE = `usage: ashlr resources pool engineering predecessor check
        --recipe ABS --policy ABS --output ABS --resource-runtime ABS
@@ -24,11 +24,8 @@ export async function cmdResourceEngineeringPredecessor(args: string[]): Promise
     const paths = { output: resourceCheckPath(parsed.values, '--output'),
       resourceRuntime: resourceCheckPath(parsed.values, '--resource-runtime'),
       workspace: resourceCheckPath(parsed.values, '--workspace'), projectsFile: resourceCheckPath(parsed.values, '--projects') };
-    const expectedPlanDigest = parsed.values.get('--expected-plan-digest');
+    const expectedPlanDigest = resourceCheckSha256(parsed.values, '--expected-plan-digest', 'Expected a SHA256 setup digest', true);
     const expectedDeadlineAt = parsed.values.get('--expected-deadline-at');
-    if (expectedPlanDigest === undefined || !/^[a-f0-9]{64}$/.test(expectedPlanDigest)) {
-      throw new ResourceCheckUsageError('Expected a SHA256 setup digest');
-    }
     if (expectedDeadlineAt === undefined || !Number.isFinite(Date.parse(expectedDeadlineAt)) ||
       new Date(expectedDeadlineAt).toISOString() !== expectedDeadlineAt) {
       throw new ResourceCheckUsageError('Expected the original canonical ISO supervision deadline');
@@ -52,9 +49,7 @@ export async function cmdResourceEngineeringPredecessor(args: string[]): Promise
     ].join('\n'));
     return result.status === 'verified' ? 0 : 1;
   } catch (error) {
-    const message = error instanceof ResourceCheckUsageError ? error.message
-      : 'Engineering predecessor evidence unavailable; inspect the selected setup and retained ownership records';
-    if (args.includes('--json')) console.log(JSON.stringify({ error: message })); else console.error(message);
-    return error instanceof ResourceCheckUsageError ? 2 : 1;
+    return reportResourceCheckError(args, error,
+      'Engineering predecessor evidence unavailable; inspect the selected setup and retained ownership records');
   }
 }
