@@ -218,6 +218,11 @@ async function recordSelfImprove(proposalId: string, ts: string): Promise<void> 
   recordDecision({ ts, proposalId, action: 'self-improve:written', detail: 'verdict=noise' });
 }
 
+async function recordSkillLibrary(proposalId: string, ts: string): Promise<void> {
+  const { recordDecision } = await import('../src/core/fleet/decisions-ledger.js');
+  recordDecision({ ts, proposalId, action: 'skill-library:written', detail: 'engine=work' });
+}
+
 function isoAgo(ms: number): string {
   return new Date(Date.now() - ms).toISOString();
 }
@@ -555,6 +560,24 @@ describe('computeFleetScorecard — learning section', () => {
     const sc = computeFleetScorecard('7d');
     expect(sc.learning.rejectionLessonsWritten).toBe(2);
   });
+
+  it('counts skill-library:written rows — the verified skill-card writer telemetry', async () => {
+    await recordSkillLibrary(pid(), isoAgo(1 * DAY_MS));
+    await recordSkillLibrary(pid(), isoAgo(2 * DAY_MS));
+    await recordSkillLibrary(pid(), isoAgo(3 * DAY_MS));
+    await recordSelfImprove(pid(), isoAgo(1 * DAY_MS));
+
+    const { computeFleetScorecard } = await import('../src/core/fleet/scorecard.js');
+    const sc = computeFleetScorecard('7d');
+    expect(sc.learning.skillCardsWritten).toBe(3);
+    expect(sc.learning.rejectionLessonsWritten).toBe(1);
+  });
+
+  it('reads zero skill cards when none were written — a real count, not unknown', async () => {
+    const { computeFleetScorecard } = await import('../src/core/fleet/scorecard.js');
+    const sc = computeFleetScorecard('7d');
+    expect(sc.learning.skillCardsWritten).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -632,6 +655,7 @@ describe('computeFleetScorecard — degraded decisions ledger', () => {
     expect(sc.cost.perMergedChangeUsd).toBeNull();
     expect(sc.latency.sampleSize).toBeNull();
     expect(sc.learning.rejectionLessonsWritten).toBeNull();
+    expect(sc.learning.skillCardsWritten).toBeNull();
     expect(sc.byEngine).toEqual([]);
     for (const sq of [
       sc.judge.sourceQuality, sc.cost.sourceQuality,

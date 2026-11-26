@@ -178,6 +178,13 @@ export interface ScorecardLearning {
   sourceQuality: ScorecardSourceQuality;
   /** 'self-improve:written' decision rows in window — the anti-playbook lesson writer's own telemetry. */
   rejectionLessonsWritten: number | null;
+  /**
+   * 'skill-library:written' decision rows in window — the verified skill-card
+   * writer's own telemetry (one row per applied proposal distilled into a
+   * SkillCard). The positive-side counterpart of rejectionLessonsWritten;
+   * null when the decisions source is not fully readable, never zero-filled.
+   */
+  skillCardsWritten: number | null;
 }
 
 export interface ScorecardEngineSplit {
@@ -567,12 +574,14 @@ function buildLatencySection(decisions: readonly DecisionEntry[], sq: ScorecardS
 }
 
 function buildLearningSection(decisions: readonly DecisionEntry[], sq: ScorecardSourceQuality, ok: boolean): ScorecardLearning {
-  if (!ok) return { sourceQuality: sq, rejectionLessonsWritten: null };
-  let count = 0;
+  if (!ok) return { sourceQuality: sq, rejectionLessonsWritten: null, skillCardsWritten: null };
+  let rejectionLessons = 0;
+  let skillCards = 0;
   for (const d of decisions) {
-    if (d.action === 'self-improve:written') count++;
+    if (d.action === 'self-improve:written') rejectionLessons++;
+    else if (d.action === 'skill-library:written') skillCards++;
   }
-  return { sourceQuality: sq, rejectionLessonsWritten: count };
+  return { sourceQuality: sq, rejectionLessonsWritten: rejectionLessons, skillCardsWritten: skillCards };
 }
 
 function buildEngineSplits(
@@ -811,6 +820,8 @@ export interface ScorecardTrendPoint {
   costPerMergedChangeUsd: number | null;
   proposalsFiled: number | null;
   rejectionLessonsWritten: number | null;
+  /** Snapshots persisted before the field existed read as null — unknown, never a fabricated 0. */
+  skillCardsWritten: number | null;
 }
 
 export interface ScorecardTrend {
@@ -827,6 +838,7 @@ function toTrendPoint(record: ScorecardSnapshotRecord): ScorecardTrendPoint {
     costPerMergedChangeUsd: record.scorecard.cost.perMergedChangeUsd,
     proposalsFiled: record.scorecard.proposals.filed,
     rejectionLessonsWritten: record.scorecard.learning.rejectionLessonsWritten,
+    skillCardsWritten: record.scorecard.learning.skillCardsWritten ?? null,
   };
 }
 

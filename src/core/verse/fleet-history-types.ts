@@ -36,6 +36,8 @@ export interface FleetScorecardTrendPoint {
   costPerMergedChangeUsd: number | null;
   proposalsFiled: number | null;
   rejectionLessonsWritten: number | null;
+  /** Absent on snapshots persisted before the field existed; reads as null. */
+  skillCardsWritten: number | null;
 }
 
 /** Query bounds for `?days=`. */
