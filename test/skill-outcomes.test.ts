@@ -91,6 +91,22 @@ describe('readSkillTrajectoryOutcomes', () => {
     })).toBeNull();
   });
 
+  it('includes all daily partitions intersecting the discovery window', () => {
+    const readEvents = vi.fn(() => skillRead());
+    const listRecords = vi.fn(() => [] as TrajectoryRecord[]);
+    readSkillTrajectoryOutcomes({ windowHours: 168, limit: 500 }, {
+      readSkillUseEvents: readEvents,
+      listRecords,
+      summarize: () => learningStatus(undefined),
+    });
+    expect(readEvents).toHaveBeenCalledWith({
+      sinceMs: expect.any(Number),
+      maxFiles: 8,
+      limit: 4000,
+    });
+    expect(listRecords).toHaveBeenCalledWith(expect.objectContaining({ windowHours: 168, limit: 500 }));
+  });
+
   it('honours caller window and limit', () => {
     const listRecords = vi.fn((_opts?: TrajectoryRecordListOptions) => [] as TrajectoryRecord[]);
     readSkillTrajectoryOutcomes({ windowHours: 6, limit: 50 }, {
