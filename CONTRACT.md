@@ -5080,3 +5080,10 @@ after the cutoff are excluded from the fold and from PR claim attribution.
 Receipts at the cutoff are included. Exact replays of dated terminal
 receipts preserve the first occurrence's position and evidence snapshot.
 Undated receipts retain ledger order.
+
+## Fleet lane slot observations
+
+`buildFleetLiveSnapshot()` returns `laneSlotsObserved` alongside `snapshot`.
+It is true when the projected lane slots come from a standing tick at most
+ten minutes old and at or before snapshot time. Consumers reporting measured
+capacity use this flag even when the snapshot provides a fleet-state reason.

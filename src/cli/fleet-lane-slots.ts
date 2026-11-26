@@ -12,9 +12,9 @@ export async function cmdFleetLaneSlots(args: string[]): Promise<number> {
     return 0;
   }
   if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) return 2;
-  const { snapshot } = await buildFleetLiveSnapshot();
+  const { snapshot, laneSlotsObserved } = await buildFleetLiveSnapshot();
   const lanes = snapshot.lanes.map(lane => ({ ...lane,
-    slots: lane.capReason === 'No standing tick has reported lanes in the last 10 minutes.' ? null : lane.slots,
+    slots: laneSlotsObserved ? lane.slots : null,
   }));
   const result = sanitizePublicJson({ schema: 'fleet.lane-slots.v1', lanes });
   const color = terminalColor();
