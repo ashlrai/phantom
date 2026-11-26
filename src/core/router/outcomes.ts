@@ -5,6 +5,7 @@ import { isAbsolute, join } from 'node:path';
 
 import { ashlrHome } from '../cloud/store.js';
 import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
+import { ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
 
 // Read-only recorded job outcomes from the newest ROUTER_OUTCOME_LEDGER_LIMIT
 // bytes of <runs>/metrics/jobs.jsonl, joined with the per-call spend ledger
@@ -1768,7 +1769,7 @@ function foldRouterOutcomesWithCiCoverage(
   // arrival at or before it — a requeue's later arrivals never move the
   // first-dispatch wait, and a job with no recorded arrival before its
   // first dispatch stays absent here so its outcome keeps null.
-  const batchClaims = new Map<string, number[]>();
+  const batchClaims = new Map<string, (number | null)[]>();
   const queueMarks = new Map<string, { arrivals: number[]; dispatches: number[] }>();
   for (const r of rows) {
     const j = attributedJobId(r);
@@ -1778,14 +1779,14 @@ function foldRouterOutcomesWithCiCoverage(
     const name = event.toLowerCase();
     const arrival = QUEUE_ARRIVAL_EVENTS.has(name);
     if (!arrival && !QUEUE_DISPATCH_EVENTS.has(name)) continue;
-    const at = Date.parse(str(r, ...LEDGER_TS_KEYS) ?? '');
+    const at = ledgerEventTs(r, null);
     if (name === 'batch_claim') {
-      if (!Number.isFinite(at)) ambiguousCiJobs.add(j);
+      if (at === null) ambiguousCiJobs.add(j);
       const claims = batchClaims.get(j) ?? [];
       claims.push(at);
       batchClaims.set(j, claims);
     }
-    if (!Number.isFinite(at)) continue;
+    if (at === null) continue;
     const marks = queueMarks.get(j) ?? { arrivals: [], dispatches: [] };
     (arrival ? marks.arrivals : marks.dispatches).push(at);
     queueMarks.set(j, marks);
@@ -1802,7 +1803,7 @@ function foldRouterOutcomesWithCiCoverage(
   }
 
   const crossesBatchClaim = (job: string, start: number, end: number) =>
-    batchClaims.get(job)?.some(at => !Number.isFinite(at) || (start <= at && at <= end)) === true;
+    batchClaims.get(job)?.some(at => at === null || (start <= at && at <= end)) === true;
 
   // CI-boundary evidence, derived once per job from the same ci_start/
   // ci_complete event pair the reward feed's ciWallMs and job-latency's
@@ -1818,8 +1819,8 @@ function foldRouterOutcomesWithCiCoverage(
     if (event === null) continue;
     const name = event.toLowerCase();
     if (name !== 'ci_start' && name !== 'ci_complete') continue;
-    const at = Date.parse(str(r, ...LEDGER_TS_KEYS) ?? '');
-    if (!Number.isFinite(at)) {
+    const at = ledgerEventTs(r, null);
+    if (at === null) {
       ambiguousCiJobs.add(j);
       continue;
     }
@@ -1863,8 +1864,8 @@ function foldRouterOutcomesWithCiCoverage(
     const finish = event === 'finish' && !terminal && phase !== 'PUBLISHED';
     const publish = phase === 'PUBLISHED' || ((event === 'publish' || event === 'published') && !terminal);
     if (!finish && !publish) continue;
-    const at = Date.parse(str(r, ...LEDGER_TS_KEYS) ?? '');
-    if (!Number.isFinite(at)) {
+    const at = ledgerEventTs(r, null);
+    if (at === null) {
       undatedPublishJobs.add(j);
       continue;
     }

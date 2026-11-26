@@ -382,6 +382,29 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(withUndatedCi.outcomes.find(outcome => outcome.job_id === 'unique')?.ci_wall_s).toBeNull();
   });
 
+  it('uses parseable timestamp aliases for phase boundaries and retry claims', () => {
+    const rows = [
+      { event: 'enqueue', at: '2026-11-01 10:00:00+0000' },
+      { event: 'launch', timestamp: '2026-11-01T10:01:00Z' },
+      { event: 'finish', at: '2026-11-01T10:02:00Z' },
+      { event: 'publish', timestamp: '2026-11-01T10:03:00Z' },
+      { event: 'ci_start', at: '2026-11-01T10:04:00Z' },
+      { event: 'ci_complete', time: '2026-11-01T10:06:00Z' },
+    ];
+    const outcome = (claim?: object) => foldRouterOutcomes(
+      [...rows, ...(claim ? [claim] : [])]
+        .map(row => JSON.stringify({ job: 'aliases', ts: 'invalid', ...row })).join('\n'),
+    ).outcomes[0];
+
+    expect(outcome({ event: 'batch_claim', at: '2026-11-01T10:07:00Z' })).toMatchObject({
+      queue_wait_s: 60, publish_wait_s: 60, ci_wall_s: 120,
+    });
+    expect(outcome({ event: 'batch_claim', at: '2026-11-01T10:02:30Z' })).toMatchObject({
+      publish_wait_s: null, ci_wall_s: 120,
+    });
+    expect(outcome({ event: 'batch_claim' })).toMatchObject({ publish_wait_s: null, ci_wall_s: null });
+  });
+
   it('folds CI wall seconds from the recorded ci_start/ci_complete pair, unknown when ambiguous', () => {
     const fold = foldRouterOutcomes([
       // C1: one start, one complete 20 minutes later -> 1200s of CI wall.
