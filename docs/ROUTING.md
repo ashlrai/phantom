@@ -881,7 +881,9 @@ but recorded nothing on `unknown`), `launch_peak_processes`,
 `launch_mean_cpu_pct` and `launch_peak_cpu_pct`, the only per-attempt
 resource-cost evidence subscription lanes record since their finish
 rows carry no `cost_usd`. The last valid receipt appended for a resolved
-job stands, including when its launch ID appeared earlier. Rows resolving
+job stands, including when its launch ID appeared earlier. The join skips
+receipts whose recorded start is after the report began. Starts exactly at
+report time and receipts with no recorded start remain eligible. Rows resolving
 outside the jobs window join nothing and
 never create outcomes. The report's `launch_cost_state` mirrors the
 jobs `state` vocabulary and `launch_cost_truncated` marks a cut

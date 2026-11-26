@@ -2967,6 +2967,35 @@ describe('router outcome launch-cost join', () => {
     });
   });
 
+  it('excludes future probe starts before choosing the last appended receipt for each job', async () => {
+    const reportTime = '2026-11-02T00:00:00.000Z';
+    const future = '2026-11-02T00:00:00.001Z';
+    const root = runsDir([
+      '{"job":"J1","phase":"MERGED"}',
+      '{"job":"J2","phase":"VERIFIED"}',
+      '{"job":"J3","phase":"CLOSED"}',
+    ].join('\n'));
+    writeLaunchCosts(root, [
+      launchCostRow('J1-aaaabbbbcccc', 'measured', { startedAt: reportTime }),
+      launchCostRow('J1-aaaabbbbcccc', 'partial', { startedAt: future }),
+      launchCostRow('J2-ddddeeeeffff', 'measured', { startedAt: future }),
+      launchCostRow('J3', 'unknown'),
+      launchCostRow('J3-aaaabbbbcccc', 'unknown', { startedAt: future }),
+    ]);
+
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(reportTime));
+    try {
+      const result = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null });
+      expect(result.outcomes).toMatchObject([
+        { job_id: 'J1', launch_cost_status: 'measured', launch_peak_processes: 4, launch_mean_cpu_pct: 12.5, launch_peak_cpu_pct: 40 },
+        { job_id: 'J2', launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null },
+        { job_id: 'J3', launch_cost_status: 'unknown', launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null },
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('joins a repeated launch receipt appended after another attempt for the same job', async () => {
     const root = runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
     writeLaunchCosts(root, [
