@@ -126,6 +126,17 @@ describe('foldUnfedHistory', () => {
       { lane: 'devin', unfedTicks: 1, slotTicks: 2, lastUnfedAt: new Date((t - 120) * 1000).toISOString(), blocked: {} },
     ]);
   });
+  it('uses an inclusive trailing window and excludes even slightly future ticks', () => {
+    const lanes = { claude: { unfed: true, headroom: 2, waiting_elsewhere: 1 } };
+    const start = t - 3600;
+    const text = [start - 1, start, t, t + 1].map(ts => unfedRow(ts, lanes)).join('\n');
+
+    expect(foldUnfedHistory(text, now, 1)).toMatchObject({
+      ticks: 2,
+      lanes: [{ lane: 'claude', unfedTicks: 2, slotTicks: 2, lastUnfedAt: new Date(now).toISOString() }],
+    });
+  });
+
   it('says when there is no history file', () => {
     expect(foldUnfedHistory(null, now, 24)).toEqual({ windowHours: 24, available: false, ticks: 0, lanes: [] });
     expect(foldUnfedHistory('', now, 24)).toEqual({ windowHours: 24, available: true, ticks: 0, lanes: [] });

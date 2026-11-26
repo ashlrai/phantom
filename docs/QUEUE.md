@@ -356,6 +356,8 @@ phm fleet unfed --window 6 --json
 `phm fleet unfed` prints each resource's utilization and its unfed capacity
 now, then folds the unfed ticks of the last `--window` hours (default 24, at
 most 168): ticks unfed and slot-ticks lost per lane, with the leading reasons.
+The history includes both endpoints of the trailing window and excludes ticks
+timestamped after the report time.
 The separate `resourcePlan` comparison uses the same advisory lane targets as
 `phm resources plan` and shows how many additional slots lack waiting rows
 hinted to that lane. The advisory `unfedSlots` count stays null when plan
