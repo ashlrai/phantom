@@ -213,14 +213,15 @@ function noteCiBoundary(acc: RewardJobAccum, kind: 'start' | 'complete', at: num
 }
 
 /**
- * CI wall time from the ledger's ci_start/ci_complete boundaries — the same
- * pairing rule job-latency applies to its phases: exactly one of each, and
- * the complete stamp must not precede the start. Anything else is unknown.
+ * CI wall time requires one unambiguous pair inside the rewarded execution's
+ * dispatch-to-outcome window. Reused job ids can carry CI from earlier runs.
  */
-function ciWallMsOf(acc: RewardJobAccum): number | null {
-  if (acc.ciStartAts.length !== 1 || acc.ciCompleteAts.length !== 1) return null;
-  const ms = acc.ciCompleteAts[0]! - acc.ciStartAts[0]!;
-  return ms >= 0 ? ms : null;
+function ciWallEvidence(acc: RewardJobAccum, dispatchMs: number, outcomeMs: number): { ciWallMs?: number } {
+  if (acc.ciStartAts.length !== 1 || acc.ciCompleteAts.length !== 1) return {};
+  const start = acc.ciStartAts[0]!;
+  const complete = acc.ciCompleteAts[0]!;
+  if (start < dispatchMs || complete > outcomeMs || complete < start) return {};
+  return { ciWallMs: complete - start };
 }
 
 /**
@@ -325,7 +326,6 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 function rewardInput(
   id: string, acc: RewardJobAccum, costUsd: number | undefined,
 ): RewardSignalInput | null {
-  const ciWallMs = ciWallMsOf(acc);
   const cost = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : null;
   const heldMerge = acc.merge !== null && !acc.standingReverted &&
     (acc.revertMs === null || acc.merge.atMs > acc.revertMs);
@@ -338,7 +338,7 @@ function rewardInput(
       repo: acc.repo !== null && REPO_PATTERN.test(acc.repo) ? acc.repo : null,
       merged: true, dispatchedAt: iso(dispatch.ms), mergedAt: iso(merge.mergedAtMs),
       costUsd: cost,
-      ...(ciWallMs !== null ? { ciWallMs } : {}),
+      ...ciWallEvidence(acc, dispatch.ms, merge.mergedAtMs),
     };
   }
   // A standing-reverted held merge resolves like a row-level revert: the
@@ -355,7 +355,7 @@ function rewardInput(
       repo: acc.repo !== null && REPO_PATTERN.test(acc.repo) ? acc.repo : null,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
-      ...(ciWallMs !== null ? { ciWallMs } : {}),
+      ...ciWallEvidence(acc, dispatch.ms, closedMs),
     };
   }
   return null;
