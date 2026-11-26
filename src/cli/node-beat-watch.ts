@@ -9,7 +9,10 @@
  * Capacity and host stats are re-measured on this machine each pass unless the
  * caller passed those flags explicitly — the same fresh samples the pool worker
  * reports — while usage and auth are never invented: an unreported node stays
- * unknown. A held or unmeasurable sample is simply omitted that pass.
+ * unknown. A held or unmeasurable sample is simply omitted that pass; a hold the
+ * sample schema cannot express (cpu-*, host-slots-*) still advertises --slots 0,
+ * the same zero bound the pool worker sends, so the node holds admission instead
+ * of keeping its last reported slots or reading unbounded.
  */
 import { readNodeCapacity, sampleHostStats, type NodeCapacity } from '../core/drive/nodes/capacity.js';
 import { nodeBeatCapacity } from '../core/drive/nodes/capacity-sample.js';
@@ -47,6 +50,13 @@ function beatArgs(base: string[], deps: NodeBeatWatchDeps): string[] {
       const report = nodeBeatCapacity((deps.measure ?? readNodeCapacity)(),
         { ...(deps.now ? { now: deps.now } : {}), ...(deps.host ? { host: deps.host } : {}) });
       if (report.sample) args.push('--capacity', JSON.stringify(report.sample));
+      // The pool worker zeroes its advertised slots on every hold
+      // (routerSlots in worker.ts); a standalone keep-alive must do the same for
+      // the holds the sample cannot carry, or the node keeps its last bound —
+      // or none — and the router keeps assigning it work it measured as held.
+      // An explicit --slots still wins, and a measurement that throws stays
+      // unknown rather than held.
+      else if (report.omit === 'unreportable-held' && !hasFlag(base, '--slots')) args.push('--slots', '0');
     } catch { /* unmeasured capacity stays absent: the node reads unknown, never a guess */ }
   }
   if (!hasFlag(base, '--host-stats')) {

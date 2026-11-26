@@ -169,8 +169,9 @@ machine — macOS kernel telemetry or Linux /proc — and a platform with no rea
 reports `memory-unmeasured`. `held` is `null` or `memory-unmeasured`,
 `memory-pressure`, `disk-unmeasured` or `disk-pressure`, and a held node reports
 `"slots":0`. A node held for a reason the sample cannot express (`cpu-*`,
-`host-slots-*`) makes `measure` exit 1; omit `--capacity` on that beat, as the
-worker does, so the node reads unknown rather than wrongly ready. A `--capacity`
+`host-slots-*`) makes `measure` exit 1; on that beat omit `--capacity` and pass
+`--slots 0`, as the worker does, so the node holds admission rather than
+reading wrongly ready. A `--capacity`
 value that is not one JSON object in that shape is refused as `bad-capacity`
 (exit 2) before the beat is recorded; its fix prints the `measure` command.
 
@@ -178,7 +179,12 @@ A standalone session expires 30 seconds after its last beat, so
 `phm node beat --watch [--every <seconds>]` keeps one alive in the foreground:
 each pass is the ordinary `beat` through the same dispatch (a pooled Mac still
 delegates to the primary), re-measuring the `--capacity` sample and host stats
-on this machine unless the caller passed those flags explicitly. The interval
+on this machine unless the caller passed those flags explicitly. A pass whose
+measurement reports a hold the sample cannot express (`cpu-*`, `host-slots-*`)
+omits `--capacity` but still advertises `--slots 0` — the same zero bound the
+pool worker sends — so the node holds admission instead of keeping its last
+reported slots; a caller-supplied `--slots` wins, and a measurement that fails
+stays unknown rather than held. The interval
 defaults to 10 seconds and is capped at 25, inside the expiry window. Ctrl-C or
 SIGTERM stops the loop and prints a confirmation; a beat that exits non-zero —
 a lapsed session, a refused flag — stops it at once with that beat's error. The

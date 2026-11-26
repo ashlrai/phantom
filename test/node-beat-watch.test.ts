@@ -117,7 +117,11 @@ describe('phm node beat --watch', () => {
     capture();
     await cmdNodeBeatWatch(['--node', 'n1', '--session', '1', '--watch'],
       baseDeps(ac, { run, measure: () => { throw new Error('denied'); } }));
-    for (const args of seen) expect(args.some(a => a === '--capacity' || a.startsWith('--capacity='))).toBe(false);
+    for (const args of seen) {
+      expect(args.some(a => a === '--capacity' || a.startsWith('--capacity='))).toBe(false);
+      // A measurement that throws is unknown, not held: no slots claim either way.
+      expect(args.some(a => a === '--slots')).toBe(false);
+    }
 
     const ac2 = new AbortController();
     const second = recorder(1, ac2);
@@ -125,6 +129,47 @@ describe('phm node beat --watch', () => {
     await cmdNodeBeatWatch(['--node', 'n1', '--session', '1', '--watch'],
       baseDeps(ac2, { run: second.run, measure: () => ({ ramBytes: GIB, slots: 0, held: 'cpu-pressure' }) }));
     expect(second.seen[0]!.some(a => a === '--capacity' || a.startsWith('--capacity='))).toBe(false);
+  });
+
+  it('advertises --slots 0 on a hold the capacity sample cannot express', async () => {
+    // cpu-* and host-slots-* holds have no sample form, so without the zero
+    // bound the node would keep its last advertised slots — or read
+    // unbounded — while the router kept assigning it held work. The pool
+    // worker sends --slots 0 for the same holds (worker.ts routerSlots).
+    for (const held of ['cpu-pressure', 'cpu-unmeasured', 'host-slots-exhausted', 'host-slots-unmeasured'] as const) {
+      const ac = new AbortController();
+      const { seen, run } = recorder(2, ac);
+      capture();
+      await cmdNodeBeatWatch(['--node', 'n1', '--session', '1', '--watch'],
+        baseDeps(ac, { run, measure: () => ({ ramBytes: GIB, slots: 0, held }) }));
+      for (const args of seen) {
+        expect(args.some(a => a === '--capacity' || a.startsWith('--capacity='))).toBe(false);
+        expect(args.filter(a => a === '--slots')).toHaveLength(1);
+        expect(args[args.indexOf('--slots') + 1]).toBe('0');
+      }
+    }
+  });
+
+  it('keeps a caller-supplied --slots over the held-node zero and a ready sample over both', async () => {
+    const ac = new AbortController();
+    const { seen, run } = recorder(1, ac);
+    capture();
+    await cmdNodeBeatWatch(['--node', 'n1', '--session', '1', '--watch', '--slots', '4'],
+      baseDeps(ac, { run, measure: () => ({ ramBytes: GIB, slots: 0, held: 'cpu-pressure' }) }));
+    expect(seen[0]!.filter(a => a === '--slots')).toHaveLength(1);
+    expect(seen[0]![seen[0]!.indexOf('--slots') + 1]).toBe('4');
+
+    // A reportable hold rides inside the sample (slots:0, held set); the
+    // watch adds no second --slots claim.
+    const ac2 = new AbortController();
+    const second = recorder(1, ac2);
+    capture();
+    await cmdNodeBeatWatch(['--node', 'n1', '--session', '1', '--watch'],
+      baseDeps(ac2, { run: second.run, measure: () => ({ ramBytes: GIB, slots: 0, held: 'memory-pressure' }) }));
+    const args = second.seen[0]!;
+    expect(args.some(a => a === '--slots')).toBe(false);
+    const sample = JSON.parse(args[args.indexOf('--capacity') + 1]!) as Record<string, unknown>;
+    expect(sample).toMatchObject({ slots: 0, held: 'memory-pressure' });
   });
 
   it('propagates the first failing beat exit code and stops', async () => {
