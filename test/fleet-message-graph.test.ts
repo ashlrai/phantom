@@ -7,6 +7,7 @@ import { Readable } from 'node:stream';
 import { cmdFleetMessageGraph } from '../src/cli/fleet-message-graph.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import type { AshlrConfig } from '../src/core/config.js';
+import type { AgentMessagesQuery } from '../src/core/fleet/agent-messages.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { readMapEdges } from '../src/core/fleet/map-edges.js';
 import { formatMessageGraphText, MESSAGE_GRAPH_PATH, messageGraphResponse, organizationOf, readMessageGraph } from '../src/core/fleet/message-graph.js';
@@ -15,14 +16,26 @@ import { handleApi } from '../src/core/web/api.js';
 const T0 = Date.UTC(2026, 10, 18, 12, 0, 0), NOW = T0 + 60_000;
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); vi.restoreAllMocks(); });
-function store(messages: [at: number, from: string, to: string, text: string][] = []) {
+type Said = [at: number, from: string, to: string, body: string | Record<string, unknown>, priority?: 'P0' | 'P1' | 'P2' | 'P3'];
+function store(messages: Said[] = []) {
   const root = mkdtempSync(join(tmpdir(), 'message-graph-'));
   roots.push(root);
-  messages.forEach(([at, from, to, text], i) => expect(appendBusInbox({ id: `m${i}`, from, to, priority: 'P2', ttl: 86_400_000, body: { text } },
-    { root, now: () => at }).status).toBe('posted'));
+  messages.forEach(([at, from, to, body, priority], i) => expect(appendBusInbox({ id: `m${i}`, from, to, priority: priority ?? 'P2', ttl: 86_400_000,
+    body: typeof body === 'string' ? { text: body } : body }, { root, now: () => at }).status).toBe('posted'));
   return root;
 }
-const read = (root: string, since?: string, before?: string) => readMessageGraph(since, { root, now: () => NOW, before })!;
+// One of every filterable shape: plain mail both ways, a job citation, a
+// threaded channel note and a reply citing m1 — ids are the store's m<index>.
+const mixed: Said[] = [
+  [T0, 'leader', 'claude', 'please look at the build'],
+  [T0 + 1_000, 'claude', 'leader', 'on it?'],
+  [T0 + 2_000, 'leader', 'claude', 'thanks, next the docs'],
+  [T0 + 3_000, 'claude', 'codex', 'RQ-ONE-1 shipped the patch'],
+  [T0 + 4_000, 'codex', 'group:build:general', { kind: 'note', thread: 'build', text: 'build notes here' }],
+  [T0 + 5_000, 'claude', 'leader', { text: 'answering you', inReplyTo: 'm1' }],
+];
+const read = (root: string, since?: string, before?: string, filters?: AgentMessagesQuery) =>
+  readMessageGraph(since, { root, now: () => NOW, before, filters })!;
 const KEYS = ['schema', 'version', 'generatedAt', 'since', 'source', 'organizations', 'groups', 'messages', 'skipped'];
 
 describe('fleet message graph', () => {
@@ -85,6 +98,53 @@ describe('fleet message graph', () => {
       'unknown -> unknown: 1, last 12:00:08Z', '  mystery-claude -> mystery: 1']);
   });
 
+  it('the shared phm messages filters narrow the matched rows before the organization pairs aggregate', () => {
+    const root = store(mixed);
+    const unfiltered = read(root);
+    expect(unfiltered.messages).toBe(6);
+    expect(unfiltered.groups!.map(group => [group.id, group.count])).toEqual([
+      ['Anthropic->unknown', 2], ['OpenAI->unknown', 1], ['Anthropic->OpenAI', 1], ['unknown->Anthropic', 2]]);
+    const filtered = (filters: AgentMessagesQuery, since?: string, before?: string) => read(root, since, before, filters);
+    // --kind keeps one classified kind; --contains is the scrubbed-summary substring search.
+    expect(filtered({ kind: 'ask' })).toMatchObject({ messages: 1 });
+    expect(filtered({ kind: 'ask' })!.groups).toEqual([expect.objectContaining({ id: 'Anthropic->unknown', count: 1 })]);
+    expect(filtered({ kind: 'reply' })).toMatchObject({ messages: 1 });
+    expect(filtered({ contains: 'DOCS' })).toMatchObject({ messages: 1 });
+    // --from/--to decide on the addressed labels; --agent/--with scope to the pair.
+    const senders = filtered({ from: 'claude' });
+    expect(senders.messages).toBe(3);
+    expect(senders.groups!.map(group => [group.id, group.count])).toEqual([['Anthropic->unknown', 2], ['Anthropic->OpenAI', 1]]);
+    expect(filtered({ to: 'claude' })).toMatchObject({ messages: 2 });
+    const pair = filtered({ agent: 'claude', with: 'leader' });
+    expect(pair.messages).toBe(4);
+    expect(pair.groups!.map(group => group.id).sort()).toEqual(['Anthropic->unknown', 'unknown->Anthropic']);
+    // --job/--thread/--channel/--in-reply-to/--id/--body-kind keep only the rows
+    // carrying that citation or discriminator, and the organizations roll up
+    // exactly the matched rows — never a guessed total.
+    expect(filtered({ job: 'RQ-ONE-1' })).toMatchObject({ messages: 1 });
+    expect(filtered({ thread: 'build' })).toMatchObject({ messages: 1 });
+    expect(filtered({ channel: 'build' })).toMatchObject({ messages: 1 });
+    expect(filtered({ inReplyTo: 'm1' })).toMatchObject({ messages: 1 });
+    expect(filtered({ id: 'm3' })).toMatchObject({ messages: 1 });
+    expect(filtered({ id: 'm-gone' })).toMatchObject({ messages: 0, groups: [], organizations: [] });
+    expect(filtered({ bodyKind: 'note' })).toMatchObject({ messages: 1 });
+    expect(filtered({ bodyKind: 'work.post' })).toMatchObject({ messages: 0, groups: [] });
+    expect(filtered({ priority: 'P0' })).toMatchObject({ messages: 0 });
+    expect(filtered({ priority: 'P2' })).toMatchObject({ messages: 6 });
+    // A one-direction filter still reports both organizations with honest
+    // sent/received splits over the matched rows only.
+    expect(senders.organizations).toEqual([
+      { name: 'Anthropic', agents: ['claude'], sent: 3, received: 0 },
+      { name: 'OpenAI', agents: ['codex'], sent: 0, received: 1 },
+      { name: 'unknown', agents: ['leader'], sent: 0, received: 2 }]);
+    // The read's own window still bounds the matched set: since/filters compose
+    // into one [since, before) window exactly like the unfiltered read.
+    expect(filtered({ from: 'claude' }, String(T0 + 4_500))).toMatchObject({ messages: 1 });
+    expect(filtered({ kind: 'status' }, undefined, String(T0 + 2_500))!.messages).toBe(2);
+    // An empty filter object is the unfiltered read, byte-identical.
+    expect(read(root, undefined, undefined, {})).toEqual(unfiltered);
+  });
+
   it('an unreadable bus is unknown, not zero', () => {
     const root = store([[T0, 'claude', 'codex', 'hello']]);
     writeFileSync(join(root, 'bus-inbox', 'messages.json'), '{broken');
@@ -115,6 +175,43 @@ describe('fleet message graph', () => {
     expect((await call(`${MESSAGE_GRAPH_PATH}?since=soon`)).status).toBe(400);
     expect((await call(`${MESSAGE_GRAPH_PATH}?before=soon`)).status).toBe(400);
     expect((await call(`${MESSAGE_GRAPH_PATH}?before=${T0 + 8_000}`)).status).toBe(200);
+    expect((await call(`${MESSAGE_GRAPH_PATH}?from=claude`)).status).toBe(200);
+    expect((await call(`${MESSAGE_GRAPH_PATH}?kind=bogus`)).status).toBe(400);
+  });
+
+  it('GET /api/fleet/message-graph takes the phm messages filters, each once, and never paginates', () => {
+    const root = store(mixed), options = { root, now: () => NOW };
+    const filtered = (query: string) => messageGraphResponse(`${MESSAGE_GRAPH_PATH}?${query}`, options);
+    // Every filter is a param of the same name the map-edges read takes,
+    // validated by the same parser, narrowing the rows before the pairs aggregate.
+    expect(filtered('from=claude')).toMatchObject({ status: 200, body: { messages: 3 } });
+    expect(filtered('kind=ask')).toMatchObject({ status: 200, body: { messages: 1 } });
+    expect(filtered('kind=reply')).toMatchObject({ status: 200, body: { messages: 1 } });
+    expect(filtered('contains=docs')).toMatchObject({ status: 200, body: { messages: 1 } });
+    expect(filtered('job=RQ-ONE-1')).toMatchObject({ status: 200, body: { messages: 1 } });
+    expect(filtered('thread=build')).toMatchObject({ status: 200, body: { messages: 1 } });
+    expect(filtered('channel=build')).toMatchObject({ status: 200, body: { messages: 1 } });
+    expect(filtered('inReplyTo=m1')).toMatchObject({ status: 200, body: { messages: 1 } });
+    expect(filtered('id=m3')).toMatchObject({ status: 200, body: { messages: 1 } });
+    expect(filtered('bodyKind=note')).toMatchObject({ status: 200, body: { messages: 1 } });
+    expect(filtered('priority=P2')).toMatchObject({ status: 200, body: { messages: 6 } });
+    expect(filtered('agent=claude&with=leader')).toMatchObject({ status: 200, body: { messages: 4 } });
+    expect(filtered('to=claude')).toMatchObject({ status: 200, body: { messages: 2 } });
+    expect(filtered('excludeFrom=claude')).toMatchObject({ status: 200, body: { messages: 3 } });
+    expect(filtered('result=failed')).toMatchObject({ status: 200, body: { messages: 0, groups: [] } });
+    // The organization pairs still roll up honestly: one direction keeps
+    // both sides with their matched sent/received splits.
+    expect(filtered('from=claude')).toMatchObject({ status: 200, body: {
+      groups: [{ id: 'Anthropic->unknown', count: 2 }, { id: 'Anthropic->OpenAI', count: 1 }],
+      organizations: [{ name: 'Anthropic', sent: 3, received: 0 }, { name: 'OpenAI', sent: 0, received: 1 },
+        { name: 'unknown', sent: 0, received: 2 }] } });
+    // Filters compose with the window params into one [since, before) read.
+    expect(filtered(`kind=status&before=${T0 + 2_500}`)).toMatchObject({ status: 200, body: { messages: 2 } });
+    // The same once-each rule and the same parser refusals the other reads apply;
+    // `limit` is not a graph param — the aggregate never paginates.
+    for (const query of ['limit=5', 'kind=ask&kind=reply', 'agent=claude&agent=codex', 'kind=bogus', 'with=claude',
+      'result=released', 'bodyKind=has%20space', 'inReplyTo=m1&inReplyTo=m2', 'priority=P9', 'job=has space'])
+      expect(filtered(query).status).toBe(400);
   });
 
   it('phm fleet message-graph prints the same JSON, is registered, and rejects bad usage', async () => {
@@ -122,14 +219,21 @@ describe('fleet message graph', () => {
     expect(Object.keys(await FLEET_SUBCOMMAND_LOADERS['message-graph']!())).toContain('cmdFleetMessageGraph');
     expect(await cmdFleetMessageGraph(['--help'])).toBe(0);
     expect(out.mock.lastCall![0]).toContain('phm fleet message-graph [--json] [--since <10m|2h|1d|ISO>] [--before <10m|2h|1d|ISO|epoch>]');
-    for (const args of [['--since'], ['--json', '--json'], ['--since', 'soon'], ['--before'], ['--before', 'soon'], ['--apply']]) expect(await cmdFleetMessageGraph(args)).toBe(2);
-    expect(err).toHaveBeenCalledTimes(6);
+    for (const args of [['--since'], ['--json', '--json'], ['--since', 'soon'], ['--before'], ['--before', 'soon'], ['--apply'],
+      ['--limit', '5'], ['--kind', 'bogus'], ['--with', 'claude'], ['--result', 'released'], ['--id'],
+      ['--agent', 'claude', '--agent', 'codex'], ['--kind', 'ask', '--kind', 'reply']]) expect(await cmdFleetMessageGraph(args)).toBe(2);
+    expect(err).toHaveBeenCalledTimes(13);
     expect(await cmdFleetMessageGraph(['--json', '--since', '1m'])).toBe(0);
     const printed = JSON.parse(out.mock.lastCall![0]);
     expect(Object.keys(printed)).toEqual(KEYS);
     expect(printed).toMatchObject({ schema: 'fleet.message-graph.v1', version: 1 });
     expect(await cmdFleetMessageGraph(['--json', '--before', '1h'])).toBe(0);
     expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.message-graph.v1', version: 1 });
+    // The phm messages filter flags parse through the shared parser and reach the read.
+    expect(await cmdFleetMessageGraph(['--json', '--kind', 'ask', '--contains', 'build'])).toBe(0);
+    expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.message-graph.v1', version: 1, source: 'missing', messages: 0 });
+    expect(await cmdFleetMessageGraph(['--json', '--from', 'claude', '--priority', 'P0'])).toBe(0);
+    expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.message-graph.v1', version: 1, source: 'missing', messages: 0 });
     expect(await cmdFleetMessageGraph([])).toBe(0);
     expect(out.mock.lastCall![0]).toMatch(/^\d+ agent messages? between \d+ organizations? since /);
   });
