@@ -142,6 +142,20 @@ describe('CI baseline evidence', () => {
     const suite = await analyzeCiBaseline('owner/repo', github({ suite: true, pass: true, filePass: true, count: 1 }).gh);
     expect(suite.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
   });
+  it.each(['1 skipped', '1 todo'])('uses a module summary with %s only as collection evidence', async qualifier => {
+    for (const suite of [false, true]) {
+      const { gh } = github({ suite, pass: true, filePass: true, count: 1 });
+      const report = await analyzeCiBaseline('owner/repo', async args => {
+        const response = await gh(args);
+        return args[1]?.endsWith('/jobs/10/logs')
+          ? { ...response, stdout: response.stdout.replace('(4 tests)', `(4 tests | ${qualifier})`) }
+          : response;
+      });
+      expect(report.groups[0]).toMatchObject(suite
+        ? { classification: 'probable-flake', action: 'rerun-failed', master: 'pass' }
+        : { classification: 'unknown', action: 'unknown', master: 'unknown' });
+    }
+  });
   it('excludes stale and unreadable or unrecognized logs', async () => {
     for (const options of [{ stale: true }, { unknown: true }, { unreadable: true }]) {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);
