@@ -2097,6 +2097,28 @@ describe('router outcome empty-tag join', () => {
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
   });
 
+  it('joins only empty tags available at the report start', async () => {
+    const cutoff = '2026-11-02T00:00:00.000Z';
+    const future = '2026-11-02T00:00:00.001Z';
+    const root = runsDir(['AT', 'FUTURE', 'INVALID'].map(job =>
+      JSON.stringify({ job, lane: 'alpha', phase: 'CLOSED', ts: cutoff })).join('\n'));
+    writeEmptyTags(root, [
+      emptyTag('AT', 'already_done', { ts: cutoff }),
+      emptyTag('AT', 'blocked', { ts: future }),
+      emptyTag('FUTURE', 'unknown', { ts: future }),
+      emptyTag('INVALID', 'blocked', { ts: 'invalid' }),
+    ]);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(future)).mockReturnValueOnce(Date.parse(cutoff));
+    try {
+      const report = await readRouterOutcomes({ runsDir: root, authorityEvidence: null });
+      expect(Object.fromEntries(report.outcomes.map(row => [row.job_id, row.empty_tag]))).toEqual({
+        AT: 'already_done', FUTURE: null, INVALID: null,
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('keeps empty_tag null and reports empty_tag_state when the tags ledger is absent or refused', async () => {
     const missing = await readRouterOutcomes({ runsDir: runsDir('{"job":"J1","phase":"MERGED"}\n') });
     expect(missing).toMatchObject({ state: 'read', empty_tag_state: 'missing', empty_tag_truncated: false });

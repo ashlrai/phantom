@@ -678,8 +678,11 @@ ended empty — the `job.empty-tag.v1` rows the daemon's
 append to `metrics/empty-tags.jsonl` from empty-final-reason's verdict
 (src/core/fleet/empty-tags.ts, src/core/fleet/empty-tag-sync.ts): the closed
 `already_done`/`pool_cap`/`blocked`/`no_change_needed`/`unknown`
-vocabulary. The newest tag row for the job stands (the recorder dedups
-by job id); the tag attaches regardless of the standing finish verdict —
+vocabulary. New receipts carry their recording time. Router outcomes and
+improvement discovery exclude receipts recorded after their start time and
+receipts with invalid timestamps. Older receipts without timestamps remain
+eligible, and the last eligible append for each job supplies the tag. The
+tag attaches regardless of the standing finish verdict —
 it is the fleet's post-hoc triage of the job's final output, distinct
 from the finish row's own `empty`/`empty_class` measures — and rows
 naming jobs outside the jobs window never create outcomes. Only rows

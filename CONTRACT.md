@@ -748,7 +748,7 @@ decisions only) and `fallback_used` (job receipts). See [gates and inert status]
 `authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text, asOfMs?)`,
 `foldRouteDecisionWorkClasses(text)`, `foldRouteDecisions(text)`,
 `foldMarketHandoffAdvisories(text)`,
-`foldEmptyTags(text)`, `foldMergeEvents(text)`, `foldRewardSignals(text)`,
+`foldEmptyTags(text, throughMs?)`, `foldMergeEvents(text)`, `foldRewardSignals(text)`,
 `foldLaunchCosts(text)`,
 `readLedgerFile(path, limit?)`,
 `readLedgerTail(path, maxBytes?)` and
@@ -839,12 +839,15 @@ never recorded raw, and the field is never guessed from the job id
 or PR URL. It stays `null` when no retained row recorded a bounded
 repo — unknown, not "no repo". `empty_tag` joins the same bound of
 `metrics/empty-tags.jsonl`: `foldEmptyTags` collapses `job.empty-tag.v1`
-rows — the `{schema, job, lane, tag}` records the daemon's
+rows — the `{schema, job, lane, tag, ts?}` records the daemon's
 `empty-tag-sync` off-tick job and `phm jobs empty --record`
 append from the fleet's final-output verdict (src/core/fleet/
 empty-tags.ts, src/core/fleet/empty-tag-sync.ts) — to each job's recorded tag in the closed
 `already_done`/`pool_cap`/`blocked`/`no_change_needed`/`unknown`
-vocabulary, last appended row winning a repeat. Only rows with the exact
+vocabulary, with the last eligible append winning a repeat. New rows carry
+a recording timestamp `ts`. The fold skips invalid timestamps and timestamps
+after the optional epoch-millisecond cutoff. Legacy rows without `ts` remain
+eligible. Router reports and discovery use their start time as the cutoff. Only rows with the exact
 schema, a bounded job id and an in-vocabulary tag count; malformed JSON,
 other schemas and unrecognized tags are skipped, never recorded raw. The
 tag attaches to the job's outcome regardless of its standing finish

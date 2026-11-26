@@ -96,6 +96,20 @@ describe('emptyTagBacklogItems', () => {
     expect(items[0]?.prompt).toContain('untagged=3');
   });
 
+  it('counts recurring tags only when their recording time reaches the window cutoff', async () => {
+    const ids = ['RQ-F1', 'RQ-F2', 'RQ-F3'];
+    const jobsText = ids.map(id => finishRow(id, 1)).join('\n');
+    const tagsText = ids.map(id => JSON.stringify({
+      ...JSON.parse(tagRow(id, 'blocked')),
+      ts: new Date(NOW.getTime() + 1).toISOString(),
+    })).join('\n');
+    const opts = { repo: 'ashlrai/phantom', jobsText, tagsText };
+    const before = await emptyTagBacklogItems({ ...opts, now: NOW });
+    expect(before.map(item => item.id)).toEqual(['fleet-empty-tag-untagged']);
+    const at = await emptyTagBacklogItems({ ...opts, now: new Date(NOW.getTime() + 1) });
+    expect(at.map(item => item.id)).toEqual(['fleet-empty-tag-blocked']);
+  });
+
   it('turns a recurring recorded tag into a valid priority-3 backlog item', async () => {
     const jobs = [finishRow('RQ-AAA-1', 5), finishRow('RQ-AAA-2', 4), finishRow('RQ-AAA-3', 3)].join('\n');
     const tags = [tagRow('RQ-AAA-1', 'blocked'), tagRow('RQ-AAA-2', 'blocked'), tagRow('RQ-AAA-3', 'blocked')].join('\n');
