@@ -139,6 +139,13 @@ wins ties and takes precedence over dispatcher values with unknown capture
 times or a reset at or before report time. The controller tick is independent
 of quota capture.
 
+For Codex Personal, a weekly dispatcher quota with a reset at or before report
+time yields to a dated session reading whose weekly window has not reset.
+When both readings have no elapsed reset, the ledger compares their capture
+times and keeps the dispatcher reading on a tie. Expired session readings do
+not replace dispatcher data. The ledger preserves the dispatcher hold and
+records both quota readings when it selects the session reading.
+
 Computed route constants: `VERSE_FLEET_CONTROL_QUEUE_PATH` defines
 `/api/verse/fleet/control/queue`; `VERSE_FLEET_CONTROL_RUNS_PREFIX` defines the
 control run prefix. Ops paths use `VERSE_OPS_BOARD_PATH`,
