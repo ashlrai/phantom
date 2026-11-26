@@ -263,10 +263,10 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{ budgets: PoolBudgetSnapshot }',
   },
   {
-    usage: 'phm resource --json [--directory <fleet-directory>]',
-    description: 'Refresh the shared resource projection in fleet.json from recorded usage and machine telemetry; no provider calls or dispatch.',
+    usage: 'phm resource [--cards] [--json] [--directory <fleet-directory>]',
+    description: 'Refresh the shared resource projection in $ASHLR_HOME/fleet.json (default ~/.ashlr) from recorded usage and machine telemetry; --cards groups pools into provider cards. No provider calls or dispatch.',
     safety: 'append',
-    jsonShape: 'resource.v1; missing or stale inputs have null measurements and unknown status',
+    jsonShape: 'resource.v1 (or provider-cards.v1 with --cards); missing or stale inputs have null measurements and unknown status; errors return {ok:false,error:{code,message}}',
   },
   {
     usage: 'ashlr fleet queue merged|read|complete <job-id> [--json]',
@@ -1370,7 +1370,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'pulse merge-latency [--jobs <jobs.jsonl>] [--json]', desc: 'Merge latency diagnosis: observed time waiting for checks, running checks and waiting to merge, with the top wastes. Read-only; unknown stays unknown.', topic: 'observability' },
   { cmd: 'pulse-export',                 desc: 'Fleet→pulse OTLP backfill/manual export.', topic: 'observability' },
   { cmd: 'pulse-test',                   desc: 'Fleet→pulse connectivity + auth probe (read-only).', topic: 'observability' },
-  { cmd: 'resource [--json] [--directory <fleet-directory>]', desc: 'Refresh the shared resource.v1 view in fleet.json from recorded inputs.', topic: 'observability' },
+  { cmd: 'resource [--cards] [--json] [--directory <fleet-directory>]', desc: 'Refresh the shared resource.v1 view in $ASHLR_HOME/fleet.json (or print provider-cards.v1 with --cards).', topic: 'observability' },
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
   { cmd: 'capacity publish [--json]', desc: 'Refresh local subscription usage metadata once with this node’s local authentication.', topic: 'observability' },
   { cmd: 'estates [--json] [--repo <repo-id>]', desc: 'Per-repo estate cards: health, CI, security. Read-only portfolio view.', topic: 'observability' },
