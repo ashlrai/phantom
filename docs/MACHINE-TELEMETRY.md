@@ -129,6 +129,13 @@ The local host uses Node OS counters and statfs, with no shell or network probes
 RAM used here means physical total minus OS free, rather than working-set attribution.
 Pressure and memguard state are available only from a fresh existing machine sample.
 
+Quota verdicts, admission fields and the 24-hour publish count require a readable
+dispatcher tick at or before report time and at most 60 seconds old. For other
+ticks these fields are `null`. `dispatcherAt` keeps the readable observation time,
+and lane hard caps show the last reported configuration. When an embedded admission
+record supplies `ts`, it must match `last_tick`. Older records without `ts` use the
+enclosing tick for freshness and leave `admission.observedAt` unknown.
+
 Node pool capacity. Each node also carries its advertised `caps` (null when none were
 reported). The payload adds `hosts` and `pool`, a rollup from `src/core/fleet/compute-hosts.ts`
 that groups workers per physical Mac (mbp-w1 + mbp-w2) and sums advertised slots of
