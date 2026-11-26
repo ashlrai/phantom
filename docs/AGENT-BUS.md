@@ -879,7 +879,16 @@ live evidence — so an agent already working `agents bus` reconstructs one
 exchange's raw chain without dropping to the fleet command family; like
 `fleet bus-thread` it takes a wire id only, so a `wh-…` claim-holder hint
 id reports `not-found` here rather than resolving through `show`'s
-wake-hint path. All three surfaces read with live evidence: every message
+wake-hint path. All three surfaces take the shared bus-read filters —
+`--to`/`--from`/`--exclude-from` resolved through the identity registry
+with exact-label fallback, `--channel`, `--job`, `--priority`,
+`--thread`, `--in-reply-to`, `--body-kind`, `--result`, the
+`[since, before)` receivedAt window and `--contains` (the MCP tool's
+camelCase twins) — which narrow the listed chain members only: the
+`inReplyTo` walk, `rootFound` and the scan honesty fields still describe
+the whole chain, so a root whose every member a filter excludes reports
+`rootFound` with an empty `messages`, never a proven miss. All three
+surfaces read with live evidence: every message
 carries the same `held`/`holder`/`job`/`fromAgent` annotations `agents bus
 inbox`, `agents bus channel read` and `agents bus show` report — whether
 a claimable work or worker-handoff body in the chain is already taken,
