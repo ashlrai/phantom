@@ -362,7 +362,11 @@ count of headroom and rows waiting elsewhere, capped by total waiting rows
 because lanes can see the same work. If `ready.tsv` is unavailable, queue-derived
 counts show as unknown. Published dispatcher counts still apply, and a free
 lane with no waiting evidence has an unknown unfed verdict. A readable empty
-queue supplies measured zero counts. Actual placement depends on eligibility
+queue supplies measured zero counts in the derived report. When the dispatcher
+publishes a partial block, a missing tick total stays unknown. Missing lane
+counts also stay unknown for lanes with spare capacity unless the tick recorded
+zero waiting rows. A separate ready-file read still supplies current hint counts.
+Actual placement depends on eligibility
 and admission. The command then folds the unfed ticks of the last `--window` hours (default 24, at
 most 168): ticks unfed and slot-ticks lost per lane, with the leading reasons.
 The history includes both endpoints of the trailing window and excludes ticks

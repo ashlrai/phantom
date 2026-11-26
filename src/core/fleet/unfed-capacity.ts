@@ -353,7 +353,8 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     ? { ...stoppedReadyHints(readyTsv), rows: strict.rows, invalid: strict.invalid }
     : strict;
   const publishedLanes = published && isRecord(published.lanes) ? published.lanes : {};
-  const waiting = published && count(published.waiting) ? published.waiting : hints?.waiting ?? null;
+  const waiting = published === null ? hints?.waiting ?? null
+    : count(published.waiting) ? published.waiting : null;
   const resources: UnfedResource[] = [];
   for (const [lane, value] of Object.entries(data.lanes)) {
     if (!LANE.test(lane) || !isRecord(value) || !count(value.running)) throw new Error('invalid lane');
@@ -365,7 +366,8 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     const readyHinted = hints === null ? null : hints.byLane.get(lane) ?? 0;
     const entry = publishedLanes[lane];
     const canBeUnfed = headroom > 0 && !held;
-    let waitingElsewhere: number | null = canBeUnfed && hints === null ? null : 0;
+    // The live ready file may already differ from the dispatcher's tick.
+    let waitingElsewhere: number | null = canBeUnfed && waiting !== 0 ? null : 0;
     let blocked: Record<string, number> = {};
     if (isRecord(entry) && count(entry.waiting_elsewhere)) {
       waitingElsewhere = entry.waiting_elsewhere;
