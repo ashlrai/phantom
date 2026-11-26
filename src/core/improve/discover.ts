@@ -88,6 +88,12 @@
  *     or dropping jobs becomes work instead of sitting in a report
  *     someone had to run — outcome learning censors the silent vanishes
  *     as unresolved attempts that never count;
+ *   - the jobs ledger's claude_recovery rows: the dispatcher's own
+ *     auto-recovery record, appended when claude_recoveries() sees two
+ *     fresh exit-1 empty claude finishes on distinct attempts and spawns
+ *     a -CR1 child (claudeRecoveryBacklogItems below) — the one
+ *     jobs.jsonl lifecycle event no reader folded, so a claude lane
+ *     that keeps churning empty exit-1 finishes never became work;
  *   - the swapout-rate ledger's recurring memory evidence: the per-sample
  *     free_pct/swap_gb/swapouts_per_min rows the daemon's swapout-sync
  *     job folds from memstat.json into metrics/swapout-rate.jsonl —
@@ -1020,6 +1026,7 @@ import { emptyTagBacklogItems } from './empty-tag-backlog.js';
 import { postMergeBacklogItems } from './postmerge-backlog.js';
 import { ciRerunBacklogItems } from './ci-rerun-backlog.js';
 import { lostLaunchBacklogItems } from './lost-launch-backlog.js';
+import { claudeRecoveryBacklogItems } from './claude-recovery-backlog.js';
 import { memoryBacklogItems } from './memory-backlog.js';
 import { diskBacklogItems } from './disk-backlog.js';
 import { controllerBacklogItems } from './controller-backlog.js';
@@ -1250,6 +1257,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // work; a (lane, class) cell emits only at the recurring bar inside the
   // window and only for the fleet's own repository.
   items.push(...await lostLaunchBacklogItems({ repo }));
+
+  // Claude-recovery ledger: the dispatcher's own auto-recovery record —
+  // the claude_recovery rows it appends to metrics/jobs.jsonl when
+  // claude_recoveries() sees two fresh exit-1 empty finishes on distinct
+  // attempts and spawns a -CR1 child — becomes backlog items too. Until
+  // now the row had no reader at all: every other jobs.jsonl lifecycle
+  // event folds somewhere, but the fleet's record that the claude lane
+  // kept producing empty exit-1 finishes never became work. A
+  // recorded-reason cell emits only at the recurring bar of distinct
+  // parent jobs inside the window, truncated tails are stated as lower
+  // bounds, and only the fleet's own repository inherits the items
+  // since the recovery machinery is this install's dispatcher.
+  items.push(...await claudeRecoveryBacklogItems({ repo }));
 
   // Swapout-rate ledger: the daemon's per-sample host memory readings —
   // recurring recorded-pressure hours and recurring hours where the
