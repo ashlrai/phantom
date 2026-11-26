@@ -1316,6 +1316,7 @@ import { devinReviewBacklogItems } from './devin-review-backlog.js';
 import { custodyBacklogItems } from './custody-backlog.js';
 import { launchCostBacklogItems } from './launch-cost-backlog.js';
 import { knowledgeOutcomeBacklogItems } from './knowledge-outcome-backlog.js';
+import { playbookOutcomeBacklogItems } from './playbook-outcome-backlog.js';
 import { landedCloseBacklogItems } from './landed-close-backlog.js';
 import { marketPostureBacklogItems } from './market-posture-backlog.js';
 import { liveConfigBacklogItems } from './live-config-backlog.js';
@@ -2404,6 +2405,28 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // nothing, and only the fleet's own repository inherits the items
   // since the ledger describes this install's injection machinery.
   items.push(...await knowledgeOutcomeBacklogItems({ repo }));
+
+  // Playbook-version trajectory outcome tallies: the per-version
+  // {merged, refused, reverted, failed, total} buckets
+  // countPlaybookOutcomes (src/core/playbooks/stats.ts) folds from the
+  // learn/retro ended-run store's playbookRef field — attached by the
+  // retro sweep's uses.jsonl lane:key join for fleet dispatches and by
+  // playbookForLaunch for cloud/Devin tasks — the same tallies `phm
+  // playbook show` prints and the playbooks API serves. Until now they
+  // only reached those two surfaces — reports someone had to run and
+  // read — so a playbook version whose runs kept being reverted or
+  // failing never became work even though every matching launch pays
+  // the injected prompt bytes and the version's instructions shape the
+  // run's whole trajectory. A version emits only at the recurring bars
+  // of three adverse runs (reverted + failed — refused stays reported
+  // but never counts, gate and owner decisions are not evidence about
+  // the version) across two distinct UTC days inside the 7-day window,
+  // only while its playbook id still resolves (built-ins always live,
+  // disk playbooks only while the id remains), truncated retro bounds
+  // are stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the store describes this install's
+  // procedure memory.
+  items.push(...await playbookOutcomeBacklogItems({ repo }));
 
   // Landed-close attempt journal (queue/landed-closes.jsonl under the
   // runs dir): the {at, pr, head, outcome, reason?} rows `fleet

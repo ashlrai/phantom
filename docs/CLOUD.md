@@ -1290,6 +1290,30 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   or truncated runs log, degraded trajectory sources) or a failed
   knowledge read emits nothing, and another repository emits nothing
   since the ledger describes this install's injection machinery —
+  and the playbook-version trajectory outcome tallies' recurring
+  adverse evidence, the per-version {merged, refused, reverted,
+  failed, total} buckets countPlaybookOutcomes
+  (src/core/playbooks/stats.ts) folds from the learn/retro
+  ended-run store's playbookRef field — attached by the retro
+  sweep's uses.jsonl lane:key join for fleet dispatches and by
+  playbookForLaunch for cloud/Devin tasks — the same tallies `phm
+  playbook show` prints per version and the playbooks API serves
+  (otherwise only visible through those two surfaces — reports
+  someone had to run and read — so a playbook version whose runs
+  kept being reverted or failing never became work even though
+  every matching launch pays the injected prompt bytes). A version
+  becomes an item only at the recurring bars of three adverse runs
+  (reverted + failed — the refused bucket stays reported but never
+  counts, since gate-refused, owner-laned, closed and vetoed are
+  gate and owner decisions, not evidence about the version)
+  across two distinct UTC days inside the 7-day window AND only
+  while its playbook id still resolves — built-ins are always
+  live, disk playbooks only while the id remains in the store; a
+  deleted playbook's history is moot, rows with malformed refs or
+  unparseable endedAt never reach a cell, a retro store whose
+  newest-500 bound lands wholly inside the window states its
+  tallies as lower bounds, and another repository emits nothing
+  since the store describes this install's procedure memory —
   and the landed-close attempt journal's recurring adverse cells, the
   {at, pr, head, outcome, reason?} rows `ashlr fleet landed-close
   --apply` appends to <runs>/queue/landed-closes.jsonl for each
@@ -1474,7 +1498,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts, postrun, git-contention, job-latency, job-reissue and route-shadow items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome, playbook-outcome, landed-close, live-config, delivery-receipts, postrun, git-contention, job-latency, job-reissue and route-shadow items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
