@@ -77,7 +77,7 @@ import { setHomeChoice, useHomeView } from './shell/home-view-store.js';
 import type { UnreadCounts } from './shell/unread-counts.js';
 import type { WarmupOptions } from './shell/warmup.js';
 import { useVerseUi } from './useVerseUi.js';
-import { useLayoutMode } from './layout-mode.js';
+import { useLayoutMode } from './use-layout-mode.js';
 import { useFocusMode } from './shell/focus-mode.js';
 import { openPaneInChat } from './dock/dock-store.js';
 // Only the event name: validation and the handler are the lazy open-terminal chunk.

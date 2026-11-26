@@ -188,12 +188,17 @@ function verseFirstPaintChunks(): Plugin {
       // The console's static closure, minus anything the other consoles share (§1),
       // with what the phone app also reaches split off into the shared group (§1b).
       const entryStatic = reach(entries, new Set(), true);
-      // §1c: the entry's own imports (React included) load with every console; one chunk, not one each.
-      // Vite's preload helper is one of them: every first-paint chunk calls it.
+      // §1c: the entry's imports that a Verse first paint also imports (React, the console-mode
+      // helpers, Vite's preload helper) load with every console; one chunk, not one each. The
+      // entry's own side-effect modules (appearance-boot) stay in the entry: a lazy chunk must
+      // never run them on import.
+      const shellStatic = reach([VERSE_SHELL_ROOT], new Set(), true);
       for (const id of entryStatic) {
-        if (!info(id)?.isEntry && (!id.startsWith('\0') || id.includes('preload-helper'))) verseBootModules.add(id);
+        const helper = id.includes('preload-helper');
+        if (info(id)?.isEntry || (id.startsWith('\0') && !helper)) continue;
+        if (shellStatic.has(id) || mobileFirstPaint.has(id) || helper) verseBootModules.add(id);
       }
-      for (const id of reach([VERSE_SHELL_ROOT], new Set(), true)) {
+      for (const id of shellStatic) {
         if (elsewhere.has(id)) {
           // §1c: never the entry's own modules or a package (React keeps its chunks).
           if (entryStatic.has(id) || id.includes('/node_modules/') || id.startsWith('\0')) continue;
