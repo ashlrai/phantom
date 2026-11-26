@@ -9,9 +9,8 @@
  *   job repo PARKED-<reason>[.<lane>] tier prompt [req]        lane-column parked
  *   PARKED-<reason>[.<lane>] job lane tier repo prompt [req]   status-first parked
  * Parked rows wait on dependencies or rate limits — they are not runnable
- * queue work, so they never count toward `ready`/`filler`/`real`. A status
- * word in the first cell (`READY`, `CLAIMED`, ...) shifts the job id to the
- * second cell, matching dep-gate's readyRow layout.
+ * queue work, so they never count toward `ready`/`filler`/`real`. For
+ * status-first rows, only `READY` counts and the job id is in the second cell.
  */
 import { KNOWN_STATUSES } from './lane-console.js';
 import { laneLaunchTarget } from './lane-launch-target.js';
@@ -55,7 +54,7 @@ interface QueueRow {
 
 /**
  * One runnable ready.tsv row (job id + lane), or null for blank lines,
- * comments, parked rows and rows missing either cell. Status-first rows put
+ * comments, non-ready rows and rows missing either cell. Status-first rows put
  * the job id in the second cell.
  */
 function queueRow(line: string): QueueRow | null {
@@ -66,7 +65,9 @@ function queueRow(line: string): QueueRow | null {
   const first = cells[0]?.trim() ?? '';
   const lane = cells[2]?.trim() ?? '';
   if (!first || !lane) return null;
-  const id = (KNOWN_STATUSES.has(first.toUpperCase()) ? cells[1] : cells[0])?.trim() ?? '';
+  const status = first.toUpperCase();
+  if (KNOWN_STATUSES.has(status) && status !== 'READY') return null;
+  const id = status === 'READY' ? cells[1]?.trim() : first;
   return id ? { id, lane } : null;
 }
 
