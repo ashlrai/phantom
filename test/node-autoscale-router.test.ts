@@ -322,6 +322,30 @@ describe('autoscale router scoring', () => {
     }
   });
 
+  it('keeps fresh capacity when a newer sample exceeds the clock skew allowance', () => {
+    const ready = node(mbp());
+    const held = (offset: number) => node(mbp({
+      measuredAtMs: T0 + offset,
+      mem: { ...mbp().mem, pressureLevel: 2 },
+    }));
+    const future = held(60_001);
+    const input = { costs: [COSTS[0]!], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }] };
+    for (const nodes of [[ready, future], [future, ready]]) {
+      expect(planAutoscaleRoutes({ ...input, nodes })[0]?.nodeId).toBe(ready.doc.node);
+      expect(fleetRunnable(nodes.map(n => n.doc), T0).codex).toBe(ready.doc.agents_runnable_now.codex);
+    }
+    expect(planAutoscaleRoutes({ ...input, nodes: [future] })[0]).toMatchObject({
+      nodeId: null, rejected: { 'node-stale': 1 },
+    });
+    expect(fleetRunnable([future.doc], T0).codex).toBeNull();
+
+    const boundary = held(60_000);
+    expect(planAutoscaleRoutes({ ...input, nodes: [ready, boundary] })[0]).toMatchObject({
+      nodeId: null, rejected: { 'node-pressure': 1 },
+    });
+    expect(fleetRunnable([ready.doc, boundary.doc], T0).codex).toBe(0);
+  });
+
   it('reports conflicting same-time capacity as unknown and keeps other nodes eligible', () => {
     const ready = node(mbp());
     const held = node(mbp({

@@ -413,9 +413,12 @@ swap growth using the snapshot schema's types. Use `null` for an unknown
 reading. Missing or malformed values in these fields make the file invalid;
 the command returns an input error before planning.
 Input can contain several snapshots for one node ID. Routing and fleet-wide
-runnable totals use the newest timestamp per node, so copying a snapshot
-cannot increase capacity and a newer hold takes precedence. Conflicting
-inputs at the same newest timestamp leave that node's capacity unknown.
+runnable totals use the newest plausible timestamp per node, so copying a
+snapshot cannot increase capacity and a newer hold takes precedence. A
+timestamp more than 60 seconds ahead of report time cannot supersede another
+observation. A node with only unusable timestamps reports stale capacity.
+Conflicting inputs at the same newest plausible timestamp leave that node's
+capacity unknown.
 For a node without its own harness footprint, routing can borrow measurements
 from other nodes whose latest snapshots pass the same freshness check.
 A borrowed footprint uses the largest observed memory and CPU costs for the

@@ -90,18 +90,21 @@ export interface Placement {
 export const ROUTER_DEFAULTS = Object.freeze({ maxAgeMs: 120_000, tokenWeight: 0.5 });
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+const MAX_CLOCK_SKEW_MS = 60_000;
 
-/** Select one observation per node, retaining conflicts at the newest timestamp. */
-function latestByNode<T>(items: readonly T[], docOf: (item: T) => NodeCapacityDoc) {
+/** Select one observation per node, retaining conflicts at the newest plausible timestamp. */
+function latestByNode<T>(items: readonly T[], docOf: (item: T) => NodeCapacityDoc, nowMs: number) {
   const latest = new Map<string, { item: T; at: number; conflict: boolean }>();
   for (const item of items) {
     const doc = docOf(item);
     const parsed = Date.parse(doc.measured_at);
-    const at = finite(parsed) ? parsed : -Infinity;
+    // Keep a placeholder for stale diagnostics, but never let an unusable
+    // timestamp displace a plausible observation of the same node.
+    const at = finite(parsed) && parsed <= nowMs + MAX_CLOCK_SKEW_MS ? parsed : -Infinity;
     const previous = latest.get(doc.node);
     if (!previous || at > previous.at) {
       latest.set(doc.node, { item, at, conflict: false });
-    } else if (at === previous.at && !isDeepStrictEqual(item, previous.item)) {
+    } else if (finite(at) && at === previous.at && !isDeepStrictEqual(item, previous.item)) {
       previous.conflict = true;
     }
   }
@@ -158,11 +161,11 @@ function hasMeasuredMemory(doc: NodeCapacityDoc): boolean {
 
 function nodeStates(input: RouterInput): NodeState[] {
   const maxAge = input.maxAgeMs ?? ROUTER_DEFAULTS.maxAgeMs;
-  return latestByNode(input.nodes, node => node.doc)
+  return latestByNode(input.nodes, node => node.doc, input.nowMs)
     .sort((a, b) => a.item.doc.node.localeCompare(b.item.doc.node)).map(({ item: node, at, conflict }) => {
       const age = input.nowMs - at;
       const blocked = conflict ? 'capacity-conflict'
-        : !finite(age) || age < -60_000 || age > maxAge ? 'stale'
+        : !finite(age) || age > maxAge ? 'stale'
         : capacityHold(node.doc) ?? (hasMeasuredMemory(node.doc) ? null : 'unmeasured');
       const cores = node.doc.cpu.headroom_cores;
       return { node, loaded: new Set(node.localModels ?? []), bytes: node.doc.mem_free.headroom_bytes ?? 0,
@@ -250,9 +253,9 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
  * fresh node has a measured answer for that harness.
  */
 export function fleetRunnable(docs: NodeCapacityDoc[], nowMs: number, maxAgeMs = ROUTER_DEFAULTS.maxAgeMs): Record<string, number | null> {
-  const current = latestByNode(docs, doc => doc).filter(({ at, conflict }) => {
+  const current = latestByNode(docs, doc => doc, nowMs).filter(({ at, conflict }) => {
     const age = nowMs - at;
-    return !conflict && finite(age) && age >= -60_000 && age <= maxAgeMs;
+    return !conflict && finite(age) && age <= maxAgeMs;
   }).map(({ item: doc }) => ({ doc, stopped: capacityHold(doc) !== null || doc.cpu.headroom_cores === 0 }));
   const out: Record<string, number | null> = {};
   for (const adapter of HARNESS_ADAPTERS) {
