@@ -155,6 +155,9 @@ trajectories for that sample or contribute to dispatch join diagnostics.
 Direct trajectory reads also exclude future UTC dispatch partitions from
 the file cap and future dispatches from the event cap. Physical scan limits
 still apply to every selected file.
+Agent actions dated after report time do not enter trajectory timelines or
+join diagnostics. Future UTC action partitions do not consume dated file
+slots, and valid future actions in scanned files do not consume event slots.
 Proposal snapshots whose creation timestamps fall after report time cannot
 supply trajectory outcomes or enter trajectory join diagnostics.
 The skill-outcome report anchors its ledger read and trajectory join to one

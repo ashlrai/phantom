@@ -2505,6 +2505,21 @@ describe('Trajectory records', () => {
     expect(published.skillOutcomes).toBeDefined();
   });
 
+  it('excludes future actions from the trajectory timeline at the report cutoff', () => {
+    const readAgentActions = vi.fn(() => [
+      action({ ts: new Date(TEST_NOW_MS + 1).toISOString(), action: 'future-action' }),
+      action({ ts: new Date(TEST_NOW_MS).toISOString(), action: 'boundary-action' }),
+    ]);
+    const [record] = listTrajectoryRecords({
+      asOfMs: TEST_NOW_MS,
+      deps: deps({ listOutcomeRecords: () => [], readAgentActions }),
+    });
+
+    expect(readAgentActions).toHaveBeenCalledWith(expect.objectContaining({ asOfMs: TEST_NOW_MS }));
+    expect(record?.timeline.filter((event) => event.kind === 'agent-action').map((event) => event.action))
+      .toEqual(['boundary-action']);
+  });
+
   it('excludes future proposal snapshots from existing dispatch trajectories', () => {
     const outcome = outcomeRecord();
     const readRecords = (createdAtMs: number) => listTrajectoryRecords({

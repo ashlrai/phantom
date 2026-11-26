@@ -5037,7 +5037,13 @@ explicit and peer mappings confer no authority. See the
 an optional `asOfMs` report time in epoch milliseconds. It defaults to the
 current time and anchors the lookback and both endpoints of the skill-use
 and post-merge observation windows. Direct dispatch ledger reads use the
-same cutoff.
+same cutoff, as do agent-action reads for trajectories and join diagnostics.
+
+`readAgentActionsDetailed(opts?)` and `readAgentActions(opts?)` accept an
+optional inclusive `asOfMs` in epoch milliseconds. Future UTC partitions do
+not consume dated file slots. Valid future action rows do not consume event
+slots or contribute rejected-payload diagnostics. Physical scan and integrity
+checks still apply to selected files.
 
 `readDispatchProductionEventsDetailed(opts?)` and
 `readDispatchProductionEvents(opts?)` accept an optional inclusive `asOfMs`
