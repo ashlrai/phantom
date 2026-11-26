@@ -65,7 +65,17 @@ export function parseFeedQuery(input: { limit?: string; since?: string; kind?: s
   return { ...query, sinceMs };
 }
 
-const plain = (text: string): string => scrubSecrets(text).replace(/\s+/g, ' ').trim().slice(0, 400);
+/** Feed text repeats across items and requests: each distinct line is scrubbed once, bounded. */
+const plainMemo = new Map<string, string>();
+const plain = (text: string): string => {
+  let out = plainMemo.get(text);
+  if (out === undefined) {
+    out = scrubSecrets(text).replace(/\s+/g, ' ').trim().slice(0, 400);
+    if (plainMemo.size >= 20_000) plainMemo.clear();
+    plainMemo.set(text, out);
+  }
+  return out;
+};
 const iso = (value: string): string | null => Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
 /** Per-tick dispatcher chatter that is never news on its own. */
@@ -135,11 +145,28 @@ function mainItems(raw: string): FeedItem[] | null {
   });
 }
 
+/** Links repeat across items (one pane per kind): each distinct one is scrubbed once, bounded. */
+const hrefMemo = new Map<string, boolean>();
+function cleanHref(href: string): boolean {
+  let clean = hrefMemo.get(href);
+  if (clean === undefined) {
+    clean = scrubSecrets(href) === href;
+    if (hrefMemo.size >= 20_000) hrefMemo.clear();
+    hrefMemo.set(href, clean);
+  }
+  return clean;
+}
+
 const hourOf = (item: FeedItem): string => `${item.repo ?? 'unknown'}:${new Date(item.at).toISOString().slice(0, 13)}`;
 /** Newest-first items in, the same out, with each burst of merges (one repo, one clock hour) as one card listing them. */
 function groupBursts(ordered: FeedItem[], now: number): FeedItem[] {
   const bursts = new Map<string, FeedItem[]>();
-  for (const item of ordered) if (item.kind === 'merged') bursts.set(hourOf(item), [...(bursts.get(hourOf(item)) ?? []), item]);
+  for (const item of ordered) {
+    if (item.kind !== 'merged') continue;
+    const hour = hourOf(item);
+    const burst = bursts.get(hour);
+    if (burst) burst.push(item); else bursts.set(hour, [item]);
+  }
   return ordered.flatMap((item): FeedItem[] => {
     const burst = item.kind === 'merged' ? bursts.get(hourOf(item))! : [];
     if (burst.length < FEED_BURST_MIN) return [item];
@@ -169,10 +196,12 @@ export function buildFeed(inputs: FeedInputs, query: FeedQuery, now: number): Fe
   ];
   const since = query.sinceMs ?? now - FEED_MAX_WINDOW_MS;
   const seen = new Set<string>();
+  // Times parsed once per item, not once per comparison.
+  const at = new Map(all.map(item => [item, Date.parse(item.at)]));
   const ordered = all
-    .filter(item => (!query.kind || item.kind === query.kind) && !NOISE.test(item.text) && scrubSecrets(item.href) === item.href
-      && Date.parse(item.at) >= since && Date.parse(item.at) <= now)
-    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .filter(item => (!query.kind || item.kind === query.kind) && at.get(item)! >= since && at.get(item)! <= now
+      && !NOISE.test(item.text) && cleanHref(item.href))
+    .sort((a, b) => at.get(b)! - at.get(a)! || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .filter(item => !seen.has(item.id) && Boolean(seen.add(item.id)));
   const items: FeedItem[] = [];
   for (const item of groupBursts(ordered, now)) {
@@ -210,6 +239,20 @@ export function defaultFeedReaders(runsDir = process.env.ASHLR_RUNS_DIR?.trim() 
     },
     guardian: () => readFile(join(runsDir, 'guardian', 'state.json'), 'utf8').catch(() => null),
   };
+}
+
+/** How long one served Feed answers repeat polls: every open window's badge and pane poll it. */
+export const FEED_SHARE_MS = 5_000;
+let shared: { key: string; at: number; report: Promise<FeedReport> } | null = null;
+
+/** readFeed with the real readers, shared by every poll of the same query within FEED_SHARE_MS. */
+export function readFeedShared(query: FeedQuery, now = Date.now()): Promise<FeedReport> {
+  const key = JSON.stringify(query);
+  if (shared && shared.key === key && now - shared.at >= 0 && now - shared.at < FEED_SHARE_MS) return shared.report;
+  const report = readFeed(query, defaultFeedReaders(), now);
+  shared = { key, at: now, report };
+  report.catch(() => { if (shared?.report === report) shared = null; });
+  return report;
 }
 
 export async function readFeed(query: FeedQuery, readers: FeedReaders = defaultFeedReaders(), now = Date.now()): Promise<FeedReport> {
