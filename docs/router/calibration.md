@@ -17,8 +17,10 @@ measurement. Launch and finish `ts` stamps provide the elapsed-time fallback.
 Eventless `MERGED` or `CLOSED` verdicts and those carried on reconciler publish
 rows resolve the job. An ordinary publish claim alone leaves it unresolved.
 Supply a launch, a `batch_claim`, or a reward signal for each included job.
-A batch member's recorded claim lane supplies the arm when neither a launch
-nor a reward signal supplies one. Arm lookup skips blank values and
+A batch member's recorded claim lane supplies the arm only for jobs with no
+standalone launch and no recorded reward pool. An unlabeled standalone
+launch uses the `unknown` arm unless a reward signal supplies its pool.
+Arm lookup skips blank values and
 case-insensitive `unknown` placeholders, so a later alias or a recorded
 reward pool can supply the arm. Jobs with no usable arm and jobs with
 conflicting claim lanes alone use the `unknown` arm. Conflicting known

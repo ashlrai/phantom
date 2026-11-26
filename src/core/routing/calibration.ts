@@ -190,7 +190,7 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
   for (const job of jobs.values()) {
     if (!job.launched && !job.batchLanes && job.rewardMerged === undefined) throw new Error('Event has no matching launch');
     if (!job.arm) {
-      job.arm = job.batchLanes?.size === 1 ? [...job.batchLanes][0]! : 'unknown';
+      job.arm = !job.launched && job.batchLanes?.size === 1 ? [...job.batchLanes][0]! : 'unknown';
     }
     job.merged = job.rewardMerged ?? job.merged;
     if (job.started !== undefined && job.finished !== undefined) {

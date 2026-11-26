@@ -122,6 +122,16 @@ describe('router calibration', () => {
       row({ event: 'publish', id: 'TEST-a', status: 'published' }) + row({ event: 'outcome', id: 'TEST-a', outcome: 'pending' }));
     expect(report.arms[0]).toMatchObject({ resolved: 0, observedMergeRate: null, brier: null });
   });
+  it.each([false, true])('keeps an unlabeled standalone launch out of the batch arm (claim last: %s)', (claimLast) => {
+    const claim = row({ event: 'batch_claim', job: 'RQ-FALLBACK', lane: 'codex', ts: '2026-01-01T00:00:00Z' });
+    const launch = row({ event: 'launch', job: 'RQ-FALLBACK', lane: 'unknown',
+      ts: '2026-01-01T00:00:01Z', predicted_merge_rate: 0.8 });
+    const verdict = row({ jobId: 'RQ-FALLBACK', outcome: 'MERGED' });
+    const report = calibrateRouting((claimLast ? launch + claim : claim + launch) + verdict);
+    expect(report.arms).toMatchObject([
+      { arm: 'unknown', jobs: 1, resolved: 1, mergeRate: { actual: 1, paired: 1 } },
+    ]);
+  });
   it('skips unknown arm aliases and groups launches with no arm evidence as unknown', () => {
     const report = calibrateRouting(
       row({ event: 'launch', job: 'RQ-SOLO', arm: ' Unknown ', lane: 'codex' }) +
