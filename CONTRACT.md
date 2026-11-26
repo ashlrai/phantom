@@ -4810,6 +4810,10 @@ explicit and peer mappings confer no authority. See the
 an optional `asOfMs` report time in epoch milliseconds. It defaults to the
 current time and anchors the lookback and both endpoints of the skill-use
 and post-merge observation windows.
+Bounded skill ledger reads in `src/core/fleet/skill-records.ts` accept an
+optional inclusive `asOfMs` in epoch milliseconds. Together with `sinceMs`,
+it limits eligible daily partitions and rows before evidence caps and
+skill-use deduplication. Complete lifecycle reads ignore time bounds.
 
 `fleet.plugins-panel.v1` and `fleet.skills-panel.v1` (`src/core/fleet/installed-panels.ts`):
 `readPluginsPanel(opts?)`, `readSkillsPanel(opts?)`, `formatInstalledPanel(panel, noun)`.

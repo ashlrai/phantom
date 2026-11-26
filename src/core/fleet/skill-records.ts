@@ -83,6 +83,8 @@ const MAX_TEXT = {
 
 export interface ReadSkillRecordsOptions {
   sinceMs?: number;
+  /** Inclusive upper timestamp bound for bounded reads. */
+  asOfMs?: number;
   limit?: number;
   maxFiles?: number;
   /** Scan every private date partition so lifecycle rows cannot age out. */
@@ -699,11 +701,9 @@ function readFileComplete(filePath: string, maxBytes: number): CompleteFileRead 
   }
 }
 
-function fileMayContainSince(file: string, sinceMs: number): boolean {
-  const match = DATE_LEDGER_FILE_RE.exec(file);
-  if (!match) return false;
-  const endOfDayMs = Date.parse(`${match[1]}T23:59:59.999Z`);
-  return !Number.isFinite(endOfDayMs) || endOfDayMs >= sinceMs;
+function fileOverlapsWindow(file: string, sinceMs: number, asOfMs: number): boolean {
+  const startOfDayMs = Date.parse(`${file.slice(0, 10)}T00:00:00.000Z`);
+  return startOfDayMs <= asOfMs && startOfDayMs + 86_400_000 - 1 >= sinceMs;
 }
 
 function fileIsNotFutureDated(file: string): boolean {
@@ -729,6 +729,10 @@ function readRecordsWithDiagnostics<T>(
   const sinceMs = !complete && typeof opts.sinceMs === 'number' && Number.isFinite(opts.sinceMs)
     ? opts.sinceMs
     : undefined;
+  const asOfMs = !complete && typeof opts.asOfMs === 'number' && Number.isFinite(opts.asOfMs)
+    ? opts.asOfMs
+    : undefined;
+  const boundedWindow = sinceMs !== undefined || asOfMs !== undefined;
   let sourcePresent = false;
   let filesScanned = 0;
   let unreadableFiles = 0;
@@ -794,10 +798,10 @@ function readRecordsWithDiagnostics<T>(
     limitExceeded ||= listing.limitExceeded;
     if (limitExceeded || (complete && invalidRows > 0)) return result([], 'degraded');
     const completePartitionNames = complete ? [...listing.files] : undefined;
-    const files = sinceMs === undefined
-      ? listing.files
-      : listing.files.filter((file) => fileMayContainSince(file, sinceMs));
-    const partialWindow = checkRowLimit && sinceMs !== undefined && files.length > maxFiles;
+    const files = boundedWindow
+      ? listing.files.filter((file) => fileOverlapsWindow(file, sinceMs ?? -Infinity, asOfMs ?? Infinity))
+      : listing.files;
+    const partialWindow = checkRowLimit && boundedWindow && files.length > maxFiles;
     if (!complete) files.splice(maxFiles);
     const out: T[] = [];
     const completeSnapshots: Array<{ filePath: string; snapshot: BigIntStats }> = [];
@@ -845,9 +849,9 @@ function readRecordsWithDiagnostics<T>(
             continue;
           }
           const record = sanitize(parsed);
-          if (sinceMs !== undefined) {
+          if (boundedWindow) {
             const recordMs = Date.parse((record as { ts: string }).ts);
-            if (Number.isFinite(recordMs) && recordMs < sinceMs) continue;
+            if (recordMs < (sinceMs ?? -Infinity) || recordMs > (asOfMs ?? Infinity)) continue;
           }
           if (out.length >= limit) {
             limitExceeded = true;
