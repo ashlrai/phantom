@@ -693,6 +693,28 @@ describe('M355 skill records', () => {
     });
   });
 
+  it('excludes future partitions and same-day receipts before applying skill-use budgets', () => {
+    const boundary = useEvent({ eventId: 'boundary', ts: '2026-07-09T15:00:00.000Z' });
+    recordSkillUseEvent([
+      boundary,
+      useEvent({ ...boundary, ts: '2026-07-09T15:00:00.001Z' }),
+      ...Array.from({ length: 4 }, (_, index) =>
+        useEvent({ eventId: `future-${index}`, ts: '2026-07-09T16:00:00.000Z' })),
+      useEvent({ eventId: 'future-partition', ts: '2026-07-10T00:00:00.000Z' }),
+    ]);
+
+    expect(readSkillUseEventsWithDiagnostics({
+      sinceMs: Date.parse('2026-07-09T00:00:00.000Z'),
+      asOfMs: Date.parse(boundary.ts),
+      maxFiles: 1,
+      limit: 1,
+    })).toMatchObject({
+      sourceState: 'healthy',
+      eventState: 'present',
+      events: [{ eventId: boundary.eventId, ts: boundary.ts }],
+    });
+  });
+
   it('marks a skill-use sample degraded when distinct events exceed the requested limit', () => {
     const older = useEvent({ eventId: 'older-use' });
     const newer = useEvent({ eventId: 'newer-use' });

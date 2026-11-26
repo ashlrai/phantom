@@ -101,6 +101,7 @@ describe('readSkillTrajectoryOutcomes', () => {
     });
     expect(readEvents).toHaveBeenCalledWith({
       sinceMs: expect.any(Number),
+      asOfMs: expect.any(Number),
       maxFiles: 8,
       limit: 4000,
     });
