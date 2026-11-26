@@ -16,6 +16,13 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.76](https://github.com/ashlrai/phantom/compare/v3.30.75...v3.30.76) (2026-11-26)
+
+
+### Fixes
+
+* **release:** qualify successors for owed Auto-tag versions ([#9003](https://github.com/ashlrai/phantom/issues/9003)) ([84a0c4d](https://github.com/ashlrai/phantom/commit/84a0c4d0a584addaee894f02780cd78d7b53e77c))
+
 ## [Unreleased]
 
 ### Since v3.30.40
