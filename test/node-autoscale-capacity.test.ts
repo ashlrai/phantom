@@ -301,6 +301,22 @@ describe('capacity model', () => {
     expect(doc.basis.notes.some(n => n.includes('upper bound'))).toBe(true);
   });
 
+  it('bounds CPU cost per harness when per-process readings are incomplete', () => {
+    const doc = computeNodeCapacity(snap({
+      cpu: { cores: 8, load: null, busyPercent: 25 },
+      sessions: [
+        { harness: 'codex', rootPid: 10, processes: 1, memBytes: 400 * MIB, cpuPercent: 25 },
+        { harness: 'codex', rootPid: 11, processes: 1, memBytes: 400 * MIB, cpuPercent: null },
+        { harness: 'grok', rootPid: 20, processes: 1, memBytes: 150 * MIB, cpuPercent: null },
+        { harness: 'claude', rootPid: 30, processes: 1, memBytes: 400 * MIB, cpuPercent: 50 },
+      ],
+    }));
+    expect(doc.per_harness_footprint.codex?.cpu_cores_per_session).toBe(1);
+    expect(doc.per_harness_footprint.grok?.cpu_cores_per_session).toBe(2);
+    expect(doc.per_harness_footprint.claude?.cpu_cores_per_session).toBe(0.5);
+    expect(doc.agents_runnable_now).toMatchObject({ codex: 4, grok: 2, claude: 9 });
+  });
+
   it('fails closed on unknown pressure, and on an unreadable process table', () => {
     const unknown = computeNodeCapacity(snap({ mem: { totalBytes: 128 * GIB, freeBytes: 1, freePercent: 50, pressureLevel: null } }));
     expect(Object.values(unknown.agents_runnable_now).every(n => n === null)).toBe(true);

@@ -461,6 +461,10 @@ A platform or file with no reader reports unknown, never normal. Memory
 headroom is the memory above memguard's raise line (30% free).
 CPU headroom is 85% of cores minus busy cores. Measured zero CPU headroom
 blocks placements even when CPU cost per session is unknown or recorded as zero.
+When a harness has incomplete per-process CPU readings, its fallback cost
+divides measured host busy cores by the number of live sessions of that same
+harness. This bounds the harness's mean CPU cost without assuming that other
+harnesses share the load equally.
 The runnable count and route planner use CPU headroom and per-session cost
 without rounding either to a fixed number of decimal places.
 The runnable count and placement planner allow for arithmetic roundoff at

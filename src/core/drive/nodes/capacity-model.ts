@@ -116,9 +116,9 @@ function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string
     if (sessions.length && mems.length === sessions.length) {
       const cpus = sessions.map(x => x.cpuPercent).filter(finite);
       let cpu: number | null = cpus.length === sessions.length ? cpus.reduce((a, b) => a + b, 0) / cpus.length / 100 : null;
-      // Without per-process CPU, charge every live session an equal share of all busy cores:
-      // an upper bound per session, so the CPU rule errs toward fewer launches.
-      if (cpu === null && busyCores !== null && live.length) { cpu = busyCores / live.length; cpuFromHost = true; }
+      // Without complete per-process CPU, the harness could account for all
+      // busy cores. Bound its mean using only that harness's session count.
+      if (cpu === null && busyCores !== null) { cpu = busyCores / sessions.length; cpuFromHost = true; }
       out[adapter.id] = { sessions: sessions.length, mem_bytes_max: Math.max(...mems), mem_bytes_median: median(mems),
         cpu_cores_per_session: cpu, source: 'measured', learned_at: null };
       continue;
@@ -130,7 +130,7 @@ function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string
       out[adapter.id] = { ...old, sessions: 0, source: 'learned', learned_at: new Date(learnedAt).toISOString() };
     }
   }
-  if (cpuFromHost) notes.push('cpu_cores_per_session = host busy cores / live harness sessions (process source reports no per-process CPU; upper bound)');
+  if (cpuFromHost) notes.push('cpu_cores_per_session = host busy cores / live sessions of the same harness (incomplete per-process CPU; upper bound on the harness mean)');
   return out;
 }
 
