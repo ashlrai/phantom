@@ -7,7 +7,7 @@ import { collectSnapshot } from '../core/autofix/collect.js';
 import { createNodeHost } from '../core/autofix/host-node.js';
 import { runAutofix, fixerId } from '../core/autofix/run.js';
 import {
-  FIXER_IDS,
+  AUTOFIX_SCHEMA, FIXER_IDS,
   type AutofixHost, type AutofixSnapshot, type FixerId,
 } from '../core/autofix/types.js';
 
@@ -38,7 +38,6 @@ export async function cmdAutofix(args: string[], deps: AutofixCliDeps = {}): Pro
   let apply = false;
   let dry = false;
   let json = false;
-  let olderThanMin: number | undefined;
   let stuckMinutes: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -64,8 +63,7 @@ export async function cmdAutofix(args: string[], deps: AutofixCliDeps = {}): Pro
         err(`error: ${arg} needs an integer from 1 to 10080`);
         return 2;
       }
-      if (arg === '--older-than') olderThanMin = Number(value);
-      else stuckMinutes = Number(value);
+      if (arg === '--stuck-minutes') stuckMinutes = Number(value);
       continue;
     }
     err(`error: unknown argument ${arg}\n${USAGE}`);
@@ -78,10 +76,10 @@ export async function cmdAutofix(args: string[], deps: AutofixCliDeps = {}): Pro
   const host = deps.host ?? createNodeHost();
   const snapshot = deps.snapshot ?? (deps.collect ? await deps.collect(host) : collectSnapshot(host));
   const result = await runAutofix({
-    host, snapshot, dryRun: !apply, only, olderThanMin, stuckMinutes,
+    host, snapshot, dryRun: !apply, only, stuckMinutes,
   });
   if (json) {
-    out(JSON.stringify({ schema: 'autofix.v1', dryRun: !apply, killed: result.killed, lines: result.lines, incidents: result.incidents }));
+    out(JSON.stringify({ schema: AUTOFIX_SCHEMA, dryRun: !apply, killed: result.killed, lines: result.lines, incidents: result.incidents }));
     return result.exitCode;
   }
   if (result.killed) {

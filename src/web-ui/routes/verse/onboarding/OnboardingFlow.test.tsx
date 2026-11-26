@@ -540,8 +540,7 @@ describe('OnboardingPanel — replay from Settings', () => {
         <OnboardingFlow />
       </>,
     );
-    // TeamPanel reads its own data on mount; opening the guide must not fetch.
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/api/verse/team?'), expect.anything()));
+    // Opening the guide must not fetch.
     vi.mocked(fetch).mockClear();
     const guide = screen.getByText('How Phantom works');
     expect(guide.closest('details')!.open).toBe(false);

@@ -6,6 +6,8 @@
 
 export const AUTOFIX_SCHEMA = 'autofix.v1';
 export const LEDGER_NAME = 'autofix.jsonl';
+export const SHA_RE = /^[0-9a-f]{40}$/;
+export const LANE_RE = /^[a-z][a-z0-9-]{1,30}$/;
 
 export const FIXER_IDS = [
   'release-stuck-draft',
@@ -52,7 +54,6 @@ export const FRESH_MS = 90_000;
 export const HOUR_MS = 3_600_000;
 /** A plist or rollback sibling newer than this is an operator start. */
 export const OPERATOR_QUIET_MS = 15 * 60_000;
-export const DEFAULT_DRAFT_AGE_MIN = 30;
 export const DEFAULT_STUCK_MIN = 30;
 /** dispatchd D02: stop launching when load1 exceeds this times the CPU count. */
 export const LOAD_PER_CPU = 2;

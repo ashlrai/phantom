@@ -106,12 +106,16 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   return { schema: 'queue.generator-yield.v1', sinceHours: hours, known: true, jobsKnown: true, generationKnown: true, malformedLines, generators };
 }
 export async function readGeneratorYield(runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), hours = 24, now = Date.now()): Promise<GeneratorYieldReport> {
-  try {
-    const [jobs, decisions] = await Promise.all([
-      readFile(join(runsDir, 'metrics', 'jobs.jsonl'), 'utf8').catch(e => { if (e.code === 'ENOENT') return null; throw e; }),
-      readFile(join(runsDir, 'metrics', 'generation.jsonl'), 'utf8').catch(e => { if (e.code === 'ENOENT') return null; throw e; }),
-    ]);
-    return { ...generatorYield(jobs ?? '', hours, now, decisions ?? ''), known: jobs !== null || decisions !== null, jobsKnown: jobs !== null, generationKnown: decisions !== null };
-  }
-  catch { return { schema: 'queue.generator-yield.v1', sinceHours: hours, known: false, jobsKnown: false, generationKnown: false, malformedLines: 0, generators: [] }; }
+  const [jobs, decisions] = await Promise.allSettled([
+    readFile(join(runsDir, 'metrics', 'jobs.jsonl'), 'utf8'),
+    readFile(join(runsDir, 'metrics', 'generation.jsonl'), 'utf8'),
+  ]);
+  const jobsKnown = jobs.status === 'fulfilled';
+  const generationKnown = decisions.status === 'fulfilled';
+  return {
+    ...generatorYield(jobsKnown ? jobs.value : '', hours, now, generationKnown ? decisions.value : ''),
+    known: jobsKnown || generationKnown,
+    jobsKnown,
+    generationKnown,
+  };
 }

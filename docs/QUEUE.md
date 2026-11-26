@@ -1056,6 +1056,9 @@ report. Use `--root /path` to inspect a different runs directory.
 Trailing-hour merge counts use a readable, timezone-qualified `mergedAt` on
 merge ledger rows when available. Older rows and rows with an unreadable
 `mergedAt` use the existing ledger event timestamp.
+When the merge ledger is missing or degraded, a lane with no observed merges
+reports `null`. Observed counts remain visible and may be incomplete. The
+fleet-wide total, including the Leader board total, requires a healthy ledger.
 
 Blocked jobs are the parked ones. Each lane has `blockedReasons`
 (`[{ reason, count }]`, biggest first, e.g. `DEP` or `HOLD`) and `stale`, the
@@ -1172,7 +1175,9 @@ hash. Counts deduplicate by source and target within the window; stages can
 overlap. Only draft evidence attributes later launches and PRs to that source.
 Rejections never claim another generator's results. `generationKnown: false`
 means the generation ledger is unavailable; `jobsKnown` does the same for the
-jobs ledger. Counts cover recorded evidence only.
+jobs ledger. If either journal is missing or unreadable, the report still
+includes evidence from the readable journal. Interpret counts using the
+availability flag for the journal they depend on.
 
 The self-improvement discovery feed queues recurring refusals after four
 distinct recorded rejection observations for one source and reason across
