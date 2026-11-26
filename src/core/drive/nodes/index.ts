@@ -2,7 +2,7 @@ import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js'
 import { validNodeTask, type EmbeddedNodeTask } from './task.js';
 import { actionableClaim, jobBlockers, nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
-import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
+import { isVersionCap } from './phm-version.js';
 import { isNodeCapacity, isHostStats, type NodeCapacitySample, type HostStats } from './state.js';
 export { planRoutes } from './router.js';
 export type { RouteAssignment } from './router.js';
@@ -98,6 +98,8 @@ export interface NodeView {
   auth: NodeAuth;
   heartbeatAt: number;
   expiresAt: number;
+  /** Every advertised cap a job can name in `--requires`; the `phm-<version>`
+   * build marker stays in `caps` for drift checks but is never a lane. */
   lanes: string[];
 }
 
@@ -323,7 +325,7 @@ export class DriveNodes implements QueueV1 {
       owners: [...scope],
       nodes: state.nodes.filter(n => n.owners?.some(o => scope.has(o)))
         .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
-          caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
+          caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => !isVersionCap(c)),
           heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? null, auth: n.auth ?? 'unknown',
           ...(n.capacity ? { capacity: n.capacity } : {}),
           ...(n.slots === undefined ? {} : { slots: n.slots }) }))

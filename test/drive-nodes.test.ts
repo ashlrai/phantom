@@ -629,6 +629,22 @@ describe('standalone join version reporting', () => {
     const joined = executeNodeFleet('join', ['--node', 'worker', '--owner', 'o', '--caps', 'build'], f.a);
     expect(joined['caps']).toEqual(['build']);
   });
+  it('reports every advertised cap except the version marker as a lane', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme',
+        '--caps', 'codex,devin,gh,build,pack:codex-file', '--json'],
+        { store, phmVersion: () => '9.9.9' });
+      expect(code).toBe(0);
+      const node = new DriveNodes(store).view(['acme']).nodes[0]!;
+      expect(node.caps).toEqual(['build', 'codex', 'devin', 'gh', 'pack:codex-file', 'phm-9.9.9']);
+      // Jobs may require any advertised cap — gh, build, pack:* and provider
+      // lanes alike — so `lanes` lists all of them minus the build marker.
+      expect(node.lanes).toEqual(['build', 'codex', 'devin', 'gh', 'pack:codex-file']);
+    } finally { vi.restoreAllMocks(); }
+  });
 });
 
 describe('standalone join node id default', () => {
