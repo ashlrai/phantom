@@ -223,6 +223,20 @@ describe('CI baseline evidence', () => {
     expect(report.master.known).toBe(false);
     expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
   });
+  it('withholds PR freshness when a failed workflow has only successful jobs', async () => {
+    const { gh } = github({ count: 1, pass: true, runConclusion: 'failure', masterRunConclusion: 'success', prJobConclusion: 'success' });
+    const report = await analyzeCiBaseline('owner/repo', gh);
+    expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
+    expect(report.groups).toEqual([]);
+    expect(report.master.known).toBe(true);
+  });
+  it('withholds master pass evidence when a failed workflow has only successful jobs', async () => {
+    const { gh } = github({ count: 1, pass: true, runConclusion: 'failure' });
+    const report = await analyzeCiBaseline('owner/repo', gh);
+    expect(report.master.known).toBe(false);
+    expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
+    expect(report.groups).toMatchObject([{ classification: 'unknown', action: 'unknown', master: 'unknown' }]);
+  });
   it('reads a jobless run that did not succeed as incomplete evidence', async () => {
     for (const conclusion of ['startup_failure', 'cancelled', 'timed_out', 'action_required', 'stale', 'failure']) {
       const report = await analyzeCiBaseline('owner/repo', github({ noJobs: true, runConclusion: conclusion }).gh);
