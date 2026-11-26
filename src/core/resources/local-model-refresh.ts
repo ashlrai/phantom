@@ -1,13 +1,13 @@
 /** Explicit inventory-only freshness; never starts, loads, or invokes a local model. */
 import { performance } from 'node:perf_hooks';
-import { normalizeNumericLoopbackOllamaBaseUrl, verifyOllamaModelIdentity } from '../run/ollama-identity.js';
+import { normalizeNumericLoopbackOllamaBaseUrl, verifyLmStudioModelInventory, verifyOllamaModelIdentity } from '../run/ollama-identity.js';
 import { canonical, digest } from '../universe/artifacts.js';
 import { MAX_RESOURCE_OBSERVATION_AGE_MS, validateResourceObservations,
   validateResourcePool, type ResourceObservation, type ResourcePool } from './pool-policy.js';
 import { validateResourceBindings, type ResourceBinding } from './worker.js';
 
 export const RESOURCE_LOCAL_MODEL_REFRESH_TTL_MS = Math.min(60_000, MAX_RESOURCE_OBSERVATION_AGE_MS);
-export interface ResourceLocalModelWorker { workerId: string; modelDigest: string }
+export type ResourceLocalModelWorker = { workerId: string; modelDigest: string } | { workerId: string; runtime: 'lm-studio' };
 export interface ResourceLocalModelConfig { schemaVersion: 1; poolDigest: string; workers: ResourceLocalModelWorker[] }
 export interface ResourceLocalModelRefreshOptions {
   pool: ResourcePool;
@@ -15,6 +15,7 @@ export interface ResourceLocalModelRefreshOptions {
   config: ResourceLocalModelConfig;
   timeoutMs: number;
   signal?: AbortSignal;
+  fetchImpl?: typeof fetch;
 }
 export interface ResourceLocalModelRefreshResult {
   /** Actual successful captures only. Expired captures remain evidence, not availability. */
@@ -49,14 +50,18 @@ export function validateResourceLocalModelConfig(value: unknown, poolValue: Reso
     value.poolDigest !== digest(canonical({ pool, bindings })) || !roster(value.workers, pool.workers.length)) return invalid();
   const seen = new Set<string>(); const workers: ResourceLocalModelWorker[] = [];
   for (const row of value.workers) {
-    if (!object(row) || !exact(row, ['workerId', 'modelDigest']) || typeof row.workerId !== 'string' ||
-      !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(row.workerId) || seen.has(row.workerId) ||
-      typeof row.modelDigest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(row.modelDigest)) return invalid();
+    if (!object(row) || typeof Object.getOwnPropertyDescriptor(row, 'workerId')?.value !== 'string' ||
+      typeof row.workerId !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(row.workerId) || seen.has(row.workerId)) return invalid();
+    const enrollment: ResourceLocalModelWorker | null = exact(row, ['workerId', 'runtime']) && row.runtime === 'lm-studio'
+      ? { workerId: row.workerId, runtime: row.runtime }
+      : exact(row, ['workerId', 'modelDigest']) && typeof row.modelDigest === 'string' && /^sha256:[a-f0-9]{64}$/.test(row.modelDigest)
+        ? { workerId: row.workerId, modelDigest: row.modelDigest } : null;
+    if (!enrollment) return invalid();
     const worker = pool.workers.find((worker) => worker.id === row.workerId);
     const binding = bindings.find((binding) => binding.workerId === row.workerId);
     if (worker?.provider !== 'local' || binding?.kind !== 'local-chat' ||
       normalizeNumericLoopbackOllamaBaseUrl(binding.endpoint) !== binding.endpoint) return invalid();
-    seen.add(row.workerId); workers.push(Object.freeze({ workerId: row.workerId, modelDigest: row.modelDigest }));
+    seen.add(row.workerId); workers.push(Object.freeze(enrollment));
   }
   Object.freeze(workers);
   return Object.freeze({ schemaVersion: 1, poolDigest: value.poolDigest, workers });
@@ -95,10 +100,13 @@ export async function refreshResourceLocalModelsOnce(options: ResourceLocalModel
       const binding = bindings.find((binding) => binding.workerId === row.workerId)!;
       if (binding.kind !== 'local-chat') break; // Enrollment already enforces this before contact.
       try {
-        const verified = await verifyOllamaModelIdentity({ baseUrl: binding.endpoint, model: worker.model,
-          expectedDigest: row.modelDigest, timeoutMs: Math.min(5000, available), signal: controller.signal });
+        const probe = { baseUrl: binding.endpoint, model: worker.model, signal: controller.signal };
+        const ready = 'runtime' in row
+          ? await verifyLmStudioModelInventory({ ...probe, fetchImpl: options.fetchImpl })
+          : await verifyOllamaModelIdentity({ ...probe, expectedDigest: row.modelDigest, timeoutMs: Math.min(5000, available) })
+            .then(result => result.ok && result.identity.digest === row.modelDigest);
         if (controller.signal.aborted || remaining() < 1) break;
-        if (!verified.ok || verified.identity.digest !== row.modelDigest) continue;
+        if (!ready) continue;
         const captured = Date.now();
         const observation = validateResourceObservations([{ workerId: row.workerId, health: 'ready', windows: [], retryAfter: null,
           observedAt: new Date(captured).toISOString(), expiresAt: new Date(captured + RESOURCE_LOCAL_MODEL_REFRESH_TTL_MS).toISOString() }], pool)[0]!;

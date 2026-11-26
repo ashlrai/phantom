@@ -5,6 +5,7 @@ import { join, relative, resolve } from 'node:path';
 import { QUEUE_TIER_SCOPE } from '../drive/queue-tier.js';
 import { killSwitchOn } from '../sandbox/policy.js';
 import { readResourceJson, readResourcePoolHistory } from '../resources/pool-runtime.js';
+import { validateResourceLocalModelConfig } from '../resources/local-model-refresh.js';
 import { validateResourcePool } from '../resources/pool-policy.js';
 import { validateResourceBindings } from '../resources/worker.js';
 import { resourceCommissioningFences } from '../resources/pool-commissioning-custody.js';
@@ -26,6 +27,7 @@ import type { UniverseManifest, UniverseResourceGenerationConfig, UniverseTrial 
 import type { UniverseIntegrationDefinition } from '../universe/integration-types.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { parseSwarmPilotGraph, readSwarmPilotSpec, type SwarmPilotNode, type SwarmPilotSpec } from './pilot-plan.js';
+import { inspectSwarmFleetLane } from './fleet-worker-lanes.js';
 
 const TIMEOUT = 300_000;
 const ATTEMPTS = 2;
@@ -33,7 +35,7 @@ const MAX_ACTIVE_NODES = 2;
 
 interface PilotWorkerLane {
   id: string;
-  admissionReason(): 'unsupported-worker-lane' | 'subscription-only-lane-required' | null;
+  admissionReason(): 'unsupported-worker-lane' | 'subscription-only-lane-required' | 'local-model-readiness-required' | null;
 }
 
 interface PilotLaneAdapter {
@@ -45,12 +47,15 @@ function openLanes(runtimePath: string, spec: SwarmPilotSpec) {
   const runtime = validateResourceGenerationRuntime(readResourceJson(runtimePath));
   const pool = validateResourcePool(readResourceJson(runtime.poolPath));
   const bindings = validateResourceBindings(readResourceJson(runtime.bindingsPath), pool);
+  const localPath = runtime.localModelConfigPath;
+  const localModels = localPath ? validateResourceLocalModelConfig(readResourceJson(localPath), pool, bindings) : null;
   const lane = (id: string): PilotWorkerLane => ({
     id,
     admissionReason() {
       const worker = pool.workers.find(row => row.id === id);
       if (!worker) return 'unsupported-worker-lane';
-      if (worker.provider === 'local') return null;
+      if (worker.provider === 'local') return localModels?.workers.some(row => row.workerId === id)
+        ? null : 'local-model-readiness-required';
       return runtime.quotaEvidenceMode === 'shared-collector' &&
         resourceCommissioningFences(readResourcePoolHistory(runtime.root, pool, bindings)).has(id)
         ? null : 'subscription-only-lane-required';
@@ -133,8 +138,12 @@ export async function runSwarmPilot(input: unknown, runtimePath: string, options
   for (const id of Object.keys(spec.oracles)) pinnedOracle(spec, id);
   const lanes = openLanes(runtimePath, spec);
   if (!options.apply || lanes.reasons.length) {
+    const excluded = await Promise.all(lanes.reasons.map(async row => {
+      const transport = row.reason === 'unsupported-worker-lane' ? await inspectSwarmFleetLane(row.workerId) : null;
+      return transport ? { ...row, transport } : row;
+    }));
     return { schema: 'swarm.pilot.preview.v1', status: lanes.reasons.length ? 'held' : 'preview',
-      id: spec.id, baselineUsdEstimate: spec.baselineUsdEstimate, excluded: lanes.reasons };
+      id: spec.id, baselineUsdEstimate: spec.baselineUsdEstimate, excluded };
   }
   if (process.platform !== 'darwin') throw new Error('fixed-evaluator-confinement-unsupported');
   const plannerIds = [spec.planner.workerId];
