@@ -4363,7 +4363,17 @@ every registered spelling of one identity through the same matcher and
 exact-label fallback, composing with `from` so a sender both included
 and excluded matches nothing — the drop runs inside the queue-tail
 match, so `matched` stays the count the whole filter set accepts, with a
-malformed exclusion answering `invalid`; `filter.channel` keeps only
+malformed exclusion answering `invalid`; `filter.to` keeps only hints
+addressed to one ref through the same `agentRefAddressMatcher`
+identity-label rule `filter.from` applies on the sender side — a handle,
+`agent:<handle>`, stable id or alias matching every label of that
+identity, an unresolvable ref or unreadable registry keeping
+exact-label matching — decided on the hint row's own `to` label inside
+the same queue-tail match, so it needs no referent resolution, counts
+in `matched` with the rest, composes with the addressee scope (on the
+addressed read it intersects the agent's own addressing, so a different
+addressee is an honest empty page) and with every other filter, with a
+malformed addressee answering `invalid`; `filter.channel` keeps only
 hints whose own `to` label sits under `group:<name>:*` — the same room
 prefix `readAgentInbox`'s `channel` and `phm messages --channel` match,
 grammar-validated by the shared channel-name rule and decided on the
@@ -4439,8 +4449,9 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
-and resolves referents identically — sender matchers resolve through
+`job`/`from`/`excludeFrom`/`to`/`channel`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
+and resolves referents identically — sender and addressee matchers
+resolve through
 the registry with exact-label fallback, `channel` keeps only hints whose
 own `to` label sits under `group:<name>:*` inside the queue-tail match,
 filtered verdicts fail closed

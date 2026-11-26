@@ -3058,6 +3058,88 @@ describe('wake hint sender filter', () => {
   });
 });
 
+describe('wake hint addressee filter', () => {
+  it('keeps only hints addressed to one ref under the identity-label rule', async () => {
+    const options = setup();
+    register(options, 'nova', 'orion');
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['lane-atlas'] }, options).status).toBe('created');
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'a', id: 'w-atlas', priority: 'P0', wake: true }, options))
+      .toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'orion', to: 'nova', text: 'b', id: 'w-orion', priority: 'P0', wake: true }, options))
+      .toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'orion', text: 'c', id: 'w-orion-dm', priority: 'P0', wake: true }, options))
+      .toMatchObject({ status: 'posted' });
+    // Hints queued under bare addressee labels no identity claims.
+    enqueueBusWake({ kind: 'bus.send', id: 'w-bare', from: 'agent:atlas', to: 'fleet-watch' }, { root: options.runsRoot });
+    enqueueBusWake({ kind: 'bus.send', id: 'w-lane', from: 'agent:orion', to: 'lane-atlas' }, { root: options.runsRoot });
+
+    expect(readAllWakes(undefined, options)).toMatchObject({ status: 'ok', scope: 'fleet', matched: 5 });
+    // The handle, agent: address and stable id all name nova's identity, so
+    // every spelling keeps both of her hints and nothing else.
+    for (const to of ['nova', 'agent:nova', stableAgentId('nova')]) {
+      const page = readAllWakes(undefined, options, { to });
+      expect(page).toMatchObject({ status: 'ok', scope: 'fleet', matched: 2, truncated: false });
+      if (page.status !== 'ok') throw new Error('unreachable');
+      expect(page.wakes.map(row => row.id)).toEqual(['w-atlas', 'w-orion']);
+    }
+    // Atlas's alias names the same identity as her handle: the bare
+    // lane-atlas hint and agent:atlas-addressed traffic match alike.
+    for (const to of ['atlas', 'lane-atlas', 'agent:atlas']) {
+      const page = readAllWakes(undefined, options, { to });
+      expect(page).toMatchObject({ status: 'ok', matched: 1 });
+      if (page.status !== 'ok') throw new Error('unreachable');
+      expect(page.wakes.map(row => row.id)).toEqual(['w-lane']);
+    }
+    // An unresolvable addressee keeps exact-label matching on the hint's
+    // own to: only the literal fleet-watch row matches, never a widened set.
+    const bare = readAllWakes(undefined, options, { to: 'fleet-watch' });
+    expect(bare).toMatchObject({ status: 'ok', matched: 1 });
+    if (bare.status !== 'ok') throw new Error('unreachable');
+    expect(bare.wakes.map(row => row.id)).toEqual(['w-bare']);
+    expect(readAllWakes(undefined, options, { to: 'ghost' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    // A case-variant of a registered handle resolves to no identity:
+    // exact-label matching only, like 'ghost' — never the identity's labels.
+    for (const to of ['Nova', 'LANE-ATLAS', 'agent:Nova']) {
+      expect(readAllWakes(undefined, options, { to }))
+        .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    }
+    // The addressee filter composes with the sender filters inside the
+    // queue-tail match like every other.
+    expect(readAllWakes(undefined, options, { to: 'nova', from: 'atlas' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    expect(readAllWakes(undefined, options, { to: 'nova', excludeFrom: 'atlas' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    expect(readAllWakes(undefined, options, { to: 'nova', from: 'orion', excludeFrom: 'orion' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+
+    // On the addressed read the filter intersects the agent's own
+    // addressing: the same ref still matches, a different addressee is an
+    // honest empty page, and the bare label keeps its literal scope.
+    expect(readAgentWakes('nova', undefined, options, { to: 'nova' }))
+      .toMatchObject({ status: 'ok', matched: 2 });
+    expect(readAgentWakes('nova', undefined, options, { to: 'agent:nova' }))
+      .toMatchObject({ status: 'ok', matched: 2 });
+    expect(readAgentWakes('nova', undefined, options, { to: 'orion' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    const label = readAgentWakes('fleet-watch', undefined, options);
+    expect(label).toMatchObject({ status: 'ok', scope: 'label', matched: 1 });
+    expect(readAgentWakes('fleet-watch', undefined, options, { to: 'fleet-watch' }))
+      .toMatchObject({ status: 'ok', scope: 'label', matched: 1 });
+    expect(readAgentWakes('fleet-watch', undefined, options, { to: 'nova' }))
+      .toMatchObject({ status: 'ok', scope: 'label', matched: 0, wakes: [] });
+    // The same validation the sender filter applies.
+    expect(readAllWakes(undefined, options, { to: '' }))
+      .toMatchObject({ status: 'invalid' });
+    expect(readAllWakes(undefined, options, { to: 'x'.repeat(129) }))
+      .toMatchObject({ status: 'invalid' });
+    expect(readAgentWakes('nova', undefined, options, { to: '' }))
+      .toMatchObject({ status: 'invalid' });
+    expect(readAgentWakes('nova', undefined, options, { to: 'x'.repeat(129) }))
+      .toMatchObject({ status: 'invalid' });
+  });
+});
+
 describe('wake hint priority filter', () => {
   it('keeps only hints whose resolved referent carries the band', async () => {
     const options = setup();

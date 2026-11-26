@@ -674,7 +674,7 @@ posts and legacy traffic with the same kind/held/job annotations `inbox`
 reports — so an agent on the unified surface can wait for mail without
 polling `inbox` in a loop or dropping to the raw-envelope stream.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
-[--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
+[--from <agent>] [--exclude-from <agent>] [--to <agent>] [--priority P0..P3]
 [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]` lists wake
 hints for the agent — addressed under any spelling that resolves to its
@@ -705,7 +705,16 @@ spelling of one identity through the same matcher and exact-label
 fallback `--from` applies — composing with `--from` so a sender both
 included and excluded matches nothing — so "everyone's wakes except the
 noisy bot's" is one filtered read, and `matched` stays the count the
-whole filter set accepts. `--channel` keeps only hints addressed to
+whole filter set accepts. `--to` keeps only hints addressed to one ref —
+the same `agentRefAddressMatcher` identity-label rule `--from` applies
+on the sender side, so a handle, `agent:<handle>`, stable id or alias
+matches every label of that identity and an unresolvable ref keeps
+exact-label matching — decided on the hint's own `to` label inside the
+queue-tail match, so it needs no referent resolution and composes with
+the addressee scope and every other filter: under `--all` it answers
+"which hints is agent X being paged with" in one fleet read, and on the
+addressed read it intersects the agent's own addressing, so a different
+addressee is an honest empty page. `--channel` keeps only hints addressed to
 `group:<name>:*` of one channel — the same room prefix `inbox --channel`,
 `channel read` and `phm messages --channel` match, grammar-validated by
 the shared channel-name rule — decided on the hint's own `to` label, so
