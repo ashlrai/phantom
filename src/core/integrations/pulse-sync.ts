@@ -46,6 +46,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { desktopUpdateInterlockPresent } from '../desktop/update-interlock.js';
 import type { AshlrConfig } from '../types.js';
 import {
   exportFleetEvents,
@@ -244,7 +245,7 @@ function globalKillSwitchOn(): boolean {
     lstatSync(join(homedir(), '.ashlr', 'KILL'));
     return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT' || desktopUpdateInterlockPresent();
   }
 }
 

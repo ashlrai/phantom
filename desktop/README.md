@@ -232,7 +232,22 @@ see the details. Agents and operators can read the same last observation with
 `phm desktop update status --json` or the read-only `fleet_desktop_update_status`
 MCP tool. Older apps that do not publish this observation report it as
 unavailable; the read does not start an update. A staged update waiting for
-Stop or idle work is rechecked every 30 seconds.
+Stop or a quiet window is rechecked every 30 seconds. On supported hosts,
+queued work can defer adoption for up to five minutes, but active or unknown
+work still blocks installation after that window.
+
+On a compatible host, `phm desktop install --upgrade --require-app` reports
+when an active grant covers the unchanged authority surface. With `--apply`,
+the CLI waits for a low-activity window, quits the verified app normally,
+proves the app and sidecar are gone, installs the signed app and CLI together,
+and resumes the same resident without an owner-start step. An older dispatcher
+still requires manual Stop. The CLI records covered resumes and apply holds on
+the Agent Bus and does not change operator Stop or hosted publishing.
+
+The custody helper can sign a release-specific update approval and prospective
+standing grant together. The signature alone neither installs the grant nor
+restarts the resident. The existing desktop install and native update commands
+do not yet consume that approval.
 
 For a managed install, run `~/.local/bin/phm authority resident start` from
 the managed CLI. That command still requires authority admission and owner
@@ -242,10 +257,14 @@ drift and observed Homebrew global copies without modifying them.
 
 The update panel can turn **Automatic updates** on or off, see verified download progress, or refresh
 status. Before attempting handoff, the updater asks the managed CLI to download
-and verify the signed CLI archive and check the staged app. After Stop is
-engaged and local work is idle, the updater verifies the handoff and quits and
-relaunches Phantom without an owner click. Unknown activity holds the update
-with a fixed reason code in Settings; the updater never clears Stop.
+and verify the signed CLI archive and check the staged app. When host
+interlock support cannot be proven, operator Stop is still required. On
+supported hosts the updater can pause locally for the switch, with a
+30-second budget that reserves the last 10 seconds for switch checks. If the
+budget expires before switching, it aborts and restores the previous
+resident when its authority and ownership still check out. It never clears
+operator Stop, removes an operator's release-train pause, or changes hosted
+publishing.
 
 While the update details are open, Settings refreshes the public release and
 feed observation every 15 seconds. A feed-ready observation is not installation

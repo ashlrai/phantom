@@ -34,6 +34,30 @@ final class SigningAndPromptTests: XCTestCase {
     XCTAssertEqual(message.prefix(24), Data("ashlr:standing-grant:v1\u{0}".utf8))
   }
 
+  func testDesktopUpdateApprovalValidatesAndShowsWhatItSigns() throws {
+    let release = String(repeating: "a", count: 64)
+    let transaction = String(repeating: "b", count: 32)
+    let payload = JSONValue.object([
+      JSONMember(key: "transaction", value: .string(transaction)),
+      JSONMember(key: "releaseDigest", value: .string(release)),
+      JSONMember(key: "surfaceDigest", value: .string(grant.authoritySurfaceDigest)),
+      JSONMember(key: "expiresAtMs", value: .integer(Int64((fixtureContext.now.timeIntervalSince1970 + 60) * 1000))),
+      JSONMember(key: "grant", value: fx.payload),
+    ])
+    let canonical = try CanonicalJSON.encode(payload)
+    let approval = try DesktopUpdateApproval(data: Data(canonical.utf8), context: fixtureContext)
+    XCTAssertEqual(try CustodyCLI.parse(["sign-desktop-update", "-"]), .signDesktopUpdate)
+    XCTAssertThrowsError(try CustodyCLI.parse(["sign-desktop-update", "approval.json"]))
+    XCTAssertEqual(approval.message, Data(("ashlr:desktop-update-approval:v1\u{0}" + canonical).utf8))
+    XCTAssertTrue(approval.prompt.reason.contains(String(release.prefix(12))))
+    XCTAssertTrue(approval.prompt.fullScope.contains(transaction))
+    XCTAssertTrue(approval.prompt.fullScope.contains(grant.authoritySurfaceDigest))
+    XCTAssertThrowsError(try DesktopUpdateApproval(data: Data(canonical.utf8),
+      context: GrantValidationContext(now: fixtureContext.now.addingTimeInterval(61))))
+    let changed = payload.replacing([.key("surfaceDigest")], with: .string(String(repeating: "c", count: 64)))
+    XCTAssertThrowsError(try DesktopUpdateApproval(data: Data(CanonicalJSON.encode(changed).utf8), context: fixtureContext))
+  }
+
   func testNodeAndSwiftFixtureSignaturesVerifyOverTheSameBytes() throws {
     let message = GrantSigning.message(for: grant)
     for (pem, sig) in [(fx.nodePublicKeyPEM, fx.nodeSignature), (fx.swiftPublicKeyPEM, fx.swiftSignature)] {

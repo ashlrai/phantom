@@ -16,6 +16,7 @@ public enum CustodyCommand: Equatable, Sendable {
   case hostBinding
   /// nil = read the payload from stdin (`-`).
   case signGrant(path: String?)
+  case signDesktopUpdate
   case storeGithubApp
   case storeClaudeToken
   case reauthorize(account: ReauthorizationAccount)
@@ -80,6 +81,7 @@ public enum CustodyCLI {
     pubkey                     print {keyId, publicKeyPem}
     host-binding               print this Mac's grant host binding
     sign-grant <file|->        sign a StandingGrantV1 payload (Touch ID; shows the full scope)
+    sign-desktop-update -     sign one desktop update approval and its standing grant (Touch ID)
     store-github-app           read {"appId","privateKeyPem"} on stdin into the Keychain
     store-claude-token         read a `claude setup-token` token on stdin into the Keychain
     reauthorize <account>      refresh ONE existing item's helper trust (github-app|claude-token; human Terminal)
@@ -119,6 +121,9 @@ public enum CustodyCLI {
       if source == "-" { return .signGrant(path: nil) }
       if source.hasPrefix("-") { throw CustodyFailure.usage("unknown option \(source)") }
       return .signGrant(path: source)
+    case "sign-desktop-update":
+      guard rest == ["-"] else { throw CustodyFailure.usage("sign-desktop-update reads only from stdin (-)") }
+      return .signDesktopUpdate
     case "gh-token":
       guard rest.count == 2, rest[0] == "--repo" else {
         throw CustodyFailure.usage("gh-token takes exactly --repo <owner/name>")

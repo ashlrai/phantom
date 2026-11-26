@@ -279,13 +279,57 @@ for explicit CLI-only rollback, which holds when an app is installed. Neither
 mode grants authority or restarts the resident. `cmdDesktop` accepts optional upgrade dependencies as
 its fifth parameter; `parseDesktopInstallArgs` preserves `{apply}` for plain
 install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
-The native `DesktopUpdateDependencies` port includes lowering-only
-`residentStop`; native installation requires Stop and known idle work, not a
-standing authority grant.
+The native `DesktopUpdateDependencies` port retains read-only
+`residentQuiescent` for manual Stop, which does not require a standing grant
+or unregister the resident. With interlock support and a verified running
+managed resident, verified apply may acquire its own transaction-bound local
+Stop. It records the resident, grant and surface before switching. A verified
+installation or abort can consume one in-process capability to restore that
+resident on the corresponding managed release only while those proofs still
+agree. Ownership, grant, surface and recovery failures return fixed holds.
+On supported hosts, the updater prefers an empty dispatcher queue and
+rechecks the verified stage while waiting. After five minutes it no longer
+defers just for queued work; active or unknown jobs and leases still block
+adoption. The owned pause has a 30-second pre-switch budget, with its last
+10 seconds reserved for switch checks. Expiry before the first app move
+aborts and restores verified previous state through the scoped capability.
+Release-train pause provenance is local: the updater only removes its own
+`RELEASE_AUTORUN_DESKTOP_UPDATE_OFF` marker, never `RELEASE_AUTORUN_OFF` or
+operator Stop provenance.
+For a covered `desktop install --upgrade` plan with a verified older app,
+the CLI coordinates the normal quit instead of requiring the native updater
+handoff. It waits for low activity, then verifies the app and its sidecar
+have exited before taking the same scoped pause. The plan and result carry
+`daemon.restart.ownerConfirmation: false` and
+`coveredBy: {grantId, surfaceDigest, transaction}`. The stage records the
+installation attempt before taking the pause; it is not reusable. A covered
+resume or apply hold receives a deduplicated Agent Bus record.
+At the custody boundary, `sign-desktop-update -` signs one update approval and
+its prospective standing grant with one Touch ID gesture. The approval uses a
+separate signing domain and binds the transaction ID, release digest, candidate
+authority surface, expiry, and exact grant payload. The helper does not install
+the grant, authorize resident startup, or consume an update stage. The desktop
+coordinator must verify and consume the stage separately, and may accept a
+replacement grant only after proving the paired installation.
 `phm desktop-update prepare --stage <id> --json` verifies the private staged
 app and the original CLI archive before Stop, including the app inventory and
 the candidate authority surface. It caches only the verified original package
 in the stage and does not change installed files, fleet state, or authority.
+`phm desktop update status --json` adds local interlock details under `drain`
+and the hosted release train's read-only `hostedReleaseTrain` state
+(`paused`, `enabled`, or `unknown`) to the native observation.
+Where interlock compatibility is unproven it reports
+`drain-interlock-unsupported`; on those hosts native installation still requires operator Stop.
+`~/.ashlr/KILL` remains operator-owned and separate from
+`~/.ashlr/DESKTOP_UPDATE_STOP`. The hosted status query never pauses or resumes
+publishing.
+On macOS, the CLI reports the dispatcher under `drain.hostCensus`. A missing
+capability marker on any installed host launcher reports `unsupported`, and a
+busy or unreadable census reports unknown work rather than idle. Qualified
+updates count active and unknown dispatcher work alongside native execution
+leases when the host supports the census. The dispatcher and its launchers
+refuse new work while `DESKTOP_UPDATE_STOP` is present. These source changes
+do not install or update any live host files; Security re-pinning still applies.
 The install module also exports `ConsumerInstallHeld` for shared error
 classification and the `directory`, `parents`, `owned`, `regular`, `write`,
 `sha`, `ioRead` and `packageReady` guards.

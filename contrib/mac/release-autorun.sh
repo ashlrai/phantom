@@ -1,4 +1,5 @@
 #!/bin/bash
+# phantom.desktop-update-interlock.v1
 # RELEASE-AUTORUN rev2b-sec (STANDING-RELEASE-AUTHORITY rev1b + ANCESTOR-sec, Security 2026-11-09; base: #4135 + #4190).
 # ANCESTOR-sec: attestor sha must equal the peeled release-tag sha; head_branch must be that tag or master-with-sha==master.
 # Ancestor-of-master alone is not enough (replay). Compare is URL-encoded, repo-bound, fail-closed on truncation.
@@ -9,7 +10,7 @@
 # rc 0, 5 and 16 stay final. Any other rc is retried up to 3 times, then rc 14 writes NEEDS-MASON.
 # v3.30.34 is superseded by the next version: this pass skips it and never edits, publishes, deletes, or moves that draft or tag.
 # Until ~/.ashlr-runs/release-sign/keychain-allowed exists (Masbot creates it after Mason clicks Always Allow once), it only writes
-# NEEDS-MASON-<tag> with the exact command and starts nothing. Kill switches: ~/.ashlr/KILL (fleet) and ~/.ashlr-runs/RELEASE_AUTORUN_OFF. Either stops before any network.
+# NEEDS-MASON-<tag> with the exact command and starts nothing. Honors operator and desktop-update local holds.
 # rev2: after selection, each completed successful signing outcome gets a bounded GET-only published-state proof  -
 # the tag's public release must carry exactly the seven signed desktop assets, its latest.json must bind GitHub's
 # recorded asset digests to the signed manifest fields and detached signatures, and while that release is latest
@@ -39,12 +40,16 @@ export HOME="$_RH"; unset _RH
 REPO=ashlrai/phantom; R=${RA_ROOT_SELFTEST:-$HOME/.ashlr-runs}; ST=$R/release-sign; D=$ST/autorun
 GH=${RA_GH_SELFTEST:-/opt/homebrew/bin/gh}; RS=${RA_RS_SELFTEST:-$R/bin/release-sign.sh}; SCRUB=$R/bin/scrub.pl
 [ -f $R/RELEASE_AUTORUN_OFF ] && exit 0
+if [ -e "$R/RELEASE_AUTORUN_DESKTOP_UPDATE_OFF" ] || [ -L "$R/RELEASE_AUTORUN_DESKTOP_UPDATE_OFF" ]; then exit 0; fi
 mkdir -p -m 700 "$ST" "$D"; L=$D/autorun.log
 log(){ echo "$(date '+%F %T') $*" | /usr/bin/perl "$SCRUB" >> "$L"; }
 # Fleet KILL (~/.ashlr/KILL), same sentinel as ashlr stop. Present or unreadable dir fails closed before any network.
 KILL=${RA_KILL_SELFTEST:-$HOME/.ashlr/KILL}
 if [ -L "$KILL" ] || [ -e "$KILL" ]; then log "fleet KILL present; release train stopped"; exit 0; fi
 KILL_DIR=$(dirname "$KILL")
+UPDATE_STOP=$KILL_DIR/DESKTOP_UPDATE_STOP
+update_held(){ [ -L "$UPDATE_STOP" ] || [ -e "$UPDATE_STOP" ] || { [ -e "$KILL_DIR" ] && [ ! -x "$KILL_DIR" ]; }; }
+if update_held; then log "desktop update interlock present or unreadable; release train stopped"; exit 0; fi
 if [ -e "$KILL_DIR" ] && [ ! -r "$KILL_DIR" ]; then log "fleet KILL directory unreadable; fail closed"; exit 0; fi
 mkdir "$D/lock" 2>/dev/null || exit 0; trap 'rmdir "$D/lock" 2>/dev/null' EXIT
 [ -d "$ST/lock" ] && { log "release-sign running, skip"; exit 0; }
@@ -242,6 +247,7 @@ if [ -f "$LAST" ] && [ ! -L "$LAST" ]; then
   fi
 fi
 [ -f "$ST/standing-authority" ] && [ ! -L "$ST/standing-authority" ] && grep -q 'STANDING-RELEASE-AUTHORITY rev1' "$ST/standing-authority" || { log "standing-authority marker absent; skip"; exit 0; }
+if update_held; then log "desktop update interlock present or unreadable; release train stopped"; exit 0; fi
 CMD=("$RS" --tag "$TAG" --head-sha "$HEAD" --ci-run "$CI" --ci-attempt "$CA" --artifact-id "$CART" --bundle-artifact-id "$BART" \
   --attestor-run "$AR" --attestor-attempt "$AA" --attestor-sha "$AS" --audit-run "$AU" --audit-attempt "$UA")
 if [ ! -f "$ST/keychain-allowed" ]; then

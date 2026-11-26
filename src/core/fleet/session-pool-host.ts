@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, closeSync, constants, fstatSync, lstatSync, openSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { desktopUpdateInterlockPresent } from '../desktop/update-interlock.js';
 import { join } from 'node:path';
 import { checkDriveExecutable } from '../drive/script-bridge.js';
 import { readNodeCapacity } from '../drive/nodes/capacity.js';
@@ -61,7 +62,7 @@ export async function runHostSessionPool(runner: string, policy: SessionPoolPoli
   const held = () => {
     try { lstatSync(join(homedir(), '.ashlr', 'KILL')); return true; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return true; }
-    return nodeStopped() || readNodeCapacity().held !== null;
+    return desktopUpdateInterlockPresent() || nodeStopped() || readNodeCapacity().held !== null;
   };
   if (signal?.aborted || held()) throw new Error('Session admission held');
   const lanes = probeNodeLanes();

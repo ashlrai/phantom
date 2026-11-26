@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Writable } from 'node:stream';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { cmdDesktopUpdate, parseDesktopUpdateArgs, desktopUpdateJsonWriter } from '../src/cli/desktop-update.js';
+import { cmdDesktop } from '../src/cli/desktop.js';
+import * as releaseTrain from '../src/core/release/train.js';
+import { readDesktopHostInterlockCensus } from '../src/core/desktop/host-update-interlock.js';
 import type { DesktopUpdateDependencies } from '../src/core/desktop/qualified-update.js';
 
 afterEach(()=>vi.restoreAllMocks());
@@ -8,6 +14,50 @@ const dependencies:DesktopUpdateDependencies={home:'/private/owned',platform:'da
   admission:()=>{throw new Error('unexpected admission');},currentPackageRoot:()=>null,captureParent:()=>null,verifyParent:async()=>false,parentState:()=> 'unknown',now:Date.now,sleep:async()=>{},
   download:async()=>{throw new Error('network forbidden');}};
 describe('installed desktop-update CLI contract',()=>{
+  it('does not treat an older dispatcher or unverified census program as an idle host', () => {
+    const home = mkdtempSync(join(tmpdir(), 'desktop-host-census-'));
+    const run = vi.fn(() => ({schema:'phantom.desktop-update-interlock.v1',activeJobs:2,unknown:0}));
+    try {
+      expect(readDesktopHostInterlockCensus(home, run).state).toBe('absent');
+      const bin = join(home, '.ashlr-runs', 'bin');
+      mkdirSync(bin, {recursive:true, mode:0o700});
+      for (const [src, name] of [
+        ['dispatchd.py', 'dispatchd.py'],
+        ['host-integration/launch.candidate.sh', 'launch.sh'],
+        ['batch-launch.sh', 'batch-launch.sh'],
+        ['local_job.py', 'local_job.py'],
+        ['release-autorun.sh', 'release-autorun.sh'],
+        ['desktop_update_interlock.py', 'desktop_update_interlock.py'],
+        ['process_snapshot.py', 'process_snapshot.py'],
+      ]) copyFileSync(join('contrib', 'mac', src!), join(bin, name!));
+      expect(readDesktopHostInterlockCensus(home, run)).toEqual({state:'supported',activeJobs:2,unknown:0});
+      expect(readDesktopHostInterlockCensus(home, () => null)).toEqual({state:'supported',activeJobs:0,unknown:1});
+      run.mockClear();
+      writeFileSync(join(bin, 'dispatchd.py'), '#!/usr/bin/python3\n');
+      expect(readDesktopHostInterlockCensus(home, run)).toEqual({state:'unsupported',activeJobs:0,unknown:1});
+      expect(run).not.toHaveBeenCalled();
+      writeFileSync(join(bin, 'dispatchd.py'), '# phantom.desktop-update-interlock.v1\n');
+      expect(readDesktopHostInterlockCensus(home, run)).toEqual({state:'unsupported',activeJobs:0,unknown:1});
+      expect(run).not.toHaveBeenCalled();
+      copyFileSync(join('contrib', 'mac', 'dispatchd.py'), join(bin, 'dispatchd.py'));
+      writeFileSync(join(bin, 'desktop_update_interlock.py'), '# phantom.desktop-update-interlock.v1\n');
+      expect(readDesktopHostInterlockCensus(home, run).state).toBe('unsupported');
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      rmSync(home, {recursive:true, force:true});
+    }
+  });
+  it('reports manual-only update drain and read-only hosted pause status', async () => {
+    const hosted = vi.spyOn(releaseTrain, 'readHostedReleaseTrainPause').mockReturnValue('paused');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdDesktop(['update', 'status', '--json'])).toBe(0);
+    expect(hosted).toHaveBeenCalledOnce();
+    expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
+      schema: 'desktop.native-update-status.v1',
+      drain: {automaticDrain: false, reason: 'drain-interlock-unsupported'},
+      hostedReleaseTrain: 'paused',
+    });
+  });
   it.each(['inspect','prepare','apply'] as const)('accepts the fixed %s opaque-ID JSON request',verb=>{
     expect(parseDesktopUpdateArgs([verb,'--stage','a'.repeat(32),'--json'])).toEqual({verb,stage:'a'.repeat(32)});
   });
