@@ -24,10 +24,22 @@ for validated lane-open dispatcher jobs. `readyRowsForDepth`
 (`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
 `tier` for the tier tally, including lane-open jobs as `READY`.
 
-`findStarvedLanes(statusJson, readyTsv)` (`src/core/fleet/lane-starve.ts`)
-accepts `null` for a missing ready snapshot. Its rows and the
-`fleet.lane-starve.v1` CLI report expose `ready`, `filler`, and `real` as
-nullable counts. An empty snapshot yields numeric zeroes.
+`findStarvedLanes(statusJson, readyTsv, routerQueue?)`
+(`src/core/fleet/lane-starve.ts`) accepts `null` for a missing ready snapshot
+and an optional `router-queue.md` text that resolves spec-less dispatcher
+rows' requirement envelopes. Dispatcher rows count toward the lane the work
+market's hint resolves to — requirements `preferred_lane`, else the lane
+column — while an explicit `null` or empty lane cell is lane-open shared
+supply reported once as `openRows`, and a row the market would reject is
+dead work, never counted; rows in other ready.tsv dialects keep the
+tolerant lane-column read. `readyMarketLine(line, routerQueue?)`
+(`src/core/fleet/unfed-market.ts`) is the shared per-line verdict behind
+`parseReadyMarketRows`: `null` when the line is not a dispatcher market row,
+`'invalid'` when the market would reject it, else the resolved row whose
+`hint` is `null` for lane-open supply. `findStarvedLanes` returns
+`{ lanes, openRows }`, and its lanes plus the `fleet.lane-starve.v1` CLI
+report expose `ready`, `filler`, and `real` as nullable counts and
+`open_rows`. An empty snapshot yields numeric zeroes.
 
 ## Wiki context and ecosystem
 

@@ -903,10 +903,18 @@ phm fleet launchable --json
 and rows explicitly marked `READY` in the first column. Other recognized
 statuses such as `CLAIMED`, `RUNNING`, and `DONE` are excluded, as are rows
 with a `PARKED` marker in either the first column or the lane column.
-`queued` comes from the status snapshot, so it can differ from `ready`.
-When `ready.tsv` is missing, the split reads `unknown` in text and all three
-counts (`ready`, `filler`, `real`) are `null` in JSON. An empty file yields
-zero counts. Lane selection and the exit code still use the status snapshot.
+Dispatcher rows (`job repo lane tier prompt [requirements]`) count toward
+the lane the work market's hint resolves to — the requirements cell's
+`preferred_lane`, or the matching `router-queue.md` `(attrs)` envelope for a
+spec-less row, wins over the lane column; an explicit `null` or empty lane
+cell is lane-open shared supply reported once as `open_rows` (`openRows` in
+the core result and `openRows` in `fleet.launchable.v1`), and a row the
+market would reject is dead work, never counted. Rows in any other dialect
+keep the tolerant lane-column read. `queued` comes from the status snapshot,
+so it can differ from `ready`. When `ready.tsv` is missing, the split reads
+`unknown` in text, all three counts (`ready`, `filler`, `real`) are `null`
+in JSON, and `open_rows` is `null`. An empty file yields zero counts. Lane
+selection and the exit code still use the status snapshot.
 Lanes with `held: true` in the dispatcher snapshot are excluded.
 
 `launchable` compares each lane's `free` slots with ready rows whose prompt
@@ -922,7 +930,8 @@ additional slots or contribute to both lane-hinted and lane-open supply.
 The report also excludes parked rows,
 jobs marked `drop` or `defer` in `skipped-empty.tsv`, and filler while
 `FILLER_HOLD` exists. Both commands use the launch target described below and
-read `~/.ashlr-runs/queue` (including `router-queue.md` for `launchable`);
+read `~/.ashlr-runs/queue` (including `router-queue.md` for spec-less row
+envelopes);
 set `ASHLR_RUNS_DIR` to inspect another runs directory.
 
 `launchable` reports zero free slots for a lane with `held: true`, while

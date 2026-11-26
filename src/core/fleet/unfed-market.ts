@@ -247,6 +247,48 @@ export function readySpecCell(cell: string | undefined): Record<string, unknown>
 }
 
 /**
+ * One ready.tsv line's market verdict, shared by every ready-row reader.
+ * Returns null when the line is not a dispatcher market row at all — blank,
+ * comment, parked, or shorter than the five-column job/repo/lane/tier/prompt
+ * shape — so tolerant readers can apply their own dialect to it; 'invalid'
+ * when the row carries the dispatcher's shape but work_market.requirements
+ * would reject it before the market sees it (bad job id, repo or tier, or a
+ * malformed spec/envelope — dead work, never supply); otherwise the resolved
+ * market row, whose `hint` is null for lane-open supply. Status-first rows
+ * (`READY job lane ...`) are not dispatcher jobs — callers filter them on
+ * KNOWN_STATUSES before calling, exactly like countReady.
+ */
+export function readyMarketLine(
+  line: string, routerQueue?: string | null,
+): ReadyMarketRow | 'invalid' | null {
+  if (!line.trim() || line.startsWith('#')) return null;
+  const cols = line.split('\t');
+  if (cols.length < 5 || !cols[0] || cols[0].startsWith('PARKED-') || (cols[2] ?? '').startsWith('PARKED-')) return null;
+  const job = cols[0]!;
+  if (!JOB_ID.test(job) || cols[1]!.includes('/')) return 'invalid';
+  const tier = cols[3]!;
+  if (!known(MARKET_TIERS, tier)) return 'invalid';
+  let spec: Record<string, unknown> = {};
+  if (cols.length > 5) {
+    const cell = readySpecCell(cols[5]);
+    if (cell === 'invalid' || cell === null) return 'invalid';
+    spec = cell;
+  } else {
+    // Spec-less rows are validated like work_market.requirements first: the
+    // lane column defaults to preferred_lane, so a non-empty cell that is
+    // not a lane id rejects the row before its router-queue envelope is read.
+    const laneCell = cols[2] ?? '';
+    if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) return 'invalid';
+    const env = readyEnvelopeSpec(routerQueue, job);
+    if (env === 'invalid') return 'invalid';
+    if (env !== null) spec = env;
+  }
+  const row = resolveReadyMarketRow(cols, spec);
+  if (row === null) return 'invalid';
+  return { ...row, id: job, prompt: cols[4]!, tier };
+}
+
+/**
  * Parse dispatcher ready.tsv rows (job, repo, lane hint, tier, prompt[, requirements]).
  * Parked rows, comments and short rows are skipped exactly like readyHints; rows
  * the dispatcher's ok-check or work_market.requirements would reject are counted
@@ -259,31 +301,9 @@ export function parseReadyMarketRows(readyTsv: string, routerQueue?: string | nu
   const rows: ReadyMarketRow[] = [];
   let invalid = 0;
   for (const line of readyTsv.split('\n')) {
-    if (!line.trim() || line.startsWith('#')) continue;
-    const cols = line.split('\t');
-    if (cols.length < 5 || !cols[0] || cols[0].startsWith('PARKED-') || (cols[2] ?? '').startsWith('PARKED-')) continue;
-    const job = cols[0]!;
-    if (!JOB_ID.test(job) || cols[1]!.includes('/')) { invalid++; continue; }
-    const tier = cols[3]!;
-    if (!known(MARKET_TIERS, tier)) { invalid++; continue; }
-    let spec: Record<string, unknown> = {};
-    if (cols.length > 5) {
-      const cell = readySpecCell(cols[5]);
-      if (cell === 'invalid' || cell === null) { invalid++; continue; }
-      spec = cell;
-    } else {
-      // Spec-less rows are validated like work_market.requirements first: the
-      // lane column defaults to preferred_lane, so a non-empty cell that is
-      // not a lane id rejects the row before its router-queue envelope is read.
-      const laneCell = cols[2] ?? '';
-      if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) { invalid++; continue; }
-      const env = readyEnvelopeSpec(routerQueue, job);
-      if (env === 'invalid') { invalid++; continue; }
-      if (env !== null) spec = env;
-    }
-    const row = resolveReadyMarketRow(cols, spec);
-    if (row === null) { invalid++; continue; }
-    rows.push({ ...row, id: job, prompt: cols[4]!, tier });
+    const row = readyMarketLine(line, routerQueue);
+    if (row === 'invalid') invalid++;
+    else if (row !== null) rows.push(row);
   }
   return { rows, invalid };
 }
