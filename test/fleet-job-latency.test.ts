@@ -262,6 +262,24 @@ it('reads the remaining timestamp aliases and the kind event key', () => {
   expect(phase('publish_wait')).toMatchObject({ total_seconds: 30, measured_jobs: 1 });
 });
 
+it('joins latency boundaries using the first usable lifecycle aliases', () => {
+  const text = [
+    { job: ' ', job_id: 'attempt-1', event: '', type: ' Enqueue ', ts: '2026-01-01T00:00:00Z' },
+    { job: 42, jobId: 'attempt-1', event: false, type: ' ', kind: 'Launch', at: '2026-01-01 01:00:10+0100' },
+    { id: ' attempt-1 ', event: ' Finish ', ts: '2026-01-01T00:01:00Z' },
+    { job: 'attempt-1', event: 'Published', ts: '2026-01-01T00:02:00Z' },
+    { job: 'attempt-1', outcome: 'MERGED', mergedAt: '2026-01-01T00:04:00Z' },
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const report = jobLatency(text);
+  expect(report).toMatchObject({ jobs: 1, ignored_events: 0 });
+  expect(report.phases.find(p => p.phase === 'queue_wait')).toMatchObject({ total_seconds: 10, measured_jobs: 1 });
+  expect(report.phases.find(p => p.phase === 'worker')).toMatchObject({ total_seconds: 50, measured_jobs: 1 });
+  expect(report.phases.find(p => p.phase === 'publish_wait')).toMatchObject({ total_seconds: 60, measured_jobs: 1 });
+  expect(mergeQueueLatency(text).phases.find(p => p.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: 120, measured_jobs: 1 });
+});
+
 it('exposes versioned pulse JSON and plain text, including unreadable ledgers and usage errors', async () => {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
