@@ -16,7 +16,7 @@ import { closeSync, constants, existsSync, readFileSync, readdirSync, renameSync
 import { join, sep } from 'node:path';
 import { NODE_TASK_LIMIT, validNodeTask, nodeTaskArgs, type EmbeddedNodeTask } from './task.js';
 import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
-import { validCap } from './state.js';
+import { NODE_HEARTBEAT_MS, validCap } from './state.js';
 import type { RouteAssignment } from './router.js';
 import { MARKET_LANE_ID, readyEnvelopeSpec } from '../../fleet/unfed-market.js';
 import { scrubSecrets } from '../../util/scrub.js';
@@ -156,24 +156,35 @@ function reservesReadyId(row: ReadyRow): boolean {
 
 /** Pure eligibility plan. Unknown slot telemetry is `null` and never admits a row. */
 export function planNodeBridge(input: BridgeRouterView & {
-  rows: ReadyRow[]; claimed: (job: string) => boolean; maxPerPass?: number;
+  rows: ReadyRow[]; claimed: (job: string) => boolean; now: number; maxPerPass?: number;
 }): { nodes: BridgeNodeView[]; rows: BridgeRowDecision[] } {
   const live = input.nodes.filter(n => n.live).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const running = (id: string) => input.jobs.filter(j => j.state === 'running' && j.claimedBy === id).length;
   const free = new Map<string, number | null>(live.map(n => [n.nodeId, n.slots === undefined ? null : Math.max(0, n.slots - running(n.nodeId))]));
-  // Capacity-reporting nodes on one physical host share its measured slots —
-  // the router's nodeCapacityView groups by capacity.hostId the same way. Each
-  // node's advertised `slots` already includes host headroom, so free capacity
-  // is accounted once per host (the smallest advertisement minus every claim
-  // on it), never summed per node; a node without a capacity sample is its own
-  // host, which leaves standalone accounting exactly as before.
+  // Count the physical host's budget once, including claims held by siblings.
+  // Legacy nodes without samples still use their advertised slot bounds.
   const hostOf = (n: NodeView): string => n.capacity?.hostId ?? n.nodeId;
   const hostGroups = new Map<string, NodeView[]>();
   for (const n of live) { const host = hostOf(n); const members = hostGroups.get(host) ?? []; members.push(n); hostGroups.set(host, members); }
   const hostFree = new Map<string, number | null>();
+  const freshCapacity = (node: NodeView) => {
+    const sample = node.capacity;
+    return sample && sample.sampledAtMs <= input.now &&
+      input.now - sample.sampledAtMs <= 2 * NODE_HEARTBEAT_MS ? sample : undefined;
+  };
   for (const [host, members] of hostGroups) {
-    hostFree.set(host, members.every(m => m.slots !== undefined)
-      ? Math.max(0, Math.min(...members.map(m => m.slots!)) - members.reduce((sum, m) => sum + running(m.nodeId), 0))
+    const samples = members.map(freshCapacity);
+    if (samples.some(sample => sample?.held)) {
+      hostFree.set(host, 0);
+      continue;
+    }
+    const budgets = members.map((member, index) => {
+      const sample = samples[index];
+      if (member.slots === undefined || (member.capacity && !sample)) return null;
+      return Math.min(member.slots, sample?.slots ?? member.slots);
+    });
+    hostFree.set(host, budgets.every((budget): budget is number => budget !== null)
+      ? Math.max(0, Math.min(...budgets) - members.reduce((sum, m) => sum + running(m.nodeId), 0))
       : null);
   }
   const reserve = (node: NodeView) => {
@@ -462,7 +473,7 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
     });
     const bridged = new Set(manifests.map(m => m.job));
     const plan = planNodeBridge({ rows: fresh.rows, claimed: j => bridged.has(j) || claimedLocally(host, j),
-      ...view, ...(opts.maxPerPass !== undefined ? { maxPerPass: opts.maxPerPass } : {}) });
+      ...view, now, ...(opts.maxPerPass !== undefined ? { maxPerPass: opts.maxPerPass } : {}) });
     report.nodes = plan.nodes;
     report.rows = plan.rows;
     return plan;

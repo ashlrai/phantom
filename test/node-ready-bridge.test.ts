@@ -271,6 +271,32 @@ describe('ready.tsv -> node router bridge', () => {
     expect(assigned.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
   });
 
+  it('keeps work ready during a shared host hold and resumes within measured headroom', async () => {
+    const jobs = ['RQ-REVIEW-A', 'RQ-REVIEW-B'];
+    const f = fixture(jobs.map(job => row(job)), [
+      { id: 'worker', caps: READ, slots: 4 },
+      { id: 'sibling', caps: [], slots: 4 },
+    ]);
+    const sample = { hostId: 'mac', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000_000 };
+    f.nodes.heartbeat(f.sessions.get('worker')!, { capacity: sample });
+    f.nodes.heartbeat(f.sessions.get('sibling')!, { capacity: { ...sample, slots: 0, held: 'memory-pressure' } });
+    const held = await f.pass();
+    expect(held.claimed).toEqual([]);
+    expect(held.rows.map(r => r.reasons)).toEqual([['no_free_slot'], ['no_free_slot']]);
+    expect(f.ready()).toBe(jobs.map(job => f.line(job) + '\n').join(''));
+
+    f.advance(6001);
+    for (const session of f.sessions.values()) f.nodes.heartbeat(session);
+    const stale = await f.pass(false);
+    expect(stale.rows.map(r => r.reasons)).toEqual([['slots_unknown'], ['slots_unknown']]);
+
+    for (const session of f.sessions.values()) {
+      f.nodes.heartbeat(session, { capacity: { ...sample, sampledAtMs: 1_006_001 } });
+    }
+    expect((await f.pass()).claimed).toEqual([jobs[0]]);
+    expect(f.ready()).toBe(f.line(jobs[1]!) + '\n');
+  });
+
   it('reports shared headroom after sibling reservations', async () => {
     const f = fixture([row('RQ-REVIEW-A')], [
       { id: 'node-a', caps: [...READ, 'build'], slots: 1 },
