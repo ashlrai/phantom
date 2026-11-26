@@ -3,7 +3,7 @@ export const NODE_FLEET_VERBS = ['join', 'beat', 'enqueue', 'plan', 'pull', 'ren
 
 export const NODE_FLEET_USAGE = `Usage: phm node join [--node <id>] --owner <scope[,scope]> [--caps <cap[,cap]>] [--slots 0-64] [--json]
        phm node beat --node <id> --session <n> [--usage 0-1000] [--slots 0-64] [--capacity <sample-json>] [--auth ok|missing|unknown | --probe-auth] [--watch [--every <seconds>]] [--json]
-       phm node enqueue --job <id> --owner <scope> [--requires <cap[,cap]>] [--pack <id>] [--secrets <NAME[,NAME]>] [--json]
+       phm node enqueue --job <id> --owner <scope> [--requires <cap[,cap]>] [--pack <id>] [--secrets <NAME[,NAME]>] [--task-part <text>] [--task-sha256 sha256:<hex>] [--json]
        phm node plan [--owner <scope>] [--json]
        phm node pull --node <id> --session <n> [--json]
        phm node renew --job <id> --node <id> --session <n> --token <n> --leader-token <n> [--watch [--every <seconds>]] [--json]
@@ -29,6 +29,13 @@ claiming node), or completed with the accepted result text — and never changes
 anything. State lives in
 ~/.ashlr/nodes (or $ASHLR_HOME/nodes). Each node uses only its own local login; tokens are
 never copied or sent, and jobs carry secret NAMES, never values.
+
+\`--task-part\` and \`--task-sha256\` embed the job's task text — the prompt a
+runner executes, which the claiming node's \`pull\` prints. Repeat \`--task-part\`
+for long text (the parts join in order; each at most 4000 characters, 16 KiB
+joined). \`--task-sha256\` is \`sha256:\` plus the lowercase hex sha256 of the
+exact joined text (\`sha256sum\` on Linux, \`shasum -a 256\` on macOS). An embedded
+task requires \`--pack codex-file\`, and the two flags together or neither.
 
 \`beat --watch\` repeats the beat every --every seconds (default 10, at most 25 — sessions
 expire 30 s after the last beat) until Ctrl-C, re-measuring capacity and host stats on this

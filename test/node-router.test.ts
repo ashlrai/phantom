@@ -436,6 +436,15 @@ describe('phm node CLI', () => {
     expect((await cli('--help')).out).toContain('Usage: phm node bootstrap --dry-run');
     expect((await cli('--help')).out).toContain('phm node pull');
   });
+
+  it('help advertises the embedded-task enqueue flags a producer needs', async () => {
+    // The codex-file task path is how a job carries real work to a node; it
+    // must be discoverable from `phm node --help`, not only from source.
+    const help = (await cli('--help')).out;
+    expect(help).toContain('--task-part');
+    expect(help).toContain('--task-sha256');
+    expect(help).toContain('codex-file');
+  });
 });
 
 describe('local auth probe', () => {

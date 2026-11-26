@@ -1045,7 +1045,11 @@ describe('fleet flag value validation', () => {
     const sha = (text: string) => createHash('sha256').update(text).digest('hex');
     const taskArgs = (pack: string, digest: string, text = 'do the thing') =>
       ['--job', 'j1', '--owner', 'acme', '--pack', pack, '--task-part', text, '--task-sha256', digest];
-    expect(run('enqueue', taskArgs('codex-file', 'sha256:xyz'), f)).toMatchObject({ code: 'bad-task-sha256', exit: 2 });
+    const badDigest = run('enqueue', taskArgs('codex-file', 'sha256:xyz'), f);
+    expect(badDigest).toMatchObject({ code: 'bad-task-sha256', exit: 2 });
+    // The fix names a digest tool every supported platform ships — sha256sum
+    // is not optional garnish beside a macOS-only shasum suggestion.
+    expect(badDigest.fix).toContain('sha256sum');
     expect(run('enqueue', taskArgs('codex-file', `sha256:${sha('other')}`), f)).toMatchObject({ code: 'bad-task-sha256', exit: 2 });
     expect(run('enqueue', taskArgs('codex-file', `sha256:${sha('   ')}`, '   '), f)).toMatchObject({ code: 'bad-task', exit: 2 });
     // A task without the codex-file pack is a usage error naming --pack, not a

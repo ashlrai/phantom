@@ -78,6 +78,25 @@ computer's sanitized hostname — the same default a pool join applies — so
 `phm node join --owner <scope>` is the shortest first join. A job with no
 live node prints a `phm node join --owner` fix that names the caps it needs.
 
+To send real work instead of an empty claim, embed the task text in the job:
+
+```sh
+phm node enqueue --job review-1 --owner acme --requires codex,pack:codex-file \
+  --pack codex-file --task-part "Review this diff: ..." --task-sha256 sha256:<hex> --json
+```
+
+`--task-part` repeats for long text — the parts join in order, each at most
+4000 characters and 16 KiB joined — and `--task-sha256` is `sha256:` plus the
+lowercase hex sha256 of the exact joined text (`printf %s "$TASK" |
+sha256sum`, or `shasum -a 256` on macOS). An embedded task requires
+`--pack codex-file`, and the two flags together or neither. The claiming
+node's `pull` prints the task text; the `codex-file` pack runs it through
+`codex exec` in a fresh scratch directory, so `codex,pack:codex-file` in
+`--requires` routes only to nodes with codex signed in and the pack
+advertised. A manual runner can also read the printed task, do the work and
+`complete --result` with its own result text — the pack is what an automated
+runner executes, not a requirement on the result.
+
 `phm node result --job <id> --owner <scope>` is the read-only way back to a
 job's outcome: `pending`, `running` (naming the node whose live claim can act),
 `completed` with the accepted `--result` text, executor and completion time, or
