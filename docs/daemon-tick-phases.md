@@ -57,7 +57,9 @@ reward-signal ledger (`src/core/metrics/reward-feed.ts`), discounting merges
 the standing revert set proves did not hold. A standing revert requires
 an exclusive job claim on the merge's PR. The claim check uses the lowercase
 `owner/repo#n` key, so repository case and a trailing slash do not distinguish
-claims. The fold takes the lane and dispatch
+claims. Future-dated claims can contest attribution once their receipt time
+is reached. Undated claims can still make attribution ambiguous.
+The fold takes the lane and dispatch
 time from the latest dispatch at or before the outcome, using GitHub's
 merge timestamp when available for a held merge. A closed-unmerged PR uses
 `closedAt` or `closed_at` to select the dispatch and bound CI timing. If

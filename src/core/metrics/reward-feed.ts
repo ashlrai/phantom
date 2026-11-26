@@ -279,6 +279,8 @@ export function foldJobsLedgerRewards(
     } catch { continue; }
     const id = firstString(row, JOB_ID_KEYS);
     if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
+    const at = ledgerTs(row);
+    if (at !== null && at > nowMs) continue;
     if (claims !== null) {
       const url = firstString(row, URL_KEYS);
       const key = url === null ? null : pullRequestKey(url);
@@ -289,11 +291,10 @@ export function foldJobsLedgerRewards(
       }
     }
     if (!JOB_ID_PATTERN.test(id)) continue;
-    const at = ledgerTs(row);
     const name = firstString(row, EVENT_KEYS)?.toLowerCase();
     const dispatch = name !== undefined && DISPATCH_EVENTS.has(name);
     const ciBoundary = name === 'ci_start' || name === 'ci_complete';
-    if (at === null ? !dispatch && !ciBoundary : at > nowMs) continue;
+    if (at === null && !dispatch && !ciBoundary) continue;
     let acc = jobs.get(id);
     if (!acc) {
       acc = newAccum();
