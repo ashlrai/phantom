@@ -961,6 +961,8 @@ Missing fleet summaries are marked explicitly; flags hidden behind `[opts]` or u
 | <code>phm subagent spawn&#124;list&#124;result [opts]</code> | Plan bounded cross-provider children; apply stores held records only, never dispatches. | - | - |
 | <code>phm swarm "&lt;goal&gt;" [opts]</code> | Decompose goal into a contracts-first DAG; run a fleet of agents. | - | - |
 | <code>phm swarm &lt;specId&gt; [opts]</code> | Run a swarm against an existing spec artifact. | - | - |
+| <code>phm swarm pilot &lt;spec.json&gt; --runtime &lt;file&gt; [--root &lt;dir&gt;] [--apply] [--json]</code> | Preview or run an enrolled resource-pool swarm. | <code>--apply</code>, <code>--json</code>, <code>--root</code>, <code>--runtime</code> | <code>phm swarm pilot &lt;spec.json&gt; --runtime &lt;file&gt; [--root &lt;dir&gt;] [--apply] --json</code> |
+| <code>phm swarm pilot-report &lt;id&gt; [--root &lt;dir&gt;] [--pr &lt;number&gt;] [--json]</code> | Read swarm evidence and optionally verify a merged PR. | <code>--json</code>, <code>--pr</code>, <code>--root</code> | <code>phm swarm pilot-report &lt;id&gt; [--root &lt;dir&gt;] [--pr &lt;number&gt;] --json</code> |
 | <code>phm swarm show &lt;id&gt;</code> | Print a past swarm run in detail. | - | - |
 | <code>phm swarms [--json]</code> | List past swarm runs (newest first). | <code>--json</code> | <code>phm swarms --json</code> |
 | <code>phm sweep report [--repo &lt;dir&gt;]</code> | Write a local weekly deletion review report from a Phantom checkout. | <code>--repo</code> | - |
