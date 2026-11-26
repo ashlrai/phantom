@@ -278,7 +278,7 @@ function detail(t: BoardTransition, state: BoardNotifyState): string | null {
     if (!e.owner || !e.claimReceipt) return null;
     return `${field(e.owner, 120)} (claim ${field(e.claimReceipt, 160)})`;
   }
-  if (state === 'BLOCKED') return e.dependency ? field(e.dependency, 160) : null;
+  if (state === 'BLOCKED') return e.dependency ? proofField(e.dependency) : null;
   const parts: string[] = [];
   if (e.pr !== undefined) parts.push(`PR #${e.pr}`);
   if (e.head) parts.push(`head ${proofField(e.head)}`);
