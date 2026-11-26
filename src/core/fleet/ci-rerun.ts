@@ -10,7 +10,7 @@ import { enqueueFlakeFixes, JOURNAL_TEST_MAX, recurringFlakes } from './ci-flake
 import { scrubSecrets } from '../util/scrub.js';
 import { defaultCiGh } from './ci-failure-groups.js';
 
-type Entry = { at: string; repo: string; head: string; runId: number; pr: number; outcome: 'attempt' | 'ok' | 'failed' | 'verdict'; test?: string; tests?: string[]; verdict?: 'pass' | 'fail' | 'inconclusive' };
+type Entry = { at: string; repo: string; head: string; runId: number; runAttempt?: number; pr: number; outcome: 'attempt' | 'ok' | 'failed' | 'verdict'; test?: string; tests?: string[]; verdict?: 'pass' | 'fail' | 'inconclusive' };
 type VerdictCursor = Pick<Entry, 'at' | 'repo' | 'head' | 'runId'>;
 type RepoStatus = { groups: number; attempted: number; ok: number; failed: number; skippedDuplicate: number; skippedCap: number; queued: number; flakeFixesQueued: number; recurringFlakes: number; verdictsPending: number; verdictsResolved: number; verdictCursor?: VerdictCursor; queueBlocked: string | null; errors: string[] };
 
@@ -59,10 +59,11 @@ function pendingVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
 }
 
 /** Map a workflow-run API payload to a verdict; null means not yet resolvable. */
-function verdictFromRun(data: unknown, entry: Entry): Entry['verdict'] | null {
+function verdictFromRun(data: unknown, entry: Entry, expectedAttempt: number | undefined): Entry['verdict'] | null {
   if (typeof data !== 'object' || data === null) return null;
-  const run = data as { id?: unknown; status?: unknown; conclusion?: unknown; head_sha?: unknown; updated_at?: unknown };
+  const run = data as { id?: unknown; status?: unknown; conclusion?: unknown; head_sha?: unknown; updated_at?: unknown; run_attempt?: unknown };
   if (run.id !== entry.runId || run.head_sha !== entry.head || run.status !== 'completed') return null;
+  if (expectedAttempt !== undefined && run.run_attempt !== expectedAttempt) return null;
   if (typeof run.conclusion !== 'string' || !run.conclusion.trim() || typeof run.updated_at !== 'string') return null;
   const updated = Date.parse(run.updated_at);
   if (!Number.isFinite(updated) || updated < Date.parse(entry.at) - VERDICT_SKEW_MS) return null;
@@ -103,6 +104,7 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
         try {
           const e = JSON.parse(line) as Entry;
           if (typeof e.repo === 'string' && typeof e.head === 'string' && Number.isSafeInteger(e.runId) && Number.isFinite(Date.parse(e.at))
+            && (e.runAttempt === undefined || (Number.isSafeInteger(e.runAttempt) && e.runAttempt > 0 && e.runAttempt < Number.MAX_SAFE_INTEGER))
             && ['attempt', 'ok', 'failed', 'verdict'].includes(e.outcome)
             && (e.outcome !== 'verdict' || (VERDICTS as readonly string[]).includes(e.verdict ?? ''))) entries.push(e);
         } catch { /* malformed journal row */ }
@@ -215,15 +217,21 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
           opts.signal.throwIfAborted();
           let verdict: Entry['verdict'] | null = null;
           try {
-            const r = await gh(['api', `repos/${repo}/actions/runs/${p.runId}`]);
+            const expectedAttempt = p.runAttempt === undefined ? undefined : p.runAttempt + 1;
+            const endpoint = `repos/${repo}/actions/runs/${p.runId}`
+              + (expectedAttempt === undefined ? '' : `/attempts/${expectedAttempt}`);
+            const r = await gh(['api', endpoint]);
             if (r.ok) {
-              try { verdict = verdictFromRun(JSON.parse(r.stdout), p); }
+              try { verdict = verdictFromRun(JSON.parse(r.stdout), p, expectedAttempt); }
               catch { /* malformed run payload: stays pending for a later pass */ }
             }
           } catch (error) { if (opts.signal.aborted) throw error; }
           s.verdictCursor = { at: p.at, repo: p.repo, head: p.head, runId: p.runId };
           if (verdict === null) continue;
-          append({ at: new Date(now()).toISOString(), repo: p.repo, head: p.head, runId: p.runId, pr: p.pr, outcome: 'verdict', verdict, ...(p.test ? { test: p.test } : {}) });
+          append({
+            at: new Date(now()).toISOString(), repo: p.repo, head: p.head, runId: p.runId, pr: p.pr,
+            outcome: 'verdict', verdict, runAttempt: p.runAttempt, ...(p.test ? { test: p.test } : {}),
+          });
           s.verdictsResolved++;
         }
       } catch (error) {

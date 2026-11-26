@@ -10,9 +10,9 @@ import { nextFixGeneration } from './ci-fix-generations.js';
 
 type Failure = { testId: string; file: string; names: string; excerpt: string };
 type Pr = { number: number; headRefOid: string; headRefName: string; files: { path: string }[] };
-type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string };
+type Run = { id: number; run_attempt?: number; head_sha: string; workflow_id: number; status: string; conclusion?: string };
 type Job = { id: number; conclusion: string; head_sha: string };
-type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: number };
+type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: number; runAttempt?: number };
 
 // Job conclusions that mean the check never reached a verdict: cancelled,
 // timed out, awaiting action, failed to start, or marked stale. Their logs
@@ -2570,7 +2570,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (latest.some(r => r.head_sha !== pr.headRefOid)) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'stale', reason: 'stale-head' }); continue; }
     let known = true;
     let incomplete = false;
-    const found: (Failure & { runId: number })[] = [];
+    const found: (Failure & { runId: number; runAttempt?: number })[] = [];
     for (const run of latest) {
       if (run.status !== 'completed') { known = false; continue; }
       const evidence = await logs(run, pr.headRefOid);
@@ -2583,7 +2583,8 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       for (const log of evidence.entries.filter(l => l.conclusion === 'failure')) {
         const failures = parseBaselineFailures(log.text, repo, auditExceptions);
         if (!failures.length) known = false;
-        found.push(...failures.map(failure => ({ ...failure, runId: run.id })));
+        const runAttempt = run.run_attempt;
+        found.push(...failures.map(failure => ({ ...failure, runId: run.id, runAttempt })));
       }
     }
     freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: incomplete ? 'incomplete-check' : 'unreadable-log-or-unverified-checkout' } : {}) });
@@ -2611,7 +2612,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // at all, so the ambient set cannot reach any of them.
       const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === BUILD_STEP_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
-      observations.push({ pr, failure, touched, runId: failure.runId });
+      observations.push({ pr, failure, touched, runId: failure.runId, runAttempt: failure.runAttempt });
     }
   }
   const ids = [...new Set(observations.map(o => o.failure.testId))].sort();
@@ -2619,7 +2620,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const rows = observations.filter(o => o.failure.testId === testId);
     const { file, names, testId: id, excerpt } = rows[0]!.failure;
     const failure = { file, names, testId: id, excerpt };
-    const runs = [...new Map(rows.map(o => [`${o.pr.headRefOid}:${o.runId}`, { pr: o.pr.number, head: o.pr.headRefOid, runId: o.runId }])).values()];
+    const runs = [...new Map(rows.map(o => {
+      const { runId, runAttempt } = o;
+      const observedAttempt = runAttempt !== undefined && Number.isSafeInteger(runAttempt) && runAttempt > 0 && runAttempt < Number.MAX_SAFE_INTEGER;
+      return [`${o.pr.headRefOid}:${runId}`, { pr: o.pr.number, head: o.pr.headRefOid, runId, ...(observedAttempt ? { runAttempt } : {}) }];
+    })).values()];
     const unaffected = [...new Set(rows.filter(o => o.touched === false).map(o => o.pr.number))];
     const prNumbers = [...new Set(rows.map(o => o.pr.number))];
     const classification = unaffected.length >= 2 ? 'shared-baseline' : rows.every(o => o.touched === true) ? 'pr-caused' : prNumbers.length === 1 && rows[0]!.touched === false && passes(failure) ? 'probable-flake' : 'unknown';

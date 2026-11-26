@@ -10,7 +10,7 @@ const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true })));
 function setup(classification = 'probable-flake') {
   const dir = mkdtempSync(join(tmpdir(), 'ci-rerun-')); dirs.push(dir);
-  const report = { v: 1, repo: 'org/repo', groups: [{ file: 'test/a.test.ts', names: 'a', testId: 'test/a.test.ts > a', excerpt: '', classification, action: classification === 'shared-baseline' ? 'queue-master-fix' : 'rerun-failed', runs: [{ pr: 1, head: 'a'.repeat(40), runId: 123 }], prs: [1], unaffectedPrs: [1], master: 'pass', jobId: 'RQ-CIBASE-TEST', brief: 'fix baseline' }], freshness: [], master: { head: 'b'.repeat(40), known: true }, updates: [], errors: [] };
+  const report = { v: 1, repo: 'org/repo', groups: [{ file: 'test/a.test.ts', names: 'a', testId: 'test/a.test.ts > a', excerpt: '', classification, action: classification === 'shared-baseline' ? 'queue-master-fix' : 'rerun-failed', runs: [{ pr: 1, head: 'a'.repeat(40), runId: 123, runAttempt: undefined as number | undefined }], prs: [1], unaffectedPrs: [1], master: 'pass', jobId: 'RQ-CIBASE-TEST', brief: 'fix baseline' }], freshness: [], master: { head: 'b'.repeat(40), known: true }, updates: [], errors: [] };
   const gh = vi.fn(async (_args: string[]) => ({ ok: true, stdout: '', stderr: '' }));
   const opts: CiRerunOptions = { repos: ['org/repo'], signal: new AbortController().signal, gh, analyzer: async () => report, now: () => Date.parse('2026-01-01T12:00:00Z'), journalPath: join(dir, 'journal.jsonl'), statusPath: join(dir, 'status.json'), queueFile: join(dir, 'queue.md'), autonomyEffective: () => true, killOff: () => true };
   return { opts, gh, report };
@@ -197,6 +197,28 @@ describe('resident CI reruns', () => {
     expect(read.verdicts.resolutionRate).toBe(1);
     await runCiRerunMaintenance(opts);
     expect(gh.mock.calls.filter(call => call[0][0] === 'api')).toHaveLength(1);
+  });
+  it.each([3, 5, undefined])('withholds a verdict from attempt %s when attempt 4 was requested', async runAttempt => {
+    const { opts, gh, report } = setup();
+    report.groups[0]!.runs[0]!.runAttempt = 3;
+    await runCiRerunMaintenance(opts);
+    expect(readCiReruns(opts.journalPath!, opts.now!()).recent.at(-1)).toMatchObject({
+      outcome: 'ok', runAttempt: 3,
+    });
+
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    const payload = {
+      id: 123, status: 'completed', head_sha: 'a'.repeat(40),
+      updated_at: '2026-01-01T12:09:00Z', conclusion: 'failure',
+    };
+    gh.mockResolvedValue({ ok: true, stdout: JSON.stringify({ ...payload, run_attempt: runAttempt }), stderr: '' });
+    await runCiRerunMaintenance(opts);
+    expect(gh).toHaveBeenLastCalledWith(['api', 'repos/org/repo/actions/runs/123/attempts/4']);
+    expect(readCiReruns(opts.journalPath!, opts.now!()).verdicts).toMatchObject({ pending: 1, fail: 0 });
+
+    gh.mockResolvedValue({ ok: true, stdout: JSON.stringify({ ...payload, run_attempt: 4, conclusion: 'success' }), stderr: '' });
+    await runCiRerunMaintenance(opts);
+    expect(readCiReruns(opts.journalPath!, opts.now!()).verdicts).toMatchObject({ pending: 0, pass: 1, fail: 0 });
   });
   it('maps run conclusions to fail and inconclusive and skips running or stale reads', async () => {
     const { opts, gh, report } = setup();

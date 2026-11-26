@@ -632,8 +632,12 @@ the rerun verdicts.
 
 An `ok` journal row only proves the `gh run rerun` call succeeded, not that the
 flake passed. On each maintenance pass, after queueing work, the loop resolves
-pending reruns by reading `repos/<repo>/actions/runs/<runId>`: a completed run
-with conclusion `success` journals a `pass` verdict, `failure` or `timed_out`
+pending reruns using GitHub's workflow run attempt endpoint. When baseline
+evidence includes `runAttempt`, the journal records that failed attempt
+number and polls `repos/<repo>/actions/runs/<runId>/attempts/<runAttempt+1>`.
+The response must also report that next attempt number. Journal entries
+without an observed attempt number use the run-level endpoint and timestamp
+guard. A completed attempt with conclusion `success` journals a `pass` verdict, `failure` or `timed_out`
 a `fail`, and any other reported conclusion (cancelled, skipped, neutral,
 startup failure, stale) an `inconclusive` one. Verdicts require a matching run
 ID and head SHA, a nonempty conclusion, and a parseable `updated_at` no earlier

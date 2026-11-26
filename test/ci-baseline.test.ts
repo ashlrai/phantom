@@ -101,7 +101,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     } else if (endpoint.includes('/actions/runs?')) {
       const isMaster = endpoint.includes(master);
       const conclusion = (isMaster ? options.masterRunConclusion : undefined) ?? options.runConclusion;
-      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : head, ...(conclusion !== undefined ? { conclusion } : {}) }] };
+      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, run_attempt: 3, status: 'completed', head_sha: isMaster ? master : options.stale ? master : head, ...(conclusion !== undefined ? { conclusion } : {}) }] };
     } else throw new Error(`unexpected call ${args.join(' ')}`);
     return success(JSON.stringify(value));
   };
@@ -128,7 +128,7 @@ describe('CI baseline evidence', () => {
   it('requires an explicit same-test master pass for a singleton flake', async () => {
     const pass = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true }).gh);
     expect(pass.groups[0]?.action).toBe('rerun-failed');
-    expect(pass.groups[0]?.runs).toEqual([{ pr: 1, head, runId: 2 }]);
+    expect(pass.groups[0]?.runs).toEqual([{ pr: 1, head, runId: 2, runAttempt: 3 }]);
     const fail = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
     expect(fail.groups[0]?.action).toBe('unknown');
   });
