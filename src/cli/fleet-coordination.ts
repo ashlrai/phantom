@@ -7,10 +7,11 @@ import {
 import { returnFleetClaim } from '../core/fleet/coordination-return.js';
 import { parseCoordinationInboxFilters, projectCoordinationInbox, type CoordinationInboxFilters } from '../core/fleet/coordination-inbox.js';
 import { parseCoordinationReturnsFilters, projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
+import { parseCoordinationClaimsFilters, projectCoordinationClaims } from '../core/fleet/coordination-claims-view.js';
 import { claimNoticeDir, claimNoticePaths } from '../core/fleet/claim-notice-send.js';
 import { appendClaimThreadBinding, validateClaimThreadKey } from '../core/fleet/claim-thread-binding-write.js';
 
-const USAGE = 'Usage: ashlr fleet coordination <claim|release|return|returns|handoff|board|post|inbox|assign> [options]';
+const USAGE = 'Usage: ashlr fleet coordination <claim|release|return|returns|claims|handoff|board|post|inbox|assign> [options]';
 export const FLEET_COORDINATION_HELP = [
   USAGE,
   '  claim --repo owner/repo --task "work" --agent name [--ttl-seconds 3600] [--thread <slack:T:C:ts | T/C/ts>] [--json] — binds the claim\'s ASSIGNED/RELEASED/BLOCKED/VERIFIED notices to that thread; local state, not authority.',
@@ -19,6 +20,7 @@ export const FLEET_COORDINATION_HELP = [
   '  handoff <claim-id> --agent name --lease <lease> --to name [--ttl-seconds 3600] [--json]',
   '  board [--json]',
   '  returns [--claim <id>] [--repo owner/name] [--result VERIFIED|BLOCKED] [--from name] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains text] [--json] — RESULT receipts from coordination return, newest first; evidence, not authority. The filters narrow the parsed set before the newest-50 page, so a filtered read reaches receipts the unfiltered cap hides: --claim keeps one claim id\'s receipts, --repo one repo (case-insensitive), --result one verdict, --from one sender label, --since/--before keep receipts inside one [since, before) window on their at stamp, --contains keeps receipts whose repo, verdict, evidence kind or evidence text carries the text (case-insensitive).',
+  '  claims [--agent name] [--exclude-agent name] [--repo owner/name] [--id id] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains text] [--json] — live advisory claims, newest first; --agent keeps one owner label\'s holds and --exclude-agent drops them (exact coordination names, never resolved through the bus registry), --repo one repo (case-insensitive), --id one exact claim id, --since/--before keep claims inside one [since, before) window on their claimedAt stamp, --contains keeps claims whose id, repo, task or agent text carries the text (case-insensitive). The filters narrow the live set before the newest-50 page and matched/omitted report the filtered truncation — both stay null under an unknown ledger. Advisory only; grants no execution authority.',
   '  post --from name --to name --message "text" [--id id] [--ttl-seconds 3600] [--json]',
   '  inbox --agent name [--from sender] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains text] [--json] — filters narrow the addressed read: --from keeps posts one sender label wrote (proposals carry no sender and drop out), --since/--before keep records inside one [since, before) window on their at stamp, --contains keeps messages whose body and proposals whose repo+task carry the text (case-insensitive).',
   '  assign --repo owner/repo --task "work" --to name [--ttl-seconds 3600] [--json]',
@@ -30,6 +32,7 @@ const VALUES: Record<string, string[]> = {
   return: ['--agent', '--lease', '--pr', '--head', '--tests', '--artifact', '--blocked', '--ttl-seconds'],
   handoff: ['--agent', '--lease', '--to', '--ttl-seconds'], board: [],
   returns: ['--claim', '--repo', '--result', '--from', '--since', '--before', '--contains'],
+  claims: ['--agent', '--exclude-agent', '--repo', '--id', '--since', '--before', '--contains'],
   post: ['--from', '--to', '--message', '--id', '--ttl-seconds'], inbox: ['--agent', '--from', '--since', '--before', '--contains'],
   assign: ['--repo', '--task', '--to', '--ttl-seconds'],
 };
@@ -69,6 +72,16 @@ export async function cmdFleetCoordination(args: string[], deps: { runsRoot?: st
       before: values['--before'], contains: values['--contains'] }, now);
     if (!parsed.ok) return invalid();
     const result = projectCoordinationReturns(readFleetBoard({ reap: false, now }), now, parsed.filters);
+    output(result);
+    return result.state === 'known' ? 0 : 1;
+  }
+  if (sub === 'claims') {
+    const now = (deps.now ?? Date.now)();
+    const parsed = parseCoordinationClaimsFilters({ agent: values['--agent'], excludeAgent: values['--exclude-agent'],
+      repo: values['--repo'], id: values['--id'], since: values['--since'],
+      before: values['--before'], contains: values['--contains'] }, now);
+    if (!parsed.ok) return invalid();
+    const result = projectCoordinationClaims(readFleetBoard({ reap: false, now }), now, parsed.filters);
     output(result);
     return result.state === 'known' ? 0 : 1;
   }

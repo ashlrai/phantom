@@ -27,8 +27,8 @@ describe('coordination claims projection (376)', () => {
 
   it('reports reader failure as unknown ownership', () => {
     expect(projectCoordinationClaims(null, now)).toEqual({ v: 1, source: 'coordination-ledger',
-      state: 'unknown', claims: [], expiredClaims: null, asOf: new Date(now).toISOString(),
-      reason: 'coordination ledger: reader failed' });
+      state: 'unknown', claims: [], expiredClaims: null, matched: null, omitted: null,
+      asOf: new Date(now).toISOString(), reason: 'coordination ledger: reader failed' });
   });
 
   it('preserves an unknown board', () => {
