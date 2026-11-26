@@ -656,7 +656,8 @@ function workJobClaimHuman(result: BusWorkJobClaimResult): string {
     return `conflict ${result.holder.claimKey} for ${claimJobLabel(result.job)} held by ${result.holder.owner} ` +
       `until ${new Date(result.holder.leaseUntil).toISOString()}${claimScopeSuffix(result.scope)}`;
   }
-  return `${result.status}: ${result.reason}${result.job === undefined ? '' : ` (${claimJobLabel(result.job)})`}`;
+  return `${result.status}: ${result.reason}${result.job === undefined ? '' : ` (${claimJobLabel(result.job)})`}` +
+    `${result.scope === undefined ? '' : claimScopeSuffix(result.scope)}`;
 }
 
 /** `claim message` human lines: the envelope id leads; the fencing token prints only on acquire. */

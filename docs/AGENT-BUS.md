@@ -1041,14 +1041,19 @@ unreadable feed refuses rather than claiming against a guessed job. The
 result echoes the announced job — with the feed's `postId`/`statusId`
 receipt citations, so `agents bus show <postId>` reads the announcement
 behind every outcome — and, on `acquired`, the fencing token for its
-acquirer only; a conflict names the holder, never a token. `acquired` and
-`conflict` also carry `scope` — the live coordination holds on the job's
-*other* declared claim keys (the targeted key excluded), each
-`{claimKey, owner, leaseUntil}` under the same overlap rule `work feed
---claims` applies, so a sibling `repo:`/`path:`/`pr:` scope already held by
-another participant is visible in the claim result itself rather than on a
-later feed or claim-list read. `scope.source` is `missing`, `available` or
-`unavailable`; an unreadable table means sibling holds are unknown, never a
+acquirer only; a conflict names the holder, never a token. Every outcome
+that resolved the job also carries `scope` — the live coordination holds on
+the job's declared claim keys, each `{claimKey, owner, leaseUntil}` under the
+same overlap rule `work feed --claims` applies. On `acquired`/`conflict` the
+targeted key is excluded (its state is already reported by `claim`/`holder`),
+so a sibling `repo:`/`path:`/`pr:` scope already held by another participant
+is visible in the claim result itself rather than on a later feed or
+claim-list read; every other outcome reports no key's state separately, so
+its `holds` cover every declared claim key — a `job-not-open` or
+`undeclared-key` refusal already names who holds the job's scopes, queue key
+included.
+`scope.source` is `missing`, `available` or
+`unavailable`; an unreadable table means holds are unknown, never a
 free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
