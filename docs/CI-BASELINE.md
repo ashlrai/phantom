@@ -631,7 +631,9 @@ crash or failed call; a new head is eligible. Reads tolerate malformed rows and
 are bounded to the last 4 MiB, so deduplication, counts and recurrence cover
 that retained read window. `phm ci reruns --json` shows the latest 100 entries,
 counts in that window, the last-hour attempt count, the recurring flakes and
-the rerun verdicts.
+the rerun verdicts. Reports and the hourly cap count rows through the
+evaluation time, inclusive. Future-dated receipts still prevent duplicate
+reruns and duplicate verdict writes.
 
 ## Rerun verdicts
 
