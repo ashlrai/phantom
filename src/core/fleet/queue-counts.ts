@@ -120,7 +120,9 @@ export async function getLaneQueueCounts(
     return arrival;
   };
   const byLane = new Map(queue.byLane.map(row => [row.lane, row]));
-  const readyKnown = queue.sources.ready !== 'missing';
+  // A degraded source may still have readable rows. The queue health
+  // projection distinguishes a partial parse from an unavailable file.
+  const readyKnown = (queue.health?.counts.ready ?? null) !== null;
   // Budget- and hold-only lanes carry no queue activity; leave them out.
   const lanes = new Set([
     ...byLane.keys(),
@@ -167,7 +169,9 @@ export async function getLaneQueueCounts(
     if (state === 'missing') notes.push(`${what} not found: ${effect}.`);
     else if (state === 'degraded' || state === 'unavailable') notes.push(`${what} is unreadable or has malformed rows: ${effect}.`);
   };
-  say('queue/ready.tsv', sources.ready, 'ready, parked and blocked reasons are unknown');
+  say('queue/ready.tsv', sources.ready, readyKnown
+    ? 'ready, parked and blocked reasons may be incomplete'
+    : 'ready, parked and blocked reasons are unknown');
   say('queue state (queue.v1.json)', sources.running, 'running counts are unknown');
   say('merge ledger (jobs.jsonl)', sources.ledger, 'merges are unknown');
   say('metrics/jobs.jsonl', metrics.state, 'oldest waits are unknown');
