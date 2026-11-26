@@ -36,6 +36,10 @@ recut, or recovered a failure class seen on three earlier failed jobs seeds
 one bounded draft card.
 For recurrence, Phantom orders jobs by their latest terminal outcome row in
 the retained ledger. Later bookkeeping rows do not change that order.
+For each resolved job, the learner uses the lane, retries, recuts and
+failure class recorded through that terminal row in ledger order.
+Subsequent execution evidence becomes eligible when a newer terminal row
+resolves the job.
 Recovery drafts require an observed lane. A terminal row can supply that
 lane even when it has no event name. Queue hints and `unknown` values
 leave the last observed lane intact. Jobs without an observed lane supply

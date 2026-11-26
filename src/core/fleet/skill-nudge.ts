@@ -152,16 +152,21 @@ const REVERT_PHASES: ReadonlySet<string> = new Set(['REVERT', 'REVERTED']);
 /** The resolved outcomes draftSkillNudges consumes; queued/running stay unresolved. */
 type NudgeOutcome = 'merged' | 'failed' | 'empty' | 'cancelled';
 
-interface NudgeJobAccum {
+interface NudgeRecoveryEvidence {
   lane: string | null;
-  outcome: NudgeOutcome | undefined;
-  /** PR URL on the row that set the standing outcome; null when that row carried none. */
-  verdictUrl: string | null;
-  reverted: boolean;
   attempts: number;
   retryReceipts: number;
   recuts: number;
   failureClass: string | null;
+}
+
+interface NudgeJobAccum {
+  evidence: NudgeRecoveryEvidence;
+  verdictEvidence: NudgeRecoveryEvidence | null;
+  outcome: NudgeOutcome | undefined;
+  /** PR URL on the row that set the standing outcome; null when that row carried none. */
+  verdictUrl: string | null;
+  reverted: boolean;
   lastLine: number;
   outcomeLine: number | null;
 }
@@ -280,30 +285,35 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     if (!LEDGER_ID_PATTERN.test(id)) continue;
     let acc = jobs.get(id);
     if (acc === undefined) {
-      acc = { lane: null, outcome: undefined, verdictUrl: null, reverted: false, attempts: 0,
-        retryReceipts: 0, recuts: 0, failureClass: null, lastLine: lineNo, outcomeLine: null };
+      acc = {
+        evidence: { lane: null, attempts: 0, retryReceipts: 0, recuts: 0, failureClass: null },
+        verdictEvidence: null, outcome: undefined, verdictUrl: null, reverted: false,
+        lastLine: lineNo, outcomeLine: null,
+      };
       jobs.set(id, acc);
     }
     acc.lastLine = lineNo;
     const event = ledgerEventName(row);
     const outcome = outcomeOf(row);
+    const evidence = acc.evidence;
     if (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event)) {
       const lane = firstString(row, LEDGER_LANE_KEYS);
-      if (lane !== null && hasKnownLane(lane)) acc.lane = lane;
+      if (lane !== null && hasKnownLane(lane)) evidence.lane = lane;
     }
-    if (event !== null && ATTEMPT_EVENTS.has(event)) acc.attempts += 1;
-    else if (event === 'claim' && row['launch_dedupe'] !== true) acc.attempts += 1;
+    if (event !== null && ATTEMPT_EVENTS.has(event)) evidence.attempts += 1;
+    else if (event === 'claim' && row['launch_dedupe'] !== true) evidence.attempts += 1;
     if (event === 'launch_failed' && firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase() === 'retry') {
-      acc.retryReceipts += 1;
+      evidence.retryReceipts += 1;
     }
     if (event === 'recut_admission') {
       const action = firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase();
-      if (action === 'defer' || action === 'ready') acc.recuts += 1;
+      if (action === 'defer' || action === 'ready') evidence.recuts += 1;
     }
     const failureClass = failureClassOf(row, event);
-    if (failureClass !== null) acc.failureClass = failureClass;
+    if (failureClass !== null) evidence.failureClass = failureClass;
     if (hasRevertEvidence(row)) acc.reverted = true;
     if (outcome !== undefined) {
+      acc.verdictEvidence = { ...evidence };
       acc.outcome = outcome;
       acc.outcomeLine = lineNo;
       // The standing verdict row's own PR URL is what the revert-set join
@@ -314,16 +324,17 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
   return [...jobs.entries()]
     .sort((a, b) => (a[1].outcomeLine ?? a[1].lastLine) - (b[1].outcomeLine ?? b[1].lastLine))
     .map(([id, acc]) => {
-      const retries = Math.max(0, acc.attempts - 1) + acc.retryReceipts;
+      const evidence = acc.verdictEvidence ?? acc.evidence;
+      const retries = Math.max(0, evidence.attempts - 1) + evidence.retryReceipts;
       const reverted = acc.reverted || standingReverted(id, acc, claims, revertedPrKeys);
       return {
         id,
-        lane: acc.lane ?? 'unknown',
+        lane: evidence.lane ?? 'unknown',
         ...(acc.outcome !== undefined ? { outcome: acc.outcome } : {}),
         ...(reverted ? { reverted: true } : {}),
         ...(retries > 0 ? { retries } : {}),
-        ...(acc.recuts > 0 ? { recuts: acc.recuts } : {}),
-        ...(acc.failureClass !== null ? { failureClass: acc.failureClass } : {}),
+        ...(evidence.recuts > 0 ? { recuts: evidence.recuts } : {}),
+        ...(evidence.failureClass !== null ? { failureClass: evidence.failureClass } : {}),
       };
     });
 }

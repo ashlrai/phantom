@@ -290,6 +290,24 @@ describe('skillNudgeJobsFromLedger', () => {
     // The launch's unparseable lane is rejected; the outcome row's valid lane wins.
     expect(jobs[2]).toMatchObject({ lane: 'codex', outcome: 'merged' });
   });
+
+  it('binds recovery evidence to the latest terminal row in ledger order', () => {
+    const retry = (job: string) => [
+      launch(job, 'devin'),
+      finish(job, { failure_class: 'quota' }, 'devin'),
+      line({ job, event: 'recut_admission', action: 'ready' }),
+    ];
+    const text = [
+      launch('RQ-MERGED'), outcome('RQ-MERGED', 'MERGED'), ...retry('RQ-MERGED'),
+      launch('RQ-RETRIED'), outcome('RQ-RETRIED', 'CLOSED'), ...retry('RQ-RETRIED'),
+      line({ job: 'RQ-RETRIED', state: 'MERGED' }),
+    ].join('\n');
+
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: 'RQ-MERGED', lane: 'codex', outcome: 'merged' },
+      { id: 'RQ-RETRIED', lane: 'devin', outcome: 'merged', retries: 1, recuts: 1, failureClass: 'quota' },
+    ]);
+  });
 });
 
 describe('syncSkillNudgesFromJobsLedger', () => {
