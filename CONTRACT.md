@@ -4832,3 +4832,11 @@ Each `ci` bucket (`clean`, `failedChecks`, `jobFinishFailed`) retains its total
 post-merge outcomes. `adverseRate` is `adverse / resolved`. Rates with zero
 resolved outcomes are null. CI direction is `insufficient-data` when either
 required-check bucket lacks resolved outcomes.
+
+## Recovery skill ledger fold
+
+`skillNudgeJobsFromLedger(text, revertedPrKeys?, nowMs?)` accepts an
+observation cutoff in Unix milliseconds, defaulting to the current time.
+Rows with a recognized receipt timestamp or effective merge or close timestamp
+after the cutoff are excluded from the fold and from PR claim attribution.
+Receipts at the cutoff are included. Undated receipts retain ledger order.

@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import type { SkillCard } from '../types.js';
 import type { MetricsJob } from './metrics-ingest.js';
 import { ledgerEventName, ledgerPhase } from './empty-cause.js';
-import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
+import { isNodePoolLedgerRow, ledgerEventTs } from './jobs-ledger-dialect.js';
 import { readSkillCardCorpus, recordSkillCard, sanitizeSkillCard } from './skill-records.js';
 import { hasRevertEvidence } from './slot-yield.js';
 import {
@@ -264,7 +264,9 @@ function failureClassOf(row: Record<string, unknown>, event: string | null): str
  * jobs). Pure; never throws; malformed lines and rows without a usable job id
  * are ignored.
  */
-export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: ReadonlySet<string> | null): SkillNudgeJob[] {
+export function skillNudgeJobsFromLedger(
+  text: string, revertedPrKeys?: ReadonlySet<string> | null, nowMs = Date.now(),
+): SkillNudgeJob[] {
   const jobs = new Map<string, NudgeJobAccum>();
   // PR key -> claiming job ids, collected only when the caller supplied
   // standing revert keys — the same unambiguous-claim evidence pass
@@ -285,6 +287,11 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     // Batch members have their own rows. The session wrapper and node-pool
     // attempt telemetry do not supply job-level recovery evidence.
     if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
+    const outcome = outcomeOf(row);
+    const rowAt = ledgerEventTs(row, null);
+    const terminalPhase = outcome === 'merged' ? 'MERGED' : outcome === 'failed' ? 'CLOSED' : null;
+    const terminalAt = terminalPhase === null ? null : ledgerEventTs(row, terminalPhase);
+    if ((rowAt !== null && rowAt > nowMs) || (terminalAt !== null && terminalAt > nowMs)) continue;
     const prKey = claims === null ? null : rowPrKey(row);
     if (claims !== null && prKey !== null) {
       const set = claims.get(prKey) ?? new Set<string>();
@@ -303,7 +310,6 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     }
     acc.lastLine = lineNo;
     const event = ledgerEventName(row);
-    const outcome = outcomeOf(row);
     const evidence = acc.evidence;
     if (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event)) {
       for (const key of LEDGER_LANE_KEYS) {
@@ -403,8 +409,9 @@ export async function syncSkillNudgesFromJobsLedger(
       : await readLedgerTail(jobsPath);
     if (jobs.state !== 'read') return { state: jobs.state, ...empty };
     if (opts.signal?.aborted) return { state: 'read', ...empty, truncated: jobs.truncated };
-    const folded = skillNudgeJobsFromLedger(jobs.text, opts.revertedPrKeys);
-    const candidates = nudgeSkillsFromJobs(folded, (opts.now ?? (() => new Date()))().toISOString());
+    const now = (opts.now ?? (() => new Date()))();
+    const folded = skillNudgeJobsFromLedger(jobs.text, opts.revertedPrKeys, now.getTime());
+    const candidates = nudgeSkillsFromJobs(folded, now.toISOString());
     return { state: 'read', jobsPath, truncated: jobs.truncated, folded: folded.length, candidates: candidates.length };
   } catch {
     return { state: 'error', ...empty };

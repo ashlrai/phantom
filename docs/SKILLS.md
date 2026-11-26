@@ -45,6 +45,9 @@ For each resolved job, the learner uses the lane, retries, recuts and
 failure class recorded through that terminal row in ledger order.
 Subsequent execution evidence becomes eligible when a newer terminal row
 resolves the job.
+The fold excludes receipts dated after the sync time, including terminal
+receipts whose merge or close timestamp is still in the future. Receipts
+without a parseable timestamp retain their ledger order.
 A recut requires a `ready` recut admission followed by a dispatch attempt
 for the same job before its terminal outcome. Repeated readiness checks
 count once per dispatch. A later defer or skip clears pending readiness.
