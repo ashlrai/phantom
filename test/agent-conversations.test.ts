@@ -243,6 +243,43 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { channel: 'dev', agent: 'grok' })).toEqual([]);
   });
 
+  it('topic keeps whole threads where a member message is addressed to that group topic, in any room', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'group:dev:deploy', 0, { kind: 'ask' }),
+      say('b', 'claude', 'group:dev:deploy', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'grok', 'group:ops:deploy', 2, { kind: 'status' }),
+      say('d', 'zai', 'group:dev:alerts', 3, { kind: 'status' }),
+      say('e', 'peer-a', 'peer-b', 4, { kind: 'status' }),
+    ], NOW);
+    // 'a'+'b' are one reply chain into dev's deploy topic; 'c' is ops' deploy;
+    // 'd' is dev's alerts; 'e' is agent mail — the topic matches across rooms.
+    expect(filterConversations(list, { topic: 'deploy' }).map(c => c.id).sort()).toEqual(['a', 'c']);
+    expect(filterConversations(list, { topic: 'alerts' }).map(c => c.id)).toEqual(['d']);
+    expect(filterConversations(list, { topic: 'missing' })).toEqual([]);
+    // A room name is never a topic: 'dev' parses as the room component.
+    expect(filterConversations(list, { topic: 'dev' })).toEqual([]);
+    // It composes with channel into one room AND one topic like every flag here.
+    expect(filterConversations(list, { topic: 'deploy', channel: 'dev' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { topic: 'deploy', channel: 'ops' }).map(c => c.id)).toEqual(['c']);
+    expect(filterConversations(list, { topic: 'deploy', channel: 'missing' })).toEqual([]);
+    expect(filterConversations(list, { topic: 'deploy', agent: 'claude' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { topic: 'deploy', agent: 'grok' }).map(c => c.id)).toEqual(['c']);
+  });
+
+  it('topic never matches a bare room, a deeper label, an agent address or a malformed topic', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'group:dev', 0, { kind: 'status' }),
+      say('b', 'claude', 'group:dev:deploy:extra', 1, { kind: 'status' }),
+      say('c', 'grok', 'agent:dev', 2, { kind: 'status' }),
+      say('d', 'zai', 'group:Dev:Deploy', 3, { kind: 'status' }),
+      say('e', 'peer-a', 'group:ops:deploy', 4, { kind: 'status' }),
+    ], NOW);
+    // Only the well-formed two-component label carries a provable topic.
+    expect(filterConversations(list, { topic: 'deploy' }).map(c => c.id)).toEqual(['e']);
+    expect(filterConversations(list, { topic: 'dev' })).toEqual([]);
+    expect(filterConversations(list, { topic: 'extra' })).toEqual([]);
+  });
+
   it('priority keeps whole threads where a member message carries that band', () => {
     const list = buildConversations([
       say('a', 'leader', 'claude', 0, { kind: 'ask', priority: 'P0' }),
@@ -874,7 +911,7 @@ describe('phm agents conversations --json', () => {
     expect(threads['t-other']).toMatchObject({ messageCount: 1 });
   });
 
-  it('inReplyTo, channel, priority and from read the same member fields every bus read filters on', () => {
+  it('inReplyTo, channel, topic, priority and from read the same member fields every bus read filters on', () => {
     const root = bus([
       [T0, 'r1', 'leader', 'claude', { text: 'can you look?' }],
       [T0 + MIN, 'r2', 'claude', 'leader', { text: 'yes', inReplyTo: 'r1' }, { priority: 'P0' }],
@@ -887,6 +924,10 @@ describe('phm agents conversations --json', () => {
     expect(read({ inReplyTo: 'r1' })).toEqual(['r1']);
     expect(read({ inReplyTo: 'r2' })).toEqual([]);
     expect(read({ channel: 'dev' })).toEqual(['r3']);
+    // r3's to label parses to the deploy topic; a room name or another topic never matches.
+    expect(read({ topic: 'deploy' })).toEqual(['r3']);
+    expect(read({ topic: 'dev' })).toEqual([]);
+    expect(read({ topic: 'alerts' })).toEqual([]);
     expect(read({ priority: 'P0' })).toEqual(['r1']);
     // r1, r3 and r4 all carry the default P2 band; only r2 is P0.
     expect(read({ priority: 'P2' }).sort()).toEqual(['r1', 'r3', 'r4']);
@@ -894,6 +935,8 @@ describe('phm agents conversations --json', () => {
     expect(read({ excludeFrom: 'bot' }).sort()).toEqual(['r1', 'r4']);
     // They compose like every other filter and stay whole-thread reads.
     expect(read({ channel: 'dev', priority: 'P0' })).toEqual([]);
+    expect(read({ topic: 'deploy', channel: 'dev' })).toEqual(['r3']);
+    expect(read({ topic: 'deploy', channel: 'ops' })).toEqual([]);
     expect(read({ inReplyTo: 'r1', from: 'claude' })).toEqual(['r1']);
     expect(read({ inReplyTo: 'r1', from: 'grok' })).toEqual([]);
   });
@@ -949,6 +992,31 @@ describe('phm agents conversations --json', () => {
     expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-T2']);
     expect(await run(['--thread'])).toBe(2);
     expect(await run(['--body-kind', '--json'])).toBe(2);
+    expect(errors.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('the CLI --topic filters on the group topic and refuses a bad value', async () => {
+    const root = bus([
+      [T0, 'g1', 'bot', 'group:dev:deploy', { kind: 'note', text: 'ship note' }],
+      [T0 + MIN, 'g2', 'bot', 'group:ops:deploy', { kind: 'note', text: 'ops note' }],
+      [T0 + 2 * MIN, 'g3', 'bot', 'group:dev:alerts', { kind: 'note', text: 'alert note' }],
+      [T0 + 3 * MIN, 'g4', 'bot', 'group:dev', { kind: 'note', text: 'bare room' }],
+    ]);
+    const lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    // The topic matches across rooms; --channel narrows it to one room.
+    expect(await run(['--topic', 'deploy', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id).sort()).toEqual(['g1', 'g2']);
+    expect(await run(['--topic', 'deploy', '--channel', 'dev', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['g1']);
+    expect(await run(['--topic', 'alerts', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['g3']);
+    // A room name is never a topic and an unknown one is an honest empty.
+    expect(await run(['--topic', 'dev', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop!()).conversations).toEqual([]);
+    // Bad values are usage errors, never a silent default.
+    expect(await run(['--topic', 'Has Space'])).toBe(2);
+    expect(await run(['--topic'])).toBe(2);
     expect(errors.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -1264,6 +1332,25 @@ describe('phm agents conversations --json', () => {
     expect((await resultCall(`${AGENT_CONVERSATIONS_PATH}?result=bogus`)).status).toBe(400);
     expect((await resultCall(`${AGENT_CONVERSATIONS_PATH}?result=`)).status).toBe(400);
     expect((await resultCall(`${AGENT_CONVERSATIONS_PATH}?result=a&result=b`)).status).toBe(400);
+    // topic keeps the threads a member message's to label parses to that
+    // exact group topic — across rooms, narrowed by channel — and bad
+    // values are refused.
+    const topicRoot = bus([
+      [T0, 'g1', 'bot', 'group:dev:deploy', { kind: 'note', text: 'ship note' }],
+      [T0 + MIN, 'g2', 'bot', 'group:ops:deploy', { kind: 'note', text: 'ops note' }],
+      [T0 + 2 * MIN, 'g3', 'bot', 'group:dev:alerts', { kind: 'note', text: 'alert note' }],
+    ]);
+    const topicCall = serve(createFleetLiveMapApi(undefined, undefined, undefined,
+      query => readAgentConversations(query, { root: topicRoot, now: () => NOW })));
+    const deploy = await topicCall(`${AGENT_CONVERSATIONS_PATH}?topic=deploy`);
+    expect(deploy.status).toBe(200);
+    expect(deploy.body.conversations.map((c: { id: string }) => c.id).sort()).toEqual(['g1', 'g2']);
+    const room = await topicCall(`${AGENT_CONVERSATIONS_PATH}?channel=dev&topic=deploy`);
+    expect(room.status).toBe(200);
+    expect(room.body.conversations.map((c: { id: string }) => c.id)).toEqual(['g1']);
+    expect((await topicCall(`${AGENT_CONVERSATIONS_PATH}?topic=`)).status).toBe(400);
+    expect((await topicCall(`${AGENT_CONVERSATIONS_PATH}?topic=Has%20Space`)).status).toBe(400);
+    expect((await topicCall(`${AGENT_CONVERSATIONS_PATH}?topic=a&topic=b`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?extra=1`)).status).toBe(400);
     expect((await call(AGENT_CONVERSATIONS_PATH, null)).status).toBe(401);
     // blocked=1 keeps only the blocked threads, same as --blocked.
