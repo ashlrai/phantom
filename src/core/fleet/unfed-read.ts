@@ -15,8 +15,9 @@ import { readTail, runsRoot } from '../metrics/loop-collect.js';
 import { readFleetResourcePlan } from '../usage/resource-live/fleet-plan.js';
 import {
   currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides,
-  foldRouteRejections, foldUnfedHistory, readyHints, type UnfedReport,
+  foldRouteRejections, foldUnfedHistory, type UnfedReport,
 } from './unfed-capacity.js';
+import { parseReadyMarketRows } from './unfed-market.js';
 
 export const UNFED_DEFAULT_WINDOW_HOURS = 24;
 export const UNFED_MAX_WINDOW_HOURS = 24 * 7;
@@ -92,15 +93,22 @@ export async function readUnfedReport(options: UnfedReadOptions = {}): Promise<U
   const window = options.windowHours ?? UNFED_DEFAULT_WINDOW_HOURS;
   const jobsTruncated = jobsRead?.truncated ?? false;
   const current = currentUnfed(status, ready, { slots, models, budget, adaptive, hold, routerQueue, nowMs });
-  const advisoryReady = capacity && ready !== null && current.statusFresh
-    ? readyHints(ready, routerQueue) : null;
+  const advisoryJobs = capacity && ready !== null && current.statusFresh ? new Set<string>() : null;
+  const advisoryByLane = new Map<string, number>();
+  if (advisoryJobs !== null && ready !== null) {
+    for (const row of parseReadyMarketRows(ready, routerQueue).rows) {
+      if (advisoryJobs.has(row.id)) continue;
+      advisoryJobs.add(row.id);
+      if (row.hint !== null) advisoryByLane.set(row.hint, (advisoryByLane.get(row.hint) ?? 0) + 1);
+    }
+  }
   return {
     ...current,
     resourcePlan: capacity?.lanes.map(({ lane, running, target_concurrency, additional_slots }) => {
-      const readyHere = advisoryReady?.byLane.get(lane) ?? 0;
+      const readyHere = advisoryByLane.get(lane) ?? 0;
       return { lane, running, target: target_concurrency,
-        unfedSlots: advisoryReady === null || additional_slots === null ? null
-          : Math.min(Math.max(0, additional_slots - readyHere), advisoryReady.waiting - readyHere) };
+        unfedSlots: advisoryJobs === null || additional_slots === null ? null
+          : Math.min(Math.max(0, additional_slots - readyHere), advisoryJobs.size - readyHere) };
     }) ?? null,
     marketTruncated: marketRead?.truncated ?? false,
     history: foldUnfedHistory(history, nowMs, window),
