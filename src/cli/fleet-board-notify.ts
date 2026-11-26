@@ -20,7 +20,7 @@ import { validateBusEnvelope } from '../core/fleet/bus-envelope.js';
 import { appendBusInbox } from '../core/fleet/bus-inbox.js';
 import { postBusReply } from '../core/fleet/bus-reply-post.js';
 import { CHANNEL_BUS_TTL_MS } from '../core/fleet/channel-bus-publish.js';
-import { boardNotifyDir, boardNotifyLedgerPath, diffBoard, planNotifications,
+import { boardNotifyDir, boardNotifyLedgerPath, diffBoard, planNotifications, missingNoticeEvidence,
   readBoardNotifySent, readBoardNotifySnapshot, sendNotifications, snapshotAfterSend,
   snapshotBoard, writeBoardNotifySnapshot,
   type BoardNotice, type BoardNotifySender, type BoardNotifySenders } from '../core/fleet/work-board-notify.js';
@@ -175,12 +175,26 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   if (sent === null) return emit({ status: 'ledger-unavailable', lines: ['board-notify: sent ledger unreadable; refusing to risk a second post'] }, 1);
   const killed = deps.killed ?? killSwitchOn();
   const transitions = diffBoard(prev ?? [], next);
-  const plan = planNotifications(transitions, sent, line => { if (!json) console.error(line); });
+  const plan = planNotifications(transitions, sent);
+  const safeId = (id: string): string => scrubSecrets(id).replace(/[\r\n\p{Cc}\p{Zl}\p{Zp}]/gu, ' ').slice(0, 128);
+  const dropped = plan.dropped.map(d => ({ ...d, itemId: safeId(d.itemId) }));
+
+  // Match the planner's explicit evidence verdict, not the unrelated dedupe drops.
+  const missing = new Map(transitions.flatMap(t => {
+    if (t.to !== 'ASSIGNED' && t.to !== 'BLOCKED' && t.to !== 'VERIFIED') return [];
+    const reason = missingNoticeEvidence(t, t.to);
+    return reason === null ? [] : [[t.itemId, reason] as const];
+  }));
+  const evidencePending = plan.dropped.filter(d => missing.get(d.itemId) === d.reason).map(d => ({
+    itemId: safeId(d.itemId),
+    state: d.state, reason: d.reason,
+  }));
+  const evidencePendingIds = plan.dropped.filter(d => missing.get(d.itemId) === d.reason).map(d => d.itemId);
 
   if (dryRun) {
     return emit({
       status: 'dry-run', baselined: prev === null, killed, inbox: board.inbox,
-      transitions: transitions.length, planned: plan.notices.length, dropped: plan.dropped,
+      transitions: transitions.length, planned: plan.notices.length, dropped, evidencePending,
       notices: plan.notices.map(n => ({
         itemId: scrubSecrets(n.itemId), state: n.state, sourceChannel: scrubSecrets(n.sourceChannel),
         sourceThread: n.sourceThread === null ? null : scrubSecrets(n.sourceThread),
@@ -189,7 +203,7 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
       lines: [
         `board-notify dry-run: transitions=${transitions.length} planned=${plan.notices.length} dropped=${plan.dropped.length}${prev === null ? ' (first pass would baseline)' : ''}${killed ? ' (KILL armed)' : ''}`,
         ...plan.notices.map(n => `would-post [${n.sourceChannel}${n.sourceThread ? ` ${n.sourceThread}` : ''}] ${n.text}`),
-        ...plan.dropped.map(d => `dropped ${d.itemId}: ${d.reason}`),
+        ...dropped.map(d => `dropped ${d.itemId}: ${d.reason}`),
       ],
     });
   }
@@ -230,7 +244,7 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   const count = (e: NoticeDelivery['evidence']): number => deliveries.filter(d => d.evidence === e).length;
   const queued = count('slack-bus-note-enqueued');
   const busPosted = count('bus-reply-posted');
-  const pending = new Set(results.filter(r => r.status !== 'sent' && r.status !== 'duplicate').map(r => r.notice.itemId));
+  const pending = new Set([...evidencePendingIds, ...results.filter(r => r.status !== 'sent' && r.status !== 'duplicate').map(r => r.notice.itemId)]);
   // A truncated listing is a bounded projection, not the whole board:
   // preserve prior rows for items outside the page so their baselines —
   // including pending undelivered updates — are not silently discarded.
@@ -240,13 +254,14 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
     ...(!saved ? { reason: 'snapshot-write-failed' } : {}), transitions: transitions.length, planned: plan.notices.length,
     // `sent` is the legacy count of durable sender receipts (incl. dedupes). It
     // is NOT a count of Slack deliveries: see `queued`, `busPosted`, `deliveries`.
-    sent: delivered.length, queued, busPosted, pending: pending.size, dropped: plan.dropped,
+    sent: delivered.length, queued, busPosted, pending: pending.size, evidencePending, dropped,
     deliveries,
     lines: [
       ...(!saved ? ['board-notify: snapshot could not be saved; retry after restoring state storage'] : []),
       `board-notify: transitions=${transitions.length} planned=${plan.notices.length} receipts=${delivered.length} queued=${queued} bus-posted=${busPosted} pending=${pending.size} dropped=${plan.dropped.length}`,
       ...results.map(r => `${describeResult(r.status, evidence.get(r.notice))} [${r.notice.sourceChannel}${r.notice.sourceThread ? ` ${r.notice.sourceThread}` : ''}] ${r.notice.text}${r.reason ? ` (${r.reason})` : ''}`),
-      ...plan.dropped.map(d => `dropped ${d.itemId}: ${d.reason}`),
+      ...evidencePending.map(d => `evidence pending ${d.itemId}: ${d.reason}`),
+      ...plan.dropped.filter(d => missing.get(d.itemId) !== d.reason).map(d => `dropped ${safeId(d.itemId)}: ${d.reason}`),
     ],
-  }, saved ? 0 : 1);
+  }, saved && pending.size === 0 ? 0 : 1);
 }
