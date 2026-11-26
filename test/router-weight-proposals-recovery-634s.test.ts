@@ -53,6 +53,8 @@ const writeRewardSignals = (rows: object[]): void => {
 };
 const launchCostsPath = (): string => join(runs, 'metrics', 'launch-cost.jsonl');
 const writeLaunchCosts = (rows: object[]): void => writeFileSync(launchCostsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+const jobCostsPath = (): string => join(runs, 'metrics', 'job-cost-model.jsonl');
+const writeJobCosts = (rows: object[]): void => writeFileSync(jobCostsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
 const crossReviewsPath = (): string => join(root, 'ashlr', 'fleet', 'cross-review.jsonl');
 const writeCrossReviews = (rows: (object | string)[]): void => {
   mkdirSync(join(root, 'ashlr', 'fleet'), { recursive: true });
@@ -76,6 +78,12 @@ const launchCostRow = (launchId: string, status: 'measured' | 'partial' | 'unkno
   meanCpuPercentOneCore: status === 'unknown' ? null : 12.5,
   peakCpuPercentOneCore: status === 'unknown' ? null : 40,
   status, ...extra,
+});
+/** An ashlr.job-cost-model/v1 row in the shape growth_exports.py appends (one per finish). */
+const jobCostRow = (job: string, modeledValueUsd: number | null, extra: Record<string, unknown> = {}): object => ({
+  schema: 'ashlr.job-cost-model/v1', job, lane: 'alpha', ts: '2026-11-01T00:00:00Z',
+  realSpendUsd: null, modeledValueUsd, method: modeledValueUsd === null ? 'none' : 'tokens-x-list-price',
+  inputs: {}, source: null, confidence: modeledValueUsd === null ? null : 'medium', reason: null, ...extra,
 });
 /** A reward-signals.jsonl v1 row in the shape the reward-sync feed appends. */
 const rewardRow = (jobId: string, merged: boolean, pctUsedDelta: number | null): object => ({
@@ -403,6 +411,8 @@ describe('outcome-quality evidence', () => {
       acus_mean: null,
       pool_pct_used_known: 0,
       pool_pct_used_mean: null,
+      modeled_cost_known: 0,
+      modeled_cost_usd_mean: null,
       launch_cost_known: 0,
       launch_cost_measured: 0,
       launch_peak_processes_mean: null,
@@ -670,6 +680,7 @@ describe('outcome-quality evidence', () => {
       passk_known: 0, passk_mean: null,
       acus_known: 0, acus_mean: null,
       pool_pct_used_known: 0, pool_pct_used_mean: null,
+      modeled_cost_known: 0, modeled_cost_usd_mean: null,
       launch_cost_known: 0, launch_cost_measured: 0,
       launch_peak_processes_mean: null, launch_cpu_pct_mean: null, launch_cpu_pct_peak_mean: null,
       diff_files_known: 0, diff_files_mean: null,
@@ -2097,6 +2108,61 @@ describe('launch-cost evidence', () => {
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('launch_cost=missing');
     expect(out).toContain('launch-cost coverage: launch-cost.jsonl missing');
+  });
+});
+
+describe('job-cost-model evidence', () => {
+  it('folds the summed modeled spend per job into per-group evidence as advisory tallies', async () => {
+    // job-cost-model.jsonl prices each finish's token usage; a job's rows
+    // sum into its modeled_cost_usd — the subscription lanes' only
+    // per-job dollar figure. The tally is advisory cost context: it
+    // never feeds the held-merge weight, and a job whose finishes
+    // recorded no modeled value keeps modeled_cost_known at its real
+    // coverage rather than counting as a zero-cost job.
+    writeLedger(merged(20));
+    writeJobCosts([
+      jobCostRow('synthetic-MERGED-alpha-code-0', 1.5),
+      jobCostRow('synthetic-MERGED-alpha-code-0', 0.5),  // a second finish sums
+      jobCostRow('synthetic-MERGED-alpha-code-1', 2),
+      jobCostRow('synthetic-MERGED-alpha-code-2', 0.125),
+      // Unpriced finishes contribute nothing — never a zeroed figure.
+      jobCostRow('synthetic-MERGED-alpha-code-3', null, { reason: 'model None has no list price in the table' }),
+      // A metered real-spend row is not modeled evidence.
+      jobCostRow('synthetic-MERGED-alpha-code-4', null, { realSpendUsd: 3.5, method: 'real-spend' }),
+      // A row for a job outside the jobs window joins nothing.
+      jobCostRow('synthetic-elsewhere', 9),
+      // Malformed rows never count.
+      { ...jobCostRow('synthetic-MERGED-alpha-code-5', 100), schema: 'ashlr.job-cost-model/v2' },
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      job_cost_state: 'read', job_cost_truncated: false,
+      known_outcomes: 20, unknown_outcomes: 0,
+    });
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ status: 'proposed', proposed_weight: 0.6, known_n: 20 });
+    expect(p.evidence).toMatchObject({
+      // Three jobs carry a summed modeled value: 2.0 + 2 + 0.125.
+      modeled_cost_known: 3,
+      modeled_cost_usd_mean: 1.375,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('job_cost=read');
+    expect(out).toContain('modeled_cost_usd=1.375(3)');
+  });
+
+  it('reports job-cost coverage missing and modeled evidence nulls when the ledger was not read', async () => {
+    writeLedger(merged(20));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ job_cost_state: 'missing', job_cost_truncated: false });
+    expect(report.proposals[0].evidence).toMatchObject({
+      modeled_cost_known: 0, modeled_cost_usd_mean: null,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('job_cost=missing');
+    expect(out).toContain('job-cost coverage: job-cost-model.jsonl missing');
   });
 });
 

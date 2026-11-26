@@ -219,6 +219,22 @@ import { ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
 // `cross_review_state` reports the ledger's health and
 // `cross_review_truncated` marks a cut tail; anything but 'read' leaves
 // every cross_review null — unknown, never a guessed review.
+// A ninth ledger joins under the same runs dir —
+// <runs>/metrics/job-cost-model.jsonl, the ops-side cost projection's
+// ashlr.job-cost-model/v1 journal (~/.ashlr-runs/bin/growth_exports.py,
+// fleet machinery not shipped in this repo): one row per finish
+// pricing the job's recorded token usage — `modeledValueUsd` against
+// the model's list price or plan-window share for subscription lanes,
+// `realSpendUsd` for the metered lane's verified api-spend figure.
+// `foldJobCosts` keeps each job's summed modeled value (the producer's
+// own per-job aggregate sums the same rows) and the read joins it as
+// modeled_cost_usd — the only per-job dollar estimate subscription
+// lanes produce, since their finish rows carry no cost_usd. The
+// figure is a modeled estimate, never billed spend: a different unit
+// than cost_usd, never summed with it. `job_cost_state` reports the
+// ledger's health and `job_cost_truncated` marks a cut tail; anything
+// but 'read' leaves modeled_cost_usd null — unknown, never a zeroed
+// or guessed cost.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
@@ -252,6 +268,13 @@ export const ROUTER_LAUNCH_COST_LEDGER_RELATIVE = join('metrics', 'launch-cost.j
  * runsDir.
  */
 export const ROUTER_CROSS_REVIEW_LEDGER_RELATIVE = join('fleet', 'cross-review.jsonl');
+/**
+ * The job-cost-model ledger's path relative to the runs dir —
+ * `<runs>/metrics/job-cost-model.jsonl`, the ops-side cost projection's
+ * ashlr.job-cost-model/v1 journal. Like the other runs-dir side
+ * ledgers it is not joined under the ASHLR home root.
+ */
+export const ROUTER_JOB_COST_LEDGER_RELATIVE = join('metrics', 'job-cost-model.jsonl');
 
 export interface RouterOutcome {
   schema: 'router.outcome.v1';
@@ -980,6 +1003,23 @@ export interface RouterOutcome {
   launch_peak_processes: number | null;
   launch_mean_cpu_pct: number | null;
   launch_peak_cpu_pct: number | null;
+  /**
+   * The job-cost-model ledger's summed modeled USD estimate for the
+   * job — metrics/job-cost-model.jsonl's ashlr.job-cost-model/v1 rows
+   * (the ops-side growth_exports.py cost projection), joined by
+   * readRouterOutcomes under `job_cost_state`. Each recorded row
+   * prices one finish's token usage — `modeledValueUsd` against the
+   * model's list price or plan-window share — so a job's finishes sum
+   * into this figure, matching the producer's own per-job aggregate.
+   * Rows that recorded no modeled value (unpriced model, missing
+   * usage, the metered lane's real-spend rows) contribute nothing and
+   * stay indistinguishable from absent rows. A modeled estimate,
+   * never a billed figure: a different unit than cost_usd, never
+   * summed with it. Null when no row for the job recorded a modeled
+   * value or the ledger was not read — unknown, never a zeroed or
+   * guessed cost.
+   */
+  modeled_cost_usd: number | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -1931,6 +1971,7 @@ function foldRouterOutcomesWithCiCoverage(
       node_outcome: null, node_id: null, node_pack: null,
       merge_queue: null, cross_review: null,
       launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
+      modeled_cost_usd: null,
       passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
@@ -3050,6 +3091,42 @@ export function foldLaunchCosts(text: string): Map<string, LaunchCostEvidence> {
 }
 
 /**
+ * Folds job-cost-model.jsonl text into per-job summed modeled USD.
+ * A row counts only as ashlr.job-cost-model/v1 evidence: the exact
+ * schema, a bounded job identifier and a finite non-negative
+ * modeledValueUsd — the only figure this join consumes (the producer's
+ * realSpendUsd duplicates the api-spend cost_usd join and its reason,
+ * method, inputs and confidence fields stay unconsulted). Rows with a
+ * null modeledValueUsd — unpriced models, missing usage, the metered
+ * lane's real-spend rows — contribute nothing and are
+ * indistinguishable from absent rows. Malformed JSON, other schemas
+ * and rows failing any check are skipped — never recorded raw, never
+ * guessed. The map keys on the row's recorded job id and sums across
+ * its finishes, matching the producer's own per-job aggregate; a job
+ * whose rows all lack a modeled value never enters the map.
+ */
+export function foldJobCosts(text: string): Map<string, number> {
+  const costs = new Map<string, number>();
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const r = value as Row;
+    const job = str(r, 'job');
+    const modeled = r['modeledValueUsd'];
+    if (r['schema'] !== 'ashlr.job-cost-model/v1' || job === null || !REWARD_JOB_ID.test(job) ||
+        typeof modeled !== 'number' || !Number.isFinite(modeled) || modeled < 0) continue;
+    costs.set(job, (costs.get(job) ?? 0) + modeled);
+  }
+  return costs;
+}
+
+/**
  * The cross-model review verdict vocabulary — the producer's closed
  * ReviewOutcome set (src/core/fleet/cross-review.ts). Kept as a local
  * copy for the same reason the merge-event vocabulary is: a producer-side
@@ -3241,6 +3318,19 @@ export interface RouterOutcomeRead extends RouterOutcomeFold {
    * unreviewed.
    */
   cross_review_truncated: boolean;
+  /**
+   * Health of the job-cost-model.jsonl tail behind the modeled_cost_usd
+   * joins. Anything but 'read' means no cost-model rows joined —
+   * outcomes keep modeled_cost_usd null, never a guessed or zeroed
+   * cost figure.
+   */
+  job_cost_state: Exclude<LedgerReadState, 'too-large'>;
+  /**
+   * True when the job-cost-model tail exceeded the retained bound:
+   * joined modeled values cover only the newest bytes, so older
+   * finishes' modeled spend reads unpriced.
+   */
+  job_cost_truncated: boolean;
   /**
    * True when the ledger exceeded the retained tail: the fold, and so every
    * count on this read, covers only the newest ROUTER_OUTCOME_LEDGER_LIMIT
@@ -3463,6 +3553,9 @@ export async function readRouterOutcomes(opts: {
   const crossReviewRead = await readLedgerTail(join(ashlarRoot, ROUTER_CROSS_REVIEW_LEDGER_RELATIVE));
   const crossReviewState = crossReviewRead.state;
   const crossReviewTruncated = crossReviewRead.state === 'read' ? crossReviewRead.truncated : false;
+  const jobCostRead = await readLedgerTail(join(runsDir, ROUTER_JOB_COST_LEDGER_RELATIVE));
+  const jobCostState = jobCostRead.state;
+  const jobCostTruncated = jobCostRead.state === 'read' ? jobCostRead.truncated : false;
   const revertLedger = await liveRevertOutcomeKeys(opts.ashlarDir);
   if (read.state !== 'read') {
     return { ...empty, state: read.state, path, eval_state: laneScores.state,
@@ -3473,7 +3566,8 @@ export async function readRouterOutcomes(opts: {
       revert_ledger_state: revertLedger.state,
       reward_state: rewardState, reward_truncated: rewardTruncated,
       launch_cost_state: launchCostState, launch_cost_truncated: launchCostTruncated,
-      cross_review_state: crossReviewState, cross_review_truncated: crossReviewTruncated, truncated: false };
+      cross_review_state: crossReviewState, cross_review_truncated: crossReviewTruncated,
+      job_cost_state: jobCostState, job_cost_truncated: jobCostTruncated, truncated: false };
   }
   const workClasses = marketRead.state === 'read'
     ? foldRouteDecisionWorkClasses(marketRead.text)
@@ -3558,6 +3652,13 @@ export async function readRouterOutcomes(opts: {
       o.launch_peak_cpu_pct = ev.peakCpuPct;
     }
   }
+  if (jobCostRead.state === 'read') {
+    const costs = foldJobCosts(jobCostRead.text);
+    for (const o of folded.outcomes) {
+      const modeled = costs.get(o.job_id);
+      if (modeled !== undefined) o.modeled_cost_usd = modeled;
+    }
+  }
   if (marketRead.state === 'read') {
     const decisions = foldRouteDecisions(marketRead.text);
     const advisories = foldMarketHandoffAdvisories(marketRead.text);
@@ -3598,5 +3699,6 @@ export async function readRouterOutcomes(opts: {
     reward_state: rewardState, reward_truncated: rewardTruncated,
     launch_cost_state: launchCostState, launch_cost_truncated: launchCostTruncated,
     cross_review_state: crossReviewState, cross_review_truncated: crossReviewTruncated,
+    job_cost_state: jobCostState, job_cost_truncated: jobCostTruncated,
     truncated: read.truncated };
 }

@@ -953,7 +953,31 @@ ranking, admission or weight math. The read degrades independently:
 `cross_review_truncated` marks a cut tail; anything but `read` leaves
 every `cross_review` null — unknown, never a guessed verdict, and an
 empty readable ledger means zero recorded joins rather than missing
-coverage. `passk` is the
+coverage. A ninth ledger joins under the same runs dir —
+`<runsDir>/metrics/job-cost-model.jsonl`
+(`ROUTER_JOB_COST_LEDGER_RELATIVE`), the ops-side cost projection's
+`ashlr.job-cost-model/v1` journal (`growth_exports.py`, fleet
+machinery not shipped in this repo): one row per finish pricing the
+job's recorded token usage — `modeledValueUsd` against the model's
+list price or plan-window share for subscription lanes,
+`realSpendUsd` for the metered lane's verified api-spend figure.
+`foldJobCosts` keeps each job's summed modeled value under a closed
+check — exact schema, a bounded job identifier and a finite
+non-negative `modeledValueUsd`; the producer's `realSpendUsd`
+duplicates the api-spend `cost_usd` join and its reason, method,
+inputs and confidence fields stay unconsulted — matching the
+producer's own per-job aggregate, which sums the same rows. Rows
+with a null modeled value (unpriced models, missing usage, the
+metered lane's real-spend rows) contribute nothing and stay
+indistinguishable from absent rows; malformed rows are skipped. The
+join fills `modeled_cost_usd` — the only per-job dollar estimate
+subscription lanes produce, since their finish rows carry no
+`cost_usd`. The figure is a modeled estimate, never billed spend: a
+different unit than `cost_usd`, `acus` and `pool_pct_used`, never
+summed with them. `RouterOutcomeRead.job_cost_state` reports the
+ledger's health and `job_cost_truncated` marks a cut tail; anything
+but `read` leaves `modeled_cost_usd` null — unknown, never a zeroed
+or guessed cost. `passk` is the
 lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
 projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
 it is `null` whenever the ledger lacks lane/model, the projection is

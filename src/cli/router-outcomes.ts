@@ -53,7 +53,11 @@
  * standing pull request's newest recorded cross-model review verdict
  * (cross_review, joined from <ashlr>/fleet/cross-review.jsonl through
  * the job's unambiguous canonical PR claim — the review record's
- * approve/reject/failed/skipped outcome and its `at` timestamp).
+ * approve/reject/failed/skipped outcome and its `at` timestamp) and
+ * the job-cost-model ledger's summed modeled spend estimate
+ * (modeled_cost_usd, joined from metrics/job-cost-model.jsonl — the
+ * subscription lanes' only per-job dollar figure, a modeled estimate
+ * never summed with cost_usd).
  * RQ-BATCH-* session rows are infrastructure evidence counted in
  * session_rows, never outcomes. Never writes; a missing ledger reports
  * `missing`, an unreadable or non-file one exits 1. Each read retains the
@@ -76,7 +80,7 @@ import {
 
 export const ROUTER_OUTCOMES_USAGE =
   'Usage: ashlr router outcomes [--json] [--runs-dir <dir>] [--lane <lane>] [--limit <1..1000>]\n' +
-  'Reads the newest bounded tail of <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs) joined with metrics/api-spend.jsonl for cost_usd, metrics/merge-events.jsonl for merge_queue, metrics/launch-cost.jsonl for the recorded launch resource probe, plus <ashlr>/metrics/reward-signals.jsonl fills unresolved merged/ttm_s/ci_wall_s/cost_usd/repo and supplies pool_pct_used, <ashlr>/fleet/cross-review.jsonl supplies the standing PR\'s newest cross-model review verdict (cross_review); one router.outcome.v1 row per job in the retained window, newest first, truncated=true when older rows were not read. passk is advisory eval evidence, null when unknown. Exit 0 report (a missing ledger reports state=missing, not an error), 1 unreadable/non-file ledger, 2 usage.';
+  'Reads the newest bounded tail of <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs) joined with metrics/api-spend.jsonl for cost_usd, metrics/merge-events.jsonl for merge_queue, metrics/launch-cost.jsonl for the recorded launch resource probe, metrics/job-cost-model.jsonl for the modeled per-job spend estimate (modeled_cost_usd), plus <ashlr>/metrics/reward-signals.jsonl fills unresolved merged/ttm_s/ci_wall_s/cost_usd/repo and supplies pool_pct_used, <ashlr>/fleet/cross-review.jsonl supplies the standing PR\'s newest cross-model review verdict (cross_review); one router.outcome.v1 row per job in the retained window, newest first, truncated=true when older rows were not read. passk is advisory eval evidence, null when unknown. Exit 0 report (a missing ledger reports state=missing, not an error), 1 unreadable/non-file ledger, 2 usage.';
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
@@ -153,6 +157,10 @@ export interface RouterOutcomesReport {
   cross_review_state: RouterOutcomeRead['cross_review_state'];
   /** True when the cross-review tail was cut; joined verdicts cover only the newest bytes. */
   cross_review_truncated: boolean;
+  /** Health of the job-cost-model.jsonl tail behind modeled_cost_usd joins. */
+  job_cost_state: RouterOutcomeRead['job_cost_state'];
+  /** True when the job-cost-model tail was cut; joined modeled values cover only the newest bytes. */
+  job_cost_truncated: boolean;
   /** Jobs with at least one folded outcome row, after --lane filtering. */
   total: number;
   /** Rows actually returned (newest first, capped by --limit). */
@@ -191,6 +199,8 @@ export function buildRouterOutcomesReport(read: RouterOutcomeRead, limit: number
     launch_cost_truncated: read.launch_cost_truncated,
     cross_review_state: read.cross_review_state,
     cross_review_truncated: read.cross_review_truncated,
+    job_cost_state: read.job_cost_state,
+    job_cost_truncated: read.job_cost_truncated,
     total: read.outcomes.length,
     returned: page.length,
     limit,
@@ -222,7 +232,7 @@ function outcomeLine(o: RouterOutcome): string {
     `lane=${text(o.lane)}`, `model=${text(o.model)}`, `tier=${text(o.tier)}`, `work_class=${text(o.work_class)}`, `repo=${text(o.repo)}`,
     `lane_hint=${text(o.lane_hint)}`, `lane_override=${text(o.lane_override)}`,
     `merged=${text(o.merged)}`, `reverted=${text(o.reverted)}`, `ci_first_pass=${text(o.ci_first_pass)}`, `review=${review}`,
-    `cost_usd=${text(o.cost_usd)}`, `pool_pct_used=${text(o.pool_pct_used)}`, `acus=${text(o.acus)}`, `wall_s=${text(o.wall_s)}`, `ttm_s=${text(o.ttm_s)}`, `queue_wait_s=${text(o.queue_wait_s)}`, `ci_wall_s=${text(o.ci_wall_s)}`, `publish_wait_s=${text(o.publish_wait_s)}`, `tokens_total=${text(o.tokens_total)}`, `passk=${text(o.passk)}`,
+    `cost_usd=${text(o.cost_usd)}`, `pool_pct_used=${text(o.pool_pct_used)}`, `acus=${text(o.acus)}`, `modeled_cost_usd=${text(o.modeled_cost_usd)}`, `wall_s=${text(o.wall_s)}`, `ttm_s=${text(o.ttm_s)}`, `queue_wait_s=${text(o.queue_wait_s)}`, `ci_wall_s=${text(o.ci_wall_s)}`, `publish_wait_s=${text(o.publish_wait_s)}`, `tokens_total=${text(o.tokens_total)}`, `passk=${text(o.passk)}`,
     `empty=${text(o.empty)}`, `exit_code=${text(o.exit_code)}`, `failure_class=${text(o.failure_class)}`,
     `empty_class=${text(o.empty_class)}`, `empty_tag=${text(o.empty_tag)}`, `task_outcome=${text(o.task_outcome)}`,
     `skipped=${text(o.skipped)}`, `skip_reason=${text(o.skip_reason)}`, `skip_code=${text(o.skip_code)}`,
@@ -244,7 +254,7 @@ function outcomeLine(o: RouterOutcome): string {
 
 export function routerOutcomeLines(report: RouterOutcomesReport): string[] {
   return [
-    `router outcomes state=${report.state} eval=${report.eval_state} spend=${report.spend_state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} revert_ledger=${report.revert_ledger_state} reward=${report.reward_state} launch_cost=${report.launch_cost_state} cross_review=${report.cross_review_state} jobs=${report.total} shown=${report.returned} truncated=${report.truncated} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls} session_rows=${report.session_rows}`,
+    `router outcomes state=${report.state} eval=${report.eval_state} spend=${report.spend_state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} revert_ledger=${report.revert_ledger_state} reward=${report.reward_state} launch_cost=${report.launch_cost_state} cross_review=${report.cross_review_state} job_cost=${report.job_cost_state} jobs=${report.total} shown=${report.returned} truncated=${report.truncated} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls} session_rows=${report.session_rows}`,
     `ledger ${report.path}`,
     ...(report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : []),
     ...(report.spend_truncated ? ['spend coverage: truncated ledger, spend-derived job costs withheld'] : []),
@@ -254,6 +264,7 @@ export function routerOutcomeLines(report: RouterOutcomesReport): string[] {
     ...(report.reward_truncated ? ['reward coverage: retained tail only; reward-signal joins cover the newest bytes'] : []),
     ...(report.launch_cost_truncated ? ['launch-cost coverage: retained tail only; launch_cost joins cover the newest bytes'] : []),
     ...(report.cross_review_truncated ? ['cross-review coverage: retained tail only; cross_review joins cover the newest bytes'] : []),
+    ...(report.job_cost_truncated ? ['job-cost coverage: retained tail only; modeled_cost_usd joins cover the newest bytes'] : []),
     ...report.outcomes.map(outcomeLine),
   ];
 }

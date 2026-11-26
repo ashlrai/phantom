@@ -54,6 +54,7 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
   if (e.cost_usd_mean !== null) parts.push(`cost_usd=${e.cost_usd_mean}(${e.cost_known})`);
   if (e.acus_mean !== null) parts.push(`acus=${e.acus_mean}(${e.acus_known})`);
   if (e.pool_pct_used_mean !== null) parts.push(`pool_pct_used=${e.pool_pct_used_mean}(${e.pool_pct_used_known})`);
+  if (e.modeled_cost_usd_mean !== null) parts.push(`modeled_cost_usd=${e.modeled_cost_usd_mean}(${e.modeled_cost_known})`);
   if (e.launch_cost_known > 0) {
     parts.push(`launch_cost=${e.launch_cost_known}` +
       `(measured:${e.launch_cost_measured}` +
@@ -133,7 +134,7 @@ function qualityReceiptLine(r: ControllerQualityReceipt): string {
 }
 
 function proposalLines(report: RouterWeightProposalReport): string[] {
-  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} reward=${report.reward_state} launch_cost=${report.launch_cost_state} cross_review=${report.cross_review_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
+  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} reward=${report.reward_state} launch_cost=${report.launch_cost_state} cross_review=${report.cross_review_state} job_cost=${report.job_cost_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
     'advisory-only: not applied to routing or weights.json';
   if (report.status === 'unavailable') {
     return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`];
@@ -253,6 +254,11 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
       ? [`cross-review coverage: cross-review.jsonl ${report.cross_review_state}; no review verdicts joined`]
       : report.cross_review_truncated
         ? ['cross-review coverage: retained tail only; cross_review joins cover the newest bytes']
+        : []),
+    ...(report.job_cost_state !== 'read'
+      ? [`job-cost coverage: job-cost-model.jsonl ${report.job_cost_state}; no modeled cost evidence joined`]
+      : report.job_cost_truncated
+        ? ['job-cost coverage: retained tail only; modeled_cost_usd joins cover the newest bytes']
         : []),
     ...(report.controller_quality_state !== 'read' && report.controller_quality_state !== 'unreported'
       ? [`controller-quality coverage: fleet-controller.json ${report.controller_quality_state}; no lane-quality verdicts joined`]

@@ -50,6 +50,7 @@ function outcome(over: Partial<RouterOutcome> = {}): RouterOutcome {
     node_outcome: null, node_id: null, node_pack: null,
     merge_queue: null, cross_review: null,
     launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
+  modeled_cost_usd: null,
     passk: null,
     ...over,
   };
@@ -66,6 +67,7 @@ function read(over: Partial<RouterOutcomeRead> = {}): RouterOutcomeRead {
     reward_state: 'missing', reward_truncated: false,
     launch_cost_state: 'missing', launch_cost_truncated: false,
     cross_review_state: 'missing', cross_review_truncated: false,
+    job_cost_state: 'missing', job_cost_truncated: false,
     outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, session_rows: 0, truncated: false,
     ...over,
   };

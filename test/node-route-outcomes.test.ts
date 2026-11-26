@@ -29,6 +29,7 @@ const outcome = (job: string, lane: string | null, merged: boolean | null, rever
   node_outcome: null, node_id: null, node_pack: null,
   merge_queue: null, cross_review: null,
   launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
+  modeled_cost_usd: null,
   passk: null,
 });
 
