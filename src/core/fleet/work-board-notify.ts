@@ -19,7 +19,7 @@
  * state key stays exposed for Set-based callers. Labels and claim
  * owners are untrusted data and grant no authority. */
 import { createHash } from 'node:crypto';
-import { appendFileSync, chmodSync } from 'node:fs';
+import { appendFileSync, chmodSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import type { WorkBoardResult } from '../comms/work-board.js';
@@ -391,25 +391,36 @@ export function boardNotifySnapshotPath(stateDir: string): string {
  * Unreadable or truncated ledgers fail closed; a missing ledger is empty. */
 export function readBoardNotifySent(ledgerPath: string): Set<string> | null {
   const read = readPrivateFileCapped(ledgerPath, LEDGER_MAX_BYTES);
-  if (read === null) return new Set();
+  if (read === null) {
+    try { lstatSync(ledgerPath); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Set();
+    }
+    return null;
+  }
   if (read.truncated) return null;
   const sent = new Set<string>();
   for (const line of read.text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line) as { v?: unknown; itemId?: unknown; state?: unknown; delta?: unknown };
-      if (row.v === 1 && boundedString(row.itemId, 128)
-        && (BOARD_NOTIFY_STATES as readonly string[]).includes(String(row.state))) {
+      const row = JSON.parse(line) as Record<string, unknown> | null;
+      const nonblank = (value: unknown, max: number): value is string =>
+        boundedString(value, max) && value.trim().length > 0;
+      if (row && !Array.isArray(row) && row.v === 1 && nonblank(row.itemId, 128)
+        && typeof row.state === 'string' && (BOARD_NOTIFY_STATES as readonly string[]).includes(row.state)
+        && nonblank(row.at, 64) && nonblank(row.channel, 64)
+        && (row.thread === null || nonblank(row.thread, 1024))
+        && (nonblank(row.receipt, 512) || (row.delta === undefined && row.receipt === null))
+        && (row.delta === undefined || nonblank(row.delta, 64))) {
         const itemId = row.itemId, state = String(row.state);
         sent.add(boardNotifyLedgerKey(itemId, state));
-        if (boundedString(row.delta, 64) && row.delta.length > 0) {
+        if (typeof row.delta === 'string') {
           sent.add(boardNotifyLedgerKey(itemId, state, row.delta));
           sent.add(provenanceKey(itemId, state, 'modern'));
         } else {
           sent.add(provenanceKey(itemId, state, 'legacy'));
         }
-      }
-    } catch { /* skip a torn line */ }
+      } else return null;
+    } catch { return null; }
   }
   return sent;
 }
