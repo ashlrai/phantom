@@ -888,8 +888,10 @@ under the producer's closed contract (`schemaVersion` 1, an
 `owner/repo`-shaped `repo`, a positive integral `pr`, the
 `approve`/`reject`/`failed`/`skipped` outcome vocabulary and a
 parseable `at` stamp when available) and collapses them to each PR's latest
-recorded review time. Replays of older reviews leave the newer verdict in
-place. If verdicts disagree at the latest time, the PR's review evidence is
+recorded review time. Router outcome reports consider dated reviews through
+the report start, inclusive. A future-dated receipt cannot replace an eligible
+verdict or supply evidence for a PR with no eligible review. Replays of older
+reviews leave the newer verdict in place. If verdicts disagree at the latest time, the PR's review evidence is
 withheld until a later dated review resolves it. If every receipt for a PR
 is undated, the last appended verdict stands with a null timestamp.
 Decision rows, wrong-schema rows, malformed rows and foreign kinds
