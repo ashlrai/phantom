@@ -1393,7 +1393,9 @@ receipts.
 
 The self-improvement discovery feed queues recurring refusals after four
 distinct recorded rejection observations for one source and reason across
-at least two UTC days in the last seven days. Replayed decisions with the
+at least two UTC days in the last seven days, through the evaluation time
+inclusive. Future-dated rejections and drafts enter the counts only once
+their recorded time falls within that window. Replayed decisions with the
 same job, source, event, reason and recorded instant count once in both the
 recurrence threshold and the refusal share. Later observations for the
 same job still count. When the bounded journal read clips older decisions,
