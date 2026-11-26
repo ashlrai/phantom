@@ -28,10 +28,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { AshlrConfig, Proposal, TaskSpec } from '../src/core/types.js';
+import { writePrivateFileAtomically } from '../src/core/util/private-file-write.js';
 import { assurePrivateStoragePath } from '../src/core/util/private-storage.js';
 
 vi.mock('../src/core/daemon/activation-permit.js', () => ({
@@ -202,7 +203,10 @@ function writeTasks(tasks: TaskSpec[]): void {
     const assurance = assurePrivateStoragePath(dir, 'directory', 'secure-created', { anchorPath: tmpHome });
     expect(assurance.ok, assurance.reason).toBe(true);
   }
-  writeFileSync(join(dir, 'tasks.json'), JSON.stringify(tasks, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  writePrivateFileAtomically(join(dir, 'tasks.tmp'), join(dir, 'tasks.json'), `${JSON.stringify(tasks, null, 2)}\n`, {
+    anchorPath: tmpHome,
+    label: 'M300 task fixture',
+  });
 }
 
 function baseTask(overrides: Partial<TaskSpec> = {}): TaskSpec {
@@ -241,7 +245,7 @@ beforeEach(() => {
 
 afterEach(() => {
   process.env.HOME = origHome;
-  rmSync(tmpHome, { recursive: true, force: true });
+  rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 // ---------------------------------------------------------------------------
@@ -267,7 +271,7 @@ describe('M300 [D1] exhausted claude → reroutes to codex', () => {
     const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
     const result = await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
 
-    expect(result.errors).toHaveLength(0);
+    expect(result.errors, JSON.stringify(result.errors)).toHaveLength(0);
     expect(result.proposalsFiled).toBe(1);
     // runEngineSandboxed was called with 'codex', NOT 'claude'
     expect(mockRunEngineSandboxed).toHaveBeenCalledOnce();
