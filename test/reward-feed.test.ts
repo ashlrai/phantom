@@ -421,6 +421,28 @@ describe('foldJobsLedgerRewards', () => {
       .toMatchObject([{ jobId: job, merged: true }]);
   });
 
+  it.each(['MERGED', 'CLOSED'])('preserves conflicting PR claims across tied %s receipts and replays', (state) => {
+    const job = 'RQ-TIED-RESOLUTION';
+    const url = 'https://github.com/ashlrai/phantom/pull/101';
+    const other = 'https://github.com/ashlrai/companion/pull/102';
+    const receipt = { job, state, ts: MERGED_ISO };
+    const left = line({ ...receipt, url });
+    const right = line({ ...receipt, url: other });
+    const standing = new Set(['ashlrai/phantom#101']);
+    const ci = [
+      line({ job, event: 'ci_start', ts: '2026-10-28T14:30:00.000Z', url }),
+      line({ job, event: 'ci_complete', ts: '2026-10-28T14:45:00.000Z', url }),
+    ];
+
+    for (const tied of [[left, right, left], [right, left, right]]) {
+      const inputs = foldJobsLedgerRewards([launch(job), ...ci, ...tied].join('\n'), NOW_MS, undefined, standing);
+      expect(inputs).toEqual([
+        expect.objectContaining({ jobId: job, repo: null, merged: state === 'MERGED' }),
+      ]);
+      expect(inputs[0]).not.toHaveProperty('ciWallMs');
+    }
+  });
+
   it.each(['ledger', 'standing set'])('attributes a revert from the %s to the original merge attempt', (source) => {
     const job = 'RQ-REUSED';
     const original = launch(job);

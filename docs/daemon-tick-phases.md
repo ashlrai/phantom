@@ -71,6 +71,10 @@ time from the latest dispatch at or before the outcome, using GitHub's
 merge timestamp when available for a held merge. A closed-unmerged PR uses
 `closedAt` or `closed_at` to select the dispatch and bound CI timing. If
 neither field has a parseable time, the fold uses the receipt timestamp.
+Merge or close receipts tied on both resolution time and receipt time
+retain all their PR claims. Conflicting claims withhold PR-specific revert
+attribution and CI timing, and conflicting repositories leave the reward's
+repository unknown. Replaying one of the tied receipts cannot break the tie.
 Closures dated after the observation time are ignored. The fold skips jobs
 without an eligible dispatch and jobs with an undated dispatch receipt, which
 could supersede a dated one. The job is best-effort, never throws, and writes only

@@ -198,6 +198,18 @@ function receiptPrKeys(row: Record<string, unknown>): string[] {
   return [...keys];
 }
 
+function latestResolution(current: ResolutionMark | null, next: ResolutionMark): ResolutionMark {
+  if (current === null || next.resolvedMs > current.resolvedMs) return next;
+  if (next.resolvedMs < current.resolvedMs) return current;
+  if (next.atMs > current.atMs) return next;
+  if (next.atMs < current.atMs) return current;
+
+  // Tied receipts cannot establish which PR supplied the verdict.
+  const repo = current.repo === undefined ? next.repo
+    : next.repo === undefined || current.repo === next.repo ? current.repo : null;
+  return { ...current, repo, prKeys: [...new Set([...current.prKeys, ...next.prKeys])] };
+}
+
 interface RewardJobAccum {
   dispatches: DispatchMark[];
   dispatchUndated: boolean;
@@ -343,21 +355,13 @@ export function foldJobsLedgerRewards(
     }
     if (at === null) continue;
     if (isMerge) {
-      const mergedAtMs = resolvedAt ?? at;
-      if (acc.merge === null || mergedAtMs > acc.merge.resolvedMs ||
-          (mergedAtMs === acc.merge.resolvedMs && at >= acc.merge.atMs)) {
-        acc.merge = {
-          atMs: at, resolvedMs: mergedAtMs, repo: repoOf(row, prKeys), prKeys,
-        };
-      }
+      acc.merge = latestResolution(acc.merge, {
+        atMs: at, resolvedMs: resolvedAt ?? at, repo: repoOf(row, prKeys), prKeys,
+      });
     } else if (isClose) {
-      const closedAtMs = resolvedAt ?? at;
-      if (acc.close === null || closedAtMs > acc.close.resolvedMs ||
-          (closedAtMs === acc.close.resolvedMs && at >= acc.close.atMs)) {
-        acc.close = {
-          atMs: at, resolvedMs: closedAtMs, repo: repoOf(row, prKeys), prKeys,
-        };
-      }
+      acc.close = latestResolution(acc.close, {
+        atMs: at, resolvedMs: resolvedAt ?? at, repo: repoOf(row, prKeys), prKeys,
+      });
     }
   }
   for (const [id, acc] of jobs) {
