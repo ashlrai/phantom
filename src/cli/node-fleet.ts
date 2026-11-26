@@ -163,12 +163,16 @@ function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<s
   if (verb === 'pull') {
     if (!out['pulled']) {
       // An empty pull can still say why this node takes nothing: a measured
-      // capacity hold or an advertised zero-slot bound, in the same words
-      // `phm node status` uses. No hold means the queue simply had nothing.
+      // capacity hold or an advertised zero-slot bound (the same words
+      // `phm node status` uses), or open work that fit but routed elsewhere.
+      // Any of them means the queue was not simply empty.
       const held = typeof out['held'] === 'string' ? out['held'] : null;
       const slots = typeof out['slots'] === 'number' ? out['slots'] : null;
+      const open = typeof out['open'] === 'number' && out['open'] > 0 ? out['open'] : null;
       const why = held !== null ? `this node is held (${PULL_HELD_WORDS[held] ?? held})`
-        : slots === 0 ? 'this node advertises zero job slots' : null;
+        : slots === 0 ? 'this node advertises zero job slots'
+        : open !== null ? `${open} open job${open === 1 ? '' : 's'} fit this node but routed to other nodes or wait on a free slot`
+        : null;
       return why === null ? 'No job for this node. Run: phm node plan'
         : `No job for this node; ${why}. Run: phm node plan`;
     }
