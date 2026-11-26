@@ -4373,12 +4373,19 @@ and bound, each bracket naming `#<channel>:<topic>`. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the thirteen dependencies the unified verbs touch — the
+read-only probe over the fourteen dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
 plus `truncated` for queue-tail or cap cuts, null when the state is
-unknown), the shared coordination table (`listCoordination` — live claims and
+unknown), the bus hop log (`readBusHoplogTail` over `<root>/bus/hops.jsonl`
+— the path the send path's `hoplogFile` resolves for writes, or
+`busHoplogPath()` with no root — the same bounded tail
+`readFleetBusHops` serves; `state` plus on-disk `bytes`, the `hops`
+count observed inside the window, `skippedRows` for malformed or torn
+rows and a `truncated` flag; 0 counts on a verified-missing log, null
+when unreadable, never message ids, agent labels or bodies), the shared
+coordination table (`listCoordination` — live claims and
 status rows),
 the message-id claim journal (`inspectBusWorkClaims` retained-record count),
 the work-feed projection (job count, or the refusal `reason` plus the blamed

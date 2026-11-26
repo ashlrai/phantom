@@ -1600,12 +1600,19 @@ held work, and every other store state keeps its own status. Exit 0 on
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the thirteen
+**Status.** `phm agents bus status [--json]` is a read-only probe of the fourteen
 dependencies every verb above touches plus the outbound send gate every
 write verb passes through: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
 the wake queue (state, observed hint count before the row cap, and whether
-the bounded tail or cap truncated older hints), the shared coordination table
+the bounded tail or cap truncated older hints), the bus hop log every
+wake-enabled send and accepted channel mirror appends
+(`<root>/bus/hops.jsonl` — `state` plus on-disk `bytes`, the `hops`
+count observed inside the bounded tail `fleet_bus_hops` reads,
+`skippedRows` for malformed or torn rows and a `truncated` flag for hops
+beyond the window; 0 counts on a verified-missing log, null when
+unreadable, never message ids, agent labels or bodies), the shared
+coordination table
 (live claims and status rows), the message-id claim journal behind `fleet
 bus-next`/`bus-claim` and the `work mine` hold state (retained claim records),
 the work-feed projection (job count, or the refusal reason when the feed

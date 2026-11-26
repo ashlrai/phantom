@@ -553,7 +553,7 @@ on this surface (the same journal comms bus claim spends) — while empty
 reports
 the observed {candidates, held} scan totals so a dry well reads
 differently from held work. Claims coordinate scope only; bodies are
-never executed. status is a read-only probe of the store, registry, wake queue, coordination
+never executed. status is a read-only probe of the store, registry, wake queue, bus hop log, coordination
 table, message-id claim journal, work feed, owner-chat share receipts, the
 legacy mailbox, the shared task board with its fleet queue, the claim-drift
 verdict comparing the claim journal with the coordination table, and the
@@ -832,6 +832,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           `live=${result.store.liveCount ?? unknown} expired=${result.store.expiredCount ?? unknown}`,
         `registry ${result.registry.source} identities=${result.registry.identities ?? unknown} channels=${result.registry.channels ?? unknown}`,
         `wakes ${result.wakes.state} hints=${result.wakes.hints ?? unknown} truncated=${result.wakes.truncated ?? unknown}`,
+        `hoplog ${result.hoplog.state} bytes=${result.hoplog.bytes ?? unknown} ` +
+          `hops=${result.hoplog.hops ?? unknown} skipped=${result.hoplog.skippedRows ?? unknown} ` +
+          `truncated=${result.hoplog.truncated ?? unknown}`,
         `coordination ${result.coordination.source} liveClaims=${result.coordination.liveClaims ?? unknown} statuses=${result.coordination.statuses ?? unknown}`,
         `workClaims ${result.workClaims.source} claims=${result.workClaims.claims ?? unknown}`,
         `claimDrift ${result.claimDrift.state} matched=${result.claimDrift.matched ?? unknown} ` +
