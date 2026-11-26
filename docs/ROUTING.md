@@ -748,6 +748,10 @@ USD figure. The spend read degrades independently: the report's
 marks a cut spend tail. Phantom withholds spend-derived costs when earlier
 calls may be missing. Explicit jobs-ledger costs and the reward-signal
 fallback still apply.
+Both the router outcomes and the daemon's reward feed withhold a job's
+spend-derived total if any call attributed to that job lacks a usable USD
+price or the sum is non-finite. Spend totals for other jobs can still be
+measured.
 The reward-signal ledger joins under the ASHLR home root — the same
 root the eval passk projection resolves — because it persists resolved
 per-job outcome evidence far longer than the bounded jobs tail: the
