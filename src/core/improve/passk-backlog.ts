@@ -23,7 +23,9 @@
  *    read degraded and yields no items — the same bar the sibling sources
  *    apply, so unknown stays unknown rather than becoming a guessed tally.
  *  - Recency-windowed. An identity emits only when its newest alert lands
- *    inside PASSK_ALERT_WINDOW_MS of the clock, so a stale journal on a
+ *    inside PASSK_ALERT_WINDOW_MS of the clock — and a stamp past the
+ *    clock plus PASSK_ALERT_FUTURE_SKEW_MS is corrupt or replayed
+ *    evidence that never reaches a cell — so a stale journal on a
  *    fleet whose eval stopped running never queues work.
  *  - Two evidence paths, both recorded. An alert identity emits when EITHER
  *    the journal shows it on at least PASSK_ALERT_MIN_REPORTS distinct eval
@@ -72,6 +74,14 @@ const PASSK_ALERT_ITEM_HARD_MAX = 25;
 export const PASSK_ALERT_MIN_REPORTS = 2;
 /** Alert evidence older than this never emits; nightly cadence makes a month generous. */
 export const PASSK_ALERT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Future-skew ceiling on alert timestamps, the sibling feeds' one-minute
+ * tolerance for same-host clock drift: an alert stamped further ahead
+ * than the evaluation time is corrupt or replayed evidence and never
+ * reaches a cell — it cannot become the identity's newest stamp, count
+ * toward its distinct reports or inflate its row tally.
+ */
+export const PASSK_ALERT_FUTURE_SKEW_MS = 60_000;
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
 const MAX_TITLE_CHARS = 200;
 /** Ledger-recorded identity fields are unbounded; flatten and cap before they reach a prompt. */
@@ -278,11 +288,15 @@ export async function passkAlertBacklogItems(opts: PasskAlertItemsOptions): Prom
     const latestReport = loadLatestPassKReport(store);
     const nowMs = (opts.now ?? new Date()).getTime();
     const windowMs = opts.windowMs ?? PASSK_ALERT_WINDOW_MS;
+    const futureCeil = nowMs + PASSK_ALERT_FUTURE_SKEW_MS;
 
     const groups = new Map<string, AlertRow[]>();
     for (const line of journal.alerts) {
       const row = alertRow(line);
       if (row === null) continue;
+      // A stamp past the evaluation time plus the sibling feeds' future
+      // skew is corrupt or replayed evidence: it never reaches a cell.
+      if (Number.isFinite(row.ms) && row.ms > futureCeil) continue;
       const a = row.alert;
       const identity = JSON.stringify([a.kind, a.lane, a.model, a.taskId ?? null, a.dimension ?? null]);
       const rows = groups.get(identity);
