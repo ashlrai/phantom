@@ -1718,7 +1718,7 @@ held work, and every other store state keeps its own status. Exit 0 on
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the seventeen
+**Status.** `phm agents bus status [--json]` is a read-only probe of the eighteen
 dependencies every verb above touches plus the outbound send gate every
 write verb passes through: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
@@ -1803,7 +1803,21 @@ partial bounded scan; 0 on a verified-empty peer plane or bus store, null
 when bindings, ledger, journal or bus store cannot be read — an
 unreadable journal leaves work.result mail unprovable, so the total is
 unknown rather than a ledger-only undercount, never callsigns, digests,
-threads or bodies), the session-handoff journal store
+threads or bodies), the transport dead-letter sink's retained
+delivery-failure reports — the `status` envelopes the router files under
+the reserved `bus.dead-letter` address when delivery provably never
+landed ("Dead letters" above), kept in the same bus store under their own
+TTL and surfaced one item at a time by `phm comms bus read --to
+bus.dead-letter` and the unified inbox's `bus-dead-letter` kind. The
+probe pages the same bounded live-receipt scan `peerInbox` runs —
+`listBusInboxAfter` already skips expired receipts — and counts envelopes
+addressed to the sink (`source` plus a `pending` count of live letters
+and a `reasons` tally by the recorded delivery-failure reason —
+`exhausted`, `expired`, `no-route`, or `other` for a letter whose stored
+body the defensive read cannot parse — plus a `truncated` flag for a
+partial bounded scan; 0 on a verified-missing or verified-empty store,
+null when unreadable, never envelope ids, original parties or bodies),
+the session-handoff journal store
 `<runsRoot>/handoffs` that `phm checkpoint handoff list|show` and
 `fleet_session_handoffs` read through the same `listSessionHandoffs`
 bounded scan under the same runs root the wake probe resolves

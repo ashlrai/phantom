@@ -71,6 +71,9 @@ describe('readUnifiedBusStatus', () => {
     expect(status.peerDispatchPolicy).toEqual({ source: 'missing', peers: 0, repositories: 0 });
     // No enrolled callsign can hold admitted peer mail: 0 is proven.
     expect(status.peerInbox).toEqual({ source: 'missing', pending: 0, truncated: false });
+    // A verifiably absent bus store retains no dead letters: real zeros.
+    expect(status.deadLetters).toEqual({ source: 'missing', pending: 0,
+      reasons: { exhausted: 0, expired: 0, noRoute: 0, other: 0 }, truncated: false });
     // A verifiably absent handoff store holds no journals: 0 is the real count.
     expect(status.sessionHandoffs).toEqual({ source: 'missing', journals: 0, open: 0,
       awaitingFailover: 0, unreadable: 0, truncated: false });
@@ -813,6 +816,69 @@ describe('peerInbox section', () => {
   });
 });
 
+describe('deadLetters section', () => {
+  const NOW = 1_800_000_000_000;
+  // The sink's own TTL (bus-transport-file): a letter stays pending attention
+  // for seven days, then the inbox read stops listing it.
+  const LETTER_TTL = 7 * 24 * 60 * 60 * 1000;
+  /** The wire shape `createFileDeadLetterSink` stores: a `status` envelope
+   * addressed to `bus.dead-letter` whose `body.payload` carries the
+   * delivery-failure summary plus the dropped or retained original. */
+  const letter = (id: string, reason: unknown, ttl = LETTER_TTL) => ({
+    id, from: 'bus-router', to: 'bus.dead-letter', priority: 'P2', ttl,
+    body: { protocol: { version: 1, kind: 'status' }, correlation_id: `corr-${id}`,
+      payload: { deadLetter: { id: `orig-${id}`, from: 'agent0', to: 'agent1',
+        kind: 'dm', priority: 'P2', correlationId: `corr-${id}`, reason,
+        deadLetteredAt: NOW, attempts: [] }, payloadDropped: true, envelope: null } },
+  });
+  const post = (options: UnifiedBusStatusOptions, envelope: unknown, at = NOW) =>
+    expect(appendBusInbox(envelope, { root: options.root, now: () => at }).status).toBe('posted');
+
+  it('counts live letters by recorded reason and skips expired or unrelated mail', () => {
+    const options = setup(NOW);
+    post(options, letter('dl-1', 'exhausted'));
+    post(options, letter('dl-2', 'expired'));
+    post(options, letter('dl-3', 'no-route'));
+    // A reason outside the closed DeadLetterReason set still counts as a
+    // pending letter — it just cannot name its bucket, so it reads 'other'.
+    post(options, letter('dl-4', 'mystery'));
+    // A body without the deadLetter summary is unparseable: 'other', still pending.
+    post(options, { id: 'dl-5', from: 'bus-router', to: 'bus.dead-letter', priority: 'P2',
+      ttl: LETTER_TTL, body: { note: 'not a letter' } });
+    // Ordinary mail to a real recipient never counts, and a letter whose TTL
+    // lapsed before the read is expired retention, not pending attention.
+    post(options, { id: 'dm-1', from: 'agent0', to: 'agent1', priority: 'P2', ttl: 60_000,
+      body: { kind: 'dm', text: 'hi' } });
+    post(options, letter('dl-old', 'exhausted'), NOW - LETTER_TTL - 1);
+
+    expect(readUnifiedBusStatus(options).deadLetters).toEqual({
+      source: 'available', pending: 5,
+      reasons: { exhausted: 1, expired: 1, noRoute: 1, other: 2 }, truncated: false });
+  });
+
+  it('reports a verified-empty sink on a live store with no letters', () => {
+    const options = setup(NOW);
+    post(options, { id: 'dm-1', from: 'agent0', to: 'agent1', priority: 'P2', ttl: 60_000,
+      body: { kind: 'dm', text: 'hi' } });
+    expect(readUnifiedBusStatus(options).deadLetters).toEqual({
+      source: 'available', pending: 0,
+      reasons: { exhausted: 0, expired: 0, noRoute: 0, other: 0 }, truncated: false });
+  });
+
+  it('degrades only the deadLetters section when the bus store cannot be read', () => {
+    const options = setup(NOW);
+    post(options, letter('dl-1', 'exhausted'));
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), '{not json', { mode: 0o600 });
+    const status = readUnifiedBusStatus(options);
+    expect(status.deadLetters)
+      .toEqual({ source: 'unavailable', pending: null, reasons: null, truncated: null });
+    expect(status.store.source).toBe('unavailable');
+    // peerInbox never reached the store — with no enrolled callsign its
+    // verified-empty verdict stands on its own inputs.
+    expect(status.peerInbox).toEqual({ source: 'missing', pending: 0, truncated: false });
+  });
+});
+
 describe('sendGate section', () => {
   // The gate reads realHome() — the worker's isolated HOME under the test
   // harness — never the probe's `root`, exactly like the send path.
@@ -992,6 +1058,9 @@ describe('phm agents bus status', () => {
     expect(json.peerLedger).toEqual({ source: 'missing', liveRows: 0 });
     expect(json.peerBindings).toEqual({ source: 'missing', peers: 0, active: 0 });
     expect(json.peerDispatchPolicy).toEqual({ source: 'missing', peers: 0, repositories: 0 });
+    expect(json.peerInbox).toEqual({ source: 'missing', pending: 0, truncated: false });
+    expect(json.deadLetters).toEqual({ source: 'missing', pending: 0,
+      reasons: { exhausted: 0, expired: 0, noRoute: 0, other: 0 }, truncated: false });
     expect(json.sessionHandoffs).toEqual({ source: 'missing', journals: 0, open: 0,
       awaitingFailover: 0, unreadable: 0, truncated: false });
     expect(json.sendGate).toEqual({ state: 'open',
@@ -1013,6 +1082,8 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('peerLedger missing liveRows=0');
     expect(lines.join('\n')).toContain('peerBindings missing peers=0 active=0');
     expect(lines.join('\n')).toContain('peerDispatchPolicy missing peers=0 repositories=0');
+    expect(lines.join('\n')).toContain('peerInbox missing pending=0 truncated=false');
+    expect(lines.join('\n')).toContain('deadLetters missing pending=0 exhausted=0 expired=0 noRoute=0 other=0 truncated=false');
     expect(lines.join('\n')).toContain('sessionHandoffs missing journals=0 open=0 awaitingFailover=0 unreadable=0 truncated=false');
     expect(lines.join('\n')).toContain('sendGate open kill=inactive:missing pause=clear');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');

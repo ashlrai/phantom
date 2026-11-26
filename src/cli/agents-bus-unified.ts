@@ -597,6 +597,7 @@ the observed {candidates, held} scan totals so a dry well reads
 differently from held work. Claims coordinate scope only; bodies are
 never executed. status is a read-only probe of the store, registry, wake queue, bus hop log, coordination
 table, message-id claim journal, work feed, owner-chat share receipts, the
+dead-letter sink's retained delivery-failure reports, the
 legacy mailbox, the shared task board with its fleet queue, the claim-drift
 verdict comparing the claim journal with the coordination table, and the
 outbound send gate every write verb passes through — its sendGate section
@@ -901,6 +902,12 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           `repositories=${result.peerDispatchPolicy.repositories ?? unknown}`,
         `peerInbox ${result.peerInbox.source} pending=${result.peerInbox.pending ?? unknown} ` +
           `truncated=${result.peerInbox.truncated ?? unknown}`,
+        `deadLetters ${result.deadLetters.source} pending=${result.deadLetters.pending ?? unknown} ` +
+          `exhausted=${result.deadLetters.reasons?.exhausted ?? unknown} ` +
+          `expired=${result.deadLetters.reasons?.expired ?? unknown} ` +
+          `noRoute=${result.deadLetters.reasons?.noRoute ?? unknown} ` +
+          `other=${result.deadLetters.reasons?.other ?? unknown} ` +
+          `truncated=${result.deadLetters.truncated ?? unknown}`,
         `sessionHandoffs ${result.sessionHandoffs.source} journals=${result.sessionHandoffs.journals ?? unknown} ` +
           `open=${result.sessionHandoffs.open ?? unknown} ` +
           `awaitingFailover=${result.sessionHandoffs.awaitingFailover ?? unknown} ` +
