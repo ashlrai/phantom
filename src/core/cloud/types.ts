@@ -209,6 +209,8 @@ export interface CloudTaskV1 {
   playbookRef?: PlaybookRef;
   /** Lessons trial arm and the approved notes that applied at launch (improve/lesson-trial.ts); absent = none applied. */
   lessons?: CloudTaskLessons;
+  /** Measured Wiki context at launch; absent means this task predates measurement. */
+  wikiSlice?: { bytes: number; nodeIds: string[] };
   /** CI and review evidence at merge/close (cloud/tracker.ts); absent = not captured. */
   outcome?: CloudTaskOutcome;
   /** Budget accounting — an ESTIMATE fixed at launch. */

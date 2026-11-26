@@ -389,6 +389,8 @@ cannot increase capacity and a newer hold takes precedence. Conflicting
 inputs at the same newest timestamp leave that node's capacity unknown.
 For a node without its own harness footprint, routing can borrow measurements
 from other nodes whose latest snapshots pass the same freshness check.
+A borrowed footprint uses the largest observed memory and CPU costs for the
+harness independently. CPU cost stays `null` when no donor measured it.
 A fresh snapshot from a node under pressure or swap growth can still supply
 a footprint. If no eligible measurement exists, the router reports
 `footprint-unmeasured` for that candidate.
