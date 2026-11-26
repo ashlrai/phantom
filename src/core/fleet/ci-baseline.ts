@@ -2192,8 +2192,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     // The workflow can stop before starting other jobs. Its conclusion
     // still applies when every listed job reached a verdict.
     const incomplete = data.jobs.some(job => INCOMPLETE_CONCLUSIONS.has(job.conclusion)) ||
-      (run.conclusion !== undefined && INCOMPLETE_CONCLUSIONS.has(run.conclusion)) ||
-      (data.jobs.length === 0 && run.conclusion === 'failure');
+      (run.conclusion !== undefined && INCOMPLETE_CONCLUSIONS.has(run.conclusion));
     const result: { conclusion: string; text: string }[] = [];
     for (const job of data.jobs) {
       if (job.conclusion === 'skipped') continue;
@@ -2238,7 +2237,12 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // unattributed evidence pass as head-verified.
       if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
     }
-    return { entries: result, incomplete };
+    // A failed workflow needs a checkout-verified failing job. A failed
+    // aggregator can be omitted only when another job accounts for the failure.
+    return {
+      entries: result,
+      incomplete: incomplete || (run.conclusion === 'failure' && !result.some(job => job.conclusion === 'failure')),
+    };
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);
   const masterRuns = branch?.commit?.sha ? await runs(branch.commit.sha) : null;
