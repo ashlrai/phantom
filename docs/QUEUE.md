@@ -330,6 +330,11 @@ phm pool admission --json
 
 ## Utilization and unfed capacity
 
+The Leader board's `queueDepthByTier` groups parsed ready rows under `frontier`,
+`work`, `mid`, `fast`, and the legacy `low` tier. Rows with missing or
+unrecognized tiers count under `unknown`, including experimental `bet:` tiers.
+The entire field is `null` when `ready.tsv` is unavailable.
+
 `phm fleet autopilot --once --json` requires a healthy `ready.tsv` read to
 identify starved lanes or propose restock. When that read is missing or
 degraded, per-lane `ready` stays null. The dispatcher’s `queued` count remains

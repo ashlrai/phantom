@@ -46,8 +46,8 @@ const MAX_BOARD_BYTES = 256 * 1024;
 /** Rolling conflict observations kept on the board (a few hours of ticks). */
 const MAX_HISTORY = 96;
 const MAX_NEEDS_ITEMS = 10;
-const MAX_TIER_KEYS = 16;
-const TIER_RE = /^[a-z][a-z0-9-]{0,15}$/;
+// Include the legacy `low` tier still recognized by the ready queue reader.
+const DEPTH_TIERS = new Set(['frontier', 'work', 'mid', 'fast', 'low']);
 /** RQ-REBASE-<REPO>-<pr number>-<head sha7> from queuegen (queuegen.rebaseId), anywhere in a queue row. */
 const REBASE_JOB_RE = /\bRQ-REBASE-(?!BATCH-)([A-Z0-9][A-Z0-9-]*)-(\d{1,7})-(?:[0-9a-f]{7,40}|u[0-9a-f]{6})(?![\w-])/i;
 /** Batch members share a repo and end with a six-character hash. */
@@ -128,15 +128,10 @@ function parkedCell(cell: string | undefined): boolean {
 /** READY depth per tier. Unknown/invalid/missing tiers fold into 'unknown'. */
 export function queueDepthByTier(rows: readonly { status: string; tier?: string }[]): Record<string, number> {
   const byTier: Record<string, number> = {};
-  let keys = 0;
   for (const row of rows) {
     if (row.status !== 'READY') continue;
     const raw = (row.tier ?? '').trim().toLowerCase();
-    const tier = TIER_RE.test(raw) ? raw : 'unknown';
-    if (byTier[tier] === undefined) {
-      if (keys >= MAX_TIER_KEYS) { byTier['unknown'] = (byTier['unknown'] ?? 0) + 1; continue; }
-      keys++;
-    }
+    const tier = DEPTH_TIERS.has(raw) ? raw : 'unknown';
     byTier[tier] = (byTier[tier] ?? 0) + 1;
   }
   return byTier;

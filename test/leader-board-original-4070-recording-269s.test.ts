@@ -92,6 +92,19 @@ it('counts lane-open work by tier without attributing it to a lane', async () =>
   expect(board?.lanes.find((lane) => lane.lane === 'codex')?.ready).toBe(1);
 });
 
+it('keeps recognized tier depth when unknown tier rows precede it', async () => {
+  const unknownTiers = ['constructor', '', 'bet:mid', ...Array.from({ length: 17 }, (_, i) => `typo-${i}`)];
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    ...unknownTiers.map((tier, i) => row('READY', `RQ-UNKNOWN-${i}`, 'codex', tier)),
+    row('READY', 'RQ-FRONTIER', 'codex', 'frontier'),
+    row('READY', 'RQ-LEGACY-LOW', 'codex', 'low'),
+  ].join('\n'));
+
+  expect((await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS })).wrote).toBe(true);
+  const { board } = await readFleetBoard({ runsDir: root });
+  expect(board?.queueDepthByTier).toEqual({ unknown: unknownTiers.length, frontier: 1, low: 1 });
+});
+
 it('reports honest failures for hostile paths and the reader stays truthful', async () => {
   expect(await recordLeaderBoard({ runsDir: 'relative/path', nowMs: NOW_MS })).toMatchObject({ wrote: false });
   expect(await recordLeaderBoard({ runsDir: '/dev/null/impossible', nowMs: NOW_MS })).toMatchObject({ wrote: false });
