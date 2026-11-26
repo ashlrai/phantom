@@ -34,7 +34,8 @@
  *   - dispatchedAt IS THE LAST DISPATCH BEFORE THE OUTCOME. claim,
  *     batch_claim and launch rows are dispatch evidence; the latest at or
  *     before the outcome produced it. Without an eligible dispatch row
- *     in the window the dispatch time is unknown: skip.
+ *     in the window, or with an undated dispatch that could supersede it,
+ *     the dispatch time is unknown: skip.
  *   - ciWallMs IS THE LEDGER'S CI BOUNDARIES. jobs.jsonl's optional
  *     ci_start/ci_complete event dialect — the same boundaries
  *     queue/visit-sync and fleet/job-latency pair — supplies the reward
@@ -198,6 +199,7 @@ interface ResolutionMark { atMs: number; resolvedMs: number; repo: string | null
 
 interface RewardJobAccum {
   dispatches: DispatchMark[];
+  dispatchUndated: boolean;
   /** Latest merge-resolution row: row time, the GitHub mergedAt it reported, and its PR URL. */
   merge: (ResolutionMark & { url: string | null }) | null;
   /** Latest closed-unmerged resolution time, falling back to the row stamp. */
@@ -215,6 +217,7 @@ interface RewardJobAccum {
 function newAccum(): RewardJobAccum {
   return {
     dispatches: [],
+    dispatchUndated: false,
     merge: null, close: null, revertMs: null, standingReverted: false,
     ciBoundaryUndated: false, ciStartAts: [], ciCompleteAts: [],
   };
@@ -244,9 +247,9 @@ function ciWallEvidence(acc: RewardJobAccum, dispatchMs: number, outcomeMs: numb
 
 /**
  * Fold jobs.jsonl text into one RewardSignalInput per job with resolved merge
- * evidence. Pure; never throws; rows without a usable timestamp or job id are
- * ignored. Both the receipt and its effective resolution must fall at or
- * before `nowMs` to contribute a verdict.
+ * evidence. Pure; never throws. Undated dispatch and CI receipts with a
+ * usable job id are retained as ambiguity. Both a verdict receipt and its
+ * effective resolution must fall at or before `nowMs` to contribute a verdict.
  *
  * `revertedPrKeys` is the caller-resolved standing revert set (`owner/repo#n`
  * keys from the outcome ledger, cloud tasks and the revert-outcomes scan —
@@ -288,18 +291,20 @@ export function foldJobsLedgerRewards(
     if (!JOB_ID_PATTERN.test(id)) continue;
     const at = ledgerTs(row);
     const name = firstString(row, EVENT_KEYS)?.toLowerCase();
+    const dispatch = name !== undefined && DISPATCH_EVENTS.has(name);
     const ciBoundary = name === 'ci_start' || name === 'ci_complete';
-    if (at === null ? !ciBoundary : at > nowMs) continue;
+    if (at === null ? !dispatch && !ciBoundary : at > nowMs) continue;
     let acc = jobs.get(id);
     if (!acc) {
       acc = newAccum();
       jobs.set(id, acc);
     }
     if (at === null) {
-      acc.ciBoundaryUndated = true;
+      if (dispatch) acc.dispatchUndated = true;
+      if (ciBoundary) acc.ciBoundaryUndated = true;
       continue;
     }
-    if (name !== undefined && DISPATCH_EVENTS.has(name)) {
+    if (dispatch) {
       acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row) });
     } else if (ciBoundary) {
       noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at);
@@ -337,6 +342,7 @@ export function foldJobsLedgerRewards(
 
 /** Latest dispatch at or before the outcome, regardless of ledger row order. */
 function dispatchBefore(acc: RewardJobAccum, boundMs: number): DispatchMark | null {
+  if (acc.dispatchUndated) return null;
   let latestMs: number | null = null;
   const lanes = new Set<string>();
   const repos = new Set<string>();

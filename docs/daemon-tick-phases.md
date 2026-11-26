@@ -62,8 +62,9 @@ time from the latest dispatch at or before the outcome, using GitHub's
 merge timestamp when available for a held merge. A closed-unmerged PR uses
 `closedAt` or `closed_at` to select the dispatch and bound CI timing. If
 neither field has a parseable time, the fold uses the receipt timestamp.
-Closures dated after the observation time are ignored. It skips jobs without
-an eligible dispatch. The job is best-effort, never throws, and writes only
+Closures dated after the observation time are ignored. The fold skips jobs
+without an eligible dispatch and jobs with an undated dispatch receipt, which
+could supersede a dated one. The job is best-effort, never throws, and writes only
 under `~/.ashlr/metrics`. A `skill-nudge`
 off-tick job on the same cadence folds the same tail into candidate shadow
 skill cards (`src/core/fleet/skill-nudge.ts`), discounting merges the
