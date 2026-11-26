@@ -4,6 +4,7 @@
  */
 import { useEffect, useState } from 'react';
 import { PRODUCT_COMPANY, PRODUCT_DESCRIPTOR } from '../../../app/product-brand.js';
+import { PhantomMark } from '../../../app/product-brand-mark.js';
 import { IconExternalLink } from '../../../components/primitives/icons.js';
 import { Button, Tag } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -52,7 +53,7 @@ export function AboutPanel() {
     <Panel title="About">
       <div className={`${styles.row} ${styles.rowStacked}`}>
         <div className={styles.about}>
-          <p className={styles.aboutName}>{APP_NAME}</p>
+          <p className={styles.aboutName}><PhantomMark size={32} /> {APP_NAME}</p>
           <p className={styles.aboutLine}>
             <Tag mono>v{desktopVersion ?? APP_VERSION}</Tag>
             <span>{desktopVersion ? 'Installed desktop' : 'Interface build'}</span>

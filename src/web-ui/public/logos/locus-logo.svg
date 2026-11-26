@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Locus mark: the identity plane. Three candidate bindings sit on the plane;
+       exactly one is pinned and raised, its head sealed like a grommet. The bright
+       segment under the pin is the scope that binding owns. -->
+  <defs>
+    <linearGradient id="lc-a" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FBBF24"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="#080a10"/>
+  <!-- the plane -->
+  <path d="M6 22.2h20" fill="none" stroke="url(#lc-a)" stroke-opacity=".32" stroke-width="1.8" stroke-linecap="round"/>
+  <!-- the scope this binding owns -->
+  <path d="M12.6 22.2h6.8" fill="none" stroke="url(#lc-a)" stroke-width="2.6" stroke-linecap="round"/>
+  <!-- unpinned candidates -->
+  <circle cx="8.4" cy="22.2" r="1.5" fill="url(#lc-a)" fill-opacity=".45"/>
+  <circle cx="23.6" cy="22.2" r="1.5" fill="url(#lc-a)" fill-opacity=".45"/>
+  <!-- the pin -->
+  <path d="M16 21.4v-7.3" fill="none" stroke="url(#lc-a)" stroke-width="2.4" stroke-linecap="round"/>
+  <circle cx="16" cy="11.5" r="4.2" fill="url(#lc-a)"/>
+  <circle cx="16" cy="11.5" r="1.65" fill="#080a10"/>
+</svg>

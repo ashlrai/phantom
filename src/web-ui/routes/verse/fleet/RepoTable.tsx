@@ -10,6 +10,8 @@
  * fit a phone, and a horizontal scroll hides the action).
  */
 import { formatMetric } from '../../../components/charts/format-metric.js';
+import { ecosystemBrand } from '../../../../core/brand/ecosystem.js';
+import { EcosystemMark } from '../../../components/brand/EcosystemMark.js';
 import { volumeLimitLabel } from '../../../../core/authority/types.js';
 import type { FleetLiveSnapshotV1, FleetMirrorSummary, FleetRepoRow, RepoHold } from '../../../../core/fleet/fleet-types.js';
 import { Sparkline } from '../../../components/charts/Sparkline.js';
@@ -37,6 +39,11 @@ export function holdText(hold: RepoHold, now: number): string {
 
 function shortRepo(repo: string): string {
   return repo.includes('/') ? repo.split('/')[1]! : repo;
+}
+
+function RepoName({ repo }: { repo: string }) {
+  const [owner, project] = repo.toLowerCase().split('/');
+  return <>{owner === 'ashlrai' && project && <EcosystemMark brand={ecosystemBrand(project)} />}{repo}</>;
 }
 
 function StageBadge({ row }: { row: FleetRepoRow }) {
@@ -152,7 +159,7 @@ export function RepoTable({ read, actions, now, compact }: { read: OptionalRead<
           {rows.map((row) => (
             <li key={row.repo} className={styles.repoCard} id={anchorId(`repo-${row.repo}`)}>
               <div className={styles.repoCardHead}>
-                <span className={styles.repoName}>{row.repo}</span>
+                <span className={styles.repoName}><RepoName repo={row.repo} /></span>
                 <RepoAction row={row} actions={actions} />
               </div>
               <dl className={styles.facts}>
@@ -184,7 +191,7 @@ export function RepoTable({ read, actions, now, compact }: { read: OptionalRead<
             <tbody>
               {rows.map((row) => (
                 <tr key={row.repo} id={anchorId(`repo-${row.repo}`)} data-held={row.holds.length > 0 || undefined}>
-                  <th scope="row" className={styles.repoName}>{row.repo}</th>
+                  <th scope="row" className={styles.repoName}><RepoName repo={row.repo} /></th>
                   <td><StageBadge row={row} /></td>
                   <td>{row.lastMergeAt ? formatRelative(row.lastMergeAt) : '—'}</td>
                   <td className={styles.num}>{today(row)}</td>

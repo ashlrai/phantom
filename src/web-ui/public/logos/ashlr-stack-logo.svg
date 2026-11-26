@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Ashlr Stack">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0a0c10"/>
+      <stop offset="100%" stop-color="#05070a"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#39556f" stop-opacity="0.55"/>
+      <stop offset="55%" stop-color="#6b8097" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#f5883e"/>
+    </linearGradient>
+    <linearGradient id="facet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f5883e"/>
+      <stop offset="100%" stop-color="#c2521c"/>
+    </linearGradient>
+    <linearGradient id="shadow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a1f26"/>
+      <stop offset="100%" stop-color="#2a1a10"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="88%" r="55%">
+      <stop offset="0%" stop-color="#e96b2a" stop-opacity="0.55"/>
+      <stop offset="70%" stop-color="#e96b2a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="sat" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fbe1cf"/>
+      <stop offset="35%" stop-color="#f5883e"/>
+      <stop offset="100%" stop-color="#e96b2a"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <!-- Center (32,32). Ring radius 25. Spire apex (32,15), base (20,45)..(44,45). -->
+  <ellipse cx="32" cy="54" rx="20" ry="4.5" fill="url(#glow)"/>
+  <path d="M 32 7 A 25 25 0 0 1 52.5 45.5" stroke="url(#ring)" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+  <path d="M 16.6 53.3 A 25 25 0 0 1 8.15 24.7" stroke="url(#ring)" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+  <path d="M 8.15 24.7 A 25 25 0 0 1 16.6 53.3" stroke="#f5883e" stroke-opacity="0.45" stroke-width="1.4" stroke-dasharray="1.2 3.6" stroke-linecap="round" fill="none"/>
+  <path d="M 32 15 L 32 45 L 20 45 Z" fill="url(#shadow)"/>
+  <path d="M 32 15 L 44 45 L 32 45 Z" fill="url(#facet)"/>
+  <path d="M 32 15 L 44 45 L 20 45 Z" fill="none" stroke="#f5883e" stroke-width="2.1" stroke-linejoin="miter"/>
+  <line x1="32" y1="15" x2="32" y2="45" stroke="#fbe1cf" stroke-opacity="0.18" stroke-width="0.8"/>
+  <circle cx="44.5" cy="10.35" r="4" fill="url(#sat)"/>
+  <circle cx="44.5" cy="10.35" r="1.4" fill="#fbe1cf"/>
+</svg>

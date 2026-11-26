@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="lexicon-title">
+  <title id="lexicon-title">Lexicon — voice into vocabulary</title>
+  <rect width="64" height="64" rx="14" fill="#0B1119"/>
+  <!-- A confident L frames three voice bars: spoken language, kept in order. -->
+  <path d="M17 16v31h29" fill="none" stroke="#F0F3F7" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M29 24v11M38 16v19M47 21v14" fill="none" stroke="#A4DDED" stroke-width="5" stroke-linecap="round"/>
+</svg>
