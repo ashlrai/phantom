@@ -1444,7 +1444,10 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   measured_jobs, missing_jobs, total_seconds and the report's own
   fix_line (otherwise only visible through that report — a report
   someone had to run and read, so a fleet whose jobs kept piling
-  wall time into one stage never became work). A phase emits only
+  wall time into one stage never became work). For phases bounded by PR
+  events, fleet job latency and pulse merge latency withhold a sample when
+  publish, CI, merge or close receipts identify conflicting PRs within the
+  span. Undated PR receipts can also make the span ambiguous. A phase emits only
   when measured on at least ten job attempts and carrying at least
   six hours of recorded wait across the bounded tail — enough
   samples that the total is not one fluke and enough accumulated

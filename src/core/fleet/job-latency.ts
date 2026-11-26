@@ -14,6 +14,7 @@ const jobPhases = [
 
 type Events = Map<string, { times: Set<number>; prsByTime: Map<number, Set<string>> }>;
 const prBoundaries = new Set(['publish', 'ci_start', 'ci_complete', 'merged']);
+const prEvidenceEvents = [...prBoundaries, 'closed'];
 
 /**
  * Canonical boundary name for one ledger row, or undefined when the row is
@@ -138,7 +139,7 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
     const boundary = events.get(event) ?? { times: new Set<number>(), prsByTime: new Map<number, Set<string>>() };
     if (!Number.isFinite(at)) ignored++;
     boundary.times.add(at);
-    if (prBoundaries.has(event)) {
+    if (prEvidenceEvents.includes(event)) {
       for (const url of [row.url, row.prUrl, row.pr_url, row.pr, row.html_url]) {
         const pr = prKeyOf(url);
         if (!pr) continue;
@@ -162,10 +163,11 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
       const [from] = a.times, [to] = b.times;
       if (from === undefined || to === undefined || !Number.isFinite(from) || !Number.isFinite(to) || to < from) continue;
       const prs = new Set([...(a.prsByTime.get(from) ?? []), ...(b.prsByTime.get(to) ?? [])]);
-      if (start === 'publish' && end === 'merged') {
-        for (const event of ['ci_start', 'ci_complete']) {
+      if (prBoundaries.has(start) && prBoundaries.has(end)) {
+        for (const event of prEvidenceEvents) {
+          if (event === start || event === end) continue;
           for (const [at, claims] of events.get(event)?.prsByTime ?? []) {
-            // An undated CI receipt could belong to this span.
+            // An undated PR receipt could belong to this span.
             if (Number.isFinite(at) && (at < from || at > to)) continue;
             for (const claim of claims) prs.add(claim);
           }
