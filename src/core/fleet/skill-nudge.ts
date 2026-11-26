@@ -301,8 +301,14 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     const outcome = outcomeOf(row);
     const evidence = acc.evidence;
     if (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event)) {
-      const lane = firstString(row, LEDGER_LANE_KEYS);
-      if (lane !== null && hasKnownLane(lane)) evidence.lane = lane;
+      for (const key of LEDGER_LANE_KEYS) {
+        const value = row[key];
+        if (typeof value !== 'string') continue;
+        const lane = value.trim();
+        if (!hasKnownLane(lane)) continue;
+        evidence.lane = lane;
+        break;
+      }
     }
     if (event !== null && ATTEMPT_EVENTS.has(event)) evidence.attempts += 1;
     else if (event === 'claim' && row['launch_dedupe'] !== true) evidence.attempts += 1;

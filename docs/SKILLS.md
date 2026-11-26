@@ -48,9 +48,11 @@ case-insensitive `unknown` values. A row with no usable classification leaves
 the last observed class intact. Without any observed class, a merge can seed
 a generic draft through a recorded retry or recut.
 Recovery drafts require an observed lane. A terminal row can supply that
-lane even when it has no event name. Queue hints and `unknown` values
-leave the last observed lane intact. Jobs without an observed lane supply
-neither recurrence evidence nor recovery drafts.
+lane even when it has no event name. The learner checks `lane`, `pool`,
+then `arm` and uses the first identifier-safe value other than
+case-insensitive `unknown`. Queue hints and rows without a usable lane leave
+the last observed lane intact. Jobs without an observed lane supply neither
+recurrence evidence nor recovery drafts.
 
 These cards are `candidate`/`imported` shadow records: they persist to the
 same card ledger, are deduplicated by content hash across ticks, and stay out
