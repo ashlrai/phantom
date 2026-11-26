@@ -233,6 +233,10 @@ install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
 The native `DesktopUpdateDependencies` port includes lowering-only
 `residentStop`; native installation requires Stop and known idle work, not a
 standing authority grant.
+`phm desktop-update prepare --stage <id> --json` verifies the private staged
+app and the original CLI archive before Stop, including the app inventory and
+the candidate authority surface. It caches only the verified original package
+in the stage and does not change installed files, fleet state, or authority.
 The install module also exports `ConsumerInstallHeld` for shared error
 classification and the `directory`, `parents`, `owned`, `regular`, `write`,
 `sha`, `ioRead` and `packageReady` guards.

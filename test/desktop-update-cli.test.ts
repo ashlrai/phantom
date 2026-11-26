@@ -8,7 +8,7 @@ const dependencies:DesktopUpdateDependencies={home:'/private/owned',platform:'da
   admission:()=>{throw new Error('unexpected admission');},currentPackageRoot:()=>null,captureParent:()=>null,verifyParent:async()=>false,parentState:()=> 'unknown',now:Date.now,sleep:async()=>{},
   download:async()=>{throw new Error('network forbidden');}};
 describe('installed desktop-update CLI contract',()=>{
-  it.each(['inspect','apply'] as const)('accepts the fixed %s opaque-ID JSON request',verb=>{
+  it.each(['inspect','prepare','apply'] as const)('accepts the fixed %s opaque-ID JSON request',verb=>{
     expect(parseDesktopUpdateArgs([verb,'--stage','a'.repeat(32),'--json'])).toEqual({verb,stage:'a'.repeat(32)});
   });
   it.each([
@@ -21,7 +21,7 @@ describe('installed desktop-update CLI contract',()=>{
     const log=vi.spyOn(console,'log').mockImplementation(()=>{});expect(await cmdDesktopUpdate(['--help'],dependencies)).toBe(0);
     expect(log).toHaveBeenCalledOnce();expect(log.mock.calls[0]?.[0]).toContain('No URL, path, shell');
   });
-  it.each(['inspect','apply'])('outputs only fixed blocked metadata when trust unavailable (%s)',async verb=>{
+  it.each(['inspect','prepare','apply'])('outputs only fixed blocked metadata when trust unavailable (%s)',async verb=>{
     const emit=vi.fn();expect(await cmdDesktopUpdate([verb,'--stage','a'.repeat(32),'--json'],dependencies,emit)).toBe(1);
     expect(emit).toHaveBeenCalledOnce();expect(emit).toHaveBeenCalledWith({schema:'phantom-desktop-update-result/v1',state:'blocked',version:null,reason:'trust-not-commissioned',requiresReapproval:false});
   });
