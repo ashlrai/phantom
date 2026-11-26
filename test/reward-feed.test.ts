@@ -77,13 +77,27 @@ describe('foldJobsLedgerRewards', () => {
     }]);
   });
 
-  it('uses the latest dispatch before the outcome, earliest as fallback', () => {
+  it('uses the latest dispatch before the outcome', () => {
     const retry = launch('RQ-D', 'codex-cmp', '2026-10-28T08:00:00-0400');
     const relaunch = launch('RQ-D', 'omlx', '2026-10-28T11:00:00-0400');
     const text = [retry, finish('RQ-D'), relaunch, merged('RQ-D')].join('\n');
     const inputs = foldJobsLedgerRewards(text, NOW_MS);
     expect(inputs).toHaveLength(1);
     expect(inputs[0]).toMatchObject({ pool: 'omlx', dispatchedAt: '2026-10-28T15:00:00.000Z' });
+  });
+
+  it.each([merged, closed])('ignores later dispatches when attributing a resolved PR (%o)', (resolve) => {
+    const job = 'RQ-RELAUNCH';
+    const text = [
+      launch(job, 'claude', '2026-10-28T15:30:30.000Z'),
+      launch(job, 'omlx', '2026-10-28T15:00:00.000Z'),
+      resolve(job, MERGED_ISO),
+      claim(job),
+    ].join('\n');
+
+    expect(foldJobsLedgerRewards(text, NOW_MS)).toMatchObject([
+      { jobId: job, pool: 'omlx', dispatchedAt: '2026-10-28T15:00:00.000Z' },
+    ]);
   });
 
   it('skips jobs without dispatch evidence or without resolved outcomes', () => {
@@ -256,6 +270,32 @@ describe('foldJobsLedgerRewards', () => {
     const inputs = foldJobsLedgerRewards(text, NOW_MS);
     expect(inputs).toHaveLength(1);
     expect(inputs[0]).toMatchObject({ ciWallMs: 900_000 });
+  });
+
+  it.each([merged, closed])('omits CI timing outside the rewarded dispatch and resolution (%o)', (resolve) => {
+    const job = 'RQ-LIFECYCLE-CI';
+    const rows = [
+      launch(job),
+      launch(job, 'omlx', '2026-10-28T15:00:00.000Z'),
+      resolve(job, '2026-10-28T15:30:00.000Z'),
+    ];
+    const outsidePairs = [
+      ['14:10:00', '14:25:00'], // previous attempt
+      ['14:55:00', '15:25:00'], // spans the retry
+      ['15:10:00', '15:30:30'], // completes after resolution, before the merge receipt
+      ['15:35:00', '15:45:00'], // subsequent CI
+    ] as const;
+    for (const [start, complete] of outsidePairs) {
+      const text = [
+        ...rows,
+        ciStart(job, `2026-10-28T${start}.000Z`),
+        ciComplete(job, `2026-10-28T${complete}.000Z`),
+      ].join('\n');
+      const inputs = foldJobsLedgerRewards(text, NOW_MS);
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0]).toMatchObject({ pool: 'omlx', dispatchedAt: '2026-10-28T15:00:00.000Z' });
+      expect(inputs[0]).not.toHaveProperty('ciWallMs');
+    }
   });
 });
 

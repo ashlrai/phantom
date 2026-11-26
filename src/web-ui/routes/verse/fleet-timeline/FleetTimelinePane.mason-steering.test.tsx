@@ -27,7 +27,7 @@ afterEach(() => { cleanup(); takeSteeringFocus(); vi.unstubAllGlobals(); vi.rest
 
 it('routes Mason to the exact steering request while worker bars still open logs', async () => {
   render(<FleetTimelinePane visible />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Mason: inspect the fleet' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Operator: inspect the fleet' }));
   expect(openDockPane).toHaveBeenCalledWith('fleet-steering');
   expect(takeSteeringFocus()).toEqual({ at, label: 'inspect the fleet' });
   fireEvent.click(screen.getByRole('button', { name: 'codex 1/1: test-job' }));

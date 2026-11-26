@@ -121,8 +121,13 @@ let lastCodexHome: string | null = null;
 /** Never resolve an alias into the CMP account, or enumerate that account. */
 function personalCodexHome(raw: unknown = process.env.CODEX_HOME_ALT ?? path.join(os.homedir(), '.codex-2')): string | null {
   if (typeof raw !== 'string' || raw !== raw.trim() || raw.length > 4096 ||
-      !path.isAbsolute(raw) || /[\\\p{Cc}]/u.test(raw) ||
-      raw.split('/').some(part => part === '.codex' || part === '..' || part === '.')) return null;
+      !path.isAbsolute(raw) || /\p{Cc}/u.test(raw)) return null;
+  const windows = path.sep === '\\';
+  if (windows ? !/^[a-z]:[/\\]/i.test(raw) : raw.includes('\\')) return null;
+  const parts = windows ? raw.slice(3).split(/[/\\]/) : raw.split('/');
+  if (parts.some(part => part === '.' || part === '..' || (windows
+    ? part.toLowerCase() === '.codex' || /[:*?"<>|]|[ .]$|~\d/i.test(part)
+    : part === '.codex'))) return null;
   const home = path.resolve(raw);
   if (home === path.parse(home).root) return null;
   // Reject symlinks at every component, including a sessions alias. No realpath
@@ -972,8 +977,8 @@ function senseCodexState(): BackendResourceState {
     lastCodexHome = home;
     if (!home) return fallback();
     const usages = collectCodexSessionUsages({
-      env: { CODEX_HOME: home, CODEX_HOME_ALT: home }, homeDir: os.homedir(),
-    }).map(usage => ({ ...usage, accountId: 'codex-personal', slot: 'secondary' as const }));
+      env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: home }, homeDir: os.homedir(),
+    });
     const report = buildCodexResourceReport(usages, [], nowMs).resources[0];
     const usage = usages[0];
     if (!report || !usage) return fallback();

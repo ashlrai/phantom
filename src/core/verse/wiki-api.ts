@@ -5,6 +5,7 @@
  *   GET  /api/verse/wiki                          → WikiReposView (enrolled repos + wiki state)
  *   GET  /api/verse/wiki/repo/<key>               → WikiRepoView (per-page staleness, job, GitHub url)
  *   GET  /api/verse/wiki/repo/<key>/page/<id>     → WikiPageView (scrubbed markdown)
+ *   GET  /api/verse/wiki/repo/<key>/system-map   → commit-pinned graph (?focus=)
  *   POST /api/verse/wiki/repo/<key>/build {force?, noModel?} → 202 {job}
  *   POST /api/verse/wiki/ask  {question, repoKey?, noModel?} → WikiAskResult
  *   POST /api/verse/wiki/open {repoKey, file, line?}         → {ok}
@@ -22,8 +23,8 @@
  * Security posture matches every Verse route: GETs sit behind the read
  * session; a POST is 404 unless dispatch is allowed, then the constant-time
  * mutation token + JSON gate, then a 16 KB body cap. Unknown query parameters
- * and body keys are 400s. Responses go through sendJson() → sanitizePublicJson(),
- * and page markdown / answers are secret-scrubbed again on the way out.
+ * and body keys are 400s. Responses are sanitized, and page markdown / answers
+ * are secret-scrubbed again on the way out.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
@@ -34,13 +35,16 @@ import type { VerseApiContext } from './verse-api.js';
 import type { AshlrConfig } from '../types.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { askWiki, type AskWikiOptions } from '../knowledge/wiki/ask.js';
+import { queryWikiEcosystem } from '../knowledge/wiki/ecosystem.js';
 import { buildWikiGraph } from '../knowledge/wiki/graph.js';
 import { startWikiJob, wikiJob, type WikiJob } from '../knowledge/wiki/jobs.js';
 import { githubNameWithOwner, isWikiReadable } from '../knowledge/wiki/scan.js';
 import { scrubWikiText } from '../knowledge/wiki/scrub.js';
 import { listWikiRepos, statusFromManifest, wikiCandidateRepos, wikiStatus } from '../knowledge/wiki/status.js';
+import { querySystemMap } from '../knowledge/wiki/system-map.js';
 import { isPageId, isWikiKey, readFileIndex, readManifest, readPage, wikiKey } from '../knowledge/wiki/store.js';
 import { VERSE_WIKI_PATH, type WikiAskResult, type WikiJobView, type WikiPageView, type WikiRepoView, type WikiReposView } from '../knowledge/wiki/types.js';
+import { sanitizePublicJson } from '../util/public-json.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
 
@@ -79,6 +83,28 @@ function sendRefused(res: ServerResponse, reason: string): void {
 
 function sendNotFound(res: ServerResponse, what: string): void {
   sendJson(res, 404, { error: `not found: ${what}` });
+}
+
+async function sendSystemMap(req: IncomingMessage, res: ServerResponse, repo: string): Promise<void> {
+  const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+  const focuses = params.getAll('focus');
+  const focus = focuses[0];
+  if ([...params.keys()].some(key => key !== 'focus') || focuses.length > 1 || focus === '' || (focus?.length ?? 0) > 1200) {
+    sendInvalid(res, 'Only one nonempty focus of at most 1200 characters is supported.');
+    return;
+  }
+  const map = await querySystemMap(repo, focus);
+  const body = sanitizePublicJson(map) as typeof map;
+  // Git-produced object IDs are provenance, not credentials (including SHA-256).
+  if ('commit' in map && 'commit' in body) {
+    body.commit = map.commit;
+    for (const item of [...body.nodes, ...body.edges]) item.anchor.commit = map.commit;
+  }
+  const payload = 'requestedCommit' in map
+    ? { ...body, requestedCommit: map.requestedCommit, indexedCommit: map.indexedCommit }
+    : body;
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+  res.end(JSON.stringify(payload));
 }
 
 function hasNoQuery(req: IncomingMessage, res: ServerResponse): boolean {
@@ -198,6 +224,15 @@ export function createWikiApi(deps: WikiApiDeps = DEFAULT_WIKI_API_DEPS): ApiMod
         return true;
       }
 
+      if (p === `${VERSE_WIKI_PATH}/ecosystem`) {
+        if (method !== 'GET') return (sendNotFound(res, `${method} ${p}`), true);
+        if (!hasNoQuery(req, res)) return true;
+        const graph = await queryWikiEcosystem();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+        res.end(JSON.stringify(graph));
+        return true;
+      }
+
       // ── POST /api/verse/wiki/ask ─────────────────────────────────────────
       if (p === `${VERSE_WIKI_PATH}/ask`) {
         if (method !== 'POST') return (sendNotFound(res, `${method} ${p}`), true);
@@ -280,6 +315,12 @@ export function createWikiApi(deps: WikiApiDeps = DEFAULT_WIKI_API_DEPS): ApiMod
         if (method !== 'GET') return (sendNotFound(res, `${method} ${p}`), true);
         if (!hasNoQuery(req, res)) return true;
         sendJson(res, 200, await buildWikiGraph(repo));
+        return true;
+      }
+
+      if (parsed.rest.length === 1 && parsed.rest[0] === 'system-map') {
+        if (method !== 'GET') return (sendNotFound(res, `${method} ${p}`), true);
+        await sendSystemMap(req, res, repo);
         return true;
       }
 

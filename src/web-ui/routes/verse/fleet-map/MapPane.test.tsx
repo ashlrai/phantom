@@ -129,7 +129,7 @@ const FAN: Said[] = [...JOBS.map((job, i): Said => ['claude', job, 200 + i, `sta
 function scene(said: Said[], jobs: string[] = []) {
   const rows = said.map(([from, to, ago, text], i) => ({ cursor: i + 1, receivedAt: NOW - ago * 1000,
     envelope: { id: `m${i}`, from, to, priority: 'P2' as const, ttl: 3_600_000, body: { text } } }));
-  const org = fleetOrgMap(null, { now: NOW, minutes: 15, messages: { schema: 'fleet.edges.v1', source: 'available', edges: projectFleetEdges(rows as never, NOW, 15) },
+  const org = fleetOrgMap(null, { now: NOW, minutes: 15, observedLanes: ['claude'], messages: { schema: 'fleet.edges.v1', source: 'available', edges: projectFleetEdges(rows as never, NOW, 15) },
     sessions: { generatedAt: AT, sourceState: 'healthy', truncated: false, recent: [], sessions: jobs.map(job => (
       { job, lane: 'claude', repo: 'phantom', model: 'fixture-model', status: 'running', elapsedSeconds: 60, startedAt: '2026-11-17T11:59:00Z', live: 'yes' })) } as unknown as FleetSessionsV1 });
   return { map: narrowLiveMap(JSON.parse(JSON.stringify(buildFleetLiveMap({ now: NOW, org: { ...org, tree: fleetOrgTree(org) } }))))!,

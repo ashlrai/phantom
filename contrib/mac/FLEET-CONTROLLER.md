@@ -47,7 +47,7 @@ target (the ramp's memory), only `effective_target`, which is what launches use 
 
 **C. Rebalance, output weight, backpressure.**
 - *Rebalance.* A pool held by usage/auth backoff or credit exhaustion (never a manual or HOLD-list hold) hands queued
-  lines to `codex-cmp` / `codex-personal` / `claude` that have idle slots (effective target - running - own queue > 0),
+  lines to `codex-personal` / `claude` that have idle slots (effective target - running - own queue > 0),
   same provider family first, then higher quality, tier fit from `models.json`. Moves go through the existing
   `route_decision` (move cap and launch lock bind; a backed-off pool counts as `hard_down`, like quota 0). At most the
   per-tick claim limit. Metered `claude-api`, `devin` (repo setup) and `codex-local` are never destinations.

@@ -340,11 +340,16 @@ export interface BusWorkMineOptions {
    * — a claim naming no resolved message names no provable outcome and
    * never lists, the same "unknown stays out" rule `priority`/`channel`/
    * `from`/`id` apply — and `inbox`/`wakes` pass the value to their own
-   * reads' result filters. The three thread sections, `board`, `channels`
-   * and `seats` carry no per-item result evidence the digest can prove —
-   * the shared conversations read's query contract has no outcome field,
-   * board post bodies are `{threadId, text}` records and seat handoff
-   * records keep no per-record body — and stay unfiltered, the same rule
+   * reads' result filters, and the three thread sections pass the value
+   * to the shared conversations read's own member-message result filter —
+   * a thread survives when at least one member message is a `work.result`
+   * receipt reporting that outcome, the same whole-thread member match
+   * `agents conversations --result` applies, so "which threads carry a
+   * failed report" narrows the same way "which mail is a failed report"
+   * does. `board`, `channels` and `seats` carry no per-item result
+   * evidence the digest can prove — board post bodies are
+   * `{threadId, text}` records and seat handoff records keep no
+   * per-record body — and stay unfiltered, the same rule
    * `priority`/`channel` apply to sections with no per-item band or room.
    * A value outside `WORK_RESULT_OUTCOMES` is an invalid read, never a
    * widened one, and an outcome nothing on the bus reports is an honest
@@ -2011,7 +2016,8 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }),
       ...(options.id === undefined ? {} : { id: options.id }),
       ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
-      ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }) },
+      ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
+      ...(options.result === undefined ? {} : { result: options.result }) },
     { root: options.root, now: () => nowMs });
   const scope = conversationScope(agent, registry, identity);
   const threads = threadsSection(conversations, scope, channelPrefix);

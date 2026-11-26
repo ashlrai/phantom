@@ -15,6 +15,7 @@
 .heading h2 { margin: 4px 0 0; font-size: var(--text-xl-size); }
 .eyebrow { color: var(--text-secondary); font-size: var(--text-2xs-size); letter-spacing: .15em; }
 .description { color: var(--text-secondary); line-height: 1.6; }
+.badge { padding: 4px 8px; border-radius: 6px; background: var(--status-warning-bg); color: var(--status-warning-fg); font-size: var(--text-xs-size); }
 .scroll { overflow-x: auto; }
 .table { border-collapse: collapse; width: 100%; font-size: var(--text-sm-size); text-align: left; }
 .table th, .table td { padding: 10px 8px; border-bottom: 1px solid var(--border-default); vertical-align: middle; }

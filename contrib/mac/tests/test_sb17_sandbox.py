@@ -15,7 +15,7 @@ APPLY = (SANDBOX / 'apply-sb17.sh').read_text()
 TEST = (SANDBOX / 'test-sb17-osa.sh').read_text()
 SUMS = (SANDBOX / 'SHA256SUMS').read_text()
 
-LANES = ['agent.sb', 'claude.sb', 'codex-cmp.sb', 'codex-local.sb', 'codex-personal.sb']
+LANES = ['agent.sb', 'claude.sb', 'codex-local.sb', 'codex-personal.sb']
 MACH = '(deny mach-lookup (global-name "com.apple.coreservices.launchservicesd"))'
 AES = '(deny appleevent-send)'
 SHA = re.compile(r'\b[0-9a-f]{64}\b')
@@ -32,8 +32,8 @@ class Sb17Tests(unittest.TestCase):
         self.assertEqual(lines[1:], [MACH, AES])
         self.assertNotIn('(allow', BLOCK)
 
-    def test_diff_covers_all_five_profiles_and_launch_sh(self):
-        self.assertEqual(DIFF.count('+++ b/bin/'), 6)
+    def test_diff_covers_all_four_profiles_and_launch_sh(self):
+        self.assertEqual(DIFF.count('+++ b/bin/'), 5)
         for lane in LANES:
             self.assertIn(f'+++ b/bin/{lane}', DIFF)
         self.assertIn('+++ b/bin/launch.sh', DIFF)
@@ -66,8 +66,8 @@ class Sb17Tests(unittest.TestCase):
             self.assertEqual(digest, sha256(SANDBOX / name), name)
 
     def test_apply_pins_every_pre_and_post_sha(self):
-        for expected in ('002278b0c55fee50', 'ed8fc729c73bbcfa', '56fe451c11a8ec28',
-                         'a007a4074c797653', 'd3f5658f1c24d1e4', 'e085cf77b53eebb9',
+        for expected in ('002278b0c55fee50', 'ed8fc729c73bbcfa',
+                         'd3f5658f1c24d1e4', 'e085cf77b53eebb9',
                          'fdb051cdf1a379f9', '32adc419ce5fe36e', '422ea9b69bcaecd0',
                          '994cada9889adecc'):
             self.assertIn(expected, APPLY)

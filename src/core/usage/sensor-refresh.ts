@@ -76,7 +76,7 @@ export function parseDevinDailyAcu(daily: unknown, limit: unknown, nowMs: number
 
 /** Official Codex App Server `account/rateLimits/read` result. The fullest window binds. */
 export function parseCodexSensor(
-  lane: 'codex-cmp' | 'codex-personal',
+  lane: 'codex-personal',
   payload: unknown,
   nowMs: number,
 ): UsageSensorReading | null {
@@ -187,7 +187,6 @@ export interface UsageSensorRefreshInput {
   devin?: { daily: unknown; limit: unknown } | null;
   devinSweFlash?: unknown;
   devinWeekly?: unknown;
-  codexCmp?: unknown;
   codexPersonal?: unknown;
   dot?: unknown;
   claude?: unknown;
@@ -209,7 +208,6 @@ export function refreshUsageSensors(input: UsageSensorRefreshInput): UsageSensor
     ['devin', chosen('devin', input.devin ? parseDevinDailyAcu(input.devin.daily, input.devin.limit, nowMs) : null, nowMs)],
     ['devin-swe-flash', chosen('devin-swe-flash', input.devinSweFlash === undefined ? null : parseDevinIncluded('devin-swe-flash', input.devinSweFlash, nowMs), nowMs)],
     ['devin-weekly', chosen('devin-weekly', input.devinWeekly === undefined ? null : parseDevinIncluded('devin-weekly', input.devinWeekly, nowMs), nowMs)],
-    ['codex-cmp', chosen('codex-cmp', input.codexCmp === undefined ? null : parseCodexSensor('codex-cmp', input.codexCmp, nowMs), nowMs)],
     ['codex-personal', chosen('codex-personal', input.codexPersonal === undefined ? null : parseCodexSensor('codex-personal', input.codexPersonal, nowMs), nowMs)],
     ['dot', chosen('dot', input.dot === undefined ? null : parseOfficialPercent('dot', input.dot, nowMs), nowMs)],
     ['claude-max', chosen('claude-max', input.claude === undefined ? null : parseClaudeSensor(input.claude, nowMs), nowMs)],

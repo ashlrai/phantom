@@ -91,6 +91,9 @@ const ADDED_NATIVE_NAMES = [
   'desktop_scroll',
   'desktop_type',
   'desktop_click',
+  'phm_wiki_map',
+  'phm_wiki_ecosystem',
+  'phm_wiki_brain',
   'ashlr_comms_agent_status',
   'ashlr_comms_agent_drafts',
   'ashlr_comms_agent_run',
@@ -142,7 +145,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(95);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(98);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -187,7 +190,8 @@ describe('native MCP tool inventory', () => {
     expect(ownerCommsBytes).toBeLessThanOrEqual(1900);
     const agentComms = addedTools.filter(tool => tool.name.startsWith('ashlr_comms_agent_'));
     const agentCommsBytes = agentComms.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    expect(agentCommsBytes).toBeLessThanOrEqual(767);
+    // Standing-approvals status disclosure adds 108 discovery bytes; keep the measured cap.
+    expect(agentCommsBytes).toBeLessThanOrEqual(875);
     // phantom_fleet_needs measured 380 bytes with its comma; no headroom.
     const needs = addedTools.find(tool => tool.name === 'phantom_fleet_needs')!;
     const needsBytes = Buffer.byteLength(JSON.stringify(needs)) + 1;
@@ -226,11 +230,20 @@ describe('native MCP tool inventory', () => {
     expect(intentEvidenceBytes).toBeLessThanOrEqual(1119);
     const intentTools = [...intentEvidence, ...intentAdditions];
     const intentBytes = intentTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    const addedBytes = addedTools.filter(tool => tool !== verbs && tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && !intentTools.includes(tool) && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    const wiki = addedTools.find(tool => tool.name === 'phm_wiki_map')!;
+    const wikiBytes = Buffer.byteLength(JSON.stringify(wiki)) + 1;
+    expect(wikiBytes).toBeLessThanOrEqual(274);
+    const brain = addedTools.find(tool => tool.name === 'phm_wiki_brain')!;
+    const brainBytes = Buffer.byteLength(JSON.stringify(brain)) + 1;
+    expect(brainBytes).toBeLessThanOrEqual(283);
+    const ecosystem = addedTools.find(tool => tool.name === 'phm_wiki_ecosystem')!;
+    const ecosystemBytes = Buffer.byteLength(JSON.stringify(ecosystem)) + 1;
+    expect(ecosystemBytes).toBeLessThanOrEqual(192);
+    const addedBytes = addedTools.filter(tool => tool !== brain && tool !== wiki && tool !== ecosystem && tool !== verbs && tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && !intentTools.includes(tool) && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9884);
     // 24,205 + 9,884 preserves the historical headroom. Later tool groups are
     // measured on their own caps above.
-    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes + needsWaitBytes + accessRequestBytes + watchBytes + verbsBytes + intentBytes);
+    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes + needsWaitBytes + accessRequestBytes + watchBytes + verbsBytes + intentBytes + wikiBytes + brainBytes + ecosystemBytes);
   });
 });
 

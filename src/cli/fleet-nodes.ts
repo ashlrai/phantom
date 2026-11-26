@@ -1,6 +1,6 @@
 import { formatAge } from '../core/nodes/age.js';
 import { buildNodesSnapshot } from '../core/nodes/view.js';
-import { NODE_PROFILES } from '../core/drive/nodes/profiles.js';
+import { readConfiguredNodeProfiles } from '../core/drive/nodes/profiles.js';
 
 export function cmdFleetNodes(args: string[]): number {
   const json = args.includes('--json');
@@ -19,7 +19,7 @@ export function cmdFleetNodes(args: string[]): number {
     if (json) console.log(JSON.stringify({ error })); else console.error(error);
     return 2;
   }
-  const snap = buildNodesSnapshot({ nowMs, profiles: NODE_PROFILES });
+  const snap = buildNodesSnapshot({ nowMs, profiles: readConfiguredNodeProfiles() });
   if (json) console.log(JSON.stringify(snap));
   else {
     console.log(`Nodes (${snap.nodes.length}) · leader: ${snap.leaderId ?? 'none (no live lease)'} · source: ${snap.sourcePath} · observed: ${snap.observedAt ?? 'unknown'}`);

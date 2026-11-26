@@ -1498,8 +1498,12 @@ body kind never match, so those sections are provably empty), `claims`
 keep only message claims whose resolved leased envelope's body reports
 it (a claim naming no resolved message never lists), `inbox` and `wakes`
 pass the value to their own reads' result filters, and the three thread
-sections, `board`, `channels` and `seats` carry no per-item result
-evidence the digest can prove and stay unfiltered; an outcome nothing
+sections pass it to the shared conversations read's own member-message
+result filter — a thread survives when at least one member message is a
+`work.result` receipt reporting that outcome, the same whole-thread
+member match `agents conversations --result` applies — while `board`,
+`channels` and `seats` carry no per-item result evidence the digest can
+prove and stay unfiltered; an outcome nothing
 on the bus reports is an honest empty match, every count stays the
 filtered total, the result echoes `result` in JSON and the human header
 prints it. The agent defaults to
@@ -1524,20 +1528,22 @@ passes a refused or degraded section through untouched.
 **Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
 <1..3600000> [--owner <label>] [--contains <text>] [--since
 <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel
-<name>] [--from <agent>] [--exclude-from <agent>]` is the claim half of the loop `work
+<name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]` is the claim half of the loop `work
 mine`
 opens: it takes the next claimable work envelope addressed to the agent —
 the same live `kind:'work'`/protocol-`task` receipts the digest's `next`
 section lists — and leases it through the same message-id claim path
 `fleet bus-next`/`comms bus next` run, so the find → claim step never
 leaves this surface. `--contains`, `--since`, `--before`, `--priority`,
-`--channel`, `--from` and `--exclude-from`
+`--channel`, `--topic`, `--from` and `--exclude-from`
 narrow the
 claimable set under the same rules every bus read applies — the scrubbed
 one-line summary substring, the inclusive `receivedAt` cutoff, the
 exclusive `receivedAt` ceiling composing with `--since` into one
 `[since, before)` window, the
-exact P0..P3 band, the `group:<name>:*` room prefix, and the sender
+exact P0..P3 band, the `group:<name>:*` room prefix, the exact topic
+component of a well-formed `group:<room>:<topic>` address — composing
+with `--channel` into one room and one topic — and the sender
 identity-label match —
 so "claim the next work about X" or "claim the next
 urgent one" is one atomic step rather than a filtered list followed by a
@@ -1744,7 +1750,11 @@ no transport serves the role. `createFileDeadLetterSink()` records a `status`
 envelope addressed to `bus.dead-letter` in the same store, holding the
 original envelope (or only its routing metadata when it would not fit) and the
 attempt log; read it with a file transport whose addresses include
-`bus.dead-letter`. The report says `recorded: false` if the sink failed, in
+`bus.dead-letter`, or with `phm comms bus read --to bus.dead-letter`. The
+unified comms inbox (`phm comms inbox`, kind `bus-dead-letter`) lists each
+live letter as pending attention — the mail provably never arrived — naming
+the reason, attempt count and original routing metadata the letter kept. The
+report says `recorded: false` if the sink failed, in
 which case the caller still holds the message.
 
 **Egress is off by default.** Outbound to any human or external service needs
@@ -1979,14 +1989,18 @@ keeps exact-label matching and never widens. All four claim surfaces —
 `agents bus work next`, `fleet bus-next`, `fleet bus-wait-claim` and
 `comms bus next` — take the same `--contains <text>`, `--since
 <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--priority <P0|P1|P2|P3>`,
-`--channel <name>`, `--from <agent>` and `--exclude-from <agent>`
+`--channel <name>`, `--topic <topic>`, `--from <agent>` and `--exclude-from <agent>`
 read filters, applied inside
 the claim scan under the identical rules the reads use (the scrubbed
 one-line summary substring, the inclusive `receivedAt` cutoff, the
 exclusive `receivedAt` ceiling composing with `--since` into one
 `[since, before)` window, the exact
-priority band, the `group:<name>:*` room prefix decided on the raw `to`
-label, and the sender identity-label match `agentRefAddressMatcher`
+priority band, the `group:<name>:*` room prefix and the exact topic
+component of a well-formed `group:<room>:<topic>` address — each decided
+on the raw `to` label under the channel-name grammar, so `--channel` and
+`--topic` compose into one room and one topic while a bare `group:<room>`,
+a deeper label or a non-group address never resolves a topic — and the
+sender identity-label match `agentRefAddressMatcher`
 shares — a sender ref resolving through the registry matches every label
 of that identity while an unresolvable ref or unreadable registry keeps
 exact-label matching, so unknown identity state never widens a claim),

@@ -20,7 +20,7 @@ class RouteHysteresis(unittest.TestCase):
                 record = None
                 moves = 0
                 for i in range(count):
-                    proposed = 'claude' if i % 2 else 'codex-cmp'
+                    proposed = 'claude' if i % 2 else 'codex-personal'
                     previous = record
                     record, reason = decide(record, proposed, i * 3599 / count, down)
                     moves += bool(previous and previous['pool'] != record['pool'])
@@ -44,7 +44,7 @@ class RouteHysteresis(unittest.TestCase):
         from test_dispatchd import build, tick
         import json
         import time
-        tmp = build(ready=['job\tphantom\tcodex-cmp\twork\tunused'])
+        tmp = build(ready=['job\tphantom\tcodex-personal\twork\tunused'])
         self.addCleanup(tmp.cleanup)
         q = Path(tmp.name) / '.ashlr-runs/queue'
         (q.parent / 'PAUSE').write_text('fixture pause')
@@ -53,17 +53,17 @@ class RouteHysteresis(unittest.TestCase):
             (q / 'ready.tsv').write_text(f'job\tphantom\t{pool}\twork\tunused\n')
             tick(tmp.name).check_returncode()
             return json.loads((q / 'route-state.json').read_text())['job']
-        self.assertEqual(propose('claude')['pool'], 'codex-cmp')
-        state = {'job': {'pool': 'codex-cmp', 'decided_at': time.time() - 3700,
+        self.assertEqual(propose('claude')['pool'], 'codex-personal')
+        state = {'job': {'pool': 'codex-personal', 'decided_at': time.time() - 3700,
                          'moves': [time.time() - 500, time.time() - 400]}}
         (q / 'route-state.json').write_text(json.dumps(state))
-        self.assertEqual(propose('claude')['pool'], 'codex-cmp')
+        self.assertEqual(propose('claude')['pool'], 'codex-personal')
         events = (q.parent / 'dispatch-events.log').read_text()
-        self.assertIn('ROUTE_HOLD job codex-cmp->claude reason=move_cap', events)
+        self.assertIn('ROUTE_HOLD job codex-personal->claude reason=move_cap', events)
         state['job']['moves'] = []
         (q / 'route-state.json').write_text(json.dumps(state))
-        (q / 'run/job.line').write_text('job\tphantom\tcodex-cmp\twork\tunused\n')
-        self.assertEqual(propose('claude')['pool'], 'codex-cmp')
+        (q / 'run/job.line').write_text('job\tphantom\tcodex-personal\twork\tunused\n')
+        self.assertEqual(propose('claude')['pool'], 'codex-personal')
         self.assertIn('reason=launched', (q.parent / 'dispatch-events.log').read_text())
 
     def test_hard_down_evidence_and_corrupt_history(self):
@@ -74,31 +74,31 @@ class RouteHysteresis(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         q = Path(tmp.name) / '.ashlr-runs/queue'
         (q.parent / 'PAUSE').write_text('fixture pause')
-        for evidence, expected in [({'quota': False}, 'codex-cmp'),
-                                   ({'held': True}, 'codex-cmp'),
+        for evidence, expected in [({'quota': False}, 'codex-personal'),
+                                   ({'held': True}, 'codex-personal'),
                                    # RQ-CONSTRAINT-AUDIT-1: a manual hold stays sticky; an autobackoff hold is hard-down.
-                                   ({'held': True, 'held_by': 'manual'}, 'codex-cmp'),
-                                   ({'held': False, 'held_by': 'autobackoff'}, 'codex-cmp'),
+                                   ({'held': True, 'held_by': 'manual'}, 'codex-personal'),
+                                   ({'held': False, 'held_by': 'autobackoff'}, 'codex-personal'),
                                    ({'held': True, 'held_by': 'autobackoff',
                                      'held_until': '2999-01-01T00:00:00+00:00'}, 'claude'),
                                    ({'held': True, 'held_reason': 'credits exhausted (RQ-X)'}, 'claude'),
                                    ({'quota': 0}, 'claude'),
                                    ({'auth_failed': True}, 'claude')]:
-            state = {'job': {'pool': 'codex-cmp', 'decided_at': time.time(), 'moves': []}}
+            state = {'job': {'pool': 'codex-personal', 'decided_at': time.time(), 'moves': []}}
             (q / 'route-state.json').write_text(json.dumps(state))
-            (q / 'slots.json').write_text(json.dumps({'codex-cmp': evidence}))
+            (q / 'slots.json').write_text(json.dumps({'codex-personal': evidence}))
             (q / 'ready.tsv').write_text('job\tphantom\tclaude\twork\tunused\n')
             tick(tmp.name).check_returncode()
             self.assertEqual(json.loads((q / 'route-state.json').read_text())['job']['pool'], expected)
         # An operator HOLD-list entry is never routed around, even when the lane is also backed off.
-        (q.parent / 'HOLD').write_text('codex-cmp\n')
-        state = {'job': {'pool': 'codex-cmp', 'decided_at': time.time(), 'moves': []}}
+        (q.parent / 'HOLD').write_text('codex-personal\n')
+        state = {'job': {'pool': 'codex-personal', 'decided_at': time.time(), 'moves': []}}
         (q / 'route-state.json').write_text(json.dumps(state))
-        (q / 'slots.json').write_text(json.dumps({'codex-cmp': {'held': True, 'held_by': 'autobackoff',
+        (q / 'slots.json').write_text(json.dumps({'codex-personal': {'held': True, 'held_by': 'autobackoff',
                                                                 'held_until': '2999-01-01T00:00:00+00:00'}}))
         (q / 'ready.tsv').write_text('job\tphantom\tclaude\twork\tunused\n')
         tick(tmp.name).check_returncode()
-        self.assertEqual(json.loads((q / 'route-state.json').read_text())['job']['pool'], 'codex-cmp')
+        self.assertEqual(json.loads((q / 'route-state.json').read_text())['job']['pool'], 'codex-personal')
         (q.parent / 'HOLD').unlink()
         (q / 'route-state.json').write_text('{broken')
         self.assertEqual(tick(tmp.name).returncode, 1)

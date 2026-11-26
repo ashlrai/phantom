@@ -190,6 +190,7 @@ export interface UnfedRejections {
 export interface UnfedReport {
   schema: typeof FLEET_UNFED_SCHEMA;
   readOnly: true;
+  resourcePlan?: { lane: string; running: number | null; target: number | null; unfedSlots: number | null }[] | null;
   /**
    * `dispatcher`: the tick's own verdict from status.json, with reason codes.
    * `derived`: computed here from lane counts and ready.tsv, because the
@@ -520,13 +521,13 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const prev = latest.get(job);
     if (prev !== undefined && prev.ts >= ts) continue;
+    const preferred = laneField(row.preferred_lane);
+    const chosen = laneField(row.chosen_lane);
     let override: LatestRouteDecision['override'] = null;
-    if (isRecord(row.override)) {
-      const from = row.override.from, to = row.override.to, reason = row.override.reason;
-      if ((from === null || (typeof from === 'string' && LANE.test(from)))
-          && typeof to === 'string' && LANE.test(to)
-          && typeof reason === 'string' && CODE.test(reason)) {
-        override = { from: from as string | null, to, reason };
+    if (preferred !== null && chosen !== null && preferred !== chosen && isRecord(row.override)) {
+      const { from, to, reason } = row.override;
+      if (from === preferred && to === chosen && typeof reason === 'string' && CODE.test(reason)) {
+        override = { from: preferred, to: chosen, reason };
       }
     }
     const workClass = typeof row.work_class === 'string' && MARKET_WORK_CLASSES.has(row.work_class)
@@ -534,8 +535,8 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     latest.set(job, {
       ts,
       override,
-      preferred: laneField(row.preferred_lane),
-      chosen: laneField(row.chosen_lane),
+      preferred,
+      chosen,
       workClass,
       rejected: rejectedLanes(row.rejected_lanes),
     });
@@ -616,6 +617,7 @@ export function foldClaimOverrides(
     // malformed lane_hint means the pair cannot be named honestly.
     const hint = row.lane_hint;
     if (hint !== null && (typeof hint !== 'string' || !LANE.test(hint))) continue;
+    if (hint === lane) continue;
     tally.overridden++;
     if (tally.byReason[reason] !== undefined || Object.keys(tally.byReason).length < MAX_CODES) {
       tally.byReason[reason] = (tally.byReason[reason] ?? 0) + 1;
@@ -785,6 +787,10 @@ export function renderUnfed(report: UnfedReport): string[] {
     const use = r.utilization === null ? 'no target' : `${Math.round(r.utilization * 100)}%`;
     const state = r.held ? '  HELD' : r.unfed ? `  UNFED: ${r.headroom} free, ${r.waitingElsewhere} rows waiting elsewhere${Object.keys(r.blocked).length ? ` (${topCodes(r.blocked)})` : ''}` : '';
     lines.push(`${r.lane}  ${r.running}/${r.target} running (${use}), ${r.readyHinted} hinted here${state}`);
+  }
+  for (const lane of report.resourcePlan ?? []) {
+    if (lane.target === null) continue;
+    lines.push(`plan ${lane.lane}: ${lane.running ?? 'unknown'}/${lane.target ?? 'unknown'} running, ${lane.unfedSlots ?? 'unknown'} unfilled plan slots with waiting work`);
   }
   if (report.resources.length === 0) lines.push('No lanes in queue/status.json.');
   lines.push(report.unfedLanes.length === 0

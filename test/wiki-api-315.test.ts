@@ -17,6 +17,7 @@ import { createWikiApi, DEFAULT_WIKI_API_DEPS, type WikiApiDeps } from '../src/c
 import { askWiki, buildWiki, wikiKey } from '../src/core/knowledge/wiki/index.js';
 import { classifyRemoteRoute } from '../src/core/web/remote-gateway-policy.js';
 import { startWikiJob } from '../src/core/knowledge/wiki/jobs.js';
+import { querySystemMap } from '../src/core/knowledge/wiki/system-map.js';
 import type { WikiJob } from '../src/core/knowledge/wiki/jobs.js';
 import type { WikiAskResult, WikiGraphView, WikiPageView, WikiRepoView, WikiReposView } from '../src/core/knowledge/wiki/types.js';
 
@@ -165,6 +166,34 @@ describe('/api/verse/wiki', () => {
     repo.unenroll();
     expect((await get(`/api/verse/wiki/repo/${key}/graph`)).status).toBe(404);
     expect((await post('/api/verse/wiki/open', { repoKey: key, ...edge!.citations![0] })).status).toBe(409);
+  });
+
+  it('keeps ecosystem scope local and rejects extra GET parameters', async () => {
+    const route = '/api/verse/wiki/ecosystem';
+    expect(classifyRemoteRoute('GET', route)).toEqual({ kind: 'deny' });
+    expect((await get(route + '?repo=acme/notes')).status).toBe(400);
+    expect((await post(route, {})).status).toBe(404);
+    expect(await (await get(route)).json()).toMatchObject({ status: 'unavailable', repos: [], edges: [] });
+  });
+
+  it('serves the pinned graph by enrolled key and exact focus, without reading the worktree', async () => {
+    const route = `/api/verse/wiki/repo/${wikiKey(repo.dir)}/system-map`;
+    repo.writeFile('src/server.ts', 'export const dirty = true;\n');
+    const res = await get(`${route}?focus=file%3Asrc%2Fserver.ts`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    const graph = await res.json();
+    const expected = await querySystemMap(repo.dir, 'file:src/server.ts');
+    expect(graph).toEqual({ ...expected, update: { mode: 'cold', blobsRead: 2, filesParsed: 2 } });
+    expect(graph.nodes).toContainEqual(expect.objectContaining({ label: 'handle', anchor: { file: 'src/server.ts', line: 2, commit: graph.commit } }));
+    expect(JSON.stringify(graph)).not.toContain('dirty');
+    expect(classifyRemoteRoute('GET', route)).toEqual({ kind: 'deny' });
+    for (const query of ['?path=/etc/passwd', '?focus=', '?focus=a&focus=b', `?focus=${'a'.repeat(1201)}`]) {
+      expect((await get(route + query)).status).toBe(400);
+    }
+    expect((await post(route, {})).status).toBe(404);
+    repo.unenroll();
+    expect((await get(route)).status).toBe(404);
   });
 
   it('serves page markdown with cited links and no secrets', async () => {

@@ -1,19 +1,21 @@
 import type { Writable } from 'node:stream';
 import { getDesktopUpdateTrust } from '../core/desktop/update-trust.js';
-import { applyQualifiedDesktopUpdate, createDesktopUpdateDependencies, inspectQualifiedDesktopUpdate, readQualifiedDesktopUpdateResult,
+import { applyQualifiedDesktopUpdate, createDesktopUpdateDependencies, inspectQualifiedDesktopUpdate, prepareQualifiedDesktopUpdate, readQualifiedDesktopUpdateResult,
   type DesktopUpdateDependencies, type DesktopUpdateResult } from '../core/desktop/qualified-update.js';
 
-const USAGE = `usage: phm desktop-update inspect|apply --stage <32 lowercase hex> --json
+const USAGE = `usage: phm desktop-update inspect|prepare|apply --stage <32 lowercase hex> --json
 
-Inspect a publisher-signed app/CLI stage or apply it after verified native
-exit and prior Stop/drain. No URL, path, shell, credential operation, Stop
-release or resident restart is accepted. Authority approval remains separate.
+Inspect a publisher-signed app/CLI stage, verify both downloads before Stop
+with prepare, or apply after verified native exit and prior Stop/drain.
+No URL, path, shell, credential operation, Stop release or resident restart
+is accepted. Authority approval remains separate.
 `;
-export function parseDesktopUpdateArgs(args: string[]): {verb: 'inspect'|'apply'; stage: string} | null {
+export function parseDesktopUpdateArgs(args: string[]): {verb: 'inspect'|'prepare'|'apply'; stage: string} | null {
   if (!args.length || args.length === 1 && ['help', '--help', '-h'].includes(args[0]!)) return null;
-  if (args.length !== 4 || !['inspect', 'apply'].includes(args[0]!) || args[1] !== '--stage' ||
+  const verb = args[0];
+  if (args.length !== 4 || (verb !== 'inspect' && verb !== 'prepare' && verb !== 'apply') || args[1] !== '--stage' ||
       !/^[a-f0-9]{32}$/.test(args[2]!) || args[3] !== '--json') throw new Error('Invalid desktop-update arguments');
-  return {verb: args[0] as 'inspect'|'apply', stage: args[2]!};
+  return {verb, stage: args[2]!};
 }
 const closedOutput = (error: unknown) => ['EPIPE', 'ERR_STREAM_DESTROYED', 'ERR_STREAM_WRITE_AFTER_END'].includes((error as NodeJS.ErrnoException)?.code ?? '');
 /** Only the native-update JSON channel owns this listener; no global IO errors are ignored. */
@@ -46,6 +48,8 @@ export async function cmdDesktopUpdate(args: string[], dependencies?: DesktopUpd
     if (options.verb === 'inspect') {
       observed = inspectQualifiedDesktopUpdate(options.stage, deps);
       if (observed.reason === 'update-attempt-already-recorded') observed = await readQualifiedDesktopUpdateResult(options.stage, deps);
+    } else if (options.verb === 'prepare') {
+      observed = await prepareQualifiedDesktopUpdate(options.stage, deps);
     } else observed = await applyQualifiedDesktopUpdate(options.stage, deps, undefined, output);
     // Apply already fsynced its durable result. Normal native exit closes this
     // pipe; that expected output failure must not erase a completed transaction.

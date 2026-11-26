@@ -8,6 +8,16 @@ afterEach(cleanup);
 const svgOf = (c: HTMLElement) => c.querySelector('svg')!;
 
 describe('BrandMark', () => {
+  it('uses only a bounded embedded PNG override and otherwise uses the registered brand', () => {
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jz1kAAAAASUVORK5CYII=';
+    const { container, rerender } = render(<BrandMark brand="OpenAI" logo={png} />);
+    expect(svgOf(container).querySelector('image')?.getAttribute('href')).toBe(png);
+    for (const logo of ['https://example.com/logo.png', 'data:image/svg+xml;base64,AAAA']) {
+      rerender(<BrandMark brand="OpenAI" logo={logo} />);
+      expect(svgOf(container).getAttribute('data-provider')).toBe('codex');
+      expect(svgOf(container).querySelector('image')).toBeNull();
+    }
+  });
   it('draws a real logo for every registered brand, in currentColor unless it has a brand hue', () => {
     for (const id of BRAND_IDS) {
       const { container, unmount } = render(<BrandMark brand={id} />);

@@ -18,8 +18,10 @@ flash lane dispatch and paid/overage guards; this older candidate has no flash
 dispatch branch. Host adoption needs a Security pin.
 
 `restock.py` claims eligible `READY` lines from `router-queue.md` into lane
-prompts (`ready.tsv`/`claimed.tsv`) for the fleet allowlist repos only, keeping
-the READY stock at >=30% `bet=bold` and parking security-pinned surfaces as
+prompts (`ready.tsv`/`claimed.tsv`) for AshlrAI checkouts in the effective signed
+rollout scope. It reads `phm authority status --json` each pass. Missing,
+paused, or unreadable policy blocks new claims and parked-row recovery. It keeps
+the READY stock at >=30% `bet=bold` and parks security-pinned surfaces as
 `HOLD-SECURITY`. Lines whose `after=` dependencies are not yet landed are written
 as `PARKED-DEP.<lane>` rows with a `DEPENDENCY GATE:` id list in the prompt
 (RQ-QUEUE-AUTOUNPARK-1). Each restock tick re-reads those prompts; when
@@ -334,13 +336,13 @@ lines that miss the end-of-tick `ready.tsv` write (lock busy) are carried in
 as `queue/batches/<batch>.notes.md` before the worktree is removed. A line runs in at
 most 2 bundles (`<job>.batch-attempts`) and then only solo.
 
-Model mix (`batch-sessions.json`, subscriptions only): Claude lines get Sonnet
-subagents, and Opus for `tier=frontier` or hard markers (architecture, migration,
-concurrency, security and similar). The Claude bundle session itself runs at `work`
+Model mix (`batch-sessions.json`, subscriptions only): Claude lines get Opus for
+work/frontier, Sonnet for mid, and Haiku for fast. Hard markers (architecture, migration,
+concurrency, security and similar) still select Opus. The Claude bundle session itself runs at `work`
 tier. Fable is never assigned here; the broker's `fable-share` keeps its benchmarked
-share. Codex lanes run `gpt-6.2-astra` for `frontier` and `gpt-6.2-sol` for all
-lower tiers. The `models.codex.frontier` override falls back to `models.codex.default`
-when absent; older configs with only `default` still apply it to every tier.
+share. Codex lanes run `gpt-6.2-astra` for `frontier`, `gpt-6-luna` for
+`fast`, and `gpt-6.2-sol` otherwise. Configs with only `models.codex.default`
+still apply it to every tier.
 Devin runs the free `swe-2-flash`. With the
 file installed, Devin keeps only lines from `eligible_repos` declaring `size<=100`
 or less; the rest log `DEVIN_ROUTE <job> repo-not-eligible|size-not-sm -> <lane>`
@@ -377,9 +379,9 @@ branches.
 differ, copying each replaced file to `<file>.bak-macdispatch-<YYYYmmdd-HHMMSS>`
 first. It prints the new sha256 of every file for Security to pin, refuses symlink
 destinations, never creates the target directory, and touches nothing else. It does
-not install `launch.sh` (a pinned, host-managed file): add the line
-`. "${ASHLR_RUNS_BIN:-$HOME/.ashlr-runs/bin}/launch-gate.sh"` to it before the agent
-starts. **Do not run it against the live directory until Security has reviewed
+not replace `launch.sh` unless Security explicitly approves the candidate digest
+and passes `--launcher-pin SHA256`. Dry-run previews the historical candidate, not
+the live review snapshot. **Do not run it against the live directory until Security has reviewed
 `install.sh` and `dispatchd.py` and updated the pins (G1-CODE-PIN, `GS_SHA`).**
 
 ```sh
@@ -389,15 +391,15 @@ contrib/mac/install.sh                    # install with timestamped backups
 contrib/mac/install.sh --json             # same, one JSON object (schema macdispatch.install.v1)
 ```
 
-`install.sh` covers the dispatcher lane only. [fleet/sync.py](../../fleet/README.md)
+`install.sh` covers dispatcher and explicitly pinned launcher adoption only. [fleet/sync.py](../../fleet/README.md)
 is the manifest-driven generalization for all `~/.ashlr-runs/bin` machinery —
 same diff/backup/sha-verify semantics plus rollback, pinned-file drift reports
 and an unmanaged-file sweep; it is the adoption path once Security re-reviews
 the installer.
 
 Afterwards `shasum -a 256 contrib/mac/dispatchd.py ~/.ashlr-runs/bin/dispatchd.py`
-prints the same digest twice, and a second `install.sh` run reports every file
-`unchanged`.
+prints the same digest twice. A second `install.sh` run reports unchanged
+dispatcher files and leaves any unapproved launcher change held.
 
 Fixture tests run both scripts against a synthetic `~/.ashlr-runs` under a
 temporary HOME and never touch the live queue:
@@ -523,8 +525,14 @@ handler, after releasing the worktree lease and leaving its cwd, invoke:
 "$BRIDGE_DIR/wt-prune.sh" --event WT_REMOVED
 ```
 
-This sweeps remaining finished and kept worktrees. An optional absolute path
-restricts the sweep to one worktree:
+This sweeps remaining idle worktrees. Discovery only probes for `.git` at
+direct bridge worktrees and under `~/.ashlr-runs/wt/<job>`; it never descends
+through other run-state directories looking for repositories. For the fleet
+`wt/` layout, the sweep also needs the current `phm disk-maint` classifier
+(with split reap/protect reasons) on its PATH. It reads one dry-run plan per
+sweep, leaves reapable worktrees to disk-maint, and preserves all worktrees if
+the plan is unavailable or incomplete. Artifact safety checks still apply.
+An optional absolute path restricts the sweep to one worktree:
 
 ```sh
 "$BRIDGE_DIR/wt-prune.sh" --event WT_REMOVED "$REMOVED_WORKTREE"

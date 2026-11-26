@@ -178,12 +178,21 @@ function printResourcesHelp(): void {
   console.log(`    ${cyan('phm resources')}          ${dim('table view of availability/used%/cap/resets')}`);
   console.log(`    ${cyan('phm resources --json')}   ${dim('raw JSON (ResourceSnapshot)')}`);
   console.log(`    ${cyan('phm resources --ledger --json')} ${dim('remaining quota, burn, exhaustion and observed final-hour usage by pool/bucket')}`);
+  console.log(`    ${cyan('phm resources plan --json')} ${dim('compute-constrained concurrency and waste at quota deadlines')}`);
   console.log(`    ${cyan('phm resources autopilot --json')} ${dim('read-only lane targets from disk, inode and credit readings')}`);
   console.log(`    ${cyan('phm resources --watch')}  ${dim('refresh every 30s (Ctrl-C to stop)')}`);
   console.log('');
 }
 
 export async function cmdResources(args: string[]): Promise<number> {
+  if (args[0] === 'evidence') {
+    const { cmdResourcesEvidence } = await import('./resources-evidence.js');
+    return cmdResourcesEvidence(args.slice(1));
+  }
+  if (args[0] === 'plan') {
+    const { cmdResourcesPlan } = await import('./resources-plan.js');
+    return cmdResourcesPlan(args.slice(1));
+  }
   if (args[0] === 'stale') {
     const { cmdResourceStale } = await import('./resource-stale.js');
     return cmdResourceStale(args.slice(1));
@@ -298,11 +307,21 @@ export async function cmdResources(args: string[]): Promise<number> {
       console.log(JSON.stringify(await getResourceLedger(cfg), null, 2));
       return;
     }
-    const snapshot = await getResourceSnapshot(cfg);
+    const [{ readBankedResets, codexResetBankUpgradeHint }, { defaultResourceLiveRunsDir }] = await Promise.all([
+      import('../core/usage/resource-live/banked-resets.js'), import('../core/usage/resource-live/feed.js'),
+    ]);
+    const [snapshot, resetBank] = await Promise.all([
+      getResourceSnapshot(cfg), readBankedResets(defaultResourceLiveRunsDir(), Date.now()).catch(() => null),
+    ]);
+    const resetReason = resetBank?.unknown_reason;
+    const resetHint = codexResetBankUpgradeHint(resetReason);
     if (jsonMode) {
-      console.log(JSON.stringify(snapshot, null, 2));
+      console.log(JSON.stringify(resetReason ? { ...snapshot, codex_reset_bank: {
+        count: null, unknown_reason: resetReason, ...(resetHint ? { hint: resetHint } : {}),
+      } } : snapshot, null, 2));
     } else {
       printSnapshot(snapshot);
+      if (resetReason) console.log(`  Codex reset bank: unknown (${resetReason})${resetHint ? `. ${resetHint}` : ''}`);
     }
   }
 

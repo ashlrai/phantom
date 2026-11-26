@@ -162,6 +162,10 @@ function safePrefix(p: string): string | null {
   return norm;
 }
 
+export function wikiIgnorePaths(value: unknown): string[] {
+  return stringList(asRecord(value)?.['ignorePaths']).map(safePrefix).filter((p): p is string => p !== null);
+}
+
 /**
  * Read steering for `repo`. Never throws; malformed files are ignored (a broken
  * wiki.json must not stop the wiki — it just stops steering it).
@@ -196,7 +200,7 @@ export async function readWikiSteering(repo: string): Promise<WikiSteering> {
     exclude: stringList(a['exclude']),
     focus: stringList(a['focus'], 12),
     notes: [...noteList(a['notes']), ...noteList(d['repo_notes'])].slice(0, MAX_NOTES),
-    ignorePaths: stringList(a['ignorePaths']).map(safePrefix).filter((p): p is string => p !== null),
+    ignorePaths: wikiIgnorePaths(a),
     pages: [...ashlrPages, ...devinPages].slice(0, MAX_CUSTOM_PAGES),
     ...(maxPages !== undefined ? { maxPages } : {}),
     localOnly: a['localOnly'] === true,

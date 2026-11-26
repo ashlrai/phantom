@@ -163,11 +163,11 @@ describe('parseReadyTsv', () => {
     expect(dropped).toBe(2);
     expect(invalid).toBe(2);
     expect(unhinted).toBe(2);
-    // Lane-open rows keep their validated id and repo for supply counts; the
+    // Lane-open rows keep their validated id, repo and tier for supply counts; the
     // row that resolved a preferred_lane and the invalid rows are not among them.
     expect(unhintedRows).toEqual([
-      { id: 'RQ-OPEN-A', repo: 'phantom' },
-      { id: 'RQ-OPEN-B', repo: 'ashlrai/phantom' },
+      { id: 'RQ-OPEN-A', repo: 'phantom', tier: 'work' },
+      { id: 'RQ-OPEN-B', repo: 'ashlrai/phantom', tier: 'mid' },
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: 'RQ-OPEN-C', status: 'READY', pool: 'claude', tier: 'frontier', repo: 'phantom' });
@@ -190,7 +190,7 @@ describe('parseReadyTsv', () => {
     expect(dropped).toBe(2);
     expect(invalid).toBe(2);
     expect(unhinted).toBe(1);
-    expect(unhintedRows).toEqual([{ id: 'RQ-SPEC-B', repo: 'phantom' }]);
+    expect(unhintedRows).toEqual([{ id: 'RQ-SPEC-B', repo: 'phantom', tier: 'work' }]);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ id: 'RQ-SPEC-A', status: 'READY', pool: 'claude', tier: 'work', repo: 'phantom' });
     expect(rows[1]).toMatchObject({ id: 'RQ-SPEC-C', status: 'READY', pool: 'devin', tier: 'work', repo: 'phantom' });
@@ -315,6 +315,9 @@ describe('getFleetLaneSnapshot (fixture)', () => {
       { jobId: 'closed', pool: 'codex-personal', outcome: 'CLOSED', prUrl: url(7), ts: '2026-10-29T04:59:00Z' },
       { job: 'legacy', pool: 'codex-personal', to: 'LAND', at: '2026-10-29T04:45:00Z' },
       { job: 'legacy', pool: 'codex-personal', event: 'pr-merge', at: '2026-10-29T04:45:00Z' },
+      { job: 'late-write', pool: 'devin', outcome: 'MERGED', ts: '2026-10-29T05:05:00Z', mergedAt: '2026-10-29T04:50:00Z' },
+      { job: 'backfill', pool: 'claude', outcome: 'MERGED', ts: '2026-10-29T04:55:00Z', mergedAt: '2026-10-29T03:50:00Z' },
+      { job: 'bad-merge-time', pool: 'devin', outcome: 'MERGED', ts: '2026-10-29T04:56:00Z', mergedAt: 'invalid' },
     ];
     await writeFile(join(dir, 'jobs.jsonl'), rows.map(row => JSON.stringify(row)).join('\n'));
     await writeFile(join(dir, 'ready.tsv'), [
@@ -327,6 +330,8 @@ describe('getFleetLaneSnapshot (fixture)', () => {
       now: () => new Date('2026-10-29T05:00:00Z'),
     });
     expect(snapshot.lanes.find(l => l.lane === 'codex-personal')!.mergesPerHour).toBe(5);
+    expect(snapshot.lanes.find(l => l.lane === 'devin')!.mergesPerHour).toBe(2);
+    expect(snapshot.lanes.find(l => l.lane === 'claude')!.mergesPerHour).toBe(0);
   });
 
   it('finds recent event timestamps before a large backfilled ledger tail', async () => {
@@ -364,8 +369,8 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(codex.queueDepth).toBe(1);
     expect(codex.liveJobs).toBe(1);            // RQ-FIXTURE-008 PR-OPEN
     expect(codex.mergesPerHour).toBe(1);       // RQ-FIXTURE-008 → LAND at 01:40
-    expect(codex.credit.label).toBe('64% weekly · 3 credits');
-    expect(codex.credit.remainingPct).toBe(64);
+    expect(codex.credit.label).toBe('unknown');
+    expect(codex.credit.remainingPct).toBeNull();
 
     const local = byLane.get('local-omlx')!;
     expect(local.liveJobs).toBe(1);            // RQ-FIXTURE-009 CLAIMED
@@ -550,7 +555,7 @@ describe('formatFleetLanes', () => {
     expect(out).toContain('merges/h');
     expect(out).toContain('devin');
     expect(out).toContain('12.5 ACU');
-    expect(out).toContain('64% weekly · 3 credits');
+    expect(out).not.toContain('64% weekly · 3 credits');
     expect(out).toContain('sources: ready.tsv healthy (6 rows)');
     expect(out).not.toContain('\x1b[');
   });

@@ -32,7 +32,6 @@ export const FLEET_SCHEMA = 'fleet.v1';
 // ---------------------------------------------------------------------------
 
 export const ROSTER_POOL_IDS = [
-  'codex-cmp',
   'codex-personal',
   'claude-max',
   'devin',
@@ -45,15 +44,13 @@ export type RosterPoolId = (typeof ROSTER_POOL_IDS)[number];
 
 /** Scheduler aliases fleet.v1 maps onto canonical pools. */
 const POOL_ALIASES: Readonly<Record<string, RosterPoolId>> = {
-  'codex-primary': 'codex-cmp',
   'codex-secondary': 'codex-personal',
   claude: 'claude-max',
   local: 'omlx',
 };
 
 export const POOL_LABELS: Readonly<Record<RosterPoolId, string>> = {
-  'codex-cmp': 'Codex (primary)',
-  'codex-personal': 'Codex (secondary)',
+  'codex-personal': 'Codex personal',
   'claude-max': 'Claude Max',
   devin: 'Devin',
   'grok-ultra-weekly': 'Grok Ultra',
@@ -64,7 +61,6 @@ export const POOL_LABELS: Readonly<Record<RosterPoolId, string>> = {
 
 /** The default team an agent lands in, by pool. */
 const POOL_TEAMS: Readonly<Record<RosterPoolId, string>> = {
-  'codex-cmp': 'Codex',
   'codex-personal': 'Codex',
   'claude-max': 'Claude',
   devin: 'Devin',

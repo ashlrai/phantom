@@ -36,6 +36,7 @@
  * refreshed OFF the caller's stack, so C1's activity route never waits on I/O.
  */
 import { setWebsiteMode, websiteStatus } from '../website/host-release.js';
+import { canWriteStandingGrantHere } from '../drive/nodes/pool-host.js';
 import { lstatSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -635,21 +636,11 @@ async function draftRepos(): Promise<DraftRepoInput[]> {
   return out;
 }
 
-/** Seats from A9's capacity snapshot; engine-level defaults when none was published yet. */
+/** The current resource roster, not the last published capacity snapshot. */
 async function draftSeats(): Promise<DraftSeatInput[]> {
-  try {
-    const { readCapacitySnapshot } = await import('../routing/budget-store.js');
-    const snapshot = readCapacitySnapshot();
-    if (snapshot && snapshot.seats.length > 0) return snapshot.seats.map((seat) => ({ seatId: seat.seatId, engine: seat.engine }));
-  } catch {
-    // fall through to defaults
-  }
-  return [
-    { seatId: 'claude', engine: 'claude' },
-    { seatId: 'grok', engine: 'grok' },
-    { seatId: 'codex', engine: 'codex' },
-    { seatId: 'local', engine: 'local' },
-  ];
+  const [{ loadConfigReadOnly }, { discoverSeats }] = await Promise.all([import('../config.js'), import('./seats.js')]);
+  const { seats } = await discoverSeats(loadConfigReadOnly());
+  return seats.map((seat) => ({ seatId: seat.id, engine: seat.engine }));
 }
 
 /**
@@ -754,7 +745,7 @@ export async function buildStandingGrantDraft(
     authoritySurfaceDigest: surface.digest,
   };
   let payload: StandingGrantV1;
-  const devin = await (opts.devin ?? devinDraftChoice)();
+  const [devin, seats] = await Promise.all([(opts.devin ?? devinDraftChoice)(), draftSeats()]);
   // Server enforcement only where GitHub enforces required checks today
   // (authority/server-enforcement.ts): a re-approval switches a `server` repo
   // GitHub cannot protect to `local`; a new grant names `server` only for
@@ -769,6 +760,7 @@ export async function buildStandingGrantDraft(
     payload = buildReapprovalGrantPayload(installed.envelope.payload, position, {
       ...base,
       serverEnforcement,
+      seats,
       devin: devin.include,
       ...(opts.eliteDirect === true ? { eliteDirect: true } : {}),
     });
@@ -778,7 +770,7 @@ export async function buildStandingGrantDraft(
     payload = buildDefaultGrantPayload({
       ...base,
       repos: repos.map((repo) => ({ ...repo, serverEnforcement: probes.get(repo.nameWithOwner.toLowerCase())?.state ?? null })),
-      seats: await draftSeats(),
+      seats,
       devin: devin.include,
       eliteDirect: opts.eliteDirect === true,
     });
@@ -856,6 +848,9 @@ export async function applyAuthorityAction(body: Record<string, unknown>): Promi
   const allowed = ACTION_KEYS[action]!;
   for (const key of Object.keys(body)) {
     if (!allowed.includes(key)) return { ok: false, status: 400, code: 'VERSE_INVALID', error: `unknown key for ${action}: ${key}` };
+  }
+  if ((action === 'grant' || action === 're-approve' || action === 'revoke') && !canWriteStandingGrantHere()) {
+    return { ok: false, status: 403, code: 'grant-leader-only', error: 'Manage signed grants on the leader, not a worker.' };
   }
   switch (action) {
     case 'website-mode': {

@@ -20,8 +20,8 @@ const session = (job: string, lane: string, extra: object = {}) => ({ job, lane,
   elapsedSeconds: 600, startedAt: '2026-11-17T11:50:00Z', live: 'yes', ...extra });
 const lane = (name: string, running: number, target: number, extra: object = {}) => ({ lane: name, running, target, queued: 0, held: false, heldReason: null, ...extra });
 /** The tree exactly as `phm org --json` prints it: built by the core builder, then sent as JSON. */
-function tree(sessions: object[] | null, lanes: object[] | null): FleetOrgTree {
-  const map = fleetOrgMap(null, { now: NOW, sessions: sessions && { generatedAt: AT, sourceState: 'healthy', truncated: false, recent: [], sessions } as unknown as FleetSessionsV1 });
+function tree(sessions: object[] | null, lanes: Array<{ lane: string }> | null, observedLanes = lanes?.map(row => row.lane)): FleetOrgTree {
+  const map = fleetOrgMap(null, { now: NOW, observedLanes, sessions: sessions && { generatedAt: AT, sourceState: 'healthy', truncated: false, recent: [], sessions } as unknown as FleetSessionsV1 });
   return JSON.parse(JSON.stringify(fleetOrgTree(map, {
     runs: lanes && { lanes, events: [{ at: '2026-11-17T11:57:00Z', kind: 'LEADER', text: 'planned' }], lastTick: AT, paused: false, sources: { status: 'healthy', events: 'healthy' } } as unknown as FleetRunsDirState,
     usage: { asOf: AT, sources: { status: 'healthy' }, lanes: [{ lane: 'claude', usedPct: 41.6, resetAt: null }] } as unknown as ResourceLedgerV1,
@@ -64,7 +64,7 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('Org tree at %s', (_na
     expect(screen.queryByRole('button', { name: 'Open job RQ-CLOUD' })).toBeNull();
     // One column of rows at every width: no table and no sideways layout to break on a phone.
     expect(container.querySelector('table')).toBeNull();
-    expect(screen.getAllByRole('button', { expanded: false }).length).toBeGreaterThan(5);
+    expect(screen.getAllByRole('button', { expanded: false })).toHaveLength(2);
   });
 
   it('expands a lane, shows a published job as done and opens the existing job detail in one click', () => {
@@ -89,7 +89,7 @@ it('shows an empty fleet as idle and an unread fleet as unknown, never as zero',
   render(<OrgTreeView tree={tree([], [lane('claude', 0, 8)])} now={NOW} />);
   expect(screen.getByText('No jobs running')).toBeTruthy(); expect(head('claude')).toHaveTextContent('Idle'); expect(head('claude')).toHaveTextContent('0 of 8 running');
   cleanup();
-  render(<OrgTreeView tree={tree(null, null)} now={NOW} />);
+  render(<OrgTreeView tree={tree(null, null, ['grok'])} now={NOW} />);
   expect(screen.getByText('Leader (CEO)').parentElement).toHaveTextContent('Unknown');
   expect(head('grok')).toHaveTextContent('Unknown'); expect(head('grok')).toHaveTextContent('unknown of unknown running · pool use unknown');
   fireEvent.click(head('grok')); expect(head('grok').closest('li')).toHaveTextContent('Jobs unknown.');

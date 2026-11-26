@@ -1,11 +1,13 @@
 /** Pure operator binding schema; no transport, process, account or default-config imports. */
 import { isAbsolute } from 'node:path';
 import { normalizeNumericLoopbackOllamaBaseUrl } from '../run/ollama-identity.js';
+import { isResourceBridgeLane } from './pool-bridge-evidence.js';
 import { validateResourcePool, type ResourcePool, type ResourceWorker } from './pool-policy.js';
 
 export type ResourceBinding =
   | { workerId: string; capacityKey: string; kind: 'native-cli'; command: string[] }
-  | { workerId: string; capacityKey: string; kind: 'local-chat'; endpoint: string };
+  | { workerId: string; capacityKey: string; kind: 'local-chat'; endpoint: string }
+  | { workerId: string; capacityKey: string; kind: 'mac-bridge' };
 const IDENTIFIER = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -37,12 +39,13 @@ export function validateResourceBindings(value: unknown, pool: ResourcePool): Re
   const definition = validateResourcePool(pool);
   if (!array(value, 1, definition.workers.length) || value.length !== definition.workers.length) throw new Error('Invalid resource bindings');
   const workers = new Map(definition.workers.map((worker) => [worker.id, worker]));
-  const seen = new Set<string>(); const capacities = new Map<string, ResourceWorker>();
+  const seen = new Set<string>(); const capacities = new Map<string, ResourceWorker>(); const bridgeAccounts = new Map<string, string>();
   const result: ResourceBinding[] = [];
   for (const row of value) {
     const kind = object(row) ? Object.getOwnPropertyDescriptor(row, 'kind')?.value : undefined;
     if (!object(row) || !exact(row, kind === 'native-cli'
-      ? ['workerId', 'capacityKey', 'kind', 'command'] : ['workerId', 'capacityKey', 'kind', 'endpoint']) ||
+      ? ['workerId', 'capacityKey', 'kind', 'command'] : kind === 'mac-bridge'
+        ? ['workerId', 'capacityKey', 'kind'] : ['workerId', 'capacityKey', 'kind', 'endpoint']) ||
         !identifier(row.workerId) || !identifier(row.capacityKey) || seen.has(row.workerId)) {
       throw new Error('Invalid resource bindings');
     }
@@ -52,7 +55,17 @@ export function validateResourceBindings(value: unknown, pool: ResourcePool): Re
       throw new Error('Invalid resource bindings: shared capacity requires consistent provider and task bounds');
     }
     let binding: ResourceBinding;
-    if (row.kind === 'native-cli' && worker.provider !== 'local' && array(row.command, 1, 32) &&
+    if (row.kind === 'mac-bridge' && isResourceBridgeLane(worker.provider) && worker.bridge) {
+      const identity = `${worker.provider}:${worker.bridge.accountDigest}`;
+      const previous = bridgeAccounts.get(identity);
+      if (previous !== undefined && previous !== row.capacityKey ||
+        shared && (shared.bridge?.accountDigest !== worker.bridge.accountDigest ||
+          shared.bridge?.executableSha256 !== worker.bridge.executableSha256)) {
+        throw new Error('Invalid resource bindings: bridge account aliases must share one pinned capacity');
+      }
+      bridgeAccounts.set(identity, row.capacityKey);
+      binding = { workerId: worker.id, capacityKey: row.capacityKey, kind: 'mac-bridge' };
+    } else if (row.kind === 'native-cli' && (worker.provider === 'codex' || worker.provider === 'claude') && array(row.command, 1, 32) &&
         row.command.every((arg) => text(arg, 4_096)) && isAbsolute(row.command[0] as string) &&
         row.command.reduce((bytes, arg) => bytes + Buffer.byteLength(arg as string, 'utf8'), 0) <= 16 * 1024) {
       const command = [...row.command] as string[]; Object.freeze(command);

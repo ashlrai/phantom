@@ -25,6 +25,7 @@ export interface DailyJobSpec {
   /** Minute inside the chosen hour; staggers jobs sharing an hour. */
   minute: number;
   weekday?: number;
+  everyHalfHour?: boolean;
   /** Stdout/stderr sink, a file path under the user's own state dir. */
   log: string;
 }
@@ -53,7 +54,7 @@ export function dailyUserSchedule(spec: DailyJobSpec, opts: { phmPath: string; n
 <plist version="1.0"><dict>
   <key>Label</key><string>${spec.label}</string>
   <key>ProgramArguments</key><array>${args.map((a) => `<string>${xml(a)}</string>`).join('')}</array>
-  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${spec.minute}</integer>${spec.weekday === undefined ? '' : `<key>Weekday</key><integer>${spec.weekday}</integer>`}</dict>
+  ${spec.everyHalfHour ? '<key>StartInterval</key><integer>1800</integer>' : `<key>StartCalendarInterval</key><dict><key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${spec.minute}</integer>${spec.weekday === undefined ? '' : `<key>Weekday</key><integer>${spec.weekday}</integer>`}</dict>`}
   <key>StandardOutPath</key><string>${xml(log)}</string>
   <key>StandardErrorPath</key><string>${xml(log)}</string>
   <key>LowPriorityIO</key><true/><key>Nice</key><integer>10</integer>
@@ -72,7 +73,7 @@ export function dailyUserSchedule(spec: DailyJobSpec, opts: { phmPath: string; n
   const output = `append:${log.replace(/%/g, '%%')}`;
   return [
     { path: join(dir, `${spec.fileStem}.service`), contents: `[Unit]\nDescription=${spec.description}\n\n[Service]\nType=oneshot\nNice=10\nIOSchedulingClass=idle\nExecStart=${args.map(q).join(' ')}\nStandardOutput=${output}\nStandardError=${output}\n`, activate: ['systemctl', '--user', 'daemon-reload'] },
-    { path: join(dir, `${spec.fileStem}.timer`), contents: `[Unit]\nDescription=${spec.weekday === undefined ? 'Daily' : 'Weekly'} ${spec.description}\n\n[Timer]\nOnCalendar=${spec.weekday === undefined ? '' : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][spec.weekday] + ' '}*-*-* ${String(hour).padStart(2, '0')}:${String(spec.minute).padStart(2, '0')}:00\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n`, activate: ['systemctl', '--user', 'enable', '--now', `${spec.fileStem}.timer`] },
+    { path: join(dir, `${spec.fileStem}.timer`), contents: `[Unit]\nDescription=${spec.everyHalfHour ? 'Half-hourly' : spec.weekday === undefined ? 'Daily' : 'Weekly'} ${spec.description}\n\n[Timer]\nOnCalendar=${spec.everyHalfHour ? '*-*-* *:00,30:00' : `${spec.weekday === undefined ? '' : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][spec.weekday] + ' '}*-*-* ${String(hour).padStart(2, '0')}:${String(spec.minute).padStart(2, '0')}:00`}\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n`, activate: ['systemctl', '--user', 'enable', '--now', `${spec.fileStem}.timer`] },
   ];
 }
 

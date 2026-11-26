@@ -24,10 +24,10 @@ no docs page names), drops anything `bets check` says already exists, and ranks 
 first, smallest size next. Each row has an `id`, `repo`, `size`, `goal` and an `Acceptance:` line
 (`schema: "bets.propose.v1"`). It is read-only and never writes a queue file.
 
-`ashlr router rank --tier frontier --routes routes.json --slots codex-cmp=2 --json`
+`ashlr router rank --tier frontier --routes routes.json --slots codex-personal=2 --json`
 returns `{schema: "fleet.lane-rank.v1", tier, lanes}` ordered by nearest budget reset.
 `routes.json` maps pool names to existing `routeBackend` decisions, e.g.
-`{"codex-cmp":{"backend":"codex","tier":"frontier","reason":"prior route"}}`.
+`{"codex-personal":{"backend":"codex","tier":"frontier","reason":"prior route"}}`.
 Supply currently free slots; missing routes, slots or usable budgets exclude a lane.
 This reads the pool-budget ledger without writes or reservations. Decisions remain
 advisory: the dispatcher must recheck policy, account admission and capacity.
@@ -388,7 +388,7 @@ labels accessible to processes running as the same OS user, not authenticated
 principals.
 
 ```sh
-phm bus send --from codex-cmp --to fleet --id task-1 --body '{"task":"review"}' --priority P1 --ttl 60000 --json
+phm bus send --from codex-personal --to fleet --id task-1 --body '{"task":"review"}' --priority P1 --ttl 60000 --json
 phm bus inbox --to fleet --limit 100 --json
 phm bus ack task-1 --to fleet --json
 ```
@@ -945,15 +945,15 @@ For more failure modes and their recovery, see
 `phm budget get --json` reads the owner spend budget (`spend.budget.v1`) from the account home. A provider the owner has not named is 0 USD for the month. A stored amount above 0 stays 0 until a Security pin-chain or owner signature root exists in the repo; a ledger note or operator approval does not count. Lowering or zeroing an entry revokes older files. A missing or corrupt file stays 0. `phm budget set --provider claude-api --period month --usd 0 --json` is the explicit owner change from an interactive terminal and appends one audit line. Agent processes and non-TTY calls are refused, and the MCP tool `phantom_spend_budget` can only read. The committed config stays at 0, so pay-per-use lanes stay closed. `phm budget show --json` returns `{ "budgets": ... }`; fleet status includes the
 same `budgets` projection. Its schema is `fleet.budgets.v1`. It is an advisory
 observation ledger, with no dispatch or spending authority. Pools are
-`codex-cmp`, `codex-personal`, `devin`, `claude`, `grok-build`, `local-omlx`, and
+`codex-personal`, `devin`, `claude`, `grok-build`, `local-omlx`, and
 `grok-ultra`. Claude remains `held`; local oMLX reports capacity only.
 
 ```sh
-phm budget add codex-cmp --bucket weeklyPct --remaining 0 --reset-at 2026-11-01T12:00:00Z --json
-phm budget add codex-cmp --bucket credits --remaining 42 --json
+phm budget add codex-personal --bucket weeklyPct --remaining 0 --reset-at 2026-11-01T12:00:00Z --json
+phm budget add codex-personal --bucket credits --remaining 42 --json
 phm budget add devin --bucket acus --remaining 12.5 --json
 phm budget add local-omlx --bucket capacity --remaining 2 --json
-phm budget add codex-cmp --source log --input ./quota.log --json
+phm budget add codex-personal --source log --input ./quota.log --json
 phm budget show --json
 ```
 

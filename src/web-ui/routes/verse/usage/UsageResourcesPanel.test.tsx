@@ -1,6 +1,6 @@
 /**
  * UsageResourcesPanel.test.tsx — RQ-NIGHT-USAGE-1: the desktop "Every
- * resource" grid must render all twelve rows, label a resource with no
+ * resource" grid must render all eleven rows, label a resource with no
  * reader "No reader yet" (never a fake number), and let the existing
  * codex/devin readers feed their rows.
  */
@@ -37,12 +37,12 @@ afterEach(() => {
 });
 
 describe('UsageResourcesPanel', () => {
-  it('renders all twelve rows, in roster order', async () => {
+  it('renders all eleven rows, in roster order', async () => {
     stubResources(wire());
     render(<UsageResourcesPanel />);
     const grid = await screen.findByRole('list');
     const cells = within(grid).getAllByRole('listitem');
-    expect(cells).toHaveLength(12);
+    expect(cells).toHaveLength(11);
     expect(cells.map((cell) => cell.getAttribute('data-resource'))).toEqual(USAGE_RESOURCES.map((r) => r.id));
     for (const { label } of USAGE_RESOURCES) {
       expect(within(grid).getByText(label)).toBeInTheDocument();
@@ -64,17 +64,17 @@ describe('UsageResourcesPanel', () => {
 
   it('lets the codex and devin readers feed their rows', async () => {
     stubResources(wire({
-      'codex-cmp': { state: 'ok', used: 62, limit: 100, unit: 'percent',
+      'codex-personal': { state: 'ok', used: 62, limit: 100, unit: 'percent',
         resetsAt: '2026-11-05T12:00:00.000Z', source: 'codex-session-logs', asOf: '2026-11-02T11:00:00.000Z' },
       devin: { state: 'ok', used: 1240, limit: 2000, unit: 'acu',
         resetsAt: '2026-12-01T00:00:00.000Z', source: 'devin-api-v3-org-cycle', asOf: '2026-11-02T11:59:00.000Z' },
     }));
     render(<UsageResourcesPanel />);
     await screen.findByRole('list');
-    const cmp = document.querySelector('[data-resource="codex-cmp"]') as HTMLElement;
-    expect(within(cmp).getByRole('meter')).toHaveAttribute('aria-valuenow', '62');
-    expect(within(cmp).getByText('62% used')).toBeInTheDocument();
-    expect(within(cmp).getByText('codex-session-logs')).toBeInTheDocument();
+    const personal = document.querySelector('[data-resource="codex-personal"]') as HTMLElement;
+    expect(within(personal).getByRole('meter')).toHaveAttribute('aria-valuenow', '62');
+    expect(within(personal).getByText('62% used')).toBeInTheDocument();
+    expect(within(personal).getByText('codex-session-logs')).toBeInTheDocument();
     const devin = document.querySelector('[data-resource="devin"]') as HTMLElement;
     expect(within(devin).getByText('1,240 of 2,000 ACU')).toBeInTheDocument();
     expect(within(devin).getByText('devin-api-v3-org-cycle')).toBeInTheDocument();

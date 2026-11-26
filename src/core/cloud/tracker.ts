@@ -30,6 +30,7 @@
 import { tmpdir } from 'node:os';
 
 import { FLEET_BRANCH_PREFIX } from '../fleet/host-merge.js';
+import { projectCloudBrainMerge, projectCloudBrainRejection } from '../knowledge/wiki/brain-cloud.js';
 import { defaultGitRunner } from '../verse/git-ops.js';
 import { parseCloudReport } from './delivery-contract.js';
 import { listCloudTasks, readCloudTask, writeCloudTask } from './store.js';
@@ -401,7 +402,18 @@ export async function refreshCloudTasks(deps: CloudTrackerDeps = {}): Promise<{ 
     }
     if (!next) continue;
     try {
-      if (commit(task, next)) updated += 1;
+      if (commit(task, next)) {
+        updated += 1;
+        const sha = next.outcome?.mergeSha;
+        if (task.state !== 'merged' && next.state === 'merged' && ghPr && sha) {
+          await projectCloudBrainMerge(task.repo, ghPr.number, sha).catch(() => undefined);
+        }
+        const head = next.outcome?.headSha;
+        if (task.state !== 'closed' && next.state === 'closed' && ghPr && head) {
+          await projectCloudBrainRejection(task.repo, ghPr.number, head, task.baseBranch, next.outcome?.failedChecks ?? [])
+            .catch(() => undefined);
+        }
+      }
     } catch { /* a failed write leaves the task as it was */ }
   }
   return { checked, updated };

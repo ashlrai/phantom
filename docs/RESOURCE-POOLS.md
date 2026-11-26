@@ -74,7 +74,7 @@ This does not enroll a worker, authorize overage, or reserve spend.
 
 For an agent check, give the operator or a designated agent one read-only task:
 inspect only the named, already signed-in usage surface (or use the
-[desktop operator's read action](DESKTOP-OPERATOR.md)), then record only the
+[desktop operator's read action](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-OPERATOR.md)), then record only the
 measured allowance and UTC observation time. Don't sign in, switch the active
 dispatch account, send messages, capture credentials or make purchases. Stop if
 the account, model group or numbers cannot be established. A quota shown as
@@ -95,7 +95,7 @@ There is no automatic desktop or browser session launch.
 
 ### Scheduled desktop evidence
 
-On a Mac with the [desktop operator](DESKTOP-OPERATOR.md) set up, create
+On a Mac with the [desktop operator](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-OPERATOR.md) set up, create
 a private targets file and run `phm usage resource-evidence --targets /absolute/path/to/resource-evidence-targets.json --watch`.
 Omit `--watch` for a single pass. Only configured targets are checked; the
 collector does not start automatically. Leave the exact, already signed-in,
@@ -118,7 +118,7 @@ target Messages or republish conversation contents to make Dot readable.
 
 The app, exact window title and unique in-window heading above are examples;
 use the names actually displayed on your Mac. Target keys are `antigravity`,
-`dot`, `cursor`, `grok-bot`, `claude-api` and `openai-api`. Use a heading
+`dot`, `cursor`, `grok-bot`, `claude-api`, `openai-api` and `codex-personal-resets`. Use a heading
 specific to the enrolled account's quota, five-hour model group or promotional
 grant, not a general billing summary. The collector uses the same read path as
 `phm desktop read`, including its bounded in-memory OCR fallback, with no
@@ -141,6 +141,82 @@ checks two minutes before a known reset or expiry, and checks again at the
 boundary. Unavailable or unparseable readings store null usage and retry in
 five minutes. Unconfigured rows, including custom resources and Workspace,
 are preserved; don't use a separate writer for the same configured keys.
+
+### Banked ChatGPT and Codex resets
+
+The personal App Server reader separates the 300-minute and 10,080-minute
+windows using the provider's duration, not their position or which one is fuller.
+The weekly row can also use a fresh non-estimated
+`queue/budget-overrides.json` weekly reading from the personal App Server
+reader. Five-hour usage is not inferred from the weekly window.
+
+The Codex App Server's
+[`account/rateLimits/read` response schema](https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/app-server-protocol/schema/json/v2/GetAccountRateLimitsResponse.json)
+exposes `rateLimitResetCredits` separately from usage windows and reloadable
+credits. With an explicit personal pool home configured (`codexPersonalHome`
+or `PHANTOM_SENSOR_CODEX_PERSONAL_HOME`), the existing Resource Live poll reads
+the bank in the same request as the usage windows. A complete list of distinct,
+available `codexRateLimits` grants with future expiries is recorded as full
+resets; an explicit empty list with count zero records an empty bank. Missing,
+partial or ambiguous details do not overwrite evidence or imply zero. Phantom
+does not store provider credit IDs or call a reset redemption method.
+If the field is absent and the App Server reports a version older than 0.172.0,
+the bank is unknown with reason `codex-cli-too-old (<0.172.0)`. If the version
+cannot be read, the reason is `codex-cli-version-unknown`. After the Resource Live
+poll records an old-CLI result, `phm resources`, `phm resources plan` and
+`phm doctor` suggest upgrading Codex; Phantom does not upgrade it automatically.
+Fresh desktop or manual bank evidence remains usable.
+Record the count and each separately expiring grant with the local CLI:
+
+```sh
+phm resources evidence record --resource codex-personal --resets 2 \
+  --expires 2026-12-01T22:31:00Z,2026-12-12T22:26:00Z \
+  --observed-at 2026-11-26T04:45:00Z --source owner-screenshot --json
+```
+
+Use the actual observation time for a saved screenshot; omit `--observed-at`
+only for a current observation. Use one UTC expiry per grant and omit
+`--expires` for an explicitly observed empty bank. The command defaults to full
+resets; `--kind 5h` or `--kind weekly` declares a bank of that kind. It
+uses the same private, atomic evidence writer as the scheduled collector.
+
+If your App Server does not report a complete bank, configure the
+`codex-personal-resets` desktop target with
+the exact quota-only ChatGPT Settings → Usage window and unique
+`Usage limit resets` heading. The collector needs a single `Available` count
+and matching `Full reset expires`, `5-hour reset expires` or
+`Weekly reset expires` lines with UTC timestamps or unambiguous English
+month/day, time and EST/EDT. If it cannot read a complete bank, it retries
+without overwriting an existing observation or inferring zero.
+
+Evidence is stored as `readings["codex-personal-resets"]` in the private
+`resource-evidence.v1` file.
+For example, a ChatGPT Settings → Usage observation at 23:45 ET on
+November 25 displayed 55% weekly quota left and two full resets (separate
+from the 0 reloadable credits). The reset evidence for that example is:
+
+```json
+{
+  "observed_at": "2026-11-26T04:45:00Z",
+  "count": 2,
+  "grants": [
+    {"kind":"full","count":1,"expires_at":"2026-12-01T22:31:00Z","source":"chatgpt-settings-usage"},
+    {"kind":"full","count":1,"expires_at":"2026-12-12T22:26:00Z","source":"chatgpt-settings-usage"}
+  ]
+}
+```
+
+A grant kind is `full`, `5h` or `weekly`. Do not reuse example values
+or refresh a timestamp without a new observation. Old evidence is unknown,
+not zero. `phm usage resource-live --json` reports the bank and at most
+one `use-reset-now` proposal. It requires a fresh ready count for the
+personal Codex lane, at least 90% used, and measured burn in that same
+window indicating the grant will expire before projected exhaustion, which
+must itself precede the natural reset. It never issues a provider reset,
+and the assistant setting does not replace the required explicit request.
+The Fleet resource bar shows fresh advisor targets, allowance waste estimates at
+their deadlines and the reset proposal from `phm resources plan`. These are
+read-only; the reset chip does not spend a grant.
 
 ### Custom resources
 

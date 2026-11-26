@@ -1267,7 +1267,7 @@ export async function handleApi(
         return true;
       }
       setRepoPriority(repo, body.priority);
-      sendJson(res, 200, { repo, priority: body.priority });
+      sendJson(res, 200, { repo, priority: body.priority, prioritySync: 'local-only' });
       return true;
     }
 
@@ -2619,11 +2619,11 @@ export async function handleApi(
     }
 
     if (path === '/api/feed' && method === 'GET') {
-      const { FEED_QUERY_ERROR, parseFeedQuery, readFeed } = await import('../feed.js');
+      const { FEED_QUERY_ERROR, parseFeedQuery, readFeedShared } = await import('../feed.js');
       const params = new URL(req.url ?? '', 'http://localhost').searchParams;
       const query = parseFeedQuery({ limit: params.get('limit') ?? undefined, since: params.get('since') ?? undefined, kind: params.get('kind') ?? undefined });
       if (!query) sendJson(res, 400, { error: FEED_QUERY_ERROR });
-      else sendJson(res, 200, await readFeed(query));
+      else sendJson(res, 200, await readFeedShared(query));
       return true;
     }
 

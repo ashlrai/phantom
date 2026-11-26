@@ -606,6 +606,7 @@
 /test/improve-autopilot-backlog.test.ts @masonwyatt23
 /test/improve-backlog-leverage.test.ts @masonwyatt23
 /test/improve-bet-audit-backlog.test.ts @masonwyatt23
+/test/improve-bet-outcome-backlog.test.ts @masonwyatt23
 /test/improve-boundary.test.ts @masonwyatt23
 /test/improve-branch-gardener-backlog.test.ts @masonwyatt23
 /test/improve-catalog-refresh-backlog.test.ts @masonwyatt23
@@ -1289,6 +1290,7 @@
 /test/resource-native-profile-identity.test.ts @masonwyatt23
 /test/resource-native-profile-review.test.ts @masonwyatt23
 /test/resource-native-profile.test.ts @masonwyatt23
+/test/resource-pool-bridge-evidence.test.ts @masonwyatt23
 /test/resource-pool-commissioning-apply.test.ts @masonwyatt23
 /test/resource-pool-commissioning-check.test.ts @masonwyatt23
 /test/resource-pool-commissioning-collector.test.ts @masonwyatt23

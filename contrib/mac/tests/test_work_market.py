@@ -1,5 +1,6 @@
 """Shared market contracts plus real dispatcher ticks, all in synthetic homes."""
 import ast
+import datetime
 import json
 from pathlib import Path
 import sys
@@ -335,7 +336,9 @@ class MarketUnit(unittest.TestCase):
         self.assertEqual(view(claude={'repos': 'phantom'})['claude']['repos'], set())
 
     def posture_view(self, running=None, **overrides):
-        slots = {lane: {'target': 2, **overrides.get(lane, {})} for lane in ('codex-cmp', 'codex-personal', 'claude')}
+        slots = {lane: {'target': 2, **overrides.get(lane, {})} for lane in ('burn-seat', 'codex-personal', 'claude')}
+        slots['burn-seat'] = {'capabilities': ['git'], 'tiers': list(market.TIERS), 'cost_class': 'included',
+                              'posture': 'burn', **slots['burn-seat']}
         return market.lane_view(list(slots), slots, {**dict.fromkeys(slots, 0), **(running or {})}, dict.fromkeys(slots, 2), set(), {}, {}, [], None, 10000)
 
     def pick(self, tier, spec, lanes):
@@ -347,55 +350,55 @@ class MarketUnit(unittest.TestCase):
         # Bulk and standard work hinted at a preserved window goes to the burnable one, with the reason recorded.
         for tier in ('mid', 'work'):
             result = self.pick(tier, {'preferred_lane': 'codex-personal'}, lanes)
-            self.assertEqual(result['chosen_lane'], 'codex-cmp')
-            self.assertEqual(result['override'], {'from': 'codex-personal', 'to': 'codex-cmp', 'reason': 'resource_fit', 'preferred_lane_blocked_by': []})
+            self.assertEqual(result['chosen_lane'], 'burn-seat')
+            self.assertEqual(result['override'], {'from': 'codex-personal', 'to': 'burn-seat', 'reason': 'resource_fit', 'preferred_lane_blocked_by': []})
             self.assertIn('resource_fit', result['reason_codes'])
         # Judgment work (frontier tier, P0, or declared) keeps the preserved window, hint first.
         self.assertEqual(self.pick('frontier', {'preferred_lane': 'claude'}, lanes)['chosen_lane'], 'claude')
-        self.assertEqual(self.pick('frontier', {'preferred_lane': 'codex-cmp'}, lanes)['chosen_lane'], 'codex-personal')
+        self.assertEqual(self.pick('frontier', {'preferred_lane': 'burn-seat'}, lanes)['chosen_lane'], 'codex-personal')
         self.assertEqual(self.pick('work', {'priority': 'P0'}, lanes)['chosen_lane'], 'codex-personal')
         self.assertEqual(self.pick('work', {'work_class': 'judgment', 'preferred_lane': 'claude'}, lanes)['work_class'], 'judgment')
-        self.assertEqual(self.pick('frontier', {'work_class': 'bulk'}, lanes)['chosen_lane'], 'codex-cmp')
+        self.assertEqual(self.pick('frontier', {'work_class': 'bulk'}, lanes)['chosen_lane'], 'burn-seat')
 
     def test_idle_preserved_lane_is_fed_when_the_burnable_one_is_full(self):
-        lanes = self.posture_view(running={'codex-cmp': 2})
-        result = self.pick('mid', {'preferred_lane': 'codex-cmp'}, lanes)
+        lanes = self.posture_view(running={'burn-seat': 2})
+        result = self.pick('mid', {'preferred_lane': 'burn-seat'}, lanes)
         self.assertEqual(result['chosen_lane'], 'codex-personal')
         self.assertEqual(result['override']['reason'], 'preferred_lane_fallback')
         self.assertEqual(result['override']['preferred_lane_blocked_by'], ['saturated'])
         self.assertIsNone(self.pick('mid', {}, lanes)['override'])
 
     def test_posture_is_host_owned_and_never_grants_eligibility(self):
-        lanes = self.posture_view(**{'codex-personal': {'posture': 'burn'}, 'codex-cmp': {'posture': 'nonsense'}})
-        self.assertEqual((lanes['codex-personal']['posture'], lanes['codex-cmp']['posture']), ('burn', 'burn'))
+        lanes = self.posture_view(**{'codex-personal': {'posture': 'burn'}, 'burn-seat': {'posture': 'nonsense'}})
+        self.assertEqual((lanes['codex-personal']['posture'], lanes['burn-seat']['posture']), ('burn', 'balanced'))
         # A free window reads as burn until it ends; afterwards the declared or default posture returns.
         for until, expected in (('2099-01-01', 'burn'), (20000, 'burn'), (9999, 'preserve'), ('garbage', 'preserve'), (True, 'preserve')):
             self.assertEqual(self.posture_view(claude={'free_until': until})['claude']['posture'], expected)
         self.assertEqual(market.posture('claude', {'free_until': '2099-01-01'}), 'preserve')
         # Burn posture never overrides cost class, holds or quota.
-        metered = self.posture_view(**{'codex-cmp': {'cost_class': 'metered'}})
+        metered = self.posture_view(**{'burn-seat': {'cost_class': 'metered'}})
         self.assertEqual(self.pick('mid', {'max_cost_class': 'included'}, metered)['chosen_lane'], 'codex-personal')
-        held = self.posture_view(**{'codex-cmp': {'held': True}})
+        held = self.posture_view(**{'burn-seat': {'held': True}})
         self.assertEqual(self.pick('mid', {}, held)['chosen_lane'], 'codex-personal')
 
     def test_unfed_capacity_counts_headroom_while_rows_wait_elsewhere(self):
-        lanes = {'codex-cmp': {'running': 1, 'target': 4, 'held': False}, 'codex-personal': {'running': 2, 'target': 2, 'held': False},
+        lanes = {'burn-seat': {'running': 1, 'target': 4, 'held': False}, 'codex-personal': {'running': 2, 'target': 2, 'held': False},
                  'devin': {'running': 0, 'target': 3, 'held': True}, 'claude': {'running': 0, 'target': 0, 'held': False}}
-        waiting = [('codex-personal', {'codex-cmp': ['missing_capability'], 'codex-personal': ['saturated']}),
-                   ('codex-personal', {}), (None, None), ('codex-cmp', {'codex-cmp': ['provider_backoff']})]
+        waiting = [('codex-personal', {'burn-seat': ['missing_capability'], 'codex-personal': ['saturated']}),
+                   ('codex-personal', {}), (None, None), ('burn-seat', {'burn-seat': ['provider_backoff']})]
         report = market.unfed_capacity(lanes, waiting)
         self.assertEqual((report['schema'], report['event'], report['waiting']), ('work-market.v1', 'unfed_capacity', 4))
-        self.assertEqual(report['unfed_lanes'], ['codex-cmp'])
+        self.assertEqual(report['unfed_lanes'], ['burn-seat'])
         self.assertEqual(report['unfed_slots'], 3)
-        cmp = report['lanes']['codex-cmp']
-        self.assertEqual((cmp['headroom'], cmp['waiting_elsewhere'], cmp['utilization']), (3, 3, 0.25))
-        self.assertEqual(cmp['blocked'], {'missing_capability': 1, 'deferred_after_selection': 1, 'not_evaluated': 1})
+        burn = report['lanes']['burn-seat']
+        self.assertEqual((burn['headroom'], burn['waiting_elsewhere'], burn['utilization']), (3, 3, 0.25))
+        self.assertEqual(burn['blocked'], {'missing_capability': 1, 'deferred_after_selection': 1, 'not_evaluated': 1})
         # Full, held and zero-target lanes are never unfed.
         for lane in ('codex-personal', 'devin', 'claude'):
             self.assertFalse(report['lanes'][lane]['unfed'])
         self.assertIsNone(report['lanes']['claude']['utilization'])
         stopped = market.unfed_capacity(lanes, waiting, 'admission_stopped')
-        self.assertEqual(stopped['lanes']['codex-cmp']['blocked'], {'admission_stopped': 3})
+        self.assertEqual(stopped['lanes']['burn-seat']['blocked'], {'admission_stopped': 3})
         self.assertEqual(market.unfed_capacity(lanes, [])['unfed_lanes'], [])
         self.assertNotIn('RQ-', json.dumps(report))
 
@@ -432,10 +435,11 @@ class MarketTick(unittest.TestCase):
             provenance = market.read_devin_allowance(home)['provenance']
             self.assertEqual(provenance, {k: v for k, v in expected.items() if k not in missing})
 
-    def fixture(self, targets=None):
+    def fixture(self, targets=None, overrides=None):
         slots = held_lanes()
         for lane, target in (targets or {'codex-personal': 1, 'claude': 1}).items():
-            slots[lane] = {'target': target, 'floor': 0, 'ceiling': target, 'hard_cap': target, 'last_change': int(1e15)}
+            slots[lane] = {'target': target, 'floor': 0, 'ceiling': target, 'hard_cap': target, 'last_change': int(1e15),
+                           **(overrides or {}).get(lane, {})}
         tmp = build(slots=slots); self.addCleanup(tmp.cleanup)
         home = Path(tmp.name).resolve(); launch_stubs(home)
         return home, home / '.ashlr-runs/queue'
@@ -450,9 +454,27 @@ class MarketTick(unittest.TestCase):
     def rows(self, home):
         return [json.loads(row) for row in (home / '.ashlr-runs/metrics/work-market.jsonl').read_text().splitlines()]
 
+    def routes(self, home):
+        return [row for row in self.rows(home) if row['event'] == 'route_decision']
+
     def run_tick(self, home):
         result = tick(home)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_resource_advice_reaches_market_but_cannot_raise_target(self):
+        home, queue = self.fixture({'codex-personal': 2, 'claude': 1})
+        now = int(time.time())
+        document = {'schema': 'phantom.fleet-resource-plan.v1',
+                    'generated_at': datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+                    'targets': {'claude': 1000, 'codex-personal': True}}
+        self.assertEqual(market.advisory_targets(document, now), {'claude': 1000})
+        self.assertEqual(market.advisory_targets(document, now + 300), {})
+        (queue / 'resource-capacity-advice.json').write_text(json.dumps(document))
+        self.add(home, 'RQ-ADVICE', 'codex-personal')
+        self.run_tick(home)
+        receipt = next(row for row in self.rows(home) if row.get('job') == 'RQ-ADVICE' and row.get('event') == 'route_decision')
+        self.assertEqual(receipt['ranking_inputs']['claude']['advisory_target'], 1)
+        self.assertIsNone(receipt['ranking_inputs']['codex-personal']['advisory_target'])
 
     def devin_accounting(self, home, used=20):
         now = time.time()
@@ -571,7 +593,7 @@ class MarketTick(unittest.TestCase):
         self.add(home, 'RQ-MARKET-A', needs=['git', 'node'])
         self.add(home, 'RQ-MARKET-B', lane='codex-personal', preferred_lane='codex-personal')
         self.run_tick(home)
-        rows = self.rows(home)
+        rows = self.routes(home)
         self.assertEqual([r['chosen_lane'] for r in rows], ['codex-personal', 'claude'])
         self.assertIn('preferred_lane_fallback', rows[1]['reason_codes'])
         for job, lane in [('RQ-MARKET-A', 'codex-personal'), ('RQ-MARKET-B', 'claude')]:
@@ -581,14 +603,14 @@ class MarketTick(unittest.TestCase):
             self.assertTrue(state['launched'])
         self.assertEqual((q / 'ready.tsv').read_text(), '')
         self.run_tick(home)
-        self.assertEqual(len(self.rows(home)), 2)
+        self.assertEqual(len(self.routes(home)), 2)
 
     def test_legacy_lane_still_launches_and_unknown_lane_is_a_hint(self):
         home, q = self.fixture()
         queue_job(home, 'RQ-LEGACY', 'codex-personal', size=20)
         queue_job(home, 'RQ-UNKNOWN', 'retired-lane', size=20)
         self.run_tick(home)
-        self.assertEqual([r['chosen_lane'] for r in self.rows(home)], ['codex-personal', 'claude'])
+        self.assertEqual([r['chosen_lane'] for r in self.routes(home)], ['codex-personal', 'claude'])
         self.assertTrue(dispatched(home, 'RQ-LEGACY'))
         self.assertTrue(dispatched(home, 'RQ-UNKNOWN'))
 
@@ -601,7 +623,7 @@ class MarketTick(unittest.TestCase):
         self.assertTrue(dispatched(home, 'RQ-IMPORTANT'))
         self.assertFalse(dispatched(home, 'LAND-NOISE'))
         self.assertFalse(dispatched(home, 'RQ-BLOCKED'))
-        self.assertEqual(self.rows(home)[0]['reason_codes'], ['no_runnable_lane'])
+        self.assertEqual(self.routes(home)[0]['reason_codes'], ['no_runnable_lane'])
 
     def test_recovered_launch_receipt_cannot_move_to_another_lane(self):
         home, q = self.fixture({'claude': 1})
@@ -609,23 +631,23 @@ class MarketTick(unittest.TestCase):
         (q / 'run/RQ-LOCKED.line').write_text(f'RQ-LOCKED\tphantom\tcodex-personal\twork\t{q}/prompts/RQ-LOCKED.md\n')
         self.run_tick(home)
         self.assertFalse(dispatched(home, 'RQ-LOCKED'))
-        self.assertIn('hysteresis_launched', self.rows(home)[0]['reason_codes'])
+        self.assertIn('hysteresis_launched', self.routes(home)[0]['reason_codes'])
 
     def jobs(self, home):
         return [json.loads(row) for row in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
 
     def test_idle_burnable_lane_claims_a_row_hinted_elsewhere_and_ledgers_why(self):
-        home, q = self.fixture({'codex-cmp': 1, 'codex-personal': 1})
+        home, q = self.fixture({'claude': 1, 'codex-personal': 1}, {'claude': {'posture': 'burn'}})
         self.add(home, 'RQ-HINTED', lane='codex-personal', preferred_lane='codex-personal')
         self.run_tick(home)
         self.assertTrue(dispatched(home, 'RQ-HINTED'))
         claim = next(r for r in self.jobs(home) if r['event'] == 'claim')
         self.assertEqual((claim['lane'], claim['lane_hint'], claim['lane_override'], claim['lane_hint_blocked_by']),
-                         ('codex-cmp', 'codex-personal', 'resource_fit', []))
-        self.assertEqual(self.rows(home)[0]['override']['reason'], 'resource_fit')
-        self.assertIn('FLEET_REBALANCE RQ-HINTED codex-personal->codex-cmp (shared market: resource_fit)',
+                         ('claude', 'codex-personal', 'resource_fit', []))
+        self.assertEqual(self.routes(home)[0]['override']['reason'], 'resource_fit')
+        self.assertIn('FLEET_REBALANCE RQ-HINTED codex-personal->claude (shared market: resource_fit)',
                       (home / '.ashlr-runs/dispatch-events.log').read_text())
-        self.assertEqual(json.loads((q / 'route-state.json').read_text())['RQ-HINTED']['pool'], 'codex-cmp')
+        self.assertEqual(json.loads((q / 'route-state.json').read_text())['RQ-HINTED']['pool'], 'claude')
 
     def test_claim_on_the_hinted_lane_carries_no_override(self):
         home, q = self.fixture({'claude': 1})
@@ -656,21 +678,21 @@ class MarketTick(unittest.TestCase):
         self.assertEqual(len(claimed), len(set(claimed)))
 
     def test_unfed_capacity_is_reported_with_the_blocking_reason(self):
-        home, q = self.fixture({'codex-cmp': 2, 'claude': 1})
+        home, q = self.fixture({'codex-personal': 2, 'claude': 1})
         self.add(home, 'RQ-NEEDS-CLAUDE-A', lane='claude', needs=['claude-cli'])
         self.add(home, 'RQ-NEEDS-CLAUDE-B', lane='claude', needs=['claude-cli'])
         self.run_tick(home)
         unfed = json.loads((q / 'status.json').read_text())['unfed_capacity']
-        self.assertEqual(unfed['unfed_lanes'], ['codex-cmp'])
-        self.assertEqual(unfed['lanes']['codex-cmp']['blocked'], {'missing_capability': 1})
-        self.assertEqual((unfed['lanes']['codex-cmp']['headroom'], unfed['lanes']['codex-cmp']['waiting_elsewhere']), (2, 1))
+        self.assertEqual(unfed['unfed_lanes'], ['codex-personal'])
+        self.assertEqual(unfed['lanes']['codex-personal']['blocked'], {'missing_capability': 1})
+        self.assertEqual((unfed['lanes']['codex-personal']['headroom'], unfed['lanes']['codex-personal']['waiting_elsewhere']), (2, 1))
         audit = [r for r in self.rows(home) if r['event'] == 'unfed_capacity']
         self.assertEqual(len(audit), 1)
         self.assertEqual(audit[0]['unfed_slots'], 1)
         self.assertNotIn('RQ-NEEDS', json.dumps(audit[0]))
 
     def test_data_class_and_tier_ceiling_bind_at_dispatch(self):
-        home, q = self.fixture({'codex-cmp': 2})
+        home, q = self.fixture({'codex-personal': 2})
         self.add(home, 'RQ-CONFIDENTIAL', data_class='confidential')
         self.add(home, 'RQ-INTERNAL', data_class='internal', max_tier='work')
         self.run_tick(home)
@@ -690,7 +712,7 @@ class MarketTick(unittest.TestCase):
         fields = (q / 'ready.tsv').read_text().strip().split('\t')
         self.assertEqual(json.loads(fields[5])['needs'], ['claude-cli'])
         self.run_tick(home)
-        self.assertEqual(self.rows(home)[0]['chosen_lane'], 'claude')
+        self.assertEqual(self.routes(home)[0]['chosen_lane'], 'claude')
         self.assertTrue(dispatched(home, 'RQ-RESTOCK'))
 
     def test_restock_routes_gh_repairs_to_capable_lane_through_dispatch(self):
@@ -752,7 +774,7 @@ class MarketTick(unittest.TestCase):
         (q / 'slots.json').write_text(json.dumps(slots))
         self.add(home, 'RQ-REGISTERED', needs=['browser'])
         self.run_tick(home)
-        self.assertEqual(self.rows(home)[0]['chosen_lane'], 'cursor')
+        self.assertEqual(self.routes(home)[0]['chosen_lane'], 'cursor')
         self.assertTrue(dispatched(home, 'RQ-REGISTERED'))
 
     def test_retired_executor_receipts_do_not_block_the_rest_of_the_market(self):
