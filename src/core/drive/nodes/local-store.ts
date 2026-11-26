@@ -34,7 +34,16 @@ export class LocalNodesStore implements NodesStore {
               (process.getuid && stat.uid !== process.getuid())))) {
           throw new Error('Unsafe drive nodes state');
         }
-        state = parseState(JSON.parse(readFileSync(fd, 'utf8')));
+        const text = readFileSync(fd, 'utf8');
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(text);
+        } catch (error) {
+          // JSON.parse's own message quotes the file's bytes; the store
+          // reports a fixed string like every other refusal in this stack.
+          throw new Error('Corrupt drive nodes state', { cause: error });
+        }
+        state = parseState(parsed);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         state = emptyState();

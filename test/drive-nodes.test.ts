@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
+import { DriveNodes, LocalNodesStore, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { versionFromCaps } from '../src/core/drive/nodes/phm-version.js';
@@ -1344,5 +1347,76 @@ describe('fleet flag value validation', () => {
       expect(enqueue).toBe(2);
       expect(JSON.parse(lines.at(-1)!).error).toMatchObject({ code: 'bad-owner' });
     } finally { vi.restoreAllMocks(); }
+  });
+});
+
+describe('standalone store-state error honesty', () => {
+  function capture() {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    vi.spyOn(console, 'error').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    return lines;
+  }
+  function storeDir() {
+    return realpathSync(mkdtempSync(join(tmpdir(), 'node-store-state-')));
+  }
+  const STORE_FIX = /nodes\.json failed its integrity checks/;
+
+  it('names a corrupt nodes.json instead of masking it as an unavailable store', async () => {
+    const dir = storeDir();
+    const lines = capture();
+    try {
+      writeFileSync(join(dir, 'nodes.json'), '{not json', { mode: 0o600 });
+      const code = await cmdNodeFleet('status', ['--owner', 'acme', '--json'], { store: new LocalNodesStore(dir) });
+      expect(code).toBe(1);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out).toMatchObject({ schemaVersion: 1, command: 'status',
+        error: { code: 'rejected', message: 'Corrupt drive nodes state' } });
+      expect(out.error.fix).toMatch(STORE_FIX);
+      expect(out.error.fix).not.toContain('private (0700) directory');
+      expect(out.error.fix).not.toContain('Check ids');
+    } finally { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); }
+  });
+
+  it('gives schema-invalid state the file fix, not the flag fix', async () => {
+    const dir = storeDir();
+    const lines = capture();
+    try {
+      writeFileSync(join(dir, 'nodes.json'), '{"version":"bogus"}', { mode: 0o600 });
+      const code = await cmdNodeFleet('join', ['--owner', 'acme', '--json'], { store: new LocalNodesStore(dir) });
+      expect(code).toBe(1);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out.error).toMatchObject({ code: 'rejected', message: 'Invalid drive nodes state' });
+      expect(out.error.fix).toMatch(STORE_FIX);
+      expect(out.error.fix).not.toContain('Check ids');
+    } finally { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); }
+  });
+
+  it('names an unsafe nodes.json file instead of the lock fix', async () => {
+    const dir = storeDir();
+    const lines = capture();
+    try {
+      // Over the store's 16 MiB bound: unsafe on every platform, where the
+      // permission-bit check itself is POSIX-only.
+      writeFileSync(join(dir, 'nodes.json'), Buffer.alloc(16 * 1024 * 1024 + 1, 0x20), { mode: 0o600 });
+      const code = await cmdNodeFleet('status', ['--owner', 'acme', '--json'], { store: new LocalNodesStore(dir) });
+      expect(code).toBe(1);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out.error).toMatchObject({ code: 'rejected', message: 'Unsafe drive nodes state' });
+      expect(out.error.fix).toMatch(STORE_FIX);
+      expect(out.error.fix).not.toContain('no other process holds its lock');
+    } finally { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); }
+  });
+
+  it('prints the same honest message and fix without --json', async () => {
+    const dir = storeDir();
+    const lines = capture();
+    try {
+      writeFileSync(join(dir, 'nodes.json'), 'garbage', { mode: 0o600 });
+      const code = await cmdNodeFleet('status', ['--owner', 'acme'], { store: new LocalNodesStore(dir) });
+      expect(code).toBe(1);
+      expect(lines.at(-1)).toContain('Corrupt drive nodes state');
+      expect(lines.at(-1)).toContain('nodes.json failed its integrity checks');
+    } finally { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); }
   });
 });
