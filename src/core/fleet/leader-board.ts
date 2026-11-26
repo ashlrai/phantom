@@ -287,7 +287,13 @@ async function buildLeaderBoard(runsDir: string, nowMs: number, previous: Leader
   }
 
   const conflictCount = readySource.state === 'healthy' ? conflictingPrIds(readySource.text).size : null;
-  const history = [...previous, ...(conflictCount === null ? [] : [{ at: at.toISOString(), count: conflictCount }])].slice(-MAX_HISTORY);
+  const samples = new Map<number, LeaderBoardConflictSample>();
+  for (const sample of previous) {
+    const sampledAt = Date.parse(sample.at);
+    if (sampledAt <= nowMs) samples.set(sampledAt, sample);
+  }
+  if (conflictCount !== null) samples.set(nowMs, { at: at.toISOString(), count: conflictCount });
+  const history = [...samples.keys()].sort((a, b) => a - b).slice(-MAX_HISTORY).map((time) => samples.get(time)!);
   // An unmeasured count reports unknown — never a trend computed on stale samples.
   const { delta, trend } = conflictCount === null ? { delta: null, trend: 'unknown' as const } : conflictTrend(history);
 
