@@ -84,7 +84,14 @@ export function localLanePlan(deps: LocalLaneProbeDeps = {}): LocalLaneProbe {
   return { config, configError: error, plan };
 }
 
+/** The whole probe for callers that also surface the config diagnostic; null
+ * when the probe itself fails — the same never-throw contract
+ * probeLocalModelCaps keeps for caps-only callers. */
+export function probeLocalLanePlan(deps: LocalLaneProbeDeps = {}): LocalLaneProbe | null {
+  try { return localLanePlan(deps); } catch { return null; }
+}
+
 /** Caps to merge into `phm node join --caps` / worker advertisement; [] unless advertised. */
 export function probeLocalModelCaps(deps: LocalLaneProbeDeps = {}): string[] {
-  try { return localLanePlan(deps).plan.caps; } catch { return []; }
+  return probeLocalLanePlan(deps)?.plan.caps ?? [];
 }

@@ -104,12 +104,20 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
     // private to this machine, so the node only ever sees jobs enqueued here.
     const owners = out['owners'] as string[];
     const caps = out['caps'] as string[];
-    return [
+    const lines = [
       `Joined ${String(out['nodeId'])} as session ${String(out['session'])} for ${owners.length === 1 ? 'owner' : 'owners'} ${owners.join(', ')} (caps: ${caps.join(', ') || 'none'}).`,
       'The session expires 30 seconds after the last beat. Keep it live:',
       `  ${String(out['next'])}`,
       'This registry is local to this machine — the node sees only jobs enqueued on this computer; other machines cannot see it. A shared queue needs the SSH pool (docs/NODES.md; join commands: docs/AGENT-NETWORK.md).',
-    ].join('\n');
+    ];
+    // A malformed local-lanes.json is a diagnostic, not a join failure: the
+    // node joined without its lane caps, and the reply names the broken file.
+    const lanes = out['localLanes'] as { error?: unknown; fix?: unknown } | undefined;
+    if (typeof lanes?.error === 'string') {
+      const fix = typeof lanes.fix === 'string' ? lanes.fix : 'Run: phm node lanes';
+      lines.push(`Local model lanes not advertised: ${lanes.error}. ${fix}`);
+    }
+    return lines.join('\n');
   }
   if (verb === 'beat') {
     // Beat is the keep-alive `join --watch` and `beat --watch` print every pass,
@@ -305,12 +313,15 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
     const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join },
-      { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalModelCaps }] = await Promise.all([
+      { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalLanePlan }] = await Promise.all([
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
       import('../core/drive/nodes/phm-version.js'), import('../core/drive/nodes/local-model-caps.js')]);
     const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
     const drive = new DriveNodes(store, deps.now ? { now: deps.now } : {});
+    // Join's lane probe runs once; a malformed local-lanes.json rides the reply
+    // as a diagnostic below instead of silently costing the node its lane caps.
+    let localLaneError: string | null = null;
     if (verb === 'join') {
       // A standalone join defaults --node to this computer's sanitized hostname,
       // the same default a pool join applies. Like the version cap below it stays
@@ -343,8 +354,13 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // the CLI layer: runNodeFleet is shared with the SSH endpoint, where the
       // joining worker's own machine — not this host — owns the lanes it
       // reports. An absent, disabled or backed-off lane contributes nothing;
-      // explicit --caps entries are kept and deduped against the probe.
-      const localCaps = probeLocalModelCaps(deps.localLanes);
+      // explicit --caps entries are kept and deduped against the probe. A
+      // malformed local-lanes.json contributes nothing either, but its parse
+      // error is kept for the reply: silently dropping a lane the operator
+      // asked for is exactly the failure `phm node lanes` exists to explain.
+      const laneProbe = probeLocalLanePlan(deps.localLanes);
+      localLaneError = laneProbe?.configError ?? null;
+      const localCaps = laneProbe?.plan.caps ?? [];
       if (localCaps.length > 0) {
         const caps = [...new Set([...(flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean), ...localCaps])];
         flags.set('--caps', caps.join(','));
@@ -370,6 +386,11 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // that boundary in the reply instead of letting a first-time node
       // assume it joined a shared fleet.
       out['registry'] = 'local';
+      // The node joined without its lane caps; name the broken file so the
+      // first-run output says why instead of looking never-configured.
+      if (localLaneError !== null) {
+        out['localLanes'] = { state: 'invalid', error: localLaneError, fix: 'Run: phm node lanes' };
+      }
     }
     // status/list name each expired node's rejoin command. Text only: the
     // --json view stays the scope-filtered projection, and a machine caller
