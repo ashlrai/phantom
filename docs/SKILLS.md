@@ -24,7 +24,9 @@ sibling outcome readers share — job ids `job|job_id|jobId|id`, lanes
 `lane|pool|arm`, events `event|type|kind` (`published` folds to `publish`),
 terminal phases `phase|state|outcome|status|result|conclusion`, and
 `merged`/`closed`/`revert`/`reverted` event names when no phase field
-resolves. Reverted covers the ledger's own revert spellings plus the
+resolves. Other event names leave the standing terminal verdict and its
+evidence intact unless the row carries a recognized terminal phase.
+Reverted covers the ledger's own revert spellings plus the
 standing revert set the daemon supplies (`revertedPrKeys` — outcome-ledger,
 cloud-task and `phm fleet reverts --record` detections): a merged job whose
 standing verdict row's pull URL is claimed by exactly that job and whose

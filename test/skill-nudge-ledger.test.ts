@@ -39,6 +39,19 @@ beforeEach(() => {
 afterEach(() => rmSync(directory, { recursive: true, force: true }));
 
 describe('skillNudgeJobsFromLedger', () => {
+  it('keeps the standing merge evidence when an unknown event follows it', () => {
+    const job = 'RQ-RECOVERY';
+    const text = [
+      launch(job), launch(job), outcome(job, 'MERGED'),
+      line({ event: 'constructor', job, lane: 'claude' }),
+      line({ event: '__proto__', job: 'RQ-UNRESOLVED', lane: 'codex' }),
+    ].join('\n');
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', retries: 1 },
+      { id: 'RQ-UNRESOLVED', lane: 'codex' },
+    ]);
+  });
+
   it('folds a retried merge into one job with retry and failure-class evidence', () => {
     const text = [
       enqueue('RQ-A'), claim('RQ-A'), launch('RQ-A'),
