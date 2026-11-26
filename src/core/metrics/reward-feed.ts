@@ -199,6 +199,7 @@ function receiptPrKeys(row: Record<string, unknown>): string[] {
 interface RewardJobAccum {
   dispatches: DispatchMark[];
   dispatchUndated: boolean;
+  batchClaims: Set<number>;
   /** Latest merge-resolution row: row time, the GitHub mergedAt it reported, and its PR keys. */
   merge: ResolutionMark | null;
   /** Latest closed-unmerged resolution time, falling back to the row stamp. */
@@ -216,7 +217,7 @@ interface RewardJobAccum {
 function newAccum(): RewardJobAccum {
   return {
     dispatches: [],
-    dispatchUndated: false,
+    dispatchUndated: false, batchClaims: new Set(),
     merge: null, close: null, reverts: new Map(), standingReverted: false,
     ciBoundaryUndated: false, ciStarts: new Map(), ciCompletions: new Map(),
   };
@@ -247,6 +248,9 @@ function ciWallEvidence(
   const start = starts[0]!;
   const complete = completions[0]!;
   if (complete < start) return {};
+  for (const claim of acc.batchClaims) {
+    if (claim >= start && claim <= complete) return {};
+  }
   const keys = new Set([
     ...outcomePrKeys, ...acc.ciStarts.get(start)!, ...acc.ciCompletions.get(complete)!,
   ]);
@@ -321,6 +325,7 @@ export function foldJobsLedgerRewards(
     }
     if (dispatch) {
       acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row) });
+      if (name === 'batch_claim') acc.batchClaims.add(at);
     } else if (ciBoundary) {
       noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at, row);
     }
