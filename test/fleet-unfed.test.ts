@@ -165,6 +165,21 @@ describe('foldUnfedHistory', () => {
 describe('foldMarketOverrides', () => {
   const now = 1_800_000_000_000;
   const t = now / 1000;
+  it('keeps the latest decision as of the report time across all decision folds', () => {
+    const text = [
+      decision('RQ-A', t - 24 * 3600),
+      decision('RQ-B', t),
+      decision('RQ-B', t + 1, { chosen_lane: null, override: null }),
+      decision('RQ-C', t + 1),
+    ].join('\n');
+
+    expect(foldMarketOverrides(text, now, 24)).toMatchObject({ decided: 2, overridden: 2 });
+    expect(foldRouteRejections(text, now, 24)).toMatchObject({ decided: 2, unrouted: 0 });
+    expect(foldDecisionOutcomes(text, null, now, 24)).toMatchObject({
+      decided: 2, overridden: { decided: 2 }, unrouted: { decided: 0 },
+    });
+  });
+
   it('requires recorded lane fields across all decision folds', () => {
     const text = [
       decision('RQ-A', t - 90),
@@ -269,6 +284,17 @@ describe('foldClaimOverrides', () => {
     JSON.stringify({ event: 'claim', job, repo: 'phantom', lane: 'claude', tier: 'work', ts, ...extra });
   const batchClaim = (job: string, ts: string, extra: Record<string, unknown> = {}) =>
     JSON.stringify({ event: 'batch_claim', job, batch: 'B-1', repo: 'phantom', lane: 'claude', tier: 'work', ts, ...extra });
+
+  it('includes both report window endpoints and excludes slightly future launches', () => {
+    const override = { lane_hint: 'devin', lane_override: 'batch_session' };
+    const journal = [
+      claim('RQ-A', iso(now - 24 * 3_600_000)),
+      batchClaim('RQ-B', iso(now), override),
+      batchClaim('RQ-C', iso(now + 1), override),
+    ].join('\n');
+
+    expect(foldClaimOverrides(journal, now, 24)).toMatchObject({ claimed: 2, overridden: 1 });
+  });
 
   it('tallies claim launches that left their hinted lane, batch_session included', () => {
     const journal = [

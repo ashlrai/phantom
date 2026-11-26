@@ -511,7 +511,8 @@ const rejectedLanes = (value: unknown): { lane: string; codes: string[] }[] => {
  * are skipped. An explicit null lane is valid evidence.
  */
 function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number): Map<string, LatestRouteDecision> {
-  const since = nowMs / 1000 - windowHours * 3600;
+  const until = nowMs / 1000;
+  const since = until - windowHours * 3600;
   const latest = new Map<string, LatestRouteDecision>();
   for (const line of jsonl.split('\n')) {
     // Cheap prefilter: route decisions are the bulk of the file.
@@ -520,7 +521,7 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     try { row = JSON.parse(line); } catch { continue; }
     if (!isRecord(row) || row.schema !== 'work-market.v1' || row.event !== 'route_decision') continue;
     const ts = row.ts;
-    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > nowMs / 1000 + 300) continue;
+    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > until) continue;
     const job = row.job;
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const prev = latest.get(job);
@@ -602,7 +603,6 @@ export function foldClaimOverrides(
   };
   if (jsonl === null) return tally;
   const since = nowMs - windowHours * 3_600_000;
-  const until = nowMs + 300_000;
   const pairs = new Map<string, UnfedClaimLane>();
   for (const line of jsonl.split('\n')) {
     // Cheap prefilter: claim events are a minority of the ledger.
@@ -615,7 +615,7 @@ export function foldClaimOverrides(
     const lane = row.lane;
     if (typeof lane !== 'string' || !LANE.test(lane)) continue;
     const at = parseLedgerTs(row.ts);
-    if (at === null || at < since || at > until) continue;
+    if (at === null || at < since || at > nowMs) continue;
     tally.claimed++;
     const reason = row.lane_override;
     if (typeof reason !== 'string' || !CODE.test(reason)) continue;
