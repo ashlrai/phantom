@@ -736,7 +736,13 @@ about one
 v2 job — a `work.post`, its `work.status`,
 `work.result`, `work.claim` and `work.release` bodies sharing a `jobId`, or a
 claim-key-only body the post lists — form one `job:<id>` thread even without
-replies, and a `failed` or `complete` outcome marks it blocked or done. Any
+replies, and a `failed` or `complete` outcome marks it blocked or done. A
+thread reports `waiting` while its latest ask or handoff is unanswered:
+the request stays open until a message from a different sender follows it
+— the requester's own later posts (a nudge, a status) never answer it —
+so `waiting.on`/`since`/`ms` name the request, not the latest message; a
+`blocked` or `done` report on the latest message still wins the state, and
+any other participant's later message answers it into `answered`. Any
 body carrying a declared label — the v2 `thread` field `--thread` reads
 filter on (the same key `phm agents messages` reports as `threadId`), a
 `threadId`, or a `job:<id>` key — buckets its conversation under that label

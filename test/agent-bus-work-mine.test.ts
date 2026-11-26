@@ -1646,6 +1646,44 @@ describe('readBusWorkMine', () => {
     expect(recipientAfter.threads.matched).toBe(0);
   });
 
+  it('keeps an unanswered ask waiting when the asker posts a follow-up in the thread', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'can you check the feed?',
+      thread: 't-out', id: 'out-ask' }, options)).toMatchObject({ status: 'posted' });
+    options.clock.now += 60_000;
+    // The asker's own status note is not an answer: the wait still names
+    // nova and cites the ask's envelope and subject, not the follow-up's.
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'still waiting on this',
+      thread: 't-out', id: 'out-nudge' }, options)).toMatchObject({ status: 'posted' });
+
+    const result = readBusWorkMine('atlas', options);
+    if (result.status !== 'ok' || result.awaiting.status !== 'ok') throw new Error('unreachable');
+    expect(result.awaiting).toMatchObject({ matched: 1 });
+    if (result.awaiting.status !== 'ok') throw new Error('unreachable');
+    expect(result.awaiting.items[0]).toMatchObject({ id: 't-out', messageId: 'out-ask', kind: 'ask',
+      waitingOn: 'nova', waitingOnAgent: 'nova', from: 'atlas', messageCount: 2 });
+    expect(result.awaiting.items[0]!.subject).toContain('can you check the feed?');
+
+    // The recipient's mirror names the same unanswered ask.
+    const recipient = readBusWorkMine('nova', options);
+    if (recipient.status !== 'ok' || recipient.threads.status !== 'ok') throw new Error('unreachable');
+    expect(recipient.threads.matched).toBe(1);
+    expect(recipient.threads.items[0]).toMatchObject({ messageId: 'out-ask', kind: 'ask',
+      waitingOn: 'nova', from: 'atlas' });
+
+    // nova's answer still clears the wait for both sides.
+    options.clock.now += 60_000;
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'checked, looks good',
+      thread: 't-out', id: 'out-ans' }, options)).toMatchObject({ status: 'posted' });
+    const after = readBusWorkMine('atlas', options);
+    if (after.status !== 'ok' || after.awaiting.status !== 'ok') throw new Error('unreachable');
+    expect(after.awaiting).toMatchObject({ matched: 0, items: [] });
+  });
+
   it('lists sent handoffs and channel asks as awaiting, minus waits on itself', async () => {
     const options = setup();
     register(options, 'atlas', 'nova', 'ghost');
@@ -2643,9 +2681,9 @@ describe('readBusWorkMine', () => {
     await announce(options, 'atlas', 'RQ-J-MINE-ENG', ['queue:RQ-J-MINE-ENG'], 'group:eng:general');
     await announce(options, 'atlas', 'RQ-J-MINE-DM', ['queue:RQ-J-MINE-DM'], 'agent:nova');
 
-    // Threads: an eng-room wait, a DM wait, and one thread whose latest
-    // message moved from the room to a DM — earlier room posts do not keep
-    // it in the room's pending set.
+    // Threads: an eng-room wait, a DM wait, and one thread whose asker
+    // followed up by DM — the requester's own later post never answers the
+    // room ask, so the wait stays on the room.
     post('th-eng', 'agent:ghost', 'group:eng:general', { kind: 'note', text: 'eng question?', thread: 't-eng' });
     post('th-dm', 'agent:nova', 'agent:atlas', { kind: 'note', text: 'dm question?', thread: 't-dm' });
     post('th-mix-1', 'agent:ghost', 'group:eng:general', { kind: 'note', text: 'room then dm?', thread: 't-mix' });
@@ -2734,14 +2772,16 @@ describe('readBusWorkMine', () => {
     expect(all.claims.claims.map(row => row.key).sort())
       .toEqual(['queue:missing-1', 'queue:w-dm', 'queue:w-eng', 'queue:w-ops', 'repo:a/b']);
 
-    // Threads keep waits whose latest message is addressed to the room:
-    // the eng ask, the eng handoff and ghost's eng job announcement (a
-    // work.post classifies as an ask) stay; the DM ask, the room-then-DM
-    // thread, the other room's traffic and atlas's own posts drop.
-    expect(result.threads).toMatchObject({ status: 'ok', matched: 3 });
+    // Threads keep waits whose unanswered request is addressed to the room:
+    // the eng ask, the eng handoff, ghost's eng job announcement (a
+    // work.post classifies as an ask) and t-mix stay — its room ask is
+    // still unanswered because ghost's own DM follow-up is the requester's
+    // voice, not an answer; the DM ask, the other room's traffic and
+    // atlas's own posts drop.
+    expect(result.threads).toMatchObject({ status: 'ok', matched: 4 });
     if (result.threads.status !== 'ok') throw new Error('unreachable');
     expect(result.threads.items.map(item => item.messageId).sort())
-      .toEqual(['ho-eng', 'post-RQ-J-ENG', 'th-eng']);
+      .toEqual(['ho-eng', 'post-RQ-J-ENG', 'th-eng', 'th-mix-1']);
     // Awaiting keeps atlas's own unanswered asks addressed to the room:
     // her eng note and her eng announcement; the DM ask drops.
     expect(result.awaiting).toMatchObject({ status: 'ok', matched: 2 });
@@ -2754,10 +2794,11 @@ describe('readBusWorkMine', () => {
     if (all.threads.status !== 'ok' || all.awaiting.status !== 'ok' || all.blocked.status !== 'ok') {
       throw new Error('unreachable');
     }
-    // Unfiltered: the three eng waits plus the ops pair (handoff and job
+    // Unfiltered: the four eng waits (th-eng, ho-eng, the eng announcement
+    // and t-mix's still-open room ask) plus the ops pair (handoff and job
     // announcement), the DM pair (handoff and job announcement) and th-dm;
-    // t-mix answered itself and atlas's own posts wait in awaiting instead.
-    expect(all.threads.matched).toBe(8);
+    // atlas's own posts wait in awaiting instead.
+    expect(all.threads.matched).toBe(9);
     expect(all.awaiting.matched).toBe(4);
     expect(all.blocked.matched).toBe(2);
 

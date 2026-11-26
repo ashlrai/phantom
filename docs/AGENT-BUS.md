@@ -1119,9 +1119,9 @@ channel it belongs to, minus threads whose waiting message it sent itself
 cites the waiting message's envelope `id` for `agents bus show`, its
 `kind`, `waitingOn`, `waitingMs`, sender and scrubbed subject) — and the
 conversations it is waiting on: the outbound mirror over the same shared
-read, every `waiting` thread whose latest message the agent sent and whose
-`waiting.on` is not the agent itself — its own unanswered asks and
-handoffs, each naming `waitingOn` plus the resolved `waitingOnAgent` (null
+read, every `waiting` thread whose unanswered ask or handoff the agent
+sent and whose `waiting.on` is not the agent itself — its own unanswered
+asks and handoffs, each naming `waitingOn` plus the resolved `waitingOnAgent` (null
 for a topic, a `group:` address, an unregistered label or an unreadable
 registry), the same 20-item cap and `matched`/`truncated`/`skipped`
 semantics; the two thread sections are mutually exclusive on every thread —
@@ -1419,9 +1419,9 @@ message claims whose resolved leased envelope sits in the room — a
 claim naming no resolved message, a scope-key claim or an
 unresolvable/unreadable lease names no provable room and never
 lists, the same "unknown stays out" rule `--priority` applies, the
-three thread sections keep threads whose latest message — the
-wait's own recipient for waiting threads, the block report's
-recipient for blocked ones — is addressed to the room, and `wakes`
+three thread sections keep threads addressed to the room — a waiting
+thread by its unanswered request's recipient, a blocked one by its
+block report's recipient — and `wakes`
 and `inbox` pass the name to their own reads' channel filters (the
 wakes read's raw `to` prefix, the inbox read's member-channel rule —
 a room the agent does not belong to simply has no mail or hints to

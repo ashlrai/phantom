@@ -37,7 +37,7 @@ import { agentChannelNameSchema, agentLabels, agentPendingAddressMatcher, agentR
 import { busBodyKind, busBodyResultOutcome, busBodyThread, parseClaimKey, WORK_RESULT_OUTCOMES,
   type WorkResultOutcome } from './bus-v2-schema.js';
 import type { AgentMessageKind } from '../fleet/agent-messages.js';
-import { conversationScope, readAgentConversations, type AgentConversations, type Conversation, type ConversationScope } from '../fleet/agent-conversations.js';
+import { conversationScope, readAgentConversations, waitingRequest, type AgentConversations, type Conversation, type ConversationScope } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobCitesEnvelope, busWorkFeedJobHold, busWorkFeedJobSearchText, busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher,
   busWorkJobDispatch, busWorkJobResultSuffix, readBusWorkFeed, type BusWorkFeedHold, type BusWorkFeedHoldCoverage, type BusWorkFeedJob,
@@ -1793,28 +1793,31 @@ function annotateClaimMessages(claims: BusWorkMineClaim[], options: BusWorkMineO
 
 /**
  * The `--channel` verdict for one conversation thread, decided on the same
- * address evidence the thread sections report: the thread's latest message
- * — the wait's own recipient for waiting threads (`waiting.on` is that
- * message's `to`), the block report's recipient for blocked ones — must
- * carry `group:<name>:*`, the same room prefix every other section matches.
- * A thread whose latest word was addressed to a label or another room names
- * no provable room traffic and never matches; earlier room posts do not
- * pull a now-DM wait back into the room's pending set.
+ * address evidence the thread sections report: a waiting thread's unanswered
+ * request recipient (`waiting.on` is that message's `to`), a blocked
+ * thread's latest message recipient — must carry `group:<name>:*`, the same
+ * room prefix every other section matches. A wait whose request was
+ * addressed to a label or another room names no provable room traffic and
+ * never matches; the requester's own later posts do not pull a room wait
+ * out of the room's pending set, and earlier room posts do not pull a
+ * now-DM wait in.
  */
 function threadInChannel(thread: Conversation, channelPrefix: string | undefined): boolean {
-  return channelPrefix === undefined ||
-    thread.messages[thread.messages.length - 1]!.to.startsWith(channelPrefix);
+  if (channelPrefix === undefined) return true;
+  const to = (thread.waiting !== null ? waitingRequest(thread)?.to : undefined)
+    ?? thread.messages[thread.messages.length - 1]!.to;
+  return to.startsWith(channelPrefix);
 }
 
 /**
- * The conversation threads whose latest message still wants this agent's
- * answer — the same thread state `agents conversations --waiting`
+ * The conversation threads whose unanswered ask or handoff still wants this
+ * agent's answer — the same thread state `agents conversations --waiting`
  * computes, narrowed to waits the agent (or a channel it belongs to) owes.
- * `waiting.on` is the conversation projection's recipient name with routing
- * prefixes already stripped, so matching goes through the same identity
- * labels and channel membership the other sections use, with the
+ * `waiting.on` is the conversation projection's request recipient with
+ * routing prefixes already stripped, so matching goes through the same
+ * identity labels and channel membership the other sections use, with the
  * literal-label fallback when no identity resolves — matching never widens
- * on unknown state. A thread whose waiting message the agent itself sent
+ * on unknown state. A thread whose waiting request the agent itself sent
  * never counts: you cannot owe yourself a reply. The section reads the one
  * shared conversations projection, so an unreadable store reports
  * `unavailable` and a missing one is a verified-empty `ok`, and `skipped`
@@ -1827,36 +1830,36 @@ function threadsSection(conversations: AgentConversations, scope: ConversationSc
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
   const matched = conversations.conversations.filter(thread => thread.waiting !== null &&
-    scope.denotes(thread.waiting.on) && !scope.isSelf(thread.messages[thread.messages.length - 1]!.from) &&
+    scope.denotes(thread.waiting.on) && !scope.isSelf(waitingRequest(thread)?.from ?? '') &&
     threadInChannel(thread, channelPrefix));
   return { status: 'ok', source, matched: matched.length,
     items: matched.slice(0, WORK_MINE_THREADS_MAX).map(thread => {
-      const last = thread.messages[thread.messages.length - 1]!;
       const waiting = thread.waiting!;
+      const request = waitingRequest(thread)!;
       return {
-        id: thread.id, messageId: last.id, kind: last.kind === 'handoff' ? 'handoff' : 'ask',
+        id: thread.id, messageId: request.id, kind: request.kind === 'handoff' ? 'handoff' : 'ask',
         waitingOn: waiting.on, waitingMs: waiting.ms, lastAt: thread.lastAt,
-        messageCount: thread.messageCount, from: last.from,
-        fromAgent: scope.agentOf(last.from),
-        subject: mineField(thread.subject, WORK_MINE_SUMMARY_MAX),
+        messageCount: thread.messageCount, from: request.from,
+        fromAgent: scope.agentOf(request.from),
+        subject: mineField(request.subject, WORK_MINE_SUMMARY_MAX),
       };
     }),
     truncated: matched.length > WORK_MINE_THREADS_MAX, skipped: conversations.skipped };
 }
 
 /**
- * The outbound mirror of `threads`: conversation threads whose latest
- * message the agent itself sent and which still wait on the recipient's
- * reply — asks and handoffs the agent asked and nobody has answered yet, so
- * "is my question still outstanding?" is answered by the same digest instead
- * of a second `agents conversations` read and a mental filter. The wait is
- * the projection's own: `waiting.on` names the last message's recipient,
- * and a thread only counts when that recipient is not the agent — you cannot
- * wait on yourself. A reply, a done or blocked state, or the wait's TTL
- * expiring drops the thread exactly the way `agents conversations` reports
- * it. Same shared read, same caps and honesty rules as `threads`; the two
- * sections are mutually exclusive on every thread (one needs the agent's
- * label off the waiting message, the other on it).
+ * The outbound mirror of `threads`: conversation threads whose unanswered
+ * ask or handoff the agent itself sent and which still wait on the
+ * recipient's reply — asks and handoffs the agent asked and nobody has
+ * answered yet, so "is my question still outstanding?" is answered by the
+ * same digest instead of a second `agents conversations` read and a mental
+ * filter. The wait is the projection's own: `waiting.on` names the request's
+ * recipient, and a thread only counts when that recipient is not the agent —
+ * you cannot wait on yourself. A reply from anyone else, a done or blocked
+ * state, or the wait's TTL expiring drops the thread exactly the way
+ * `agents conversations` reports it. Same shared read, same caps and honesty
+ * rules as `threads`; the two sections are mutually exclusive on every
+ * thread (one needs the request's sender off the agent, the other on it).
  */
 function awaitingSection(conversations: AgentConversations, scope: ConversationScope,
   channelPrefix?: string): BusWorkMineAwaiting {
@@ -1865,19 +1868,19 @@ function awaitingSection(conversations: AgentConversations, scope: ConversationS
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
   const matched = conversations.conversations.filter(thread => thread.waiting !== null &&
-    scope.isSelf(thread.messages[thread.messages.length - 1]!.from) && !scope.isSelf(thread.waiting.on) &&
+    scope.isSelf(waitingRequest(thread)?.from ?? '') && !scope.isSelf(thread.waiting.on) &&
     threadInChannel(thread, channelPrefix));
   return { status: 'ok', source, matched: matched.length,
     items: matched.slice(0, WORK_MINE_THREADS_MAX).map(thread => {
-      const last = thread.messages[thread.messages.length - 1]!;
       const waiting = thread.waiting!;
+      const request = waitingRequest(thread)!;
       return {
-        id: thread.id, messageId: last.id, kind: last.kind === 'handoff' ? 'handoff' : 'ask',
+        id: thread.id, messageId: request.id, kind: request.kind === 'handoff' ? 'handoff' : 'ask',
         waitingOn: waiting.on, waitingOnAgent: scope.agentOf(waiting.on),
         waitingMs: waiting.ms, lastAt: thread.lastAt,
-        messageCount: thread.messageCount, from: last.from,
-        fromAgent: scope.agentOf(last.from),
-        subject: mineField(thread.subject, WORK_MINE_SUMMARY_MAX),
+        messageCount: thread.messageCount, from: request.from,
+        fromAgent: scope.agentOf(request.from),
+        subject: mineField(request.subject, WORK_MINE_SUMMARY_MAX),
       };
     }),
     truncated: matched.length > WORK_MINE_THREADS_MAX, skipped: conversations.skipped };

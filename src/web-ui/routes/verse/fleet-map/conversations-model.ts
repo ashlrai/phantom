@@ -3,7 +3,7 @@
  * GET /api/verse/fleet/control/agent-conversations, the same agents.conversations.v1
  * `phm agents conversations --json` prints; everything here is pure.
  */
-import { CONVERSATION_LINE_WINDOW_MS, CONVERSATION_STATES, CONVERSATION_STATE_WORDS, UNKNOWN_AGENT, plainAge,
+import { CONVERSATION_LINE_WINDOW_MS, CONVERSATION_STATES, CONVERSATION_STATE_WORDS, UNKNOWN_AGENT, plainAge, waitingRequest,
   type Conversation, type ConversationAgent, type ConversationState } from '../../../../core/fleet/agent-conversation-model.js';
 import { scrubSecrets } from '../../../../core/util/scrub.js';
 import { apiGet } from '../../../data/client.js';
@@ -55,12 +55,15 @@ export function threadLines(conversations: readonly Conversation[] | null, now: 
   const lines = new Map<string, ThreadLine & { at: number }>();
   for (const c of conversations ?? []) {
     const node = (name: string) => c.participants.find(p => p.name === name)?.node ?? null;
-    const last = c.messages[c.messages.length - 1];
+    // The awaited reply belongs to the unanswered ask or handoff — the
+    // request's endpoints mark the line, never a later nudge the requester
+    // sent into the same thread.
+    const request = c.waiting !== null ? waitingRequest(c) : undefined;
     for (const link of c.links) {
       const at = Date.parse(link.lastAt), a = node(link.a), b = node(link.b);
       if (!a || !b || a === b || !drawn.has(a) || !drawn.has(b) || now - at > CONVERSATION_LINE_WINDOW_MS || at > now + 60_000) continue;
       const key = [a, b].sort().join('|'), line = lines.get(key);
-      const waits = !!c.waiting && !!last && [last.from, last.to].sort().join('|') === [link.a, link.b].sort().join('|');
+      const waits = !!c.waiting && !!request && [request.from, request.to].sort().join('|') === [link.a, link.b].sort().join('|');
       if (!line) lines.set(key, { key, a, b, count: link.count, waiting: waits, threadId: c.id, at });
       else { line.count += link.count; line.waiting ||= waits; if (at > line.at) { line.at = at; line.threadId = c.id; } }
     }
