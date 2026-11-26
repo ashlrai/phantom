@@ -4694,3 +4694,14 @@ until leader replication is available.
 snapshot's `repos` map keys are canonical `owner/name` strings; each maps to
 optional `docs` and `site` records with integer UTC seven-day `period` and a
 `verdict` as specified in [Queue](docs/QUEUE.md#repository-shares).
+
+
+## Fleet eval report
+
+`buildFleetEvalReport` returns `fleet.eval-report.v1`. Group `revertRate` and
+`followUpRate` use `durability.resolved` as their denominator. Each `ci`
+bucket (`clean`, `failedChecks`, `jobFinishFailed`) retains its total
+`merged` count and exposes `resolved`, the number of stable or adverse
+post-merge outcomes. `adverseRate` is `adverse / resolved`. Rates with zero
+resolved outcomes are null. CI direction is `insufficient-data` when either
+required-check bucket lacks resolved outcomes.
