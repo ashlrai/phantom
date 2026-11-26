@@ -29,6 +29,9 @@ returns `{schema: "fleet.lane-rank.v1", tier, lanes}` ordered by nearest budget 
 `routes.json` maps pool names to existing `routeBackend` decisions, e.g.
 `{"codex-personal":{"backend":"codex","tier":"frontier","reason":"prior route"}}`.
 Supply currently free slots; missing routes, slots or usable budgets exclude a lane.
+Each observed budget bucket must be at most two hours old. A manual reading
+with a declared reset can qualify until that reset. Spill forecasts still
+require a reading from the last two hours.
 This reads the pool-budget ledger without writes or reservations. Decisions remain
 advisory: the dispatcher must recheck policy, account admission and capacity.
 The command consumes route evidence because invoking the legacy router can publish usage.
