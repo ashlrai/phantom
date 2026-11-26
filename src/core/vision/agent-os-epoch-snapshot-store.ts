@@ -7,8 +7,7 @@
  * load keys, mutate pointers, or grant runtime/effect authority.
  */
 
-import { timingSafeEqual } from 'node:crypto';
-import { lstatSync, opendirSync, type BigIntStats } from 'node:fs';
+import { lstatSync, opendirSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 
 import type { LocalStoreLock } from '../fleet/local-store-lock.js';
@@ -46,6 +45,16 @@ import {
   isAgentOsRawSha256DigestV1,
 } from './agent-os-epoch-records.js';
 import {
+  deepFreezeEpochValue as deepFreeze,
+  epochPlainRecord as record,
+  epochToken,
+  exactDenseEpochArray,
+  exactEpochKeys as exactKeys,
+  isPrivateEpochDirectory as privateDirectory,
+  isValidEpoch as validEpoch,
+  sameEpochDigest as sameDigest,
+} from './agent-os-epoch-shared.js';
+import {
   canonicalAgentOsEpochSnapshotEnvelopeBytesV2,
   createAgentOsEpochSnapshotEnvelopeV2,
   parseAgentOsEpochSnapshotEnvelopeV2,
@@ -58,13 +67,8 @@ import {
 import { isAgentOsEpochStorePlatformSupportedV1 } from './agent-os-epoch-store.js';
 import type { AgentOsReadModelV1 } from './agent-os-read-model.js';
 
-export const AGENT_OS_EPOCH_SNAPSHOT_STORE_PROTOCOL_V1 =
-  'ashlr-agent-os-epoch-snapshot-store-v1' as const;
-
-const PRIVATE_DIRECTORY_MODE = 0o700;
 const STORE_LOCK = '.agent-os-epoch-snapshot-v2.lock';
 const RECORD_FILE_RE = /^(\d{12})\.json$/u;
-const MAX_EPOCH = 999_999_999_999;
 const MAX_SEQUENCE = 4_096;
 const MAX_RECORD_BYTES = 1024 * 1024;
 const DEFAULT_MAX_RECORDS = MAX_SEQUENCE;
@@ -286,27 +290,6 @@ const AUTHORITY: Readonly<AgentOsEpochSnapshotStoreAuthorityV1> = Object.freeze(
   anchorMutationAuthority: false,
 });
 
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
-
 function canonicalComparable(value: unknown, depth = 0): string | null {
   if (depth > 32) return null;
   if (value === null || typeof value === 'boolean' || typeof value === 'string') {
@@ -339,42 +322,8 @@ function canonicalComparable(value: unknown, depth = 0): string | null {
   return Buffer.byteLength(canonical, 'utf8') <= MAX_RECORD_BYTES ? canonical : null;
 }
 
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
-  if (ArrayBuffer.isView(value)) return value;
-  if (value !== null && typeof value === 'object' && !seen.has(value)) {
-    seen.add(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested, seen);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function exactBytes(left: Uint8Array, right: Uint8Array): boolean {
-  const a = Buffer.from(left);
-  const b = Buffer.from(right);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function sameDigest(left: string, right: string): boolean {
-  return exactBytes(Buffer.from(left), Buffer.from(right));
-}
-
-function validEpoch(value: unknown): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= MAX_EPOCH;
-}
-
 function validGeneration(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 1_000_000;
-}
-
-function privateDirectory(stat: BigIntStats): boolean {
-  return stat.isDirectory() && !stat.isSymbolicLink() &&
-    (typeof process.getuid !== 'function' || stat.uid === BigInt(process.getuid())) &&
-    (process.platform === 'win32' || (stat.mode & 0o777n) === BigInt(PRIVATE_DIRECTORY_MODE));
-}
-
-function epochToken(epoch: number): string {
-  return String(epoch).padStart(12, '0');
 }
 
 function sequenceToken(sequence: number): string {
@@ -1087,19 +1036,6 @@ function degradedBindingBatchResult(): AgentOsEpochSnapshotBindingBatchResultV1 
   return deepFreeze({ state: 'degraded' as const });
 }
 
-function exactDenseArray(value: unknown[]): boolean {
-  try {
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    return Reflect.ownKeys(value).every((key) => typeof key === 'string' &&
-      (key === 'length' || /^(?:0|[1-9][0-9]*)$/u.test(key)) &&
-      (key === 'length' || (descriptors[key]?.enumerable === true &&
-        Object.hasOwn(descriptors[key]!, 'value')))) &&
-      value.every((_, index) => Object.hasOwn(value, index));
-  } catch {
-    return false;
-  }
-}
-
 function canonicalBindingBatchRequest(
   request: Readonly<AgentOsEpochSnapshotBindingBatchRequestV1>,
   maxRecords: number,
@@ -1107,13 +1043,12 @@ function canonicalBindingBatchRequest(
   const row = record(request);
   if (!row || !exactKeys(row, ['bindings', 'inputSetDigest', 'protocol']) ||
     row['protocol'] !== AGENT_OS_EPOCH_SNAPSHOT_BINDING_BATCH_PROTOCOL_V1 ||
-    !isAgentOsPrefixedSha256DigestV1(row['inputSetDigest']) ||
-    !Array.isArray(row['bindings']) || !exactDenseArray(row['bindings']) ||
-    row['bindings'].length < 1 ||
-    row['bindings'].length > maxRecords) return null;
+    !isAgentOsPrefixedSha256DigestV1(row['inputSetDigest'])) return null;
+  const rawBindings = exactDenseEpochArray(row['bindings'], maxRecords);
+  if (!rawBindings || rawBindings.length < 1) return null;
   const bindings: AgentOsEpochSnapshotV2BindingVerificationInputV1[] = [];
   const digests: string[] = [];
-  for (const candidate of row['bindings']) {
+  for (const candidate of rawBindings) {
     const binding = record(candidate);
     const digest = agentOsEpochSnapshotBindingDigestV1(
       candidate as AgentOsEpochSnapshotV2BindingVerificationInputV1,

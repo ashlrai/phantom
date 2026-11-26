@@ -16,6 +16,8 @@ from pathlib import Path
 tool, *args = sys.argv
 tool = Path(tool).name
 if tool == 'ssh':
+    # Keep the simulated remote on the fixture PATH, not the runner's Homebrew PATH.
+    sys.platform = 'linux'
     platform.system = lambda: os.environ['TEST_SYSTEM']
     os.environ['TEST_SSH'] = '1'
     exec(shlex.split(args[-1])[-1])
@@ -83,7 +85,8 @@ runpy.run_path(sys.argv[0], run_name='__main__')
 """
 
 
-class ProfileTests(unittest.TestCase):
+@unittest.skipUnless(os.name == "posix", "integration fixtures require POSIX shell shims and file modes")
+class ProfileIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
         bindir = self.home / "bin"
@@ -175,11 +178,6 @@ class ProfileTests(unittest.TestCase):
             self.assertEqual(rows[tool]["action"], "manual")
         self.assertFalse((self.home / "terminal-actions").exists())
 
-    def test_gui_probe_timeout_returns_no_states(self):
-        gui_checks = runpy.run_path(str(SCRIPT))["gui_checks"]
-        with patch.dict(gui_checks.__globals__, terminal_launch=Mock(return_value=True), GUI_WAIT=0.01):
-            self.assertEqual(gui_checks({"agy": ["agy", "models"]}, SCRIPT.read_text()), {})
-
     def test_windows_and_linux_installers_and_report_only_models(self):
         self.env["TEST_SYSTEM"] = "Windows"
         items = self.profile("--apply")["items"]
@@ -196,6 +194,13 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual((self.home / "pipx-commands").read_text().strip(), "install uv")
         self.assertIn("bun", (self.home / "npm-installed").read_text())
         self.assertFalse((self.home / "ollama-commands").exists())
+
+
+class ProfileTests(unittest.TestCase):
+    def test_gui_probe_timeout_returns_no_states(self):
+        gui_checks = runpy.run_path(str(SCRIPT))["gui_checks"]
+        with patch.dict(gui_checks.__globals__, terminal_launch=Mock(return_value=True), GUI_WAIT=0.01):
+            self.assertEqual(gui_checks({"agy": ["agy", "models"]}, SCRIPT.read_text()), {})
 
     def test_copy_only_allows_application_paths_and_checks_signature_before_transfer(self):
         parse = runpy.run_path(str(SCRIPT))["parse_profile"]
