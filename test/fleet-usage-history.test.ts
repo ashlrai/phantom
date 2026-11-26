@@ -127,6 +127,24 @@ describe('pool series', () => {
     });
   });
 
+  it('keeps quota pace and runway scoped to the same reset when windows overlap', () => {
+    const unknownReset = read(4, 10, null);
+    const previousReset = read(3, 20, iso(NOW + D));
+    const first = read(2, 25);
+    expect(poolUsageSeries('claude', [unknownReset, previousReset, first], NOW)).toMatchObject({
+      pace: 'unknown', reason: 'Only one reading in this window.',
+      points: [{ at: first.observed_at, used_pct: 25 }],
+      runway: { verdict: 'unknown', pace_per_hour: null },
+    });
+
+    const second = read(0, 29, RESET.replace('Z', '+00:00'));
+    expect(poolUsageSeries('claude', [unknownReset, previousReset, first, second], NOW)).toMatchObject({
+      pace: 'behind',
+      points: [{ at: first.observed_at, used_pct: 25 }, { at: second.observed_at, used_pct: 29 }],
+      runway: { pace_per_hour: 2 },
+    });
+  });
+
   it('shows a deduped current reading as the tail point so a flat run reaches its reading time', () => {
     const [s] = projectUsageHistory([read(20, 10), read(10, 30)], NOW, [read(0, 30)]);
     expect(s!.points.map(p => p.at)).toEqual([iso(NOW - 20 * H), iso(NOW - 10 * H), iso(NOW)]);
