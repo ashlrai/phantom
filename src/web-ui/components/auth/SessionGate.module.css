@@ -105,3 +105,8 @@
 }
 
 .optional { font-weight: var(--font-weight-normal, 400); color: var(--text-tertiary); }
+
+.summary {
+  cursor: pointer;
+  margin-block: var(--space-3);
+}

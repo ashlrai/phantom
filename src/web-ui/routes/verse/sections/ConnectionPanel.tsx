@@ -17,9 +17,11 @@ import { clearMutationToken, clearReadSession } from '../../../data/auth-store.j
 import { useAuthPhase, useMutationHold } from '../../../data/hooks.js';
 import { useToast } from '../../../components/primitives/Toast.js';
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
+import { isDesktopShell } from '../../../app/desktop-shell.js';
 import { Panel, SettingRow } from './SettingRow.js';
 import { PairedDevicesRows } from './PairedDevicesRows.js';
 import { PhoneAccessRows } from './PhoneAccessRows.js';
+import { BrowserPairingRows } from './PairingRows.js';
 import { FleetSourcesRows } from './FleetSourcesRows.js';
 import styles from './SettingsSection.module.css';
 
@@ -33,6 +35,7 @@ function formatHoldExpiry(heldUntil: number | null): string {
 export function ConnectionPanel() {
   const phase = useAuthPhase();
   const hold = useMutationHold();
+  const desktop = isDesktopShell();
   const toast = useToast();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [unlockOpen, setUnlockOpen] = useState(false);
@@ -52,7 +55,7 @@ export function ConnectionPanel() {
   async function disconnect(): Promise<void> {
     setConfirmOpen(false);
     await clearReadSession();
-    toast.show('Disconnected. Paste the read token to reconnect.');
+    toast.show('Disconnected. Use a pairing link or a read token to reconnect.');
   }
 
   return (
@@ -114,15 +117,16 @@ export function ConnectionPanel() {
             <strong>Where the tokens come from.</strong> Start the console with{' '}
             <code className={styles.code}>phm console</code> — it prints a read token and a mutation token in that
             terminal, and opens this page. The desktop app injects both for you. Tokens are never displayed here, and
-            the server never writes them into a page, a log line or an API response. Lost them? Stop the server and start
+            the server never writes them into a page or a log line. Lost them? Stop the server and start
             it again; it mints a fresh pair.
           </span>
         </p>
       </div>
+      {desktop && <BrowserPairingRows unlocked={hold.hasHold} />}
 
       <h4 className={styles.panelTitle} data-verse-anchor="fleet-sources">Fleet on this Mac</h4>
       <FleetSourcesRows />
-      <PhoneAccessRows />
+      <PhoneAccessRows desktopPairing={desktop} unlocked={hold.hasHold} />
       <PairedDevicesRows />
 
       {unlockOpen && <MutationTokenDialog
@@ -137,7 +141,7 @@ export function ConnectionPanel() {
         onClose={() => setConfirmOpen(false)}
         titleId="verse-settings-disconnect"
         title="Disconnect from this server?"
-        description="You will need the read token again to get back in. Running sessions keep running on the server."
+        description="You will need a new pairing link or the read token to get back in. Running sessions keep running on the server."
         initialFocusRef={cancelRef}
       >
         <div className={styles.previewRow} style={{ justifyContent: 'flex-end' }}>

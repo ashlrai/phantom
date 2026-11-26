@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { ToastProvider } from '../../../components/primitives/Toast.js';
 import { evictAll } from '../../../data/cache.js';
+import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { PhoneAccessRows } from './PhoneAccessRows.js';
 
 const snapshot = { v: 1, generatedAt: '2026-11-01T04:12:00Z', gateway: 'running',
@@ -9,7 +10,7 @@ const snapshot = { v: 1, generatedAt: '2026-11-01T04:12:00Z', gateway: 'running'
   pending: 0, devices: { active: 0, revoked: 0 } };
 
 beforeEach(() => evictAll());
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); clearMutationToken(); });
 
 function mount(data: unknown) {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(data)));
@@ -22,6 +23,22 @@ it('shows an accessible QR code for the phone URL', async () => {
   expect(qr).toHaveAttribute('width', '128');
   expect(qr).toHaveAttribute('height', '128');
 }, 15_000);
+
+it('shows the Mac-issued phone invitation as a fragment link and QR', async () => {
+  const code = 'p'.repeat(43);
+  setMutationToken('a'.repeat(64));
+  const fetchMock = vi.fn(async (_path: string, init?: RequestInit) => Response.json(init?.method === 'POST'
+    ? { code, expiresAt: Date.now() + 60_000 } : snapshot));
+  vi.stubGlobal('fetch', fetchMock);
+  render(<ToastProvider><PhoneAccessRows desktopPairing unlocked /></ToastProvider>);
+  fireEvent.change(await screen.findByLabelText('Access subject'), { target: { value: 'fixture-subject' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create phone invitation' }));
+  expect(await screen.findByRole('link', { name: 'Open phone pairing link' })).toHaveAttribute('href',
+    `${snapshot.phoneUrl}/#/pair/${code}`);
+  expect(screen.getByRole('img', { name: 'Phone pairing QR code' })).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith('/api/verse/fleet/control/remote-pairing',
+    expect.objectContaining({ body: JSON.stringify({ action: 'invite', subject: 'fixture-subject', scope: 'read' }) }));
+});
 
 it('omits the QR code when there is no phone URL', async () => {
   mount({ ...snapshot, phoneUrl: null, publicOrigin: null });

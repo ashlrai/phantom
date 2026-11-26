@@ -8,6 +8,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { Panel, SettingRow } from './SettingRow.js';
 import { inviteCommand, phoneAccessTell, phoneUrlFitsQr } from './phone-access-model.js';
 import { phoneAccessQuery } from './phone-access-query.js';
+import { PhonePairingRows } from './PairingRows.js';
 
 // Optional card: if it ever fails to render, hide it rather than take the
 // whole Connection panel down (same rule as DockHelperBoundary).
@@ -27,11 +28,11 @@ class PhoneAccessBoundary extends Component<{ children: ReactNode }, { failed: b
   }
 }
 
-export function PhoneAccessRows() {
-  return <PhoneAccessBoundary><PhoneAccessRowsView /></PhoneAccessBoundary>;
+export function PhoneAccessRows({ desktopPairing = false, unlocked = false }: { desktopPairing?: boolean; unlocked?: boolean }) {
+  return <PhoneAccessBoundary><PhoneAccessRowsView desktopPairing={desktopPairing} unlocked={unlocked} /></PhoneAccessBoundary>;
 }
 
-function PhoneAccessRowsView() {
+function PhoneAccessRowsView({ desktopPairing, unlocked }: { desktopPairing: boolean; unlocked: boolean }) {
   const read = useQuery(phoneAccessQuery);
   const refetch = useRefetch(phoneAccessQuery);
   const toast = useToast();
@@ -54,6 +55,8 @@ function PhoneAccessRowsView() {
           {phoneUrlFitsQr(data.phoneUrl) && <QrSvg value={data.phoneUrl} size={128} label="Phone URL QR code" />}
         </div>
       </SettingRow>}
+      {desktopPairing && data.gateway === 'running' && data.phoneUrl &&
+        <PhonePairingRows phoneUrl={data.phoneUrl} unlocked={unlocked} />}
       <SettingRow label={`${data.pending} pairing${data.pending === 1 ? ' waits' : 's wait'} for you below`}>
         <Button size="sm" variant="ghost" onClick={() => void copy(inviteCommand(), 'Invite command')}>Copy invite command</Button>
       </SettingRow>

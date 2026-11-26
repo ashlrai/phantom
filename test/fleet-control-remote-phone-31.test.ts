@@ -12,11 +12,12 @@ function setup(remoteAdmin: (input: unknown) => Promise<unknown>) {
     remoteDevices: () => ({ list: () => [{ revokedAt: null }, { revokedAt: 1 }] as RemoteDevice[] }) });
 }
 afterEach(() => { setFleetControlDepsForTest(null); vi.useRealTimers(); });
-async function call(route: string, body?: unknown, authorized = true, allowDispatch = true) {
+async function call(route: string, body?: unknown, authorized = true, allowDispatch = true, origin = 'http://127.0.0.1:7777') {
   const path = `/api/verse/fleet/control/${route}`;
   const method = body === undefined ? 'GET' : 'POST';
   const req = Object.assign(Readable.from(body === undefined ? [] : [JSON.stringify(body)]), {
-    url: path, method, headers: { 'content-type': 'application/json', ...(authorized ? { 'x-ashlr-token': 'test-local' } : {}) },
+    url: path, method, headers: { host: '127.0.0.1:7777', origin,
+      'content-type': 'application/json', ...(authorized ? { 'x-ashlr-token': 'test-local' } : {}) },
   }) as IncomingMessage;
   let status = 0, payload = '';
   const res = { writeHead(code: number) { status = code; return this; }, end(text: string) { payload = text; } } as unknown as ServerResponse;
@@ -72,6 +73,17 @@ it('rejects bad ids, actions, missing credentials and disabled dispatch before t
   expect((await call('remote-pairing', { action: 'deny', id }, false)).status).toBe(401);
   expect((await call('remote-pairing', { action: 'deny', id }, true, false)).status).toBe(404);
   expect(admin).not.toHaveBeenCalled();
+});
+it('requests a subject-scoped Mac invitation only after mutation and origin checks', async () => {
+  const invite = { code: 'i'.repeat(43), expiresAt: Date.now() + 60_000 };
+  const admin = vi.fn(async () => ({ ...invite, privateField: 'not projected' }));
+  setup(admin);
+  const body = { action: 'invite', subject: 'fixture-subject', scope: 'act' };
+  expect((await call('remote-pairing', body, false)).status).toBe(401);
+  expect((await call('remote-pairing', body, true, true, 'https://other.example')).status).toBe(403);
+  expect(admin).not.toHaveBeenCalled();
+  expect(await call('remote-pairing', body)).toEqual({ status: 200, body: { v: 1, ...invite } });
+  expect(admin).toHaveBeenCalledExactlyOnceWith(body);
 });
 it.each([false, true])('bounds failures without leaking socket errors (reply=%s)', async (reply) => {
   setup(async () => { if (reply) return { error: 'private-fixture' }; throw new Error('private-fixture'); });

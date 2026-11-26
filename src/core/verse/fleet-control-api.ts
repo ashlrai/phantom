@@ -181,6 +181,24 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
       if (pairing) {
         const body = await readMutationBody(ctx, req, res);
         if (!body) return true;
+        if (body.action === 'invite') {
+          if (req.headers.origin !== `http://${req.headers.host}`) {
+            sendJson(res, 403, { error: 'Same-origin pairing required' });
+            return true;
+          }
+          if (typeof body.subject !== 'string' || !/^[A-Za-z0-9_-]{8,256}$/.test(body.subject)
+            || (body.scope !== 'read' && body.scope !== 'act')) {
+            sendInvalid(res, 'invalid invitation subject or scope');
+            return true;
+          }
+          const result = await remoteCommand({ action: 'invite', subject: body.subject, scope: body.scope }, 70_000);
+          if (typeof result.code !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(result.code)
+            || typeof result.expiresAt !== 'number' || !Number.isSafeInteger(result.expiresAt) || result.expiresAt <= Date.now()) {
+            throw new Error('Invalid invitation response');
+          }
+          sendJson(res, 200, { v: 1, code: result.code, expiresAt: result.expiresAt });
+          return true;
+        }
         if ((body.action !== 'approve' && body.action !== 'deny') || typeof body.id !== 'string'
           || !/^[0-9a-f-]{36}$/.test(body.id)) { sendInvalid(res, 'invalid pairing action or id'); return true; }
         const result = await remoteCommand({ action: body.action, id: body.id }, 70_000);
