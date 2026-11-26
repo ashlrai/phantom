@@ -54,6 +54,13 @@ timestamp alone. A run can still count as a call when its phase age is unknown.
 An end timestamp suppresses the alert only when it is readable and falls
 between the current phase start and report time, inclusive.
 
+## Lane truth quota evidence
+
+`phm fleet lane-truth --json` compares dated quota readings within each
+provider window. Readings with unreadable observation timestamps are excluded
+from ordering and reset detection. If an observed window has no dated reading,
+the lane verdict is unknown.
+
 ## Memory shed plan
 
 Run `phm fleet shed-plan` for the next suggested action, or add `--json` for
