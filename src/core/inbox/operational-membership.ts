@@ -1,4 +1,5 @@
 import type { Proposal } from '../types.js';
+import { canonicalTimestampMillis } from './operational-projection-helpers.js';
 import { canonicalRealizedMergeIdentity } from './realized-merge.js';
 import {
   PROPOSAL_PERSISTENCE_MISMATCH_REASON,
@@ -35,12 +36,6 @@ export interface OperationalProposalMembershipResult {
   reason: OperationalProposalMembershipReason;
   /** Canonical inclusive expiry for bounded recovery memberships only. */
   expiresAt: string | null;
-}
-
-function canonicalTimestampMillis(value: unknown): number | null {
-  if (typeof value !== 'string') return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value ? parsed : null;
 }
 
 function locallyProvenRejectedPartialRecoveryExpiryMs(proposal: Proposal): number | null {

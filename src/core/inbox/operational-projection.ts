@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   chmodSync,
   lstatSync,
@@ -8,7 +8,6 @@ import {
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
-import { loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
 import type { Proposal, ProposalStatus } from '../types.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
@@ -19,6 +18,16 @@ import {
   type OperationalProposalMembershipType,
 } from './operational-membership.js';
 import {
+  SHA256_RE,
+  canonicalTimestamp,
+  deriveDomainSigningKey,
+  equalDigest,
+  hmacDomainPayload,
+  loadProvenanceKey32,
+  safePrivatePath,
+  validProposalId,
+} from './operational-projection-helpers.js';
+import {
   inboxDir,
   listProposalsDetailed,
   loadProposal,
@@ -28,7 +37,7 @@ import {
   type ProposalStoreMutationLock,
 } from './proposal-mutation-lock.js';
 
-export const OPERATIONAL_PROPOSAL_PROJECTION_SCHEMA_VERSION = 1 as const;
+const OPERATIONAL_PROPOSAL_PROJECTION_SCHEMA_VERSION = 1 as const;
 
 const MAX_MEMBERS = 4_096;
 const MAX_MIGRATION_INPUTS = 65_536;
@@ -37,8 +46,6 @@ const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
 const MAX_PROPOSAL_BYTES = 4 * 1024 * 1024;
 const MAX_TOTAL_PROPOSAL_BYTES = 64 * 1024 * 1024;
 const MAX_MIGRATION_TOTAL_BYTES = 256 * 1024 * 1024;
-const SHA256_RE = /^[a-f0-9]{64}$/;
-const PROPOSAL_ID_RE = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/;
 const PROPOSAL_STATUSES = new Set<ProposalStatus>([
   'pending',
   'approved',
@@ -174,29 +181,7 @@ function sha256(domain: string, value: unknown): string {
 }
 
 function hmac(key: Buffer, domain: string, value: unknown): string {
-  return createHmac('sha256', key)
-    .update(domain, 'utf8')
-    .update('\n', 'utf8')
-    .update(canonicalJson(value), 'utf8')
-    .digest('hex');
-}
-
-function projectionSigningKey(provenanceKey: Buffer): Buffer {
-  return createHmac('sha256', provenanceKey)
-    .update(SIGNING_KEY_DOMAIN, 'utf8')
-    .update('\n', 'utf8')
-    .digest();
-}
-
-function equalDigest(left: string, right: string): boolean {
-  if (!SHA256_RE.test(left) || !SHA256_RE.test(right)) return false;
-  return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
-}
-
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+  return hmacDomainPayload(key, domain, canonicalJson(value));
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -208,11 +193,6 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
-function validProposalId(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= 240 && PROPOSAL_ID_RE.test(value) &&
-    value !== '.' && value !== '..';
 }
 
 function validProposalStatus(value: unknown): value is ProposalStatus {
@@ -375,22 +355,6 @@ function verifyManifest(projection: OperationalProposalProjectionV1, key: Buffer
     equalDigest(projectionDigest, projection.projectionDigest);
 }
 
-function safePrivatePath(path: string, kind: 'file' | 'directory', exactMode: number): boolean {
-  try {
-    const stat = lstatSync(path, { bigint: true });
-    if (stat.isSymbolicLink() || (kind === 'file'
-      ? !stat.isFile() || stat.nlink !== 1n
-      : !stat.isDirectory())) return false;
-    if (typeof process.getuid === 'function' && stat.uid !== BigInt(process.getuid())) return false;
-    if (process.platform !== 'win32' && Number(stat.mode & 0o777n) !== exactMode) return false;
-    return assurePrivateStoragePath(path, kind, 'inspect-existing', {
-      anchorPath: homedir(),
-    }).ok;
-  } catch {
-    return false;
-  }
-}
-
 function legacyState(): OperationalProposalsReadResult {
   const legacy = listProposalsDetailed({ maxFiles: 1, requireComplete: false });
   if (legacy.filesDiscovered > 0) {
@@ -449,12 +413,11 @@ function readProjectionFile():
     if (!read.ok) return { state: 'degraded', reason: 'projection-unavailable' };
     const projection = parseManifest(read.text);
     if (!projection) return { state: 'degraded', reason: 'projection-invalid' };
-    let key: Buffer | null;
-    try { key = loadExistingProvenanceKeyReadOnly(); } catch { key = null; }
-    if (!key || key.length !== 32) {
+    const key = loadProvenanceKey32();
+    if (!key) {
       return { state: 'degraded', reason: 'provenance-key-unavailable' };
     }
-    if (!verifyManifest(projection, projectionSigningKey(key))) {
+    if (!verifyManifest(projection, deriveDomainSigningKey(key, SIGNING_KEY_DOMAIN))) {
       return { state: 'degraded', reason: 'projection-integrity-failed' };
     }
     return { state: 'ok', projection, key };
@@ -606,10 +569,9 @@ export function migrateOperationalProposalProjection(
   if (!Number.isFinite(nowMs) || !Number.isSafeInteger(nowMs) || !Array.isArray(options.proposals) ||
     options.proposals.length > MAX_MIGRATION_INPUTS) return degraded('migration-input-invalid');
 
-  let key: Buffer | null;
-  try { key = loadExistingProvenanceKeyReadOnly(); } catch { key = null; }
-  if (!key || key.length !== 32) return degraded('provenance-key-unavailable');
-  const signingKey = projectionSigningKey(key);
+  const key = loadProvenanceKey32();
+  if (!key) return degraded('provenance-key-unavailable');
+  const signingKey = deriveDomainSigningKey(key, SIGNING_KEY_DOMAIN);
 
   const current = readProjectionFile();
   if (current.state === 'degraded') return degraded(current.reason);
