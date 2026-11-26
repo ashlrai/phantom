@@ -77,13 +77,14 @@ function analyzeLaneTruth(lanes: readonly LaneState[], meters: readonly MeterSam
     let latest: MeterSample | null = null;
     for (const sample of meters.filter(s => s.provider === lane.lane)) {
       const group = groups.get(sample.window) ?? [];
-      group.push(sample);
       groups.set(sample.window, group);
       const at = Date.parse(sample.sampledAt);
-      if (Number.isFinite(at) && (latest === null || at > Date.parse(latest.sampledAt))) latest = sample;
+      if (!Number.isFinite(at)) continue;
+      group.push(sample);
+      if (latest === null || at > Date.parse(latest.sampledAt)) latest = sample;
     }
     let verdict: LaneVerdict = 'unknown';
-    const windows = [...groups.values()].map(samples => [...samples].sort((a, b) => Date.parse(b.sampledAt) - Date.parse(a.sampledAt)));
+    const windows = [...groups.values()].map(samples => samples.sort((a, b) => Date.parse(b.sampledAt) - Date.parse(a.sampledAt)));
     const known = windows.length > 0 && windows.every(([s]) => s && valid(s) && fresh(s.sampledAt, now) && Date.parse(s.resetAt!) > now);
     if (known && typeof lane.held === 'boolean') {
       const reset = windows.some(samples => {

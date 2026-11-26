@@ -45,6 +45,13 @@ describe('lane truth fixtures', () => {
     expect(await verdict({}, [sample, { ...sample, usedPercent: 90 }])).toBe('ok');
     expect(await verdict({}, [sample, { ...sample, usedPercent: 90, sampledAt: '2026-10-31T10:00:00Z' }])).toBe('ok');
   });
+  it('uses dated observations when an unreadable timestamp interrupts the journal', async () => {
+    const older = { ...sample, usedPercent: 85, sampledAt: '2026-10-31T11:55:00Z' };
+    const undated = { ...sample, sampledAt: 'unreadable' };
+    expect(await verdict({}, [older, undated, sample])).toBe('reset_detected');
+    expect(await verdict({}, [undated, older, sample])).toBe('reset_detected');
+    expect(await verdict({}, [sample, { ...undated, window: 'session' }])).toBe('unknown');
+  });
   it('emits one row per lane and strips untrusted metadata', async () => {
     const result = await readLaneTruth({ lanes: async () => [lane, { ...lane, lane: 'claude', held_reason: 'fixture-secret' }], meters: async () => [sample] }, now);
     expect(result.lanes.map(row => row.verdict)).toEqual(['ok', 'unknown']);
