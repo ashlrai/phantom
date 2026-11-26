@@ -13,6 +13,7 @@ import { RESOURCE_LIVE_ALLOWANCES, type ResourceLiveAllowance } from './types.js
 
 export const FLEET_RESOURCE_PLAN_SCHEMA = 'phantom.fleet-resource-plan.v1';
 const MINUTE = 60_000;
+const FINISH_WINDOW_MS = 7 * 1440 * MINUTE;
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
   ? value as Record<string, unknown> : {};
 const number = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -29,7 +30,7 @@ function finishes(ledger: JobsTailRead, now: number): Finish[] {
     try { row = object(JSON.parse(line)); } catch { continue; }
     const at = time(row['ts']), seconds = number(row['wall_s']);
     if (row['event'] !== 'finish' || typeof row['lane'] !== 'string' || !Number.isFinite(at) ||
-      at > now || at < now - 7 * 1440 * MINUTE || seconds === null || seconds === 0) continue;
+      at > now || at < now - FINISH_WINDOW_MS || seconds === null || seconds === 0) continue;
     out.push({ lane: row['lane'], at, minutes: seconds / 60, tokens: number(row['tokens_total']), fable: row['sublane'] === 'fable' });
   }
   return out;
@@ -88,18 +89,19 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const points = (sidecar.history[row.id] ?? []).filter(point => point.reset_at === reading.reset_at &&
       time(point.observed_at) <= now).sort((a, b) => time(a.observed_at) - time(b.observed_at));
     const first = points[0], last = points.at(-1);
-    const measured = first && last && time(first.observed_at) < time(last.observed_at) &&
-      (!ledger.truncated || jobs.some(job => job.at <= time(first.observed_at)))
+    const start = time(first?.observed_at);
+    const measured = ledger.text !== null && last && start < time(last.observed_at) &&
+      start >= now - FINISH_WINDOW_MS && (!ledger.truncated || jobs.some(job => job.at <= start))
       ? jobs.filter(job => job.lane === row.lane && (row.id !== 'claude-fable' || job.fable) &&
-        job.at > time(first.observed_at) && job.at <= time(last.observed_at)) : [];
+        job.at > start && job.at <= time(last.observed_at)) : null;
     const spent = first && last ? last.used - first.used : null;
-    const tokens = measured.every(job => job.tokens !== null) ? measured.reduce((sum, job) => sum + job.tokens!, 0) : 0;
+    const tokens = measured?.every(job => job.tokens !== null) ? measured.reduce((sum, job) => sum + job.tokens!, 0) : 0;
     const tokenFit = tokens > 0 && lane?.tokens_per_job != null && lane.tokens_per_job > 0;
-    const perJob = measured.length && spent !== null && spent > 0 && reading.unit !== 'models'
+    const perJob = measured?.length && spent !== null && spent > 0 && reading.unit !== 'models'
       ? tokenFit ? spent / tokens * lane!.tokens_per_job! : spent / measured.length : null;
     const jobsPerSlot = minutes === null || lane?.minutes_per_job == null ? null : Math.floor(minutes / lane.minutes_per_job);
     return { id: row.id, label: reading.label, class: reading.class, lane: row.lane, unit: row.unit, remaining: row.remaining, deadline_at: row.deadline_at,
-      jobs_per_slot: jobsPerSlot, measured_jobs_for_quota: ledger.text === null ? null : measured.length,
+      jobs_per_slot: jobsPerSlot, measured_jobs_for_quota: measured?.length ?? null,
       estimated_quota_per_job: perJob, estimate_basis: perJob === null ? null : tokenFit ? 'observed-quota-per-token' : 'observed-quota-per-finish',
       projected_jobs: null as number | null, projected_waste_at_deadline: null as number | null,
       action: row.action };

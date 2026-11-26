@@ -46,7 +46,8 @@ describe('fleet resource plan', () => {
       running: 1, max_concurrency: 2, target_concurrency: 2, minutes_per_job: 20, tokens_per_job: 6000, additional_slots: 1,
     });
     expect(plan.allowances.find(row => row.id === 'codex-personal')).toMatchObject({ remaining: 82, deadline_at: deadline,
-      estimated_quota_per_job: 5, estimate_basis: 'observed-quota-per-token', projected_jobs: 6, projected_waste_at_deadline: 52 });
+      measured_jobs_for_quota: 2, estimated_quota_per_job: 5, estimate_basis: 'observed-quota-per-token',
+      projected_jobs: 6, projected_waste_at_deadline: 52 });
     expect(plan.allowances.find(row => row.id === 'antigravity')?.projected_waste_at_deadline).toBe(50);
     const dir = await mkdtemp(join(tmpdir(), 'phantom-fleet-plan-'));
     try {
@@ -55,6 +56,23 @@ describe('fleet resource plan', () => {
       expect(JSON.parse(await readFile(join(dir, 'queue/resource-capacity-advice.json'), 'utf8')))
         .toEqual({ schema: 'phantom.fleet-resource-plan.v1', generated_at: iso(now), targets: { 'codex-personal': 2, agy: 2 } });
     } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it.each([
+    { name: 'single observation', firstAt: now, evidence: ledger, samples: null },
+    { name: 'interval outside the finish window', firstAt: now - 8 * 24 * hr, evidence: ledger, samples: null },
+    { name: 'truncated ledger without coverage', firstAt: now - hr, evidence: { ...ledger, truncated: true }, samples: null },
+    { name: 'covered interval without finishes', firstAt: now - hr, evidence: { ...ledger, text: '' }, samples: 0 },
+  ])('counts quota samples honestly with $name', ({ firstAt, evidence, samples }) => {
+    const history = { 'codex-personal': [
+      { observed_at: iso(firstAt), used: 8, reset_at: deadline },
+      { observed_at: iso(now), used: 18, reset_at: deadline },
+    ] };
+    const plan = buildFleetResourcePlan({ ...live, history }, [node], status(), evidence, now);
+    expect(plan.allowances.find(row => row.id === 'codex-personal')).toMatchObject({
+      measured_jobs_for_quota: samples, estimated_quota_per_job: null, projected_waste_at_deadline: null,
+    });
+    expect(plan.lanes.find(row => row.lane === 'codex-personal')?.additional_slots).toBeNull();
   });
 
   it('does not double count shared slots and distinguishes unknown from known zero', () => {
