@@ -513,6 +513,16 @@ exports[`390px fleet status 1`] = `
           </p>
         </section>
         <section
+          aria-label="Running now"
+        >
+          <strong>
+            Running now
+          </strong>
+          <p>
+            Running jobs: unknown
+          </p>
+        </section>
+        <section
           aria-labelledby="_r_4_"
         >
           <div>
@@ -616,9 +626,6 @@ exports[`390px fleet status 1`] = `
               </span>
             </div>
           </div>
-          <p>
-            Read from local clones on your Mac. Nothing is tagged or published from here.
-          </p>
         </section>
         <section
           aria-labelledby="_r_d_"

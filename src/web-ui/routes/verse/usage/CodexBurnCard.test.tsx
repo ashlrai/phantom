@@ -54,7 +54,7 @@ describe('CodexBurnCard', () => {
     view.rerender(<SectionVisibilityProvider visible><CodexBurnCard now={start} /></SectionVisibilityProvider>);
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
   });
-  it('mounts the card first in the Usage body', async () => {
+  it('mounts the card right after Runway and Producers in the Usage body', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === '/api/verse/fleet/runs') return json(fixture());
@@ -64,6 +64,13 @@ describe('CodexBurnCard', () => {
     render(<SectionVisibilityProvider visible><UsageSection /></SectionVisibilityProvider>);
     const heading = await screen.findByRole('heading', { name: 'Personal Codex burn' });
     const section = screen.getByRole('region', { name: 'Usage' });
-    expect(within(section).getAllByRole('heading')[1]).toBe(heading);
+    const headings = within(section).getAllByRole('heading');
+    expect(headings.slice(0, 4).map((el) => el.textContent)).toEqual([
+      'Usage',
+      'Runway',
+      'Who is spending',
+      'Personal Codex burn',
+    ]);
+    expect(headings[3]).toBe(heading);
   });
 });
