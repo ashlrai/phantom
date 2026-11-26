@@ -119,16 +119,7 @@ function dispatchLane(row: Record<string, unknown>): string | null {
   return null;
 }
 
-/** jobs.jsonl stamps arrive as ISO (with or without offset colon) or epoch-ms numbers. */
-function ledgerTs(row: Record<string, unknown>): number | null {
-  for (const key of TS_KEYS) {
-    const value = row[key];
-    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
-    const parsed = parseLedgerTs(value);
-    if (parsed !== null) return parsed;
-  }
-  return null;
-}
+const MAX_EPOCH_MS = 8_640_000_000_000_000;
 
 function stateOf(row: Record<string, unknown>): string {
   return (firstString(row, STATE_KEYS) ?? '').toUpperCase();
@@ -150,10 +141,12 @@ function outcomeStateOf(row: Record<string, unknown>): string {
   return event === null ? '' : OUTCOME_EVENT_STATES[event.toLowerCase()] ?? '';
 }
 
-/** The first parseable GitHub resolution timestamp for this verdict. */
-function resolutionAt(row: Record<string, unknown>, keys: readonly string[]): number | null {
+/** The first parseable ISO or epoch-millisecond stamp among the given aliases. */
+function timestampOf(row: Record<string, unknown>, keys: readonly string[]): number | null {
   for (const key of keys) {
-    const parsed = parseLedgerTs(row[key]);
+    const value = row[key];
+    if (typeof value === 'number' && value > 0 && value <= MAX_EPOCH_MS) return value;
+    const parsed = parseLedgerTs(value);
     if (parsed !== null) return parsed;
   }
   return null;
@@ -303,7 +296,7 @@ export function foldJobsLedgerRewards(
     } catch { continue; }
     const id = firstString(row, JOB_ID_KEYS);
     if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
-    const at = ledgerTs(row);
+    const at = timestampOf(row, TS_KEYS);
     if (at !== null && at > nowMs) continue;
     if (claims !== null) {
       const url = firstString(row, URL_KEYS);
@@ -334,8 +327,9 @@ export function foldJobsLedgerRewards(
     } else if (ciBoundary) {
       noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at, row);
     }
-    if (hasRevertEvidence(row)) {
-      const revertedAtMs = resolutionAt(row, REVERTED_AT_KEYS) ?? at;
+    const explicitRevertMs = timestampOf(row, REVERTED_AT_KEYS);
+    if (explicitRevertMs !== null || hasRevertEvidence(row)) {
+      const revertedAtMs = explicitRevertMs ?? at;
       if (revertedAtMs <= nowMs) {
         const url = firstString(row, URL_KEYS);
         const key = url === null ? null : pullRequestKey(url);
@@ -347,7 +341,7 @@ export function foldJobsLedgerRewards(
     }
     const state = outcomeStateOf(row);
     if (row['merged'] === true || MERGE_STATES.has(state)) {
-      const mergedAtMs = resolutionAt(row, MERGED_AT_KEYS) ?? at;
+      const mergedAtMs = timestampOf(row, MERGED_AT_KEYS) ?? at;
       if (mergedAtMs > nowMs) continue;
       if (acc.merge === null || mergedAtMs > acc.merge.resolvedMs ||
           (mergedAtMs === acc.merge.resolvedMs && at >= acc.merge.atMs)) {
@@ -357,7 +351,7 @@ export function foldJobsLedgerRewards(
         };
       }
     } else if (row['merged'] === false || CLOSED_STATES.has(state)) {
-      const closedAtMs = resolutionAt(row, CLOSED_AT_KEYS) ?? at;
+      const closedAtMs = timestampOf(row, CLOSED_AT_KEYS) ?? at;
       if (closedAtMs <= nowMs && (acc.close === null || closedAtMs > acc.close.resolvedMs ||
           (closedAtMs === acc.close.resolvedMs && at >= acc.close.atMs))) {
         acc.close = {

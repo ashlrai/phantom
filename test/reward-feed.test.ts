@@ -490,6 +490,43 @@ describe('foldJobsLedgerRewards', () => {
     }]);
   });
 
+  it.each([
+    ['MERGED', 'merged_at'],
+    ['CLOSED', 'closedAt'],
+  ])('bounds %s rewards by the epoch-millisecond resolution time', (state, field) => {
+    const job = 'RQ-EPOCH';
+    const resolution = '2026-10-28T15:00:00.000Z';
+    const receipt = { event: 'outcome', job, state, ts: '2026-10-28T16:00:00Z' };
+    const text = [
+      launch(job),
+      ciStart(job, '2026-10-28T14:10:00Z'),
+      ciComplete(job, '2026-10-28T14:20:00Z'),
+      launch(job, 'devin', '2026-10-28T15:30:00Z'),
+      line({ ...receipt, [field]: Date.parse(resolution) }),
+    ].join('\n');
+    expect(foldJobsLedgerRewards(text, NOW_MS)).toMatchObject([{
+      pool: 'codex-cmp', dispatchedAt: DISPATCH_ISO, ciWallMs: 600_000,
+      merged: state === 'MERGED', mergedAt: state === 'MERGED' ? resolution : null,
+    }]);
+    const future = line({ ...receipt, [field]: NOW_MS + 1 });
+    expect(foldJobsLedgerRewards([launch(job), future].join('\n'), NOW_MS)).toEqual([]);
+  });
+
+  it('orders a timestamp-only epoch-millisecond revert by its effective time', () => {
+    const job = 'RQ-EPOCH-REVERT';
+    const revert = (timestamp: number) => line({
+      job, reverted_at: timestamp, ts: '2026-10-28T16:00:00Z',
+    });
+    for (const [at, held] of [
+      [Date.parse(MERGED_ISO) - 1, true],
+      [Date.parse(MERGED_ISO), false],
+      [NOW_MS + 1, true],
+    ] as const) {
+      expect(foldJobsLedgerRewards([launch(job), merged(job), revert(at)].join('\n'), NOW_MS))
+        .toMatchObject([{ merged: held, dispatchedAt: DISPATCH_ISO }]);
+    }
+  });
+
   it('reads merged/closed event names as verdicts when no phase field resolves', () => {
     const text = [
       launch('RQ-EV'),
