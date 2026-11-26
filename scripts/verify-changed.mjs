@@ -367,11 +367,141 @@ export function masterMergeBase(root, exec = execFileSync) {
   return exec('git', ['merge-base', 'HEAD', 'origin/master'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 }
 
+/**
+ * Merge-base recovery for clones that never fetched enough history. A
+ * single-branch clone has no `origin/master` ref at all, and a shallow clone
+ * of a topic branch keeps a grafted boundary that shares no commit with
+ * master until both sides deepen — either way `git merge-base` fails and the
+ * run would degrade to checking only uncommitted work. The heal fetches only
+ * what the merge-base needs: the master tracking ref (written explicitly so
+ * narrow configured refspecs cannot skip it), then staged `--deepen` of the
+ * remote branches on HEAD's truncated ancestry. Returns the base sha, or null
+ * when the clone still cannot reach one — unrelated histories, an unreachable
+ * remote, or a fork point deeper than the last stage all degrade to the
+ * caller's status-mode fallback exactly as before.
+ */
+/** Refspec that always writes the master tracking ref, whatever the clone's configured refspec. */
+const HEAL_MASTER_REF = '+refs/heads/master:refs/remotes/origin/master';
+/** First deepen is absolute commits-from-tip; it must exceed the clone's current depth to extend, never shorten. */
+const HEAL_MIN_DEPTH = 400;
+const HEAL_MAX_DEPTH = 12000;
+const HEAL_GROWTH = 5;
+const HEAL_STAGES = 3;
+/** Bound on each heal fetch; a stalled remote must not hang verification for long. */
+const HEAL_FETCH_TIMEOUT_MS = 180_000;
+/** Remote branches one heal may deepen alongside master; keeps a pathological ref set bounded. */
+const HEAL_MAX_REFSPECS = 8;
+
+/** One git probe for the heal: trimmed stdout, or null on any failure (non-zero exit, timeout, spawn error). */
+function healGit(exec, root, args) {
+  try {
+    const out = exec('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const trimmed = typeof out === 'string' ? out.trim() : '';
+    return trimmed === '' ? null : trimmed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One heal fetch. Fetch progress stays on stderr so a slow deepen is visible;
+ * returns 'ok', 'fail' or 'timeout' so the caller can stop spending time on a
+ * remote that already proved it cannot answer in time.
+ */
+function healFetch(exec, root, args) {
+  try {
+    exec('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], timeout: HEAL_FETCH_TIMEOUT_MS });
+    return 'ok';
+  } catch (err) {
+    const killed = !!err && typeof err === 'object'
+      && (err.killed === true || err.code === 'ETIMEDOUT' || err.signal === 'SIGTERM' || err.signal === 'SIGKILL');
+    return killed ? 'timeout' : 'fail';
+  }
+}
+
+/**
+ * Branch names on origin whose history carries HEAD's truncated ancestry:
+ * HEAD's upstream when it points at origin, then the remote branches
+ * containing each shallow boundary commit reachable from HEAD (the grafted
+ * tips `git rev-list --max-parents=0` exposes). Master is excluded — the
+ * caller always adds it — and the list stays capped so a many-branch clone
+ * cannot turn the heal into a whole-repo fetch.
+ */
+function healBranchNames(root, exec) {
+  const names = [];
+  const seen = new Set(['master']);
+  const push = (name) => {
+    if (name && !seen.has(name) && names.length < HEAL_MAX_REFSPECS - 1) {
+      seen.add(name);
+      names.push(name);
+    }
+  };
+  const upstream = healGit(exec, root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
+  if (upstream !== null && upstream.startsWith('origin/')) push(upstream.slice('origin/'.length));
+  const bases = (healGit(exec, root, ['rev-list', '--max-parents=0', 'HEAD']) ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^[0-9a-f]{40}$/.test(line))
+    .slice(0, 4);
+  for (const sha of bases) {
+    const containing = healGit(exec, root, ['branch', '-r', '--contains', sha]) ?? '';
+    for (const line of containing.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('origin/') || trimmed.includes(' -> ')) continue;
+      push(trimmed.slice('origin/'.length));
+    }
+  }
+  return names;
+}
+
+/**
+ * Attempt to reach a merge-base the clone never fetched: ensure the master
+ * tracking ref exists, then in a shallow clone deepen master plus the remote
+ * branches on HEAD's ancestry in growing absolute-depth stages until the fork
+ * point is reachable. Never throws; every failure degrades to null so the
+ * caller falls back to status mode.
+ */
+export function healedMergeBase(root, exec = execFileSync) {
+  try {
+    const shallow = healGit(exec, root, ['rev-parse', '--is-shallow-repository']) === 'true';
+    const hasMaster = healGit(exec, root, ['rev-parse', '--verify', '--quiet', 'origin/master^{commit}']) !== null;
+    if (!shallow && hasMaster) return null;
+    if (!shallow) {
+      // A complete clone missing only the tracking ref — the single-branch case.
+      if (healFetch(exec, root, ['fetch', '--no-tags', 'origin', HEAL_MASTER_REF]) === 'timeout') return null;
+      return healGit(exec, root, ['merge-base', 'HEAD', 'origin/master']);
+    }
+    const refspecs = [HEAL_MASTER_REF, ...healBranchNames(root, exec).map((name) => `+refs/heads/${name}:refs/remotes/origin/${name}`)];
+    // --deepen is absolute commits-from-tip and can shorten a ref already
+    // deeper than the requested depth, so stage one must clear the deepest
+    // known side — HEAD's chain and master's — not just HEAD's.
+    const depthNow = Math.max(
+      Number.parseInt(healGit(exec, root, ['rev-list', '--count', 'HEAD']) ?? '0', 10) || 0,
+      hasMaster ? Number.parseInt(healGit(exec, root, ['rev-list', '--count', 'origin/master']) ?? '0', 10) || 0 : 0,
+    );
+    let depth = Math.max(HEAL_MIN_DEPTH, depthNow + HEAL_MIN_DEPTH);
+    for (let stage = 0; stage < HEAL_STAGES; stage += 1) {
+      const fetched = healFetch(exec, root, ['fetch', '--no-tags', `--deepen=${depth}`, 'origin', ...refspecs]);
+      const base = healGit(exec, root, ['merge-base', 'HEAD', 'origin/master']);
+      if (base !== null) return base;
+      if (fetched === 'timeout') return null;
+      const next = Math.min(depth * HEAL_GROWTH, HEAL_MAX_DEPTH);
+      if (next === depth) return null;
+      depth = next;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Without shared history, verify only this worker's index and working tree. */
 export function verificationBase(root, exec = execFileSync) {
   try {
     return { base: masterMergeBase(root, exec), mode: 'merge-base' };
   } catch {
+    const healed = healedMergeBase(root, exec);
+    if (healed !== null) return { base: healed, mode: 'merge-base' };
     const git = (...args) => exec('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     return { base: git('rev-parse', '--verify', 'HEAD^{commit}'), mode: 'status' };
   }
