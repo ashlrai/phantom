@@ -296,9 +296,9 @@ function detail(t: BoardTransition, state: BoardNotifyState): string | null {
   if (state === 'BLOCKED') return e.dependency ? proofField(e.dependency) : null;
   const parts: string[] = [];
   if (e.pr !== undefined) parts.push(`PR #${e.pr}`);
-  if (e.head) parts.push(`head ${proofField(e.head)}`);
-  if (e.tests) parts.push(`tests ${proofField(e.tests)}`);
-  if (e.artifact) parts.push(parts.length === 0 ? proofField(e.artifact) : `artifact ${proofField(e.artifact)}`);
+  if (normDeltaField(e.head)) parts.push(`head ${proofField(e.head!)}`);
+  if (normDeltaField(e.tests)) parts.push(`tests ${proofField(e.tests!)}`);
+  if (normDeltaField(e.artifact)) parts.push(parts.length === 0 ? proofField(e.artifact!) : `artifact ${proofField(e.artifact!)}`);
   return parts.length === 0 ? null : parts.join(' ');
 }
 
@@ -306,14 +306,14 @@ function detail(t: BoardTransition, state: BoardNotifyState): string | null {
 export function missingNoticeEvidence(t: BoardTransition, state: BoardNotifyState): string | null {
   const e = t.evidence;
   if (state === 'ASSIGNED') {
-    if (!e.owner) return 'ASSIGNED dropped: no named owner';
-    if (!e.claimReceipt) return 'ASSIGNED dropped: no durable claim receipt';
+    if (!normDeltaField(e.owner)) return 'ASSIGNED dropped: no named owner';
+    if (!normDeltaField(e.claimReceipt)) return 'ASSIGNED dropped: no durable claim receipt';
     return null;
   }
   if (state === 'BLOCKED') {
-    return e.dependency ? null : 'BLOCKED dropped: no dependency named';
+    return normDeltaField(e.dependency) ? null : 'BLOCKED dropped: no dependency named';
   }
-  if (e.pr !== undefined || e.head || e.tests || e.artifact) return null;
+  if (e.pr !== undefined || normDeltaField(e.head) || normDeltaField(e.tests) || normDeltaField(e.artifact)) return null;
   return 'VERIFIED dropped: no PR, head or test artifact';
 }
 

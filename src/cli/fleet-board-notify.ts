@@ -235,6 +235,9 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   const queued = count('slack-bus-note-enqueued');
   const busPosted = count('bus-reply-posted');
   const pending = new Set(results.filter(r => r.status !== 'sent' && r.status !== 'duplicate').map(r => r.notice.itemId));
+  for (const drop of plan.dropped) {
+    if (drop.reason !== `${drop.state} dropped: already notified`) pending.add(drop.itemId);
+  }
   // A truncated listing is a bounded projection, not the whole board:
   // preserve prior rows for items outside the page so their baselines —
   // including pending undelivered updates — are not silently discarded.
