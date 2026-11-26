@@ -5,6 +5,7 @@
  * Per lane and size (a launch row's `size`, else "unknown"), plus a per-lane
  * "all" row, the window is the lane's last 50 launches. A job's merge counts
  * once on its latest launch, and empty evidence must follow that launch.
+ * Exact replays of timestamped launch receipts count once.
  * Rows fold through the fleet's jobs-ledger dialect: reconciler
  * outcome rows keyed by `jobId`/`prUrl`/`outcome`/`status`, `type`/`kind`
  * event spellings, the `pool` lane alias and terminal empty phases
@@ -142,6 +143,7 @@ export function computeLaneYield(ledger: string | null): LaneYieldReport {
   type Receipt = { at: number | null; seq: number };
   type Launch = Receipt & { lane: string; size: string; merged: boolean; reverted: boolean; empty: boolean };
   const launches: Launch[] = [];
+  const seenLaunchReceipts = new Set<string>();
   const byJob = new Map<string, Launch>();
   const merged = new Set<string>();
   const reverted = new Set<string>();
@@ -157,6 +159,11 @@ export function computeLaneYield(ledger: string | null): LaneYieldReport {
       const lane = firstString(row, LANE_KEYS);
       if (!lane) continue;
       const at = eventTs(row, phase);
+      if (at !== null) {
+        const receipt = line.trim();
+        if (seenLaunchReceipts.has(receipt)) continue;
+        seenLaunchReceipts.add(receipt);
+      }
       const launch: Launch = { lane, size: text(row.size) ?? 'unknown', at, seq, merged: false, reverted: false, empty: false };
       launches.push(launch);
       const prev = byJob.get(id);
