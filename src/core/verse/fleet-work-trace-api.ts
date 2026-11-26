@@ -4,6 +4,7 @@ import { sendJson } from '../web/api.js';
 import { ashlrHome } from '../cloud/store.js';
 import { collectBusWorkItemEvidence, type BusWorkItemEvidenceResult } from '../comms/work-item-bus-evidence.js';
 import { classifyWorkItem } from '../comms/work-item-state.js';
+import { scrubSecrets } from '../util/scrub.js';
 
 export const WORK_TRACE_MAX_IDS = 20;
 export const WORK_TRACE_MAX_ID_LENGTH = 200;
@@ -31,7 +32,16 @@ export function createFleetWorkTraceApi(
     const items = ids.map(id => {
       try {
         const { evidence, sources } = collect(id, { root: rootOf(), now });
-        return { id, ...classifyWorkItem(evidence, nowIso), owner: evidence.owner ?? null,
+        const classified = classifyWorkItem(evidence, nowIso);
+        const safe = (value: string): string => scrubSecrets(value).replace(/[\r\n\p{Cc}\p{Zl}\p{Zp}]/gu, ' ');
+        const field = (value: string | undefined): string | null => value === undefined ? null : safe(value.slice(0, 200));
+        const proof = classified.state === 'BLOCKED' && evidence.blocker
+          ? { kind: 'blocked' as const, dependency: safe(evidence.blocker.dependency) }
+          : classified.state === 'VERIFIED' && evidence.verified
+            ? { kind: 'verified' as const, pr: evidence.verified.pr ?? null, head: field(evidence.verified.head),
+              tests: field(evidence.verified.tests), artifact: field(evidence.verified.artifact) }
+            : undefined;
+        return { id, ...classified, ...(proof ? { result: proof } : {}), owner: evidence.owner ?? null,
           claimReceipt: evidence.claimReceipt ?? null, inbox: sources.inbox, claims: sources.claims,
           coordination: sources.coordination };
       } catch {
