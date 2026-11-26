@@ -264,6 +264,33 @@ describe('CI baseline evidence', () => {
     expect(mismatch.groups).toEqual([]);
     expect(mismatch.freshness.every(p => p.state === 'unknown')).toBe(true);
   });
+  it.each(['git log', 'source binding'] as const)('rejects a later conflicting %s checkout proof', async (kind) => {
+    const { gh } = github({ bound: kind === 'source binding' });
+    const other = 'f'.repeat(40);
+    const trailer = kind === 'git log' ? `/usr/bin/git log -1 --format=%H\n${other}`
+      : `Bound candidate ${other} to event tree ${'e'.repeat(40)}`;
+    const report = await analyzeCiBaseline('owner/repo', async (args) => {
+      const result = await gh(args);
+      return args[1]?.endsWith('/jobs/20/logs') && result
+        ? { ...result, stdout: `${result.stdout}\n${trailer}\n` }
+        : result;
+    });
+    expect(report.groups).toEqual([]);
+    expect(report.freshness.map(p => p.state)).toEqual(['unknown', 'unknown']);
+  });
+
+  it('accepts agreeing checkout proofs of both kinds', async () => {
+    const { gh } = github();
+    const report = await analyzeCiBaseline('owner/repo', async (args) => {
+      const result = await gh(args);
+      return args[1]?.endsWith('/jobs/20/logs') && result
+        ? { ...result, stdout: `${result.stdout}\nBound candidate ${head} to event tree ${'e'.repeat(40)}\n` }
+        : result;
+    });
+    expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline' });
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+  });
+
   it('verifies unbound gate jobs through the checkout ref echo', async () => {
     // secret-shape, quick, clean-tree, authority-drift, fast-gate,
     // secret-scan and the dependency-audit job never run
