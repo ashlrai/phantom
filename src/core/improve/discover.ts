@@ -1155,6 +1155,30 @@
  *     own recorded verdicts; 'missing' and clean reads never emit,
  *     and only the fleet's own repository inherits the items since
  *     the ledgers describe this install's learned memory;
+ *   - the seat-routing shadow journal's recurring starvation and
+ *     evidence-broken exclusions: the {v:1, at, source, request,
+ *     decision, actual} rows recordShadowDecision appends to
+ *     ~/.ashlr/routing/decisions.jsonl (plus its one rotated
+ *     generation) for every seat-route evaluation — the
+ *     (source, task, autonomous) cells whose decisions kept returning
+ *     seatId null, and the (seatId, adverse-kind) exclusion pairs the
+ *     non-dispatch surfaces ('gateway', 'leader', 'best-of-n',
+ *     'verse') kept recording — each folded across distinct UTC days
+ *     inside the 7-day window (seatRouteBacklogItems below). Until now
+ *     the journal's only readers were point-in-time surfaces — the
+ *     reserve-breach attributor's bounded scan, the Budget panel's
+ *     newest-50 route and `phm telemetry`'s newest-50 print — so a
+ *     routing surface that kept finding no eligible seat, or seats
+ *     kept excluded for broken eligibility evidence off the dispatch
+ *     path, looked like ordinary current-state numbers, never work.
+ *     'daemon'-source exclusions never emit here — the fleet dispatch
+ *     mirror journals the same SeatDecision objects
+ *     fleet/runtime/runs.jsonl carries and runtime-journal-backlog
+ *     already folds them — 'test' rows are synthetic probes that never
+ *     count, truncated tails are stated as lower bounds, and only the
+ *     fleet's own repository inherits the items since the journal
+ *     describes this install's routing and carries no repository
+ *     column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1272,6 +1296,7 @@ import { outsidePrBacklogItems } from './outside-pr-backlog.js';
 import { repoShareBacklogItems } from './repo-share-backlog.js';
 import { reasoningInsightBacklogItems } from './reasoning-insight-backlog.js';
 import { fleetGapBacklogItems } from './fleet-gap-backlog.js';
+import { seatRouteBacklogItems } from './seat-route-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2725,6 +2750,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the evidence describes this
   // install's dispatcher and carries no repository column.
   items.push(...await fleetGapBacklogItems({ repo }));
+
+  // Seat-route shadow journal fold: every seat-route evaluation the
+  // budget router runs appends one {v:1, at, source, request, decision,
+  // actual} row to ~/.ashlr/routing/decisions.jsonl — until now its only
+  // readers were point-in-time surfaces (the reserve-breach
+  // attributor's bounded scan, the Budget panel's newest-50 route,
+  // `phm telemetry`'s newest-50 print), so recurring no-eligible-seat
+  // decisions and recurring evidence-broken exclusions on the
+  // non-dispatch surfaces never became work. 'daemon'-source exclusion
+  // cells stay with runtime-journal-backlog — the dispatch mirror
+  // journals the same SeatDecision objects fleet/runtime/runs.jsonl
+  // carries — while 'daemon' rows still count toward the no-seat
+  // cells no sibling folds; 'test' rows are synthetic probes that
+  // never count. Cells emit only at the recurring bars of adverse
+  // observations across distinct UTC days inside the window,
+  // truncated tails are stated as lower bounds, and only the fleet's
+  // own repository inherits the items since the journal describes
+  // this install's routing and carries no repository column.
+  items.push(...await seatRouteBacklogItems({ repo }));
   return { items, errors };
 }
 
