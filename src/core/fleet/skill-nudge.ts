@@ -299,7 +299,8 @@ export function skillNudgeJobsFromLedger(
     // A replay must not move a verdict past later failures or capture
     // execution evidence recorded after the original verdict.
     const datedVerdict = outcome !== undefined && (rowAt !== null || terminalAt !== null);
-    const datedRecovery = rowAt !== null && (dispatched || event === 'recut_admission');
+    const datedRecovery = rowAt !== null && (dispatched || event === 'recut_admission'
+      || event === 'launch_failed' || event === 'launch_terminal' || event === 'finish');
     if (datedVerdict || datedRecovery) {
       const receipt = line.trim();
       if (recoveryReceipts.has(receipt)) continue;
