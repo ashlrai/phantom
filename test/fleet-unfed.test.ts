@@ -1178,9 +1178,28 @@ describe('fleet stop verdicts', () => {
     expect(report.resources.find(r => r.lane === 'a')!.blocked).toEqual({});
   });
 
+  it('uses timestamped admission evidence only from the status tick', () => {
+    const tick = '2026-11-26T10:00:00-0500';
+    const ready = [TWO_WAITING, `${row('RQ-INVALID', 'b')}\t{broken`].join('\n');
+    const reportAt = (ts: string) => currentUnfed(JSON.stringify({
+      last_tick: tick,
+      lanes: STOP_LANES,
+      admission: { ts, gate_reason: 'load guard', admit: false },
+    }), ready);
+
+    expect(reportAt(tick)).toMatchObject({ fleetStop: 'admission_stopped', waiting: 3 });
+    for (const ts of ['2026-11-26T09:59:59-0500', '2026-11-26T10:00:01-0500']) {
+      const report = reportAt(ts);
+      expect(report).toMatchObject({ fleetStop: null, waiting: 2, invalidRows: 1 });
+      expect(report.resources.find(r => r.lane === 'a')?.blocked).toEqual({});
+    }
+  });
+
   it('reads the stop code back from dispatcher-published blocked reasons', () => {
     const status = JSON.stringify({
       lanes: STOP_LANES,
+      last_tick: '2026-11-26T10:00:00-0500',
+      admission: { ts: '2026-11-26T09:59:59-0500', running: 4, cap: 4 },
       unfed_capacity: {
         waiting: 2,
         lanes: {

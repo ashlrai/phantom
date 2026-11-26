@@ -305,9 +305,9 @@ export function readyHints(readyTsv: string, routerQueue?: string | null):
 function fleetStopVerdict(data: Record<string, unknown>): FleetStopCode | null {
   if (data.paused) return 'admission_stopped';
   const admission = isRecord(data.admission) ? data.admission : null;
-  const gateReason = admission?.gate_reason;
+  if (admission === null || (admission.ts !== undefined && admission.ts !== data.last_tick)) return null;
+  const gateReason = admission.gate_reason;
   if (typeof gateReason === 'string' && gateReason.trim().length > 0) return 'admission_stopped';
-  if (admission === null) return null;
   const cap = count(admission.cap) ? admission.cap : null;
   const running = count(admission.running) ? admission.running : null;
   const launched = Array.isArray(data.launched_this_tick) ? data.launched_this_tick.length : null;
