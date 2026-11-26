@@ -382,6 +382,11 @@ recorded `work_class` (`unclassified` when absent or outside the market's
 closed values). A missing jobs ledger leaves every decided job
 `unresolved` — unknown stays unknown — and `jobsTruncated` marks a
 tail-bound lower bound on outcomes.
+`marketTruncated` flags a read that omitted older work-market journal bytes.
+History, overrides, rejections and decision outcomes then cover only retained
+evidence and may be incomplete for the requested window. Text output flags
+the same limitation. Each fold's `available` flag still indicates whether
+its journal was readable.
 `--json` prints `fleet.unfed.v1`. `source` is `dispatcher` when status.json
 carries the block and `derived` when the running dispatcher predates it; a
 derived report compares lane counts with `ready.tsv` hints; when
