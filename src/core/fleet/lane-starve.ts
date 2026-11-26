@@ -30,6 +30,7 @@ import { readyMarketLine } from './unfed-market.js';
 export const FILLER_ID = /A\d{6,}Q8$/;
 
 const PARKED = /^PARKED/i;
+const DISPATCHER_MAX_AGE_MS = 60_000;
 
 export interface StarvedLane {
   lane: string;
@@ -91,12 +92,18 @@ function queueRow(line: string): QueueRow | null {
   return id ? { id, lane } : null;
 }
 
-/** Pure: starved lanes from status.json text and ready.tsv text (null when absent). */
+/** Pure: supply and occupancy from a snapshot. Pass report time for a live verdict. */
 export function findStarvedLanes(
-  statusJson: string, readyTsv: string | null, routerQueue?: string | null,
+  statusJson: string, readyTsv: string | null, routerQueue?: string | null, now?: number,
 ): StarvedLanes {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
+  if (now !== undefined) {
+    const tick = typeof data.last_tick === 'string' ? Date.parse(data.last_tick) : NaN;
+    if (!Number.isFinite(tick) || tick > now || now - tick > DISPATCHER_MAX_AGE_MS) {
+      throw new Error('unusable dispatcher tick');
+    }
+  }
   const split = new Map<string, { filler: number; real: number }>();
   const countedJobs = new Set<string>();
   let open = 0;
