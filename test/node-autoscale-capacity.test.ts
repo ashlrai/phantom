@@ -227,6 +227,18 @@ describe('capacity model', () => {
     expect(parseNodeCapacityDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
   });
 
+  it('keeps a measured rate just below the swap-growth threshold runnable', () => {
+    const prev = computeNodeCapacity(snap());
+    const doc = computeNodeCapacity(snap({
+      measuredAtMs: T0 + 60_001,
+      swap: { ...snap().swap, swapoutsTotal: 1_000 + MEMORY_GUARD.growingSwapoutsPerMin },
+    }), prev);
+
+    expect(doc.swap.swapouts_per_min).toBeLessThan(MEMORY_GUARD.growingSwapoutsPerMin);
+    expect(doc.swap.growing).toBe(false);
+    expect(doc.agents_runnable_now.codex).toBeGreaterThan(0);
+  });
+
   it('keeps the integrity gates: kernel pressure and swap growth stop every harness', () => {
     const warn = computeNodeCapacity(snap({ mem: { totalBytes: 128 * GIB, freeBytes: null, freePercent: 60, pressureLevel: 2 } }));
     expect(Object.values(warn.agents_runnable_now).every(n => n === 0)).toBe(true);
