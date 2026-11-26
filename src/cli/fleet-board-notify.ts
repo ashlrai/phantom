@@ -188,7 +188,7 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
       })),
       lines: [
         `board-notify dry-run: transitions=${transitions.length} planned=${plan.notices.length} dropped=${plan.dropped.length}${prev === null ? ' (first pass would baseline)' : ''}${killed ? ' (KILL armed)' : ''}`,
-        ...plan.notices.map(n => `would-post [${n.sourceChannel}${n.sourceThread ? ` ${n.sourceThread}` : ''}] ${n.text}`),
+        ...plan.notices.map(n => scrubSecrets(`would-post [${n.sourceChannel}${n.sourceThread ? ` ${n.sourceThread}` : ''}] ${n.text}`)),
         ...plan.dropped.map(d => `dropped ${d.itemId}: ${d.reason}`),
       ],
     });
@@ -226,6 +226,8 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   const results = await sendNotifications(plan.notices, { senders: tracked, ledgerPath });
   const delivered = results.filter(r => r.status === 'sent' || r.status === 'duplicate');
   const deliveries = results.map(r => ({ itemId: r.notice.itemId, state: r.notice.state, status: r.status,
+    sourceChannel: scrubSecrets(r.notice.sourceChannel),
+    sourceThread: r.notice.sourceThread === null ? null : scrubSecrets(r.notice.sourceThread),
     ...(evidence.get(r.notice) ?? { evidence: 'none', transport: 'none' }) }));
   const count = (e: NoticeDelivery['evidence']): number => deliveries.filter(d => d.evidence === e).length;
   const queued = count('slack-bus-note-enqueued');
@@ -245,7 +247,7 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
     lines: [
       ...(!saved ? ['board-notify: snapshot could not be saved; retry after restoring state storage'] : []),
       `board-notify: transitions=${transitions.length} planned=${plan.notices.length} receipts=${delivered.length} queued=${queued} bus-posted=${busPosted} pending=${pending.size} dropped=${plan.dropped.length}`,
-      ...results.map(r => `${describeResult(r.status, evidence.get(r.notice))} [${r.notice.sourceChannel}${r.notice.sourceThread ? ` ${r.notice.sourceThread}` : ''}] ${r.notice.text}${r.reason ? ` (${r.reason})` : ''}`),
+      ...results.map(r => scrubSecrets(`${describeResult(r.status, evidence.get(r.notice))} [${r.notice.sourceChannel}${r.notice.sourceThread ? ` ${r.notice.sourceThread}` : ''}] ${r.notice.text}${r.reason ? ` (${r.reason})` : ''}`)),
       ...plan.dropped.map(d => `dropped ${d.itemId}: ${d.reason}`),
     ],
   }, saved ? 0 : 1);
