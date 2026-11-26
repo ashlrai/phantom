@@ -141,6 +141,66 @@ describe('measurement parsers (recorded host output)', () => {
   });
 });
 
+describe('Linux /proc measurement', () => {
+  const MEMINFO = `MemTotal:       16777216 kB
+MemFree:         1048576 kB
+MemAvailable:    8388608 kB
+Buffers:          524288 kB
+SwapTotal:       2097152 kB
+SwapFree:        1048576 kB
+`;
+  const PSI_NORMAL = `some avg10=2.50 avg60=1.00 avg300=0.50 total=123456\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n`;
+  const PSI_WARN = `some avg10=15.00 avg60=9.00 avg300=4.00 total=123456\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n`;
+  const VMSTAT = `pswpin 100\npswpout 4242\npgpgin 999999\n`;
+  const PS = '  10     1 102400  5.0 codex\n  11    10  51200  1.0 node\n';
+  const TOTAL = 16 * GIB;
+
+  function linuxHost(files: Record<string, string | null>, withReadFile = true): MeasureHost {
+    const host: MeasureHost = {
+      platform: 'linux', now: () => T0, hostname: () => 'linux-box', loadavg: () => [1, 2, 3],
+      totalmem: () => TOTAL, freemem: () => 8 * GIB, sleep: async () => {},
+      run: async file => file === '/bin/ps' ? PS : null,
+      cpus: () => Array.from({ length: 8 }, () => ({ model: '', speed: 0, times: { user: 0, nice: 0, sys: 0, irq: 0, idle: 0 } })),
+    };
+    if (withReadFile) host.readFile = async path => files[path] ?? null;
+    return host;
+  }
+
+  it('reads MemAvailable, swap and PSI from /proc so the capacity doc is measured', async () => {
+    const s = await measureNode({ host: linuxHost({ '/proc/meminfo': MEMINFO, '/proc/pressure/memory': PSI_NORMAL, '/proc/vmstat': VMSTAT }) });
+    expect(s.platform).toBe('linux');
+    expect(s.processSource).toBe('ps');
+    expect(s.mem).toEqual({ totalBytes: TOTAL, freeBytes: 8 * GIB, freePercent: 50, pressureLevel: 1 });
+    expect(s.swap).toEqual({ usedBytes: GIB, totalBytes: 2 * GIB, swapoutsTotal: 4242 });
+    // Before the /proc reader every Linux harness reported unmeasured; now the model
+    // derives a real runnable count from headroom and the measured codex footprint
+    // (codex pid 10 plus its node child pid 11: 150 MiB; headroom (50-30)% of 16 GiB).
+    const doc = computeNodeCapacity(s);
+    expect(doc.mem_free).toMatchObject({ free_percent: 50, pressure_level: 1 });
+    expect(doc.swap).toMatchObject({ used_bytes: GIB, total_bytes: 2 * GIB, swapouts_total: 4242 });
+    expect(doc.agents_runnable_now.codex).toBe(21);
+    expect(doc.basis.limiting.codex).toBe('memory');
+  });
+
+  it('maps PSI some avg10 onto the admission bands and fails closed when /proc is unreadable', async () => {
+    const warn = await measureNode({ host: linuxHost({ '/proc/meminfo': MEMINFO, '/proc/pressure/memory': PSI_WARN, '/proc/vmstat': VMSTAT }) });
+    expect(warn.mem.pressureLevel).toBe(2);
+    const doc = computeNodeCapacity(warn);
+    expect(doc.agents_runnable_now.codex).toBe(0);
+    expect(doc.basis.limiting.codex).toBe('pressure');
+
+    const noPsi = await measureNode({ host: linuxHost({ '/proc/meminfo': MEMINFO, '/proc/pressure/memory': null, '/proc/vmstat': VMSTAT }) });
+    expect(noPsi.mem.pressureLevel).toBeNull();
+    expect(computeNodeCapacity(noPsi).agents_runnable_now.codex).toBeNull();
+
+    // An injected host with no readFile at all keeps every Linux reading unknown.
+    const blind = await measureNode({ host: linuxHost({}, false) });
+    expect(blind.mem.pressureLevel).toBeNull();
+    expect(blind.swap).toEqual({ usedBytes: null, totalBytes: null, swapoutsTotal: null });
+    expect(computeNodeCapacity(blind).agents_runnable_now.codex).toBeNull();
+  });
+});
+
 describe('capacity model', () => {
   it('derives headroom above the memguard raise line and per-harness runnable from measured footprints', () => {
     expect(CAPACITY_POLICY.memReserveFreePct).toBe(MEMORY_GUARD.raiseFreePct);
