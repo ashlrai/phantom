@@ -131,6 +131,36 @@ describe('lanes read: starved object', () => {
   });
 
   it.each([
+    { age: 60_000, paused: false, admission: { cap: 3, running: 3 }, free: 0 },
+    { age: 0, paused: 'operator pause', admission: { cap: 4, running: 3 }, free: 0 },
+    { age: 0, paused: false, admission: { admit: false }, free: 0 },
+    { age: 0, paused: false, admission: { cap: 4, running: 3 }, free: 1 },
+    { age: 60_001, paused: true, admission: { cap: 3, running: 3 }, free: 3 },
+    { age: -1, paused: true, admission: { cap: 3, running: 3 }, free: 3 },
+    { age: 0, paused: false, admission: { cap: 3, running: 3, ts: minutesAgo(1) }, free: 3 },
+  ])('uses fresh shared admission to bound starvation headroom (%j)', async ({ age, paused, admission, free }) => {
+    const root = await scratch();
+    const queueDir = join(root, 'queue');
+    await mkdir(queueDir);
+    await writeFile(join(queueDir, 'ready.tsv'), 'id\tstatus\tpool\nj1\tRUNNING\tclaude\n');
+    await writeFile(join(queueDir, 'slots.json'), JSON.stringify({
+      claude: { target: 4, floor: 0, ceiling: 4, held: false },
+    }), { mode: 0o600 });
+    await writeFile(join(queueDir, 'status.json'), JSON.stringify({
+      last_tick: new Date(NOW - age).toISOString(),
+      lanes: { claude: { running: 1, target: 4, queued: 0, held: false } },
+      paused, admission,
+    }));
+    const snap = await getFleetLaneSnapshot({
+      queueDir, budgetsDir: join(root, 'budgets'), usageLogPaths: [], now: () => new Date(NOW), starvedStateDir: root,
+    });
+    expect(snap.starved.lanes.claude).toMatchObject({ free_slots: free, ready_rows: 0, starved: free > 0 });
+    expect(snap.lanes.find(lane => lane.lane === 'claude')).toMatchObject({
+      slotTarget: 4, health: { state: free > 0 ? 'starved' : 'ok' },
+    });
+  });
+
+  it.each([
     { effectiveTarget: 8, launchTarget: 2 },
     { effectiveTarget: 1, launchTarget: 1 },
     { effectiveTarget: 0, launchTarget: 0 },

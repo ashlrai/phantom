@@ -75,7 +75,7 @@ import { readPoolBudgets, poolBudgetDirectory } from './pool-budget-store.js';
 import type { PoolBudgetSnapshot, PoolBudgetView } from './pool-budget.js';
 import { readLaneTargets } from './runs-lane-targets.js';
 import { laneHealthFor, type LaneHealth } from './lane-badge.js';
-import { laneLaunchTarget } from './lane-launch-target.js';
+import { dispatcherAdmissionHeadroom, laneLaunchTarget } from './lane-launch-target.js';
 import { parseStarvedState, readStarved, STARVED_STATE_FILE, type StarvedRead } from './lane-starved.js';
 import { readyEnvelopeSpec, readySpecCell, resolveReadyMarketRow } from './unfed-market.js';
 import { readLedgerTail } from '../router/outcomes.js';
@@ -1082,14 +1082,24 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   // Lane-open rows are open supply the market may place on any lane, so they keep a free lane from reading as starved.
   let stateText: string | null = null;
   try { stateText = await readBounded(join(options.starvedStateDir ?? join(homedir(), '.ashlr', 'vision', 'leader'), STARVED_STATE_FILE), 16 * 1024); } catch { /* no record yet */ }
-  const starved = readStarved(views.map(view => ({
-    lane: view.lane,
-    target: view.slotTarget,
-    running: view.liveJobs,
-    ready: openQueueRows === null ? null : readyCounts.get(view.lane) ?? 0,
-    held: view.hold?.held === true,
-    drained: view.credit.remainingPct !== null && view.credit.remainingPct <= 0,
-  })), parseStarvedState(stateText).since, now.getTime(), openQueueRows);
+  const freshAdmission = tick <= now.getTime() && now.getTime() - tick <= 60_000;
+  const paused = status?.paused === true || (typeof status?.paused === 'string' && status.paused.trim().length > 0);
+  const headroom = freshAdmission
+    ? paused ? 0 : dispatcherAdmissionHeadroom(status?.admission, status?.last_tick)
+    : null;
+  const starved = readStarved(views.map(view => {
+    const { slotTarget, liveJobs } = view;
+    const target = headroom !== null && slotTarget !== null && liveJobs !== null
+      ? Math.min(slotTarget, liveJobs + headroom) : slotTarget;
+    return {
+      lane: view.lane,
+      target,
+      running: liveJobs,
+      ready: openQueueRows === null ? null : readyCounts.get(view.lane) ?? 0,
+      held: view.hold?.held === true,
+      drained: view.credit.remainingPct !== null && view.credit.remainingPct <= 0,
+    };
+  }), parseStarvedState(stateText).since, now.getTime(), openQueueRows);
 
   const emptyNotes = await laneEmptyNotes(dirname(queueDir), now.getTime(), options.emptyNotes);
   for (const view of views) {
