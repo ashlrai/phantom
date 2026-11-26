@@ -36,6 +36,7 @@ import type { SlackJournalRead, SlackObservation } from '../src/core/agents/slac
 import type { SlackSendReceiptRead } from '../src/core/agents/slack-send-receipts.js';
 import type { SentReceipt } from '../src/core/agents/slack-reply-binding.js';
 import type { LeaderThreadUndeliveredItem, LeaderThreadUndeliveredRead } from '../src/core/vision/leader-thread.js';
+import type { LeaderNetworkDigestFact, LeaderNetworkRequestFact, LeaderNetworkStateRead } from '../src/core/agents/leader-network-read.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
@@ -2268,6 +2269,166 @@ describe('readUnifiedInbox leader deliveries', () => {
     });
     expect(byKind.items.map(i => i.id)).toEqual(['leader-delivery:lt-20261107060000-abc123']);
     expect(inbox.items.filter(i => i.kind === 'leader-message-undelivered')).toHaveLength(1);
+  });
+});
+
+describe('readUnifiedInbox leader network', () => {
+  const REQ_A = 'a'.repeat(64);
+  const REQ_B = 'b'.repeat(64);
+  const REQ_C = 'c'.repeat(64);
+  const DIGEST_A = 'd'.repeat(64);
+  const request = (over: Partial<LeaderNetworkRequestFact> = {}): LeaderNetworkRequestFact => ({
+    requestId: REQ_A, channel: 'telegram', to: 'leader',
+    receivedAt: now - 3_600_000, text: 'fake owner request',
+    inbox: true, bus: true, reply: null, jobIds: [], ...over,
+  });
+  const digest = (over: Partial<LeaderNetworkDigestFact> = {}): LeaderNetworkDigestFact => ({
+    key: DIGEST_A, channel: 'telegram', day: '2026-11-06',
+    at: now - 7_200_000, sent: false, attempted: true, ...over,
+  });
+  const ok = (requests: LeaderNetworkRequestFact[], digests: LeaderNetworkDigestFact[] = []): LeaderNetworkStateRead =>
+    ({ status: 'ok', requests, digests });
+  const pinned = {
+    readRequests: () => ({ status: 'missing' as const, requests: [] }),
+  };
+  const readWith = (readLeaderNetwork: NonNullable<UnifiedInboxOptions['readLeaderNetwork']>) =>
+    readUnifiedInbox({ runsDir, busRoot, now: () => now, ...pinned, readLeaderNetwork });
+
+  it('lists awaiting requests, incomplete ingests, unconfirmed replies and digests; proved routes stay out', async () => {
+    const inbox = await readWith(() => ok([
+      // Verified owner request fully ingested, unanswered — the leader's queue.
+      request(),
+      // Same shape but the bus mirror never landed — incomplete, not awaiting.
+      request({ requestId: REQ_B, inbox: true, bus: false, text: null }),
+      // Reply recorded, delivery attempt ambiguous — reconcile, never retry.
+      request({ requestId: REQ_C, reply: { delivered: false, attempted: true, at: now - 1_800_000 } }),
+      // Reply recorded but delivery failed non-ambiguously — still pending,
+      // the network retries it on the next reply pass.
+      request({ requestId: '9'.repeat(64), reply: { delivered: false, attempted: false, at: now - 600_000 } }),
+      // Delivered reply and a non-leader route with its bus publish — history.
+      request({ requestId: 'e'.repeat(64), reply: { delivered: true, attempted: true, at: now - 900_000 } }),
+      request({ requestId: 'f'.repeat(64), to: 'worker', inbox: false, bus: true }),
+    ], [digest()]));
+    expect(inbox.sources['leader-network']).toEqual({ state: 'healthy', pending: 5 });
+    const items = inbox.items.filter(i => i.source === 'leader-network');
+    expect(items).toHaveLength(5);
+    const awaiting = items.find(i => i.id === `leader-network:request-${REQ_A}`)!;
+    expect(awaiting).toMatchObject({
+      kind: 'leader-request', severity: 'warn', blocking: false,
+      title: 'fake owner request',
+      detail: `leader network · via telegram · awaiting reply · received ${new Date(now - 3_600_000).toISOString()}`,
+      since: new Date(now - 3_600_000).toISOString(), expiresAt: null,
+      act: ['phm leader inbox --json', 'phm comms thread'],
+    });
+    const incomplete = items.find(i => i.id === `leader-network:incomplete-${REQ_B}`)!;
+    expect(incomplete).toMatchObject({
+      kind: 'leader-request-incomplete', severity: 'warn', blocking: false,
+      title: 'Leader request delivery incomplete via telegram',
+      detail: expect.stringContaining('unproven: bus mirror'),
+    });
+    const unconfirmed = items.find(i => i.id === `leader-network:reply-${REQ_C}`)!;
+    expect(unconfirmed).toMatchObject({
+      kind: 'leader-reply-unconfirmed', severity: 'warn', blocking: false,
+      title: 'Leader reply delivery unconfirmed via telegram',
+      detail: expect.stringContaining('delivery outcome unknown — reconcile before retry'),
+      since: new Date(now - 1_800_000).toISOString(),
+    });
+    const retryable = items.find(i => i.id === `leader-network:request-${'9'.repeat(64)}`)!;
+    expect(retryable).toMatchObject({
+      kind: 'leader-request', severity: 'warn', blocking: false,
+      detail: expect.stringContaining('reply recorded'),
+    });
+    expect(retryable.detail).toContain('delivery incomplete — awaiting retry');
+    const digestItem = items.find(i => i.id === `leader-network:digest-${DIGEST_A}`)!;
+    expect(digestItem).toMatchObject({
+      kind: 'leader-digest-unconfirmed', severity: 'warn', blocking: false,
+      title: 'Leader away-digest delivery unconfirmed via telegram',
+      detail: expect.stringContaining('day 2026-11-06'),
+      act: ['phm leader inbox --json'],
+    });
+    // A sent digest and an attempted-then-cleared one are proved or retryable.
+    const clean = await readWith(() => ok([], [
+      digest({ key: '1'.repeat(64), sent: true }),
+      digest({ key: '2'.repeat(64), attempted: false }),
+    ]));
+    expect(clean.items.filter(i => i.source === 'leader-network')).toHaveLength(0);
+    expect(clean.sources['leader-network']).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('names the missing legs for non-leader routes and leader inbox gaps', async () => {
+    const inbox = await readWith(() => ok([
+      // Non-leader route: only the bus publish is a required leg.
+      request({ requestId: REQ_A, to: 'worker', inbox: false, bus: false }),
+      // Leader route missing both legs names both.
+      request({ requestId: REQ_B, inbox: false, bus: false, text: 'second fake request' }),
+      // Leader route missing only the inbox append.
+      request({ requestId: REQ_C, inbox: false, bus: true }),
+    ]));
+    const items = inbox.items.filter(i => i.source === 'leader-network');
+    expect(items).toHaveLength(3);
+    expect(items.find(i => i.id === `leader-network:incomplete-${REQ_A}`)!.detail).toContain('unproven: bus publish');
+    expect(items.find(i => i.id === `leader-network:incomplete-${REQ_B}`)!.detail).toContain('unproven: inbox append, bus mirror');
+    expect(items.find(i => i.id === `leader-network:incomplete-${REQ_C}`)!.detail).toContain('unproven: inbox append');
+  });
+
+  it('carries job citations from the request body and never owner identifiers', async () => {
+    const inbox = await readWith(() => ok([
+      request({ jobIds: ['RQ-LEADER-1', 'RQ-LEADER-2'] }),
+    ]));
+    const item = inbox.items.find(i => i.source === 'leader-network')!;
+    expect(item.jobIds).toEqual(['RQ-LEADER-1', 'RQ-LEADER-2']);
+    const serialized = JSON.stringify(item);
+    // Route keys are sha256 digests; recipient ids, channel refs and raw
+    // envelopes never reach an item.
+    expect(serialized).not.toContain('recipient');
+    expect(serialized).not.toContain('channelRef');
+    expect(serialized).not.toContain('fingerprint');
+  });
+
+  it('scrubs secret-shaped request text out of the item title', async () => {
+    const secret = `sk-ant-api03-${'x'.repeat(24)}`;
+    const inbox = await readWith(() => ok([request({ text: `please rotate ${secret} now` })]));
+    const item = inbox.items.find(i => i.source === 'leader-network')!;
+    expect(JSON.stringify(item)).not.toContain(secret);
+    expect(item.title).toContain('[REDACTED]');
+  });
+
+  it('reports the read state as the source state, never a fabricated healthy', async () => {
+    const missing = await readWith(() => ({ status: 'missing' as const }));
+    expect(missing.sources['leader-network']).toEqual({ state: 'missing', pending: 0 });
+    const unavailable = await readWith(() => ({ status: 'unavailable' as const }));
+    expect(unavailable.sources['leader-network']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'leader-network')).toHaveLength(0);
+  });
+
+  it('reports unavailable on a throwing seam while other sources still list', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readLeaderNetwork: () => { throw new Error('boom'); },
+    });
+    expect(inbox.sources['leader-network']).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'leader-network')).toHaveLength(0);
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('filters by its own source and kind like every other source', async () => {
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readLeaderNetwork: () => ok([request(), request({ requestId: REQ_B, inbox: false, bus: true })]),
+      filter: { source: 'leader-network' },
+    });
+    expect(inbox.items.map(i => i.id).sort()).toEqual([
+      `leader-network:incomplete-${REQ_B}`, `leader-network:request-${REQ_A}`,
+    ]);
+    expect(inbox.filter).toEqual({ source: 'leader-network' });
+    const byKind = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readLeaderNetwork: () => ok([request()]),
+      filter: { kind: 'leader-request' },
+    });
+    expect(byKind.items.map(i => i.id)).toEqual([`leader-network:request-${REQ_A}`]);
+    expect(inbox.items.filter(i => i.kind === 'leader-request')).toHaveLength(1);
   });
 });
 

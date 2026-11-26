@@ -39,9 +39,9 @@ it('drops items without id or title and with unknown enum values', () => {
 
 it('summarises sources, marking non-healthy and showing missing as a dash', () => {
   const view = readUnifiedInboxView(raw({ sources: { 'needs-you': report('healthy', 3), imessage: report('healthy', 1), 'teammate-tasks': report('healthy', 2), drafts: report('missing', 0), bus: report('degraded', 2), requests: report('healthy', 1) } }));
-  expect(view && !view.unavailable && sourceSummary(view.sources)).toBe('Needs you 3 · Needs-you delivery — · iMessage 1 · Teammate tasks 2 · Owner thread — · Owner delivery — · Drafts — · Bus degraded 2 · Mailbox — · Board — · Conversations — · Wakes — · Seats — · Peer dispatch — · Org outbox — · Gmail — · LinkedIn — · Requests 1 · Email inbox — · Email outbox — · Team approvals — · Proposals — · Slack — · Slack sends — · Leader delivery —');
+  expect(view && !view.unavailable && sourceSummary(view.sources)).toBe('Needs you 3 · Needs-you delivery — · iMessage 1 · Teammate tasks 2 · Owner thread — · Owner delivery — · Drafts — · Bus degraded 2 · Mailbox — · Board — · Conversations — · Wakes — · Seats — · Peer dispatch — · Org outbox — · Gmail — · LinkedIn — · Requests 1 · Email inbox — · Email outbox — · Team approvals — · Proposals — · Slack — · Slack sends — · Leader delivery — · Leader network —');
   const healthy = readUnifiedInboxView(raw());
-  expect(healthy && !healthy.unavailable && sourceSummary(healthy.sources)).toBe('Needs you 1 · Needs-you delivery — · iMessage 0 · Teammate tasks — · Owner thread — · Owner delivery — · Drafts 1 · Bus 0 · Mailbox — · Board — · Conversations — · Wakes — · Seats — · Peer dispatch — · Org outbox — · Gmail — · LinkedIn — · Requests — · Email inbox — · Email outbox — · Team approvals — · Proposals — · Slack — · Slack sends — · Leader delivery —');
+  expect(healthy && !healthy.unavailable && sourceSummary(healthy.sources)).toBe('Needs you 1 · Needs-you delivery — · iMessage 0 · Teammate tasks — · Owner thread — · Owner delivery — · Drafts 1 · Bus 0 · Mailbox — · Board — · Conversations — · Wakes — · Seats — · Peer dispatch — · Org outbox — · Gmail — · LinkedIn — · Requests — · Email inbox — · Email outbox — · Team approvals — · Proposals — · Slack — · Slack sends — · Leader delivery — · Leader network —');
 });
 
 it('reads comms-request items and labels them', () => {

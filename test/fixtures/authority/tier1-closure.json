@@ -367,6 +367,7 @@
     "src/core/agents/claim-store.ts",
     "src/core/agents/leader-inbox-writer.ts",
     "src/core/agents/leader-network-config.ts",
+    "src/core/agents/leader-network-read.ts",
     "src/core/agents/leader-network-runtime.ts",
     "src/core/agents/leader-network.ts",
     "src/core/agents/leader-office.ts",
