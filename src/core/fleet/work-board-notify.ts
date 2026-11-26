@@ -33,7 +33,7 @@ export const BOARD_NOTIFY_STATES = ['ASSIGNED', 'BLOCKED', 'VERIFIED'] as const;
 export type BoardNotifyState = typeof BOARD_NOTIFY_STATES[number];
 
 /** One board item as the notifier needs it: the shared `listWorkBoard`
- * row plus the blocker/verification evidence the listing drops. */
+ * row plus its blocker/verification evidence. */
 export interface BoardSnapshotItem {
   id: string;
   state: WorkItemState;
@@ -47,9 +47,9 @@ export interface BoardSnapshotItem {
   verified: WorkItemEvidence['verified'] | null;
 }
 
-/** Enrich a work-board listing with the blocker/verified evidence each
- * item's own classification already used. `readEvidence` is the only I/O
- * seam; items in other states need none and stay unenriched. */
+/** Use the evidence settled with the listing. Only result-less legacy rows
+ * use the optional reader; a mismatched result is not evidence for the state
+ * and must not be replaced by a later read. */
 export function snapshotBoard(
   board: WorkBoardResult,
   readEvidence?: (itemId: string) => WorkItemEvidence | undefined,
@@ -57,7 +57,16 @@ export function snapshotBoard(
   return board.items.map(item => {
     let blocker: BoardSnapshotItem['blocker'] = null;
     let verified: BoardSnapshotItem['verified'] = null;
-    if ((item.state === 'BLOCKED' || item.state === 'VERIFIED') && readEvidence) {
+    if (item.state === 'BLOCKED' && item.result?.kind === 'blocked') {
+      blocker = { dependency: item.result.dependency, source: item.source, at: item.asOf };
+    } else if (item.state === 'VERIFIED' && item.result?.kind === 'verified') {
+      const { pr, head, tests, artifact } = item.result;
+      verified = {
+        source: item.source, at: item.asOf,
+        ...(pr !== null ? { pr } : {}), ...(head !== null ? { head } : {}),
+        ...(tests !== null ? { tests } : {}), ...(artifact !== null ? { artifact } : {}),
+      };
+    } else if (item.result === undefined && (item.state === 'BLOCKED' || item.state === 'VERIFIED') && readEvidence) {
       try {
         const evidence = readEvidence(item.id);
         blocker = evidence?.blocker ?? null;
