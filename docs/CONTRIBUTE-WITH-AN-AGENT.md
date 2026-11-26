@@ -122,7 +122,7 @@ exit code is non-zero if any of them failed.
 
 | Step | Runs when | If it fails |
 | --- | --- | --- |
-| File selection | Always | Without a merge base with `origin/master` (missing remote branch or shallow clone) it prints `WARN no merge base` and checks only uncommitted changes against `HEAD`, so committed work goes unchecked. Run `git fetch origin master`, or `git fetch --unshallow origin` in a shallow clone, then `node scripts/verify-changed.mjs --force`. |
+| File selection | Always | Without a merge base with `origin/master` (missing remote branch or shallow clone) the script first fetches what it needs — the master tracking ref, then staged `--deepen` of the remote branches on HEAD's ancestry in a shallow clone — and only prints `WARN no merge base` when that still fails, checking just uncommitted changes against `HEAD` so committed work goes unchecked. If you see the WARN, run `git fetch --unshallow origin`, then `node scripts/verify-changed.mjs --force`. |
 | Empty test check | Always | Every new test file needs at least one test. |
 | Fleet registry | A `src/cli/fleet-*.ts` file changed | Run `node scripts/gen-fleet-registry.mjs` and commit the result. |
 | Authority drift | The diff touches `src/`, `test/`, `scripts/` or `.github/CODEOWNERS` | Review the drift, run `npm run authority:regen` and list each new Tier-1 root in the pull request body. When `origin/master` changed drift-relevant paths since you branched, the step reruns as `authority drift on current master` on your changed files laid over `origin/master`; if that fails, rebase onto `origin/master`, then regenerate. |
