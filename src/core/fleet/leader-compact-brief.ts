@@ -139,7 +139,10 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   let openRows: number | null = null;
   if (marketReady !== null) {
     openRows = 0;
+    const seen = new Set<string>();
     for (const row of marketReady.rows) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
       if (row.hint === null) openRows += 1;
       else queuedByLane.set(row.hint, (queuedByLane.get(row.hint) ?? 0) + 1);
     }

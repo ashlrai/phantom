@@ -123,6 +123,24 @@ it('counts queued supply by the market-resolved lane hint and reports lane-open 
   expect(dry.headline).toBe('personal 1/20 running, 2 queued: supply-starved');
   expect(dry.whyIdle).toContain('Local models: 2 free spots, 0 ready jobs');
 });
+it('reports starvation when duplicate ready rows would otherwise fill the lane', async () => {
+  await writeFile(join(dir, 'queue/slots.json'), JSON.stringify({ personal: { target: 4 } }));
+  await writeFile(join(dir, 'queue/status.json'), JSON.stringify({
+    last_tick: at, paused: false, lanes: { personal: { running: 0, held: false } },
+  }));
+  await writeFile(join(dir, 'queue/ready.tsv'), [
+    'RQ-A\tphantom\tpersonal\tbogus\tplain',
+    'RQ-A\tphantom\t\twork\tplain',
+    'RQ-A\tphantom\tpersonal\twork\tplain',
+    'RQ-B\tphantom\tpersonal\twork\tplain',
+    'RQ-B\tphantom\t\twork\tplain',
+  ].join('\n'));
+
+  const brief = await readCompactBrief(dir, now);
+  expect(brief.openRows).toBe(1);
+  expect(brief.lanes[0]).toMatchObject({ lane: 'personal', queued: 1, queuedReady: 1 });
+  expect(brief.headline).toBe('personal 0/4 running, 1 queued +1 lane-open: supply-starved');
+});
 it('returns no data on an empty directory and writes a private snapshot each tick', async () => {
   expect(await readCompactBrief(dir, now)).toMatchObject({ state: 'no data', lanes: [], medianOpenToMergeSeconds: null });
   const steps = Object.fromEntries(SELF_TICK_STEP_ORDER.map(s => [s, async () => ({ exitCode: 0, output: '{}' })])) as SelfTickSteps;
