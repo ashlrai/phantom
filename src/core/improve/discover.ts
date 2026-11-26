@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Eighty-two sources, all of which Phantom
+ * evidence instead of a hand-kept list. Eighty-three sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -1222,6 +1222,22 @@
  *     unified inbox's point-in-time projection, so a request kind that
  *     kept expiring — an ask Mason never answered, a queue that never
  *     drained, a transport that kept refusing — never became work;
+ *   - the main-guardian repair-time ledgers' recurring stalled and
+ *     slow repairs: the ops-side guardian loop's FIXUP-MAIN enqueue
+ *     rows in guardian.jsonl joined to the finish rows in
+ *     jobs-finished.jsonl under the Ashlr home — the same pairing
+ *     `phm fleet main-repair-time` prints — folded per repository into
+ *     repairs still open past the stalled bar (a still-missing finish
+ *     is present-tense evidence that does not expire with the window)
+ *     and recorded enqueue→finish spans past the slow bar inside the
+ *     7-day window, each emitting only at the recurring bars of
+ *     distinct jobs across distinct UTC days with the finish ledger
+ *     gating everything (guardianRepairBacklogItems below). Until now
+ *     the pairing's only reader was the repair-time report itself — a
+ *     report someone had to run — so a repair path that kept dropping
+ *     finishes or taking most of a day never became work, and the
+ *     repo's default branch sat unverified or red with no fleet trace
+ *     beyond the enqueue;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1334,6 +1350,7 @@ import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
 import { efficiencyBacklogItems } from './efficiency-backlog.js';
 import { landingsBacklogItems } from './landings-backlog.js';
 import { gitContentionBacklogItems } from './git-contention-backlog.js';
+import { guardianRepairBacklogItems } from './guardian-repair-backlog.js';
 import { jobLatencyBacklogItems } from './job-latency-backlog.js';
 import { jobReissueBacklogItems } from './job-reissue-backlog.js';
 import { shadowRouteBacklogItems } from './shadow-route-backlog.js';
@@ -2896,6 +2913,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // describes this install's comms traffic and carries no repository
   // column.
   items.push(...await commsRequestsBacklogItems({ repo }));
+
+  // Main-guardian repair ledgers: the ops-side guardian loop's
+  // FIXUP-MAIN enqueue rows (guardian.jsonl) joined to the finish rows
+  // (jobs-finished.jsonl) under the Ashlr home — the same pairing `phm
+  // fleet main-repair-time` prints — become backlog items too. Until
+  // now the only reader was that report itself, so repairs that kept
+  // never recording a finish or kept taking most of a day never became
+  // work while the repo's default branch sat unverified or red. Same
+  // bounded no-follow tail read per ledger; the finish ledger gates
+  // both cells (an absent one makes every missing finish unknowable,
+  // never zero), stalled repairs count every parsed enqueue past the
+  // bar since a still-missing finish does not expire with the window,
+  // slow repairs window on the enqueue inside the 7-day window, each
+  // cell emits only at the recurring bars of distinct jobs across
+  // distinct UTC days, truncated tails are stated as lower bounds, and
+  // only enqueues naming this repository inherit the items.
+  items.push(...await guardianRepairBacklogItems({ repo }));
   return { items, errors };
 }
 
