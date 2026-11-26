@@ -18,8 +18,10 @@ import { agentBusPageQuery } from '../fleet-bus/agent-bus-queries.js';
 import { fleetOrgMapQuery } from '../fleet/org-map-query.js';
 import { advanceCores, fresh, isFleetCompute, isFleetSessionMap, loadRatio, type CoreHistory, type MapSession } from './compute-model.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
+import { elapsedTime } from '../../../lib/relative-time.js';
 import { ComputeScene3D, OrgMessages } from './ComputeScene3D.js';
-import { recordedAt, shown } from './company-model.js';
+import { shown } from './company-model.js';
+import { isOfflineWithoutFreshMetrics, LaneTelemetry, MachineReadings, Observation, OfflineMachine } from './ComputeTelemetry.js';
 import styles from './compute.module.css';
 
 export const computeQuery: QueryDef<FleetCompute> = {
@@ -59,7 +61,7 @@ export function laneQuotaState(held: boolean | null | undefined, quotaOk: boolea
 }
 
 function CoreSparks({ history, current }: { history?: CoreHistory; current: boolean }) {
-  if (!history || !current) return <p>Per-core utilization unknown</p>;
+  if (!history || !current) return null;
   return <details><summary>Per-core utilization · last {history.samples.length} observations</summary>
     <div className={styles.cores}>{history.previous.cores.map((_, core) => {
       const value = history.samples.at(-1)?.[core];
@@ -85,7 +87,7 @@ function PoolHosts({ data, now }: { data: FleetCompute; now: number }) {
       {totals.unplacedNodes ? ` · ${totals.unplacedNodes} nodes without host telemetry (host unknown)` : ''}</p>
     <div className={styles.hostRows}>{hosts.map(h => <article key={h.id} className={styles.host} data-over={h.oversubscribed === null ? 'unknown' : String(h.oversubscribed)}>
       <h4>{h.nodeIds.join(' + ')}</h4>
-      <small>{h.inferred ? 'Workers grouped by matching RAM, CPUs and boot time' : 'Single worker'} · {gib(h.ramTotal)} · {h.cores} CPUs · telemetry {recordedAt(h.observedAt, now)}</small>
+      <small>{h.inferred ? 'Workers grouped by matching RAM, CPUs and boot time' : 'Single worker'} · {gib(h.ramTotal)} · {h.cores} CPUs · telemetry <Observation value={h.observedAt} now={now} /></small>
       <span>{h.liveWorkers}/{h.nodeIds.length} workers live · live slots {shown(h.liveSlots)} · RAM-budget slots {h.ramSlots} · claims {h.claims}</span>
       <strong>{h.oversubscribed === null ? 'Oversubscription unknown' : h.oversubscribed ? `OVERSUBSCRIBED · ${h.liveSlots} advertised vs ${h.ramSlots} RAM-budget` : 'Within RAM budget'}</strong>
       <span>Caps: {h.caps.length ? h.caps.join(', ') : 'none reported'}{h.heldWorkers ? ` · ${h.heldWorkers} held (0 slots; reason not recorded)` : ''}</span>
@@ -96,7 +98,7 @@ function PoolHosts({ data, now }: { data: FleetCompute; now: number }) {
 function Token({ session, selected, choose }: { session: MapSession; selected: boolean; choose: () => void }) {
   return <button type="button" className={styles.token} data-state={session.mapState} aria-pressed={selected} onClick={choose}>
     <strong>{session.job}</strong><ProviderBadge of={session.model} lane={session.lane} /><span>{session.lane ?? 'lane unknown'} · {session.model ?? 'model unknown'}</span>
-    <span>{session.status} · {session.elapsedSeconds === null ? 'age unknown' : `${Math.floor(session.elapsedSeconds / 60)}m elapsed`}</span>
+    <span>{session.status} · {session.elapsedSeconds === null ? 'age unknown' : `${elapsedTime(session.elapsedSeconds)} elapsed`}</span>
     <small>{session.activity ? `Last log excerpt (time unknown): ${session.activity}` : 'Activity unknown'}</small>
   </button>;
 }
@@ -183,6 +185,8 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
   // Scene geometry is rebuilt only when observations change, not on every slider move.
   const now3d = useMemo(() => Date.now(), [data, sessions.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const nodes = data?.nodes ?? [];
+  const offlineNodes: ComputeNode[] = [], primaryNodes: ComputeNode[] = [];
+  for (const node of nodes) (isOfflineWithoutFreshMetrics(node, now) ? offlineNodes : primaryNodes).push(node);
   const jobs = sessions.data?.mapSessions ?? [];
   const location = (job: MapSession) => job.nodeId;
   const selected = jobs.find(j => j.job === selection) ?? sessions.data?.mapRecent?.find(j => j.job === selection);
@@ -216,47 +220,49 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       const read = q as typeof compute;
       return read.status === 'error' ? <p key={String(label)} role="alert">{String(label)} refresh failed. {read.data ? 'Last reading retained; may be stale.' : 'No data available.'}</p> : null;
     })}
-    <p>{data ? `Compute observed ${data.generatedAt} · ${recordedAt(data.generatedAt, now)}${data.truncated ? ' · partial inventory' : ''}` : 'No compute data yet.'}</p>
-    <div className={styles.quota} aria-label="Lane quota strip">{!laneRows.length && <p>No lane observations.</p>}{laneRows.map(l => <article key={l.lane} data-state={laneQuotaState(l.hold?.held, data?.lanes[l.lane]?.quotaOk)}>
-      <strong>{l.lane}</strong><span>{shown(l.liveJobs)} running / {shown(l.slotTarget)} target / {shown(data?.lanes[l.lane]?.hardCap)} hard cap</span>
-      <span>{shown(l.queueDepth)} queued</span>
-      <span>quota_ok: {data?.lanes[l.lane]?.quotaOk == null ? 'unknown' : String(data.lanes[l.lane]!.quotaOk)} · {l.credit.label}</span>
-      <span>{l.hold?.held ? `HELD · ${l.hold.by ?? 'unknown'} · ${l.hold.reason ?? 'reason unknown'} · until ${l.hold.until ?? 'unknown'}` : l.hold ? 'No recorded hold' : 'Hold unknown'}</span>
-      <small>Reset {l.credit.resetAt ?? 'unknown'} · {recordedAt(l.credit.observedAt, now)}</small>
-    </article>) ?? <p>Lane quota: no data</p>}</div>
+    <p>{data ? <>Compute <Observation value={data.generatedAt} now={now} />{data.truncated && ' · partial inventory'}</> : 'No compute data yet.'}</p>
+    <section aria-label="Lane quota strip">
+      <h3>Lanes &amp; capacity</h3>
+      <div className={styles.quota}>{!laneRows.length && <p>No lane observations.</p>}{laneRows.map(lane => {
+        const limits = data?.lanes[lane.lane];
+        return <LaneTelemetry key={lane.lane} lane={lane} limits={limits} state={laneQuotaState(lane.hold?.held, limits?.quotaOk)} now={now} />;
+      })}</div>
+    </section>
     {data && <PoolHosts data={data} now={now} />}
     {mode === '3D' && <ComputeScene3D nodes={nodes} jobs={jobs} orgMap={org.data ?? null} now={now3d} heat={heat} yaw={yaw} tilt={tilt} zoom={zoom}
       selection={selection} onSelect={select} onOrbit={(y, t) => { setYaw(y); setTilt(t); }} />}
     <details className={styles.viewport} open={mode === '2D' || undefined}>
       <summary>{mode === '2D' ? 'Machines' : 'Machine details (text)'}</summary>
       <div className={styles.scene}>
-        {nodes.map(n => {
+        {primaryNodes.map(n => {
           const s = n.stats, current = fresh(s?.sampledAtMs, now), ceiling = s?.cores.length ? 2 * s.cores.length : null;
           const ratio = loadRatio(n, now);
           return <article className={styles.machine} key={n.id} data-heat={heat && ratio !== null ? heatBand(ratio) : 'unknown'}
             style={{ flexGrow: s ? 1 + s.cores.length / maxCores : 1 }}>
-            <h3>{n.id}{n.local ? ' · this host' : ''}</h3><p>{n.state} · Heartbeat {n.heartbeatAt === null ? 'unknown' : recordedAt(n.heartbeatAt, now)}</p>
-            <small>Metrics {s ? recordedAt(s.sampledAtMs, now) : 'unknown · no host-stats beat'}</small>
-            <p>{s?.cores.length || 'unknown'} CPUs · Load 1/5/15: {s ? s.load.map(v => v === null ? 'unknown' : v.toFixed(1)).join(' / ') : 'unknown'}</p>
-            <p>RAM {gib(s?.ramUsed)} / {gib(s?.ramTotal)} · Pressure {n.pressure ?? 'unknown'}</p>
-            <p>Disk free {gib(s?.diskFree)} · Uptime {s ? `${Math.floor(s.uptimeSeconds / 3600)}h` : 'unknown'}</p>
+            <h3>{n.id}{n.local ? ' · this host' : ''}</h3><MachineReadings node={n} now={now} />
+            {ratio !== null && <div className={styles.capacity}>
+              <meter aria-label={`${n.id} load versus ceiling`} min={0} max={1} optimum={0} low={HEAT_WARM} high={HEAT_HOT} value={Math.min(1, ratio)} />
+              <small>{(ratio * 100).toFixed(0)}% of load ceiling (2 × CPU = {ceiling}) · memory and slot gates are independent</small>
+            </div>}
             <CoreSparks history={history[n.id]} current={current} />
-            <div className={styles.capacity}><span>Load ceiling (2 × CPU): {shown(ceiling)} · Slots {shown(n.slots)}{n.slots === 0 && n.state === 'ready' ? ' (held; reason not recorded)' : ''} · RAM slot ceiling {shown(n.ramSlots)}</span>
-              <span>Caps: {n.caps?.length ? n.caps.join(', ') : 'unknown'}</span>
-              <span>Memguard {n.memguardPaused === null ? 'unknown' : n.memguardPaused ? 'paused' : 'clear'}</span>
-              {ratio === null ? <p>Headroom unknown · no fresh load reading</p> : <><meter aria-label={`${n.id} load versus ceiling`} min={0} max={1} optimum={0} low={HEAT_WARM} high={HEAT_HOT} value={Math.min(1, ratio)} /><small>{(ratio * 100).toFixed(0)}% of load ceiling · advisory; memory/slot gates remain independent</small></>}
-            </div>
             {tokens(jobs.filter(j => location(j) === n.id))}
           </article>;
         })}
       </div>
+      {offlineNodes.length > 0 && <details aria-label="Offline machines" className={styles.offline}
+        open={offlineNodes.some(node => jobs.some(job => location(job) === node.id)) || undefined}>
+        <summary>Offline machines <span>{offlineNodes.length}</span></summary>
+        <div className={styles.offlineRows}>{offlineNodes.map(node => <OfflineMachine key={node.id} node={node} now={now}>
+          {tokens(jobs.filter(j => location(j) === node.id))}
+        </OfflineMachine>)}</div>
+      </details>}
     </details>
     {!nodes.length && <p>No nodes observed.</p>}
     <section aria-label="Unassigned agents"><h3>Queued / placement unknown</h3>{tokens(jobs.filter(j => location(j) === null || !nodes.some(n => n.id === location(j))))}</section>
     {mode === '2D' && <OrgMessages orgMap={org.data ?? null} />}
     {!jobs.length && <p>{sessions.data?.sourceState === 'healthy' ? 'No active sessions recorded.' : 'Session inventory unknown.'}</p>}
     {sessions.data && <p>Session placement uses compute observation {sessions.data.computeAt}.</p>}
-    <p>Sessions: {sessions.data?.sourceState ?? 'unknown'}{sessions.data?.truncated ? ' · partial snapshot' : ''} · {recordedAt(sessions.data?.generatedAt, now)}. Dispatcher: {recordedAt(data?.dispatcherAt, now)}. {data && Object.entries(data.sources).map(([k, v]) => `${k}: ${v}`).join(' · ')}</p>
+    <p>Sessions: {sessions.data?.sourceState ?? 'unknown'}{sessions.data?.truncated ? ' · partial snapshot' : ''} · <Observation value={sessions.data?.generatedAt} now={now} />. Dispatcher: <Observation value={data?.dispatcherAt} now={now} />. {data && Object.entries(data.sources).map(([k, v]) => `${k}: ${v}`).join(' · ')}</p>
     {selected && <AgentDetail key={selected.job} session={selected} node={nodes.find(n => n.id === location(selected))} enabled={enabled} close={() => select(null)}
       known={{ repo: row?.repo ?? null, startedAt: row?.startedAt ?? null, tokens: row?.tokensTotal ?? null }} openLog={() => { requestWorkerLogJob(selected.job); if (host) host.openPane('worker-log'); else openDockPane('worker-log'); }} />}
     {selection && !selected && <p role="status">Selected session left the active snapshot. See the job log for its outcome.</p>}

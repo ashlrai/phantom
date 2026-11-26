@@ -8,6 +8,8 @@ import bar from './SpendDown.module.css';
 import { UsageHistoryChart } from './UsageHistoryChart.js';
 import { SpendDownChart, paceQuery, spendDownQuery } from './SpendDownChart.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { providerFor } from '../../../../core/fleet/provider.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 
 const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round(n)}%`;
 const width = (n: number | null): string => `${Math.min(100, Math.max(0, n ?? 0))}%`;
@@ -74,7 +76,7 @@ export function SpendDown() {
     {!data ? <p className={styles.dotRow}>{failed ? 'unknown (status unavailable)' : 'Reading usage…'}</p>
       : data.pools.length === 0 ? <p className={styles.dotRow}>No usage readings yet.</p> : <><p className={bar.headline} role="status">{data.headline}</p><ul className={bar.list}>
       {data.pools.map(row => <li className={styles.dotRow} key={row.pool} aria-label={row.pool}>
-        <span className={bar.head}><span className={styles.dotLabel}>{row.unit === 'usd' ? `${row.pool} gift` : row.pool}</span>
+        <span className={bar.head}><span className={`${styles.dotLabel} ${bar.providerLabel}`}><BrandMark brand={providerFor(row.pool).brand ?? row.pool} size={14} />{row.unit === 'usd' ? `${row.pool} gift` : row.pool}</span>
           <span className={bar.verdict} data-verdict={row.verdict}>{status[row.status]}</span></span>
         <SpendBar row={row} />
         <UsageHistoryChart status={history === undefined ? 'loading' : history === null ? 'failed' : 'ready'}

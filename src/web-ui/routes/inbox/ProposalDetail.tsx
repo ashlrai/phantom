@@ -10,6 +10,7 @@
  * judgment, and is rendered with its own distinct label/tone — never folded
  * into a genuine judge-review (see JUDGE_REASON_DISPLAY below).
  */
+import { RelativeTime } from '../../components/primitives/RelativeTime.js';
 import { lazy, Suspense, useState } from 'react';
 import type { DecisionEntry, JudgeDecisionReasonCode } from '../../data/api-types.js';
 import { proposalDetailQuery } from '../../data/queries.js';
@@ -45,20 +46,6 @@ function latestJudged(decisions: DecisionEntry[]): DecisionEntry | null {
   const judged = decisions.filter((d) => d.action === 'judged' && d.judgeReasonCode);
   if (judged.length === 0) return null;
   return judged.reduce((a, b) => (Date.parse(b.ts) > Date.parse(a.ts) ? b : a));
-}
-
-function formatRelative(iso: string | undefined): string {
-  if (!iso) return '—';
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return '—';
-  const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
 }
 
 type PendingAction = 'approve' | 'reject' | null;
@@ -172,8 +159,8 @@ export function ProposalDetail({ id, onDispatchDisabled }: { id: string; onDispa
           <span className={styles.metaItem} title={p.repo ?? undefined}>
             {p.repo ?? 'no repo'}
           </span>
-          <span className={styles.metaItem}>created {formatRelative(p.createdAt)}</span>
-          {p.decidedAt ? <span className={styles.metaItem}>decided {formatRelative(p.decidedAt)}</span> : null}
+          <span className={styles.metaItem}>created <RelativeTime value={p.createdAt} fallback="—" /></span>
+          {p.decidedAt ? <span className={styles.metaItem}>decided <RelativeTime value={p.decidedAt} fallback="—" /></span> : null}
           {p.riskClass ? <span className={`${styles.riskBadge} ${styles[`risk_${p.riskClass}`]}`}>{p.riskClass} risk</span> : null}
         </div>
         {p.summary ? <p className={styles.summary}>{p.summary}</p> : null}

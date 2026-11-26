@@ -1,3 +1,4 @@
+import { ageInSeconds } from '../../../lib/relative-time.js';
 export interface LeaderPulseInput {
   v: 1;
   generatedAt: string;
@@ -40,14 +41,7 @@ export function leaderRows(input: LeaderPulseInput, nowMs: number): Array<{ labe
 }
 
 export function formatPulseAge(ageMs: number | null): string {
-  if (ageMs === null) return '—';
-  const seconds = Math.floor(Math.max(0, ageMs) / 1000);
-  if (seconds < 60) return `${seconds} sec ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hr ago`;
-  return `${Math.floor(hours / 24)} days ago`;
+  return ageMs === null ? 'unknown' : ageInSeconds(ageMs / 1000, 'spaced').replace(/ s ago$/, ' sec ago');
 }
 
 export function dropRows(input: LeaderPulseInput): Array<{ lane: string; pending: number; files: string[] }> {

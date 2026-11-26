@@ -36,7 +36,7 @@ it('shows the empty state with the command', async () => {
 it('marks a plan older than 24 hours as stale', async () => {
   serve({ schema: SCHEMA, plans: [plan({ at: new Date(Date.now() - 25 * 3_600_000).toISOString() })] });
   render(<GmailArchivePlanCard visible />);
-  expect(await screen.findByText(/1d ago · stale/)).toBeInTheDocument();
+  expect(await screen.findByText(/1d 1h ago · stale/)).toBeInTheDocument();
 });
 
 it('renders nothing on a malformed payload or server error', async () => {

@@ -16,9 +16,12 @@
 .root button[aria-pressed=true] { border-color: var(--accent-500); background: var(--bg-hover); }
 .toolbar button { min-height: var(--control-h-sm); }
 .root button:focus-visible, .root input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
-.quota { display: flex; gap: var(--space-3); overflow-x: auto; padding: var(--space-2) 0 var(--space-4); }
-.quota article { display: grid; gap: var(--space-1); min-width: 240px; border-left: 3px solid var(--status-unknown-solid); border-radius: var(--radius-xs) var(--radius-md) var(--radius-md) var(--radius-xs); padding: var(--space-3) var(--space-4); font-size: var(--text-xs-size); background: var(--bg-surface); }
+.quota { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: var(--space-3); padding: var(--space-2) 0 var(--space-4); }
+.quota article { display: grid; align-content: start; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; border: 1px solid var(--border-subtle); border-left: 3px solid var(--status-unknown-solid); border-radius: var(--radius-xs) var(--radius-md) var(--radius-md) var(--radius-xs); padding: var(--space-3) var(--space-4); font-size: var(--text-xs-size); background: var(--bg-surface); }
 .quota article strong { font-size: var(--text-sm-size); }
+.laneName { display: flex; align-items: center; gap: var(--space-2); min-height: 20px; }
+.laneCapacity { width: 100%; height: var(--space-2); accent-color: var(--accent-500); }
+.noTelemetry { color: var(--text-secondary); }
 /* The edge is the reading: green only for a confirmed quota, amber for a hold, red for a refused one. A lane nobody has measured is dimmed, not coloured. */
 .quota article[data-state='ok'] { border-left-color: var(--status-success-solid); }
 .quota article[data-state='held'] { border-left-color: var(--status-warning-solid); }
@@ -34,6 +37,12 @@
 .viewport > summary { cursor: pointer; width: fit-content; margin-bottom: var(--space-3); color: var(--text-secondary); font-size: var(--text-sm-size); }
 .viewport > summary:hover { color: var(--text-primary); }
 .scene { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-5); }
+.offline { margin-top: var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-secondary); }
+.offline > summary { padding: var(--space-2) var(--space-4); cursor: pointer; }
+.offline > summary span { margin-inline-start: var(--space-1); font-variant-numeric: tabular-nums; }
+.offlineRows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: var(--space-2); padding: 0 var(--space-3) var(--space-3); }
+.offlineMachine { display: grid; gap: var(--space-1); align-content: start; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow-wrap: anywhere; }
+.offlineMachine h3 { margin: 0; font-size: var(--text-sm-size); color: var(--text-primary); }
 .scene3d { margin: 0 0 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-xl); background: var(--bg-surface); overflow: hidden; }
 .scene3d canvas { display: block; width: 100%; touch-action: none; cursor: grab; }
 .scene3d figcaption { padding: 8px 12px; font-size: var(--text-2xs-size); color: var(--text-secondary); }
@@ -47,6 +56,8 @@
 .cores svg { width: 100%; height: 32px; color: var(--accent-500); }
 .capacity { display: grid; gap: 5px; font-size: var(--text-xs-size); padding: 12px 0; border-block: 1px solid var(--border-subtle); }
 .capacity meter { width: 100%; }
+.machineFacts { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); font-size: var(--text-xs-size); color: var(--text-secondary); }
+.machineFacts:empty { display: none; }
 .lane h4 { font-size: var(--text-xs-size); letter-spacing: var(--tracking-label); color: var(--text-secondary); margin: var(--space-3) 0 var(--space-2); }
 .root .token { display: grid; gap: var(--space-1); text-align: left; margin: var(--space-2) 0; width: 100%; padding: var(--space-2) var(--space-3); overflow-wrap: anywhere; }
 .token span, .token small { font-size: var(--text-2xs-size); }

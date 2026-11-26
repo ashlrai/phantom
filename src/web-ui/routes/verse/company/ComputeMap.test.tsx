@@ -15,7 +15,7 @@ import { MockEventSource } from '../fixtures.test-support.js';
 const stats = { sampledAtMs: NOW, uptimeSeconds: 500, load: [1, 2, 3], ramTotal: 16 * 1024 ** 3, ramUsed: 8 * 1024 ** 3, diskFree: 100 * 1024 ** 3, cores: [{ total: 100, idle: 50 }] };
 const compute: FleetCompute = { schema: 'fleet.compute.v1', generatedAt: at(), localNodeId: 'local', truncated: false, sources: { registry: 'loaded' }, dispatcherAt: at(), lanes: { 'codex-personal': { hardCap: 4, quotaOk: null } }, nodes: [
   { id: 'local', local: true, owners: ['team'], heartbeatAt: null, state: 'unknown', stats, jobs: [], slots: 2, ramSlots: 1, pressure: null, memguardPaused: null },
-  { id: 'muse', local: false, owners: ['team'], heartbeatAt: NOW - 400_000, state: 'offline', stats: null, jobs: [], slots: null, ramSlots: null, pressure: null, memguardPaused: null },
+  { id: 'muse', local: false, owners: ['team'], heartbeatAt: NOW - 553_560_000, state: 'offline', stats: null, jobs: [], slots: null, ramSlots: null, pressure: null, memguardPaused: null },
 ] };
 const mapped = (over: Partial<MapSession> = {}): MapSession => ({
   job: 'RQ-A', lane: 'codex-personal', model: 'test-model', status: 'running', elapsedSeconds: 60,
@@ -27,7 +27,10 @@ function serve() {
     '/api/verse/fleet/control/compute': compute,
     '/api/verse/agent-bus?after=0&limit=100': { v: 1, status: 'ok', nextCursor: 1, messages: [{ cursor: 1, receivedAt: NOW, envelope: { id: 'bus-1', from: 'helper', to: 'worker', priority: 'P2', ttl: 60000, body: { kind: 'work.claim', jobId: 'RQ-A' } } }] },
     '/api/verse/fleet/control/sessions': { ...sessions, computeAt: at(), mapRecent: [], mapSessions: [mapped(), mapped({ job: 'RQ-WAIT', status: 'queued', nodeId: null, placement: 'unknown', mapState: 'queued' })] },
-    '/api/fleet/lanes': { schema: 'fleet.lanes.v1', generatedAt: at(), lanes: [{ ...lane, slotTarget: 2, hold: { held: true, by: 'autobackoff', reason: 'quota reset', until: at(-100) } }] },
+    '/api/fleet/lanes': { schema: 'fleet.lanes.v1', generatedAt: at(), lanes: [
+      { ...lane, slotTarget: 2, hold: { held: true, by: 'autobackoff', reason: 'quota reset', until: at(-100) } },
+      { ...lane, lane: 'lexicon', liveJobs: null, queueDepth: null, hold: null, credit: { ...lane.credit, state: 'unknown', observedAt: null } },
+    ] },
     '/api/fleet/job?id=RQ-A': { schema: 'fleet.job.v1', branch: 'work/fleet', log: { tail: ['running typecheck'] }, publish: { prUrl: 'https://github.com/ashlrai/phantom/pull/1', autoMerge: true } },
     '/api/fleet/job/activity?id=RQ-A': { schema: 'fleet.job.activity.v1', job: 'RQ-A', generatedAt: at(), state: 'running', lane: 'codex-personal', tier: 'work', model: null, sources: { events: 'healthy', commands: 'healthy', files: 'healthy', reports: 'missing' }, entries: [{ kind: 'command', text: 'npm run typecheck', line: 1 }], counts: { event: 0, command: 1, files: 0, report: 0 }, truncated: false },
   };
@@ -44,10 +47,18 @@ it('opens the compute and agent lens from the existing Fleet surface independent
 it('shows offline/unknown telemetry, lane holds and queued placement', async () => {
   serve(); render(<ComputeMap visible />);
   expect(await screen.findByText('local · this host')).toBeInTheDocument();
-  expect(screen.getByText(/offline · Heartbeat Stale/)).toBeInTheDocument();
-  expect(screen.getByText('Metrics unknown · no host-stats beat')).toBeInTheDocument();
+  const offline = screen.getByText(/Offline machines/).closest('details')!;
+  expect(offline).not.toHaveAttribute('open');
+  expect(within(offline).getByText('muse')).toBeInTheDocument();
+  expect(within(offline).getByText('since 6d 9h ago')).toHaveAttribute('title', at(553_560));
+  expect(offline).not.toHaveTextContent(/unknown|0 slots/);
+  const lexicon = screen.getByText('lexicon').closest('article')!;
+  expect(lexicon).toHaveTextContent('No telemetry yet');
+  expect(lexicon).not.toHaveTextContent(/unknown|0 running|0 queued/);
+  expect(lexicon.querySelector('img')).toHaveAttribute('src', expect.stringContaining('lexicon-logo.svg'));
   expect(screen.getByText(/HELD · autobackoff · quota reset/)).toBeInTheDocument();
   expect(screen.getByText(/1 running \/ 2 target \/ 4 hard cap/)).toBeInTheDocument();
+  expect(screen.getByRole('progressbar', { name: 'codex-personal slot utilization' })).toHaveAttribute('value', '1');
   expect(within(screen.getByRole('region', { name: 'Unassigned agents' })).getByText('RQ-WAIT')).toBeInTheDocument();
   expect(getPane('fleet-compute')?.needsSession).toBe(false);
 });

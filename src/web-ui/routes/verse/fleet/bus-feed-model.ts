@@ -1,3 +1,4 @@
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import type { Tone } from '../../../components/primitives/StatusBadge.js';
 import type { BusFeedData, BusHop, BusKind } from './bus-feed-queries.js';
 
@@ -10,9 +11,8 @@ export function eventTone(kind: BusKind): Tone {
   return tones[kind] ?? 'neutral';
 }
 export function relativeAt(at: string | null, now: number): string {
-  if (at === null || !Number.isFinite(Date.parse(at))) return 'unknown';
-  const seconds = Math.max(0, Math.floor((now - Date.parse(at)) / 1000));
-  return seconds < 60 ? `${seconds} s ago` : seconds < 3600 ? `${Math.floor(seconds / 60)} m ago` : seconds < 86400 ? `${Math.floor(seconds / 3600)} h ago` : `${Math.floor(seconds / 86400)} d ago`;
+  const time = at === null ? NaN : Date.parse(at);
+  return Number.isFinite(time) ? ageInSeconds((now - time) / 1000, 'spaced').replace(/min/g, 'm') : 'unknown';
 }
 export function busTimeline(data: BusFeedData) {
   // Hops only carry sequence order. Anchor the group at the last observed hop;

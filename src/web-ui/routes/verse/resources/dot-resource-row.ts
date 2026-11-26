@@ -4,6 +4,7 @@
  * and waiting count = teammate latency). A missing fact is null and reads
  * "No reading yet": a number is never invented or defaulted to zero.
  */
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import type { CommsStatus } from '../fleet-inbox/comms-status-model.js';
 
 export const DOT_ACTIVE_WINDOW_MINUTES = 60;
@@ -24,10 +25,7 @@ export interface DotResourceRow {
 }
 
 function agoText(minutes: number): string {
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
-  return `${Math.floor(minutes / 1440)}d ago`;
+  return minutes < 1 ? 'just now' : ageInSeconds(minutes * 60);
 }
 
 export function dotResourceRow(status: CommsStatus | null, now: number): DotResourceRow {

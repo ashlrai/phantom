@@ -82,7 +82,8 @@ function RuntimeIdentityLine() {
   // Re-age a cached reading whenever fresh data lands, not only on the poll.
   if (read.data === undefined && read.error === undefined) return <p className={styles.runtimeRow} role="status">runtime reading…</p>;
   const row = describeRuntimeIdentity(read.data, read.error, Math.max(now, read.updatedAt ?? 0));
-  return <p className={styles.runtimeRow} data-tone={row.tone} role={row.tone === 'down' ? 'alert' : 'status'}>{row.text}</p>;
+  return <p className={styles.runtimeRow} data-tone={row.tone} role={row.tone === 'down' ? 'alert' : 'status'}
+    title={row.tone === 'down' ? undefined : read.data?.snapshot?.asOf}>{row.text}</p>;
 }
 
 function MachineSummary({ onClose }: { onClose: () => void }) {

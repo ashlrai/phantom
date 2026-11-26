@@ -1,3 +1,4 @@
+import { relativeTime } from '../../../lib/relative-time.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -27,9 +28,8 @@ const nodeReachQuery: QueryDef<NodeReachItem[]> = {
 
 /** "seen 3m ago" or "no heartbeat yet"; `now` is injectable for tests. */
 export function asOfText(iso: string | null, now: number): string {
-  if (!iso) return 'no heartbeat yet';
-  const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
-  return s < 60 ? `seen ${s}s ago` : s < 3600 ? `seen ${Math.floor(s / 60)}m ago` : `seen ${Math.floor(s / 3600)}h ago`;
+  const reading = relativeTime(iso, now);
+  return reading ? `seen ${reading.text}` : 'no heartbeat yet';
 }
 
 export function NodeReachRows({ nodes, now }: { nodes: NodeReachItem[]; now: number }) {
@@ -38,7 +38,7 @@ export function NodeReachRows({ nodes, now }: { nodes: NodeReachItem[]; now: num
     {nodes.map((n) => <li key={n.label}>
       <span>{n.label} ({n.role})</span>{' '}
       <span className={styles.badge} data-tone={n.state === 'reachable' ? undefined : 'warn'}>{n.state}</span>{' '}
-      <span className={styles.muted}>{asOfText(n.lastSeenIso, now)}</span>
+      <span className={styles.muted} title={n.lastSeenIso ?? undefined}>{asOfText(n.lastSeenIso, now)}</span>
     </li>)}
   </ul>;
 }
