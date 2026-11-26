@@ -671,6 +671,9 @@ vocabulary and `empty_tag_truncated` marks a cut tags tail, in which case
 joined tags cover only the newest bytes; anything but `read` leaves
 every `empty_tag` `null` — unknown, never a guessed cause — while a
 recorded `unknown` tag stays distinct from missing evidence.
+The daemon waits for a finish on or after the job's latest recorded launch
+or batch claim before reading its log or recording a duplicate-check outcome.
+When timestamps match, ledger order decides which receipt came first.
 `merge_queue` is the merge queue's recorded per-PR history for the
 job's standing pull request — the `metrics/merge-events.jsonl`
 observations the host merge observer and `phm fleet merge-retry`
