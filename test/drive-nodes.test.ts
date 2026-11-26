@@ -27,6 +27,26 @@ function fixture() {
   return { a, b, store, alice, bob, advance: (ms: number) => { now += ms; } };
 }
 
+describe('owner-scoped routing preview', () => {
+  it('honors earlier reservations on a shared worker without returning other owners’ routes', () => {
+    const f = fixture();
+    const worker = f.a.join('shared-worker', { owners: ['alpha', 'beta'], slots: 1 })!;
+    f.a.enqueue('earlier-job', { owner: 'alpha' });
+    f.a.enqueue('later-job', { owner: 'beta' });
+
+    const preview = executeNodeFleet('plan', ['--owner', 'beta'], f.a);
+    expect(preview.routes).toEqual([
+      expect.objectContaining({ jobId: 'later-job', owner: 'beta', nodeId: null, fix: expect.stringContaining('no free job slots') }),
+    ]);
+    expect(preview.routes).toEqual(f.a.view(['beta']).routes);
+    const pulled = f.a.pull(worker)!;
+    expect(pulled.job.id).toBe('earlier-job');
+    expect(f.a.complete(pulled.claim, 'done')).toBe(true);
+    expect(f.a.plan('beta')).toEqual([{ jobId: 'later-job', owner: 'beta', nodeId: worker.nodeId }]);
+    expect(f.a.pull(worker)?.job.id).toBe('later-job');
+  });
+});
+
 describe('drive node leases', () => {
   it('acquires one leader and renews without changing its fencing token', () => {
     const f = fixture();
