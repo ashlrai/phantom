@@ -23,7 +23,8 @@ afterEach(() => {
   vi.restoreAllMocks();
   rmSync(root, { recursive: true, force: true });
 });
-const status = (lanes: unknown) => writeFileSync(join(queue, 'status.json'), JSON.stringify({ lanes }));
+const status = (lanes: unknown, tick: Record<string, unknown> = {}) =>
+  writeFileSync(join(queue, 'status.json'), JSON.stringify({ ...tick, lanes }));
 // Dispatcher dialect: job, repo, lane, tier, prompt[, requirements].
 const row = (id: string, lane: string, prompt: string) => [id, 'repo', lane, 'work', prompt].join('\t');
 const report = () => JSON.parse(String(log.mock.calls.at(-1)?.[0]));
@@ -167,6 +168,32 @@ describe('fleet launchable', () => {
       { lane: 'room', running: 2, target: 3, free: 1, launchable: 0 },
       { lane: 'shed', running: 3, target: 3, free: 0, launchable: 0 },
     ]);
+  });
+  it.each([
+    { paused: 'operator pause' },
+    { admission: { admit: false } },
+    { admission: { cap: 3, running: 3 } },
+  ])('keeps ready supply visible when dispatcher admission is closed (%j)', async tick => {
+    const prompt = join(root, 'prompt.md');
+    writeFileSync(prompt, 'task');
+    writeFileSync(join(queue, 'ready.tsv'), [row('RQ-HINT', 'alpha', prompt), row('RQ-OPEN', '', prompt)].join('\n'));
+    status({ alpha: { target: 4, running: 1, effective_target: 3 } }, tick);
+
+    expect(await cmdFleetLaunchable(['--json'])).toBe(0);
+    expect(report()).toMatchObject({ openRows: 1, lanes: [
+      { lane: 'alpha', running: 1, target: 3, free: 0, launchable: 1 },
+    ] });
+  });
+  it('bounds each lane by shared headroom only when admission belongs to the same tick', async () => {
+    const lastTick = '2026-11-26T12:00:00Z';
+    const lanes = { alpha: { target: 4, running: 1 }, beta: { target: 2, running: 1 } };
+    status(lanes, { last_tick: lastTick, admission: { ts: lastTick, cap: 4, running: 2 } });
+    expect(await cmdFleetLaunchable(['--json'])).toBe(1);
+    expect(report().lanes).toMatchObject([{ lane: 'alpha', free: 2 }, { lane: 'beta', free: 1 }]);
+
+    status(lanes, { last_tick: lastTick, admission: { ts: '2026-11-26T11:59:30Z', admit: false } });
+    expect(await cmdFleetLaunchable(['--json'])).toBe(1);
+    expect(report().lanes).toMatchObject([{ lane: 'alpha', free: 3 }, { lane: 'beta', free: 1 }]);
   });
   it('reports zero free slots for held lanes and resumes counting them when released', async () => {
     status({ alpha: { target: 4, running: 1, effective_target: 3, held: true } });
