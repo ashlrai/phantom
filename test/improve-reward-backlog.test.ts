@@ -281,6 +281,12 @@ describe('rewardBacklogItems', () => {
     expect(item.prompt).toContain('9 of 11');
     expect(item.prompt).toContain('not held across 3 UTC day(s)');
     expect(item.prompt).toContain('no-change');
+
+    for (const repo of ['ASHLRAI/Phantom', 'phantom']) {
+      const allowed = await rewardBacklogItems({ repo, ledgerPath: path, now: NOW_MS });
+      expect(allowed.map(({ id }) => id)).toEqual([item.id]);
+    }
+    expect(await rewardBacklogItems({ repo: 'another-owner/phantom', ledgerPath: path, now: NOW_MS })).toEqual([]);
   });
 
   it('emits nothing for missing evidence, another repository, or below-bar cells', async () => {

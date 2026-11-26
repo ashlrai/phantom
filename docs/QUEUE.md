@@ -1415,7 +1415,9 @@ The report uses receipts through its generation time, inclusive. Future-dated
 receipts and terminal merge or close timestamps are excluded before PR URL
 ownership is resolved. Receipts without a parseable timestamp remain eligible.
 
-Reward backlog discovery requires six or more resolved jobs in a pool
+Reward backlog discovery targets `ashlrai/phantom` or the bare `phantom`
+shorthand, matching case-insensitively. It uses resolved jobs across all
+repositories in the fleet's reward ledger. A brief requires six or more resolved jobs in a pool
 within the evidence window. At least four must have not-held outcomes,
 those outcomes must form a strict majority, and they must have been
 recorded on at least two distinct UTC dates. The brief lists dates with
