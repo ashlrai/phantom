@@ -518,7 +518,8 @@ const rejectedLanes = (value: unknown): { lane: string; codes: string[] }[] => {
  * Collapse work-market.jsonl route_decision rows to each job's latest
  * in-window decision. The dispatcher re-decides every waiting job each tick,
  * so rows collapse before counting — a job that waited for hours counts once,
- * by where the market currently sends it. Rows outside the window, malformed
+ * by where the market currently sends it. For equal tick timestamps, the
+ * later valid append wins. Rows outside the window, malformed
  * JSON, non-route_decision events and missing or malformed decision fields
  * are skipped. An explicit null lane is valid evidence.
  */
@@ -537,7 +538,7 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     const job = row.job;
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const prev = latest.get(job);
-    if (prev !== undefined && prev.ts >= ts) continue;
+    if (prev !== undefined && prev.ts > ts) continue;
     const preferred = laneField(row.preferred_lane);
     const chosen = laneField(row.chosen_lane);
     if (chosen === null && row.chosen_lane !== null) continue;

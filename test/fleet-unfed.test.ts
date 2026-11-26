@@ -260,6 +260,28 @@ describe('foldMarketOverrides', () => {
       decided: 3, overridden: { decided: 1 }, open: { decided: 1 }, unrouted: { decided: 1 },
     });
   });
+
+  it('uses the last valid journal entry for decisions from the same tick', () => {
+    const text = [
+      decision('RQ-A', t, {
+        chosen_lane: null, preferred_lane: undefined, override: null,
+        reason_codes: ['invalid_requirements'],
+      }),
+      decision('RQ-A', t, {
+        rejected_lanes: [{ lane: 'codex-personal', reason_codes: ['saturated'] }],
+      }),
+      decision('RQ-A', t, { chosen_lane: undefined }),
+      decision('RQ-A', t - 1, { chosen_lane: null, override: null }),
+    ].join('\n');
+
+    expect(foldMarketOverrides(text, now, 24)).toMatchObject({ decided: 1, overridden: 1 });
+    expect(foldRouteRejections(text, now, 24)).toMatchObject({
+      decided: 1, unrouted: 0, byReason: { saturated: 1 },
+    });
+    expect(foldDecisionOutcomes(text, null, now, 24)).toMatchObject({
+      decided: 1, overridden: { decided: 1 }, unrouted: { decided: 0 },
+    });
+  });
   const decision = (job: string, ts: number, extra: Record<string, unknown> = {}) =>
     JSON.stringify({
       schema: 'work-market.v1', event: 'route_decision', job, ts,
