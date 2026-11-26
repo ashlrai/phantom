@@ -102,9 +102,13 @@ export async function startServer(
   gcRunStreams(true);
   // Separate capabilities: read authority can mint a GET-only browser ticket,
   // while the mutation token is accepted only by handleApi mutation gates.
-  const sessions = createReadSessionBoundary({ onRotate: drainSseConnections, onRevokeSession: drainSseSession });
-  const { readToken } = sessions;
   const token = randomBytes(32).toString('hex');
+  const sessions = createReadSessionBoundary({
+    onRotate: drainSseConnections,
+    onRevokeSession: drainSseSession,
+    pairingMutationToken: opts.allowDispatch ? token : undefined,
+  });
+  const { readToken } = sessions;
   // Fleet apps recovery readers stay out of the Tier-1 closure; this bootstrap
   // is outside it, so it is the production install point for the provider slot.
   const { installFleetAppsRecoveryProviders } = await import('../fleet/app-recovery-install.js');

@@ -134,7 +134,7 @@ function LocalPhantomMobileApp() {
     <Boot>
       {phase === 'unauthenticated' ? (
         <Suspense fallback={CONNECTING}>
-          <SessionGate heading="Connect to your Mac" command="phm console" subject={PRODUCT_NAME} mutationField />
+          <SessionGate heading="Connect to your Mac" command="phm console" subject={PRODUCT_NAME} mutationField pairing />
         </Suspense>
       ) : unreachable ? (
         <div role="alert">

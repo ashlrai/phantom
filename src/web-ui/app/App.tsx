@@ -61,7 +61,7 @@ export function App() {
           Checking for an existing session…
         </div>
       ) : phase === 'unauthenticated' ? (
-        <SessionGate />
+        <SessionGate pairing />
       ) : (
         <HashRouter>
           <SkipToContent />

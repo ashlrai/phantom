@@ -174,6 +174,25 @@ export async function clearReadSession(): Promise<void> {
   expireNow();
 }
 
+export async function redeemPairingCode(code: string): Promise<void> {
+  const response = await fetch('/api/session/pairing/redeem', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'x-ashlr-pairing-code': code,
+      'x-ashlr-read-client': getReadClientProof(),
+    },
+  });
+  if (!response.ok) throw new Error('This pairing link is invalid, expired, or already used. Get a new link from Phantom Desktop.');
+  const { mutationToken } = await response.json() as { mutationToken?: unknown };
+  if (typeof mutationToken !== 'string' || !/^[a-f0-9]{64}$/.test(mutationToken)) {
+    throw new Error('Phantom could not complete pairing. Get a new link from Phantom Desktop.');
+  }
+  rememberedReadToken = null;
+  setMutationToken(mutationToken);
+  markCheckComplete(true);
+}
+
 function expireNow(): void {
   clearMutationToken();
   evictAll();

@@ -529,6 +529,18 @@ Resident non-once ticks enable `offTickMaintenance` (ignored for dry runs):
 self-heal and ancillary run single-flight in the background, and auto-merge
 precedes backlog refresh. Direct and once ticks retain in-tick maintenance.
 
+## Local console pairing
+
+The dispatch-enabled loopback console enables `createReadSessionBoundary`'s
+optional `pairingMutationToken`. Same-origin `POST /api/session/pairing`
+requires a valid read cookie and client proof plus the mutation header. A new
+code replaces the previous one and expires after two minutes.
+`POST /api/session/pairing/redeem` takes that code in `X-Ashlr-Pairing-Code`
+and a fresh read-client proof, consumes the code once, issues the normal
+read-only cookie and returns the separate mutation token for the tab's
+memory-only hold. Neither the raw read token nor a renewable credential is
+returned. Phone gateway invitations retain Access, passkey and Mac approval.
+
 # Advisory routing pairing
 
 `routing/decision-schema.ts` exports `routeFailureKindSchema` (quota, 5xx,

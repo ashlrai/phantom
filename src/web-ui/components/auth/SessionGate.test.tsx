@@ -14,6 +14,46 @@ describe('SessionGate', () => {
     vi.unstubAllGlobals();
     clearMutationToken();
     delete window.__ASHLR_TOKENS__;
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('redeems a fragment once, clears it from the address, and keeps manual paste collapsed', async () => {
+    const code = 'q'.repeat(43);
+    const mutation = 'e'.repeat(64);
+    window.history.replaceState(null, '', `/verse/#/pair/${code}`);
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce(Response.json({ mutationToken: mutation }));
+    const onAuthenticated = vi.fn();
+
+    render(<SessionGate pairing mutationField onAuthenticated={onAuthenticated} />);
+    expect(screen.getByText('Enter tokens manually').parentElement).not.toHaveAttribute('open');
+    await waitFor(() => expect(onAuthenticated).toHaveBeenCalledOnce());
+    expect(window.location.hash).toBe('');
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/session/pairing/redeem', expect.objectContaining({
+      method: 'POST',
+      headers: { 'x-ashlr-pairing-code': code, 'x-ashlr-read-client': expect.stringMatching(/^[a-f0-9]{64}$/) },
+    }));
+    expect(getMutationToken()).toBe(mutation);
+    expect(Object.values(localStorage)).not.toContain(mutation);
+    expect(Object.values(sessionStorage)).not.toContain(mutation);
+  });
+
+  it('uses desktop recovery rather than redeeming a browser pairing link in the desktop shell', async () => {
+    const dom = (globalThis as unknown as { jsdom: { reconfigure(options: { url: string }): void } }).jsdom;
+    const previousUrl = window.location.href;
+    const invoke = vi.fn().mockResolvedValue(null);
+    vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+    dom.reconfigure({ url: `http://127.0.0.1:7777/verse/#/pair/${'q'.repeat(43)}` });
+    try {
+      render(<SessionGate pairing mutationField />);
+
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith('desktop_session_tokens'));
+      expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+      expect(screen.queryByText('Enter tokens manually')).not.toBeInTheDocument();
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      dom.reconfigure({ url: previousUrl });
+    }
   });
 
   it('adopts host-injected window.__ASHLR_TOKENS__ without a paste and clears them from the page', async () => {

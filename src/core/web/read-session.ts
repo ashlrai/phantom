@@ -17,6 +17,8 @@ const READ_CLIENT_HEADER = 'x-ashlr-read-client';
 const READ_CLIENT_QUERY = 'client';
 const READ_CLIENT_RE = /^[a-f0-9]{64}$/;
 const READ_SESSION_REVOCATION_CAPACITY = 64;
+const PAIRING_TTL_MS = 2 * 60_000;
+const PAIRING_CODE_RE = /^[A-Za-z0-9_-]{43}$/;
 
 /**
  * Paths where a browser EventSource connects directly (no custom headers
@@ -298,18 +300,53 @@ export function createReadSessionBoundary(options: {
   cookieName?: string;
   onRevokeSession?: (id: string) => void;
   onRotate?: () => void;
+  pairingMutationToken?: string;
 } = {}): ReadSessionBoundary {
   const cookieName = options.cookieName ?? READ_SESSION_COOKIE;
   if (!/^[A-Za-z0-9_]{1,80}$/.test(cookieName)) throw new Error('Invalid read-session cookie name');
   const readToken = randomBytes(32).toString('hex');
   let signingKey = randomBytes(32).toString('hex');
+  let invitation: { code: string; expiresAt: number } | null = null;
   const revocations = new ReadSessionRevocations(READ_SESSION_REVOCATION_CAPACITY);
+  const issueCookie = (proof: string) =>
+    sessionCookie(mintReadSession(signingKey, proof), Math.floor(READ_SESSION_TTL_MS / 1000), cookieName);
   return {
     readToken,
     authority: (req, url) => readAuthority(req, readToken, signingKey, url, revocations, cookieName),
     handleSession(req, res, url) {
-      if (url.pathname !== '/api/session') return false;
       const method = (req.method ?? 'GET').toUpperCase();
+      const issue = url.pathname === '/api/session/pairing';
+      if (issue || url.pathname === '/api/session/pairing/redeem') {
+        const mutationToken = options.pairingMutationToken;
+        if (!mutationToken) {
+          sendJson(res, 404, { error: 'Pairing unavailable' });
+        } else if (method !== 'POST') {
+          sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+        } else if (!isAllowedHost(req.headers.host) || headerValue(req, 'origin') !== `http://${req.headers.host}`) {
+          sendJson(res, 403, { error: 'Same-origin pairing required' });
+        } else if (url.search || !readClientHeader(req)) {
+          sendJson(res, 400, { error: 'invalid read client proof' });
+        } else if (issue) {
+          if (!safeEqual(headerValue(req, 'x-ashlr-token'), mutationToken)
+            || !validateReadSession(req, signingKey, url, revocations, 'logout', Date.now(), cookieName)) {
+            sendJson(res, 401, { error: 'Read session and mutation authority required' });
+          } else {
+            invitation = { code: randomBytes(32).toString('base64url'), expiresAt: Date.now() + PAIRING_TTL_MS };
+            sendJson(res, 200, invitation);
+          }
+        } else {
+          const code = headerValue(req, 'x-ashlr-pairing-code');
+          if (invitation && invitation.expiresAt <= Date.now()) invitation = null;
+          if (!invitation || !PAIRING_CODE_RE.test(code) || !safeEqual(code, invitation.code)) {
+            sendJson(res, 401, { error: 'Pairing link is invalid, expired, or already used' });
+          } else {
+            invitation = null;
+            sendJson(res, 200, { mutationToken }, { 'Set-Cookie': issueCookie(readClientHeader(req)) });
+          }
+        }
+        return true;
+      }
+      if (url.pathname !== '/api/session') return false;
       if (method === 'POST') {
         if (!safeEqual(headerValue(req, 'x-ashlr-token'), readToken)) {
           sendJson(res, 401, { error: 'unauthorized: missing or invalid x-ashlr-token' });
@@ -319,9 +356,8 @@ export function createReadSessionBoundary(options: {
           sendJson(res, 400, { error: 'invalid read client proof' });
           return true;
         }
-        const ticket = mintReadSession(signingKey, readClientHeader(req));
         sendJson(res, 204, undefined, {
-          'Set-Cookie': sessionCookie(ticket, Math.floor(READ_SESSION_TTL_MS / 1000), cookieName),
+          'Set-Cookie': issueCookie(readClientHeader(req)),
         });
         return true;
       }
@@ -345,6 +381,7 @@ export function createReadSessionBoundary(options: {
       return true;
     },
     clear() {
+      invitation = null;
       revocations.clear();
       signingKey = randomBytes(32).toString('hex');
     },

@@ -13,10 +13,10 @@
  * separate (the mutation token only ever enters the memory-only hold), it
  * just spares the operator a second paste screen on the first Enter.
  */
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { PRODUCT_NAME } from '../../app/product-brand.js';
 import { PhantomMark } from '../../app/product-brand-mark.js';
-import { adoptInjectedTokens, establishReadSession, isDesktopSession, reconnectDesktopSession, setMutationToken } from '../../data/auth-store.js';
+import { adoptInjectedTokens, establishReadSession, isDesktopSession, reconnectDesktopSession, redeemPairingCode, setMutationToken } from '../../data/auth-store.js';
 import styles from './SessionGate.module.css';
 
 const TOKEN_RE = /^[a-f0-9]{64}$/;
@@ -34,6 +34,7 @@ export interface SessionGateProps {
    * two paste screens into one for surfaces where sending is the whole point.
    */
   mutationField?: boolean;
+  pairing?: boolean;
 }
 
 export function DesktopSessionRecovery({ onAuthenticated }: Pick<SessionGateProps, 'onAuthenticated'>) {
@@ -73,11 +74,12 @@ export function SessionGate(props: SessionGateProps) {
   return <BrowserSessionGate {...props} />;
 }
 
-function BrowserSessionGate({ onAuthenticated, heading = `Connect to ${PRODUCT_NAME}`, command = 'phm serve', subject = 'This dashboard', mutationField = false }: SessionGateProps) {
+function BrowserSessionGate({ onAuthenticated, heading = `Connect to ${PRODUCT_NAME}`, command = 'phm serve', subject = 'This dashboard', mutationField = false, pairing = false }: SessionGateProps) {
   const [token, setToken] = useState('');
   const [mutation, setMutation] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pairingStatus, setPairingStatus] = useState<'connecting' | 'failed' | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
   const mutationId = useId();
@@ -94,6 +96,17 @@ function BrowserSessionGate({ onAuthenticated, heading = `Connect to ${PRODUCT_N
     });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    const code = pairing ? /^#\/pair\/([A-Za-z0-9_-]{43})$/.exec(window.location.hash)?.[1] : undefined;
+    if (!code) return;
+    window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search);
+    setPairingStatus('connecting');
+    void redeemPairingCode(code).then(() => {
+      setPairingStatus(null);
+      authenticatedRef.current?.();
+    }, () => setPairingStatus('failed'));
+  }, [pairing]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -118,6 +131,7 @@ function BrowserSessionGate({ onAuthenticated, heading = `Connect to ${PRODUCT_N
     }
   }
 
+  const Manual = pairing ? 'details' : Fragment;
   return (
     <div className={styles.wrap}>
       <div className={styles.card}>
@@ -125,6 +139,13 @@ function BrowserSessionGate({ onAuthenticated, heading = `Connect to ${PRODUCT_N
           <PhantomMark size={44} />
         </div>
         <h1 className={styles.heading}>{heading}</h1>
+        {pairing && <>
+          <p className={styles.body}>Open Phantom Desktop → Settings → Connection and choose Pair this browser. Open the one-time link on this computer.</p>
+          {pairingStatus === 'connecting' && <p role="status">Connecting…</p>}
+          {pairingStatus === 'failed' && <p className={styles.error} role="alert">Could not use this pairing link. Get a new link from Phantom Desktop.</p>}
+        </>}
+        <Manual>
+        {pairing && <summary className={styles.summary}>Enter tokens manually</summary>}
         <p className={styles.body}>
           {subject} only ever talks to the {PRODUCT_NAME} server running on this machine
           (<code>127.0.0.1</code>, never a remote host). To read data, paste the{' '}
@@ -155,7 +176,7 @@ function BrowserSessionGate({ onAuthenticated, heading = `Connect to ${PRODUCT_N
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? errorId : undefined}
             placeholder="64 hex characters"
-            autoFocus
+            autoFocus={!pairing}
           />
           {mutationField ? (
             <>
@@ -182,10 +203,11 @@ function BrowserSessionGate({ onAuthenticated, heading = `Connect to ${PRODUCT_N
               {error}
             </p>
           ) : null}
-          <button type="submit" className={styles.submit} disabled={busy || token.trim().length === 0}>
+          <button type="submit" className={styles.submit} disabled={busy || pairingStatus === 'connecting' || token.trim().length === 0}>
             {busy ? 'Connecting…' : 'Connect'}
           </button>
         </form>
+        </Manual>
       </div>
     </div>
   );
