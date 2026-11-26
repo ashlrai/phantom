@@ -110,6 +110,10 @@ describe('fleet resource plan', () => {
       action: 'use-reset-now', requires_explicit_request: true, grant, window: 'weekly', queued_jobs: 3,
     });
     expect(plan({ ...bank, queued: 0 }).reset_proposal).toBeNull();
+    const scoped = buildFleetResourcePlan(weekly, [node], status(), ledger, now, [], bank, new Map([['agy', []]]));
+    expect(scoped.reset_proposal).toBeNull();
+    expect(scoped.lanes.find(row => row.lane === 'codex-personal')).toMatchObject({ queued_jobs: null, additional_slots: null });
+    expect(scoped.lanes.find(row => row.lane === 'agy')).toMatchObject({ queued_jobs: 0, additional_slots: 0 });
   });
 
   it('reroutes eligible rows once toward the earliest included deadline and shares the plan with readers', async () => {
@@ -141,6 +145,18 @@ describe('fleet resource plan', () => {
         readings: readings.map(row => row.id === 'antigravity' ? { ...row, reset_at: sooner } : row),
         history: { ...live.history, antigravity: live.history.antigravity!.map(row => ({ ...row, reset_at: sooner })) },
       }));
+      await write('queue/status.json', {
+        ...dispatch, lanes: Object.fromEntries(lanes.map(lane => [lane, { ...dispatch.lanes[lane], queued: 10 }])),
+      });
+      await writeFile(join(dir, 'PAUSE'), '');
+      const paused = await readFleetResourcePlan(dir, now);
+      expect(paused.lanes.find(lane => lane.lane === 'agy')).toMatchObject({
+        queued_jobs: null, target_concurrency: null, additional_slots: null,
+      });
+      await writeFleetResourceAdvice(dir, paused);
+      expect(JSON.parse(await readFile(join(dir, 'queue/resource-capacity-advice.json'), 'utf8')).targets).toEqual({});
+      await rm(join(dir, 'PAUSE'));
+      await write('queue/status.json', dispatch);
       const plan = await readFleetResourcePlan(dir, now);
       expect(plan.lanes.filter(lane => lanes.includes(lane.lane)).map(lane => [lane.queued_jobs, lane.additional_slots])).toEqual([[2, 1], [2, 1]]);
       const readCapacity = async () => plan;
