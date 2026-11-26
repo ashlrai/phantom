@@ -127,10 +127,10 @@ export interface TurnFeaturesV1 {
 
 export const LOOP_MIN = 3;
 export const REEDIT_MIN = 3;
-export const REPEATED_FAILURE_MIN = 2;
+const REPEATED_FAILURE_MIN = 2;
 export const UNCERTAIN_TURN_SCORE = 4;
 export const BACKTRACK_TURN_MIN = 2;
-export const STRUGGLE_TOOL_ERRORS = 3;
+const STRUGGLE_TOOL_ERRORS = 3;
 const MAX_TRACKED_TOOLS = 2_000;
 const MAX_EVIDENCE_PER_KIND = 3;
 const MAX_SIGNATURES = 10;
@@ -242,8 +242,14 @@ const AGENT_NAMES = new Set([
   'request_user_input', 'request_user_input_async', 'exitplanmode', 'bash_output', 'killshell', 'bash_tail',
 ]);
 
-function isObject(value: unknown): value is Record<string, unknown> {
+/** Plain non-array object guard shared across reasoning extractors, store, and ingestors. */
+export function isReasoningRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** String value or empty string (shared across reasoning ingestors). */
+export function asString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }
 
 /** Last segment of a namespaced tool name: `mcp__plugin_x__ashlr__edit` → `edit`, `mcp:server.read_file` → `read_file`. */
@@ -255,7 +261,7 @@ function baseToolName(name: string): string {
 
 function commandText(input: unknown): string | null {
   if (typeof input === 'string') return input;
-  if (!isObject(input)) return null;
+  if (!isReasoningRecord(input)) return null;
   const raw = input['command'] ?? input['cmd'] ?? input['script'];
   if (typeof raw === 'string') return raw;
   if (Array.isArray(raw)) {
@@ -269,22 +275,26 @@ function commandText(input: unknown): string | null {
   return null;
 }
 
+function changePaths(input: Record<string, unknown>): string[] {
+  const changes = input['changes'];
+  if (Array.isArray(changes)) {
+    const out: string[] = [];
+    for (const change of changes) {
+      if (isReasoningRecord(change) && typeof change['path'] === 'string') out.push(change['path']);
+    }
+    return out;
+  }
+  return isReasoningRecord(changes) ? Object.keys(changes) : [];
+}
+
 function fileTarget(input: unknown): string | null {
-  if (!isObject(input)) return null;
+  if (!isReasoningRecord(input)) return null;
   for (const key of ['file_path', 'filePath', 'path', 'target_file', 'notebook_path', 'file']) {
     const value = input[key];
     if (typeof value === 'string' && value.trim() !== '') return value;
   }
-  const changes = input['changes'];
-  if (Array.isArray(changes)) {
-    for (const change of changes) {
-      if (isObject(change) && typeof change['path'] === 'string') return change['path'];
-    }
-  } else if (isObject(changes)) {
-    const first = Object.keys(changes)[0];
-    if (first) return first;
-  }
-  return null;
+  const first = changePaths(input)[0];
+  return first || null;
 }
 
 /** Stable, bounded identity of a tool input (for exact-repeat detection). */
@@ -298,17 +308,9 @@ function inputKey(input: unknown): string {
 }
 
 /** Every file an edit call touches (codex file_change can carry several). */
-export function editTargets(input: unknown): string[] {
-  if (!isObject(input)) return [];
-  const changes = input['changes'];
-  const out: string[] = [];
-  if (Array.isArray(changes)) {
-    for (const change of changes) {
-      if (isObject(change) && typeof change['path'] === 'string') out.push(change['path']);
-    }
-  } else if (isObject(changes)) {
-    out.push(...Object.keys(changes));
-  }
+function editTargets(input: unknown): string[] {
+  if (!isReasoningRecord(input)) return [];
+  const out = changePaths(input);
   if (out.length === 0) {
     const single = fileTarget(input);
     if (single) out.push(single);
@@ -359,7 +361,7 @@ export function commandSignature(command: string): string {
 const SHELL_WRAPPER_RE = /^\s*(?:\S*\/)?(?:ba|z|da|k)?sh\s+-\w*c\s+(["'])([\s\S]*)\1\s*$/;
 
 /** `/bin/zsh -lc "npm test"` → `npm test` (codex/grok wrap every command this way). */
-export function unwrapShell(command: string): string {
+function unwrapShell(command: string): string {
   let current = command;
   for (let i = 0; i < 3; i += 1) {
     const match = SHELL_WRAPPER_RE.exec(current);
@@ -474,10 +476,6 @@ export class TurnAccumulator {
   /** ISO time of the newest action seen (for idle sweeps). */
   get lastAt(): string | null {
     return this.lastActivityAt;
-  }
-
-  get actionCount(): number {
-    return this.thinkingSteps + this.tools.length + this.extraToolCalls;
   }
 
   addThinking(ref: string, at: string, text: string, redacted = false): void {

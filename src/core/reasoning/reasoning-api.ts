@@ -27,7 +27,7 @@ import { codexInteractiveOptIn, ingestCodexRollouts } from './ingest-codex.js';
 import { ingestFleetAgentLogs } from './ingest-fleet.js';
 import { ingestVerseSessionLogs } from './ingest-verse.js';
 import { applyReasoningRetention } from './retention.js';
-import { DAY_MS, reasoningRoot, scanFeatures, scanSteps } from './store.js';
+import { DAY_MS, isPrintableAsciiId, reasoningRoot, scanFeatures, scanSteps } from './store.js';
 import {
   REASONING_API_PREFIX,
   REASONING_DIGEST_PATH,
@@ -40,12 +40,11 @@ import {
   type ReasoningStepsResponse,
 } from './types.js';
 
-export { computeReasoningDigest, DEFAULT_DIGEST_DAYS };
+export { computeReasoningDigest };
 
-export const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1_000;
+const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1_000;
 const FIRST_RUN_WAIT_MS = 2_000;
 const MAX_QUERY_CHARS = 200;
-const MAX_SESSION_ID_CHARS = 256;
 
 // ---------------------------------------------------------------------------
 // Maintenance
@@ -237,7 +236,7 @@ export const handleReasoningApi: ApiModule = async (
     return true;
   }
   // Ids are printable ASCII without spaces (store.ts cleanId); anything else can never match.
-  if (sessionId.length > MAX_SESSION_ID_CHARS || (sessionId !== '' && !/^[\x21-\x7e]+$/.test(sessionId))) {
+  if (sessionId !== '' && !isPrintableAsciiId(sessionId)) {
     sendJson(res, 400, { code: 'REASONING_INVALID', error: 'invalid sessionId' });
     return true;
   }
