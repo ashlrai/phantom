@@ -28,6 +28,22 @@ function fixture() {
 }
 
 describe('drive node leases', () => {
+  it.each([10_000, 25_000])('preserves a running claim across %i ms watch intervals with scheduling delay', interval => {
+    let now = 1_000;
+    const nodes = new DriveNodes(new MemoryStore(), { now: () => now });
+    const worker = nodes.join('watcher', { owners: ['o'] })!;
+    const leader = nodes.heartbeat(worker)!.leader!;
+    nodes.enqueue('job', { owner: 'o' });
+    const claim = nodes.pull(worker)!.claim;
+
+    for (let beat = 0; beat < 3; beat++) {
+      now += interval + 250;
+      expect(nodes.heartbeat(worker)?.leader?.token).toBe(leader.token);
+      expect(nodes.renewClaim(claim)?.expiresAt).toBe(now + 30_000);
+    }
+    expect(nodes.complete(claim, 'done')).toBe(true);
+  });
+
   it('acquires one leader and renews without changing its fencing token', () => {
     const f = fixture();
     const leader = f.a.heartbeat(f.alice)!.leader!;

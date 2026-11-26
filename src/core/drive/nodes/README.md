@@ -20,7 +20,7 @@ if (leadership?.nodeId === session.nodeId) {
 ```
 
 Call `heartbeat(session)` periodically, comfortably within both the node and
-leader TTLs (defaults: 30 seconds and 10 seconds). Every live node participates:
+leader TTLs (both default to 30 seconds). Every live node participates:
 a follower heartbeat acquires leadership automatically when the old leader
 expires. Leader renewal preserves its token; acquisition allocates a larger
 one. `renewClaim` extends a current claim (default 30 seconds). An expired

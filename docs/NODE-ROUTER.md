@@ -145,7 +145,9 @@ A standalone session expires 30 seconds after its last beat, so
 each pass is the ordinary `beat` through the same dispatch (a pooled Mac still
 delegates to the primary), re-measuring the `--capacity` sample and host stats
 on this machine unless the caller passed those flags explicitly. The interval
-defaults to 10 seconds and is capped at 25, inside the expiry window. Ctrl-C or
+defaults to 10 seconds and is capped at 25, inside the 30-second expiry window
+for both the node session and the leader lease. A heartbeat from the current
+leader renews its lease without changing the fencing token. Ctrl-C or
 SIGTERM stops the loop and prints a confirmation; a beat that exits non-zero —
 a lapsed session, a refused flag — stops it at once with that beat's error. The
 watch flags are consumed by the dispatcher and never reach the beat parser, so
