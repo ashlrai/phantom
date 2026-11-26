@@ -74,6 +74,37 @@ the node already rejoined under a newer session, the fix names that session and
 the exact `leave` command instead, so you can resume without hunting for the
 number. Omit `--probe-auth` if this node does not need GitHub authentication.
 
+## See it take a job
+
+The same registry is the queue: a job enqueued on this computer under the
+same owner scope is routed to a live node that advertises the job's
+capabilities. Run the whole loop here — enqueue, plan, pull:
+
+```sh
+phm node enqueue --job hello-1 --owner acme --json
+phm node plan --owner acme
+phm node pull --node <nodeId> --session 1
+```
+
+`plan` shows `hello-1 -> <nodeId>` — or `nobody` with the reason and fix
+when no node can take it — and `pull` (without `--json`) prints the claimed
+job, its lease tokens and the paste-ready `renew`, `complete` and `release`
+commands. Run the printed `complete` command with your result text before
+the 30-second claim lapses; for work that takes longer, `phm node renew`
+with the same lease flags under `--watch` keeps the claim alive (see
+[NODE-ROUTER.md](NODE-ROUTER.md)). If `plan` routed the job to a different
+node, pull on that node instead. Read the outcome back with:
+
+```sh
+phm node result --job hello-1 --owner acme --json
+phm node status --owner acme --json
+```
+
+Every command above runs on this computer: the standalone registry is local,
+so producer and node are the same machine and a job enqueued elsewhere never
+reaches this node — that needs the pool or team path
+([NODES.md](NODES.md)).
+
 ## Leave
 
 ```sh
