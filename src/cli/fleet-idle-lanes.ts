@@ -46,10 +46,12 @@ export async function cmdFleetIdleLanes(
   const json = args.includes('--json');
   try {
     const runsDir = join(homedir(), '.ashlr-runs');
-    const lanes = parseIdleLanes(await reader(join(runsDir, 'queue', 'status.json')));
+    const status = await reader(join(runsDir, 'queue', 'status.json'));
+    const now = Date.now();
+    const lanes = parseIdleLanes(status, now);
     const events = await readIdleLaneEvents(runsDir, reader);
     const rows: Array<IdleLane & Partial<IdleLaneAge>> = hasPooledDatedEvent(events)
-      ? idleLaneAges(lanes, events, Date.now(), stuckAfterMin) : lanes;
+      ? idleLaneAges(lanes, events, now, stuckAfterMin) : lanes;
     if (json) {
       console.log(JSON.stringify({ schema: IDLE_LANES_SCHEMA, lanes: rows, stuckAfterMin }));
     } else {
@@ -61,7 +63,7 @@ export async function cmdFleetIdleLanes(
     }
     return lanes.some(lane => lane.status === 'red') ? 1 : 0;
   } catch {
-    const error = 'Cannot read lane status. Expected lanes with held, running, target and queued in ~/.ashlr-runs/queue/status.json.';
+    const error = 'Cannot read lane status. Expected lane counts and a last_tick at most 60 seconds old in ~/.ashlr-runs/queue/status.json.';
     console.log(json ? JSON.stringify({ schema: IDLE_LANES_SCHEMA, error }) : error);
     return 2;
   }

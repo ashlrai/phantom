@@ -1109,7 +1109,10 @@ has no phantom room, so `fleet admission --details`, `fleet lane-idle`, `fleet l
 all measure "under target", "full" and "starved" against it. `fleet trim`'s
 `SLOTS` suggestion still retunes the configured target it would change.
 
-`ashlr fleet idle-lanes` takes the newest event for each lane at or before
+`ashlr fleet idle-lanes` requires a readable dispatcher `last_tick` at most
+60 seconds old and no later than report time. If the timestamp is missing,
+invalid, stale or in the future, the command exits 2 without lane verdicts.
+It takes the newest event for each lane at or before
 report time from the bounded tails of `metrics/jobs.jsonl` and the legacy
 `queue/jobs.jsonl` under the runs directory. Events need a lane or pool and a
 timestamp with a timezone offset. A lane without a matching event has unknown

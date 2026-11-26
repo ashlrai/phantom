@@ -44,7 +44,7 @@ function readerWithLedger(status: unknown, ledger: string | Error) {
 
 it('a red lane quiet for 20 min is not STUCK by default, but STUCK with --stuck-after 15', async () => {
   const lane = 'stuck-demo';
-  const status = JSON.stringify({ lanes: { [lane]: { running: 0, target: 4, queued: 17, held: false } } });
+  const status = JSON.stringify({ last_tick: ago(0), lanes: { [lane]: { running: 0, target: 4, queued: 17, held: false } } });
   const ledger = JSON.stringify({ pool: lane, ts: ago(20) });
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
@@ -67,7 +67,7 @@ it('a red lane quiet for 20 min is not STUCK by default, but STUCK with --stuck-
 
 it('--json --stuck-after 15 reports stuckAfterMin 15 and stuck true; --json alone reports stuckAfterMin 30', async () => {
   const lane = 'json-test';
-  const status = JSON.stringify({ lanes: { [lane]: { running: 0, target: 4, queued: 17, held: false } } });
+  const status = JSON.stringify({ last_tick: ago(0), lanes: { [lane]: { running: 0, target: 4, queued: 17, held: false } } });
   const ledger = JSON.stringify({ pool: lane, ts: ago(20) });
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
@@ -92,7 +92,7 @@ it('--json --stuck-after 15 reports stuckAfterMin 15 and stuck true; --json alon
 
 it('flag order --stuck-after 15 --json works the same way', async () => {
   const lane = 'order-test';
-  const status = JSON.stringify({ lanes: { [lane]: { running: 0, target: 4, queued: 17, held: false } } });
+  const status = JSON.stringify({ last_tick: ago(0), lanes: { [lane]: { running: 0, target: 4, queued: 17, held: false } } });
   const ledger = JSON.stringify({ pool: lane, ts: ago(20) });
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);

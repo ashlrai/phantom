@@ -22,6 +22,11 @@ and the dates quoted in discovery briefs.
 
 ## Fleet lane ledger
 
+`parseIdleLanes(statusJson, nowMs?)` (`src/core/fleet/idle-lanes.ts`) parses
+dispatcher lane observations. With a report clock, it requires a readable
+`last_tick` in the inclusive interval from 60 seconds before report time
+through report time. Without a clock, it parses the supplied snapshot.
+
 `unfedTickLanes(row)` (`src/core/fleet/unfed-market.ts`) reads a decoded
 `unfed_capacity` snapshot and returns its usable lane observations as
 `{ lane, slots, blocked }`. Each observation requires positive headroom
