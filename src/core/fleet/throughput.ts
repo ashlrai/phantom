@@ -7,7 +7,8 @@
  * main-guardian status. The desktop Throughput pane shows this exact report.
  * Anything not measured is null (JSON) or "unknown" (text), never zero.
  */
-import { ledgerRows, readText, type LedgerRow } from './empty-cause.js';
+import { ledgerEventName, ledgerPhase, ledgerPrUrl, ledgerRows, readText, type LedgerRow } from './empty-cause.js';
+import { parseLedgerTs } from '../metrics/loop.js';
 import { finishesIn } from './empties.js';
 import { readFleetMainHealth } from './main-health.js';
 import { outcomePercentile } from './outcome-metrics.js';
@@ -57,34 +58,6 @@ const LEDGER_TAIL_BYTES = 32 * 1024 * 1024;
 const PR_URL = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/([1-9]\d*)\/?$/i;
 const NONE: ThroughputCounts = { launched: null, published: null, merged: null, finished: null, empty: null, empty_rate: null, median_publish_to_merge_s: null, merge_time_unknown: null };
 const label = (value: unknown): string | null => typeof value === 'string' && /^[\w][\w.:@/-]{0,79}$/.test(value.trim()) ? value.trim() : null;
-/**
- * jobs.jsonl field dialects beyond the id/lane/ts sets ledgerRows already
- * accepts: the event name event|type|kind, the phase
- * phase|state|outcome|status|result|conclusion and the PR link
- * url|prUrl|pr_url|pr|html_url — the same aliases dispatchd `_vc_event`,
- * `_vc_phase` and `_vc_pr` read.
- */
-const eventName = (row: Record<string, unknown>): string | null => {
-  for (const key of ['event', 'type', 'kind'] as const) {
-    const value = row[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return null;
-};
-const phaseName = (row: Record<string, unknown>): string | null => {
-  for (const key of ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const) {
-    const value = row[key];
-    if (typeof value === 'string' && value.trim()) return value.trim().toUpperCase();
-  }
-  return null;
-};
-const prLink = (row: Record<string, unknown>): string => {
-  for (const key of ['url', 'prUrl', 'pr_url', 'pr', 'html_url'] as const) {
-    const value = row[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return '';
-};
 /** `ashlrai/phantom` and `phantom` are one repo. */
 const repoName = (value: unknown): string | null => label(value)?.split('/').pop()?.toLowerCase() || null;
 /** A model id as the launch row wrote it (the same names `phm fleet lane-models` accepts); anything else is no name. */
@@ -103,7 +76,7 @@ function marksOf(rows: readonly LedgerRow[], since: number, now: number, perLaun
   const launches = new Map<string, { job: string; at: number }>();
   const prs = new Map<string, { job: string; repo: string | null; published?: number; merged?: number; ttm?: number }>();
   for (const { row, id, at } of rows) {
-    const event = eventName(row) ?? (row.source === 'metrics-outcomes-reconciler' ? 'outcome' : null);
+    const event = ledgerEventName(row), phase = ledgerPhase(row);
     if (id) {
       // The launch row decides a job's lane, repo, tier and model; other rows only fill gaps.
       const route = routes.get(id) ?? {};
@@ -113,10 +86,12 @@ function marksOf(rows: readonly LedgerRow[], since: number, now: number, perLaun
       routes.set(id, route);
       if (event === 'launch') launches.set(`${id}@${at}`, { job: id, at });
     }
-    const merged = event === 'merged' || (event === 'outcome' && phaseName(row) === 'MERGED');
-    const published = event === 'publish' || event === 'published';
+    // Terminal outcomes can be eventless or retain the original publish event.
+    // They prove a resolution, never a second publication.
+    const merged = phase !== 'CLOSED' && (phase === 'MERGED' || event === 'merged');
+    const published = !merged && phase !== 'CLOSED' && (event === 'publish' || (event === null && phase === 'PUBLISHED'));
     if (!merged && !published) continue;
-    const url = PR_URL.exec(prLink(row));
+    const url = PR_URL.exec(ledgerPrUrl(row) ?? '');
     // A publish row without a PR link is an empty or aborted publish, not a PR.
     if (!url && (published || !id)) continue;
     // Re-emitted rows for one PR count once, at their earliest time.
@@ -125,8 +100,8 @@ function marksOf(rows: readonly LedgerRow[], since: number, now: number, perLaun
     pr.job ||= id;
     if (published) pr.published = Math.min(pr.published ?? Infinity, at);
     else {
-      const stamp = typeof row.mergedAt === 'string' ? Date.parse(row.mergedAt) : NaN;
-      pr.merged = Math.min(pr.merged ?? Infinity, Number.isFinite(stamp) && stamp <= now ? stamp : at);
+      // A future merge stays outside the window; do not replace it with the poll time.
+      pr.merged = Math.min(pr.merged ?? Infinity, parseLedgerTs(row.mergedAt) ?? at);
       if (typeof row.ttm_s === 'number' && Number.isFinite(row.ttm_s) && row.ttm_s >= 0) pr.ttm ??= row.ttm_s;
     }
     prs.set(key, pr);
@@ -149,7 +124,7 @@ function marksOf(rows: readonly LedgerRow[], since: number, now: number, perLaun
     // The work log counts how each launch ended, so a job launched twice has two endings and a skipped job has none.
     const runs = new Map<string, LedgerRow[]>(), launched = new Map<string, number>();
     for (const row of [...ended].sort((x, y) => x.at - y.at)) {
-      const run = `${row.id}#${launched.set(row.id, (launched.get(row.id) ?? 0) + (eventName(row.row) === 'launch' ? 1 : 0)).get(row.id)}`;
+      const run = `${row.id}#${launched.set(row.id, (launched.get(row.id) ?? 0) + (ledgerEventName(row.row) === 'launch' ? 1 : 0)).get(row.id)}`;
       runs.set(run, [...(runs.get(run) ?? []), row]);
     }
     finishes = [...runs.values()].flatMap(run => finishesIn(run)).filter(finish => !finish.skipped);

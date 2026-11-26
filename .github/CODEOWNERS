@@ -1140,6 +1140,7 @@
 /test/merge-cockpit-owner-qualification-302s.test.ts @masonwyatt23
 /test/merge-cockpit-recovery-132.test.ts @masonwyatt23
 /test/merge-cockpit.test.ts @masonwyatt23
+/test/merge-count-q8.test.ts @masonwyatt23
 /test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
 /test/merge-graph-original-246s.test.ts @masonwyatt23
