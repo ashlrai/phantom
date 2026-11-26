@@ -18,7 +18,10 @@
  * (`with` narrows `agent` to the two-way talk between that agent and one
  * other and requires `agent`), `kind` one of ask/reply/handoff/status/blocker
  * under the CLI's case-insensitive match, `priority` one exact P0–P3 band,
- * `channel` the strict channel-name grammar, `contains` the bounded needle
+ * `channel` the strict channel-name grammar, `topic` the same grammar for
+ * the topic component of a well-formed `group:<room>:<topic>` address —
+ * the shared `groupAddressTopicOf` match every other bus read's `topic`
+ * filter applies — `contains` the bounded needle
  * `busReadContains` normalizes and `limit` an integer in 1–1024 (the
  * projection's own default of 50 applies when absent). Unknown keys,
  * wrong types, caller roots and malformed values are all refused before
@@ -50,7 +53,7 @@ const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const MESSAGE_KEYS = new Set([
   'since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread',
-  'contains', 'from', 'excludeFrom', 'inReplyTo', 'channel', 'id', 'bodyKind', 'to', 'result', 'limit',
+  'contains', 'from', 'excludeFrom', 'inReplyTo', 'channel', 'topic', 'id', 'bodyKind', 'to', 'result', 'limit',
 ]);
 const LABEL_KEYS = ['job', 'thread', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to'] as const;
 
@@ -63,8 +66,9 @@ export type FleetAgentMessagesArgs = AgentMessagesQuery;
  * is optional — the timeline has no required agent — and each takes the
  * same value rules `parseAgentMessagesQuery` enforces for the CLI flags
  * and API params: `kind` lowercases into the classified-kind enum,
- * `priority` stays an exact P0–P3 member, the label keys and `channel`
- * take their grammar, `since`/`before` resolve through `parseSince` to a
+ * `priority` stays an exact P0–P3 member, the label keys take their
+ * grammar, `channel` and `topic` take the strict channel-name grammar,
+ * `since`/`before` resolve through `parseSince` to a
  * safe non-negative epoch-ms integer (`before` the exclusive upper bound
  * composing with `since` into one [since, before) window), `contains`
  * normalizes through
@@ -99,6 +103,11 @@ export function parseFleetAgentMessagesArgs(args: Record<string, unknown>): Flee
   if (channel !== undefined) {
     if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
     query.channel = channel;
+  }
+  const topic = args.topic;
+  if (topic !== undefined) {
+    if (typeof topic !== 'string' || !agentChannelNameSchema.safeParse(topic).success) return null;
+    query.topic = topic;
   }
   const contains = busReadContains(args.contains);
   if (contains === null) return null;

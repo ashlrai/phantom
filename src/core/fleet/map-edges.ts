@@ -64,8 +64,8 @@ export interface MapEdgesOptions extends BusInboxOptions {
   /**
    * The shared `phm messages` filter set, already parsed by
    * `parseAgentMessagesQuery` — agent/with, kind, priority, job, thread,
-   * channel, contains, from/exclude-from, in-reply-to, id, body-kind, to and
-   * result — narrowed onto the matched rows before the edges aggregate, the
+   * channel, topic, contains, from/exclude-from, in-reply-to, id, body-kind,
+   * to and result — narrowed onto the matched rows before the edges aggregate, the
    * same `matchAgentMessages` pipeline `agents messages`, `fleet map
    * messages` and `bus recent` run, so "who messaged whom about job X" or
    * "which lines reach agent Y" is one filtered read here too. `since` and

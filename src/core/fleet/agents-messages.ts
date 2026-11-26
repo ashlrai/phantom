@@ -5,7 +5,7 @@
  * `phm messages` uses (agent-messages.ts: scrubbed one-line summaries, capped at
  * 160 characters), filtered by the map's agent-to-agent rule (fleet-edges.ts)
  * and by the same filter vocabulary `phm messages` parses — kind, priority,
- * job, thread, channel, contains, from/exclude-from, in-reply-to, id,
+ * job, thread, channel, topic, contains, from/exclude-from, in-reply-to, id,
  * body-kind, to, agent/with —
  * with each sender and recipient resolved to the node id `phm map` draws
  * (map-edges.ts: `leader`, `lane:<name>`, `job:<id>`). An agent the map does not
@@ -67,7 +67,7 @@ export interface AgentsMessages {
 export interface AgentsMessagesFlags {
   since?: string; before?: string; limit?: string;
   agent?: string; with?: string; kind?: string; priority?: string; job?: string;
-  thread?: string; channel?: string; contains?: string;
+  thread?: string; channel?: string; topic?: string; contains?: string;
   from?: string; excludeFrom?: string; inReplyTo?: string; id?: string; bodyKind?: string; to?: string;
   result?: string;
 }
@@ -112,7 +112,7 @@ export function parseAgentsMessagesQuery(input: AgentsMessagesFlags, now: number
   }
   const shared = parseAgentMessagesQuery({
     agent: input.agent, with: input.with, kind: input.kind, priority: input.priority, job: input.job,
-    thread: input.thread, channel: input.channel, contains: input.contains,
+    thread: input.thread, channel: input.channel, topic: input.topic, contains: input.contains,
     from: input.from, excludeFrom: input.excludeFrom, inReplyTo: input.inReplyTo, id: input.id,
     bodyKind: input.bodyKind, to: input.to, result: input.result, limit: input.limit,
   }, now);

@@ -1,5 +1,5 @@
 /** `phm messages`: thin argv layer over core/fleet/agent-messages.ts. */
-export const MESSAGES_USAGE = `Usage: phm messages [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--limit <n>] [--text]
+export const MESSAGES_USAGE = `Usage: phm messages [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--limit <n>] [--text]
 Agent-to-agent messages on the local agent bus, newest first: id, ts, priority,
 from, to, kind (ask, reply, handoff, status, blocker), a one-line scrubbed
 summary, and the related job or PR when known. --before keeps only messages
@@ -17,7 +17,14 @@ same match agents bus inbox --thread and comms bus read --thread apply;
 --channel keeps only the posts addressed to group:<name>:* — the room's
 whole traffic under every topic, the same address prefix agents bus inbox
 --channel and channel read match — so one room's classified traffic is a
-single filtered read while agent mail and other rooms stay out;
+single filtered read while agent mail and other rooms stay out; --topic
+keeps only the posts addressed to a well-formed group:<room>:<topic>
+address carrying that exact topic component — the same groupAddressTopicOf
+match agents bus work feed --topic, work next --topic, inbox --topic,
+channel read --topic and comms bus next --topic apply — so "every
+release-topic post across every room" is one filtered read, composing with
+--channel into one room AND one topic while an agent address, a bare
+group:<room> or a malformed topic never matches;
 --contains keeps only the messages whose scrubbed summary carries that text
 (case-insensitive substring), the fleet-wide text search no other bus read
 offers; --from keeps only the messages one sender wrote — a handle, alias
@@ -68,14 +75,14 @@ Damaged bus records are skipped and counted. Exit 0 read, 1 bus unreadable, 2 ba
 export async function cmdMessages(args: string[]): Promise<number> {
   if (args.some(a => a === '--help' || a === '-h' || a === 'help')) { console.log(MESSAGES_USAGE); return 0; }
   let text = false;
-  const values: { since?: string; before?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; to?: string; inReplyTo?: string; id?: string; channel?: string; bodyKind?: string; result?: string; limit?: string } = {};
+  const values: { since?: string; before?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; to?: string; inReplyTo?: string; id?: string; channel?: string; topic?: string; bodyKind?: string; result?: string; limit?: string } = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--text') { text = true; continue; }
     if (arg === '--json') continue;
     const key = arg === '--since' ? 'since' : arg === '--before' ? 'before' : arg === '--agent' ? 'agent' : arg === '--with' ? 'with'
       : arg === '--kind' ? 'kind' : arg === '--priority' ? 'priority' : arg === '--job' ? 'job'
-      : arg === '--thread' ? 'thread' : arg === '--channel' ? 'channel' : arg === '--contains' ? 'contains'
+      : arg === '--thread' ? 'thread' : arg === '--channel' ? 'channel' : arg === '--topic' ? 'topic' : arg === '--contains' ? 'contains'
       : arg === '--from' ? 'from' : arg === '--exclude-from' ? 'excludeFrom' : arg === '--to' ? 'to' : arg === '--in-reply-to' ? 'inReplyTo'
       : arg === '--id' ? 'id' : arg === '--body-kind' ? 'bodyKind' : arg === '--result' ? 'result' : arg === '--limit' ? 'limit' : null;
     const value = args[i + 1];

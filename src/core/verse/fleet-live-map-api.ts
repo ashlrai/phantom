@@ -147,14 +147,14 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
     if (path === AGENT_MESSAGES_PATH) {
       // The same filter vocabulary `phm agents messages` and `phm messages`
       // share; dashed flags arrive camelCase, each param once.
-      const keys = ['since', 'before', 'limit', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to', 'result'];
+      const keys = ['since', 'before', 'limit', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'topic', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to', 'result'];
       if ([...params.keys()].some(key => !keys.includes(key)) || keys.some(key => params.getAll(key).length > 1)) {
-        sendJson(res, 400, { error: 'Use since, before, limit, agent, with, kind, priority, job, thread, channel, contains, from, excludeFrom, inReplyTo, id, bodyKind, to and result only, once each.' }); return true;
+        sendJson(res, 400, { error: 'Use since, before, limit, agent, with, kind, priority, job, thread, channel, topic, contains, from, excludeFrom, inReplyTo, id, bodyKind, to and result only, once each.' }); return true;
       }
       try {
         const pick = (key: string) => params.get(key) ?? undefined;
         const read = messages({ since: pick('since'), before: pick('before'), limit: pick('limit'), agent: pick('agent'), with: pick('with'),
-          kind: pick('kind'), priority: pick('priority'), job: pick('job'), thread: pick('thread'), channel: pick('channel'),
+          kind: pick('kind'), priority: pick('priority'), job: pick('job'), thread: pick('thread'), channel: pick('channel'), topic: pick('topic'),
           contains: pick('contains'), from: pick('from'), excludeFrom: pick('excludeFrom'), inReplyTo: pick('inReplyTo'), id: pick('id'),
           bodyKind: pick('bodyKind'), to: pick('to'), result: pick('result') });
         if (!read.ok) sendJson(res, 400, { error: read.error });
@@ -166,7 +166,7 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
       // The same filter vocabulary `phm messages` parses — every param of
       // the same name the agent-messages read takes, minus `limit`: edges
       // aggregate the whole matched set and never paginate. Each param once.
-      const FILTER_KEYS = ['agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains',
+      const FILTER_KEYS = ['agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'topic', 'contains',
         'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to', 'result'];
       const KEYS = ['since', 'before', ...FILTER_KEYS];
       if ([...params.keys()].some(key => !KEYS.includes(key)) || KEYS.some(key => params.getAll(key).length > 1)) {
