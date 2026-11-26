@@ -111,6 +111,24 @@ describe('planFleetAutopilot', () => {
   });
 
   it.each([
+    { secondHeld: true, expected: { kind: 'no-op', reason: 'capacity-bound', detail: expect.stringContaining('jobs on held lanes') } },
+    { secondHeld: false, expected: { kind: 'hold-lane', lane: 'claude' } },
+  ])('checks whether existing holds can drain below the cap (second held: $secondHeld)', ({ secondHeld, expected }) => {
+    const report = planFleetAutopilot(state({
+      admission: admission([
+        admissionLane('devin', 0, 2, 6),
+        admissionLane('codex', 1, 1, 0, true),
+        admissionLane('codex-local', 1, 1, 0),
+        admissionLane('claude', 2, 2, 8),
+      ], 3, 4),
+      operatorHolds: new Set(secondHeld ? ['codex-local'] : []),
+      queue: queueView({ byLane: [{ lane: 'devin', ready: 6, parked: 0 }, { lane: 'claude', ready: 8, parked: 0 }] }),
+    }));
+    expect(report.topGap).toMatchObject({ kind: 'starved-lane', lane: 'devin' });
+    expect(report.action).toMatchObject(expected);
+  });
+
+  it.each([
     { cap: 2, expected: { kind: 'hold-lane', lane: 'claude' } },
     { cap: 1, expected: { kind: 'no-op', reason: 'capacity-bound' } },
   ])('checks whether a sibling can drain below a reduced cap of $cap', ({ cap, expected }) => {
