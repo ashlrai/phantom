@@ -5,12 +5,27 @@
  * expectations. It has no execution, storage, network, or policy authority.
  */
 
+import { createHash } from 'node:crypto';
 import {
-  createHash,
-  createPublicKey,
-  verify as verifySignature,
-  type KeyObject,
-} from 'node:crypto';
+  VERIFIER_EXECUTION_ARCHITECTURES as ARCHITECTURES,
+  VERIFIER_EXECUTION_BACKENDS as BACKENDS,
+  VERIFIER_EXECUTION_DIGEST_RE as DIGEST,
+  VERIFIER_EXECUTION_MAX_LIFETIME_MS as MAX_LIFETIME_MS,
+  VERIFIER_EXECUTION_PLATFORMS as PLATFORMS,
+  canonicalBase64Url,
+  canonicalIso,
+  denseArray,
+  ed25519KeyId,
+  exactPlainRecord,
+  plainDataGraph,
+  sha256Domain,
+  sortedEnumArray,
+  verifiedEd25519PublicKey,
+  verifyEd25519Signature,
+  type VerifierExecutionArchitecture,
+  type VerifierExecutionBackend,
+  type VerifierExecutionPlatform,
+} from './verifier-execution-shared.js';
 
 export const VERIFIER_EXECUTION_AUTHORITY_PROTOCOL_V2 =
   'ashlr-verifier-execution-authority-v2' as const;
@@ -23,13 +38,10 @@ const SIGNATURE_DOMAIN = 'ashlr:verifier-execution-authority-signature:v2';
 const KEY_ID_DOMAIN = 'ashlr:verifier-execution-authority-key-id:v1';
 const TRUST_POLICY_DIGEST_DOMAIN = 'ashlr:verifier-execution-trust-policy:v1';
 const STATEMENT_DIGEST_DOMAIN = 'ashlr:verifier-execution-authority-statement:v2';
-const DIGEST = /^[0-9a-f]{64}$/;
 const POLICY_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const COMMAND_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const MAX_TRUST_KEYS = 16;
 const MAX_COMMANDS = 64;
-const MAX_LIFETIME_MS = 10 * 60 * 1_000;
 const MAX_FUTURE_SKEW_MS = 30_000;
 const GENERIC_RESOLVER_ALIASES = new Set([
   'bash', 'bun', 'busybox', 'cmd', 'comspec', 'corepack', 'cscript', 'csh', 'dash', 'deno',
@@ -38,18 +50,6 @@ const GENERIC_RESOLVER_ALIASES = new Set([
 ]);
 const WINDOWS_RESERVED_DEVICE = /^(?:aux|clock\$|com[1-9]|con|conin\$|conout\$|lpt[1-9]|nul|prn)$/i;
 const EXECUTABLE_ALIAS_EXTENSION = /\.(?:bat|cmd|com|exe)$/i;
-
-const PLATFORMS = ['darwin', 'linux', 'win32'] as const;
-const ARCHITECTURES = ['arm64', 'x64'] as const;
-const BACKENDS = [
-  'linux-namespace-cgroup-broker',
-  'macos-virtualization-framework-broker',
-  'windows-appcontainer-job-broker',
-] as const;
-
-export type VerifierExecutionPlatform = typeof PLATFORMS[number];
-export type VerifierExecutionArchitecture = typeof ARCHITECTURES[number];
-export type VerifierExecutionBackend = typeof BACKENDS[number];
 
 const CAPSULE_ROOTS: Readonly<Record<VerifierExecutionPlatform, string>> = Object.freeze({
   darwin: '/opt/ashlr/verifier-capsule',
@@ -227,81 +227,6 @@ export type VerifierExecutionAuthorityResultV2 = VerifierExecutionAuthorityResul
   }
 );
 
-function sha256(value: string | Uint8Array): string {
-  return createHash('sha256').update(value).digest('hex');
-}
-
-function exactPlainRecord(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return false;
-  if (Object.values(Object.getOwnPropertyDescriptors(value)).some(
-    (descriptor) => !Object.hasOwn(descriptor, 'value'),
-  )) return false;
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
-function plainDataGraph(value: unknown, seen = new Set<object>(), depth = 0): boolean {
-  if (value === null || typeof value !== 'object') return true;
-  if (depth > 8 || seen.size >= 512 || seen.has(value)) return false;
-  seen.add(value);
-  const prototype = Object.getPrototypeOf(value);
-  if (Array.isArray(value)) {
-    if (prototype !== Array.prototype || value.length > 128) return false;
-  } else if (prototype !== Object.prototype && prototype !== null) return false;
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  for (const descriptor of Object.values(descriptors)) {
-    if (!Object.hasOwn(descriptor, 'value') || !plainDataGraph(descriptor.value, seen, depth + 1)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function denseArray(value: unknown, minimum: number, maximum: number): value is unknown[] {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype ||
-    value.length < minimum || value.length > maximum ||
-    Object.getOwnPropertyNames(value).length !== value.length + 1 ||
-    Object.values(Object.getOwnPropertyDescriptors(value)).some(
-      (descriptor) => !Object.hasOwn(descriptor, 'value'),
-    )) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    if (!Object.hasOwn(value, index)) return false;
-  }
-  return true;
-}
-
-function canonicalIso(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length !== 24) return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
-function canonicalBase64Url(value: unknown, minimumBytes: number, maximumBytes: number): Buffer | null {
-  if (typeof value !== 'string' || value.length === 0 || value.length > 512 ||
-    !BASE64URL.test(value)) return null;
-  try {
-    const bytes = Buffer.from(value, 'base64url');
-    return bytes.length >= minimumBytes && bytes.length <= maximumBytes &&
-      bytes.toString('base64url') === value ? bytes : null;
-  } catch { return null; }
-}
-
-function sortedEnumArray<T extends string>(
-  value: unknown,
-  allowed: readonly T[],
-): value is T[] {
-  if (!denseArray(value, 1, allowed.length)) return false;
-  let prior = '';
-  for (const entry of value) {
-    if (typeof entry !== 'string' || !allowed.includes(entry as T) || entry <= prior) return false;
-    prior = entry;
-  }
-  return true;
-}
-
 function trustedBackend(platform: VerifierExecutionPlatform, backend: string): boolean {
   return (platform === 'linux' && backend === 'linux-namespace-cgroup-broker') ||
     (platform === 'darwin' && backend === 'macos-virtualization-framework-broker') ||
@@ -426,11 +351,9 @@ function unsignedStatementShape(
   if (!BACKENDS.includes(backend as VerifierExecutionBackend)) {
     return { statement: null, reason: 'unsupported-backend' };
   }
-  if (!trustedBackend(platform, backend)) return {
-    statement: null,
-    reason: BACKENDS.includes(backend as VerifierExecutionBackend)
-      ? 'backend-platform-mismatch' : 'unsupported-backend',
-  };
+  if (!trustedBackend(platform, backend)) {
+    return { statement: null, reason: 'backend-platform-mismatch' };
+  }
   const commandReason = entrypointMapReason(value['commandEntrypoints'], platform, value['capsuleRoot']);
   if (commandReason) return { statement: null, reason: commandReason };
   for (const key of BINDING_KEYS) {
@@ -477,16 +400,7 @@ function statementShape(
 
 /** Stable identity for an external Ed25519 admission key. */
 export function verifierExecutionAuthorityKeyId(publicKeySpki: unknown): string | null {
-  const bytes = canonicalBase64Url(publicKeySpki, 32, 128);
-  if (!bytes) return null;
-  try {
-    const key = createPublicKey({ key: bytes, format: 'der', type: 'spki' });
-    const canonical = Buffer.from(key.export({ format: 'der', type: 'spki' }));
-    if (key.type !== 'public' || key.asymmetricKeyType !== 'ed25519' || !canonical.equals(bytes)) {
-      return null;
-    }
-    return sha256(Buffer.concat([Buffer.from(`${KEY_ID_DOMAIN}\0`, 'utf8'), bytes]));
-  } catch { return null; }
+  return ed25519KeyId(KEY_ID_DOMAIN, publicKeySpki);
 }
 
 /** Canonical caller-pinned identity of a bounded trust policy. */
@@ -495,7 +409,7 @@ export function verifierExecutionAuthorityTrustPolicyDigest(value: unknown): str
     if (!plainDataGraph(value)) return null;
     const policy = structuredClone(value);
     if (!trustPolicyShape(policy)) return null;
-    return sha256(JSON.stringify([
+    return createHash('sha256').update(JSON.stringify([
       TRUST_POLICY_DIGEST_DOMAIN,
       policy.schemaVersion,
       policy.protocol,
@@ -504,7 +418,7 @@ export function verifierExecutionAuthorityTrustPolicyDigest(value: unknown): str
         key.keyId, key.signatureAlgorithm, key.role, key.publicKeySpki, key.notBefore, key.notAfter,
         key.allowedPlatforms, key.allowedArchitectures, key.allowedBackends,
       ]),
-    ]));
+    ])).digest('hex');
   } catch { return null; }
 }
 
@@ -550,17 +464,6 @@ export function canonicalVerifierExecutionAuthorityPayloadV2(value: unknown): Bu
       bounded.mergePermitted,
       bounded.evidencePermitted,
     ]), 'utf8');
-  } catch { return null; }
-}
-
-function trustedPublicKey(key: VerifierExecutionTrustKeyV1): KeyObject | null {
-  const bytes = canonicalBase64Url(key.publicKeySpki, 32, 128);
-  if (!bytes || verifierExecutionAuthorityKeyId(key.publicKeySpki) !== key.keyId) return null;
-  try {
-    const publicKey = createPublicKey({ key: bytes, format: 'der', type: 'spki' });
-    return publicKey.type === 'public' && publicKey.asymmetricKeyType === 'ed25519' &&
-      Buffer.from(publicKey.export({ format: 'der', type: 'spki' })).equals(bytes)
-      ? publicKey : null;
   } catch { return null; }
 }
 
@@ -638,7 +541,7 @@ export function inspectVerifierExecutionAuthorityV2(
 
   const key = policy.keys.find((candidate) => candidate.keyId === statement.keyId);
   if (!key) return withheld('trust-key-unknown');
-  const publicKey = trustedPublicKey(key);
+  const publicKey = verifiedEd25519PublicKey(KEY_ID_DOMAIN, key.publicKeySpki, key.keyId);
   if (!publicKey) return withheld('trust-key-invalid');
   if (!key.allowedPlatforms.includes(statement.platform) ||
     !key.allowedArchitectures.includes(statement.architecture) ||
@@ -658,11 +561,8 @@ export function inspectVerifierExecutionAuthorityV2(
 
   const { signature, ...unsigned } = statement;
   const payload = canonicalVerifierExecutionAuthorityPayloadV2(unsigned);
-  const signatureBytes = canonicalBase64Url(signature, 64, 64);
+  const signatureBytes = payload ? verifyEd25519Signature(payload, publicKey, signature) : null;
   if (!payload || !signatureBytes) return withheld('signature-invalid');
-  let verified = false;
-  try { verified = verifySignature(null, payload, publicKey, signatureBytes); } catch { /* withheld */ }
-  if (!verified) return withheld('signature-invalid');
 
   return {
     schemaVersion: 1,
@@ -673,9 +573,7 @@ export function inspectVerifierExecutionAuthorityV2(
     executionPermitted: false,
     mergePermitted: false,
     evidencePermitted: false,
-    statementDigest: sha256(Buffer.concat([
-      Buffer.from(`${STATEMENT_DIGEST_DOMAIN}\0`, 'utf8'), payload, signatureBytes,
-    ])),
+    statementDigest: sha256Domain(STATEMENT_DIGEST_DOMAIN, payload, signatureBytes),
     trustPolicyDigest: policyDigest,
     keyId: statement.keyId,
     platform: statement.platform,
