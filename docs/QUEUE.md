@@ -1129,6 +1129,13 @@ Rejections never claim another generator's results. `generationKnown: false`
 means the generation ledger is unavailable; `jobsKnown` does the same for the
 jobs ledger. Counts cover recorded evidence only.
 
+The self-improvement discovery feed queues recurring refusals after four
+distinct recorded rejection observations for one source and reason across
+at least two UTC days in the last seven days. Replayed decisions with the
+same job, source, event, reason and recorded instant count once in both the
+recurrence threshold and the refusal share. Later observations for the
+same job still count.
+
 ## Fleet resource capacity advice
 
 `phm resources plan --json` joins verified allowance deadlines and remaining

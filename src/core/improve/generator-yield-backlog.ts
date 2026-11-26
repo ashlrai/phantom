@@ -216,7 +216,8 @@ export interface GenerationRejectionFold {
  * Pure: fold one generation.jsonl text into recurring refusal cells.
  * Each line must parse to an object carrying a job id, a drafted or
  * rejected event and a parseable timestamp inside the window; anything
- * else is skipped like the sibling readers' own parse. Rejections group
+ * else is skipped like the sibling readers' own parse. Replayed decisions
+ * with identical evidence count once. Rejections group
  * by (src, reason); drafts tally per src so prompts can quote the
  * refusal share. The 'unknown' src bucket never emits — it is the
  * catch-all for rows that lost their channel, not a channel.
@@ -233,6 +234,7 @@ export function foldGenerationRejections(
 
   const cells = new Map<string, GenerationCell>();
   const srcDecisions = new Map<string, number>();
+  const seenDecisions = new Set<string>();
   let rejections = 0;
   let drafts = 0;
   let tracked = 0;
@@ -249,13 +251,16 @@ export function foldGenerationRejections(
     const job = firstString(row, JOB_KEYS);
     if (job === null) continue;
     const src = firstString(row, SRC_KEYS) ?? UNKNOWN_SRC;
+    const reason = event === 'rejected' ? firstString(row, REASON_KEYS) ?? 'unknown' : null;
+    const decisionKey = JSON.stringify([job, src, event, reason, atMs]);
+    if (seenDecisions.has(decisionKey)) continue;
+    seenDecisions.add(decisionKey);
     srcDecisions.set(src, (srcDecisions.get(src) ?? 0) + 1);
-    if (event === 'drafted') {
+    if (reason === null) {
       drafts += 1;
       continue;
     }
     rejections += 1;
-    const reason = firstString(row, REASON_KEYS) ?? 'unknown';
     const key = `${src} ${reason}`;
     let cell = cells.get(key);
     if (cell === undefined) {

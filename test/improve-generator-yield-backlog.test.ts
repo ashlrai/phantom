@@ -129,6 +129,31 @@ describe('generatorYieldBacklogItems', () => {
     expect(await generatorYieldBacklogItems({ repo: REPO, now: NOW, ledgerText: draftsOnly })).toEqual([]);
   });
 
+  it('counts replayed decisions once and preserves later observations of the same job', async () => {
+    const src = 'autofill:bet';
+    const first = rej('job-1', src, 'duplicate', at(4));
+    const second = rej('job-1', src, 'duplicate', at(3));
+    const drafted = draft('job-2', src, at(4));
+    const aliasReplay = JSON.stringify({
+      schema: 'queue.generation-event.v1',
+      jobId: 'job-1',
+      source: src,
+      kind: 'rejected',
+      reason: 'duplicate',
+      timestamp: at(4).replace('Z', '+00:00'),
+    });
+    const replayed = [first, second, first, aliasReplay, second, drafted, drafted];
+    const options = { repo: REPO, now: NOW };
+    expect(foldGenerationRejections(replayed.join('\n'), { nowMs: NOW }))
+      .toMatchObject({ rejections: 2, drafts: 1, cells: [] });
+    expect(await generatorYieldBacklogItems({ ...options, ledgerText: replayed.join('\n') })).toEqual([]);
+
+    const later = [rej('job-1', src, 'duplicate', at(2)), rej('job-1', src, 'duplicate', at(1))];
+    const items = await generatorYieldBacklogItems({ ...options, ledgerText: [...replayed, ...later].join('\n') });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('4 of 5 recorded autofill:bet decisions');
+  });
+
   it('never emits the unknown-src catch-all and ignores malformed or out-of-window rows', async () => {
     const text = [
       // Unknown src: 10 rejections across 5 days — the catch-all never emits.
