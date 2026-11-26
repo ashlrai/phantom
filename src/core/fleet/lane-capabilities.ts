@@ -22,13 +22,12 @@ export type RouteSkipCode = `route_skip: lane lacks ${LaneCapability}`;
 /**
  * Declared facts only. claude: its worker sandbox cannot read the gh config
  * ("operation not permitted", four EMPTY runs on 2026-11-16, 19 more on
- * 2026-11-20), so gh is false until a run proves otherwise. codex-personal,
- * codex-cmp and devin run gh today. Every other value is unknown.
+ * 2026-11-20), so gh is false until a run proves otherwise. codex-personal
+ * and devin run gh today. Every other value is unknown.
  */
 export const DECLARED_LANE_CAPABILITIES: LaneCapabilityOverrides = Object.freeze({
   claude: Object.freeze({ gh: false }),
   'codex-personal': Object.freeze({ gh: true }),
-  'codex-cmp': Object.freeze({ gh: true }),
   devin: Object.freeze({ gh: true }),
 });
 

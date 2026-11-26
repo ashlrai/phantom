@@ -212,7 +212,7 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
   if (isAbsolute(personalHome) && personalHome === personalHome.trim() && personalHome.length <= 4096 &&
       !/\p{Cc}/u.test(personalHome) && resolve(personalHome) !== parse(personalHome).root &&
       !personalHome.split(/[\\/]+/).some(part => part === '.codex' || part === '..')) {
-    const usages = collectCodexSessionUsages({ env: { CODEX_HOME: personalHome, CODEX_HOME_ALT: personalHome }, homeDir: homedir() });
+    const usages = collectCodexSessionUsages({ env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: personalHome }, homeDir: homedir() });
     const report = buildCodexResourceReport(usages.map(usage => ({ ...usage, accountId: 'codex-personal', slot: 'secondary' as const })), [], now);
     const personal = report.resources[0];
     const observed = personal?.observedAt ? Date.parse(personal.observedAt) : NaN;

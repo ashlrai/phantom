@@ -22,7 +22,7 @@ which are Mach RPCs to `launchservicesd`, not execs), and AppleEvent sends
 ## Files
 
 - `sb17-block.sb` — the exact 3 appended lines (sha-pinned in `apply-sb17.sh`).
-- `sandbox-deny-osa.diff` — unified diff vs live: five `.sb` hunks + `launch.sh`
+- `sandbox-deny-osa.diff` — unified diff vs live: four `.sb` hunks + `launch.sh`
   pin-line hunk.
 - `apply-sb17.sh` — installer (pre-sha gate → tick wait → atomic append →
   re-pin `LSB_SHA` → post-sha table + `sandbox-exec -f` parse check).
@@ -35,7 +35,6 @@ which are Mach RPCs to `launchservicesd`, not execs), and AppleEvent sends
 |---|---|---|
 | `agent.sb` | `002278b0…b82d1` | `ed8fc729…9003` |
 | `claude.sb` | `002278b0…b82d1` | `ed8fc729…9003` |
-| `codex-cmp.sb` | `56fe451c…70f2b` | `a007a407…f0d7f7` |
 | `codex-personal.sb` | `d3f5658f…3757a` | `e085cf77…01f30a` |
 | `codex-local.sb` | `fdb051cd…82f06` | **computed at apply** (printed + pinned into `launch.sh`) |
 | `launch.sh` | `32adc419…9cc36` | **computed at apply** (depends on `codex-local.sb` post) |

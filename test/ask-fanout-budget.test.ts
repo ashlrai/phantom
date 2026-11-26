@@ -14,8 +14,8 @@ const snapshot = (rows: BudgetReading[], sourceState: 'healthy' | 'unavailable' 
 
 describe('capAskFanoutByBudget', () => {
   it('caps the fan-out at 0 when the observed remaining budget is 0', () => {
-    const cap = capAskFanoutByBudget(3, 'codex-cmp', snapshot([
-      reading('codex-cmp', 'weeklyPct', 0), reading('codex-cmp', 'credits', 42)]));
+    const cap = capAskFanoutByBudget(3, 'codex-personal', snapshot([
+      reading('codex-personal', 'weeklyPct', 0), reading('codex-personal', 'credits', 42)]));
     expect(cap).toMatchObject({ requested: 3, granted: 0, limiting: 'weeklyPct' });
     expect(capAskFanoutByBudget(2, 'devin', snapshot([reading('devin', 'acus', 0)])).granted).toBe(0);
   });
@@ -30,8 +30,8 @@ describe('capAskFanoutByBudget', () => {
       reading('codex-personal', 'weeklyPct', 80), reading('codex-personal', 'credits', 10)])).granted).toBe(2);
   });
   it('grants the tightest bucket when several are observed', () => {
-    const cap = capAskFanoutByBudget(3, 'codex-cmp', snapshot([
-      reading('codex-cmp', 'weeklyPct', 50), reading('codex-cmp', 'credits', 2)]));
+    const cap = capAskFanoutByBudget(3, 'codex-personal', snapshot([
+      reading('codex-personal', 'weeklyPct', 50), reading('codex-personal', 'credits', 2)]));
     expect(cap).toMatchObject({ granted: 2, limiting: 'credits' });
   });
   it('holds Claude at 0 until a positive observed weekly allowance, then meters it', () => {

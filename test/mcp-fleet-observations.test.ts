@@ -49,9 +49,9 @@ describe('native fleet observation MCP tools', () => {
 
   it('returns session fixture quota JSON without prompts, auth or environment values', async () => {
     const home = fixture();
-    const dir = join(home, '.codex', 'sessions', '2026', '10', '29');
+    const dir = join(home, '.codex-2', 'sessions', '2026', '10', '29');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(home, '.codex', 'auth.json'), 'not-json-do-not-read');
+    writeFileSync(join(home, '.codex-2', 'auth.json'), 'not-json-do-not-read');
     writeFileSync(join(dir, 'rollout-fixture.jsonl'), JSON.stringify({
       timestamp: new Date().toISOString(), type: 'event_msg', payload: {
         type: 'token_count', prompt: 'fixture-private-prompt', env: { CUSTOM: 'fixture-private-value' },
@@ -62,7 +62,7 @@ describe('native fleet observation MCP tools', () => {
     vi.spyOn(session, 'collectCodexSessionUsages').mockImplementation(() => collect({ env: {}, homeDir: home }));
     const result = await json('phantom_fleet_session');
     expect(result.v).toBe('resource.v1');
-    expect(result.resources[0]).toMatchObject({ id: 'codex-cmp', state: 'current', session: { usedPct: 40 } });
+    expect(result.resources[0]).toMatchObject({ id: 'codex-personal', state: 'current', session: { usedPct: 40 } });
     expect(JSON.stringify(result)).not.toMatch(/fixture-private|auth.json|CUSTOM/);
   });
 

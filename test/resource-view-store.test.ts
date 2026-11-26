@@ -62,23 +62,23 @@ describe('resourceViewDirectory and ASHLR_HOME isolation', () => {
 
     writeFileSync(join(customHome, 'fleet.json'), JSON.stringify({
       readings: {
-        'codex-cmp': {
-          pool: 'codex-cmp', pctUsed: 35,
+        'codex-personal': {
+          pool: 'codex-personal', pctUsed: 35,
           fetchedAt: new Date(NOW - 1_000).toISOString(),
           resetAt: new Date(NOW + 3_600_000).toISOString(),
-          source: 'codex-cmp-reader', burnRatePctPerHour: 10,
+          source: 'codex-personal-reader', burnRatePctPerHour: 10,
         },
       },
     }), { mode: 0o600 });
 
     process.env['ASHLR_HOME'] = customHome;
     const written = writeResourceView(undefined, NOW);
-    expect(written.pools.find(p => p.pool === 'codex-cmp')?.pctUsed).toBe(35);
+    expect(written.pools.find(p => p.pool === 'codex-personal')?.pctUsed).toBe(35);
     expect(existsSync(join(customHome, 'fleet.json'))).toBe(true);
     expect(existsSync(join(homeAshlr, 'fleet.json'))).toBe(homeFleetExistedBefore);
 
     const read = await readResourceView(undefined, NOW, join(root, 'missing-runs'), async () => ({ status: 'unknown', reason: 'missing-key' }));
-    expect(read.pools.find(p => p.pool === 'codex-cmp')?.pctUsed).toBe(35);
+    expect(read.pools.find(p => p.pool === 'codex-personal')?.pctUsed).toBe(35);
   });
 });
 
@@ -129,11 +129,11 @@ describe('resource-view-store symlink and private-storage handling', () => {
     mkdirSync(target, { mode: 0o700 });
     writeFileSync(join(target, 'fleet.json'), JSON.stringify({
       readings: {
-        'codex-cmp': {
-          pool: 'codex-cmp', pctUsed: 88,
+        'codex-personal': {
+          pool: 'codex-personal', pctUsed: 88,
           fetchedAt: new Date(NOW - 1_000).toISOString(),
           resetAt: new Date(NOW + 3_600_000).toISOString(),
-          source: 'codex-cmp-reader', burnRatePctPerHour: 0,
+          source: 'codex-personal-reader', burnRatePctPerHour: 0,
         },
       },
     }), { mode: 0o600 });
@@ -145,7 +145,7 @@ describe('resource-view-store symlink and private-storage handling', () => {
     expect(() => writeResourceView(`${leafLink}/`, NOW)).toThrow();
 
     const read = await readResourceView(leafLink, NOW, join(root, 'no-runs'), async () => ({ status: 'unknown', reason: 'missing-key' }));
-    expect(read.pools.find(p => p.pool === 'codex-cmp')?.pctUsed).toBeNull();
+    expect(read.pools.find(p => p.pool === 'codex-personal')?.pctUsed).toBeNull();
   });
 
   it('refuses a dangling symlink, regular file, or non-private directory mode on write', () => {
