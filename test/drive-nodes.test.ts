@@ -1199,6 +1199,22 @@ describe('fleet flag value validation', () => {
     expect(f.a.snapshot().nodes.map(n => n.nodeId)).not.toContain('n1');
     expect(f.a.snapshot().jobs).toEqual([]);
   });
+  it('prints the help pointer once, at the end, on a composed list fix', () => {
+    const f = fixture();
+    // needIdList and optCapList each compose two fix sentences that both end
+    // in the help pointer; verbatim concatenation read "Run: phm node --help
+    // Separate entries …" mid-fix, as if the pointer took arguments.
+    for (const [verb, args] of [
+      ['join', ['--node', 'n1', '--owner', 'acme,,bad id']],
+      ['status', ['--owner', 'acme,,bad id']],
+      ['join', ['--node', 'n1', '--owner', 'acme', '--caps', 'Build']],
+      ['enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'GH']],
+    ] as const) {
+      const err = run(verb, args, f);
+      expect(err.fix, `${verb} ${args.join(' ')}`).toMatch(/Run: phm node --help$/);
+      expect(err.fix!.match(/Run: phm node --help/g), `${verb} ${args.join(' ')}`).toHaveLength(1);
+    }
+  });
   it('names the embedded-task failure instead of the store fix', () => {
     const f = fixture();
     const sha = (text: string) => createHash('sha256').update(text).digest('hex');
