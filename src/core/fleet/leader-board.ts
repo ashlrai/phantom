@@ -243,12 +243,16 @@ export async function readLeaderBoard(opts: { runsDir?: string } = {}): Promise<
 }
 
 /** The prior conflict history on disk — validated, never trusted past shape and bound. */
-function previousHistory(board: LeaderBoardV1 | null): LeaderBoardConflictSample[] {
+function previousHistory(board: LeaderBoardV1 | null, nowMs: number): LeaderBoardConflictSample[] {
   if (!board || !Array.isArray(board.conflictingPrs?.history)) return [];
-  return board.conflictingPrs.history
-    .filter((s): s is LeaderBoardConflictSample =>
-      s !== null && typeof s === 'object' && typeof s.at === 'string'
-      && Number.isFinite(Date.parse(s.at)) && Number.isSafeInteger(s.count) && s.count >= 0)
+  const byTime = new Map<number, LeaderBoardConflictSample>();
+  for (const sample of board.conflictingPrs.history) {
+    if (!sample || typeof sample.at !== 'string' || !Number.isSafeInteger(sample.count) || sample.count < 0) continue;
+    const time = Date.parse(sample.at);
+    if (Number.isFinite(time) && time <= nowMs) byTime.set(time, sample);
+  }
+  return [...byTime.entries()].sort(([a], [b]) => a - b)
+    .map(([, sample]) => sample)
     .slice(-MAX_HISTORY);
 }
 
@@ -287,7 +291,10 @@ async function buildLeaderBoard(runsDir: string, nowMs: number, previous: Leader
   }
 
   const conflictCount = readySource.state === 'healthy' ? conflictingPrIds(readySource.text).size : null;
-  const history = [...previous, ...(conflictCount === null ? [] : [{ at: at.toISOString(), count: conflictCount }])].slice(-MAX_HISTORY);
+  const history = conflictCount === null ? previous : [
+    ...previous.filter(sample => Date.parse(sample.at) < nowMs),
+    { at: at.toISOString(), count: conflictCount },
+  ].slice(-MAX_HISTORY);
   // An unmeasured count reports unknown — never a trend computed on stale samples.
   const { delta, trend } = conflictCount === null ? { delta: null, trend: 'unknown' as const } : conflictTrend(history);
 
@@ -329,7 +336,7 @@ export async function recordLeaderBoard(opts: { runsDir?: string; nowMs?: number
   try {
     if (!isAbsolute(runsDir)) return { wrote: false, path, reason: 'runs dir is not absolute' };
     const nowMs = opts.nowMs ?? Date.now();
-    const previous = previousHistory((await readLeaderBoard({ runsDir })).board);
+    const previous = previousHistory((await readLeaderBoard({ runsDir })).board, nowMs);
     const board = await buildLeaderBoard(runsDir, nowMs, previous, (opts.readCapacity ?? readFleetResourcePlan)(runsDir, nowMs));
     const dir = join(runsDir, 'coordination');
     await mkdir(dir, { recursive: true, mode: 0o700 });

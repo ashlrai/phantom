@@ -534,6 +534,12 @@ The Leader board estimates the number of conflicting PRs from rebase job IDs
 in `ready.tsv`. It includes parked rebase jobs, expands batches into their
 member PRs, and counts each PR once across job IDs. References in titles,
 prompts, and requirements do not contribute to the estimate.
+The conflict history keeps one observation per timestamp in chronological
+order. A measured retry replaces that timestamp's count, and a clock rollback
+discards observations later than the current tick. Delta compares the two
+latest observations, and trend compares the oldest and latest retained
+observations. Both are unknown when the current count is unmeasured or fewer
+than two distinct observations remain.
 
 `phm queue` owns the separate `queue.v1` coordination snapshot at
 `~/.ashlr-runs/queue/queue.v1.json`. `--dir <directory>` selects an isolated store.
