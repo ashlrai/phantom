@@ -6,7 +6,12 @@
  * to take with the evidence currently available?"
  */
 
-import { protectedPrOperationShape, protectedPrEvidenceMatchesRegistry } from './protected-pr-handoff.js';
+import {
+  AUTONOMY_RISK_ORDER,
+  configuredAutoMergeMaxRisk,
+  protectedPrEvidenceMatchesRegistry,
+  protectedPrOperationShape,
+} from './protected-pr-handoff.js';
 import type { AshlrConfig } from '../types.js';
 import {
   hasRequiredVerifierManifestBinding,
@@ -32,27 +37,12 @@ export interface AutonomyPolicyVerdict {
   reason: string;
 }
 
-const RISK_ORDER: Record<'low' | 'medium' | 'high', number> = {
-  low: 0,
-  medium: 1,
-  high: 2,
-};
-
 function refuse(reason: string): AutonomyPolicyVerdict {
   return { tier: 'T0', action: 'escalate-human', allowed: false, reason };
 }
 
 function allow(tier: AutonomyTier, action: AutonomyAction, reason: string): AutonomyPolicyVerdict {
   return { tier, action, allowed: true, reason };
-}
-
-function autoMergeCfg(cfg: AshlrConfig): Record<string, unknown> {
-  return ((cfg.foundry as Record<string, unknown> | undefined)?.['autoMerge'] as Record<string, unknown> | undefined) ?? {};
-}
-
-function maxRisk(cfg: AshlrConfig): 'low' | 'medium' | 'high' {
-  const value = autoMergeCfg(cfg)['maxRisk'];
-  return value === 'medium' || value === 'high' ? value : 'low';
 }
 
 function hasBaseBoundVerificationMetadata(pack: AutonomyEvidencePack): boolean {
@@ -118,8 +108,9 @@ export function evaluateAutonomyPolicy(
   if (!pack.verification.passed) {
     return refuse(`verification did not pass: ${pack.verification.detail}`);
   }
-  if (RISK_ORDER[pack.riskClass] > RISK_ORDER[maxRisk(cfg)]) {
-    return refuse(`risk '${pack.riskClass}' exceeds configured maxRisk '${maxRisk(cfg)}'`);
+  const allowedMaxRisk = configuredAutoMergeMaxRisk(cfg);
+  if (AUTONOMY_RISK_ORDER[pack.riskClass] > AUTONOMY_RISK_ORDER[allowedMaxRisk]) {
+    return refuse(`risk '${pack.riskClass}' exceeds configured maxRisk '${allowedMaxRisk}'`);
   }
 
   const prOperation = pack.gates.remoteProtection ? protectedPrOperationShape(pack.gates.remoteProtection) : 'legacy';

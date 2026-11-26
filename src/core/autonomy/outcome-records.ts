@@ -192,7 +192,7 @@ export interface ReadyEvidenceOutcomeRecordDeps {
   loadProposal?: (id: string) => Proposal | null;
 }
 
-function safeArray<T>(read: () => T[] | undefined): T[] {
+export function safeArray<T>(read: () => T[] | undefined): T[] {
   try {
     const value = read();
     return Array.isArray(value) ? value : [];
@@ -201,9 +201,10 @@ function safeArray<T>(read: () => T[] | undefined): T[] {
   }
 }
 
-function safeValue<T>(read: () => T | undefined): T | undefined {
+export function safeValue<T>(read: () => T | null | undefined): T | undefined {
   try {
-    return read();
+    const value = read();
+    return value === null ? undefined : value;
   } catch {
     return undefined;
   }
@@ -215,28 +216,54 @@ function boundedLimit(limit: number | undefined): number {
     : 50;
 }
 
-function activityTime(...values: Array<string | undefined>): string {
+export function parseEventMs(ts: string | undefined): number | null {
+  const parsed = Date.parse(ts ?? '');
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function latestActivityTime(
+  values: ReadonlyArray<string | undefined>,
+  fallback = '',
+): string {
   let newestMs = Number.NEGATIVE_INFINITY;
   let newest = '';
   for (const value of values) {
     if (value === undefined) continue;
-    const ms = Date.parse(value);
-    if (!Number.isNaN(ms) && ms > newestMs) {
+    const ms = parseEventMs(value);
+    if (ms !== null && ms > newestMs) {
       newestMs = ms;
       newest = value;
     }
   }
-  return newest;
+  return newest || fallback;
+}
+
+export function isDerivedWorkTrajectory(id: string | undefined): boolean {
+  return typeof id === 'string' && id.startsWith('work:');
+}
+
+export function coverageMetric(count: number, denominator: number): { count: number; rate: number } {
+  return {
+    count,
+    rate: denominator > 0 ? count / denominator : 0,
+  };
+}
+
+export function pushToGroupMap<K, V>(map: Map<K, V[]>, key: K | undefined | null, value: V): void {
+  if (key === undefined || key === null || key === '') return;
+  const existing = map.get(key);
+  if (existing) existing.push(value);
+  else map.set(key, [value]);
+}
+
+export function attachSourceQuality<T, Q>(values: readonly T[], quality: Q): T[] & { sourceQuality?: Q } {
+  const copy = [...values] as T[] & { sourceQuality?: Q };
+  Object.defineProperty(copy, 'sourceQuality', { value: quality, enumerable: false });
+  return copy;
 }
 
 function byNewestTs<T>(readTs: (value: T) => string | undefined): (a: T, b: T) => number {
-  return (a, b) => {
-    const ams = Date.parse(readTs(a) ?? '');
-    const bms = Date.parse(readTs(b) ?? '');
-    const safeA = Number.isNaN(ams) ? 0 : ams;
-    const safeB = Number.isNaN(bms) ? 0 : bms;
-    return safeB - safeA;
-  };
+  return (a, b) => (parseEventMs(readTs(b)) ?? 0) - (parseEventMs(readTs(a)) ?? 0);
 }
 
 function proposalSnapshot(proposal: Proposal): OutcomeRecordProposal {
@@ -391,35 +418,21 @@ export function listOutcomeRecords(
     const postMergeByProposal = new Map<string, PostMergeObservation[]>();
     if (postMergeHealthy) {
       for (const observation of postMergeRead.observations) {
-        const rows = postMergeByProposal.get(observation.proposalId) ?? [];
-        rows.push(observation);
-        postMergeByProposal.set(observation.proposalId, rows);
+        pushToGroupMap(postMergeByProposal, observation.proposalId, observation);
       }
     }
 
     const decisionsByProposal = new Map<string, DecisionEntry[]>();
-    for (const decision of decisions) {
-      if (!decisionsByProposal.has(decision.proposalId)) decisionsByProposal.set(decision.proposalId, []);
-      decisionsByProposal.get(decision.proposalId)!.push(decision);
-    }
+    for (const decision of decisions) pushToGroupMap(decisionsByProposal, decision.proposalId, decision);
 
     const tracesByProposal = new Map<string, JudgeTrace[]>();
-    for (const trace of traces) {
-      if (!tracesByProposal.has(trace.proposalId)) tracesByProposal.set(trace.proposalId, []);
-      tracesByProposal.get(trace.proposalId)!.push(trace);
-    }
+    for (const trace of traces) pushToGroupMap(tracesByProposal, trace.proposalId, trace);
 
     const evidenceByProposal = new Map<string, AutonomyEvidencePack[]>();
-    for (const pack of evidence) {
-      if (!evidenceByProposal.has(pack.proposal.id)) evidenceByProposal.set(pack.proposal.id, []);
-      evidenceByProposal.get(pack.proposal.id)!.push(pack);
-    }
+    for (const pack of evidence) pushToGroupMap(evidenceByProposal, pack.proposal.id, pack);
 
     const workedById = new Map<string, WorkedEvent[]>();
-    for (const event of workedEvents) {
-      if (!workedById.has(event.itemId)) workedById.set(event.itemId, []);
-      workedById.get(event.itemId)!.push(event);
-    }
+    for (const event of workedEvents) pushToGroupMap(workedById, event.itemId, event);
 
     const records = proposals.map((proposal): OutcomeRecord => {
       const proposalDecisions = (decisionsByProposal.get(proposal.id) ?? [])
@@ -444,7 +457,7 @@ export function listOutcomeRecords(
       return {
         version: 1,
         proposal: proposalSnapshot(proposal),
-        lastActivityAt: activityTime(
+        lastActivityAt: latestActivityTime([
           proposal.decidedAt,
           proposal.createdAt,
           proposalDecisions[0]?.ts,
@@ -453,7 +466,7 @@ export function listOutcomeRecords(
           proposalEvidence[0]?.generatedAt,
           proposalWorked[0]?.ts,
           proposalPostMerge[0]?.observedAt,
-        ),
+        ]),
         decisions: proposalDecisions.map((decision) => decisionSnapshot(
           decision, proposal.id, decisionSemanticsHealthy,
         )),
@@ -471,10 +484,8 @@ export function listOutcomeRecords(
     });
 
     records.sort((a, b) => {
-      const ams = Date.parse(a.lastActivityAt);
-      const bms = Date.parse(b.lastActivityAt);
-      const safeA = Number.isNaN(ams) ? 0 : ams;
-      const safeB = Number.isNaN(bms) ? 0 : bms;
+      const safeA = parseEventMs(a.lastActivityAt) ?? 0;
+      const safeB = parseEventMs(b.lastActivityAt) ?? 0;
       if (safeA !== safeB) return safeB - safeA;
       return b.proposal.id.localeCompare(a.proposal.id);
     });
@@ -588,12 +599,30 @@ function healthyInjectedEvidenceSource(packs: AutonomyEvidencePack[]): AutonomyE
   };
 }
 
-function sourceStateOf(
-  sources: Array<{ sourceState: 'missing' | 'healthy' | 'degraded'; complete: boolean }>,
+export function combineAutonomySourceState(
+  sources: ReadonlyArray<{ sourceState: 'missing' | 'healthy' | 'degraded'; complete: boolean }>,
 ): OutcomeRecordSourceQuality['sourceState'] {
   if (sources.some((source) => source.sourceState === 'degraded' || !source.complete)) return 'degraded';
   if (sources.some((source) => source.sourceState === 'missing')) return 'missing';
   return 'healthy';
+}
+
+export function failedOutcomeRecordsRead(): OutcomeRecordsDetailedResult {
+  const { observations: _observations, ...postMerge } = failedPostMergeSource();
+  return {
+    records: [],
+    sourceQuality: {
+      sourceState: 'degraded',
+      sourcePresent: false,
+      complete: false,
+      sources: {
+        proposals: failedProposalSource(),
+        decisions: failedDecisionSource(),
+        evidence: failedEvidenceSource(),
+        postMerge,
+      },
+    },
+  };
 }
 
 /**
@@ -668,18 +697,16 @@ export function listOutcomeRecordsDetailed(
     postMergeRead = failedPostMergeSource();
   }
 
-  const decisions = [...decisionRead.decisions];
-  Object.defineProperty(decisions, 'sourceQuality', {
-    value: (({ decisions: _decisions, ...quality }) => quality)(decisionRead),
-    enumerable: false,
-  });
-  const evidence = [...evidenceRead.packs] as AutonomyEvidencePackList;
-  Object.defineProperty(evidence, 'sourceQuality', {
-    value: (({ packs: _packs, ...quality }) => quality)(evidenceRead),
-    enumerable: false,
-  });
+  const decisions = attachSourceQuality(
+    decisionRead.decisions,
+    (({ decisions: _decisions, ...quality }) => quality)(decisionRead),
+  );
+  const evidence = attachSourceQuality(
+    evidenceRead.packs,
+    (({ packs: _packs, ...quality }) => quality)(evidenceRead),
+  ) as AutonomyEvidencePackList;
 
-  const records = listOutcomeRecords({
+  const rawRecords = listOutcomeRecords({
     limit: cap,
     deps: {
       ...deps,
@@ -697,17 +724,14 @@ export function listOutcomeRecordsDetailed(
     postMerge: postMergeSource,
   };
   const sourceList = Object.values(sources);
-  const sourceState = sourceStateOf(sourceList);
+  const sourceState = combineAutonomySourceState(sourceList);
   const sourceQuality: OutcomeRecordSourceQuality = {
     sourceState,
     sourcePresent: sourceList.every((source) => source.sourcePresent),
     complete: sourceState === 'healthy' && sourceList.every((source) => source.complete),
     sources,
   };
-  Object.defineProperty(records, 'sourceQuality', {
-    value: sourceQuality,
-    enumerable: false,
-  });
+  const records = attachSourceQuality(rawRecords, sourceQuality);
 
   return { records, sourceQuality };
 }
@@ -735,16 +759,8 @@ export function listReadyEvidenceOutcomeRecords(
     if (sourceQuality && (sourceQuality.sourceState !== 'healthy' || sourceQuality.complete !== true)) {
       return [];
     }
-    const effectiveSourceQuality: AutonomyEvidenceSourceQuality = sourceQuality ?? {
-      sourceState: 'healthy',
-      sourcePresent: true,
-      complete: true,
-      filesRead: evidence.length,
-      bytesRead: 0,
-      invalidFiles: 0,
-      unreadableFiles: 0,
-      limitExceeded: false,
-    };
+    const { packs: _packs, ...defaultEvidenceQuality } = healthyInjectedEvidenceSource(evidence);
+    const effectiveSourceQuality: AutonomyEvidenceSourceQuality = sourceQuality ?? defaultEvidenceQuality;
     const latestByProposal = new Map<string, AutonomyEvidencePack>();
     for (const pack of evidence) {
       if (!latestByProposal.has(pack.proposal.id)) latestByProposal.set(pack.proposal.id, pack);
@@ -761,7 +777,7 @@ export function listReadyEvidenceOutcomeRecords(
       records.push({
         version: 1,
         proposal: proposalSnapshot(proposal),
-        lastActivityAt: activityTime(pack.generatedAt, proposal.createdAt),
+        lastActivityAt: latestActivityTime([pack.generatedAt, proposal.createdAt]),
         decisions: [],
         judgeTraces: [],
         evidencePacks: [evidenceSnapshot(pack)],

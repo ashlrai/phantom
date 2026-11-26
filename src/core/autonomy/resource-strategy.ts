@@ -6,7 +6,13 @@
  * writes ledgers, or changes policy.
  */
 
-import { protectedPrOperationShape, protectedPrEvidenceMatchesRegistry } from './protected-pr-handoff.js';
+import {
+  AUTONOMY_RISK_ORDER,
+  configuredAutoMergeMaxRisk,
+  finiteNumberOrNull,
+  protectedPrEvidenceMatchesRegistry,
+  protectedPrOperationShape,
+} from './protected-pr-handoff.js';
 import type { AshlrConfig, AutoMergeTrustBasis, EngineId } from '../types.js';
 import type { GuardHealthDiagnosis } from '../daemon/guard-health.js';
 import type { FleetStatus } from '../fleet/status.js';
@@ -17,9 +23,9 @@ import type {
 } from '../fabric/resource-monitor.js';
 import type { OutcomeRecord } from './outcome-records.js';
 import {
+  allEvidenceGatesOk,
+  areEvidenceTimestampsFresh,
   isLiveRemoteProtectionEvidence,
-  READY_EVIDENCE_MAX_AGE_MS,
-  READY_EVIDENCE_MAX_FUTURE_SKEW_MS,
 } from './evidence-pack.js';
 import type { EcosystemDoctorCheck, EcosystemDoctorReport } from '../ecosystem/doctor.js';
 import {
@@ -167,15 +173,10 @@ const DEFAULT_MAX_CHECKS = 8;
 const CLOUD_BACKENDS = new Set<string>(['claude', 'codex', 'nim', 'kimi', 'ashlrcode', 'opencode', 'hermes', 'meta-muse']);
 const LOCAL_BACKENDS = new Set<string>(['builtin', 'local-coder', 'ollama']);
 const HARD_STOP_AVAILABILITY = new Set<BackendAvailability>(['exhausted', 'throttled', 'unreachable']);
-const RISK_ORDER: Record<'low' | 'medium' | 'high', number> = { low: 0, medium: 1, high: 2 };
 
 function cap(value: number | undefined, fallback: number): number {
   if (value === undefined || !Number.isFinite(value) || value <= 0) return fallback;
   return Math.max(1, Math.floor(value));
-}
-
-function finiteNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function budgetLevel(spent: number, capUsd: number | null): ResourceStrategyBudgetSummary['daemonBudgetLevel'] {
@@ -187,11 +188,11 @@ function budgetLevel(spent: number, capUsd: number | null): ResourceStrategyBudg
 
 function summarizeBudgets(cfg: AshlrConfig, fleet: FleetStatus): ResourceStrategyBudgetSummary {
   const foundry = cfg.foundry as (NonNullable<AshlrConfig['foundry']> & Record<string, unknown>) | undefined;
-  const daemonDailyBudgetUsd = finiteNumber(cfg.daemon?.dailyBudgetUsd);
+  const daemonDailyBudgetUsd = finiteNumberOrNull(cfg.daemon?.dailyBudgetUsd);
   const limits = foundry?.limits ?? {};
   const rateLimits = Object.entries(limits)
     .flatMap(([backend, limit]) => {
-      const max = finiteNumber((limit as { max?: unknown } | undefined)?.max);
+      const max = finiteNumberOrNull((limit as { max?: unknown } | undefined)?.max);
       const window = (limit as { window?: unknown } | undefined)?.window;
       if (max === null || typeof window !== 'string') return [];
       return [{ backend, window, max }];
@@ -206,16 +207,16 @@ function summarizeBudgets(cfg: AshlrConfig, fleet: FleetStatus): ResourceStrateg
     daemonDailyBudgetUsd,
     daemonSpentTodayUsd: fleet.daemon.todaySpentUsd,
     daemonBudgetLevel: budgetLevel(fleet.daemon.todaySpentUsd, daemonDailyBudgetUsd),
-    telemetryBudgetUsd: finiteNumber(cfg.telemetry?.budgetUsd),
-    telemetryBudgetTokens: finiteNumber(cfg.telemetry?.budgetTokens),
+    telemetryBudgetUsd: finiteNumberOrNull(cfg.telemetry?.budgetUsd),
+    telemetryBudgetTokens: finiteNumberOrNull(cfg.telemetry?.budgetTokens),
     telemetryBudgetWindow: cfg.telemetry?.budgetWindow ?? null,
     telemetryGovAction: cfg.telemetry?.govAction ?? null,
     rateLimits,
     claudeResource: {
-      weeklyMessageCap: finiteNumber(claude['weeklyMessageCap']),
-      weeklyTokenBudget: finiteNumber(claude['weeklyTokenBudget']),
-      weeklyCostBudgetUsd: finiteNumber(claude['weeklyCostBudgetUsd']),
-      protectPct: finiteNumber(claude['protectPct']),
+      weeklyMessageCap: finiteNumberOrNull(claude['weeklyMessageCap']),
+      weeklyTokenBudget: finiteNumberOrNull(claude['weeklyTokenBudget']),
+      weeklyCostBudgetUsd: finiteNumberOrNull(claude['weeklyCostBudgetUsd']),
+      protectPct: finiteNumberOrNull(claude['protectPct']),
       window: typeof claude['window'] === 'string' ? claude['window'] : null,
     },
   };
@@ -303,19 +304,6 @@ function configuredTrustBasis(cfg: AshlrConfig): AutoMergeTrustBasis {
   return value === 'verification' || value === 'evidence' ? value : 'tier';
 }
 
-function configuredMaxRisk(cfg: AshlrConfig): 'low' | 'medium' | 'high' {
-  const value = cfg.foundry?.autoMerge?.maxRisk;
-  return value === 'medium' || value === 'high' ? value : 'low';
-}
-
-function freshReadyTimestamp(value: string | undefined, nowMs: number): number | null {
-  const parsed = Date.parse(value ?? '');
-  if (!Number.isFinite(parsed)) return null;
-  if (parsed > nowMs + READY_EVIDENCE_MAX_FUTURE_SKEW_MS) return null;
-  if (parsed < nowMs - READY_EVIDENCE_MAX_AGE_MS) return null;
-  return parsed;
-}
-
 function isCurrentReadyEvidence(record: OutcomeRecord, cfg: AshlrConfig, now: Date): boolean {
   const evidence = record.evidencePacks[0];
   const verify = record.proposal.verifyResult;
@@ -323,27 +311,15 @@ function isCurrentReadyEvidence(record: OutcomeRecord, cfg: AshlrConfig, now: Da
   if (!evidence || !verify) return false;
   if (source?.sourceState !== 'healthy' || source.complete !== true) return false;
 
-  const generatedMs = freshReadyTimestamp(evidence.generatedAt, now.getTime());
-  const verifiedMs = freshReadyTimestamp(evidence.verification.verifiedAt, now.getTime());
-  if (generatedMs === null || verifiedMs === null) return false;
-  if (generatedMs + READY_EVIDENCE_MAX_FUTURE_SKEW_MS < verifiedMs) return false;
+  if (!areEvidenceTimestampsFresh(evidence.generatedAt, evidence.verification.verifiedAt, now.getTime())) {
+    return false;
+  }
 
   const currentTrustBasis = configuredTrustBasis(cfg);
-  const currentMaxRisk = configuredMaxRisk(cfg);
+  const currentMaxRisk = configuredAutoMergeMaxRisk(cfg);
   const risk = evidence.riskClass;
   const gates = evidence.gates;
   const operation = gates.remoteProtection ? protectedPrOperationShape(gates.remoteProtection) : 'legacy';
-  const gateValues = [
-    gates.authority,
-    gates.provenance,
-    gates.verification,
-    gates.risk,
-    gates.scope,
-    gates.manager,
-    gates.selfTarget,
-    gates.edv,
-    gates.remoteProtection,
-  ].filter((gate) => gate !== undefined);
 
   return (
     record.proposal.status === 'pending' &&
@@ -359,7 +335,7 @@ function isCurrentReadyEvidence(record: OutcomeRecord, cfg: AshlrConfig, now: Da
       protectedPrEvidenceMatchesRegistry(gates.remoteProtection, cfg.foundry.autoMerge.protectedRemotes)) &&
     evidence.verification.passed === true &&
     evidence.verification.commandKinds.length > 0 &&
-    gateValues.every((gate) => gate.ok) &&
+    allEvidenceGatesOk(gates) &&
     evidence.diffHash !== undefined &&
     evidence.diffHash === record.proposal.diffHash &&
     evidence.diffHash === evidence.verification.diffHash &&
@@ -372,7 +348,7 @@ function isCurrentReadyEvidence(record: OutcomeRecord, cfg: AshlrConfig, now: Da
     evidence.verification.source !== undefined &&
     evidence.verification.source === verify.source &&
     evidence.verification.verifiedAt === verify.verifiedAt &&
-    RISK_ORDER[risk] <= RISK_ORDER[currentMaxRisk] &&
+    AUTONOMY_RISK_ORDER[risk] <= AUTONOMY_RISK_ORDER[currentMaxRisk] &&
     (record.proposal.riskClass === undefined || record.proposal.riskClass === risk) &&
     (currentTrustBasis !== 'evidence' || (
       evidence.remotePreferred === true &&
