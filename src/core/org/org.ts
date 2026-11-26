@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
-import { parse, stringify } from 'smol-toml';
+import { parse, stringify, TomlError } from 'smol-toml';
 import { z } from 'zod';
 import { ashlrHome } from '../cloud/store.js';
 import { assertMetadata } from '../connectors/profile.js';
@@ -89,7 +89,13 @@ export function loadOrg(file = orgFile()): Org {
   try { text = readFileSync(file, 'utf8'); } catch { return fail(`No org file at ${file}. org.toml holds org ids and lane shares only, never credentials: get a copy from your org leader, or start a new org with phm org init --member <id> --machine <id>.`); }
   if (text.length > 256 * 1024) fail('org.toml is too large.');
   let doc: unknown;
-  try { doc = parse(text); } catch { return fail('org.toml is not valid TOML.'); }
+  try { doc = parse(text); } catch (err) {
+    // TomlError carries the 1-based position of the first bad token; naming it
+    // gives a member something concrete to send their leader. File content is
+    // never echoed — org.toml holds member and machine ids only.
+    const at = err instanceof TomlError ? ` at line ${err.line}` : '';
+    return fail(`org.toml is not valid TOML${at}. org.toml is maintained by your org leader — ask them to repair it and send a fresh copy.`);
+  }
   return validateOrg(doc);
 }
 

@@ -40,6 +40,17 @@ describe('org.toml validation', () => {
     expect(() => loadOrg(join(tmp(), 'org.toml'))).toThrow(/No org file/);
     expect(loadOrg('docs/examples/org.toml').leader).toBe('mason-wyatt');
   });
+  it('names the line of a malformed org.toml and points at the leader', () => {
+    const file = join(tmp(), 'org.toml');
+    writeFileSync(file, 'version = 1\nleader = "boss"\n[[members]]\nid = "a"\nbad line here\n');
+    // A member cannot repair org.toml — the leader owns it — so the refusal
+    // names the broken line for the report back, never echoes file content.
+    let message = '';
+    try { loadOrg(file); } catch (e) { message = String(e); }
+    expect(message).toMatch(/not valid TOML at line 5\./);
+    expect(message).toMatch(/org leader/);
+    expect(message).not.toContain('bad line here');
+  });
 });
 
 describe('init', () => {
