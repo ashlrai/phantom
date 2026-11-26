@@ -234,6 +234,10 @@ engaged and local work is idle, the updater verifies the handoff and quits and
 relaunches Phantom without an owner click. Unknown activity holds the update
 with a fixed reason code in Settings; the updater never clears Stop.
 
+While the update details are open, Settings refreshes the public release and
+feed observation every 15 seconds. A feed-ready observation is not installation
+admission; the native updater still verifies the signed release and artifacts.
+
 Installation does not require a standing grant or Touch ID and does not restart
 the resident fleet. Changed authority still requires grant re-approval before
 resuming the fleet. Settings and accounts stay in their existing locations.
