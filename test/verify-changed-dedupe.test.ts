@@ -183,7 +183,7 @@ describe('verifyPassedDir', () => {
 });
 
 describe('verify-changed dedupe end-to-end', () => {
-  it.each(['clean', 'backend', 'web', 'router'])('scopes status verification for %s changes', (project) => {
+  it.each(['clean', 'backend', 'web', 'router', 'satellite'])('scopes status verification for %s changes', (project) => {
     const root = fixture(true);
     const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
     git('checkout', '--', 'scripts/check-realio-lane-membership.mjs');
@@ -191,7 +191,10 @@ describe('verify-changed dedupe end-to-end', () => {
     mkdirSync(join(root, 'node_modules/.bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules/.bin/tsgo'), '#!/usr/bin/env node\nconst fs = require("node:fs"); const calls = fs.existsSync("observed.txt") ? JSON.parse(fs.readFileSync("observed.txt")) : []; calls.push(process.argv.slice(2)); fs.writeFileSync("observed.txt", JSON.stringify(calls));\n', { mode: 0o755 });
     if (project !== 'clean') {
-      const file = project === 'web' ? 'src/web-ui/view.ts' : project === 'router' ? 'contrib/router/x.ts' : 'src/backend.ts';
+      const file = project === 'web' ? 'src/web-ui/view.ts'
+        : project === 'router' ? 'contrib/router/x.ts'
+        : project === 'satellite' ? 'contrib/mac/memguard/x.ts'
+        : 'src/backend.ts';
       mkdirSync(dirname(join(root, file)), { recursive: true });
       writeFileSync(join(root, file), 'export {};\n');
       if (project === 'backend') git('add', file);
@@ -201,11 +204,11 @@ describe('verify-changed dedupe end-to-end', () => {
     if (project === 'clean') {
       expect(result.stdout).toContain('verify: 0 changed files (status), typecheck skipped: no changes');
       expect(existsSync(join(root, 'observed.txt'))).toBe(false);
-    } else if (project === 'router') {
-      // No tsconfig project covers contrib/router, so tsgo is never called;
+    } else if (project === 'router' || project === 'satellite') {
+      // No tsconfig project covers contrib/, so tsgo is never called;
       // the bundled tsc stub proves the program check ran by writing observed.txt.
-      expect(result.stdout).toContain('verify: 1 changed files (status), contrib router: no project change');
-      expect(result.stdout).toContain('PASS contrib router typecheck');
+      expect(result.stdout).toContain('verify: 1 changed files (status), contrib: no project change');
+      expect(result.stdout).toContain('PASS contrib typecheck');
       expect(readFileSync(join(root, 'observed.txt'), 'utf8')).toBe('compiled');
     } else {
       expect(result.stdout).toContain(`verify: 1 changed files (status), ${project}, incremental`);
