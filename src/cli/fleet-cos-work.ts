@@ -15,7 +15,7 @@ const usage = `Usage: ashlr fleet cos-work [--apply] [--runs-dir <abs>] [--json]
 Dry run by default: count pending jobs without claiming or spawning.
 With --apply, one bounded chief-of-staff pass: claim the oldest READY cos-* intake job, run
 one headless model turn on the declared planner slate, and record the reply
-as a draft awaiting Mason's approval in NEEDS-MASON.md. Sends nothing.
+as a draft awaiting the owner's approval in NEEDS-MASON.md. Sends nothing.
 A drafted or blocked pass also posts one notice to the bus (best effort).
 Exit 0 for idle, paused or drafted; 1 for blocked; 2 for usage errors.`;
 

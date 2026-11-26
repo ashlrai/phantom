@@ -5,9 +5,10 @@
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isPinnedName, sha256Hex } from './fixers.js';
+import { isDispatchdBinary, isSandboxProfileName, sha256Hex } from './fixers.js';
+import { launchAgentsDir, newestRollbackMtime } from './launchd.js';
 import {
-  LOAD_PER_CPU, PINNED_NAMES, RESIDENT_LABEL,
+  LOAD_PER_CPU, PINNED_NAMES, RESIDENT_LABEL, SHA_RE,
   type AutofixHost, type AutofixSnapshot, type LaunchdJob, type Proc, type ReleaseDraft, type RunsSample,
 } from './types.js';
 
@@ -36,7 +37,7 @@ function collectReleases(host: AutofixHost): { drafts: ReleaseDraft[]; attestSha
   return { drafts: listed ? parseReleases(listed) : [], attestShas: attested ? parseAttestShas(attested) : [] };
 }
 
-export function parseReleases(text: string): ReleaseDraft[] {
+function parseReleases(text: string): ReleaseDraft[] {
   let parsed: unknown;
   try { parsed = JSON.parse(text); } catch { return []; }
   if (!Array.isArray(parsed)) return [];
@@ -54,7 +55,7 @@ export function parseReleases(text: string): ReleaseDraft[] {
   return drafts;
 }
 
-export function parseAttestShas(text: string): string[] {
+function parseAttestShas(text: string): string[] {
   let parsed: unknown;
   try { parsed = JSON.parse(text); } catch { return []; }
   const runs = parsed && typeof parsed === 'object' ? (parsed as { workflow_runs?: unknown }).workflow_runs : null;
@@ -63,12 +64,12 @@ export function parseAttestShas(text: string): string[] {
   for (const row of runs) {
     if (!row || typeof row !== 'object') continue;
     const run = row as Record<string, unknown>;
-    if (run.conclusion === 'success' && typeof run.head_sha === 'string' && /^[0-9a-f]{40}$/.test(run.head_sha)) shas.push(run.head_sha);
+    if (run.conclusion === 'success' && typeof run.head_sha === 'string' && SHA_RE.test(run.head_sha)) shas.push(run.head_sha);
   }
   return shas;
 }
 
-export function parseLaunchctlList(text: string): string[] {
+function parseLaunchctlList(text: string): string[] {
   const labels: string[] = [];
   for (const line of text.split('\n')) {
     const fields = line.trim().split(/\s+/);
@@ -83,17 +84,11 @@ function collectLaunchd(host: AutofixHost): LaunchdJob[] {
   const listed = execText(host, ['launchctl', 'list']);
   if (listed === null) return [];
   const journal = readJournal(host.readText(join(host.runsDir(), 'ledger', 'launchd-runs.jsonl')));
-  const dir = join(host.homeDir(), 'Library', 'LaunchAgents');
+  const dir = launchAgentsDir(host);
   const names = host.listDir(dir);
   const jobs: LaunchdJob[] = [];
   for (const label of parseLaunchctlList(listed)) {
     if (!label.startsWith('ai.ashlr.') && !label.startsWith('com.ashlr.')) continue;
-    let rollback: number | null = null;
-    for (const name of names) {
-      if (!name.includes('.rollback.') || !name.startsWith(label)) continue;
-      const mtime = host.statMtime(join(dir, name));
-      if (mtime !== null && (rollback === null || mtime > rollback)) rollback = mtime;
-    }
     jobs.push({
       label,
       domain: 'gui',
@@ -101,7 +96,7 @@ function collectLaunchd(host: AutofixHost): LaunchdJob[] {
       samples: journal.get(label) ?? [],
       logTail: '',
       plistMtimeMs: host.statMtime(join(dir, `${label}.plist`)),
-      rollbackMtimeMs: rollback,
+      rollbackMtimeMs: newestRollbackMtime(host, label, names),
       authorityGoverned: label === RESIDENT_LABEL,
     });
   }
@@ -161,7 +156,7 @@ function collectLanes(host: AutofixHost): AutofixSnapshot['lanes'] {
   } catch { return []; }
 }
 
-export function parsePs(text: string): Proc[] {
+function parsePs(text: string): Proc[] {
   const procs: Proc[] = [];
   for (const line of text.split('\n')) {
     const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\s+(\S+)/.exec(line);
@@ -178,14 +173,13 @@ export function parsePs(text: string): Proc[] {
   return procs;
 }
 
-export function markDispatchdOwned(procs: readonly Proc[]): Proc[] {
+function markDispatchdOwned(procs: readonly Proc[]): Proc[] {
   const byPid = new Map(procs.map((proc) => [proc.pid, proc]));
   const owned = (pid: number, depth: number): boolean => {
     if (depth > 8) return false;
     const proc = byPid.get(pid);
     if (!proc) return false;
-    const base = proc.comm.split('/').pop()?.toLowerCase() ?? '';
-    if (base === 'dispatchd' || base === 'dispatchd.py') return true;
+    if (isDispatchdBinary(proc.comm)) return true;
     if (proc.ppid === pid || proc.ppid <= 0) return false;
     return owned(proc.ppid, depth + 1);
   };
@@ -203,8 +197,7 @@ function collectPinned(host: AutofixHost): AutofixSnapshot['pinned'] {
   const bin = join(host.runsDir(), 'bin');
   const repo = fileURLToPath(new URL('../../..', import.meta.url));
   const files = [];
-  for (const name of [...PINNED_NAMES]) {
-    if (!isPinnedName(name)) continue;
+  for (const name of PINNED_NAMES) {
     const installedPath = join(bin, name);
     const installed = host.readText(installedPath);
     const mirror = PIN_MIRRORS[name];
@@ -217,7 +210,7 @@ function collectPinned(host: AutofixHost): AutofixSnapshot['pinned'] {
     });
   }
   for (const name of host.listDir(bin)) {
-    if (!name.endsWith('.sb') && !name.includes('sandbox-profile')) continue;
+    if (!isSandboxProfileName(name)) continue;
     const installedPath = join(bin, name);
     const installed = host.readText(installedPath);
     files.push({

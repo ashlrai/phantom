@@ -935,14 +935,14 @@ hold coverage rule and reports incomplete coverage as degraded.
 
 `phm agents bus work feed [--status <s>] [--job <id>] [--repo <owner/name>]
 [--provider <p>] [--tier <fast|mid|work|frontier>] [--to <label>] [--owner <agent>]
-[--channel <name>] [--result <reserved|admitted|complete|failed>]
+[--channel <name>] [--result <reserved|admitted|complete|failed>] [--id <envelope-id>]
 [--claims] [--open] [--claimable]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>]`
 reads the
 same projection back — jobs newest-first, optionally filtered by status,
 exact job id, announced repo, provider, declared dispatch tier,
 announcement address, announcing
-agent or descriptive text and joined with the
+agent, descriptive text or a cited envelope id and joined with the
 live coordination holds — so the
 whole post/status/feed loop stays on this surface without dropping to
 `phm fleet work-feed`. With `--claims`, every open job (`queued`/`rescheduled`)
@@ -1008,7 +1008,16 @@ and which" is one filtered read and a `complete` result sitting on a
 still-`running` job — the divergence the citation exists to surface —
 answers directly; a job with no retained result never matches, unknown
 stays out of a positive filter, and an unrecognized value is a usage
-error like every other feed filter. `--limit`
+error like every other feed filter. `--id` keeps only jobs whose retained
+envelope citations include that wire id — the `work.post` announcement,
+the newest `work.status` receipt or the newest `work.result` receipt the
+job's state cites, the same ids the job line prints as `post=`/`status=`/
+`receipt=` and the same `busWorkFeedJobCitesEnvelope` match `work mine
+--id` applies to its job sections — so "which feed job does envelope X
+belong to" is one filtered read instead of paging the feed and eyeballing
+citations; the match is exact wire-id equality, never a substring or a
+body citation, and an id nothing on the feed cites is an honest empty
+match. `--limit`
 pages the filtered view newest-first (1–200) and reports `matched` as the
 true filtered total before the cap and `omitted` as the rest — the same
 page `fleet_work_feed`'s `limit` argument (default 50 there) and the
@@ -1567,7 +1576,7 @@ held work, and every other store state keeps its own status. Exit 0 on
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the twelve
+**Status.** `phm agents bus status [--json]` is a read-only probe of the thirteen
 dependencies every verb above touches plus the outbound send gate every
 write verb passes through: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
@@ -1614,7 +1623,17 @@ resolve — `realHome()/.ashlr/fleet` by default — read by the same
 `readPeerLedger` those surfaces use; `source` plus a `liveRows` count of
 unexpired coordination rows the send budget still counts; 0 on a
 verified-missing ledger, null when unreadable, never peer names, claim
-keys, digests, threads or bodies), plus the
+keys, digests, threads or bodies), the session-handoff journal store
+`<runsRoot>/handoffs` that `phm checkpoint handoff list|show` and
+`fleet_session_handoffs` read through the same `listSessionHandoffs`
+bounded scan under the same runs root the wake probe resolves
+(`ASHLR_RUNS_DIR` or `~/.ashlr-runs` by default — `source` plus `journals`
+scanned, `open` journals whose latest signal is not `completed`,
+`awaitingFailover` open journals whose signal requests failover under the
+`handoffPressure` rule, `unreadable` journals that failed `show`'s
+validation and a `truncated` flag for journals beyond the scan cap; 0
+counts on a verified-missing store, null when unreadable, never job ids,
+lanes, models or signal payloads), plus the
 claim-store drift verdict the claim journal and the
 coordination table imply — the same `fleet.claim-drift.v1` read
 `ashlr fleet claim-drift` serves, run over the probe's own two reads so the
@@ -2186,7 +2205,7 @@ channel-name grammar with no registry dependence. The
 endpoint needs a current read session and accepts `claims=true` plus the
 same filter parameters the feed CLIs take — `status`, `job`, `repo`,
 `provider`, `tier`, `to`, `owner`, `since`, `before`, `contains`, `channel`,
-`result`, `open`, `claimable` and `limit` — each a single value validated by the shared
+`result`, `id`, `open`, `claimable` and `limit` — each a single value validated by the shared
 `parseBusWorkFeedQuery` rules (`src/core/agents/bus-work-feed-query.ts`) and
 applied through the same `projectBusWorkFeedView` the CLIs use, so an HTTP
 client gets the identical narrowed, newest-first view: `open`/`claimable`
@@ -2315,7 +2334,17 @@ finished matching claim produces complete/failed, including when the feed
 cursor has advanced; peer work.status
 does not prove completion — it is the announcing peer's own feed report, sent
 through `peers post` under the same owner rule as `updateWorkStatus`, and it
-carries no claim token or queue evidence. Uncertain reservations remain visible
+carries no claim token or queue evidence. The read also takes the shared bus
+filter flags — `--from`/`--exclude-from`/`--to` on the envelope's own
+callsign/topic labels (never registry-resolved), `--since`/`--before` on the
+receipt stamp, `--contains` on the scrubbed body summary, `--id`, `--kind`
+(the `busBodyKind` discriminator), `--peer-kind` (the inner kind of a
+`peer.message` body), `--thread` (a `peer.message` payload's `threadId` or a
+note/context body's `thread`), `--job` (the shared job-citation rule) and
+`--result` (the `work.result` outcome) — applied to the admitted page only:
+they narrow what the caller sees and never admit an envelope the ledger or
+journal refused, and `nextCursor` still advances over every scanned row, so a
+filtered read is a view of the page rather than a subscription. Uncertain reservations remain visible
 and retryable. The unified comms inbox's `peer-dispatch` source lists the same
 journal's receipts whose `sent` trails `outcome` — results a peer still awaits
 that no other surface enumerates (the dispatch feed page reports only the

@@ -29,9 +29,9 @@ async function check(status: string, items: Array<{ id: string; text: string }>,
   expect(await cmdFleetNeeds(['--runs-dir', dir])).toBe(exit);
   if (status === 'unavailable') {
     expect(errors.pop()).toBe('error: fleet needs unavailable\n');
-    expect(output.join(' ')).not.toContain('Nothing needs Mason');
+    expect(output.join(' ')).not.toContain('Nothing needs the owner');
     expect(listNeedsMason({ runsDir: dir })).toEqual([]);
-  } else if (!items.length) expect(output.pop()).toBe('Nothing needs Mason.');
+  } else if (!items.length) expect(output.pop()).toBe('Nothing needs the owner.');
   else expect(output.pop()).toContain(`${items[0]!.id}  ${items[0]!.text}`);
 }
 

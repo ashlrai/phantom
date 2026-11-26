@@ -7,17 +7,15 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
-import { alreadyRecorded, ledgerLine, scrubText } from './guard.js';
+import { ledgerLine, scrubText, skipIfRecorded } from './guard.js';
 import type { FixContext } from './launchd.js';
 import {
-  AUDIT_REPO, AUDIT_WORKFLOW, LOAD_PER_CPU, NICE_BATCH, NICE_NORMAL, PINNED_NAMES, RELEASE_LABEL,
+  AUDIT_REPO, AUDIT_WORKFLOW, LANE_RE, LOAD_PER_CPU, NICE_BATCH, NICE_NORMAL, PINNED_NAMES, RELEASE_LABEL, SHA_RE,
   type LaneLease, type LaneView, type LedgerLine, type PinnedFile, type Proc, type ReleaseDraft,
 } from './types.js';
 
 const TAG_RE = /v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)/;
 const TAG_EXACT = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
-const SHA_RE = /^[0-9a-f]{40}$/;
-const LANE_RE = /^[a-z][a-z0-9-]{1,30}$/;
 const LEASE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 const INTERACTIVE = new Set([
@@ -31,10 +29,12 @@ const BATCH = new Set([
   'biomesyncd', 'replayd', 'suggestd', 'cloudd', 'bird', 'restock.py', 'batch-launch.sh',
 ]);
 
-export function isPinnedName(name: string): boolean {
-  return (PINNED_NAMES as readonly string[]).includes(name)
-    || name.endsWith('.sb')
-    || name.includes('sandbox-profile');
+export function isSandboxProfileName(name: string): boolean {
+  return name.endsWith('.sb') || name.includes('sandbox-profile');
+}
+
+function isPinnedName(name: string): boolean {
+  return (PINNED_NAMES as readonly string[]).includes(name) || isSandboxProfileName(name);
 }
 
 export function sha256Hex(bytes: string): string {
@@ -42,7 +42,7 @@ export function sha256Hex(bytes: string): string {
 }
 
 /** The autorun log names this tag sha on the audit-absent line or the few lines above it. */
-export function auditAbsentForSha(log: string, sha: string): boolean {
+function auditAbsentForSha(log: string, sha: string): boolean {
   if (!SHA_RE.test(sha)) return false;
   const prefix = sha.slice(0, 12);
   const lines = log.split('\n');
@@ -55,13 +55,11 @@ export function auditAbsentForSha(log: string, sha: string): boolean {
 }
 
 export function tagOf(text: string): string | null {
-  const match = TAG_RE.exec(text);
-  return match && TAG_EXACT.test(match[0]) ? match[0] : null;
+  return TAG_RE.exec(text)?.[0] ?? null;
 }
 
 function semver(tag: string): [number, number, number] | null {
-  const match = TAG_EXACT.exec(tag);
-  if (!match) return null;
+  if (!TAG_EXACT.test(tag)) return null;
   const parts = tag.slice(1).split('.').map(Number);
   if (parts.length !== 3 || parts.some((part) => !Number.isInteger(part))) return null;
   return [parts[0]!, parts[1]!, parts[2]!];
@@ -79,7 +77,7 @@ export function newerReleasePublished(tag: string, releases: readonly ReleaseDra
   const mine = semver(tag);
   if (!mine) return false;
   return releases.some((release) => {
-    if (release.draft || !TAG_EXACT.test(release.tag)) return false;
+    if (release.draft) return false;
     const other = semver(release.tag);
     return other !== null && semverCmp(other, mine) > 0;
   });
@@ -101,23 +99,6 @@ export function laneTargetFromSlots(text: string | null, lane: string): number |
   }
 }
 
-export function stuckDrafts(releases: readonly ReleaseDraft[], attestShas: readonly string[], nowMs: number, olderThanMin: number): ReleaseDraft[] {
-  const attested = new Set(attestShas);
-  const minAge = olderThanMin * 60_000;
-  return releases.filter((release) => release.draft
-    && release.assetCount === 0
-    && TAG_EXACT.test(release.tag)
-    && SHA_RE.test(release.sha)
-    && attested.has(release.sha)
-    && nowMs - release.createdAtMs > minAge);
-}
-
-function recordedOr(ctx: FixContext, line: LedgerLine): LedgerLine {
-  const prior = alreadyRecorded(ctx.ledger, line);
-  if (prior) return ledgerLine(line.ts, line.fixer, line.target, line.action, line.before, prior.after, 'skipped');
-  return line;
-}
-
 export function fixReleaseStuckDraft(release: ReleaseDraft, log: string, ctx: FixContext): LedgerLine[] {
   const ts = ctx.host.now().toISOString();
   const target = `${release.tag}#${release.id}`;
@@ -127,8 +108,8 @@ export function fixReleaseStuckDraft(release: ReleaseDraft, log: string, ctx: Fi
   const lines: LedgerLine[] = [];
   if (ctx.dryRun) lines.push(kickLine);
   else {
-    const done = recordedOr(ctx, kickLine);
-    if (done.result === 'skipped') lines.push(done);
+    const skipped = skipIfRecorded(ctx.ledger, kickLine);
+    if (skipped) lines.push(skipped);
     else {
       const result = ctx.host.exec(['launchctl', 'kickstart', kick]);
       lines.push(result.code === 0
@@ -145,9 +126,9 @@ export function fixReleaseStuckDraft(release: ReleaseDraft, log: string, ctx: Fi
     lines.push(auditLine);
     return lines;
   }
-  const auditDone = recordedOr(ctx, auditLine);
-  if (auditDone.result === 'skipped') {
-    lines.push(auditDone);
+  const auditSkipped = skipIfRecorded(ctx.ledger, auditLine);
+  if (auditSkipped) {
+    lines.push(auditSkipped);
     return lines;
   }
   const argv = ['gh', 'workflow', 'run', AUDIT_WORKFLOW, '--repo', AUDIT_REPO, '--ref', release.tag] as const;
@@ -158,17 +139,10 @@ export function fixReleaseStuckDraft(release: ReleaseDraft, log: string, ctx: Fi
   return lines;
 }
 
-export function leaseIsStale(lease: LaneLease, nowMs: number, stuckMs: number): boolean {
+function leaseIsStale(lease: LaneLease, nowMs: number, stuckMs: number): boolean {
   if (!LEASE_RE.test(lease.id)) return false;
   if (lease.expiresAtMs !== null && lease.expiresAtMs <= nowMs) return true;
   return lease.expiresAtMs === null && !lease.manifestPresent && nowMs - lease.mtimeMs >= stuckMs;
-}
-
-export function laneIsStuck(lane: LaneView, nowMs: number, stuckMs: number): boolean {
-  if (!LANE_RE.test(lane.lane)) return false;
-  if (lane.leases.some((lease) => leaseIsStale(lease, nowMs, stuckMs))) return true;
-  if (lane.running <= 0) return false;
-  return lane.lastProgressAtMs === null || nowMs - lane.lastProgressAtMs >= stuckMs;
 }
 
 export async function fixStuckLane(lane: LaneView, ctx: FixContext, stuckMs: number): Promise<LedgerLine[]> {
@@ -189,9 +163,9 @@ export async function fixStuckLane(lane: LaneView, ctx: FixContext, stuckMs: num
       continue;
     }
     const planned = ledgerLine(ts, 'stuck-lane', lease.id, action, before, { reaped: true }, 'applied');
-    const prior = alreadyRecorded(ctx.ledger, planned);
-    if (prior) {
-      lines.push(ledgerLine(ts, 'stuck-lane', lease.id, action, before, prior.after, 'skipped'));
+    const skipped = skipIfRecorded(ctx.ledger, planned);
+    if (skipped) {
+      lines.push(skipped);
       continue;
     }
     ctx.host.unlink(path);
@@ -209,9 +183,9 @@ export async function fixStuckLane(lane: LaneView, ctx: FixContext, stuckMs: num
     return lines;
   }
   const planned = ledgerLine(ts, 'stuck-lane', lane.lane, action, before, { restarted: true }, 'applied');
-  const prior = alreadyRecorded(ctx.ledger, planned);
-  if (prior) {
-    lines.push(ledgerLine(ts, 'stuck-lane', lane.lane, action, before, prior.after, 'skipped'));
+  const skipped = skipIfRecorded(ctx.ledger, planned);
+  if (skipped) {
+    lines.push(skipped);
     return lines;
   }
   try {
@@ -230,16 +204,21 @@ function commBase(comm: string): string {
   return base.toLowerCase();
 }
 
-export function loadBlocks(proc: Proc): 'kernel' | 'dispatchd' | 'interactive' | null {
+export function isDispatchdBinary(comm: string): boolean {
+  const base = commBase(comm);
+  return base === 'dispatchd' || base === 'dispatchd.py';
+}
+
+function loadBlocks(proc: Proc): 'kernel' | 'dispatchd' | 'interactive' | null {
   if (proc.pid <= 1) return 'kernel';
   const base = commBase(proc.comm);
-  if (proc.dispatchdOwned || base === 'dispatchd' || base === 'dispatchd.py') return 'dispatchd';
+  if (proc.dispatchdOwned || isDispatchdBinary(proc.comm)) return 'dispatchd';
   if (KERNEL.has(base) || base.startsWith('[') || (proc.uid === 0 && base.startsWith('kernel'))) return 'kernel';
   if (INTERACTIVE.has(base)) return 'interactive';
   return null;
 }
 
-export function niceTarget(proc: Proc): number {
+function niceTarget(proc: Proc): number {
   return BATCH.has(commBase(proc.comm)) ? NICE_BATCH : NICE_NORMAL;
 }
 
@@ -260,9 +239,9 @@ export function fixOutsideLoad(load1: number, ncpu: number, loadPerCpu: number, 
       continue;
     }
     const planned = ledgerLine(ts, 'outside-load', String(proc.pid), action, before, { nice }, 'applied');
-    const prior = alreadyRecorded(ctx.ledger, planned);
-    if (prior) {
-      lines.push(ledgerLine(ts, 'outside-load', String(proc.pid), action, before, prior.after, 'skipped'));
+    const skipped = skipIfRecorded(ctx.ledger, planned);
+    if (skipped) {
+      lines.push(skipped);
       continue;
     }
     const result = ctx.host.exec(['renice', '-n', String(nice), '-p', String(proc.pid)]);
@@ -296,11 +275,10 @@ export function reportPinnedHandEdit(file: PinnedFile, ctx: FixContext): LedgerL
     note: 'Hand edit detected on an installed pinned file. Security reviews it. Autofix did not change the file.',
   };
   const line = ledgerLine(ts, 'pinned-hand-edit', file.name, 'security-report', before, { detectOnly: true }, 'detect-only');
-  const prior = alreadyRecorded(ctx.ledger, line);
-  if (prior || ctx.dryRun) {
-    return ctx.dryRun && !prior
-      ? ledgerLine(ts, 'pinned-hand-edit', file.name, 'security-report', before, { detectOnly: true }, 'dry-run')
-      : ledgerLine(ts, 'pinned-hand-edit', file.name, 'security-report', before, prior?.after ?? { detectOnly: true }, prior ? 'skipped' : 'dry-run');
+  const skipped = skipIfRecorded(ctx.ledger, line);
+  if (skipped) return skipped;
+  if (ctx.dryRun) {
+    return ledgerLine(ts, 'pinned-hand-edit', file.name, 'security-report', before, { detectOnly: true }, 'dry-run');
   }
   const safe = file.name.replace(/[^A-Za-z0-9._-]/g, '_');
   const path = join(ctx.host.runsDir(), 'ledger', 'autofix-security', `${safe}.json`);

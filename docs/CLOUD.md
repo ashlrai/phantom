@@ -608,8 +608,10 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   join — reports and joins someone had to run and read, so a dispatch
   pool whose resolved work kept not holding never became work even
   though the ledger exists to score which arm deserves the next
-  dispatch). A pool becomes an item while its in-window resolved rows
-  reach the recurring bars — enough rows, enough not-held rows, a
+  dispatch). Discovery uses the first valid retained row for each job ID
+  before applying the time window, so replays cannot inflate counts or
+  make an older resolution recent. A pool becomes an item while its
+  in-window resolved jobs reach the recurring bars — enough jobs, enough not-held jobs, a
   strict majority not held and evidence spanning distinct UTC days
   inside the 7-day window — with rows whose pool field went unrecorded
   grouping as the calibration arm's own 'unknown' cell, in-flight jobs
