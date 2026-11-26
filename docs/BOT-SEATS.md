@@ -93,6 +93,7 @@ unreadable or unresolved identities keep exact-label matching.
 ```sh
 phm bots seats --json
 phm bots handoffs --json
+phm bots handoffs --pending --json
 phm bots handoffs --apply --json
 phm bots handoff --seat devin-review --json
 phm bots handoff --seat devin-review --apply --json
@@ -126,6 +127,19 @@ open claims/jobs — reads as `fleet_bot_seats`, the same seat views
 `phm bots seats --json` computes minus the persist-on-read lifecycle
 write (`persisted: false`), with secret-handle names and adapter
 internals kept out of the result.
+
+The fleet plan read narrows without leaving the plan shape:
+`phm bots handoffs --seat <id>` keeps the one roster seat's entry —
+`eligible`, `participantId`, projected `state` and pending records — where
+an unknown seat id is an honest empty `seats` list rather than the
+`handoff --seat` throw; `--state <active|draining|idle>` keeps seats in one
+projected lifecycle state; and `--pending` keeps only seats still carrying
+handoff records not yet journaled — the same `handoffs.length > 0` set the
+unified inbox `seats` source lists, so "which seats still have work to move"
+is one filtered read. The flags compose, an unmatched filter is an honest
+empty list, and they apply to the read-only plan only: `handoffs --apply`
+still drains every eligible seat and refuses the filter flags — drain one
+seat with `handoff --seat <id> --apply` instead.
 
 Handoff defaults to a dry-run plan. It refuses active seats; only draining seats
 or idle seats with work may hand off (completed handoffs allow harmless replay).

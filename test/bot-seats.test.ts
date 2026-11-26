@@ -147,6 +147,49 @@ it('CLI handoffs plans the whole roster read-only and reports an empty roster', 
   expect(await runBotsCli(['handoffs', '--json'], emit, o.home)).toBe(0);
   expect(JSON.parse(out.pop()!)).toEqual({ schema: 'phantom-bot-handoffs-plan.v1', apply: false, seats: [] });
 });
+it('CLI handoffs narrows the fleet plan by seat, state and pending work', async () => {
+  const reviewer = { id: 'reviewer', kind: 'local', displayName: 'Reviewer', participantId: 'reviewer', capabilities: ['review'], quota: { source: 'none' } };
+  const idler = { id: 'idler', kind: 'local', displayName: 'Idler', participantId: 'idler', capabilities: ['review'], quota: { source: 'none' } };
+  const o = await fixture([seat(), reviewer, idler]);
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  // The CLI plan read runs on the real clock, so the claims must be live now.
+  const realNow = Date.now();
+  acquireCoordination({ root: fleetRoot, origin: 'resource', key: 'pr:o/r#20', owner: 'helper', sourceId: 'fleet-claim', leaseMs: 3600000, leaseUntil: realNow + 3600000, now: realNow });
+  acquireCoordination({ root: fleetRoot, origin: 'resource', key: 'pr:o/r#21', owner: 'reviewer', sourceId: 'active-claim', leaseMs: 3600000, leaseUntil: realNow + 3600000, now: realNow });
+  await writeFile(join(o.root, 'seat-state.json'), JSON.stringify({
+    helper: { state: 'draining', since: iso(), exhaustedReset: null },
+    reviewer: { state: 'active', since: iso(), exhaustedReset: null },
+    idler: { state: 'idle', since: iso(), exhaustedReset: null },
+  }));
+  const out: string[] = [], emit = (text: string) => out.push(text);
+  const plan = async (args: string[]): Promise<{ schema: string; apply: boolean; seats: { seatId: string; participantId: string; state: string; eligible: boolean; handoffs: unknown[] }[] }> => {
+    expect(await runBotsCli(['handoffs', ...args, '--json'], emit, o.home)).toBe(0);
+    return JSON.parse(out.pop()!);
+  };
+  const ids = (result: { seats: { seatId: string }[] }) => result.seats.map(s => s.seatId);
+  // --pending keeps only seats still carrying unjournaled handoff records —
+  // the same set the unified inbox seats source lists.
+  expect(ids(await plan(['--pending']))).toEqual(['helper']);
+  // --state keeps seats in one projected lifecycle state.
+  expect(ids(await plan(['--state', 'active']))).toEqual(['reviewer']);
+  expect(ids(await plan(['--state', 'idle']))).toEqual(['idler']);
+  // --seat keeps the one roster entry with its eligibility and participantId.
+  expect(await plan(['--seat', 'reviewer'])).toMatchObject({ schema: 'phantom-bot-handoffs-plan.v1', apply: false,
+    seats: [{ seatId: 'reviewer', participantId: 'reviewer', state: 'active', eligible: false, handoffs: [] }] });
+  // The flags compose, and an unmatched filter is an honest empty list.
+  expect(ids(await plan(['--state', 'draining', '--pending']))).toEqual(['helper']);
+  expect(ids(await plan(['--seat', 'missing']))).toEqual([]);
+  expect(ids(await plan(['--state', 'draining', '--seat', 'reviewer']))).toEqual([]);
+  // A filtered read stays a plan: nothing journaled or released.
+  expect((await readdir(o.root)).sort()).toEqual(['seat-state.json', 'seats.json']);
+  // Invalid state values, filters combined with --apply, and the filters on
+  // other verbs are all refused.
+  expect(await runBotsCli(['handoffs', '--state', 'bogus', '--json'], emit, o.home)).toBe(1);
+  expect(JSON.parse(out.pop()!)).toMatchObject({ ok: false });
+  expect(await runBotsCli(['handoffs', '--apply', '--pending', '--json'], emit, o.home)).toBe(1);
+  expect(await runBotsCli(['seats', '--pending', '--json'], emit, o.home)).toBe(1);
+  expect(await runBotsCli(['handoff', '--seat', 'helper', '--state', 'idle', '--json'], emit, o.home)).toBe(1);
+});
 it('fences source releases to the lease generation and still releases the current holder', async () => {
   const o = await fixture();
   const root = join(o.home, '.ashlr', 'fleet');

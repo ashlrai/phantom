@@ -77,7 +77,7 @@ increase above 20%. Refusal leaves the active harness unchanged.
 
 `src/core/bots/seats.ts` exports `BotSeat`, `QuotaEvidence`, `SeatAdapter`,
 `SeatState`, `SeatHandoff`, `SeatHandoffPlanEntry`, `SeatHandoffsPlan`,
-`SeatStoreInspection` and `SeatOptions`. The strict on-disk roster schema is
+`SeatHandoffsPlanFilter`, `SeatStoreInspection` and `SeatOptions`. The strict on-disk roster schema is
 `phantom-bot-seats.v1` at `~/.phantom/bots/seats.json`; missing means empty.
 Kinds are devin-bot, grok-bot, openai-bot, local and other; other requires a bus
 provider, all others derive it. Secret handles are names only; secret-shaped
@@ -142,6 +142,16 @@ Exports:
   projection otherwise, `handoffs` the journaled `AppliedSeatHandoff` records
   with notification receipts on applied seats only. A throwing plan read
   propagates; a partial apply is safely re-run.
+- `filterSeatHandoffsPlan(plan, filter)` narrows a `SeatHandoffsPlan`
+  read-side: `seat` keeps the one entry whose roster `seatId` matches,
+  `state` keeps entries in one projected lifecycle state and `pending` keeps
+  only entries still carrying unjournaled handoff records — the same
+  `handoffs.length > 0` rule the unified inbox seats source applies. The
+  result keeps the `phantom-bot-handoffs-plan.v1` shape and `apply:false`, an
+  unmatched filter is an honest empty `seats` list, and nothing is released,
+  journaled or notified. `phm bots handoffs` applies it for
+  `--seat`/`--state`/`--pending`; the flags are refused with `--apply`, which
+  still drains every eligible seat.
 - `sendSeatMessage({from, to, text}, opts?)` delegates configured participants to
   unified bus DMs under the seat's fleet root and clock, or owner notices;
   `from`/`to` accept a seat id or participantId (`to: 'owner'` posts an
