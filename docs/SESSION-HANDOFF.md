@@ -62,7 +62,16 @@ open-or-completed state and HEAD — never goal, plan, decisions or context
 digest, which stay behind `show`. The scan is bounded to the newest 256 journals
 by file time and sets `truncated` when more exist; a journal that fails the same
 validation `show` applies lands in `unreadable` by job id instead of poisoning
-the index. A never-written store reports `status: "missing"` (verified absent,
+the index. `list` also takes the shared read filters — `--state open|completed`,
+`--job`, `--lane`, `--repo owner/name` (matched case-insensitively),
+`--signal <kind>`, `--pressure` (the same failover verdict `planSessionFailover`
+applies: rate-limit, quota-exhausted or a budget under its threshold) and
+`--since`/`--before` on the 15m/2h/1d/epoch-ms/ISO grammar composing into one
+[since, before) window on each entry's revision time — so "which sessions await
+failover on this lane or repo" is one read instead of a client-side pass;
+`fleet_session_handoffs` accepts the same arguments. Only `--job` narrows
+`unreadable`, since no other field is provable for a journal that cannot be
+read. A never-written store reports `status: "missing"` (verified absent,
 empty lists); a store that cannot be read reports `status: "unavailable"` with
 null lists — unknown stays unknown. `phm checkpoint handoff plan resume.json --json` is
 read-only. Its request contains `runs`, `worktree`, `job`, `attempt`, `repo`,

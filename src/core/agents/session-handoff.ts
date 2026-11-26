@@ -9,8 +9,9 @@ import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { acquireCoordination, renewCoordination, settleCoordination } from './claim-store.js';
 import { handoffRepoState } from './session-handoff-repo.js';
-import { HANDOFF_LOG_BYTES, handoffId, handoffModel, handoffTier, handoffPressure, handoffSignalSchema, parseHandoff, refuseHandoff,
+import { HANDOFF_LOG_BYTES, HANDOFF_SIGNAL_KINDS, handoffId, handoffModel, handoffTier, handoffPressure, handoffSignalSchema, parseHandoff, refuseHandoff,
   scrubHandoffDraft, type HandoffDraft, type HandoffSignal, type SessionHandoff } from './session-handoff-schema.js';
+import { parseSince } from '../fleet/agent-messages.js';
 
 function directory(runs: string, create = false): string {
   const root = realpathSync(runs);
@@ -73,6 +74,123 @@ export interface SessionHandoffList {
   truncated: boolean;
 }
 
+/** The read filters `listSessionHandoffs` applies to each journal-validated entry — the same
+ * dimensions `phm checkpoint handoff list` flags and `fleet_session_handoffs` args fill, parsed
+ * once by `parseSessionHandoffListArgs` so the CLI and MCP reads can never disagree on a value. */
+export interface SessionHandoffListFilter {
+  /** Keep only entries whose projected state is this — 'open' awaits resume or failover, 'completed' is retained history. */
+  state?: 'open' | 'completed';
+  /** Keep only the journal for this job id. The filename proves an unreadable journal's id, so `unreadable` narrows by this field alone. */
+  job?: string;
+  /** Keep only checkpoints taken on this lane label. */
+  lane?: string;
+  /** Keep only checkpoints for this repo — owner/name compared case-insensitively, the same rule every bus repo filter applies. */
+  repo?: string;
+  /** Keep only checkpoints whose latest signal kind is this — one of the wire union's kinds. */
+  signal?: HandoffSignal['kind'];
+  /** Keep only checkpoints whose latest signal asks for failover — the same `handoffPressure` verdict `planSessionFailover` applies. */
+  pressure?: boolean;
+  /** Keep only checkpoints whose latest revision `at` is at or after this epoch-ms cutoff. */
+  since?: number;
+  /** Keep only checkpoints whose latest revision `at` is strictly before this epoch-ms cutoff — the exclusive upper bound composing with `since` into one [since, before) window. */
+  before?: number;
+}
+
+/** Every filter key `parseSessionHandoffListArgs` accepts. */
+export const SESSION_HANDOFF_LIST_FILTER_KEYS = [
+  'state', 'job', 'lane', 'repo', 'signal', 'pressure', 'since', 'before',
+] as const;
+
+/** The owner/name slug rule `handoffDraftSchema.repo` enforces, shared by the filter's `repo` value. */
+const HANDOFF_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+export type SessionHandoffListArgsResult =
+  | { ok: true; filter?: SessionHandoffListFilter }
+  | { ok: false; error: string };
+
+/**
+ * Validate one session-handoff list filter — the shared value rules for the
+ * `phm checkpoint handoff list` flags and the `fleet_session_handoffs` MCP
+ * args, so the two surfaces can never disagree about what a value means.
+ * `state` takes open or completed, `job` and `lane` the handoff-id grammar
+ * journals enforce, `repo` the owner/name slug (matched case-insensitively),
+ * `signal` one of the wire union's kinds, `pressure` a boolean, and `since`/
+ * `before` the shared `parseSince` grammar resolved against `options.now`
+ * into epoch-ms cutoffs on each entry's `at`. Unknown keys and malformed
+ * values are usage errors, never a silently empty index.
+ */
+export function parseSessionHandoffListArgs(
+  args: Record<string, unknown>, options: { now?: number } = {},
+): SessionHandoffListArgsResult {
+  for (const key of Object.keys(args)) {
+    if (!(SESSION_HANDOFF_LIST_FILTER_KEYS as readonly string[]).includes(key)) {
+      return { ok: false, error: `unknown filter: ${key}` };
+    }
+  }
+  const filter: SessionHandoffListFilter = {};
+  const state = args.state;
+  if (state !== undefined) {
+    if (state !== 'open' && state !== 'completed') return { ok: false, error: 'state takes open or completed.' };
+    filter.state = state;
+  }
+  for (const key of ['job', 'lane'] as const) {
+    const value = args[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || !handoffId.safeParse(value).success) {
+      return { ok: false, error: `${key} takes a handoff job or lane id.` };
+    }
+    filter[key] = value;
+  }
+  const repo = args.repo;
+  if (repo !== undefined) {
+    if (typeof repo !== 'string' || !HANDOFF_REPO.test(repo)) {
+      return { ok: false, error: 'repo takes an owner/name slug.' };
+    }
+    filter.repo = repo;
+  }
+  const signal = args.signal;
+  if (signal !== undefined) {
+    if (typeof signal !== 'string' || !(HANDOFF_SIGNAL_KINDS as readonly string[]).includes(signal)) {
+      return { ok: false, error: `signal takes one of ${HANDOFF_SIGNAL_KINDS.join(', ')}.` };
+    }
+    filter.signal = signal as HandoffSignal['kind'];
+  }
+  const pressure = args.pressure;
+  if (pressure !== undefined) {
+    if (typeof pressure !== 'boolean') return { ok: false, error: 'pressure takes true or false.' };
+    filter.pressure = pressure;
+  }
+  for (const key of ['since', 'before'] as const) {
+    const value = args[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'string') return { ok: false, error: `${key} takes 15m, 2h, 1d, epoch ms or an ISO time.` };
+    const resolved = parseSince(value, options.now ?? Date.now());
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) {
+      return { ok: false, error: `${key} takes 15m, 2h, 1d, epoch ms or an ISO time.` };
+    }
+    filter[key] = resolved;
+  }
+  return { ok: true, ...(Object.keys(filter).length === 0 ? {} : { filter }) };
+}
+
+/** One journal-validated entry against the filter: every named field must match. `repo` compares
+ * case-insensitively and the `at` window is [since, before) on the recorded revision time. */
+function sessionHandoffEntryMatches(entry: SessionHandoffListEntry, filter: SessionHandoffListFilter): boolean {
+  if (filter.state !== undefined && entry.state !== filter.state) return false;
+  if (filter.job !== undefined && entry.job !== filter.job) return false;
+  if (filter.lane !== undefined && entry.lane !== filter.lane) return false;
+  if (filter.repo !== undefined && entry.repo.toLowerCase() !== filter.repo.toLowerCase()) return false;
+  if (filter.signal !== undefined && entry.signal.kind !== filter.signal) return false;
+  if (filter.pressure !== undefined && handoffPressure(entry.signal) !== filter.pressure) return false;
+  if (filter.since !== undefined || filter.before !== undefined) {
+    const at = Date.parse(entry.at);
+    if (!Number.isFinite(at)) return false;
+    if (filter.since !== undefined && at < filter.since) return false;
+    if (filter.before !== undefined && at >= filter.before) return false;
+  }
+  return true;
+}
+
 const HANDOFF_LIST_MAX_JOURNALS = 256;
 
 function handoffList(status: 'missing' | 'unavailable'): SessionHandoffList {
@@ -83,9 +201,13 @@ function handoffList(status: 'missing' | 'unavailable'): SessionHandoffList {
 
 /** Fleet-wide index of session-handoff journals: which jobs hold a checkpoint awaiting resume or
  * failover, without knowing each job id. Read-only; per-file validation matches `show`, so one
- * corrupt journal lands in `unreadable` instead of poisoning the index. Existence is staged before
- * the private-storage check because a never-written store is 'missing', not 'unsafe'. */
-export function listSessionHandoffs(runs: string): SessionHandoffList {
+ * corrupt journal lands in `unreadable` instead of poisoning the index. `filter` narrows the
+ * journal-validated `handoffs` entries on the shared dimensions; `unreadable` journals failed that
+ * same validation, so no field but the filename-proven `job` id can match — every other filter
+ * leaves the diagnostic list whole rather than fabricating fields for journals that cannot be read.
+ * Existence is staged before the private-storage check because a never-written store is 'missing',
+ * not 'unsafe'. */
+export function listSessionHandoffs(runs: string, filter?: SessionHandoffListFilter): SessionHandoffList {
   let root: string;
   try { root = realpathSync(runs); }
   catch (error) {
@@ -131,7 +253,9 @@ export function listSessionHandoffs(runs: string): SessionHandoffList {
   }
   handoffs.sort((a, b) => b.at.localeCompare(a.at) || a.job.localeCompare(b.job));
   unreadable.sort();
-  return { schema: 'session-handoff.list.v1', status: 'ok', handoffs, unreadable,
+  return { schema: 'session-handoff.list.v1', status: 'ok',
+    handoffs: filter === undefined ? handoffs : handoffs.filter(entry => sessionHandoffEntryMatches(entry, filter)),
+    unreadable: filter?.job === undefined ? unreadable : unreadable.filter(job => job === filter.job),
     truncated: candidates.length > scanned.length };
 }
 
