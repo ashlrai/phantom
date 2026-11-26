@@ -38,11 +38,14 @@ import { capacitySource } from './capacity-source.js';
 import { anthropicCostSource } from '../../fabric/readers/anthropic-cost.js';
 import { operatorPageSources, type OperatorUsagePageReader } from './operator-page.js';
 import { publishCodexResetBank } from './banked-resets.js';
+import { ANTIGRAVITY_USAGE_TIMEOUT_MS, readAntigravityUsage } from '../../fabric/readers/antigravity-usage.js';
+import { ANTIGRAVITY_SOURCE } from './antigravity-quota.js';
 
 export interface ResourceLiveSourceOptions extends LiveSourcesConfig {
   readCapacity?: () => CapacitySnapshot | null;
   operatorPageReader?: OperatorUsagePageReader;
   runAnthropicCost?: () => Promise<string>;
+  readAntigravity?: typeof readAntigravityUsage;
   /** Runs dir holding metrics/claude-quota.json and queue/resources.json. */
   runsDir: string;
   operatorHome?: string;
@@ -221,6 +224,22 @@ function agentCheck(load: () => Promise<unknown>, id: EvidenceId): ResourceLiveS
   } };
 }
 
+export function antigravityAgentCheck(runsDir: string): ResourceLiveSource {
+  return agentCheck(() => readResourceEvidenceFile(runsDir), 'antigravity');
+}
+
+function antigravity(o: ResourceLiveSourceOptions): ResourceLiveSource {
+  return { tier: 'official', deadlineMs: ANTIGRAVITY_USAGE_TIMEOUT_MS + 2_000, read: async now => {
+    const result = await (o.readAntigravity ?? readAntigravityUsage)(o.antigravityModel);
+    if (result.groups === null) return { reason: result.reason, execution_context: result.execution_context };
+    const future = result.groups.flatMap(group => group.buckets.map(bucket => bucket.reset_at))
+      .filter(at => Date.parse(at) > now).sort();
+    if (future.length === 0) return { reason: 'invalid-reading', execution_context: result.execution_context };
+    return { groups: result.groups, execution_context: result.execution_context, used: null, limit: null, unit: 'percent',
+      reset_at: future[0]!, source: ANTIGRAVITY_SOURCE, observed_at: iso(now) };
+  } };
+}
+
 function visible(o: ResourceLiveSourceOptions, siteId: UsageSite['id']): ResourceLiveSource[] {
   const site = USAGE_SITES.find(row => row.id === siteId);
   const session = o.browser;
@@ -279,7 +298,7 @@ export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): Resour
     // The lane's own quota window, published by the dispatcher from its own calls.
     'glm-lite': [registry(o, 'zai', 'own-call'), ...visible(o, 'zai')],
     gemini: visible(o, 'gemini'),
-    antigravity: [evidence('antigravity')],
+    antigravity: [antigravity(o)],
     'google-workspace': [evidence('google-workspace')],
     dot: [evidence('dot')],
     instinct: [],

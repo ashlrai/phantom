@@ -173,7 +173,7 @@ describe('router consumption', () => {
     run(fixture({ jobId: 'RQ-SECOND', merged: false, mergedAt: null, ciWallMs: 600_000, costUsd: null }));
     const report = calibrateRouting(readFileSync(path, 'utf8'));
     expect(report.arms).toHaveLength(1);
-    expect(report.arms[0]).toMatchObject({ arm: 'devin', jobs: 2, resolved: 2 });
+    expect(report.arms[0]).toMatchObject({ arm: 'devin', jobs: 2, resolved: 2, observedMergeRate: 0.5 });
     // No recorded predictions: the outcome side is present but unpaired.
     expect(report.arms[0]!.mergeRate).toEqual({ predicted: null, actual: null, paired: 0 });
   });

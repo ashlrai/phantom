@@ -4,6 +4,7 @@ import { defaultNodesViewDeps, readNodesView, type NodeRow } from '../../fleet/n
 import { readJobsTail, type JobsTailRead } from '../../fleet/report-ledger.js';
 import { readResourceQueue } from '../../fleet/resource-queue.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
+import { ANTIGRAVITY_EXHAUSTION, antigravityQuota } from './antigravity-quota.js';
 import { planBurnDown } from './burn-down.js';
 import { codexResetBankUpgradeHint, planBankedReset, readBankedResets } from './banked-resets.js';
 import { readCustomResources } from './custom.js';
@@ -59,6 +60,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
   const dispatch = object(status);
   const age = now - time(dispatch['last_tick']);
   const statusLanes = dispatch['schema'] === 'dispatchd.status.v1' && age >= 0 && age < 5 * MINUTE ? object(dispatch['lanes']) : {};
+  const antigravity = antigravityQuota(measured.get('antigravity'), now);
   const laneNames = [...new Set([...plan.allowances.flatMap(row => row.lane ? [row.lane] : []), ...Object.keys(statusLanes)])];
   const lanes = laneNames.map(lane => {
     const row = object(statusLanes[lane]);
@@ -68,12 +70,14 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const queued = demand?.get(lane)?.length ?? count(row['queued']);
     const recent = jobs.filter(job => job.lane === lane);
     const tokenJobs = recent.filter(job => job.tokens !== null);
+    const exhaustedUntil = (lane === 'agy' || lane === 'agy-neon') ? antigravity.reset_at : null;
     return { lane, running, held, max_concurrency: cap, queued_jobs: queued,
       jobs_sampled: ledger.text === null ? null : recent.length,
       token_jobs_sampled: ledger.text === null ? null : tokenJobs.length,
       minutes_per_job: recent.length ? recent.reduce((sum, job) => sum + job.minutes, 0) / recent.length : null,
       tokens_per_job: tokenJobs.length ? tokenJobs.reduce((sum, job) => sum + job.tokens!, 0) / tokenJobs.length : null,
-      target_concurrency: null as number | null, additional_slots: null as number | null };
+      target_concurrency: exhaustedUntil ? 0 : null as number | null, additional_slots: exhaustedUntil ? 0 : null as number | null,
+      ...(exhaustedUntil ? { reason: ANTIGRAVITY_EXHAUSTION, reset_at: exhaustedUntil } : {}) };
   });
   const laneByName = new Map(lanes.map(lane => [lane.lane, lane]));
   const allowances = plan.allowances.map(row => {
@@ -114,6 +118,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
   const reserved = new Set<string>(), plannedJobs = new Map<string, number>();
   for (const name of ordered) {
     const lane = laneByName.get(name)!;
+    if (lane.reason === ANTIGRAVITY_EXHAUSTION) continue;
     const candidates = allowances.filter(row => row.lane === name);
     const active = candidates.filter(row => row.action === 'burn' && row.remaining !== null && row.jobs_per_slot !== null &&
       row.jobs_per_slot > 0 && row.estimated_quota_per_job !== null);
@@ -167,6 +172,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
   const resetReason = resets?.unknown_reason;
   const resetHint = codexResetBankUpgradeHint(resetReason);
   return { schema: FLEET_RESOURCE_PLAN_SCHEMA, generated_at: new Date(now).toISOString(),
+    antigravity,
     ...(resetReason ? { codex_reset_bank: { count: null, unknown_reason: resetReason, ...(resetHint ? { hint: resetHint } : {}) } } : {}),
     reset_bank_deadlines: resets?.grants?.map(({ expires_at, count, kind }) => ({ expires_at, count, kind })) ?? null,
     reset_proposal: resetProposal,

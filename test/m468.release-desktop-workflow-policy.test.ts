@@ -94,7 +94,7 @@ const actionRefs = [...workflow.matchAll(/^\s*-?\s*uses:\s*([^\s#]+)(?:\s+#.*)?$
 
 describe('M468 desktop release workflow supply-chain policy', () => {
   it('pins every third-party action to a full immutable commit', () => {
-    expect(actionRefs).toHaveLength(6);
+    expect(actionRefs).toHaveLength(8);
     for (const ref of actionRefs) {
       expect(ref, `mutable action ref: ${ref}`).toMatch(
         /^[a-z0-9_.-]+\/[a-z0-9_.-]+@[0-9a-f]{40}$/i,
@@ -108,6 +108,8 @@ describe('M468 desktop release workflow supply-chain policy', () => {
       'dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4',
       'actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809',
       'tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5',
+      'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683',
+      'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
     ]);
   });
 
@@ -300,7 +302,9 @@ describe('M468 desktop release workflow supply-chain policy', () => {
     expect(workflow).toContain('Tag protection for `refs/tags/desktop-v*` is necessary but not sufficient');
     expect(workflow).toContain('historical commit whose workflow predates');
     expect(buildJob.strategy?.['fail-fast']).toBe(false);
-    expect(Object.keys(parsedWorkflow.jobs ?? {})).toEqual(['build']);
+    // The only other job is the read-only post-build self-check; it uploads nothing.
+    expect(Object.keys(parsedWorkflow.jobs ?? {})).toEqual(['build', 'self-check']);
+    expect(parsedWorkflow.jobs?.['self-check']?.permissions).toEqual({ contents: 'read' });
     expect(buildMatrix).toEqual([
       {
         os: 'macos-latest',

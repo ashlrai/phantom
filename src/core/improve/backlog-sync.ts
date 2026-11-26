@@ -5,6 +5,13 @@
  * deterministic backlog (the item was chosen by priority and file order, not
  * by a model). Idempotent: a task already registered is skipped.
  *
+ * The `pr` event names the PR that can still carry the work to a merge. When
+ * cloud intake has superseded the task's cloud PR (`supersededBy`), that is
+ * the fleet App PR — the cloud PR is already closed by design, so its own
+ * 'closed' state must not read as a dead proposal, and the fleet PR's number
+ * is what `phm improve measure`, the revert journal and post-merge
+ * observation all need to follow.
+ *
  * `syncCloudBacklogOutcomes` runs the same registration `phm improve
  * sync-backlog` does, as a total function the cloud scheduler can call on its
  * hourly tick: without it the ledger only learns about backlog PRs when an
@@ -22,7 +29,8 @@ export const BACKLOG_SOURCE_RULE = 'cloud-backlog';
 export const backlogProposalId = (taskId: string) => createHash('sha256').update(`cloud-task:${taskId}`).digest('hex').slice(0, 10);
 
 export function backlogRegistrations(
-  tasks: readonly Pick<CloudTaskV1, 'id' | 'repo' | 'title' | 'pr' | 'backlogItemId'>[],
+  tasks: readonly (Pick<CloudTaskV1, 'id' | 'repo' | 'title' | 'pr' | 'backlogItemId'> &
+    Partial<Pick<CloudTaskV1, 'state' | 'supersededBy'>>)[],
   items: readonly CloudBacklogItem[],
   records: readonly LedgerRecord[],
 ): LedgerEvent[] {
@@ -31,14 +39,28 @@ export function backlogRegistrations(
   const out: LedgerEvent[] = [];
   for (const task of tasks) {
     const item = task.backlogItemId ? byId.get(task.backlogItemId) : undefined;
-    if (!item?.metric || !task.pr || task.pr.state === 'closed') continue;
+    if (!item?.metric) continue;
+    // The PR that can still carry the work to a merge: once cloud intake
+    // supersedes the cloud PR, the fleet App PR is the carrier and the cloud
+    // PR's own 'closed' state is expected, not dead. task.state is the
+    // tracker's verdict on that carrier — only an open or merged fleet PR
+    // still owes this proposal its outcome.
+    const carrier = task.supersededBy ?? null;
+    let prNumber: number;
+    if (carrier) {
+      if (task.state !== 'pr-open' && task.state !== 'merged') continue;
+      prNumber = carrier.number;
+    } else {
+      if (!task.pr || task.pr.state === 'closed') continue;
+      prNumber = task.pr.number;
+    }
     const proposalId = backlogProposalId(task.id);
     if (registered.has(proposalId)) continue;
     registered.add(proposalId);
     out.push(
       { type: 'registered', proposalId, title: item.title.slice(0, 200), proposalKind: kindOf(item.area),
         source: { kind: 'deterministic', rule: BACKLOG_SOURCE_RULE }, metric: item.metric, predictedDelta: null },
-      { type: 'pr', proposalId, repository: task.repo, number: task.pr.number },
+      { type: 'pr', proposalId, repository: task.repo, number: prNumber },
     );
   }
   return out;
