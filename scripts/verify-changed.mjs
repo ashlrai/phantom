@@ -148,6 +148,8 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     snapFiles: changed.filter((path) => existing.has(path) && /\.snap$/i.test(path)),
     patchFiles: changed.filter((path) => existing.has(path) && /\.(?:patch|diff)$/i.test(path)),
     htmlFiles: changed.filter((path) => existing.has(path) && HTML_FILE.test(path) && !path.startsWith('test/fixtures/')),
+    seatbeltFiles: changed.filter((path) => existing.has(path) && /\.sb$/i.test(path)),
+    mdcFiles: changed.filter((path) => existing.has(path) && /\.mdc$/i.test(path)),
     detachedScriptFiles: changed.filter((path) => existing.has(path) && DETACHED_SCRIPT_TREE.test(path) && DETACHED_SCRIPT_FILE.test(path)),
     contribRouterTypecheck: changed.some((path) =>
       (path.startsWith(`${CONTRIB_ROUTER_DIR}/`) && ROUTER_PROGRAM_FILE.test(path)) ||
@@ -1005,6 +1007,67 @@ export function runYamlSyntaxCheck(root, files, spawn = spawnSync) {
   return true;
 }
 
+/**
+ * `.mdc` files are agent rule files (Cursor rules under .cursor/rules/)
+ * whose optional YAML frontmatter — the `---` fenced block the rule
+ * loader reads for description/globs/alwaysApply — no other gate step
+ * parses: eslint's JS/TS globs, the markdown docs check's curated list and
+ * every tsconfig skip them, and the markdown body itself has no grammar
+ * worth a step. A file that opens with a `---` line promises frontmatter:
+ * an unterminated fence or a block the yaml parser rejects fails here,
+ * the same rejection the loader's own YAML read applies. Files without a
+ * leading fence are plain markdown and pass untouched. The child shares
+ * the yaml package and its SKIP preflight with the .yaml/.yml check.
+ */
+const MDC_SYNTAX_CHECK = `import { readFileSync } from 'node:fs';
+import pkg from 'yaml';
+const { parseAllDocuments } = pkg;
+const firstLine = (error) => String(error && error.message ? error.message : error).split('\\n')[0];
+const FENCE = /^---[ \\t]*$/;
+const CLOSE = /^(?:---|\\.\\.\\.)[ \\t]*$/;
+let failed = false;
+for (const path of process.argv.slice(1)) {
+  const errors = [];
+  try {
+    const lines = readFileSync(path, 'utf8').replace(/^\\uFEFF/, '').split('\\n').map((line) => line.replace(/\\r$/, ''));
+    if (FENCE.test(lines[0] ?? '')) {
+      let close = -1;
+      for (let index = 1; index < lines.length; index += 1) {
+        if (CLOSE.test(lines[index] ?? '')) { close = index; break; }
+      }
+      if (close === -1) {
+        errors.push(new Error('unterminated frontmatter fence'));
+      } else {
+        const frontmatter = lines.slice(1, close).join('\\n');
+        for (const doc of parseAllDocuments(frontmatter)) errors.push(...doc.errors);
+      }
+    }
+  } catch (error) {
+    errors.push(error);
+  }
+  for (const error of errors.slice(0, 8)) console.error(path + ': ' + firstLine(error));
+  if (errors.length > 8) console.error(path + ': ' + (errors.length - 8) + ' more errors');
+  if (errors.length) failed = true;
+}
+process.exit(failed ? 1 : 0);
+`;
+
+/** Syntax-check changed .mdc agent-rule files' YAML frontmatter; false on any parse failure. */
+export function runMdcSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn(process.execPath, ['--input-type=module', '-e', MDC_SYNTAX_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL mdc frontmatter syntax check');
+    return false;
+  }
+  console.log('PASS mdc frontmatter syntax check');
+  return true;
+}
+
 const TOML_SYNTAX_CHECK = `import { readFileSync } from 'node:fs';
 import pkg from 'smol-toml';
 const { parse } = pkg;
@@ -1128,6 +1191,140 @@ export function runSnapSyntaxCheck(root, files, read = readFileSync) {
     return false;
   }
   console.log('PASS snap syntax check');
+  return true;
+}
+
+/**
+ * `.sb` files are macOS Seatbelt (SBPL) sandbox profiles — the GATES-v3
+ * confinement boundary the fleet lanes run under (contrib/mac/
+ * host-integration/*.sb, contrib/mac/sandbox/*.sb). sandbox-exec compiles a
+ * profile at launch; a truncated or garbled one fails inside the launcher,
+ * far from the edit that broke it, and no other gate step reads the
+ * grammar: eslint's JS/TS globs, every tsconfig include, the shebang
+ * buckets and the per-extension parsers all skip it. The language is
+ * s-expressions — `(version 1)`, `(allow file-read* (subpath "..."))`,
+ * `(deny ...)`, `(define (wp n) ...)`, `(require-all ...)`, regex literals
+ * `#"..."` and `;` comments — so the grammar step here is a structural
+ * parse: balanced parentheses, terminated string and regex literals, and
+ * every top-level form a proper list headed by an atom. Operation names
+ * and filter semantics stay unchecked on purpose — SBPL grows new
+ * operations and a whitelist would reject valid future profiles; what
+ * sandbox-exec's own reader rejects first is exactly what this catches.
+ * Like the snap check the parse runs in-process, so there is no preflight
+ * or SKIP path.
+ */
+const SEATBELT_MAX_DEPTH = 1000;
+
+/** First structural error in SBPL text as {line, column, message}, or null. Never throws. */
+function seatbeltSyntaxError(text) {
+  const tokens = [];
+  let i = 0;
+  let line = 1;
+  let column = 1;
+  const length = text.length;
+  const space = (c) => c === ' ' || c === '\t' || c === '\r' || c === '\f' || c === '\v' || c === '\n';
+  while (i < length) {
+    const ch = text[i];
+    if (ch === '\n') { line += 1; column = 1; i += 1; continue; }
+    if (space(ch)) { column += 1; i += 1; continue; }
+    if (ch === ';') {
+      while (i < length && text[i] !== '\n') { i += 1; column += 1; }
+      continue;
+    }
+    if (ch === '(' || ch === ')') {
+      tokens.push({ kind: ch, line, column });
+      i += 1; column += 1;
+      continue;
+    }
+    const startLine = line;
+    const startColumn = column;
+    const quoted = ch === '"' ? 'string' : ch === '#' && text[i + 1] === '"' ? 'regex' : null;
+    if (quoted !== null) {
+      i += quoted === 'regex' ? 2 : 1;
+      column += quoted === 'regex' ? 2 : 1;
+      let closed = false;
+      while (i < length) {
+        const c = text[i];
+        if (c === '\\') {
+          i += 1; column += 1;
+          if (i < length) {
+            if (text[i] === '\n') { line += 1; column = 1; i += 1; }
+            else { i += 1; column += 1; }
+          }
+          continue;
+        }
+        if (c === '"') { i += 1; column += 1; closed = true; break; }
+        if (c === '\n') { line += 1; column = 1; i += 1; continue; }
+        i += 1; column += 1;
+      }
+      if (!closed) return { line: startLine, column: startColumn, message: `unterminated ${quoted} literal` };
+      tokens.push({ kind: quoted, line: startLine, column: startColumn });
+      continue;
+    }
+    while (i < length) {
+      const c = text[i];
+      if (space(c) || c === '(' || c === ')' || c === ';' || c === '"') break;
+      i += 1; column += 1;
+    }
+    tokens.push({ kind: 'atom', line: startLine, column: startColumn });
+  }
+  let pos = 0;
+  const parse = (depth) => {
+    if (depth > SEATBELT_MAX_DEPTH) {
+      const tok = tokens[pos];
+      return { error: { line: tok ? tok.line : line, column: tok ? tok.column : column, message: `nesting deeper than ${SEATBELT_MAX_DEPTH} levels` } };
+    }
+    const tok = tokens[pos];
+    if (!tok || tok.kind !== '(') {
+      if (tok && tok.kind === ')') return { error: { line: tok.line, column: tok.column, message: 'unexpected )' } };
+      if (tok) pos += 1;
+      return {};
+    }
+    const open = tok;
+    pos += 1;
+    const head = tokens[pos];
+    if (!head) return { error: { line: open.line, column: open.column, message: 'unclosed list' } };
+    if (head.kind === ')') { pos += 1; return {}; }
+    if (head.kind !== 'atom') return { error: { line: head.line, column: head.column, message: 'list head must be an atom' } };
+    pos += 1;
+    while (pos < tokens.length && tokens[pos].kind !== ')') {
+      const element = parse(depth + 1);
+      if (element.error) return element;
+    }
+    if (pos >= tokens.length) return { error: { line: open.line, column: open.column, message: 'unclosed list' } };
+    pos += 1;
+    return {};
+  };
+  while (pos < tokens.length) {
+    if (tokens[pos].kind !== '(') {
+      const tok = tokens[pos];
+      return { line: tok.line, column: tok.column, message: 'top-level form must be a list' };
+    }
+    const form = parse(0);
+    if (form.error) return form.error;
+  }
+  return null;
+}
+
+/** Syntax-check changed .sb Seatbelt profiles; false on the first structural error per file. */
+export function runSeatbeltSyntaxCheck(root, files, read = readFileSync) {
+  const failures = [];
+  for (const path of files) {
+    let text;
+    try {
+      text = read(resolve(root, path), 'utf8');
+    } catch (error) {
+      failures.push(`${path}: unreadable (${String(error && error.message ? error.message : error).split('\n')[0]})`);
+      continue;
+    }
+    const error = seatbeltSyntaxError(text);
+    if (error) failures.push(`${path}:${error.line}:${error.column}: ${error.message}`);
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`FAIL seatbelt syntax check: ${failure}`);
+    return false;
+  }
+  console.log('PASS seatbelt syntax check');
   return true;
 }
 
@@ -2057,6 +2254,21 @@ function main() {
     if (!html.ok) {
       console.log(`SKIP html payload syntax check: ${html.reason}`);
     } else if (!runHtmlPayloadCheck(root, selection.htmlFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (selection.seatbeltFiles.length === 0) {
+    console.log('PASS seatbelt syntax check skipped: no .sb change');
+  } else if (!runSeatbeltSyntaxCheck(root, selection.seatbeltFiles)) {
+    process.exitCode = 1;
+  }
+  if (selection.mdcFiles.length === 0) {
+    console.log('PASS mdc frontmatter syntax check skipped: no .mdc change');
+  } else {
+    const mdc = parserPackagePreflight(root, 'yaml');
+    if (!mdc.ok) {
+      console.log(`SKIP mdc frontmatter syntax check: ${mdc.reason}`);
+    } else if (!runMdcSyntaxCheck(root, selection.mdcFiles)) {
       process.exitCode = 1;
     }
   }
