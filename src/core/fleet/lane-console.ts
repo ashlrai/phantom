@@ -309,14 +309,14 @@ interface ParsedTsv {
   invalid: number;
   /** Dispatcher rows recognized but carrying no lane hint — open market rows the dispatcher may place on any lane. */
   unhinted: number;
-  /** The validated job id and repo of each lane-open row, for supply classification without a lane. */
-  unhintedRows: { id: string; repo: string }[];
+  /** The validated job id, repo and tier of each lane-open row. */
+  unhintedRows: { id: string; repo: string; tier: string }[];
 }
 
 /** A recognized dispatcher row: attributed to a lane, lane-open, or market-invalid. */
 type DispatcherRow =
   | { readonly kind: 'row'; readonly row: FleetLaneQueueRow }
-  | { readonly kind: 'open'; readonly id: string; readonly repo: string }
+  | { readonly kind: 'open'; readonly id: string; readonly repo: string; readonly tier: string }
   | { readonly kind: 'drop' }
   | null;
 
@@ -369,7 +369,7 @@ function dispatcherQueueRow(cells: string[]): DispatcherRow {
   if (spec === 'invalid') return { kind: 'drop' };
   const resolved = resolveReadyMarketRow(cells, spec ?? {});
   if (resolved === null) return { kind: 'drop' };
-  if (resolved.hint === null) return { kind: 'open', id, repo };
+  if (resolved.hint === null) return { kind: 'open', id, repo, tier };
   return { kind: 'row', row: { id, status: 'READY', pool: resolved.hint, tier, repo, title: prompt } };
 }
 
@@ -383,7 +383,7 @@ export function parseReadyTsv(text: string): ParsedTsv {
   let dropped = 0;
   let invalid = 0;
   let unhinted = 0;
-  const unhintedRows: { id: string; repo: string }[] = [];
+  const unhintedRows: ParsedTsv['unhintedRows'] = [];
   let header: (keyof FleetLaneQueueRow)[] | null = null;
 
   const lines = text.split('\n');
@@ -415,7 +415,10 @@ export function parseReadyTsv(text: string): ParsedTsv {
     if (header === null) {
       const dialect = dispatcherQueueRow(cells);
       if (dialect !== null) {
-        if (dialect.kind === 'open') { unhinted++; unhintedRows.push({ id: dialect.id, repo: dialect.repo }); }
+        if (dialect.kind === 'open') {
+          unhinted++;
+          unhintedRows.push({ id: dialect.id, repo: dialect.repo, tier: dialect.tier });
+        }
         else if (dialect.kind === 'drop') { dropped++; invalid++; }
         else rows.push(dialect.row);
         continue;
@@ -907,7 +910,6 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
 
   const mergeCounts = new Map<string, number>();
   const candidates: Array<{ pool: string; job: string | null; pr: string | null }> = [];
-  let sawMergeEvidence = sources.ledger.state === 'healthy';
   for (const event of ledgerEvents) {
     const at = eventTimestamp(event.mergedAt ?? event.at);
     if (!event.merge || at === null || at > now.getTime() || at < cutoff) continue;
@@ -917,11 +919,9 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   }
   // ready.tsv LAND rows with their own timestamps count too — some routers
   // export the whole queue, lands included, in one file.
-  let sawReadyLand = false;
   for (const row of queueRows) {
     const at = eventTimestamp(row.at);
     if (!MERGE_WORDS.has(row.status.toLowerCase()) || at === null || at > now.getTime() || at < cutoff) continue;
-    sawReadyLand = true;
     candidates.push({ pool: row.pool, job: row.id, pr: null });
   }
   // Prefer PR identity; a legacy job-only observation of that PR is a duplicate.
@@ -934,7 +934,6 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     if (key) seen.add(key);
     mergeCounts.set(candidate.pool, (mergeCounts.get(candidate.pool) ?? 0) + 1);
   }
-  sawMergeEvidence = sawMergeEvidence || sawReadyLand || mergeCounts.size > 0;
 
   // Starts = distinct jobs launched in the window, for the wasteful verdict.
   const startJobs = new Map<string, Set<string>>();
@@ -983,7 +982,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
         ? liveFromTsv.get(lane) ?? (sources.queue.state === 'healthy' && liveFromTsv.size > 0 ? 0 : null)
         : null);
     const mergeCount = mergeCounts.get(lane) ?? 0;
-    const mergesPerHour = !sawMergeEvidence ? null
+    const mergesPerHour = mergeCount === 0 && sources.ledger.state !== 'healthy' ? null
       : Math.round((mergeCount / (mergeWindowMs / 3_600_000)) * 100) / 100;
     const row = holds.get(lane);
     const hold: FleetLaneView['hold'] = row ? {

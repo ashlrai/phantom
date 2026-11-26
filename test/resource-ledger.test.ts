@@ -6,12 +6,12 @@ import { cmdResources } from '../src/cli/resources.js';
 
 const at = (hour: number) => new Date(Date.UTC(2026, 9, 29) + hour * 3_600_000).toISOString();
 const reading = (remaining: number, hour: number, extra: Partial<BudgetReading> = {}): BudgetReading => ({
-  pool: 'codex-cmp', bucket: 'weeklyPct', remaining, timestamp: at(hour), resetAt: at(12), source: 'log', ...extra,
+  pool: 'codex-personal', bucket: 'weeklyPct', remaining, timestamp: at(hour), resetAt: at(12), source: 'log', ...extra,
 });
 const snapshot: ResourceSnapshot = { generatedAt: at(10), backends: [{ backend: 'codex', availability: 'open',
   usedPct: 25, cap: 100, capUnit: 'requests', capWindow: '5h', resetsAt: Date.parse(at(14)) / 1000,
   costPerMTokenOut: 0, p50LatencyMs: null, snapshotAt: at(10), reason: '', backoffUntilMs: null }] };
-const bucket = (rows: BudgetReading[], hour = 11.75) => projectPoolBudgets(rows, new Date(at(hour))).pools['codex-cmp'].buckets.weeklyPct!;
+const bucket = (rows: BudgetReading[], hour = 11.75) => projectPoolBudgets(rows, new Date(at(hour))).pools['codex-personal'].buckets.weeklyPct!;
 vi.mock('../src/core/config.js', () => ({ loadConfig: () => ({}) }));
 vi.mock('../src/core/fabric/resource-monitor.js', () => ({ getResourceSnapshot: vi.fn() }));
 vi.mock('../src/core/fleet/pool-budget-store.js', () => ({ readPoolBudgets: vi.fn() }));
@@ -32,13 +32,13 @@ describe('resource ledger', () => {
   });
   it('projects exhaustion before reset without conflating accounts, credits or monitor windows', () => {
     const ledger = buildResourceLedger(snapshot, projectPoolBudgets([reading(30, 9), reading(10, 10),
-      reading(40, 10, { bucket: 'credits', resetAt: null })], new Date(at(10))));
+      reading(40, 10, { bucket: 'credits', resetAt: null }), reading(1, 10, { pool: 'codex-cmp' })], new Date(at(10))));
     const codex = ledger.backends.find(b => b.backend === 'codex')!;
     expect(codex.monitor).toEqual({ leftPct: 75, resetAt: at(14), observedAt: at(10) });
     expect(codex.pools[0]?.buckets.weeklyPct).toMatchObject({ remaining: 10, resetAt: at(12),
       burnPerHour: { last2: 20 }, projectedExhaustion: at(10.5) });
     expect(codex.pools[0]?.remainingCredits).toBe(40);
-    expect(codex.pools[1]?.remainingWeeklyPct).toBeNull();
+    expect(codex.pools.map(pool => pool.pool)).toEqual(['codex-personal']);
     expect(bucket([reading(30, 9), reading(20, 10)]).projectedExhaustion).toBeNull();
     expect(buildResourceLedger(snapshot, projectPoolBudgets([], new Date(at(14)))).backends[0]?.monitor.leftPct).toBeNull();
   });
@@ -67,7 +67,7 @@ describe('resource ledger', () => {
     expect(projectPoolBudgets(rows, new Date(at(11.5))).pools['local-omlx'].buckets.capacity).toMatchObject({
       remaining: 4, burnPerHour: { last2: null }, usageInLastHourBeforeReset: null });
   });
-  it('CLI emits one ledger JSON object from existing readers and preserves plain --json', async () => {
+  it('CLI emits one ledger JSON object and includes Antigravity status in the plain snapshot', async () => {
     const { getResourceSnapshot } = await import('../src/core/fabric/resource-monitor.js');
     const { readPoolBudgets } = await import('../src/core/fleet/pool-budget-store.js');
     vi.mocked(getResourceSnapshot).mockResolvedValue(snapshot);
@@ -79,6 +79,10 @@ describe('resource ledger', () => {
     expect(JSON.parse(log.mock.calls[0]![0] as string)).toEqual(buildResourceLedger(snapshot, budgets));
     log.mockClear();
     expect(await cmdResources(['--json'])).toBe(0);
-    expect(JSON.parse(log.mock.calls[0]![0] as string)).toEqual(snapshot);
+    expect(JSON.parse(log.mock.calls[0]![0] as string)).toEqual({
+      ...snapshot,
+      antigravity: { source: 'antigravity-cli-status', execution_context: 'unknown',
+        groups: null, reset_at: null, reason: 'source-returned-nothing' },
+    });
   });
 });

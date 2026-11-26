@@ -211,6 +211,8 @@ and the Phantom console route return at once. See AUTHORITY.md §3.
 of `switch`, `stop`, `clear-stop`, `revoke`, `grant`, `re-approve`. Every POST
 passes the Phantom server's dispatch and mutation-token gates. A grant action names the
 digest of a draft the server served; the server signs exactly that draft.
+The draft response includes display-only `ownerDisplayName` from the local
+`user.name` setting (or “the owner”); it is not part of the payload or digest.
 
 ## Phase 0: `ashlr authority setup`
 

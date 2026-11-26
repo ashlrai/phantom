@@ -203,11 +203,12 @@ async function launchWithGate(req: CloudLaunchRequest | CloudInternalLaunch, gat
       const arm = block.noteIds.length > 0 ? (deps.lessonArm ?? lessonArm)(task.id) : 'served';
       if (block.noteIds.length > 0) task.lessons = { arm, noteIds: [...block.noteIds].slice(0, 64) };
       if (arm === 'served' && block.noteIds.length > 0) void recordKnowledgeHits(block.noteIds);
-      const brain = await cloudBrainContext(task.repo, checkout.path, `${task.title}\n${task.prompt}`).catch(() => '');
-      const lessons = [arm === 'served' ? block.text : '', brain].filter(Boolean).join('\n\n');
+      const brain = await cloudBrainContext(task.repo, checkout.path, `${task.title}\n${task.prompt}`).catch(() => ({ text: '', nodeIds: [] }));
+      const lessons = [arm === 'served' ? block.text : '', brain.text].filter(Boolean).join('\n\n');
       const launched = await launchCloudSession({ cwd: checkout.path, prompt: buildCloudPrompt(task, lessons, playbook.block, companionToolsBlock(declaredMcpServers(checkout.path))) }, deps.launcher);
       if (!launched.ok) return fail(launched.failure, launched.message);
       Object.assign(task, {
+        wikiSlice: { bytes: Buffer.byteLength(brain.text), nodeIds: brain.nodeIds },
         state: 'running',
         sessionId: launched.sessionId,
         sessionUrl: launched.url,

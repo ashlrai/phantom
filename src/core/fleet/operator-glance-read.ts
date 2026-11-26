@@ -99,7 +99,7 @@ function codexUsage(nowMs: number): { usedPct: number | null; resetsAt: string |
   try {
     const home = homedir();
     const personalHome = join(home, '.codex-2');
-    const usages = collectCodexSessionUsages({ env: { CODEX_HOME: personalHome, CODEX_HOME_ALT: personalHome }, homeDir: home });
+    const usages = collectCodexSessionUsages({ env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: personalHome }, homeDir: home });
     const report = buildCodexResourceReport(usages.map((usage) => ({ ...usage, accountId: 'codex-personal', slot: 'secondary' as const })), [], nowMs);
     const account = report.resources.find((resource) => resource.state === 'current' && resource.weekly?.usedPct != null
       && (resource.weekly.windowMinutes === null || resource.weekly.windowMinutes > 315)

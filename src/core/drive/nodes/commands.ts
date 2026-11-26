@@ -132,7 +132,8 @@ function claimOf(flags: Map<string, string>): JobClaim {
  * profile value comes from a parseState-validated record (validId owners,
  * validCap caps, bounded-integer slots), so the hint can never carry shell
  * metacharacters into a paste. `phm nodes` prints the same hint for an expired
- * local session, so both surfaces restore the full advertised profile. */
+ * local session and `phm node status`/`list` names it per expired node, so
+ * every surface restores the full advertised profile. */
 export function joinHintCommand(nodeId: string, profile: { owners?: string[]; caps?: string[]; slots?: number } | null): string {
   if (!validId(nodeId)) return 'phm node join --node <id> --owner <scope>';
   return ['phm node join', `--node ${nodeId}`,

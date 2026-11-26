@@ -30,7 +30,7 @@ class ClaudeRecovery(unittest.TestCase):
         self.assertEqual(claude_recoveries(rows[:2] * 2, now), {})
         self.assertEqual(claude_recoveries(rows + [dict(rows[2], ts=rows[3]['ts']), rows[3]], now), {})
         for change in (dict(empty=False), dict(empty=None), dict(exit_code=0), dict(exit_code=True),
-                       dict(exit_code=None), dict(pool_error='authentication'), dict(lane='codex-cmp'),
+                       dict(exit_code=None), dict(pool_error='authentication'), dict(lane='codex-personal'),
                        dict(ts='bad'), dict(ts='2000-01-01T00:00:00Z')):
             with self.subTest(change=change):
                 self.assertEqual(claude_recoveries(rows[:-1] + [dict(rows[-1], **change)], now), {})
@@ -40,7 +40,7 @@ class ClaudeRecovery(unittest.TestCase):
                          ('FIXUP', '42', 'abcdef0'))
 
     def fixture(self, slot=None, needs=None):
-        slots = held_lanes(); slots.update(claude=lane_slot(), **{'codex-cmp': slot or lane_slot()})
+        slots = held_lanes(); slots.update(claude=lane_slot(), **{'codex-personal': slot or lane_slot()})
         tmp = build(slots=slots); self.addCleanup(tmp.cleanup)
         home = Path(tmp.name).resolve(); q = home / '.ashlr-runs/queue'
         queue_job(home, JOB, 'claude')
@@ -62,12 +62,12 @@ class ClaudeRecovery(unittest.TestCase):
                 before = ledger.read_text()
                 result = tick(home, env); self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue(dispatched(home, CHILD))
-                self.assertEqual((q / f'run/{CHILD}.line').read_text().split('\t')[2], 'codex-cmp')
+                self.assertEqual((q / f'run/{CHILD}.line').read_text().split('\t')[2], 'codex-personal')
                 self.assertTrue(ledger.read_text().startswith(before))
                 self.assertEqual((home / f'.ashlr-runs/{JOB}.log').read_text(), 'original failure evidence\n')
                 self.assertIn(CHILD + ' (', (q / f'prompts/{CHILD}.md').read_text())
                 with ledger.open('a') as out:
-                    out.write(json.dumps(dict(event='finish', job=CHILD, lane='codex-cmp', empty=empty, exit_code=code)) + '\n')
+                    out.write(json.dumps(dict(event='finish', job=CHILD, lane='codex-personal', empty=empty, exit_code=code)) + '\n')
                 for _ in range(2):
                     result = tick(home, env); self.assertEqual(result.returncode, 0, result.stderr)
                 rows = list(map(json.loads, ledger.read_text().splitlines()))
@@ -85,7 +85,7 @@ class ClaudeRecovery(unittest.TestCase):
                 self.assertIn(CHILD, (q / 'ready.tsv').read_text())
                 if needs is None:
                     slots = json.loads((q / 'slots.json').read_text())
-                    slots['codex-cmp'] = lane_slot()
+                    slots['codex-personal'] = lane_slot()
                     (q / 'slots.json').write_text(json.dumps(slots))
                     (q / f'prompts/{CHILD}.md').unlink()  # interrupted prompt preparation repairs itself
                     result = tick(home, env); self.assertEqual(result.returncode, 0, result.stderr)

@@ -64,13 +64,30 @@ This does not enroll a worker, authorize overage, or reserve spend.
 | ChatGPT / Codex personal | Official native App Server reading on an explicitly configured pool home, then capacity receipts or signed-in display | [Codex App Server account limits](https://developers.openai.com/codex/app-server#account), [Codex slash commands](https://developers.openai.com/codex/cli/slash-commands) (`/status`). Not the OpenAI API balance. |
 | OpenAI promotional API credit | Agent check of the signed-in credit-grant view | [OpenAI organization usage and costs](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage) reports consumption, not promotional grant expiry. Verify the grant in [OpenAI billing](https://platform.openai.com/settings/organization/billing/credit-grants); do not use undocumented billing endpoints or infer grant balance from organization spend. |
 | OpenAI Dot (iMessage) | Agent check only when a numeric quota is actually visible | No documented quota source established. The desktop operator denies Messages; use a separately available quota-only Dot display if one exists, or leave it unknown. Do not send messages or use Codex's quota as a proxy. |
-| Google AI Ultra (personal Antigravity) | Agent captures the official interactive Antigravity CLI quota | [Antigravity `/usage` (`/quota`)](https://antigravity.google/docs/cli/commands/usage) refreshes from the backend and displays five-hour and weekly windows per model group. Record the five-hour Gemini group window applicable to the enrolled model and actual reset displayed; do not derive a reset from the clock. [`/credits`](https://antigravity.google/docs/cli/commands/credits) is a separate balance. |
+| Google AI Ultra (personal Antigravity) | Official Antigravity `cli-status` in the user's macOS GUI login session | [Antigravity `/usage` (`/quota`)](https://antigravity.google/docs/cli/commands/usage) reports remaining fractions and reset times by model group and window. Phantom does not invoke `/credits`. |
 | Google Workspace Business (Antigravity) | Separate agent check of the signed-in Workspace starter quota | [Antigravity for Workspace](https://antigravity.google/docs/workspace) describes starter access but not a paid-plan refresh entitlement. Do not copy the Ultra window to this account. |
 | Cursor | Agent check of personal usage and cycle | [Cursor Dashboard](https://cursor.com/dashboard?tab=usage); the [Cursor Admin API](https://cursor.com/docs/account/teams/admin-api) documents team usage and is not proof of this personal entitlement. |
 | Grok Bot desktop | Agent check of the separate Bot allowance and reset | [Grok Bot FAQ](https://docs.x.ai/grok-bot/faq). Do not copy the Grok Build allowance or assume a link grants a Bot balance. |
 | Devin Cloud / Devin CLI SWE-2 Flash | Official org usage and sessions, and a separate native model catalog reading for the CLI preview | [Devin API overview](https://docs.devin.ai/api-reference/overview) and [Devin CLI models](https://docs.devin.ai/cli/models). Preview availability is not a Cloud ACU balance. |
 | Z.ai GLM Coding Lite | Derived from the lane's own recorded calls; signed-in page fallback | [GLM Coding Plan](https://docs.z.ai/devpack/overview) and [subscription management](https://z.ai/manage-apikey/subscription). |
 | LM Studio and Ollama | Official loopback model inventories | [LM Studio `GET /v1/models`](https://lmstudio.ai/docs/developer/openai-compat/models) and [Ollama `GET /api/tags`](https://docs.ollama.com/api/tags). Model counts, not token caps; no request generates model output. |
+
+The resident reader runs only `agy -p "/usage" --output-format json`, with a
+30-second timeout and a zero-turn, zero-token response requirement. Evidence
+records `execution_context` as `gui-resident`, `ssh`, or `unknown`. SSH or
+unconfirmed GUI contexts do not run the CLI and report `non_gui_context`.
+The model list must include `usage.liveSources.antigravityModel` (default
+`gemini-4-neon`, with effort suffixes ignored). A response listing only
+Hydrogen and Flash cannot verify a Neon resource: it reports
+`identity_mismatch` with unknown quota. Model descriptions are used for
+validation only; raw CLI output and account identifiers are not kept.
+
+`phm resources` and `phm resources plan` show 0–1 remaining fractions and
+provider reset times for each bucket. When current evidence shows that every
+group is exhausted, the planner reports an advisory target of zero with
+`quota_exhausted_until_reset` until the first group could reopen. A reset
+does not prove the next balance, and a partially exhausted response does not
+zero the lane. AI credits remain metered and opt-in.
 
 For an agent check, give the operator or a designated agent one read-only task:
 inspect only the named, already signed-in usage surface (or use the
@@ -88,7 +105,8 @@ Each reading contains only `used`, `limit`, `observed_at`, and `reset_at`
 `expires_at`; all other keys use percent. Missing, expired, future or
 over-15-minute-old agent-check evidence is not used as a current measurement.
 Refresh from the actual surface rather than changing only the timestamp.
-For Antigravity's five-hour window, record `window_start` alongside the reset
+The Antigravity operator-entry key remains available for the swarm five-hour
+probe, separately from official Resource Live quota. Record `window_start` alongside the reset
 when the surface identifies that window (the reset minus five hours). A
 weekly window must not be recorded as a five-hour window.
 There is no automatic desktop or browser session launch.

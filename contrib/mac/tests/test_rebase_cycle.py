@@ -15,7 +15,7 @@ def job(n):
     return f'RQ-DRAIN-PHX-REB-{n:02d}'
 
 
-def prompt(n, head='a' * 40, lane='codex-cmp'):
+def prompt(n, head='a' * 40, lane='codex-personal'):
     return (f'Job {job(n)} (pool {lane}, tier work, repo phantom). Task from the Ashlr router queue, verbatim:\n\n'
             f'{job(n)} (P1, pool={lane}, tier=work, repo=phantom): '
             f'Recut https://github.com/ashlrai/phantom/pull/42 at {head}; report {job(n)}.\n\n'
@@ -80,12 +80,12 @@ class RebaseCycleTests(unittest.TestCase):
         self.assertIsNone(empty_reason(job(2), identity(2), [claim, dict(job=job(1), event='launch_terminal')], 0))
 
     def test_concurrent_dispatchers_claim_one_copy_even_with_batching_enabled(self):
-        with build(slots={'codex-cmp': lane_slot()}) as tmp:
+        with build(slots={'codex-personal': lane_slot()}) as tmp:
             home = Path(tmp).resolve(); env = launch_stubs(home)
             q = home / '.ashlr-runs/queue'
             (q / 'BATCH_OFF').unlink()
             for n in (1, 2):
-                queue_job(home, job(n), 'codex-cmp')
+                queue_job(home, job(n), 'codex-personal')
                 (q / f'prompts/{job(n)}.md').write_text(prompt(n))
             with ThreadPoolExecutor(max_workers=2) as workers:
                 results = list(workers.map(lambda _: tick(home, env), range(2)))
@@ -104,7 +104,7 @@ class RebaseCycleTests(unittest.TestCase):
 
     def test_dispatch_records_terminal_reason_and_allows_a_changed_head(self):
         for published in (False, True):
-            with self.subTest(published=published), build(slots={'codex-cmp': lane_slot()}) as tmp:
+            with self.subTest(published=published), build(slots={'codex-personal': lane_slot()}) as tmp:
                 home = Path(tmp).resolve(); env = launch_stubs(home)
                 rows = failed(1) + failed(2) + failed(3)
                 if published:
@@ -112,7 +112,7 @@ class RebaseCycleTests(unittest.TestCase):
                 ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
                 ledger.write_text(''.join(json.dumps(r) + '\n' for r in rows))
                 for n, head in ((4, 'a' * 40), (5, 'b' * 40)):
-                    queue_job(home, job(n), 'codex-cmp')
+                    queue_job(home, job(n), 'codex-personal')
                     (home / f'.ashlr-runs/queue/prompts/{job(n)}.md').write_text(prompt(n, head=head))
                 result = tick(home, env)
                 self.assertEqual(result.returncode, 0, result.stderr)

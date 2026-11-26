@@ -67,9 +67,8 @@ export interface ResourceLiveCustom {
 
 /**
  * Expiry instants are the end of the named day in America/New_York (UTC-5 in
- * late November): CMP runs through Nov 25 and Devin Flash through Nov 30, 2026.
+ * late November): Devin Flash runs through Nov 30, 2026.
  */
-export const CODEX_CMP_EXPIRES_AT = '2026-11-26T05:00:00.000Z';
 export const DEVIN_FLASH_EXPIRES_AT = '2026-12-01T05:00:00.000Z';
 
 export const RESOURCE_LIVE_ALLOWANCES = [
@@ -78,7 +77,6 @@ export const RESOURCE_LIVE_ALLOWANCES = [
   { id: 'claude-api', label: 'Claude API included credit', lane: 'claude-api', class: 'metered-included', sensor_lane: 'claude-api', expires_at: null },
   { id: 'codex-personal', label: 'ChatGPT / Codex personal', lane: 'codex-personal', class: 'included', sensor_lane: 'codex-personal', expires_at: null },
   { id: 'codex-personal-5h', label: 'ChatGPT / Codex personal · 5-hour', lane: 'codex-personal', class: 'included', sensor_lane: null, expires_at: null },
-  { id: 'codex-cmp', label: 'Codex CMP', lane: 'codex-cmp', class: 'expiring', sensor_lane: 'codex-cmp', expires_at: CODEX_CMP_EXPIRES_AT },
   { id: 'openai-api', label: 'OpenAI API promotional credit', lane: null, class: 'metered-included', sensor_lane: null, expires_at: null },
   { id: 'devin', label: 'Devin Cloud', lane: 'devin', class: 'included', sensor_lane: 'devin', expires_at: null },
   { id: 'devin-flash', label: 'Devin CLI · SWE-2 Flash', lane: 'devin-flash', class: 'expiring', sensor_lane: 'devin-swe-flash', expires_at: DEVIN_FLASH_EXPIRES_AT },
@@ -110,9 +108,13 @@ export type ResourceLiveReason =
   | 'source-timeout'
   | 'invalid-reading'
   | 'needs-signin'
+  | 'non_gui_context'
+  | 'identity_mismatch'
   | 'window-reset';
 
 export interface ResourceLiveReading {
+  groups?: AntigravityUsageGroup[];
+  execution_context?: AntigravityExecutionContext;
   account_id?: string;
   model?: string;
   window_start?: string;
@@ -135,6 +137,13 @@ export interface ResourceLiveReading {
   observed_at: string | null;
   stale_after: string | null;
   reason: ResourceLiveReason | null;
+}
+
+export type AntigravityExecutionContext = 'gui-resident' | 'ssh' | 'unknown';
+
+export interface AntigravityUsageGroup {
+  name: string;
+  buckets: { id: string; window: string; remaining: number; reset_at: string }[];
 }
 
 export type BurnDownAction = 'burn' | 'steady' | 'hold' | 'reserve';

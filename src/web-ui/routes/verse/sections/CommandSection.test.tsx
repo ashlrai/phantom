@@ -319,7 +319,9 @@ describe('CommandSection — raising past the grant', () => {
     expect(posted).toEqual([]);
     await waitFor(() => expect(within(sheet).getByText(/30 days, until/)).toBeInTheDocument());
     expect(within(sheet).getByRole('cell', { name: 'ashlrai/ashlrcode' })).toBeInTheDocument();
-    expect(within(sheet).getByText(/keeps 40% for you/)).toBeInTheDocument();
+    const spend = within(sheet).getByRole('region', { name: 'Spend' });
+    expect(within(spend).getByText('claude-a').closest('li'))
+      .toHaveTextContent('claude-a: keep 40% for the owner · permitted roles: judge, leader');
     expect(within(sheet).getByText(/Rollout ladder \(4 stages/)).toBeInTheDocument();
     await user.click(within(sheet).getByRole('button', { name: 'Approve with Touch ID' }));
     await waitFor(() => expect(posted.map((p) => p.body['action'])).toEqual(['grant', 'switch']));

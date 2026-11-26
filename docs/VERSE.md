@@ -1584,7 +1584,7 @@ merges in the last hour from GitHub (`org:ashlrai`), personal Codex used %
 (read from the Codex CLI's own session logs for the personal account; no auth
 file is opened), and leader passes.
 
-The lanes table lists `codex-cmp`, `codex-personal`, `claude`, `devin`,
+The lanes table lists `codex-personal`, `claude`, `devin`,
 `claude-api` and `codex-local`, with running, target, queued and held counts,
 tokens in 1h and merged in 24h. You can also inspect workers, publishes, the
 event tail and the inbox tail. A dash means **not known**, never zero. A quiet
@@ -1603,7 +1603,7 @@ Use **Queue** (`queue/DISABLE`) to pause all new dispatches while running worker
 finish. `PAUSE`, `ORCH_OFF`, `OPUS_LEADER_OFF`, and `PUBLISH_HOLD` control their
 named activities under `~/.ashlr-runs`.
 
-In **Settings ▸ Desktop ▸ Updates**, you can see the running version and short
+In **Settings ▸ Updates**, you can see the running version and short
 commit, how far it is behind or ahead of `origin/master`, whether a fast-forward
 is possible, and the native updater phase. Use **Check now** to refresh. The
 view also lists up to three local change paths when available, with a count of

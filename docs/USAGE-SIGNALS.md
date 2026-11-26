@@ -32,7 +32,7 @@ npx tsx src/cli/usage-signal.ts --directory /absolute/private/ops \
 
 After compilation, use `node dist/cli/usage-signal.js` with the same options.
 Without `--pool`, all five pools are selected. Repeat `--pool` to select a subset:
-`grok-ultra`, `codex-cmp`, `codex-personal`, `claude-max`, `terra`.
+`grok-ultra`, `codex-personal`, `claude-max`, `terra`.
 
 The store must be an owned canonical directory with mode 0700. Existing
 `fleet.json` and `usage-readings.log` files must be owned regular files with mode
@@ -74,8 +74,9 @@ Sources are assigned by the writer; extra reader fields and error text are disca
 Reader processes have a 15-second deadline and an 8 KiB output cap. No provider
 reader is enabled by default. The Grok dependency's returned reading fits this
 contract; its optional log append must be disabled so this writer owns journaling.
-Its verified-page requirement still applies. CMP and personal Codex accounts
-must have separate provisioned readers; Terra also needs an explicit reader.
+Its verified-page requirement still applies. Personal Codex needs an explicitly
+provisioned reader; Terra needs a separate explicit reader. Existing CMP journal
+rows retain their historical identity and cannot supply personal Codex capacity.
 
 ## Persistence and signals
 
@@ -115,12 +116,12 @@ built-in readers that run no operator executables:
 
 ```sh
 npx tsx src/cli/usage-signal.ts --directory "$HOME/.ashlr-runs" --event manual-reading \
-  --status-readers --codex-home /absolute/cmp/pool/home --dry-run
+  --status-readers --codex-personal-home /absolute/personal/pool/home --dry-run
 ```
 
 `--dry-run` runs the readers and prints the rows that would be appended (`preview`)
 without touching `usage-readings.log` or `fleet.json`; drop it to append. Only
-`codex-cmp` (Codex App Server rate-limit read with fixed argv and an explicit pool
+`codex-personal` (Codex App Server rate-limit read with fixed argv and an explicit pool
 HOME) and `claude-max` (Phantom's own sanitized `rate_limit_event` store, `utilization`
 as a 0..1 fraction) are read. No `~/.codex`, `~/.claude`, auth file, keychain or
 environment is read, nothing calls login/logout, and only numeric fields are logged.
@@ -173,7 +174,7 @@ two never race. The sidecar is replaced by rename, and a lock file beside it
 keeps two passes from overlapping.
 
 Allowances: Claude weekly, the Claude Fable share, the Claude API included
-credit, Codex personal, Codex CMP, Devin, Devin Flash, GLM Lite, Gemini,
+credit, Codex personal, Devin, Devin Flash, GLM Lite, Gemini,
 Antigravity, Dot, Instinct, local models, Grok and Cursor.
 
 Sources are tried in order and the first current reading wins:
@@ -181,8 +182,7 @@ Sources are tried in order and the first current reading wins:
 1. `official`: the provider's own API or CLI status, through the readers
    above. Claude weekly comes from `metrics/claude-quota.json`, the Fable share
    from the Fable weekly sensor file, Codex from the App Server on an explicit
-   pool home (`PHANTOM_SENSOR_CODEX_CMP_HOME`,
-   `PHANTOM_SENSOR_CODEX_PERSONAL_HOME`), Devin from the org API, the Claude
+   pool home (`PHANTOM_SENSOR_CODEX_PERSONAL_HOME`), Devin from the org API, the Claude
    API credit from the grant store (`PHANTOM_RESOURCE_LIVE_ACCOUNTS_ROOT`),
    Grok from its runway store, local models from loopback `/v1/models`.
 2. `own-call`: rate-limit data returned to calls Phantom already made. That is
@@ -190,6 +190,12 @@ Sources are tried in order and the first current reading wins:
    `queue/resources.json`.
 3. `visible-window`: with `--browser`, the rendered text of the usage page in
    the dedicated usage browser, as in the live usage tracker above.
+
+The stored Claude `/usage` reading stops supplying weekly quota when a
+reset recorded after the observation arrives. While the all-models window is
+current, the same check applies independently to each model scope. Observations
+captured at or after the reported reset can still provide renewal evidence.
+All windows remain subject to the six-hour observation age limit.
 
 A reading older than 15 minutes is kept only when no later source has a
 current one. Devin Flash, Antigravity, Dot, Instinct and Cursor have no
@@ -218,8 +224,8 @@ comes from readings in the same window, and `pace` is `behind`, `on-pace` or
 
 Spend order, in `lane_order`:
 
-1. Free and expiring: Dot, local models, Devin Flash through Nov 30 and Codex
-   CMP through Nov 25, 2026. After its end date an expiring allowance ranks
+1. Free and expiring: Dot, local models, and Devin Flash through Nov 30.
+   After its end date an expiring allowance ranks
    with the included ones.
 2. Included subscriptions, most urgent first (largest share of the allowance
    that must be spent per hour).
@@ -271,7 +277,7 @@ and omlx in `queue/budget-overrides.json`, the file dispatchd copies into `statu
 `contrib/mac/com.ashlr.usage-self.plist.in` runs it every 10 minutes (installing it is an operator step).
 
 ```sh
-npx tsx src/cli/usage-self.ts --runs-dir /absolute/runs --codex-home /absolute/personal/pool/home --dry-run
+npx tsx src/cli/usage-self.ts --runs-dir /absolute/runs --codex-personal-home /absolute/personal/pool/home --dry-run
 ```
 
 Per lane, in order: a sanctioned reading, then an estimate, then unknown.
@@ -279,7 +285,7 @@ Per lane, in order: a sanctioned reading, then an estimate, then unknown.
 | Lane | Sanctioned reading | Estimate when none |
 | --- | --- | --- |
 | claude | Phantom's parsed `/usage` reading (`metrics/claude-quota.json`), else its sanitized `rate_limit_event` store | last reading plus `jobs.jsonl` tokens, weekly reset rolled forward 7 days |
-| codex-personal | Codex App Server `account/rateLimits/read` with an explicit pool HOME (`--codex-home`; no `~/.codex*` path is accepted) | same as claude |
+| codex-personal | Codex App Server `account/rateLimits/read` with an explicit pool HOME (`--codex-personal-home`; no `~/.codex*` path is accepted) | same as claude |
 | devin | org cycle ACU reader (`devin-api-v3-org-cycle`) | last reading plus `acus` from `jobs.jsonl`; the next cycle end is unknown, so `reset_at` becomes null |
 | zai | the `zai` row of `queue/resources.json` while fresh | 10 000 credits per week from `docs/lanes/zai.md`, credits computed from `jobs.jsonl`, reset Monday 00:00 UTC |
 | gemini | none verified | none: all numbers null, `source: unknown:no-sanctioned-reader` |

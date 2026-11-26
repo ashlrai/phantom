@@ -30,17 +30,17 @@ describe('Pools card', () => {
     render(<PoolsCard onOpenJob={open} />);
     const claude = await screen.findByRole('button', { name: 'Claude: 3% left, runs out in about 4 h, resets in 50 h' });
     expect(claude).toHaveAttribute('data-warn', 'true');
-    expect(screen.getAllByRole('button')).toHaveLength(8);
+    expect(screen.getAllByRole('button')).toHaveLength(7);
     expect(screen.getByRole('button', { name: 'Local: free, limited by memory' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'CMP Codex: usage unknown, runway unknown, reset unknown' })).not.toHaveAttribute('data-warn');
+    expect(screen.getByRole('button', { name: 'Personal Codex: usage unknown, runway unknown, reset unknown' })).not.toHaveAttribute('data-warn');
     expect(calls.calls.map(call => call.path).sort()).toEqual(['/api/fleet/local-capacity', '/api/usage/runway']);
     // The bar repeats the row's own reading: 97% used is drawn, an unread pool is unknown (never 0), and Local has no window to draw.
     expect(screen.getByRole('meter', { name: 'Claude used' })).toHaveAttribute('aria-valuenow', '97');
-    const unread = screen.getByRole('meter', { name: 'CMP Codex used' });
+    const unread = screen.getByRole('meter', { name: 'Personal Codex used' });
     expect(unread).toHaveAttribute('aria-valuetext', 'unknown');
     expect(unread).not.toHaveAttribute('aria-valuenow');
     expect(screen.queryByRole('meter', { name: 'Local used' })).toBeNull();
-    expect(screen.getAllByRole('meter')).toHaveLength(7);
+    expect(screen.getAllByRole('meter')).toHaveLength(6);
     fireEvent.click(claude);
     fireEvent.click(await screen.findByRole('button', { name: 'Build' }));
     expect(open).toHaveBeenCalledWith('Build');
@@ -58,7 +58,7 @@ describe('Pools card', () => {
     installFetch(() => response);
     render(<PoolsCard onOpenJob={vi.fn()} />);
     expect(await screen.findByRole('status')).toHaveTextContent('Pool readings unavailable');
-    expect(within(screen.getByRole('region', { name: 'Pools' })).getAllByRole('button')).toHaveLength(8);
+    expect(within(screen.getByRole('region', { name: 'Pools' })).getAllByRole('button')).toHaveLength(7);
     expect(screen.getByRole('button', { name: 'Claude: usage unknown, runway unknown, reset unknown' })).toHaveTextContent(/usage unknown.*runway unknown.*reset unknown/);
     expect(screen.queryByText(/% left|Next reset|^Read /)).toBeNull();
     for (const meter of screen.getAllByRole('meter')) expect(meter.getAttribute('aria-valuenow')).toBeNull();

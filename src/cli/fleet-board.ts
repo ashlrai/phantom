@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { cmdFleetCoordination } from './fleet-coordination.js';
 
 import { LEADER_BOARD_SCHEMA, readLeaderBoard, type LeaderBoardRead, type LeaderBoardV1 } from '../core/fleet/leader-board.js';
+import { ownerDisplayName } from '../core/owner-display.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 export const FLEET_BOARD_USAGE = 'Usage: ashlr fleet board [--json] | --leader [--json] [--runs-dir DIR]';
@@ -16,7 +17,7 @@ export const FLEET_BOARD_USAGE = 'Usage: ashlr fleet board [--json] | --leader [
 const USAGE = `Usage: phm fleet board --leader [--json] [--runs-dir DIR]
   --runs-dir DIR  Read DIR/coordination/leader-board.json (default: ASHLR_RUNS_DIR or ~/.ashlr-runs).
 Prints the last Leader tick's board: lanes, queue depth by tier, merges in the
-last hour, the conflicting-PR trend and items needing Mason. Read-only.`;
+last hour, the conflicting-PR trend and items needing the owner. Read-only.`;
 
 export interface FleetBoardDeps {
   /** Board reader; injectable so tests never touch a real runs dir. */
@@ -26,7 +27,7 @@ export interface FleetBoardDeps {
 
 const cell = (n: number | null | undefined): string => (n === null || n === undefined ? 'unknown' : String(n));
 
-function plainLines(board: LeaderBoardV1): string[] {
+function plainLines(board: LeaderBoardV1, owner: string): string[] {
   const lines = [
     `Leader board — ${board.generatedAt}`,
     `merges last hour: ${cell(board.mergesLastHour)}`,
@@ -38,9 +39,12 @@ function plainLines(board: LeaderBoardV1): string[] {
     : `queue depth by tier: ${Object.entries(tiers).sort(([a], [b]) => a.localeCompare(b)).map(([tier, n]) => `${tier} ${n}`).join(', ') || 'none'}`);
   if (board.lanes.length === 0) lines.push('lanes: none observed');
   for (const lane of board.lanes) {
-    lines.push(`lane ${lane.lane}  ready ${cell(lane.ready)}  parked ${cell(lane.parked)}  running ${cell(lane.running)}  merges/h ${cell(lane.mergesLastHour)}`);
+    lines.push(`lane ${lane.lane}  ready ${cell(lane.ready)}  parked ${cell(lane.parked)}  running ${cell(lane.running)} / target ${cell(board.resourcePlan?.lanes.find(row => row.lane === lane.lane)?.target_concurrency)}  merges/h ${cell(lane.mergesLastHour)}`);
   }
-  lines.push(`needs Mason: ${board.needsMason.count} item(s)${board.needsMason.status === 'available' ? '' : ` (${board.needsMason.status})`}`);
+  for (const row of board.resourcePlan?.deadlines ?? []) {
+    lines.push(`  ${row.label}: projected waste ${row.projected_waste_at_deadline === null ? 'unknown' : `${row.projected_waste_at_deadline} ${row.unit}`} by ${row.deadline_at}`);
+  }
+  lines.push(`needs ${owner}: ${board.needsMason.count} item(s)${board.needsMason.status === 'available' ? '' : ` (${board.needsMason.status})`}`);
   for (const item of board.needsMason.items) lines.push(`  ${item.id}  ${item.text}`);
   return lines;
 }
@@ -79,7 +83,8 @@ export async function cmdFleetLeaderBoard(args: string[], deps: FleetBoardDeps =
       ? 'No Leader board yet — no Leader tick has recorded one.'
       : 'Leader board is unreadable.');
   } else {
-    for (const line of plainLines(board)) console.log(line);
+    const { loadConfigReadOnly } = await import('../core/config.js');
+    for (const line of plainLines(board, ownerDisplayName(loadConfigReadOnly().user?.name))) console.log(line);
   }
   return result.status === 'unavailable' ? 1 : 0;
 }

@@ -49,7 +49,7 @@ let origMoonshotApiKey: string | undefined;
 const FAKE_NIM_API_KEY = 'm250-fake-nim-credential';
 
 beforeEach(() => {
-  tmpHome = realpathSync(mkdtempSync(join(tmpdir(), 'ashlr-m250-')));
+  tmpHome = realpathSync.native(mkdtempSync(join(tmpdir(), 'ashlr-m250-')));
   mkdirSync(join(tmpHome, '.ashlr', 'fleet'), { recursive: true });
   mkdirSync(join(tmpHome, '.claude'), { recursive: true });
   origHome = process.env['HOME'];
@@ -90,21 +90,23 @@ afterEach(() => {
 
 import type { CodexSessionUsage, CodexSessionWindow } from '../src/core/fleet/codex-session-usage.js';
 
-function mockCodexSession(primary: CodexSessionWindow | null, secondary: CodexSessionWindow | null = null): void {
+function mockCodexSession(primary: CodexSessionWindow | null, secondary: CodexSessionWindow | null = null) {
   const usage: CodexSessionUsage = {
     accountId: 'codex-personal', slot: 'secondary', observedAt: new Date().toISOString(),
     planType: 'pro', limitId: 'codex', limitName: null, rateLimitReachedType: null,
     spendControlReached: null, individualLimit: null, model: null, originator: null,
     cliVersion: null, primary, secondary, credits: null,
   };
+  const collect = vi.fn((options) => {
+    expect(options.env.CODEX_HOME).toBe(join(tmpHome, '.codex'));
+    expect(options.env.CODEX_HOME_ALT).toBe(join(tmpHome, '.codex-2'));
+    return primary ? [usage] : [];
+  });
   vi.doMock('../src/core/fleet/codex-session-usage.js', async (importOriginal) => ({
     ...await importOriginal<typeof import('../src/core/fleet/codex-session-usage.js')>(),
-    collectCodexSessionUsages: vi.fn((options) => {
-      expect(options.env.CODEX_HOME).toBe(join(tmpHome, '.codex-2'));
-      expect(options.env.CODEX_HOME_ALT).toBe(join(tmpHome, '.codex-2'));
-      return primary ? [usage] : [];
-    }),
+    collectCodexSessionUsages: collect,
   }));
+  return collect;
 }
 
 function writeStatsCache(
@@ -462,7 +464,7 @@ describe('M250 ResourceMonitor — operator resource overrides', () => {
 
 describe('M250 ResourceMonitor — Codex delegation', () => {
   it('maps usedPercent=45 → open', async () => {
-    mockCodexSession({ usedPercent: 45, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 });
+    const collect = mockCodexSession({ usedPercent: 45, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 });
     vi.doMock('../src/core/observability/codex-source.js', () => ({
       readCodexRateLimits: vi.fn().mockReturnValue({
         primary: { usedPercent: 45, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
@@ -474,6 +476,12 @@ describe('M250 ResourceMonitor — Codex delegation', () => {
 
     const state = await getBackendResourceState('codex', baseCfg());
 
+    expect(collect, 'resource monitor must reach the personal Codex reader').toHaveBeenCalledWith(
+      expect.objectContaining({ env: {
+        CODEX_HOME: join(tmpHome, '.codex'),
+        CODEX_HOME_ALT: join(tmpHome, '.codex-2'),
+      } }),
+    );
     expect(state.backend).toBe('codex');
     expect(state.availability).toBe('open');
     expect(state.usedPct).toBe(45);

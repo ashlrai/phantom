@@ -13,9 +13,12 @@ export async function cmdReposRank(args: string[]): Promise<number> {
   if (verb === 'list' && repo === undefined) {
     const result = await listManagedRepos();
     if (json) emit(result);
-    else console.table(result.repos.map(({ repo, enrolled, grantStage, priority, queueDepth, allocation }) => ({
-      repo, enrolled, grantStage, priority, queueDepth, share: `${(allocation.share * 100).toFixed(1)}%`,
-    })));
+    else {
+      console.log('Priority: local only (not synced)');
+      console.table(result.repos.map(({ repo, enrolled, grantStage, priority, queueDepth, allocation }) => ({
+        repo, enrolled, grantStage, priority, queueDepth, share: `${(allocation.share * 100).toFixed(1)}%`,
+      })));
+    }
     return 0;
   }
   if (repo && extra === undefined) {
@@ -29,8 +32,8 @@ export async function cmdReposRank(args: string[]): Promise<number> {
     }
     if (name && verb === 'priority' && isRepoPriority(value)) {
       setRepoPriority(name, value);
-      if (json) emit({ repo: name, priority: value });
-      else console.log(`${name}: ${value}`);
+      if (json) emit({ repo: name, priority: value, prioritySync: 'local-only' });
+      else console.log(`${name}: ${value} (not synced)`);
       return 0;
     }
   }

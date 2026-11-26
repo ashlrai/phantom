@@ -37,6 +37,7 @@ import { CUSTODY_HELPER_PATH } from '../core/authority/custody-client.js';
 import type { GrantScopeEdit } from '../core/authority/grant-scope-types.js';
 import { HUB_REPOSITORY_IDENTITY } from '../core/authority/repository-binding.js';
 import { STANDING_GRANT_PATTERNS } from '../core/authority/types.js';
+import { ownerDisplayName } from '../core/owner-display.js';
 import { checkClaudeAuth, renewClaudeToken } from '../core/resources/claude-resignin.js';
 import { pauseReleaseTrainForStop, resumeReleaseTrainAfterStop } from '../core/release/train.js';
 import { resolveBinAbsolute } from '../core/run/engines.js';
@@ -645,6 +646,11 @@ async function cmdClearStop(deps: AuthorityCliDeps): Promise<number> {
 }
 
 async function cmdRevoke(parsed: Parsed, deps: AuthorityCliDeps): Promise<number> {
+  const { canWriteStandingGrantHere } = await import('../core/drive/nodes/pool-host.js');
+  if (!canWriteStandingGrantHere()) {
+    deps.err('Manage signed grants on the leader, not a worker.');
+    return 1;
+  }
   const { revokeStanding, revokeStandingAndDrain } = await import('../core/authority/clamp.js');
   const reason = one(parsed, '--reason') ?? 'revoked with ashlr authority revoke';
   const result = parsed.flags.has('--no-wait')
@@ -742,6 +748,8 @@ async function signAndInstall(
   payload: StandingGrantV1,
   deps: AuthorityCliDeps,
 ): Promise<{ ok: true; grant: StandingGrantV1 } | { ok: false; reason: string }> {
+  const { canWriteStandingGrantHere } = await import('../core/drive/nodes/pool-host.js');
+  if (!canWriteStandingGrantHere()) return { ok: false, reason: 'Manage signed grants on the leader, not a worker.' };
   const { standingGrantPayloadDigest, installStandingGrant } = await import('../core/authority/standing-grant.js');
   const { displaySurfaceTarget, invalidateStandingPolicyCache } = await import('../core/authority/effective-config.js');
   const digest = standingGrantPayloadDigest(payload);
@@ -763,6 +771,7 @@ async function signAndInstall(
 async function cmdGrant(parsed: Parsed, deps: AuthorityCliDeps, kind: 'new' | 'reapprove'): Promise<number> {
   const { describeGrantScope, parseStandingGrantPayload } = await import('../core/authority/standing-grant.js');
   let payload: StandingGrantV1;
+  let owner: string;
   const file = one(parsed, '--payload');
   if (file) {
     if (Object.keys(volumeScopeFromArgs(parsed)).length > 0) { deps.err('--payload cannot be combined with volume edits; edit the reviewed payload first.'); return 2; }
@@ -776,17 +785,21 @@ async function cmdGrant(parsed: Parsed, deps: AuthorityCliDeps, kind: 'new' | 'r
       return 1;
     }
     payload = checked.value;
+    const { loadConfigReadOnly } = await import('../core/config.js');
+    owner = ownerDisplayName(loadConfigReadOnly().user?.name);
   } else {
     const { buildStandingGrantDraft } = await import('../core/verse/authority-api.js');
     const eliteDirect = await eliteDirectChoice(parsed, deps, !parsed.flags.has('--yes'));
-    payload = (await buildStandingGrantDraft(kind, Date.now(), {
+    const draft = await buildStandingGrantDraft(kind, Date.now(), {
       githubGet: ghGet(deps),
       scope: volumeScopeFromArgs(parsed),
       ...(eliteDirect !== undefined ? { eliteDirect } : {}),
-    })).payload;
+    });
+    payload = draft.payload;
+    owner = ownerDisplayName(draft.ownerDisplayName);
   }
   deps.out(kind === 'new' ? 'You are about to sign this standing grant:' : 'You are about to re-approve (continue) this standing grant:');
-  for (const line of describeGrantScope(payload)) deps.out(`  ${line}`);
+  for (const line of describeGrantScope(payload, owner)) deps.out(`  ${line}`);
   if (!parsed.flags.has('--yes') && !(await deps.confirm('Sign it with Touch ID?'))) {
     deps.out('Not signed.');
     return 1;

@@ -113,7 +113,9 @@ export function observeCloudReverts(tasks: readonly CloudTaskV1[], repository: s
       }
       if (!onBranch(exec, repoDir, mergeSha, head)) continue;
       const log = exec('git', [...GIT, 'log', '--format=%H%x1f%B%x1e', `${mergeSha}..${head}`], repoDir);
-      const revert = revertOf(log, mergeSha, t.repo, t.pr!.number);
+      // The PR a revert names is the one that landed: a superseded task's
+      // fleet App PR, not its closed cloud PR.
+      const revert = revertOf(log, mergeSha, t.repo, t.supersededBy?.number ?? t.pr!.number);
       if (revert) changes.push({ taskId: t.id, revertedBy: revert });
     } catch (err) {
       errors.push(`${t.id}: ${(err instanceof Error ? err.message : String(err)).split('\n')[0]!.slice(0, 200)}`);

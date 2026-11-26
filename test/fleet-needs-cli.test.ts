@@ -18,12 +18,12 @@ afterEach(() => { vi.restoreAllMocks(); });
 
 it('prints each item and the count', async () => {
   expect(await cmdFleetNeeds([], { list: () => items, deliveries: () => emptyDeliveries })).toBe(0);
-  expect(out).toEqual(['nm-123456789abc  Review fake plan\nnm-abcdef123456  Choose fake color\n2 item(s) need Mason.\nResolve: ashlr fleet needs-resolve <id> --reply "..."']);
+  expect(out).toEqual(['nm-123456789abc  Review fake plan\nnm-abcdef123456  Choose fake color\n2 item(s) need the owner.\nResolve: ashlr fleet needs-resolve <id> --reply "..."']);
 });
 
 it('reports an empty list', async () => {
   expect(await cmdFleetNeeds([], { list: () => [], deliveries: () => emptyDeliveries })).toBe(0);
-  expect(out).toEqual(['Nothing needs Mason.']);
+  expect(out).toEqual(['Nothing needs the owner.']);
 });
 
 it('outputs the versioned JSON shape', async () => {
@@ -42,7 +42,7 @@ it('lists pending reply deliveries in JSON and text with the retry hint', async 
   expect(JSON.parse(out[0]!).replyDeliveries).toEqual(deliveries);
   out = [];
   expect(await cmdFleetNeeds([], { list: () => [], deliveries: () => deliveries })).toBe(0);
-  expect(out[0]).toContain('Nothing needs Mason.');
+  expect(out[0]).toContain('Nothing needs the owner.');
   expect(out[0]).toContain('1 needs-you answer(s) are not confirmed in the planner inbox:');
   expect(out[0]).toContain('nm-123456789abc  Review fake plan');
   expect(out[0]).toContain('Retry delivery: ashlr fleet needs-resolve <id>');
