@@ -1,7 +1,7 @@
 /** `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave`: thin handlers over DriveNodes. */
 import { hostname } from 'node:os';
 import type { DriveNodes, NodesStore } from '../core/drive/nodes/index.js';
-import { UsageError, joinHintCommand, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
+import { UsageError, joinHintCommand, knownOwnerScopes, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
 import { validId, type NodeAuth } from '../core/drive/nodes/state.js';
 import type { SelfUpdatePlan } from '../core/drive/nodes/phm-version.js';
 
@@ -56,7 +56,11 @@ function expiredRejoinHints(nodes: DriveNodes, out: Record<string, unknown>): Ma
   return hints.size ? hints : undefined;
 }
 
-function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<string, string>, drift?: SelfUpdatePlan): string {
+function text(verb: string, out: Record<string, unknown>, notes?: {
+  rejoin?: ReadonlyMap<string, string>;
+  drift?: SelfUpdatePlan;
+  knownScopes?: readonly string[];
+}): string {
   if (verb === 'join') {
     // Join is the first command every new node runs; its text answer is a
     // sentence, not the key:value dump, and it states the 30-second session
@@ -97,7 +101,7 @@ function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<s
     // hint a session-expired error prints — so the diagnostic command also
     // says how to bring the node back.
     const rejoinFor = (nodeId: string): string => {
-      const cmd = rejoin?.get(nodeId);
+      const cmd = notes?.rejoin?.get(nodeId);
       return cmd === undefined ? '' : ` — rejoin: ${cmd}`;
     };
     // A node that outlived a phm upgrade keeps advertising its join-time build —
@@ -106,7 +110,7 @@ function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<s
     // `phm-<version>` cap for the operator to interpret. Only non-current
     // states annotate; the version itself already sits in caps.
     const driftFor = (nodeId: string): string => {
-      const row = drift?.nodes.find(n => n.nodeId === nodeId);
+      const row = notes?.drift?.nodes.find(n => n.nodeId === nodeId);
       return row !== undefined && row.status !== 'current' ? ` phm=${row.status}` : '';
     };
     const lines = [`Owner scope: ${scope}`,
@@ -114,12 +118,22 @@ function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<s
       ...jobs.map(j => `job ${j.id} ${jobStateWords(j)}${fixes.has(j.id) ? ` — ${fixes.get(j.id)}` : ''}`)];
     // An empty scope is the first-run case: say so and print the join command,
     // the same next step `phm node plan` prints for a job with no live node.
+    // view() filters to the requested scopes, so an empty view also means none
+    // of them exist in this store — naming the scopes it does know turns a
+    // mistyped --owner into a correction instead of a second scope fragment.
     if (!nodes.length) lines.push('No nodes joined in this scope.');
     if (!jobs.length) lines.push('No jobs queued in this scope.');
-    if (!nodes.length && !jobs.length && scope) lines.push(`Join this computer: phm node join --owner ${scope}`);
+    if (!nodes.length && !jobs.length && scope) {
+      const known = notes?.knownScopes;
+      if (known !== undefined && known.length > 0) {
+        lines.push(`This store knows: ${known.join(', ')} — none of the requested scopes have nodes or jobs here.`);
+      }
+      lines.push(`Join this computer: phm node join --owner ${scope}`);
+    }
     // self-update takes one --owner scope; a multi-scope status keeps the
     // placeholder rather than silently checking only the first scope.
-    if (drift !== undefined && drift.drifted.length) {
+    const driftPlan = notes?.drift;
+    if (driftPlan !== undefined && driftPlan.drifted.length) {
       const owner = scope.includes(',') ? '<scope>' : scope;
       lines.push(`Some nodes run a different phm build than this machine or do not report one: phm node self-update --owner ${owner} reports the per-node update plan.`);
     }
@@ -290,7 +304,17 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     const drift = !json && (verb === 'status' || verb === 'list')
       ? planNodeSelfUpdate(out['nodes'] as Parameters<typeof planNodeSelfUpdate>[0], (deps.phmVersion ?? localPhmVersion)())
       : undefined;
-    console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out, rejoin, drift));
+    // status/list on a scope the store does not know still print the join
+    // command; naming the scopes the store does know (minus the requested
+    // ones, which an empty view proves are absent) lets the operator correct
+    // a mistyped --owner before fragmenting the registry. Text only, like
+    // rejoin/drift: the --json view stays the scope-filtered projection.
+    const knownScopes = !json && (verb === 'status' || verb === 'list') &&
+      Array.isArray(out['nodes']) && Array.isArray(out['jobs']) &&
+      (out['nodes'] as unknown[]).length === 0 && (out['jobs'] as unknown[]).length === 0
+      ? (knownOwnerScopes(drive) ?? []).filter(s => !(out['owners'] as string[]).includes(s))
+      : undefined;
+    console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out, { rejoin, drift, knownScopes }));
     return 0;
   } catch (error) {
     const known = error instanceof UsageError;

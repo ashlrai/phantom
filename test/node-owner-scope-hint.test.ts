@@ -104,3 +104,70 @@ describe('missing --owner names the store scopes or the join', () => {
     } finally { vi.restoreAllMocks(); }
   });
 });
+
+describe('an --owner the store does not know names the scopes it does', () => {
+  async function statusText(store: MemoryStore, args: string[]): Promise<string> {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      expect(await cmdNodeFleet('status', args, { store })).toBe(0);
+      return lines.at(-1)!;
+    } finally { vi.restoreAllMocks(); }
+  }
+
+  it('status on an unknown scope names known scopes and still offers join', async () => {
+    const store = new MemoryStore();
+    const nodes = new DriveNodes(store);
+    executeNodeFleet('join', ['--node', 'box', '--owner', 'ops'], nodes);
+    executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'personal'], nodes);
+    const out = await statusText(store, ['--owner', 'acme']);
+    expect(out).toContain('This store knows: ops, personal');
+    expect(out).toContain('phm node join --owner acme');
+    expect(out).toContain('No nodes joined in this scope.');
+  });
+
+  it('list annotates the same way, and a known scope prints no scope hint', async () => {
+    const store = new MemoryStore();
+    const nodes = new DriveNodes(store);
+    executeNodeFleet('join', ['--node', 'box', '--owner', 'ops'], nodes);
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      expect(await cmdNodeFleet('list', ['--owner', 'typo'], { store })).toBe(0);
+      expect(lines.at(-1)).toContain('This store knows: ops');
+      lines.length = 0;
+      expect(await cmdNodeFleet('status', ['--owner', 'ops'], { store })).toBe(0);
+      expect(lines.at(-1)).toContain('node box');
+      expect(lines.at(-1)).not.toContain('This store knows');
+    } finally { vi.restoreAllMocks(); }
+  });
+
+  it('an empty store and a multi-scope request keep the plain join line / hint once', async () => {
+    const empty = new MemoryStore();
+    const bare = await statusText(empty, ['--owner', 'acme']);
+    expect(bare).toContain('Join this computer: phm node join --owner acme');
+    expect(bare).not.toContain('This store knows');
+    const store = new MemoryStore();
+    const nodes = new DriveNodes(store);
+    executeNodeFleet('join', ['--node', 'box', '--owner', 'ops'], nodes);
+    const multi = await statusText(store, ['--owner', 'acme,personal']);
+    expect(multi).toContain('This store knows: ops —');
+    expect(multi).toContain('phm node join --owner acme,personal');
+  });
+
+  it('the --json view stays the pure scope-filtered projection', async () => {
+    const store = new MemoryStore();
+    const nodes = new DriveNodes(store);
+    executeNodeFleet('join', ['--node', 'box', '--owner', 'ops'], nodes);
+    executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'personal'], nodes);
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      expect(await cmdNodeFleet('status', ['--owner', 'acme', '--json'], { store })).toBe(0);
+      const parsed = JSON.parse(lines.at(-1)!);
+      expect(Object.keys(parsed).sort()).toEqual(['command', 'jobs', 'nodes', 'owners', 'routes', 'schemaVersion']);
+      expect(parsed.nodes).toEqual([]);
+      expect(parsed.jobs).toEqual([]);
+    } finally { vi.restoreAllMocks(); }
+  });
+});
