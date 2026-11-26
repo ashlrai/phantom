@@ -3,10 +3,9 @@
  *
  * The daemon-side wrapper around `ashlr-custody` (tools/custody, Swift): a
  * root-owned helper holding a non-exportable Secure Enclave P-256 key behind
- * Touch ID plus Keychain items only the helper can read. `sign-grant` is the
- * ONLY signing path (the helper strictly parses StandingGrantV1, refuses
- * unknown keys and over-ceiling values, and shows the full scope in the Touch
- * ID prompt). Token minting needs no presence, so the fleet can run 24/7.
+ * Touch ID plus Keychain items only the helper can read. The signing paths
+ * strictly parse StandingGrantV1, refuse unknown keys and over-ceiling values,
+ * and render the scope themselves. Token minting needs no presence.
  *
  * The exported names and signatures of the day-0 stub are a FROZEN cross-unit
  * contract (U1 signs grants and runs setup through them; U3/U4 mint GitHub
@@ -520,6 +519,65 @@ export async function signGrant(payload: StandingGrantV1): Promise<SignedStandin
     Buffer.from(signature, 'base64'));
   if (!ok) throw new CustodyError('signature-mismatch', "the signature does not verify against the custody helper's public key");
   return { payload: JSON.parse(requested) as StandingGrantV1, signature };
+}
+
+const DESKTOP_UPDATE_APPROVAL_DOMAIN = 'ashlr:desktop-update-approval:v1\0';
+const DESKTOP_UPDATE_APPROVAL_COMMAND = 'sign-desktop-update';
+
+export interface DesktopUpdateApprovalBinding {
+  readonly transaction: string;
+  readonly releaseDigest: string;
+  readonly surfaceDigest: string;
+  readonly expiresAtMs: number;
+}
+
+export interface SignedDesktopUpdateApproval {
+  readonly grant: SignedStandingGrantV1;
+  readonly approvalSignature: string;
+}
+
+function desktopUpdateApprovalRequest(binding: DesktopUpdateApprovalBinding, grant: StandingGrantV1, nowMs: number): string {
+  if (!/^[a-f0-9]{32}$/.test(binding.transaction) || !STANDING_GRANT_PATTERNS.sha256Hex.test(binding.releaseDigest)
+    || !STANDING_GRANT_PATTERNS.sha256Hex.test(binding.surfaceDigest) || binding.surfaceDigest !== grant.authoritySurfaceDigest
+    || !Number.isSafeInteger(nowMs) || !Number.isSafeInteger(binding.expiresAtMs) || binding.expiresAtMs <= nowMs
+    || !(binding.expiresAtMs <= Date.parse(grant.expiresAt))) {
+    throw new CustodyError('refused', 'the desktop update approval is invalid, expired, or not bound to the grant surface');
+  }
+  const {transaction, releaseDigest, surfaceDigest, expiresAtMs} = binding;
+  return canonicalJson({transaction, releaseDigest, surfaceDigest, expiresAtMs, grant});
+}
+
+/** Check both signatures against the same trusted key and exact expected stage binding. */
+export function verifyDesktopUpdateApproval(binding: DesktopUpdateApprovalBinding, value: unknown, key: CustodyKeyInfo,
+  nowMs = Date.now()): value is SignedDesktopUpdateApproval {
+  try {
+    if (!isPlainRecord(value) || !isPlainRecord(value['grant'])) return false;
+    exactKeys(value, ['grant', 'approvalSignature'], DESKTOP_UPDATE_APPROVAL_COMMAND);
+    const grant = value['grant'];
+    exactKeys(grant, ['payload', 'signature'], DESKTOP_UPDATE_APPROVAL_COMMAND);
+    if (!isPlainRecord(grant['payload']) || grant['payload']['keyId'] !== key.keyId) return false;
+    const payload = grant['payload'] as unknown as StandingGrantV1;
+    const request = desktopUpdateApprovalRequest(binding, payload, nowMs);
+    const publicKey = {key: p256PublicKey(key.publicKeyPem, 'pubkey'), dsaEncoding: 'ieee-p1363' as const};
+    const verify = (message: string, signature: unknown) => typeof signature === 'string'
+      && STANDING_GRANT_PATTERNS.signature.test(signature)
+      && verifySignature('sha256', Buffer.from(message), publicKey, Buffer.from(signature, 'base64'));
+    return verify(STANDING_GRANT_SIGNING_DOMAIN + canonicalJson(payload), grant['signature'])
+      && verify(DESKTOP_UPDATE_APPROVAL_DOMAIN + request, value['approvalSignature']);
+  } catch { return false; }
+}
+
+/** One biometric gesture for the verified candidate's update approval and standing grant. */
+export async function signDesktopUpdateApproval(binding: DesktopUpdateApprovalBinding, payload: StandingGrantV1): Promise<SignedDesktopUpdateApproval> {
+  const requested = desktopUpdateApprovalRequest(binding, payload, Date.now());
+  const {grant, ...expected} = JSON.parse(requested) as DesktopUpdateApprovalBinding & {grant: StandingGrantV1};
+  const key = await custodyPublicKey();
+  if (grant.keyId !== key.keyId) throw new CustodyError('keyid-mismatch', 'the desktop update grant names a different custody key');
+  const out = await runHelper([DESKTOP_UPDATE_APPROVAL_COMMAND, '-'], TIMEOUT_MS.presence, requested);
+  if (!verifyDesktopUpdateApproval(expected, out, key) || canonicalJson(out.grant.payload) !== canonicalJson(grant)) {
+    throw new CustodyError('signature-mismatch', 'the desktop update approval and standing grant do not match the request');
+  }
+  return out;
 }
 
 /** `ashlr-custody store-github-app` — Keychain item whose ACL trusts only the helper. */

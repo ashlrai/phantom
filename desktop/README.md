@@ -236,6 +236,11 @@ Stop or a quiet window is rechecked every 30 seconds. On supported hosts,
 queued work can defer adoption for up to five minutes, but active or unknown
 work still blocks installation after that window.
 
+The custody helper can sign a release-specific update approval and prospective
+standing grant together. The signature alone neither installs the grant nor
+restarts the resident. The existing desktop install and native update commands
+do not yet consume that approval.
+
 For a managed install, run `~/.local/bin/phm authority resident start` from
 the managed CLI. That command still requires authority admission and owner
 confirmation. It registers the verified managed release rather than an

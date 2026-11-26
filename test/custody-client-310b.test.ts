@@ -28,9 +28,11 @@ import {
   custodyStatus,
   githubToken,
   keyIdForPublicKeyPem,
+  signDesktopUpdateApproval,
   signGrant,
   storeClaudeToken,
   storeGithubApp,
+  verifyDesktopUpdateApproval,
   _setCustodyRunnerForTest,
   type CustodyRunRequest,
   type CustodyRunResult,
@@ -69,6 +71,45 @@ function grant(keyId: string): StandingGrantV1 {
     '../tools/custody/Tests/CustodyCoreTests/Fixtures/standing-grant-fixture.json', import.meta.url)), 'utf8')) as { payload: StandingGrantV1 };
   return { ...fixture.payload, keyId };
 }
+
+describe('desktop update custody approval', () => {
+  it('requires both signatures and binds them to the release, stage, surface, and expiration', async () => {
+    const key = p256();
+    const now = Date.now();
+    const payload = {...grant(key.keyId), expiresAt: new Date(now + 60_000).toISOString()};
+    const binding = {
+      transaction: 'a'.repeat(32),
+      releaseDigest: 'b'.repeat(64),
+      surfaceDigest: payload.authoritySurfaceDigest,
+      expiresAtMs: now + 30_000,
+    };
+    const expected = canonicalJson({...binding, grant: payload});
+    const credentials = {keyId: key.keyId, publicKeyPem: key.pem};
+    const signature = (data: string) => sign('sha256', Buffer.from(data), {
+      key: key.privateKey, dsaEncoding: 'ieee-p1363',
+    }).toString('base64');
+    const approval = {
+      grant: {payload, signature: signature(STANDING_GRANT_SIGNING_DOMAIN + canonicalJson(payload))},
+      approvalSignature: signature('ashlr:desktop-update-approval:v1\0' + expected),
+    };
+    const calls = install(req => {
+      if (req.args[0] === 'pubkey') return ok(credentials);
+      expect(req.args).toEqual(['sign-desktop-update', '-']);
+      expect(req.input).toBe(expected);
+      return ok(approval);
+    });
+    await expect(signDesktopUpdateApproval(binding, payload)).resolves.toEqual(approval);
+    expect(calls).toHaveLength(2);
+    expect(verifyDesktopUpdateApproval(binding, approval, credentials, now)).toBe(true);
+    expect(verifyDesktopUpdateApproval(binding, approval, credentials, binding.expiresAtMs)).toBe(false);
+    for (const changed of [
+      {...binding, transaction: 'c'.repeat(32)}, {...binding, releaseDigest: 'c'.repeat(64)},
+      {...binding, surfaceDigest: 'c'.repeat(64)}, {...binding, expiresAtMs: binding.expiresAtMs + 1},
+    ]) expect(verifyDesktopUpdateApproval(changed, approval, credentials, now)).toBe(false);
+    expect(verifyDesktopUpdateApproval(binding, {...approval, approvalSignature: approval.grant.signature}, credentials, now)).toBe(false);
+    expect(verifyDesktopUpdateApproval(binding, {...approval, grant: {...approval.grant, signature: approval.approvalSignature}}, credentials, now)).toBe(false);
+  });
+});
 
 describe('helper install trust (root-owned or nothing)', () => {
   it('names the canonical install path and the custody data dir', () => {

@@ -278,6 +278,13 @@ aborts and restores verified previous state through the scoped capability.
 Release-train pause provenance is local: the updater only removes its own
 `RELEASE_AUTORUN_DESKTOP_UPDATE_OFF` marker, never `RELEASE_AUTORUN_OFF` or
 operator Stop provenance.
+At the custody boundary, `sign-desktop-update -` signs one update approval and
+its prospective standing grant with one Touch ID gesture. The approval uses a
+separate signing domain and binds the transaction ID, release digest, candidate
+authority surface, expiry, and exact grant payload. The helper does not install
+the grant, authorize resident startup, or consume an update stage. The desktop
+coordinator must verify and consume the stage separately, and may accept a
+replacement grant only after proving the paired installation.
 `phm desktop-update prepare --stage <id> --json` verifies the private staged
 app and the original CLI archive before Stop, including the app inventory and
 the candidate authority surface. It caches only the verified original package
