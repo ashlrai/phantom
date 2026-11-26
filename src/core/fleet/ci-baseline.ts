@@ -1507,6 +1507,147 @@ function parseInstallFailures(log: string): Failure[] {
   return out;
 }
 
+// The install-smoke jobs (install-smoke-linux/windows/macos in ci.yml)
+// run two single-purpose steps each: `ci-install-smoke.mjs commit`
+// builds, packs and globally installs this commit's tarball under a
+// scratch prefix, then asserts `phm --version`; `... release` downloads
+// the published tarball, verifies its dist.integrity checksum,
+// installs it and asserts the published `phm --version`. Every refusal
+// funnels through the script's one catch -- `console.error(error.message)`
+// then exit 1 -- so the step's only failure output is one diagnosis line
+// (a child exit like `npm run build exited 1`, `npm install -g ...
+// exited 1` or `npm view ... exited 1`; a smoke verdict like `npm pack
+// produced no tarball`, `installed phm not found under <prefix>`, the
+// `::error file=...::installed phm version <actual>, expected
+// <expected>` annotation, the `published release ...` checks or
+// `package.json version is missing`) plus the runner's
+// `##[error]Process completed with exit code` marker. No vitest, TAP,
+// tsc or report shape names these, so without step attribution a broken
+// smoke leaves every open PR unknown and queues no fix. The same
+// `##[group]Run` step tracking as the helper gates applies: a step
+// qualifies only when every script line is the smoke invocation with a
+// commit|release target -- mixed bash, `uses:` actions, companions and
+// arg-less or unknown-target invocations stay unattributed. Two
+// suppressions keep the group honest. A diagnosis naming `npm run
+// build` or `npm pack` (whose prepack lifecycle is the build) belongs
+// to the build parsers -- or stays unknown when the build dies without
+// a parsed shape, exactly as the main Build step reads. And a companion
+// failure shape in the step's own output -- a tsc diagnostic, vitest or
+// TAP line, version-sync report, or build-helper prefix -- means the
+// inner build failed before the script could name it, so the dedicated
+// parsers own that failure instead. Everything else groups per target
+// as `.github/scripts/ci-install-smoke.mjs > (install-smoke)
+// commit|release`: the script plus -- for the commit arm only -- the
+// pack/install inputs (manifest pair, shrinkwrap/.npmrc resolution
+// variants, the bin/ashlr launcher) and the ci.yml step definition are
+// the closed input list a master fix restores; the measured dist/
+// graph has no enumerable closure, so deeper source changes stay
+// unattributed, the same convention the perf, memory and pack gates
+// use. The release arm reads only the already-published artifact, so
+// its inputs are the script and workflow alone. Like the other
+// non-test identities these groups can never resolve through a vitest
+// pass line: shared-baseline, pr-caused or unknown -- never
+// probable-flake.
+const INSTALL_SMOKE_FILE = '.github/scripts/ci-install-smoke.mjs';
+const INSTALL_SMOKE_MAX = 8;
+const INSTALL_SMOKE_STEP = /^node\s+\.github\/scripts\/ci-install-smoke\.mjs\s+(commit|release)$/;
+const INSTALL_SMOKE_BUILD_EXIT = /^npm\s+(?:run\s+build|pack)\b.*\bexited\s+\S+$/;
+
+// Failure shapes the smoke's inner `npm run build`/`npm pack` children
+// can print that the dedicated parsers already own; their presence in a
+// smoke step's output means the build failed inside the smoke, not the
+// smoke itself.
+function installSmokeForeignFailure(line: string): boolean {
+  if (TSC_ERROR_LINE.test(line) || FAIL_LINE.test(line) || SUITE_FAIL_LINE.test(line) || /^not ok\b/.test(line)) return true;
+  if (line.startsWith(VERSION_SYNC_PREFIX)) return true;
+  if (line.startsWith('{') && /"matches"\s*:\s*false/.test(line) && /"check"\s*:\s*true/.test(line)) return true;
+  if (line.startsWith('authority-surface: ')) return !BUILD_AUTHORITY_SURFACE_OK.test(line) && !BUILD_AUTHORITY_SURFACE_NOTE.test(line);
+  if (line.startsWith('[copy-assets] source not found: ')) return true;
+  if (/^release dependency inventory(?: npm pack)?: /.test(line) || line === 'npm pack file report is missing' || line === 'npm runtime closure exceeds traversal depth') return true;
+  const uncaught = BUILD_UNCAUGHT_HEADER.exec(line);
+  if (uncaught !== null) return BUILD_CHAIN_SCRIPTS.has(uncaught[1]!);
+  return BUILD_VITE_UNRESOLVED.test(line) || BUILD_VITE_EXTERNAL.test(line);
+}
+
+const INSTALL_SMOKE_INPUTS: Record<string, readonly string[]> = {
+  '(install-smoke) commit': [
+    INSTALL_SMOKE_FILE,
+    'package.json', 'package-lock.json', 'npm-shrinkwrap.json', '.npmrc',
+    'bin/ashlr', '.github/workflows/ci.yml',
+  ],
+  '(install-smoke) release': [INSTALL_SMOKE_FILE, '.github/workflows/ci.yml'],
+};
+
+function parseInstallSmokeFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // idle: no step context. script: collecting a Run block's script lines.
+  // meta: past the shell:/env: marker inside the block. output: scanning a
+  // step's output for the script's own diagnosis and foreign failure shapes.
+  let phase: 'idle' | 'script' | 'meta' | 'output' = 'idle';
+  let disqualified = false;
+  const targets = new Set<string>();
+  let suppressed = false;
+  let recent: string[] = [];
+  const noteScriptLine = (line: string) => {
+    if (line === '') return;
+    const match = INSTALL_SMOKE_STEP.exec(line);
+    if (match === null) { disqualified = true; return; }
+    targets.add(match[1]!);
+  };
+  const reset = () => {
+    phase = 'idle'; disqualified = false; targets.clear(); suppressed = false; recent = [];
+  };
+  for (const line of lines(log)) {
+    if (line.startsWith('##[group]')) {
+      // Any group boundary ends the current step: a new Run block starts
+      // script collection, anything else leaves the step unattributed.
+      reset();
+      const run = CI_STEP_GROUP.exec(line);
+      if (run !== null) {
+        phase = 'script';
+        if (run[1] !== undefined) noteScriptLine(run[1]);
+      }
+      continue;
+    }
+    if (phase === 'script') {
+      if (CI_STEP_END.test(line)) {
+        phase = 'output';
+        suppressed = false;
+        recent = [];
+        continue;
+      }
+      if (CI_STEP_META.test(line)) { phase = 'meta'; continue; }
+      noteScriptLine(line);
+      continue;
+    }
+    if (phase === 'meta') {
+      if (CI_STEP_END.test(line)) {
+        phase = 'output';
+        suppressed = false;
+        recent = [];
+      }
+      continue;
+    }
+    if (phase === 'output') {
+      if (CI_STEP_FAILED.test(line)) {
+        if (!disqualified && targets.size > 0 && !suppressed) {
+          const excerpt = recent.length > 0 ? recent.join('\n') : line;
+          for (const target of [...targets].sort()) {
+            if (out.length >= INSTALL_SMOKE_MAX) break;
+            const names = `(install-smoke) ${target}`;
+            out.push({ file: INSTALL_SMOKE_FILE, names, testId: `${INSTALL_SMOKE_FILE} > ${names}`, excerpt: clean(excerpt) });
+          }
+        }
+        reset();
+        continue;
+      }
+      if (INSTALL_SMOKE_BUILD_EXIT.test(line) || installSmokeForeignFailure(line)) suppressed = true;
+      if (line !== '') { recent.push(line); if (recent.length > 4) recent.shift(); }
+    }
+  }
+  return out;
+}
+
 // The `ci` job's "Memory benchmark regression gate" step on the ubuntu
 // authority 3/3 shard runs `npm run --silent bench:memory -- --check >
 // /dev/null`: the redirect discards the script's pretty-printed JSON
@@ -2031,6 +2172,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     if (result.length >= 100) break;
     result.push(failure);
   }
+  for (const failure of parseInstallSmokeFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
   for (const failure of parseMemoryBenchmarkFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
@@ -2489,7 +2634,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the dependency manifests, and never read a file's imports, so the
       // dependency set is each gate's closed input list rather than the
       // import closure walk.
-      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names] ?? SECRET_GATE_INPUTS[failure.names] ?? INSTALL_STEP_INPUTS[failure.names] ?? BUILD_STEP_INPUTS[failure.file];
+      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names] ?? SECRET_GATE_INPUTS[failure.names] ?? INSTALL_STEP_INPUTS[failure.names] ?? INSTALL_SMOKE_INPUTS[failure.names] ?? BUILD_STEP_INPUTS[failure.file];
       const deps = flatInputs !== undefined ? new Set<string>(flatInputs) : await dependencies(failure.file);
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only
