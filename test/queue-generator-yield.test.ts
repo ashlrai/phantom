@@ -68,6 +68,20 @@ describe('generator yield', () => {
       { generator: 'filler', jobs: 1, launched: 1, merged: 1, emptyRate: 0, medianDiffLines: 6, tokensPerMergedPr: 20 },
     ]);
   });
+  it('credits only claims with a worker launch at or after the claim timestamp', () => {
+    const batch = 'RQ-BATCH-X';
+    const report = generatorYield([
+      row({ job: batch, event: 'launch', ts: '2026-11-09T10:30:00Z' }),
+      row({ job: 'RQ-DRAIN-1', event: 'batch_claim', batch, ts: '2026-11-09T11:00:00Z' }),
+      row({ job: 'FIXUP-X', event: 'batch_claim', batch, ts: '2026-11-09T11:00:00Z' }),
+      row({ job: batch, event: 'launch', ts: '2026-11-09T09:30:00Z' }),
+      row({ job: 'FIXUP-X', event: 'batch_claim', batch }),
+    ].join('\n'), 24, now);
+    expect(report.generators).toMatchObject([
+      { generator: 'drain', jobs: 1, launched: 0 },
+      { generator: 'fixup', jobs: 1, launched: 1 },
+    ]);
+  });
   it('counts each decision once per source without crediting a duplicate generator for another source PR', () => {
     const decisions = [
       row({ job: 'RQ-X', src: 'ideas', event: 'drafted' }),
