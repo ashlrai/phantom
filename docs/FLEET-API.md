@@ -132,6 +132,12 @@ receipt proves coordination, not job execution.
 | POST | `/api/verse/leader/questions/` (QUESTION_PATH_RE or ANSWER_PATH_RE) + {questionId} + /answer | none | [AnswerLeaderQuestionResult or SubmitLeaderQuestionResult](../src/core/vision/leader-thread-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"text":"Proceed"}' 'http://127.0.0.1:7777/api/verse/leader/questions/example-question/answer'` |
 | POST | `/api/verse/leader/actions/` (APPROVE_PATH_RE) + {actionId} + /approve | none | [ApproveLeaderActionResult](../src/core/vision/leader-thread-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:7777/api/verse/leader/actions/example-action/approve'` |
 
+The Leader board's conflict delta compares the current count with the latest
+earlier observation. The trend compares it with the oldest retained observation.
+History is ordered by timestamp and keeps one sample per tick. A successful
+retry replaces that tick's sample, and future-dated samples are excluded after a
+clock rollback. With no earlier observation, the delta and trend stay unknown.
+
 Usage history charts readings that name the current quota reset and were
 observed from the window start up to, but excluding, that reset. Pace and
 runway need at least two distinct observation times from that window. When

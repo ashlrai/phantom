@@ -104,3 +104,21 @@ it('reports honest failures for hostile paths and the reader stays truthful', as
   expect((await readFleetBoard({ runsDir: root })).status).toBe('unavailable');
   expect(fleetBoardResponse({ status: 'unavailable', board: null }, NOW_MS).ageSeconds).toBeNull();
 });
+
+it('uses distinct, earlier ticks for conflict trends after retries and clock rollback', async () => {
+  await seed();
+  await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS + 60_000 });
+  const retryAt = NOW_MS;
+  const first = await recordLeaderBoard({ runsDir: root, nowMs: retryAt });
+  expect(first.wrote && first.board.conflictingPrs).toMatchObject({ count: 2, delta: null, trend: 'unknown' });
+
+  await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'RQ-REBASE-PHANTOM-1234-abc1234', 'devin', 'work'));
+  const retry = await recordLeaderBoard({ runsDir: root, nowMs: retryAt });
+  expect(retry.wrote && retry.board.conflictingPrs).toEqual({
+    count: 1, delta: null, trend: 'unknown', history: [{ at: minutesAgo(0), count: 1 }],
+  });
+
+  await seed();
+  const next = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS + 120_000 });
+  expect(next.wrote && next.board.conflictingPrs).toMatchObject({ count: 2, delta: 1, trend: 'rising' });
+});
