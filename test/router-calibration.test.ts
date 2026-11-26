@@ -84,6 +84,27 @@ describe('router calibration', () => {
       { arm: 'codex', jobs: 1, resolved: 0, tokens: { predicted: 120, actual: 100, paired: 1 } },
     ]);
   });
+  it.each([
+    { event: 'outcome', merged: false, phase: 'MERGED' },
+    { event: 'outcome', merged: true, phase: 'CLOSED' },
+    { event: 'merged', merged: false },
+    { event: 'publish', source: 'metrics-outcomes-reconciler', merged: false, outcome: 'MERGED' },
+    { event: 'outcome', outcome: 'rejected', phase: 'MERGED' },
+  ])('rejects a receipt with contradictory merge verdicts (%j)', (receipt) => {
+    const launch = row({ event: 'launch', job: 'RQ-CONFLICT', lane: 'codex', predicted_merge_rate: 0.8 });
+    expect(() => calibrateRouting(launch + row({ job: 'RQ-CONFLICT', ...receipt })))
+      .toThrow('Conflicting merged verdicts on a job receipt');
+  });
+  it('accepts corroborating verdicts and ignores false merge flags on nonterminal publishes', () => {
+    const launch = (job: string) => row({ event: 'launch', job, lane: 'codex', predicted_merge_rate: 0.8 });
+    const ledger = launch('RQ-MERGED') + launch('RQ-CLOSED') + launch('RQ-PENDING') +
+      row({ job: 'RQ-MERGED', event: 'outcome', phase: 'MERGED', merged: true }) +
+      row({ job: 'RQ-CLOSED', event: 'outcome', phase: 'CLOSED', merged: false }) +
+      row({ job: 'RQ-PENDING', event: 'publish', phase: 'PUBLISHED', merged: false });
+    expect(calibrateRouting(ledger).arms).toMatchObject([
+      { arm: 'codex', jobs: 3, resolved: 2, mergeRate: { actual: 0.5, paired: 2 } },
+    ]);
+  });
   it('counts a replayed timestamped launch once and rejects ambiguous duplicate launches', () => {
     const launch = { event: 'launch', job: 'RQ-REPLAY', lane: 'codex',
       ts: '2026-01-01T00:00:00Z', predicted_wall_time_ms: 2000 };

@@ -2580,6 +2580,10 @@ prediction-paired population. Baseline comparisons expose
 `delta.observedMergeRate` as current minus baseline, or null when either
 rate is unavailable.
 
+Calibration rejects a receipt when its explicit merge verdict disagrees
+with its terminal lifecycle state. A false merge flag on a nonterminal
+publish receipt leaves the outcome unresolved.
+
 ## Router queue generation
 
 `runQueuegenCycle` takes explicit repository scope in `QueuegenOptions.repos`.

@@ -183,7 +183,13 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       }
     }
     const verdict = event === 'outcome' ? outcome(row) : undefined;
-    assign(job, 'merged', verdict ?? (state === 'MERGED' ? true : state === 'CLOSED' ? false : undefined));
+    const terminalVerdict = state === 'MERGED' ? true : state === 'CLOSED' ? false : undefined;
+    const explicitVerdict = typeof row['merged'] === 'boolean' ? row['merged'] : verdict;
+    if ((terminalVerdict !== undefined && explicitVerdict !== undefined && terminalVerdict !== explicitVerdict)
+      || (row['merged'] === true && terminalPhases.has('CLOSED'))) {
+      throw new Error('Conflicting merged verdicts on a job receipt');
+    }
+    assign(job, 'merged', verdict ?? terminalVerdict);
     metrics(job, row);
   }
   if (rows.length && !recognized) throw new Error('No recognized dispatch events');
