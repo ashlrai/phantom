@@ -652,12 +652,39 @@ describe('result: read-only owner-scoped outcome', () => {
       expect(out).toContain('Task:');
       expect(out).toContain(taskText);
       const lease = `--job task-job --node worker --session ${session} --token ${claim.token} --leader-token ${claim.leaderToken}`;
+      expect(out).toContain('The lease lapses 30 seconds after the last renew');
       expect(out).toContain(`Run: phm node renew ${lease}`);
+      // The keep-alive is printed next to the one-shot renew: a job that
+      // outlives the 30 s window needs repeated renewals, and --watch is the
+      // form that repeats them (docs/NODE-ROUTER.md prescribes it).
+      expect(out).toContain(`Keep it alive while you work: phm node renew ${lease} --watch`);
       expect(out).toContain(`Done? Run: phm node complete ${lease} --result <text>`);
       // A second pull finds the job already running and keeps the short no-job text.
       lines.length = 0;
       expect(await cmdNodeFleet('pull', ['--node', 'worker', '--session', session], { store })).toBe(0);
       expect(lines.at(-1)).toBe('No job for this node. Run: phm node plan');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('a json pull names the renew --watch keep-alive as next, and an empty pull does not', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const nodes = new DriveNodes(store);
+      const joined = executeNodeFleet('join', ['--node', 'worker', '--owner', 'o'], nodes);
+      const session = String(joined['session']);
+      executeNodeFleet('enqueue', ['--job', 'job', '--owner', 'o'], nodes);
+      expect(await cmdNodeFleet('pull', ['--node', 'worker', '--session', session, '--json'], { store })).toBe(0);
+      const pulled = JSON.parse(lines.at(-1)!) as { pulled: boolean; claim: { jobId: string; token: number; leaderToken: number }; next?: string };
+      expect(pulled.pulled).toBe(true);
+      // `next` is the keep-alive the lease needs while work runs past the
+      // 30-second window — the same hint join gives beat keepers.
+      expect(pulled.next).toBe(`phm node renew --job job --node worker --session ${session}`
+        + ` --token ${pulled.claim.token} --leader-token ${pulled.claim.leaderToken} --watch`);
+      // Nothing claimed means no lease to keep alive: no next on an empty pull.
+      lines.length = 0;
+      expect(await cmdNodeFleet('pull', ['--node', 'worker', '--session', session, '--json'], { store })).toBe(0);
+      expect(JSON.parse(lines.at(-1)!).next).toBeUndefined();
     } finally { vi.restoreAllMocks(); }
   });
 });

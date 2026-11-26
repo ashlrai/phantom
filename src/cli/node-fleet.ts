@@ -144,10 +144,16 @@ function text(verb: string, out: Record<string, unknown>): string {
     const lease = `--job ${claim.jobId} --node ${claim.nodeId} --session ${claim.session} --token ${claim.token} --leader-token ${claim.leaderToken}`;
     const lines = [
       `Claimed ${claim.jobId}${facts.length ? ` (${facts.join('; ')})` : ''}.`,
-      `Lease token ${claim.token}, leader-token ${claim.leaderToken}; expires ${new Date(claim.expiresAt).toISOString()}. Renew before expiry; pass the token to every effect.`,
+      // The claim TTL slides: every renew buys another 30 seconds, so a job
+      // that outlives one window needs repeated renewals — the watch form
+      // below is the keep-alive, matching what docs/NODE-ROUTER.md prescribes.
+      `Lease token ${claim.token}, leader-token ${claim.leaderToken}; expires ${new Date(claim.expiresAt).toISOString()}. The lease lapses 30 seconds after the last renew; pass the token to every effect.`,
     ];
     if (typeof job?.task?.text === 'string' && job.task.text.length) lines.push('', 'Task:', job.task.text);
-    lines.push('', `Run: phm node renew ${lease}`, `Done? Run: phm node complete ${lease} --result <text>`);
+    lines.push('',
+      `Run: phm node renew ${lease}`,
+      `Keep it alive while you work: phm node renew ${lease} --watch`,
+      `Done? Run: phm node complete ${lease} --result <text>`);
     return lines.join('\n');
   }
   if (verb === 'result') {
@@ -224,6 +230,17 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // that boundary in the reply instead of letting a first-time node
       // assume it joined a shared fleet.
       out['registry'] = 'local';
+    }
+    // A claimed job's lease slides 30 s from the last renew, so a job that
+    // outlives one window needs repeated renewals. The text output prints the
+    // keep-alive command; --json pullers get the same next step as `next`, the
+    // way join already hands beat keepers theirs. Like join's, this stays in
+    // the CLI layer: runNodeFleet is shared with the SSH endpoint and pool
+    // replies carry their own fields.
+    if (verb === 'pull' && out['pulled'] === true) {
+      const claim = out['claim'] as { jobId: string; nodeId: string; session: number; token: number; leaderToken: number };
+      out['next'] = `phm node renew --job ${claim.jobId} --node ${claim.nodeId} --session ${claim.session}`
+        + ` --token ${claim.token} --leader-token ${claim.leaderToken} --watch`;
     }
     console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out));
     return 0;

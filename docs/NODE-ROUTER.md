@@ -88,7 +88,10 @@ job's outcome: `pending`, `running` (naming the node whose live claim can act),
 A text `pull` (no `--json`) prints the same claim for a person: the job's
 owner, requirements, pack and secret names, the embedded task text when the
 job carries one, the lease token pair and expiry, and paste-ready `renew` and
-`complete` commands.
+`complete` commands. The claim's lease slides 30 seconds from the last renew,
+so the output says so and names `renew --watch` — the keep-alive that repeats
+renew while the job runs — beside the one-shot renew; a `--json` pull carries
+the same command as `next`.
 
 The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
