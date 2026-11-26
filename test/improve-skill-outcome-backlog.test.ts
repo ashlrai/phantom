@@ -186,6 +186,31 @@ describe('skillOutcomeBacklogItems', () => {
     })).toEqual([]);
   });
 
+  it('withholds briefs for conflicting statuses on the latest revision regardless of row order', async () => {
+    const older = card({ status: 'revoked' });
+    const later = card({ ts: '2026-07-11T12:00:00.000Z' });
+    const sibling = card({ skillId: 'skill.sibling' });
+    const outcomes = summary([
+      outcomeRow(later.skillId, 1, recurring),
+      outcomeRow(sibling.skillId, 1, recurring),
+    ]);
+
+    for (const cards of [[older, later], [later, older]]) {
+      const items = await skillOutcomeBacklogItems({ repo: REPO, outcomes, corpus: corpus([...cards, sibling]) });
+      expect(items).toHaveLength(1);
+      expect(items[0]?.prompt).toContain(sibling.skillId);
+    }
+
+    const next = card({ revision: 2 });
+    const items = await skillOutcomeBacklogItems({
+      repo: REPO,
+      outcomes: summary([outcomeRow(next.skillId, 2, recurring)]),
+      corpus: corpus([older, next, later, next]),
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.title).toContain('rev 2');
+  });
+
   it('gates on the fleet repository and orders by recorded adverse evidence', async () => {
     const outcomes = summary([
       outcomeRow('skill.b', 1, { regressed: 3 }, 4),
