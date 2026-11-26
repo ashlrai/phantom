@@ -220,9 +220,11 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
     const statusQuota = statusMeasurements.get('codex-personal') ?? null;
     const quotaAt = statusQuota?.observedAt;
     const statusAt = quotaAt ? Date.parse(quotaAt) : NaN;
-    const statusHasDatedReading = statusQuota?.usedPct != null && statusAt <= now;
+    const statusHasDatedReading = statusQuota?.usedPct != null && statusAt <= now &&
+      (statusQuota.resetAt === null || Date.parse(statusQuota.resetAt) > now);
     if (personal?.weekly?.usedPct != null &&
         (personal.weekly.windowMinutes === null || personal.weekly.windowMinutes > 315) &&
+        (personal.weekly.resetsAt === null || Date.parse(personal.weekly.resetsAt) > now) &&
         Number.isFinite(observed) && observed <= now &&
         (!statusHasDatedReading || observed > statusAt)) {
       if (!lane) {

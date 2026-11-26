@@ -98,6 +98,19 @@ it('compares personal observations with the same lane quota timestamp, preservin
   expect((await read()).lanes[0]).toMatchObject({ usedPct: 89, source: 'fake-status',
     quotaEvidence: { measuredQuota: null, statusQuota: { observedAt: iso(-10_000) } } });
 });
+it.each([-1, 0])('prefers the active personal window over a newer dispatcher quota that reset at offset %s ms', async offset => {
+  status(100, iso(offset), iso(-1), iso(-10_000));
+  rollout(5, iso(-30_000));
+  expect((await read()).lanes[0]).toMatchObject({ usedPct: 5, source: 'codex-personal-sessions', held: true,
+    quotaEvidence: { state: 'observed-headroom', reason: 'measured-quota',
+      statusQuota: { usedPct: 100, resetAt: iso(offset) }, measuredQuota: { usedPct: 5 } } });
+});
+it('keeps an active dispatcher window when a newer personal reading has already reset', async () => {
+  status(89, iso(86_400_000), iso(-1), iso(-60_000));
+  rollout(5, iso(-30_000), 10080, iso(0));
+  expect((await read()).lanes[0]).toMatchObject({ usedPct: 89, source: 'fake-status',
+    quotaEvidence: { state: 'unknown', reason: 'status-quota', measuredQuota: null } });
+});
 it.each([null, 'invalid', iso(1)])('accepts a measured personal reading over an unorderable status quota (%s)', async observedAt => {
   status(100, iso(86_400_000), iso(-1), observedAt);
   rollout(0, iso(-30_000));
