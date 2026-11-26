@@ -1,12 +1,15 @@
 /**
- * Read side of state/resource-live.json: paths, the stored shape and a
+ * Storage for state/resource-live.json and resource evidence: paths, the stored shape and a
  * tolerant parser. Consumers (the world model, the scheduler) import this
  * file, not the engine, so reading the sidecar never loads a provider reader.
  */
+import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { lstat, mkdir, open } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
+import { acquireLocalStoreLock, releaseLocalStoreLock } from '../../fleet/local-store-lock.js';
+import { writePrivateFileAtomically } from '../../util/private-file-write.js';
 import { EMPTY_RESET_STATE } from './reset-rule.js';
 import {
   RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_SCHEMA, RESOURCE_LIVE_STALE_MS,
@@ -18,6 +21,11 @@ import {
 export const HISTORY_PER_ALLOWANCE = 12;
 export const resourceHistoryPath = (runsDir: string): string => join(resourceLiveStateDir(runsDir), 'resource-live-history.json');
 const MAX_SIDECAR_BYTES = 512 * 1024;
+const MAX_EVIDENCE_BYTES = 16 * 1024;
+const fileSchema = z.object({
+  schema: z.literal('resource-evidence.v1'),
+  readings: z.record(z.string(), z.unknown()),
+});
 
 export function resourceLiveStateDir(runsDir: string): string {
   if (!isAbsolute(runsDir) || /(?:^|\/)\.codex[^/]*(?:\/|$)/.test(runsDir)) throw new Error('resource-live runs dir refused');
@@ -152,7 +160,33 @@ export async function readResourceLiveFile(runsDir: string): Promise<unknown | n
 }
 
 export async function readResourceEvidenceFile(runsDir: string): Promise<unknown | null> {
-  return readPrivateJson(join(resourceLiveStateDir(runsDir), 'resource-evidence.json'), 16 * 1024);
+  return readPrivateJson(join(resourceLiveStateDir(runsDir), 'resource-evidence.json'), MAX_EVIDENCE_BYTES);
+}
+
+export async function updateEvidence<T>(runsDir: string, update: (readings: Record<string, unknown>) => Promise<{ changed: boolean; result: T }>): Promise<T | null> {
+  const state = resourceLiveStateDir(runsDir);
+  await mkdir(state, { recursive: true, mode: 0o700 });
+  const path = join(state, 'resource-evidence.json');
+  const lock = acquireLocalStoreLock(join(state, 'resource-evidence.lock'), 0, { anchorPath: runsDir });
+  if (!lock) return null;
+  try {
+    const existing = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+      return null;
+    });
+    const stored = existing ? fileSchema.safeParse(await readPrivateJson(path, MAX_EVIDENCE_BYTES)) : null;
+    if (stored && !stored.success) throw new Error('Invalid existing resource-evidence.v1 file.');
+    const readings = stored?.data.readings ?? {};
+    const { changed, result } = await update(readings);
+    if (changed) {
+      const body = JSON.stringify({ schema: 'resource-evidence.v1', readings }) + '\n';
+      if (Buffer.byteLength(body) > MAX_EVIDENCE_BYTES) throw new Error('Resource evidence exceeds the sidecar limit.');
+      writePrivateFileAtomically(`${path}.${randomUUID()}.tmp`, path, body, { anchorPath: runsDir, label: 'Resource evidence' });
+    }
+    return result;
+  } finally {
+    releaseLocalStoreLock(lock);
+  }
 }
 
 export async function readResourceHistoryFile(runsDir: string): Promise<unknown | null> {

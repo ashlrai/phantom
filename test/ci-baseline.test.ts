@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; noJobs?: boolean } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/') || endpoint.includes('/jobs/30/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.installSmoke ? 'install-smoke-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       let prefix: string;
       if (options.checkoutRef !== undefined) {
@@ -1412,6 +1412,89 @@ describe('CI baseline evidence', () => {
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ install: true, count: 1, pass: true }).gh);
     expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses install-smoke step failures per verb', () => {
+    const failures = parseBaselineFailures(fixture('install-smoke-shared'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/scripts/ci-install-smoke.mjs > (install-smoke-commit)',
+      '.github/scripts/ci-install-smoke.mjs > (install-smoke-release)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: '.github/scripts/ci-install-smoke.mjs', names: '(install-smoke-commit)' });
+    expect(failures[0]?.excerpt).toContain('installed phm version 0.0.0, expected 3.30.71');
+    expect(failures[1]).toMatchObject({ file: '.github/scripts/ci-install-smoke.mjs', names: '(install-smoke-release)' });
+    expect(failures[1]?.excerpt).toContain('published release checksum mismatch');
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('install-smoke-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    const step = (script: string[], output: string[], error = '##[error]Process completed with exit code 1.') =>
+      ['##[group]Run ' + script[0], ...script.slice(1), 'shell: /usr/bin/bash -e {0}', '##[endgroup]', ...output, error].join('\n');
+    // A step qualifies only when every script line is the same install-smoke
+    // invocation: trailing commands, other verbs, missing verbs, other
+    // scripts, uses: actions, cancelled and passing steps stay unparsed.
+    for (const bad of [
+      step(['node .github/scripts/ci-install-smoke.mjs commit && npm test'], ['npm test failed']),
+      step(['node .github/scripts/ci-install-smoke.mjs commit', 'npm test'], ['boom']),
+      step(['node .github/scripts/ci-install-smoke.mjs commit', 'node .github/scripts/ci-install-smoke.mjs release'], ['boom']),
+      step(['node .github/scripts/ci-install-smoke.mjs'], ['usage: ci-install-smoke.mjs commit|release']),
+      step(['node .github/scripts/ci-install-smoke.mjs bogus'], ['boom']),
+      step(['node .github/scripts/ci-pack-smoke.mjs capture'], ['boom']),
+      step(['actions/setup-node@820762786026740c76f36085b0efc47a31fe5020'], ['with:', '  node-version: \'22\'']),
+      step(['node .github/scripts/ci-install-smoke.mjs release'], ['published release checksum mismatch'], '##[error]The operation was canceled.'),
+      step(['node .github/scripts/ci-install-smoke.mjs commit'], ['phm --version 3.30.71'], ''),
+    ]) {
+      expect(parseBaselineFailures(bad), bad.slice(0, 60)).toEqual([]);
+    }
+    // env: metadata inside the block does not disturb attribution, and a
+    // step failure with no script output still groups under the verb.
+    const env = [
+      '##[group]Run node .github/scripts/ci-install-smoke.mjs commit',
+      'node .github/scripts/ci-install-smoke.mjs commit',
+      'shell: /usr/bin/bash -e {0}',
+      'env:',
+      '  NODE_OPTIONS: --max-old-space-size=5120',
+      '##[endgroup]',
+      'npm pack produced no tarball',
+      '##[error]Process completed with exit code 1.',
+    ].join('\n');
+    expect(parseBaselineFailures(env).map(f => f.testId)).toEqual(['.github/scripts/ci-install-smoke.mjs > (install-smoke-commit)']);
+    const bare = step(['node .github/scripts/ci-install-smoke.mjs release'], []);
+    expect(parseBaselineFailures(bare).map(f => f.testId)).toEqual(['.github/scripts/ci-install-smoke.mjs > (install-smoke-release)']);
+  });
+  it('groups install-smoke failures and attributes each verb its own inputs', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ installSmoke: true, checkoutRef: 'self' }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(2);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      '.github/scripts/ci-install-smoke.mjs > (install-smoke-commit)',
+      '.github/scripts/ci-install-smoke.mjs > (install-smoke-release)',
+    ]);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // The commit verb reads this checkout: package.json (version, files,
+    // bin), the lockfile, the packed bin shim and the workflow step are
+    // pr-caused for that group only. The release verb installs the
+    // published artifact no diff can change, so those inputs stay
+    // shared-baseline for it while the script and workflow still count.
+    for (const [touched, commit, release] of [
+      ['package.json', 'pr-caused', 'queue-master-fix'],
+      ['package-lock.json', 'pr-caused', 'queue-master-fix'],
+      ['bin/ashlr', 'pr-caused', 'queue-master-fix'],
+      ['.github/workflows/ci.yml', 'pr-caused', 'pr-caused'],
+      ['.github/scripts/ci-install-smoke.mjs', 'pr-caused', 'pr-caused'],
+      ['install.sh', 'queue-master-fix', 'queue-master-fix'],
+      ['src/core/status.ts', 'queue-master-fix', 'queue-master-fix'],
+      ['tsconfig.json', 'queue-master-fix', 'queue-master-fix'],
+    ] as const) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ installSmoke: true, checkoutRef: 'self', touched }).gh);
+      const byId = new Map(caused.groups.map(g => [g.testId, g.action]));
+      expect(byId.get('.github/scripts/ci-install-smoke.mjs > (install-smoke-commit)'), touched).toBe(commit);
+      expect(byId.get('.github/scripts/ci-install-smoke.mjs > (install-smoke-release)'), touched).toBe(release);
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ installSmoke: true, checkoutRef: 'self', count: 1, pass: true }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('parses memory benchmark floor violations as gate failures', () => {
     const failures = parseBaselineFailures(fixture('membench-shared'));

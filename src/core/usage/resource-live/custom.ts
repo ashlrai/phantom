@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { ashlrHome } from '../../cloud/store.js';
+import { isCustomLogo } from '../../brand/registry.js';
 import { readPrivateJson, readResourceEvidenceFile } from './store.js';
 import type { ResourceLiveSource } from './source-types.js';
 import { RESOURCE_LIVE_STALE_MS, type ResourceLiveAllowance, type ResourceLiveClass, type ResourceLiveCustom } from './types.js';
@@ -16,6 +17,7 @@ const entrySchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
   name,
   provider: name,
+  logo: z.string().optional(),
   kind: z.enum(['subscription', 'promo-credit', 'metered', 'local', 'bot']),
   source,
   unit,
@@ -50,7 +52,8 @@ export async function readCustomResources(): Promise<CustomResource[]> {
     if (resources.has(e.id)) duplicates.add(e.id);
     resources.set(e.id, { id: `custom:${e.id}`, label: e.name, lane: null, sensor_lane: null, class: classes[e.kind],
       expires_at: normalize(e.expires_at), resetAt: normalize(e.reset_at), unit: e.unit, limit: e.limit,
-      custom: { provider: e.provider, kind: e.kind, source: e.source, metered_opt_in: e.metered_opt_in,
+      custom: { provider: e.provider, ...(isCustomLogo(e.logo) ? { logo: e.logo } : {}),
+        kind: e.kind, source: e.source, metered_opt_in: e.metered_opt_in,
         window_hours: e.window_hours, revision: createHash('sha256').update(JSON.stringify(e)).digest('hex') } });
   }
   return [...resources.entries()].filter(([id]) => !duplicates.has(id)).map(([, row]) => row);

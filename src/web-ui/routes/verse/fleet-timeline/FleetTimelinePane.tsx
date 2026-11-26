@@ -97,7 +97,7 @@ export function FleetTimelinePane({ visible }: Pick<PaneProps, 'visible'>) {
       : <>
         {read.status === 'error' ? <p className={styles.muted} role="status">Fleet runs could not refresh. Showing the last reading.</p> : null}
         {grouped || ciVisible ? <>
-        {mason ? <Swimlane title="Mason" lanes={[mason]} from={timeline.from} to={timeline.to} now={now} status={{ kind: 'ready' }} toneOf={toneOf} onSelectItem={selectItem} /> : null}
+        {mason ? <Swimlane title="Operator" lanes={[mason]} from={timeline.from} to={timeline.to} now={now} status={{ kind: 'ready' }} toneOf={toneOf} onSelectItem={selectItem} /> : null}
         {merges?.lane ? <Swimlane title="Merges" lanes={[merges.lane]} from={timeline.from} to={timeline.to} now={now} status={{ kind: 'ready' }} toneOf={toneOf} onSelectItem={selectItem} /> : null}
         {ciVisible?.lane ? <div title={ciVisible.headline ?? undefined}>
           <Swimlane title="CI" lanes={[ciVisible.lane]} from={timeline.from} to={timeline.to} now={now} status={{ kind: 'ready' }} toneOf={toneOf} onSelectItem={selectItem} />

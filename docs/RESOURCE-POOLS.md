@@ -150,7 +150,22 @@ The weekly row can also use a fresh non-estimated
 `queue/budget-overrides.json` weekly reading from the personal App Server
 reader. Five-hour usage is not inferred from the weekly window.
 
-App Server rate limits do not establish ownership or expiry of banked resets.
+The Codex App Server's
+[`account/rateLimits/read` response schema](https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/app-server-protocol/schema/json/v2/GetAccountRateLimitsResponse.json)
+exposes `rateLimitResetCredits` separately from usage windows and reloadable
+credits. With an explicit personal pool home configured (`codexPersonalHome`
+or `PHANTOM_SENSOR_CODEX_PERSONAL_HOME`), the existing Resource Live poll reads
+the bank in the same request as the usage windows. A complete list of distinct,
+available `codexRateLimits` grants with future expiries is recorded as full
+resets; an explicit empty list with count zero records an empty bank. Missing,
+partial or ambiguous details do not overwrite evidence or imply zero. Phantom
+does not store provider credit IDs or call a reset redemption method.
+If the field is absent and the App Server reports a version older than 0.172.0,
+the bank is unknown with reason `codex-cli-too-old (<0.172.0)`. If the version
+cannot be read, the reason is `codex-cli-version-unknown`. After the Resource Live
+poll records an old-CLI result, `phm resources`, `phm resources plan` and
+`phm doctor` suggest upgrading Codex; Phantom does not upgrade it automatically.
+Fresh desktop or manual bank evidence remains usable.
 Record the count and each separately expiring grant with the local CLI:
 
 ```sh
@@ -165,7 +180,8 @@ only for a current observation. Use one UTC expiry per grant and omit
 resets; `--kind 5h` or `--kind weekly` declares a bank of that kind. It
 uses the same private, atomic evidence writer as the scheduled collector.
 
-To collect automatically, configure the `codex-personal-resets` target with
+If your App Server does not report a complete bank, configure the
+`codex-personal-resets` desktop target with
 the exact quota-only ChatGPT Settings → Usage window and unique
 `Usage limit resets` heading. The collector needs a single `Available` count
 and matching `Full reset expires`, `5-hour reset expires` or

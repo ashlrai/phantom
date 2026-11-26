@@ -609,6 +609,17 @@ evidence never suppresses — suppression is advisory and fails open. The
 ledger read is tail-bounded via `--metrics` (default
 `~/.ashlr-runs/metrics/jobs.jsonl`).
 
+Queuegen reads repositories from the verified, effective standing policy.
+Both proposal and merge stages can receive work. An inactive policy or Stop
+parks generation. The Mac launcher currently takes AshlrAI checkout names.
+
+Each active repo receives two P2 freshness jobs per seven-day UTC window.
+The docs job checks documented commands and examples against current code
+and CLI help. The site job checks the configured production deployment and
+records its revision and health, including when no site is configured or
+the evidence is unreadable. The jobs share queuegen's cycle cap. An active
+job carries over into the next window without a duplicate.
+
 The recut loop ([`recut-loop.ts`](../src/core/fleet/recut-loop.ts)) applies
 the same rule to the drop jobs it mints for conflicting fleet PRs: when the
 last two attempts it wrote for one PR on the *same head* all finished empty
@@ -1129,6 +1140,13 @@ Rejections never claim another generator's results. `generationKnown: false`
 means the generation ledger is unavailable; `jobsKnown` does the same for the
 jobs ledger. Counts cover recorded evidence only.
 
+The self-improvement discovery feed queues recurring refusals after four
+distinct recorded rejection observations for one source and reason across
+at least two UTC days in the last seven days. Replayed decisions with the
+same job, source, event, reason and recorded instant count once in both the
+recurrence threshold and the refusal share. Later observations for the
+same job still count.
+
 ## Fleet resource capacity advice
 
 `phm resources plan --json` joins verified allowance deadlines and remaining
@@ -1226,7 +1244,7 @@ Three actions change one queued job. Each takes `--dry-run`, which prints the
 change and writes nothing, and `--json` (schema `queue.action.v1`):
 
 - `phm queue top <id>` moves the job to the front.
-- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused.
+- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused. The row's lane column and its requirements cell's `preferred_lane` move together — the market prefers the spec hint, so a column-only rewrite would leave the job on its old lane.
 - `phm queue drop <id>` takes it out. The row is copied to `queue/dropped.tsv` and its router line is marked `DROPPED`.
 
 Every write holds `queue/ready.lock`, edits a fresh read of `queue/ready.tsv` and
