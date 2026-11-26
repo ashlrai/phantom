@@ -20,7 +20,7 @@ const VERDICT_MIN_AGE_MS = 5 * 60_000;
 const VERDICT_MAX_AGE_MS = 24 * 60 * 60_000;
 /** Verdict API reads per repository per maintenance pass, bounding calls inside the deadline. */
 const MAX_VERDICT_CHECKS = 8;
-/** Slack allowed between the local fire timestamp and the run's GitHub updated_at guard. */
+/** Slack allowed between the local fire timestamp and the GitHub attempt start. */
 const VERDICT_SKEW_MS = 60_000;
 const VERDICTS = ['pass', 'fail', 'inconclusive'] as const;
 
@@ -61,11 +61,15 @@ function pendingVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
 /** Map a workflow-run API payload to a verdict; null means not yet resolvable. */
 function verdictFromRun(data: unknown, entry: Entry): Entry['verdict'] | null {
   if (typeof data !== 'object' || data === null) return null;
-  const run = data as { id?: unknown; status?: unknown; conclusion?: unknown; head_sha?: unknown; updated_at?: unknown };
+  const run = data as { id?: unknown; status?: unknown; conclusion?: unknown; head_sha?: unknown; updated_at?: unknown; run_attempt?: unknown; run_started_at?: unknown };
   if (run.id !== entry.runId || run.head_sha !== entry.head || run.status !== 'completed') return null;
   if (typeof run.conclusion !== 'string' || !run.conclusion.trim() || typeof run.updated_at !== 'string') return null;
+  if (typeof run.run_attempt !== 'number' || !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 2
+      || typeof run.run_started_at !== 'string') return null;
+  const started = Date.parse(run.run_started_at);
   const updated = Date.parse(run.updated_at);
-  if (!Number.isFinite(updated) || updated < Date.parse(entry.at) - VERDICT_SKEW_MS) return null;
+  if (!Number.isFinite(started) || !Number.isFinite(updated)
+      || started < Date.parse(entry.at) - VERDICT_SKEW_MS || updated < started) return null;
   if (run.conclusion === 'success') return 'pass';
   if (run.conclusion === 'failure' || run.conclusion === 'timed_out') return 'fail';
   return 'inconclusive';

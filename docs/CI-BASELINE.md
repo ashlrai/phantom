@@ -639,10 +639,13 @@ pending reruns by reading `repos/<repo>/actions/runs/<runId>`: a completed run
 with conclusion `success` journals a `pass` verdict, `failure` or `timed_out`
 a `fail`, and any other reported conclusion (cancelled, skipped, neutral,
 startup failure, stale) an `inconclusive` one. Verdicts require a matching run
-ID and head SHA, a nonempty conclusion, and a parseable `updated_at` no earlier
-than one minute before the successful rerun call was journaled. In-progress
-runs and incomplete, mismatched or stale reads stay pending for a later pass. Attempts younger than five minutes are not checked
-yet so a stale pre-rerun read cannot be mistaken for the new attempt's result;
+ID and head SHA, a nonempty conclusion, and a `run_attempt` of at least two.
+The recorded `run_started_at` must be no earlier than one minute before the
+successful rerun call was journaled, and `updated_at` must be at or after
+that start. This keeps an updated workflow record for an older attempt from
+supplying a verdict. In-progress runs and incomplete, mismatched or stale
+reads stay pending for a later pass. Attempts younger than five minutes are
+given time to settle before polling;
 unresolved attempts older than 24 hours stop being polled. Each pass performs
 at most eight verdict reads per repository inside the same five-minute
 deadline. Each repository resumes after its last checked rerun, wrapping

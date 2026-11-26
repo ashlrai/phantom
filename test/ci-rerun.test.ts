@@ -147,7 +147,7 @@ describe('resident CI reruns', () => {
       const index = Number(args[1]!.split('/').at(-1)) - 123;
       const stdout = JSON.stringify({
         id: 123 + index, status: 'completed', conclusion: 'failure',
-        head_sha: heads[index], updated_at: '2026-01-01T12:09:00Z',
+        head_sha: heads[index], updated_at: '2026-01-01T12:09:00Z', run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z',
       });
       return { ok: true, stdout, stderr: '' };
     });
@@ -184,7 +184,7 @@ describe('resident CI reruns', () => {
     await runCiRerunMaintenance(opts);
     opts.now = () => Date.parse('2026-01-01T12:10:00Z');
     gh.mockImplementation(async (args: string[]) => args[0] === 'api'
-      ? { ok: true, stdout: JSON.stringify({ id: 123, status: 'completed', conclusion: 'success', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z' }), stderr: '' }
+      ? { ok: true, stdout: JSON.stringify({ id: 123, status: 'completed', conclusion: 'success', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z', run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z' }), stderr: '' }
       : { ok: true, stdout: '', stderr: '' });
     const status = await runCiRerunMaintenance(opts);
     expect(status.repos['org/repo']?.verdictsResolved).toBe(1);
@@ -209,10 +209,10 @@ describe('resident CI reruns', () => {
     expect(gh.mock.calls.filter(call => call[0][0] === 'run')).toHaveLength(4);
     opts.now = () => Date.parse('2026-01-01T12:10:00Z');
     const payloads: Record<string, unknown> = {
-      '123': { id: 123, status: 'completed', conclusion: 'failure', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z' },
-      '124': { id: 124, status: 'completed', conclusion: 'cancelled', head_sha: 'b'.repeat(40), updated_at: '2026-01-01T12:09:00Z' },
-      '125': { id: 125, status: 'in_progress', conclusion: null, head_sha: 'c'.repeat(40), updated_at: '2026-01-01T12:09:00Z' },
-      '126': { id: 126, status: 'completed', conclusion: 'success', head_sha: 'd'.repeat(40), updated_at: '2026-01-01T11:00:00Z' },
+      '123': { id: 123, status: 'completed', conclusion: 'failure', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z', run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z' },
+      '124': { id: 124, status: 'completed', conclusion: 'cancelled', head_sha: 'b'.repeat(40), updated_at: '2026-01-01T12:09:00Z', run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z' },
+      '125': { id: 125, status: 'in_progress', conclusion: null, head_sha: 'c'.repeat(40), updated_at: '2026-01-01T12:09:00Z', run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z' },
+      '126': { id: 126, status: 'completed', conclusion: 'success', head_sha: 'd'.repeat(40), updated_at: '2026-01-01T11:00:00Z', run_attempt: 2, run_started_at: '2026-01-01T11:00:00Z' },
     };
     gh.mockImplementation(async (args: string[]) => args[0] === 'api'
       ? { ok: true, stdout: JSON.stringify(payloads[args[1]!.split('/').pop()!] ?? {}), stderr: '' }
@@ -230,12 +230,18 @@ describe('resident CI reruns', () => {
     { head_sha: 'b'.repeat(40) },
     { updated_at: undefined },
     { updated_at: 'invalid' },
+    { updated_at: '2026-01-01T12:00:30Z' },
+    { run_attempt: undefined },
+    { run_attempt: 1 },
+    { run_started_at: undefined },
+    { run_started_at: 'invalid' },
+    { run_started_at: '2026-01-01T11:58:59Z' },
     { conclusion: null },
   ])('keeps incomplete or mismatched verdict evidence pending (%j)', async override => {
     const { opts, gh } = setup();
     await runCiRerunMaintenance(opts);
     opts.now = () => Date.parse('2026-01-01T12:10:00Z');
-    const evidence = { id: 123, status: 'completed', conclusion: 'success', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z' };
+    const evidence = { id: 123, status: 'completed', conclusion: 'success', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z', run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z' };
     gh.mockResolvedValue({ ok: true, stdout: JSON.stringify({ ...evidence, ...override }), stderr: '' });
     await runCiRerunMaintenance(opts);
     expect(readCiReruns(opts.journalPath!, opts.now!()).verdicts).toEqual({
@@ -278,7 +284,7 @@ describe('resident CI reruns', () => {
       const id = Number(args[1]!.split('/').pop());
       const head = String(id - 100).padStart(40, '0');
       const status = oldestUnresolved && id < 108 ? 'in_progress' : 'completed';
-      return { ok: true, stdout: JSON.stringify({ id, status, conclusion: 'success', head_sha: head, updated_at: '2026-01-01T11:30:00Z' }), stderr: '' };
+      return { ok: true, stdout: JSON.stringify({ id, status, conclusion: 'success', head_sha: head, updated_at: '2026-01-01T11:30:00Z', run_attempt: 2, run_started_at: '2026-01-01T11:01:00Z' }), stderr: '' };
     });
     const first = await runCiRerunMaintenance(opts);
     expect(first.repos['org/repo']?.verdictsPending).toBe(10);
