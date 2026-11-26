@@ -303,9 +303,11 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
   let header: string | null = null;
   let statusColumn = -1;
   let repoColumn = -1;
-  const parsedRows: Array<{ row: ReturnType<typeof parseReadyTsv>['rows'][number]; originalState: string | undefined; unsafeRepo: boolean }> = [];
+  const parsedRows: Array<
+    { openJobId: string } |
+    { row: ReturnType<typeof parseReadyTsv>['rows'][number]; originalState: string | undefined; unsafeRepo: boolean }
+  > = [];
   let dropped = 0;
-  let unhinted = 0;
   /** router-queue.md text for spec-less envelope resolution, read lazily on
    *  the first five-column market row. Undefined = not yet read; null = the
    *  market's own fallback (missing or over-bound leaves the lane column). */
@@ -379,7 +381,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
       }
     }
     dropped += result.dropped;
-    unhinted += result.unhinted;
+    for (const { id } of result.unhintedRows) parsedRows.push({ openJobId: id });
     const row = result.rows[0];
     if (!row) continue;
     const originalState = positional
@@ -408,13 +410,27 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
   let ready = 0;
   let parked = 0;
   let malformed = dropped;
-  for (const { row, originalState, unsafeRepo } of parsedRows) {
+  let unhinted = 0;
+  const seenReady = new Set<string>();
+  for (const parsed of parsedRows) {
+    if ('openJobId' in parsed) {
+      if (!seenReady.has(parsed.openJobId)) {
+        seenReady.add(parsed.openJobId);
+        unhinted++;
+      }
+      continue;
+    }
+    const { row, originalState, unsafeRepo } = parsed;
     const statusText = originalState?.toUpperCase() === row.status ? originalState : row.status;
     const statusParked = parseParkedState(statusText);
     // Dispatcher 5-col parked rows keep status READY and put PARKED-REASON.lane in the pool column.
     const poolParked = parseParkedState(row.pool);
     const parkedState = statusParked.parked ? statusParked : poolParked;
     if (!row.id || !JOB_ID.test(row.id) || (!parkedState.parked && row.status !== 'READY')) { malformed++; continue; }
+    if (!parkedState.parked) {
+      if (seenReady.has(row.id)) continue;
+      seenReady.add(row.id);
+    }
     // The parser uppercases the whole PARKED marker inside `status`, so its
     // lane capture can differ in case from the lane the row's own pool cell
     // names (lane-column parked rows carry the marker's lane there verbatim).

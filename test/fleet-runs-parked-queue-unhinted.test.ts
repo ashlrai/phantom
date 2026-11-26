@@ -20,6 +20,29 @@ async function queueWithFiles(ready: string, routerQueue?: string) {
 }
 
 describe('fleet queue lane-open rows', () => {
+  it('counts each ready job once using its first valid ready hint', async () => {
+    const dir = await queueWith([
+      'RQ-LANED\tphantom\tdevin\twork\tprompts/a.md',
+      'RQ-LANED\tphantom\t\twork\tprompts/a.md',
+      'RQ-LANED\tphantom\tclaude\twork\tprompts/a.md',
+      'RQ-OPEN\tphantom\tclaude\twork\tprompts/b.md\t{"preferred_lane":null}',
+      'RQ-OPEN\tphantom\tclaude\twork\tprompts/b.md',
+      'RQ-OPEN\tphantom\t\twork\tprompts/b.md',
+      'RQ-PARKED\tphantom\tPARKED-QUOTA.devin\twork\tprompts/c.md',
+      'RQ-PARKED\tphantom\tdevin\twork\tprompts/c.md',
+    ].join('\n'));
+    try {
+      const result = await readFleetQueue({ runsDir: dir, now: () => now });
+      expect(result).toMatchObject({
+        total: 4, ready: 3, parked: 1, malformed: 0, unhinted: 1,
+        sources: { ready: 'healthy' },
+        health: { counts: { ready: 3 } },
+      });
+      expect(result.byLane).toMatchObject([{ lane: 'devin', ready: 2, parked: 1 }]);
+      expect(result.nextUp).toEqual([{ lane: 'devin', jobs: ['RQ-LANED', 'RQ-PARKED'] }]);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('counts open-hint rows as ready work without degrading the source or inventing a lane', async () => {
     const dir = await queueWith([
       'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
