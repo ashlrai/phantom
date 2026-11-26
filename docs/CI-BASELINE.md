@@ -603,8 +603,10 @@ unknown KILL state blocks queueing. These gates do not apply to flake reruns.
 
 The append-only `ci-reruns/journal.jsonl` under ASHLR_HOME (default `~/.ashlr`)
 records an attempt durably before calling GitHub, then records its outcome.
-Attempt rows carry the eligible failing test IDs (each bounded to 400
-characters), so each test flaking on unrelated commits is visible over time.
+Attempt rows carry eligible failing test IDs that fit within 400 characters
+and survive secret scrubbing unchanged. IDs that would need truncation or
+redaction are omitted from recurrence evidence, and their presence on a run
+withholds per-test attribution of its workflow verdict.
 When multiple probable flakes share a workflow run, one attempt counts
 toward each test's recurrence and consumes one slot in the hourly cap. A test that was
 rerun-attempted on at least three distinct heads within the last seven days is

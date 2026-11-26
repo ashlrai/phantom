@@ -210,6 +210,34 @@ describe('resident CI reruns', () => {
     expect(verdict?.test).toBe(otherRunId === 123 ? undefined : flake!.testId);
     expect(read.verdicts).toMatchObject({ fail: 1, pending: 0 });
   });
+  it.each([
+    { label: 'overlong IDs with a shared prefix', testIds: ['a', 'b'].map(suffix => `test/a.test.ts > ${'x'.repeat(400)}${suffix}`), shortId: undefined },
+    { label: 'a redacted ID and an intact ID', testIds: [`test/b.test.ts > ghp_${'x'.repeat(36)}`], shortId: 'test/a.test.ts > a' },
+  ])('withholds per-test verdicts for $label', async ({ testIds, shortId }) => {
+    const { opts, gh, report } = setup();
+    const flake = report.groups[0]!;
+    report.groups = [...(shortId ? [flake] : []), ...testIds.map(testId => ({ ...flake, testId }))];
+    await runCiRerunMaintenance(opts);
+
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    gh.mockResolvedValue({
+      ok: true,
+      stdout: JSON.stringify({
+        id: 123, head_sha: flake.runs[0]!.head, status: 'completed', conclusion: 'success',
+        run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z', updated_at: '2026-01-01T12:09:00Z',
+      }),
+      stderr: '',
+    });
+    await runCiRerunMaintenance(opts);
+
+    const read = readCiReruns(opts.journalPath, opts.now());
+    expect(read.entries.map(({ outcome, test, tests }) => ({ outcome, test, tests }))).toEqual([
+      { outcome: 'attempt', test: shortId, tests: undefined },
+      { outcome: 'ok', test: undefined, tests: undefined },
+      { outcome: 'verdict', test: undefined, tests: undefined },
+    ]);
+    expect(read.verdicts).toMatchObject({ pass: 1, pending: 0 });
+  });
   it('resolves a fired rerun to a pass verdict on a later pass and reports it once', async () => {
     const { opts, gh } = setup();
     await runCiRerunMaintenance(opts);

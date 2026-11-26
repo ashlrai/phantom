@@ -167,8 +167,10 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
         const runsWithOtherFailures = new Set<string>();
         const testsByRun = new Map<string, Set<string>>();
         for (const group of report.groups) {
+          // A shortened or redacted ID can collide with a different test.
           const test = rerunGroups.has(group) && typeof group.testId === 'string'
-            ? scrubSecrets(group.testId).slice(0, JOURNAL_TEST_MAX)
+            && group.testId.length <= JOURNAL_TEST_MAX && scrubSecrets(group.testId) === group.testId
+            ? group.testId
             : '';
           for (const run of group.runs) {
             const key = rerunKey({ repo, ...run });
