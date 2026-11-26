@@ -121,16 +121,18 @@ queue is empty.
 
 The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
-expiry, prints the keep-alive `beat --watch` command and says the registry is
+expiry, prints the keep-alive `beat --watch` command (or, with `--watch` on the
+join itself, already holds the new session live — standalone only, refused on a
+pool-configured Mac) and says the registry is
 local to this machine — only jobs enqueued on this computer reach the node
 (`"registry":"local"` in `--json`); `status`/`list` name
 the node holding each running claim (`claimed by`, or `no live claim` once the
 claim lapsed or was fenced), show each node's advertised slot bound (`slots=N`,
 or `slots=unbounded` when no bound was ever reported — an absent bound is
 legacy routing, not a measured zero) and its last measured hold as
-`held=<reason>` while one is reported, name the `phm node join` command that
-restores each expired node's last advertised profile (the same hint a
-session-expired error prints), annotate each node whose advertised
+`held=<reason>` while one is reported, name the `phm node join … --watch`
+command that restores each expired node's last advertised profile and keeps it
+live (the same hint a session-expired error prints), annotate each node whose advertised
 `phm-<version>` cap is not this build (`phm=behind`, `phm=ahead` or
 `phm=unreported` — beats never re-stamp caps, so a node that outlived an
 upgrade reads as behind) and point at `phm node self-update --owner <scope>`
@@ -191,6 +193,17 @@ SIGTERM stops the loop and prints a confirmation; a beat that exits non-zero —
 a lapsed session, a refused flag — stops it at once with that beat's error. The
 watch flags are consumed by the dispatcher and never reach the beat parser, so
 older stores and pool primaries see only the usual beat arguments.
+
+`phm node join --watch [--every <seconds>]` is the one-command first run on
+the standalone registry: it performs the ordinary join — same flags, same
+session answer, `--probe-auth` on the beats when `gh` was advertised — then
+holds the new session with exactly the beat watch above, re-measuring capacity
+and host stats each pass. The watch flags are stripped before the join parser,
+so the fleet flag table is unchanged; `--json` prints the join envelope once,
+then one beat envelope per pass. On a pool-configured Mac it is refused with a
+usage error: a pool join releases its probe session on purpose and
+`phm node worker` holds the live sessions, so there is nothing for the watch
+to keep alive.
 
 `phm node renew --watch [--every <seconds>]` is the claim-side counterpart: a
 pull's lease expires 30 seconds after the last renew, so a job that takes

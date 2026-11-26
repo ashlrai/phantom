@@ -1,7 +1,7 @@
 /** Kept import-free so `phm node --help` and `bootstrap` never load the node store. */
 export const NODE_FLEET_VERBS = ['join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'release', 'withdraw', 'result', 'status', 'list', 'leave'] as const;
 
-export const NODE_FLEET_USAGE = `Usage: phm node join [--node <id>] --owner <scope[,scope]> [--caps <cap[,cap]>] [--slots 0-64] [--json]
+export const NODE_FLEET_USAGE = `Usage: phm node join [--node <id>] --owner <scope[,scope]> [--caps <cap[,cap]>] [--slots 0-64] [--watch [--every <seconds>]] [--json]
        phm node beat --node <id> --session <n> [--usage 0-1000] [--slots 0-64] [--capacity <sample-json>] [--auth ok|missing|unknown | --probe-auth] [--watch [--every <seconds>]] [--json]
        phm node enqueue --job <id> --owner <scope> [--requires <cap[,cap]>] [--pack <id>] [--secrets <NAME[,NAME]>] [--task-part <text>] [--task-sha256 sha256:<hex>] [--json]
        phm node plan [--owner <scope>] [--json]
@@ -41,4 +41,7 @@ task requires \`--pack codex-file\`, and the two flags together or neither.
 expire 30 s after the last beat) until Ctrl-C, re-measuring capacity and host stats on this
 machine each pass unless those flags were given explicitly. \`renew --watch\` repeats the
 renew on the same interval so a pulled job's 30-second claim lease survives real work;
-the watch flags never reach either verb's parser.`;
+the watch flags never reach either verb's parser. \`join --watch\` is the one-command
+first run on the standalone registry: it joins, prints the session, then holds it live
+with the same beat watch — refused on a pool-configured Mac, where join releases its
+probe session and \`phm node worker\` holds the live sessions instead.`;

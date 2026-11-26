@@ -135,17 +135,24 @@ function claimOf(flags: Map<string, string>): JobClaim {
  * metacharacters into a paste. `phm nodes` prints the same hint for an expired
  * local session and `phm node status`/`list` names it per expired node, so
  * every surface restores the full advertised profile. */
-export function joinHintCommand(nodeId: string, profile: { owners?: string[]; caps?: string[]; slots?: number } | null): string {
-  if (!validId(nodeId)) return 'phm node join --node <id> --owner <scope>';
+export function joinHintCommand(nodeId: string, profile: { owners?: string[]; caps?: string[]; slots?: number } | null,
+  opts: { watch?: boolean } = {}): string {
+  // watch names `join --watch`, the standalone keep-alive: a bare join's
+  // session dies 30 s after its last beat, so a hint whose job is restoring
+  // "Phantom running" must also hold the session. Pool callers never pass it —
+  // a pool join releases its probe session and workers hold their own.
+  const watch = opts.watch === true ? ['--watch'] : [];
+  if (!validId(nodeId)) return ['phm node join', '--node <id>', '--owner <scope>', ...watch].join(' ');
   return ['phm node join', `--node ${nodeId}`,
     profile?.owners?.length ? `--owner ${profile.owners.join(',')}` : '--owner <scope>',
     ...(profile?.caps?.length ? [`--caps ${profile.caps.join(',')}`] : []),
-    ...(profile?.slots === undefined ? [] : [`--slots ${profile.slots}`])].join(' ');
+    ...(profile?.slots === undefined ? [] : [`--slots ${profile.slots}`]),
+    ...watch].join(' ');
 }
 
 /** Rejoin command for a dead session's fix text. */
-function joinHint(nodes: DriveNodes, nodeId: string): string {
-  return joinHintCommand(nodeId, nodes.nodeProfile(nodeId));
+function joinHint(nodes: DriveNodes, nodeId: string, watch = false): string {
+  return joinHintCommand(nodeId, nodes.nodeProfile(nodeId), { watch });
 }
 
 /** The session a node id is live under right now, or null. Read-only, and used
@@ -198,7 +205,8 @@ function requireOwnerFlag(flags: Map<string, string>, nodes: DriveNodes, verb: s
   }
 }
 
-export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: DriveNodes, probeAuth: () => NodeAuth): Record<string, unknown> {
+export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: DriveNodes, probeAuth: () => NodeAuth,
+  opts: { rejoinWatch?: boolean } = {}): Record<string, unknown> {
   const session = (): { nodeId: string; session: number } => ({ nodeId: needId(flags, '--node'), session: num(flags, '--session') });
   const stale = (nodeId: string, attempted?: number) => {
     const live = liveSession(nodes, nodeId);
@@ -206,7 +214,10 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       `Node '${nodeId}' has no live session (it expired, left, or was replaced).`,
       live !== null && live !== attempted
         ? `Node '${nodeId}' is live as session ${live}: retry with --session ${live}, or run phm node leave --node ${nodeId} --session ${live} and rejoin.`
-        : `Rejoin with: ${joinHint(nodes, nodeId)}; then use the new session.`, 1);
+        // rejoinWatch is set only on the standalone path (cmdNodeFleet): there
+        // `join --watch` both creates the session and holds it live. The SSH
+        // endpoint leaves it off — pool joins release their probe session.
+        : `Rejoin with: ${joinHint(nodes, nodeId, opts.rejoinWatch === true)}; then use the new session.`, 1);
   };
   switch (verb) {
     case 'join': {
