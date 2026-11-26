@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; qualification?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/') || endpoint.includes('/jobs/30/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.installSmoke ? 'install-smoke-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.installSmoke ? 'install-smoke-shared' : options.script ? 'script-shared' : options.qualification ? 'qualification-lane' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       let prefix: string;
       if (options.checkoutRef !== undefined) {
@@ -1349,6 +1349,106 @@ describe('CI baseline evidence', () => {
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ fastSelect: true, count: 1, pass: true, contents }).gh);
     expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses qualification-lane verdict failures under the gate identity', () => {
+    // The lane's own verdicts -- report validation, missing/extra
+    // reports, source-identity drift -- print only the error line plus
+    // the step marker, so they group under the script like every other
+    // ci.yml helper gate. Verdicts naming evidence other parsers own
+    // stay with those parsers: the flaky refusal is the
+    // qualification-flake shape and the failed child's
+    // [test-ci:sharded] verdict belongs to the test-runner parser.
+    const failures = parseBaselineFailures(fixture('qualification-lane'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/scripts/ci-qualification-lane.mjs > (qualification-lane)',
+      'test/example.test.ts > owner status reports delivery',
+      'scripts/test-ci-sharded.mjs > (test-ci-sharded)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: '.github/scripts/ci-qualification-lane.mjs', names: '(qualification-lane)' });
+    expect(failures[0]?.excerpt).toContain('Missing or extra qualification reports');
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('qualification-lane').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+  });
+  it('suppresses qualification-lane groups companion parsers already own', () => {
+    const step = (output: string[]) =>
+      ['##[group]Run node .github/scripts/ci-qualification-lane.mjs web', 'node .github/scripts/ci-qualification-lane.mjs web', 'shell: /usr/bin/bash -e {0}', '##[endgroup]', ...output, '##[error]Process completed with exit code 1.'].join('\n');
+    // The flaky refusal groups under the test it names, never the gate.
+    const flaky = step(['Test case passed only after a failed attempt (flaky): test/example.test.ts > owner status reports delivery']);
+    expect(parseBaselineFailures(flaky).map(f => f.testId)).toEqual(['test/example.test.ts > owner status reports delivery']);
+    // A vitest FAIL inside the child run keeps its own group.
+    const vitest = step(['FAIL  |unit| test/example.test.ts > suite > case']);
+    expect(parseBaselineFailures(vitest).map(f => f.testId)).toEqual(['test/example.test.ts > suite > case']);
+    // A failed child echoes the test-runner wrapper verdicts; those
+    // groups own the failure and the lane's `Qualification command
+    // failed` wrapper must not double-count them.
+    for (const verdict of [
+      '[test-ci] idle-timeout after 300000ms without output.',
+      '[test-ci] hard-runtime-cap reached after 5400000ms (last output 120000ms ago)',
+      '[test-ci:sharded] cannot plan balanced shards: duration table is missing entries',
+      '[test-ci:sharded] shard 2 of 4 failed to start: spawn npm ENOENT',
+    ]) {
+      const failures = parseBaselineFailures(step([verdict, 'Qualification command failed (1)']));
+      expect(failures.map(f => f.testId), verdict).not.toContain('.github/scripts/ci-qualification-lane.mjs > (qualification-lane)');
+      expect(failures.length, verdict).toBeGreaterThan(0);
+    }
+    // Every other lane verdict groups under the gate identity.
+    for (const verdict of [
+      'Qualification command failed (1)',
+      'Missing or extra qualification reports',
+      'Unsafe qualification report',
+      'Qualification report changed',
+      'Failed or empty Vitest report',
+      'Failed or empty test module',
+      'Invalid or duplicate test module',
+      'Invalid test case result',
+      'Vitest case totals disagree',
+      'Source changed during qualification',
+      'Missing or dirty CI source identity',
+      'Canonical POSIX source and temporary paths required',
+      'Missing GitHub step output',
+    ]) {
+      expect(parseBaselineFailures(step([verdict])).map(f => f.testId), verdict)
+        .toEqual(['.github/scripts/ci-qualification-lane.mjs > (qualification-lane)']);
+    }
+  });
+  it('groups qualification-lane failures and attributes the report-producing inputs', async () => {
+    const contents = {
+      '.github/scripts/ci-qualification-lane.mjs': "import { execFileSync, spawnSync } from 'node:child_process';\nimport { createHash } from 'node:crypto';",
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ qualification: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      '.github/scripts/ci-qualification-lane.mjs > (qualification-lane)',
+      'scripts/test-ci-sharded.mjs > (test-ci-sharded)',
+      'test/example.test.ts > owner status reports delivery',
+    ]);
+    expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+    // The workflow step/env wiring, the lane script itself, the vitest
+    // configs and the runner chain are inputs: touching any of them is
+    // pr-caused for the lane group.
+    for (const touched of [
+      '.github/workflows/ci.yml',
+      '.github/scripts/ci-qualification-lane.mjs',
+      'vitest.config.web.ts',
+      'scripts/test-ci-sharded.mjs',
+      'test/helpers/test-durations.json',
+      'package.json',
+    ]) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ qualification: true, touched, contents }).gh);
+      const byId = new Map(caused.groups.map(g => [g.testId, g.action]));
+      expect(byId.get('.github/scripts/ci-qualification-lane.mjs > (qualification-lane)'), touched).toBe('pr-caused');
+    }
+    // The vitest harness ambient set cannot reach this gate, and
+    // unrelated changes share the baseline.
+    for (const touched of ['src/core/status.ts', 'docs/README.md', 'eslint.config.js']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ qualification: true, touched, contents }).gh);
+      const byId = new Map(shared.groups.map(g => [g.testId, g.classification]));
+      expect(byId.get('.github/scripts/ci-qualification-lane.mjs > (qualification-lane)'), `${touched} -> qualification-lane`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ qualification: true, count: 1, pass: true, contents }).gh);
+    expect(singleton.groups[0]).toMatchObject({ testId: '.github/scripts/ci-qualification-lane.mjs > (qualification-lane)', classification: 'unknown', action: 'unknown' });
   });
   it('attributes npm ci install failures to the dependency manifests', () => {
     // A broken manifest/lockfile on master fails every PR's "Install

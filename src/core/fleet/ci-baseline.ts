@@ -556,6 +556,35 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   '.github/scripts/ci-fast-inputs.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-green-reuse.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mcp-selection.mjs': ['.github/workflows/ci.yml'],
+  // The qualification lanes wrap the suite runs and re-read each lane's
+  // Vitest JSON reports: their verdicts fail on report shape/count
+  // drift, spawn failures, source-identity drift or unsafe report
+  // files, so the dependency set is the closed surface that produces
+  // and validates those reports -- the workflow step/env wiring, the
+  // npm scripts it shells to, the web lane's vitest config, and the
+  // mac lanes' runner chain: the shard plan's duration table, the
+  // per-shard wrapper, its reporter and the vitest config/setup
+  // surface the spawned run executes under (the same closed list the
+  // test-runner identities declare, plus the web config).
+  '.github/scripts/ci-qualification-lane.mjs': [
+    '.github/workflows/ci.yml',
+    'vitest.config.web.ts',
+    'vitest.config.ts',
+    'vitest.config.mock-compat.ts',
+    'test/setup/home.ts',
+    'test/setup/home-isolation-guard.ts',
+    'test/config/realio-lane-membership.mjs',
+    'test/config/serial-cpu-lane-membership.mjs',
+    'test/config/weighted-sequencer.mjs',
+    'scripts/test-ci-sharded.mjs',
+    'scripts/test-shard-plan.mjs',
+    'scripts/test-ci.mjs',
+    'scripts/vitest-progress-reporter.mjs',
+    'test/helpers/test-durations.json',
+    'package.json',
+    'package-lock.json',
+    'tsconfig.json',
+  ],
   // The memory benchmark gate runs `tsx scripts/benchmark-memory.ts`
   // (npm run bench:memory -- --check): its import closure covers the
   // benchmark, its floors file and the whole src/core/memory
@@ -1328,6 +1357,16 @@ const CI_SCRIPT_GATES: Record<string, string> = {
   'ci-fast-inputs.mjs': '(fast-inputs)',
   'ci-green-reuse.mjs': '(green-reuse)',
   'ci-mcp-selection.mjs': '(mcp-selection)',
+  // The qualification lanes wrap the suite runs: the script re-reads each
+  // lane's Vitest JSON reports and refuses a case that passed only after
+  // a retry. Its own verdicts -- report validation, spawn failures,
+  // missing/extra reports, source-identity drift -- print only the error
+  // line plus the step marker. Three of its outputs name evidence other
+  // parsers already own and suppress this group: the flaky-case refusal
+  // is the qualification-flake shape, a vitest FAIL inside the child
+  // run keeps its own group, and a failed child echoes the
+  // [test-ci]/[test-ci:sharded] wrapper verdicts verbatim.
+  'ci-qualification-lane.mjs': '(qualification-lane)',
 };
 const CI_SCRIPT_GATE_FILES = new Set(Object.keys(CI_SCRIPT_GATES).map(base => `.github/scripts/${base}`));
 const CI_STEP_GROUP = /^##\[group\]Run(?:\s+(.*))?$/;
@@ -1405,6 +1444,12 @@ function parseCiScriptGateFailures(log: string): Failure[] {
         continue;
       }
       if (FAIL_LINE.test(line) || SUITE_FAIL_LINE.test(line) || /^not ok\b/.test(line)) suppressed = true;
+      // The qualification lane's verdicts name evidence dedicated parsers
+      // already own: its flaky-case refusal is the qualification-flake
+      // shape, and a failed child run echoes the [test-ci] and
+      // [test-ci:sharded] wrapper verdicts verbatim, so the gate group
+      // must not double-count either.
+      if (QUALIFICATION_FLAKY_LINE.test(line) || TEST_CI_VERDICT.test(line) || TEST_CI_SHARDED_VERDICT.test(line)) suppressed = true;
       if (line !== '') { recent.push(line); if (recent.length > 4) recent.shift(); }
     }
   }
