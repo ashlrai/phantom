@@ -428,7 +428,7 @@ def ranked_records(records):
         try: spec = work_market.from_envelope(record[2])
         except (ValueError, TypeError): continue
         parsed[record[0]] = (repo, record[1], spec, None)
-    shares = work_market.repo_shares(parsed.values(), H)
+    shares = work_market.repo_shares(parsed.values(), H, work_market.read_repo_freshness(Q), time.time())
     counts = {}
     def rank(record):
         repo, _, spec, _ = parsed.get(record[0], (None, None, {}, None))

@@ -2,7 +2,9 @@
 import datetime
 import json
 import math
+import os
 import re
+import stat
 from collections import defaultdict
 from pathlib import Path
 
@@ -124,7 +126,57 @@ def repo_priority(home, repo):
     except (OSError, UnicodeError): return "normal"
 
 
-def repo_shares(rows, home):
+FRESHNESS_WEEK = 7 * 86400
+FRESHNESS_JOB = re.compile(r"RQ-(DOCS|SITE)-FRESHNESS-([a-z0-9][a-z0-9._-]{0,99})-([0-9]{1,8})")
+FRESHNESS_VERDICTS = {"docs": {"clean", "drift", "unknown"},
+                      "site": {"healthy", "stale", "unhealthy", "unknown", "not-configured"}}
+
+
+def read_repo_freshness(queue):
+    try:
+        with open(Path(queue) / "repo-freshness.json", encoding="utf-8") as source:
+            text = source.read(262145)
+        if len(text) > 262144: return {}
+        data = json.loads(text)
+        if data.get("schema") == "repo-freshness.v1" and isinstance(data.get("repos"), dict):
+            return data["repos"]
+    except (OSError, ValueError, AttributeError): pass
+    return {}
+
+
+def freshness_finding(job, repo, worktree, now):
+    match = FRESHNESS_JOB.fullmatch(job)
+    if not match or repo != "ashlrai/" + match[2]: return None
+    kind, period = match[1].lower(), int(match[3])
+    if not 0 <= int(now // FRESHNESS_WEEK) - period <= 1: return None
+    try:
+        fd = os.open(Path(worktree) / "BRIDGE_NOTES.md", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as source:
+            if not stat.S_ISREG(os.fstat(fd).st_mode): return None
+            notes = source.read(65537)
+        if len(notes) > 65536: return None
+        lines = [line for line in notes.decode("utf-8").splitlines() if line.startswith("FRESHNESS:")]
+        if len(lines) != 1: return None
+        verdict = lines[0][len("FRESHNESS:"):].strip()
+        return (kind, {"period": period, "verdict": verdict}) if verdict in FRESHNESS_VERDICTS[kind] else None
+    except (OSError, UnicodeError): return None
+
+
+def freshness_signals(kinds, now):
+    if not isinstance(kinds, dict): return []
+    def verdict_of(kind):
+        record = kinds.get(kind)
+        if (isinstance(record, dict) and type(record.get("period")) is int
+                and 0 <= int(now // FRESHNESS_WEEK) - record["period"] <= 1):
+            return record.get("verdict")
+        return None
+    docs, site = verdict_of("docs"), verdict_of("site")
+    return ([("docs_freshness_drift", .35)] if docs == "drift" else []) + (
+        [("site_freshness_unhealthy", .65)] if site == "unhealthy" else
+        [("site_freshness_stale", .45)] if site == "stale" else [])
+
+
+def repo_shares(rows, home, freshness=None, now=0):
     """Rows are (canonical repo, job ID, work spec, observed merge rate)."""
     evidence = defaultdict(list)
     for repo, job, spec, rate in rows:
@@ -148,6 +200,9 @@ def repo_shares(rows, home):
         if rates and max(rates) > 0:
             score += .5 * max(rates)
             reasons.append("historical_solution_yield")
+        for reason, bonus in freshness_signals((freshness or {}).get(repo), now):
+            score += bonus
+            reasons.append(reason)
         if nudge != "normal": reasons.append("owner_" + nudge)
         score *= {"normal": 1, "boost": 1.25, "pause": 0}[nudge]
         result[repo] = dict(schema="work-market.v1", event="repo_share", repo=repo, priority=nudge,

@@ -265,7 +265,10 @@ The Mac shared queue starts flat: no repository has a fixed rank or guaranteed
 top share. Within existing job urgency and safety bands, restock and dispatch
 interleave candidates by repository score. Ready depth, CI repair work, bug and
 research jobs, and declared mission impact increase the bounded score; dispatch
-also considers observed merge rates for comparable work. `boost` multiplies the
+also considers observed merge rates for comparable work. Recent weekly findings
+add 0.35 for docs drift, 0.45 for a stale site, or 0.65 for an unhealthy site,
+with reason codes `docs_freshness_drift`, `site_freshness_stale`, and
+`site_freshness_unhealthy`. `boost` multiplies the
 score by 1.25, `normal` leaves it alone, and `pause` keeps work pending without
 admitting new claims on this queue. These are local scheduling settings, not
 authority, cancellation or changes to execution constraints.
@@ -619,6 +622,14 @@ and CLI help. The site job checks the configured production deployment and
 records its revision and health, including when no site is configured or
 the evidence is unreadable. The jobs share queuegen's cycle cap. An active
 job carries over into the next window without a duplicate.
+
+Each job reports one standalone `FRESHNESS: <verdict>` line in its worktree's
+`BRIDGE_NOTES.md`. Docs verdicts are `clean`, `drift`, or `unknown`; site
+verdicts are `healthy`, `stale`, `unhealthy`, `unknown`, or `not-configured`.
+Before reaping finished worktrees, the Mac dispatcher saves the latest valid
+weekly verdict per repo and kind in `queue/repo-freshness.json`. Only the
+current and previous UTC windows count. Missing, unknown, and out-of-window
+findings add no weight. The snapshot stores no notes, endpoints, or revisions.
 
 The recut loop ([`recut-loop.ts`](../src/core/fleet/recut-loop.ts)) applies
 the same rule to the drop jobs it mints for conflicting fleet PRs: when the

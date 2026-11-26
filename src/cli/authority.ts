@@ -645,6 +645,11 @@ async function cmdClearStop(deps: AuthorityCliDeps): Promise<number> {
 }
 
 async function cmdRevoke(parsed: Parsed, deps: AuthorityCliDeps): Promise<number> {
+  const { canWriteStandingGrantHere } = await import('../core/drive/nodes/pool-host.js');
+  if (!canWriteStandingGrantHere()) {
+    deps.err('Manage signed grants on the leader, not a worker.');
+    return 1;
+  }
   const { revokeStanding, revokeStandingAndDrain } = await import('../core/authority/clamp.js');
   const reason = one(parsed, '--reason') ?? 'revoked with ashlr authority revoke';
   const result = parsed.flags.has('--no-wait')
@@ -742,6 +747,8 @@ async function signAndInstall(
   payload: StandingGrantV1,
   deps: AuthorityCliDeps,
 ): Promise<{ ok: true; grant: StandingGrantV1 } | { ok: false; reason: string }> {
+  const { canWriteStandingGrantHere } = await import('../core/drive/nodes/pool-host.js');
+  if (!canWriteStandingGrantHere()) return { ok: false, reason: 'Manage signed grants on the leader, not a worker.' };
   const { standingGrantPayloadDigest, installStandingGrant } = await import('../core/authority/standing-grant.js');
   const { displaySurfaceTarget, invalidateStandingPolicyCache } = await import('../core/authority/effective-config.js');
   const digest = standingGrantPayloadDigest(payload);

@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { configurePool } from '../src/core/drive/nodes/pool-host.js';
 
 const state = vi.hoisted(() => ({
   roots: [] as unknown[],
@@ -190,6 +191,28 @@ describe('routing and gates', () => {
 });
 
 describe('actions', () => {
+  it('refuses standing grant writes from a worker before invoking custody', async () => {
+    vi.stubEnv('ASHLR_HOME', join(process.env['HOME']!, '.ashlr'));
+    try {
+      configurePool({ role: 'worker', node: 'mac-worker', owner: 'owner', primary: 'mac-primary', backup: 'mac-backup' });
+      for (const action of ['grant', 're-approve', 'revoke']) {
+        const result = await call('POST', '/api/verse/authority', { action });
+        expect(result).toMatchObject({ status: 403, body: { code: 'grant-leader-only' } });
+      }
+      const { cmdWebsite } = await import('../src/cli/website.js');
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        expect(await cmdWebsite(['commission', '--yes'])).toBe(1);
+        expect(error).toHaveBeenCalledWith('Manage signed grants on the leader, not a worker.');
+      } finally {
+        error.mockRestore();
+      }
+      expect(state.signCalls).toBe(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('raising past the grant is 409 grant-required; lowering is always fine', async () => {
     const raised = await call('POST', '/api/verse/authority', { action: 'switch', to: 'propose' });
     expect(raised?.status).toBe(409);

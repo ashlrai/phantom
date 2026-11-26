@@ -1458,6 +1458,19 @@ def reap_worktrees():
                 target = drain_target(j, _job_repo(j))
                 if target: drain_targets.add(target)
             continue
+        if work_market.FRESHNESS_JOB.fullmatch(j) and (_rc(j) == 0 or published):
+            if os.path.realpath(wt) == os.path.join(os.path.realpath(WTROOT), j):
+                repo = work_market.repo_key(b[1])
+                finding = work_market.freshness_finding(j, repo, wt, NOW)
+                if finding:
+                    kind, record = finding
+                    freshness = work_market.read_repo_freshness(Q)
+                    if not isinstance(freshness.get(repo), dict): freshness[repo] = {}
+                    previous = freshness[repo].get(kind)
+                    if not isinstance(previous, dict) or type(previous.get("period")) is not int or previous["period"] < record["period"]:
+                        freshness[repo][kind] = record
+                        try: jsave(Q + "/repo-freshness.json", {"schema": "repo-freshness.v1", "repos": freshness})
+                        except OSError: log("repo freshness snapshot unavailable")
         if batch_manifest(j):   # a bundle publishes nothing itself; its lines publish on their own next pass
             if over_budget() or os.path.exists(RUN + "/" + j + ".keptlogged"): continue
             try:
@@ -2157,7 +2170,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     jsave(Q + "/ranking.json", {"at": NOW, "decisions": list(admission[f[0]] for f in cand)})
     cand = [f for f in cand if admission[f[0]]["outcome"] != "DONE-NOOP"]
     repo_shares = work_market.repo_shares(
-        ((work_market.repo_key(f[1]), f[0], market_specs[f[0]], admission[f[0]]["mergeRate"]) for f in cand), H)
+        ((work_market.repo_key(f[1]), f[0], market_specs[f[0]], admission[f[0]]["mergeRate"]) for f in cand),
+        H, work_market.read_repo_freshness(Q), NOW)
     last_shares = jload(Q + "/repo-shares.json", {})
     if not isinstance(last_shares, dict) or last_shares.get("repos") != repo_shares:
         for share in repo_shares.values(): market_metric(share)
