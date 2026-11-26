@@ -613,7 +613,22 @@ for its release, never a guessed deadline; both gates clear is a
 verified-open source with a real zero, and either probe's own unknown
 verdict degrades the source — unknown stays unknown, never an open gate
 passed off as fact; deep links `phm agents bus status --json`, `phm
-fleet status`, `phm fleet resume`) — and each item carries `act` deep-link commands (`phm fleet
+fleet status`, `phm fleet resume`) — and READY jobs in the dispatch
+router queue that no recorded launch proves ever started (the same
+`readStuckQueue` read `phm queue stuck` and the desktop Queue view
+serve, so the surfaces can never disagree: work sitting READY in
+`queue/router-queue.md` while every bus, board, feed and coordination
+read shows nothing was invisible to the one view an agent checks for
+work; each unlaunched READY row lists as warn `router-queue-job`
+naming the job id — the same label `phm queue` verbs take — `since`
+the enqueue epoch or first dispatch-event time the wait is measured
+from and `expiresAt` null, since a queued job waits for a lane, never
+a guessed deadline; a missing `dispatch-events.log` degrades the
+source — every READY row still lists but its launch state is
+unproven, and the detail says so — an absent queue file is `missing`
+(verified-empty: no READY rows can exist) and an unreadable one
+`unavailable`, never an empty queue passed off as fact; deep links
+`phm queue stuck`, `phm fleet unfed --json`, `phm queue`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -630,7 +645,8 @@ run`, `phm channels`, `phm comms cycle`, `phm leader inbox`, `phm imessage
 replies`, `phm leader replies`, `phm comms send-owner`, `phm fleet
 coordination board`, `phm fleet coordination inbox --agent`, `phm fleet
 claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`,
-`phm agents bus status`, `phm fleet status`, `phm fleet resume`). It never claims, replies, or mutates; a source
+`phm agents bus status`, `phm fleet status`, `phm fleet resume`, `phm
+queue stuck`, `phm fleet unfed --json`, `phm queue`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
@@ -644,7 +660,8 @@ that provably name that job — a bus or mailbox body's `busBodyJobMatch`
 citation, a feed job's id, a board task's fleet item or a delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
 seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
-peer-dispatch receipt's job or a session-handoff journal's job id —
+peer-dispatch receipt's job, a session-handoff journal's job id or a
+router-queue row's own READY id —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound

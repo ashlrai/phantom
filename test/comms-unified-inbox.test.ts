@@ -16,7 +16,7 @@ import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
@@ -4695,5 +4695,118 @@ describe('readUnifiedInbox send gate', () => {
     // A gate verdict names no job — --job never matches it.
     const byJob = await readGate(pending.kill, pending.pause, { filter: { job: 'job-1' } });
     expect(byJob.items.filter(i => i.source === 'send-gate')).toHaveLength(0);
+  });
+});
+
+describe('readUnifiedInbox router queue', () => {
+  const queueRead = (over: Partial<RouterQueueStuckRead> = {}): RouterQueueStuckRead => ({
+    state: 'healthy', jobs: [], ...over,
+  });
+  const readQueue = (q: RouterQueueStuckRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readRouterQueue: async () => q, ...extra });
+  /** dispatch-events.log stamps are local wall time; build them from `now` so the read is TZ-proof. */
+  const localStamp = (ms: number): string => {
+    const d = new Date(ms);
+    const p = (n: number): string => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  };
+  const writeQueue = (lines: string[]): void => {
+    const dir = join(runsDir, 'queue');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'router-queue.md'), `${lines.join('\n')}\n`, { mode: 0o600 });
+  };
+
+  it('lists each unlaunched READY job as a warn naming its id, wait and acts', async () => {
+    const inbox = await readQueue(queueRead({ jobs: [
+      { id: 'RQ-ALPHA', age_s: 7_200 },
+      { id: 'RQ-BETA', age: 'unknown' },
+    ] }));
+    expect(inbox.sources['router-queue']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'router-queue');
+    expect(items).toHaveLength(2);
+
+    const alpha = items.find(i => i.id === 'router-queue:RQ-ALPHA')!;
+    expect(alpha).toMatchObject({
+      kind: 'router-queue-job', severity: 'warn', blocking: false,
+      title: 'Router job RQ-ALPHA has no recorded launch',
+      since: new Date(now - 7_200_000).toISOString(), expiresAt: null,
+      jobIds: ['RQ-ALPHA'],
+    });
+    expect(alpha.detail).toContain('READY in queue/router-queue.md');
+    expect(alpha.detail).toContain('waiting 2h');
+    expect(alpha.act).toEqual(['phm queue stuck', 'phm fleet unfed --json', 'phm queue']);
+
+    // Neither an enqueue epoch nor a dispatch event — the wait stays unknown.
+    const beta = items.find(i => i.id === 'router-queue:RQ-BETA')!;
+    expect(beta.since).toBeNull();
+    expect(beta.detail).toContain('wait age unknown');
+    expect(beta.jobIds).toEqual(['RQ-BETA']);
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readQueue(queueRead({ state: 'missing', jobs: [{ id: 'RQ-X', age_s: 1 }] }));
+    expect(missing.sources['router-queue']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'router-queue')).toHaveLength(0);
+
+    const unavailable = await readQueue(queueRead({ state: 'unavailable', jobs: [{ id: 'RQ-X', age_s: 1 }] }));
+    expect(unavailable.sources['router-queue']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'router-queue')).toHaveLength(0);
+
+    const throwing = await read({ readRouterQueue: async () => { throw new Error('queue boom'); } });
+    expect(throwing.sources['router-queue']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'router-queue')).toHaveLength(0);
+  });
+
+  it('lists every READY row degraded when launch evidence is unavailable, saying so in the detail', async () => {
+    const inbox = await readQueue(queueRead({ state: 'degraded', jobs: [{ id: 'RQ-ALPHA', age_s: 600 }] }));
+    expect(inbox.sources['router-queue']).toEqual({ state: 'degraded', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'router-queue:RQ-ALPHA')!;
+    expect(item.detail).toContain('waiting 10m');
+    expect(item.detail).toContain('launch evidence unavailable');
+  });
+
+  it('reads the real queue file and events log under runsDir', async () => {
+    writeQueue([
+      `- READY RQ-ALPHA enq=${Math.floor((now - 7_200_000) / 1000)}`,
+      '- READY RQ-BETA',
+      `- READY RQ-GAMMA enq=${Math.floor((now - 600_000) / 1000)}`,
+      `- DONE RQ-OLD enq=${Math.floor((now - 7_200_000) / 1000)}`,
+    ]);
+    writeFileSync(join(runsDir, 'dispatch-events.log'),
+      `${localStamp(now - 300_000)} LAUNCH RQ-GAMMA\n${localStamp(now - 7_300_000)} NOTE RQ-BETA picked up\n`,
+      { mode: 0o600 });
+    const inbox = await read();
+    expect(inbox.sources['router-queue']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'router-queue');
+    expect(items.map(i => i.id).sort()).toEqual(['router-queue:RQ-ALPHA', 'router-queue:RQ-BETA']);
+    expect(items.find(i => i.id === 'router-queue:RQ-ALPHA')!.since).toBe(new Date(now - 7_200_000).toISOString());
+    // No enq= on the row: the first dispatch-event mention is the wait's start.
+    expect(items.find(i => i.id === 'router-queue:RQ-BETA')!.since).toBe(new Date(now - 7_300_000).toISOString());
+  });
+
+  it('degrades when the events log is missing but still lists READY rows, and reports a missing queue file as missing', async () => {
+    writeQueue([`- READY RQ-ALPHA enq=${Math.floor((now - 600_000) / 1000)}`]);
+    const degraded = await read();
+    expect(degraded.sources['router-queue']).toEqual({ state: 'degraded', pending: 1 });
+    const item = degraded.items.find(i => i.source === 'router-queue')!;
+    expect(item.detail).toContain('launch evidence unavailable');
+
+    rmSync(join(runsDir, 'queue', 'router-queue.md'));
+    const missing = await read();
+    expect(missing.sources['router-queue']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'router-queue')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = queueRead({ jobs: [{ id: 'RQ-ALPHA', age_s: 600 }, { id: 'RQ-BETA', age_s: 60 }] });
+    const bySource = await readQueue(pending, { filter: { source: 'router-queue' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'router-queue')).toBe(true);
+    const byKind = await readQueue(pending, { filter: { kind: 'router-queue-job' } });
+    expect(byKind.items.map(i => i.id).sort()).toEqual(['router-queue:RQ-ALPHA', 'router-queue:RQ-BETA']);
+    expect(byKind.sources['router-queue']).toEqual({ state: 'healthy', pending: 2 });
+    // The READY id is the item's own citation — --job names it directly.
+    const byJob = await readQueue(pending, { filter: { job: 'RQ-ALPHA' } });
+    expect(byJob.items.filter(i => i.source === 'router-queue').map(i => i.id)).toEqual(['router-queue:RQ-ALPHA']);
   });
 });
