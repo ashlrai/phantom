@@ -768,7 +768,10 @@ completion in order. CI receipts outside that window are ignored when
 checking for ambiguity, so earlier attempts can coexist with a measured
 retry. A merge uses its recorded merge time even if its ledger receipt
 arrived later. The latest effective merge time selects the rewarded attempt.
-A revert at or after that merge changes its verdict. The fold uses the
+A revert at or after that merge changes its verdict. When the revert
+receipt identifies a GitHub PR by URL, it can change only the verdict for
+that PR, even if another PR used the same job ID. Revert receipts without
+a usable PR URL retain job-level attribution. The fold uses the
 recorded revert time when available and the receipt timestamp otherwise.
 Replayed merge receipts cannot restore credit for a reverted merge, and the
 original merge time still bounds dispatch and CI evidence.
