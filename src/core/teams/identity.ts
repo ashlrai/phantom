@@ -23,6 +23,10 @@ export const AGENT_ENV_MARKERS: readonly string[] = Object.freeze([...new Set([
 
 export function ownerConfigPath(): string { return join(ashlrHome(), 'teams', 'owner.json'); }
 
+/** `localHumanActor` refuses an agent process; the typed error lets `phm team --json`
+ * mark the failure `refused` instead of reporting a plain operational error. */
+export class AgentProcessRefusedError extends Error {}
+
 /** Device human from the OS user and owner config. Does not read agent env and does not authorize a request. */
 export function enrolledHumanActor(): TeamActor {
   const osUser = normalizeHandle(userInfo().username);
@@ -39,7 +43,7 @@ export function enrolledHumanActor(): TeamActor {
 
 export function localHumanActor(env: NodeJS.ProcessEnv = process.env): TeamActor {
   const marker = AGENT_ENV_MARKERS.find((k) => env[k] !== undefined && env[k] !== '');
-  if (marker) throw new Error(`Approvals must come from the local human owner, not an agent process (${marker} is set).`);
+  if (marker) throw new AgentProcessRefusedError(`Approvals must come from the local human owner, not an agent process (${marker} is set).`);
   return enrolledHumanActor();
 }
 

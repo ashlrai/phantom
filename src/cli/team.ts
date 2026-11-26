@@ -7,7 +7,7 @@ import { addTeamPerson, DirectoryInputError, DirectoryRefusedError, OWNER_ONLY, 
 import { memberRunningJobs } from '../core/teams/running-jobs.js';
 import { shareTotal, TEAM_SCHEMA, toMember } from '../shared/team-directory.js';
 import {
-  inviteMember, isAssignableMemberRole, isOpenHandoff, joinWithInvite, localHumanActor, memberIdForGithubUser,
+  AgentProcessRefusedError, inviteMember, isAssignableMemberRole, isOpenHandoff, joinWithInvite, localHumanActor, memberIdForGithubUser,
   normalizeHandle, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, describeAccessAction, releaseClaim,
   teamState, updateWorkspace, type TeamActor,
 } from '../core/teams/index.js';
@@ -37,7 +37,9 @@ Start: view --team <id>; confirm the authoritative local log and your task with 
 Team names do not sync machines. Roles do not grant repository or connector access.
 Missing access/context: ask the owner/admin with a task reference and redacted error.
 Returning: review handoff details with view --json, source links and claims before editing.
-Guide: docs/TEAM.md`;
+With --json every failure prints {"schema":"phantom.team.v1","version":1,"error","refused"}
+on stderr (refused marks an identity or owner-only refusal) instead of "phm team: ..." text;
+exit codes are unchanged. Guide: docs/TEAM.md`;
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -144,14 +146,25 @@ export async function cmdTeam(argv: string[]): Promise<number> {
       }
       case 'release': return out(releaseClaim(team, me, rest[0] ?? ''), 'Released.');
       case 'say': { if (!rest.length) throw new Error('say needs text'); const ev = appendEvent(team, me, 'message.posted', { channel: 'general', text: rest.join(' ') }); return out(ev, 'Posted.'); }
-      default: console.error(USAGE); return 2;
+      default:
+        if (json) { console.error(JSON.stringify({ schema: TEAM_SCHEMA, version: 1, error: `Unknown team command '${sub}'.`, refused: false })); return 2; }
+        console.error(USAGE); return 2;
     }
   } catch (err) {
-    if (['list', 'show', 'add'].includes(sub) || (sub === 'remove' && /^(person|human):/.test(rest[0] ?? ''))) {
-      const error = err instanceof DirectoryInputError ? err.message : sub === 'remove' && err instanceof Error ? err.message : 'Team directory unavailable.';
-      console.error(json ? JSON.stringify({ schema: TEAM_SCHEMA, version: 1, error, refused: err instanceof DirectoryRefusedError }) : `phm team: ${error}`); return 1;
+    // Directory verbs keep their redacted operational message; every other verb
+    // reports the thrown message. Under --json all verbs emit the same
+    // phantom.team.v1 envelope on stderr, so --json callers always get
+    // machine-readable output — docs/TEAM.md promises it on invite/join/remove too.
+    const directoryOp = ['list', 'show', 'add'].includes(sub) || (sub === 'remove' && /^(person|human):/.test(rest[0] ?? ''));
+    const error = directoryOp
+      ? (err instanceof DirectoryInputError ? err.message : sub === 'remove' && err instanceof Error ? err.message : 'Team directory unavailable.')
+      : err instanceof Error ? err.message : String(err);
+    if (json) {
+      console.error(JSON.stringify({ schema: TEAM_SCHEMA, version: 1, error,
+        refused: err instanceof DirectoryRefusedError || err instanceof AgentProcessRefusedError }));
+      return 1;
     }
-    console.error(`phm team: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`phm team: ${error}`);
     return 1;
   }
 }
