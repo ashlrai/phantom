@@ -116,6 +116,11 @@ receipt proves coordination, not job execution.
 
 ## Leader
 
+The local `fleet.leader-board.v1` conflict trend uses distinct observation
+times in chronological order. Recording a tick again at the same timestamp
+replaces its sample, and observations ahead of the current tick are discarded.
+An unavailable ready queue leaves the current conflict count and trend unknown.
+
 | Method | Path | Query | Response type / source | Handler | Curl example |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/verse/leader` | none | [LeaderStateV1](../src/core/vision/leader-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader'` |
