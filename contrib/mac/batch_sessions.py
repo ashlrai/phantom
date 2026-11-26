@@ -40,7 +40,7 @@ DEFAULTS = {
     "max_lines": 10,
     "min_lines": 2,
     # Hosted subscription lanes only. claude-api spends API credits and codex-local is a 6-slot local model.
-    "lanes": ["claude", "codex-personal", "codex-cmp", "devin"],
+    "lanes": ["claude", "codex-personal", "devin"],
     "models": {
         "claude": {"workhorse": "sonnet", "hard": "opus"},
         "codex": {"default": "gpt-6.2-sol", "frontier": "gpt-6.2-astra"},
@@ -50,7 +50,7 @@ DEFAULTS = {
     "hard_markers": ["architecture", "architectural", "redesign", "migration", "concurrency", "race condition",
                      "security", "threat model", "protocol", "cross-cutting", "invariant"],
     "devin": {"route": False, "eligible_repos": ["phantom"], "sm_max_lines": 100,
-              "fallback_lanes": ["claude", "codex-personal", "codex-cmp"]},
+              "fallback_lanes": ["claude", "codex-personal"]},
 }
 CLAUDE_MODEL_IDS = {"sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}
 
@@ -70,7 +70,7 @@ def load_config(path):
             cfg[key] = raw[key]
     cfg["min_lines"] = min(cfg["min_lines"], cfg["max_lines"])
     if isinstance(raw.get("lanes"), list):
-        cfg["lanes"] = [l for l in raw["lanes"] if isinstance(l, str) and l not in ("claude-api", "codex-local")]
+        cfg["lanes"] = [l for l in raw["lanes"] if isinstance(l, str) and l not in ("claude-api", "codex-local", "codex-cmp")]
     if isinstance(raw.get("hard_markers"), list):
         cfg["hard_markers"] = [m for m in raw["hard_markers"] if isinstance(m, str) and m.strip()]
     for fam, picks in (raw.get("models") or {}).items():
@@ -89,7 +89,7 @@ def load_config(path):
             cfg["devin"]["sm_max_lines"] = dv["sm_max_lines"]
         if isinstance(dv.get("fallback_lanes"), list):
             cfg["devin"]["fallback_lanes"] = [l for l in dv["fallback_lanes"]
-                                              if isinstance(l, str) and l not in ("devin", "claude-api")]
+                                              if isinstance(l, str) and l not in ("devin", "claude-api", "codex-cmp")]
     return cfg
 
 

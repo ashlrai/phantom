@@ -4,18 +4,17 @@ import { userInfo } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
 export interface CodexUsageReading {
-  pool: 'codex-cmp';
+  pool: 'codex-personal';
   pctUsed: number | null;
   resetAt: string | null;
-  terraResetAt: string | null;
   source: 'codex-reader';
   fetchedAt: string;
 }
 
 export interface CodexUsageOptions {
-  /** Explicit CMP pool HOME, never the operator's HOME or a copied profile. */
-  home?: string;
-  /** Append both account aliases to this usage-readings.log. Errors propagate. */
+  /** Explicit personal pool HOME, never the operator's HOME or a copied profile. */
+  personalHome?: string;
+  /** Append the personal reading to this usage-readings.log. Errors propagate. */
   logPath?: string;
 }
 
@@ -34,13 +33,13 @@ function object(value: unknown): value is ObjectValue {
  * expired or malformed windows cannot establish current account headroom.
  * https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt
  */
-export function parseCodexUsage(payload: unknown, nowMs: number): Pick<CodexUsageReading, 'pctUsed' | 'resetAt' | 'terraResetAt'> {
+export function parseCodexUsage(payload: unknown, nowMs: number): Pick<CodexUsageReading, 'pctUsed' | 'resetAt'> {
   try { return parseNativeUsage(payload, nowMs); }
-  catch { return { pctUsed: null, resetAt: null, terraResetAt: null }; }
+  catch { return { pctUsed: null, resetAt: null }; }
 }
 
-function parseNativeUsage(payload: unknown, nowMs: number): Pick<CodexUsageReading, 'pctUsed' | 'resetAt' | 'terraResetAt'> {
-  const unknown = { pctUsed: null, resetAt: null, terraResetAt: null };
+function parseNativeUsage(payload: unknown, nowMs: number): Pick<CodexUsageReading, 'pctUsed' | 'resetAt'> {
+  const unknown = { pctUsed: null, resetAt: null };
   if (!object(payload) || !Number.isFinite(nowMs)) return unknown;
   const hasMap = Object.hasOwn(payload, 'rateLimitsByLimitId');
   const bucket = hasMap
@@ -60,13 +59,15 @@ function parseNativeUsage(payload: unknown, nowMs: number): Pick<CodexUsageReadi
   const selected = windows.sort((a, b) => b.pctUsed - a.pctUsed || Date.parse(b.resetAt) - Date.parse(a.resetAt))[0];
   // A provider denial without a measured full window is not a percentage.
   if (!selected || bucket.rateLimitReachedType != null && selected.pctUsed !== 100) return unknown;
-  // Terra uses this CMP account's shared Codex quota, not another account or
-  // an inferred model-specific allowance. Both aliases retain identical evidence.
-  return { ...selected, terraResetAt: selected.resetAt };
+  return selected;
 }
 
-async function cmpHome(home: string | undefined): Promise<string | null> {
+async function poolHome(home: string | undefined): Promise<string | null> {
   if (!home || !isAbsolute(home) || resolve(home) !== home) return null;
+  const retiredHome = process.env.PHANTOM_SENSOR_CODEX_CMP_HOME;
+  const legacyState = process.env.CODEX_HOME;
+  if (retiredHome && resolve(retiredHome) === home ||
+      legacyState && [home, join(home, '.codex')].includes(resolve(legacyState))) return null;
   // Do not even inspect the operator's native credential directories. The
   // explicit pool HOME must be separate; symlinked profile copies are refused.
   const operatorHome = userInfo().homedir;
@@ -160,16 +161,15 @@ async function readNativeStatus(home: string): Promise<unknown> {
 export async function readCodexUsage(options: CodexUsageOptions = {}): Promise<CodexUsageReading> {
   let payload: unknown = null;
   try {
-    const home = await cmpHome(options.home);
+    const home = await poolHome(options.personalHome);
     if (home) payload = await readNativeStatus(home);
   } catch { /* Suppress native errors and private diagnostics. */ }
   const fetchedAt = new Date().toISOString();
   const reading: CodexUsageReading = {
-    pool: 'codex-cmp', ...parseCodexUsage(payload, Date.parse(fetchedAt)), source: 'codex-reader', fetchedAt,
+    pool: 'codex-personal', ...parseCodexUsage(payload, Date.parse(fetchedAt)), source: 'codex-reader', fetchedAt,
   };
   if (options.logPath) {
-    const rows = [reading, { ...reading, pool: 'terra@cmp', resetAt: reading.terraResetAt }];
-    await appendFile(options.logPath, rows.map(row => JSON.stringify({ ...row, used: row.pctUsed ?? 'unknown' }) + '\n').join(''),
+    await appendFile(options.logPath, JSON.stringify({ ...reading, used: reading.pctUsed ?? 'unknown' }) + '\n',
       { mode: 0o600 });
   }
   return reading;

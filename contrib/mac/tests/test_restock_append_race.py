@@ -18,7 +18,7 @@ import time
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'restock.py'
-LANES = ['codex-cmp', 'codex-personal', 'devin', 'codex-local', 'claude-api']
+LANES = ['codex-personal', 'devin', 'codex-local', 'claude-api']
 
 # Fake `ps`: marks that restock reached its mid-run subprocess call, then waits
 # for the release file before exiting with an empty listing. The 30s cap keeps

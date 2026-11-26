@@ -110,12 +110,12 @@ describe('outcome learning', () => {
     expect(picked.size).toBeGreaterThan(1);
   });
 
-  it('sends the job to Devin when CMP Codex cannot finish before reset', () => {
-    const learning = learnOutcomes(LOG);
-    const offers = [offer('codex-cmp', 'gpt-5.4', 5, 40), offer('devin', 'swe-2-max', 55, 7 * 24 * 60)];
+  it('sends the job to Devin when personal Codex cannot finish before reset', () => {
+    const learning = learnOutcomes(LOG.replaceAll('codex-cmp', 'codex-personal'));
+    const offers = [offer('codex-personal', 'gpt-5.4', 5, 40), offer('devin', 'swe-2-max', 55, 7 * 24 * 60)];
     const route = routeLearnedJob(learning, PROBE, offers, { nowMs: NOW, explore: false });
     expect(route).toMatchObject({ action: 'dispatch', resource: 'devin', model: 'swe-2-max', explored: false });
-    expect(route.explanation).toBe('Sent to Devin because CMP Codex resets in 40 min with 5% left.');
+    expect(route.explanation).toBe('Sent to Devin because personal Codex resets in 40 min with 5% left.');
   });
 
   it('spends the allowance that resets soon when that resource still ships', () => {
@@ -127,8 +127,8 @@ describe('outcome learning', () => {
   });
 
   it('does not make a critical job wait on an exhausted resource', () => {
-    const learning = learnOutcomes(LOG);
-    const offers = [offer('codex-cmp', 'gpt-5.4', 5, 40)];
+    const learning = learnOutcomes(LOG.replaceAll('codex-cmp', 'codex-personal'));
+    const offers = [offer('codex-personal', 'gpt-5.4', 5, 40)];
     const critical = routeLearnedJob(learning, { ...PROBE, priority: 'critical' }, offers, { nowMs: NOW, explore: false });
     const patient = routeLearnedJob(learning, PROBE, offers, { nowMs: NOW, explore: false });
     expect(critical).toMatchObject({
@@ -136,8 +136,15 @@ describe('outcome learning', () => {
       resource: null,
       explanation: 'No resource can take this critical job right now, so it is not waiting on a reset.',
     });
-    expect(patient).toMatchObject({ action: 'wait', resource: 'codex-cmp' });
-    expect(patient.explanation).toBe('Waiting until CMP Codex resets in 40 min with 5% left, because nothing else can take this job.');
+    expect(patient).toMatchObject({ action: 'wait', resource: 'codex-personal' });
+    expect(patient.explanation).toBe('Waiting until personal Codex resets in 40 min with 5% left, because nothing else can take this job.');
+  });
+
+  it('does not route or wait on a retired offer even with historical evidence', () => {
+    const learning = learnOutcomes(LOG);
+    const offers = [offer('codex-cmp', 'gpt-5.4', 80, 40)];
+    expect(routeLearnedJob(learning, PROBE, offers, { nowMs: NOW, explore: false }))
+      .toMatchObject({ action: 'nowhere', resource: null });
   });
 
   it('feeds posterior means into seat ranking without changing the default sentence', () => {
@@ -195,16 +202,18 @@ describe('outcome learning', () => {
     expect(decision.route.explanation.startsWith('Sent to ')).toBe(true);
     home = mkdtempSync(join(tmpdir(), 'outcome-offers-'));
     const offers = join(home, 'offers.json');
+    const events = join(home, 'events.jsonl');
+    writeFileSync(events, LOG.replaceAll('codex-cmp', 'codex-personal'));
     const at = Date.now();
     writeFileSync(offers, JSON.stringify([
-      { resource: 'codex-cmp', model: 'gpt-5.4', usageLeftPercent: 5, resetAt: new Date(at + 40 * 60_000).toISOString(), slots: 1 },
+      { resource: 'codex-personal', model: 'gpt-5.4', usageLeftPercent: 5, resetAt: new Date(at + 40 * 60_000).toISOString(), slots: 1 },
       { resource: 'devin', model: 'swe-2-max', usageLeftPercent: 55, resetAt: new Date(at + 7 * 24 * 60 * 60_000).toISOString(), slots: 2 },
     ]));
-    const explained = await run(['route', '--events', LOG_PATH, '--repo', 'phantom', '--type', 'code', '--priority', 'critical', '--offers', offers, '--json']);
+    const explained = await run(['route', '--events', events, '--repo', 'phantom', '--type', 'code', '--priority', 'critical', '--offers', offers, '--json']);
     expect(explained.code).toBe(0);
     const critical = JSON.parse(explained.out) as { route: { explanation: string; action: string; resource: string } };
     expect(critical.route).toMatchObject({ action: 'dispatch', resource: 'devin' });
-    expect(critical.route.explanation).toBe('Sent to Devin because CMP Codex resets in 40 min with 5% left.');
+    expect(critical.route.explanation).toBe('Sent to Devin because personal Codex resets in 40 min with 5% left.');
   });
 
   describe('jobs ledger outcomes', () => {

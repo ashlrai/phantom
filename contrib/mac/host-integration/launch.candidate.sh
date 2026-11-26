@@ -7,6 +7,7 @@ pinsha(){ /usr/bin/awk -F'\t' -v n="$1" '$1==n{print $2}' "$HOME/.ashlr-runs/bin
 unset NODE_OPTIONS NODE_PATH OPENSSL_CONF ELECTRON_RUN_AS_NODE; export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 set -o pipefail
 J=$1; REPO=$2; POOL=$3; TIER=${4:-${TIER:-work}}; R=~/.ashlr-runs; RP=~/Projects/ashlrai/$REPO; WT=~/Projects/ashlrai/wt/$J
+[ "$POOL" != codex-cmp ] || { echo "REFUSED: retired lane" >&2; exit 3; }
 case "$TIER" in frontier|work|mid|fast) ;; *) echo "REFUSED: unknown scope tier" >&2; exit 3;; esac
 ~/.ashlr-runs/bin-locus-new/locus status >/dev/null 2>&1 || true   # rev1.4: WARN dropped (the pin lives in the locus-ashlr tmux session, not visible from launch; it was always false here)
 # RQ-CLOSE-NOWT (Masbot 18:55 Oct 27): CLOSE-* jobs only need gh, so their worktree is index-only: --no-checkout, then
@@ -117,7 +118,6 @@ if [[ "$J" =~ ^RQ-APP-LOCALBUILD(-[A-Za-z0-9]+)?$ ]]; then
 fi
 # <<< LOCALBUILD rev1
 case $POOL in
- codex-cmp) lm_ok "$LM/mcp.json" "$LM_MJ"; native_pressure_ok || exit 3; { nohup "${E[@]}" ${CODEX_HOME:+CODEX_HOME="$CODEX_HOME"} sandbox-exec -f $R/bin/codex-cmp.sb codex exec -m $M ${EF:+-c model_reasoning_effort=$EF} "${LMC[@]}" -c web_search=live --sandbox danger-full-access -C $WT - < $R/$J.prompt 2>&1 | $SCRUB > $R/$J.log; rcw "${PIPESTATUS[0]}"; } & ;;
  codex-personal) lm_ok "$LM/mcp.json" "$LM_MJ"; lm_ok "$HOME/.codex-2/lane.config.toml" adfc46b45a74f9589e1f9a0de0ea758c2906a54c8d1e8b1e8f04291bb85e45e96   # APPS-ALLOWLIST rev1g: deny-by-default codex_apps profile
   native_pressure_ok || exit 3; { nohup "${E[@]}" CODEX_HOME="$HOME/.codex-2" sandbox-exec -f $R/bin/codex-personal.sb codex exec -p lane -m $M ${EF:+-c model_reasoning_effort=$EF} "${LMC[@]}" -c web_search=live --sandbox danger-full-access -C $WT - < $R/$J.prompt 2>&1 | $SCRUB > $R/$J.log; rcw "${PIPESTATUS[0]}"; } & ;;
  claude) lm_ok "$LM/mcp.json" "$LM_MJ"   # >>> CLAUDE-BROKER rev1 (Security 2026-11-04)
@@ -312,6 +312,6 @@ esac
 child_pid=$!
 # Observation only: registration cannot alter the launch outcome or signal the child.
 case "$POOL" in
-  codex-cmp|codex-personal|devin) /usr/bin/python3 -I "$R/bin/host_session_tick.py" register "$J" "$child_pid" >/dev/null 2>&1 || : ;;
+  codex-personal|devin) /usr/bin/python3 -I "$R/bin/host_session_tick.py" register "$J" "$child_pid" >/dev/null 2>&1 || : ;;
 esac
 echo "launched $J $POOL pid $child_pid base ${BASE:0:9}"

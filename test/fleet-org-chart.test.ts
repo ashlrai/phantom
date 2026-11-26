@@ -63,7 +63,7 @@ describe('org chart', () => {
     expect(find(tree, 'claude').jobs).toEqual([expect.objectContaining({ id: 'RQ-A', repo: 'phantom', tier: 'frontier', ageSeconds: 720, goal: 'Fix the login redirect', state: 'running' })]);
     // A session row never carries its prompt, so a job with no engine title has an unknown goal.
     expect(find(tree, 'codex-personal').jobs[0]).toMatchObject({ id: 'RQ-B', tier: 'work', ageSeconds: 5400, goal: null });
-    expect(tree.lanes.slice(0, 3).map(row => row.lane)).toEqual(['codex-personal', 'codex-cmp', 'claude']);
+    expect(tree.lanes.slice(0, 3).map(row => row.lane)).toEqual(['codex-personal', 'claude', 'claude-api']);
     const text = renderOrgTreeText(tree, NOW);
     expect(text).toContain('Executor: running. Active. Last sign 3m ago.');
     expect(text).toContain('Main guardian: running. Active. Last sign 4m ago.');

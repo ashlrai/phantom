@@ -364,8 +364,8 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(codex.queueDepth).toBe(1);
     expect(codex.liveJobs).toBe(1);            // RQ-FIXTURE-008 PR-OPEN
     expect(codex.mergesPerHour).toBe(1);       // RQ-FIXTURE-008 → LAND at 01:40
-    expect(codex.credit.label).toBe('64% weekly · 3 credits');
-    expect(codex.credit.remainingPct).toBe(64);
+    expect(codex.credit.label).toBe('unknown');
+    expect(codex.credit.remainingPct).toBeNull();
 
     const local = byLane.get('local-omlx')!;
     expect(local.liveJobs).toBe(1);            // RQ-FIXTURE-009 CLAIMED
@@ -550,7 +550,7 @@ describe('formatFleetLanes', () => {
     expect(out).toContain('merges/h');
     expect(out).toContain('devin');
     expect(out).toContain('12.5 ACU');
-    expect(out).toContain('64% weekly · 3 credits');
+    expect(out).not.toContain('64% weekly · 3 credits');
     expect(out).toContain('sources: ready.tsv healthy (6 rows)');
     expect(out).not.toContain('\x1b[');
   });

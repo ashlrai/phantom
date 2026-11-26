@@ -70,7 +70,7 @@ export async function readJobRows(runsDir: string, io: JobLogIo = { open }): Pro
 export interface ReaderOptions {
   runsDir: string;
   /** Explicit personal-pool Codex HOME. Absent means codex-personal has no sanctioned reader (never ~/.codex). */
-  codexHome?: string;
+  codexPersonalHome?: string;
   nowMs: () => number;
   /** Loopback oMLX models URL. Fixed host; nothing else is ever fetched. */
   omlxUrl?: string;
@@ -116,10 +116,10 @@ export function defaultReaders(o: ReaderOptions): Partial<Record<SelfLane, Sanct
       return n > 0 ? { pctUsed: null, resetAt: null, creditsRemaining: n, source: 'omlx-loopback-models' } : null;
     },
   };
-  if (o.codexHome) {
-    const home = o.codexHome;
+  if (o.codexPersonalHome) {
+    const home = o.codexPersonalHome;
     readers['codex-personal'] = async () => {
-      const r = await readCodexUsage({ home });
+      const r = await readCodexUsage({ personalHome: home });
       return r.pctUsed === null ? null : { pctUsed: r.pctUsed, resetAt: r.resetAt, source: 'codex-app-server-rate-limits' };
     };
   }

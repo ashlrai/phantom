@@ -16,7 +16,7 @@ import {
 import { defaultResourceLiveSources } from '../src/core/usage/resource-live/sources.js';
 import { parseResourceLiveSidecar, resetDecisionDir, resourceLivePath } from '../src/core/usage/resource-live/store.js';
 import {
-  CODEX_CMP_EXPIRES_AT, RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_SCHEMA,
+  DEVIN_FLASH_EXPIRES_AT, RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_SCHEMA,
   type ResourceLiveId, type ResourceLiveReading, type ResourceLiveSidecar,
 } from '../src/core/usage/resource-live/types.js';
 import { presentUsageSensors } from '../src/core/usage/sensor-reading.js';
@@ -180,20 +180,20 @@ describe('burn-down plan', () => {
   it('spends free and expiring first, included next, metered credit after, reserve last', () => {
     const plan = planBurnDown([
       reading('grok'), reading('cursor'), reading('claude-api', { unit: 'usd', used: 10, limit: 50, remaining: 40 }),
-      reading('claude-weekly'), reading('codex-cmp'), reading('devin-flash'), reading('dot'),
+      reading('claude-weekly'), reading('devin-flash'), reading('dot'),
       reading('local', { used: null, limit: 3, unit: 'models', used_pct: null, remaining: null, reset_at: null }),
     ], {}, NOW);
-    expect(plan.lane_order).toEqual(['codex-local', 'codex-cmp', 'devin-flash', 'dot', 'claude', 'claude-api', 'grok', 'cursor']);
-    expect(plan.allowances.map(row => row.tier)).toEqual([0, 0, 0, 0, 1, 2, 3, 3]);
-    expect(plan.allowances.map(row => row.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(plan.lane_order).toEqual(['codex-local', 'devin-flash', 'dot', 'claude', 'claude-api', 'grok', 'cursor']);
+    expect(plan.allowances.map(row => row.tier)).toEqual([0, 0, 0, 1, 2, 3, 3]);
+    expect(plan.allowances.map(row => row.rank)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(plan.allowances.filter(row => row.tier === 3).every(row => row.action === 'reserve')).toBe(true);
   });
 
   it('uses the expiry as the deadline when it comes before the reset, and drops the priority once expired', () => {
-    const before = planBurnDown([reading('codex-cmp', { reset_at: '2026-12-05T00:00:00.000Z' })], {}, NOW).allowances[0]!;
-    expect(before).toMatchObject({ tier: 0, deadline_at: CODEX_CMP_EXPIRES_AT });
-    const after = Date.parse(CODEX_CMP_EXPIRES_AT) + HOUR;
-    const expired = planBurnDown([reading('codex-cmp', { reset_at: '2026-12-05T00:00:00.000Z', observed_at: iso(after), stale_after: iso(after + HOUR) })], {}, after).allowances[0]!;
+    const before = planBurnDown([reading('devin-flash', { reset_at: '2026-12-05T00:00:00.000Z' })], {}, NOW).allowances[0]!;
+    expect(before).toMatchObject({ tier: 0, deadline_at: DEVIN_FLASH_EXPIRES_AT });
+    const after = Date.parse(DEVIN_FLASH_EXPIRES_AT) + HOUR;
+    const expired = planBurnDown([reading('devin-flash', { reset_at: '2026-12-05T00:00:00.000Z', observed_at: iso(after), stale_after: iso(after + HOUR) })], {}, after).allowances[0]!;
     expect(expired).toMatchObject({ tier: 1, deadline_at: '2026-12-05T00:00:00.000Z' });
   });
 
@@ -537,12 +537,11 @@ describe('default sources', () => {
 
   it('reads Codex only from an explicit pool home and never from ~/.codex', async () => {
     const readCodex = vi.fn(async () => ({ pctUsed: 44, resetAt: WEEKLY_RESET, fetchedAt: iso(NOW) }));
-    const allowed = defaultResourceLiveSources({ runsDir: tmp(), operatorHome: '/Users/op', codexCmpHome: '/pools/cmp', readCodex });
-    expect(await allowed['codex-cmp'][0]!.read(NOW)).toMatchObject({ used: 44, source: 'codex-app-server' });
-    expect(await allowed['codex-personal'][0]!.read(NOW)).toBeNull();
+    const allowed = defaultResourceLiveSources({ runsDir: tmp(), operatorHome: '/Users/op', codexPersonalHome: '/pools/personal', readCodex });
+    expect(await allowed['codex-personal'][0]!.read(NOW)).toMatchObject({ used: 44, source: 'codex-app-server' });
+    expect(allowed).not.toHaveProperty('codex-cmp');
     for (const home of ['/Users/op', '/Users/op/.codex', '/Users/op/.codex-2/x', 'relative']) {
-      const refused = defaultResourceLiveSources({ runsDir: tmp(), operatorHome: '/Users/op', codexCmpHome: home, codexPersonalHome: home, readCodex });
-      expect(await refused['codex-cmp'][0]!.read(NOW)).toBeNull();
+      const refused = defaultResourceLiveSources({ runsDir: tmp(), operatorHome: '/Users/op', codexPersonalHome: home, readCodex });
       expect(await refused['codex-personal'][0]!.read(NOW)).toBeNull();
     }
     expect(readCodex).toHaveBeenCalledTimes(1);

@@ -10,7 +10,7 @@ from test_dispatchd import build, tick, queue_job, launch_stubs, lane_slot, disp
 
 class MergeYieldAdmission(unittest.TestCase):
     def test_fresh_repairs_finish_without_claims_and_unresolved_work_launches(self):
-        with build(slots={'codex-cmp': lane_slot()}) as tmp:
+        with build(slots={'codex-personal': lane_slot()}) as tmp:
             home = Path(tmp).resolve(); env = launch_stubs(home)
             stub = home / 'stubbin/locus'
             stub.write_text('#!/usr/bin/env python3\nimport json, sys\n'
@@ -22,7 +22,7 @@ class MergeYieldAdmission(unittest.TestCase):
             jobs = [f'RQ-{kind}-phantom-{pr}-aaaaaaa' for kind, pr in
                     [('FIXUP', 41), ('FIXUP', 42), ('REBASE', 43), ('FIXUP', 44)]]
             for job in jobs:
-                queue_job(home, job, 'codex-cmp')
+                queue_job(home, job, 'codex-personal')
                 (home / f'.ashlr-runs/queue/prompts/{job}.md').write_text(f'{job} (P1): check="Merge Gate"')
             result = tick(home, env); self.assertEqual(result.returncode, 0, result.stderr)
             ledger = [json.loads(line) for line in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
@@ -35,10 +35,10 @@ class MergeYieldAdmission(unittest.TestCase):
             self.assertEqual((home / '.ashlr-runs/queue/ready.tsv').read_text().strip(), '')
 
     def test_repairs_wait_when_freshness_budget_is_exhausted(self):
-        with build(slots={'codex-cmp': lane_slot()}) as tmp:
+        with build(slots={'codex-personal': lane_slot()}) as tmp:
             home = Path(tmp).resolve(); env = launch_stubs(home)
             job = 'RQ-FIXUP-phantom-42-aaaaaaa'
-            queue_job(home, job, 'codex-cmp')
+            queue_job(home, job, 'codex-personal')
             result = tick(home, dict(env, TICK_BUDGET_S='-1'))
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(dispatched(home, job))
@@ -49,15 +49,15 @@ class MergeYieldAdmission(unittest.TestCase):
         rows = []
         for kind, count, merged in [('A', 4, 3), ('B', 25, 1)]:
             for i in range(count):
-                row = dict(job=f'RQ-{kind}-{i}', repo='phantom', lane='codex-cmp', tier='work', ts=stamp)
+                row = dict(job=f'RQ-{kind}-{i}', repo='phantom', lane='codex-personal', tier='work', ts=stamp)
                 rows += [dict(row, event='launch'), dict(job=row['job'], ts=stamp,
                          **(dict(event='outcome', state='MERGED') if i < merged else dict(event='finish', empty=True)))]
         rows += [dict(event='outcome', job='old', ts=stamp, state='MERGED', url='https://github.com/ashlrai/phantom/pull/42'),
                  dict(event='outcome', job='old2', ts=stamp, state='CLOSED', url='https://github.com/ashlrai/phantom/pull/43')]
-        with build(slots={'codex-cmp': lane_slot()}, finishes=rows) as tmp:
+        with build(slots={'codex-personal': lane_slot()}, finishes=rows) as tmp:
             home = Path(tmp).resolve(); env = launch_stubs(home)
             for job in ('RQ-B-next', 'RQ-A-next', 'RQ-C-merged', 'RQ-C-closed'):
-                queue_job(home, job, 'codex-cmp')
+                queue_job(home, job, 'codex-personal')
             for job, pr in [('RQ-C-merged', 42), ('RQ-C-closed', 43)]:
                 (home / f'.ashlr-runs/queue/prompts/{job}.md').write_text(f'{job} (P1, pr={pr}): repair target')
             result = tick(home, env); self.assertEqual(result.returncode, 0, result.stderr)
@@ -76,7 +76,7 @@ class MergeYieldAdmission(unittest.TestCase):
         from launch_precheck import admission_history, admission_rank, terminal_target
         now = time.time()
         def row(age, **kw):
-            return dict(job='RQ-A-1', repo='phantom', tier='work', lane='codex-cmp',
+            return dict(job='RQ-A-1', repo='phantom', tier='work', lane='codex-personal',
                         ts=datetime.fromtimestamp(now - age, timezone.utc).isoformat(), **kw)
         url = 'https://github.com/ashlrai/phantom/pull/1'
         launch = row(60, event='launch')
@@ -86,9 +86,9 @@ class MergeYieldAdmission(unittest.TestCase):
                 row(86401, event='launch'), row(-1, event='launch'), {'ts': 'invalid'}]
         rows[2].pop('repo')  # Production publish rows omit repo too.
         groups, states = admission_history(rows, now)
-        rank = admission_rank('RQ-A-next', 'work', 'codex-cmp', groups)
+        rank = admission_rank('RQ-A-next', 'work', 'codex-personal', groups)
         self.assertEqual((rank['sampledLaunches'], rank['unknownLaunches'], rank['mergeRate']), (1, 1, 1))
-        for tier, lane in [('fast', 'codex-cmp'), ('work', 'claude')]:
+        for tier, lane in [('fast', 'codex-personal'), ('work', 'claude')]:
             rank = admission_rank('RQ-A-next', tier, lane, groups)
             self.assertIsNone(rank['mergeRate']); self.assertEqual(rank['score'], 1)
         self.assertEqual(admission_rank('RQ-B', 'work', 'x', {('B', 'work', 'x'): [False]})['score'], .1)
@@ -109,13 +109,13 @@ def snapshot():
 
 class DispatchRepoRank(unittest.TestCase):
     def run_queue(self, content):
-        with build(slots={'codex-cmp': lane_slot(), 'hard_cap': 4}) as tmp:
+        with build(slots={'codex-personal': lane_slot(), 'hard_cap': 4}) as tmp:
             home = Path(tmp).resolve()
             env = launch_stubs(home)
             for job in ('A', 'B', 'C', 'D'):
-                queue_job(home, job, 'codex-cmp')
-            queue_job(home, 'Z', 'codex-cmp', repo='locus')
-            queue_job(home, 'RQ-FIX-MAIN-X', 'codex-cmp', repo='ashlr-md')
+                queue_job(home, job, 'codex-personal')
+            queue_job(home, 'Z', 'codex-personal', repo='locus')
+            queue_job(home, 'RQ-FIX-MAIN-X', 'codex-personal', repo='ashlr-md')
             if content is not None:
                 path = home / '.ashlr/repo-rank.json'
                 path.parent.mkdir()

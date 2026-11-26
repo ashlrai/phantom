@@ -108,6 +108,17 @@ const byJob = (snap: FleetSessionsV1, job: string): FleetSessionV1 | undefined =
   [...snap.sessions, ...snap.recent].find(s => s.job === job);
 
 describe('local session reconciliation', () => {
+  it('keeps a retired CMP job found only in the transition journal', async () => {
+    const root = await runsDir({ 'metrics/jobs.jsonl': JSON.stringify({
+      job: 'RQ-RETIRED', lane: 'codex-cmp', repo: 'phantom', tier: 'work',
+      event: 'finish', ts: metricTs(ANCHOR - 60 * S), exit_code: 0,
+    }) + '\n' });
+    const report = await getFleetSessions({ ...opts, runsDir: root, runPs: noPs });
+    expect(report.recent).toEqual(expect.arrayContaining([expect.objectContaining({
+      job: 'RQ-RETIRED', lane: 'codex-cmp',
+    })]));
+  });
+
   it('distinguishes live, finished, unknown and conflicting runs despite old heartbeats, without writes or signals', async () => {
     const root = await runsDir({ 'queue/status.json': JSON.stringify({ last_tick: metricTs(ANCHOR - 7200 * S) }) });
     const jobs = ['LIVE', 'DONE', 'UNKNOWN', 'RETRY', 'CONFLICT', 'EXIT'];

@@ -102,12 +102,13 @@ function heldStampText(ms: number): string {
   return `${part('month')} ${part('day')} ${part('hour')}:${part('minute')}`;
 }
 
-/** Lane header for the timeline: `codex-cmp 0/30`, plus `· held: <reason>`
+/** Lane header for the timeline: `codex-personal 0/30`, plus `· held: <reason>`
  *  when the lane is held so an empty lane reads as held, not idle. */
 export function laneLabel(
   lane: { lane: string; running: number; target: number; held: boolean; heldReason: string | null },
   nowMs: number,
 ): string {
+  if (lane.lane === 'codex-cmp') return 'Codex CMP (retired)';
   let label = `${lane.lane} ${lane.running}/${lane.target}`;
   if (lane.held) {
     const parsed = parseHeldReason(lane.heldReason);

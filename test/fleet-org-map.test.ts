@@ -30,7 +30,7 @@ describe('fleet map', () => {
   it('joins two session lanes, three jobs and a recent leader message without reviving a stale claim', () => {
     const now = Date.parse('2026-11-16T12:00:00Z');
     const sessions = { generatedAt: new Date(now).toISOString(), sourceState: 'healthy', truncated: false, recent: [], sessions: [
-      { job: 'one', lane: 'codex-cmp', model: 'fixture-model', repo: 'phantom', elapsedSeconds: 90, status: 'running' },
+      { job: 'one', lane: 'codex-personal', model: 'fixture-model', repo: 'phantom', elapsedSeconds: 90, status: 'running' },
       { job: 'two', lane: 'claude', model: null, repo: 'phantom', elapsedSeconds: 60, status: 'running' },
       { job: 'stale', lane: 'claude', model: null, repo: null, elapsedSeconds: 7200, status: 'stale' },
     ] } as FleetSessionsV1;
@@ -52,7 +52,7 @@ describe('fleet map', () => {
     expect(map.unmappedMessages).toBe(1); expect(JSON.stringify(map)).not.toContain('private fixture body');
     const nodeProvider = new Map(map.nodes.map(node => [node.id, node.provider]));
     expect(map.edges.every(edge => edge.provider === nodeProvider.get(edge.from))).toBe(true);
-    expect(map.edges.find(edge => edge.id === 'reports:job:one:lane:codex-cmp')?.provider).toBe('OpenAI');
+    expect(map.edges.find(edge => edge.id === 'reports:job:one:lane:codex-personal')?.provider).toBe('OpenAI');
     expect(map.nodes.find(node => node.id === 'lane:codex-local')?.provider).toBe('Local');
     const ids = new Set(map.nodes.map(node => node.id));
     expect(map.edges.every(edge => ids.has(edge.from) && ids.has(edge.to))).toBe(true);

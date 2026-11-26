@@ -6,7 +6,8 @@ import re
 TIERS = {"fast": 0, "mid": 1, "work": 2, "frontier": 3}
 COSTS = {"local": 0, "included": 1, "metered": 2}
 CAP = re.compile(r"^(?:[a-z][a-z0-9-]*|secrets:[A-Za-z0-9_.-]+)$")
-BUILTIN = {"codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local", "omlx"}
+RETIRED_LANE = "codex-cmp"
+BUILTIN = {"codex-personal", "claude", "devin", "claude-api", "codex-local", "omlx"}
 # Data handling clearance, lowest to highest. A job without data_class is unclassified (legacy rows).
 DATA_CLASSES = {"public": 0, "internal": 1, "confidential": 2, "restricted": 3}
 WORK_CLASSES = ("bulk", "standard", "judgment")
@@ -15,7 +16,7 @@ WORK_CLASSES = ("bulk", "standard", "judgment")
 POSTURES = ("burn", "balanced", "preserve")
 SPEND_DOWN_BURN_PCT = 10
 SPEND_DOWN_PRESERVE_MARGIN_PCT = 10
-POSTURE = {"codex-cmp": "burn", "codex-personal": "preserve", "claude": "preserve"}
+POSTURE = {"codex-personal": "preserve", "claude": "preserve"}
 FIT = {"burn": {"bulk": 0, "standard": 0, "judgment": 1},
        "balanced": {"bulk": 1, "standard": 1, "judgment": 1},
        "preserve": {"bulk": 2, "standard": 1, "judgment": 0}}

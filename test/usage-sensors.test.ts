@@ -11,7 +11,7 @@ import { readMissionControl } from '../src/core/fleet/mission-control.js';
 import { assessSeat, type SeatCapacity } from '../src/core/routing/headroom.js';
 import {
   SENSOR_TIMESTAMP_BASELINE,
-  USAGE_SENSOR_LANES,
+  ACTIVE_USAGE_SENSOR_LANES,
   USAGE_SENSOR_SCHEMA,
   presentUsageSensors,
   readingIsFresh,
@@ -53,7 +53,7 @@ describe('usage sensor schema', () => {
     expect(SENSOR_TIMESTAMP_BASELINE).toEqual({ timestamped: 9, total: 12 });
     const report = presentUsageSensors([reading()], NOW);
     expect(report.schema).toBe(USAGE_SENSOR_SCHEMA);
-    expect(report.lanes.map(lane => lane.lane)).toEqual([...USAGE_SENSOR_LANES]);
+    expect(report.lanes.map(lane => lane.lane)).toEqual([...ACTIVE_USAGE_SENSOR_LANES]);
     expect(report.lanes.every(lane => 'observedAt' in lane && 'source' in lane && 'staleAfter' in lane)).toBe(true);
     const stamped = report.lanes.filter(lane => lane.observedAt !== null && lane.source !== null && lane.staleAfter !== null);
     expect(stamped).toHaveLength(report.lanes.length);
@@ -125,12 +125,12 @@ describe('official usage fixtures', () => {
     const readings = refreshUsageSensors({
       nowMs: NOW,
       devin: { daily: fixture('devin-daily.json'), limit: fixture('devin-limit.json') },
-      codexCmp: fixture('codex-rate-limits.json'),
+      codexPersonal: fixture('codex-rate-limits.json'),
       claude: JSON.stringify(fixture('claude-usage.json')),
       grok: fixture('grok-status.json'),
     });
     const report = presentUsageSensors(readings, NOW);
-    expect(report.lanes.find(lane => lane.lane === 'codex-cmp')).toMatchObject({
+    expect(report.lanes.find(lane => lane.lane === 'codex-personal')).toMatchObject({
       status: 'fresh', source: 'codex-app-server', used: 40, limit: 100, headroom: 60,
     });
     expect(report.lanes.find(lane => lane.lane === 'claude-max')).toMatchObject({
@@ -139,9 +139,7 @@ describe('official usage fixtures', () => {
     expect(report.lanes.find(lane => lane.lane === 'grok-ultra')).toMatchObject({
       status: 'fresh', source: 'grok-status', used: 12, headroom: 88,
     });
-    expect(report.lanes.find(lane => lane.lane === 'codex-personal')).toMatchObject({
-      status: 'unknown', source: 'unmeasured', headroom: null,
-    });
+    expect(report.lanes.map(lane => lane.lane)).not.toContain('codex-cmp');
     expect(report.lanes.find(lane => lane.lane === 'terra')).toMatchObject({ status: 'unknown', headroom: null });
   });
 });
@@ -173,16 +171,15 @@ describe('official refresh refuses operator credential homes', () => {
     const readings = await pullOfficialUsageSensors({
       nowMs: NOW,
       operatorHome: '/home/operator',
-      codexCmpHome: '/home/operator/.codex',
       codexPersonalHome: '/home/operator/.codex-2/sessions',
       readCodex,
       readDevin: async () => ({ status: 'unknown', reason: 'missing-key' }),
       readClaude: () => null,
     });
     expect(readCodex).not.toHaveBeenCalled();
-    const codex = readings.find(row => row.lane === 'codex-cmp')!;
+    const codex = readings.find(row => row.lane === 'codex-personal')!;
     expect(codex.source).toBe('unmeasured');
-    expect(presentUsageSensors([codex], NOW).lanes.find(lane => lane.lane === 'codex-cmp')!.headroom).toBeNull();
+    expect(presentUsageSensors([codex], NOW).lanes.find(lane => lane.lane === 'codex-personal')!.headroom).toBeNull();
   });
 
   it('reads an explicit Codex pool home through the official status parser', async () => {
@@ -190,15 +187,15 @@ describe('official refresh refuses operator credential homes', () => {
     const readings = await pullOfficialUsageSensors({
       nowMs: NOW,
       operatorHome: '/home/operator',
-      codexCmpHome: '/srv/pools/codex-cmp',
+      codexPersonalHome: '/srv/pools/codex-personal',
       readCodex,
       readDevin: async () => ({ status: 'unknown', reason: 'missing-key' }),
       readClaude: () => null,
       readGrok: () => null,
     });
     expect(readCodex).toHaveBeenCalledTimes(1);
-    expect(readCodex).toHaveBeenCalledWith('/srv/pools/codex-cmp');
-    expect(readings.find(row => row.lane === 'codex-cmp')).toMatchObject({
+    expect(readCodex).toHaveBeenCalledWith('/srv/pools/codex-personal');
+    expect(readings.find(row => row.lane === 'codex-personal')).toMatchObject({
       source: 'codex-app-server', used: 40, limit: 100, unit: 'percent',
     });
   });

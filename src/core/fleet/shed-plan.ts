@@ -23,7 +23,7 @@ export interface ShedPlan {
 const object = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const nonnegative = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 const count = (v: unknown): number | null => Number.isSafeInteger(v) ? nonnegative(v) : null;
-const cloud = new Set(['codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'cursor', 'gemini', 'zai', 'agy', 'grok']);
+const cloud = new Set(['codex-personal', 'claude', 'devin', 'claude-api', 'cursor', 'gemini', 'zai', 'agy', 'grok']);
 
 export function planFleetShed(input: unknown): ShedPlan {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid status');
@@ -35,7 +35,7 @@ export function planFleetShed(input: unknown): ShedPlan {
   // Match dispatchd's free-memory fallback. Swap is reported, not used as a threshold.
   const pressure = memFreePct === null ? 'unknown' : memFreePct <= 30 ? 'high' : 'normal';
   const byLane = object(object(status.rollup_24h).by_lane);
-  const lanes: ShedLane[] = Object.entries(object(status.lanes)).filter(([name]) => /^[a-z0-9][a-z0-9-]{0,63}$/.test(name)).map(([lane, raw]) => {
+  const lanes: ShedLane[] = Object.entries(object(status.lanes)).filter(([name]) => name !== 'codex-cmp' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(name)).map(([lane, raw]) => {
     const row = object(raw);
     const running = count(row.running);
     const merged = count(object(byLane[lane]).merged);

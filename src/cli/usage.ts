@@ -300,8 +300,7 @@ function printUsage(): void {
   console.log('  writes state/resource-live.json: every allowance with source and observed time, plus the burn-down order.');
   console.log('  Reading a snapshot automatically refreshes stale Codex personal usage');
   console.log('  when its pool home is configured; the snapshot is not rewritten.');
-  console.log('  Codex refresh uses PHANTOM_SENSOR_CODEX_CMP_HOME and');
-  console.log('  PHANTOM_SENSOR_CODEX_PERSONAL_HOME when those pool homes are set.');
+  console.log('  Codex refresh uses an explicitly configured PHANTOM_SENSOR_CODEX_PERSONAL_HOME.');
   console.log('  Operator credential directories are refused.');
   console.log('');
   console.log('  ' + b('Options:'));

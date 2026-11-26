@@ -135,66 +135,58 @@ afterEach(() => {
 });
 
 describe('codexAccountHomes', () => {
-  it('maps the two credential homes to fleet pool ids', () => {
+  it('maps the personal home and ignores the former CMP home', () => {
     const homes = codexAccountHomes(env('/h'), '/h');
-    expect(homes.map((h) => h.accountId)).toEqual(['codex-cmp', 'codex-personal']);
-    expect(homes[0]!.home).toBe(join('/h', '.codex'));
-    expect(homes[1]!.home).toBe(join('/h', '.codex-2'));
+    expect(homes.map((h) => h.accountId)).toEqual(['codex-personal']);
+    expect(homes[0]!.home).toBe(join('/h', '.codex-2'));
   });
 
-  it('defaults to ~/.codex and ~/.codex-2 without env', () => {
+  it('defaults to ~/.codex-2 without env', () => {
     const homes = codexAccountHomes({}, '/home/tester');
-    expect(homes.map((h) => h.home)).toEqual([join('/home/tester', '.codex'), join('/home/tester', '.codex-2')]);
+    expect(homes.map((h) => h.home)).toEqual([join('/home/tester', '.codex-2')]);
   });
 
-  it('collapses identical resolved homes to the primary', () => {
+  it('does not attribute the former CMP home to personal when the configured homes match', () => {
     const homes = codexAccountHomes(
       { CODEX_HOME: '/x', CODEX_HOME_ALT: '/x' } as NodeJS.ProcessEnv, '/h');
-    expect(homes).toHaveLength(1);
-    expect(homes[0]!.accountId).toBe('codex-cmp');
+    expect(homes).toEqual([]);
   });
 });
 
 describe('collectCodexSessionUsages', () => {
-  it('reads rate limits from both account homes', () => {
+  it('reads the personal rate limits without opening the former CMP home', () => {
     tmpHome = makeHome();
     mkdirSync(join(tmpHome, '.codex'), { recursive: true });
     mkdirSync(join(tmpHome, '.codex-2'), { recursive: true });
-    writeRollout(join(tmpHome, '.codex'), 'rollout-2036-06-14T00-00-00-aaa.jsonl', [
+    writeRollout(join(tmpHome, '.codex-2'), 'rollout-2036-06-14T00-00-00-aaa.jsonl', [
       sessionMeta('2036-06-14T00:00:00Z'),
       turnContext('2036-06-14T00:00:01Z'),
       tokenCount('2036-06-14T00:05:00Z', GOOD_LIMITS),
     ]);
-    writeRollout(join(tmpHome, '.codex-2'), 'rollout-2036-06-14T00-00-00-bbb.jsonl', [
-      sessionMeta('2036-06-14T00:00:00Z'),
-      tokenCount('2036-06-14T00:04:00Z', {
-        primary: { used_percent: 12, window_minutes: 300, resets_at: SESSION_RESET_S },
-        secondary: { used_percent: 88, window_minutes: 10_080, resets_at: WEEKLY_RESET_S },
-        plan_type: 'team',
-      }),
+    writeRollout(join(tmpHome, '.codex'), 'rollout-2036-06-14T00-00-00-bbb.jsonl', [
+      tokenCount('2036-06-14T00:06:00Z', GOOD_LIMITS),
     ]);
+    openedPaths.paths.length = 0;
     const usages = collectCodexSessionUsages({ env: env(tmpHome), homeDir: tmpHome });
-    expect(usages).toHaveLength(2);
-    const cmp = usages.find((u) => u.accountId === 'codex-cmp')!;
+    expect(usages).toHaveLength(1);
+    expect(openedPaths.paths.some(path => String(path).includes('-bbb.jsonl'))).toBe(false);
     const personal = usages.find((u) => u.accountId === 'codex-personal')!;
-    expect(cmp.primary?.usedPercent).toBe(40);
-    expect(cmp.secondary?.usedPercent).toBe(55);
-    expect(cmp.secondary?.resetsAt).toBe(WEEKLY_RESET_S);
-    expect(cmp.credits).toEqual({ hasCredits: true, unlimited: false, balance: '42.50' });
-    expect(cmp.planType).toBe('pro');
-    expect(cmp.model).toBe('gpt-5.4-codex');
-    expect(cmp.originator).toBe('codex_cli_rs');
-    expect(cmp.cliVersion).toBe('0.99.0');
-    expect(cmp.individualLimit).toEqual({ remainingPercent: 42, resetsAt: WEEKLY_RESET_S });
-    expect(cmp.observedAt).toBe('2036-06-14T00:05:00.000Z');
-    expect(personal.secondary?.usedPercent).toBe(88);
-    expect(personal.planType).toBe('team');
+    expect(personal.primary?.usedPercent).toBe(40);
+    expect(personal.secondary?.usedPercent).toBe(55);
+    expect(personal.secondary?.resetsAt).toBe(WEEKLY_RESET_S);
+    expect(personal.credits).toEqual({ hasCredits: true, unlimited: false, balance: '42.50' });
+    expect(personal.planType).toBe('pro');
+    expect(personal.model).toBe('gpt-5.4-codex');
+    expect(personal.originator).toBe('codex_cli_rs');
+    expect(personal.cliVersion).toBe('0.99.0');
+    expect(personal.individualLimit).toEqual({ remainingPercent: 42, resetsAt: WEEKLY_RESET_S });
+    expect(personal.observedAt).toBe('2036-06-14T00:05:00.000Z');
   });
 
   it('drops every non-allowlisted field, including credential-shaped values', () => {
     tmpHome = makeHome();
-    mkdirSync(join(tmpHome, '.codex'), { recursive: true });
-    writeRollout(join(tmpHome, '.codex'), 'rollout-2036-06-14T00-00-00-ccc.jsonl', [
+    mkdirSync(join(tmpHome, '.codex-2'), { recursive: true });
+    writeRollout(join(tmpHome, '.codex-2'), 'rollout-2036-06-14T00-00-00-ccc.jsonl', [
       { timestamp: '2036-06-14T00:00:00Z', type: 'session_meta', payload: { originator: SECRET_SENTINEL } },
       tokenCount('2036-06-14T00:05:00Z', {
         ...GOOD_LIMITS,
@@ -224,8 +216,8 @@ describe('collectCodexSessionUsages', () => {
 
   it('treats a home with no rate-limit evidence as unknown, not zero', () => {
     tmpHome = makeHome();
-    mkdirSync(join(tmpHome, '.codex'), { recursive: true });
-    writeRollout(join(tmpHome, '.codex'), 'rollout-2036-06-14T00-00-00-ddd.jsonl', [
+    mkdirSync(join(tmpHome, '.codex-2'), { recursive: true });
+    writeRollout(join(tmpHome, '.codex-2'), 'rollout-2036-06-14T00-00-00-ddd.jsonl', [
       sessionMeta('2036-06-14T00:00:00Z'),
       tokenCount('2036-06-14T00:05:00Z', null), // codex writes null when unavailable
     ]);
@@ -238,14 +230,14 @@ describe('collectCodexSessionUsages', () => {
 
   it('omits homes that do not exist', () => {
     tmpHome = makeHome();
-    mkdirSync(join(tmpHome, '.codex'), { recursive: true });
+    mkdirSync(join(tmpHome, '.codex-2'), { recursive: true });
     const usages = collectCodexSessionUsages({ env: env(tmpHome), homeDir: tmpHome });
-    expect(usages.map((u) => u.accountId)).toEqual(['codex-cmp']);
+    expect(usages.map((u) => u.accountId)).toEqual(['codex-personal']);
   });
 
   it('never opens auth.json or anything outside sessions/rollout-*.jsonl', () => {
     tmpHome = makeHome();
-    const codexHome = join(tmpHome, '.codex');
+    const codexHome = join(tmpHome, '.codex-2');
     mkdirSync(codexHome, { recursive: true });
     writeFileSync(join(codexHome, 'auth.json'), `{"OPENAI_API_KEY":"${AUTH_SENTINEL}"}`, { mode: 0o600 });
     writeFileSync(join(codexHome, 'config.toml'), 'model = "x"', { mode: 0o600 });
@@ -499,14 +491,14 @@ describe('publishCodexFleetUsage', () => {
 });
 
 describe('subscriptionUsage codex integration', () => {
-  it('takes the most-saturated window across both accounts', () => {
+  it('takes the most-saturated personal Codex window, ignoring the retired account', () => {
     tmpHome = makeHome();
     mkdirSync(join(tmpHome, '.codex'), { recursive: true });
     mkdirSync(join(tmpHome, '.codex-2'), { recursive: true });
     writeRollout(join(tmpHome, '.codex'), 'rollout-2036-06-14T00-00-00-fff.jsonl', [
       tokenCount('2036-06-14T00:05:00Z', {
         primary: { used_percent: 10, window_minutes: 300, resets_at: SESSION_RESET_S },
-        secondary: { used_percent: 20, window_minutes: 10_080, resets_at: WEEKLY_RESET_S },
+        secondary: { used_percent: 99, window_minutes: 10_080, resets_at: WEEKLY_RESET_S },
         plan_type: 'pro',
       }),
     ]);
@@ -528,7 +520,7 @@ describe('subscriptionUsage codex integration', () => {
     // The fleet.json extension landed as a side effect.
     const ext = readCodexFleetUsage(join(tmpHome, 'fleet', 'fleet.json'));
     expect(ext?.report.v).toBe('resource.v1');
-    expect(ext?.report.resources.map((r) => r.id).sort()).toEqual(['codex-cmp', 'codex-personal']);
+    expect(ext?.report.resources.map((r) => r.id).sort()).toEqual(['codex-personal']);
     expect(ext?.report.resources.find((r) => r.id === 'codex-personal')?.weekly?.usedPct).toBe(77);
   });
 

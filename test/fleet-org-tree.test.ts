@@ -98,7 +98,7 @@ describe('fleetOrgTree', () => {
     expect(build(true)).toBe(build(false));
     const tree = JSON.parse(build(false)) as FleetOrgTree;
     expect(Object.keys(tree)).toEqual(['schema', 'version', 'generatedAt', 'leader', 'planners', 'lanes', 'jobsKnown', 'messages', 'messageWindowMinutes', 'unmappedMessages', 'sources']);
-    expect(tree.lanes.map(row => row.lane)).toEqual(['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor', 'aa-custom', 'zz-custom']);
+    expect(tree.lanes.map(row => row.lane)).toEqual(['codex-personal', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor', 'aa-custom', 'zz-custom']);
     expect(find(tree, 'claude').jobs.map(job => job.id)).toEqual(['RQ-C', 'RQ-A']);
     expect(tree.messages).toEqual([{ from: 'Leader (CEO)', to: 'claude', count: 3, lastAt: '1970-01-01T00:00:00.001Z' }, { from: 'Leader (CEO)', to: 'devin', count: 1, lastAt: '1970-01-01T00:00:00.002Z' }]);
   });

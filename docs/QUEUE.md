@@ -162,8 +162,8 @@ Unknown scope is omitted, never invented; incomplete or mismatched receipts do
 not establish allowance posture.
 
 Each executor has a posture: `burn` (spend the window on volume), `preserve`
-(keep the window for judgment work), or `balanced`. The defaults are `burn` for
-`codex-cmp` and `preserve` for `codex-personal` and `claude`; every other
+(keep the window for judgment work), or `balanced`. The default is `preserve`
+for `codex-personal` and `claude`; every other
 executor is `balanced`. The host overrides this with `posture` in `slots.json`.
 A `free_until` instant (epoch seconds or an ISO date) reads as `burn` until it
 passes, which is how a free-session window on an executor is declared. Nothing

@@ -45,7 +45,6 @@ export interface ResourceLiveSourceOptions extends LiveSourcesConfig {
   runsDir: string;
   operatorHome?: string;
   /** Explicit Codex pool homes. Refused when they are the operator home or under ~/.codex*. */
-  codexCmpHome?: string;
   codexPersonalHome?: string;
   /** Accounts root of the Claude API grant store. Absent leaves the credit unverified. */
   accountsRoot?: string;
@@ -99,7 +98,7 @@ function claudeFable(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
 function codex(o: ResourceLiveSourceOptions, home: string | undefined): ResourceLiveSource[] {
   return [{ tier: 'official', read: async () => {
     if (!home || !codexPoolHomeAllowed(home, o.operatorHome ?? homedir())) return null;
-    const reading = await (o.readCodex ?? (dir => readCodexUsage({ home: dir })))(home);
+    const reading = await (o.readCodex ?? (dir => readCodexUsage({ personalHome: dir })))(home);
     if (reading.pctUsed === null) return null;
     return { used: reading.pctUsed, limit: 100, unit: 'percent', reset_at: reading.resetAt, source: 'codex-app-server', observed_at: reading.fetchedAt };
   } }];
@@ -220,7 +219,7 @@ function devinPreview(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
 }
 
 export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): ResourceLiveSources {
-  const operator = (provider: 'claude' | 'codex-personal' | 'codex-cmp') => operatorPageSources(o.operatorPageFallback, provider, o.operatorPageReader);
+  const operator = (provider: 'claude' | 'codex-personal') => operatorPageSources(o.operatorPageFallback, provider, o.operatorPageReader);
   const evidence = (id: EvidenceId) => agentCheck(() => readResourceEvidenceFile(o.runsDir), id);
   const anthropic = o.anthropicCost ? [anthropicCostSource(o.anthropicCost, o.runAnthropicCost)] : [];
   return {
@@ -230,7 +229,6 @@ export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): Resour
       ...(o.accountsRoot ? [registry(o, 'claude-api-gift', 'operator-entry')] : []), evidence('claude-api'),
       ...(!o.anthropicCost?.expiresAt ? anthropic : [])],
     'codex-personal': [...codex(o, o.codexPersonalHome), capacitySource('codex-personal', o.codexSeatMap, o.readCapacity), ...visible(o, 'chatgpt-codex'), ...operator('codex-personal')],
-    'codex-cmp': [...codex(o, o.codexCmpHome), capacitySource('codex-cmp', o.codexSeatMap, o.readCapacity), ...operator('codex-cmp')],
     'openai-api': [evidence('openai-api')],
     devin: [registry(o, 'devin', 'official'), ...devinWeekly(o), ...visible(o, 'devin')],
     // Zero-cost SWE-2 Lightning/Flash previews the CLI lists as free, until they expire.

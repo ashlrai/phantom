@@ -27,7 +27,7 @@ const finite = (value: unknown): number | null =>
 const MARKET_TIERS: Readonly<Record<string, number>> = { fast: 0, mid: 1, work: 2, frontier: 3 };
 const MARKET_COSTS: Readonly<Record<string, number>> = { local: 0, included: 1, metered: 2 };
 const MARKET_DATA: Readonly<Record<string, number>> = { public: 0, internal: 1, confidential: 2, restricted: 3 };
-const MARKET_BUILTIN = new Set(['codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local', 'omlx']);
+const MARKET_BUILTIN = new Set(['codex-personal', 'claude', 'devin', 'claude-api', 'codex-local', 'omlx']);
 const MARKET_LOCAL = new Set(['codex-local', 'omlx']);
 const MARKET_CAP = /^(?:[a-z][a-z0-9-]*|secrets:[A-Za-z0-9_.-]+)$/;
 const MARKET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;

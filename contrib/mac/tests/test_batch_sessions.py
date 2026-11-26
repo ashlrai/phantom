@@ -56,7 +56,6 @@ class ModelMix(unittest.TestCase):
 
     def test_codex_tiers_devin_flash_and_no_fable_pick(self):
         self.assertEqual(bs.model_for('codex-personal', 'work', '', self.cfg)[0], 'gpt-6.2-sol')
-        self.assertEqual(bs.model_for('codex-cmp', 'frontier', '', self.cfg)[0], 'gpt-6.2-astra')
         self.assertEqual(bs.model_for('devin', 'work', '', self.cfg)[0], 'swe-2-flash')
         self.assertEqual(bs.model_for('codex-local', 'fast', '', self.cfg)[0], None)
         picks = {bs.model_for('claude', t, p, self.cfg)[0] for t in ('work', 'frontier') for p in ('', 'security')}
@@ -70,10 +69,10 @@ class ModelMix(unittest.TestCase):
         self.assertIsNone(bs.devin_route('locus', None, bs.load_config('/nonexistent')))   # routing off
 
     def test_codex_lower_tiers_and_fallbacks(self):
-        for lane in ('codex-personal', 'codex-cmp'):
-            for tier in ('work', 'mid', 'fast', 'computer', '', 'unknown'):
-                self.assertEqual(bs.model_for(lane, tier, '', self.cfg)[0], 'gpt-6.2-sol')
-            self.assertEqual(bs.model_for(lane, 'frontier', '', bs.load_config('/nonexistent'))[0], 'gpt-6.2-astra')
+        lane = 'codex-personal'
+        for tier in ('work', 'mid', 'fast', 'computer', '', 'unknown'):
+            self.assertEqual(bs.model_for(lane, tier, '', self.cfg)[0], 'gpt-6.2-sol')
+        self.assertEqual(bs.model_for(lane, 'frontier', '', bs.load_config('/nonexistent'))[0], 'gpt-6.2-astra')
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / 'config.json'
             p.write_text(json.dumps({'schema': bs.SCHEMA, 'models': {'codex': {'default': 'operator-model'}}}))

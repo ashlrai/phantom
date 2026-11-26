@@ -13,8 +13,8 @@ const NOW = Date.parse('2026-10-26T16:00:00.000Z');
 const live: DevinUsage = { pool: 'devin', acuUsed: 40, acuLimit: 100, pctUsed: 40,
   resetAt: new Date(NOW + 3_600_000).toISOString(), source: 'devin-api-v3-org-cycle',
   fetchedAt: new Date(NOW - 1_000).toISOString() };
-const codexReading = { pool: 'codex-cmp', pctUsed: 12, resetAt: new Date(NOW + 3_600_000).toISOString(),
-  fetchedAt: new Date(NOW - 1_000).toISOString(), source: 'codex-cmp-reader' };
+const codexReading = { pool: 'codex-personal', pctUsed: 12, resetAt: new Date(NOW + 3_600_000).toISOString(),
+  fetchedAt: new Date(NOW - 1_000).toISOString(), source: 'codex-personal-reader' };
 
 function fixture() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'fleet-devin-'))); roots.push(root);
@@ -28,8 +28,8 @@ function devinPool(view: ResourceView) {
   return pool;
 }
 function codexPool(view: ResourceView) {
-  const pool = view.pools.find(row => row.pool === 'codex-cmp');
-  if (!pool) throw new Error('codex-cmp pool missing');
+  const pool = view.pools.find(row => row.pool === 'codex-personal');
+  if (!pool) throw new Error('codex-personal pool missing');
   return pool;
 }
 const liveRead = () => vi.fn(async (): Promise<DevinUsageResult> => live);
@@ -53,7 +53,7 @@ describe('readResourceView independent live Devin read', () => {
   it('still refuses unsafe file contents while reporting the live reading', async () => {
     const f = fixture();
     const file = join(f.fleet, 'fleet.json');
-    writeFileSync(file, JSON.stringify({ readings: { 'codex-cmp': { ...codexReading, pctUsed: 99 } } }), { mode: 0o666 });
+    writeFileSync(file, JSON.stringify({ readings: { 'codex-personal': { ...codexReading, pctUsed: 99 } } }), { mode: 0o666 });
     chmodSync(file, 0o666);
     const read = liveRead();
     const view = await readResourceView(f.fleet, NOW, f.runs, read);
@@ -65,7 +65,7 @@ describe('readResourceView independent live Devin read', () => {
   it('merges the live reading over a valid snapshot without touching other pools', async () => {
     const f = fixture();
     writeFileSync(join(f.fleet, 'fleet.json'), JSON.stringify({
-      readings: { 'codex-cmp': codexReading },
+      readings: { 'codex-personal': codexReading },
       resources: { devin: { pool: 'devin', pctUsed: 99, resetAt: live.resetAt,
         fetchedAt: live.fetchedAt, source: 'devin-api-v3-org-cycle' } },
     }), { mode: 0o600 });

@@ -18,7 +18,7 @@ it('projects local pool evidence into the compact brief without a reserve or bil
     lanes: { 'devin-flash': { running: 1, target: 3 } },
     budget: {
       claude: { used_pct: 99, reset_at: at(10), burn_pct_per_hour: 1 },
-      'codex-cmp': { used_pct: 100, reset_at: at(12) },
+      'codex-personal': { used_pct: 100, reset_at: at(12) },
     },
   }));
   await writeFile(join(root, 'queue/grok-reading.json'), JSON.stringify({ pct: 30, ts: now / 1000 - 72 * 3600, reset_at: at(10) }));
@@ -31,8 +31,8 @@ it('projects local pool evidence into the compact brief without a reserve or bil
   expect(pool('cursor')).toMatchObject({ usedPct: 20, source: 'metrics/usage-history.json', ageHours: 0, burnPerHour: 1 });
   expect(pool('grok')).toMatchObject({ usedPct: null, source: 'queue/grok-reading.json', ageHours: 72,
     verdict: 'grok: stale (72h); refresh the provider reading' });
-  expect(pool('codex-cmp')).toMatchObject({ usedPct: 100, source: 'queue/status.json', safeBurn: 0,
-    verdict: `codex-cmp: spent until ${at(12)}` });
+  expect(pool('codex-personal')).toMatchObject({ usedPct: 100, source: 'queue/status.json', safeBurn: 0,
+    verdict: `codex-personal: spent until ${at(12)}` });
   expect(pool('claude')).toMatchObject({ usedPct: 99, source: 'queue/status.json', safeBurn: 0.1, verdict: 'over' });
   expect(pool('devin-flash')).toMatchObject({ usedPct: null, source: 'queue/status.json lane slots', headroom: { slots: 2 },
     verdict: expect.stringContaining('slot headroom is not billing eligibility') });

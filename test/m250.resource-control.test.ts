@@ -99,7 +99,7 @@ function mockCodexSession(primary: CodexSessionWindow | null, secondary: CodexSe
   vi.doMock('../src/core/fleet/codex-session-usage.js', async (importOriginal) => ({
     ...await importOriginal<typeof import('../src/core/fleet/codex-session-usage.js')>(),
     collectCodexSessionUsages: vi.fn((options) => {
-      expect(options.env.CODEX_HOME).toBe(join(tmpHome, '.codex-2'));
+      expect(options.env.CODEX_HOME).toBe(join(tmpHome, '.codex'));
       expect(options.env.CODEX_HOME_ALT).toBe(join(tmpHome, '.codex-2'));
       return primary ? [usage] : [];
     }),

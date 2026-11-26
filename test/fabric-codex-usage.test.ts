@@ -16,10 +16,10 @@ function payload(primary: unknown = window(), secondary: unknown = null) {
   return { rateLimits: { limitId: 'codex', primary, secondary } };
 }
 
-describe('CMP native quota parsing', () => {
+describe('personal Codex native quota parsing', () => {
   it('records measured usage and the shared Terra account reset', () => {
     expect(parseCodexUsage(payload(), NOW)).toEqual({ pctUsed: 25,
-      resetAt: '2030-01-01T01:00:00.000Z', terraResetAt: '2030-01-01T01:00:00.000Z' });
+      resetAt: '2030-01-01T01:00:00.000Z' });
   });
 
   it('selects the fullest window with its own reset, then the later reset on ties', () => {
@@ -49,7 +49,7 @@ describe('CMP native quota parsing', () => {
     payload(window(25, RESET * 1000)), payload(window(25, NOW / 1000)),
     payload(window(25, RESET + 0.5)), payload(window(25, Infinity)), payload(window(), window(50, 0)),
   ])('returns unknown for unusable evidence: %j', input => {
-    expect(parseCodexUsage(input, NOW)).toEqual({ pctUsed: null, resetAt: null, terraResetAt: null });
+    expect(parseCodexUsage(input, NOW)).toEqual({ pctUsed: null, resetAt: null });
   });
 
   it('preserves observed zero and full usage without inventing denial percentages', () => {
@@ -64,7 +64,7 @@ describe('CMP native quota parsing', () => {
   });
 });
 
-describe('CMP isolated status and log pipeline', () => {
+describe('personal Codex isolated status and log pipeline', () => {
   let root: string;
   let home: string;
   let sent: Record<string, unknown>[];
@@ -126,14 +126,14 @@ describe('CMP isolated status and log pipeline', () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it('runs only metadata calls in the explicit CMP HOME and logs both aliases with resets', async () => {
+  it('runs only metadata calls in the explicit personal Codex HOME and logs only the personal reading', async () => {
     vi.stubEnv('CODEX_HOME', join(root, 'wrong-account'));
     vi.stubEnv('OPENAI_API_KEY', privateDiagnostic);
     nativePayload = { ...payload(), privateDiagnostic };
     const stdout = vi.spyOn(console, 'log'); const stderr = vi.spyOn(console, 'error');
     const logPath = join(root, 'usage-readings.log');
-    const reading = await readCodexUsage({ home, logPath });
-    expect(reading).toMatchObject({ pool: 'codex-cmp', pctUsed: 25, source: 'codex-reader' });
+    const reading = await readCodexUsage({ personalHome: home, logPath });
+    expect(reading).toMatchObject({ pool: 'codex-personal', pctUsed: 25, source: 'codex-reader' });
     const args = vi.mocked(spawn).mock.calls[0]!;
     expect(args[0]).toBe('codex');
     expect(args[1]).toEqual(['app-server', '--stdio', '-c', 'analytics.enabled=false',
@@ -144,8 +144,8 @@ describe('CMP isolated status and log pipeline', () => {
     expect(sent.map(r => r.method)).toEqual(['initialize', 'initialized', 'account/rateLimits/read']);
     const log = await readFile(logPath, 'utf8');
     const rows = log.trim().split('\n').map(row => JSON.parse(row));
-    expect(rows).toEqual([ { ...reading, used: 25 }, { ...reading, pool: 'terra@cmp', used: 25 } ]);
-    expect(rows.every(row => row.resetAt === reading.terraResetAt && Number.isFinite(Date.parse(row.resetAt)))).toBe(true);
+    expect(rows).toEqual([{ ...reading, used: 25 }]);
+    expect(rows.every(row => Number.isFinite(Date.parse(row.resetAt)))).toBe(true);
     expect(log.includes(privateDiagnostic)).toBe(false);
     expect(log.includes(home)).toBe(false);
     if (process.platform !== 'win32') expect((await stat(logPath)).mode & 0o777).toBe(0o600);
@@ -170,25 +170,31 @@ describe('CMP isolated status and log pipeline', () => {
         if (kind === 'file-profile') await writeFile(join(home, '.codex'), 'TEST profile placeholder');
       }
       vi.mocked(spawn).mockClear();
-      expect((await readCodexUsage({ home: candidate })).pctUsed).toBeNull();
+      expect((await readCodexUsage({ personalHome: candidate })).pctUsed).toBeNull();
       expect(spawn).not.toHaveBeenCalled();
     });
+
+  it.each(['PHANTOM_SENSOR_CODEX_CMP_HOME', 'CODEX_HOME'])('does not read former CMP state configured in %s', async key => {
+    vi.stubEnv(key, key === 'CODEX_HOME' ? join(home, '.codex') : home);
+    expect(await readCodexUsage({ personalHome: home })).toMatchObject({ pctUsed: null, resetAt: null });
+    expect(spawn).not.toHaveBeenCalled();
+  });
 
   it.each(['spawn-error', 'malformed', 'overflow', 'partial', 'wrong-home', 'account-change', 'refresh-request', 'provider-error', 'exit-failed'])(
     'logs unknown and discards diagnostics on %s', async failure => {
       mode = failure;
       const logPath = join(root, 'usage-readings.log');
-      const reading = await readCodexUsage({ home, logPath });
-      expect(reading).toMatchObject({ pctUsed: null, resetAt: null, terraResetAt: null });
+      const reading = await readCodexUsage({ personalHome: home, logPath });
+      expect(reading).toMatchObject({ pctUsed: null, resetAt: null });
       const log = await readFile(logPath, 'utf8');
       expect(log.includes(privateDiagnostic)).toBe(false);
-      expect(log.trim().split('\n').map(row => JSON.parse(row).used)).toEqual(['unknown', 'unknown']);
+      expect(log.trim().split('\n').map(row => JSON.parse(row).used)).toEqual(['unknown']);
     });
 
   it.each(['hang', 'exit-hang'])('bounds the complete native exchange, including %s', async failure => {
     mode = failure;
     vi.useFakeTimers();
-    const pending = readCodexUsage({ home });
+    const pending = readCodexUsage({ personalHome: home });
     // Home validation uses real filesystem promises before the timer starts.
     await vi.waitFor(() => expect(vi.mocked(spawn).mock.calls.length).toBeGreaterThan(0));
     await vi.advanceTimersByTimeAsync(8_000);

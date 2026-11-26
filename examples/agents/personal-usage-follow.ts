@@ -36,7 +36,7 @@ type Sample = { type: 'sample'; sampledAt: string; resource: CodexAccountResourc
 // The collector follows symlinks within sessions. Refuse them before calling it
 // so a personal sessions tree cannot redirect ordinary reads to another home.
 function readPersonal(opts: NonNullable<Parameters<typeof collectCodexSessionUsages>[0]>): CodexSessionUsage[] {
-  const home = opts.env?.['CODEX_HOME'];
+  const home = opts.env?.['CODEX_HOME_ALT'];
   if (!home) throw new Error();
   let visited = 0;
   const inspect = (path: string, depth: number): void => {
@@ -124,7 +124,7 @@ export async function runPersonalUsageFollow(args: string[], overrides: Partial<
   try {
     while (samples.length < values['--samples']! && !deps.signal?.aborted) {
       const nowMs = deps.now();
-      const usages = deps.read({ env: { CODEX_HOME: personalHome, CODEX_HOME_ALT: personalHome }, homeDir: deps.homeDir });
+      const usages = deps.read({ env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: personalHome }, homeDir: deps.homeDir });
       const usage = usages[0] ? { ...usages[0], accountId: 'codex-personal', slot: 'secondary' as const,
         limitId: null, limitName: null, model: null, originator: null, cliVersion: null } : missingUsage();
       const resource = buildCodexResourceReport([usage], [], nowMs).resources[0]!;
