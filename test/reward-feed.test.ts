@@ -461,6 +461,26 @@ describe('syncRewardSignalsFromJobsLedger', () => {
     expect(rows.find((r) => r.jobId === 'RQ-C')).toMatchObject({ merged: false, mergedAt: null });
   });
 
+  it('writes a merge reward only after its effective timestamp is reached', async () => {
+    const mergedAt = '2026-10-28T20:01:00.000Z';
+    const laterDispatch = '2026-10-28T20:00:30.000Z';
+    writeJobs([
+      launch('RQ-A'),
+      merged('RQ-A', mergedAt, '2026-10-28T19:59:00.000Z'),
+      launch('RQ-A', 'claude', laterDispatch),
+    ].join('\n'));
+
+    const early = await syncRewardSignalsFromJobsLedger({ runsDir, home, now: NOW });
+    expect(early.recorded).toBe(0);
+    expect(rewardRows()).toEqual([]);
+
+    const onTime = await syncRewardSignalsFromJobsLedger({ runsDir, home, now: () => new Date(mergedAt) });
+    expect(onTime.recorded).toBe(1);
+    expect(rewardRows()).toMatchObject([
+      { jobId: 'RQ-A', merged: true, mergedAt, dispatchedAt: laterDispatch, pool: 'claude' },
+    ]);
+  });
+
   it('writes measured ciWallMs into the reward row and leaves it null without boundaries', async () => {
     writeJobs([
       launch('RQ-A'),
