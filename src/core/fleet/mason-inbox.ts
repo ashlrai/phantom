@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { appendFile, mkdir, open } from 'node:fs/promises';
+import { appendFile, mkdir, open, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
@@ -148,15 +148,23 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
 /** Read-only check of the existing owner inbox, including mode bits when run as root. */
 export async function inboxWriteHealth(runsDir?: string): Promise<'missing' | 'permission-denied' | null> {
   const file = join(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'leader', 'MASON-INBOX.md');
+  const failure = await probeInboxWrite(file);
+  return failure === 'write-failed' ? 'permission-denied' : failure;
+}
+
+async function probeInboxWrite(file: string): Promise<'missing' | 'permission-denied' | 'write-failed' | null> {
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
+    if (!(await stat(file)).isFile()) return 'write-failed';
     // r+ does not create a missing file or write any content.
     handle = await open(file, 'r+');
-    const stat = await handle.stat();
-    return stat.isFile() && (stat.mode & 0o200) !== 0 ? null : 'permission-denied';
+    const info = await handle.stat();
+    if (!info.isFile()) return 'write-failed';
+    return (info.mode & 0o200) !== 0 ? null : 'permission-denied';
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    return code === 'ENOENT' ? 'missing' : 'permission-denied';
+    if (code === 'ENOENT') return 'missing';
+    return code === 'EACCES' || code === 'EPERM' ? 'permission-denied' : 'write-failed';
   } finally { await handle?.close().catch(() => undefined); }
 }
 
@@ -182,12 +190,16 @@ export async function appendInboxEntry(text: string, opts: InboxAppendOptions = 
     const { entry } = formatChannelEntry(long ? summariseForInbox(clean, INBOX_ATTACH_SUMMARY_CHARS, id, text.length) : clean, source, now, clean);
     const result = { ok: true as const, at, id, bytes: Buffer.byteLength(entry, 'utf8'), ...(attachment ? { attachment } : {}) };
     if (opts.dryRun === true) return result;
-    if (await inboxWriteHealth(runsDir) === 'permission-denied') return { ok: false, reason: 'inbox-permission-denied' };
+    const leaderDir = join(runsDir, 'leader');
+    const file = join(leaderDir, 'MASON-INBOX.md');
+    const failure = await probeInboxWrite(file);
+    if (failure === 'write-failed') return { ok: false, reason: failure };
+    if (failure === 'permission-denied') return { ok: false, reason: 'inbox-permission-denied' };
     // Exclusive create first: a collision fails the append rather than overwriting or pointing at foreign content.
     if (attachment) await writeInboxAttachment(runsDir, id, text);
-    await mkdir(join(runsDir, 'leader'), { recursive: true });
+    await mkdir(leaderDir, { recursive: true });
     try {
-      await appendFile(join(runsDir, 'leader', 'MASON-INBOX.md'), entry, { encoding: 'utf8', flag: 'a' });
+      await appendFile(file, entry, { encoding: 'utf8', flag: 'a' });
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       return { ok: false, reason: code === 'EACCES' || code === 'EPERM' ? 'inbox-permission-denied' : 'write-failed' };
