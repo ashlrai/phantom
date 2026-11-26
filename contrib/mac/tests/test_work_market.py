@@ -450,6 +450,9 @@ class MarketTick(unittest.TestCase):
     def rows(self, home):
         return [json.loads(row) for row in (home / '.ashlr-runs/metrics/work-market.jsonl').read_text().splitlines()]
 
+    def routes(self, home):
+        return [row for row in self.rows(home) if row['event'] == 'route_decision']
+
     def run_tick(self, home):
         result = tick(home)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -571,7 +574,7 @@ class MarketTick(unittest.TestCase):
         self.add(home, 'RQ-MARKET-A', needs=['git', 'node'])
         self.add(home, 'RQ-MARKET-B', lane='codex-personal', preferred_lane='codex-personal')
         self.run_tick(home)
-        rows = self.rows(home)
+        rows = self.routes(home)
         self.assertEqual([r['chosen_lane'] for r in rows], ['codex-personal', 'claude'])
         self.assertIn('preferred_lane_fallback', rows[1]['reason_codes'])
         for job, lane in [('RQ-MARKET-A', 'codex-personal'), ('RQ-MARKET-B', 'claude')]:
@@ -581,14 +584,14 @@ class MarketTick(unittest.TestCase):
             self.assertTrue(state['launched'])
         self.assertEqual((q / 'ready.tsv').read_text(), '')
         self.run_tick(home)
-        self.assertEqual(len(self.rows(home)), 2)
+        self.assertEqual(len(self.routes(home)), 2)
 
     def test_legacy_lane_still_launches_and_unknown_lane_is_a_hint(self):
         home, q = self.fixture()
         queue_job(home, 'RQ-LEGACY', 'codex-personal', size=20)
         queue_job(home, 'RQ-UNKNOWN', 'retired-lane', size=20)
         self.run_tick(home)
-        self.assertEqual([r['chosen_lane'] for r in self.rows(home)], ['codex-personal', 'claude'])
+        self.assertEqual([r['chosen_lane'] for r in self.routes(home)], ['codex-personal', 'claude'])
         self.assertTrue(dispatched(home, 'RQ-LEGACY'))
         self.assertTrue(dispatched(home, 'RQ-UNKNOWN'))
 
@@ -601,7 +604,7 @@ class MarketTick(unittest.TestCase):
         self.assertTrue(dispatched(home, 'RQ-IMPORTANT'))
         self.assertFalse(dispatched(home, 'LAND-NOISE'))
         self.assertFalse(dispatched(home, 'RQ-BLOCKED'))
-        self.assertEqual(self.rows(home)[0]['reason_codes'], ['no_runnable_lane'])
+        self.assertEqual(self.routes(home)[0]['reason_codes'], ['no_runnable_lane'])
 
     def test_recovered_launch_receipt_cannot_move_to_another_lane(self):
         home, q = self.fixture({'claude': 1})
@@ -609,7 +612,7 @@ class MarketTick(unittest.TestCase):
         (q / 'run/RQ-LOCKED.line').write_text(f'RQ-LOCKED\tphantom\tcodex-personal\twork\t{q}/prompts/RQ-LOCKED.md\n')
         self.run_tick(home)
         self.assertFalse(dispatched(home, 'RQ-LOCKED'))
-        self.assertIn('hysteresis_launched', self.rows(home)[0]['reason_codes'])
+        self.assertIn('hysteresis_launched', self.routes(home)[0]['reason_codes'])
 
     def jobs(self, home):
         return [json.loads(row) for row in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
@@ -622,7 +625,7 @@ class MarketTick(unittest.TestCase):
         claim = next(r for r in self.jobs(home) if r['event'] == 'claim')
         self.assertEqual((claim['lane'], claim['lane_hint'], claim['lane_override'], claim['lane_hint_blocked_by']),
                          ('codex-cmp', 'codex-personal', 'resource_fit', []))
-        self.assertEqual(self.rows(home)[0]['override']['reason'], 'resource_fit')
+        self.assertEqual(self.routes(home)[0]['override']['reason'], 'resource_fit')
         self.assertIn('FLEET_REBALANCE RQ-HINTED codex-personal->codex-cmp (shared market: resource_fit)',
                       (home / '.ashlr-runs/dispatch-events.log').read_text())
         self.assertEqual(json.loads((q / 'route-state.json').read_text())['RQ-HINTED']['pool'], 'codex-cmp')
@@ -690,7 +693,7 @@ class MarketTick(unittest.TestCase):
         fields = (q / 'ready.tsv').read_text().strip().split('\t')
         self.assertEqual(json.loads(fields[5])['needs'], ['claude-cli'])
         self.run_tick(home)
-        self.assertEqual(self.rows(home)[0]['chosen_lane'], 'claude')
+        self.assertEqual(self.routes(home)[0]['chosen_lane'], 'claude')
         self.assertTrue(dispatched(home, 'RQ-RESTOCK'))
 
     def test_restock_routes_gh_repairs_to_capable_lane_through_dispatch(self):
@@ -752,7 +755,7 @@ class MarketTick(unittest.TestCase):
         (q / 'slots.json').write_text(json.dumps(slots))
         self.add(home, 'RQ-REGISTERED', needs=['browser'])
         self.run_tick(home)
-        self.assertEqual(self.rows(home)[0]['chosen_lane'], 'cursor')
+        self.assertEqual(self.routes(home)[0]['chosen_lane'], 'cursor')
         self.assertTrue(dispatched(home, 'RQ-REGISTERED'))
 
     def test_retired_executor_receipts_do_not_block_the_rest_of_the_market(self):
