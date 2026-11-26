@@ -403,7 +403,10 @@ carries the block and `derived` when the running dispatcher predates it; a
 derived report compares lane counts with `ready.tsv` hints; when
 `queue/slots.json` also parses it recomputes the same eligibility reason codes
 the dispatcher would record (`derivedReasons: true` in `--json`), otherwise
-reasons stay unknown. Ready rows are validated exactly like the dispatcher's
+reasons stay unknown. For API lanes whose derived cost class is metered, rows
+without `max_cost_class=metered` receive `metered_api_opt_in_required`. The
+dispatcher verdict includes any changes in cost class from promotional windows.
+Ready rows are validated exactly like the dispatcher's
 `work_market.requirements`: a malformed job id, tier or requirements spec —
 including a spec-less row whose `queue/router-queue.md` `(attrs)` envelope
 fails validation — never reaches the market, so the report counts it in
