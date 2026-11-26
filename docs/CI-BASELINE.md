@@ -15,7 +15,10 @@ or, for gate jobs that never run the binding script (secret-shape, quick,
 clean-tree, authority-drift, fast-gate, secret-scan and the whole
 dependency-audit job), recording `actions/checkout` steps whose resolved
 `with: ref:` input is the analyzed head in every checkout group of the log.
-The bound revision or checkout ref must equal the analyzed head exactly; an
+When a log contains multiple explicit receipts, every echoed SHA and
+source-binding revision must equal the analyzed head. A conflict leaves the
+run unknown and prevents its log from supplying failure or pass evidence.
+Each checkout ref used as fallback proof must also equal the analyzed head. An
 unpinned checkout (which falls back to the event's merge commit on pull
 requests), a non-SHA ref or a second checkout of anything else leaves the
 job unverifiable. Jobs that never check out the workspace (aggregators such

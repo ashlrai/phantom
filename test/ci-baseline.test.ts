@@ -264,6 +264,37 @@ describe('CI baseline evidence', () => {
     expect(mismatch.groups).toEqual([]);
     expect(mismatch.freshness.every(p => p.state === 'unknown')).toBe(true);
   });
+  it('requires all explicit checkout receipts in a job to agree with its head', async () => {
+    const { gh } = github({ count: 1, pass: true });
+    const gitProof = (sha: string) => `/usr/bin/git log -1 --format=%H\n${sha}\n`;
+    const boundProof = (sha: string) => `Bound candidate ${sha} to event tree ${master}\n`;
+    for (const proof of [gitProof, boundProof]) {
+      for (const bound of [false, true]) {
+        const fixture = github({ count: 1, pass: true, bound });
+        const analyze = (sha: string) => analyzeCiBaseline('owner/repo', async args => {
+          const response = await fixture.gh(args);
+          return args[1]?.endsWith('/jobs/20/logs')
+            ? { ...response, stdout: `${response.stdout}\n${proof(sha)}` }
+            : response;
+        });
+        const matching = await analyze(head);
+        expect(matching.groups[0]?.classification).toBe('probable-flake');
+        const conflicting = await analyze(master);
+        expect(conflicting.groups).toEqual([]);
+        expect(conflicting.freshness).toMatchObject([
+          { state: 'unknown', reason: 'unreadable-log-or-unverified-checkout' },
+        ]);
+      }
+    }
+    const conflictingMaster = await analyzeCiBaseline('owner/repo', async args => {
+      const response = await gh(args);
+      return args[1]?.endsWith('/jobs/10/logs')
+        ? { ...response, stdout: `${response.stdout}\n${boundProof(head)}` }
+        : response;
+    });
+    expect(conflictingMaster.master.known).toBe(false);
+    expect(conflictingMaster.groups[0]).toMatchObject({ master: 'unknown', action: 'unknown' });
+  });
   it('verifies unbound gate jobs through the checkout ref echo', async () => {
     // secret-shape, quick, clean-tree, authority-drift, fast-gate,
     // secret-scan and the dependency-audit job never run
