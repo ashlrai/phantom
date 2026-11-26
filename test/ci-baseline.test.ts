@@ -109,6 +109,34 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
 }
 
 describe('CI baseline evidence', () => {
+  it.each([
+    ['workflow runs', '/actions/runs?', 'missing-or-capped-runs'],
+    ['jobs', '/jobs?', 'unreadable-log-or-unverified-checkout'],
+  ])('withholds freshness and master verdicts for a short page of %s', async (_label, path, reason) => {
+    const { gh } = github();
+    const withShortPage = (scope: 'master' | 'pr'): CloudGh => async args => {
+      const response = await gh(args);
+      const endpoint = args[1] ?? '';
+      if (!endpoint.includes(path)) return response;
+      const isMaster = endpoint.includes(master) || endpoint.includes('/runs/1/');
+      if (isMaster !== (scope === 'master')) return response;
+      const page = JSON.parse(response.stdout);
+      return { ...response, stdout: JSON.stringify({ ...page, total_count: page.total_count + 1 }) };
+    };
+
+    const masterReport = await analyzeCiBaseline('owner/repo', withShortPage('master'));
+    expect(masterReport.master.known).toBe(false);
+    expect(masterReport.groups[0]).toMatchObject({ classification: 'shared-baseline', master: 'unknown' });
+
+    const prReport = await analyzeCiBaseline('owner/repo', withShortPage('pr'));
+    expect(prReport.master.known).toBe(true);
+    expect(prReport.freshness.map(pr => [pr.state, pr.reason])).toEqual([
+      ['unknown', reason],
+      ['unknown', reason],
+    ]);
+    expect(prReport.groups).toEqual([]);
+  });
+
   it('groups independent failures and keeps analysis read-only', async () => {
     const { gh, calls } = github();
     const report = await analyzeCiBaseline('owner/repo', gh);
