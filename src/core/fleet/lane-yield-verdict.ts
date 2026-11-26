@@ -127,11 +127,13 @@ const emptyEvidence = (row: Record<string, unknown>, event: string | null, phase
 
 /** Fold the jobs ledger into one record per finished job, on the lane of its latest launch. Bad lines are skipped. */
 export function parseLaneJobs(ledger: string): LaneJob[] {
-  type Launch = { lane: string; at: number };
+  type Receipt = { at: number | null; seq: number };
+  type Launch = Receipt & { lane: string };
+  type Finish = Receipt & { empty: boolean };
   const launches = new Map<string, Launch>();
-  const done = new Map<string, { at: number | null; empty: boolean; merged: boolean }>();
+  const done = new Map<string, { mergeAt: number | null; merged: boolean; finishes: Finish[] }>();
   const reverted = new Set<string>();
-  for (const line of ledger.split('\n')) {
+  for (const [seq, line] of ledger.split('\n').entries()) {
     let row: unknown;
     try { row = JSON.parse(line); } catch { continue; }
     if (!isObject(row)) continue;
@@ -143,7 +145,7 @@ export function parseLaneJobs(ledger: string): LaneJob[] {
     if (event === 'launch') {
       const lane = firstString(row, LANE_KEYS) ?? '';
       const prev = launches.get(id);
-      if (lane && (!prev || (at ?? 0) >= prev.at)) launches.set(id, { lane, at: at ?? 0 });
+      if (lane && (!prev || (at ?? 0) >= (prev.at ?? 0))) launches.set(id, { lane, at, seq });
       continue;
     }
     if (hasRevertEvidence(row)) reverted.add(id);
@@ -153,15 +155,29 @@ export function parseLaneJobs(ledger: string): LaneJob[] {
     const empty = emptyEvidence(row, event, phase);
     const finished = empty || (row.launched !== false && event !== null && FINISH_EVENTS.has(event));
     if (!merged && !finished) continue;
-    const prev = done.get(id) ?? { at: null, empty: false, merged: false };
-    done.set(id, { at: Math.max(prev.at ?? 0, at ?? 0) || null, empty: prev.empty || empty, merged: prev.merged || merged });
+    const job = done.get(id) ?? { mergeAt: null, merged: false, finishes: [] };
+    if (merged) {
+      job.merged = true;
+      if (at !== null && (job.mergeAt === null || at > job.mergeAt)) job.mergeAt = at;
+    }
+    if (finished) job.finishes.push({ at, seq, empty });
+    done.set(id, job);
   }
   const out: LaneJob[] = [];
   for (const [job, d] of done) {
     const launch = launches.get(job);
     if (!launch) continue;
+    const finishes = d.finishes.filter(finish =>
+      finish.at !== null && launch.at !== null && finish.at !== launch.at
+        ? finish.at > launch.at
+        : finish.seq > launch.seq);
+    if (!d.merged && finishes.length === 0) continue;
     const merged = d.merged && !reverted.has(job);
-    out.push({ job, lane: launch.lane, at: d.at ?? (launch.at || null), merged, empty: d.empty && !merged });
+    let at = d.mergeAt;
+    for (const finish of finishes) {
+      if (finish.at !== null && (at === null || finish.at > at)) at = finish.at;
+    }
+    out.push({ job, lane: launch.lane, at: at ?? launch.at, merged, empty: !merged && finishes.some(finish => finish.empty) });
   }
   return out;
 }
