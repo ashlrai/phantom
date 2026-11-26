@@ -11,6 +11,11 @@ import { buildStatusDigest, type StatusDigestInput } from '../src/core/leader/st
 
 const NOW = Date.parse('2026-11-17T12:00:00.000Z');
 const at = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
+const localTime = (hoursAgo: number) => {
+  const d = new Date(NOW - hoursAgo * 3_600_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
 const lane = (name: string, patch: Partial<ResourceLaneRow> = {}): ResourceLaneRow => ({
   lane: name, running: 1, target: 2, held: false, window: 'weekly', usedPct: 50, creditsRemaining: null, resetAt: at(84),
   burnPctPerHour: null, tokensPerHour6h: null, projectedExhaustion: null, source: null, deadSignal: null,
@@ -61,7 +66,7 @@ describe('buildQueueSupply', () => {
     expect(noQueue.gaps[0]).toBe('The ready queue could not be read.');
     const noLog = supply([lane('claude')], { claude: 4 }, null);
     expect(row(noLog, 'claude')).toMatchObject({ state: 'healthy', ready: 4, starts_per_hour: null, hours_queued: null });
-    expect(row(noLog, 'claude').reason).toBe('launch log not readable');
+    expect(row(noLog, 'claude').reason).toBe('launch window unavailable');
   });
 
   it('under an hour of work on a pool that is behind is supply_low and named in the digest line', () => {
@@ -120,8 +125,39 @@ describe('readers', () => {
 
       await writeFile(join(queue, 'ready.tsv'), '');
       const empty = await readQueueSupply(opts);
-      expect(row(empty, pool)).toMatchObject({ state: 'empty', ready: 0, hours_queued: 0, supply_low: true });
+      expect(row(empty, pool)).toMatchObject({ state: 'empty', ready: 0, starts_per_hour: 0, hours_queued: 0, supply_low: true });
       expect(supplyLowLine(empty)).toContain('0 queued');
+    } finally {
+      await rm(runsDir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses a truncated dispatch log only when its retained events cover the launch window', async () => {
+    const runsDir = await mkdtemp(join(tmpdir(), 'phantom-queue-supply-'));
+    try {
+      const queue = join(runsDir, 'queue');
+      const pool = 'codex-supply-test';
+      await mkdir(queue);
+      await writeFile(join(queue, 'status.json'), JSON.stringify({
+        last_tick: at(0), lanes: { [pool]: { running: 0, target: 2 } },
+        budget: { [pool]: { weekly_used_pct: 72, observed_at: at(-0.01), reset_at: at(31), burn_pct_per_hour: 0.3 } },
+      }));
+      await writeFile(join(queue, 'ready.tsv'), `RQ-A\tphantom\t${pool}\twork\t/p/a\n`);
+      const log = join(runsDir, 'dispatch-events.log');
+      const launch = `${localTime(1)} LAUNCH RQ-B phantom ${pool} work\n`;
+      const padding = 'x'.repeat(2 * 1024 * 1024);
+      const opts = { runsDir, now: () => NOW };
+
+      await writeFile(log, `${localTime(6)} EVENT ${padding}\n${localTime(6)} DONE RQ-C\n${launch}`);
+      expect(row(await readQueueSupply(opts), pool)).toMatchObject({
+        ready: 1, starts_per_hour: null, hours_queued: null, supply_low: false,
+        reason: 'launch window unavailable',
+      });
+
+      await writeFile(log, `${localTime(7)} EVENT ${padding}\n${localTime(7)} DONE RQ-C\n${launch}`);
+      expect(row(await readQueueSupply(opts), pool)).toMatchObject({
+        ready: 1, starts_per_hour: 1 / 6, hours_queued: 6,
+      });
     } finally {
       await rm(runsDir, { recursive: true, force: true });
     }
@@ -172,8 +208,7 @@ describe('readers', () => {
   });
 
   it('counts LAUNCH lines per lane inside the window only', () => {
-    const local = (hoursAgo: number) => { const d = new Date(NOW - hoursAgo * 3_600_000); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
-    const log = [`${local(1)} LAUNCH RQ-A phantom claude mid`, `${local(5)} LAUNCH RQ-B phantom claude mid`, `${local(7)} LAUNCH RQ-C phantom claude mid`, `${local(2)} DONE RQ-A`].join('\n');
+    const log = [`${localTime(1)} LAUNCH RQ-A phantom claude mid`, `${localTime(5)} LAUNCH RQ-B phantom claude mid`, `${localTime(7)} LAUNCH RQ-C phantom claude mid`, `${localTime(2)} DONE RQ-A`].join('\n');
     expect(countStarts(log, NOW)).toEqual({ claude: 2 });
   });
 });
