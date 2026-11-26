@@ -223,4 +223,48 @@ describe('standalone join advertises the planned local lane caps', () => {
     r = await joinOnce('n-pressured', deps({ headroom: headroom(60, 0, 4) }), 'build');
     expect(r.store.state.nodes[0]!.caps).toEqual(['build']);
   });
+
+  it('names a malformed local-lanes.json in the reply instead of silently skipping the lane', async () => {
+    writeFileSync(configPath, 'not json');
+    const { code, store, out } = await joinOnce('n-broken-config', deps({ headroom: headroom() }), 'build');
+    expect(code).toBe(0);
+    expect(store.state.nodes[0]!.caps).toEqual(['build']);
+    expect(out['caps']).toEqual(['build']);
+    expect(out['localLanes']).toEqual({
+      state: 'invalid',
+      error: 'local-lanes.json is not valid JSON',
+      fix: 'Run: phm node lanes',
+    });
+  });
+
+  it('prints the same diagnostic in text mode', async () => {
+    writeFileSync(configPath, 'not json');
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join',
+        ['--node', 'n-broken-text', '--owner', 'mason'],
+        { store, phmVersion: () => null, localLanes: deps({ headroom: headroom() }) });
+      expect(code).toBe(0);
+      expect(lines.join('\n')).toContain('Local model lanes not advertised: local-lanes.json is not valid JSON. Run: phm node lanes');
+    } finally { vi.restoreAllMocks(); }
+  });
+
+  it('adds no localLanes field when the config is absent, disabled, valid or the probe fails', async () => {
+    let r = await joinOnce('n-clean-absent', deps({ headroom: headroom() }), 'build');
+    expect(r.out['localLanes']).toBeUndefined();
+    writeFileSync(configPath, JSON.stringify({ schemaVersion: 1, enabled: false }));
+    r = await joinOnce('n-clean-disabled', deps({ headroom: headroom() }), 'build');
+    expect(r.out['localLanes']).toBeUndefined();
+    writeFileSync(configPath, JSON.stringify(enable));
+    r = await joinOnce('n-clean-valid', deps({ headroom: headroom() }), 'build');
+    expect(r.out['localLanes']).toBeUndefined();
+    expect(r.out['caps']).toContain('omlx');
+    // A probe that throws (here: the headroom reader) advertises nothing and
+    // reports no config error — same never-throw contract as before.
+    r = await joinOnce('n-clean-throw', deps({ headroom: () => { throw new Error('sysctl unavailable'); } }), 'build');
+    expect(r.out['localLanes']).toBeUndefined();
+    expect(r.store.state.nodes[0]!.caps).toEqual(['build']);
+  });
 });

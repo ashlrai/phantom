@@ -44,8 +44,10 @@ credentials stay on this computer.
 A computer serving a local model through oMLX needs no `--caps` entry: opt in
 with `~/.ashlr/local-lanes.json` (`{"schemaVersion":1,"enabled":true}`), check
 the plan with `phm node lanes`, and `phm node join` advertises the resulting
-`omlx` caps automatically — the same merge a pool join or worker performs.
-See [OMLX-SMALL-MACS.md](OMLX-SMALL-MACS.md).
+`omlx` caps automatically — the same merge a pool join or worker performs. A
+malformed `local-lanes.json` is named in the standalone join reply
+(`localLanes` under `--json`) instead of being skipped silently; `phm node
+lanes` prints the same parse error. See [OMLX-SMALL-MACS.md](OMLX-SMALL-MACS.md).
 
 ## Verify and stay live
 
