@@ -2324,7 +2324,7 @@ const MARKET_WORK_CLASS = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
  * the market's own classification of the job (declared or derived from its
  * requirements), recorded whether or not a lane was chosen.
  */
-export function foldRouteDecisionWorkClasses(text: string): Map<string, string> {
+export function foldRouteDecisionWorkClasses(text: string, throughEpochSeconds = Infinity): Map<string, string> {
   const latest = new Map<string, { workClass: string | null; ts: number }>();
   for (const line of text.split('\n')) {
     // Cheap prefilter: route decisions are the bulk of the file.
@@ -2341,7 +2341,7 @@ export function foldRouteDecisionWorkClasses(text: string): Map<string, string> 
     const job = row['job'];
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const ts = row['ts'];
-    if (typeof ts !== 'number' || !Number.isFinite(ts)) continue;
+    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts > throughEpochSeconds) continue;
     const prev = latest.get(job);
     if (prev !== undefined && prev.ts > ts) continue;
     const rawClass = row['work_class'];
@@ -2461,7 +2461,7 @@ const marketRejectedLanes = (v: unknown): MarketRejectedLane[] | null => {
  * skipped. Conflicting verdicts at the newest timestamp leave the job
  * absent from the map, so every market verdict field stays null.
  */
-export function foldRouteDecisions(text: string): Map<string, MarketRouteDecision> {
+export function foldRouteDecisions(text: string, throughEpochSeconds = Infinity): Map<string, MarketRouteDecision> {
   const latest = new Map<string, { ts: number; decision: MarketRouteDecision | null }>();
   for (const line of text.split('\n')) {
     // Cheap prefilter: route decisions are the bulk of the file.
@@ -2478,7 +2478,7 @@ export function foldRouteDecisions(text: string): Map<string, MarketRouteDecisio
     const job = row['job'];
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const ts = row['ts'];
-    if (typeof ts !== 'number' || !Number.isFinite(ts)) continue;
+    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts > throughEpochSeconds) continue;
     const prev = latest.get(job);
     if (prev !== undefined && prev.ts > ts) continue;
     const lane = row['chosen_lane'];
@@ -2537,7 +2537,7 @@ export interface MarketHandoffAdvisory {
  * trigger, or a malformed job id are skipped, never guessed; a job
  * absent from the map keeps whatever the jobs-ledger fold recorded.
  */
-export function foldMarketHandoffAdvisories(text: string): Map<string, MarketHandoffAdvisory> {
+export function foldMarketHandoffAdvisories(text: string, throughEpochSeconds = Infinity): Map<string, MarketHandoffAdvisory> {
   const latest = new Map<string, { ts: number; advisory: MarketHandoffAdvisory }>();
   for (const line of text.split('\n')) {
     // Cheap prefilter: the advisory value string appears under whichever
@@ -2554,7 +2554,7 @@ export function foldMarketHandoffAdvisories(text: string): Map<string, MarketHan
     const job = row['job'];
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const ts = row['ts'];
-    if (typeof ts !== 'number' || !Number.isFinite(ts)) continue;
+    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts > throughEpochSeconds) continue;
     const advisory = handoffAdvisory(row);
     if (advisory === null) continue;
     const prev = latest.get(job);
@@ -3526,8 +3526,9 @@ export async function readRouterOutcomes(opts: {
       launch_cost_state: launchCostState, launch_cost_truncated: launchCostTruncated,
       cross_review_state: crossReviewState, cross_review_truncated: crossReviewTruncated, truncated: false };
   }
+  const marketThrough = reportStartedAt / 1000;
   const workClasses = marketRead.state === 'read'
-    ? foldRouteDecisionWorkClasses(marketRead.text)
+    ? foldRouteDecisionWorkClasses(marketRead.text, marketThrough)
     : new Map<string, string>();
   const authorityEvidence = opts.authorityEvidence === undefined
     ? await liveAuthorityEvidence()
@@ -3598,8 +3599,8 @@ export async function readRouterOutcomes(opts: {
     }
   }
   if (marketRead.state === 'read') {
-    const decisions = foldRouteDecisions(marketRead.text);
-    const advisories = foldMarketHandoffAdvisories(marketRead.text);
+    const decisions = foldRouteDecisions(marketRead.text, marketThrough);
+    const advisories = foldMarketHandoffAdvisories(marketRead.text, marketThrough);
     const jobsAdvisoryAt = latestJobsHandoffAdvisoryMs(read.text);
     for (const o of folded.outcomes) {
       const decision = decisions.get(o.job_id);
