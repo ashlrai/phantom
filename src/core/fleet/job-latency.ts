@@ -1,3 +1,5 @@
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
+
 const jobPhases = [
   ['queue_wait', 'queued', 'launch', 'Measure admission delays and remove the largest queue bottleneck.'],
   ['checkout', 'launch', 'checkout_complete', 'Profile checkout and reuse safe local worktree preparation.'],
@@ -135,6 +137,7 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
       row = value as Record<string, unknown>;
     } catch { ignored++; continue; }
+    if (isNodePoolLedgerRow(row)) continue;
     const id = row.job ?? row.job_id ?? row.jobId ?? row.id;
     const event = boundaryEvent(row);
     if (event === 'git_operation') {
@@ -145,6 +148,8 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
       }
       continue;
     }
+    // Batch members carry their own evidence. The session is a shared worker.
+    if (typeof id === 'string' && id.startsWith('RQ-BATCH-')) continue;
     const at = event === undefined ? NaN : boundaryTs(row, event);
     if (typeof id !== 'string' || !id || event === undefined) { ignored++; continue; }
     const events = jobs.get(id) ?? new Map<string, number[]>();
