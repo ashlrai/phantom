@@ -1008,6 +1008,10 @@ event falls between the windows counts as missing evidence, never as a
 shorter wait. Without `--json`, the same command prints a plain-language
 report. Use `--root /path` to inspect a different runs directory.
 
+Trailing-hour merge counts use a readable, timezone-qualified `mergedAt` on
+merge ledger rows when available. Older rows and rows with an unreadable
+`mergedAt` use the existing ledger event timestamp.
+
 Blocked jobs are the parked ones. Each lane has `blockedReasons`
 (`[{ reason, count }]`, biggest first, e.g. `DEP` or `HOLD`) and `stale`, the
 parked dependency jobs whose gates all show MERGED but were never unparked
