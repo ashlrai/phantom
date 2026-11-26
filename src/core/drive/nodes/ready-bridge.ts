@@ -18,6 +18,7 @@ import { NODE_TASK_LIMIT, validNodeTask, nodeTaskArgs, type EmbeddedNodeTask } f
 import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
 import { validCap } from './state.js';
 import type { RouteAssignment } from './router.js';
+import { MARKET_LANE_ID, readyEnvelopeSpec } from '../../fleet/unfed-market.js';
 import { scrubSecrets } from '../../util/scrub.js';
 
 export const NODE_BRIDGE_SCHEMA = 'phantom.node-bridge.v1';
@@ -105,7 +106,7 @@ export function remoteLaneCap(lane: string): string | null {
   return null;
 }
 
-export function parseReadyRow(text: string): ReadyRow | null {
+export function parseReadyRow(text: string, routerQueue?: string | null): ReadyRow | null {
   const line = text.replace(/\r$/, '');
   if (!line.trim() || line.startsWith('#')) return null;
   const f = line.split('\t');
@@ -125,6 +126,20 @@ export function parseReadyRow(text: string): ReadyRow | null {
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).some(k => !SPEC_KEYS.has(k))) throw new Error('spec');
       spec = parsed as Record<string, unknown>;
     } catch { return { job, lane: f[2]!, line, spec: null, invalid: 'invalid_requirements' }; }
+  } else {
+    // Spec-less rows are validated like work_market.requirements first: the
+    // lane cell defaults to preferred_lane, so a non-empty cell that is not a
+    // lane id rejects the row before its router-queue envelope is read. A
+    // matching `- STATUS ... (attrs):` envelope then replaces the requirements
+    // wholesale — exactly like dispatchd's from_envelope — so the envelope's
+    // preferred_lane (or explicit open) and declared needs/data_class reach the
+    // offload decision instead of the raw lane cell standing in for them.
+    if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) {
+      return { job, lane: f[2]!, line, spec: null, invalid: 'invalid_requirements' };
+    }
+    const env = readyEnvelopeSpec(routerQueue, job);
+    if (env === 'invalid') return { job, lane: f[2]!, line, spec: null, invalid: 'invalid_requirements' };
+    if (env !== null) spec = env;
   }
   return { job, lane: f[2]!, line, spec, invalid: null };
 }
@@ -277,7 +292,11 @@ function readBridgeTask(host: NodeBridgeHost, row: ReadyRow): EmbeddedNodeTask {
 
 function readRows(host: NodeBridgeHost): { text: string; rows: ReadyRow[] } {
   const text = readText(join(queueDir(host), 'ready.tsv')) ?? '';
-  return { text, rows: text.split('\n').map(parseReadyRow).filter((r): r is ReadyRow => r !== null) };
+  // Spec-less rows inherit their requirements from the matching
+  // router-queue.md `(attrs)` envelope, exactly like dispatchd's from_envelope.
+  // A missing or unreadable queue leaves every spec-less row on its lane cell.
+  const routerQueue = readText(join(queueDir(host), 'router-queue.md'));
+  return { text, rows: text.split('\n').map(line => parseReadyRow(line, routerQueue)).filter((r): r is ReadyRow => r !== null) };
 }
 
 function claimedLocally(host: NodeBridgeHost, job: string): boolean {
