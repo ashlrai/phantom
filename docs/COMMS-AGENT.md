@@ -34,7 +34,10 @@ The policy is code, not prompt text. A prompt cannot approve a recipient.
   the first's sent mark. Pending drafts list in
   `phm comms-agent drafts` and the `phm comms inbox` drafts
   source (a Comms email draft already mirrored into `phm drafts` lists only
-  there, so one pending reply is one item).
+  there, so one pending reply is one item). `phm comms-agent drafts
+  --status sent` (or `all`) reads the resolved half of the same store —
+  delivered replies with their `resolvedAt` stamp — and `--transport`
+  narrows either slice to one channel; the default stays pending-only.
 - KILL and the comms pause refuse every send. Both are read from the account
   home (`os.userInfo().homedir`), so a process with a relocated `$HOME` still
   sees `~/.ashlr/KILL` and `~/.ashlr/comms/pause.json`.
@@ -50,10 +53,14 @@ The policy is code, not prompt text. A prompt cannot approve a recipient.
 phm comms-agent status --json
 phm comms-agent run --lanes claude,local --json
 phm comms-agent drafts --json
+phm comms-agent drafts --status sent --transport email --json
 ```
 
 `--lanes` is the candidate set. Omit it and the run reports no lane rather
-than picking one. `--dir` selects an isolated runs directory.
+than picking one. `--dir` selects an isolated runs directory. `drafts`
+takes `--status pending|sent|all` (default `pending`) and `--transport`
+(one of the Comms transports) to narrow the read; the filters apply to the
+`drafts` verb only.
 
 `status` reports the pending inbox depth as `inbox`: a real count of
 messages still awaiting a reply — unanswered mail only, since a delivered
