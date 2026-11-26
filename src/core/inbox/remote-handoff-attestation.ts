@@ -9,7 +9,11 @@ import type { ProposalRemoteHandoff, RemoteHandoffReconciliation } from '../type
 import { viewPr } from '../integrations/github.js';
 import type { PrView } from '../integrations/github.js';
 import { resolveGitHubOriginAuthority } from '../git.js';
-import { sanitizeGithubMergedAt } from './remote-handoff-time.js';
+import {
+  hasStrongRemoteHandoffIdentity,
+  prUrlMatchesRepository,
+  sanitizeGithubMergedAt,
+} from './remote-handoff-time.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 
@@ -202,22 +206,6 @@ function signature(values: unknown[], createKey = false): string | null {
   } catch { return null; }
 }
 
-function strongIdentity(handoff: ProposalRemoteHandoff, pr: PrView): boolean {
-  return Boolean(
-    handoff.prUrl && pr.url && handoff.prUrl === pr.url &&
-    handoff.branch && pr.headRefName && handoff.branch === pr.headRefName &&
-    handoff.base && pr.baseRefName && handoff.base === pr.baseRefName &&
-    handoff.expectedHeadOid && pr.headRefOid &&
-    handoff.expectedHeadOid.toLowerCase() === pr.headRefOid.toLowerCase()
-  );
-}
-
-function prUrlMatchesRepository(url: string, nameWithOwner: string): boolean {
-  const match = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/([1-9]\d*)$/i);
-  return Boolean(match?.[1] && match[2] &&
-    `${match[1]}/${match[2]}`.toLowerCase() === nameWithOwner.toLowerCase());
-}
-
 export interface ReconciledHostRead {
   pr: PrView;
   reconciliation?: RemoteHandoffReconciliation;
@@ -238,7 +226,8 @@ export function viewPrWithReconciliation(
   const mergeCommitOid = typeof pr.mergeCommitOid === 'string' && SHA_RE.test(pr.mergeCommitOid.toLowerCase())
     ? pr.mergeCommitOid.toLowerCase()
     : undefined;
-  if (handoff.state !== 'awaiting-host-merge' || !mergedAt || !mergeCommitOid || !strongIdentity(handoff, pr)) {
+  if (handoff.state !== 'awaiting-host-merge' || !mergedAt || !mergeCommitOid ||
+    !hasStrongRemoteHandoffIdentity(handoff, pr)) {
     return { pr };
   }
   const observedAt = new Date().toISOString();

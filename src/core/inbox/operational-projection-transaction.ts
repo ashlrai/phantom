@@ -1,15 +1,22 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
-import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import {
   operationalProposalProjectionDir,
 } from './operational-projection.js';
+import {
+  SHA256_RE as DIGEST_RE,
+  canonicalTimestamp,
+  equalDigest,
+  hmacDomainPayload,
+  loadDerivedDomainKey,
+  safePrivateDirectory,
+  validProposalId,
+} from './operational-projection-helpers.js';
 import {
   ownsProposalStoreMutationLock,
   type ProposalStoreMutationLock,
@@ -17,8 +24,6 @@ import {
 
 const SCHEMA_VERSION = 1 as const;
 const MAX_TRANSACTION_BYTES = 64 * 1024;
-const DIGEST_RE = /^[a-f0-9]{64}$/;
-const PROPOSAL_ID_RE = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/;
 const KEY_DOMAIN = 'ashlr.operational-projection-transaction.key.v1';
 const KEY_ID_DOMAIN = 'ashlr.operational-projection-transaction.key-id.v1';
 const ATTESTATION_DOMAIN = 'ashlr.operational-projection-transaction.record.v1';
@@ -67,36 +72,26 @@ export interface PrepareOperationalProjectionTransactionInput {
   now?: Date;
 }
 
-const PHASE_ORDER: Record<OperationalProjectionTransactionPhase, number> = {
+export const OPERATIONAL_PROJECTION_PHASE_ORDER: Record<OperationalProjectionTransactionPhase, number> = {
   prepared: 0,
   'proposal-installed': 1,
   'projection-installed': 2,
   committed: 3,
 };
-
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
+const PHASE_ORDER = OPERATIONAL_PROJECTION_PHASE_ORDER;
 
 function validDigest(value: unknown): value is string | null {
   return value === null || (typeof value === 'string' && DIGEST_RE.test(value));
 }
 
-function validDigestPair(value: unknown): value is OperationalProjectionTransactionDigestsV1 {
+export function validDigestPair(value: unknown): value is OperationalProjectionTransactionDigestsV1 {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return Object.keys(record).sort().join(',') === 'projection,proposal' &&
     validDigest(record['proposal']) && validDigest(record['projection']);
 }
 
-function validProposalId(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= 240 &&
-    PROPOSAL_ID_RE.test(value) && value !== '.' && value !== '..';
-}
-
-function validPhase(value: unknown): value is OperationalProjectionTransactionPhase {
+export function validPhase(value: unknown): value is OperationalProjectionTransactionPhase {
   return typeof value === 'string' && Object.hasOwn(PHASE_ORDER, value);
 }
 
@@ -114,27 +109,11 @@ function canonicalRecord(value: Omit<OperationalProjectionTransactionV1, 'attest
   });
 }
 
-function signingKey(provenanceKey: Buffer): Buffer {
-  return createHmac('sha256', provenanceKey)
-    .update(KEY_DOMAIN, 'utf8')
-    .update('\n', 'utf8')
-    .digest();
-}
-
 function attest(
   key: Buffer,
   value: Omit<OperationalProjectionTransactionV1, 'attestation'>,
 ): string {
-  return createHmac('sha256', key)
-    .update(ATTESTATION_DOMAIN, 'utf8')
-    .update('\n', 'utf8')
-    .update(canonicalRecord(value), 'utf8')
-    .digest('hex');
-}
-
-function equalDigest(left: string, right: string): boolean {
-  return DIGEST_RE.test(left) && DIGEST_RE.test(right) &&
-    timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
+  return hmacDomainPayload(key, ATTESTATION_DOMAIN, canonicalRecord(value));
 }
 
 function parseRecord(text: string): OperationalProjectionTransactionV1 | null {
@@ -158,37 +137,12 @@ function parseRecord(text: string): OperationalProjectionTransactionV1 | null {
   }
 }
 
-function keyId(key: Buffer): string {
-  return createHmac('sha256', key)
-    .update(KEY_ID_DOMAIN, 'utf8')
-    .update('\n', 'utf8')
-    .digest('hex');
-}
-
 function loadKey(): { key: Buffer; id: string } | null {
-  try {
-    const key = loadExistingProvenanceKeyReadOnly();
-    if (!key || key.length !== 32) return null;
-    const derived = signingKey(key);
-    return { key: derived, id: keyId(derived) };
-  } catch {
-    return null;
-  }
+  return loadDerivedDomainKey(KEY_DOMAIN, KEY_ID_DOMAIN);
 }
 
 function safeDirectory(): boolean {
-  try {
-    const dir = operationalProposalProjectionDir();
-    const stat = lstatSync(dir, { bigint: true });
-    if (stat.isSymbolicLink() || !stat.isDirectory()) return false;
-    if (typeof process.getuid === 'function' && stat.uid !== BigInt(process.getuid())) return false;
-    if (process.platform !== 'win32' && Number(stat.mode & 0o777n) !== 0o700) return false;
-    return assurePrivateStoragePath(dir, 'directory', 'inspect-existing', {
-      anchorPath: homedir(),
-    }).ok;
-  } catch {
-    return false;
-  }
+  return safePrivateDirectory(operationalProposalProjectionDir());
 }
 
 export function operationalProjectionTransactionPath(): string {

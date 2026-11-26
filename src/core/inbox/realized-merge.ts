@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import type {
   Proposal,
@@ -11,7 +10,14 @@ import type {
   RemoteHandoffReconciliation,
 } from '../types.js';
 import { verifyRemoteHandoffReconciliation } from './remote-handoff-attestation.js';
-import { sanitizeGithubMergedAt } from './remote-handoff-time.js';
+import {
+  hasValidRemoteHandoffRecovery,
+  prUrlMatchesRepository,
+  remoteAuthorityBinding,
+  remoteIntentAuthorizationId,
+  sameRemoteAuthorityBinding,
+  sanitizeGithubMergedAt,
+} from './remote-handoff-time.js';
 import {
   verifyLocalMergeIntent,
   verifyLocalRealizedMergeReceipt,
@@ -23,8 +29,7 @@ const ATTESTATION_RE = /^[a-f0-9]{64}$/i;
 const MAX_REF_LENGTH = 255;
 const MAX_PR_URL_LENGTH = 2_048;
 const MAX_FUTURE_SKEW_MS = 60_000;
-export const MAX_LOCAL_MERGE_RECOVERY_COMMITS = 256;
-const REMOTE_HANDOFF_RECOVERY_MARKER = '[ashlr-remote-handoff-retry:1]';
+const MAX_LOCAL_MERGE_RECOVERY_COMMITS = 256;
 const AUTHORIZATION_RE = /^[a-f0-9]{32}$/;
 
 const LOCAL_KEYS = new Set([
@@ -214,74 +219,9 @@ function exactRemoteBinding(
     verifyRemoteHandoffReconciliation(id, repo, typedHandoff);
 }
 
-function stablePushUrlIdentity(raw: string): string {
-  const value = raw.trim();
-  try {
-    const parsed = new URL(value);
-    parsed.username = '';
-    parsed.password = '';
-    parsed.hash = '';
-    parsed.search = '';
-    parsed.hostname = parsed.hostname.toLowerCase();
-    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
-    return parsed.toString().replace(/\/$/, '');
-  } catch {
-    return value;
-  }
-}
-
 function liveRemoteAuthority(repo: string): ProposalRemoteAuthorityBinding | null {
   const authority = resolveGitHubOriginAuthorityDetails(repo);
-  if (!authority?.nameWithOwner || authority.pushUrls.length === 0) return null;
-  const pushUrls = [...new Set(authority.pushUrls.map(stablePushUrlIdentity))].sort();
-  const pushAuthorityDigest = createHash('sha256').update(JSON.stringify([
-    'ashlr.github-push-authority.v1',
-    authority.nameWithOwner,
-    pushUrls,
-  ]), 'utf8').digest('hex');
-  return { provider: 'github', nameWithOwner: authority.nameWithOwner, pushAuthorityDigest };
-}
-
-function exactAuthority(
-  left: ProposalRemoteAuthorityBinding | undefined,
-  right: ProposalRemoteAuthorityBinding | undefined,
-): boolean {
-  return Boolean(left && right && left.provider === 'github' && right.provider === 'github' &&
-    left.nameWithOwner.length > 0 && left.nameWithOwner === right.nameWithOwner &&
-    ATTESTATION_RE.test(left.pushAuthorityDigest) && left.pushAuthorityDigest === right.pushAuthorityDigest);
-}
-
-function remoteAuthorizationId(
-  phase: 'pre-effect' | 'recovery',
-  intent: ProposalLocalMergeIntent,
-): string {
-  const authority = intent.remoteAuthority;
-  if (!authority || !exactAuthority(authority, authority)) return '';
-  return createHash('sha256').update(JSON.stringify([
-    intent.evidenceProtocol === 'sealed-v3'
-      ? 'ashlr.remote-handoff-authorization.sealed-v3.v1'
-      : 'ashlr.remote-handoff-authorization.v1',
-    phase,
-    authority.provider,
-    authority.nameWithOwner,
-    authority.pushAuthorityDigest,
-    intent.schemaVersion,
-    intent.branch,
-    intent.base,
-    intent.baseBeforeOid,
-    intent.proposalHeadOid,
-    intent.diffHash,
-    intent.evidencePackDigest,
-    intent.authorizedAt,
-    phase === 'recovery' ? REMOTE_HANDOFF_RECOVERY_MARKER : '',
-    ...(intent.evidenceProtocol === 'sealed-v3' ? [intent.evidenceProtocol] : []),
-  ]), 'utf8').digest('hex').slice(0, 32);
-}
-
-function exactPrRepository(url: string, nameWithOwner: string): boolean {
-  const match = url.match(/^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)$/i);
-  return Boolean(match?.[1] && match[2] &&
-    `${match[1]}/${match[2]}`.toLowerCase() === nameWithOwner.toLowerCase());
+  return authority ? remoteAuthorityBinding(authority) : null;
 }
 
 function exactSignedRemoteAuthority(
@@ -296,18 +236,14 @@ function exactSignedRemoteAuthority(
     const recovery = handoff.recovery;
     const phase = recovery === undefined ? 'pre-effect' : 'recovery';
     if (typeof id !== 'string' || typeof repo !== 'string' || !intent || !handoff.authority ||
-      !exactAuthority(intent.remoteAuthority, handoff.authority) ||
-      !exactAuthority(liveRemoteAuthority(repo) ?? undefined, handoff.authority) ||
-      !exactPrRepository(prUrl, handoff.authority.nameWithOwner) ||
+      !sameRemoteAuthorityBinding(intent.remoteAuthority, handoff.authority) ||
+      !sameRemoteAuthorityBinding(liveRemoteAuthority(repo) ?? undefined, handoff.authority) ||
+      !prUrlMatchesRepository(prUrl, handoff.authority.nameWithOwner) ||
       handoff.intentAttestation !== intent.attestation || intent.branch !== handoff.branch ||
       intent.base !== handoff.base || intent.proposalHeadOid.toLowerCase() !== handoff.expectedHeadOid?.toLowerCase() ||
       !verifyLocalMergeIntent(id, repo, intent) || !AUTHORIZATION_RE.test(intent.authorizationId) ||
-      intent.authorizationId !== remoteAuthorizationId(phase, intent)) return false;
-    return recovery === undefined || (
-      recovery.schemaVersion === 1 && recovery.attempt === 1 &&
-      recovery.marker === REMOTE_HANDOFF_RECOVERY_MARKER &&
-      Number.isFinite(Date.parse(recovery.authorizedAt))
-    );
+      intent.authorizationId !== remoteIntentAuthorizationId(phase, intent)) return false;
+    return recovery === undefined || hasValidRemoteHandoffRecovery(handoff);
   } catch {
     return false;
   }

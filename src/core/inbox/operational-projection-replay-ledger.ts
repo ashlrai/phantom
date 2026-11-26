@@ -1,18 +1,28 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { lstatSync, mkdirSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
-import { loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
-import type {
-  OperationalProjectionTransactionPhase,
-  OperationalProjectionTransactionV1,
+import {
+  SHA256_RE as DIGEST_RE,
+  canonicalTimestamp,
+  equalDigest,
+  hmacDomainPayload as hmac,
+  loadDerivedDomainKey,
+  safePrivateDirectory as safeDirectory,
+} from './operational-projection-helpers.js';
+import {
+  OPERATIONAL_PROJECTION_PHASE_ORDER as PHASE_ORDER,
+  readOperationalProjectionTransaction,
+  validDigestPair,
+  validPhase,
+  type OperationalProjectionTransactionPhase,
+  type OperationalProjectionTransactionV1,
 } from './operational-projection-transaction.js';
-import { readOperationalProjectionTransaction } from './operational-projection-transaction.js';
 import {
   ownsProposalStoreMutationLock,
   type ProposalStoreMutationLock,
@@ -21,19 +31,11 @@ import {
 const MAX_ROWS = 4_096;
 const MAX_STATE_BYTES = 4 * 1024 * 1024;
 const MAX_ROW_BYTES = 4 * 1024;
-const DIGEST_RE = /^[a-f0-9]{64}$/;
 const KEY_DOMAIN = 'ashlr.operational-projection-replay-ledger.key.v1';
 const KEY_ID_DOMAIN = 'ashlr.operational-projection-replay-ledger.key-id.v1';
 const ROW_DOMAIN = 'ashlr.operational-projection-replay-ledger.row.v1';
 const ROW_ATTESTATION_DOMAIN = 'ashlr.operational-projection-replay-ledger.row-attestation.v1';
 const ROOT_ATTESTATION_DOMAIN = 'ashlr.operational-projection-replay-ledger.root-attestation.v1';
-
-const PHASE_ORDER: Record<OperationalProjectionTransactionPhase, number> = {
-  prepared: 0,
-  'proposal-installed': 1,
-  'projection-installed': 2,
-  committed: 3,
-};
 
 export interface OperationalProjectionReplayRowV1 {
   schemaVersion: 1;
@@ -91,39 +93,8 @@ export interface OperationalProjectionReplayVerification {
   historicalAuthority: false;
 }
 
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
-function validPhase(value: unknown): value is OperationalProjectionTransactionPhase {
-  return typeof value === 'string' && Object.hasOwn(PHASE_ORDER, value);
-}
-
-function equalDigest(left: string, right: string): boolean {
-  return DIGEST_RE.test(left) && DIGEST_RE.test(right) &&
-    timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
-}
-
 function deriveKey(): { key: Buffer; id: string } | null {
-  try {
-    const provenance = loadExistingProvenanceKeyReadOnly();
-    if (!provenance || provenance.length !== 32) return null;
-    const key = createHmac('sha256', provenance).update(`${KEY_DOMAIN}\n`, 'utf8').digest();
-    const id = createHmac('sha256', key).update(`${KEY_ID_DOMAIN}\n`, 'utf8').digest('hex');
-    return { key, id };
-  } catch {
-    return null;
-  }
-}
-
-function hmac(key: Buffer, domain: string, canonical: string): string {
-  return createHmac('sha256', key)
-    .update(domain, 'utf8')
-    .update('\n', 'utf8')
-    .update(canonical, 'utf8')
-    .digest('hex');
+  return loadDerivedDomainKey(KEY_DOMAIN, KEY_ID_DOMAIN);
 }
 
 function rowPayload(row: Omit<OperationalProjectionReplayRowV1, 'entryDigest' | 'attestation'>): string {
@@ -176,18 +147,6 @@ export function operationalProjectionReplayLedgerDir(): string {
 
 export function operationalProjectionReplayLedgerPath(): string {
   return join(operationalProjectionReplayLedgerDir(), 'state.json');
-}
-
-function safeDirectory(path: string): boolean {
-  try {
-    const stat = lstatSync(path, { bigint: true });
-    return !stat.isSymbolicLink() && stat.isDirectory() &&
-      (typeof process.getuid !== 'function' || stat.uid === BigInt(process.getuid())) &&
-      (process.platform === 'win32' || Number(stat.mode & 0o777n) === 0o700) &&
-      assurePrivateStoragePath(path, 'directory', 'inspect-existing', { anchorPath: homedir() }).ok;
-  } catch {
-    return false;
-  }
 }
 
 function secureCreatedOrRecoverEmptyWindowsDirectory(path: string, created: boolean): boolean {
@@ -363,18 +322,11 @@ function matchesActiveTransaction(
 function validTransactionShape(value: unknown): value is OperationalProjectionTransactionV1 {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const transaction = value as Record<string, unknown>;
-  const digestPair = (candidate: unknown): boolean => {
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
-    const pair = candidate as Record<string, unknown>;
-    return Object.keys(pair).sort().join(',') === 'projection,proposal' &&
-      [pair['proposal'], pair['projection']].every((digest) =>
-        digest === null || (typeof digest === 'string' && DIGEST_RE.test(digest)));
-  };
   return transaction['schemaVersion'] === 1 &&
     typeof transaction['transactionId'] === 'string' && DIGEST_RE.test(transaction['transactionId']) &&
     typeof transaction['signingKeyId'] === 'string' && DIGEST_RE.test(transaction['signingKeyId']) &&
     typeof transaction['proposalId'] === 'string' && validPhase(transaction['phase']) &&
-    digestPair(transaction['before']) && digestPair(transaction['after']) &&
+    validDigestPair(transaction['before']) && validDigestPair(transaction['after']) &&
     canonicalTimestamp(transaction['createdAt']) && canonicalTimestamp(transaction['updatedAt']) &&
     typeof transaction['attestation'] === 'string' && DIGEST_RE.test(transaction['attestation']);
 }
