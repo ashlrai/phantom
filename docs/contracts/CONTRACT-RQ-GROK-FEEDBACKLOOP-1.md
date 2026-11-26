@@ -35,12 +35,27 @@ withholds injection. Apply alone creates state: a shared lock, one-minute cycle
 reservation (including crashed cycles), at most five staged jobs, and existing queue
 backpressure. Regressions take priority; questions and excess jobs are deferred.
 The existing atomic no-clobber drop writer feeds the normal READY sweep; staging
-is not proof of launch. Invoke scan from an existing overnight routine for automation.
+is not proof of launch. Each successful apply also appends one
+`{at,job,source,ref,kind}` row to `feedback/feedback-queued.jsonl` under the runs
+root — the scan's own record of which submission became which `RQ-PHX-FB` job,
+so a reporter can trace request → job → PR without asking where it went. The
+row carries provenance only; submission text stays inside the untrusted job
+prompt. A failed journal append reports `queue-record-failed` and never unqueues
+the job. Invoke scan from an existing overnight routine for automation.
 
 `digest` covers twelve hours. `shipped` means merged PRs, not deployments; latest
 job events distinguish review, failures and last recorded launches (not live probes).
-Missing sources are explicit; unavailable history yields null lists, malformed rows
-are counted, and truncated sources remain partial. The runs root is `--runs-dir`,
-`ASHLR_RUNS_DIR`, or `~/.ashlr-runs`; local reads cap at 4 MiB. Errors never echo raw
-input. Both commands emit `fleet.feedback.v1` JSON (pretty without `--json`): exit 0
-complete, 1 degraded/failure, 2 invalid arguments. Dry-run and digest never write.
+`submissions` folds every journaled `RQ-PHX-FB` job (plus ledger-only FB rows whose
+journal predates this record) into one state: `queued` admitted with no verdict,
+`under-review` a PR is recorded or open, `action-required` a declined, failed,
+give-up or finished-without-PR run, `merged` a ledger MERGED claim, `shipped` a
+MERGED claim whose PR ref is inside the ingest's gh-verified merged set. A missing
+or unreadable queue journal degrades provenance to null; only an unreadable one
+reports `sources["feedback-queued"]` unavailable. An unreadable jobs ledger nulls
+`submissions` with the other lists. Missing sources are explicit; unavailable
+history yields null lists, malformed rows are counted, and truncated sources
+remain partial. The runs root is `--runs-dir`, `ASHLR_RUNS_DIR`, or
+`~/.ashlr-runs`; local reads cap at 4 MiB (the queue journal at 1 MiB). Errors
+never echo raw input. Both commands emit `fleet.feedback.v1` JSON (pretty
+without `--json`): exit 0 complete, 1 degraded/failure, 2 invalid arguments.
+Dry-run and digest never write.
