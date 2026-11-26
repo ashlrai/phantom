@@ -629,10 +629,10 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   strict majority not held and evidence spanning distinct UTC days
   inside the 7-day window — with rows whose pool field went unrecorded
   grouping as the calibration arm's own 'unknown' cell, in-flight jobs
-  absent by design and never counted; a missing or unreadable ledger
-  emits nothing, rows failing the writer's closed contract drop like
-  the substrate readers' own parse, truncated tails are stated as lower
-  bounds, and another repository emits nothing since the ledger is
+  absent by design and never counted. A missing, unreadable or truncated
+  ledger emits nothing. A clipped prefix can change the majority and
+  first-row attribution. Rows failing the writer's closed contract are
+  skipped, and another repository emits nothing since the ledger is
   this install's dispatch record —
   and the job-control steering ledger's recurring unacknowledged
   requests, the fleet.job.control.v1 rows `phm job <action>`, POST
