@@ -19,6 +19,11 @@ Creation requires `--dry-run` and never calls the writer.
 with a timezone. The lane snapshot uses it for the merge window and falls
 back to `at` when absent. `at` continues to carry the event timestamp.
 
+`parseReadyTsv` returns `unhintedRows` entries with `id`, `repo` and `tier`
+for validated lane-open dispatcher jobs. `readyRowsForDepth`
+(`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
+`tier` for the tier tally, including lane-open jobs as `READY`.
+
 ## Wiki context and ecosystem
 
 `cloudBrainContext(githubRepo, checkout, taskText)` and
@@ -277,6 +282,10 @@ install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
 The native `DesktopUpdateDependencies` port includes lowering-only
 `residentStop`; native installation requires Stop and known idle work, not a
 standing authority grant.
+`phm desktop-update prepare --stage <id> --json` verifies the private staged
+app and the original CLI archive before Stop, including the app inventory and
+the candidate authority surface. It caches only the verified original package
+in the stage and does not change installed files, fleet state, or authority.
 The install module also exports `ConsumerInstallHeld` for shared error
 classification and the `directory`, `parents`, `owned`, `regular`, `write`,
 `sha`, `ioRead` and `packageReady` guards.
@@ -394,6 +403,9 @@ records gain `recurringFlakes`, `flakeFixesQueued`, `verdictsPending` and
 `verdictsResolved` counts.
 Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
 Resident off-tick ticks launch it only with repositories and an elapsed interval.
+Attempt entries use `test` for a singleton or `tests` for multiple eligible
+test IDs in the same workflow run. Each ID contributes to recurrence.
+A multi-test rerun verdict contributes only to the workflow totals.
 The CLI `ci reruns [--json]` reads recent journal entries, counts,
 recurringFlakes and verdicts without mutation.
 
@@ -4111,8 +4123,9 @@ carries the needle as a case-insensitive whitespace-collapsed substring;
 `UnifiedInboxFilter.kind` (`comms inbox --kind`, validated by
 `isUnifiedInboxKind` over `UNIFIED_INBOX_KINDS`) keeps only items of that
 stored kind — the item's own classification, finer than `source` where one
-source emits several kinds (the `bus` source's `bus-work`/`bus-handoff`
-split, the `board` source's `board-delivery`/`board-task` split) — and
+source emits several kinds (the `bus` source's
+`bus-work`/`bus-handoff`/`bus-dead-letter` split, the `board` source's
+`board-delivery`/`board-task` split) — and
 ANDs with every other view dimension while the per-source `pending`
 reports stay the unfiltered store truth;
 and

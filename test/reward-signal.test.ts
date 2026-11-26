@@ -188,6 +188,26 @@ describe('router consumption', () => {
     expect(report.arms[0]!.brier).toBeCloseTo(0.36, 5);
   });
 
+  it.each([null, 600_000])('leaves execution wall time unknown with reward CI time %s', (ciWallMs) => {
+    const input = fixture({ ciWallMs });
+    run(input);
+    const posthog = JSON.stringify([{ jobId: input.jobId, predicted_wall_time_ms: 30_000 }]);
+    const report = calibrateRouting(readFileSync(path, 'utf8'), posthog);
+    expect(report.arms[0]!.wallTimeMs).toEqual({ predicted: null, actual: null, paired: 0 });
+  });
+
+  it('uses execution boundaries when reward and execution timestamps differ', () => {
+    const input = fixture({ ciWallMs: 600_000 });
+    run(input);
+    const started = Date.parse(DISPATCHED) + 1_000;
+    const launch = JSON.stringify({ event: 'launch', id: input.jobId, arm: input.pool,
+      timestamp: new Date(started).toISOString(), predicted_wall_time_ms: 30_000 });
+    const finish = JSON.stringify({ event: 'finish', id: input.jobId,
+      timestamp: new Date(started + 25_000).toISOString() });
+    const report = calibrateRouting([launch, finish, readFileSync(path, 'utf8')].join('\n'));
+    expect(report.arms[0]!.wallTimeMs).toEqual({ predicted: 30_000, actual: 25_000, paired: 1 });
+  });
+
   it('joins a launch event that lands after the reward row in the file', () => {
     run(fixture());
     const launch = JSON.stringify({ event: 'launch', job_id: 'RQ-SELFOPT-REWARD-SIGNALS', arm: 'devin',

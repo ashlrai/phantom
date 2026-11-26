@@ -428,6 +428,11 @@ the same `readUnfedReport` read this command and the tool share — with
 
 ## Dispatch-neutral queue snapshot
 
+The Leader board's `queueDepthByTier` counts READY work across the fleet,
+including rows with an empty lane column or an explicit
+`"preferred_lane": null` in the requirements. These open jobs have no
+per-lane attribution.
+
 `phm queue` owns the separate `queue.v1` coordination snapshot at
 `~/.ashlr-runs/queue/queue.v1.json`. `--dir <directory>` selects an isolated store.
 The CLI accepts and round-trips the same requirements. Adding to this snapshot
@@ -1244,7 +1249,7 @@ Three actions change one queued job. Each takes `--dry-run`, which prints the
 change and writes nothing, and `--json` (schema `queue.action.v1`):
 
 - `phm queue top <id>` moves the job to the front.
-- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused.
+- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused. The row's lane column and its requirements cell's `preferred_lane` move together — the market prefers the spec hint, so a column-only rewrite would leave the job on its old lane.
 - `phm queue drop <id>` takes it out. The row is copied to `queue/dropped.tsv` and its router line is marked `DROPPED`.
 
 Every write holds `queue/ready.lock`, edits a fresh read of `queue/ready.tsv` and

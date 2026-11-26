@@ -6,4 +6,11 @@ Use numeric `predicted_merge_rate` (probability from 0 to 1), `predicted_tokens`
 
 The optional PostHog export is a JSON array or an object with a `results` array; each row is a run or has a `properties` object. Join by `job_id` or `jobId`, using the same numeric fields. Unmatched rows are counted. Conflicting values and duplicate launches are rejected rather than silently double-counted. PostHog export input must represent one run per job or contain consistent duplicate observations.
 
+The jobs input also accepts reward-signal rows. Each supplies the resolved
+merge outcome and any recorded pool and joins launch or PostHog evidence by
+job ID. Execution wall time uses explicit measurements or the launch and
+finish timestamps. Reward timestamps describe dispatch and PR resolution,
+and `ciWallMs` measures CI, so a reward row alone leaves execution wall time
+unknown.
+
 Each predicted / actual average uses only jobs with both values, with the paired count shown alongside it. Brier is the mean squared difference between each recorded merge probability and its binary resolved outcome for that same population. `resolved` counts all known outcomes, including jobs without predictions. Missing pairs produce null in JSON and `n/a` in Markdown. These are descriptive statistics of recorded evidence, not proof that the sample is representative. The files supplied by the operator determine schema compatibility and coverage.

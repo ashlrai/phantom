@@ -78,6 +78,20 @@ it('keeps a bounded conflict trend, then reports unknown when ready.tsv disappea
   expect(read.board?.conflictingPrs.count).toBeNull();
 });
 
+it('counts lane-open work by tier without attributing it to a lane', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    'RQ-OPEN\tphantom\t\tfrontier\tprompts/open.md',
+    'RQ-RESET-HINT\tphantom\tcodex\twork\tprompts/reset.md\t{"preferred_lane":null}',
+    'RQ-HINTED\tphantom\tcodex\twork\tprompts/hinted.md',
+    'RQ-PARKED\tphantom\tPARKED-DEP.codex\tfast\tprompts/parked.md',
+    'RQ-INVALID\tphantom\t\tmid\tprompts/invalid.md\t{"preferred_lane":false}',
+  ].join('\n'));
+  expect((await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS })).wrote).toBe(true);
+  const { board } = await readFleetBoard({ runsDir: root });
+  expect(board?.queueDepthByTier).toEqual({ frontier: 1, work: 2 });
+  expect(board?.lanes.find((lane) => lane.lane === 'codex')?.ready).toBe(1);
+});
+
 it('reports honest failures for hostile paths and the reader stays truthful', async () => {
   expect(await recordLeaderBoard({ runsDir: 'relative/path', nowMs: NOW_MS })).toMatchObject({ wrote: false });
   expect(await recordLeaderBoard({ runsDir: '/dev/null/impossible', nowMs: NOW_MS })).toMatchObject({ wrote: false });

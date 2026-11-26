@@ -83,7 +83,7 @@ Every command, grouped by topic.
     apps list|open|quit|restart|focus|status [<app>] [--json] [--dry-run] | apps request open|quit|focus <app> [--json]  Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Per-app action policy; logged to the feed. Requests and unsafe quits go to needs-you.
     browser [tabs|doctor|open <url>|shot [<path.png>]|close] [--json]                                                    Drive Safari, Phantom's own agent browser: list agent tabs, open a web address, save a screenshot, close its windows. doctor says whether remote automation is on and the one step to enable it. Chrome is always refused.
     desktopctl capabilities|status|run <resource> [--json]                                                               Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.
-    desktop-update inspect|apply --stage <32hex> --json                                                                  Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.
+    desktop-update inspect|prepare|apply --stage <32hex> --json                                                          Inspect a signed pair, verify both downloads before Stop, or apply after native exit and Stop/drain. Never resumes the resident.
     app update status [--json]                                                                                           Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage.
     update [--check] [--json]                                                                                            Self-update; mutation requires service registration proven absent and not running. --check remains read-only.
     self-update --check [--json] | --plan                                                                                Is the phm running on this host current? The running commit and build time, how many commits it is behind origin/master (local ref, no network), the last rebuild result, then a verdict: current, behind N commits, or last build failed. --plan prints the blue/green steps and runs nothing. Read-only.
@@ -152,15 +152,16 @@ Every command, grouped by topic.
     memory add|list|search|forget [--json]  Durable markdown memory under ~/.phantom/memory; secret-shaped text refused.
 
   Knowledge - portfolio RAG + graph
-    graph nodes|edges|status [--json]  Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.
-    radar <list|run|diff>              Observe public documentation and compare bounded local snapshots.
-    knowledge build                    Index enrolled repos locally (read-only, secret-scrubbed) for portfolio RAG.
-    ask "<question>"                   Local RAG across the indexed portfolio; cites repo/file:line. --allow-cloud opt-in. `ask status` prints the ask.status.v1 stream from the metrics jobs ledger.
-    knowledge impact <target>          Show references + dependents of a file/symbol within and across enrolled repos.
-    knowledge graph                    Print the portfolio knowledge graph (repos/modules/deps + cross-repo findings).
-    wiki build [repo] [--all]          Private architecture wiki per repo (local models; cited, verified file:line). Only stale pages rebuild.
-    wiki ask "<question>"              Answer from the wiki + index + genome with verified file:line citations, or say "not found".
-    wiki status [repo]                 Wiki freshness: generated at <commit>, N pages stale.
+    graph nodes|edges|status [--json]                  Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.
+    radar <list|run|diff>                              Observe public documentation and compare bounded local snapshots.
+    knowledge build                                    Index enrolled repos locally (read-only, secret-scrubbed) for portfolio RAG.
+    ask "<question>"                                   Local RAG across the indexed portfolio; cites repo/file:line. --allow-cloud opt-in. `ask status` prints the ask.status.v1 stream from the metrics jobs ledger.
+    knowledge impact <target>                          Show references + dependents of a file/symbol within and across enrolled repos.
+    knowledge graph                                    Print the portfolio knowledge graph (repos/modules/deps + cross-repo findings).
+    wiki build [repo] [--all]                          Private architecture wiki per repo (local models; cited, verified file:line). Only stale pages rebuild.
+    wiki ask "<question>"                              Answer from the wiki + index + genome with verified file:line citations, or say "not found".
+    wiki status [repo]                                 Wiki freshness: generated at <commit>, N pages stale.
+    wiki map [repo] [--focus <node-or-file>] [--json]  Commit-pinned modules, declarations and source relationships for an enrolled repo.
 
   Autonomy - enrollment, backlog, daemon, inbox, goals
     bots list|show|create --dry-run|explain|seats|handoffs|handoff --seat <id> [--apply] [--json]                                                                                                                                                                                                                                                                                                                             Provider-neutral bot metadata, seat quota and draining handoffs. handoffs plans every seat; handoff --seat is dry-run unless --apply.

@@ -36,6 +36,7 @@ export const KNOWN_FAST_SPAWN_FILES = [
   'test/m422.policy-transaction-recovery.test.ts', // 1.6s
   'test/m331.verify-to-green.test.ts', // 1.5s
   'test/m389.persistence-generation-cas.test.ts', // 1.4s
+  'test/queue-order.test.ts', // 1.3s file total 2026-11-25; one bounded python3 flock holder (~0.6s), the rest in-process fakes
   'test/m89.pulse-export.test.ts', // 1.1s
   'test/tidy.test.ts', // 1.0s
   'test/m17.rollback.test.ts', // 0.8s
