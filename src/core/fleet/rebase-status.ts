@@ -1,11 +1,12 @@
 /** Read-only snapshot of conflicting bridge PRs and queuegen rebase coverage. */
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { defaultGitRunner } from '../verse/git-ops.js';
+import { defaultGitRunner, type GitRunner } from '../verse/git-ops.js';
 import { parseReadyTsv } from './lane-console.js';
 import { readSource } from './runs-parked-queue.js';
 
 const LIMIT = 1000;
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 type Pr = { number: number; title: string; mergeable: string; mergeStateStatus: string; createdAt: string; headRefOid: string };
 type QueueRow = { id: string | null; status: string };
 
@@ -28,20 +29,24 @@ export function summarizeRebases(repo: string, prs: Pr[], jobs: QueueRow[], now:
   return { conflicting: conflicts.length, ageSeconds: { oldest: ages.at(-1) ?? null, median: ages.length ? ages[Math.floor((ages.length - 1) / 2)] : null, unknown: unknownAge }, coverage: { currentHead: covered, staleHeadOnly: stale, unknownHead, uncovered: conflicts.length - covered - stale - unknownHead } };
 }
 
-export async function readRebaseStatus(repos: string[], runsDir: string, now = new Date()) {
-  const queue = await readSource(join(runsDir, 'queue/ready.tsv'), 2 * 1024 * 1024, false);
-  const parsed = parseReadyTsv(queue.text);
+export async function readRebaseStatus(repos: string[], runsDir: string, now = new Date(), run: GitRunner = defaultGitRunner) {
+  const [queue, router] = await Promise.all([
+    readSource(join(runsDir, 'queue/ready.tsv'), 2 * 1024 * 1024, false),
+    readSource(join(runsDir, 'queue/router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
+  ]);
+  const parsed = parseReadyTsv(queue.text, router.state === 'healthy' ? router.text : null);
   const queueSource = queue.state === 'healthy' && (parsed.dropped || parsed.rows.length >= 50_000) ? 'degraded' : queue.state;
+  const jobs: QueueRow[] = [...parsed.rows, ...parsed.unhintedRows.map(({ id }) => ({ id, status: 'READY' }))];
   const results = [];
   for (const repo of repos) {
-    const result = await defaultGitRunner('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', String(LIMIT), '--json', 'number,title,mergeable,mergeStateStatus,createdAt,headRefOid'], { cwd: tmpdir(), timeoutMs: 20000, maxStdoutBytes: 2 * 1024 * 1024 });
+    const result = await run('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', String(LIMIT), '--json', 'number,title,mergeable,mergeStateStatus,createdAt,headRefOid'], { cwd: tmpdir(), timeoutMs: 20000, maxStdoutBytes: 2 * 1024 * 1024 });
     let rows: unknown;
     try { rows = JSON.parse(result.stdout); } catch { rows = null; }
     if (result.code !== 0 || result.timedOut || result.truncated || !Array.isArray(rows) || rows.some(p => !p || !Number.isSafeInteger(p.number) || p.number < 1 || typeof p.title !== 'string' || typeof p.mergeable !== 'string' || typeof p.mergeStateStatus !== 'string' || typeof p.createdAt !== 'string' || typeof p.headRefOid !== 'string')) {
       results.push({ repo, source: 'unavailable', summary: null });
       continue;
     }
-    const summary = summarizeRebases(repo, rows as Pr[], parsed.rows, now.getTime());
+    const summary = summarizeRebases(repo, rows as Pr[], jobs, now.getTime());
     results.push({ repo, source: rows.length >= LIMIT ? 'truncated' : 'ok', summary: { ...summary, coverage: queueSource === 'healthy' ? summary.coverage : null } });
   }
   return { v: 1, generatedAt: now.toISOString(), queueSource, repos: results };

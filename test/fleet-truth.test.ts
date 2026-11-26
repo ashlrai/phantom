@@ -188,6 +188,19 @@ describe('getFleetTruth', () => {
     expect(truth.queued).toBe(2);
   });
 
+  it('counts lane-open and envelope-resolved dispatcher rows in queued', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'),
+      'JOB-OPEN\tphantom\t\twork\tprompts/JOB-OPEN.md\n' +
+      'JOB-HINT\tphantom\tclaude\twork\tprompts/JOB-HINT.md\n' +
+      'JOB-ENV\tphantom\tNOT-A-LANE\twork\tprompts/JOB-ENV.md\n');
+    writeFileSync(join(root, 'queue', 'router-queue.md'),
+      '- READY JOB-ENV (preferred_lane=devin): envelope-resolved\n');
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root, liveWorkers: async () => 0 });
+    expect(truth.queued).toBe(3);
+  });
+
   it('falls back to live job pids when admission.json is stale', async () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
     mkdirSync(join(root, 'queue'));

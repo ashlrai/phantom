@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { summarizeRebases, readRebaseStatus } from '../src/core/fleet/rebase-status.js';
+import type { GitRunner } from '../src/core/verse/git-ops.js';
 import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,6 +35,23 @@ describe('rebase status', () => {
       expect((await readRebaseStatus([], root, new Date(now))).queueSource).toBe('healthy');
       await rm(join(root, 'queue', 'ready.tsv'));
       expect((await readRebaseStatus([], root, new Date(now))).queueSource).toBe('missing');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it('counts lane-open and envelope-resolved rebase rows as coverage', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rebase-status-'));
+    try {
+      await mkdir(join(root, 'queue'));
+      await writeFile(join(root, 'queue', 'ready.tsv'),
+        'RQ-REBASE-PHANTOM-777-abcdef0\tphantom\t\tfrontier\tprompts/r1.md\n' +
+        'RQ-REBASE-PHANTOM-888-1234567\tphantom\tNOT-A-LANE\tfrontier\tprompts/r2.md\n');
+      await writeFile(join(root, 'queue', 'router-queue.md'),
+        '- READY RQ-REBASE-PHANTOM-888-1234567 (preferred_lane=devin): rebase phantom#888\n');
+      const run: GitRunner = async () => ({ code: 0, stdout: JSON.stringify([
+        pr(777), pr(888, { headRefOid: '1234567890abcdef' }),
+      ]), stderr: '', timedOut: false, truncated: false, missing: false });
+      const report = await readRebaseStatus(['ashlrai/phantom'], root, new Date(now), run);
+      expect(report.queueSource).toBe('healthy');
+      expect(report.repos[0]!.summary!.coverage).toEqual({ currentHead: 2, staleHeadOnly: 0, unknownHead: 0, uncovered: 0 });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
