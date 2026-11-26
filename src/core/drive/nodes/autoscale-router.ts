@@ -114,14 +114,20 @@ export function mergeRate(o: LaneOutcomes | undefined): number {
   return (merged + 1) / (attempts + 2);
 }
 
-/** Largest measured session footprint of each harness on any node: the stand-in for a node that has not run it yet. */
-export function fleetFootprints(docs: NodeCapacityDoc[]): Record<string, HarnessFootprint> {
-  const out: Record<string, HarnessFootprint> = {};
-  for (const doc of [...docs].sort((a, b) => a.node.localeCompare(b.node))) {
+type FootprintCost = Pick<HarnessFootprint, 'mem_bytes_max' | 'cpu_cores_per_session'>;
+
+/** Per-resource maxima for each harness, used on nodes that have not run it yet. */
+export function fleetFootprints(docs: NodeCapacityDoc[]): Record<string, FootprintCost> {
+  const out: Record<string, FootprintCost> = {};
+  for (const doc of docs) {
     for (const [id, fp] of Object.entries(doc.per_harness_footprint)) {
       const cur = out[id];
-      if (!cur || fp.mem_bytes_max > cur.mem_bytes_max ||
-          (fp.mem_bytes_max === cur.mem_bytes_max && (fp.cpu_cores_per_session ?? 0) > (cur.cpu_cores_per_session ?? 0))) out[id] = fp;
+      const previousCpu = cur?.cpu_cores_per_session ?? null;
+      const cpu = fp.cpu_cores_per_session;
+      out[id] = {
+        mem_bytes_max: Math.max(cur?.mem_bytes_max ?? fp.mem_bytes_max, fp.mem_bytes_max),
+        cpu_cores_per_session: previousCpu === null ? cpu : cpu === null ? previousCpu : Math.max(previousCpu, cpu),
+      };
     }
   }
   return out;
@@ -166,7 +172,7 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
   for (const job of input.jobs) {
     const rejected: Record<string, number> = {};
     const reject = (why: string) => { rejected[why] = (rejected[why] ?? 0) + 1; };
-    type Cand = { state: NodeState; cost: HarnessModelCost; fp: HarnessFootprint; fpSource: 'node' | 'fleet'; load: number; p: number; perMTok: number; perHour: number };
+    type Cand = { state: NodeState; cost: HarnessModelCost; fp: FootprintCost; fpSource: 'node' | 'fleet'; load: number; p: number; perMTok: number; perHour: number };
     const cands: Cand[] = [];
     for (const cost of costs) {
       if (job.providers && !job.providers.includes(cost.provider)) { reject('provider-not-in-job'); continue; }

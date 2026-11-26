@@ -2347,6 +2347,15 @@ optional `providerBinaries`; `NodeRunnerDeps` gains `resolveBinary`.
 and `runCodexFilePack`, which writes a mode-0600 `node-results/<jobId>.json` artifact on success only.
 See [node runner](docs/NODES.md#reference-runner-security-review-before-installation).
 
+## Node route fleet footprint costs
+
+`src/core/drive/nodes/autoscale-router.ts` exports `fleetFootprints(docs)`.
+For each harness it returns the maximum `mem_bytes_max` and maximum measured
+`cpu_cores_per_session` across the supplied documents. The maxima can come
+from different nodes. CPU stays `null` when all supplied costs are unknown.
+`planAutoscaleRoutes` supplies only fresh, non-conflicting snapshots and uses
+the aggregate when the candidate node has no footprint for that harness.
+
 ## Node route lane outcomes (`phantom.node-route-outcomes.v1`)
 
 `src/core/drive/nodes/route-outcomes.ts` exports `ROUTE_OUTCOMES_SCHEMA`,

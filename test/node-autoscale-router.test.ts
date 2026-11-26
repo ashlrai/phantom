@@ -76,6 +76,28 @@ describe('autoscale router scoring', () => {
     expect(plan[2]).toMatchObject({ nodeId: null, rejected: { 'node-pressure': 1, memory: 1 } });
   });
 
+  it('charges the largest observed memory and CPU costs even when they come from different donors', () => {
+    const memoryDonor = node(mbp({
+      cpu: { cores: 18, load: null, busyPercent: null },
+      sessions: [{ harness: 'codex', rootPid: 1, processes: 1, memBytes: 700 * MIB, cpuPercent: null }],
+    }), { providers: [] });
+    const cpuDonor = node(mbp({
+      node: 'cpu-donor',
+      sessions: [{ harness: 'codex', rootPid: 1, processes: 1, memBytes: 300 * MIB, cpuPercent: 80 }],
+    }), { providers: [] });
+    const target = node(mbp8({ cpu: { cores: 8, load: null, busyPercent: 70 } }));
+    expect(fleetFootprints([memoryDonor.doc]).codex).toMatchObject({ cpu_cores_per_session: null });
+    for (const donors of [[memoryDonor, cpuDonor], [cpuDonor, memoryDonor]]) {
+      expect(fleetFootprints(donors.map(donor => donor.doc)).codex).toEqual({
+        mem_bytes_max: 700 * MIB, cpu_cores_per_session: 0.8,
+      });
+      const plan = planAutoscaleRoutes({ nodes: [...donors, target], costs: [COSTS[0]!], outcomes: {}, nowMs: T0,
+        jobs: [{ id: 'fits' }, { id: 'cpu-full' }] });
+      expect(plan[0]).toMatchObject({ nodeId: target.doc.node, footprint: 'fleet' });
+      expect(plan[1]).toMatchObject({ nodeId: null, rejected: { cpu: 1 } });
+    }
+  });
+
   it('never routes to a stale node, an exhausted provider, a provider not on the node, or an unserved local model', () => {
     const costs: HarnessModelCost[] = [...COSTS, { provider: 'local', model: 'qwen3-32b', harness: 'codex', tokensPerJob: 1, minutesPerJob: 60, local: true }];
     const stale = planAutoscaleRoutes({ nodes: [node(mbp())], costs, outcomes: {}, nowMs: T0 + 10 * 60_000, jobs: [{ id: 'j' }] });
