@@ -403,6 +403,11 @@ summaries use the lane holds from the same dispatcher tick.
 An embedded admission record with a `ts` must match the status `last_tick`
 to supply the fleet stop verdict. The status pause marker and published
 blocked reasons can still supply evidence when the timestamps differ.
+Live ready-file counts use the first valid row per job ID, including when
+estimating waiting work and blockers without a dispatcher summary. If
+admission stopped before the market ran, the fallback uses the first row per
+job with a valid ID and tier and takes its hint from the raw lane column.
+Published waiting and blocker counts come directly from the dispatcher tick.
 
 The separate `resourcePlan` comparison uses the same advisory lane targets as
 `phm resources plan` and shows how many additional slots lack waiting rows

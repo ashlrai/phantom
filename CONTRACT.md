@@ -1618,9 +1618,11 @@ Ready rows are validated exactly like `work_market.requirements` — a malformed
 job id, tier or requirements spec (including a spec-less row whose
 router-queue.md `(attrs)` envelope fails `from_envelope`) is rejected before
 the market sees it, so it is counted in the report's `invalidRows` and left
-out of `waiting`/unfed math like the dispatcher's `_waiting` set; on an
-admission-stopped tick the dispatcher counts every JID+tier-valid row by its
-raw lane column instead, and the derived report follows that relaxed set.
+out of the normal `waiting`/unfed calculation. Ready-file counts and derived
+blockers use the first valid row per job ID. For a derived admission-stopped
+tick, the first row per job with a valid ID and tier supplies the raw lane
+hint without validating requirements. Published tick counts retain the
+dispatcher's row accounting.
 Reports also carry `fleetStop` (`admission_stopped` | `global_admission` | null): the
 tick's fleet-wide stop in the dispatcher's own codes, read from status.json's
 `paused`/`admission` verdict for either source. Published `blocked` codes
