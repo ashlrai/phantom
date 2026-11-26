@@ -109,6 +109,22 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
 }
 
 describe('CI baseline evidence', () => {
+  it('uses master job verdicts to distinguish recovered output from a standing failure', async () => {
+    const endpoint = 'repos/owner/repo/actions/jobs/10/logs';
+    for (const conclusion of ['success', 'failure']) {
+      const { gh } = github({ count: 1, pass: true, masterJobConclusion: conclusion });
+      const report = await analyzeCiBaseline('owner/repo', async args => {
+        const result = await gh(args);
+        if (args[1] !== endpoint) return result;
+        return { ...result, stdout: `/usr/bin/git log -1 --format=%H\n${master}\n${fixture('shared')}\n${fixture('pass')}` };
+      });
+      expect(report.groups).toHaveLength(1);
+      expect(report.groups[0]).toMatchObject(conclusion === 'success'
+        ? { master: 'pass', classification: 'probable-flake', action: 'rerun-failed' }
+        : { master: 'fail', classification: 'unknown', action: 'unknown' });
+    }
+  });
+
   it('groups independent failures and keeps analysis read-only', async () => {
     const { gh, calls } = github();
     const report = await analyzeCiBaseline('owner/repo', gh);
