@@ -12,6 +12,8 @@ import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { configurePool } from '../src/core/drive/nodes/pool-host.js';
+import { PRIVATE_STORAGE_TEST_CONTROL, _setPrivateStorageTestControlForTest } from '../src/core/util/private-storage.js';
+import { createSemanticPrivateStorageHarness, trustedWindowsSystemRootForTest } from './helpers/semantic-private-storage.js';
 
 const state = vi.hoisted(() => ({
   roots: [] as unknown[],
@@ -194,6 +196,10 @@ describe('actions', () => {
   it('refuses standing grant writes from a worker before invoking custody', async () => {
     vi.stubEnv('ASHLR_HOME', join(process.env['HOME']!, '.ashlr'));
     try {
+      if (process.platform === 'win32') {
+        const { runner } = createSemanticPrivateStorageHarness({ systemRoot: trustedWindowsSystemRootForTest() });
+        _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, { runner });
+      }
       configurePool({ role: 'worker', node: 'mac-worker', owner: 'owner', primary: 'mac-primary', backup: 'mac-backup' });
       for (const action of ['grant', 're-approve', 'revoke']) {
         const result = await call('POST', '/api/verse/authority', { action });
@@ -209,6 +215,7 @@ describe('actions', () => {
       }
       expect(state.signCalls).toBe(0);
     } finally {
+      if (process.platform === 'win32') _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, undefined);
       vi.unstubAllEnvs();
     }
   });
