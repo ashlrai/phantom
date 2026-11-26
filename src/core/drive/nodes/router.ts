@@ -142,12 +142,19 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       continue;
     }
     const requires = job.requires ?? [];
+    // 'declined' and 'auth' are recorded only after a node passes the owner and
+    // caps fences (jobBlockers orders declined, then caps, then auth), so
+    // either reason proves a live in-scope node already advertises every
+    // required cap — the caps fix's "no node advertises" claim would be false
+    // in those mixes. Order the cascade so the nearer unblock is named.
     const fix = !nodes.some(n => n.owners?.includes(job.owner!))
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
       : reasons.has('capacity')
         ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
-      : reasons.has('declined') && !reasons.has('caps')
+      : reasons.has('declined')
         ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
+      : reasons.has('auth')
+        ? `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`
       : reasons.has('caps')
         ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
         : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;

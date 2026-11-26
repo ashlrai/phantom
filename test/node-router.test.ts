@@ -82,6 +82,36 @@ describe('node router', () => {
     expect(plan.find(r => r.jobId === 'j-plain')).toMatchObject({ nodeId: null,
       fix: "No live node belongs to owner 'o'. Run: phm node join --owner o" });
   });
+
+  it('names gh auth, not missing caps, when one node advertises them and another lacks them', () => {
+    const f = fixture();
+    // node-a advertises gh but its local gh login is missing; node-b lacks the
+    // cap entirely. "No node advertises gh" would be false — node-a does, and
+    // `gh auth login` plus --probe-auth is the nearer unblock.
+    const a = f.box.join('node-a', { owners: ['o'], caps: ['gh'] })!;
+    f.box.join('node-b', { owners: ['o'], caps: ['build'] });
+    f.box.heartbeat(a, { auth: 'missing' });
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    expect(f.box.plan()[0]).toMatchObject({ nodeId: null, fix: expect.stringContaining('gh auth login') });
+    expect(f.box.plan()[0]!.fix).not.toContain('No node owned by');
+  });
+
+  it('keeps the all-declined fix when a declined node still advertises the caps another node lacks', () => {
+    const f = fixture();
+    const a = f.box.join('node-a', { owners: ['o'], caps: ['gh'] })!;
+    f.box.join('node-b', { owners: ['o'], caps: ['build'] });
+    f.box.heartbeat(a, { auth: 'ok' });
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    const claim = f.box.pull(a)!;
+    f.box.release(claim.claim, true);
+    // node-a declined (it had every cap when it pulled); node-b lacks gh. The
+    // caps fix's "no node advertises" claim is false, so the declined fix —
+    // whose advice also unblocks node-b — is the honest one.
+    const plan = f.box.plan()[0]!;
+    expect(plan.nodeId).toBeNull();
+    expect(plan.fix).toContain('unrun');
+    expect(plan.fix).not.toContain('No node owned by');
+  });
 });
 
 describe('job leases: no job runs twice', () => {
