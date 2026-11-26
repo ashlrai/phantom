@@ -9,6 +9,10 @@ from datetime import datetime
 from typing import Literal
 
 CapabilityFailure = Literal["empty_capability_gh_unavailable"]
+EmptyRetryFailure = CapabilityFailure | Literal["provider_authentication", "provider_rate_limit",
+    "provider_usage_limit", "provider_credits_exhausted", "sandbox_denied", "tool_missing"]
+_EMPTY_RETRY_REASONS = {"provider_authentication", "provider_rate_limit", "provider_usage_limit",
+                        "provider_credits_exhausted", "sandbox_denied", "tool_missing"}
 
 
 def capability_failure(tail: str) -> CapabilityFailure | None:
@@ -31,21 +35,26 @@ def latest_attempts(rows):
     return latest
 
 
-def empty_retry_blocks(identity, rows, now) -> dict[str, CapabilityFailure]:
-    """One confirmed capability failure is enough; re-cuts do not reset the bound.
+def empty_retry_blocks(identity, rows, now) -> dict[str, EmptyRetryFailure]:
+    """One confirmed lane failure is enough; re-cuts do not reset the bound.
 
     Unknown failures stay unknown. Evidence expires after 24h, or a productive
     attempt supersedes it. Base movement alone does not repair a lane's tools.
     """
     blocked = {}
     for row in latest_attempts(rows).values():
+        reason = row.get('capability_failure') or row.get('failure_reason')
         if (not identity or row.get('repo') != identity.get('repo') or row.get('empty') is not True
-                or row.get('capability_failure') != 'empty_capability_gh_unavailable'): continue
+                or not isinstance(reason, str)
+                or reason not in _EMPTY_RETRY_REASONS | {'empty_capability_gh_unavailable'}): continue
         same = any(identity.get(k) and row.get(k) == identity[k] for k in ('task_hash', 'prompt_hash'))
-        try: age = now - datetime.fromisoformat(str(row['ts']).replace('Z', '+00:00')).timestamp()
+        try:
+            stamp = datetime.fromisoformat(str(row['ts']).replace('Z', '+00:00'))
+            if not stamp.tzinfo: continue
+            age = now - stamp.timestamp()
         except (KeyError, ValueError, TypeError): continue
         if same and 0 <= age < 86400 and isinstance(row.get('lane'), str):
-            blocked[row['lane']] = row['capability_failure']
+            blocked[row['lane']] = reason
     return blocked
 
 
@@ -632,7 +641,7 @@ def classify_launch_failure(out, exit_code=None):
     return ("launch_script_error", True)      # unknown: still bounded by LAUNCH_MAX_ATTEMPTS
 
 
-def classify_empty_failure(empty, exit_code, pool_error=None):
+def classify_empty_failure(empty, exit_code, pool_error=None, output=''):
     """Why a finished-empty job produced nothing: a fixed reason, or None when it is not a failure.
 
     A clean exit with no diff is a legitimate no-op (classify_empty -> no_diff), never a failure.
@@ -643,7 +652,22 @@ def classify_empty_failure(empty, exit_code, pool_error=None):
     if exit_code == 124:
         return "launch_timeout"
     if pool_error:
-        return "provider_" + re.sub(r"[^a-z0-9]+", "_", str(pool_error).lower()).strip("_")[:32]
+        # Never transform arbitrary provider text into persisted identifiers.
+        return {"rate-limit": "provider_rate_limit", "rate_limit": "provider_rate_limit",
+                "usage_limit": "provider_usage_limit", "credits_exhausted": "provider_credits_exhausted",
+                "model_capacity": "provider_model_capacity", "authentication": "provider_authentication"
+                }.get(pool_error, "provider_error") if isinstance(pool_error, str) else "provider_error"
+    # Only concrete error records count; task prose and examples never authorize a route.
+    errors = '\n'.join(line for line in output.splitlines()[-30:] if re.match(
+        r'^\s*(?:ERROR|Error|API Error|stream error|\[[0-9T:.\-]+Z?\]\s*ERROR)[: ]', line))
+    for reason, pattern in (
+        ('provider_authentication', r'\b(?:HTTP|status(?: code)?)\s*[=:]?\s*401\b|\bunauthorized\b|authentication (?:failed|required)|invalid_grant|refresh_token_reused|failed to refresh (?:access )?token'),
+        ('provider_rate_limit', r'\b(?:HTTP|status(?: code)?)\s*[=:]?\s*429\b|rate[ _-]?limit'),
+        ('provider_usage_limit', r'usage[ _-]?limit|quota exhausted|insufficient_quota'),
+        ('sandbox_denied', r'\b(?:EPERM|EACCES)\b|operation not permitted|permission denied'),
+        ('tool_missing', r'command not found|spawn \S+ ENOENT'),
+    ):
+        if re.search(pattern, errors, re.I): return reason
     return "agent_exit_nonzero" if kind == EMPTY_ERROR else "exit_status_missing"
 
 
