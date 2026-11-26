@@ -2340,8 +2340,10 @@ export function summarizeTrajectoryLearning(
   }>();
   const skillOutcomeSkillIds = new Set<string>();
   let skillOutcomeSelections = 0;
-  if (publishSkillMetrics) {
-    for (const record of productionRecords) {
+  const skillOutcomeRecords = productionRecords.filter((record) => skillSelectionOutcomesByRecord.has(record));
+  const publishSkillOutcomes = skillOutcomeRecords.length >= MIN_SKILL_OBSERVED_TRAJECTORIES;
+  if (publishSkillOutcomes) {
+    for (const record of skillOutcomeRecords) {
       for (const selection of skillSelectionOutcomesByRecord.get(record) ?? []) {
         const key = JSON.stringify([selection.skillId, selection.skillRevision]);
         let row = skillOutcomeRows.get(key);
@@ -2399,7 +2401,7 @@ export function summarizeTrajectoryLearning(
           sampleState,
         }
       : { eventState, sampleState },
-    ...(publishSkillMetrics ? {
+    ...(publishSkillOutcomes ? {
       skillOutcomes: {
         skills: skillOutcomeSkillIds.size,
         selections: skillOutcomeSelections,
