@@ -542,8 +542,9 @@ per-lane attribution.
 
 The Leader board estimates the number of conflicting PRs from rebase job IDs
 in `ready.tsv`. It includes parked rebase jobs, expands batches into their
-member PRs, and counts each PR once across job IDs. References in titles,
-prompts, and requirements do not contribute to the estimate.
+member PRs, and counts each PR once across job IDs. It excludes rows marked
+`DONE`, `FINISHED`, `LANDED`, `MERGED`, `FAILED`, `CANCELLED`, or `SPLIT-PARENT`.
+References in titles, prompts, and requirements do not contribute to the estimate.
 
 `phm queue` owns the separate `queue.v1` coordination snapshot at
 `~/.ashlr-runs/queue/queue.v1.json`. `--dir <directory>` selects an isolated store.
