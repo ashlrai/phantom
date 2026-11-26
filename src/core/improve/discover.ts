@@ -967,6 +967,26 @@
  *     so absence is proven rather than guessed; the jobs ledger is
  *     required evidence, not enrichment — withheld, every pick is
  *     'unknown' and nothing emits;
+ *   - the pick grader's recurring grade starvation: the funded picks
+ *     selector/picks.jsonl records, joined by the grader's own parser
+ *     (selectorPickRecords) to the (pick, window) grades
+ *     ~/.ashlr/picks/grades.jsonl holds and the jobs tail's coverage
+ *     horizon the sync's guard applies (pickGradeBacklogItems below).
+ *     selectorPicksBacklogItems folds what the picks' jobs did; nothing
+ *     folded whether the grading pass itself lands grades — and
+ *     CONTRACT-SELECTOR's promise that a 7d grade with realized >= 0.5
+ *     is the friction ledger's only automatic close dies silently when
+ *     grades stop landing. A 'stranded' cell emits when proven-ungraded
+ *     picks sit before the retained jobs tail's first dated row — the
+ *     coverage guard defers them forever — and a 'missing' cell when
+ *     proven-ungraded picks sit inside coverage yet no grade row exists
+ *     past window + a day of grace, meaning the hourly pass is not
+ *     reaching runPickGrader. Absence is proven through the grades
+ *     tail's own coverage bound, a cell emits only at three distinct
+ *     picks across two UTC days, both cells are present-tense so every
+ *     proven pick counts, truncation is stated as a lower bound, and
+ *     only the fleet's own repository inherits the items since the
+ *     journals are this install's selector machinery;
  *   - the efficiency baseline's recurring ranked bottleneck cells:
  *     the top-N `ranked` measured-cost items each hourly
  *     ashlr.efficiency-hourly/v1 row of
@@ -1360,6 +1380,7 @@ import { betAuditBacklogItems } from './bet-audit-backlog.js';
 import { betOutcomeBacklogItems } from './bet-outcome-backlog.js';
 import { slackBridgeBacklogItems } from './slack-bridge-backlog.js';
 import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
+import { pickGradeBacklogItems } from './pick-grade-backlog.js';
 import { efficiencyBacklogItems } from './efficiency-backlog.js';
 import { landingsBacklogItems } from './landings-backlog.js';
 import { gitContentionBacklogItems } from './git-contention-backlog.js';
@@ -2732,6 +2753,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // anything less folds to 'unknown'. The jobs ledger is required
   // evidence here, not enrichment: withheld, the source stays quiet.
   items.push(...await selectorPicksBacklogItems({ repo }));
+
+  // Pick-grader health: whether the grading pass itself lands grades.
+  // selectorPicksBacklogItems folds what funded picks' jobs did; this
+  // folds the grader's own journals — picks.jsonl through the sync's
+  // parser, grades.jsonl for (pick, window) rows on record, and the
+  // jobs tail's coverageStartMs the coverage guard applies. Until now
+  // ~/.ashlr/picks/grades.jsonl and weights.json had no reader outside
+  // the grader itself. Two starvations produced no work: coverage-
+  // stranded picks (funding time before the retained tail's first dated
+  // row — the guard defers them forever) and gradeable-but-ungraded
+  // picks (full coverage, window closed over a day ago, still no grade
+  // row — the hourly pass is not reaching runPickGrader). The friction
+  // ledger's only automatic close — the 7d grader-7d grade — dies
+  // silently either way. A cell emits only at three distinct
+  // proven-ungraded picks across two UTC days; absence is proven
+  // through the grades tail's own coverage bound, truncated tails fold
+  // as stated lower bounds, and only the fleet's own repository
+  // inherits the items since the journals are this install's machinery.
+  items.push(...await pickGradeBacklogItems({ repo }));
 
   // Efficiency baseline ranked bottleneck cells: the top-N `ranked`
   // measured-cost items each hourly ashlr.efficiency-hourly/v1 row of
