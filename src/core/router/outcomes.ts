@@ -2766,7 +2766,7 @@ const CI_COVERAGE_EVENTS = new Set([
   'check_observed', 'checks_passed', 'retry_requested', 'retry_failed', 'recut_requested',
 ]);
 
-function parseMergeEvents(text: string): { evidence: Map<string, MergeQueueEvidence>; coverage: MergeEventCoverage } {
+function parseMergeEvents(text: string, throughMs = Infinity): { evidence: Map<string, MergeQueueEvidence>; coverage: MergeEventCoverage } {
   interface Acc {
     events: number;
     blocked: string[];
@@ -2799,6 +2799,9 @@ function parseMergeEvents(text: string): { evidence: Map<string, MergeQueueEvide
       continue;
     }
     const row = value as Row;
+    const at = row['at'];
+    const atMs = typeof at === 'string' ? Date.parse(at) : NaN;
+    if (atMs > throughMs) continue;
     const repo = row['repo'];
     const pr = row['pr'];
     const type = row['type'];
@@ -2829,8 +2832,7 @@ function parseMergeEvents(text: string): { evidence: Map<string, MergeQueueEvide
       conclusion = c;
       required = req === true;
     }
-    const at = row['at'];
-    const atOk = typeof at === 'string' && Number.isFinite(Date.parse(at));
+    const atOk = Number.isFinite(atMs);
     if (!atOk && !MERGE_UNTIMED_TYPES.has(type)) {
       if (affectsCiCoverage) coverage.incompletePrs.add(key);
       continue;
@@ -3461,6 +3463,7 @@ export async function readRouterOutcomes(opts: {
   const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   if (!isAbsolute(runsDir)) throw new RangeError('runsDir must be an absolute path');
   if (opts.ashlarDir !== undefined && !isAbsolute(opts.ashlarDir)) throw new RangeError('ashlarDir must be an absolute path');
+  const reportTimeMs = Date.now();
   const laneScores = readLaneScores({ rootDir: opts.ashlarDir });
   const path = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
   const read = await readLedgerTail(path);
@@ -3512,7 +3515,7 @@ export async function readRouterOutcomes(opts: {
     ? await liveAuthorityEvidence()
     : opts.authorityEvidence;
   const ambiguousCiJobs = new Set<string>();
-  const mergeEvents = mergeEventsRead.state === 'read' ? parseMergeEvents(mergeEventsRead.text) : undefined;
+  const mergeEvents = mergeEventsRead.state === 'read' ? parseMergeEvents(mergeEventsRead.text, reportTimeMs) : undefined;
   const rewards = rewardRead.state === 'read' ? foldRewardSignals(rewardRead.text) : undefined;
   const folded = foldRouterOutcomesWithCiCoverage(read.text, {
     passkFor: laneScoreLookup(laneScores),
