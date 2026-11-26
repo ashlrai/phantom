@@ -113,7 +113,7 @@ describe('planFleetAutopilot', () => {
 
   it('holds an over-deep lane when a starved lane is blocked at the cap', () => {
     const report = planFleetAutopilot(state({
-      admission: admission([lane('devin', 0, 2, 4), lane('grok', 8, 4, 0)], 10, 8, true),
+      admission: admission([lane('devin', 0, 2, 4), lane('grok', 8, 4, 0)], 8, 8, true),
       queue: queueView({ byLane: [
         { lane: 'devin', ready: 4, parked: 0 },
         { lane: 'grok', ready: 14, parked: 0 },
