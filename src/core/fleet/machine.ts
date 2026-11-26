@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+const DISPATCHER_MAX_AGE_MS = 60_000; // Two 30-second dispatcher ticks.
+
 export interface FleetMachine {
   schema: 'fleet.machine.v1';
   load1: number | null;
@@ -31,6 +33,17 @@ export function projectFleetMachine(value: unknown): FleetMachine {
 }
 
 export async function readFleetMachine(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json')): Promise<FleetMachine> {
-  try { return projectFleetMachine(JSON.parse(await readFile(path, 'utf8'))); }
-  catch { return projectFleetMachine(null); }
+  try {
+    const status = object(JSON.parse(await readFile(path, 'utf8')));
+    const tick = typeof status.last_tick === 'string' ? Date.parse(status.last_tick) : NaN;
+    const age = Date.now() - tick;
+    const admissionTick = object(status.admission).ts;
+    if (!Number.isFinite(age) || age < 0 || age > DISPATCHER_MAX_AGE_MS ||
+        (admissionTick !== undefined && admissionTick !== status.last_tick)) {
+      return projectFleetMachine(null);
+    }
+    return projectFleetMachine(status);
+  } catch {
+    return projectFleetMachine(null);
+  }
 }
