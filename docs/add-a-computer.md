@@ -86,5 +86,8 @@ replaced session cannot leave a newer one; a refused leave answers
 command that leaves it.
 
 The current router uses a private local state directory shared by processes on
-one host; joining does not connect separate computers over a network. See the
-[node router guide](NODE-ROUTER.md) for routing, leases, and this limit.
+one host; joining does not connect separate computers over a network. The
+`join` reply says the same — `"registry":"local"` in `--json` and a plain-words
+line in text — so a first-time node never mistakes this for a shared fleet.
+See the [node router guide](NODE-ROUTER.md) for routing, leases, and this
+limit.
