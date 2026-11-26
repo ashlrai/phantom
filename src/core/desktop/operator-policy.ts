@@ -87,10 +87,8 @@ export const OPERATOR_ROSTER: readonly OperatorRosterApp[] = [
   { id: 'cursor', names: ['Cursor'], bundleIds: ['com.todesktop.230313mzl4w4u92'] },
 ];
 
-/** Exact bundle ids that may receive focus, scroll, type or click. Phantom is not in this list. */
-export const DESKTOP_WRITE_BUNDLE_IDS: readonly string[] = OPERATOR_ROSTER
-  .filter((app) => app.id !== 'phantom')
-  .flatMap((app) => app.bundleIds);
+/** Exact bundle ids that may receive focus, scroll, type or click, Phantom's own included. */
+export const DESKTOP_WRITE_BUNDLE_IDS: readonly string[] = OPERATOR_ROSTER.flatMap((app) => app.bundleIds);
 
 function exactBundleId(bundleId: string, expected: string): boolean {
   return bundleId.toLowerCase() === expected.toLowerCase();
@@ -154,11 +152,8 @@ export function operatorDenyReason(input: {
     return 'System Settings is closed to desktop control.';
   }
   if (isWriteVerb(input.verb)) {
-    if (isPhantom(name, bundleId)) {
-      return 'Agents drive Phantom through phm and MCP. Desktop writes to Phantom are closed.';
-    }
     const allowed = typeof bundleId === 'string' && DESKTOP_WRITE_BUNDLE_IDS.some((id) => exactBundleId(bundleId, id));
-    if (!allowed) return 'Desktop writes are limited to Devin, Codex, Claude, Grok Bot and Cursor.';
+    if (!allowed) return 'Desktop writes are limited to Phantom, Devin, Codex, Claude, Grok Bot and Cursor.';
   }
   if (isPhantom(name, bundleId)) return null;
   if (bundleId) {

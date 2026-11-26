@@ -50,6 +50,7 @@ import { FLEET_APPS } from './fleet/app-await.js';
 import { EVIDENCE_SCHEMAS, recordEvidence, validEvidenceArgs } from './intent/mcp-evidence.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 import { desktopOperatorTools } from './desktop/operator-mcp.js';
+import { selfSurfaceTools } from './desktop/self-surface-mcp.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, type OwnerThreadSettings } from './comms/owner-channel.js';
 import type { OwnerThreadReadFilter } from './comms/owner-thread.js';
 
@@ -1604,6 +1605,7 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   ...desktopOperatorTools,
+  ...selfSurfaceTools,
   {
     name: 'phm_wiki_map',
     description: 'Read a commit-pinned source map for an enrolled repo.',

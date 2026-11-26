@@ -45,8 +45,9 @@ let closedBundles = [
     "com.apple.systempreferences",
     "com.apple.Settings",
 ]
-// Exact bundle ids only. Phantom (ai.ashlr.desktop) is not writable.
+// Exact bundle ids only. Phantom drives its own window under the same gates.
 let writableBundles = [
+    "ai.ashlr.desktop",
     "ai.cognition.devin",
     "com.cognition.devin",
     "com.exafunction.windsurf",

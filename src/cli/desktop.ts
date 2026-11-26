@@ -43,6 +43,7 @@ export async function cmdDesktop(args: string[], dependencies?: ConsumerInstallD
     const {readNativeUpdateStatus}=await import('../core/desktop/native-update-status.js');
     console.log(JSON.stringify(readNativeUpdateStatus()));return 0;
   }
+  if (head === 'self') return (await import('./desktop-self.js')).cmdDesktopSelf(args.slice(1));
   if (head && !['install', 'help', '--help', '-h'].includes(head)) return cmdDesktopOperator(args, operatorDeps);
   let options: ReturnType<typeof parseDesktopInstallArgs>;
   try {options=parseDesktopInstallArgs(args);} catch {console.error(USAGE);return 2;}
