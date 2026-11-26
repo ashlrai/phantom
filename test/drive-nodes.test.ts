@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
+import { nodeCapacityView } from '../src/core/drive/nodes/router.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { versionFromCaps } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNodeFleet } from '../src/cli/node-fleet.js';
@@ -26,6 +27,35 @@ function fixture() {
   const bob = b.join('bob')!;
   return { a, b, store, alice, bob, advance: (ms: number) => { now += ms; } };
 }
+
+describe('node host latency', () => {
+  it('uses the recorded execution host and leaves unattributed completions unmeasured', () => {
+    const f = fixture();
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.enqueue('legacy', { owner: 'o' });
+    const legacy = f.a.claim(leader, f.bob, 'legacy')!;
+    f.advance(3);
+    expect(f.a.complete(legacy, 'done')).toBe(true);
+
+    const capacity = (hostId: string) => ({
+      hostId, ramBytes: 8 * 1024 ** 3, slots: 1, held: null,
+      sampledAtMs: f.a.snapshot().observedAt,
+    });
+    f.a.heartbeat(f.bob, { capacity: capacity('original-host') });
+    f.a.enqueue('measured', { owner: 'o' });
+    const measured = f.a.claim(leader, f.bob, 'measured')!;
+    f.advance(7);
+    expect(f.a.complete(measured, 'done')).toBe(true);
+    f.a.heartbeat(f.alice, { capacity: capacity('original-host') });
+    f.a.heartbeat(f.bob, { capacity: capacity('current-host') });
+
+    const snapshot = f.a.snapshot();
+    expect(nodeCapacityView(snapshot, snapshot.observedAt)).toMatchObject([
+      { hostId: 'current-host', latency: { samples: 0, medianMs: null } },
+      { hostId: 'original-host', latency: { samples: 1, medianMs: 7 } },
+    ]);
+  });
+});
 
 describe('drive node leases', () => {
   it('acquires one leader and renews without changing its fencing token', () => {
