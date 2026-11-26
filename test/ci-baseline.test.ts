@@ -254,6 +254,20 @@ describe('CI baseline evidence', () => {
     expect(report.master.known).toBe(false);
     expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', master: 'fail' });
   });
+  it.each([
+    ['missing checkout proof', ''],
+    ['mismatched checkout SHA', `/usr/bin/git log -1 --format=%H\n${head}\n`],
+    ['mismatched binding receipt', `Bound candidate ${head} to event tree ${merged}\n`],
+  ])('isolates %s on an incomplete master job', async (_reason, prefix) => {
+    for (const conclusion of ['cancelled', 'failure']) {
+      const { gh } = github({ count: 1, extraMasterJob: conclusion });
+      const report = await analyzeCiBaseline('owner/repo', args => args[1]?.endsWith('/jobs/30/logs')
+        ? Promise.resolve({ ok: true, stdout: prefix + fixture('suite-shared'), stderr: '' })
+        : gh(args));
+      expect(report.master.known).toBe(false);
+      expect(report.groups).toMatchObject([{ master: conclusion === 'cancelled' ? 'fail' : 'unknown' }]);
+    }
+  });
   it('reports incomplete PR checks even when their logs are unavailable', async () => {
     const { gh } = github({ extraPrJob: 'cancelled' });
     const report = await analyzeCiBaseline('owner/repo', async args => {
