@@ -89,7 +89,7 @@ describe('ciRerunBacklogItems', () => {
     expect(item.title).toContain('alpha.test.ts');
     expect(item.prompt).toContain('3 recorded rerun verdicts concluded failure');
     expect(item.prompt).toContain('1 passed, 1 inconclusive');
-    expect(item.prompt).toContain('5 rerun attempt rows');
+    expect(item.prompt).toContain('5 distinct rerun attempts');
     expect(item.prompt).toContain('3 distinct head(s)');
     expect(item.prompt).toContain('phm ci reruns');
     expect(item.prompt).toContain('phm ci baseline');
@@ -110,8 +110,39 @@ describe('ciRerunBacklogItems', () => {
       ]),
     });
     expect(items).toHaveLength(1);
-    expect(items[0]?.prompt).toContain('6 rerun attempt rows');
+    expect(items[0]?.prompt).toContain('6 distinct rerun attempts');
     expect(items[0]?.prompt).toContain('3 recorded rerun verdicts concluded failure');
+  });
+
+  it('counts the earliest receipt for each attempt before applying the window', async () => {
+    const shared = { at: daysAgo(1), repo: REPO, head: sha(7), runId: 7, pr: 7, outcome: 'attempt' as const, tests: [TEST_A, TEST_B] };
+    const expired = { ...shared, head: sha(8), runId: 8, at: daysAgo(8) };
+    const items = await ciRerunBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        ...failingVerdicts(),
+        { ...shared, at: daysAgo(0.5), repo: 'AshlrAI/Phantom' },
+        shared,
+        { ...expired, at: daysAgo(1) },
+        expired,
+      ]),
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('6 distinct rerun attempts');
+  });
+
+  it('does not let a replay bring an expired verdict back into the window', async () => {
+    const expired = rerun(REPO, TEST_A, sha(3), 13, 'fail', 8);
+    const items = await ciRerunBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        ...rerun(REPO, TEST_A, sha(1), 11, 'fail', 1),
+        ...rerun(REPO, TEST_A, sha(2), 12, 'fail', 2),
+        { ...expired[2]!, at: daysAgo(0.5) },
+        ...expired,
+      ]),
+    });
+    expect(items).toEqual([]);
   });
 
   it('stays quiet below the recurring bar, on a single head, or outside the window', async () => {
