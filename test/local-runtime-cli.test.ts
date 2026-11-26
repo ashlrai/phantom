@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { join, parse } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LocalRuntimeInstallation, LocalRuntimeStatus } from '../src/core/local-runtime/types.js';
 
@@ -24,6 +25,9 @@ function child(): EventEmitter & { kill: ReturnType<typeof vi.fn> } {
 const installArgs = ['install', '--store', '/private/fixture/store', '--artifact', '/private/fixture/package.tgz',
   '--sha256', 'a'.repeat(64), '--revision', 'b'.repeat(40), '--version', '3.4.0'];
 const runArgs = ['run', '--store', '/private/fixture/store', '--', 'universe', 'status', '--root', '/private/fixture/universe'];
+const fixtureRoot = parse(process.cwd()).root;
+const runtimePath = join(fixtureRoot, 'private', 'fixture', 'runtime.json');
+const quotedRuntimePath = join(fixtureRoot, 'private', "fixture owner's", 'runtime.json');
 
 describe('local runtime CLI', () => {
   let output: ReturnType<typeof vi.spyOn>; let errors: ReturnType<typeof vi.spyOn>;
@@ -148,9 +152,9 @@ describe('local runtime CLI', () => {
   });
 
   it.each([
-    [['--resource-runtime', '/private/fixture/runtime.json']],
-    [['--resource-runtime', '/private/fixture/runtime.json', '--json']],
-    [['--json', '--resource-runtime', "/private/fixture owner's/runtime.json"]],
+    [['--resource-runtime', runtimePath]],
+    [['--resource-runtime', runtimePath, '--json']],
+    [['--json', '--resource-runtime', quotedRuntimePath]],
   ])('forwards exact rootless read-only resource check options %j through the verified runtime', async (options) => {
     const handle = child(); childProcess.spawn.mockReturnValue(handle);
     const forwarded = ['universe', 'resources', 'check', ...options];
@@ -167,14 +171,14 @@ describe('local runtime CLI', () => {
     [[]], [['--json']], [['--resource-runtime']], [['--resource-runtime', 'relative']], [['--resource-runtime', '/']],
     [['--resource-runtime', '/private/../runtime.json']], [['--resource-runtime', '/private//runtime.json']],
     [['--resource-runtime', '/private/runtime.json/']], [['--resource-runtime', `/private/${'é'.repeat(2050)}`]],
-    [['--resource-runtime', '/private/runtime.json', '--resource-runtime', '/private/other.json']],
-    [['--resource-runtime', '/private/runtime.json', '--json', '--json']],
-    [['--resource-runtime', '/private/runtime.json', '--root', '/private/universe']],
-    [['--root', '/private/universe', '--resource-runtime', '/private/runtime.json']],
-    [['--resource-runtime', '/private/runtime.json', '--help']], [['--help']], [['help']],
-    [['--resource-runtime', '/private/runtime.json', '--unknown']], [['--resource-runtime=/private/runtime.json']],
-    [['--resource-runtime', '/private/runtime.json', 'run']], [['--resource-runtime', '--json']],
-    [['--resource-runtime', '/private/runtime.json', '--', 'help']],
+    [['--resource-runtime', runtimePath, '--resource-runtime', join(fixtureRoot, 'private', 'other.json')]],
+    [['--resource-runtime', runtimePath, '--json', '--json']],
+    [['--resource-runtime', runtimePath, '--root', '/private/universe']],
+    [['--root', '/private/universe', '--resource-runtime', runtimePath]],
+    [['--resource-runtime', runtimePath, '--help']], [['--help']], [['help']],
+    [['--resource-runtime', runtimePath, '--unknown']], [[`--resource-runtime=${runtimePath}`]],
+    [['--resource-runtime', runtimePath, 'run']], [['--resource-runtime', '--json']],
+    [['--resource-runtime', runtimePath, '--', 'help']],
   ])('rejects ambiguous rootless resource-check options %j before resolution', async (options) => {
     expect(await cmdRuntime(['run', '--store', '/private/fixture/store', '--', 'universe', 'resources', 'check', ...options])).toBe(2);
     for (const fn of Object.values(core)) expect(fn).not.toHaveBeenCalled();
