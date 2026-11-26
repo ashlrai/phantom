@@ -47,6 +47,8 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   const jobs = new Map<string, Job>(); let malformedLines = 0;
   const drafts = new Map<string, string>();
   const generation = new Map<string, Map<string, { drafted: boolean; reasons: Set<string> }>>();
+  const rows: { id: string; at: number; row: Record<string, unknown> }[] = [];
+  const since = now - hours * 3600000;
   for (const line of `${raw}\n${decisions}`.split(/\r?\n/)) {
     if (!line.trim()) continue;
     let value: unknown;
@@ -57,7 +59,12 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     const timestamp = pickString(r, TS_KEYS);
     const at = timestamp ? Date.parse(timestamp) : NaN;
     if (!id || !Number.isFinite(at)) { malformedLines++; continue; }
-    if (at < now - hours * 3600000 || at > now) continue;
+    if (at < since || at > now) continue;
+    rows.push({ id, at, row: r });
+  }
+  // Late receipts can be appended out of order. Stable sorting preserves
+  // ledger order when receipts share a timestamp.
+  for (const { id, row: r } of rows.sort((a, b) => a.at - b.at)) {
     const event = pickString(r, EVENT_KEYS)?.toLowerCase();
     if (event === 'drafted' || event === 'rejected') {
       const source = string(r.src) ?? 'unknown', group = generation.get(source) ?? new Map<string, { drafted: boolean; reasons: Set<string> }>();

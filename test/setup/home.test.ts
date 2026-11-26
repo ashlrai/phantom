@@ -79,10 +79,10 @@ it('rejects a non-absolute or non-private explicit worker-home parent', () => {
   // The acceptance half needs a parent whose whole ancestry is custody-safe.
   // The isolated worker HOME lives under os.tmpdir(); when that is the
   // world-writable /tmp (a local Linux run without a private TMPDIR), use the
-  // checkout's own ignored node_modules/.cache instead, and prove the
-  // /tmp-rooted parent is refused for its ancestors rather than accepted.
+  // checkout's ignored node_modules/.cache when that ancestry is safe too.
   const repoCache = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'node_modules', '.cache');
   const homeIsSafe = custodySafeChain(workerHome);
+  let base = workerHome;
   if (!homeIsSafe) {
     const unsafeParent = mkdtempSync(join(workerHome, 'ashlr-vitest-parent-validation-'));
     try {
@@ -91,13 +91,16 @@ it('rejects a non-absolute or non-private explicit worker-home parent', () => {
     } finally {
       rmSync(unsafeParent, { recursive: true, force: true });
     }
-    mkdirSync(repoCache, { recursive: true });
+    if (custodySafeChain(dirname(repoCache))) {
+      mkdirSync(repoCache, { recursive: true });
+      if (custodySafeChain(repoCache)) base = realpathSync(repoCache);
+    }
   }
-  const base = homeIsSafe ? workerHome : realpathSync(repoCache);
-  expect(custodySafeChain(base), `no custody-safe base for the explicit-parent fixture (tried ${workerHome} and ${base})`).toBe(true);
+  const baseIsSafe = homeIsSafe || base !== workerHome;
   const parent = mkdtempSync(join(base, 'ashlr-vitest-parent-validation-'));
   try {
-    expect(resolveWorkerHomeParent(parent)).toBe(realpathSync(parent));
+    if (baseIsSafe) expect(resolveWorkerHomeParent(parent)).toBe(realpathSync(parent));
+    else expect(() => resolveWorkerHomeParent(parent)).toThrow(/custody ancestors/u);
     chmodSync(parent, 0o755);
     expect(() => resolveWorkerHomeParent(parent)).toThrow(/mode 0700/u);
   } finally {

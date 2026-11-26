@@ -12,6 +12,13 @@ with master reason codes and posture evidence; no model calls, dispatch or write
 `cli/bots.ts::runBotsCli(argv, out?, home?)` returns 0 on success, 1 on error/refusal.
 Creation requires `--dry-run` and never calls the writer.
 
+## Fleet lane ledger
+
+`parseJobsJsonl` (`src/core/fleet/lane-console.ts`) adds an optional
+`LaneLedgerEvent.mergedAt` when a merge row carries a readable timestamp
+with a timezone. The lane snapshot uses it for the merge window and falls
+back to `at` when absent. `at` continues to carry the event timestamp.
+
 ## Desktop appearance
 
 `UiAppearance` (`src/core/verse/ui-appearance-file.ts`) includes
@@ -232,6 +239,13 @@ separate `agy` seat uses only IDs returned by `agy models`.
 
 # Managed desktop upgrade
 
+`phm desktop update status --json` and `fleet_desktop_update_status` read the
+same bounded, private native observation (`desktop.native-update-status.v1`),
+not upgrade admission or a live process check. Managed macOS resident starts
+require the admitted running release to match the verified managed current
+pointer. Resident status reports registration drift and known alternate CLI
+copies; neither read mutates those installations or changes authority.
+
 `src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`
 (the consumer install ports plus `smokeVersion` and lowering-only
 `residentStop`), `ConsumerUpgradeOptions`, `ConsumerUpgradeResult`,
@@ -280,6 +294,17 @@ null usage/age and an invalid-timestamp reason. A lane name alone never proves
 cost. Fresh verified USD readings map to `api-credit`; included/metered receipt
 classes require fresh matching provenance, and unrecognized classes stay unknown.
 `GET /api/usage/lanes` returns this projection without refreshing providers.
+
+`recordResetEvidence(runsDir, count, expiries, kind, observedAt, now?)`
+atomically stores a complete, timestamped owner observation in
+`resource-evidence.v1`; older observations cannot replace newer ones.
+`buildFleetResourcePlan(raw, nodes, status, ledger, now, custom?, resets?)`
+returns allowance labels and a nullable `reset_proposal` from the recent
+reset-bank and usage evidence. `GET /api/verse/world?resourcePools=1` exposes
+a read-only `resourceCapacity` projection with lane targets, waste by
+allowance deadline, and the proposal. Recording evidence or reading the
+proposal never consumes a reset.
+
 `postureEvidence(root)` is exported from `src/core/queue/route-explain.ts` for
 the shared bounded journal parser. It preserves receipt `ts` (epoch seconds or
 ISO timestamp) as optional `observedAt`, plus lane `lane`, `account_id`, `model`,
@@ -327,7 +352,9 @@ settled: attempts younger than five minutes are not trusted yet, unresolved
 attempts older than 24 hours stop being polled, and each pass checks at most
 eight pending reruns per repository. `success` maps to `pass`, `failure` and
 `timed_out` to `fail`, other completed conclusions to `inconclusive`; runs
-still in progress or reads predating the rerun call stay pending.
+still in progress stay pending, as do reads without a matching run ID and
+head SHA, a nonempty conclusion, or a parseable update time within the
+rerun's freshness guard.
 `src/core/fleet/ci-flakes.ts` exports `recurringFlakes(rows, opts?)`,
 `flakeJobId(repo, test)` and `enqueueFlakeFixes(flakes, absoluteQueuePath)`:
 a test probable-flaking on at least three distinct heads within seven days
@@ -730,18 +757,19 @@ fold's `mergeEvents` option joins each outcome's `merge_queue` through
 the job's newest unambiguous canonical PR claim — the same claim rule
 the authority revert join applies, so a contested or foreign URL never
 resolves — and merge-events rows for PRs no outcome claims unambiguously
-join nothing and never create outcomes. The same joined check record
+join nothing and never create outcomes. GitHub pull URLs that differ only
+in case or a trailing slash share one claim identity for URL-only jobs
+rows and all PR evidence joins. Multiple jobs claiming that identity
+count once in `ambiguous_urls` and receive no evidence through it. Other
+URLs still match literally for URL-only jobs rows. The same joined check record
 resolves `ci_first_pass` fill-only when no jobs row recorded a verdict:
 any recorded `check_observed` failure — required or unrelated — reads
 `false` even beside a later `checks_passed` boundary or a merge (a
 rerun or a new head got it green, which is not a first pass); with
-zero recorded failures a `checks_passed` boundary or a recorded merge
-beside observed check activity reads `true`; pending-only
-observations, no check rows at all and unmerged PRs without the
-boundary stay `null` — unknown, never guessed from absent evidence.
-`readRouterOutcomes` reruns the same fill-only pass after the
-reward-signal join so a reward-only merge verdict reaches the
-fallback. The read degrades
+zero recorded failures, a `checks_passed` boundary reads `true`.
+A merge verdict, including one filled from the reward journal, and
+individual check observations leave CI first-pass evidence unknown
+(`null`) when the all-required-checks-passed boundary is absent. The read degrades
 independently: `RouterOutcomeRead.merge_events_state` reports its
 health and `merge_events_truncated` marks a cut tail; anything but
 `read` leaves every `merge_queue` null — unknown, never a guessed
@@ -1447,7 +1475,11 @@ jobsTruncated?)`,
 `foldRouteRejections(marketJsonl, nowMs, windowHours)` and
 `renderUnfed(report)` in
 `src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
-`phm fleet unfed` (`fleet.unfed.v1`). `foldMarketOverrides` collapses the
+`phm fleet unfed` (`fleet.unfed.v1`). The report's `marketTruncated` boolean
+is true when the bounded work-market journal read omitted older bytes.
+History, overrides, rejections and decision outcomes may then be incomplete
+for the requested window. A missing or unreadable journal is indicated by
+the market folds' `available: false`. `foldMarketOverrides` collapses the
 window's `route_decision` rows to each job's latest decision and tallies
 `lane_override`s by reason and hinted-to-chosen lane; the report's
 `overrides` field carries the counts (`available`, `decided`, `overridden`,

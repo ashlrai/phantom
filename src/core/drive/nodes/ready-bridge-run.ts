@@ -26,7 +26,7 @@ export function readNodeBridgeConfig(home: string = ashlrHome()): NodeBridgeConf
   } catch { return 'invalid'; }
 }
 
-export interface NodeBridgeRunOptions { apply: boolean; owner?: string; signal?: AbortSignal; now?: number }
+export interface NodeBridgeRunOptions { apply: boolean; owner?: string; signal?: AbortSignal; now?: number; deadlineAt?: number }
 
 /** Resolve config, router and host, then run one pass. Apply needs `enabled: true`. */
 export async function runConfiguredNodeBridge(opts: NodeBridgeRunOptions): Promise<NodeBridgeReport> {
@@ -53,5 +53,6 @@ export async function runConfiguredNodeBridge(opts: NodeBridgeRunOptions): Promi
     ...(config !== 'invalid' && config.maxPerPass ? { maxPerPass: config.maxPerPass } : {}),
     ...(config !== 'invalid' && config.pendingTtlMs ? { pendingTtlMs: config.pendingTtlMs } : {}),
     ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.deadlineAt !== undefined ? { deadlineAt: opts.deadlineAt } : {}),
   });
 }
