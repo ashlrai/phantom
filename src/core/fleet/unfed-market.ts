@@ -311,23 +311,25 @@ export function parseReadyMarketRows(readyTsv: string, routerQueue?: string | nu
 /**
  * The dispatcher's admission-stopped waiting set (dispatchd's `_waiting` else
  * branch): when the launch gate kept the market from running, every non-parked
- * row with a valid job id and tier counts, hinted by its raw lane column —
- * requirements are never parsed, so spec-invalid rows still wait. No per-row
- * market fields are produced.
+ * row with a valid job id and tier can count. Use the first such row per job
+ * and its raw lane column. Requirements are never parsed, so spec-invalid
+ * rows still wait.
  */
 export function stoppedReadyHints(readyTsv: string): { waiting: number; byLane: Map<string, number> } {
   const byLane = new Map<string, number>();
-  let waiting = 0;
+  const jobs = new Set<string>();
   for (const line of readyTsv.split('\n')) {
     if (!line.trim() || line.startsWith('#')) continue;
     const cols = line.split('\t');
     if (cols.length < 5 || cols[0]!.startsWith('PARKED-') || (cols[2] ?? '').startsWith('PARKED-')) continue;
     if (!JOB_ID.test(cols[0]!) || !known(MARKET_TIERS, cols[3]!)) continue;
-    waiting++;
+    const job = cols[0]!;
+    if (jobs.has(job)) continue;
+    jobs.add(job);
     const lane = cols[2] || '';
     byLane.set(lane, (byLane.get(lane) ?? 0) + 1);
   }
-  return { waiting, byLane };
+  return { waiting: jobs.size, byLane };
 }
 
 /** Shared market inputs parsed once per report. */

@@ -278,14 +278,18 @@ function utilization(running: number, target: number): number | null {
  * (the requirements column — or the router-queue.md envelope for a spec-less
  * row — may override the lane column), matching the dispatcher's own unfed
  * accounting. Rows the market would reject (bad job id, tier or spec) are
- * counted in `invalid` and left out of waiting/byLane/rows, like the
- * dispatcher's `_waiting` set.
+ * counted in `invalid`. Each job contributes once, using its first valid row.
  */
 export function readyHints(readyTsv: string, routerQueue?: string | null):
   { waiting: number; byLane: Map<string, number>; rows: ReadyMarketRow[]; invalid: number } {
-  const { rows, invalid } = parseReadyMarketRows(readyTsv, routerQueue);
+  const { rows: parsed, invalid } = parseReadyMarketRows(readyTsv, routerQueue);
+  const jobs = new Set<string>();
+  const rows: ReadyMarketRow[] = [];
   const byLane = new Map<string, number>();
-  for (const row of rows) {
+  for (const row of parsed) {
+    if (jobs.has(row.id)) continue;
+    jobs.add(row.id);
+    rows.push(row);
     const lane = row.hint ?? '';
     byLane.set(lane, (byLane.get(lane) ?? 0) + 1);
   }
@@ -350,7 +354,7 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     ? new Set((market?.hold ?? '').split(/\s+/u).filter(Boolean)) : null;
   const stop = fleetStopVerdict(data);
   // An admission-stopped tick never ran the market: the dispatcher's own
-  // _waiting then counts every JID+tier-valid row by its raw lane column.
+  // _waiting then uses the raw lane column from JID+tier-valid rows.
   const strict = readyTsv === null ? null : readyHints(readyTsv, market?.routerQueue);
   const hints = strict !== null && readyTsv !== null && published === null && stop === 'admission_stopped'
     ? { ...stoppedReadyHints(readyTsv), rows: strict.rows, invalid: strict.invalid }
