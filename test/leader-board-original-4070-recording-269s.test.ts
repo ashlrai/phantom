@@ -92,6 +92,19 @@ it('counts lane-open work by tier without attributing it to a lane', async () =>
   expect(board?.lanes.find((lane) => lane.lane === 'codex')?.ready).toBe(1);
 });
 
+it('groups unsupported READY tier labels under unknown on the board', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    row('READY', 'RQ-VALID', 'codex', 'MID'),
+    row('READY', 'RQ-ALIAS', 'codex', 'standard'),
+    row('READY', 'RQ-UNSUPPORTED', 'codex', 'custom'),
+    row('READY', 'RQ-PROPERTY-NAME', 'codex', 'constructor'),
+  ].join('\n'));
+
+  expect((await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS })).wrote).toBe(true);
+  const { board } = await readFleetBoard({ runsDir: root });
+  expect(board?.queueDepthByTier).toEqual({ mid: 1, unknown: 3 });
+});
+
 it('reports honest failures for hostile paths and the reader stays truthful', async () => {
   expect(await recordLeaderBoard({ runsDir: 'relative/path', nowMs: NOW_MS })).toMatchObject({ wrote: false });
   expect(await recordLeaderBoard({ runsDir: '/dev/null/impossible', nowMs: NOW_MS })).toMatchObject({ wrote: false });
