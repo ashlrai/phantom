@@ -103,6 +103,34 @@ describe('readStarved', () => {
 
 describe('lanes read: starved object', () => {
   it.each([
+    { configuredHeld: false, dispatcherHeld: true, tickAgeMs: 0, held: true },
+    { configuredHeld: true, dispatcherHeld: false, tickAgeMs: 0, held: true },
+    { configuredHeld: false, dispatcherHeld: true, tickAgeMs: 5 * 60_000, held: false },
+  ])('honors holds from the slots file or a fresh dispatcher tick (%j)', async ({
+    configuredHeld, dispatcherHeld, tickAgeMs, held,
+  }) => {
+    const root = await scratch();
+    const queueDir = join(root, 'queue');
+    await mkdir(queueDir);
+    await writeFile(join(queueDir, 'ready.tsv'), 'id\tstatus\tpool\nj1\tRUNNING\tclaude\n');
+    await writeFile(join(queueDir, 'slots.json'), JSON.stringify({
+      claude: { target: 4, floor: 0, ceiling: 4, held: configuredHeld, held_reason: configuredHeld ? 'manual pause' : null },
+    }), { mode: 0o600 });
+    await writeFile(join(queueDir, 'status.json'), JSON.stringify({
+      last_tick: new Date(NOW - tickAgeMs).toISOString(),
+      lanes: { claude: { running: 1, target: 4, queued: 0, held: dispatcherHeld } },
+    }));
+    const snap = await getFleetLaneSnapshot({
+      queueDir, budgetsDir: join(root, 'budgets'), usageLogPaths: [], now: () => new Date(NOW), starvedStateDir: root,
+    });
+    expect(snap.lanes.find(lane => lane.lane === 'claude')).toMatchObject({
+      hold: { held, reason: configuredHeld ? 'manual pause' : null },
+      health: { state: held ? 'held' : 'starved' },
+    });
+    expect(snap.starved.lanes.claude).toMatchObject({ free_slots: held ? 0 : 3, ready_rows: 0, starved: !held });
+  });
+
+  it.each([
     { effectiveTarget: 8, launchTarget: 2 },
     { effectiveTarget: 1, launchTarget: 1 },
     { effectiveTarget: 0, launchTarget: 0 },
