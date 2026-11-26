@@ -114,9 +114,23 @@ function sameApp(expected, io) {
 
 /** Existing Stop intent, strict lease census and exact native/sidecar process evidence. No work is killed. */
 export async function requireLocalQuiescence(io) {
-  let kill;
-  try { kill = io.lstat(join(io.home, '.ashlr', 'KILL')); } catch { /* No readable Stop intent. */ }
-  if (!kill?.isFile || kill.isSymbolicLink) hold('stop-not-engaged', 'Stop must already be engaged; drain work with `ashlr authority stop` first');
+  if (io.updatePause) {
+    const {stage, manifest, nonce, deadline} = io.updatePause;
+    let matches = false;
+    try {
+      const marker = join(io.home, '.ashlr', 'DESKTOP_UPDATE_STOP');
+      const markerStat = io.lstat(marker);
+      matches = /^[a-f0-9]{32}$/.test(stage) && /^[a-f0-9]{64}$/.test(manifest) &&
+        /^[a-f0-9]{32}$/.test(nonce) && Number.isSafeInteger(deadline) &&
+        io.ownsUpdatePause() && markerStat?.isFile && !markerStat.isSymbolicLink && !io.lstat(join(io.home, '.ashlr', 'KILL')) &&
+        io.readBoundedFile(marker, 512) === JSON.stringify({stage, manifest, nonce, deadline}) + '\n';
+    } catch { /* The ownership proof is unreadable. */ }
+    if (!matches) hold('stop-not-engaged', 'the update no longer owns the local pause');
+  } else {
+    let kill;
+    try { kill = io.lstat(join(io.home, '.ashlr', 'KILL')); } catch { /* No readable Stop intent. */ }
+    if (!kill?.isFile || kill.isSymbolicLink) hold('stop-not-engaged', 'Stop must already be engaged; drain work with `ashlr authority stop` first');
+  }
   let census;
   try { census = await io.executionLeaseCensus(); } catch { /* No readable lease census. */ }
   if (!census || census.unknown !== 0 || !Array.isArray(census.leases) || census.leases.length) hold('leases-active', 'execution leases are active or unknown; finish the supported drain before installation');

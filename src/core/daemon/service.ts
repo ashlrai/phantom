@@ -1476,6 +1476,59 @@ export async function installResidentService(opts: ServiceInstallOptions, capabi
   return withDaemonServiceLifecycleFence(resident, () => installWithinLifecycleFence(resident));
 }
 
+function desktopUpdateLaunchdRuntime(opts: ServiceInstallOptions) {
+  const def = generateServiceDefinition(opts);
+  const spec = def.launchdRuntime!;
+  const domain = `gui/${os.userInfo().uid}`;
+  const label = 'ai.ashlr.daemon';
+  const target = `${domain}/${label}`;
+  const fd = fs.openSync(def.filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  let stat: fs.Stats;
+  try {
+    stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== os.userInfo().uid || stat.nlink !== 1 || stat.mode & 0o022 ||
+        stat.size !== Buffer.byteLength(def.content) || fs.readFileSync(fd, 'utf8') !== def.content)
+      throw new Error('unverified resident registration');
+  } finally { fs.closeSync(fd); }
+  if (launchdDisabled(domain, label)) throw new Error('unverified resident activation');
+  const runtime = readLaunchdRuntimeState(target, {
+    expectedPath: def.filePath, expectedProgram: spec.program, expectedArguments: spec.arguments, timeoutMs: 2_000,
+  });
+  const process = runtime.pid === undefined ? null :
+    runCmd(['/bin/ps', '-p', String(runtime.pid), '-o', 'lstart='], undefined, 2_000);
+  if (process && (!process.ok || !process.stdout.trim())) throw new Error('unverified resident process start');
+  const named = fs.lstatSync(def.filePath);
+  if (named.dev !== stat.dev || named.ino !== stat.ino || named.ctimeMs !== stat.ctimeMs) throw new Error('resident registration changed');
+  return {target, runtime, processStart: process?.stdout.trim() ?? null, dev: stat.dev, ino: stat.ino, ctimeMs: stat.ctimeMs};
+}
+
+export function readDesktopUpdateResident(opts: ServiceInstallOptions) {
+  try { return desktopUpdateLaunchdRuntime(opts); } catch { return null; }
+}
+
+export async function resumeDesktopUpdateResident(capability: unknown): Promise<boolean> {
+  const { consumeDesktopUpdateResume } = await import('../desktop/qualified-update.js');
+  const resume = consumeDesktopUpdateResume(capability);
+  if (!resume || process.platform !== 'darwin') return false;
+  try {
+    return await withDaemonServiceLifecycleFence(resume.previous, async () => {
+      const current = readDesktopUpdateResident(resume.previous);
+      if (!current || current.dev !== resume.dev || current.ino !== resume.ino || current.ctimeMs !== resume.ctimeMs ||
+          !current.runtime.loaded || !resume.check()) return false;
+      if (current.runtime.pid !== undefined) {
+        return resume.previous.binPath === resume.next.binPath &&
+          current.runtime.pid === resume.pid && current.processStart === resume.processStart && resume.release();
+      }
+      if (resume.previous.binPath !== resume.next.binPath) await installWithinLifecycleFence(resume.next);
+      const installed = readDesktopUpdateResident(resume.next);
+      if (!installed?.runtime.loaded || !resume.release()) return false;
+      if (!runCmd(['/bin/launchctl', 'kickstart', installed.target], undefined, 5_000).ok) return false;
+      const observed = readDesktopUpdateResident(resume.next);
+      return observed?.runtime.pid !== undefined && installed.dev === observed.dev && installed.ino === observed.ino;
+    });
+  } catch { return false; }
+}
+
 async function installWithinLifecycleFence(opts: ServiceInstallOptions): Promise<void> {
   const platform = (opts.platform ?? process.platform) as Platform;
   const def = generateServiceDefinition(opts);

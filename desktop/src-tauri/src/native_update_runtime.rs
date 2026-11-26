@@ -254,7 +254,11 @@ mod platform {
             "--json",
         ]);
         cmd.env_clear()
-            .envs(crate::fleet_ops::base_env(&home, &stage.path_env));
+            .envs(crate::fleet_ops::base_env(&home, &stage.path_env))
+            .env(
+                "PHANTOM_NATIVE_UPDATE_INTERLOCK",
+                "phantom.desktop-update-interlock.v1",
+            );
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());

@@ -254,9 +254,14 @@ for explicit CLI-only rollback, which holds when an app is installed. Neither
 mode grants authority or restarts the resident. `cmdDesktop` accepts optional upgrade dependencies as
 its fifth parameter; `parseDesktopInstallArgs` preserves `{apply}` for plain
 install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
-The native `DesktopUpdateDependencies` port includes read-only
-`residentQuiescent`; native installation requires Stop and known idle work,
-not a standing authority grant. Native apply does not unregister the resident.
+The native `DesktopUpdateDependencies` port retains read-only
+`residentQuiescent` for manual Stop, which does not require a standing grant
+or unregister the resident. With interlock support and a verified running
+managed resident, verified apply may acquire its own transaction-bound local
+Stop. It records the resident, grant and surface before switching. A verified
+installation or abort can consume one in-process capability to restore that
+resident on the corresponding managed release only while those proofs still
+agree. Ownership, grant, surface and recovery failures return fixed holds.
 `phm desktop-update prepare --stage <id> --json` verifies the private staged
 app and the original CLI archive before Stop, including the app inventory and
 the candidate authority surface. It caches only the verified original package
@@ -265,7 +270,7 @@ in the stage and does not change installed files, fleet state, or authority.
 and the hosted release train's read-only `hostedReleaseTrain` state
 (`paused`, `enabled`, or `unknown`) to the native observation.
 Where interlock compatibility is unproven it reports
-`drain-interlock-unsupported`; native installation still requires operator Stop.
+`drain-interlock-unsupported`; on those hosts native installation still requires operator Stop.
 `~/.ashlr/KILL` remains operator-owned and separate from
 `~/.ashlr/DESKTOP_UPDATE_STOP`. The hosted status query never pauses or resumes
 publishing.
