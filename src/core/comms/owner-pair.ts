@@ -60,7 +60,7 @@ export interface OwnerPairStatusV1 {
 
 export type PairStartResult =
   | { status: 'pending'; handles: string[]; since: number }
-  | { status: 'already-paired' | 'already-pending' | 'too-soon' | 'none-found' | 'send-failed' | 'messages-unreadable' | 'bad-handle' };
+  | { status: 'already-paired' | 'already-pending' | 'too-soon' | 'none-found' | 'send-failed' | 'messages-unreadable' | 'state-unreadable' | 'bad-handle' };
 export type PairCheckResult =
   | { status: 'none' | 'waiting' | 'expired' | 'unreadable' }
   | { status: 'bound'; confirmed: boolean; reason?: string };
@@ -74,18 +74,27 @@ const clock = (deps: PairDeps): number => (deps.now ?? Date.now)();
 
 function emptyState(): PairState { return { pending: null, lastStartAt: null, autoOff: false }; }
 
-export function readPairState(configDir: string): PairState {
+function readPairStateResult(configDir: string): { ok: true; state: PairState } | { ok: false } {
   try {
-    const raw = JSON.parse(readFileSync(join(configDir, 'comms', STATE_FILE), 'utf8')) as Record<string, unknown>;
-    const p = raw.pending as Record<string, unknown> | null | undefined;
+    const raw: unknown = JSON.parse(readFileSync(join(configDir, 'comms', STATE_FILE), 'utf8'));
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false };
+    const record = raw as Record<string, unknown>;
+    const p = record.pending as Record<string, unknown> | null | undefined;
     // Older state files held one `handle`.
     const listed = Array.isArray(p?.handles) ? p.handles : typeof p?.handle === 'string' ? [p.handle] : [];
     const handles = listed.filter((h): h is string => typeof h === 'string' && IMESSAGE_HANDLE_RE.test(h)).slice(0, PAIR_MAX_HANDLES);
     const pending = p && handles.length > 0 && Number.isFinite(p.startedAt) && Number.isFinite(p.expiresAt) && Number.isSafeInteger(p.afterRowId)
       ? { handles, startedAt: p.startedAt as number, expiresAt: p.expiresAt as number, afterRowId: p.afterRowId as number }
       : null;
-    return { pending, lastStartAt: Number.isFinite(raw.lastStartAt) ? raw.lastStartAt as number : null, autoOff: raw.autoOff === true };
-  } catch { return emptyState(); }
+    return { ok: true, state: { pending, lastStartAt: Number.isFinite(record.lastStartAt) ? record.lastStartAt as number : null, autoOff: record.autoOff === true } };
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? { ok: true, state: emptyState() } : { ok: false };
+  }
+}
+
+export function readPairState(configDir: string): PairState {
+  const result = readPairStateResult(configDir);
+  return result.ok ? result.state : emptyState();
 }
 
 function atomicWrite(file: string, text: string, mode: number): void {
@@ -187,7 +196,9 @@ export function readOwnerPairStatus(configDir: string): OwnerPairStatusV1 {
 export async function startOwnerPair(deps: PairDeps, input: { handle?: string; auto?: boolean } = {}): Promise<PairStartResult> {
   const now = clock(deps);
   if (boundHandle(deps.configDir)) return { status: 'already-paired' };
-  const state = readPairState(deps.configDir);
+  const result = readPairStateResult(deps.configDir);
+  if (!result.ok) return { status: 'state-unreadable' };
+  const state = result.state;
   const explicit = input.handle?.trim();
   if (explicit !== undefined && !IMESSAGE_HANDLE_RE.test(explicit)) return { status: 'bad-handle' };
   const live = state.pending && state.pending.expiresAt > now ? state.pending : null;
@@ -267,8 +278,10 @@ export interface PairTickReport { action: 'none' | 'started' | 'waiting' | 'boun
  */
 export async function pairTick(deps: PairDeps): Promise<PairTickReport> {
   if (boundHandle(deps.configDir)) return { action: 'none', detail: 'paired' };
+  const state = readPairStateResult(deps.configDir);
+  if (!state.ok) return { action: 'none', detail: 'state-unreadable' };
   let expired = false;
-  if (readPairState(deps.configDir).pending) {
+  if (state.state.pending) {
     const checked = await checkOwnerPair(deps);
     if (checked.status === 'bound') return { action: 'bound', detail: checked.confirmed ? 'paired and confirmed' : `paired; ${checked.reason ?? 'not confirmed'}` };
     if (checked.status === 'unreadable') return { action: 'waiting', detail: 'Messages replies are unreadable; YES cannot currently be checked' };
