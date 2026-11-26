@@ -603,6 +603,11 @@ export async function sendNotifications(
       ]);
     } catch { receipt = { status: 'unavailable', reason: 'sender threw' }; }
     finally { if (timer !== undefined) clearTimeout(timer); }
+    if (receipt === null || typeof receipt !== 'object' || Array.isArray(receipt)
+      || !['sent', 'duplicate', 'refused', 'unavailable'].includes(receipt.status)) {
+      results.push({ notice, status: 'unavailable', reason: 'invalid-sender-receipt' });
+      continue;
+    }
     if (receipt.status !== 'sent' && receipt.status !== 'duplicate') {
       results.push({ notice, status: receipt.status, ...(receipt.reason ? { reason: receipt.reason } : {}) });
       continue;
