@@ -76,7 +76,6 @@ export async function cmdUsageSensors(args: string[]): Promise<number> {
     try {
       readings = await pullOfficialUsageSensors({
         nowMs: Date.now(),
-        codexCmpHome: home('PHANTOM_SENSOR_CODEX_CMP_HOME'),
         codexPersonalHome: home('PHANTOM_SENSOR_CODEX_PERSONAL_HOME'),
       });
     }

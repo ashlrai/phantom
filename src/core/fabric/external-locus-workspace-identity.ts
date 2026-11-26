@@ -4,7 +4,21 @@
  * workspace truth, release provenance, or authority.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import {
+  GIT_COMMIT_RE as COMMIT_RE,
+  SEMVER_RE,
+  SHA256_PREFIXED_DIGEST_RE as DIGEST_RE,
+  canonicalJsonBytes,
+  decodeStrictUtf8JsonBytes,
+  deepFreeze as immutable,
+  exactKeys,
+  isCanonicalIsoTimestamp,
+  isEnumValue as enumValue,
+  isSafeIntegerInRange as integer,
+  sha256Prefixed as sha,
+  strictPlainRecord as record,
+  timingSafeUtf8Equal as sameText,
+} from './external-contract-codec.js';
 
 export const LOCUS_WORKSPACE_IDENTITY_OBSERVATION_PROTOCOL =
   'ashlr-locus-workspace-identity-observation-v1' as const;
@@ -18,11 +32,11 @@ export const LOCUS_WORKSPACE_IDENTITY_OBSERVATION_GENESIS_DIGEST = `sha256:${'0'
 
 const PRODUCER_RECORD_TYPE = 'locus-workspace-identity-observation' as const;
 const MAX_AGGREGATE_COUNT = 1_000_000;
-const MAX_CANONICAL_DEPTH = 12;
-const MAX_CANONICAL_NODES = 256;
-const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
-const COMMIT_RE = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
-const SEMVER_RE = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const CANONICAL_BOUNDS = {
+  maxDepth: 12,
+  maxNodes: 256,
+  maxBytes: LOCUS_WORKSPACE_IDENTITY_OBSERVATION_MAX_BYTES,
+};
 const LOCUS_SOURCE_VERSION_RE = /^0\.5\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const DIGEST_DOMAIN = 'ashlr:locus-workspace-identity-observation:v1\0';
 const OUTPUT_DIGEST_DOMAIN = 'ashlr:external-locus-workspace-identity-observation:v1\0';
@@ -207,104 +221,12 @@ export interface ExternalLocusWorkspaceIdentityExpectationsV1 {
   previousObservationDigest: string;
 }
 
-type Canonical = null | boolean | number | string | Canonical[] | { [key: string]: Canonical };
-
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const keys = Reflect.ownKeys(value);
-    if (keys.some((key) => typeof key !== 'string' || !descriptors[String(key)]?.enumerable ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const sorted = [...expected].sort();
-  return actual.length === sorted.length && actual.every((key, index) => key === sorted[index]);
-}
-
-function canonicalize(
-  value: unknown,
-  state = { depth: 0, nodes: 0, ancestors: new Set<object>() },
-): Canonical {
-  state.nodes += 1;
-  if (state.nodes > MAX_CANONICAL_NODES || state.depth > MAX_CANONICAL_DEPTH) {
-    throw new TypeError('value exceeds bounds');
-  }
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new TypeError('non-finite number');
-    return Object.is(value, -0) ? 0 : value;
-  }
-  if (typeof value !== 'object' || state.ancestors.has(value)) throw new TypeError('non-json value');
-  state.ancestors.add(value);
-  state.depth += 1;
-  try {
-    if (Array.isArray(value)) {
-      if (Reflect.ownKeys(value).some((key) => typeof key === 'symbol' ||
-        (key !== 'length' && !/^(?:0|[1-9][0-9]*)$/.test(key)))) throw new TypeError('invalid array');
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse array');
-        return canonicalize(entry, state);
-      });
-    }
-    const row = record(value);
-    if (!row) throw new TypeError('non-plain object');
-    const output: { [key: string]: Canonical } = Object.create(null) as { [key: string]: Canonical };
-    for (const key of Object.keys(row).sort()) output[key] = canonicalize(row[key], state);
-    return output;
-  } finally {
-    state.depth -= 1;
-    state.ancestors.delete(value);
-  }
-}
-
 function canonicalBytes(value: unknown): Buffer | null {
-  try {
-    const bytes = Buffer.from(JSON.stringify(canonicalize(value)), 'utf8');
-    return bytes.length <= LOCUS_WORKSPACE_IDENTITY_OBSERVATION_MAX_BYTES ? bytes : null;
-  } catch {
-    return null;
-  }
-}
-
-function sha(domain: string, bytes: Uint8Array): string {
-  return `sha256:${createHash('sha256').update(domain, 'utf8').update(bytes).digest('hex')}`;
-}
-
-function sameText(left: unknown, right: unknown): boolean {
-  if (typeof left !== 'string' || typeof right !== 'string') return false;
-  const first = Buffer.from(left, 'utf8');
-  const second = Buffer.from(right, 'utf8');
-  return first.length === second.length && timingSafeEqual(first, second);
-}
-
-function immutable<T>(value: T, seen = new WeakSet<object>()): T {
-  if (value === null || typeof value !== 'object' || seen.has(value)) return value;
-  seen.add(value);
-  for (const nested of Object.values(value as Record<string, unknown>)) immutable(nested, seen);
-  return Object.freeze(value);
+  return canonicalJsonBytes(value, CANONICAL_BOUNDS);
 }
 
 function canonicalIso(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length !== 24) return false;
-  const milliseconds = Date.parse(value);
-  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
-}
-
-function integer(value: unknown, minimum: number, maximum: number): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
-}
-
-function enumValue(value: unknown, values: readonly string[]): value is string {
-  return typeof value === 'string' && values.includes(value);
+  return isCanonicalIsoTimestamp(value, 24);
 }
 
 function validProducer(value: unknown): value is LocusWorkspaceIdentityObservationV1['producer'] {
@@ -525,14 +447,15 @@ export function compileExternalLocusWorkspaceIdentityObservationV1(
   now: Date = new Date(),
 ): ExternalLocusWorkspaceIdentityResultV1 {
   try {
-    if (!(bytes instanceof Uint8Array)) return fail('invalid-bytes');
-    if (bytes.byteLength > LOCUS_WORKSPACE_IDENTITY_OBSERVATION_MAX_BYTES) return fail('oversized-observation');
-    if (bytes.byteLength < 2 || !(now instanceof Date) || !Number.isFinite(now.getTime())) return fail('invalid-bytes');
-    const copied = Buffer.from(bytes);
-    const text = copied.toString('utf8');
-    if (!copied.equals(Buffer.from(text, 'utf8'))) return fail('invalid-bytes');
-    let parsed: unknown;
-    try { parsed = JSON.parse(text) as unknown; } catch { return fail('non-canonical-json'); }
+    const decoded = decodeStrictUtf8JsonBytes(
+      bytes,
+      LOCUS_WORKSPACE_IDENTITY_OBSERVATION_MAX_BYTES,
+      now,
+    );
+    if (!decoded.ok) {
+      return fail(decoded.reason === 'oversized' ? 'oversized-observation' : decoded.reason);
+    }
+    const { copied, parsed } = decoded;
     const issue = structuralIssue(parsed);
     if (issue) return fail(issue);
     const canonical = canonicalBytes(parsed);

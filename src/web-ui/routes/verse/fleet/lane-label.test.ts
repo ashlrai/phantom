@@ -3,7 +3,7 @@ import { laneLabel, laneShort } from './lane-label.js';
 
 describe('laneLabel — known ids', () => {
   it('codex-personal', () => expect(laneLabel('codex-personal')).toBe('Codex personal'));
-  it('codex-cmp', () => expect(laneLabel('codex-cmp')).toBe('Codex CMP'));
+  it('labels historical CMP rows as retired', () => expect(laneLabel('codex-cmp')).toBe('Codex CMP (retired)'));
   it('codex-local', () => expect(laneLabel('codex-local')).toBe('Local models'));
   it('claude', () => expect(laneLabel('claude')).toBe('Claude'));
   it('claude-api', () => expect(laneLabel('claude-api')).toBe('Claude API'));

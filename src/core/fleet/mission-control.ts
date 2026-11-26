@@ -57,7 +57,7 @@ const DECISION_KINDS = new Set(['ROUTE', 'ROUTER', 'PICK', 'LAUNCH', 'LANE_HOLD'
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const LABELS: Readonly<Record<string, string>> = {
   'codex-personal': 'Personal Codex',
-  'codex-cmp': 'CMP Codex',
+  'codex-cmp': 'Codex CMP (retired)',
   claude: 'Claude',
   'claude-api': 'Claude',
   devin: 'Devin',

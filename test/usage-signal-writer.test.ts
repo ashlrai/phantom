@@ -20,7 +20,7 @@ const sample = (pool: UsagePool, pctUsed: number | null = 20, resetAt: string | 
 const lines = (): Entry[] => readFileSync(join(directory, 'usage-readings.log'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
 const fleet = (): { readings: Partial<Record<UsagePool, Entry>>; usageSignals: Record<string, unknown>; [key: string]: unknown } =>
   JSON.parse(readFileSync(join(directory, 'fleet.json'), 'utf8'));
-const run = (pool: UsagePool = 'codex-cmp', pctUsed: number | null = 20, resetAt: string | null = RESET, event: Event = 'manual-reading') =>
+const run = (pool: UsagePool = 'codex-personal', pctUsed: number | null = 20, resetAt: string | null = RESET, event: Event = 'manual-reading') =>
   writeUsageSignal({ directory, event, pools: [pool], readers: { [pool]: async () => sample(pool, pctUsed, resetAt) }, now });
 
 beforeEach(() => {
@@ -31,8 +31,8 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }); });
 
 describe('event-driven usage signals', () => {
-  it('covers exactly the five operational pools', () => {
-    expect(USAGE_POOLS).toEqual(['grok-ultra', 'codex-cmp', 'codex-personal', 'claude-max', 'terra']);
+  it('covers exactly the four operational pools', () => {
+    expect(USAGE_POOLS).toEqual(['grok-ultra', 'codex-personal', 'claude-max', 'terra']);
   });
 
   it.each(EVENTS)('%s reads and writes each pool once per rolling debounce window', async event => {
@@ -54,13 +54,13 @@ describe('event-driven usage signals', () => {
   });
 
   it('uses persisted pool timestamps across independent calls and events', async () => {
-    await run('codex-cmp', 10, RESET, 'dispatch-start');
+    await run('codex-personal', 10, RESET, 'dispatch-start');
     clock += 10 * 60 * 1_000;
-    await run('codex-personal', 40, RESET, 'pr-merge');
+    await run('claude-max', 40, RESET, 'pr-merge');
     clock += 20 * 60 * 1_000;
-    expect((await run('codex-cmp', 15, RESET, '429')).written).toEqual(['codex-cmp']);
-    expect((await run('codex-personal', 45, RESET, 'limit-message')).debounced).toEqual(['codex-personal']);
-    expect(lines().map(row => row.pool)).toEqual(['codex-cmp', 'codex-personal', 'codex-cmp']);
+    expect((await run('codex-personal', 15, RESET, '429')).written).toEqual(['codex-personal']);
+    expect((await run('claude-max', 45, RESET, 'limit-message')).debounced).toEqual(['claude-max']);
+    expect(lines().map(row => row.pool)).toEqual(['codex-personal', 'claude-max', 'codex-personal']);
   });
 
   it('coalesces concurrent events before duplicate reader execution or publication', async () => {
@@ -111,9 +111,9 @@ describe('event-driven usage signals', () => {
   });
 
   it('calculates burn from same-window readings and projects full usage', async () => {
-    await run('codex-cmp', 20);
+    await run('codex-personal', 20);
     clock += WINDOW;
-    await run('codex-cmp', 30);
+    await run('codex-personal', 30);
     expect(lines()[1]).toMatchObject({ burnRatePctPerHour: 20, projected100At: '2026-10-26T16:00:00.000Z' });
   });
 
@@ -215,16 +215,16 @@ describe('event-driven usage signals', () => {
   });
 
   it('repairs a missing projection from the durable journal without rereading a debounced provider', async () => {
-    await run('codex-cmp', 30);
+    await run('codex-personal', 30);
     const previous = lines()[0];
     rmSync(join(directory, 'fleet.json'));
-    const reader = vi.fn(async () => sample('codex-cmp', 60));
+    const reader = vi.fn(async () => sample('codex-personal', 60));
     clock += 1;
-    expect((await writeUsageSignal({ directory, event: 'pr-merge', pools: ['codex-cmp'], readers: { 'codex-cmp': reader }, now })).debounced)
-      .toEqual(['codex-cmp']);
+    expect((await writeUsageSignal({ directory, event: 'pr-merge', pools: ['codex-personal'], readers: { 'codex-personal': reader }, now })).debounced)
+      .toEqual(['codex-personal']);
     expect(reader).not.toHaveBeenCalled();
     expect(lines()).toHaveLength(1);
-    expect(fleet().readings['codex-cmp']).toEqual(previous);
+    expect(fleet().readings['codex-personal']).toEqual(previous);
   });
 
   it('fails closed on a backward wall clock without reading or appending', async () => {

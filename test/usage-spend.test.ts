@@ -10,7 +10,7 @@ const fixture = { schema: 'dispatchd.status.v1', last_tick: '2026-11-09T16:00:00
 describe('spend down', () => {
   it('always includes one row for every desktop pool, including an unmeasured gift', () => {
     const rows = projectUsageSpend(null, now).pools;
-    const required = ['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'zai', 'local'];
+    const required = ['codex-personal', 'claude', 'claude-api', 'devin', 'zai', 'local'];
     for (const pool of required) expect(rows.filter(row => row.pool === pool)).toHaveLength(1);
     expect(new Set(rows.map(row => row.pool)).size).toBe(rows.length);
     expect(rows.find(row => row.pool === 'claude-api')?.unit).toBe('usd');
@@ -18,15 +18,15 @@ describe('spend down', () => {
       resetAt: null, burnPerHour: null, projectedUnusedPercent: null, projectedUnusedUsd: null });
   });
 
-  it('keeps CMP and gift units separate and exposes their measured forecasts', () => {
+  it('keeps personal Codex and gift units separate and exposes their measured forecasts', () => {
     const snapshot = { ...fixture, budget: {
-      'codex-cmp': { use_it_all: { known: true, stale: false, used_pct: 40,
+      'codex-personal': { use_it_all: { known: true, stale: false, used_pct: 40,
         reset_at: '2026-11-10T02:00:00Z', burn_pct_per_hour: 6 } },
       'claude-api': { gift: { usd_remaining: 90, usd_granted: 120, as_of: fixture.last_tick,
         expires_at: '2026-11-10T02:00:00Z', usd_burn_per_hour: 3 } },
     } };
     const rows = projectUsageSpend(snapshot, now).pools;
-    expect(rows.find(row => row.pool === 'codex-cmp')).toMatchObject({ unit: 'percent', usedPercent: 40,
+    expect(rows.find(row => row.pool === 'codex-personal')).toMatchObject({ unit: 'percent', usedPercent: 40,
       resetAt: '2026-11-10T02:00:00.000Z', burnPerHour: 6, projectedUnusedPercent: 0, verdict: 'on-pace' });
     expect(rows.find(row => row.pool === 'claude-api')).toMatchObject({ unit: 'usd', usedPercent: 25,
       resetAt: '2026-11-10T02:00:00.000Z', burnPerHour: 3, projectedUnusedPercent: 50,

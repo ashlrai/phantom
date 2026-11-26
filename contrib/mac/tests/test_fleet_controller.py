@@ -31,7 +31,7 @@ def bus(**over):
 
 
 def lanes_view(**over):
-    base = {'codex-cmp': dict(desired=10, floor=10, bound=32, held=False),
+    base = {'fixture-subscription': dict(desired=10, floor=10, bound=32, held=False),
             'codex-personal': dict(desired=32, floor=10, bound=32, held=False),
             'claude': dict(desired=8, floor=0, bound=8, held=False),
             'devin': dict(desired=6, floor=3, bound=10, held=False)}
@@ -214,7 +214,7 @@ class PhaseALedger(unittest.TestCase):
     def record(self, **over):
         r = bus(**over)
         p = fc.plan(r, lanes_view(), 0)
-        return fc.ledger_record(NOW, r, p, 'shadow', mutations=[{'lane': 'a'}], reroutes=[('J', 'codex-cmp', 'claude')])
+        return fc.ledger_record(NOW, r, p, 'shadow', mutations=[{'lane': 'a'}], reroutes=[('J', 'fixture-subscription', 'claude')])
 
     def test_line_shape_is_what_the_renderers_need(self):
         rec = self.record()
@@ -225,7 +225,7 @@ class PhaseALedger(unittest.TestCase):
         for k in ('load1', 'load5', 'load15', 'mem_free_pct', 'swap_rate_gb_h', 'procs', 'worktrees', 'queue_by_tier', 'quota',
                   'merge_rate_1h', 'ci_fail_rate'):
             self.assertIn(k, rec['signals'])
-        self.assertEqual(rec['reroutes'], [{'job': 'J', 'from': 'codex-cmp', 'to': 'claude'}])
+        self.assertEqual(rec['reroutes'], [{'job': 'J', 'from': 'fixture-subscription', 'to': 'claude'}])
         json.dumps(rec, allow_nan=False)
 
     def test_append_tail_roundtrip_and_garbage_lines_skipped(self):
@@ -264,10 +264,10 @@ class PhaseBShed(unittest.TestCase):
 
     def test_target_math_per_level(self):
         lv = lanes_view()
-        for level, want in [(0, {'codex-cmp': 10, 'codex-personal': 32, 'claude': 8, 'devin': 6}),
-                            (1, {'codex-cmp': 10, 'codex-personal': 16, 'claude': 4, 'devin': 3}),
-                            (2, {'codex-cmp': 10, 'codex-personal': 10, 'claude': 2, 'devin': 3}),
-                            (3, {'codex-cmp': 10, 'codex-personal': 10, 'claude': 0, 'devin': 3})]:
+        for level, want in [(0, {'fixture-subscription': 10, 'codex-personal': 32, 'claude': 8, 'devin': 6}),
+                            (1, {'fixture-subscription': 10, 'codex-personal': 16, 'claude': 4, 'devin': 3}),
+                            (2, {'fixture-subscription': 10, 'codex-personal': 10, 'claude': 2, 'devin': 3}),
+                            (3, {'fixture-subscription': 10, 'codex-personal': 10, 'claude': 0, 'devin': 3})]:
             self.assertEqual(targets(fc.plan(bus(), lv, level)), want, level)
 
     def test_small_targets_round_up_not_to_zero_and_never_exceed_desired(self):
@@ -363,7 +363,7 @@ class PhaseBShed(unittest.TestCase):
     def test_frozen_plan_is_floors_and_keeps_holds(self):
         lv = lanes_view(claude=dict(held=True, held_by='autobackoff'))
         p = fc.frozen_plan(lv, 'controller_error:KeyError')
-        self.assertEqual(targets(p), {'codex-cmp': 10, 'codex-personal': 10, 'claude': 0, 'devin': 3})
+        self.assertEqual(targets(p), {'fixture-subscription': 10, 'codex-personal': 10, 'claude': 0, 'devin': 3})
         self.assertTrue(p['lanes']['claude']['held'])
         self.assertEqual(p['level'], 3)
 
@@ -382,11 +382,11 @@ class PhaseBShed(unittest.TestCase):
 
 class PhaseCRebalance(unittest.TestCase):
     def setUp(self):
-        self.plan = fc.plan(bus(), lanes_view(**{'codex-cmp': dict(held=True, held_by='autobackoff')}), 0)
-        self.cands = [('J1', 'codex-cmp', 'work'), ('J2', 'codex-cmp', 'frontier'), ('J3', 'codex-cmp', 'mid'), ('N1', 'codex-personal', 'work')]
+        self.plan = fc.plan(bus(), lanes_view(**{'fixture-subscription': dict(held=True, held_by='autobackoff')}), 0)
+        self.cands = [('J1', 'fixture-subscription', 'work'), ('J2', 'fixture-subscription', 'frontier'), ('J3', 'fixture-subscription', 'mid'), ('N1', 'codex-personal', 'work')]
         self.ok = lambda d, t: True
 
-    def run_rb(self, running=None, quality=None, tier_ok=None, route_ok=None, limit=4, sources=('codex-cmp',), plan=None, hold=()):
+    def run_rb(self, running=None, quality=None, tier_ok=None, route_ok=None, limit=4, sources=('fixture-subscription',), plan=None, hold=()):
         return fc.rebalance(self.cands, set(sources), (plan or self.plan)['lanes'], running or {}, quality or {}, tier_ok or self.ok,
                             route_ok or (lambda j, d: True), limit, hold)
 
@@ -400,8 +400,10 @@ class PhaseCRebalance(unittest.TestCase):
         moves = self.run_rb(running={'codex-personal': 31}, quality={'claude': 1.0})
         # personal has 32 - 31 - 1 native queued = 0 headroom, so everything lands on claude
         self.assertEqual({m[2] for m in moves}, {'claude'})
-        moves = self.run_rb(running={'codex-personal': 20})
-        self.assertEqual(moves[0], ('J1', 'codex-cmp', 'codex-personal'))
+        moves = fc.rebalance([('J1', 'claude-api', 'work')], {'claude-api'}, self.plan['lanes'],
+                             {}, {'codex-personal': 1.0, 'claude': 0.7}, self.ok,
+                             lambda j, d: True, 1)
+        self.assertEqual(moves[0], ('J1', 'claude-api', 'claude'))
 
     def test_headroom_is_target_minus_running_minus_own_queue(self):
         # personal 32, running 28, 1 native queued -> room 3; claude 8 running 8 -> none; devin/local never targets
@@ -413,13 +415,13 @@ class PhaseCRebalance(unittest.TestCase):
         self.assertEqual(moves, [])
 
     def test_never_targets_held_hold_listed_metered_devin_or_local(self):
-        view = fc.plan(bus(), lanes_view(**{'codex-cmp': dict(held=True, held_by='autobackoff'),
+        view = fc.plan(bus(), lanes_view(**{'fixture-subscription': dict(held=True, held_by='autobackoff'),
                                             'codex-personal': dict(held=True, held_by='autobackoff')}), 0)
-        self.assertEqual({m[2] for m in self.run_rb(plan=view, sources=('codex-cmp', 'codex-personal'))}, {'claude'})
-        self.assertEqual(self.run_rb(plan=view, sources=('codex-cmp', 'codex-personal'), hold=('claude',)), [])
+        self.assertEqual({m[2] for m in self.run_rb(plan=view, sources=('fixture-subscription', 'codex-personal'))}, {'claude'})
+        self.assertEqual(self.run_rb(plan=view, sources=('fixture-subscription', 'codex-personal'), hold=('claude',)), [])
         view['lanes']['claude-api'] = dict(view['lanes']['claude'], held=False, target=8)
         view['lanes']['codex-local'] = dict(view['lanes']['claude'], held=False, target=8)
-        self.assertEqual(self.run_rb(plan=view, sources=('codex-cmp', 'codex-personal'), hold=('claude',)), [])
+        self.assertEqual(self.run_rb(plan=view, sources=('fixture-subscription', 'codex-personal'), hold=('claude',)), [])
 
     def test_tier_fit_is_respected(self):
         moves = self.run_rb(tier_ok=lambda d, t: not (d == 'codex-personal' and t == 'frontier'))
@@ -437,7 +439,7 @@ class PhaseCRebalance(unittest.TestCase):
         self.assertEqual(self.run_rb(sources=()), [])
 
     def test_shed_reduces_headroom(self):
-        lv = lanes_view(**{'codex-cmp': dict(held=True, held_by='autobackoff')})
+        lv = lanes_view(**{'fixture-subscription': dict(held=True, held_by='autobackoff')})
         lvl1 = fc.plan(bus(), lv, 1)                                   # personal 16, claude 4
         moves = self.run_rb(plan=lvl1, running={'codex-personal': 16, 'claude': 0}, limit=10)
         self.assertEqual([m[2] for m in moves], ['claude'] * 3)
@@ -481,7 +483,7 @@ class PhaseCOutput(unittest.TestCase):
     def test_tier_capacity_counts_unheld_fit_lanes(self):
         p = fc.plan(bus(), lanes_view(devin=dict(held=True, held_by='autobackoff')), 0)
         cap = fc.tier_capacity(p, lambda lane, t: lane != 'claude' or t != 'fast', ['work', 'fast'])
-        self.assertEqual(cap, {'work': 10 + 32 + 8, 'fast': 10 + 32})
+        self.assertEqual(cap, {'work': 32 + 8, 'fast': 32})
 
 
 class SafetyTightenOnly(unittest.TestCase):

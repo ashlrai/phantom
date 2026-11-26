@@ -4,7 +4,7 @@ import { BUDGET_POOLS, type BudgetPool, type PoolBudgetSnapshot } from '../fleet
 // Accounts and quota units stay separate: a backend's active window can be 5h
 // while its pool budget is weekly. Never sum them or substitute one for another.
 const BACKEND: Record<BudgetPool, string> = {
-  'codex-cmp': 'codex', 'codex-personal': 'codex', claude: 'claude', devin: 'devin-cli',
+  'codex-personal': 'codex', claude: 'claude', devin: 'devin-cli',
   'grok-build': 'grok-cli', 'grok-ultra': 'grok-cli', 'local-omlx': 'local-coder',
 };
 

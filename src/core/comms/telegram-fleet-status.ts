@@ -14,7 +14,7 @@ export interface TelegramFleetStatusDeps {
 }
 
 const LANES = [
-  'codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local',
+  'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local',
   'devin-flash', 'gemini', 'zai', 'agy', 'grok', 'cursor',
 ] as const;
 const SOURCES = ['status', 'claimed', 'events', 'metrics', 'claudeLane', 'switches', 'drop'] as const;

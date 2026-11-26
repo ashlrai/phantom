@@ -1,13 +1,13 @@
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   betObservation, dayStamp, feedbackLoop, ideaToMerged, isMissing, jobLaneHours, jobTimelines, laneRows, loopMetricValue,
   mergedToInstalled, mergeMorning, morningFields, nodeCapacityRow, parseLedgerTs, percentile, selectionHints, slotLanes,
   throughput, topConstraint, type LoopReport,
 } from '../src/core/metrics/loop.js';
-import { collectLoop, latestCost, parseMergedPrs, parseReleases, readTail, writeLoop, type LoopReaders } from '../src/core/metrics/loop-collect.js';
+import { collectLoop, latestCost, parseMergedPrs, parseReleases, readTail, runsRoot, writeLoop, type LoopReaders } from '../src/core/metrics/loop-collect.js';
 import { loopStagesText } from '../src/core/metrics/loop-stages.js';
 import { cmdMetricsLoop } from '../src/cli/metrics-loop.js';
 import { cmdMetrics } from '../src/cli/metrics.js';
@@ -196,6 +196,12 @@ describe('lanes, capacity and hints', () => {
 });
 
 describe('collector readers', () => {
+  it('accepts a native absolute runs directory override, but not a relative path', () => {
+    const absolute = resolve(tmpdir(), 'phantom-runs');
+    expect(runsRoot({ ASHLR_RUNS_DIR: absolute })).toBe(absolute);
+    expect(runsRoot({ ASHLR_RUNS_DIR: 'relative-runs' })).toBe(join(homedir(), '.ashlr-runs'));
+  });
+
   it('reads the latest cost within 24h only', () => {
     const text = [J({ t: iso(120), costPerMergedPrUsd: 2.5 }), J({ ts: iso(60), costPerMergedPrUsd: 1.234 }), J({ ts: iso(30), costPerMergedPrUsd: null }), J({ ts: iso(2000), costPerMergedPrUsd: 0.1 }), 'bad'].join('\n');
     expect(latestCost(text, T0)).toMatchObject({ usd: 1.23, at: iso(60) });
