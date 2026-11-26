@@ -961,7 +961,7 @@ export interface RouterOutcome {
    * `<job>-<12 lowercase hex claim hash>` — one row per launch
    * attempt — and unknown probes by the bare job id; the read resolves
    * each launchId against the folded job window (see the module
-   * comment) and the last appended row for a resolved job stands.
+   * comment) and the first usable retained row for a resolved job stands.
    * `launch_cost_status` is the standing row's recorded probe verdict —
    * `measured` (nearly-full 60-second window, at least 12 samples),
    * `partial` (shorter recorded coverage) or `unknown` (the probe ran
@@ -2912,9 +2912,9 @@ const rewardPctUsed = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100 ? v : null;
 
 /**
- * Folds reward-signals.jsonl text into per-job evidence, last appended row
- * winning a repeat (the ledger is first-write-wins per jobId, so repeats are
- * rare). A row counts only as reward-signal v1 evidence: `v:1`, a bounded
+ * Folds reward-signals.jsonl text into per-job evidence. The first usable
+ * retained row wins, matching the writer's first-write-wins contract.
+ * A row counts only as reward-signal v1 evidence: `v:1`, a bounded
  * `jobId`, a boolean `merged` verdict and the row's `dispatchedAt`/
  * `recordedAt` stamps — the fields every producer row carries. Consumed
  * fields join under their own bounded shapes: milliseconds become seconds,
@@ -2942,6 +2942,7 @@ export function foldRewardSignals(text: string): Map<string, RewardOutcomeEviden
         typeof r['merged'] !== 'boolean' ||
         typeof dispatchedAt !== 'string' || !Number.isFinite(Date.parse(dispatchedAt)) ||
         typeof recordedAt !== 'string' || !Number.isFinite(Date.parse(recordedAt))) continue;
+    if (rewards.has(jobId)) continue;
     const cost = r['cost'];
     const costRow = cost !== null && typeof cost === 'object' && !Array.isArray(cost) ? cost as Row : null;
     const ttmMs = r['merged'] ? num(r['timeToMergeMs']) : null;

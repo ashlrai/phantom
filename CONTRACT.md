@@ -869,7 +869,7 @@ reward-signal substrate's per-job resolved-outcome rows
 append; src/core/metrics/reward-signal.ts).
 `foldRewardSignals` collapses the tail to each job's recorded
 `{merged, ttm_s, ci_wall_s, cost_usd, repo, pool_pct_used}` evidence —
-last appended row winning a repeat, only rows with `v:1`, a bounded
+first usable retained row winning a repeat in ledger order, only rows with `v:1`, a bounded
 `jobId`, a boolean `merged` verdict and parseable `dispatchedAt`/
 `recordedAt` stamps counting, consumed fields joining under their own
 bounded shapes (milliseconds become seconds, `costUsd`/`pctUsedDelta`/

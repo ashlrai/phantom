@@ -763,7 +763,9 @@ daemon's reward-sync feed and supervising bridges append one `v:1` row
 per terminal job (`jobId`, resolved `merged` verdict,
 `dispatchedAt`/`mergedAt`/`recordedAt` stamps, derived
 `timeToMergeMs`, `ciWallMs`, and a `cost` block carrying the metered
-pool readings). The daemon excludes batch session wrappers (`RQ-BATCH-*`)
+pool readings). The router uses the first usable receipt per job in the
+retained ledger, so duplicate receipts cannot replace its verdict or
+measurements. The daemon excludes batch session wrappers (`RQ-BATCH-*`)
 and node-pool attempt telemetry from the reward fold. Batch members still
 use their own `batch_claim` rows and PR verdicts. The daemon records
 `ciWallMs` when the rewarded dispatch

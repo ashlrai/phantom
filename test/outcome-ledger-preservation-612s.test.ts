@@ -2509,24 +2509,24 @@ describe('router outcome cross-review join', () => {
 });
 
 describe('router outcome reward-signals join', () => {
-  it('foldRewardSignals keeps only v1 rows and collapses repeats last-wins', () => {
+  it('keeps the first usable reward receipt for each job', () => {
     const rewards = foldRewardSignals([
+      JSON.stringify({ ...rewardRow('J1', false), recordedAt: 'not a date' }),
       JSON.stringify(rewardRow('J1', true)),
       'not json',
       JSON.stringify({ ...rewardRow('J2', false), v: 2 }),
       JSON.stringify({ ...rewardRow('J3', true), jobId: 'bad id!' }),
       JSON.stringify({ ...rewardRow('J4', true), merged: 'yes' }),
       JSON.stringify({ ...rewardRow('J5', true), dispatchedAt: 'not a date' }),
-      JSON.stringify(rewardRow('J1', false, { timeToMergeMs: 5000, mergedAt: null })),
+      JSON.stringify(rewardRow('J1', false, { ciWallMs: 1000, recordedAt: '2026-11-01T03:00:00.000Z' })),
       JSON.stringify(rewardRow('J6', true, {
         cost: { pool: 'codex-cmp', pctUsedStart: 10, pctUsedEnd: 12.5, pctUsedDelta: 140, costUsd: -1 },
         repo: '../escape', timeToMergeMs: 500, ciWallMs: null,
       })),
     ].join('\n'));
     expect([...rewards.keys()].sort()).toEqual(['J1', 'J6']);
-    // The second J1 row wins the repeat: closed-unmerged verdict, no merge span.
     expect(rewards.get('J1')).toEqual({
-      merged: false, ttm_s: null, ci_wall_s: 600, cost_usd: 0.75,
+      merged: true, ttm_s: 3600, ci_wall_s: 600, cost_usd: 0.75,
       repo: 'ashlrai/phantom', pool_pct_used: 2.5,
     });
     // Out-of-shape consumed fields drop to null without discarding the row.
@@ -2551,6 +2551,7 @@ describe('router outcome reward-signals join', () => {
     ].join('\n'));
     const ashlar = rewardLedger([
       rewardRow('J1', true),
+      rewardRow('J1', false, { ciWallMs: 1000 }),
       rewardRow('J2', false, { timeToMergeMs: 999_000, ciWallMs: 1 }),
       rewardRow('J3', true),
       rewardRow('J4', false, { timeToMergeMs: 5_000 }),
