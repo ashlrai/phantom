@@ -158,6 +158,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Act on Eng Ops incident files for a stuck release, a launchd loop, a stalled lane, or outside load | [Autofix](https://github.com/ashlrai/phantom/blob/master/docs/AUTOFIX.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
 | Understand the signed desktop updater feed and its published-state verification | [Desktop update channel](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-UPDATE-CHANNEL.md) |
+| Change the desktop sidebar mark, theme, accent, or density from Settings or the CLI | [Customize Phantom Desktop](https://github.com/ashlrai/phantom/blob/master/docs/APPEARANCE.md) |
 | Inspect release dependencies and unresolved publisher ownership across repositories | [Ecosystem release planning](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTEM-RELEASE-CONTRACTS.md) |
 | Diagnose daemon liveness and prepare the protected Mac revival handoff | [Daemon revival source guide](https://github.com/ashlrai/phantom/blob/master/docs/DAEMON-REVIVE.md) |
 | Read the resident tick's bounded phases, outcomes and per-stage errors | [Daemon tick phases](https://github.com/ashlrai/phantom/blob/master/docs/daemon-tick-phases.md) |

@@ -1,6 +1,6 @@
 /**
- * core/settings-appearance.ts — the four plain-word appearance settings an
- * operator or agent changes most: theme, accent, density, font size.
+ * core/settings-appearance.ts — the plain-word appearance settings an
+ * operator or agent changes most: brand, theme, accent, density, font size.
  *
  * NOT a second store. These are a typed view over the ONE shared appearance
  * record (`<runs dir>/ui/appearance.json`, core/verse/ui-appearance-file.ts)
@@ -33,11 +33,13 @@ import {
   type UiScale,
   type UiTheme,
 } from './verse/ui-appearance-file.js';
+import { type BrandMark } from './brand/sidebar-upload.js';
 
-export const APPEARANCE_SETTING_KEYS = ['theme', 'accent', 'density', 'fontSize'] as const;
+export const APPEARANCE_SETTING_KEYS = ['theme', 'accent', 'density', 'fontSize', 'brand'] as const;
 export type AppearanceSettingKey = (typeof APPEARANCE_SETTING_KEYS)[number];
 
 export interface AppearanceSettings {
+  brand: BrandMark;
   theme: UiTheme;
   /** Lowercase '#rrggbb'. */
   accent: string;
@@ -47,7 +49,7 @@ export interface AppearanceSettings {
 }
 
 /** The record fields one setting writes. */
-export type AppearancePatch = Partial<Pick<UiAppearance, 'theme' | 'accentH' | 'accentS' | 'accentL' | 'density' | 'uiScale'>>;
+export type AppearancePatch = Partial<Pick<UiAppearance, 'theme' | 'accentH' | 'accentS' | 'accentL' | 'density' | 'uiScale' | 'brand' | 'brandAsset'>>;
 
 export type AppearanceValidation =
   | { ok: true; patch: AppearancePatch }
@@ -89,9 +91,10 @@ export function hexToHsl(input: string): { h: number; s: number; l: number } | n
   return { h: ((Math.round(h) % 360) + 360) % 360, s: Math.round(s * 100), l: Math.round(l * 100) };
 }
 
-/** The four settings as read from a stored (or default) appearance record. */
+/** The settings as read from a stored (or default) appearance record. */
 export function appearanceSettingsFrom(appearance: UiAppearance = defaultUiAppearance()): AppearanceSettings {
   return {
+    brand: appearance.brand,
     theme: appearance.theme,
     accent: hslToHex(appearance.accentH, appearance.accentS, appearance.accentL),
     density: appearance.density,
@@ -110,6 +113,10 @@ function oneOf(key: string, value: string, values: readonly string[]): string | 
 /** Validate one `key value` pair (both as typed on a command line) into a record patch. */
 export function validateAppearanceSetting(key: string, value: string): AppearanceValidation {
   switch (key) {
+    case 'brand':
+      return value === 'p' || value === 'ghost'
+        ? { ok: true, patch: { brand: value } }
+        : { ok: false, error: 'brand must be p or ghost. To use an image, upload a brand file.' };
     case 'theme': {
       const error = oneOf(key, value, UI_THEMES);
       return error ? { ok: false, error } : { ok: true, patch: { theme: value as UiTheme } };
@@ -193,7 +200,7 @@ export function parseFontSize(value: string): UiScale | null {
 
 /**
  * The lenient read: any input (a stored blob, a hand-edited file, null)
- * becomes four valid settings. Each value that does not validate falls back
+ * becomes valid settings. Each value that does not validate falls back
  * to ITS default; this never throws. Writes use the strict validators above.
  */
 export function normalizeAppearanceSettings(input: unknown): AppearanceSettings {
@@ -205,6 +212,7 @@ export function normalizeAppearanceSettings(input: unknown): AppearanceSettings 
     const checked = typeof value === 'string' ? validateAppearanceSetting(key, value) : null;
     if (checked?.ok) patch = { ...patch, ...checked.patch };
   }
+  if (record.brand === 'upload') patch.brand = 'upload';
   return appearanceSettingsFrom({ ...defaultUiAppearance(), ...patch });
 }
 
@@ -214,6 +222,7 @@ export const APPEARANCE_FLAGS: Readonly<Record<string, AppearanceSettingKey>> = 
   '--accent': 'accent',
   '--density': 'density',
   '--font-size': 'fontSize',
+  '--brand': 'brand',
 };
 
 /**
@@ -223,22 +232,29 @@ export const APPEARANCE_FLAGS: Readonly<Record<string, AppearanceSettingKey>> = 
  */
 export function parseAppearanceFlags(
   args: readonly string[],
-): { ok: true; patch: AppearancePatch; settings: AppearanceSettingKey[] } | { ok: false; error: string } {
+): { ok: true; patch: AppearancePatch; settings: AppearanceSettingKey[]; brandFile?: string } | { ok: false; error: string } {
   let patch: AppearancePatch = {};
   const settings: AppearanceSettingKey[] = [];
+  let brandFile: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
     const eq = arg.indexOf('=');
     const flag = eq > 0 ? arg.slice(0, eq) : arg;
-    const key = APPEARANCE_FLAGS[flag];
-    if (key === undefined) return { ok: false, error: `unknown option "${arg}"; use ${Object.keys(APPEARANCE_FLAGS).join(', ')}.` };
     const value = eq > 0 ? arg.slice(eq + 1) : args[++i];
+    const key = APPEARANCE_FLAGS[flag];
+    if (key === undefined && flag !== '--brand-file') return { ok: false, error: `unknown option "${arg}"; use ${[...Object.keys(APPEARANCE_FLAGS), '--brand-file'].join(', ')}.` };
     if (value === undefined || value === '' || (eq < 0 && value.startsWith('--'))) return { ok: false, error: `${flag} needs a value.` };
+    if (key === undefined) {
+      if (brandFile !== undefined) return { ok: false, error: '--brand-file was given twice.' };
+      brandFile = value;
+      continue;
+    }
     if (settings.includes(key)) return { ok: false, error: `${flag} was given twice.` };
     const checked = validateAppearanceSetting(key, value);
     if (!checked.ok) return checked;
     patch = { ...patch, ...checked.patch };
     settings.push(key);
   }
-  return { ok: true, patch, settings };
+  if (brandFile !== undefined && patch.brand !== undefined) return { ok: false, error: 'Use --brand or --brand-file, not both.' };
+  return { ok: true, patch, settings, ...(brandFile === undefined ? {} : { brandFile }) };
 }

@@ -12,6 +12,23 @@ with master reason codes and posture evidence; no model calls, dispatch or write
 `cli/bots.ts::runBotsCli(argv, out?, home?)` returns 0 on success, 1 on error/refusal.
 Creation requires `--dry-run` and never calls the writer.
 
+## Desktop appearance
+
+`UiAppearance` (`src/core/verse/ui-appearance-file.ts`) includes
+`brand: 'p' | 'ghost' | 'upload'` and an optional `brandAsset` digest
+in `sha256:<hex>` form, carried only for an uploaded mark. Older records default to `p`.
+`AppearanceSettings` and `phm settings appearance get --json` expose the
+brand choice, not the asset digest. Use `set --brand p|ghost` for a built-in
+mark or `set --brand-file <path>` to import an image together with any
+other appearance flags.
+
+`GET /api/verse/appearance/brand-image` returns the selected image under
+the read-session boundary, or 404 when none is available. The response
+does not allow caching, content sniffing, or active SVG. `POST` to the
+same path requires dispatch and the mutation token, accepts a base64
+SVG/PNG/WebP of at most 512 KiB decoded, and returns the updated
+`UiAppearanceFile`. See [Customize Phantom Desktop](docs/APPEARANCE.md).
+
 ## Harness experiment adoption
 
 `ExperimentResultV1` (`src/core/learn/harness-types.ts`) records the base and

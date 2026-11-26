@@ -3215,9 +3215,11 @@ async function main(): Promise<void> {
       case 'settings': {
         if (wantsHelp(rest)) {
           printCoreUsage('settings', 'Desktop and phone app appearance: theme, accent, density, font size.', [
-            ['phm settings appearance [--json]', 'Read the four appearance settings'],
+            ['phm settings appearance [--json]', 'Read the appearance settings'],
             ['phm settings appearance [--theme <t>] [--accent <hex>] [--density <d>] [--font-size <n>] [--json]', 'Change any of them in one write; a running app applies it live'],
             ['phm settings appearance --reset [--json]', 'Back to the defaults'],
+            ['phm settings appearance set --brand <p|ghost> [--json]', 'Choose a built-in sidebar mark'],
+            ['phm settings appearance set --brand-file <path> [--json]', 'Upload an SVG, PNG or WebP sidebar mark'],
           ]);
           process.exitCode = 0;
           break;
