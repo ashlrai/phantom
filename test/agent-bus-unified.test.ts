@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,7 +8,7 @@ import {
 } from '../src/core/agents/bus-identity.js';
 import {
   agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodySummary, busPageResumeCursor, listBusChannels, postChannelMessage, postLabelMessage,
-  readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
+  readAgentBusHops, readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
   sendWakeRequest, shouldWake, updateWorkStatus, type AgentWakeRow, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
@@ -23,6 +23,7 @@ import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.j
 import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
 import { publishGroupPresence, subscribeGroup } from '../src/core/fleet/bus-group.js';
 import { busBodyKind, busBodySchema, busV2ContractSummary } from '../src/core/agents/bus-v2-schema.js';
+import { appendBusHop } from '../src/core/fleet/bus-hoplog.js';
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -4055,5 +4056,93 @@ describe('CLI session adapters', () => {
     expect(framed).not.toContain(token);
     expect(framed).not.toContain('"claimKeys"');
     expect(framed).not.toContain('"queueId"');
+  });
+});
+
+describe('hops read', () => {
+  const hoplogFile = (options: UnifiedBusOptions) => join(options.root!, 'bus', 'hops.jsonl');
+  const hop = (options: UnifiedBusOptions, id: string, from: string, to: string,
+    tokens: { inputTokens?: number; outputTokens?: number } = {}) =>
+    appendBusHop({ id, from, to, ...tokens }, hoplogFile(options));
+
+  it('reports a verified-missing log as an honest empty read', () => {
+    const options = setup();
+    expect(readAgentBusHops({}, options)).toMatchObject({ status: 'ok', source: 'missing',
+      hops: [], matched: 0, returnedHops: 0, skippedRows: 0, truncated: false, usageSummary: null });
+  });
+
+  it('reads the tail oldest-first and filters by identity labels, exact id and page', () => {
+    const options = setup();
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['pico'] }, options).status).toBe('created');
+    register(options, 'nova');
+    expect(hop(options, 'h-1', 'agent:atlas', 'agent:nova', { inputTokens: 3, outputTokens: 4 })).toBe(true);
+    expect(hop(options, 'h-2', 'agent:nova', 'agent:atlas')).toBe(true);
+    expect(hop(options, 'h-3', 'leader', 'agent:nova')).toBe(true);
+    expect(hop(options, 'h-4', 'pico', 'agent:nova', { outputTokens: 9 })).toBe(true);
+    expect(hop(options, 'h-5', 'agent:nova', 'fleet.mesh')).toBe(true);
+
+    const all = readAgentBusHops({}, options);
+    if (all.status !== 'ok') throw new Error('unreadable');
+    expect(all.source).toBe('available');
+    expect(all.matched).toBe(5);
+    expect(all.returnedHops).toBe(5);
+    expect(all.hops.map(h => h.id)).toEqual(['h-1', 'h-2', 'h-3', 'h-4', 'h-5']);
+    expect(all.hops[0]).toEqual({ id: 'h-1', from: 'agent:atlas', to: 'agent:nova',
+      inputTokens: 3, outputTokens: 4 });
+    expect(all.hops[1]!.inputTokens).toBeNull();
+    expect(all.usageSummary?.hopCount).toBe(5);
+    expect(all.usageSummary?.input).toMatchObject({ total: 3, knownSamples: 1, unknownSamples: 4 });
+    expect(all.usageSummary?.output.total).toBe(13);
+    expect(all.truncated).toBe(false);
+
+    // --from resolves every registered spelling of one identity.
+    expect(readAgentBusHops({ from: 'atlas' }, options)).toMatchObject({ matched: 2, returnedHops: 2 });
+    const atlasHops = readAgentBusHops({ from: 'atlas' }, options);
+    if (atlasHops.status === 'ok') expect(atlasHops.hops.map(h => h.id)).toEqual(['h-1', 'h-4']);
+    expect(readAgentBusHops({ from: 'agent:nova' }, options)).toMatchObject({ matched: 2 });
+    expect(readAgentBusHops({ to: 'nova' }, options)).toMatchObject({ matched: 3 });
+    expect(readAgentBusHops({ excludeFrom: 'atlas' }, options)).toMatchObject({ matched: 3 });
+    // An unresolvable ref keeps exact-label matching.
+    expect(readAgentBusHops({ from: 'leader' }, options)).toMatchObject({ matched: 1 });
+    expect(readAgentBusHops({ id: 'h-2' }, options)).toMatchObject({ matched: 1 });
+    expect(readAgentBusHops({ id: 'h-' }, options)).toMatchObject({ matched: 0 });
+    // Composed filters intersect.
+    expect(readAgentBusHops({ from: 'nova', to: 'agent:atlas' }, options)).toMatchObject({ matched: 1 });
+  });
+
+  it('returns the newest page and reports the honest cut', () => {
+    const options = setup();
+    for (let i = 1; i <= 5; i += 1) hop(options, `h-${i}`, 'a', 'b');
+    const page = readAgentBusHops({ limit: 2 }, options);
+    if (page.status !== 'ok') throw new Error('unreadable');
+    expect(page.matched).toBe(5);
+    expect(page.returnedHops).toBe(2);
+    expect(page.hops.map(h => h.id)).toEqual(['h-4', 'h-5']);
+    expect(page.truncated).toBe(true);
+    expect(page.usageSummary?.hopCount).toBe(2);
+    // A page covering every match is not truncated.
+    expect(readAgentBusHops({ limit: 5 }, options)).toMatchObject({ truncated: false });
+  });
+
+  it('counts malformed rows as skipped evidence, never activity', () => {
+    const options = setup();
+    hop(options, 'h-1', 'a', 'b');
+    appendFileSync(hoplogFile(options), 'not json\n');
+    const result = readAgentBusHops({}, options);
+    expect(result).toMatchObject({ status: 'ok', matched: 1, skippedRows: 1 });
+  });
+
+  it('reports unavailable when the log fails custody and invalid on bad args', () => {
+    const options = setup();
+    hop(options, 'h-1', 'a', 'b');
+    chmodSync(hoplogFile(options), 0o644);
+    try {
+      expect(readAgentBusHops({}, options)).toEqual({ status: 'unavailable',
+        reason: 'Bus hop log is unreadable.' });
+    } finally { chmodSync(hoplogFile(options), 0o600); }
+    expect(readAgentBusHops({ limit: 0 }, options).status).toBe('invalid');
+    expect(readAgentBusHops({ limit: 51 }, options).status).toBe('invalid');
+    expect(readAgentBusHops({ from: 'bad label' }, options).status).toBe('invalid');
+    expect(readAgentBusHops({ id: '' }, options).status).toBe('invalid');
   });
 });
