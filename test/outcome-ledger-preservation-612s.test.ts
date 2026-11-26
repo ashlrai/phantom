@@ -2636,6 +2636,33 @@ describe('router outcome reward-signals join', () => {
     });
   });
 
+  it('joins only reward receipts available when the report started', async () => {
+    const reportStart = '2026-11-01T02:00:00.000Z';
+    const future = '2026-11-01T02:00:00.001Z';
+    const root = runsDir(['J1', 'J2', 'J3', 'J4'].map(job => JSON.stringify({ job, lane: 'alpha' })).join('\n'));
+    const ashlarDir = rewardLedger([
+      rewardRow('J1', false, { recordedAt: future }),
+      rewardRow('J1', true, { recordedAt: reportStart }),
+      rewardRow('J2', true, { recordedAt: future }),
+      rewardRow('J3', true, { dispatchedAt: future }),
+      rewardRow('J4', true, { mergedAt: future }),
+    ]);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(reportStart));
+    try {
+      const result = await readRouterOutcomes({ runsDir: root, ashlarDir, authorityEvidence: null });
+      expect(result.reward_state).toBe('read');
+      const byId = new Map(result.outcomes.map(outcome => [outcome.job_id, outcome]));
+      expect(byId.get('J1')).toMatchObject({ merged: true, ttm_s: 3600, ci_wall_s: 600, cost_usd: 0.75 });
+      for (const id of ['J2', 'J3', 'J4']) {
+        expect(byId.get(id)).toMatchObject({
+          merged: null, ttm_s: null, ci_wall_s: null, cost_usd: null, repo: null, pool_pct_used: null,
+        });
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('fills only fields the jobs fold left null and never contradicts a recorded verdict', async () => {
     const root = runsDir([
       // J1: no merge verdict, no repo, no cost — the reward row fills them all.
