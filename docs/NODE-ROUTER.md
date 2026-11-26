@@ -423,6 +423,11 @@ CLI therefore costs a node only its own measured footprint. A whole-host
 backoff only happens when one of those gates is hit. A harness never seen on
 the node reports `null` (unknown), never a guess. The previous document supplies swap growth and footprints
 learned in the last 7 days.
+Each live session of a harness needs a positive memory reading to refresh its
+footprint. A zero RSS total leaves that harness on its eligible learned
+footprint, or leaves its footprint and runnable count unknown if no usable
+measurement exists and no host-wide stop applies. Other harnesses keep their
+own measurements.
 
 `phm node route` scores each job's feasible placements by learned lane merge
 rate per token and per minute, using one or more capacity documents, a

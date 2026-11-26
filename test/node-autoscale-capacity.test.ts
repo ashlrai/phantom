@@ -260,6 +260,24 @@ describe('capacity model', () => {
     expect(chained.agents_runnable_now.codex).toBeNull();
   });
 
+  it.each([false, true])('handles zero RSS without invalidating the capacity document (previous sample: %s)', usePrevious => {
+    const baseline = snap();
+    const previous = usePrevious ? computeNodeCapacity(baseline) : null;
+    const doc = computeNodeCapacity(snap({
+      measuredAtMs: T0 + 60_000,
+      sessions: baseline.sessions!.map(session => session.harness === 'codex' ? { ...session, memBytes: 0 } : session),
+    }), previous);
+
+    expect(parseNodeCapacityDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
+    expect(doc.agents_runnable_now.grok).toBeGreaterThan(0);
+    expect(doc.agents_runnable_now.codex).toBe(previous?.agents_runnable_now.codex ?? null);
+    if (previous) {
+      expect(doc.per_harness_footprint.codex).toMatchObject({ source: 'learned', learned_at: previous.measured_at });
+    } else {
+      expect(doc.per_harness_footprint.codex).toBeUndefined();
+    }
+  });
+
   it('charges host busy cores per session when the process source has no CPU column', () => {
     const doc = computeNodeCapacity(snap({ processSource: 'pgrep+footprint', cpu: { cores: 18, load: [214.56, 115.14, 89.08], busyPercent: 95 },
       sessions: [{ harness: 'codex', rootPid: 1, processes: 3, memBytes: 500 * MIB, cpuPercent: null }] }));
