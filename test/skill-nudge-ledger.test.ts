@@ -360,6 +360,19 @@ describe('skillNudgeJobsFromLedger', () => {
 describe('syncSkillNudgesFromJobsLedger', () => {
   const NOW = () => new Date('2026-10-28T20:00:00.000Z');
 
+  it.each(['ts', 'mergedAt'])('waits for a merge with a future %s', async field => {
+    const job = 'RQ-REC';
+    const future = '2026-10-28T21:00:00.000Z';
+    const text = [launch(job), launch(job), outcome(job, 'MERGED', { [field]: future })].join('\n');
+
+    const early = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(early.candidates).toBe(0);
+    expect(cards).toHaveLength(0);
+    const observed = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: () => new Date(future) });
+    expect(observed.candidates).toBe(1);
+    expect(cards[0]?.sourceJobIds).toEqual([job]);
+  });
+
   it.each([true, false])('uses terminal outcome order for recurrence (third failure before merge: %s)', async beforeMerge => {
     const firstFailures = ['RQ-F1', 'RQ-F2'].flatMap(id => [
       launch(id), finish(id, { failure_class: 'quota' }), outcome(id, 'CLOSED'),
