@@ -93,7 +93,7 @@ function dayAndTime(iso: string): string {
 
 /** "20 min", "1 hour", "3 hours". */
 function span(hours: number): string {
-  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} min`;
+  if (hours < 1) return `${Math.min(59, Math.max(1, Math.round(hours * 60)))} min`;
   const h = Math.round(hours);
   return plural(h, 'hour', 'hours');
 }
@@ -103,8 +103,9 @@ const atRisk = (row: PoolRow): boolean => row.wasteRisk === 'high' || row.wasteR
 function rowFor(pool: PoolRow, input: QueueSupplyInput, nowMs: number, windowH: number): SupplyRow {
   const label = poolLabel(pool.id);
   const ready = input.readyByLane === null ? null : input.readyByLane[pool.id] ?? 0;
-  const starts = input.startsByLane === null ? null : round1((input.startsByLane[pool.id] ?? 0) / windowH);
-  const hoursQueued = ready === null ? null : ready === 0 ? 0 : starts !== null && starts > 0 ? round1(ready / starts) : null;
+  const launchCount = input.startsByLane === null ? null : input.startsByLane[pool.id] ?? 0;
+  const starts = launchCount === null ? null : launchCount / windowH;
+  const hoursQueued = ready === null ? null : ready === 0 ? 0 : launchCount !== null && launchCount > 0 ? ready * windowH / launchCount : null;
   const resetMs = pool.resetAt === null ? NaN : Date.parse(pool.resetAt);
   const resetsIn = Number.isFinite(resetMs) && resetMs > nowMs ? round1((resetMs - nowMs) / 3_600_000) : null;
   const used = pool.usedPct;
