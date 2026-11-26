@@ -142,6 +142,22 @@ describe('CI baseline evidence', () => {
     const suite = await analyzeCiBaseline('owner/repo', github({ suite: true, pass: true, filePass: true, count: 1 }).gh);
     expect(suite.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
   });
+  it('requires a complete module pass or an explicit case pass to classify a case as flaky', async () => {
+    for (const summary of ['4 tests | 1 skipped', '4 tests | 1 todo', '0 test']) {
+      for (const evidence of ['summary', 'case', 'suite']) {
+        const { gh } = github({ count: 1, pass: true, suite: evidence === 'suite' });
+        const report = await analyzeCiBaseline('owner/repo', async args => {
+          if (args[1] !== 'repos/owner/repo/actions/jobs/10/logs') return gh(args);
+          const log = `/usr/bin/git log -1 --format=%H\n${master}\n✓ |unit| test/example.test.ts (${summary}) 4ms\n`;
+          return { ok: true, stdout: log + (evidence === 'case' ? fixture('pass') : ''), stderr: '' };
+        });
+        const expected = evidence === 'summary'
+          ? { classification: 'unknown', action: 'unknown', master: 'unknown' }
+          : { classification: 'probable-flake', action: 'rerun-failed', master: 'pass' };
+        expect(report.groups[0], `${summary} / ${evidence}`).toMatchObject(expected);
+      }
+    }
+  });
   it('excludes stale and unreadable or unrecognized logs', async () => {
     for (const options of [{ stale: true }, { unknown: true }, { unreadable: true }]) {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);
