@@ -28,6 +28,7 @@ import { join } from 'node:path';
 import { explainFleetAdmission, type FleetAdmissionReport } from '../../cli/fleet-admission.js';
 import { readFleetQueue, type FleetQueueV1, type Source } from './runs-parked-queue.js';
 import { clampLocalTarget, LOCAL_LANE } from './local-capacity.js';
+import { laneLaunchTarget } from './lane-launch-target.js';
 import { readLaneTargets, type LaneTargetsV1 } from './runs-lane-targets.js';
 import { readRebaseStatus } from './rebase-status.js';
 
@@ -226,7 +227,9 @@ export function autopilotLanes(state: FleetAutopilotState): AutopilotLane[] {
     const queuedRow = queueOk ? readyByLane.get(raw) ?? null : null;
     const running = admit?.running ?? null;
     const slot = slotsByLane.get(raw) ?? slotsByLane.get(lane);
-    const rawTarget = admit?.target ?? slot?.target ?? null;
+    // Config decreases tighten the projection immediately. Increases need
+    // a dispatcher tick that confirms the higher launch ceiling.
+    const rawTarget = admit === null ? slot?.target ?? null : laneLaunchTarget(admit.target, slot?.target);
     const target = lane === LOCAL_LANE ? clampLocalTarget(rawTarget, { workers: state.localWorkers ?? null }) : rawTarget;
     // A configured hold can arrive before the next dispatcher tick. The
     // tick can also observe runtime holds absent from slots.json.

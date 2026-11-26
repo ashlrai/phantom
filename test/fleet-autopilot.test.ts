@@ -220,6 +220,27 @@ describe('planFleetAutopilot', () => {
     expect(report.action.kind).toBe('no-op');
   });
 
+  it.each([0, 5])('honors a lower configured target before the next tick with %i ready rows', (ready) => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 1, 3, ready)], 4, 1),
+      queue: queueView({ byLane: [{ lane: 'devin', ready, parked: 0 }] }),
+      slots: slotsView([slotLane('devin', 1)]),
+    }));
+    expect(report.lanes[0]).toMatchObject({ running: 1, target: 1, utilization: 1, freeSlots: 0 });
+    expect(report.gaps).toEqual([]);
+    expect(report.action).toMatchObject({ kind: 'no-op', reason: 'fleet-healthy' });
+  });
+
+  it('keeps the last tick’s launch ceiling when the configured target is higher', () => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 1, 1, 5)], 4, 1),
+      queue: queueView({ byLane: [{ lane: 'devin', ready: 5, parked: 0 }] }),
+      slots: slotsView([slotLane('devin', 3)]),
+    }));
+    expect(report.lanes[0]).toMatchObject({ target: 1, freeSlots: 0 });
+    expect(report.gaps).toEqual([]);
+  });
+
   it('skips a sibling already held in slots when looking for a lane to hold', () => {
     const report = planFleetAutopilot(state({
       admission: admission([admissionLane('devin', 0, 2, 5), admissionLane('codex', 2, 2, 12)], 2, 2),
