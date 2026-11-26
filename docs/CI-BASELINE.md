@@ -40,6 +40,18 @@ deliberate non-verdicts, not incomplete checks. A completed run that
 instantiated no jobs at all reads the same way when its own conclusion is
 not `success`/`neutral`/`skipped` — the jobless `startup_failure` case has
 no job list to mark incomplete, so the run's conclusion carries it.
+A completed run that concludes `failure` must also produce at least one
+parsed failure from a verified job log: when every failed job's log was
+dropped as unverifiable or carried no recognized failure shape, the run's
+failure is unexplained and the PR reads `unknown` (`unreadable-log-or-
+unverified-checkout`) rather than `fresh` — the same never-clean contract
+as an unreadable log. This covers workflows whose jobs cannot prove their
+checkout at all (the path-gated Install smoke workflow's unpinned
+checkout) and any future gate whose failure output no parser recognizes;
+a failure explained by any verified sibling log still reads `fresh` with
+its groups. The same rule drops master's `known` state: a failed master
+run whose verified failure logs all parse to nothing can no longer pass
+as known-green.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.

@@ -2242,17 +2242,6 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);
   const masterRuns = branch?.commit?.sha ? await runs(branch.commit.sha) : null;
-  const masterLogs: { conclusion: string; text: string }[] = [];
-  let masterKnown = !!branch?.commit?.sha && !!masterRuns?.length;
-  for (const run of masterRuns ?? []) {
-    if (run.head_sha !== branch?.commit?.sha || run.status !== 'completed') { masterKnown = false; continue; }
-    const evidence = await logs(run, run.head_sha);
-    // An incomplete check (cancelled, timed-out, ...) keeps its verified
-    // job evidence — a sibling failure is still real master evidence —
-    // but the run cannot prove master green, so known drops to false.
-    if (evidence) { masterLogs.push(...evidence.entries); if (evidence.incomplete) masterKnown = false; }
-    else masterKnown = false;
-  }
   const dependencyCache = new Map<string, Promise<Set<string> | null>>();
   const contentsCache = new Map<string, Promise<{ ok: boolean; absent: boolean; source: string | null }>>();
   const ref = branch?.commit?.sha ?? 'master';
@@ -2268,6 +2257,24 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const fetched = await contents('.github/dependency-audit-exceptions.json');
     if (fetched.absent) auditExceptions = [];
     else if (fetched.ok && fetched.source !== null) auditExceptions = parseAuditExceptions(fetched.source);
+  }
+  const masterLogs: { conclusion: string; text: string }[] = [];
+  let masterKnown = !!branch?.commit?.sha && !!masterRuns?.length;
+  for (const run of masterRuns ?? []) {
+    if (run.head_sha !== branch?.commit?.sha || run.status !== 'completed') { masterKnown = false; continue; }
+    const evidence = await logs(run, run.head_sha);
+    // An incomplete check (cancelled, timed-out, ...) keeps its verified
+    // job evidence — a sibling failure is still real master evidence —
+    // but the run cannot prove master green, so known drops to false.
+    if (evidence) {
+      masterLogs.push(...evidence.entries);
+      if (evidence.incomplete) masterKnown = false;
+      // A completed run that concluded failure yet produced no verified,
+      // parseable failure is unexplained: its failed jobs' logs were
+      // dropped as unverifiable or carried no recognized shape, so master
+      // cannot be called known either. Unknown, never clean.
+      else if (run.conclusion === 'failure' && !evidence.entries.some(l => l.conclusion === 'failure' && parseBaselineFailures(l.text, repo, auditExceptions).length > 0)) masterKnown = false;
+    } else masterKnown = false;
   }
   const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
   // Parenthesized identities are gate checks, not vitest tests: only
@@ -2580,11 +2587,18 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the PR reads unknown rather than fresh.
       if (!evidence) { known = false; continue; }
       if (evidence.incomplete) { known = false; incomplete = true; continue; }
+      let runFailures = 0;
       for (const log of evidence.entries.filter(l => l.conclusion === 'failure')) {
         const failures = parseBaselineFailures(log.text, repo, auditExceptions);
         if (!failures.length) known = false;
+        runFailures += failures.length;
         found.push(...failures.map(failure => ({ ...failure, runId: run.id })));
       }
+      // A completed run that concluded failure yet produced no verified,
+      // parseable failure is unexplained: its failed jobs' logs were
+      // dropped as unverifiable or carried no recognized shape, so the
+      // head's checks cannot be called proven. Unknown, never clean.
+      if (run.conclusion === 'failure' && runFailures === 0) known = false;
     }
     freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: incomplete ? 'incomplete-check' : 'unreadable-log-or-unverified-checkout' } : {}) });
     if (!known) continue;

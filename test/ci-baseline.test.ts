@@ -237,6 +237,44 @@ describe('CI baseline evidence', () => {
       expect(report.master.known).toBe(true);
     }
   });
+  it('reads a failed run with only dropped failure logs as unknown, never fresh', async () => {
+    // Workflows whose jobs cannot prove their checkout at all — the
+    // path-gated Install smoke workflow's unpinned checkout — drop a
+    // failed job's log when it also carries no recognized failure shape.
+    // Before the unexplained-failure rule the run then contributed nothing
+    // and the PR read fresh despite the failed check.
+    const { gh } = github({ count: 1, runConclusion: 'failure' });
+    const dropped = '##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\nwith:\n  persist-credentials: false\n##[endgroup]\n##[group]Run bash install.sh\ninstall.sh: line 42: phm: command not found\n##[error]Process completed with exit code 127.\n';
+    const report = await analyzeCiBaseline('owner/repo', async args =>
+      args[1]?.endsWith('/jobs/20/logs') ? { ok: true, stdout: dropped, stderr: '' } : gh(args));
+    expect(report.groups).toEqual([]);
+    expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'unreadable-log-or-unverified-checkout' }]);
+    // The master run's failure is explained by its verified parseable log,
+    // so master stays known.
+    expect(report.master.known).toBe(true);
+  });
+  it('keeps a failed run fresh when a verified log explains the failure', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1, runConclusion: 'failure' }).gh);
+    expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
+    expect(report.groups.length).toBeGreaterThan(0);
+  });
+  it('drops master known state when a failed master run has only dropped logs', async () => {
+    const { gh } = github({ masterRunConclusion: 'failure' });
+    const dropped = '##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\nwith:\n  persist-credentials: false\n##[endgroup]\n##[group]Run bash install.sh\ninstall.sh: line 42: phm: command not found\n##[error]Process completed with exit code 127.\n';
+    const report = await analyzeCiBaseline('owner/repo', async args =>
+      args[1]?.endsWith('/jobs/10/logs') ? { ok: true, stdout: dropped, stderr: '' } : gh(args));
+    expect(report.master.known).toBe(false);
+    expect(report.freshness.every(p => p.state === 'fresh')).toBe(true);
+  });
+  it('drops master known state when a failed master job log verifies but parses nothing', async () => {
+    // A verified-but-unparseable failure log is unexplained on master the
+    // same way it already was on a PR: the run cannot prove master green.
+    const { gh } = github({ masterRunConclusion: 'failure' });
+    const verified = `/usr/bin/git log -1 --format=%H\n${master}\nBuild failed before the test reporter could run\n`;
+    const report = await analyzeCiBaseline('owner/repo', async args =>
+      args[1]?.endsWith('/jobs/10/logs') ? { ok: true, stdout: verified, stderr: '' } : gh(args));
+    expect(report.master.known).toBe(false);
+  });
   it('tolerates inert no-checkout aggregator jobs but rejects unverifiable evidence', async () => {
     // Merge Gate never checks out the workspace, so its log cannot carry the
     // checkout SHA marker. An inert aggregator log is dropped from evidence
