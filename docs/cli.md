@@ -164,6 +164,8 @@ Every command, grouped by topic.
     wiki status [repo]                                 Wiki freshness: generated at <commit>, N pages stale.
     wiki map [repo] [--focus <node-or-file>] [--json]  Commit-pinned modules, declarations and source relationships for an enrolled repo.
     wiki brain [repo] [--focus <node-id>] [--json]     Commit-aware evidence links for an enrolled repo.
+    wiki brain stats --json                            Fleet and Cloud merge rates with and without Wiki slices.
+    wiki ecosystem --json                              Commit-pinned relationships across the signed repository scope.
 
   Autonomy - enrollment, backlog, daemon, inbox, goals
     bots list|show|create --dry-run|explain|seats|handoffs|handoff --seat <id> [--apply] [--json]                                                                                                                                                                                                                                                                                                                             Provider-neutral bot metadata, seat quota and draining handoffs. handoffs plans every seat; handoff --seat is dry-run unless --apply.
