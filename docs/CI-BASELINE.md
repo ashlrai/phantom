@@ -60,8 +60,8 @@ chain, so the group keys on the identity the evidence itself printed.
 Because it names a real test, the usual dependency closure and pass
 evidence apply: a green master module resolves a one-off flake on an
 unaffected singleton to `probable-flake`/`rerun-failed`, while a flake
-repeated across unaffected PRs -- or printed by master itself -- groups
-`shared-baseline` for a stabilization fix. Verdicts naming paths outside
+repeated across unaffected PRs with distinct heads -- or printed by master
+itself -- groups `shared-baseline` for a stabilization fix. Verdicts naming paths outside
 the suite roots, missing case names and near-miss wording stay unparsed,
 so an unrecognized lane failure still reads unknown rather than guessed.
 TypeScript diagnostics from `tsc`/`tsgo` non-pretty output
@@ -540,9 +540,11 @@ job-memory, lifecycle (`started`/`exited`), aggregate
 unparsed: `exited` lines fire on ordinary test failures and on the
 stop-others SIGTERM cascade, so they can never be runner identities.
 
-Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
-brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
-with an explicit test pass on master's current run produces
+Two unaffected fresh PRs at distinct head commits sharing a test produce
+`queue-master-fix` and a ready brief. Multiple PRs at the same head remain in
+the report and supply only one revision of corroborating evidence. Test/import
+changes produce `pr-caused`. A singleton unaffected failure with an explicit
+test pass on master's current run produces
 `rerun-failed`. Other evidence stays `unknown`. Relative imports are followed
 transitively from master (100-file cap) with bundler resolution: `.js`/`.jsx`
 specifiers map to `.ts`/`.tsx` sources, extensionless specifiers try file then
