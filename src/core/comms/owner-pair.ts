@@ -49,7 +49,7 @@ export interface PairDeps { configDir: string; bridge: PairBridge; now?: () => n
 export interface OwnerPairStatusV1 {
   schema: 'owner-pair.status.v1';
   state: 'not-paired' | 'waiting' | 'paired';
-  /** One plain line: "not paired", "waiting for YES (sent to N)" or "paired (**ab)". */
+  /** One plain line describing the pairing state. */
   line: string;
   since?: string;
   /** How many own handles the pairing text went to (waiting only). */
@@ -172,13 +172,14 @@ function writeNetwork(configDir: string, edit: (text: string, section: Section) 
 
 const boundHandle = (configDir: string): string | undefined => loadOwnerThreadSettings(configDir).owners.imessage;
 
-export function readOwnerPairStatus(configDir: string): OwnerPairStatusV1 {
+export function readOwnerPairStatus(configDir: string, now: number = Date.now()): OwnerPairStatusV1 {
   const bound = boundHandle(configDir);
   if (bound) {
     const confirmed = readCommsLimits(configDir).state === 'confirmed';
     return { schema: 'owner-pair.status.v1', state: 'paired', line: `paired (${mask(bound)})`, confirmed };
   }
   const pending = readPairState(configDir).pending;
+  if (pending && pending.expiresAt <= now) return { schema: 'owner-pair.status.v1', state: 'not-paired', line: 'not paired (invitation expired)' };
   if (pending) return { schema: 'owner-pair.status.v1', state: 'waiting', line: `waiting for YES (sent to ${pending.handles.length})`, since: new Date(pending.startedAt).toISOString(), sent: pending.handles.length };
   return { schema: 'owner-pair.status.v1', state: 'not-paired', line: 'not paired' };
 }

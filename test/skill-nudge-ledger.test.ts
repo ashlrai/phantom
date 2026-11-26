@@ -161,6 +161,25 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(skillNudgeJobsFromLedger(text)[0]).toMatchObject({ outcome: 'merged', reverted: true });
   });
 
+  it.each([
+    ['standalone event', { event: 'revert', reverted_at: '2026-10-28T17:00:00Z' }],
+    ['standalone phase', { phase: 'REVERTED', revertedAt: '2026-10-28T17:00:00Z' }],
+    ['merge metadata', { phase: 'MERGED', reverted: true, revertedAt: '2026-10-28T17:00:00Z' }],
+  ] as const)('honors the explicit revert time on %s', (kind, receipt) => {
+    const job = 'RQ-REVERT-TIME';
+    const text = [
+      launch(job), launch(job, 'codex', '2026-10-28T10:30:00-0400'),
+      ...(kind === 'merge metadata' ? [] : [outcome(job, 'MERGED')]),
+      line({ job, ts: '2026-10-28T16:00:00Z', ...receipt }),
+    ].join('\n');
+    expect(skillNudgeJobsFromLedger(text, null, Date.parse('2026-10-28T16:59:59Z'))).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', retries: 1 },
+    ]);
+    expect(skillNudgeJobsFromLedger(text, null, Date.parse('2026-10-28T17:00:00Z'))).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', retries: 1, reverted: true },
+    ]);
+  });
+
   it('marks a merged job reverted when its unambiguous PR claim stands in the revert set', () => {
     const merge = (job: string, pr: number) => outcome(job, 'MERGED',
       { pr_url: `https://github.com/ashlrai/phantom/pull/${pr}` });
