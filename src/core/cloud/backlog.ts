@@ -59,7 +59,8 @@ export function validBacklogItem(value: unknown): CloudBacklogItem | null {
     doneWhen = validDoneWhen(r['doneWhen']) ?? undefined;
     if (!doneWhen) return null;
   }
-  return { id, title, prompt, area, priority, ...(repo !== undefined ? { repo } : {}), ...(metric ? { metric } : {}), ...(doneWhen ? { doneWhen } : {}) };
+  const assertedAt = typeof r['assertedAt'] === 'string' && Number.isFinite(Date.parse(r['assertedAt'])) ? r['assertedAt'] : undefined;
+  return { id, title, prompt, area, priority, ...(repo !== undefined ? { repo } : {}), ...(metric ? { metric } : {}), ...(doneWhen ? { doneWhen } : {}), ...(assertedAt !== undefined ? { assertedAt } : {}) };
 }
 
 /** A repo-relative path of plain segments (no `..`, no absolute forms) and a short literal, or an issue number. */
@@ -142,7 +143,7 @@ function newestTaskByItem<T extends BacklogClaimTask>(tasks: readonly T[]): Map<
   return newest;
 }
 
-function claimOf(task: BacklogClaimTask | undefined, nowMs: number): Claim {
+function claimOf(item: CloudBacklogItem, task: BacklogClaimTask | undefined, nowMs: number): Claim {
   if (!task) return { claimedBy: null, lastState: null };
   // A Devin session waiting for Mason is still in progress.
   const state: CloudTaskState = task.state === 'blocked' ? 'running' : task.state;
@@ -154,7 +155,19 @@ function claimOf(task: BacklogClaimTask | undefined, nowMs: number): Claim {
     const released = Number.isFinite(endedAt) && nowMs - endedAt >= CLOUD_BACKLOG_RETRY_MS;
     return { claimedBy: released ? null : task.id, lastState: state };
   }
-  // Non-terminal: in progress. Merged: done for good.
+  // A merged end retires an item only until a producer asserts it again.
+  // assertedAt later than the task's creation means evidence arrived after
+  // the prompt was minted — evidence the merge cannot have covered — so the
+  // item is claimable again rather than done for good. An item never
+  // re-asserted (built-in, hand-written, or a producer that stopped seeing
+  // its condition) has no later stamp and keeps done-for-good semantics.
+  if (state === 'merged') {
+    const asserted = Date.parse(item.assertedAt ?? '');
+    const minted = Date.parse(task.createdAt);
+    const released = Number.isFinite(asserted) && Number.isFinite(minted) && asserted > minted;
+    return { claimedBy: released ? null : task.id, lastState: state };
+  }
+  // Non-terminal: in progress.
   return { claimedBy: task.id, lastState: state };
 }
 
@@ -189,7 +202,7 @@ function ordered<T extends CloudBacklogItem>(items: readonly T[], leverage: Map<
 export function readCloudBacklog(tasks: readonly BacklogClaimTask[], now: Date): CloudBacklogView {
   const newest = newestTaskByItem(tasks);
   const nowMs = now.getTime();
-  const items = ordered(allItems()).map((item) => ({ ...item, ...claimOf(newest.get(item.id), nowMs) }));
+  const items = ordered(allItems()).map((item) => ({ ...item, ...claimOf(item, newest.get(item.id), nowMs) }));
   return { items, nextUp: items.find((item) => item.claimedBy === null)?.id ?? null };
 }
 
@@ -200,7 +213,7 @@ export function nextBacklogItem(tasks: readonly BacklogClaimTask[], repo: string
   const target = repo.toLowerCase();
   // An item without a repo targets whichever repo self-improvement is pointed at.
   const match = ordered(allItems()).find((item) => !exclude.has(item.id) &&
-    (item.repo === undefined || item.repo.toLowerCase() === target) && claimOf(newest.get(item.id), nowMs).claimedBy === null);
+    (item.repo === undefined || item.repo.toLowerCase() === target) && claimOf(item, newest.get(item.id), nowMs).claimedBy === null);
   return match ?? null;
 }
 
@@ -222,43 +235,68 @@ export function nextBacklogItemWhere(
   for (const item of ordered(allItems())) {
     const repo = item.repo ?? defaultRepo;
     if (repo === null) continue;
-    if (claimOf(newest.get(item.id), nowMs).claimedBy !== null) continue;
+    if (claimOf(item, newest.get(item.id), nowMs).claimedBy !== null) continue;
     if (accept(item, repo)) return { item, repo };
   }
   return null;
 }
 
-/** Adds items (dedupe by id and by normalised title); returns how many were new. Leader/operator entry point. */
-export function appendUserBacklogItems(items: readonly CloudBacklogItem[]): number {
+/**
+ * Adds items (dedupe by id and by normalised title); returns how many were
+ * new. Leader/operator entry point. Every accepted item is stamped
+ * `assertedAt` with `now`, and an item whose id is already stored is
+ * re-asserted in place — its prompt and options refresh to the producer's
+ * latest evidence while id and title keep the dedupe invariants — so a
+ * merged attempt that predates the new assertion releases its claim (see
+ * claimOf). Re-assertions are not counted in the return value.
+ */
+export function appendUserBacklogItems(items: readonly CloudBacklogItem[], now: Date = new Date()): number {
   if (!Array.isArray(items) || items.length === 0) return 0;
+  const assertedAt = now.toISOString();
+  const nowMs = now.getTime();
   let existing = readUserBacklogItems();
+  const byId = new Map(existing.map((entry, index) => [entry.id, index] as const));
   const ids = new Set([...BUILTIN_IMPROVEMENT_BACKLOG, ...existing].map((item) => item.id));
   const titles = new Set([...BUILTIN_IMPROVEMENT_BACKLOG, ...existing].map((item) => normaliseBacklogTitle(item.title)));
   const fresh: CloudBacklogItem[] = [];
+  let reasserted = 0;
   for (const entry of items) {
     const item = validBacklogItem(entry);
-    if (!item || ids.has(item.id) || titles.has(normaliseBacklogTitle(item.title))) continue;
+    if (!item) continue;
+    const stored = byId.get(item.id);
+    if (stored !== undefined) {
+      // Same id is the same work item: refresh the spec and re-stamp the
+      // assertion. id and title stay — they are the dedupe identity.
+      existing[stored] = { ...item, id: existing[stored]!.id, title: existing[stored]!.title, assertedAt };
+      reasserted += 1;
+      continue;
+    }
+    if (ids.has(item.id) || titles.has(normaliseBacklogTitle(item.title))) continue;
     ids.add(item.id);
     titles.add(normaliseBacklogTitle(item.title));
-    fresh.push(item);
+    fresh.push({ ...item, assertedAt });
   }
-  if (fresh.length === 0) return 0;
+  if (fresh.length === 0 && reasserted === 0) return 0;
 
   if (existing.length + fresh.length > CLOUD_BACKLOG_MAX_USER_ITEMS) {
     // Make room by retiring items that are finished for good (their newest
-    // task merged), oldest first — never an item still waiting to run.
+    // task merged and was never re-asserted since), oldest first — never an
+    // item still waiting to run or one a producer keeps asserting.
     const newest = newestTaskByItem(listCloudTasks());
     let excess = existing.length + fresh.length - CLOUD_BACKLOG_MAX_USER_ITEMS;
     existing = existing.filter((item) => {
-      if (excess > 0 && newest.get(item.id)?.state === 'merged') {
-        excess -= 1;
-        return false;
+      if (excess > 0) {
+        const claim = claimOf(item, newest.get(item.id), nowMs);
+        if (claim.lastState === 'merged' && claim.claimedBy !== null) {
+          excess -= 1;
+          return false;
+        }
       }
       return true;
     });
   }
   const accepted = fresh.slice(0, Math.max(0, CLOUD_BACKLOG_MAX_USER_ITEMS - existing.length));
-  if (accepted.length === 0) return 0;
+  if (accepted.length === 0 && reasserted === 0) return 0;
   ensureCloudDirectory();
   writePrivateFileAtomic(cloudBacklogPath(), `${JSON.stringify({ v: BACKLOG_VERSION, items: [...existing, ...accepted] }, null, 2)}\n`);
   return accepted.length;

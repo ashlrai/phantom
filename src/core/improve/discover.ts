@@ -1069,8 +1069,10 @@
  *     merges land;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
- * by id and title, so running discovery again adds only what is new. The
- * built-in backlog file is never edited here.
+ * by id and title: running discovery again adds only what is new and
+ * re-asserts ids already stored — refreshing their spec and `assertedAt`
+ * stamp so evidence that outlives a merged fix can earn another attempt
+ * (cloud/backlog.ts claimOf). The built-in backlog file is never edited here.
  *
  * Issue and check-run text is untrusted: it reaches the agent only inside a
  * DATA fence (the automations lane convention, lanes.ts buildAutomationPrompt),
@@ -2765,7 +2767,7 @@ export async function autoDiscover(deps: AutoDiscoverDeps = {}): Promise<{ ran: 
         res.items.push(...hotPatchItems(readHotPatchLog(logPath), budget.repo));
       } catch { res.errors.push('Could not read the hot-patch log.'); }
     }
-    const added = backlog.appendUserBacklogItems(res.items.filter((i) => backlog.validBacklogItem(i) !== null));
+    const added = backlog.appendUserBacklogItems(res.items.filter((i) => backlog.validBacklogItem(i) !== null), new Date(now));
     return { ran: true, added, errors: res.errors };
   } catch (err) {
     return { ran: false, added: 0, errors: [err instanceof Error ? err.message : String(err)] };
