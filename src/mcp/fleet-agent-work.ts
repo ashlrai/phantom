@@ -14,7 +14,12 @@
  * blocked threads it is party to, wake hints, the next inbox page,
  * legacy `phm bus` mailbox mail, the shared task board digest, the
  * fleet's open session-handoff checkpoints awaiting resume or failover,
- * its registry channels and its bot-seat handoff records. Every section
+ * the advisory fleet coordination ledger's pending surface addressed to
+ * or owed by the agent — live messages, assignment proposals and
+ * unpublished RESULT intents through the same
+ * `readFleetCoordinationPending` read `phm fleet coordination inbox`
+ * serves — its registry channels and its bot-seat handoff records. Every
+ * section
  * reports its own read state, so one unreadable store degrades only its
  * own section and unknown stays unknown — never an empty list passed
  * off as fact.

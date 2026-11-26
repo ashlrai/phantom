@@ -13,6 +13,7 @@ import { planSeatHandoffs, type SeatHandoffsPlan, type SeatOptions } from '../sr
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import type { BusWorkFeedHold, BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { claimFleetWork, concludeFleetClaim, postFleetMessage, proposeFleetAssignment } from '../src/core/fleet/coordination.js';
 import { BusBoard } from '../src/core/fleet/bus-board.js';
 import { enqueueBusWake, readBusWakes } from '../src/core/fleet/bus-wake-queue.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
@@ -4703,6 +4704,179 @@ describe('sessions section', () => {
   });
 });
 
+describe('coordination section', () => {
+  const ledgerPath = (options: BusWorkMineOptions) => join(dirname(options.root), 'coordination.jsonl');
+  const ledger = (options: BusWorkMineOptions, now?: number) =>
+    ({ path: ledgerPath(options), now: now ?? options.now?.() ?? 0 });
+
+  function postMessage(options: BusWorkMineOptions,
+    input: { from: string; to: string; body: string; ttlMs?: number; id?: string }, now?: number): void {
+    expect(postFleetMessage(input, ledger(options, now)).ok).toBe(true);
+  }
+  function propose(options: BusWorkMineOptions,
+    input: { repo: string; task: string; to: string; ttlMs?: number }, now?: number): void {
+    expect(proposeFleetAssignment(input, ledger(options, now)).ok).toBe(true);
+  }
+  /** A claim concluded `intended` whose receipt publish never ran — the unpublished RESULT intent class. */
+  function pendingReturn(options: BusWorkMineOptions, agent: string, now?: number): void {
+    const at = ledger(options, now);
+    const claim = claimFleetWork({ repo: 'ashlrai/phantom', task: 'claimed work', agent }, at);
+    if (!claim.ok) throw new Error('fixture claim failed');
+    const concluded = concludeFleetClaim({
+      id: claim.value.claim.id, agent, lease: claim.value.lease,
+      message: { id: `return-${claim.value.claim.id}`, from: agent, to: 'all',
+        body: `RESULT VERIFIED ashlrai/phantom claim ${claim.value.claim.id} task "claimed work": tests passed`,
+        ttlMs: 86_400_000 },
+    }, at);
+    if (!concluded.ok || concluded.value.outcome !== 'intended') throw new Error('fixture return failed');
+  }
+  const mine = (options: BusWorkMineOptions, over: BusWorkMineOptions = {}) =>
+    readBusWorkMine('atlas', { ...options, coordination: { path: ledgerPath(options) }, ...over });
+  const section = (options: BusWorkMineOptions, over: BusWorkMineOptions = {}) => {
+    const result = mine(options, over);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    if (result.coordination.status !== 'ok') {
+      throw new Error(`coordination unavailable: ${result.coordination.reason}`);
+    }
+    return result.coordination;
+  };
+
+  it('reports a verified-absent ledger as missing, never an invented backlog', () => {
+    const options = setup();
+    register(options, 'atlas');
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    // No coordination.path override — the default locator resolves under the
+    // isolated test home, still a verified-absent ledger.
+    expect(result.coordination).toEqual({ status: 'ok', source: 'missing',
+      messages: { matched: 0, items: [], truncated: false },
+      proposals: { matched: 0, items: [], truncated: false },
+      returns: { matched: 0, items: [], truncated: false } });
+  });
+
+  it('scopes messages, proposals and returns to the agent\'s labels', () => {
+    const options = setup();
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['fleet-pilot'] }, options).status).toBe('created');
+    register(options, 'nova');
+    postMessage(options, { id: 'm-direct', from: 'agent:nova', to: 'agent:atlas', body: 'direct ping' }, 1_000);
+    postMessage(options, { id: 'm-alias', from: 'agent:sol', to: 'fleet-pilot', body: 'alias ping' }, 1_001);
+    postMessage(options, { id: 'm-all', from: 'agent:nova', to: 'all', body: 'broadcast note' }, 1_002);
+    postMessage(options, { id: 'm-other', from: 'agent:atlas', to: 'agent:nova', body: 'not for atlas' }, 1_003);
+    propose(options, { repo: 'ashlrai/phantom', task: 'review the queue migration', to: 'atlas' });
+    propose(options, { repo: 'ashlrai/phantom', task: 'other work', to: 'agent:nova' });
+    pendingReturn(options, 'atlas');
+    pendingReturn(options, 'agent:nova');
+
+    const coord = section(options);
+    expect(coord.source).toBe('available');
+    expect(coord.messages.matched).toBe(3);
+    expect(coord.messages.items.map(item => item.id)).toEqual(['m-all', 'm-alias', 'm-direct']);
+    expect(coord.messages.items[0]).toMatchObject({ from: 'agent:nova', to: 'all', body: 'broadcast note' });
+    expect(coord.proposals.matched).toBe(1);
+    expect(coord.proposals.items[0]).toMatchObject({ repo: 'ashlrai/phantom',
+      task: 'review the queue migration', to: 'atlas' });
+    expect(coord.returns.matched).toBe(1);
+    expect(coord.returns.items[0]).toMatchObject({ agent: 'atlas',
+      message: { to: 'all' } });
+    expect(coord.returns.items[0]!.message.body).toContain('RESULT VERIFIED');
+  });
+
+  it('matches the literal ref alone when no identity resolves', () => {
+    const options = setup();
+    const path = ledgerPath(options);
+    postMessage(options, { id: 'm-bare', from: 'agent:nova', to: 'ghost', body: 'bare label' });
+    postMessage(options, { id: 'm-prefixed', from: 'agent:nova', to: 'agent:ghost', body: 'prefixed label' });
+    const result = readBusWorkMine('ghost', { ...options, coordination: { path } });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    if (result.coordination.status !== 'ok') throw new Error('unreachable');
+    // The unregistered ref contributes only its literal label — `agent:ghost`
+    // is a different coordination name and stays out, the same narrowing the
+    // mailbox/board sections apply.
+    expect(result.coordination.messages.matched).toBe(1);
+    expect(result.coordination.messages.items[0]!.id).toBe('m-bare');
+  });
+
+  it('applies the shared job/contains/since/before/from/excludeFrom filters', () => {
+    const options = setup(2_000);
+    register(options, 'atlas');
+    postMessage(options, { id: 'm-old', from: 'agent:nova', to: 'atlas', body: 'please review the diff' }, 500);
+    postMessage(options, { id: 'm-new', from: 'agent:sol', to: 'atlas', body: 'standup notes' }, 1_500);
+    propose(options, { repo: 'ashlrai/phantom', task: 'migrate the queue', to: 'atlas' }, 1_000);
+    pendingReturn(options, 'atlas', 1_000);
+    const counts = (over: BusWorkMineOptions) => {
+      const coord = section(options, over);
+      return { m: coord.messages.matched, p: coord.proposals.matched, r: coord.returns.matched };
+    };
+
+    expect(counts({})).toEqual({ m: 2, p: 1, r: 1 });
+    // job: a ledger record carries no job citation the digest could prove.
+    expect(counts({ job: 'RQ-X-1' })).toEqual({ m: 0, p: 0, r: 0 });
+    // contains: scrubbed message bodies, proposal repo+task text, return receipt bodies.
+    expect(counts({ contains: 'review the diff' })).toEqual({ m: 1, p: 0, r: 0 });
+    expect(counts({ contains: 'queue' })).toEqual({ m: 0, p: 1, r: 0 });
+    expect(counts({ contains: 'tests passed' })).toEqual({ m: 0, p: 0, r: 1 });
+    expect(counts({ contains: 'agent:nova' })).toEqual({ m: 0, p: 0, r: 0 });
+    // since/before: each record's own at on the [since, before) window.
+    expect(counts({ since: 1_500 })).toEqual({ m: 1, p: 0, r: 0 });
+    expect(counts({ before: 1_000 })).toEqual({ m: 1, p: 0, r: 0 });
+    expect(counts({ before: 1_500 })).toEqual({ m: 1, p: 1, r: 1 });
+    // from: exact recorded sender label — proposals carry no sender and drop out.
+    expect(counts({ from: 'agent:nova' })).toEqual({ m: 1, p: 0, r: 0 });
+    expect(counts({ from: 'atlas' })).toEqual({ m: 0, p: 0, r: 1 });
+    // excludeFrom: drops only records whose sender label equals the value.
+    expect(counts({ excludeFrom: 'agent:nova' })).toEqual({ m: 1, p: 1, r: 1 });
+    expect(counts({ excludeFrom: 'atlas' })).toEqual({ m: 2, p: 1, r: 0 });
+    // Every other filter leaves the section whole: a ledger record carries
+    // no envelope, band, room, wire id, body citation, kind, result or thread.
+    for (const over of [{ priority: 'P0' as const }, { channel: 'eng' }, { id: 'env-1' },
+      { inReplyTo: 'env-1' }, { bodyKind: 'work' }, { result: 'failed' as const }, { thread: 't' }]) {
+      expect(counts(over)).toEqual({ m: 2, p: 1, r: 1 });
+    }
+  });
+
+  it('caps each class at 20 newest-first with matched the true total', () => {
+    const options = setup();
+    register(options, 'atlas');
+    for (let i = 0; i < 21; i += 1) {
+      postMessage(options, { from: 'agent:nova', to: 'atlas', body: `note ${i}` }, 1_000 + i);
+    }
+    const coord = section(options);
+    expect(coord.messages.matched).toBe(21);
+    expect(coord.messages.items).toHaveLength(20);
+    expect(coord.messages.truncated).toBe(true);
+    expect(coord.messages.items[0]!.body).toBe('note 20');
+    expect(coord.messages.items[19]!.body).toBe('note 1');
+  });
+
+  it('reports an unreadable ledger as unavailable, never an empty list', () => {
+    const options = setup();
+    register(options, 'atlas');
+    writeFileSync(ledgerPath(options), 'this is not jsonl\n');
+    const result = mine(options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.coordination).toEqual({ status: 'unavailable', reason: 'coordination-ledger-unreadable' });
+  });
+
+  it('renders the coordination section in the human digest', () => {
+    const options = setup();
+    register(options, 'atlas');
+    postMessage(options, { id: 'm-fmt', from: 'agent:nova', to: 'atlas', body: 'please review the diff' });
+    propose(options, { repo: 'ashlrai/phantom', task: 'migrate the queue', to: 'atlas' });
+    pendingReturn(options, 'atlas');
+    const lines = formatBusWorkMine(mine(options));
+    expect(lines).toContain('coordination source=available messages=1 shown=1 proposals=1 shown=1 returns=1 shown=1');
+    expect(lines.some(line => line.includes('[message id=m-fmt from agent:nova to atlas]') &&
+      line.includes('please review the diff'))).toBe(true);
+    expect(lines.some(line => line.includes('[proposal id=') && line.includes('ashlrai/phantom migrate the queue'))).toBe(true);
+    expect(lines.some(line => line.includes('[return claim=') && line.includes('agent=atlas') &&
+      line.includes('RESULT VERIFIED'))).toBe(true);
+  });
+});
+
 describe('formatBusWorkMine', () => {
   it('renders every section with unknown states spelled out', async () => {
     const options = setup();
@@ -4787,6 +4961,10 @@ describe('phm agents bus work mine', () => {
       wakes: { status: 'ok', wakes: [] },
       inbox: { status: 'ok', messages: [], truncated: false },
       mailbox: { status: 'ok', matched: 0, messages: [], truncated: false },
+      coordination: { status: 'ok', source: 'missing',
+        messages: { matched: 0, items: [], truncated: false },
+        proposals: { matched: 0, items: [], truncated: false },
+        returns: { matched: 0, items: [], truncated: false } },
       seats: { status: 'ok', matched: 0, seats: [], truncated: false } });
   });
 
