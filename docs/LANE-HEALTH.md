@@ -55,6 +55,9 @@ timestamp alone. A run can still count as a call when its phase age is unknown.
 Run `phm fleet shed-plan` for the next suggested action, or add `--json` for
 `fleet.shed-plan.v1`. The read-only plan uses `~/.ashlr-runs/queue/status.json`:
 free memory at or below 30% is high pressure, matching the dispatcher's fallback.
+The snapshot's `last_tick` must be readable, at most 60 seconds old, and at or
+before report time. Otherwise the report keeps lane names and kinds, shows
+memory and lane measurements as unknown, and withholds shed and keep advice.
 Swap is shown as context; it has no independent threshold in this plan. Active
 local lanes come before cloud lanes, ordered within each kind by 24-hour merged
 PRs divided by lane RAM (`lanes.<lane>.ram_gb`, total GiB). Missing measurements
