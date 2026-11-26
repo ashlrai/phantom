@@ -5,23 +5,25 @@
  */
 import { execFile } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { homedir, loadavg, availableParallelism } from 'node:os';
+import { loadavg, availableParallelism } from 'node:os';
 import { join } from 'node:path';
+import { defaultRunsDir } from '../fleet/landed-closes-read.js';
 import { GLOBAL_SLOT_KEYS } from '../fleet/runs-lane-targets.js';
 import { adaptiveSettle, readAdaptiveSettle, type SettleInputs, type SettleConfig, type SettleDecision } from './adaptive-settle.js';
+import { isPlainRecord } from './schema.js';
 
-export const LOAD_MAX = 36;
-export const PROCS_MAX = 800;
+const LOAD_MAX = 36;
+const PROCS_MAX = 800;
 /** Floor of the active-worktree limit; the limit scales with cores (worktreesMax). */
-export const WORKTREES_MAX = 40;
+const WORKTREES_MAX = 40;
 /** Active job worktrees allowed per core before admission blocks (18 cores → 72). */
-export const WORKTREES_PER_CPU = 4;
+const WORKTREES_PER_CPU = 4;
 /**
  * A job worktree is ACTIVE when its job log, its `.base` record or the worktree
  * directory changed within this window. Parked worktrees (kept for uncommitted
  * work, publish holds) sit idle and are reported as `worktreesParked`, not counted.
  */
-export const ACTIVE_WORKTREE_WINDOW_S = 30 * 60;
+const ACTIVE_WORKTREE_WINDOW_S = 30 * 60;
 
 export function worktreesMax(ncpu: number): number {
   const cores = Number.isFinite(ncpu) && ncpu >= 1 ? Math.floor(ncpu) : 1;
@@ -33,7 +35,7 @@ export const DAEMON_TICK_MAX_S = 15 * 60;
  * the fixed 18 is gone. A top-level slots.json hard_cap is an optional operator ceiling; a malformed one fails
  * closed to this legacy value, as dispatchd does.
  */
-export const LEGACY_GLOBAL_HARD_CAP = 18;
+const LEGACY_GLOBAL_HARD_CAP = 18;
 const STATUS_TIMEOUT_MS = 30_000;
 
 /** RQ-PACE-TO-RESET: one lane's weekly-quota pacing verdict (mirrors dispatchd's usage_verdict). */
@@ -172,22 +174,29 @@ async function mtimeMs(path: string): Promise<number | null> {
   try { return (await stat(path)).mtimeMs; } catch { return null; }
 }
 
+async function readJsonRecord(path: string): Promise<Record<string, unknown>> {
+  try {
+    const parsed: unknown = JSON.parse((await text(path)) ?? '{}');
+    return isPlainRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<AdmissionReport> {
   const now = (opts.now ?? Date.now)();
-  const report = await readAdmissionState({ ...opts, now: () => now });
-  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const root = opts.runsDir ?? defaultRunsDir();
+  const report = await readAdmissionState(root, now, opts);
   return { ...report, settle: await readAdaptiveSettle(root, now, report.snapshot, opts.settleConfig) };
 }
 
-async function readAdmissionState(opts: ReadAdmissionOptions): Promise<Omit<AdmissionReport, 'settle'>> {
-  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+async function readAdmissionState(root: string, now: number, opts: ReadAdmissionOptions): Promise<Omit<AdmissionReport, 'settle'>> {
   const queue = join(root, 'queue');
   // v2 is the dispatcher verdict, including starvation probes and its rolling swap window.
   // Keep the legacy probe path for hosts that have not installed the pinned dispatcher yet.
-  const now = (opts.now ?? Date.now)();
   let staleSnapshot: AdmissionReport['staleSnapshot'];
-  try {
-    const a = JSON.parse(await text(join(queue, 'admission.json')) ?? '{}') as Record<string, unknown>;
+  const a = await readJsonRecord(join(queue, 'admission.json'));
+  if (a.schema === 'dispatchd.admission.v2' && typeof a.admit === 'boolean') {
     // dispatchd rewrites the snapshot every tick. One it stopped refreshing is a dead dispatcher's last
     // verdict (with its tick age frozen at write time), so it must not be reported as the current decision.
     const ts = typeof a.ts === 'string' ? a.ts : null;
@@ -196,8 +205,8 @@ async function readAdmissionState(opts: ReadAdmissionOptions): Promise<Omit<Admi
     const rawAgeS = (now - writtenAt) / 1000;
     const fresh = Number.isFinite(rawAgeS) && Math.abs(rawAgeS) <= DAEMON_TICK_MAX_S;
     const ageSeconds = Number.isFinite(rawAgeS) ? Math.max(0, rawAgeS) : null;
-    if (a.schema === 'dispatchd.admission.v2' && typeof a.admit === 'boolean' && !fresh) staleSnapshot = { ts, ageSeconds };
-    if (a.schema === 'dispatchd.admission.v2' && typeof a.admit === 'boolean' && fresh) return {
+    if (!fresh) staleSnapshot = { ts, ageSeconds };
+    else return {
       admit: a.admit, reason: typeof a.reason === 'string' ? a.reason : null,
       reasons: Array.isArray(a.reasons) ? a.reasons as string[] : [], disabled: a.disabled === true,
       load: { load1: Number(a.load1), max: Number(a.load_max) }, ncpu: Number(a.ncpu),
@@ -210,23 +219,21 @@ async function readAdmissionState(opts: ReadAdmissionOptions): Promise<Omit<Admi
       installLock: { holder: a.install_lock_holder as InstallLockHolder | null }, snapshot: a,
       lanes: a.lanes as Record<string, LaneAdmission> | undefined,
     };
-  } catch { /* Older hosts use the legacy probes below. */ }
+  }
   const alive = opts.pidAlive ?? defaultAlive;
 
-  let slots: Record<string, unknown> = {};
-  try { const raw = JSON.parse(await text(join(queue, 'slots.json')) ?? '{}'); if (raw && typeof raw === 'object' && !Array.isArray(raw)) slots = raw; } catch { /* unreadable: cap 0 */ }
+  const slots = await readJsonRecord(join(queue, 'slots.json'));
 
-  let adaptiveCap: number | null = null;
-  try {
-    const c = JSON.parse(await text(join(queue, 'concurrency.json')) ?? '{}') as Record<string, unknown>;
-    if (c.schema === 'dispatchd.concurrency.v1' && isCount(c.cap)) adaptiveCap = c.cap;
-  } catch { /* no controller state: legacy ncpu bound */ }
+  const concurrency = await readJsonRecord(join(queue, 'concurrency.json'));
+  const adaptiveCap = concurrency.schema === 'dispatchd.concurrency.v1' && isCount(concurrency.cap) ? concurrency.cap : null;
 
   let running = 0;
-  try {
-    const lanes = (JSON.parse(await text(join(queue, 'status.json')) ?? '{}') as { lanes?: Record<string, { running?: unknown }> }).lanes ?? {};
-    for (const row of Object.values(lanes)) if (isCount(row?.running)) running += row.running;
-  } catch { /* no status yet: nothing known to be running */ }
+  const statusDoc = await readJsonRecord(join(queue, 'status.json'));
+  if (isPlainRecord(statusDoc.lanes)) {
+    for (const row of Object.values(statusDoc.lanes)) {
+      if (isPlainRecord(row) && isCount(row.running)) running += row.running;
+    }
+  }
 
   // Active, not existing: a worktree kept for uncommitted work stays on disk for days and is no load.
   let worktrees = 0; let worktreesParked = 0;
@@ -261,14 +268,10 @@ async function readAdmissionState(opts: ReadAdmissionOptions): Promise<Omit<Admi
 
   // RQ-PACE-TO-RESET: mirror dispatchd's per-lane weekly pacing verdicts from
   // budget-overrides.json for hosts whose dispatcher predates the lanes field.
-  let usage: Record<string, unknown> = {};
-  try {
-    const raw = JSON.parse(await text(join(queue, 'budget-overrides.json')) ?? '{}');
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) usage = raw;
-  } catch { /* unknown usage: every verdict admits */ }
+  const usage = await readJsonRecord(join(queue, 'budget-overrides.json'));
   const lanes = Object.fromEntries(Object.keys(slots).filter(lane => !GLOBAL_SLOT_KEYS.has(lane)).map(lane => {
     const row = usage[lane];
-    const r = row && typeof row === 'object' && !Array.isArray(row) ? row as Record<string, unknown> : {};
+    const r = isPlainRecord(row) ? row : {};
     return [lane, { routine: usageVerdict(r, now), critical: usageVerdict(r, now, true) }];
   }));
   const report = evaluateAdmission({

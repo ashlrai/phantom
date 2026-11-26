@@ -27,9 +27,7 @@
  * `verified: false` means the last check still found the old queue.
  */
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
-import { lstat, open, readFile, rename, unlink } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DROP_JOB_LANES } from '../fleet/drop-job-writer.js';
 import { defaultRunsDir } from '../fleet/landed-closes-read.js';
@@ -39,10 +37,11 @@ import { parseReadyRows, readReadyText, type ReadyRow } from '../fleet/ready-row
 import { readLaneTargets } from '../fleet/runs-lane-targets.js';
 import { replaceQueueText } from './dedupe.js';
 import { queueAgeText, type QueueActionRequest, type QueueActionV1, type QueueOrderV1, type QueueSteerCode } from './order-types.js';
+import { atomicWriteQueueFile } from './store.js';
 import { ROUTER_LINE, appendGuarded, cycleOf, eventClock, parked, repoKey, supersedeQueue } from './supersede.js';
 
 export const READY_BACKUP = 'ready.tsv.bak';
-export const DROP_ARCHIVE = 'dropped.tsv';
+const DROP_ARCHIVE = 'dropped.tsv';
 // router-queue.md envelopes resolve spec-less ready rows' requirements; the
 // same 32 MiB bound the unfed report and queue supply read it under.
 const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
@@ -119,6 +118,11 @@ async function openLanes(runsDir: string): Promise<string[]> {
   return [...new Set([...DROP_JOB_LANES, ...targets.map(row => row.lane)])].filter(lane => !held.has(lane)).sort();
 }
 
+async function readRouterQueueText(queueDir: string): Promise<string | null> {
+  const source = await readSource(join(queueDir, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false);
+  return source.state === 'healthy' ? source.text : null;
+}
+
 /** The queue in launch order. Throws QueueSteerError('queue-missing') when there is no ready.tsv. */
 export async function readQueueOrder(opts: QueueOrderOptions = {}): Promise<QueueOrderV1> {
   const runsDir = opts.runsDir ?? defaultRunsDir(), queueDir = join(runsDir, 'queue'), now = (opts.now ?? (() => new Date()))();
@@ -127,11 +131,9 @@ export async function readQueueOrder(opts: QueueOrderOptions = {}): Promise<Queu
   // A spec-less row's lane hint lives in its router-queue.md envelope; read it
   // once, and only when such a row is queued. Missing or over-bound leaves the
   // lane column, the market's own fallback.
-  let routerQueueText: string | null = null;
-  if (live.some(row => row.raw.split('\t').length === 5)) {
-    const source = await readSource(join(queueDir, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false);
-    routerQueueText = source.state === 'healthy' ? source.text : null;
-  }
+  const routerQueueText = live.some(row => row.raw.split('\t').length === 5)
+    ? await readRouterQueueText(queueDir)
+    : null;
   const plan = await supersedeQueue({ runsDir }).catch(() => null);
   const newer = new Map(plan?.superseded.map(job => [`${job.repo}\n${job.id}`, job.supersededBy]));
   // A job's age is the age of its prompt, which the producer writes as it queues the row.
@@ -176,7 +178,7 @@ function marketHint(row: ReadyRow, routerQueue?: string | null): string | null {
 }
 
 /** Pure: the rows after the action, or null when the queue already is the way the action wants it. */
-export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionRequest, routerQueue?: string | null): ReadyRow[] | null {
+function planQueueAction(rows: readonly ReadyRow[], req: QueueActionRequest, routerQueue?: string | null): ReadyRow[] | null {
   const mine = rows.filter(row => row.id === req.id && !parked(row));
   if (!mine.length) return null;
   const rest = rows.filter(row => !mine.includes(row));
@@ -226,12 +228,7 @@ export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionReque
 
 /** Replace a file in the queue directory by temp + rename: never partial, never through a link. */
 export async function replaceLockedQueueFile(path: string, text: string): Promise<void> {
-  const temp = `${path}.${randomUUID()}.tmp`;
-  const handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-  try {
-    try { await handle.writeFile(text); await handle.sync(); } finally { await handle.close(); }
-    await rename(temp, path);
-  } catch (error) { await unlink(temp).catch(() => {}); throw error; }
+  await atomicWriteQueueFile(path, text, 0o600);
 }
 
 /** Mark the job's router-queue.md line DROPPED so the restocker does not queue it again. Best effort. */
@@ -276,10 +273,7 @@ export async function steerQueue(req: QueueActionRequest, opts: QueueOrderOption
       // needs it. Missing or over-bound leaves the lane column.
       let routerQueueText: string | null | undefined;
       const routerQueue = async (): Promise<string | null> => {
-        if (routerQueueText === undefined) {
-          const source = await readSource(join(queueDir, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false);
-          routerQueueText = source.state === 'healthy' ? source.text : null;
-        }
+        if (routerQueueText === undefined) routerQueueText = await readRouterQueueText(queueDir);
         return routerQueueText;
       };
       if (!from) {

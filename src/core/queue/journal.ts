@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { isQueueVisit, queueVisitKey, type QueueVisit } from './stats.js';
+import { atomicWriteQueueFile } from './store.js';
 
 /** `$ASHLR_HOME/queue/visits.jsonl` (default `~/.ashlr/...`), resolved per call so a test HOME is honoured. */
 export const queueJournalPath = (): string => {
@@ -15,10 +15,7 @@ export const queueJournalPath = (): string => {
 
 /** Record metadata only: reuse the visit id at each transition; retries need a new id. */
 export async function recordQueueVisit(visit: QueueVisit, path = queueJournalPath()): Promise<void> {
-  if (!isQueueVisit(visit)) throw new Error('Invalid queue visit');
-  const { id, station, pool, arrivedAt, startedAt, completedAt } = visit;
-  await mkdir(dirname(path), { recursive: true });
-  await appendFile(path, JSON.stringify({ id, station, pool, arrivedAt, startedAt, completedAt }) + '\n', { mode: 0o600 });
+  await appendQueueVisits([visit], path);
 }
 
 /**
@@ -69,7 +66,7 @@ export const VISIT_JOURNAL_MAX_BYTES = 4 * 1024 * 1024;
  * no producer can append a newer snapshot for it. Kept well past the
  * largest documented window so manual queries still see honest history.
  */
-export const VISIT_JOURNAL_RECENT_MS = 30 * 24 * 60 * 60 * 1000;
+const VISIT_JOURNAL_RECENT_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface QueueJournalCompactionOptions {
   /** Epoch-ms clock for the retention cutoff (default: Date.now()). */
@@ -141,7 +138,7 @@ export async function compactQueueVisits(
   } catch (error) {
     return compactionResult((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable');
   }
-  if (size <= maxBytes) return { ...compactionResult('read', size, 0, 'under-cap') };
+  if (size <= maxBytes) return compactionResult('read', size, 0, 'under-cap');
   let content: string;
   try {
     content = await readFile(path, 'utf8');
@@ -177,11 +174,9 @@ export async function compactQueueVisits(
     return compactionResult('read', size, lines.length, 'unchanged');
   }
   const text = `${keptLines.join('\n')}\n`;
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(temporary, text, { mode: 0o600 });
-    await rename(temporary, path);
+    await atomicWriteQueueFile(path, text, 0o600);
   } catch {
     return compactionResult('error', size, lines.length);
   }

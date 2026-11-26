@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { coalesceQueue } from '../core/queue/coalesce.js';
+import { readQueueStream } from '../core/queue/store.js';
 
 const help = `Usage: phm queue coalesce [<file>] [--apply --out <directory>] [--json]
 Merge small READY lines for the same repo into batch jobs (up to 8 tasks each).
@@ -11,9 +12,7 @@ Never batched: P0, tier=frontier, FIXUP ids, src=leader, lines without size<=200
 
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) throw new Error('No queue file given and stdin is a terminal');
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks).toString('utf8');
+  return readQueueStream(process.stdin as AsyncIterable<string | Uint8Array>);
 }
 
 export async function cmdQueueCoalesce(args: string[]): Promise<number> {

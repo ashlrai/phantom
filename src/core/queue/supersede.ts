@@ -27,7 +27,7 @@ import { defaultRunsDir } from '../fleet/landed-closes-read.js';
 import { parseReadyRows, readReadyText, rewriteReadyRows, type RewriteReadyRowsOptions } from '../fleet/ready-row-edit.js';
 import { replaceQueueText } from './dedupe.js';
 
-export const SUPERSEDE_ARCHIVE = 'superseded.tsv';
+const SUPERSEDE_ARCHIVE = 'superseded.tsv';
 export interface QueueJob {
   id: string; repo: string;
   /** False for a claimed or running job: it can supersede older cycles but is never superseded itself. */

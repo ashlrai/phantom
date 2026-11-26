@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { importMarkdown } from '../core/queue/markdown.js';
-import { loadMergedJobIds, QueueStore } from '../core/queue/store.js';
+import { loadMergedJobIds, QueueStore, readQueueStream } from '../core/queue/store.js';
 import { createSpawnIngest, loadOrCreateIngestToken } from '../core/queue/ingest.js';
 import { validateQueue, type QueueDocument } from '../core/queue/schema.js';
 import { draftCosResult } from '../core/cos/intake.js';
@@ -30,16 +30,6 @@ With --pr-url, done records PR-OPEN; done without it records DONE.
 Claims require READY and all dependencies DONE. No fleet cutover is performed.
 Spawn children land as PROPOSED: deduped, rate-limited, depth-capped and
 never allowed a higher tier, tighter priority, other pool or other repo.`;
-async function readStdin(cap: number): Promise<string> {
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin as AsyncIterable<Buffer>) {
-    size += chunk.length;
-    if (size > cap) throw new Error('Proposal on stdin is too large');
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString('utf8');
-}
 export async function cmdJobQueue(args: string[]): Promise<number> {
   let json = args.includes('--json');
   try {
@@ -108,7 +98,7 @@ export async function cmdJobQueue(args: string[]): Promise<number> {
       case 'spawn': {
         const cap = 256 * 1024;
         const text = operand === '-'
-          ? await readStdin(cap)
+          ? await readQueueStream(process.stdin as AsyncIterable<Buffer>, { maxBytes: cap, maxBytesError: 'Proposal on stdin is too large' })
           : await readFile(operand, 'utf8');
         if (Buffer.byteLength(text) > cap) throw new Error('Proposal file is too large');
         result = await store.propose(JSON.parse(text), { mergedIds: await loadMergedJobIds(dirname(store.directory)) });
