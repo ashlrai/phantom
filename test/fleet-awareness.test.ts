@@ -129,6 +129,29 @@ test('accepted witness boundaries weight observed latency and discard expired or
   f.advance(86_400_001); expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.latency.samples === 0)).toBe(true);
 });
 
+test('pool routing uses only eligible hosts to rank a host with unknown latency', () => {
+  const f = fixture();
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  const unrelated = f.add('unrelated', { slots: 1 });
+  f.enqueue('unrelated-history');
+  const previous = nodes.pull(unrelated)!;
+  f.advance(5000);
+  expect(nodes.complete(previous.claim, 'done')).toBe(true);
+  f.beat('unrelated', { slots: 0, held: 'disk-pressure' });
+  const measured = f.add('measured', { slots: 1 });
+  f.enqueue('measured-history');
+  const sample = nodes.pull(measured)!;
+  f.advance(1000);
+  expect(nodes.complete(sample.claim, 'done')).toBe(true);
+  f.beat('measured', { slots: 1 });
+  const newcomer = f.add('newcomer', { slots: 2 });
+  f.enqueue('next');
+
+  expect(projectFleetAwareness(f.state, f.now()).hosts.find(h => h.hostId === 'newcomer')?.latency.medianMs).toBeNull();
+  expect(f.plan()).toEqual([{ jobId: 'next', owner: 'mason', nodeId: 'newcomer' }]);
+  expect(nodes.pull(newcomer)?.claim.jobId).toBe('next');
+});
+
 test('a producer withdrawal is a fence, not latency evidence; accepted completions still count', () => {
   const f = fixture();
   const worker = f.add('worker', { hostId: 'mac', slots: 4 });

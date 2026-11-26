@@ -283,9 +283,12 @@ Workers reporting the same host share the minimum fresh slot budget. Active
 claims and planned assignments consume it once; a fresh pressure hold blocks
 that host. Placement ranks remaining slots divided by the median accepted
 claim-to-completion duration over 24 hours; a producer withdrawal is a fence,
-not an execution, and adds no sample. Missing latency uses the mean of
-measured host medians (equal weights when none exist). Unknown duration is never
-reported as zero. Owner, capability, local-auth and fencing checks still apply.
+not an execution, and adds no sample. For a job with an eligible host whose
+latency is unknown, the router uses the mean of the positive measured medians
+from eligible hosts with free slots, counting each host once. If none has a
+positive measured median, unknown latency gets equal weight across hosts.
+Unknown duration is never reported as zero. Owner, capability, local-auth and
+fencing checks still apply.
 
 `phm node status --json` exposes scoped capacity samples. `phm fleet status-api
 --json` and the existing Fleet compute API add lane occupancy, targets, floors
