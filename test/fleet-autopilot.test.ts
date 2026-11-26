@@ -540,6 +540,36 @@ describe('readFleetQueue depDetail metDeps', () => {
 });
 
 describe('fleet autopilot end-to-end on a fixture runs dir', () => {
+  it('honors operator lane holds before the next dispatcher tick', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fleet-autopilot-e2e-'));
+    dirs.push(dir);
+    await mkdir(join(dir, 'queue'));
+    await writeFile(join(dir, 'HOLD'), 'devin\t\ncodex-local\n');
+    await writeFile(join(dir, 'queue', 'ready.tsv'),
+      'READY\tRQ-NEW\tdevin\twork\tphantom\tprompts/x.md\n');
+    await writeFile(join(dir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: '2026-11-07T00:00:00Z',
+      admission: { cap: 4, running: 1, load1: 1, reason: null },
+      lanes: {
+        devin: { running: 1, target: 2, queued: 1, held: false },
+        'codex-local': { running: 0, target: 2, queued: 0, held: false },
+        claude: { running: 0, target: 1, queued: 0, held: false },
+      },
+    }));
+
+    const state = await readFleetAutopilotState({ runsDir: dir, now: () => new Date('2026-11-07T00:00:00Z') });
+    const report = planFleetAutopilot(state);
+    expect(report.lanes).toMatchObject([
+      { lane: 'claude', held: false, freeSlots: 1 },
+      { lane: 'codex-local', held: true, freeSlots: null },
+      { lane: 'devin', held: true, freeSlots: null },
+    ]);
+    expect(report.gaps.map(({ kind, lane }) => ({ kind, lane }))).toEqual([
+      { kind: 'missing-restock', lane: 'claude' },
+    ]);
+    expect(report.action).toMatchObject({ kind: 'enqueue', type: 'restock', count: 1, lane: 'claude' });
+  });
+
   it('proposes an unpark sweep from real queue/status/slots files', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fleet-autopilot-e2e-'));
     dirs.push(dir);

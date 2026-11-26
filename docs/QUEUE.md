@@ -339,9 +339,10 @@ old and no later than report time. A missing, invalid, future or older tick
 degrades the dispatcher source. Dispatcher counts and lane headroom stay
 unknown, suppressing starvation and restock proposals. Ready supply, configured
 slots and independent dependency or rebase evidence remain available.
-Autopilot honors a hold reported by either dispatcher status or the configured
-slots, so a newly held lane is excluded from starvation, restock and suggestions
-to hold a sibling while the dispatcher catches up.
+Autopilot honors holds from dispatcher status, configured slots and the
+operator's `HOLD` file at the runs root. The file lists whitespace-separated
+lane names. A newly held lane is excluded from starvation, restock and
+suggestions to hold a sibling while the dispatcher catches up.
 For utilization, starvation and restock, autopilot uses the lower of the
 configured lane target and the last fresh tick's launch target (which includes
 any controller shed). A target decrease can suppress a recommendation before

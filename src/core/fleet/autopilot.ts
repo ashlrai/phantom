@@ -10,7 +10,8 @@
  * running/target/queued/held via explainFleetAdmission), queue/ready.tsv
  * plus metrics/jobs.jsonl (ready/parked supply and parked dependency rows
  * via readFleetQueue with depDetail), and queue/slots.json (lane targets,
- * floors, ceilings and holds via readLaneTargets). An optional --repo pass
+ * floors, ceilings and holds via readLaneTargets), and HOLD (operator lane
+ * holds). An optional --repo pass
  * adds the read-only `gh pr list` rebase-coverage read so uncovered
  * conflicting bridge PRs can outrank local gaps; without --repo that gap
  * class is simply unmeasured, never guessed.
@@ -26,13 +27,14 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { explainFleetAdmission, type FleetAdmissionReport } from '../../cli/fleet-admission.js';
-import { readFleetQueue, type FleetQueueV1, type Source } from './runs-parked-queue.js';
+import { readFleetQueue, readSource, type FleetQueueV1, type Source } from './runs-parked-queue.js';
 import { clampLocalTarget, LOCAL_LANE } from './local-capacity.js';
 import { laneLaunchTarget } from './lane-launch-target.js';
 import { readLaneTargets, type LaneTargetsV1 } from './runs-lane-targets.js';
 import { readRebaseStatus } from './rebase-status.js';
 
 const DISPATCHER_MAX_AGE_MS = 60_000; // Two 30-second dispatcher ticks.
+const MAX_HOLD_BYTES = 64 * 1024;
 
 export const FLEET_AUTOPILOT_SCHEMA = 'fleet.autopilot.v1';
 /** A lane is over-deep (holdable at the cap) when its READY depth exceeds target × this factor. */
@@ -61,6 +63,8 @@ export interface FleetAutopilotState {
   admission: FleetAdmissionReport | null;
   queue: FleetQueueV1 | null;
   slots: LaneTargetsV1 | null;
+  /** Lane names from a readable operator HOLD file, if available. */
+  operatorHolds?: ReadonlySet<string>;
   /** Local workers memory allows right now (phm local capacity); null/absent when unknown, which leaves the lane target alone. */
   localWorkers?: number | null;
   /** Null when no --repo was passed. */
@@ -84,7 +88,7 @@ export async function readFleetAutopilotState(
 ): Promise<FleetAutopilotState> {
   const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const now = opts.now ?? (() => new Date());
-  const [status, queue, slots, rebase, localWorkers] = await Promise.all([
+  const [status, queue, slots, rebase, localWorkers, holds] = await Promise.all([
     (async (): Promise<{ source: Source; report: FleetAdmissionReport | null; tick?: number }> => {
       try {
         const text = await (opts.statusText ?? ((path) => readFile(path, 'utf8')))(join(runsDir, 'queue', 'status.json'));
@@ -124,6 +128,7 @@ export async function readFleetAutopilotState(
       }
     })(),
     opts.localWorkers?.().catch(() => null),
+    readSource(join(runsDir, 'HOLD'), MAX_HOLD_BYTES, false),
   ]);
   const generatedAt = now();
   const age = generatedAt.getTime() - (status.tick ?? NaN);
@@ -132,6 +137,7 @@ export async function readFleetAutopilotState(
     generatedAt: generatedAt.toISOString(),
     sources: { status: status.source === 'healthy' && !fresh ? 'degraded' : status.source, queue: queue.source, slots: slots.source, rebase: rebase.source },
     admission: fresh ? status.report : null, queue: queue.view, slots: slots.view, rebase: rebase.repos,
+    ...(holds.state === 'healthy' ? { operatorHolds: new Set(holds.text.split(/\s+/u).filter(Boolean)) } : {}),
     ...(opts.localWorkers ? { localWorkers: localWorkers ?? null } : {}),
   };
 }
@@ -233,7 +239,8 @@ export function autopilotLanes(state: FleetAutopilotState): AutopilotLane[] {
     const target = lane === LOCAL_LANE ? clampLocalTarget(rawTarget, { workers: state.localWorkers ?? null }) : rawTarget;
     // A configured hold can arrive before the next dispatcher tick. The
     // tick can also observe runtime holds absent from slots.json.
-    const held = admit?.held === true || slot?.held === true || (admit === null && slot?.heldReason != null);
+    const held = state.operatorHolds?.has(lane) === true || admit?.held === true ||
+      slot?.held === true || (admit === null && slot?.heldReason != null);
     const free = held || running === null || target === null ? null : Math.max(0, target - running);
     return {
       lane,
