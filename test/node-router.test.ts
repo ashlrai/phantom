@@ -85,6 +85,25 @@ describe('node router', () => {
 });
 
 describe('job leases: no job runs twice', () => {
+  it.each(['pull', 'direct claim'])('frees a worker slot after leader failover for %s', method => {
+    const f = fixture();
+    const leader = f.box.join('leader', { owners: ['other'] })!;
+    const worker = f.mac.join('worker', { owners: ['o'], slots: 1 })!;
+    f.box.heartbeat(leader);
+    f.box.enqueue('first', { owner: 'o' });
+    f.box.enqueue('second', { owner: 'o' });
+    const first = f.mac.pull(worker)!.claim;
+    expect(f.box.plan('o')[0]?.nodeId).toBeNull();
+
+    f.advance(20);
+    expect(f.mac.jobOutcome('first', 'o')).toEqual({ state: 'running' });
+    const successor = f.mac.heartbeat(worker)!.leader!;
+    expect(f.mac.renewClaim(first)).toBeNull();
+    expect(f.box.plan('o')).toEqual([{ jobId: 'second', owner: 'o', nodeId: 'worker' }]);
+    const second = method === 'pull' ? f.mac.pull(worker)?.claim : f.mac.claim(successor, worker, 'second');
+    expect(second).toMatchObject({ jobId: 'second', leaderToken: successor.token });
+  });
+
   it('two nodes racing the same job get exactly one claim', () => {
     const f = fixture();
     const a = f.box.join('a', { owners: ['o'] })!;

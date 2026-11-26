@@ -30,20 +30,19 @@ export function liveNodes(state: NodesState, now: number): NodeRecord[] {
   return state.nodes.filter(n => nodeCanAcceptWork(n, now));
 }
 
-/** True while a running job's claim can still be acted on: the claim is
- * unexpired and an unexpired node record carries the same id and session.
- * A lapsed claim is re-routable, and a claim fenced by a rejoin or departure
- * frees the node's capacity at once even though the job stays fenced until
- * the claim expires. */
+/** A claim consumes capacity only while its worker and leader can still act. */
 export function actionableClaim(state: NodesState, job: QueueJobV1, now: number): boolean {
   const claim = job.claim;
+  const leader = state.leader;
   return job.state === 'running' && claim !== undefined && claim.expiresAt > now &&
+    leader !== null && leader.token === claim.leaderToken && leader.expiresAt > now &&
+    state.nodes.some(n => n.expiresAt > now && n.nodeId === leader.nodeId && n.session === leader.session) &&
     state.nodes.some(n => n.expiresAt > now && n.nodeId === claim.nodeId && n.session === claim.session);
 }
 
 function activeClaims(state: NodesState, node: NodeRecord, now: number): number {
-  return state.jobs.filter(j => j.state === 'running' && j.claim && j.claim.expiresAt > now &&
-    j.claim.nodeId === node.nodeId && j.claim.session === node.session).length;
+  return state.jobs.filter(j => j.claim?.nodeId === node.nodeId && j.claim.session === node.session &&
+    actionableClaim(state, j, now)).length;
 }
 
 /** Capability fences every assignment path honors: a session that released the
