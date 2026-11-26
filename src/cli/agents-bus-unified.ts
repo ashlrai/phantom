@@ -19,6 +19,9 @@ import { formatBusWorkMine } from '../core/agents/bus-work-mine.js';
 import { readBusWorkMineWithSeats } from '../core/agents/bus-work-mine-seats.js';
 import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
 import { readAgentBusThread } from '../core/agents/bus-thread.js';
+import { followAgentBus, type AgentBusFollowRecord, type AgentBusFollowRequest } from '../core/agents/bus-follow.js';
+import { sanitizePublicJson } from '../core/util/public-json.js';
+import { redactFields as redactFollowFields } from './fleet-bus-follow.js';
 import type { BusThreadResult } from '../core/fleet/bus-thread-context.js';
 import { claimNextBusWork, type BusNextResult } from '../core/fleet/bus-next-claim.js';
 import { mutateBusWorkClaim, type BusClaimRequest, type BusClaimResult as BusMessageClaimResult } from '../core/fleet/bus-work-claims.js';
@@ -27,7 +30,7 @@ import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js'
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
-export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'show', 'thread', 'adapters', 'claim', 'work', 'status']);
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'follow', 'wakes', 'show', 'thread', 'adapters', 'claim', 'work', 'status']);
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
@@ -42,6 +45,7 @@ ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-f
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
+ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
 ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
 ashlr agents bus show <id>
 ashlr agents bus thread <id>
@@ -242,6 +246,18 @@ coordination hold already covers the receipt — and bodies naming a job
 worker-handoff taskIds) report job, the live feed state of the job they
 name (the same annotation show resolves, read once per page), so an agent
 sees hold and job state without a lookup per message.
+follow streams that same addressed-inbox projection as JSONL — one
+{"type":"message",...} record per matching row carrying the inbox row's
+kind, priority, sender handle, channel, held/holder and job annotations
+plus its scrubbed one-line summary, and {"type":"checkpoint","cursor":N}
+records as the scan advances — so a consumer resumes at the last accepted
+cursor (at-least-once) instead of polling inbox in a loop. --after starts
+the scan after a persisted cursor (default 0 replays retained mail),
+--duration-ms bounds the stream's lifetime and is required, --interval-ms
+sets the poll cadence, every inbox filter applies unchanged, and --json is
+required. SIGINT/SIGTERM ends the stream cleanly, a page that cannot be
+read fails it, and an agent that resolves to no registered identity
+reports unknown-agent.
 show
 resolves one retained envelope by the wire id wake hints, work mine items
 and claim operations cite; an expired id reports not-found, and the read
@@ -530,7 +546,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--before', '--root', '--key', '--owner', '--origin', '--lease-ms', '--token', '--outcome', '--reason',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
-  '--result', '--with',
+  '--result', '--with', '--duration-ms', '--interval-ms',
   '--kind', '--channel', '--contains', '--exclude-from', '--exclude-owner', '--reply-to', '--in-reply-to', '--body-kind']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched', '--all']);
@@ -978,6 +994,34 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         `nextCursor ${nextCursor}`,
       ].join('\n'));
       return 0;
+    }
+    if (verb === 'follow') {
+      noExtra(2);
+      if (!json) throw new UsageError('follow streams JSONL records; pass --json.');
+      const agent = sub ?? self;
+      if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
+      const durationMs = integer(one('--duration-ms'), '--duration-ms');
+      if (durationMs === undefined) throw new UsageError('--duration-ms is required.');
+      const request: AgentBusFollowRequest = {
+        agent, after: integer(one('--after'), '--after'), durationMs, intervalMs: integer(one('--interval-ms'), '--interval-ms'),
+        thread: one('--thread'), from: one('--from'), excludeFrom: one('--exclude-from'), with: one('--with'),
+        priority: priorityArg(), kind: kindArg(), job: one('--job'), since: sinceArg(), before: beforeArg(),
+        channel: one('--channel'), contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'),
+        bodyKind: one('--body-kind'), result: resultArg(),
+      };
+      const controller = new AbortController();
+      const stop = (): void => controller.abort();
+      process.on('SIGINT', stop); process.on('SIGTERM', stop);
+      try {
+        const emit = async (record: AgentBusFollowRecord): Promise<void> => {
+          out(JSON.stringify(sanitizePublicJson(redactFollowFields(record))));
+        };
+        const result = await followAgentBus(request, options, { emit, signal: controller.signal });
+        return result.status === 'expired' || result.status === 'cancelled' ? 0
+          : result.status === 'invalid' ? 2 : 1;
+      } finally {
+        process.off('SIGINT', stop); process.off('SIGTERM', stop);
+      }
     }
     if (verb === 'show') {
       noExtra(2);
