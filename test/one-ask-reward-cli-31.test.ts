@@ -226,6 +226,26 @@ describe('fleet lane-reward', () => {
     expect(fold.attempts.get('RQ-FAKE-B1')).toMatchObject({ lane: 'lane-b', published: true, outcome: 'closed' });
   });
 
+  it('joins URL-only outcomes across GitHub repository casing and trailing slashes', () => {
+    const fold = foldLaneRewardAttempts(rows(
+      { event: 'publish', job: 'RQ-FAKE-A1', prUrl: 'https://github.com/Fake-Org/Fake-Repo/pull/5/' },
+      { event: 'publish', job: 'RQ-FAKE-B1', url: URL(6) },
+      { event: 'merged', pr_url: URL(5) },
+    ));
+    expect(fold.attempts.get('RQ-FAKE-A1')?.outcome).toBe('merged');
+    expect(fold.attempts.get('RQ-FAKE-B1')?.outcome).toBeNull();
+  });
+
+  it('treats differently spelled claims on one GitHub PR as contested', () => {
+    const fold = foldLaneRewardAttempts(rows(
+      { event: 'publish', job: 'RQ-FAKE-A1', url: URL(5) },
+      { event: 'publish', job: 'RQ-FAKE-B1', url: 'https://github.com/Fake-Org/Fake-Repo/pull/5/' },
+      { event: 'merged', url: URL(5) },
+    ));
+    expect(fold.attempts.get('RQ-FAKE-A1')?.outcome).toBeNull();
+    expect(fold.attempts.get('RQ-FAKE-B1')?.outcome).toBeNull();
+  });
+
   it('excludes batch wrappers and node-pool telemetry from measured attempts and PR claims', async () => {
     const job = 'RQ-FAKE-MEMBER';
     const url = URL(7);
