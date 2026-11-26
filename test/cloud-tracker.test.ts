@@ -377,3 +377,106 @@ describe('refreshCloudTasks', () => {
     expect(await refreshCloudTasks({ gh: fakeGh({}).gh })).toEqual({ checked: 0, updated: 0 });
   });
 });
+
+describe('refreshCloudTasks — superseded tasks', () => {
+  const FLEET_PR = 77;
+  const fleetView = (state: 'OPEN' | 'MERGED' | 'CLOSED') => JSON.stringify({
+    number: FLEET_PR, url: `https://github.com/ashlrai/ashlr-hub/pull/${FLEET_PR}`, state, headRefName: 'ashlr/fleet/prop-1',
+  });
+  const OUTCOME = JSON.stringify({
+    headRefOid: 'a'.repeat(40), mergeCommit: { oid: 'b'.repeat(40) },
+    statusCheckRollup: [{ __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }],
+    reviewDecision: 'APPROVED', reviews: [],
+  });
+  /** gh that answers `pr view` by its --json field: state read vs outcome read. */
+  const ghView = (fleetState: 'OPEN' | 'MERGED' | 'CLOSED', outcome: string | { fail: true } | null) => {
+    const calls: string[][] = [];
+    const gh: Gh = async (args) => {
+      calls.push(args);
+      if (args[1] === 'view') {
+        const field = args[args.indexOf('--json') + 1];
+        if (field === 'number,url,state,headRefName') return { ok: true, stdout: fleetView(fleetState), stderr: '' };
+        if (outcome === null) return { ok: true, stdout: '[]', stderr: '' };
+        if (typeof outcome !== 'string') return { ok: false, stdout: '', stderr: 'boom' };
+        return { ok: true, stdout: outcome, stderr: '' };
+      }
+      return { ok: true, stdout: '[]', stderr: '' };
+    };
+    return { gh, calls };
+  };
+  const superseded = (suffix: string, state: CloudTaskV1['state'], patch: Partial<CloudTaskV1> = {}) => seed(suffix, state, {
+    stateReason: 'Superseded by fleet PR #77; it lands through the standing gates.',
+    pr: { number: 42, url: 'https://github.com/ashlrai/ashlr-hub/pull/42', state: 'closed', draft: true, title: '[ashlr-cloud] t' },
+    deliveryPin: { number: 42, url: 'https://github.com/ashlrai/ashlr-hub/pull/42' },
+    supersededBy: { repo: 'ashlrai/ashlr-hub', number: FLEET_PR },
+    ...patch,
+  });
+  const outcomeReads = (calls: string[][]) => calls.filter((a) => a[1] === 'view' && a[a.indexOf('--json') + 1] !== 'number,url,state,headRefName');
+
+  it('follows the fleet PR to merged and keeps its merge/CI/review verdict on outcome', async () => {
+    const t = superseded('aaaaaa', 'pr-open');
+    const { gh, calls } = ghView('MERGED', OUTCOME);
+    expect(await refreshCloudTasks({ gh, now: () => new Date(T0 + HOUR) })).toEqual({ checked: 1, updated: 1 });
+    expect(readCloudTask(t.id)).toMatchObject({
+      state: 'merged',
+      stateReason: 'Landed through the standing gates as fleet PR #77.',
+      outcome: {
+        observedAt: at(T0 + HOUR), headSha: 'a'.repeat(40), mergeSha: 'b'.repeat(40),
+        ci: 'success', failedChecks: [], reviewDecision: 'APPROVED', changesRequested: 0,
+      },
+    });
+    expect(outcomeReads(calls)).toEqual([['pr', 'view', '77', '--repo', 'ashlrai/ashlr-hub', '--json',
+      'headRefOid,mergeCommit,statusCheckRollup,reviewDecision,reviews']]);
+  });
+
+  it('reads no outcome while the fleet PR is still open', async () => {
+    const t = superseded('aaaaaa', 'pr-open');
+    const { gh, calls } = ghView('OPEN', OUTCOME);
+    expect(await refreshCloudTasks({ gh, now: () => new Date(T0 + HOUR) })).toEqual({ checked: 1, updated: 0 });
+    expect(readCloudTask(t.id)).toMatchObject({ state: 'pr-open' });
+    expect(readCloudTask(t.id)!.outcome).toBeUndefined();
+    expect(outcomeReads(calls)).toEqual([]);
+  });
+
+  it('still lands the state change when the outcome read fails, leaving it absent', async () => {
+    const t = superseded('aaaaaa', 'pr-open');
+    const { gh } = ghView('MERGED', { fail: true });
+    expect(await refreshCloudTasks({ gh, now: () => new Date(T0 + HOUR) })).toEqual({ checked: 1, updated: 1 });
+    const done = readCloudTask(t.id)!;
+    expect(done.state).toBe('merged');
+    expect(done.outcome).toBeUndefined();
+  });
+
+  it('fills a missing outcome on a watched closed task without changing its state', async () => {
+    const t = superseded('aaaaaa', 'closed', {
+      stateReason: 'Fleet PR #77 was closed without merging.',
+      outcome: undefined,
+    });
+    const closedOutcome = JSON.stringify({
+      headRefOid: 'a'.repeat(40), mergeCommit: null,
+      statusCheckRollup: [{ __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'FAILURE' }],
+      reviewDecision: 'CHANGES_REQUESTED', reviews: [{ state: 'CHANGES_REQUESTED' }],
+    });
+    const { gh } = ghView('CLOSED', closedOutcome);
+    expect(await refreshCloudTasks({ gh, now: () => new Date(T0 + HOUR) })).toEqual({ checked: 1, updated: 1 });
+    expect(readCloudTask(t.id)).toMatchObject({
+      state: 'closed', stateReason: 'Fleet PR #77 was closed without merging.',
+      outcome: { mergeSha: null, ci: 'failure', failedChecks: ['test'], reviewDecision: 'CHANGES_REQUESTED', changesRequested: 1 },
+    });
+    // The verdict is now recorded: the next refresh makes no further outcome read.
+    const second = ghView('CLOSED', closedOutcome);
+    expect(await refreshCloudTasks({ gh: second.gh, now: () => new Date(T0 + 2 * HOUR) })).toEqual({ checked: 1, updated: 0 });
+    expect(outcomeReads(second.calls)).toEqual([]);
+  });
+
+  it('clears a stale outcome when the fleet PR is open again', async () => {
+    const stale = {
+      observedAt: at(T0), headSha: 'a'.repeat(40), mergeSha: 'b'.repeat(40), ci: 'success' as const,
+      failedChecks: [], reviewDecision: 'APPROVED' as const, changesRequested: 0,
+    };
+    const t = superseded('aaaaaa', 'pr-open', { outcome: stale });
+    const { gh } = ghView('OPEN', null);
+    expect(await refreshCloudTasks({ gh, now: () => new Date(T0 + HOUR) })).toEqual({ checked: 1, updated: 1 });
+    expect(readCloudTask(t.id)!.outcome).toBeUndefined();
+  });
+});

@@ -1788,13 +1788,19 @@ There are two ways to launch backlog items:
   module first loads, never under a test runner. Every 10 minutes it refreshes
   task states from GitHub. Two minutes after start, and then every 60 minutes,
   it launches the next backlog item. Before each launch pick it also registers
-  every unclosed backlog PR whose item declares a metric into the outcome
-  ledger — the same records `phm improve sync-backlog` writes by hand — so
-  measured outcomes keep feeding the order above. The same pass records
+  every backlog task whose item declares a metric and whose carrier PR is
+  still live into the outcome ledger — the same records `phm improve
+  sync-backlog` writes by hand — so measured outcomes keep feeding the order
+  above. When the standing-pass intake has superseded a task's cloud PR, the
+  carrier is the fleet App PR (`supersededBy`): that is the PR number the
+  ledger records, measures and watches. The same pass records
   checkout-free post-merge observations (`syncCloudOutcomeObservations`):
-  merged task outcomes and the revert-outcomes journal become `observed`
-  events, so standing reverts discount the proposals that caused them
-  without anyone running `phm improve observe` by hand. Scheduled launches need
+  merged task outcomes, the fleet merge-state landing record for a
+  superseded task's intake proposal, and the revert-outcomes journal become
+  `observed` events — a proposal still naming the closed cloud PR is
+  re-pointed at the fleet PR — so standing reverts discount the proposals
+  that caused them without anyone running `phm improve observe` by hand.
+  Scheduled launches need
   self-improvement switched on **and** the self-improvement gate open. So with
   the defaults Phantom starts at most 4 sessions a day on its own, and stops
   when the estimate reaches the $40 reserve. The two jobs never overlap
@@ -1939,7 +1945,10 @@ the diff that was filed, the intake comments "Superseded by #N" on the cloud
 PR, closes it, and records `supersededBy` on the task. From then on the
 tracker follows the App PR: open stays `pr-open`, merged makes the task
 `merged` (so its backlog item is done for good), and closed makes it
-`closed`. Needs you no longer offers actions on a superseded PR.
+`closed`. The App PR's own merge/CI/review verdict is kept on the task's
+`outcome` at that terminal transition, exactly as the cloud PR's was — it is
+the evidence the outcome ledger, retros and lesson trial read for the PR
+that actually landed. Needs you no longer offers actions on a superseded PR.
 
 KILL stops the intake before it reads anything. It never runs outside a
 standing tick and never merges.
