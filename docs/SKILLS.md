@@ -135,6 +135,8 @@ attributes each trajectory's resolved terminal outcome (and deterministic
 post-merge realized outcome) back to the skill revisions selected on it.
 Only skill-use receipts timestamped within the reporting window, including
 both endpoints, contribute to the join or its coverage threshold.
+The skill-outcome report anchors its ledger read and trajectory join to one
+report time, so time spent reading the ledger cannot shift either boundary.
 The trajectory timeline, join diagnostics and outcome tallies use only
 post-merge receipts whose observation timestamps fall within the reporting
 window, including its start and report time.

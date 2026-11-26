@@ -4790,6 +4790,11 @@ roster v1. Legacy counters never supply measured outcomes; missing evidence is
 explicit and peer mappings confer no authority. See the
 [specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md#evidence-derived-identity-rq-agent-identity-1).
 
+`listTrajectoryRecords(opts?)` (`src/core/autonomy/trajectory-records.ts`) accepts
+an optional `asOfMs` report time in epoch milliseconds. It defaults to the
+current time and anchors the lookback and both endpoints of the skill-use
+and post-merge observation windows.
+
 `fleet.plugins-panel.v1` and `fleet.skills-panel.v1` (`src/core/fleet/installed-panels.ts`):
 `readPluginsPanel(opts?)`, `readSkillsPanel(opts?)`, `formatInstalledPanel(panel, noun)`.
 Read-only lists of the plugins and skills fleet agents have: Phantom plugins and
