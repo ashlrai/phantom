@@ -2783,7 +2783,7 @@ function printFleetHelp(): void {
   console.log(`    phm fleet deploy-plan --since <sha> [--json]  ${cyan('# find fleet scripts awaiting deployment; read-only')}`);
   console.log(`    phm fleet profile [--json] [--host <alias>]  ${cyan('# report setup drift; repeat --host for a matrix')}`);
   console.log(`    phm fleet supply --lane <lane> --n <N> [--json]  ${cyan('# suggest queue work from open sources')}`);
-  console.log(`    phm fleet board --leader [--json]      ${cyan('# last Leader tick board: lanes, tier depth, merges, conflicts, needs-Mason')}`);
+  console.log(`    phm fleet board --leader [--json]      ${cyan('# last Leader tick board: lanes, tier depth, merges, conflicts, owner requests')}`);
   console.log(`    phm fleet parked [--json]     ${cyan('# ready/parked host work; unmetDeps lists PARKED-DEP gates')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);

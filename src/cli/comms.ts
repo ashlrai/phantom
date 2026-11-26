@@ -411,7 +411,7 @@ async function cmdSetupEmail(): Promise<number> {
   console.log(`Inbound: ${inbox}`);
   console.log(`Outbound: ${saved.config?.outboxDir ?? join(inbox, '..', 'outbox')}`);
   console.log(`Processed (including refused senders): ${saved.config?.processedDir ?? join(inbox, '..', 'processed')}`);
-  console.log('1. Create private drop directories (mode 0700). Use only Mason’s independently verified addresses for --from.');
+  console.log('1. Create private drop directories (mode 0700). Use only the owner’s independently verified addresses for --from.');
   console.log(`2. Save configuration: phm comms email-drop ${JSON.stringify(inbox)} --from <verified-address> --save-config`);
   console.log('   A saved config enables polling; set "enabled": false in that file to pause it.');
   console.log('3. Mail.app → Settings → Rules → Add Rule: match From to a verified address; Run AppleScript.');
@@ -588,7 +588,7 @@ function printCommsHelp(): void {
   console.log('    bus post|read|watch|next|claim  durable local agent message plane (bus --help)');
   console.log('    inbox [--source <n>] [--severity <band>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--json]');
   console.log('                               unified pending view: needs-you, teammate texts, drafts, unclaimed bus work, comms requests');
-  console.log('    inbox read|post              Mason inbox for local operators (inbox --help)');
+  console.log('    inbox read|post              Owner inbox for local operators (inbox --help)');
   console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (allowlisted From only)');
   console.log('    email-cycle                  process the enabled saved email drop configuration');
   console.log('    setup-email                  print drop paths and Mail.app / forwarder setup');
@@ -697,7 +697,7 @@ const EMAIL_DROP_USAGE = 'usage: phm comms email-drop <inboxDir> --from <address
 
 async function cmdCommsEmailDrop(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`${EMAIL_DROP_USAGE}\nIngests every *.eml in <inboxDir> (name order), records messages whose From is allowlisted in Mason's inbox\nand the agent bus, writes a reply .eml per receipt, and moves handled files to processed/.\n--from is repeatable and required; unlisted senders are refused silently.\n--send-replies with --save-config lets 'ashlr comms cycle' send queued replies via Mail.app.\nDefaults: --outbox <inboxDir>/../outbox, --processed <inboxDir>/../processed, --once.`);
+    console.log(`${EMAIL_DROP_USAGE}\nIngests every *.eml in <inboxDir> (name order), records messages whose From is allowlisted in the owner's inbox\nand the agent bus, writes a reply .eml per receipt, and moves handled files to processed/.\n--from is repeatable and required; unlisted senders are refused silently.\n--send-replies with --save-config lets 'ashlr comms cycle' send queued replies via Mail.app.\nDefaults: --outbox <inboxDir>/../outbox, --processed <inboxDir>/../processed, --once.`);
     return 0;
   }
   const badOption = rejectUnknownOptions(args, {
