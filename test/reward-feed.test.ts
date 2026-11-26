@@ -103,6 +103,34 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs[0]).toMatchObject({ pool: 'omlx', dispatchedAt: '2026-10-28T15:00:00.000Z' });
   });
 
+  it.each(['MERGED', 'CLOSED'])('uses the PR repository on the %s verdict', (state) => {
+    const job = 'RQ-VERDICT-REPO';
+    const verdict = line({
+      job, state, repo: 'ashlrai/phantom', prUrl: 'https://github.com/AshlrAI/Lexicon/pull/12',
+      ts: MERGED_ISO,
+    });
+    expect(foldJobsLedgerRewards([launch(job), verdict].join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, repo: 'ashlrai/lexicon' },
+    ]);
+  });
+
+  it.each([
+    { current: ['ashlrai/lexicon', 'AshlrAI/Lexicon', undefined], expected: 'ashlrai/lexicon' },
+    { current: ['ashlrai/lexicon', 'ashlrai/locus'], expected: null },
+    { current: [undefined], expected: null },
+  ])('uses only repository evidence from the matching dispatch ($expected)', ({ current, expected }) => {
+    const job = 'RQ-DISPATCH-REPO';
+    const rows = [
+      launch(job),
+      ...current.map((repo) => line({ event: 'launch', job, repo, ts: '2026-10-28T15:00:00Z' })),
+      line({ job, state: 'MERGED', mergedAt: MERGED_ISO, ts: '2026-10-28T15:35:00Z' }),
+      launch(job, 'omlx', '2026-10-28T15:32:00Z'),
+    ];
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, repo: expected },
+    ]);
+  });
+
   it.each([merged, closed])('leaves the pool unknown for conflicting latest dispatch lanes (%o)', (resolve) => {
     const job = 'RQ-TIED-DISPATCH';
     const dispatches = [claim(job, 'devin', DISPATCH_ISO), launch(job, 'codex-cmp', DISPATCH_ISO)];

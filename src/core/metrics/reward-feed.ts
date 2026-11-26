@@ -146,15 +146,12 @@ function resolutionAt(row: Record<string, unknown>, keys: readonly string[]): nu
   return null;
 }
 
-/** owner/repo from the row's repo field, or proven by its GitHub PR URL. */
+/** The GitHub PR URL identifies the repository when the row carries one. */
 function repoOf(row: Record<string, unknown>): string | null {
-  const repo = firstString(row, ['repo']);
-  if (repo && REPO_PATTERN.test(repo)) return repo;
   const url = firstString(row, URL_KEYS);
   const match = url ? PR_URL_PATTERN.exec(url.replace(/\/+$/, '')) : null;
-  if (!match) return null;
-  const derived = `${match[1]}/${match[2]}`;
-  return REPO_PATTERN.test(derived) ? derived : null;
+  const repo = match ? `${match[1]}/${match[2]}` : firstString(row, ['repo']);
+  return repo !== null && REPO_PATTERN.test(repo) ? repo.toLowerCase() : null;
 }
 
 /** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
@@ -184,15 +181,16 @@ function standingReverted(
   return key !== null && keys.has(key);
 }
 
-interface DispatchMark { ms: number; lane: string | null }
+interface DispatchMark { ms: number; lane: string | null; repo: string | null }
+
+interface ResolutionMark { atMs: number; resolvedMs: number; repo: string | null }
 
 interface RewardJobAccum {
-  repo: string | null;
   dispatches: DispatchMark[];
   /** Latest merge-resolution row: row time, the GitHub mergedAt it reported, and its PR URL. */
-  merge: { atMs: number; mergedAtMs: number; url: string | null } | null;
+  merge: (ResolutionMark & { url: string | null }) | null;
   /** Latest closed-unmerged resolution time, falling back to the row stamp. */
-  closedMs: number | null;
+  close: ResolutionMark | null;
   /** Latest effective revert time, falling back to the row stamp. */
   revertMs: number | null;
   /** True when the standing revert set proves the held merge's PR was reverted. */
@@ -204,8 +202,8 @@ interface RewardJobAccum {
 
 function newAccum(): RewardJobAccum {
   return {
-    repo: null, dispatches: [],
-    merge: null, closedMs: null, revertMs: null, standingReverted: false,
+    dispatches: [],
+    merge: null, close: null, revertMs: null, standingReverted: false,
     ciStartAts: [], ciCompleteAts: [],
   };
 }
@@ -281,12 +279,11 @@ export function foldJobsLedgerRewards(
       acc = newAccum();
       jobs.set(id, acc);
     }
-    acc.repo ??= repoOf(row);
     const event = firstString(row, EVENT_KEYS);
     if (event !== null) {
       const name = event.toLowerCase();
       if (DISPATCH_EVENTS.has(name)) {
-        acc.dispatches.push({ ms: at, lane: firstString(row, LANE_KEYS) });
+        acc.dispatches.push({ ms: at, lane: firstString(row, LANE_KEYS), repo: repoOf(row) });
       } else if (name === 'ci_start' || name === 'ci_complete') {
         noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at);
       }
@@ -299,13 +296,16 @@ export function foldJobsLedgerRewards(
     if (row['merged'] === true || MERGE_STATES.has(state)) {
       const mergedAtMs = resolutionAt(row, MERGED_AT_KEYS) ?? at;
       if (mergedAtMs > nowMs) continue;
-      if (acc.merge === null || mergedAtMs > acc.merge.mergedAtMs ||
-          (mergedAtMs === acc.merge.mergedAtMs && at >= acc.merge.atMs)) {
-        acc.merge = { atMs: at, mergedAtMs, url: firstString(row, URL_KEYS) };
+      if (acc.merge === null || mergedAtMs > acc.merge.resolvedMs ||
+          (mergedAtMs === acc.merge.resolvedMs && at >= acc.merge.atMs)) {
+        acc.merge = { atMs: at, resolvedMs: mergedAtMs, repo: repoOf(row), url: firstString(row, URL_KEYS) };
       }
     } else if (row['merged'] === false || CLOSED_STATES.has(state)) {
       const closedAtMs = resolutionAt(row, CLOSED_AT_KEYS) ?? at;
-      if (closedAtMs <= nowMs) acc.closedMs = Math.max(acc.closedMs ?? 0, closedAtMs);
+      if (closedAtMs <= nowMs && (acc.close === null || closedAtMs > acc.close.resolvedMs ||
+          (closedAtMs === acc.close.resolvedMs && at >= acc.close.atMs))) {
+        acc.close = { atMs: at, resolvedMs: closedAtMs, repo: repoOf(row) };
+      }
     }
   }
   for (const [id, acc] of jobs) {
@@ -323,19 +323,26 @@ export function foldJobsLedgerRewards(
 function dispatchBefore(acc: RewardJobAccum, boundMs: number): DispatchMark | null {
   let latestMs: number | null = null;
   const lanes = new Set<string>();
+  const repos = new Set<string>();
   for (const dispatch of acc.dispatches) {
     if (dispatch.ms > boundMs || (latestMs !== null && dispatch.ms < latestMs)) continue;
     if (dispatch.ms !== latestMs) {
       latestMs = dispatch.ms;
       lanes.clear();
+      repos.clear();
     }
     if (dispatch.lane !== null && dispatch.lane !== 'unknown' && POOL_PATTERN.test(dispatch.lane)) {
       lanes.add(dispatch.lane);
     }
+    if (dispatch.repo !== null) repos.add(dispatch.repo);
   }
   // The dispatcher stamps receipts to the second. Conflicting lanes at the
   // same timestamp cannot prove which pool earned the reward.
-  return latestMs === null ? null : { ms: latestMs, lane: lanes.size === 1 ? [...lanes][0]! : null };
+  return latestMs === null ? null : {
+    ms: latestMs,
+    lane: lanes.size === 1 ? [...lanes][0]! : null,
+    repo: repos.size === 1 ? [...repos][0]! : null,
+  };
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
@@ -350,26 +357,26 @@ function rewardInput(
 ): RewardSignalInput | null {
   const cost = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : null;
   const heldMerge = acc.merge !== null && !acc.standingReverted &&
-    (acc.revertMs === null || acc.merge.mergedAtMs > acc.revertMs);
+    (acc.revertMs === null || acc.merge.resolvedMs > acc.revertMs);
   if (acc.merge !== null) {
     const merge = acc.merge;
-    const dispatch = dispatchBefore(acc, merge.mergedAtMs);
+    const dispatch = dispatchBefore(acc, merge.resolvedMs);
     if (dispatch === null) return null;
     return {
       jobId: id, pool: dispatch.lane,
-      repo: acc.repo !== null && REPO_PATTERN.test(acc.repo) ? acc.repo : null,
-      merged: heldMerge, dispatchedAt: iso(dispatch.ms), mergedAt: heldMerge ? iso(merge.mergedAtMs) : null,
+      repo: merge.repo ?? dispatch.repo,
+      merged: heldMerge, dispatchedAt: iso(dispatch.ms), mergedAt: heldMerge ? iso(merge.resolvedMs) : null,
       costUsd: cost,
-      ...ciWallEvidence(acc, dispatch.ms, merge.mergedAtMs),
+      ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs),
     };
   }
-  const closedMs = Math.max(acc.closedMs ?? 0, acc.revertMs ?? 0);
+  const closedMs = Math.max(acc.close?.resolvedMs ?? 0, acc.revertMs ?? 0);
   if (closedMs > 0) {
     const dispatch = dispatchBefore(acc, closedMs);
     if (dispatch === null) return null;
     return {
       jobId: id, pool: dispatch.lane,
-      repo: acc.repo !== null && REPO_PATTERN.test(acc.repo) ? acc.repo : null,
+      repo: acc.close?.repo ?? dispatch.repo,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
       ...ciWallEvidence(acc, dispatch.ms, closedMs),
