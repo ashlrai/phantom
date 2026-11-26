@@ -101,6 +101,35 @@ describe('fleet coordination inbox read filters', () => {
     expect(hands.json.proposals).toEqual([]);
   });
 
+  it('drops one sender under --exclude-from and composes with the other filters', async () => {
+    await seed();
+
+    const noAlice = await inbox('bob', ['--exclude-from', 'alice']);
+    expect(noAlice.json.messages.map((m: any) => m.id)).toEqual(['m-lunch']);
+    // Proposals carry no sender, so an exclusion read keeps them all.
+    expect(noAlice.json.proposals).toHaveLength(2);
+
+    const noCarol = await inbox('bob', ['--exclude-from', 'carol']);
+    expect(noCarol.json.messages.map((m: any) => m.id).sort()).toEqual(['m-all', 'm-deploy']);
+    expect(noCarol.json.proposals).toHaveLength(2);
+
+    const noDave = await inbox('bob', ['--exclude-from', 'dave']);
+    expect(noDave.json.messages.map((m: any) => m.id).sort()).toEqual(['m-all', 'm-deploy', 'm-lunch']);
+
+    // One label in both sender filters matches no message; --from still
+    // drops every proposal on its own.
+    const both = await inbox('bob', ['--from', 'alice', '--exclude-from', 'alice']);
+    expect(both.json.messages).toEqual([]);
+    expect(both.json.proposals).toEqual([]);
+
+    // The exclusion composes with the window and the text needle.
+    const composed = await inbox('bob', ['--exclude-from', 'alice', '--since', String(T0 + 1_500)]);
+    expect(composed.json.messages).toEqual([]);
+    const text = await inbox('bob', ['--exclude-from', 'alice', '--contains', 'deploy']);
+    expect(text.json.messages).toEqual([]);
+    expect(text.json.proposals).toHaveLength(1);
+  });
+
   it('reads one [since, before) window on each record\'s at stamp', async () => {
     await seed();
 
@@ -145,6 +174,7 @@ describe('fleet coordination inbox read filters', () => {
     await seed();
     for (const args of [
       ['--from', 'bad label'],
+      ['--exclude-from', 'bad label'],
       ['--since', 'bogus'],
       ['--before', '15x'],
       ['--contains', '   '],
@@ -154,6 +184,8 @@ describe('fleet coordination inbox read filters', () => {
     }
     const { code: boardCode } = await cli(['board', '--from', 'alice', '--json']);
     expect(boardCode).toBe(2);
+    const { code: boardExcludeCode } = await cli(['board', '--exclude-from', 'alice', '--json']);
+    expect(boardExcludeCode).toBe(2);
   });
 
   it('serves the same filters through the phm fleet inbox alias', async () => {
