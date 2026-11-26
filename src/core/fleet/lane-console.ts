@@ -280,6 +280,15 @@ function normalizeKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z]/g, '');
 }
 
+/** Recognize the column map for a headered queue export. */
+export function readyTsvHeader(cells: readonly string[]): (keyof FleetLaneQueueRow)[] | null {
+  const mapped = cells.map(cell => COLUMN_ALIASES[normalizeKey(cell)]);
+  return mapped.length >= 2 && mapped.every(field => field !== undefined) &&
+    mapped.some(field => field === 'pool' || field === 'status')
+    ? mapped as (keyof FleetLaneQueueRow)[]
+    : null;
+}
+
 function cleanCell(value: string): string {
   // Control characters cannot survive into the projection; cap length so one
   // hostile cell cannot bloat the snapshot.
@@ -397,17 +406,10 @@ export function parseReadyTsv(text: string): ParsedTsv {
     if (cells.length === 0 || cells.every(c => c === '')) continue;
 
     // Header row: every cell names a known column, and at least one maps to
-    // pool or status. A header line re-arms the column map (never a job row).
+    // pool or status.
     if (header === null) {
-      const mapped = cells.map(c => COLUMN_ALIASES[normalizeKey(c)]);
-      if (
-        cells.length >= 2 &&
-        mapped.every(m => m !== undefined) &&
-        mapped.some(m => m === 'pool' || m === 'status')
-      ) {
-        header = mapped as (keyof FleetLaneQueueRow)[];
-        continue;
-      }
+      header = readyTsvHeader(cells);
+      if (header !== null) continue;
     }
 
     // Headerless rows in the dispatcher's own dialect carry the lane hint in

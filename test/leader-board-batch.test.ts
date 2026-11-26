@@ -45,4 +45,17 @@ describe('leader board rebase members recovered from #7167', () => {
       'PARKED-HOLD\tRQ-REBASE-SECRETS-7-uabcdef',
     ].join('\n'))].sort()).toEqual(['PHANTOM-7', 'SECRETS-7']);
   });
+
+  it('counts job IDs without picking up rebase references in prompts or requirements', () => {
+    const ids = conflictingPrIds([
+      'READY\tRQ-OTHER\tcodex\twork\tphantom\tFollow RQ-REBASE-PHANTOM-99-uabcdef',
+      'READY\tRQ-REBASE-PHANTOM-7-uabcdef\tcodex\twork\tphantom\tSee RQ-REBASE-BATCH-PHANTOM-98-97-abcdef',
+      'RQ-OTHER\tphantom\tcodex\twork\tprompt.md\t{"dependency":"RQ-REBASE-PHANTOM-96-uabcdef"}',
+      'state=PARKED-DEP.codex\tlane=codex\tjob_id=RQ-REBASE-SECRETS-8-uabcdef',
+      'title\tpool\tjob_id\tstatus',
+      'RQ-REBASE-PHANTOM-95-uabcdef\tcodex\tRQ-OTHER\tREADY',
+      'Rebase batch\tcodex\tRQ-REBASE-BATCH-PHANTOM-10-11-abcdef\tPARKED-DEP.codex',
+    ].join('\n'));
+    expect([...ids]).toEqual(['PHANTOM-7', 'SECRETS-8', 'PHANTOM-10', 'PHANTOM-11']);
+  });
 });
