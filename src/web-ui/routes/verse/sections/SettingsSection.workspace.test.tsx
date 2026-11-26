@@ -8,6 +8,7 @@ import { evictAll } from '../../../data/cache.js';
 import { FEATURE_FLAGS_STORAGE_KEY, resetFeatureFlagsForTests } from '../../../data/feature-flags.js';
 import { SettingsSection } from './SettingsSection.js';
 import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel.js';
+import { setSettingsView } from './settings-groups.js';
 
 function WorkspaceConsumer() {
   return useFeatureFlag('agentWorkspace') ? <div>Workspace feature fixture</div> : null;
@@ -33,6 +34,9 @@ afterEach(() => {
   localStorage.clear();
   resetFeatureFlagsForTests();
 });
+
+// The long page these suites assert is the "All settings" view.
+beforeEach(() => { setSettingsView('all'); });
 
 describe('Settings agent workspace opt-in', () => {
   it('defaults off and leaves gated UI absent', () => {

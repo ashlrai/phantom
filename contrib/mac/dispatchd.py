@@ -10,7 +10,7 @@
 # RQ-DEVINTOKENSN9SQ8 rev: finish rows carry the usage each lane already reports — claude*/claude-api
 # result JSON usage, devin's sessions.db tokens + billed ACUs, the 'tokens used' log line — with
 # usage_source and a usage_missing reason when nothing was recorded.
-import sys, os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse
+import sys, os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse, stat
 from concurrent.futures import ThreadPoolExecutor
 from typing import TypedDict
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
@@ -363,17 +363,94 @@ def jsave(p, obj):
     with open(t, "w") as f: json.dump(obj, f, indent=1)
     os.replace(t, p)
 
+def profile_json(path, limit, missing=None):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode): return None
+            raw = f.read(limit + 1)
+        return json.loads(raw) if len(raw) <= limit else None
+    except FileNotFoundError: return missing
+    except (OSError, ValueError, RecursionError): return None
+
+def configured_floors(profile, registry, slots):
+    if not isinstance(profile, dict) or profile.get("schema") != "fleet.profile.v1": return {}
+    rows = profile.get("lanes", [])
+    if not isinstance(rows, list) or len(rows) > 64: return {}
+    bindings = {
+        "claude-weekly": "claude", "claude-fable": "claude", "claude-api": "claude-api",
+        "codex-personal": "codex-personal", "codex-personal-5h": "codex-personal",
+        "devin": "devin", "devin-flash": "devin-flash", "glm-lite": "zai", "gemini": "gemini",
+        "antigravity": "agy", "dot": "dot", "instinct": "instinct", "local": "codex-local",
+        "grok": "grok", "cursor": "cursor", **dict.fromkeys(("openai-api", "google-workspace",
+        "lm-studio", "ollama", "grok-bot")),
+    }
+    resources = registry.get("resources") if isinstance(registry, dict) and registry.get("schema") == "custom-resources.v1" else None
+    custom = {}
+    if isinstance(resources, list) and len(resources) <= 32:
+        for row in resources:
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str): continue
+            key = "custom:" + row["id"]
+            custom[key] = row if key not in custom else None
+    valid_id = re.compile(r"[a-z][a-z0-9-]{1,30}")
+    floors = {}
+    ids = [r.get("id") for r in rows if isinstance(r, dict)]
+    for row in rows:
+        if not isinstance(row, dict): continue
+        lane, resource, floor = row.get("id"), row.get("resource"), row.get("floor", 0)
+        if (not isinstance(lane, str) or not valid_id.fullmatch(lane) or ids.count(lane) != 1
+                or lane in ("unknown", work_market.RETIRED_LANE) or row.get("authorized") is not True
+                or type(floor) is not int or not 0 <= floor <= 2**53 - 1
+                or not isinstance(resource, str) or not re.fullmatch(r"(?:custom:)?[a-z0-9][a-z0-9-]{0,62}", resource)):
+            continue
+        slot = slots.get(lane)
+        if (not isinstance(slot, dict) or slot.get("executor_ready") is not True or slot.get("auth_failed") is True
+                or type(slot.get("target")) is not int or slot["target"] < 0
+                or any(type(slot.get(k)) is not int or slot[k] <= 0 for k in ("ceiling", "hard_cap"))
+                or (lane not in DEFAULT and not isinstance(slot.get("capabilities"), list))):
+            continue
+        if slot.get("resource_id", resource if bindings.get(resource) == lane else None) != resource: continue
+        if resource.startswith("custom:"):
+            entry = custom.get(resource)
+            if not entry or entry.get("kind") not in ("subscription", "promo-credit", "metered", "local", "bot"): continue
+            if not all(isinstance(entry.get(k), str) and 0 < len(entry[k].strip()) <= 80 for k in ("name", "provider")): continue
+            if entry.get("source") not in ("official-endpoint", "cli-status", "agent-check"): continue
+            if entry.get("unit") not in ("percent", "acu", "usd", "points", "models"): continue
+            if entry["kind"] == "metered" and entry.get("metered_opt_in") is not True: continue
+            expiry = entry.get("expires_at")
+        elif resource in bindings:
+            expiry = "2026-12-01T05:00:00Z" if resource == "devin-flash" else None
+        else: continue
+        if expiry is not None:
+            if not isinstance(expiry, str) or not expiry.endswith("Z"): continue
+            try:
+                if datetime.datetime.fromisoformat(expiry[:-1] + "+00:00").timestamp() <= NOW: continue
+            except (ValueError, OverflowError): continue
+        floors[lane] = floor
+    return floors
+
 os.makedirs(RUN, exist_ok=True); os.makedirs(Q + "/prompts", exist_ok=True)
 slots = jload(Q + "/slots.json", {})
 slots.pop(work_market.RETIRED_LANE, None)
+_ashlr_home = os.environ.get("ASHLR_HOME", "")
+if not os.path.isabs(_ashlr_home): _ashlr_home = H + "/.ashlr"
+_missing_profile = object()
+_profile = profile_json(_ashlr_home + "/fleet-profile.json", 64 * 1024, _missing_profile)
+_profile_floors = None if _profile is _missing_profile else configured_floors(
+    _profile, profile_json(_ashlr_home + "/custom-resources.json", 32 * 1024), slots)
 for lane, entry in list(slots.items()):
     if (lane not in DEFAULT and isinstance(entry, dict) and entry.get("executor_ready") is True
             and re.fullmatch(r"[a-z][a-z0-9-]*", lane) and isinstance(entry.get("capabilities"), list)
             and all(type(entry.get(k)) is int and entry[k] >= 0 for k in ("target", "ceiling", "hard_cap"))):
-        LANES.append(lane)
+        if _profile_floors is None: LANES.append(lane)
         DEFAULT[lane] = {"target": 0, "floor": 0, "ceiling": entry["ceiling"], "hard_cap": entry["hard_cap"]}
-for k, v in DEFAULT.items():
+if _profile_floors is not None:
+    LANES = list(_profile_floors)
+_stored_floors = {lane: slots[lane].get("floor", DEFAULT[lane]["floor"]) for lane in LANES} if _profile_floors is not None else {}
+for k in LANES:
+    v = DEFAULT[k]
     s = slots.setdefault(k, dict(v)); [s.setdefault(a, b) for a, b in v.items()]; s.setdefault("last_change", 0)
+    if _profile_floors is not None: s["floor"] = _profile_floors[k]
 def _cap(v, d):   # a hard_cap is a non-negative int; anything else (missing, bool, garbage) falls back to the default
     return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else d
 # The retired fixed cap was seeded into slots.json as hard_cap 18; drop that seed once, when the controller first
@@ -495,6 +572,7 @@ def ab_run(j, b):   # -> (failed, work, src). src: None | "outcome_unreadable" (
     except Exception: return (True, False, "outcome_unreadable")
 def ab_unhold():
     for lane, s_ in slots.items():
+        if _profile_floors is not None and lane not in _profile_floors: continue
         if not isinstance(s_, dict) or not s_.get("held") or s_.get("held_by") != AB_BY: continue
         u = ab_epoch(s_.get("held_until"))
         if u is not None and u > NOW: continue
@@ -679,10 +757,10 @@ if isinstance(_disk_growth, dict) and _disk_growth:
 DISK_GATE = (AP or {}).get("lane_disk_gate") or "yellow"
 if DISK_GATE not in ("green", "freeze", "halve"): DISK_GATE = "yellow"
 PREV_DISK_GATE = rd(R + "/.autopilot-disk-gate").strip() if os.path.exists(R + "/.autopilot-disk-gate") else ""
-if AP:   # devin limits: target 6, floor 3, ceiling 10 by default (DEFAULT above, DEVIN-LEVERAGE-20261026); a devin block in budget-overrides.json overrides floor and ceiling
+if AP and "devin" in LANES:
     lim = AP.get("devin", {}).get("limits") or {}
     for a in ("floor", "ceiling"):
-        if isinstance(lim.get(a), int): slots["devin"][a] = lim[a]
+        if (a != "floor" or _profile_floors is None) and isinstance(lim.get(a), int): slots["devin"][a] = lim[a]
     clamp_lane("devin")   # RQ-LOADGATE-1: the overrides floor/ceiling are reapplied every tick, so hard_cap is reapplied right after
 hold = set(rd(R + "/HOLD").split())
 def _ph_check():   # auto-release PUBLISH_HOLD once org Actions backlog < 50 queued runs; checks at most every 10 min
@@ -1399,7 +1477,7 @@ for bp in glob.glob(R + "/*.base"):
     # Keep the worktree/receipts for the existing publisher and reconciliation.
     if published_current_attempt(j) and not _maxruntime_unresolved(j): continue
     if j in alive or _maxruntime_unresolved(j):
-        if pool in running: running[pool] += 1
+        if pool in running or _profile_floors is not None: running[pool] = running.get(pool, 0) + 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
         continue
     if not os.path.isdir(wt) or j in reaping or j in publishing: continue
@@ -1412,7 +1490,7 @@ for bp in glob.glob(R + "/*.base"):
         if _rc(j) is None and not result(j):
             target = drain_target(j, _job_repo(j))
             if target: drain_targets.add(target)
-        if pool in running: running[pool] += 1
+        if pool in running or _profile_floors is not None: running[pool] = running.get(pool, 0) + 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
         continue
 
@@ -2285,7 +2363,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if market_view[_l]["cost_class"] == "included" and (_waste or pace_behind(UIA.get(_l)) is True):
             market_view[_l].pop("provenance", None)
             market_view[_l].update(posture="burn", posture_reason="use_it_all_waste_risk" if _waste else "use_it_all_behind")
-    if any(isinstance(_BUDGET_OV.get(l), dict) for l in LANES) or market_view["devin"]["target"] > 0:
+    if any(isinstance(_BUDGET_OV.get(l), dict) for l in LANES) or market_view.get("devin", {}).get("target", 0) > 0:
         market_metric({"schema": "work-market.v1", "event": "posture", "lanes": {
             l: dict(lane=l, **v.get("provenance", {}), posture=v["posture"], posture_reason=v["posture_reason"],
                     projected_unused_pct=v["spend_down"]["projected_unused_pct"],
@@ -2339,7 +2417,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         spec = market_specs[j]
         view = {dest: dict(v, running=running[dest]) for dest, v in market_view.items()}
         # Cost is model/tier-specific and every claim reserves another session cap.
-        view.update(work_market.lane_view(["devin"], slots, running, {"devin": tgt("devin")}, hold,
+        if "devin" in view: view.update(work_market.lane_view(["devin"], slots, running, {"devin": tgt("devin")}, hold,
                                          market_models, BUS["quota"], JOBS_RAW, now=NOW,
                                          allowance=market_allowance, tier=tier))
         for dest in LANES:
@@ -2600,7 +2678,8 @@ for l in current:
         rest.append(l); added[l] -= 1
 t = Q + "/ready.tsv.tmp"; open(t, "w").write("".join(l + "\n" for l in rest)); os.replace(t, Q + "/ready.tsv")
 lk.close()
-jsave(Q + "/slots.json", slots)
+jsave(Q + "/slots.json", {lane: dict(entry, floor=_stored_floors[lane]) if lane in _stored_floors else entry
+                         for lane, entry in slots.items()})
 concurrency.save(CONC_PATH, CONC)
 
 # Finished-worktree discovery/sorting runs at most every ten minutes. Drain the

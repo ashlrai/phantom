@@ -10,7 +10,7 @@ export const LEADER_THREAD_USAGE = 'Usage: phm leader thread [--since <hours|tim
 /** A plain line per message: time, who, channel, then the text. */
 export function leaderThreadLine(entry: LeaderThreadEntry): string {
   const when = entry.at === null ? 'time unknown    ' : entry.at.slice(0, 16).replace('T', ' ');
-  const who = entry.from === 'mason' ? 'Mason' : entry.from === 'leader' ? 'Leader' : entry.from === 'teammate' ? 'Teammate' : 'Unknown';
+  const who = entry.from === 'mason' ? 'Owner' : entry.from === 'leader' ? 'Leader' : entry.from === 'teammate' ? 'Teammate' : 'Unknown';
   const refs = entry.refs.length > 0 ? `  [${entry.refs.map(n => `#${n}`).join(' ')}]` : '';
   return `${when} ${who} (${entry.channel})\n  ${entry.text.replace(/\s+/g, ' ').trim()}${refs}`;
 }

@@ -191,6 +191,12 @@ Sources are tried in order and the first current reading wins:
 3. `visible-window`: with `--browser`, the rendered text of the usage page in
    the dedicated usage browser, as in the live usage tracker above.
 
+The stored Claude `/usage` reading stops supplying weekly quota when a
+reset recorded after the observation arrives. While the all-models window is
+current, the same check applies independently to each model scope. Observations
+captured at or after the reported reset can still provide renewal evidence.
+All windows remain subject to the six-hour observation age limit.
+
 A reading older than 15 minutes is kept only when no later source has a
 current one. Devin Flash, Antigravity, Dot, Instinct and Cursor have no
 supported source yet.

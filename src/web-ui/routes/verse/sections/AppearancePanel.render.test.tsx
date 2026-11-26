@@ -19,6 +19,7 @@ import { SettingsSection } from './SettingsSection.js';
 import { ToastProvider } from '../../../components/primitives/Toast.js';
 import { evictAll } from '../../../data/cache.js';
 import { defaultAppearance, getAppearance, resetAppearance, setAppearance } from '../../../data/appearance-store.js';
+import { setSettingsView } from './settings-groups.js';
 import { SidebarBrandMark } from '../../../components/brand/SidebarBrandMark.js';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 
@@ -44,6 +45,9 @@ function renderPane() {
   );
   return screen.getByRole('heading', { name: 'Appearance' }).closest('section')!;
 }
+
+// The long page these suites assert is the "All settings" view.
+beforeEach(() => { setSettingsView('all'); });
 
 describe('Settings ▸ Appearance renders in every theme at every width', () => {
   beforeEach(() => {

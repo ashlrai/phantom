@@ -20,6 +20,7 @@ import { resetAppearance, getAppearance, APPEARANCE_STORAGE_KEY } from '../../..
 import { ACCENT_PRESETS } from '../../../data/appearance-presets.js';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { darkScope, lightScope, resolveToken } from '../../../design/token-probe.test-support.js';
+import { setSettingsView } from './settings-groups.js';
 
 const root = () => document.documentElement;
 
@@ -30,6 +31,9 @@ function renderSettings() {
     </ToastProvider>,
   );
 }
+
+// The long page these suites assert is the "All settings" view.
+beforeEach(() => { setSettingsView('all'); });
 
 describe('SettingsSection', () => {
   beforeEach(() => {

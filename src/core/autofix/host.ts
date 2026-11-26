@@ -2,7 +2,7 @@
  * In-memory host for tests, and the path guard shared with the node host.
  * System calls stay behind AutofixHost.exec so a test never touches launchd.
  */
-import { forbiddenPath } from './guard.js';
+import { forbiddenPath, isForbiddenExecArgv } from './guard.js';
 import type { AutofixHost, ExecResult } from './types.js';
 
 export interface MemoryHost extends AutofixHost {
@@ -64,7 +64,7 @@ export function createMemoryHost(opts: MemoryHostOptions = {}): MemoryHost {
     onExec: () => ({ code: 0, stdout: '', stderr: '' }),
     exec: (argv) => {
       calls.push([...argv]);
-      if (argv.some((arg) => forbiddenPath(arg) || /^(kill|pkill|killall)$/.test(arg))) {
+      if (isForbiddenExecArgv(argv)) {
         return { code: 1, stdout: '', stderr: 'refused' };
       }
       return host.onExec(argv);
