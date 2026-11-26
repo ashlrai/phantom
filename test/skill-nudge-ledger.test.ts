@@ -304,20 +304,21 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(byId.get('RQ-Q')).not.toHaveProperty('failureClass');
   });
 
-  it('counts batch claims and recut admissions as retry/recut evidence', () => {
+  it('counts dispatched recuts once despite repeated admission checks', () => {
+    const ready = line({ event: 'recut_admission', job: 'RQ-S', repo: 'phantom', action: 'ready', reason: 'recut-no-current-coverage', repeatOf: null, ts: '2026-10-28T11:00:00-0400' });
     const text = [
       line({ event: 'batch_claim', job: 'RQ-R', batch: 'B-3', repo: 'ashlrai/phantom', lane: 'claude', tier: 'fast', ts: '2026-10-28T10:00:00-0400' }),
       line({ event: 'batch_claim', job: 'RQ-R', batch: 'B-4', repo: 'ashlrai/phantom', lane: 'claude', tier: 'fast', ts: '2026-10-28T11:00:00-0400' }),
       line({ event: 'recut_admission', job: 'RQ-S', repo: 'phantom', action: 'defer', reason: 'recut-in-flight', repeatOf: 'RQ-PHX-RECUT1L1', ts: '2026-10-28T10:00:00-0400' }),
-      launch('RQ-S'),
-      line({ event: 'recut_admission', job: 'RQ-S', repo: 'phantom', action: 'ready', reason: 'recut-no-current-coverage', repeatOf: null, ts: '2026-10-28T11:00:00-0400' }),
+      ready, ready, claim('RQ-S', 'codex', '2026-10-28T11:01:00-0400'),
+      launch('RQ-S', 'codex', '2026-10-28T11:02:00-0400'),
       line({ event: 'recut_admission', job: 'RQ-T', repo: 'phantom', action: 'skip', reason: 'recut-already-merged', repeatOf: 'RQ-PHX-RECUT2L1', ts: '2026-10-28T10:00:00-0400' }),
       launch('RQ-T'),
       outcome('RQ-R', 'MERGED'), outcome('RQ-S', 'MERGED'), outcome('RQ-T', 'MERGED'),
     ].join('\n');
     const byId = new Map(skillNudgeJobsFromLedger(text).map(job => [job.id, job]));
     expect(byId.get('RQ-R')).toMatchObject({ outcome: 'merged', retries: 1 });
-    expect(byId.get('RQ-S')).toMatchObject({ outcome: 'merged', recuts: 2 });
+    expect(byId.get('RQ-S')).toEqual({ id: 'RQ-S', lane: 'codex', outcome: 'merged', recuts: 1 });
     expect(byId.get('RQ-T')).not.toHaveProperty('recuts');
   });
 
@@ -339,9 +340,9 @@ describe('skillNudgeJobsFromLedger', () => {
 
   it('binds recovery evidence to the latest terminal row in ledger order', () => {
     const retry = (job: string) => [
+      line({ job, event: 'recut_admission', action: 'ready' }),
       launch(job, 'devin'),
       finish(job, { failure_class: 'quota' }, 'devin'),
-      line({ job, event: 'recut_admission', action: 'ready' }),
     ];
     const text = [
       launch('RQ-MERGED'), outcome('RQ-MERGED', 'MERGED'), ...retry('RQ-MERGED'),
@@ -402,6 +403,21 @@ describe('syncSkillNudgesFromJobsLedger', () => {
     expect(first.candidates).toBe(1);
     expect(second.candidates).toBe(0);
     expect(cards).toHaveLength(1);
+  });
+
+  it('does not persist recut drafts from admission receipts without a matching dispatch', async () => {
+    const admission = (job: string, action: string) => line({ job, event: 'recut_admission', action });
+    const text = [
+      admission('RQ-DEFER', 'defer'), launch('RQ-DEFER'), outcome('RQ-DEFER', 'MERGED'),
+      launch('RQ-LATE'), admission('RQ-LATE', 'ready'), outcome('RQ-LATE', 'MERGED'),
+      admission('RQ-STALE', 'ready'), outcome('RQ-STALE', 'CLOSED'),
+      launch('RQ-STALE'), outcome('RQ-STALE', 'MERGED'),
+      admission('RQ-BLOCKED', 'ready'), admission('RQ-BLOCKED', 'defer'),
+      launch('RQ-BLOCKED'), outcome('RQ-BLOCKED', 'MERGED'),
+    ].join('\n');
+    const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(result).toMatchObject({ state: 'read', folded: 4, candidates: 0 });
+    expect(cards).toEqual([]);
   });
 
   it('reports degraded corpus as zero candidates without throwing', async () => {
