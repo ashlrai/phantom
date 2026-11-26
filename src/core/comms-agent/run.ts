@@ -392,8 +392,27 @@ export async function commsStatus(runsDir: string, deps: {
   };
 }
 
-export async function commsDrafts(runsDir: string): Promise<{ ok: true; drafts: CommsDraft[] }> {
-  return { ok: true, drafts: (await listDrafts(runsDir)).filter(draft => draft.status === 'pending') };
+/** Status slices the drafts read can select; the default stays `pending`. */
+export const COMMS_DRAFT_STATUSES = ['pending', 'sent', 'all'] as const;
+export type CommsDraftStatusFilter = (typeof COMMS_DRAFT_STATUSES)[number];
+
+export interface CommsDraftsFilter {
+  /** `pending` (default) lists only owner approvals; `sent` lists delivered
+   * replies with their `resolvedAt`; `all` lists both. */
+  status?: CommsDraftStatusFilter;
+  /** Narrow to one transport (`email`, `imessage`, `linkedin`, `bus`,
+   * `slack`, `telegram`, `handoff`). */
+  transport?: CommsTransport;
+}
+
+export async function commsDrafts(runsDir: string, filter: CommsDraftsFilter = {}): Promise<{ ok: true; drafts: CommsDraft[] }> {
+  const status = filter.status ?? 'pending';
+  return {
+    ok: true,
+    drafts: (await listDrafts(runsDir))
+      .filter(draft => (status === 'all' || draft.status === status)
+        && (filter.transport === undefined || draft.transport === filter.transport)),
+  };
 }
 
 export function preservedIds(before: readonly InboxMessage[], kept: readonly InboxMessage[], archived: readonly InboxMessage[]): boolean {
