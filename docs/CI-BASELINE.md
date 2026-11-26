@@ -34,7 +34,9 @@ and master's known state drops while the run's verified job logs still
 feed failure parsing. If an incomplete job's log is unavailable, the
 analyzer retains verified sibling logs. These same conclusions on the
 workflow run itself mark it incomplete even when every listed job reached
-a verdict. Verified master failures still contribute evidence. A missing log for a job that
+a verdict. A failed workflow also counts as incomplete when its job list
+contains no failed job to account for the workflow verdict. Verified master
+failures still contribute evidence. A missing log for a job that
 reached a verdict still makes the run's logs unusable. `skipped` and `neutral` conclusions are
 deliberate non-verdicts, not incomplete checks. A completed run that
 instantiated no jobs at all reads the same way when its own conclusion is

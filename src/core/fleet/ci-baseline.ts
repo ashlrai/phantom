@@ -2189,11 +2189,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     // than clean. The flag is computed from the job list itself, so a
     // never-started job counts the same as one whose partial log would
     // otherwise verify or drop silently.
-    // The workflow can stop before starting other jobs. Its conclusion
-    // still applies when every listed job reached a verdict.
+    // The workflow can stop before starting other jobs. A failed workflow
+    // without a failed job also lacks evidence explaining its verdict.
     const incomplete = data.jobs.some(job => INCOMPLETE_CONCLUSIONS.has(job.conclusion)) ||
       (run.conclusion !== undefined && INCOMPLETE_CONCLUSIONS.has(run.conclusion)) ||
-      (data.jobs.length === 0 && run.conclusion === 'failure');
+      (run.conclusion === 'failure' && !data.jobs.some(job => job.conclusion === 'failure'));
     const result: { conclusion: string; text: string }[] = [];
     for (const job of data.jobs) {
       if (job.conclusion === 'skipped') continue;
