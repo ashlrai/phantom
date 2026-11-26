@@ -86,6 +86,11 @@ describe('fleet resource plan', () => {
       expect(missing).toMatchObject({ source: 'dispatcher', waiting: 2, unfedSlots: 1 });
       expect(missing.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: null });
 
+      await writeFile(join(dir, 'queue/ready.tsv'), '');
+      const empty = await readUnfedReport(options);
+      expect(empty).toMatchObject({ source: 'dispatcher', waiting: 2, unfedSlots: 1 });
+      expect(empty.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 0 });
+
       await writeFile(join(dir, 'queue/ready.tsv'), 'example\tphantom\tcodex-personal\twork\tfixture.md\n');
       const observed = await readUnfedReport(options);
       expect(observed.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 1 });

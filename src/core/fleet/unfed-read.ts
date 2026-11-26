@@ -15,7 +15,7 @@ import { readTail, runsRoot } from '../metrics/loop-collect.js';
 import { readFleetResourcePlan } from '../usage/resource-live/fleet-plan.js';
 import {
   currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides,
-  foldRouteRejections, foldUnfedHistory, type UnfedReport,
+  foldRouteRejections, foldUnfedHistory, readyHints, type UnfedReport,
 } from './unfed-capacity.js';
 
 export const UNFED_DEFAULT_WINDOW_HOURS = 24;
@@ -93,13 +93,15 @@ export async function readUnfedReport(options: UnfedReadOptions = {}): Promise<U
   const window = options.windowHours ?? UNFED_DEFAULT_WINDOW_HOURS;
   const jobsTruncated = jobsRead?.truncated ?? false;
   const current = currentUnfed(status, ready ?? '', { slots, models, budget, adaptive, hold, routerQueue, nowMs });
+  const advisoryReady = capacity && ready !== null && current.statusFresh
+    ? readyHints(ready, routerQueue) : null;
   return {
     ...current,
     resourcePlan: capacity?.lanes.map(({ lane, running, target_concurrency, additional_slots }) => {
-      const readyHere = current.resources.find(row => row.lane === lane)?.readyHinted;
+      const readyHere = advisoryReady?.byLane.get(lane) ?? 0;
       return { lane, running, target: target_concurrency,
-        unfedSlots: ready === null || !current.statusFresh || additional_slots === null || readyHere === undefined ? null
-          : Math.min(Math.max(0, additional_slots - readyHere), Math.max(0, current.waiting - readyHere)) };
+        unfedSlots: advisoryReady === null || additional_slots === null ? null
+          : Math.min(Math.max(0, additional_slots - readyHere), advisoryReady.waiting - readyHere) };
     }) ?? null,
     marketTruncated: marketRead?.truncated ?? false,
     history: foldUnfedHistory(history, nowMs, window),
