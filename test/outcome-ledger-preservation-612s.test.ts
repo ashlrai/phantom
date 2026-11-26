@@ -1671,6 +1671,33 @@ describe('router outcome work_class join', () => {
 });
 
 describe('router outcome market decision join', () => {
+  it('withholds tied conflicting verdicts in either order and accepts a newer verdict', async () => {
+    const root = runsDir(['ambiguous', 'replay', 'resolved']
+      .map(job => JSON.stringify({ job, lane: 'alpha', phase: 'MERGED' })).join('\n'));
+    const receipts = [
+      decision('ambiguous', 'bulk', 100, { chosen_lane: 'alpha' }),
+      decision('ambiguous', 'bulk', 200, { chosen_lane: 'beta' }),
+      decision('ambiguous', 'bulk', 200, { chosen_lane: 'gamma' }),
+      decision('ambiguous', 'bulk', 200, { chosen_lane: 'beta' }),
+      decision('replay', 'bulk', 200, { chosen_lane: 'beta' }),
+      decision('replay', 'bulk', 200, { chosen_lane: 'beta' }),
+      decision('resolved', 'bulk', 200, { reason_codes: [] }),
+      decision('resolved', 'bulk', 200, { reason_codes: ['global_admission'] }),
+      decision('resolved', 'bulk', 300, { chosen_lane: 'gamma' }),
+    ];
+    for (const rows of [receipts, [...receipts].reverse()]) {
+      writeMarket(root, rows);
+      const result = await readRouterOutcomes({ runsDir: root });
+      const byJob = new Map(result.outcomes.map(outcome => [outcome.job_id, outcome]));
+      expect(byJob.get('ambiguous')).toMatchObject({
+        work_class: 'bulk', lane: 'alpha', market_lane: null, market_preferred: null,
+        market_override: null, market_reasons: null, market_rejected: null,
+      });
+      expect(byJob.get('replay')).toMatchObject({ market_lane: 'beta' });
+      expect(byJob.get('resolved')).toMatchObject({ market_lane: 'gamma' });
+    }
+  });
+
   it('folds route_decision rows to each job\'s newest recorded routing verdict', () => {
     const decisions = foldRouteDecisions([
       JSON.stringify(decision('J1', 'bulk', 100, {
