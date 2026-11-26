@@ -305,8 +305,9 @@ describe('worktree classes', () => {
     expect(cls.candidates).toHaveLength(0);
   });
 
-  it('classifies a leader-sized worktree root from terminal outcomes without a dispatcher finish', async () => {
+  it('accounts for each of 846 leader-shaped worktrees once in the JSON dry run', async () => {
     const rows: Record<string, unknown>[] = [];
+    const live: string[] = [];
     const groups = [
       ['RQ-DEVINCLOUD-RQ-DVL-BUS', 65], ['RQ-DEVINCLOUD-RQ-DVL-RSI', 60],
       ['RQ-MD', 29], ['RQ-PS', 19], ['RQ-REBASE-PHANTOM', 17], ['RQ-STACK', 13], ['RQ-MIXED', 643],
@@ -315,25 +316,39 @@ describe('worktree classes', () => {
       for (let i = 0; i < count; i++) {
         const job = `${prefix}-${i}`;
         dir(`Projects/ashlrai/wt/${job}`, 10);
-        if (i % 5 === 2) file(`.ashlr-runs/queue/run/${job}.batched`, 1, 9);
         const prUrl = `https://github.com/ashlrai/phantom/pull/${i + 1}`;
-        if (i % 5 === 0 && prefix.startsWith('RQ-DEVINCLOUD-')) {
+        if (prefix === 'RQ-MIXED' && i < 12) live.push(`n${roots.wtDir}/${job}/src`);
+        if (prefix === 'RQ-MIXED' && (i === 0 || (i >= 12 && i < 22))) file(`.ashlr-runs/queue/run/${job}.batched`, 1, 9);
+        if (prefix.startsWith('RQ-DEVINCLOUD-')) {
           rows.push({ jobId: job, event: 'publish', prUrl, ts: '2026-10-01T00:05:00Z', headSha: 'a'.repeat(40) });
-        } else if (i % 5 !== 4) rows.push({ jobId: job, prUrl,
+        } else if (prefix !== 'RQ-MIXED' || i < 30 || i >= 40) rows.push({ jobId: job, prUrl,
           outcome: 'MERGED', mergedAt: '2026-10-01T00:05:00Z', source: 'metrics-outcomes-reconciler' });
       }
     }
-    const live = groups.flatMap(([prefix, count]) => Array.from({ length: count }, (_, i) => i)
-      .filter(i => i % 5 === 1).map(i => `n${roots.wtDir}/${prefix}-${i}/src`)).join('\n');
-    const { cls } = await classPlan('worktrees-jobs', {
+    mkdirSync(join(roots.runsDir, 'wt'));
+    const log: string[] = [];
+    const plan = baseDeps({
       readJobs: HEALTHY(jobsText(rows)),
-      readWorktreeProcesses: async () => ({ argv: '', cwd: live }),
-      worktreeHasUnpushed: async path => /-(?:\d*[38])$/.test(path),
+      readWorktreeProcesses: async () => ({ argv: '', cwd: live.join('\n') }),
+      worktreeHasUnpushed: async (path, head) => /\/RQ-MIXED-2[2-9]$/.test(path) ||
+        (path.includes('/RQ-DEVINCLOUD-') && head !== 'a'.repeat(40)),
     });
-    expect(cls.candidates).toHaveLength(171);
-    expect(cls.reasonCounts).toEqual({
-      'publisher-pushed': 25, merged: 146, 'live-process': 171, 'active-lease': 170, 'unpushed-commits': 168, 'state-unknown': 166,
+    expect(await cmdDiskMaint(['--json', '--only', 'worktrees-runs,worktrees-jobs'],
+      { roots, now: NOW, plan, output: { log: line => log.push(line), error: line => { throw new Error(line); } } })).toBe(0);
+    const report = JSON.parse(log.join(''));
+    expect(report.apply).toBe(false);
+    expect(report.classes[0]).toMatchObject({
+      id: 'worktrees-runs', scanned: 0, reapable: 0, protected: 0, reapReasons: {}, protectReasons: {},
     });
+    const cls = report.classes[1];
+    expect(cls.candidates).toHaveLength(806);
+    expect(cls).toMatchObject({
+      id: 'worktrees-jobs', scanned: 846, reapable: 806, protected: 40,
+      reapReasons: { 'publisher-pushed': 125, merged: 681 },
+      protectReasons: { 'live-process': 12, 'active-lease': 10, 'unpushed-commits': 8, 'state-unknown': 10 },
+    });
+    expect(Object.values(cls.reapReasons).reduce<number>((sum, count) => sum + Number(count), 0)).toBe(cls.reapable);
+    expect(Object.values(cls.protectReasons).reduce<number>((sum, count) => sum + Number(count), 0)).toBe(cls.protected);
   });
 
   it('checks the exact cloud-publisher PR head, and keeps retried or queued jobs', async () => {
@@ -353,7 +368,8 @@ describe('worktree classes', () => {
       worktreeHasUnpushed: async (path, head) => { checked.push([path, head]); return head !== headSha; },
     });
     expect(checked).toEqual([[join(roots.wtDir, names[0]!), headSha]]);
-    expect(cls.reasonCounts).toEqual({ 'publisher-pushed': 1, 'state-unknown': 1, queued: 1 });
+    expect(cls.reapReasons).toEqual({ 'publisher-pushed': 1 });
+    expect(cls.protectReasons).toEqual({ 'state-unknown': 1, queued: 1 });
   });
 });
 
@@ -505,7 +521,7 @@ describe('apply', () => {
     const plan = await planDiskMaint(deps);
     expect(plan.classes[0]!.candidates).toHaveLength(1);
     file(`Projects/ashlrai/wt/${name}/ignored/model.gguf`, 1, 0);
-    expect((await planDiskMaint(deps)).classes[0]!.reasonCounts).toEqual({ 'protected-payload': 1 });
+    expect((await planDiskMaint(deps)).classes[0]!.protectReasons).toEqual({ 'protected-payload': 1 });
     const applied = await applyDiskMaint(plan, { ...deps, runner: async () => { throw new Error('must not run Git'); } });
     expect(applied.classes[0]!.results[0]).toMatchObject({ status: 'refused', detail: 'protected-payload' });
   });
@@ -635,6 +651,48 @@ describe('cli', () => {
     expect((await run(['--compress-days', 'abc'])).code).toBe(2);
     expect((await run(['--compress-days', '50', '--prune-days', '10'])).code).toBe(2);
     expect((await run(['--home', 'relative/path'])).code).toBe(2);
+    expect((await run(['--worktree', '../RQ-ESCAPE'])).code).toBe(2);
+    expect((await run(['--worktree', 'RQ-VALID', '--only', 'ashlr-logs'])).code).toBe(2);
+  });
+
+  it('scopes post-push cleanup to one job, defaults to dry run, and keeps leases', async () => {
+    const job = 'RQ-DEVINCLOUD-ONE';
+    const other = 'RQ-DEVINCLOUD-TWO';
+    const wt = dir(`Projects/ashlrai/wt/${job}`, 0);
+    const unrelated = dir(`Projects/ashlrai/wt/${other}`, 0);
+    const oldLog = file('.ashlr/agent-logs/unrelated.jsonl', 1024, 60);
+    const headSha = 'a'.repeat(40);
+    const ts = new Date(NOW).toISOString();
+    const receipt = (id: string) => ({ jobId: id, event: 'publish', prUrl: 'https://github.com/ashlrai/phantom/pull/1', ts, headSha });
+    const calls: string[][] = [];
+    const deps = {
+      ...baseDeps({ readJobs: HEALTHY(jobsText([receipt(job), receipt(other)])),
+        worktreeHasUnpushed: async (path, head) => path !== wt || head !== headSha }),
+      now: NOW,
+      runner: async (_file: string, args: string[]) => {
+        calls.push(args);
+        if (args.includes('rev-parse')) return `${home}/repo/.git\n`;
+        rmSync(wt, { recursive: true });
+        return '';
+      },
+    };
+    const args = ['--worktree', job, '--only', 'worktrees-jobs'];
+    const preview = await run([...args, '--json'], deps);
+    expect(preview.code).toBe(0);
+    expect(JSON.parse(preview.logs.join(''))).toMatchObject({
+      apply: false, classes: [{ id: 'worktrees-jobs', scanned: 1, reapable: 1, protected: 0, reapReasons: { 'publisher-pushed': 1 } }],
+    });
+    expect(existsSync(wt)).toBe(true);
+    expect(calls).toEqual([]);
+    const lease = file(`.ashlr-runs/queue/run/${job}.dispatched`, 1, 0);
+    expect(await cmdDiskMaint([...args, '--apply'], { ...deps, output: { log: () => {}, error: () => {} } })).toBe(0);
+    expect(calls).toEqual([]);
+    rmSync(lease);
+    expect(await cmdDiskMaint([...args, '--apply'], { ...deps, output: { log: () => {}, error: () => {} } })).toBe(0);
+    expect(calls.at(-1)).toEqual(['-C', `${join(home, 'repo')}/`, 'worktree', 'remove', '--', wt]);
+    expect(existsSync(wt)).toBe(false);
+    expect(existsSync(unrelated)).toBe(true);
+    expect(existsSync(oldLog)).toBe(true);
   });
 
   it('dry run --json prints the plan with bytes by class', async () => {

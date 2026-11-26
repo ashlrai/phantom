@@ -13,6 +13,7 @@ const run = promisify(execFile);
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const REOPEN = new Set(['launch', 'enqueue', 'enqueued', 'queued', 'claim', 'batch_claim']);
 const TERMINAL = new Set(['MERGED', 'CLOSED', 'DONE-NOOP']);
+export const isWorktreeJobId = (name: string): boolean => JOB_ID.test(name) && !name.includes('..');
 const gitOptions = () => ({
   env: {
     ...withDaemonGitHardening(Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')))),

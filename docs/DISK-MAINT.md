@@ -70,6 +70,22 @@ and `--prune-days` override the 7/45-day log policy. Root overrides
 (`--home`, `--runs-dir`, `--ashlr-dir`, `--wt-dir`, `--side-projects`,
 `--hub-dir`) take absolute paths for tests and relocated homes.
 
+For the ops-side cloud publisher: after a successful PR push, write the
+`publish` receipt (job id, PR URL, timestamp, and pushed `headSha`) to
+`metrics/jobs.jsonl`, release the job's lease, and run from outside the
+worktree once the publisher has stopped using it:
+
+```sh
+phm disk-maint --worktree "$J" --only worktrees-jobs --apply --json
+```
+
+Without `--apply` this previews the job only. Without `--only`, it checks
+both worktree roots for that exact job id. A named cloud-publisher job with a
+head-bearing PR receipt can skip the normal one-hour wait; all evidence,
+process, lease, payload, and Git checks still apply. Check the JSON result
+before assuming cleanup succeeded. This command does not delete local or
+remote branches or bundles.
+
 ## The protect-list
 
 Refused unconditionally, at plan time and again at apply time; no flag
@@ -116,7 +132,10 @@ printed activation commands' disable forms (`launchctl bootout` /
 
 `phm disk-maint --json` prints `disk-maint.v1`: `roots`, `freeGb`,
 `diskguardReuseOnlyGb`, `jobsSource`, per-class `candidates`/`bytes`, worktree
-`reasonCounts` (candidate outcomes and reasons for retention), plan
+counts `scanned`, `reapable`, and `protected` for each worktree root, and
+separate `reapReasons` and `protectReasons` maps. Each scanned worktree
+contributes to exactly one reason; the maps sum to `reapable` and
+`protected` respectively. The JSON also includes plan
 `totals`, and the `refused` evidence list. With `--apply` the same object
 gains `results` (per-class per-path status and `freedBytes`), updates `freeGb`
 from the runs volume after the sweep, and adds

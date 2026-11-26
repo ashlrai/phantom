@@ -25,11 +25,12 @@ import {
 } from '../core/disk-maint/plan.js';
 import { applyDiskMaint, type ApplyDeps } from '../core/disk-maint/apply.js';
 import { diskMaintSchedule } from '../core/disk-maint/schedule.js';
+import { isWorktreeJobId } from '../core/disk-maint/worktrees.js';
 import { installScheduleUnits } from './steward.js';
 
 const USAGE =
   'usage: phm disk-maint [--apply] [--json] [--only <class>]... [--allow <class>]... ' +
-  '[--compress-days N] [--prune-days N]\n' +
+  '[--compress-days N] [--prune-days N] [--worktree <job-id>]\n' +
   '       phm disk-maint schedule [--install] [--apply] [--hour 0-23 | --worktrees]\n' +
   `classes: ${ALL_CLASSES.join(', ')}  (gated: ${[...GATED_CLASSES].join(', ')})`;
 
@@ -41,7 +42,7 @@ export interface DiskMaintCliDeps extends ApplyDeps {
   phmPath?: string;
   built?: () => boolean;
   /** Plan-side injections (tests): jobs ledger, pins, free-space, measure. */
-  plan?: Omit<MaintDeps, 'roots' | 'only' | 'allow' | 'policy' | 'now' | 'deadlineMs'>;
+  plan?: Omit<MaintDeps, 'roots' | 'only' | 'allow' | 'policy' | 'now' | 'deadlineMs' | 'worktree'>;
   deadlineMs?: number;
 }
 
@@ -105,7 +106,12 @@ export function formatDiskMaint(plan: DiskMaintPlan, applied?: Awaited<ReturnTyp
     const tag = cls.gated && !cls.enabled ? ` - gated, ${cls.note ?? 'off'}` : '';
     const freed = result ? ` - freed ${gb(result.freedBytes)}${result.failures ? `, ${result.failures} failed` : ''}${result.refusals ? `, ${result.refusals} refused` : ''}` : '';
     lines.push(`${cls.id}: ${cls.candidates.length} items, ${gb(cls.bytes)}${cls.complete ? '' : ' (partial scan)'}${tag}${freed}`);
-    if (cls.reasonCounts) lines.push(`  ${Object.entries(cls.reasonCounts).sort().map(([reason, count]) => `${reason}=${count}`).join(', ')}`);
+    if (cls.reapReasons && cls.protectReasons) {
+      const reasons = (counts: Record<string, number>) => Object.entries(counts).sort().map(([reason, count]) => `${reason}=${count}`).join(', ');
+      lines.push(`  scanned: ${cls.scanned}; reapable: ${cls.reapable}; protected: ${cls.protected}`);
+      lines.push(`  reap reasons: ${reasons(cls.reapReasons) || 'none'}`);
+      lines.push(`  protect reasons: ${reasons(cls.protectReasons) || 'none'}`);
+    }
     for (const r of result?.results ?? []) {
       if (r.status === 'done') lines.push(`  done: ${r.path} - ${gb(r.freedBytes)}${r.detail ? ` (${r.detail})` : ''}`);
       else if (r.status === 'failed') lines.push(`  FAILED: ${r.path} - ${r.detail ?? 'error'}`);
@@ -141,6 +147,7 @@ export async function cmdDiskMaint(args: string[], deps: DiskMaintCliDeps = {}):
   const argv = args;
   let apply = false;
   let json = false;
+  let worktree: string | undefined;
   const only = new Set<MaintClassId>();
   const allow = new Set<string>();
   const policy: Partial<MaintPolicy> = {};
@@ -156,6 +163,13 @@ export async function cmdDiskMaint(args: string[], deps: DiskMaintCliDeps = {}):
     seen.add(arg);
     if (arg === '--apply') apply = true;
     else if (arg === '--json') json = true;
+    else if (arg === '--worktree') {
+      worktree = argv[++i];
+      if (!worktree || !isWorktreeJobId(worktree)) {
+        out.error('error: --worktree requires a job id, not a path');
+        return 2;
+      }
+    }
     else if (arg === '--only' || arg === '--allow') {
       const value = argv[++i];
       if (!value) { out.error(`error: ${arg} needs a class name\n${USAGE}`); return 2; }
@@ -186,10 +200,14 @@ export async function cmdDiskMaint(args: string[], deps: DiskMaintCliDeps = {}):
     out.error('error: --compress-days must be below --prune-days');
     return 2;
   }
+  if (worktree && (allow.size || [...only].some(id => id !== 'worktrees-runs' && id !== 'worktrees-jobs'))) {
+    out.error('error: --worktree may only select worktree classes');
+    return 2;
+  }
   const roots = deps.roots ?? resolveMaintRoots(rootOverrides);
   const plan = await planDiskMaint({
     readJobs: deps.readJobs, readWorktreeProcesses: deps.readWorktreeProcesses, worktreeHasUnpushed: deps.worktreeHasUnpushed,
-    ...deps.plan, roots, only: only.size ? only : undefined, allow, policy, now: deps.now,
+    ...deps.plan, roots, only: only.size ? only : undefined, worktree, allow, policy, now: deps.now,
     deadlineMs: deps.deadlineMs,
   });
   const applied = apply ? await applyDiskMaint(plan, { ...deps, roots }) : undefined;
