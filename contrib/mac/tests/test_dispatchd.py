@@ -1116,7 +1116,8 @@ class RestockTriggerTests(unittest.TestCase):
         restock_script = SCRIPT.parent / 'restock.py'
         def recover():
             return subprocess.run([sys.executable, '-B', str(restock_script), '--per-lane', '0'],
-                                  env={'HOME': str(home), 'PATH': str(home / 'stubbin') + ':' + os.environ.get('PATH', '/usr/bin:/bin')},
+                                  env={'HOME': str(home), 'PATH': str(SCRIPT.parent / 'tests/fixtures/restock-authority') + ':' +
+                                       str(home / 'stubbin') + ':' + os.environ.get('PATH', '/usr/bin:/bin')},
                                   capture_output=True, text=True, timeout=60)
         r = recover()
         self.assertEqual(r.returncode, 0, r.stderr)
