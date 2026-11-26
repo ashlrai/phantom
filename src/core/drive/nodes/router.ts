@@ -104,7 +104,8 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
 /** Deterministic plan: pools rank measured free host slots per observed execution millisecond;
  * standalone legacy queues retain their load policy. Ties break by node ID.
  * Pure: the same state and clock always produce the same plan. Jobs without an
- * owner scope are never routed, so a legacy job cannot leak across scopes.
+ * owner scope are never routed. An owner filter scopes the result after shared
+ * capacity has been reserved, so the preview agrees with pull.
  */
 export function planRoutes(state: NodesState, now: number, owner?: string): RouteAssignment[] {
   const capacity = nodeCapacityView(state, now);
@@ -117,7 +118,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
-    if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
+    if (!job.owner || !routable(job, now)) continue;
     const reasons = new Map<string, number>();
     let best: NodeRecord | null = null;
     for (const node of nodes) {
@@ -153,5 +154,5 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
         : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
-  return plan;
+  return owner === undefined ? plan : plan.filter(a => a.owner === owner);
 }

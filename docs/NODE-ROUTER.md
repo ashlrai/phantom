@@ -78,6 +78,10 @@ computer's sanitized hostname — the same default a pool join applies — so
 `phm node join --owner <scope>` is the shortest first join. A job with no
 live node prints a `phm node join --owner` fix that names the caps it needs.
 
+`phm node plan --owner <scope>` shows that owner's rows from the same routing
+plan used by `pull`. Earlier jobs from other owners can reserve capacity on
+shared nodes during planning, while their rows stay outside the scoped output.
+
 `phm node result --job <id> --owner <scope>` is the read-only way back to a
 job's outcome: `pending`, `running` (naming the node whose live claim can act),
 `completed` with the accepted `--result` text, executor and completion time, or
