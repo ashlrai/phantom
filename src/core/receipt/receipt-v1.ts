@@ -20,10 +20,13 @@ export const RECEIPT_V1_SIG_ALG = 'ed25519' as const;
 const PAYLOAD_DOMAIN = 'ashlr.receipt.v1.payload';
 const NAMES_DOMAIN = 'ashlr.receipt.v1.injected-names';
 const KEY_ID_DOMAIN = 'ashlr.receipt.v1.key-id';
-const HEX64 = /^[0-9a-f]{64}$/;
-const HEX128 = /^[0-9a-f]{128}$/;
+export const HEX64_RE = /^[0-9a-f]{64}$/;
+const HEX128_RE = /^[0-9a-f]{128}$/;
+export const RUN_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
+export const OID_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+export const RECEIPT_REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 
-export const PREFLIGHT_VERDICTS = ['ready', 'degraded', 'blocked', 'unavailable'] as const;
+const PREFLIGHT_VERDICTS = ['ready', 'degraded', 'blocked', 'unavailable'] as const;
 /** Mirrors ExecutionFeedbackOutcome (src/core/fleet/execution-feedback-types.ts). */
 export const EXECUTION_OUTCOMES = [
   'producer-succeeded', 'failed', 'cancelled', 'refused', 'empty-diff', 'disabled', 'unknown',
@@ -78,46 +81,46 @@ export function injectedNamesSummary(names: readonly string[]): { count: number;
 }
 
 // ---------------------------------------------------------------------------
-// Closed shape check
+// Closed shape check (shared across receipt.v1 and receipt.v1.later)
 // ---------------------------------------------------------------------------
-type Check = (v: unknown) => boolean;
-const isObj = (v: unknown): v is Record<string, unknown> =>
+export type ShapeCheck = (v: unknown) => boolean;
+export const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
-const str = (max = 256): Check => (v) => typeof v === 'string' && v.length > 0 && v.length <= max;
-const nul = (c: Check): Check => (v) => v === null || c(v);
-const bool: Check = (v) => typeof v === 'boolean';
-const int: Check = (v) => Number.isSafeInteger(v) && (v as number) >= 0;
-const num: Check = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
-const hex64: Check = (v) => typeof v === 'string' && HEX64.test(v);
-const oid: Check = (v) => typeof v === 'string' && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(v);
-const oneOf = (list: readonly string[]): Check => (v) => typeof v === 'string' && list.includes(v);
-const rfc3339: Check = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/.test(v);
-const anyInt: Check = (v) => Number.isSafeInteger(v);
-function record(fields: Record<string, Check>): Check {
-  return (v) => isObj(v)
+const str = (max = 256): ShapeCheck => (v) => typeof v === 'string' && v.length > 0 && v.length <= max;
+export const nullable = (c: ShapeCheck): ShapeCheck => (v) => v === null || c(v);
+export const isBool: ShapeCheck = (v) => typeof v === 'boolean';
+export const isNonNegativeInt = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
+const num: ShapeCheck = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+export const isHex64: ShapeCheck = (v) => typeof v === 'string' && HEX64_RE.test(v);
+export const isOid: ShapeCheck = (v) => typeof v === 'string' && OID_RE.test(v);
+export const isOneOf = (list: readonly string[]): ShapeCheck => (v) => typeof v === 'string' && list.includes(v);
+export const isRfc3339: ShapeCheck = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/.test(v);
+const anyInt: ShapeCheck = (v) => Number.isSafeInteger(v);
+export function exactRecord(fields: Record<string, ShapeCheck>): ShapeCheck {
+  return (v) => isPlainObject(v)
     && Object.keys(v).length === Object.keys(fields).length
     && Object.entries(fields).every(([k, c]) => Object.hasOwn(v, k) && c(v[k]));
 }
-const arrayOf = (c: Check, max: number): Check => (v) => Array.isArray(v) && v.length <= max && v.every(c);
+const arrayOf = (c: ShapeCheck, max: number): ShapeCheck => (v) => Array.isArray(v) && v.length <= max && v.every(c);
 
-const SECRETS = record({
-  initialized: nul(bool),
-  status_schema: nul(int),
-  wrap: nul(record({ wrapped: bool, reason: nul(oneOf(UNWRAPPED_REASONS)) })),
-  preflight: record({ verdict: nul(oneOf(PREFLIGHT_VERDICTS)), exit: nul(anyInt) }),
-  injected_names_count: nul(int),
-  injected_names_digest: nul(hex64),
-  audit: record({ enabled: nul(bool), chain_verified: nul(bool), first_seq: nul(int), last_seq: nul(int) }),
+const SECRETS = exactRecord({
+  initialized: nullable(isBool),
+  status_schema: nullable(isNonNegativeInt),
+  wrap: nullable(exactRecord({ wrapped: isBool, reason: nullable(isOneOf(UNWRAPPED_REASONS)) })),
+  preflight: exactRecord({ verdict: nullable(isOneOf(PREFLIGHT_VERDICTS)), exit: nullable(anyInt) }),
+  injected_names_count: nullable(isNonNegativeInt),
+  injected_names_digest: nullable(isHex64),
+  audit: exactRecord({ enabled: nullable(isBool), chain_verified: nullable(isBool), first_seq: nullable(isNonNegativeInt), last_seq: nullable(isNonNegativeInt) }),
 });
 
-const BODY_FIELDS: Record<string, Check> = {
+const BODY_FIELDS: Record<string, ShapeCheck> = {
   schema: (v) => v === RECEIPT_V1_SCHEMA,
-  run_id: (v) => typeof v === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(v),
-  created_at: rfc3339,
-  repo: (v) => typeof v === 'string' && /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/.test(v),
-  base_oid: nul(oid),
-  head_oid: nul(oid),
-  identity: record({ engine: str(64), seat: nul(str(128)), locus_pin_id: nul(str(128)), locus_observed: bool }),
+  run_id: (v) => typeof v === 'string' && RUN_ID_RE.test(v),
+  created_at: isRfc3339,
+  repo: (v) => typeof v === 'string' && RECEIPT_REPO_RE.test(v),
+  base_oid: nullable(isOid),
+  head_oid: nullable(isOid),
+  identity: exactRecord({ engine: str(64), seat: nullable(str(128)), locus_pin_id: nullable(str(128)), locus_observed: isBool }),
   secrets: (v) => {
     if (!SECRETS(v)) return false;
     const s = v as unknown as ReceiptV1Secrets;
@@ -126,18 +129,22 @@ const BODY_FIELDS: Record<string, Check> = {
     // Count and digest are both known or both unknown.
     return (s.injected_names_count === null) === (s.injected_names_digest === null);
   },
-  spend: record({ tokens_in: nul(int), tokens_out: nul(int), acu: nul(num), wall_ms: int }),
-  change: record({
-    diff_sha256: nul(hex64), files_touched: int, lines: int,
-    outside_grant_scope: arrayOf(str(512), 4096), grant_digest: nul(hex64),
+  spend: exactRecord({ tokens_in: nullable(isNonNegativeInt), tokens_out: nullable(isNonNegativeInt), acu: nullable(num), wall_ms: isNonNegativeInt }),
+  change: exactRecord({
+    diff_sha256: nullable(isHex64), files_touched: isNonNegativeInt, lines: isNonNegativeInt,
+    outside_grant_scope: arrayOf(str(512), 4096), grant_digest: nullable(isHex64),
   }),
-  approvals: arrayOf(record({ tool_name: str(128), arg_hash: hex64, approved_at: int }), 1024),
-  efficiency: nul(record({ receipt_digest: hex64 })),
-  outcome: record({ execution: oneOf(EXECUTION_OUTCOMES) }),
+  approvals: arrayOf(exactRecord({ tool_name: str(128), arg_hash: isHex64, approved_at: isNonNegativeInt }), 1024),
+  efficiency: nullable(exactRecord({ receipt_digest: isHex64 })),
+  outcome: exactRecord({ execution: isOneOf(EXECUTION_OUTCOMES) }),
   later: (v) => Array.isArray(v) && v.length === 0, // appenders land in a later slice
 };
-const BODY = record(BODY_FIELDS);
-const SIG = record({ alg: (v) => v === RECEIPT_V1_SIG_ALG, key_id: hex64, value: (v) => typeof v === 'string' && HEX128.test(v) });
+const BODY = exactRecord(BODY_FIELDS);
+const SIG_RECORD = exactRecord({ alg: (v) => v === RECEIPT_V1_SIG_ALG, key_id: isHex64, value: (v) => typeof v === 'string' && HEX128_RE.test(v) });
+
+export function isReceiptV1Sig(v: unknown): v is ReceiptV1Sig {
+  return SIG_RECORD(v);
+}
 
 export function isReceiptV1Body(v: unknown): v is ReceiptV1Body {
   try { return BODY(v); } catch { return false; }
@@ -146,12 +153,16 @@ export function isReceiptV1Body(v: unknown): v is ReceiptV1Body {
 // ---------------------------------------------------------------------------
 // Digest, key id, sign, verify
 // ---------------------------------------------------------------------------
+/** Domain-separated SHA-256 over the canonical JSON representation of a payload. */
+export function receiptDomainCanonicalDigest(domain: string, payload: unknown): string | null {
+  const canonical = canonicalEvidencePackJsonV3(payload);
+  if (canonical === null) return null;
+  return createHash('sha256').update(domain, 'utf8').update('\n').update(canonical, 'utf8').digest('hex');
+}
+
 /** Domain-separated SHA-256 over the canonical body (everything but `sig`). */
 export function receiptV1Digest(body: ReceiptV1Body): string | null {
-  if (!isReceiptV1Body(body)) return null;
-  const canonical = canonicalEvidencePackJsonV3(body);
-  if (canonical === null) return null;
-  return createHash('sha256').update(PAYLOAD_DOMAIN, 'utf8').update('\n').update(canonical, 'utf8').digest('hex');
+  return isReceiptV1Body(body) ? receiptDomainCanonicalDigest(PAYLOAD_DOMAIN, body) : null;
 }
 
 /** Stable key id: domain-separated SHA-256 over the Ed25519 public key (SPKI DER). */
@@ -161,19 +172,35 @@ export function receiptV1KeyId(publicKey: KeyObject): string | null {
   return createHash('sha256').update(KEY_ID_DOMAIN, 'utf8').update('\n').update(der).digest('hex');
 }
 
-function message(digest: string): Buffer {
-  return Buffer.from(`${PAYLOAD_DOMAIN}\n${RECEIPT_V1_SIG_ALG}\n${digest}`, 'utf8');
+function signingMessage(domain: string, digest: string): Buffer {
+  return Buffer.from(`${domain}\n${RECEIPT_V1_SIG_ALG}\n${digest}`, 'utf8');
+}
+
+/** Verify an Ed25519 hex signature over a domain-separated digest. */
+export function verifyReceiptSignature(domain: string, digest: string, sigValueHex: string, publicKey: KeyObject): boolean {
+  return verify(null, signingMessage(domain, digest), publicKey, Buffer.from(sigValueHex, 'hex'));
+}
+
+/** Sign a validated receipt payload under `domain`. Returns null on bad key/digest or key-pair mismatch. */
+export function signReceiptPayload<T extends object>(
+  domain: string,
+  body: T,
+  digest: string | null,
+  privateKey: KeyObject,
+  publicKey: KeyObject,
+): (T & { sig: ReceiptV1Sig }) | null {
+  if (privateKey.type !== 'private' || privateKey.asymmetricKeyType !== 'ed25519') return null;
+  const keyId = receiptV1KeyId(publicKey);
+  if (!keyId || !digest) return null;
+  const msg = signingMessage(domain, digest);
+  const value = sign(null, msg, privateKey).toString('hex');
+  if (!verify(null, msg, publicKey, Buffer.from(value, 'hex'))) return null; // key pair mismatch
+  return { ...body, sig: { alg: RECEIPT_V1_SIG_ALG, key_id: keyId, value } };
 }
 
 /** Sign a body. Returns null for an invalid body or a key that is not an Ed25519 private key. */
 export function signReceiptV1(body: ReceiptV1Body, privateKey: KeyObject, publicKey: KeyObject): ReceiptV1 | null {
-  if (privateKey.type !== 'private' || privateKey.asymmetricKeyType !== 'ed25519') return null;
-  const keyId = receiptV1KeyId(publicKey);
-  const digest = receiptV1Digest(body);
-  if (!keyId || !digest) return null;
-  const value = sign(null, message(digest), privateKey).toString('hex');
-  if (!verify(null, message(digest), publicKey, Buffer.from(value, 'hex'))) return null; // key pair mismatch
-  return { ...body, sig: { alg: RECEIPT_V1_SIG_ALG, key_id: keyId, value } };
+  return signReceiptPayload(PAYLOAD_DOMAIN, body, receiptV1Digest(body), privateKey, publicKey);
 }
 
 /** Verify a receipt against one trusted public key. Never throws. */
@@ -182,17 +209,16 @@ export function verifyReceiptV1(
   publicKey: KeyObject,
 ): { ok: true; digest: string } | { ok: false; reason: ReceiptV1Failure } {
   try {
-    if (!isObj(receipt) || !Object.hasOwn(receipt, 'sig')) return { ok: false, reason: 'shape-invalid' };
+    if (!isPlainObject(receipt) || !Object.hasOwn(receipt, 'sig')) return { ok: false, reason: 'shape-invalid' };
     const { sig, ...body } = receipt;
-    if (isObj(sig) && Object.hasOwn(sig, 'alg') && sig['alg'] !== RECEIPT_V1_SIG_ALG) return { ok: false, reason: 'alg-unknown' };
-    if (!SIG(sig) || !isReceiptV1Body(body)) return { ok: false, reason: 'shape-invalid' };
+    if (isPlainObject(sig) && Object.hasOwn(sig, 'alg') && sig['alg'] !== RECEIPT_V1_SIG_ALG) return { ok: false, reason: 'alg-unknown' };
+    if (!isReceiptV1Sig(sig) || !isReceiptV1Body(body)) return { ok: false, reason: 'shape-invalid' };
     const keyId = receiptV1KeyId(publicKey);
     if (!keyId) return { ok: false, reason: 'key-invalid' };
-    const s = sig as unknown as ReceiptV1Sig;
-    if (s.key_id !== keyId) return { ok: false, reason: 'key-id-mismatch' };
+    if (sig.key_id !== keyId) return { ok: false, reason: 'key-id-mismatch' };
     const digest = receiptV1Digest(body);
     if (!digest) return { ok: false, reason: 'not-canonical' };
-    if (!verify(null, message(digest), publicKey, Buffer.from(s.value, 'hex'))) return { ok: false, reason: 'signature-invalid' };
+    if (!verifyReceiptSignature(PAYLOAD_DOMAIN, digest, sig.value, publicKey)) return { ok: false, reason: 'signature-invalid' };
     return { ok: true, digest };
   } catch {
     return { ok: false, reason: 'shape-invalid' };
