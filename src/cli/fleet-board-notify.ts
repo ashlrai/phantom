@@ -158,7 +158,18 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   const dir = stateDir ?? boardNotifyDir();
   const now = (deps.now ?? Date.now)();
   const ledgerPath = boardNotifyLedgerPath(dir);
+  let coverage: { truncated: boolean; inspected: number; complete: boolean } | undefined;
   const emit = (report: Record<string, unknown>, code = 0): number => {
+    if (coverage) {
+      report.coverage = coverage;
+      if (coverage.truncated) {
+        (report.lines as string[] | undefined)?.push('board-notify: scan truncated; unseen work may remain (pending covers inspected work only)');
+        if (!dryRun && report.status !== 'halted' && code === 0) {
+          report.reason = 'scan-incomplete';
+          code = 1;
+        }
+      }
+    }
     if (json) console.log(JSON.stringify(report));
     else for (const line of (report.lines as string[] | undefined) ?? []) console.log(line);
     return code;
@@ -169,6 +180,7 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
     status: 'inbox-unavailable', inbox: board.inbox,
     lines: ['board-notify: inbox unavailable; snapshot and sent ledger preserved'],
   }, 1);
+  coverage = { truncated: board.truncated, inspected: board.items.length, complete: !board.truncated };
   const next = snapshotBoard(board, id => collectBusWorkItemEvidence(id, { root: busRoot, now }).evidence);
   const prev = readBoardNotifySnapshot(dir);
   const sent = readBoardNotifySent(ledgerPath);
