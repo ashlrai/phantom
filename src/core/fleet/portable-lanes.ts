@@ -12,6 +12,7 @@ const profileLane = z.object({
   resource: z.string().regex(/^(?:custom:)?[a-z0-9][a-z0-9-]{0,62}$/),
   label: z.string().trim().min(1).max(80).regex(/^[\p{L}\p{N} ._+&()/·-]+$/u).optional(),
   authorized: z.boolean().default(false),
+  floor: z.number().int().nonnegative().optional(),
 }).strict();
 const profileSchema = z.object({
   schema: z.literal('fleet.profile.v1'),
