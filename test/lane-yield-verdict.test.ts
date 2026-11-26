@@ -32,6 +32,35 @@ describe('laneYield', () => {
 });
 
 describe('parseLaneJobs', () => {
+  it('attributes finish evidence only after the latest launch', () => {
+    const ledger = ['stale', 'pending', 'same-time', 'undated'].flatMap(job => {
+      const first = '2026-11-20T10:00:00Z';
+      const retry = '2026-11-20T11:00:00Z';
+      const launch = { event: 'launch', job };
+      const finish = { event: 'finish', job };
+      return [
+        { ...launch, lane: 'zai', ts: first },
+        { ...finish, empty: true, ts: job === 'pending' ? retry : undefined },
+        { ...launch, lane: 'claude', ts: retry },
+        // A delayed replay with an older timestamp still belongs to the first attempt.
+        { ...finish, empty: true, ts: '2026-11-20T10:05:00Z' },
+        ...(job === 'pending' ? [] : [{
+          ...finish, empty: job !== 'stale', ts: job === 'undated' ? undefined : retry,
+        }]),
+      ];
+    }).map(row => JSON.stringify(row)).join('\n');
+
+    expect(parseLaneJobs(ledger)).toEqual([
+      { job: 'stale', lane: 'claude', at: Date.parse('2026-11-20T11:00:00Z'), empty: false, merged: false },
+      { job: 'same-time', lane: 'claude', at: Date.parse('2026-11-20T11:00:00Z'), empty: true, merged: false },
+      { job: 'undated', lane: 'claude', at: Date.parse('2026-11-20T11:00:00Z'), empty: true, merged: false },
+    ]);
+    expect(computeLaneYield(ledger).rows.filter(row => row.size === 'all')).toMatchObject([
+      { lane: 'claude', launches: 4, empty: 2 },
+      { lane: 'zai', launches: 4, empty: 0 },
+    ]);
+  });
+
   it('keeps pre-launch skips from becoming empty finishes on older attempts', () => {
     const records = Array.from({ length: 20 }, (_, i) => [
       { event: 'launch', job: `job-${i}`, lane: 'zai', ts: '2026-11-20T10:00:00Z' },

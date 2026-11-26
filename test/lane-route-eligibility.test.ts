@@ -144,7 +144,7 @@ describe('lane yield weight', () => {
           ? JSON.stringify({ event: 'publish', jobId: `z${i}`, prUrl: 'https://github.com/ashlrai/phantom/pull/7', outcome: 'MERGED', source: 'metrics-outcomes-reconciler' })
           : JSON.stringify({ jobId: `z${i}`, prUrl: `https://github.com/ashlrai/phantom/pull/${i}`, outcome: 'MERGED', mergedAt: '2026-11-16T15:00:00.000Z', source: 'metrics-outcomes-reconciler' }));
       } else {
-        lines.push(JSON.stringify({ kind: 'finish', id: `z${i}`, empty: true, at: '2026-11-16T15:30:00.000Z' }));
+        lines.push(JSON.stringify({ kind: 'finish', id: `z${i}`, empty: true, at: NOW.toISOString() }));
       }
     }
     const rows = computeLaneYield(lines.join('\n')).rows;
