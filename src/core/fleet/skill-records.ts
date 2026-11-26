@@ -794,13 +794,15 @@ function readRecordsWithDiagnostics<T>(
     limitExceeded ||= listing.limitExceeded;
     if (limitExceeded || (complete && invalidRows > 0)) return result([], 'degraded');
     const completePartitionNames = complete ? [...listing.files] : undefined;
-    const files = listing.files;
+    const files = sinceMs === undefined
+      ? listing.files
+      : listing.files.filter((file) => fileMayContainSince(file, sinceMs));
+    const partialWindow = checkRowLimit && sinceMs !== undefined && files.length > maxFiles;
     if (!complete) files.splice(maxFiles);
     const out: T[] = [];
     const completeSnapshots: Array<{ filePath: string; snapshot: BigIntStats }> = [];
     partitions: for (const file of files) {
       if (!checkRowLimit && out.length >= limit) break;
-      if (sinceMs !== undefined && !fileMayContainSince(file, sinceMs)) continue;
       filesScanned += 1;
       const filePath = join(canonicalDir, file);
       let raw: string | null;
@@ -890,7 +892,7 @@ function readRecordsWithDiagnostics<T>(
       const current = lstatSync(entry.path);
       if (!sameDirectorySnapshot(entry.snapshot, current)) return result([], 'degraded');
     }
-    const degraded = unreadableFiles > 0 || invalidRows > 0 || limitExceeded || partialTail;
+    const degraded = unreadableFiles > 0 || invalidRows > 0 || limitExceeded || partialTail || partialWindow;
     return result(complete && degraded ? [] : out, degraded ? 'degraded' : 'healthy');
   } catch {
     return result([], 'degraded');
