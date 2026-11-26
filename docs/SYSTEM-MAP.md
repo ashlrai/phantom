@@ -56,4 +56,57 @@ at that commit, not at whatever happens to be in your working tree.
 
 The map complements the generated [Repo Wiki and DeepWiki grounding](DEEPWIKI.md),
 the [source guide](CODEMAP.md), and [fleet/task graph context](GRAPH-CONTEXT-CHOICES.md).
-The interactive desktop view and memory links are separate slices.
+The interactive desktop view is a separate slice.
+
+## Wiki Brain: evidence links
+
+```sh
+phm wiki brain phantom --focus file:src/cli/wiki.ts --json
+phm wiki brain phantom --link file:src/cli/wiki.ts --source-kind decision \
+  --source-id fleet:decision-123 --source-digest "$SOURCE_SHA256" --json
+```
+
+`phm_wiki_brain` is the read-only MCP equivalent. It accepts the same enrolled
+repo selector as `phm_wiki_map` and an optional exact node ID as `focus`.
+Both reads return `phantom.wiki.brain.v1` evaluated at the captured HEAD.
+The private per-checkout store under `~/.ashlr/knowledge/wiki/` holds links to
+existing evidence, not copies of source records or their text.
+
+Use `--link` locally to attach a `decision`, `lesson`, `pr`, `failure`, or
+`owner-direction` receipt. Pass a namespaced record ID and the lowercase
+SHA-256 digest of the exact source record you reviewed. This is a curated
+assertion, not independent verification of the source record or approval to
+act. The target must exist in the committed map. File/test, symbol, CLI, route,
+and MCP node IDs are supported; subsystem roll-ups are not. Replay at the
+same commit is idempotent.
+
+Each link carries its target's file and line at the observed commit, the
+source kind, ID, and digest, and a target staleness verdict:
+
+| Verdict | Meaning |
+| --- | --- |
+| `valid` | The observed commit is an ancestor (or the same commit), and the target's file blob is unchanged. |
+| `target-changed` | The exact node ID still resolves, but its file blob changed. |
+| `target-removed` | The node no longer resolves in the mapped tree. A rename is not automatically relinked. |
+| `unknown-ancestry` | Git cannot prove ancestry or read the target revision; unrelated histories and missing objects are not treated as current. |
+
+Reads return up to 24 links and 24 KiB with a `truncated` flag. Focus an exact
+node ID for a narrower result. No dirty worktree content is read. Staleness
+does not re-verify the evidence source or infer whether the old advice is
+still correct.
+
+**After merge:** Cloud's direct PR tracker writes only after it matches
+the repository, PR, head and base refs on GitHub, reads the merge SHA and
+persists the terminal state. It projects the first-parent diff of that local
+Git commit to up to 32 surviving, indexed file nodes. No PR body or title is
+copied. A unique enrolled checkout for that GitHub repo and the merge and
+parent objects must already be present; the hook never fetches. It does not
+claim the rest of a multi-commit rebase, backfill missed objects, or cover
+superseding fleet PRs, Inbox merges, or other merge paths.
+
+**Before planning:** Cloud launch checks the prepared base commit and adds at
+most four valid, automatically recorded PR references for files explicitly
+named in the task. It sends no curated text or private source IDs, does not
+change the approved-lessons trial arm, and launches without the block if the
+checkout or evidence cannot be verified. Other consumers and automated
+projection of the curated source kinds are follow-ups.

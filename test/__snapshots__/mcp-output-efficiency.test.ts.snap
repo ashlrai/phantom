@@ -341,6 +341,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "phm_wiki_brain",
+      "safety": "read",
+    },
+    {
       "name": "ashlr_comms_agent_status",
       "safety": "read",
     },
@@ -2643,6 +2647,26 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phm_wiki_map",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "focus": {
+          "maxLength": 1200,
+          "type": "string",
+        },
+        "repo": {
+          "maxLength": 255,
+          "type": "string",
+        },
+      },
+      "required": [
+        "repo",
+      ],
+      "type": "object",
+    },
+    "name": "phm_wiki_brain",
   },
   {
     "inputSchema": {
