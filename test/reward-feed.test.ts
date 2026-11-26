@@ -413,6 +413,22 @@ describe('foldJobsLedgerRewards', () => {
     for (const input of inputs) expect(input).not.toHaveProperty('ciWallMs');
   });
 
+  it('withholds CI timing when an undated boundary could fall inside the rewarded dispatch', () => {
+    const job = 'RQ-UNDATED-CI';
+    const text = [
+      launch(job),
+      ciStart(job, '2026-10-28T15:10:00.000Z'),
+      ciComplete(job, '2026-10-28T15:25:00.000Z'),
+      ciComplete(job, 'invalid'),
+      merged(job),
+    ].join('\n');
+
+    const inputs = foldJobsLedgerRewards(text, NOW_MS);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({ jobId: job, merged: true });
+    expect(inputs[0]).not.toHaveProperty('ciWallMs');
+  });
+
   it('dedupes a repeated identical CI boundary stamp', () => {
     const start = ciStart('RQ-DUP', '2026-10-28T15:10:00.000Z');
     const text = [launch('RQ-DUP'), start, start, ciComplete('RQ-DUP', '2026-10-28T15:25:00.000Z'), merged('RQ-DUP')].join('\n');

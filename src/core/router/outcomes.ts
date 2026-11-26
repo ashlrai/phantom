@@ -1710,6 +1710,12 @@ export interface RouterOutcomeFoldOptions {
 
 /** Folds JSONL text into one outcome per job. Explicit fields only; nothing inferred. */
 export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions = {}): RouterOutcomeFold {
+  return foldRouterOutcomesWithCiCoverage(text, opts, new Set());
+}
+
+function foldRouterOutcomesWithCiCoverage(
+  text: string, opts: RouterOutcomeFoldOptions, undatedCiJobs: Set<string>,
+): RouterOutcomeFold {
   const rows: Row[] = [];
   let malformed = 0;
   for (const line of text.split('\n')) {
@@ -1803,14 +1809,17 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     const name = event.toLowerCase();
     if (name !== 'ci_start' && name !== 'ci_complete') continue;
     const at = Date.parse(str(r, ...LEDGER_TS_KEYS) ?? '');
-    if (!Number.isFinite(at)) continue;
+    if (!Number.isFinite(at)) {
+      undatedCiJobs.add(j);
+      continue;
+    }
     const marks = ciMarks.get(j) ?? { starts: new Set<number>(), completes: new Set<number>() };
     (name === 'ci_start' ? marks.starts : marks.completes).add(at);
     ciMarks.set(j, marks);
   }
   const ciWallS = new Map<string, number>();
   for (const [j, marks] of ciMarks) {
-    if (marks.starts.size !== 1 || marks.completes.size !== 1) continue;
+    if (undatedCiJobs.has(j) || marks.starts.size !== 1 || marks.completes.size !== 1) continue;
     const wallMs = [...marks.completes][0]! - [...marks.starts][0]!;
     if (wallMs >= 0) ciWallS.set(j, wallMs / 1000);
   }
@@ -3387,7 +3396,8 @@ export async function readRouterOutcomes(opts: {
   const authorityEvidence = opts.authorityEvidence === undefined
     ? await liveAuthorityEvidence()
     : opts.authorityEvidence;
-  const folded = foldRouterOutcomes(read.text, {
+  const undatedCiJobs = new Set<string>();
+  const folded = foldRouterOutcomesWithCiCoverage(read.text, {
     passkFor: laneScoreLookup(laneScores),
     workClassFor: (jobId) => workClasses.get(jobId) ?? null,
     revertedPrKeys: unionRevertKeys(
@@ -3396,7 +3406,7 @@ export async function readRouterOutcomes(opts: {
     mergeEvents: mergeEventsRead.state === 'read' ? foldMergeEvents(mergeEventsRead.text) : undefined,
     mergeEventsTruncated,
     crossReviews: crossReviewRead.state === 'read' ? foldCrossReviews(crossReviewRead.text) : undefined,
-  });
+  }, undatedCiJobs);
   if (spendRead.state === 'read') {
     const costs = foldSpendCosts(spendRead.text);
     for (const o of folded.outcomes) {
@@ -3417,7 +3427,7 @@ export async function readRouterOutcomes(opts: {
       // jobs-ledger dialect applies.
       if (o.merged === null) o.merged = reward.merged;
       if (o.merged === true && o.ttm_s === null) o.ttm_s = reward.ttm_s;
-      if (o.ci_wall_s === null) o.ci_wall_s = reward.ci_wall_s;
+      if (o.ci_wall_s === null && !undatedCiJobs.has(o.job_id)) o.ci_wall_s = reward.ci_wall_s;
       if (o.cost_usd === null) o.cost_usd = reward.cost_usd;
       if (o.repo === null) o.repo = reward.repo;
       o.pool_pct_used = reward.pool_pct_used;

@@ -196,6 +196,7 @@ interface RewardJobAccum {
   /** True when the standing revert set proves the held merge's PR was reverted. */
   standingReverted: boolean;
   /** ci_start/ci_complete boundary stamps, deduped like job-latency's boundary lists. */
+  ciBoundaryUndated: boolean;
   ciStartAts: number[];
   ciCompleteAts: number[];
 }
@@ -204,7 +205,7 @@ function newAccum(): RewardJobAccum {
   return {
     dispatches: [],
     merge: null, close: null, revertMs: null, standingReverted: false,
-    ciStartAts: [], ciCompleteAts: [],
+    ciBoundaryUndated: false, ciStartAts: [], ciCompleteAts: [],
   };
 }
 
@@ -219,6 +220,7 @@ function noteCiBoundary(acc: RewardJobAccum, kind: 'start' | 'complete', at: num
  * dispatch-to-outcome window. Reused job ids can carry CI from earlier runs.
  */
 function ciWallEvidence(acc: RewardJobAccum, dispatchMs: number, outcomeMs: number): { ciWallMs?: number } {
+  if (acc.ciBoundaryUndated) return {};
   const inWindow = (at: number): boolean => at >= dispatchMs && at <= outcomeMs;
   const starts = acc.ciStartAts.filter(inWindow);
   const completions = acc.ciCompleteAts.filter(inWindow);
@@ -273,20 +275,22 @@ export function foldJobsLedgerRewards(
     }
     if (!JOB_ID_PATTERN.test(id)) continue;
     const at = ledgerTs(row);
-    if (at === null || at > nowMs) continue;
+    const name = firstString(row, EVENT_KEYS)?.toLowerCase();
+    const ciBoundary = name === 'ci_start' || name === 'ci_complete';
+    if (at === null ? !ciBoundary : at > nowMs) continue;
     let acc = jobs.get(id);
     if (!acc) {
       acc = newAccum();
       jobs.set(id, acc);
     }
-    const event = firstString(row, EVENT_KEYS);
-    if (event !== null) {
-      const name = event.toLowerCase();
-      if (DISPATCH_EVENTS.has(name)) {
-        acc.dispatches.push({ ms: at, lane: firstString(row, LANE_KEYS), repo: repoOf(row) });
-      } else if (name === 'ci_start' || name === 'ci_complete') {
-        noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at);
-      }
+    if (at === null) {
+      acc.ciBoundaryUndated = true;
+      continue;
+    }
+    if (name !== undefined && DISPATCH_EVENTS.has(name)) {
+      acc.dispatches.push({ ms: at, lane: firstString(row, LANE_KEYS), repo: repoOf(row) });
+    } else if (ciBoundary) {
+      noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at);
     }
     if (hasRevertEvidence(row)) {
       const revertedAtMs = resolutionAt(row, REVERTED_AT_KEYS) ?? at;
