@@ -2371,8 +2371,9 @@ describe('router outcome merge-events join', () => {
     const root = runsDir([58, 59, 60].map(pr => JSON.stringify({
       job: `J${pr}`, pr_url: `https://github.com/ashlrai/phantom/pull/${pr}`,
     })).join('\n'));
-    const future = { at: new Date(Date.now() + 60 * 60 * 1000).toISOString() };
-    const present = { at: new Date().toISOString() };
+    const reportStart = Date.parse('2026-11-25T12:00:00.123Z');
+    const future = { at: new Date(reportStart + 1).toISOString() };
+    const present = { at: new Date(reportStart).toISOString() };
     writeMergeEvents(root, [
       mergeEvent(58, 'checks_passed', present),
       mergeEvent(58, 'check_observed', { ...future, conclusion: 'failure', required: true }),
@@ -2381,12 +2382,17 @@ describe('router outcome merge-events join', () => {
       mergeEvent(60, 'check_observed', { ...future, conclusion: 'invalid' }),
     ]);
 
-    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null });
-    expect(result.outcomes).toMatchObject([
-      { job_id: 'J58', ci_first_pass: true, merge_queue: { events: 1, check_failures: 0 } },
-      { job_id: 'J59', ci_first_pass: null, merge_queue: null },
-      { job_id: 'J60', ci_first_pass: true, merge_queue: { events: 1 } },
-    ]);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(reportStart + 1).mockReturnValueOnce(reportStart);
+    try {
+      const result = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null });
+      expect(result.outcomes).toMatchObject([
+        { job_id: 'J58', ci_first_pass: true, merge_queue: { events: 1, check_failures: 0 } },
+        { job_id: 'J59', ci_first_pass: null, merge_queue: null },
+        { job_id: 'J60', ci_first_pass: true, merge_queue: { events: 1 } },
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('keeps CI unknown when a reward-resolved merge has only an individual passing check', async () => {
