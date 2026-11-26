@@ -726,7 +726,12 @@ daemon's reward-sync feed and supervising bridges append one `v:1` row
 per terminal job (`jobId`, resolved `merged` verdict,
 `dispatchedAt`/`mergedAt`/`recordedAt` stamps, derived
 `timeToMergeMs`, `ciWallMs`, and a `cost` block carrying the metered
-pool readings). `foldRewardSignals` collapses the bounded tail to
+pool readings). The daemon records `ciWallMs` only when the job has one
+unambiguous CI start and completion pair, in order and within the dispatch
+and resolution timestamps used for that reward. A merge uses its recorded
+merge time even if its ledger receipt arrived later. Out-of-window timing
+stays unknown, and existing reward rows retain their original values.
+`foldRewardSignals` collapses the bounded tail to
 each job's recorded evidence and the read fills only what the jobs
 fold left null — `merged`, `ttm_s` (only while the standing verdict is
 a merge, the same gate the jobs-ledger dialect applies), `ci_wall_s`,
