@@ -60,7 +60,7 @@ chain, so the group keys on the identity the evidence itself printed.
 Because it names a real test, the usual dependency closure and pass
 evidence apply: a green master module resolves a one-off flake on an
 unaffected singleton to `probable-flake`/`rerun-failed`, while a flake
-repeated across unaffected PRs -- or printed by master itself -- groups
+repeated across distinct unaffected PR heads -- or printed by master itself -- groups
 `shared-baseline` for a stabilization fix. Verdicts naming paths outside
 the suite roots, missing case names and near-miss wording stay unparsed,
 so an unrecognized lane failure still reads unknown rather than guessed.
@@ -540,9 +540,11 @@ job-memory, lifecycle (`started`/`exited`), aggregate
 unparsed: `exited` lines fire on ordinary test failures and on the
 stop-others SIGTERM cascade, so they can never be runner identities.
 
-Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
-brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
-with an explicit test pass on master's current run produces
+Two unaffected fresh PRs at distinct head commits sharing a failure produce
+`queue-master-fix` and a ready brief. PRs at the same commit remain visible in
+the group but contribute only one head toward that threshold. Test/import
+changes produce `pr-caused`. A singleton unaffected failure with an explicit
+test pass on master's current run produces
 `rerun-failed`. A green Vitest module summary with skipped or todo cases
 proves the suite loaded but leaves individual case outcomes unknown without
 an explicit pass line for the case. Relative imports are followed
