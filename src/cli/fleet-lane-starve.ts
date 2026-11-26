@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { findStarvedLanes, type StarvedLane } from '../core/fleet/lane-starve.js';
 
-export { FILLER_ID, findStarvedLanes, type StarvedLane } from '../core/fleet/lane-starve.js';
+export { FILLER_ID, findStarvedLanes, type StarvedLane, type StarvedLanes } from '../core/fleet/lane-starve.js';
 
 export const FLEET_LANE_STARVE_SCHEMA = 'fleet.lane-starve.v1';
 
@@ -11,26 +11,30 @@ export interface LaneStarveReport {
   schema: typeof FLEET_LANE_STARVE_SCHEMA;
   readOnly: true;
   filler_hold: boolean;
+  /** Lane-open ready rows any lane may take; null when ready.tsv is absent. */
+  open_rows: number | null;
   lanes: StarvedLane[];
 }
 
 const USAGE = `Usage: ashlr fleet lane-starve [--json]
-List lanes running below their launch target (the configured target tightened by the controller's effective_target shed) with work queued, and split each lane's queue/ready.tsv rows into filler and real. Says when queue/FILLER_HOLD exists. Read-only.
+List lanes running below their launch target (the configured target tightened by the controller's effective_target shed) with work queued, and split each lane's queue/ready.tsv rows into filler and real. Dispatcher rows count toward the lane the work market's hint resolves to; lane-open rows are shared supply reported once. Says when queue/FILLER_HOLD exists. Read-only.
 Parked rows are not runnable work and are not counted.
 Reads ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Exit 1 when any lane is starved.`;
 
 export interface LaneStarveIo {
   /** Returns file text, or null when the file does not exist. */
-  read: (path: string) => Promise<string | null>;
+  read: (path: string, maxBytes?: number) => Promise<string | null>;
 }
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; give it a wider bound. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 const defaultIo: LaneStarveIo = {
-  async read(path) {
+  async read(path, maxBytes = MAX_FILE_BYTES) {
     try {
       const info = await stat(path);
-      if (!info.isFile() || info.size > MAX_FILE_BYTES) throw new Error('unreadable or over read bound');
+      if (!info.isFile() || info.size > maxBytes) throw new Error('unreadable or over read bound');
       return await readFile(path, 'utf8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
@@ -53,15 +57,20 @@ export async function cmdFleetLaneStarve(args: string[], io: LaneStarveIo = defa
   const queue = join(process.env.ASHLR_RUNS_DIR || join(homedir(), '.ashlr-runs'), 'queue');
   let report: LaneStarveReport;
   try {
-    const status = await io.read(join(queue, 'status.json'));
+    const [status, ready, routerQueue, hold] = await Promise.all([
+      io.read(join(queue, 'status.json')),
+      io.read(join(queue, 'ready.tsv')),
+      io.read(join(queue, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES),
+      io.read(join(queue, 'FILLER_HOLD')),
+    ]);
     if (status === null) throw new Error('no status');
-    const ready = await io.read(join(queue, 'ready.tsv'));
-    const hold = (await io.read(join(queue, 'FILLER_HOLD'))) !== null;
+    const { lanes, openRows } = findStarvedLanes(status, ready, routerQueue);
     report = {
       schema: FLEET_LANE_STARVE_SCHEMA,
       readOnly: true,
-      filler_hold: hold,
-      lanes: findStarvedLanes(status, ready),
+      filler_hold: hold !== null,
+      open_rows: openRows,
+      lanes,
     };
   } catch {
     const error = 'Cannot read lane status. Expected lanes with running, target and queued in queue/status.json.';
@@ -75,6 +84,9 @@ export async function cmdFleetLaneStarve(args: string[], io: LaneStarveIo = defa
       console.log(`${l.lane}: ${l.running}/${l.target} running, ${l.queued} queued; ready ${ready}`);
     }
     if (report.lanes.length === 0) console.log('No starved lanes.');
+    if (report.open_rows !== null && report.open_rows > 0) {
+      console.log(`${report.open_rows} lane-open row(s) can run on any lane.`);
+    }
     if (report.filler_hold) console.log('FILLER_HOLD is set: filler is held.');
   }
   return report.lanes.length > 0 ? 1 : 0;
