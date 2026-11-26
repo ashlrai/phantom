@@ -297,6 +297,24 @@ describe('foldJobsLedgerRewards', () => {
       expect(inputs[0]).not.toHaveProperty('ciWallMs');
     }
   });
+
+  it.each([merged, closed])('measures CI for a rewarded retry with other attempts in the ledger (%o)', (resolve) => {
+    const job = 'RQ-RETRY-CI';
+    const text = [
+      launch(job),
+      ciStart(job, '2026-10-28T14:10:00.000Z'),
+      ciComplete(job, '2026-10-28T14:25:00.000Z'),
+      launch(job, 'omlx', '2026-10-28T15:00:00.000Z'),
+      ciStart(job, '2026-10-28T15:10:00.000Z'),
+      ciComplete(job, '2026-10-28T15:25:00.000Z'),
+      resolve(job, '2026-10-28T15:30:00.000Z'),
+      ciStart(job, '2026-10-28T15:35:00.000Z'),
+      ciComplete(job, '2026-10-28T15:45:00.000Z'),
+    ].join('\n');
+    expect(foldJobsLedgerRewards(text, NOW_MS)).toMatchObject([
+      { jobId: job, pool: 'omlx', ciWallMs: 900_000 },
+    ]);
+  });
 });
 
 describe('writeRewardSignals', () => {

@@ -307,20 +307,25 @@ export async function cmdResources(args: string[]): Promise<number> {
       console.log(JSON.stringify(await getResourceLedger(cfg), null, 2));
       return;
     }
-    const [{ readBankedResets, codexResetBankUpgradeHint }, { defaultResourceLiveRunsDir }] = await Promise.all([
+    const [{ readBankedResets, codexResetBankUpgradeHint }, { defaultResourceLiveRunsDir },
+      { readResourceLiveFile, parseResourceLiveSidecar }, { antigravityQuota, formatAntigravityQuota }] = await Promise.all([
       import('../core/usage/resource-live/banked-resets.js'), import('../core/usage/resource-live/feed.js'),
+      import('../core/usage/resource-live/store.js'), import('../core/usage/resource-live/antigravity-quota.js'),
     ]);
-    const [snapshot, resetBank] = await Promise.all([
-      getResourceSnapshot(cfg), readBankedResets(defaultResourceLiveRunsDir(), Date.now()).catch(() => null),
+    const now = Date.now(), runsDir = defaultResourceLiveRunsDir();
+    const [snapshot, resetBank, live] = await Promise.all([
+      getResourceSnapshot(cfg), readBankedResets(runsDir, now).catch(() => null), readResourceLiveFile(runsDir).catch(() => null),
     ]);
+    const antigravity = antigravityQuota(parseResourceLiveSidecar(live).readings.find(row => row.id === 'antigravity'), now);
     const resetReason = resetBank?.unknown_reason;
     const resetHint = codexResetBankUpgradeHint(resetReason);
     if (jsonMode) {
-      console.log(JSON.stringify(resetReason ? { ...snapshot, codex_reset_bank: {
+      console.log(JSON.stringify({ ...snapshot, antigravity, ...(resetReason ? { codex_reset_bank: {
         count: null, unknown_reason: resetReason, ...(resetHint ? { hint: resetHint } : {}),
-      } } : snapshot, null, 2));
+      } } : {}) }, null, 2));
     } else {
       printSnapshot(snapshot);
+      for (const line of formatAntigravityQuota(antigravity)) console.log(`  ${line}`);
       if (resetReason) console.log(`  Codex reset bank: unknown (${resetReason})${resetHint ? `. ${resetHint}` : ''}`);
     }
   }

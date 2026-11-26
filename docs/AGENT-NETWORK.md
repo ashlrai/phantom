@@ -40,6 +40,12 @@ to a sanitized hostname. It does not scan for devices, approve SSH fingerprints,
 install a runner or start background execution. On a configured Mac, repeat
 `phm node join --json` to recheck the route and local capacity using the saved
 identity. A primary or backup retains its role; repeat join never resets its witness.
+If this computer's node id already holds a live pool session — a running worker
+batch or an unexpired join — the repeat join is refused with `node-live`: stop
+the worker or wait about 30 seconds for the session to expire, then retry.
+When the pool cannot be reached at all, join prints per-host approval steps
+instead: the host-check and `ssh-copy-id` commands to run on this computer, and
+a reminder that each pool Mac needs Phantom installed with `phm` on its SSH PATH.
 
 See every computer in one place, from the backup or primary:
 

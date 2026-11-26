@@ -242,3 +242,41 @@ jobs:
       - name: Remove temporary keychain
         if: matrix.os == 'macos-latest' && always()
         run: security delete-keychain build.keychain 2>/dev/null || true
+
+  # Post-build self-check: `phm desktop self check` opens each main screen of a
+  # running Phantom window and flags console errors, slow loads and layout
+  # drift. Nothing depends on this job, so it never holds the release. With no
+  # GUI session (or no Phantom window to drive) it skips and records why.
+  self-check:
+    name: Self-check (post-build)
+    needs: build
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Detect a GUI session
+        id: gui
+        run: node scripts/release-self-check.mjs --detect
+
+      - name: Install root dependencies
+        if: steps.gui.outputs.available == 'true'
+        run: npm ci
+
+      - name: Build the CLI
+        if: steps.gui.outputs.available == 'true'
+        run: npm run build
+
+      - name: Run phm desktop self check
+        if: steps.gui.outputs.available == 'true'
+        run: node scripts/release-self-check.mjs --run

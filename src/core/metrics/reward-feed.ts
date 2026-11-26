@@ -217,10 +217,13 @@ function noteCiBoundary(acc: RewardJobAccum, kind: 'start' | 'complete', at: num
  * dispatch-to-outcome window. Reused job ids can carry CI from earlier runs.
  */
 function ciWallEvidence(acc: RewardJobAccum, dispatchMs: number, outcomeMs: number): { ciWallMs?: number } {
-  if (acc.ciStartAts.length !== 1 || acc.ciCompleteAts.length !== 1) return {};
-  const start = acc.ciStartAts[0]!;
-  const complete = acc.ciCompleteAts[0]!;
-  if (start < dispatchMs || complete > outcomeMs || complete < start) return {};
+  const inWindow = (at: number): boolean => at >= dispatchMs && at <= outcomeMs;
+  const starts = acc.ciStartAts.filter(inWindow);
+  const completions = acc.ciCompleteAts.filter(inWindow);
+  if (starts.length !== 1 || completions.length !== 1) return {};
+  const start = starts[0]!;
+  const complete = completions[0]!;
+  if (complete < start) return {};
   return { ciWallMs: complete - start };
 }
 

@@ -8,7 +8,7 @@
  * contains identities, never signing material.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 
@@ -22,6 +22,11 @@ import {
   parseAgentOsEpochSourceBundleV2,
   verifyAgentOsEpochSourceBundleV2,
 } from './agent-os-epoch-records.js';
+import {
+  epochPlainRecord as record,
+  exactEpochBytes as exactBytes,
+  exactEpochKeys as exactKeys,
+} from './agent-os-epoch-shared.js';
 import type {
   AgentOsEpochSnapshotSignerV2,
   AgentOsEpochSnapshotVerifierV2,
@@ -72,7 +77,7 @@ import {
   type AgentOsPreparedEpochEvidenceVerifierV1,
 } from './agent-os-rollover-protocol.js';
 
-export const AGENT_OS_EPOCH_TRUST_COMPOSITION_PROTOCOL_V1 =
+const AGENT_OS_EPOCH_TRUST_COMPOSITION_PROTOCOL_V1 =
   'ashlr-agent-os-epoch-trust-composition-v1' as const;
 
 export interface AgentOsManifestFixedSnapshotAuthenticatorRequestV1 {
@@ -229,33 +234,6 @@ function sourceLedgerFingerprint(rootPath: string, epoch: number): string | null
 
 interface CompositionOperation { reentered: boolean }
 const ACTIVE_COMPOSITIONS = new Map<string, CompositionOperation>();
-
-function exactBytes(left: Uint8Array, right: Uint8Array): boolean {
-  const a = Buffer.from(left);
-  const b = Buffer.from(right);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
 
 function canonicalOwned(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown | undefined {
   if (depth > 32) return undefined;

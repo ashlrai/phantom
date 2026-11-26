@@ -8,24 +8,41 @@
  * I/O, loads no keys, and grants no operational authority.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
+import {
+  DEFAULT_CANONICAL_EPOCH_BOUNDS,
+  canonicalEpochBytes as canonicalBytes,
+  canonicalEpochClone as canonicalClone,
+  decodeEpochBase64url as decodedBase64url,
+  deepFreezeEpochValue as deepFreeze,
+  epochPlainRecord as record,
+  exactEpochBytes as exactBytes,
+  exactEpochKeys as exactKeys,
+  isValidEpoch as validEpoch,
+  isValidEpochPolicyGeneration as validPolicyGeneration,
+  isValidEpochTimestamp as validTimestamp,
+  isValidPrefixedEpochDigest,
+  isValidRawEpochDigest,
+  matchesEpochAuthority,
+  rawEpochDigest as rawDigest,
+} from './agent-os-epoch-shared.js';
 import { AGENT_OS_SOURCE_BUNDLE_GENESIS_DIGEST_V1 } from './agent-os-rollover-protocol.js';
 
-export const AGENT_OS_EPOCH_SOURCE_PROTOCOL_V2 =
+const AGENT_OS_EPOCH_SOURCE_PROTOCOL_V2 =
   'ashlr-agent-os-epoch-source-bundle-v2' as const;
-export const AGENT_OS_EPOCH_ATTEMPT_PROTOCOL_V2 =
+const AGENT_OS_EPOCH_ATTEMPT_PROTOCOL_V2 =
   'ashlr-agent-os-epoch-attempt-receipt-v2' as const;
-export const AGENT_OS_EPOCH_SOURCE_SIGNATURE_ALGORITHM_V2 = 'ed25519' as const;
+const AGENT_OS_EPOCH_SOURCE_SIGNATURE_ALGORITHM_V2 = 'ed25519' as const;
 export const AGENT_OS_EPOCH_SOURCE_SIGNATURE_DOMAIN_V2 =
   'ashlr:agent-os:epoch-source-bundle:signature:v2\0' as const;
 export const AGENT_OS_EPOCH_SOURCE_BUNDLE_DOMAIN_V2 =
   'ashlr:agent-os:epoch-source-bundle:digest:v2\0' as const;
-export const AGENT_OS_EPOCH_ATTEMPT_ID_DOMAIN_V1 =
+const AGENT_OS_EPOCH_ATTEMPT_ID_DOMAIN_V1 =
   'ashlr:agent-os:epoch-attempt-id:v1\0' as const;
-export const AGENT_OS_EPOCH_ATTEMPT_RECEIPT_DOMAIN_V2 =
+const AGENT_OS_EPOCH_ATTEMPT_RECEIPT_DOMAIN_V2 =
   'ashlr:agent-os:epoch-attempt-receipt:digest:v2\0' as const;
-export const AGENT_OS_EPOCH_ATTEMPT_AUTHENTICATOR_DOMAIN_V2 =
+const AGENT_OS_EPOCH_ATTEMPT_AUTHENTICATOR_DOMAIN_V2 =
   'ashlr:agent-os:epoch-attempt-receipt:authenticator:v2\0' as const;
 /**
  * Compatibility alias for the single source-lineage genesis committed by the
@@ -37,31 +54,23 @@ export const AGENT_OS_EPOCH_SOURCE_RAW_GENESIS_DIGEST_V2 =
 export const AGENT_OS_EPOCH_ATTEMPT_RAW_GENESIS_DIGEST_V2 = createHash('sha256')
   .update('ashlr:agent-os:epoch-attempt:genesis:v2\0', 'utf8').digest('hex');
 
-const RAW_DIGEST_RE = /^[a-f0-9]{64}$/;
-const PREFIXED_DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
-const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
-const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-const MAX_EPOCH = 999_999_999_999;
-const MAX_POLICY_GENERATION = 1_000_000;
 const MAX_SOURCE_PAYLOAD_BYTES = 768 * 1024;
 const MAX_SOURCE_LIFETIME_MS = 5 * 60_000;
 const MAX_SOURCE_FUTURE_SKEW_MS = 60_000;
-const MAX_CANONICAL_BYTES = 1024 * 1024;
-const MAX_CANONICAL_DEPTH = 32;
-const MAX_CANONICAL_NODES = 100_000;
+const MAX_CANONICAL_BYTES = DEFAULT_CANONICAL_EPOCH_BOUNDS.maxBytes;
 const MAX_OUTCOME_PRINCIPALS = 12;
 
 export type AgentOsRawSha256DigestV1 = string;
 export type AgentOsPrefixedSha256DigestV1 = string;
 
 export function isAgentOsRawSha256DigestV1(value: unknown): value is AgentOsRawSha256DigestV1 {
-  return typeof value === 'string' && RAW_DIGEST_RE.test(value);
+  return isValidRawEpochDigest(value);
 }
 
 export function isAgentOsPrefixedSha256DigestV1(
   value: unknown,
 ): value is AgentOsPrefixedSha256DigestV1 {
-  return typeof value === 'string' && PREFIXED_DIGEST_RE.test(value);
+  return isValidPrefixedEpochDigest(value);
 }
 
 export interface AgentOsEpochRecordAuthorityV1 {
@@ -103,134 +112,13 @@ export const AGENT_OS_EPOCH_RECORD_AUTHORITY_V1: Readonly<AgentOsEpochRecordAuth
     sameUserTamperResistant: false,
   });
 
-type Canonical = null | boolean | number | string | Canonical[] | { [key: string]: Canonical };
-
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const sorted = [...expected].sort();
-  return actual.length === sorted.length && actual.every((key, index) => key === sorted[index]);
-}
-
-function canonicalize(
-  value: unknown,
-  state = { depth: 0, nodes: 0, ancestors: new Set<object>() },
-): Canonical {
-  state.nodes += 1;
-  if (state.nodes > MAX_CANONICAL_NODES || state.depth > MAX_CANONICAL_DEPTH) {
-    throw new TypeError('canonical value exceeds bounds');
-  }
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isSafeInteger(value) || Object.is(value, -0)) throw new TypeError('non-canonical number');
-    return value;
-  }
-  if (typeof value !== 'object' || state.ancestors.has(value)) throw new TypeError('non-json value');
-  state.ancestors.add(value);
-  state.depth += 1;
-  try {
-    if (Array.isArray(value)) {
-      if (Reflect.ownKeys(value).some((key) => typeof key === 'symbol' ||
-        (key !== 'length' && !/^(?:0|[1-9][0-9]*)$/.test(key)))) throw new TypeError('invalid array');
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse array');
-        return canonicalize(entry, state);
-      });
-    }
-    const row = record(value);
-    if (!row) throw new TypeError('non-plain object');
-    const output: { [key: string]: Canonical } = Object.create(null) as { [key: string]: Canonical };
-    for (const key of Object.keys(row).sort()) output[key] = canonicalize(row[key], state);
-    return output;
-  } finally {
-    state.depth -= 1;
-    state.ancestors.delete(value);
-  }
-}
-
-function canonicalBytes(value: unknown): Buffer | null {
-  try {
-    const bytes = Buffer.from(JSON.stringify(canonicalize(value)), 'utf8');
-    return bytes.length > 1 && bytes.length <= MAX_CANONICAL_BYTES ? bytes : null;
-  } catch {
-    return null;
-  }
-}
-
-function exactBytes(left: Uint8Array, right: Uint8Array): boolean {
-  const leftBytes = Buffer.from(left);
-  const rightBytes = Buffer.from(right);
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
-}
-
-function rawDigest(domain: string, bytes: Uint8Array): string {
-  return createHash('sha256').update(domain, 'utf8').update(bytes).digest('hex');
-}
-
 function prefixedDigest(domain: string, value: unknown): string | null {
   const bytes = canonicalBytes(value);
   return bytes ? `sha256:${rawDigest(domain, bytes)}` : null;
 }
 
-function validEpoch(value: unknown): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= MAX_EPOCH;
-}
-
-function validPolicyGeneration(value: unknown): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= MAX_POLICY_GENERATION;
-}
-
-function validTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || !TIMESTAMP_RE.test(value)) return false;
-  const milliseconds = Date.parse(value);
-  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
-}
-
-function decodedBase64url(value: unknown, minimum: number, maximum: number): Buffer | null {
-  if (typeof value !== 'string' || !BASE64URL_RE.test(value)) return null;
-  try {
-    const bytes = Buffer.from(value, 'base64url');
-    return bytes.length >= minimum && bytes.length <= maximum && bytes.toString('base64url') === value
-      ? bytes
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 function validAuthority(value: Record<string, unknown>): boolean {
-  return Object.entries(AGENT_OS_EPOCH_RECORD_AUTHORITY_V1)
-    .every(([key, expected]) => value[key] === expected);
-}
-
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
-  if (ArrayBuffer.isView(value)) return value;
-  if (value !== null && typeof value === 'object' && !seen.has(value)) {
-    seen.add(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested, seen);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function canonicalClone<T>(value: T): T | null {
-  const bytes = canonicalBytes(value);
-  if (!bytes) return null;
-  try { return JSON.parse(bytes.toString('utf8')) as T; } catch { return null; }
+  return matchesEpochAuthority(value, AGENT_OS_EPOCH_RECORD_AUTHORITY_V1);
 }
 
 const AUTHORITY_KEYS = Object.keys(AGENT_OS_EPOCH_RECORD_AUTHORITY_V1);

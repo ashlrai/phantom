@@ -729,11 +729,13 @@ daemon's reward-sync feed and supervising bridges append one `v:1` row
 per terminal job (`jobId`, resolved `merged` verdict,
 `dispatchedAt`/`mergedAt`/`recordedAt` stamps, derived
 `timeToMergeMs`, `ciWallMs`, and a `cost` block carrying the metered
-pool readings). The daemon records `ciWallMs` only when the job has one
-unambiguous CI start and completion pair, in order and within the dispatch
-and resolution timestamps used for that reward. A merge uses its recorded
-merge time even if its ledger receipt arrived later. Out-of-window timing
-stays unknown, and existing reward rows retain their original values.
+pool readings). The daemon records `ciWallMs` when the rewarded dispatch
+and resolution window contains exactly one distinct CI start and one distinct
+completion in order. CI receipts outside that window are ignored when
+checking for ambiguity, so earlier attempts can coexist with a measured
+retry. A merge uses its recorded merge time even if its ledger receipt
+arrived later. Missing or ambiguous timing stays unknown, and existing
+reward rows retain their original values.
 `foldRewardSignals` collapses the bounded tail to
 each job's recorded evidence and the read fills only what the jobs
 fold left null — `merged`, `ttm_s` (only while the standing verdict is
@@ -1057,8 +1059,8 @@ recorded `ttm_s` (merge latency), mean recorded `queue_wait_s` (the
 job's queue-admission wait from its arrival stamp to first dispatch —
 the same boundaries job-latency's queue_wait phase pairs), mean
 recorded `ci_wall_s` (the job's CI wall seconds from its single
-recorded `ci_start`/`ci_complete` boundary pair — the same pair the
-reward feed's ciWallMs and job-latency's `ci` phase read; a missing,
+recorded `ci_start`/`ci_complete` boundary pair. The reward feed reads
+the same boundary events within the rewarded dispatch's window. A missing,
 reversed or repeated pair stays unrecorded, never estimated), mean
 recorded `publish_wait_s` (the job's publish-station wait from its
 single recorded `finish`/`publish` boundary pair — the same pair
