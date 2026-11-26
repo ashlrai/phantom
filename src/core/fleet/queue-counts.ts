@@ -4,9 +4,9 @@ import { readFleetQueue, readSourceEnds } from './runs-parked-queue.js';
 
 export interface LaneQueueCountsRow {
   lane: string;
-  /** READY rows queued for the lane; null when ready.tsv was unreadable. */
+  /** READY rows queued for the lane; null when ready.tsv is unavailable. */
   ready: number | null;
-  /** PARKED-* rows (waiting on a dependency or hold); null when ready.tsv was unreadable. */
+  /** PARKED-* rows (waiting on a dependency or hold); null when ready.tsv is unavailable. */
   parked: number | null;
   /** Jobs occupying a lane slot now; null when no live source exists. */
   running: number | null;
@@ -14,9 +14,9 @@ export interface LaneQueueCountsRow {
   merges: number | null;
   /** Oldest ready or parked job's wait in seconds; null if any wait is unknown. */
   oldestWaitSeconds: number | null;
-  /** Why parked jobs are blocked, biggest group first (e.g. DEP, HOLD); empty when none or ready.tsv was unreadable. */
+  /** Why parked jobs are blocked, biggest group first (e.g. DEP, HOLD); empty when none or ready.tsv is unavailable. */
   blockedReasons: Array<{ reason: string; count: number }>;
-  /** Parked dependency jobs whose gates all show MERGED but were never unparked; null when ready.tsv was unreadable. */
+  /** Parked dependency jobs whose gates all show MERGED but were never unparked; null when ready.tsv is unavailable. */
   stale: number | null;
 }
 
@@ -120,7 +120,9 @@ export async function getLaneQueueCounts(
     return arrival;
   };
   const byLane = new Map(queue.byLane.map(row => [row.lane, row]));
-  const readyKnown = queue.sources.ready !== 'missing';
+  // Degraded reads can still carry parsed rows. An unavailable file has
+  // no rows to count and must not look like an observed empty queue.
+  const readyKnown = queue.sources.ready === 'healthy' || queue.malformed > 0;
   // Budget- and hold-only lanes carry no queue activity; leave them out.
   const lanes = new Set([
     ...byLane.keys(),

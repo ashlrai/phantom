@@ -1167,6 +1167,12 @@ top-level `sources` (`ready`, `running`, `ledger`: `healthy`, `missing` or
 empty queue (zeros, no notes) is never confused with unavailable data
 (`null`, with a note).
 
+A missing or unreadable `ready.tsv` yields `null` ready, parked and stale
+counts for each lane and for the totals, with an empty blocked-reason list.
+When the file can be read but contains malformed rows, the report counts the
+rows it can parse and marks the source degraded. The Leader board uses the
+same per-lane ready and parked counts.
+
 ## Incident pipeline
 
 `phm incident report --kind error --repo ashlrai/phantom --message "<text>"` turns a
