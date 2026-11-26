@@ -366,6 +366,8 @@ the first valid READY row for its lane hint or lane-open status. Later copies
 add no ready supply. Parked rows are still reported separately.
 The Leader's compact brief follows the same first-valid-row rule when
 counting hinted and lane-open supply for its starvation headline.
+The Fleet lane console uses the same rule for its ready-file queue depth
+fallback and lane-open supply.
 
 An executor is unfed when it has free slots while runnable rows wait under
 another lane's hint. Each tick the dispatcher computes this after its launches

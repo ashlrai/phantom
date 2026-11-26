@@ -859,7 +859,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
         throw error;
       });
-      const parsed = parseReadyTsv(text, routerQueue);
+      const parsed = parseReadyTsv(text, routerQueue, true);
       queueRows = parsed.rows;
       openQueueRows = parsed.dropped === 0 ? parsed.unhinted : null;
       sources.queue = {
