@@ -88,22 +88,25 @@ export function computeLaneHealth(live: FleetLiveSnapshotV1, nowMs: number = Dat
   const commit = live.commit ?? null;
   const lanes = live.lanes.map((state): LaneHealth => {
     const runs = live.runs.filter((r) => r.lane === state.lane);
-    const inWindow = runs.filter((r) => {
-      const started = ms(r.startedAt);
+    const latencies: number[] = [];
+    let calls = 0;
+    let failed = 0;
+    for (const run of runs) {
+      const started = ms(run.startedAt);
       // The window is [since, until]: a run stamped after `until` (clock skew or a
       // corrupt record) has not started inside it and must not count as a call.
-      return started !== null && started >= sinceMs && started <= untilMs;
-    });
-    const finished = inWindow.filter((r) => r.outcome !== null && r.endedAt !== null);
-    const latencies = finished
-      .map((r) => ms(r.endedAt)! - ms(r.startedAt)!)
-      .filter((d) => d >= 0)
-      .sort((a, b) => a - b);
-    const failed = finished.filter((r) => r.outcome === 'failed').length;
+      if (started === null || started < sinceMs || started > untilMs) continue;
+      calls++;
+      const ended = ms(run.endedAt);
+      if (run.outcome === null || ended === null || ended < started || ended > untilMs) continue;
+      latencies.push(ended - started);
+      if (run.outcome === 'failed') failed++;
+    }
+    latencies.sort((a, b) => a - b);
     return {
       lane: state.lane,
-      calls: inWindow.length,
-      errorRate: finished.length === 0 ? null : failed / finished.length,
+      calls,
+      errorRate: latencies.length === 0 ? null : failed / latencies.length,
       latencyP50Ms: percentile(latencies, 0.5),
       latencyP95Ms: percentile(latencies, 0.95),
       commit,

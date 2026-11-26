@@ -473,7 +473,7 @@ export function mergeResourceObservations(previous: ResourceObservation[], incom
 }
 
 function plan(root: string, state: PoolState, pool: ResourcePool, bindings: ResourceBinding[], allowedWorkerIds: string[], nowMs: number,
-  unavailableWorkerIds: string[], quotaUnavailableWorkerIds: string[] = []): ResourceAssignmentPlan {
+  unavailableWorkerIds: string[], quotaUnavailableWorkerIds: string[] = [], qualificationOnly = false): ResourceAssignmentPlan {
   const commissioning = qualifyResourceCommissioningObservations(root, state, pool, bindings, state.observations);
   state = { ...state, observations: commissioning.observations };
   unavailableWorkerIds = [...new Set([...unavailableWorkerIds, ...commissioning.quotaDenied, ...commissioning.billingDenied])];
@@ -486,11 +486,17 @@ function plan(root: string, state: PoolState, pool: ResourcePool, bindings: Reso
   }) };
   const activeCounts: Record<string, number> = {};
   const taskReservationCounts: Record<string, { count: number; nextEligibleAt: string | null }> = {};
+  const bridgeEvidence: Record<string, unknown> = Object.create(null);
   // Account health and retry denials remain shared. Quota denial narrows only
   // when both aliases have explicit catalog-pinned model scopes.
   const observations = state.observations.map((row) => ({ ...row, windows: row.windows.map((window) => ({ ...window })) }));
   for (const binding of bindings) {
     const worker = pool.workers.find((row) => row.id === binding.workerId)!;
+    if (qualificationOnly && binding.kind === 'mac-bridge' && allowedWorkerIds.includes(worker.id)) {
+      try {
+        bridgeEvidence[worker.id] = readResourceJson(join(root, 'bridge-evidence', `${worker.id}.json`), 4096);
+      } catch { /* Missing or unsafe evidence does not commission the bridge. */ }
+    }
     const aliases = new Set(bindings.filter((row) => row.capacityKey === binding.capacityKey).map((row) => row.workerId));
     const attempts = state.attempts.filter((row) => row.capacityKey === binding.capacityKey);
     activeCounts[worker.id] = attempts.filter((row) => !TERMINAL.has(row.status)).length;
@@ -529,6 +535,7 @@ function plan(root: string, state: PoolState, pool: ResourcePool, bindings: Reso
     // stale alias must not be used to manufacture spare shared capacity.
     for (const worker of pool.workers) {
       if (worker.provider === 'local') continue;
+      if (worker.provider === 'agy' || worker.provider === 'zai') continue; // Bound measured quota is checked in policy.
       const row = state.observations.find((item) => item.workerId === worker.id);
       if (!row || Date.parse(row.observedAt) > nowMs || row.updatedAt !== undefined && Date.parse(row.updatedAt) > nowMs ||
         Date.parse(row.expiresAt) <= nowMs || !row.windows.length || row.windows.some((window) =>
@@ -547,6 +554,7 @@ function plan(root: string, state: PoolState, pool: ResourcePool, bindings: Reso
   // The synthetic health veto exists only in this planning clone. The returned
   // evidence and persisted ledger retain the actual captured observations.
   const result = planResourceAssignment({ pool, observations, allowedWorkerIds, activeCounts, taskReservationCounts, nowMs,
+    bridgeEvidence, ...(qualificationOnly ? {} : { bridgeDispatchUnavailable: true }),
     quotaScopeExcludedWorkerIds: excludedResourceQuotaScopeWorkerIds(pool, bindings, quotaScopeAccess(state).exclusions) });
   return { ...result, exclusions: result.exclusions.map(row => ({ ...row, reasons: [ ...row.reasons,
     ...(commissioning.quotaDenied.includes(row.workerId) ? ['commissioning-quota-provenance-required' as const] : []),
@@ -607,7 +615,7 @@ export function resourcePoolStatus(root: string, poolValue: ResourcePool, bindin
   const state = exists ? loadState(root, pool, bindings, poolDigest) : { schemaVersion: 1 as const, poolDigest, observations: [], attempts: [] };
   state.observations = mergeResourceObservations(state.observations, qualifyResourceCommissioningObservations(root, state, pool, bindings, observed).observations);
   return { schemaVersion: 1 as const, sourceState: exists ? 'healthy' as const : 'missing' as const,
-    poolId: pool.id, plan: plan(root, state, pool, bindings, pool.workers.map((row) => row.id), Date.now(), unavailable, quotaUnavailable),
+    poolId: pool.id, plan: plan(root, state, pool, bindings, pool.workers.map((row) => row.id), Date.now(), unavailable, quotaUnavailable, true),
     ...(state.schemaVersion === 2 ? { configurationDigests: state.configurationHistory!.map(row => row.poolDigest) } : {}),
     observations: state.observations, attempts: state.attempts, allocation: allocation(state), workerAccess: workerAccess(state),
     quotaScopeAccess: quotaScopeAccess(state) };

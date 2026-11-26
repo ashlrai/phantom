@@ -156,6 +156,13 @@ describe('lanes read: starved object', () => {
       'RQ-OPEN-B\tphantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
       'RQ-HINTED\tphantom\tdevin\twork\tprompts/c.md',
     ].join('\n'));
+    await writeFile(join(queueDir, 'status.json'), JSON.stringify({
+      last_tick: new Date(NOW).toISOString(),
+      lanes: {
+        claude: { running: 0, target: 8, held: false },
+        devin: { running: 0, target: 4, held: false },
+      },
+    }));
     await writeFile(join(queueDir, 'slots.json'), JSON.stringify({
       claude: { target: 8, floor: 8, ceiling: 12 },
       devin: { target: 4, floor: 4, ceiling: 4 },
