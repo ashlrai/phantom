@@ -17,7 +17,7 @@ import { join, sep } from 'node:path';
 import { NODE_TASK_LIMIT, validNodeTask, nodeTaskArgs, type EmbeddedNodeTask } from './task.js';
 import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
 import { NODE_HEARTBEAT_MS, validCap } from './state.js';
-import type { RouteAssignment } from './router.js';
+import { nodeCanAcceptWork, type RouteAssignment } from './router.js';
 import { MARKET_LANE_ID, readyEnvelopeSpec } from '../../fleet/unfed-market.js';
 import { scrubSecrets } from '../../util/scrub.js';
 
@@ -158,7 +158,8 @@ function reservesReadyId(row: ReadyRow): boolean {
 export function planNodeBridge(input: BridgeRouterView & {
   rows: ReadyRow[]; claimed: (job: string) => boolean; now: number; maxPerPass?: number;
 }): { nodes: BridgeNodeView[]; rows: BridgeRowDecision[] } {
-  const live = input.nodes.filter(n => n.live).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
+  const live = input.nodes.filter(n => n.live && nodeCanAcceptWork(n, input.now))
+    .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const running = (id: string) => input.jobs.filter(j => j.state === 'running' && j.claimedBy === id).length;
   const free = new Map<string, number | null>(live.map(n => [n.nodeId, n.slots === undefined ? null : Math.max(0, n.slots - running(n.nodeId))]));
   // Count the physical host's budget once, including claims held by siblings.
@@ -166,6 +167,11 @@ export function planNodeBridge(input: BridgeRouterView & {
   const hostOf = (n: NodeView): string => n.capacity?.hostId ?? n.nodeId;
   const hostGroups = new Map<string, NodeView[]>();
   for (const n of live) { const host = hostOf(n); const members = hostGroups.get(host) ?? []; members.push(n); hostGroups.set(host, members); }
+  const hostRunning = new Map<string, number>();
+  for (const node of input.nodes) {
+    const host = hostOf(node);
+    hostRunning.set(host, (hostRunning.get(host) ?? 0) + running(node.nodeId));
+  }
   const hostFree = new Map<string, number | null>();
   const freshCapacity = (node: NodeView) => {
     const sample = node.capacity;
@@ -184,7 +190,7 @@ export function planNodeBridge(input: BridgeRouterView & {
       return Math.min(member.slots, sample?.slots ?? member.slots);
     });
     hostFree.set(host, budgets.every((budget): budget is number => budget !== null)
-      ? Math.max(0, Math.min(...budgets) - members.reduce((sum, m) => sum + running(m.nodeId), 0))
+      ? Math.max(0, Math.min(...budgets) - (hostRunning.get(host) ?? 0))
       : null);
   }
   const reserve = (node: NodeView) => {

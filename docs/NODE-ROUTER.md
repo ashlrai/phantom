@@ -411,6 +411,11 @@ unknown unless a fresh hold already establishes zero. Each node's reported free 
 host's remaining slots after router reservations. These per-node figures can
 refer to the same slots on a shared host. A node without a sample is its own host.
 
+The bridge uses the router heartbeat cutoff for new offloads. A session must
+be unexpired and have a recorded heartbeat less than five minutes old and at
+or before planning time. A stale sibling's active claims still count against
+its shared host budget.
+
 ### Capabilities come from a local probe
 
 A worker advertises `codex` or `claude` only when `resolveProviderBinary`

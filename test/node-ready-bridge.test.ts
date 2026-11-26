@@ -237,6 +237,19 @@ describe('ready.tsv -> node router bridge', () => {
     expect(r2.rows[0]!.reasons).toEqual(['slots_unknown']);
   });
 
+  it('keeps rows local when a worker reaches the router heartbeat cutoff before its session expires', async () => {
+    const f = fixture([row('RQ-REVIEW-A')], [{ id: 'worker', caps: READ, slots: 1 }]);
+    f.advance(299_999);
+    expect((await f.pass(false)).rows[0]).toMatchObject({ offload: true, nodeId: 'worker' });
+    f.advance(1);
+    expect(f.nodes.view(['ashlr']).nodes[0]?.live).toBe(true);
+    expect((await f.pass()).rows[0]).toMatchObject({ offload: false, reasons: ['no_live_node'] });
+    expect(existsSync(f.lease('RQ-REVIEW-A'))).toBe(false);
+
+    f.nodes.heartbeat(f.sessions.get('worker')!);
+    expect((await f.pass()).claimed).toEqual(['RQ-REVIEW-A']);
+  });
+
   it('accounts free slots once per physical host for capacity-reporting nodes', async () => {
     // Two sessions on one host each advertise the host's measured slots; the
     // pair offers the host's 2 slots once, not 4 — matching nodeCapacityView.

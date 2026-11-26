@@ -4975,3 +4975,9 @@ after the cutoff are excluded from the fold and from PR claim attribution.
 Receipts at the cutoff are included. Exact replays of dated terminal
 receipts preserve the first occurrence's position and evidence snapshot.
 Undated receipts retain ledger order.
+
+## Node routing eligibility
+
+`nodeCanAcceptWork(node, now)` accepts a node's `expiresAt` and `heartbeatAt`
+timestamps in epoch milliseconds. The router and ready-queue bridge share this
+check for new placements. See [Node router](docs/NODE-ROUTER.md#ready-queue-bridge).
