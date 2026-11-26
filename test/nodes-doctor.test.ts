@@ -97,6 +97,26 @@ describe('readNodesDoctor', () => {
     expect(peer.unknowns.some(u => u.includes('free disk unknown'))).toBe(true);
   });
 
+  it('a remote node advertising omlx caps is local-model ready; a pack cap is not', async () => {
+    // Remote probes do not exist yet, so lane readiness falls back to the
+    // advertised caps. Workers publish the oMLX family (`omlx`, `omlx-<tier>`)
+    // for local-model work; `local-model` is the report name, not a cap.
+    const pool: NodesRegistry = { source: 'pool-witness', selfNode: 'home-mac',
+      pool: { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' }, state: {
+        version: 'drive.nodes.v1', sequence: 1, observedAt: NOW - 1_000,
+        nodes: [
+          { nodeId: 'node-b', session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000, caps: ['omlx', 'omlx-work'], slots: 2 },
+          { nodeId: 'node-c', session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000, caps: ['pack:omlx-chat'], slots: 2 },
+        ],
+        leader: null, jobs: [] } };
+    const viewDeps: NodesViewDeps = { ...deps([['node-b', true], ['node-c', true]]), readRegistry: () => pool };
+    const report = await readNodesDoctor({ view: viewDeps, probe: fake({ 'home-mac': healthy() }) });
+    const b = report.nodes.find(n => n.name === 'node-b')!;
+    expect(b.lanes.find(l => l.lane === 'local-model')).toMatchObject({ status: 'ready' });
+    expect(b.lanes.find(l => l.lane === 'claude')).toMatchObject({ status: 'unknown' });
+    expect(report.nodes.find(n => n.name === 'node-c')!.lanes.find(l => l.lane === 'local-model')!.status).toBe('unknown');
+  });
+
   it('a reachable computer with no live Phantom session is a gap, never ready', async () => {
     // NO_POOL leaves this computer's standalone registry empty, so the view
     // proves Phantom is not running here even though every lane checks out.
