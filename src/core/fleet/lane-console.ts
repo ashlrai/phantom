@@ -390,6 +390,11 @@ function dispatcherQueueRow(cells: string[], routerQueue?: string | null): Dispa
   // guessed onto a lane or counted as open supply.
   const [id, repo, laneCell, tier, prompt] = [cells[0]!, cells[1]!, cells[2]!, cells[3]!, cells[4]!];
   if (!REPO_ID.test(repo) || isQueueTier(laneCell) || !isQueueTier(tier) || !promptCell(prompt)) return null;
+  // dispatchd's ok-check also requires `"/" not in f[1]`: the repo cell names
+  // a checkout under ~/Projects/ashlrai, so a slash can never launch — dead
+  // work the market never sees, the same invalid verdict readyMarketLine
+  // gives, never supply and never the generic dialect's owner/name repo.
+  if (repo.includes('/')) return { kind: 'drop' };
   if (extra !== undefined && !extra.startsWith('{')) return { kind: 'drop' };
   let spec: Record<string, unknown> | 'invalid' | null;
   if (extra === undefined) {
