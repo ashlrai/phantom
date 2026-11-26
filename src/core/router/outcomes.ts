@@ -1767,7 +1767,7 @@ function foldRouterOutcomesWithCiCoverage(
   // arrival at or before it — a requeue's later arrivals never move the
   // first-dispatch wait, and a job with no recorded arrival before its
   // first dispatch stays absent here so its outcome keeps null.
-  const batchClaims = new Map<string, (number | null)[]>();
+  const attemptBoundaries = new Map<string, (number | null)[]>();
   const queueMarks = new Map<string, { arrivals: number[]; dispatches: number[] }>();
   for (const r of rows) {
     const j = attributedJobId(r);
@@ -1778,11 +1778,11 @@ function foldRouterOutcomesWithCiCoverage(
     const arrival = QUEUE_ARRIVAL_EVENTS.has(name);
     if (!arrival && !QUEUE_DISPATCH_EVENTS.has(name)) continue;
     const at = ledgerEventTs(r, null);
-    if (name === 'batch_claim') {
+    if (name === 'batch_claim' || name === 'launch') {
       if (at === null) ambiguousCiJobs.add(j);
-      const claims = batchClaims.get(j) ?? [];
-      claims.push(at);
-      batchClaims.set(j, claims);
+      const boundaries = attemptBoundaries.get(j) ?? [];
+      boundaries.push(at);
+      attemptBoundaries.set(j, boundaries);
     }
     if (at === null) continue;
     const marks = queueMarks.get(j) ?? { arrivals: [], dispatches: [] };
@@ -1800,8 +1800,8 @@ function foldRouterOutcomesWithCiCoverage(
     if (waitMs >= 0) queueWaitS.set(j, waitMs / 1000);
   }
 
-  const crossesBatchClaim = (job: string, start: number, end: number) =>
-    batchClaims.get(job)?.some(at => at === null || (start <= at && at <= end)) === true;
+  const crossesAttemptBoundary = (job: string, start: number, end: number) =>
+    attemptBoundaries.get(job)?.some(at => at === null || (start <= at && at <= end)) === true;
 
   // CI-boundary evidence, derived once per job from the same ci_start/
   // ci_complete event pair the reward feed's ciWallMs and job-latency's
@@ -1836,7 +1836,7 @@ function foldRouterOutcomesWithCiCoverage(
     if (ambiguousCiJobs.has(j) || marks.starts.size !== 1 || marks.completes.size !== 1) continue;
     const start = [...marks.starts][0]!;
     const complete = [...marks.completes][0]!;
-    if (crossesBatchClaim(j, start, complete)) {
+    if (crossesAttemptBoundary(j, start, complete)) {
       ambiguousCiJobs.add(j);
       continue;
     }
@@ -1881,7 +1881,7 @@ function foldRouterOutcomesWithCiCoverage(
     if (undatedPublishJobs.has(j) || marks.finishes.size !== 1 || marks.publishes.size !== 1) continue;
     const finish = [...marks.finishes][0]!;
     const publish = [...marks.publishes][0]!;
-    if (publish >= finish && !crossesBatchClaim(j, finish, publish)) {
+    if (publish >= finish && !crossesAttemptBoundary(j, finish, publish)) {
       publishWaitS.set(j, (publish - finish) / 1000);
     }
   }
