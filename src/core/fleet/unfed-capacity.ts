@@ -366,7 +366,10 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
   for (const [lane, value] of Object.entries(data.lanes)) {
     if (!LANE.test(lane) || !isRecord(value) || !count(value.running)) throw new Error('invalid lane');
     if (!count(value.target)) throw new Error('invalid lane');
-    const target = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
+    const tickTarget = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
+    const slot = ctx?.slots[lane];
+    const configuredTarget = isRecord(slot) && count(slot.target) ? slot.target : null;
+    const target = laneLaunchTarget(tickTarget, configuredTarget);
     const statusHeld = value.held === true;
     const view = ctx === null ? null : marketLaneView(lane, value.running, target, statusHeld, ctx);
     const held = view?.held ?? (statusHeld || operatorHolds?.has(lane) === true);
