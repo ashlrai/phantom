@@ -16,7 +16,7 @@ import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, pageUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
@@ -3654,8 +3654,9 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
-    for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]');
+    for (const args of [['--json', '--json'], ['unified'], ['--limit', '0'], ['--limit', '201'],
+      ['--limit', 'x'], ['--limit'], ['--limit', '5', '--limit', '6'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
     }
@@ -3910,6 +3911,53 @@ describe('phm comms inbox cli', () => {
       `${new Date(now - 15 * 60_000).toISOString()}.`);
   });
 
+  it('pages the unified view with --limit through the shared slice', async () => {
+    const { command, json, lines } = setupCli();
+    postWorkSnapshot(['cli-page-1', 'cli-page-2', 'cli-page-3', 'cli-page-4']);
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    expect(await command(['--json'])).toBe(0);
+    const full = json();
+    expect(full.total).toBe(5);
+    expect(full.omitted).toBe(0);
+
+    // --limit keeps the newest n ranked items — a prefix of the unfiltered
+    // page — and recounts omitted over the shown page, the same slice
+    // fleet_comms_inbox and the HTTP endpoint apply.
+    expect(await command(['--limit', '2', '--json'])).toBe(0);
+    let report = json();
+    expect(report.items.map(i => i.id)).toEqual(full.items.slice(0, 2).map(i => i.id));
+    expect(report.total).toBe(5);
+    expect(report.omitted).toBe(3);
+    expect(report.items).toHaveLength(2);
+
+    // The human footer reports the same matched/omitted pair.
+    expect(await command(['--limit', '2'])).toBe(0);
+    expect(lines().at(-1)).toContain('5 pending');
+    expect(lines().at(-1)).toContain('3 omitted');
+
+    // The page ANDs with the view filters: total and sources stay the
+    // matched view's truth, never the shown slice's.
+    expect(await command(['--limit', '1', '--source', 'bus', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ source: 'bus' });
+    expect(report.total).toBe(4);
+    expect(report.omitted).toBe(3);
+    expect(report.items).toHaveLength(1);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    // A limit at the store bound changes nothing; a limit past the matched
+    // set shows everything matched.
+    expect(await command(['--limit', '200', '--json'])).toBe(0);
+    report = json();
+    expect(report.items).toHaveLength(5);
+    expect(report.omitted).toBe(0);
+    expect(await command(['--limit', '50', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.items).toHaveLength(1);
+    expect(report.omitted).toBe(0);
+  });
+
   it('refuses malformed unified filter invocations', async () => {
     const { command, lines } = setupCli();
     for (const args of [
@@ -3931,10 +3979,43 @@ describe('phm comms inbox cli', () => {
       ['--contains'], ['--contains', ''], ['--contains', '   '], ['--contains', '--json'],
       ['--contains', 'x'.repeat(513)], ['--contains', 'a', '--contains', 'b'],
       ['--contains', 'deploy', '--job'], ['--json', '--contains'],
+      ['--limit', '--json'], ['--limit', '5', '--job'], ['--json', '--limit'],
+      ['--limit', '1.5'], ['--limit', ''], ['--limit', '-5'], ['--limit', '5x'],
+      ['--limit', '99999999999999999999'],
     ]) {
       expect(await command(args), args.join(' ')).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
     }
+  });
+});
+
+describe('pageUnifiedInbox', () => {
+  it('keeps the newest limit items and recounts omitted over the shown page', async () => {
+    postWorkSnapshot(['pg-1', 'pg-2', 'pg-3']);
+    const inbox = await read();
+    expect(inbox.items).toHaveLength(3);
+    const page = pageUnifiedInbox(inbox, 2);
+    expect(page.items).toEqual(inbox.items.slice(0, 2));
+    expect(page.total).toBe(inbox.total);
+    expect(page.omitted).toBe(inbox.total - 2);
+    expect(page.sources).toBe(inbox.sources);
+    expect(page.filter).toBe(inbox.filter);
+    // A limit at or past the stored page returns the read unchanged.
+    expect(pageUnifiedInbox(inbox, UNIFIED_INBOX_MAX_ITEMS)).toEqual(inbox);
+    expect(pageUnifiedInbox(inbox, 99).items).toHaveLength(3);
+    expect(pageUnifiedInbox(inbox, 99).omitted).toBe(0);
+  });
+
+  it('recounts omitted across the store page bound', async () => {
+    postWorkSnapshot(Array.from({ length: UNIFIED_INBOX_MAX_ITEMS + 5 }, (_, i) => `pg-big-${i}`));
+    const inbox = await read();
+    expect(inbox.total).toBe(UNIFIED_INBOX_MAX_ITEMS + 5);
+    expect(inbox.items).toHaveLength(UNIFIED_INBOX_MAX_ITEMS);
+    expect(inbox.omitted).toBe(5);
+    const page = pageUnifiedInbox(inbox, 50);
+    expect(page.items).toHaveLength(50);
+    expect(page.total).toBe(UNIFIED_INBOX_MAX_ITEMS + 5);
+    expect(page.omitted).toBe(UNIFIED_INBOX_MAX_ITEMS + 5 - 50);
   });
 });
 

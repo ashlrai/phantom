@@ -4569,6 +4569,18 @@ rules `phm comms inbox` and `fleet_comms_inbox` apply and passes the
 resulting `filter` to `readUnifiedInbox`, echoing the report's applied
 `filter` on the response; an unknown, repeated or malformed parameter or
 value is a 400, never a silently ignored filter.
+`pageUnifiedInbox(inbox, limit)`
+(`src/core/comms/unified-inbox.ts`) is the one page slice every bounded
+read of the ranked view shares — `fleet_comms_inbox`'s `limit` arg
+(default 50), the endpoint's `limit` param (default 50) and `phm comms
+inbox --limit` (1–200 under the same digits-only grammar, default the
+store's own 200-item page so an unflagged CLI read is unchanged) all keep
+the newest `limit` items the read already ranked and recount `omitted` as
+every matched item the page leaves out, so the three surfaces can never
+disagree about what a page means or what `omitted` counts; `total`,
+`sources`, `generatedAt` and the applied `filter` echo pass through
+untouched — the page narrows what is shown, never what matched or what
+each source reports.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
 `announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to
 `DEFAULT_WORK_ADDRESS` (`leaders`, overridable per send) at P2 with a 7-day

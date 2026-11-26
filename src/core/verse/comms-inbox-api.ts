@@ -7,14 +7,16 @@
  * `phm comms inbox` and `fleet_comms_inbox` take — `source`, `kind`,
  * `severity`, `blocking`, `job`, `since`, `before`, `contains` — validated by
  * `parseUnifiedInboxQuery` so the HTTP read, the CLI read and the MCP read
- * can never disagree on what a value means; the applied filter echoes on the
+ * can never disagree on what a value means; the `limit` page itself runs
+ * through the shared `pageUnifiedInbox` slice `phm comms inbox --limit` and
+ * `fleet_comms_inbox` apply, and the applied filter echoes on the
  * response's `filter` field exactly like the MCP tool's. */
 import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { approveDraft, getDraft, listDrafts, rejectDraft, type Draft } from '../cos/drafts.js';
 import { fixedOwnerRunsDir } from '../comms/owner-channel.js';
 import { markLinkedInAnswered } from '../comms/linkedin-drop.js';
-import { readUnifiedInbox, type UnifiedInbox, type UnifiedInboxOptions } from '../comms/unified-inbox.js';
+import { pageUnifiedInbox, readUnifiedInbox, type UnifiedInbox, type UnifiedInboxOptions } from '../comms/unified-inbox.js';
 import { parseUnifiedInboxQuery, UNIFIED_INBOX_QUERY_PARAMS } from '../comms/unified-inbox-query.js';
 
 export const VERSE_COMMS_INBOX_PATH = '/api/verse/comms/inbox';
@@ -193,15 +195,15 @@ export function createCommsInboxApi(deps: CommsInboxApiDeps = {}): ApiModule {
         ...(deps.now ? { now: deps.now } : {}),
         ...(parsed.query.filter === undefined ? {} : { filter: parsed.query.filter }),
       });
-      const items = inbox.items.slice(0, parsed.query.limit);
+      const page = pageUnifiedInbox(inbox, parsed.query.limit);
       sendJson(res, 200, {
         schema: SCHEMA,
         generatedAt: inbox.generatedAt,
         sources: inbox.sources,
         total: inbox.total,
-        omitted: Math.max(0, inbox.total - items.length),
+        omitted: page.omitted,
         ...(inbox.filter === undefined ? {} : { filter: inbox.filter }),
-        items,
+        items: page.items,
       });
     } catch {
       sendJson(res, 200, { schema: SCHEMA, unavailable: true, items: [] });

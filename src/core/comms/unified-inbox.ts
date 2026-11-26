@@ -650,8 +650,10 @@ export interface UnifiedInbox {
   /** Pending items across every source, before the display cap — the items
    * matching `filter` when one is applied. */
   total: number;
-  /** Pending items left off `items` by UNIFIED_INBOX_MAX_ITEMS (matching
-   * `filter` when one is applied). */
+  /** Pending items matched but not shown in `items` — left off by
+   * UNIFIED_INBOX_MAX_ITEMS on the raw read, or by the applied `limit`
+   * page `pageUnifiedInbox` returns (matching `filter` when one is
+   * applied either way). */
   omitted: number;
   /** The applied view filter; absent on an unfiltered read. */
   filter?: UnifiedInboxFilter;
@@ -3276,4 +3278,22 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     ...(filter === undefined ? {} : { filter }),
     items: matched.slice(0, UNIFIED_INBOX_MAX_ITEMS).map(({ item }) => item),
   };
+}
+
+/**
+ * The unified view after a `limit` page — the one slice every surface that
+ * bounds the ranked list shares: `fleet_comms_inbox`'s `limit` arg,
+ * `GET /api/verse/comms/inbox?limit=` and `phm comms inbox --limit` all keep
+ * the newest `limit` items the read already ranked and recount `omitted` as
+ * every matched item the page leaves out, so a narrowed read never reports
+ * the store's own 200-item tail as its bound. `total`, `sources`,
+ * `generatedAt` and the applied `filter` echo pass through untouched — the
+ * page narrows what is shown, never what matched or what each source
+ * reports. `limit` must be an integer in 1..UNIFIED_INBOX_MAX_ITEMS; every
+ * caller validates before slicing, and a limit at or past the stored page
+ * returns the read unchanged.
+ */
+export function pageUnifiedInbox(inbox: UnifiedInbox, limit: number): UnifiedInbox {
+  const items = inbox.items.slice(0, limit);
+  return { ...inbox, items, omitted: Math.max(0, inbox.total - items.length) };
 }
