@@ -26,6 +26,22 @@ def view(**overrides):
 
 
 class MarketUnit(unittest.TestCase):
+    def test_fresh_unused_deadline_reorders_only_eligible_executors(self):
+        earlier = dict(known=True, stale=False, used_pct=50, reset_at=11000, projected_unused_pct=40)
+        later = dict(earlier, reset_at=12000, projected_unused_pct=45)
+        self.assertIsNone(market.deadline_priority(dict(earlier, stale=True), 10000))
+        self.assertIsNone(market.deadline_priority(dict(earlier, reset_at=9999), 10000))
+        self.assertIsNone(market.deadline_priority(dict(earlier, used_pct=100), 10000))
+        self.assertEqual(market.deadline_priority(dict(earlier, projected_unused_pct=None), 10000, short_window=True), 11000)
+        self.assertEqual(market.deadline_priority(dict(earlier, expires_at=10500), 10000, promotional=True), 10500)
+        lanes = view()
+        lanes['claude']['deadline_priority'] = market.deadline_priority(earlier, 10000)
+        lanes['codex-personal']['deadline_priority'] = market.deadline_priority(later, 10000)
+        spec = {'preferred_lane': 'codex-personal', 'needs': []}
+        self.assertEqual(self.choose(spec, lanes)[0]['chosen_lane'], 'claude')
+        lanes['claude']['quota'] = 0
+        self.assertEqual(self.choose(spec, lanes)[0]['chosen_lane'], 'codex-personal')
+
     def test_producer_infers_gh_without_losing_declared_requirements(self):
         for job, prompt in CAPABILITY_PROMPTS['c499'].items():
             with self.subTest(job=job):
