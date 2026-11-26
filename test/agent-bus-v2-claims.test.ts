@@ -727,9 +727,10 @@ describe('claimBusWorkJob', () => {
 });
 
 describe('claimNextBusWorkJob', () => {
-  const postWork = (root: string, jobId: string, claimKeys: string[], repo = 'a/b', to = 'leaders', at = NOW) => {
+  const postWork = (root: string, jobId: string, claimKeys: string[], repo = 'a/b', to = 'leaders', at = NOW,
+    from = 'agent-1') => {
     const body = { kind: 'work.post', jobId, title: `Job ${jobId}`, repo, claimKeys, provider: 'devin' };
-    const posted = appendBusInbox({ id: `wn-post-${jobId}`, from: 'agent-1', to, priority: 'P2',
+    const posted = appendBusInbox({ id: `wn-post-${jobId}`, from, to, priority: 'P2',
       ttl: 86_400_000, body }, { root, now: () => at });
     expect(posted.status).toBe('posted');
   };
@@ -810,6 +811,29 @@ describe('claimNextBusWorkJob', () => {
       .toMatchObject({ status: 'acquired', job: { id: 'RQ-FILTER-D' } });
   });
 
+  it('drops jobs the excluded announcer posted under the same identity rule', () => {
+    const root = tempDir('v2jobnext-');
+    // agent-1 announces the newest job; agent-2 and agent-10 announce the two
+    // older ones. Excluding agent-1 must skip to agent-2's job — and agent-10's
+    // label is a different identity, so it is never caught by a prefix match.
+    postWork(root, 'RQ-EX-NEW', ['queue:RQ-EX-NEW'], 'a/b', 'leaders', NOW - 1_000, 'agent-1');
+    postWork(root, 'RQ-EX-MID', ['queue:RQ-EX-MID'], 'a/b', 'leaders', NOW - 2_000, 'agent-2');
+    postWork(root, 'RQ-EX-OLD', ['queue:RQ-EX-OLD'], 'a/b', 'leaders', NOW - 3_000, 'agent-10');
+    const result = claimNextBusWorkJob({ root, now: NOW, owner: 'w', leaseMs: 1_000,
+      excludeAnnouncer: 'agent-1' });
+    expect(result).toMatchObject({ status: 'acquired', job: { id: 'RQ-EX-MID', owner: 'agent-2' } });
+    // Excluding every announcer left drains the well honestly — the excluded
+    // jobs are not candidates, so the counts stay observed, never guessed.
+    const dry = claimNextBusWorkJob({ root, now: NOW, owner: 'w', leaseMs: 1_000,
+      excludeAnnouncer: 'agent-1', announcer: 'agent-1' });
+    expect(dry).toEqual({ status: 'empty', candidates: 0, held: 0, attempted: 0 });
+    // agent-10's job survives an agent-1 exclusion: exact-label matching, not a
+    // prefix, so a near-miss label never widens the drop.
+    const near = claimNextBusWorkJob({ root, now: NOW, owner: 'w', leaseMs: 1_000,
+      excludeAnnouncer: 'agent-1', jobId: 'RQ-EX-OLD' });
+    expect(near).toMatchObject({ status: 'acquired', job: { id: 'RQ-EX-OLD', owner: 'agent-10' } });
+  });
+
   it('refuses malformed input before touching the feed', () => {
     const root = tempDir('v2jobnext-');
     postWork(root, 'RQ-I', ['queue:RQ-I']);
@@ -824,6 +848,7 @@ describe('claimNextBusWorkJob', () => {
       { owner: 'w', leaseMs: 1_000, jobId: 'bad job' },
       { owner: 'w', leaseMs: 1_000, to: 'bad to' },
       { owner: 'w', leaseMs: 1_000, announcer: 'bad announcer' },
+      { owner: 'w', leaseMs: 1_000, excludeAnnouncer: 'bad announcer' },
       { owner: 'w', leaseMs: 1_000, id: 'bad id' },
       { owner: 'w', leaseMs: 1_000, channel: 'Bad Channel' },
       { owner: 'w', leaseMs: 1_000, topic: 'Bad Topic' },

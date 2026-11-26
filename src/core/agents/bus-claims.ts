@@ -523,6 +523,9 @@ export function claimBusWorkJob(options: BusWorkJobClaimOptions): BusWorkJobClai
  * `to`/`announcer` are routing refs resolved through the same matchers the
  * feed's `--to`/`--owner` flags build; `id` is the retained-envelope
  * citation wire id `busWorkFeedJobCitesEnvelope` matches.
+ * `excludeAnnouncer` is the one dim the feed view does not serve — the
+ * feed read has no negative announcer filter — so it is applied to the
+ * candidate set on the job's `owner` label directly, after the view.
  */
 export interface BusWorkJobNextFilters {
   /** Keep only the job with this exact id — the feed `--job` filter. */
@@ -549,6 +552,18 @@ export interface BusWorkJobNextFilters {
    * exact-label matching.
    */
   announcer?: string;
+  /**
+   * Drop jobs announced by this routing ref — the negative counterpart of
+   * `announcer`, resolved through the same `busWorkFeedOwnerMatcher`
+   * identity-label rule the feed `--owner` filter and every bus read's
+   * `--exclude-from` share, so "claim the next job X did not announce" is
+   * one step instead of a filtered read followed by a manual skip. It
+   * composes with `announcer`: a job whose owner both matches and is
+   * excluded drops out, and an unresolvable ref or unreadable registry
+   * keeps exact-label matching so unknown identity state never widens the
+   * claim.
+   */
+  excludeAnnouncer?: string;
   /** Keep only jobs announced to `group:<channel>:*` — the feed `--channel` filter. */
   channel?: string;
   /** Keep only jobs announced to a `group:<room>:<topic>` address carrying this topic — the feed `--topic` filter. */
@@ -645,7 +660,7 @@ export function claimNextBusWorkJob(options: BusWorkJobNextOptions): BusWorkJobN
   if (options.tier !== undefined && !(WORK_TIERS as readonly string[]).includes(options.tier)) return invalid('invalid-tier');
   if (options.result !== undefined && !(WORK_RESULT_OUTCOMES as readonly string[]).includes(options.result)) return invalid('invalid-result');
   for (const [flag, value] of [['job', options.jobId], ['to', options.to], ['announcer', options.announcer],
-    ['id', options.id]] as const) {
+    ['excludeAnnouncer', options.excludeAnnouncer], ['id', options.id]] as const) {
     if (value !== undefined && !JOB_LABEL.test(value)) return invalid(`invalid-${flag}`);
   }
   if (options.channel !== undefined && !agentChannelNameSchema.safeParse(options.channel).success) return invalid('invalid-channel');
@@ -671,13 +686,20 @@ export function claimNextBusWorkJob(options: BusWorkJobNextOptions): BusWorkJobN
     ownerMatch: options.announcer === undefined ? undefined : busWorkFeedOwnerMatcher(options.announcer, { root: options.root }),
   });
   if (view.status !== 'ok') return { status: 'unavailable', reason: 'work-feed-view', attempted: 0 };
+  // `excludeAnnouncer` narrows the candidate set on the job's `owner` label
+  // through the same identity matcher `announcer` uses — a claim can never
+  // pick a job the matching read's exclusion would hide, and the observed
+  // candidate/held counts below reflect the narrowed set.
+  const excludeOwner = options.excludeAnnouncer === undefined ? undefined
+    : busWorkFeedOwnerMatcher(options.excludeAnnouncer, { root: options.root });
   // The candidate set is every filtered open job with declared claim keys —
   // the feed `--open` rule minus its complete-coverage exclusion, so a job
   // whose every key is provably held still counts as a held candidate the
   // way `work next`'s drained `empty` reports held work rather than a dry
   // well. Non-open jobs and keyless jobs can never be claimed, so they are
   // not candidates at all.
-  const candidates = view.jobs.filter(job => BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0);
+  const candidates = view.jobs.filter(job => BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0 &&
+    (excludeOwner === undefined || !excludeOwner(job.owner)));
   const opId = newBusClaimOpId();
   let attempted = 0, held = 0;
   for (const job of candidates) {

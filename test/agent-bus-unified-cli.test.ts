@@ -1630,6 +1630,52 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('empty candidates=');
   });
 
+  it('excludes jobs the named announcer posted on work claim-next', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'relay'])).json).toMatchObject({ status: 'created' });
+    // relay announces the older job, atlas the newer — both addressed to
+    // agent:atlas, so only the announcer exclusion picks between them.
+    expect((await run(['work', 'post', '--from', 'relay', '--job', 'RQ-X-OLD', '--title', 'Relay job',
+      '--repo', 'ashlrai/phantom', '--provider', 'devin', '--claim', 'queue:RQ-X-OLD',
+      '--to', 'agent:atlas', '--id', 'xn-old'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-X-NEW', '--title', 'Atlas job',
+      '--repo', 'ashlrai/phantom', '--provider', 'devin', '--claim', 'queue:RQ-X-NEW',
+      '--to', 'agent:atlas', '--id', 'xn-new'])).json).toMatchObject({ status: 'posted' });
+
+    // --exclude-announcer drops atlas's newer job, so relay's older one claims.
+    const claimed = await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '600000',
+      '--owner', 'worker-1', '--exclude-announcer', 'atlas'], { PHM_AGENT_ID: 'atlas' });
+    expect(claimed.code).toBe(0);
+    expect(claimed.json).toMatchObject({ status: 'acquired', job: { id: 'RQ-X-OLD' },
+      claim: { claimKey: 'queue:RQ-X-OLD', owner: 'worker-1' } });
+
+    // Excluding atlas again leaves only relay's now-held job as a candidate —
+    // atlas's open job is dropped, so the well reads empty with the observed
+    // held count, never a guessed claim.
+    const drained = await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '60000',
+      '--exclude-announcer', 'atlas'], { PHM_AGENT_ID: 'atlas' });
+    expect(drained.code).toBe(0);
+    expect(drained.json).toMatchObject({ status: 'empty', candidates: 1, held: 1 });
+
+    // A malformed announcer ref is a usage error, and the agent:<handle>
+    // spelling resolves to the same identity — it drops atlas's open job
+    // exactly like the bare handle did, leaving relay's held job the sole
+    // candidate.
+    expect(await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '60000',
+      '--exclude-announcer', 'bad announcer'])).toMatchObject({ code: 2 });
+    const byAlias = await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '60000',
+      '--exclude-announcer', 'agent:atlas'], { PHM_AGENT_ID: 'atlas' });
+    expect(byAlias.code).toBe(0);
+    expect(byAlias.json).toMatchObject({ status: 'empty', candidates: 1, held: 1 });
+
+    // --announcer keeps only the named announcer's jobs — the flag the usage
+    // line always documented but the parser never accepted until now.
+    const byAnnouncer = await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '60000',
+      '--announcer', 'atlas'], { PHM_AGENT_ID: 'atlas' });
+    expect(byAnnouncer.code).toBe(0);
+    expect(byAnnouncer.json).toMatchObject({ status: 'acquired', job: { id: 'RQ-X-NEW' } });
+  });
+
   it('claims the next pending work envelope addressed to an agent', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
