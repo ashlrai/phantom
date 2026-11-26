@@ -307,6 +307,9 @@ describe('Trajectory records', () => {
           maxFiles,
         }));
       }
+      expect(readSkillUseEvents).toHaveBeenCalledWith(expect.objectContaining({
+        untilMs: TEST_NOW_MS,
+      }));
     },
   );
 

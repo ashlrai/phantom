@@ -693,6 +693,27 @@ describe('M355 skill records', () => {
     });
   });
 
+  it('applies the inclusive report cutoff before partition and event budgets', () => {
+    const cutoff = Date.parse('2026-07-09T23:59:59.998Z');
+    const atCutoff = useEvent({ eventId: 'at-cutoff', ts: new Date(cutoff).toISOString(), score: 0.875 });
+    recordSkillUseEvent([
+      atCutoff,
+      useEvent({ ...atCutoff, ts: '2026-07-09T23:59:59.999Z', skillRevision: 2 }),
+      useEvent({ eventId: 'next-day', ts: '2026-07-10T00:00:00.000Z' }),
+    ]);
+
+    expect(readSkillUseEventsWithDiagnostics({
+      sinceMs: cutoff,
+      untilMs: cutoff,
+      limit: 1,
+      maxFiles: 1,
+    })).toMatchObject({
+      sourceState: 'healthy',
+      eventState: 'present',
+      events: [atCutoff],
+    });
+  });
+
   it('marks a skill-use sample degraded when distinct events exceed the requested limit', () => {
     const older = useEvent({ eventId: 'older-use' });
     const newer = useEvent({ eventId: 'newer-use' });

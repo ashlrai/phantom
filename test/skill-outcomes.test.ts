@@ -46,6 +46,7 @@ describe('readSkillTrajectoryOutcomes', () => {
     expect(readEvents).toHaveBeenCalledWith(expect.objectContaining({ maxFiles: 3 }));
     const readOpts = readEvents.mock.calls[0]![0]!;
     expect(readOpts.limit).toBe(1600);
+    expect(readOpts.untilMs! - readOpts.sinceMs!).toBe(24 * 60 * 60 * 1000);
     expect(readOpts.sinceMs).toBeGreaterThan(Date.now() - 25 * 60 * 60 * 1000);
     expect(listRecords).toHaveBeenCalledWith(expect.objectContaining({ windowHours: 24, limit: 200 }));
     // The join sees the same skill-use snapshot the health gate checked.
@@ -101,6 +102,7 @@ describe('readSkillTrajectoryOutcomes', () => {
     });
     expect(readEvents).toHaveBeenCalledWith({
       sinceMs: expect.any(Number),
+      untilMs: expect.any(Number),
       maxFiles: 8,
       limit: 4000,
     });

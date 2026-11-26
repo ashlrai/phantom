@@ -83,6 +83,8 @@ const MAX_TEXT = {
 
 export interface ReadSkillRecordsOptions {
   sinceMs?: number;
+  /** Inclusive upper timestamp bound for a bounded read. */
+  untilMs?: number;
   limit?: number;
   maxFiles?: number;
   /** Scan every private date partition so lifecycle rows cannot age out. */
@@ -706,6 +708,13 @@ function fileMayContainSince(file: string, sinceMs: number): boolean {
   return !Number.isFinite(endOfDayMs) || endOfDayMs >= sinceMs;
 }
 
+function fileMayContainUntil(file: string, untilMs: number): boolean {
+  const match = DATE_LEDGER_FILE_RE.exec(file);
+  if (!match) return false;
+  const startOfDayMs = Date.parse(`${match[1]}T00:00:00.000Z`);
+  return !Number.isFinite(startOfDayMs) || startOfDayMs <= untilMs;
+}
+
 function fileIsNotFutureDated(file: string): boolean {
   const match = DATE_LEDGER_FILE_RE.exec(file);
   if (!match) return false;
@@ -728,6 +737,9 @@ function readRecordsWithDiagnostics<T>(
   const maxFiles = complete ? Number.POSITIVE_INFINITY : boundedOption(opts.maxFiles, DEFAULT_MAX_FILES, MAX_READ_FILES);
   const sinceMs = !complete && typeof opts.sinceMs === 'number' && Number.isFinite(opts.sinceMs)
     ? opts.sinceMs
+    : undefined;
+  const untilMs = !complete && typeof opts.untilMs === 'number' && Number.isFinite(opts.untilMs)
+    ? opts.untilMs
     : undefined;
   let sourcePresent = false;
   let filesScanned = 0;
@@ -794,10 +806,11 @@ function readRecordsWithDiagnostics<T>(
     limitExceeded ||= listing.limitExceeded;
     if (limitExceeded || (complete && invalidRows > 0)) return result([], 'degraded');
     const completePartitionNames = complete ? [...listing.files] : undefined;
-    const files = sinceMs === undefined
-      ? listing.files
-      : listing.files.filter((file) => fileMayContainSince(file, sinceMs));
-    const partialWindow = checkRowLimit && sinceMs !== undefined && files.length > maxFiles;
+    const files = listing.files.filter((file) =>
+      (sinceMs === undefined || fileMayContainSince(file, sinceMs)) &&
+      (untilMs === undefined || fileMayContainUntil(file, untilMs))
+    );
+    const partialWindow = checkRowLimit && (sinceMs !== undefined || untilMs !== undefined) && files.length > maxFiles;
     if (!complete) files.splice(maxFiles);
     const out: T[] = [];
     const completeSnapshots: Array<{ filePath: string; snapshot: BigIntStats }> = [];
@@ -845,9 +858,9 @@ function readRecordsWithDiagnostics<T>(
             continue;
           }
           const record = sanitize(parsed);
-          if (sinceMs !== undefined) {
+          if (sinceMs !== undefined || untilMs !== undefined) {
             const recordMs = Date.parse((record as { ts: string }).ts);
-            if (Number.isFinite(recordMs) && recordMs < sinceMs) continue;
+            if (recordMs < (sinceMs ?? -Infinity) || recordMs > (untilMs ?? Infinity)) continue;
           }
           if (out.length >= limit) {
             limitExceeded = true;

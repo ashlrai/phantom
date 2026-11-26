@@ -4975,3 +4975,12 @@ after the cutoff are excluded from the fold and from PR claim attribution.
 Receipts at the cutoff are included. Exact replays of dated terminal
 receipts preserve the first occurrence's position and evidence snapshot.
 Undated receipts retain ledger order.
+
+## Windowed skill-use reads
+
+`ReadSkillRecordsOptions.untilMs` is an optional inclusive Unix millisecond
+upper bound for bounded skill ledger reads. Partitions starting after it
+and valid receipts timestamped after it are excluded before applying the
+file and result limits or checking for event ID conflicts. The bound does
+not relax validation or completeness checks on scanned partitions.
+Complete corpus reads ignore timestamp bounds.
