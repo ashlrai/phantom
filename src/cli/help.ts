@@ -38,6 +38,7 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm wiki map [repo] [--focus <node-or-file>] [--json]', description: 'Read a commit-pinned source graph for an enrolled repository. Refreshes only the private metadata cache; no model calls.', safety: 'read', jsonShape: 'phantom.wiki.map.v1' },
   { usage: 'phm install <url|owner/repo|name> [--dir <project>] [--dry-run] [--json]', description: 'Resolve a versioned tool manifest, install a pinned Node tool and register its declared MCP server in project .mcp.json. Dry-run writes nothing. Secret references remain pending without a vault adapter.', safety: 'append', jsonShape: 'phantom.install.result.v1 {ok,status,source,evidence,manifest,directory,config,registration,actions,secretHook}' },
   { usage: 'phm prs arm-sweep [--repos <list>] [--since 24h] [--apply] [--json]', description: 'Preview auto-merge requests across seven AshlrAI repos; --apply arms eligible PRs with no failing checks. Pending checks remain subject to GitHub gates. Owner holds stay skipped; superseded open PRs are report-only close candidates.', safety: 'append', jsonShape: 'prs.arm-sweep.v1 {dryRun,rows:[{repo,number,title,action,reason?}],closeCandidates,errors,counts:{armed,wouldArm,skipped}}' },
   { usage: 'phm fleet empties [--since 24h] [--jobs <jobs.jsonl>] [--runs-dir <directory>] [--human | --json]', description: 'Read EMPTY finishes, evidence-only causes, empty rates and top five job families. JSON by default; unknown evidence stays unknown. Exit 1 unreadable metrics, 2 invalid arguments.', safety: 'read', jsonShape: 'fleet.empties.v2' },
@@ -1160,6 +1161,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'wiki build [repo] [--all]',    desc: 'Private architecture wiki per repo (local models; cited, verified file:line). Only stale pages rebuild.', topic: 'knowledge' },
   { cmd: 'wiki ask "<question>"',        desc: 'Answer from the wiki + index + genome with verified file:line citations, or say "not found".', topic: 'knowledge' },
   { cmd: 'wiki status [repo]',           desc: 'Wiki freshness: generated at <commit>, N pages stale.', topic: 'knowledge' },
+  { cmd: 'wiki map [repo] [--focus <node-or-file>] [--json]', desc: 'Commit-pinned modules, declarations and source relationships for an enrolled repo.', topic: 'knowledge' },
 
   { cmd: 'enroll list',                  desc: 'List enrolled repos + kill switch state.', topic: 'autonomy' },
   { cmd: 'enroll add <repo> [--locus-firm]', desc: 'Enroll a repo for autonomous work. First enroll soft-offers locus.firm when locus CLI is present; --locus-firm / ASHLR_LOCUS_FIRM=1 enable without prompt (default off).', topic: 'autonomy' },

@@ -352,7 +352,9 @@ The same window's `route_decision` rows are folded into `overrides`:
 each waiting job counts once, by its latest in-window decision — how many
 jobs the market decided and how many left their hinted lane, by reason
 (`resource_fit`, `preferred_lane_fallback`, `unknown_preference`) and by
-hinted-to-chosen lane. The same collapsed decisions also fold their
+hinted-to-chosen lane. An override counts when its endpoints match the
+decision's declared preference and chosen lane, and those lanes differ.
+The same collapsed decisions also fold their
 `rejected_lanes` into `rejections`: every lane the market refused each job,
 with the reason codes that say why (`missing_capability`, `quota_exhausted`,
 `saturated`, `lower_rank`, ...). `lanes` tallies each rejected lane per job
@@ -366,7 +368,9 @@ launch — by `lane_override` reason and by hinted-to-launched lane. This is
 the launch record the decision fold cannot see: `batch_session` moves a
 combined session makes after each member's own decision appear here and
 nowhere in `overrides`, and a decision overridden on paper but deferred
-before launch never counts. `claims.truncated` is true when the ledger
+before launch never counts. A claim whose hint and launch lane match counts
+as a launch only, even if it carries an override code.
+`claims.truncated` is true when the ledger
 exceeded the retained tail, so those counts are a lower bound.
 The same collapsed decisions also join the retained tail of
 `metrics/jobs.jsonl` into `decisionOutcomes`: each decided job counts once,
@@ -1098,7 +1102,9 @@ Without `--lane` and `--n`, `fleet supply` retains its batch activity report.
 Run `phm queue yield --since 24h --json` to compare generators from the local
 `metrics/jobs.jsonl` ledger. The Metrics screen shows the same 24-hour report.
 Events in the window are joined by job ID. An explicit `src` takes precedence
-over the job ID pattern; unrecognized sources are `unknown`. PRs and merges
+over the job ID pattern; unrecognized sources are `unknown`. The fold uses
+recorded timestamps, with ledger order breaking ties. Late arrivals with
+older timestamps cannot overwrite newer recorded measurements. PRs and merges
 count jobs with recorded PRs and merges. Empty rate uses jobs with a recorded
 empty result. Median diff lines uses recorded `diff_lines`. Tokens per merged PR
 is the sum of recorded job tokens divided by merged PRs; it is unknown if any
