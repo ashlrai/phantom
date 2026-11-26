@@ -119,10 +119,10 @@ export function mergeRate(o: LaneOutcomes | undefined): number {
 
 type FootprintCost = Pick<HarnessFootprint, 'mem_bytes_max' | 'cpu_cores_per_session'>;
 
-function footprintExpired(fp: HarnessFootprint | undefined, nowMs: number): boolean {
+function footprintExpired(fp: HarnessFootprint | undefined, measuredAt: number, nowMs: number): boolean {
   if (fp?.source !== 'learned') return false;
   const learnedAt = typeof fp.learned_at === 'string' ? Date.parse(fp.learned_at) : NaN;
-  return !finite(learnedAt) || nowMs - learnedAt > CAPACITY_POLICY.learnedFootprintTtlMs;
+  return !finite(learnedAt) || learnedAt > measuredAt || nowMs - learnedAt > CAPACITY_POLICY.learnedFootprintTtlMs;
 }
 
 /** Per-resource maxima for each harness, used on nodes that have not run it yet. */
@@ -175,7 +175,7 @@ function nodeStates(input: RouterInput): NodeState[] {
         : capacityHold(node.doc) ?? (hasMeasuredMemory(node.doc) ? null : 'unmeasured');
       const cores = node.doc.cpu.headroom_cores;
       const footprints = Object.entries(node.doc.per_harness_footprint)
-        .filter(([, fp]) => !footprintExpired(fp, input.nowMs));
+        .filter(([, fp]) => !footprintExpired(fp, at, input.nowMs));
       const currentNode = { ...node, doc: { ...node.doc, per_harness_footprint: Object.fromEntries(footprints) } };
       return { node: currentNode, loaded: new Set(), bytes: node.doc.mem_free.headroom_bytes ?? 0,
         cores, cpuRoundoff: (cores ?? 0) * Number.EPSILON, blocked };
@@ -271,12 +271,12 @@ export function fleetRunnable(docs: NodeCapacityDoc[], nowMs: number, maxAgeMs =
   const current = latestByNode(docs, doc => doc, nowMs).filter(({ at, conflict }) => {
     const age = nowMs - at;
     return !conflict && finite(age) && age <= maxAgeMs;
-  }).map(({ item: doc }) => ({ doc, stopped: capacityHold(doc) !== null || doc.cpu.headroom_cores === 0 }));
+  }).map(({ item: doc, at }) => ({ doc, at, stopped: capacityHold(doc) !== null || doc.cpu.headroom_cores === 0 }));
   const out: Record<string, number | null> = {};
   for (const adapter of HARNESS_ADAPTERS) {
     let sum: number | null = null;
-    for (const { doc, stopped } of current) {
-      if (!stopped && (!hasMeasuredMemory(doc) || footprintExpired(doc.per_harness_footprint[adapter.id], nowMs))) continue;
+    for (const { doc, at, stopped } of current) {
+      if (!stopped && (!hasMeasuredMemory(doc) || footprintExpired(doc.per_harness_footprint[adapter.id], at, nowMs))) continue;
       const n = doc.agents_runnable_now[adapter.id];
       if (Number.isSafeInteger(n)) sum = (sum ?? 0) + (stopped ? 0 : (n as number));
     }

@@ -124,8 +124,11 @@ function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string
       continue;
     }
     const old = prev?.node === s.node ? prev.per_harness_footprint?.[adapter.id] : undefined;
-    const learnedAt = old ? Date.parse(old.learned_at ?? prev!.measured_at) : NaN;
-    if (old && finite(old.mem_bytes_max) && old.mem_bytes_max > 0 && finite(learnedAt) &&
+    const previousAt = prev ? Date.parse(prev.measured_at) : NaN;
+    const learnedAt = old?.source === 'learned'
+      ? Date.parse(old.learned_at ?? '')
+      : previousAt;
+    if (old && finite(old.mem_bytes_max) && old.mem_bytes_max > 0 && finite(learnedAt) && learnedAt <= previousAt &&
         s.measuredAtMs - learnedAt >= 0 && s.measuredAtMs - learnedAt <= CAPACITY_POLICY.learnedFootprintTtlMs) {
       out[adapter.id] = { ...old, sessions: 0, source: 'learned', learned_at: new Date(learnedAt).toISOString() };
     }

@@ -272,6 +272,18 @@ describe('capacity model', () => {
     expect(chained.agents_runnable_now.codex).toBeNull();
   });
 
+  it.each([null, new Date(T0 + 60_001).toISOString()])(
+    'discards a learned footprint with invalid provenance (%s) on resampling', learnedAt => {
+      const measured = computeNodeCapacity(snap());
+      const idle = computeNodeCapacity(snap({ measuredAtMs: T0 + 60_000, sessions: [] }), measured);
+      idle.per_harness_footprint.codex!.learned_at = learnedAt;
+
+      const next = computeNodeCapacity(snap({ measuredAtMs: T0 + 120_000, sessions: [] }), idle);
+      expect(next.per_harness_footprint.codex).toBeUndefined();
+      expect(next.agents_runnable_now.codex).toBeNull();
+    },
+  );
+
   it.each([false, true])('handles zero RSS without invalidating the capacity document (previous sample: %s)', usePrevious => {
     const baseline = snap();
     const previous = usePrevious ? computeNodeCapacity(baseline) : null;

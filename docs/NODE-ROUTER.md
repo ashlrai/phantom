@@ -493,8 +493,10 @@ the node reports `null` (unknown), never a guess. The previous document supplies
 learned in the last 7 days.
 Routing and fleet runnable totals enforce the seven-day limit at report time,
 even when the enclosing capacity snapshot is still fresh. A learned footprint
-needs a readable learning timestamp. Once it expires, it cannot supply a
-local or borrowed cost, and a runnable count based on it becomes unknown.
+needs a readable learning timestamp at or before the snapshot that carries it.
+Resampling preserves that timestamp and discards learned footprints with
+missing or impossible timestamps. Expired or invalid learned evidence cannot
+supply a local or borrowed cost, and a runnable count based on it becomes unknown.
 A measured host-wide stop can still establish zero for a reported count.
 Each live session of a harness needs a positive memory reading to refresh its
 footprint. A zero RSS total leaves that harness on its eligible learned

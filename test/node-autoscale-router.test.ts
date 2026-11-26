@@ -71,6 +71,20 @@ describe('autoscale router scoring', () => {
     expect(fleetRunnable([{ ...doc, swap: { ...doc.swap, growing: true } }], nowMs).codex).toBe(0);
   });
 
+  it('rejects a learned footprint dated after its snapshot for local and borrowed placement', () => {
+    const prior = computeNodeCapacity(mbp({ measuredAtMs: T0 - 1_000 }));
+    const doc = computeNodeCapacity(mbp({ sessions: [] }), prior);
+    expect(doc.agents_runnable_now.codex).toBeGreaterThan(0);
+    doc.per_harness_footprint.codex!.learned_at = new Date(T0 + 1).toISOString();
+    const peer = node(mbp8());
+    const nowMs = T0 + 1_000;
+
+    expect(planAutoscaleRoutes({
+      nodes: [{ doc }, peer], costs: [COSTS[0]!], outcomes: {}, jobs: [{ id: 'j' }], nowMs,
+    })[0]).toMatchObject({ nodeId: null, rejected: { 'footprint-unmeasured': 2 } });
+    expect(fleetRunnable([doc, peer.doc], nowMs).codex).toBeNull();
+  });
+
   it.each([
     [84.95, 0.3, 1],
     [84.92, 0.8, 0],
