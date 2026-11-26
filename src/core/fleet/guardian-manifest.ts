@@ -10,20 +10,19 @@
  */
 
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { rename, unlink, writeFile } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
 import { promisify } from 'node:util';
 import type { DetachedPostMergeRunnerInput } from './detached-post-merge-runner.js';
+import {
+  GUARDIAN_MANIFEST_MAX_ENTRIES,
+  GUARDIAN_SHA_RE,
+  isValidGuardianBranch,
+  isValidGuardianRepoPath,
+  sanitizeGuardianText,
+  writePrivateAtomic,
+} from './guardian-schema.js';
 
 const execFileAsync = promisify(execFile);
 
-const GIT_SHA_RE = /^[a-f0-9]{40}$/;
-// Mirror of the safeText rule in guardian-verify-loop.ts: 1..256 chars with no
-// C0/C1 control bytes or DEL.
-// eslint-disable-next-line no-control-regex -- matching control bytes is the point
-const SAFE_TEXT_RE = /^[^\x00-\x1f\x7f]{1,256}$/;
-const MAX_MANIFEST_ENTRIES = 100;
 const GIT_TIMEOUT_MS = 30_000;
 const MAX_GIT_OUTPUT_BYTES = 4 * 1024 * 1024;
 
@@ -37,12 +36,6 @@ export type GuardianManifestEntry = Pick<
   DetachedPostMergeRunnerInput,
   'repo' | 'cohortId' | 'proposalId' | 'baseBranch' | 'baseHead' | 'candidateHead' | 'mergeCommit'
 >;
-
-function safeText(value: string): string {
-  // eslint-disable-next-line no-control-regex -- replacing control bytes is the point
-  const cleaned = value.replace(/[\x00-\x1f\x7f]/g, '-').slice(0, 256);
-  return cleaned.length > 0 ? cleaned : '-';
-}
 
 /**
  * Pure mapping from first-parent commits (as `git log` emits them, newest
@@ -58,13 +51,13 @@ export function guardianManifestEntries(
   commits: ReadonlyArray<FirstParentCommit>,
   opts: { repo: string; branch: string },
 ): GuardianManifestEntry[] {
-  const cohortId = safeText(`guardian-${opts.branch}`);
+  const cohortId = sanitizeGuardianText(`guardian-${opts.branch}`);
   const seen = new Set<string>();
   const entries: GuardianManifestEntry[] = [];
   for (let i = commits.length - 1; i >= 0; i--) {
     const commit = commits[i]!;
     if (commit.parents.length < 1 || commit.parents.length > 2) continue;
-    if (!GIT_SHA_RE.test(commit.sha) || !commit.parents.every(sha => GIT_SHA_RE.test(sha))) continue;
+    if (!GUARDIAN_SHA_RE.test(commit.sha) || !commit.parents.every(sha => GUARDIAN_SHA_RE.test(sha))) continue;
     if (seen.has(commit.sha)) continue;
     seen.add(commit.sha);
     const pr = /\(#(\d+)\)\s*$/.exec(commit.subject);
@@ -91,10 +84,8 @@ export async function readFirstParentCommits(
   branch: string,
   limit: number,
 ): Promise<FirstParentCommit[]> {
-  // eslint-disable-next-line no-control-regex -- repo strings must not contain control bytes
-  if (!isAbsolute(repo) || repo.length > 4096 || /[\x00-\x1f\x7f]/.test(repo) ||
-    typeof branch !== 'string' || !SAFE_TEXT_RE.test(branch) || /\s/.test(branch) || branch.startsWith('-') ||
-    !Number.isSafeInteger(limit) || limit < 1 || limit > MAX_MANIFEST_ENTRIES) {
+  if (!isValidGuardianRepoPath(repo) || !isValidGuardianBranch(branch)
+    || !Number.isSafeInteger(limit) || limit < 1 || limit > GUARDIAN_MANIFEST_MAX_ENTRIES) {
     throw new Error('invalid guardian-manifest input');
   }
   const { stdout } = await execFileAsync('git', [
@@ -108,7 +99,7 @@ export async function readFirstParentCommits(
     if (!line) continue;
     const tab = line.indexOf('\t');
     const [sha, ...parents] = (tab === -1 ? line : line.slice(0, tab)).split(' ').filter(Boolean);
-    if (sha === undefined || !GIT_SHA_RE.test(sha) || !parents.every(shaPart => GIT_SHA_RE.test(shaPart))) continue;
+    if (sha === undefined || !GUARDIAN_SHA_RE.test(sha) || !parents.every(shaPart => GUARDIAN_SHA_RE.test(shaPart))) continue;
     commits.push({ sha, parents, subject: tab === -1 ? '' : line.slice(tab + 1) });
   }
   return commits;
@@ -123,15 +114,9 @@ export async function writeGuardianManifest(
   path: string,
   entries: ReadonlyArray<GuardianManifestEntry>,
 ): Promise<number> {
-  if (entries.length === 0 || entries.length > MAX_MANIFEST_ENTRIES) {
+  if (entries.length === 0 || entries.length > GUARDIAN_MANIFEST_MAX_ENTRIES) {
     throw new Error('guardian manifest requires 1 to 100 entries');
   }
-  const temp = `${path}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temp, JSON.stringify(entries, null, 2), { mode: 0o600, flag: 'wx' });
-    await rename(temp, path);
-  } finally {
-    await unlink(temp).catch(() => {});
-  }
+  await writePrivateAtomic(path, JSON.stringify(entries, null, 2));
   return entries.length;
 }
