@@ -272,6 +272,7 @@ export async function pairTick(deps: PairDeps): Promise<PairTickReport> {
   if (readPairState(deps.configDir).pending) {
     const checked = await checkOwnerPair(deps);
     if (checked.status === 'bound') return { action: 'bound', detail: checked.confirmed ? 'paired and confirmed' : `paired; ${checked.reason ?? 'not confirmed'}` };
+    if (checked.status === 'unreadable') return { action: 'waiting', detail: 'Messages replies are unreadable; YES cannot currently be checked' };
     if (checked.status !== 'expired') return { action: 'waiting', detail: sentLine(readPairState(deps.configDir).pending?.handles.length ?? 0) };
     expired = true;
   }
