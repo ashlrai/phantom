@@ -94,6 +94,15 @@ describe('fleet resource plan', () => {
       await writeFile(join(dir, 'queue/ready.tsv'), 'example\tphantom\tcodex-personal\twork\tfixture.md\n');
       const observed = await readUnfedReport(options);
       expect(observed.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 1 });
+
+      await writeFile(join(dir, 'queue/ready.tsv'), [
+        'example\tphantom\tagy\tinvalid\tfixture.md',
+        'example\tphantom\tcodex-personal\twork\tfixture.md',
+        'example\tphantom\tagy\twork\tfixture.md',
+      ].join('\n'));
+      const duplicate = await readUnfedReport(options);
+      expect(duplicate).toMatchObject({ source: 'dispatcher', waiting: 2, unfedSlots: 1 });
+      expect(duplicate.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 1 });
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
