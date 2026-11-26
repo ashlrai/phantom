@@ -19,7 +19,10 @@ case-insensitive `unknown` placeholders, so a later alias or a recorded
 reward pool can supply the arm. Jobs with no usable arm and jobs with
 conflicting claim lanes alone use the `unknown` arm. Conflicting known
 launch and reward arms still cause an error. Claim timestamps provide no execution timing. Batch
-session wrappers and node-pool telemetry are excluded.
+session wrappers and node-pool telemetry are excluded. Lifecycle receipts
+explicitly marked `launched: false`, such as admission-time `DONE-NOOP`
+outcomes, contribute no jobs, verdicts or measurements. A ledger containing
+only these recognized receipts yields an empty calibration sample.
 
 The jobs input also accepts reward-signal rows. Each supplies the resolved
 merge outcome and any recorded pool and joins launch or PostHog evidence by
