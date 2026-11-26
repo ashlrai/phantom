@@ -18,8 +18,10 @@ flash lane dispatch and paid/overage guards; this older candidate has no flash
 dispatch branch. Host adoption needs a Security pin.
 
 `restock.py` claims eligible `READY` lines from `router-queue.md` into lane
-prompts (`ready.tsv`/`claimed.tsv`) for the fleet allowlist repos only, keeping
-the READY stock at >=30% `bet=bold` and parking security-pinned surfaces as
+prompts (`ready.tsv`/`claimed.tsv`) for AshlrAI checkouts in the effective signed
+rollout scope. It reads `phm authority status --json` each pass. Missing,
+paused, or unreadable policy blocks new claims and parked-row recovery. It keeps
+the READY stock at >=30% `bet=bold` and parks security-pinned surfaces as
 `HOLD-SECURITY`. Lines whose `after=` dependencies are not yet landed are written
 as `PARKED-DEP.<lane>` rows with a `DEPENDENCY GATE:` id list in the prompt
 (RQ-QUEUE-AUTOUNPARK-1). Each restock tick re-reads those prompts; when
