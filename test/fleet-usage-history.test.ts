@@ -100,6 +100,33 @@ describe('pool series', () => {
     expect(s.points).toEqual([{ at: iso(NOW - H), used_pct: 30 }]);
   });
 
+  it('requires two readings inside the quota window before reporting pace', () => {
+    const before = read(4 * 24 + 1, 15);
+    const first = read(0, 20);
+    expect(poolUsageSeries('claude', [before, first], NOW)).toMatchObject({
+      pace: 'unknown', reason: 'Only one reading in this window.',
+      points: [{ at: first.observed_at, used_pct: 20 }],
+      runway: { verdict: 'unknown' },
+    });
+    expect(poolUsageSeries('claude', [before], NOW)).toMatchObject({
+      pace: 'unknown', reason: 'No readings in this window.', points: [], used_pct: null,
+    });
+    const opening = read(4 * 24, 16);
+    expect(poolUsageSeries('claude', [before, opening, first], NOW)).toMatchObject({
+      pace: 'behind', points: [{ at: opening.observed_at, used_pct: 16 }, { at: first.observed_at, used_pct: 20 }],
+    });
+  });
+
+  it('ignores readings at or after the reset when they still name the expired window', () => {
+    const reset = iso(NOW - H);
+    const before = read(2, 40, reset);
+    const s = poolUsageSeries('claude', [before, read(1, 1, reset), read(0, 2, reset)], NOW);
+    expect(s).toMatchObject({
+      pace: 'unknown', reason: 'The window reset. Waiting for a new reading.',
+      used_pct: 40, points: [{ at: before.observed_at, used_pct: 40 }], resets: [],
+    });
+  });
+
   it('shows a deduped current reading as the tail point so a flat run reaches its reading time', () => {
     const [s] = projectUsageHistory([read(20, 10), read(10, 30)], NOW, [read(0, 30)]);
     expect(s!.points.map(p => p.at)).toEqual([iso(NOW - 20 * H), iso(NOW - 10 * H), iso(NOW)]);
