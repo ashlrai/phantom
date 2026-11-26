@@ -437,6 +437,23 @@ For an existing managed CLI, see [managed upgrades](../desktop/README.md#upgrade
 stop but never restarts it. Journaled `--rollback` is separate from release
 publication. Any Touch ID grant and resident restart remain owner actions.
 
+With Stop engaged, a fresh install or managed upgrade on `--apply` gives the
+quota collector a short chance to recover any pending marker and release its
+lease. Only the collector's existing dead-owner proof can clear a stale marker;
+a live owner or uncertain evidence still blocks the switch. Quit Phantom
+normally (or stop a foreground Verse or resource console with Ctrl-C) and wait
+for its native workers to settle before retrying. Never delete the marker by
+hand. The JSON result reports the specific hold, such as `stop-not-engaged`,
+`leases-active`, `app-running`, `sidecar-live`, or `collector-pending`, with
+a `remedyCommand`. Upgrade inspection also reports quiescence under `stop`.
+
+If an installer directory under HOME needs private permissions, inspection
+reports `unsafe-local-path`, the exact `path`, and a `chmod go-rwx` command when
+the directory can safely be tightened. On `--apply` the installer removes only
+group and other access on required, user-owned, non-symlink directories and
+reports them in `tightenedPaths`. It does not follow symlinks, change ownership,
+or chmod directories outside HOME.
+
 Website promotion, provider sign-ins, spending permissions and resident fleet
 activation are separate verified operations. Neither this guide nor a version
 bump claims `phm.dev` was deployed. The legacy static site at `verse.ashlr.ai`
