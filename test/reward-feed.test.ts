@@ -619,6 +619,26 @@ describe('foldJobsLedgerRewards', () => {
       .toMatchObject([{ jobId: 'RQ-A', merged: true }]);
   });
 
+  it('excludes standalone future reverts from competing PR claims', () => {
+    const revertedAt = NOW_MS + 1;
+    const keys = new Set(['ashlrai/phantom#4']);
+    const rows = [launch('RQ-A'), merged('RQ-A')];
+    const receipt = {
+      job: 'RQ-B', url: 'https://github.com/ashlrai/phantom/pull/4',
+      ts: MERGED_ISO, revertedAt,
+    };
+    const text = [...rows, line({ ...receipt, event: 'reverted' })].join('\n');
+
+    expect(foldJobsLedgerRewards(text, NOW_MS, undefined, keys))
+      .toMatchObject([{ jobId: 'RQ-A', merged: false }]);
+    expect(foldJobsLedgerRewards(text, revertedAt, undefined, keys))
+      .toMatchObject([{ jobId: 'RQ-A', merged: true }]);
+
+    const mixed = [...rows, line({ ...receipt, state: 'MERGED' })].join('\n');
+    expect(foldJobsLedgerRewards(mixed, NOW_MS, undefined, keys))
+      .toMatchObject([{ jobId: 'RQ-A', merged: true }]);
+  });
+
   it('lets a later fresh merge supersede a standing-reverted one', () => {
     const pr = (n: number) => `https://github.com/ashlrai/phantom/pull/${n}`;
     const text = [
