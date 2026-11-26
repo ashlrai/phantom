@@ -1122,7 +1122,9 @@ command reads up to 2 MiB at each end of the metrics ledger — the oldest
 events near the head and the newest at the tail — so a job whose arrival
 event falls between the windows counts as missing evidence, never as a
 shorter wait. Without `--json`, the same command prints a plain-language
-report. Use `--root /path` to inspect a different runs directory.
+report. Use `--root /path` to inspect a different runs directory. The fleet-wide
+ready total includes lane-neutral jobs. Per-lane ready counts include only jobs
+with a lane hint.
 
 Trailing-hour merge counts use a readable, timezone-qualified `mergedAt` on
 merge ledger rows when available. Older rows and rows with an unreadable
