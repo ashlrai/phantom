@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FleetSessionMap } from '../../../../core/fleet/sessions-view.js';
 import type { ComputeNode, FleetCompute } from '../../../../core/fleet/compute-view.js';
 import type { ComputeHost } from '../../../../core/fleet/compute-hosts.js';
@@ -7,6 +7,8 @@ import { fleetLanesQuery, type QueryDef } from '../../../data/queries.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { onFleetComputeRefresh } from '../verse-list-channel.js';
+import { invalidateObserved } from '../../../data/cache.js';
 import { jobDetailQuery } from '../fleet-job-log/worker-log-queries.js';
 import { JobActivity } from '../fleet-job-log/JobActivity.js';
 import { SessionLive } from './SessionLive.js';
@@ -146,10 +148,26 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
   const org = useQuery(fleetOrgMapQuery, { enabled, freshMs: 0 });
   const refreshOrg = useRefetch(fleetOrgMapQuery);
   const refreshCompute = useRefetch(computeQuery), refreshSessions = useRefetch(sessionsMapQuery), refreshLanes = useRefetch(fleetLanesQuery);
-  usePollWhileVisible(refreshCompute, 5_000, { enabled });
-  usePollWhileVisible(refreshSessions, 5_000, { enabled });
-  usePollWhileVisible(refreshLanes, 15_000, { enabled });
-  usePollWhileVisible(refreshOrg, 15_000, { enabled });
+  const lastPulse = useRef(0);
+  useEffect(() => {
+    if (!enabled) return;
+    let lastDetails = 0;
+    return onFleetComputeRefresh(() => {
+      const now = Date.now();
+      lastPulse.current = now;
+      refreshCompute();
+      refreshSessions();
+      if (now - lastDetails < 15_000) return;
+      lastDetails = now;
+      refreshLanes();
+      refreshOrg();
+      invalidateObserved('verse-world');
+    });
+  }, [enabled, refreshCompute, refreshSessions, refreshLanes, refreshOrg]);
+  usePollWhileVisible(() => {
+    if (Date.now() - lastPulse.current < 20_000) return;
+    refreshCompute(); refreshSessions(); refreshLanes(); refreshOrg();
+  }, 30_000, { enabled });
   const [mode, setMode] = useState<'2D' | '3D'>('2D');
   const [group, setGroup] = useState(true), [heat, setHeat] = useState(true);
   const [yaw, setYaw] = useState(0), [tilt, setTilt] = useState(15), [zoom, setZoom] = useState(1);
@@ -167,7 +185,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
   const nodes = data?.nodes ?? [];
   const jobs = sessions.data?.mapSessions ?? [];
   const location = (job: MapSession) => job.nodeId;
-  const selected = jobs.find(j => j.job === selection) ?? sessions.data?.mapRecent.find(j => j.job === selection);
+  const selected = jobs.find(j => j.job === selection) ?? sessions.data?.mapRecent?.find(j => j.job === selection);
   const maxCores = Math.max(1, ...nodes.map(n => n.stats?.cores.length ?? 0));
   function tokens(rows: MapSession[]) {
     const groups = group ? [...new Set(rows.map(s => s.lane ?? 'Lane unknown'))] : ['All lanes'];
@@ -187,7 +205,6 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       {(['2D', '3D'] as const).map(m => <button type="button" key={m} aria-pressed={mode === m} onClick={() => setMode(m)}>{m}</button>)}
       <label><input type="checkbox" checked={group} onChange={e => setGroup(e.target.checked)} />Group lanes</label>
       <label><input type="checkbox" checked={heat} onChange={e => setHeat(e.target.checked)} />Capacity heat</label>
-      <button type="button" onClick={() => { refreshCompute(); refreshSessions(); refreshLanes(); refreshOrg(); }}>Refresh fleet</button>
       <button type="button" onClick={() => host ? host.openPane('fleet-bus') : openDockPane('fleet-bus')}>Agent bus</button>
     </div>
     {mode === '3D' && <div className={styles.toolbar}>
@@ -202,6 +219,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
     <p>{data ? `Compute observed ${data.generatedAt} · ${recordedAt(data.generatedAt, now)}${data.truncated ? ' · partial inventory' : ''}` : 'No compute data yet.'}</p>
     <div className={styles.quota} aria-label="Lane quota strip">{!laneRows.length && <p>No lane observations.</p>}{laneRows.map(l => <article key={l.lane} data-state={laneQuotaState(l.hold?.held, data?.lanes[l.lane]?.quotaOk)}>
       <strong>{l.lane}</strong><span>{shown(l.liveJobs)} running / {shown(l.slotTarget)} target / {shown(data?.lanes[l.lane]?.hardCap)} hard cap</span>
+      <span>{shown(l.queueDepth)} queued</span>
       <span>quota_ok: {data?.lanes[l.lane]?.quotaOk == null ? 'unknown' : String(data.lanes[l.lane]!.quotaOk)} · {l.credit.label}</span>
       <span>{l.hold?.held ? `HELD · ${l.hold.by ?? 'unknown'} · ${l.hold.reason ?? 'reason unknown'} · until ${l.hold.until ?? 'unknown'}` : l.hold ? 'No recorded hold' : 'Hold unknown'}</span>
       <small>Reset {l.credit.resetAt ?? 'unknown'} · {recordedAt(l.credit.observedAt, now)}</small>

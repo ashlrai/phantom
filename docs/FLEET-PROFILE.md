@@ -59,15 +59,24 @@ inline credential keys and linked configs are refused.
 
 ## Sign in on each device
 
-An entry's optional `login` defines `status` and `start` argv arrays. Each
-native CLI checks its own sign-in, including `codex login status`. Dry run
-reports sign-in state without starting login flows.
+For a CLI, an entry's optional `login` defines `status` and `start` argv
+arrays. Each native CLI checks its own sign-in, including `codex login status`.
+Dry run reports sign-in state without starting login flows. Over macOS SSH,
+Devin, Antigravity, and Cursor need the logged-in desktop's keychain: their
+checks run in Terminal. If no GUI check succeeds, the status is
+`unknown-over-ssh` and no login is started for that tool.
 Run `python3 fleet/profile/apply.py --login --host backup-mac` (omit the host
-for local use). For GitHub on macOS or Linux, open the reported device URL and
-enter its one-time code. For manual rows, run the named command directly on
-the indicated machine.
-Codex is always manual. The profile itself never opens auth files, returns
-raw status output, or transfers credentials.
+for local use). An `approve` row reports a Claude browser URL or GitHub's
+device URL and one-time code. An `approve-in-terminal` row means macOS opened
+Devin or Antigravity in Terminal on that device. For Antigravity, if you are
+already signed into a workspace account and want to switch accounts, enter
+`/logout` in Antigravity first. The profile never signs you out.
+For a desktop entry, opt in with `"login": {"app": "Claude"}`: on macOS
+`approve-in-app` means the app was opened with `open -a`. This does not
+probe or change the app's login state. For manual rows, run the named command
+or open the named app on the indicated machine.
+Cursor and Codex remain manual. The profile itself never opens auth files,
+returns raw status output, or transfers credentials.
 
 For API keys, use [Phantom Secrets](https://github.com/ashlrai/phantom-secrets)
 on each device. Set up that device's vault in a trusted terminal, unlock the

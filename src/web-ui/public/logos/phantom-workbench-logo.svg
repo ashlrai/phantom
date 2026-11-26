@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Phantom workbench: three agent lanes converge into one command aperture.
+       The open lower-left stem forms a P without reusing the Secrets ghost. -->
+  <defs>
+    <linearGradient id="phm-workbench-core" x1="17" y1="10" x2="49" y2="49" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A5F3FC"/>
+      <stop offset=".48" stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#818CF8"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="62" height="62" rx="16" fill="#080E1D"/>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="15.5" stroke="#8DB8F5" stroke-opacity=".22"/>
+  <path d="M19 51V19l9-8h15l10 10v15L43 46H31" stroke="url(#phm-workbench-core)" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M10 23h9M10 32h9M10 41h9" stroke="#A5F3FC" stroke-width="3" stroke-linecap="round"/>
+  <path d="M30 23h11v11H30z" fill="url(#phm-workbench-core)"/>
+</svg>

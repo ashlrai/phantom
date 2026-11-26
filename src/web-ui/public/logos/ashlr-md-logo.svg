@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Primary blue gradient: light-theme accent → brighter blue -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="60%" y2="100%">
+      <stop offset="0%"   stop-color="#2b7fff"/>
+      <stop offset="100%" stop-color="#0969da"/>
+    </linearGradient>
+    <!-- Subtle inner highlight at top-left -->
+    <radialGradient id="shine" cx="35%" cy="28%" r="55%">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Soft drop shadow -->
+    <filter id="shadow" x="-4%" y="-2%" width="108%" height="112%">
+      <feDropShadow dx="0" dy="8" stdDeviation="18" flood-color="#0a3d7a" flood-opacity="0.32"/>
+    </filter>
+  </defs>
+
+  <!-- Rounded square background — radius 180 matches the Welcome screen brand mark -->
+  <rect x="32" y="32" width="960" height="960" rx="180" ry="180"
+        fill="url(#bgGrad)" filter="url(#shadow)"/>
+
+  <!-- Shine overlay -->
+  <rect x="32" y="32" width="960" height="960" rx="180" ry="180"
+        fill="url(#shine)"/>
+
+  <!--
+    Bold geometric "M"
+    Design: two outer legs + a clean V-shaped valley in the center.
+    All strokes are white, rounded line-joins, stroke-width 88 (~8.6% of canvas).
+    The glyph sits in a ~460×440 bounding box, optically centered on 512,530.
+  -->
+  <polyline
+    points="196,740 196,284 512,580 828,284 828,740"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="88"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

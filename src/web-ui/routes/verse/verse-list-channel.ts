@@ -8,8 +8,14 @@ function backoffMs(attempt: number): number {
 }
 
 /** Lightweight metadata groups; the paired gateway retains its existing session topic. */
-export const VERSE_LIST_TOPICS = 'verse-sessions,verse-account-readings';
+export const VERSE_LIST_TOPICS = 'verse-sessions,verse-account-readings,fleet-compute';
 const accountReadingListeners = new Set<() => void>();
+const fleetComputeListeners = new Set<() => void>();
+export function onFleetComputeRefresh(listener: () => void): () => void {
+  fleetComputeListeners.add(listener);
+  const release = openVerseListChannel();
+  return () => { fleetComputeListeners.delete(listener); release(); };
+}
 /** Reuse the existing list stream; subscribers share one connection with the sidebar. */
 export function onVerseAccountReadingsChanged(listener: () => void): () => void {
   accountReadingListeners.add(listener);
@@ -92,6 +98,11 @@ function startVerseListChannel(): () => void {
     };
     es.addEventListener('verse-sessions', () => {
       if (!disposed && source === es && getAuthSnapshot().phase === 'authenticated') invalidateVerseLists();
+    });
+    es.addEventListener('fleet-compute', () => {
+      if (!disposed && source === es && getAuthSnapshot().phase === 'authenticated') {
+        for (const listener of fleetComputeListeners) listener();
+      }
     });
     es.addEventListener('verse-account-readings', (event) => {
       if (disposed || source !== es || getAuthSnapshot().phase !== 'authenticated') return;
