@@ -312,6 +312,18 @@ it('marks a malformed queue as degraded and keeps counts null-safe', async () =>
   expect(report.notes.some(n => n.includes('unreadable or has malformed rows'))).toBe(true);
 });
 
+it('withholds unreadable queue counts while preserving independent merges', async () => {
+  await mkdir(join(queueDir, 'ready.tsv'));
+  await writeFile(join(queueDir, 'jobs.jsonl'), merge('m-1', 'codex', minutesAgo(5)));
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.sources.ready).toBe('degraded');
+  expect(report.sources.ledger).toBe('healthy');
+  expect(report.totals).toMatchObject({ ready: null, parked: null, stale: null, blockedReasons: [], merges: 1 });
+  expect(report.lanes).toMatchObject([
+    { lane: 'codex', ready: null, parked: null, stale: null, blockedReasons: [], merges: 1 },
+  ]);
+});
+
 it('prints blocked reasons and notes in text output', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), row('PARKED-HOLD.devin', 'a-1', 'devin'));
   const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
