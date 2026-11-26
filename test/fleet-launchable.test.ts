@@ -81,6 +81,25 @@ describe('fleet launchable', () => {
       { lane: 'beta', free: 1, launchable: 1 },
     ] });
   });
+  it('counts each job once across lane-hinted and lane-open supply', async () => {
+    const prompt = join(root, 'prompt.md');
+    writeFileSync(prompt, 'task');
+    status({ alpha: { target: 3, running: 0 }, beta: { target: 1, running: 0 } });
+    writeFileSync(join(queue, 'ready.tsv'), [
+      row('RQ-HINT', 'alpha', join(root, 'missing')),
+      row('RQ-HINT', 'alpha', prompt),
+      row('RQ-HINT', 'alpha', prompt),
+      row('RQ-HINT', '', prompt),
+      row('RQ-OPEN', '', prompt),
+      row('RQ-OPEN', 'beta', prompt),
+      row('RQ-OPEN', '', prompt),
+    ].join('\n'));
+    expect(await cmdFleetLaunchable(['--json'])).toBe(1);
+    expect(report()).toMatchObject({ openRows: 1, lanes: [
+      { lane: 'alpha', free: 3, launchable: 1 },
+      { lane: 'beta', free: 1, launchable: 0 },
+    ] });
+  });
   it('resolves spec-less rows through their router-queue envelope like the market', async () => {
     const prompt = join(root, 'prompt.md');
     writeFileSync(prompt, 'task');
