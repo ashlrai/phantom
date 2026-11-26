@@ -70,8 +70,8 @@ substring or a body citation, so "where did envelope X go" is one filtered
 read — `--body-kind <kind>` for only the bodies carrying that exact kind
 discriminator — the same `busBodyKind` own-field exact match `agents bus
 inbox --body-kind`, `agents bus channel read --body-kind`, `agents bus
-wakes --body-kind`, `agents conversations --body-kind` and `fleet
-bus-follow --body-kind` apply, decided
+wakes --body-kind`, `agents conversations --body-kind`, `comms bus
+read|watch --body-kind` and `fleet bus-follow --body-kind` apply, decided
 on the raw body before projection so a body carrying no discriminator
 never matches and an unrecognized but printable value is an honest empty
 page — `--result <reserved|admitted|complete|failed>` for only the
@@ -2508,8 +2508,8 @@ apply — `--kind`/`--topic` keep only protocol-v1 bodies whose
 namespace prefix like `fleet.*`, and `--body-kind <kind>` keeps only
 envelopes whose body carries that exact kind discriminator — the same
 `busBodyKind` own-field match `agents bus inbox --body-kind`, `channel
-read --body-kind`, `wakes --body-kind`, `agents conversations --body-kind`
-and `phm messages --body-kind` apply:
+read --body-kind`, `wakes --body-kind`, `agents conversations --body-kind`,
+`phm messages --body-kind` and `comms bus read|watch --body-kind` apply:
 the v2 `kind` field, else a bus-transport v1 `protocol.kind`, else the
 `type`/`schema` a kindless notice keys on, exact and case-sensitive, a
 body carrying no discriminator never matching and an unrecognized but
@@ -2518,7 +2518,8 @@ printable value an honest empty stream. `--result
 own `outcome` strictly equals the code — the same `busBodyResultOutcome`
 own-field match and `WORK_RESULT_OUTCOMES` vocabulary `phm messages
 --result`, `agents messages --result`, `fleet messages`, `bus recent`,
-`fleet_bus_inbox`'s `result`, `fleet_agent_messages`'s `result` and the
+`fleet_bus_inbox`'s `result`, `fleet_agent_messages`'s `result`, `comms bus
+read|watch --result` and the
 work feed's `--result` share —
 so the envelope-level audit trail a job-scoped follow already narrows by
 `--job` answers "stream only this job's failed result receipts" in one
@@ -2566,7 +2567,29 @@ opaque to it. The value is bounded free text, up to 512 characters. On
 `bus-follow` filtered rows still advance checkpoints exactly like every
 other filter, and a `comms bus --checkpoint` consumer binds the raw
 `--contains` spelling into its filter identity, so a changed needle fails
-closed.
+closed. `--body-kind <kind>` and `--result
+<reserved|admitted|complete|failed>` narrow `comms bus read|watch` on the
+same body fields every other bus read filters by: `--body-kind` keeps only
+envelopes whose body carries that exact kind discriminator — the same
+`busBodyKind` own-field match `agents bus inbox --body-kind`, `agents bus
+channel read --body-kind`, `agents bus wakes --body-kind`, `agents bus
+follow --body-kind`, `agents conversations --body-kind`, `phm messages
+--body-kind`, `phm bus inbox --body-kind`, `fleet bus-follow --body-kind`
+and `fleet_bus_inbox`'s `bodyKind` apply: the v2 `kind` field, else a
+bus-transport v1 `protocol.kind`, else the `type`/`schema` a kindless
+notice keys on, exact and case-sensitive, so a body carrying no
+discriminator never matches and an unrecognized but printable value is an
+honest empty page, never an error and never a widened one; `--result` keeps
+only `work.result` bodies whose own `outcome` strictly equals one
+`WORK_RESULT_OUTCOMES` code — the same `busBodyResultOutcome` own-field
+match `phm messages --result`, `agents bus inbox --result`, `fleet
+bus-follow --result`, `phm bus inbox --result` and `fleet_bus_inbox`'s
+`result` apply — so every other body kind (a `work.release` body's own
+`released`/`completed` outcome included) and a result carrying no outcome
+never match, and a value outside the vocabulary is a usage error, never a
+widened page. Filtered rows still advance cursors and checkpoints exactly
+like every other filter, and a `comms bus --checkpoint` consumer binds both
+raw values into its filter identity, so a change fails closed.
 
 ### 4. Work feed
 
