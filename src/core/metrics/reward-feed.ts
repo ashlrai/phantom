@@ -84,7 +84,6 @@ const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 /** Same id alphabet the reward writer accepts (JOB_ID in reward-signal.ts). */
 const JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
-const PR_URL_PATTERN = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/\d+\/?$/;
 const POOL_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,63}$/;
 /** Batch session wrappers carry aggregate telemetry. Members have their own job ids. */
 const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
@@ -144,12 +143,14 @@ function timestampOf(row: Record<string, unknown>, keys: readonly string[]): num
   return null;
 }
 
-/** The GitHub PR URL identifies the repository when the row carries one. */
-function repoOf(row: Record<string, unknown>): string | null {
-  const url = firstString(row, URL_KEYS);
-  const match = url ? PR_URL_PATTERN.exec(url.replace(/\/+$/, '')) : null;
-  const repo = match ? `${match[1]}/${match[2]}` : firstString(row, ['repo']);
-  return repo !== null && REPO_PATTERN.test(repo) ? repo.toLowerCase() : null;
+/** A unique PR repository takes precedence over the receipt's repo label. */
+function repoOf(row: Record<string, unknown>, prKeys: readonly string[]): string | null | undefined {
+  const repos = new Set(prKeys.map((key) => key.slice(0, key.lastIndexOf('#')))
+    .filter((repo) => REPO_PATTERN.test(repo)));
+  if (repos.size > 1) return null;
+  if (repos.size === 1) return [...repos][0];
+  const repo = firstString(row, ['repo']);
+  return repo !== null && REPO_PATTERN.test(repo) ? repo.toLowerCase() : undefined;
 }
 
 /** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
@@ -182,7 +183,8 @@ interface DispatchMark { ms: number; lane: string | null; repo: string | null }
 interface ResolutionMark {
   atMs: number;
   resolvedMs: number;
-  repo: string | null;
+  /** null means conflicting evidence, undefined means no repository was observed. */
+  repo: string | null | undefined;
   prKeys: string[];
 }
 
@@ -225,11 +227,11 @@ function newAccum(): RewardJobAccum {
 
 /** Replayed boundaries share a timestamp but can carry conflicting PR claims. */
 function noteCiBoundary(
-  acc: RewardJobAccum, kind: 'start' | 'complete', at: number, row: Record<string, unknown>,
+  acc: RewardJobAccum, kind: 'start' | 'complete', at: number, prKeys: readonly string[],
 ): void {
   const boundaries = kind === 'start' ? acc.ciStarts : acc.ciCompletions;
   const keys = boundaries.get(at) ?? new Set<string>();
-  for (const key of receiptPrKeys(row)) keys.add(key);
+  for (const key of prKeys) keys.add(key);
   boundaries.set(at, keys);
 }
 
@@ -301,8 +303,9 @@ export function foldJobsLedgerRewards(
     if (at !== null && at > nowMs) continue;
     // A future verdict cannot establish PR ownership or supply other evidence yet.
     if (resolvedAt !== null && resolvedAt > nowMs) continue;
+    const prKeys = receiptPrKeys(row);
     if (claims !== null) {
-      for (const key of receiptPrKeys(row)) {
+      for (const key of prKeys) {
         const set = claims.get(key) ?? new Set<string>();
         set.add(id);
         claims.set(key, set);
@@ -324,18 +327,17 @@ export function foldJobsLedgerRewards(
       continue;
     }
     if (dispatch) {
-      acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row) });
+      acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row, prKeys) ?? null });
       if (name === 'batch_claim') acc.batchClaims.add(at);
     } else if (ciBoundary) {
-      noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at, row);
+      noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at, prKeys);
     }
     const explicitRevertMs = timestampOf(row, REVERTED_AT_KEYS);
     if (explicitRevertMs !== null || hasRevertEvidence(row)) {
       const revertedAtMs = explicitRevertMs ?? at;
       if (revertedAtMs <= nowMs) {
-        const keys = receiptPrKeys(row);
         // Only a receipt without a PR reference can apply job-wide.
-        const key = keys.length === 1 ? keys[0]! : null;
+        const key = prKeys.length === 1 ? prKeys[0]! : null;
         if (key !== null || firstString(row, URL_KEYS) === null) {
           acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
         }
@@ -346,8 +348,7 @@ export function foldJobsLedgerRewards(
       if (acc.merge === null || mergedAtMs > acc.merge.resolvedMs ||
           (mergedAtMs === acc.merge.resolvedMs && at >= acc.merge.atMs)) {
         acc.merge = {
-          atMs: at, resolvedMs: mergedAtMs, repo: repoOf(row),
-          prKeys: receiptPrKeys(row),
+          atMs: at, resolvedMs: mergedAtMs, repo: repoOf(row, prKeys), prKeys,
         };
       }
     } else if (isClose) {
@@ -355,7 +356,7 @@ export function foldJobsLedgerRewards(
       if (acc.close === null || closedAtMs > acc.close.resolvedMs ||
           (closedAtMs === acc.close.resolvedMs && at >= acc.close.atMs)) {
         acc.close = {
-          atMs: at, resolvedMs: closedAtMs, repo: repoOf(row), prKeys: receiptPrKeys(row),
+          atMs: at, resolvedMs: closedAtMs, repo: repoOf(row, prKeys), prKeys,
         };
       }
     }
@@ -418,7 +419,7 @@ function rewardInput(
     if (dispatch === null) return null;
     return {
       jobId: id, pool: dispatch.lane,
-      repo: merge.repo ?? dispatch.repo,
+      repo: merge.repo === undefined ? dispatch.repo : merge.repo,
       merged: heldMerge, dispatchedAt: iso(dispatch.ms), mergedAt: heldMerge ? iso(merge.resolvedMs) : null,
       costUsd: cost,
       ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs, merge.prKeys),
@@ -435,7 +436,7 @@ function rewardInput(
     if (dispatch === null) return null;
     return {
       jobId: id, pool: dispatch.lane,
-      repo: acc.close?.repo ?? dispatch.repo,
+      repo: acc.close?.repo === undefined ? dispatch.repo : acc.close.repo,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
       ...ciWallEvidence(acc, dispatch.ms, resolutionMs, acc.close?.prKeys ?? []),

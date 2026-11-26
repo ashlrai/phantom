@@ -347,6 +347,36 @@ describe('foldJobsLedgerRewards', () => {
       .toMatchObject([{ jobId: job, merged: true }]);
   });
 
+  it.each(['MERGED', 'CLOSED'])('attributes %s rewards to the PR repository across URL aliases', (state) => {
+    const job = 'RQ-PR-REPO';
+    const rows = [
+      launch(job),
+      line({
+        job, state, ts: MERGED_ISO, repo: 'ashlrai/phantom', url: 'unknown',
+        pr_url: 'https://github.com/AshlrAI/Companion/pull/101/',
+        html_url: 'https://github.com/ashlrai/companion/pull/101',
+      }),
+    ];
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, repo: 'ashlrai/companion', merged: state === 'MERGED' },
+    ]);
+  });
+
+  it.each(['MERGED', 'CLOSED'])('withholds repository attribution for a %s verdict naming multiple repositories', (state) => {
+    const job = 'RQ-CONFLICTING-PR-REPOS';
+    const rows = [
+      launch(job),
+      line({
+        job, state, ts: MERGED_ISO, repo: 'ashlrai/phantom',
+        url: 'https://github.com/ashlrai/phantom/pull/101',
+        html_url: 'https://github.com/ashlrai/companion/pull/101',
+      }),
+    ];
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, repo: null, merged: state === 'MERGED' },
+    ]);
+  });
+
   it.each(['merge', 'revert'])('withholds PR-specific discounts when the %s receipt names different PRs', (conflict) => {
     const job = 'RQ-CONFLICTING-PR-FIELDS';
     const pr = 'https://github.com/ashlrai/phantom/pull/101';

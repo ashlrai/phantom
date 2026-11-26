@@ -44,6 +44,10 @@ The reward feed attributes a resolved job to the latest dispatch timestamp
 at or before its outcome bound. Conflicting pool receipts at that timestamp
 leave the reward's pool null. A single observed pool is retained when other
 receipts at that timestamp carry missing or unknown pool labels.
+For a merge or close verdict, a single repository identified by its GitHub
+PR URL fields takes precedence over the receipt and dispatch repository
+labels. If those URLs identify different repositories, the reward keeps
+its verdict and leaves the repository null.
 The feed leaves CI wall time unknown when a batch claim falls at or between
 the paired CI timestamps. A batch claim strictly before CI starts can still
 supply dispatch evidence for a reward with measured CI wall time.
