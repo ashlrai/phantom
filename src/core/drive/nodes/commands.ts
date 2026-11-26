@@ -3,7 +3,7 @@ import type { DriveNodes, JobClaim } from './index.js';
 import { isVersionCap } from './phm-version.js';
 import type { NodeAuth, NodeCapacitySample } from './state.js';
 import { isNodeCapacity, isHostStats, validCap, validId, validSecretName } from './state.js';
-import { jobBlockers, routable } from './router.js';
+import { jobBlockers, routable, type RouteAssignment } from './router.js';
 import { NODE_TASK_LIMIT, validNodeTask } from './task.js';
 
 export class UsageError extends Error {
@@ -161,6 +161,23 @@ export function joinHintCommand(nodeId: string, profile: { owners?: string[]; ca
 /** Rejoin command for a dead session's fix text. */
 function joinHint(nodes: DriveNodes, nodeId: string, watch = false): string {
   return joinHintCommand(nodeId, nodes.nodeProfile(nodeId), { watch });
+}
+
+/** planRoutes' unrouted-job fix can end in a bare `phm node join`; on the
+ * standalone registry the keep-alive is `join --watch` — a bare join's session
+ * dies 30 s after its last beat — so the hint must carry it, the same rule
+ * joinHintCommand's watch option follows. The owner fix is the only route fix
+ * that names a join command and it always ends with its flag arguments, so the
+ * tail pattern only ever matches that form; any other wording is left alone
+ * rather than rewritten. rejoinWatch is set only on the standalone CLI path —
+ * the pool endpoint leaves it off because pool joins release their probe
+ * session and refuse --watch. */
+const JOIN_FIX_TAIL = /phm node join(?:\s+--[a-z][a-z-]*(?:\s+[^\s`]+)?)+\s*$/;
+function routeFixWithJoinWatch(fix: string): string {
+  return fix.includes('--watch') || !JOIN_FIX_TAIL.test(fix) ? fix : `${fix} --watch`;
+}
+function routesWithJoinWatch(routes: RouteAssignment[], watch: boolean): RouteAssignment[] {
+  return watch ? routes.map(a => a.fix === undefined ? a : { ...a, fix: routeFixWithJoinWatch(a.fix) }) : routes;
 }
 
 /** The session a node id is live under right now, or null. Read-only, and used
@@ -327,7 +344,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         ...(pack === undefined ? {} : { pack }), secrets, ...(task ? { task } : {}) });
       return { jobId, enqueued: added };
     }
-    case 'plan': return { routes: nodes.plan(optId(flags, '--owner')) };
+    case 'plan': return { routes: routesWithJoinWatch(nodes.plan(optId(flags, '--owner')), opts.rejoinWatch === true) };
     case 'pull': {
       const s = session();
       const pulled = nodes.pull(s);
@@ -396,7 +413,8 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
     case 'list':
     case 'status': {
       requireOwnerFlag(flags, nodes, verb);
-      return { ...nodes.view(needIdList(flags, '--owner')) };
+      const view = nodes.view(needIdList(flags, '--owner'));
+      return { ...view, routes: routesWithJoinWatch(view.routes, opts.rejoinWatch === true) };
     }
     default: {
       const s = session();
