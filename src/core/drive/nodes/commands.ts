@@ -88,6 +88,15 @@ const ID_FIX = 'Ids start with a letter or digit and use only letters, digits an
 const CAP_FIX = 'Capabilities start with a lowercase letter or digit and use only lowercase letters, digits and . _ : - (64 characters max). Run: phm node --help';
 const SECRET_FIX = 'Secret flags take NAMES such as DEPLOY_KEY, never values. Run: phm node --help';
 const LIST_FIX = 'Separate entries with commas; at most 64 entries. Run: phm node --help';
+const HELP_POINTER = 'Run: phm node --help';
+/** A fix that joins two sentences prints the help pointer once, at the end:
+ * verbatim `${A_FIX} ${B_FIX}` reads "… --help Separate entries …", as if the
+ * pointer took arguments. Each part keeps its own pointer when thrown alone;
+ * joinFix moves every part's pointer to the single trailing one. */
+const joinFix = (...parts: string[]): string => {
+  const bodies = parts.map(part => part.endsWith(HELP_POINTER) ? part.slice(0, -HELP_POINTER.length).trimEnd() : part);
+  return `${bodies.join(' ')}${parts.some(part => part.endsWith(HELP_POINTER)) ? ` ${HELP_POINTER}` : ''}`;
+};
 
 const badFlag = (name: string, message: string, fix: string): UsageError =>
   new UsageError(`bad-${name.slice(2)}`, message, fix);
@@ -105,14 +114,14 @@ const optId = (flags: Map<string, string>, name: string): string | undefined => 
 const needIdList = (flags: Map<string, string>, name: string): string[] => {
   const items = csv(need(flags, name));
   if (items.length === 0 || items.length > 64 || !items.every(validId)) {
-    throw badFlag(name, `${name} must be a comma-separated list of 1-64 ids.`, `${ID_FIX} ${LIST_FIX}`);
+    throw badFlag(name, `${name} must be a comma-separated list of 1-64 ids.`, joinFix(ID_FIX, LIST_FIX));
   }
   return items;
 };
 const optCapList = (flags: Map<string, string>, name: string): string[] => {
   const items = csv(flags.get(name));
   if (items.length > 64 || !items.every(validCap)) {
-    throw badFlag(name, `${name} must be a comma-separated list of up to 64 capabilities.`, `${CAP_FIX} ${LIST_FIX}`);
+    throw badFlag(name, `${name} must be a comma-separated list of up to 64 capabilities.`, joinFix(CAP_FIX, LIST_FIX));
   }
   return items;
 };
