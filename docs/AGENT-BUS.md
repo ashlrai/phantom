@@ -935,7 +935,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 
 `phm agents bus work feed [--status <s>] [--job <id>] [--repo <owner/name>]
 [--provider <p>] [--tier <fast|mid|work|frontier>] [--to <label>] [--owner <agent>]
-[--channel <name>] [--result <reserved|admitted|complete|failed>] [--id <envelope-id>]
+[--channel <name>] [--topic <topic>] [--result <reserved|admitted|complete|failed>] [--id <envelope-id>]
 [--claims] [--open] [--claimable]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>]`
 reads the
@@ -971,7 +971,7 @@ that routing label and `--owner` keeps jobs announced by that agent; each
 matches literally and under every label of one agent identity the ref resolves
 to through the registry — a handle, `agent:` address, stable id or alias,
 matched exactly, so a case-variant spelling names no identity — while an
-unresolvable ref or an unreadable registry keeps exact-label matching. `--channel` keeps only jobs announced to `group:<channel>:*` — the room's whole traffic under every topic, the same address prefix `inbox --channel`, `channel read` and `phm messages --channel` match on the raw routing label; the value takes the strict channel-name grammar, needs no registry, and a name outside it is a usage error. `--repo` keeps jobs announced for one `owner/name`
+unresolvable ref or an unreadable registry keeps exact-label matching. `--channel` keeps only jobs announced to `group:<channel>:*` — the room's whole traffic under every topic, the same address prefix `inbox --channel`, `channel read` and `phm messages --channel` match on the raw routing label; the value takes the strict channel-name grammar, needs no registry, and a name outside it is a usage error. `--topic` keeps only jobs announced to a well-formed `group:<room>:<topic>` address carrying that exact topic component — the same `groupAddressTopicOf` parse `work next --topic` and `comms bus next --topic` apply, decided on the raw routing label across every room, so it needs no registry and composes with `--channel` into one room AND one topic; an announcement addressed to an agent, a bare label or a `group:<room>` without a topic never matches, the value takes the same strict channel-name grammar, and a name outside it is a usage error. `--repo` keeps jobs announced for one `owner/name`
 repo, compared case-insensitively under the same rule claim keys use, and
 `--provider` keeps jobs announced for one provider; a malformed `--repo` or
 `--provider` is a usage error, never a silent empty view. `--tier` keeps
@@ -1931,7 +1931,8 @@ these shared projections to every enrolled, authenticated peer, independent of
 lane or role. `peers work-feed` accepts the same filter set every other
 work-feed surface serves — `--claims`, `--open`, `--claimable`, `--status`,
 `--job`, `--repo`, `--provider`, `--tier`, `--to`, `--owner`, `--channel`,
-`--result`, `--id`, `--since`, `--before`, `--contains` and `--limit` —
+`--topic`, `--result`, `--id`, `--since`, `--before`, `--contains` and
+`--limit` —
 validated through the shared `parseBusWorkFeedQuery` contract, so a remote
 peer's filtered feed reads exactly what `phm fleet work-feed` would; `peers
 mesh` stays unfiltered and every other verb refuses the feed flags. Private

@@ -1,6 +1,7 @@
 /** One-shot local coordination; message labels do not authenticate or authorize execution. */
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from './bus-inbox.js';
 import { BUS_PRIORITIES, isClaimableWork, type BusPriority } from './bus-envelope.js';
+import { groupAddressTopicOf } from './bus-group.js';
 import { mutateBusWorkClaim, validBusClaimRequest } from './bus-work-claims.js';
 import { agentChannelNameSchema, agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
 import { busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
@@ -76,24 +77,6 @@ export interface BusNextRequest {
 export type BusNextResult = { status: 'acquired'; receipt: BusInboxReceipt; token: string; leaseUntil: number }
   | { status: 'empty'; candidates: number; held: number }
   | { status: string };
-
-/**
- * The topic component of a well-formed `group:<room>:<topic>` routing label —
- * the two-component grammar `groupAddress` writes, room and topic each under
- * the shared channel-name rule — or null for any other label. Claimable
- * receipts carry raw `to` labels, so this parse is what `--topic` matches
- * on; a bare `group:<room>`, a deeper label, an agent address and a
- * malformed room or topic all resolve to null and never match.
- */
-function groupAddressTopicOf(to: string): string | null {
-  if (!to.startsWith('group:')) return null;
-  const sep = to.indexOf(':', 'group:'.length);
-  if (sep < 0) return null;
-  const room = to.slice('group:'.length, sep);
-  const topic = to.slice(sep + 1);
-  return agentChannelNameSchema.safeParse(room).success && agentChannelNameSchema.safeParse(topic).success
-    ? topic : null;
-}
 
 /**
  * `--to` claims for one agent identity under every routing label that

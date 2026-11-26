@@ -70,7 +70,7 @@ surface validates — the `parseBusWorkFeedQuery` contract `phm fleet
 work-feed`, `phm agents bus work feed`, `GET /api/verse/agent-bus/work-feed`
 and `fleet_work_feed` share: `--claims`, `--open`, `--claimable`, `--status`,
 `--job`, `--repo`, `--provider`, `--tier`, `--to`, `--owner`, `--channel`,
-`--result`, `--id`, `--since`, `--before`, `--contains` and `--limit`,
+`--topic`, `--result`, `--id`, `--since`, `--before`, `--contains` and `--limit`,
 alongside the read-filter names it shares (`--to`, `--since`, `--before`,
 `--contains`, `--id`, `--job`, `--result`). The parsed query applies the
 `projectBusWorkFeedView` filters and the `sliceBusWorkFeedView` page bound to

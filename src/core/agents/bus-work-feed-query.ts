@@ -34,6 +34,8 @@ export interface BusWorkFeedQueryInput {
   before?: string;
   contains?: string;
   channel?: string;
+  /** Topic component of a `group:<room>:<topic>` announcement address to keep. */
+  topic?: string;
   /** Newest `work.result` citation outcome to keep; one of WORK_RESULT_OUTCOMES. */
   result?: string;
   /** Retained envelope wire id to keep; matches the job's postId/statusId/result citations. */
@@ -63,9 +65,12 @@ const invalid = (error: string): BusWorkFeedQuery => ({ ok: false, error });
  * (15m, 2h, 1d, epoch ms or an ISO time) — `since` inclusive, `before`
  * exclusive on the job's `updatedAt`, so the pair reads one [since, before)
  * window — and `contains` takes a non-empty needle of at most
- * `BUS_WORK_FEED_CONTAINS_MAX` characters, and `channel` takes the strict
+ * `BUS_WORK_FEED_CONTAINS_MAX` characters, `channel` takes the strict
  * bus channel-name grammar — a raw `group:<channel>:` prefix match on the
- * announcement address, never a registry-dependent guess. `result` keeps
+ * announcement address, never a registry-dependent guess — and `topic`
+ * takes the same grammar for the topic component of a well-formed
+ * `group:<room>:<topic>` announcement address, the `groupAddressTopicOf`
+ * match `work next --topic` applies. `result` keeps
  * jobs whose newest `work.result` citation carries that outcome — one of the
  * `WORK_RESULT_OUTCOMES` codes — `id` keeps only jobs whose retained
  * envelope citations (the `work.post` announcement, newest `work.status`
@@ -143,6 +148,15 @@ export function parseBusWorkFeedQuery(
       return invalid('channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).');
     }
     filters.channel = input.channel;
+  }
+  if (input.topic !== undefined) {
+    // The same strict channel-name grammar `--channel` and `work next
+    // --topic` enforce — the topic component of a group:<room>:<topic>
+    // address, never a registry-dependent guess.
+    if (!agentChannelNameSchema.safeParse(input.topic).success) {
+      return invalid('topic takes a bus channel topic (a-z, 0-9, _ -; 1-32 chars).');
+    }
+    filters.topic = input.topic;
   }
   if (input.result !== undefined) {
     // The same outcome enum the work.result body schema enforces — a value

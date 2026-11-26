@@ -2965,12 +2965,14 @@ read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
 answer 503. Its query is the feed CLIs' filter set: `claims=true` adds the
 claims hold join, `open=true`/`claimable=true` imply it like the CLI flags,
 and `status`, `job`, `repo`, `provider`, `tier`, `to`, `owner`, `since`,
-`before`, `contains`, `channel`, `result` and `id` narrow the answer through the same
+`before`, `contains`, `channel`, `topic`, `result` and `id` narrow the answer through the same
 `projectBusWorkFeedView` the
 CLIs use — jobs answer newest-first, `to`/`owner` resolve through the
 server-side identity registry with exact-label fallback, `channel` is the
 strict channel-name grammar prefix-matching `group:<channel>:` on the
-announcement address, `id` keeps only jobs whose retained envelope
+announcement address, `topic` is the same grammar matched as the topic
+component of a well-formed `group:<room>:<topic>` announcement address
+through the shared `groupAddressTopicOf` parse, `id` keeps only jobs whose retained envelope
 citations (`postId`/`statusId`/`result.id`, the `busWorkFeedJobCitesEnvelope`
 match the feed `--id` flag and `work mine --id` share), and `repo`,
 `since` and `contains` share the CLI normalization. `limit` (1–200,
@@ -3029,7 +3031,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
 client-side feed filters (`{status?, jobId?, repo?, provider?, tier?, claimable?, open?,
-since?, before?, toMatch?, ownerMatch?, contains?, channel?, result?, id?}`),
+since?, before?, toMatch?, ownerMatch?, contains?, channel?, topic?, result?, id?}`),
 newest-first order and per-job hold regrouping; `repo` is the lowercase
 `owner/name` key `busWorkFeedRepoKey(repo)` normalizes a `--repo` argument to
 (undefined for a non-slug, so callers reject it as usage) and matches a job's
@@ -3068,7 +3070,13 @@ is scrubbed before the match. `channel` keeps only jobs whose announcement
 `to` carries `group:<channel>:` — the room's whole traffic under every
 topic, the same raw address prefix `agents bus inbox --channel`, `channel
 read` and `phm messages --channel` match; the value is the strict
-channel-name grammar and matching needs no registry. `result` keeps only
+channel-name grammar and matching needs no registry. `topic` keeps only
+jobs whose announcement `to` is a well-formed `group:<room>:<topic>`
+address carrying that exact topic component — the `groupAddressTopicOf`
+parse `work next --topic` and `comms bus next --topic` share, matched on
+the raw routing label across every room so it needs no registry and
+composes with `channel` into one room AND one topic; an agent address, a
+bare label or a `group:<room>` without a topic never matches. `result` keeps only
 jobs whose newest retained `work.result` citation carries that outcome —
 one of the `WORK_RESULT_OUTCOMES` codes (`reserved`, `admitted`,
 `complete`, `failed`) — reported evidence that never moved the job's
@@ -3089,7 +3097,7 @@ footer adds `receipt=<id>` when the projection blamed a retained envelope,
 and a paged read's footer adds `matched=N omitted=M` —
 both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>`,
-`--channel <name>`, `--result <reserved|admitted|complete|failed>`, `--id <envelope-id>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--contains <text>` and
+`--channel <name>`, `--topic <topic>`, `--result <reserved|admitted|complete|failed>`, `--id <envelope-id>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--contains <text>` and
 `--limit <1-200>` beside
 `--status`; `--claimable`
 implies the claims join, `--since` and `--before` parse through the shared `parseSince`
@@ -3103,10 +3111,10 @@ newest `work.status` receipt or newest `work.result` receipt, the same
 overlong values as usage errors.
 `phm fleet work-feed [--claims]
 [--to <label>] [--owner <agent>] [--job <id>] [--repo <owner/name>]
-[--provider <p>] [--channel <name>] [--claimable] [--since <15m|2h|1d|ISO>] [--limit <1-200>]` and
+[--provider <p>] [--channel <name>] [--topic <topic>] [--claimable] [--since <15m|2h|1d|ISO>] [--limit <1-200>]` and
 `phm agents bus work feed [--status] [--claims] [--claimable] [--to <label>]
 [--owner <agent>] [--job <id>] [--repo <owner/name>] [--provider <p>]
-[--channel <name>] [--since <15m|2h|1d|ISO>] [--limit <1-200>]` print the same
+[--channel <name>] [--topic <topic>] [--since <15m|2h|1d|ISO>] [--limit <1-200>]` print the same
 projection — hold lines plus a `claims=` footer — and non-ok reads print
 `jobs=unknown` rather than a fabricated count.
 
