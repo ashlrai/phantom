@@ -63,7 +63,10 @@ export async function readFleetOrgSources(minutes = 60, readers: Partial<FleetOr
   const tree = fleetOrgTree(map, { runs: settled(runs), usage, engineLanes: snapshot?.lanes, models: settled(models), leaderSeat, laneHealth: settled(health)?.lanes });
   const source = localFleetSource(tree.generatedAt, now);
   const lanes = tree.lanes.map(lane => ({ ...lane, machine: source.machine ?? undefined }));
+  const peerSources: FleetOrgTree['peerSources'] = [];
   for (const peer of fleetPeerReports(now)) {
+    const peerSource = { ...localFleetSource(peer.receivedAt, now), machine: peer.machine, via: 'leader-replica' as const };
+    peerSources.push(peerSource);
     for (const row of peer.lanes) {
       const id = `peer:${peer.machine}:${row.lane}`, provider = providerFor(row.lane).name;
       const running = row.dispatch?.running ?? row.claims;
@@ -76,12 +79,12 @@ export async function readFleetOrgSources(minutes = 60, readers: Partial<FleetOr
       map.nodes.push({ id, kind: 'lane', label: row.lane, machine: peer.machine, provider, status: state });
       map.edges.push({ id: `reports:${id}:leader`, kind: 'reports-to', from: id, to: 'leader', provider });
       lanes.push({ lane: row.lane, machine: peer.machine, provider, model: null, state, doing, heldReason: null,
-        source: { ...localFleetSource(peer.receivedAt, now), machine: peer.machine, via: 'leader-replica' },
+        source: peerSource,
         running, target: row.dispatch?.target ?? null, queued: row.dispatch?.queued ?? null, held: row.dispatch?.held ?? null, health: null,
         usage: { usedPct: null, asOf: null, resetAt: null }, jobs: [] });
     }
   }
-  return { map: { ...map, tree: { ...tree, source, lanes } }, usage };
+  return { map: { ...map, tree: { ...tree, source, lanes, peerSources } }, usage };
 }
 export async function readFleetOrgMap(minutes = 60, readers: Partial<FleetOrgReaders> = {}): Promise<FleetOrgMap & { tree: FleetOrgTree }> {
   return (await readFleetOrgSources(minutes, readers)).map;

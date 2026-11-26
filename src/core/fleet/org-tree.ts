@@ -70,6 +70,7 @@ export interface FleetOrgTree {
   source?: FleetReplicaSource;
   /** Bumped only when a field is removed or changes meaning; new fields do not bump it. */
   version: 1;
+  peerSources?: FleetReplicaSource[];
   leaderSeat?: LeaderSeatReport;
   generatedAt: string | null;
   /** `state` and `doing` describe the dispatcher the leader works through; the leader's own process, provider and model are not reported. */

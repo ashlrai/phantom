@@ -82,6 +82,7 @@ function LaneChip({ lane, runs, readAt, now, children }: { lane: FleetLiveLaneSt
         {' · '}
       </span>
       <span className={styles.laneSlots}>{slots}</span>
+      {lane.machine ? <span className={styles.laneName}> · {lane.machine}</span> : null}
       {children}
     </li>
   );
@@ -106,7 +107,7 @@ function LaneHealthRows({ health }: { health: LaneHealthV1 }) {
   );
 }
 
-const machinesQuery: QueryDef<FleetMachines> = {
+export const machinesQuery: QueryDef<FleetMachines> = {
   key: 'verse-fleet-machines',
   fetch: (signal) => apiGet<FleetMachines>('/api/fleet/machines', signal),
 };

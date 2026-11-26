@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, type ReactNode } from 'react';
 import { EmptyState } from '../../../components/primitives/EmptyState.js';
 import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
@@ -14,7 +14,7 @@ import { tickStaleness } from './tick-staleness.js';
 import { notInBuild } from './workers-card-queries.js';
 import styles from './runs-lanes.module.css';
 
-export function RunsLanesCard() {
+export function RunsLanesCard({ sourceBadge }: { sourceBadge?: ReactNode } = {}) {
   const id = useId();
   const read = useQuery(runsLanesQuery);
   const now = useNow();
@@ -23,6 +23,7 @@ export function RunsLanesCard() {
   const extras = data ? headerExtras(data, now) : [];
   return <section className={styles.panel} aria-labelledby={id}>
     <header className={styles.header}><h2 id={id}>Lanes on this Mac</h2>
+      {sourceBadge}
       {data ? <span data-level={tickStaleness(data.lastTick, now).level}>{headerText(data, now)}</span> : null}
       {extras.length ? <span data-testid="lanes-header-extras">{extras.join(' · ')}</span> : null}
     </header>

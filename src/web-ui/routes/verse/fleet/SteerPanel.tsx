@@ -56,19 +56,25 @@ export interface SteerPanelProps {
   live: FleetLiveSnapshotV1 | null;
   actions: SurfaceActions;
   now: number;
+  workingUnknown?: boolean;
 }
 
-export function SteerPanel({ live, actions, now }: SteerPanelProps) {
+export function SteerPanel({ live, actions, now, workingUnknown = false }: SteerPanelProps) {
   const queue = useQuery(fleetQueueQuery, { freshMs: 10_000 });
   const refetchQueue = useRefetch(fleetQueueQuery);
   usePollWhileVisible(refetchQueue, QUEUE_POLL_MS);
   const q = queue.data?.value ?? null;
   const runs = workingRuns(live);
+  const runReason = live?.source?.stale ? live.source.reason ?? 'The leader snapshot is unavailable.'
+    : workingUnknown ? 'Individual agents not reported for this machine.'
+    : !live ? 'The live fleet view did not answer.' : null;
 
   return (
     <Card title="Steer the fleet" caption="Stop or redirect a run, reorder the queue, retarget goals, tell the Leader">
-      <MicroLabel>Working now ({runs.length})</MicroLabel>
-      {runs.length === 0 ? (
+      <MicroLabel>Working now ({runReason ? 'unknown' : runs.length})</MicroLabel>
+      {runReason ? (
+        <p className={styles.muted}>{runReason}</p>
+      ) : runs.length === 0 ? (
         <p className={styles.muted}>No run is in flight.</p>
       ) : (
         <ul className={styles.list}>

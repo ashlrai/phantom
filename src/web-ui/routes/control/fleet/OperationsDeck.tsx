@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import type { FleetCompute } from '../../../../core/fleet/compute-view.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../../../../core/fleet/lane-health.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -20,7 +20,7 @@ const LIVE = '/api/verse/fleet/live';
 const show = (value: number | null | undefined) => typeof value === 'number' && Number.isFinite(value) ? String(value) : 'unknown';
 
 /** The same read-only operations deck on the console and Verse Fleet surfaces. */
-export function OperationsDeck() {
+export function OperationsDeck({ sourceBadges }: { sourceBadges?: ReactNode } = {}) {
   const compute = useQuery(computeQuery);
   const daemon = useQuery(fleetStatusQuery);
   const queue = useQuery(queueQuery);
@@ -65,6 +65,7 @@ export function OperationsDeck() {
 
   return <section className={styles.deck} aria-label="Fleet operations">
     <h2>Operations</h2>
+    {sourceBadges}
     <p className={styles.note}>Refreshes every 15s while visible. Hover a reading or open evidence for its source.</p>
     <div role="status" aria-live="polite" aria-atomic="true" className={styles.note}>
       {[{ status: compute.status, label: 'Compute' }, { status: queue.status, label: 'Queue' }, { status: lanes.status, label: 'Lanes' }, { status: live.status, label: 'Health' }, { status: daemon.status, label: 'Daemon' }].map(({ status, label }) =>

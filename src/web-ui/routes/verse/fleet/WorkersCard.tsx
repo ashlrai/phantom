@@ -1,4 +1,4 @@
-import { Fragment, useId, useState } from 'react';
+import { Fragment, useId, useState, type ReactNode } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { EmptyState } from '../../../components/primitives/EmptyState.js';
 import { RefreshIndicator } from '../../../components/primitives/RefreshIndicator.js';
@@ -41,7 +41,7 @@ const cardQuery = {
   },
 };
 
-export function WorkersCard() {
+export function WorkersCard({ sourceBadge }: { sourceBadge?: ReactNode } = {}) {
   const id = useId();
   const read = useQuery(cardQuery);
   const refresh = useRefresh(cardQuery);
@@ -60,6 +60,7 @@ export function WorkersCard() {
   const stuckCount = healthy ? data.workers.filter(worker => workerAgeState(worker.lane, worker.ageSeconds) === 'stuck').length : 0;
   return <section className={styles.panel} aria-labelledby={id}>
     <header className={styles.header}><h2 id={id}>Working on this Mac</h2>
+      {sourceBadge}
       {healthy ? <span>{describeWorkers(data.workers.length)}</span> : null}
       {stuckCount ? <span>{stuckCount} look stuck</span> : null}
       {read.status === 'refreshing' ? <RefreshIndicator /> : null}

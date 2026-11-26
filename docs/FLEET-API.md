@@ -392,6 +392,8 @@ the worker reads the leader's tree, live totals, queue and resource ledger.
 `leader-replica`), `asOf`, `ageSeconds`, `stale` and `reason`. Lanes name
 their `machine`; a peer-reported lane also has its own `source` with the
 leader's receipt time. Loop presence alone does not establish a job count.
+The optional `peerSources` array names recent peer observations even if the
+peer reported no lanes.
 The replicated org map carries the leader's 60-minute message window and
 reports that window in `messageWindowMinutes`, even if a different window
 was requested on the worker.

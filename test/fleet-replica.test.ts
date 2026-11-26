@@ -75,6 +75,7 @@ describe('authenticated fleet projection across two homes', () => {
     try { return await serveFleetReplica({ report }); } finally { useHost('muse'); }
   }
   it('uses the leader view from org and lane-slots with no worker coordination or grant', async () => {
+    await serveFleetReplica({ report: { machine: 'air', lanes: [] } });
     useHost('muse');
     expect(existsSync(join(process.env.HOME!, '.ashlr-runs'))).toBe(false);
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -86,6 +87,10 @@ describe('authenticated fleet projection across two homes', () => {
     expect(log.mock.lastCall?.[0]).toContain('Source: leader-mac (leader-replica)');
     expect(log.mock.lastCall?.[0]).toContain('gemini-neon @ muse');
     const worker = (await readFleetOrgMap()).tree;
+    expect(worker.peerSources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ machine: 'air', via: 'leader-replica', stale: false }),
+      expect.objectContaining({ machine: 'muse', via: 'leader-replica', stale: false }),
+    ]));
     expect(worker.leader.dispatcher).toEqual({ paused: false, lastTick: '2026-11-24T12:00:00.000Z' });
     expect(worker.lanes).toEqual(expect.arrayContaining([expect.objectContaining({ lane: 'claude', machine: 'leader-mac', running: 2, target: 4, queued: 5 })]));
     expect(await cmdFleetLaneSlots(['--json'])).toBe(0);

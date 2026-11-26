@@ -23,7 +23,7 @@ import { OperationsDeck } from '../../control/fleet/OperationsDeck.js';
  * the fleet has nothing to draw (no runs, no gate traffic) the three chart
  * cards are left out instead of each repeating "Fleet dark since …".
  */
-import { Suspense, lazy, useId, useState } from 'react';
+import { Suspense, lazy, useId, useState, type ReactNode } from 'react';
 import { ResourcePanel } from '../../fleet-dashboard/ResourcePanel.js';
 import { RefreshIndicator } from '../../../components/primitives/RefreshIndicator.js';
 import { Button } from '../../../components/primitives/Button.js';
@@ -51,7 +51,7 @@ import { authorityQuery, fleetLiveQuery } from '../command/surface-data.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useViewport } from '../shell/viewport.js';
 import { executeCatalogCommand } from '../shell/run-command.js';
-import { GateFunnelCards, LanesStrip, LiveSwimlane, OvernightCard, ParkedCard, WhySeatCard } from '../fleet/FleetCards.js';
+import { GateFunnelCards, LanesStrip, LiveSwimlane, machinesQuery, OvernightCard, ParkedCard, WhySeatCard } from '../fleet/FleetCards.js';
 import { MainHealthRows } from '../fleet/MainHealthRows.js';
 import { AutonomyCard } from '../fleet/AutonomyCard.js';
 import { RepoTable } from '../fleet/RepoTable.js';
@@ -61,6 +61,7 @@ import { GrokUltraRunway } from '../fleet/GrokUltraRunway.js';
 const ResetSpendingControl = lazyPanel(() => import('../budget/ResetSpendingControl.js').then((m) => m.ResetSpendingControl));
 import { nothingToDraw } from '../fleet/live-model.js';
 import { fleetDarkSince } from '../fleet/dark-since.js';
+import { FleetMachineScope, FleetSourceBadge, FleetSourced, useFleetMachineScope } from '../fleet/FleetMachineScope.js';
 import styles from '../fleet/fleet.module.css';
 
 export const FLEET_POLL_MS = 5_000;
@@ -109,6 +110,14 @@ export function FleetSection() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const advancedId = useId();
   const live = fleet.data?.value ?? null;
+  const scope = useFleetMachineScope(live);
+  const source = live?.source ?? scope.tree?.source;
+  const answering = useQuery(machinesQuery).data?.answering?.host;
+  const localMachine = (answering && answering !== 'unknown' ? answering : null) ??
+    (source?.via === 'local' ? source.machine : null) ?? 'This Mac';
+  const scopedRead = fleet.data && { ...fleet.data, value: scope.scopedLive };
+  const sourced = (children: ReactNode, local = false) => <FleetSourced
+    source={local ? undefined : source} now={now} localMachine={local ? localMachine : undefined}>{children}</FleetSourced>;
   const off = useAutonomyOff();
   // Same cache entry as the off-state's read (no extra request).
   const authority = useQuery(authorityQuery, { freshMs: 30_000 });
@@ -131,14 +140,16 @@ export function FleetSection() {
       actions={fleet.status === 'refreshing' ? <RefreshIndicator /> : null}
       lead={
         <>
-          <div id={anchorId('fleet-map')}>
+          <FleetMachineScope scope={scope} live={live} now={now} />
+          {!scope.machine ? <div id={anchorId('fleet-map')}>
+            {sourced(
             <Suspense fallback={<p className={styles.muted} aria-busy="true">Loading the fleet map…</p>}>
               <FleetWorld initialLens="compute" agentWorkspace={new URLSearchParams(window.location.search).get('agentWorkspace') === '1'} read={fleet.data} refreshing={fleet.status === 'refreshing'} readFailed={fleet.status === 'error'} />
-            </Suspense>
-          </div>
-          <Suspense fallback={<p className={styles.muted} aria-busy="true">Loading outcomes…</p>}>
+            </Suspense>)}
+          </div> : null}
+          {sourced(<Suspense fallback={<p className={styles.muted} aria-busy="true">Loading outcomes…</p>}>
             <OutcomesPanel actions={actions} />
-          </Suspense>
+          </Suspense>, true)}
           <div className={styles.taskActions} role="group" aria-label="Delegate and guide work">
             <Button size="sm" variant="primary" onClick={() => executeCatalogCommand('agents.new', { via: 'button' })}>Delegate a task</Button>
             <Button size="sm" variant="ghost" onClick={() => executeCatalogCommand('surface.agents', { via: 'button' })}>Review agents</Button>
@@ -148,83 +159,86 @@ export function FleetSection() {
           <ActionStatus actions={actions} />
           <div id={anchorId('fleet-control')}>
             <span id={anchorId('authority-grant')} />
-            <FleetControl actions={actions} grantFlow={grantFlow} darkSince={fleetDarkSince(live)} setupShownBelow={off?.kind === 'setup'} />
+            {sourced(<FleetControl actions={actions} grantFlow={grantFlow} darkSince={fleetDarkSince(live)} setupShownBelow={off?.kind === 'setup'} />, true)}
           </div>
-          <InterjectBox />
-          <SlackBridgeLine />
-          <CosTaskList />
-          <AutonomyCard />
-          <OperationsDeck />
-          <WorkersCard />
-          <RunsLanesCard />
-          <LaunchesCard />
+          <InterjectBox sourceBadge={<FleetSourceBadge localMachine={localMachine} now={now} />} />
+          {sourced(<SlackBridgeLine />, true)}
+          {sourced(<CosTaskList />, true)}
+          {sourced(<AutonomyCard />, true)}
+          {!scope.machine ? <>
+            <OperationsDeck sourceBadges={<><FleetSourceBadge localMachine={localMachine} now={now} /><FleetSourceBadge source={source} now={now} /></>} />
+            <WorkersCard sourceBadge={<FleetSourceBadge localMachine={localMachine} now={now} />} />
+            <RunsLanesCard sourceBadge={<FleetSourceBadge localMachine={localMachine} now={now} />} />
+            {sourced(<LaunchesCard />, true)}
+          </> : null}
           {/* The one-time setup checklist (the only step list left); every other
               off state is FleetControl's single blocker + button. */}
           {off && off.kind === 'setup' ? <AutonomyOffState state={off} here="fleet" /> : null}
-          <LanesStrip live={live} />
+          {sourced(<LanesStrip live={scope.scopedLive} />)}
           {/* Per-repo main state from the guardian's state.json — one row each,
               unknown never green. Owns its own read + poll. */}
-          <MainHealthRows />
+          {sourced(<MainHealthRows />, true)}
         </>
       }
     >
-      <Cell span={12}><GrokUltraRunway /></Cell>
+      <Cell span={12}>{sourced(<GrokUltraRunway />, true)}</Cell>
       {auth && auth.grant.state === 'active' ? (
         // Needs-you's rollout and Stop items, and ⌘K "Autonomy status", point here.
         <Cell span={12}>
           <div id={anchorId('autonomy')}>
-            <Suspense fallback={<p className={styles.muted} aria-busy="true">Loading the rollout ladder…</p>}>
+            {sourced(<Suspense fallback={<p className={styles.muted} aria-busy="true">Loading the rollout ladder…</p>}>
               <AutonomyStatus
                 status={auth}
                 now={now}
                 onReapprove={(why) => grantFlow.open('re-approve', why)}
                 blocked={paletteBlock({ status: auth, reason: null, readOnly: actions.readOnly, busy: actions.busy })}
               />
-            </Suspense>
+            </Suspense>, true)}
           </div>
         </Cell>
       ) : null}
       <Cell span={12}>
-        <ResourcePanel />
-        <div id="fleet-working-runs"><SteerPanel live={live} actions={actions} now={now} /></div>
-        <Suspense fallback={<p className={styles.muted}>Loading allowance controls…</p>}>
+        {sourced(<ResourcePanel />, true)}
+        <div id="fleet-working-runs">{sourced(<SteerPanel live={scope.scopedLive} actions={actions} now={now}
+          workingUnknown={scope.machine !== null && scope.machine !== source?.machine} />)}</div>
+        {sourced(<Suspense fallback={<p className={styles.muted}>Loading allowance controls…</p>}>
           <ResetSpendingControl view={budget.data ?? null} nowMs={now} readOnly={actions.readOnly}
             onReviewGrant={() => grantFlow.open('re-approve', 'Review subscription reserve floors and producer roles before allowance reserve shrinking.')} />
-        </Suspense>
-        <FleetScheduling budget={budget.data ?? null} now={now} />
-        <EmptyJobsPanel />
-        <ExecutionFeedback />
+        </Suspense>, true)}
+        {sourced(<FleetScheduling budget={budget.data ?? null} now={now} />, true)}
+        {sourced(<EmptyJobsPanel />, true)}
+        {sourced(<ExecutionFeedback />, true)}
       </Cell>
-      {collapse ? null : (
+      {collapse || (scope.machine !== null && scope.machine !== source?.machine) ? null : (
         <Cell span={12}>
-          <LiveSwimlane read={fleet.data} now={now} hours={compact ? 6 : 12} />
+          {sourced(<LiveSwimlane read={scopedRead} now={now} hours={compact ? 6 : 12} />)}
         </Cell>
       )}
       {showDecisions ? (
         <Cell span={12}>
-          <Suspense fallback={<p className={styles.muted} aria-busy="true">Loading shadow decisions…</p>}>
+          {sourced(<Suspense fallback={<p className={styles.muted} aria-busy="true">Loading shadow decisions…</p>}>
             <ShadowDecisions now={now} />
-          </Suspense>
+          </Suspense>, true)}
         </Cell>
       ) : null}
       {collapse ? null : (
         <Cell span={7}>
-          <GateFunnelCards read={fleet.data} />
+          {sourced(<GateFunnelCards read={fleet.data} />)}
         </Cell>
       )}
-      <Cell span={collapse ? 6 : 5}>
-        <WhySeatCard read={fleet.data} preview={preview.data ?? null} view={budget.data ?? null} now={now} />
-      </Cell>
-      {collapse ? null : (
+      {scope.machine && scope.machine !== source?.machine ? null : <Cell span={collapse ? 6 : 5}>
+        {sourced(<WhySeatCard read={scopedRead} preview={preview.data ?? null} view={budget.data ?? null} now={now} />)}
+      </Cell>}
+      {collapse || (scope.machine !== null && scope.machine !== source?.machine) ? null : (
         <Cell span={7}>
-          <ParkedCard read={fleet.data} now={now} />
+          {sourced(<ParkedCard read={scopedRead} now={now} />)}
         </Cell>
       )}
       <Cell span={collapse ? 6 : 5}>
-        <OvernightCard read={overnight.data} onOpenAdvanced={openAdvanced} dark={live?.state === 'dark'} />
+        {sourced(<OvernightCard read={overnight.data} onOpenAdvanced={openAdvanced} dark={live?.state === 'dark'} />, true)}
       </Cell>
       <Cell span={12}>
-        <RepoTable read={fleet.data} actions={actions} now={now} compact={compact} />
+        {sourced(<RepoTable read={fleet.data} actions={actions} now={now} compact={compact} />)}
       </Cell>
       <Cell span={12}>
         <div className={styles.advanced}>
@@ -241,9 +255,9 @@ export function FleetSection() {
           </button>
           <div id={advancedId} hidden={!advancedOpen}>
             {advancedOpen ? (
-              <Suspense fallback={<p className={styles.muted} aria-busy="true">Loading the advanced panels…</p>}>
+              sourced(<Suspense fallback={<p className={styles.muted} aria-busy="true">Loading the advanced panels…</p>}>
                 <FleetAdvanced />
-              </Suspense>
+              </Suspense>, true)
             ) : null}
           </div>
         </div>

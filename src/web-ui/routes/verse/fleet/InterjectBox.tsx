@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { Button } from '../../../components/primitives/Button.js';
@@ -44,7 +44,7 @@ const prCheckQuery = (prs: readonly number[]): QueryDef<InterjectPrCheck | null>
 const PR_HREF = /\/pull\/(\d+)$/;
 const absent = (error: unknown) => error instanceof ApiError && (error.status === 404 || error.status === 503);
 
-export function InterjectBox() {
+export function InterjectBox({ sourceBadge }: { sourceBadge?: ReactNode } = {}) {
   const id = useId();
   const read = useQuery(inboxTailQuery);
   usePollWhileVisible(() => { void runQuery(inboxTailQuery.key, () => inboxTailQuery.fetch()); }, 15_000);
@@ -258,6 +258,7 @@ export function InterjectBox() {
   const githubByPr = new Map((prCheck.error ? [] : prCheck.data?.items ?? []).map(item => [item.pr, item]));
   return <section className={styles.panel} aria-labelledby={`${id}-title`}>
     <h2 id={`${id}-title`}>Tell the leaders</h2>
+    {sourceBadge}
     <form onSubmit={event => { event.preventDefault(); void send(); }}
       onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }}
       onDrop={event => {
