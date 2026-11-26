@@ -47,9 +47,8 @@
  *    unattributed resolutions group together and the prompt says the
  *    attribution itself is missing.
  *  - Fleet machinery only: the ledger is this install's dispatch record,
- *    so items emit only when the backlog target's repository name is
- *    'phantom', the same last-segment rule the sibling fleet-evidence
- *    sources apply. Row-level repo names are quoted as evidence, never
+ *    so items emit only for 'ashlrai/phantom' or its bare shorthand
+ *    'phantom'. Row-level repo names are quoted as evidence, never
  *    used to filter — a pool's arm quality is fleet-level in
  *    calibration.
  *  - A truncated ledger yields no items. The omitted rows can change
@@ -89,7 +88,7 @@ export const REWARD_MIN_NOT_HELD = 4;
 /** Distinct UTC days on which not-held outcomes must be recorded. */
 export const REWARD_MIN_DAYS = 2;
 /** The fleet's own repository label: ledger evidence is this install's machinery, never another target's. */
-const FLEET_REPO_NAME = 'phantom';
+const FLEET_REPO = 'ashlrai/phantom';
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
 const MAX_TITLE_CHARS = 200;
 /** Distinct UTC days quoted inside one prompt before the rest is summarized. */
@@ -112,11 +111,6 @@ export interface RewardBacklogItemsOptions {
   limit?: number;
   /** Clock anchoring the window (default: now, ms epoch). */
   now?: number;
-}
-
-/** The repository name both vocabularies record: the last path segment, lowercased. */
-function fleetRepoName(repo: string): string {
-  return (repo.split('/').pop() ?? repo).trim().toLowerCase();
 }
 
 const sha = (value: string): string => createHash('sha256').update(value).digest('hex').slice(0, 16);
@@ -316,7 +310,8 @@ function rewardItem(cell: RewardPoolCell, repo: string): CloudBacklogItem {
 export async function rewardBacklogItems(opts: RewardBacklogItemsOptions): Promise<CloudBacklogItem[]> {
   try {
     const repo = opts.repo.trim();
-    if (repo === '' || fleetRepoName(repo) !== FLEET_REPO_NAME) return [];
+    const repoKey = repo.toLowerCase();
+    if (repoKey !== FLEET_REPO && repoKey !== 'phantom') return [];
     const nowMs = opts.now ?? Date.now();
     const windowMs = opts.windowMs !== undefined && Number.isFinite(opts.windowMs) && opts.windowMs > 0
       ? opts.windowMs
