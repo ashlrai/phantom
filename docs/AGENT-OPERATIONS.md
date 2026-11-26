@@ -1198,6 +1198,18 @@ against the newest timestamp in the last 3000 lines of the jobs ledger. Plain
 output shows one line per repository with its count and PR URLs; JSON returns
 the typed `fleet.slow-prs.v1` report. This command only reads the local ledger.
 
+`phm fleet outside-outcomes [--days <n>] [--json]` reports outcome metrics for
+merged PRs that are not fleet work (community-scale RSI evidence): on the
+repos running fleet jobs touch plus the workspace checkout, it lists
+recently-merged PRs whose head is not `codex-bridge/*` and whose author is not
+the fleet App, joins each `owner/name#N` against the standing revert ledger
+(`improve/revert-outcomes.jsonl`), and rolls up per-author merged/reverted
+counts. Agent and model are always null — gh records only the PR author login.
+An unreadable revert ledger marks every verdict `unknown`, never "not
+reverted"; a missing `gh` reports `sourceState: 'missing'`. Read-only — `gh pr
+list` and the local ledger only; see
+[core/fleet/outside-pr-outcomes.ts](../src/core/fleet/outside-pr-outcomes.ts).
+
 `phm fleet pr-hygiene [--repo <owner/name>] [--stale-days <n>] [--limit <n>] [--json]`
 audits one repo's open PRs and emits the `fleet.pr-hygiene.v1` triage report
 for the merge cockpit: each PR is flagged superseded (the same merged-job
