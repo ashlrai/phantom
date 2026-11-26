@@ -916,9 +916,11 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   const timedJobs = new Set<string>();
   const receiptPools = new Map<string, string>();
   for (const event of ledgerEvents) {
+    const mergedAt = eventTimestamp(event.mergedAt);
+    if (mergedAt !== null && mergedAt > now.getTime()) continue;
     const identity = event.pr ? `pr:${event.pr}` : event.job ? `job:${event.job}` : null;
     if (event.merge && identity && event.pool && !receiptPools.has(identity)) receiptPools.set(identity, event.pool);
-    if (event.mergedAt === undefined) continue;
+    if (mergedAt === null) continue;
     if (event.pr !== null) timedPrs.add(event.pr);
     if (event.job !== null) timedJobs.add(event.job);
   }

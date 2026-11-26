@@ -334,6 +334,35 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(snapshot.lanes.find(l => l.lane === 'claude')!.mergesPerHour).toBe(0);
   });
 
+  it('keeps usable merge evidence when matching receipts have future merge times', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    const pr = 'https://github.com/ashlrai/phantom/pull/42';
+    const at = '2026-10-28T01:50:00Z';
+    const future = '2026-10-28T02:00:01Z';
+    const rows = [
+      { job: 'future-pr', pr, pool: 'claude', outcome: 'MERGED', at, mergedAt: future },
+      { job: 'legacy-pr', pr, pool: 'devin', outcome: 'MERGED', at },
+      { job: 'legacy-job', pool: 'claude', outcome: 'MERGED', at, mergedAt: future },
+      { job: 'old-job', pool: 'claude', outcome: 'MERGED', at, mergedAt: '2026-10-28T00:59:59Z' },
+      { job: 'attributed-job', pool: 'claude', outcome: 'MERGED', at, mergedAt: future },
+      { job: 'attributed-job', pool: 'devin', outcome: 'MERGED', at },
+      { job: 'attributed-job', outcome: 'MERGED', mergedAt: at },
+    ];
+    await writeFile(join(dir, 'jobs.jsonl'), rows.map(row => JSON.stringify(row)).join('\n'));
+    await writeFile(join(dir, 'ready.tsv'), [
+      'id\tstatus\tpool\tat',
+      `legacy-job\tLAND\tcodex-personal\t${at}`,
+      `old-job\tLAND\tcodex-personal\t${at}`,
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    expect(snapshot.lanes.find(l => l.lane === 'devin')?.mergesPerHour).toBe(2);
+    expect(snapshot.lanes.find(l => l.lane === 'codex-personal')?.mergesPerHour).toBe(1);
+    expect(snapshot.lanes.find(l => l.lane === 'claude')?.mergesPerHour).toBe(0);
+  });
+
   it('finds recent event timestamps before a large backfilled ledger tail', async () => {
     const dir = join(scratch, 'queue');
     await mkdir(dir, { recursive: true });
