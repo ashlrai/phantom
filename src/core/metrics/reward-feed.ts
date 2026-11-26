@@ -294,6 +294,13 @@ export function foldJobsLedgerRewards(
     if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
     const at = timestampOf(row, TS_KEYS);
     if (at !== null && at > nowMs) continue;
+    const state = outcomeStateOf(row);
+    const isMerge = row['merged'] === true || MERGE_STATES.has(state);
+    const isClose = !isMerge && (row['merged'] === false || CLOSED_STATES.has(state));
+    const resolvedAt = isMerge ? timestampOf(row, MERGED_AT_KEYS)
+      : isClose ? timestampOf(row, CLOSED_AT_KEYS) : null;
+    // A future verdict cannot establish PR ownership or supply other evidence yet.
+    if (resolvedAt !== null && resolvedAt > nowMs) continue;
     if (claims !== null) {
       for (const key of receiptPrKeys(row)) {
         const set = claims.get(key) ?? new Set<string>();
@@ -333,10 +340,8 @@ export function foldJobsLedgerRewards(
         }
       }
     }
-    const state = outcomeStateOf(row);
-    if (row['merged'] === true || MERGE_STATES.has(state)) {
-      const mergedAtMs = timestampOf(row, MERGED_AT_KEYS) ?? at;
-      if (mergedAtMs > nowMs) continue;
+    if (isMerge) {
+      const mergedAtMs = resolvedAt ?? at;
       if (acc.merge === null || mergedAtMs > acc.merge.resolvedMs ||
           (mergedAtMs === acc.merge.resolvedMs && at >= acc.merge.atMs)) {
         acc.merge = {
@@ -344,10 +349,10 @@ export function foldJobsLedgerRewards(
           prKeys: receiptPrKeys(row),
         };
       }
-    } else if (row['merged'] === false || CLOSED_STATES.has(state)) {
-      const closedAtMs = timestampOf(row, CLOSED_AT_KEYS) ?? at;
-      if (closedAtMs <= nowMs && (acc.close === null || closedAtMs > acc.close.resolvedMs ||
-          (closedAtMs === acc.close.resolvedMs && at >= acc.close.atMs))) {
+    } else if (isClose) {
+      const closedAtMs = resolvedAt ?? at;
+      if (acc.close === null || closedAtMs > acc.close.resolvedMs ||
+          (closedAtMs === acc.close.resolvedMs && at >= acc.close.atMs)) {
         acc.close = {
           atMs: at, resolvedMs: closedAtMs, repo: repoOf(row), prKeys: receiptPrKeys(row),
         };
