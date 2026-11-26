@@ -23,7 +23,7 @@
  * Each job contributes supply once, using its first valid row.
  */
 import { KNOWN_STATUSES } from './lane-console.js';
-import { laneLaunchTarget } from './lane-launch-target.js';
+import { dispatcherAdmissionHeadroom, laneLaunchTarget } from './lane-launch-target.js';
 import { readyMarketLine } from './unfed-market.js';
 
 /** Filler ids end in A, six or more digits, then Q8. */
@@ -135,13 +135,15 @@ export function findStarvedLanes(
     if (row !== null) attribute(row.id, row.lane);
   }
   const out: StarvedLane[] = [];
+  const paused = data.paused === true || (typeof data.paused === 'string' && data.paused.trim().length > 0);
+  const admissionClosed = paused || dispatcherAdmissionHeadroom(data.admission, data.last_tick) === 0;
   for (const [lane, value] of Object.entries(data.lanes)) {
     if (!isRecord(value) || !count(value.running) || !count(value.target) || !count(value.queued)) {
       throw new Error('invalid lane');
     }
     // A shed lane at its launch ceiling has no free capacity.
     const target = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
-    if (value.held === true || value.running >= target || value.queued === 0) continue;
+    if (admissionClosed || value.held === true || value.running >= target || value.queued === 0) continue;
     const { filler, real } = split.get(lane) ?? { filler: 0, real: 0 };
     out.push({
       lane, running: value.running, target, queued: value.queued,
