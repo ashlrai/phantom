@@ -1076,11 +1076,15 @@ jobs ledger. Counts cover recorded evidence only.
 ## Is each pool fed?
 
 Run `phm queue supply` for one plain line per pool: usage left, hours to reset, jobs queued for the pool, its starts
-per hour over the last 6 hours, and the hours of work queued (ready jobs divided by starts per hour). Pools that need work
-come first: "Claude: 0 jobs queued, 16% left, about 3 hours of usage idle" or "codex-personal: 104 jobs queued, plan used
-up until Sat 3:30 PM". `--json` returns `queue.supply.v1` for agents. It is read-only and built from `phm pools`, the
-ready queue and the dispatch events. A figure that cannot be read is `null` and shown as unknown, never zero. Ready jobs
-are counted by the lane on their queue row, so a job not yet placed on a lane is not counted.
+per hour over the last 6 hours, and the hours of work queued (the pool's hinted ready jobs plus lane-open rows, divided
+by starts per hour). Pools that need work come first: "Claude: 0 jobs queued, 16% left, about 3 hours of usage idle" or
+"codex-personal: 104 jobs queued, plan used up until Sat 3:30 PM". `--json` returns `queue.supply.v1` for agents. It is
+read-only and built from `phm pools`, the ready queue and the dispatch events. A figure that cannot be read is `null` and
+shown as unknown, never zero. Ready jobs are counted by the lane hint the work market resolves — the requirements cell's
+`preferred_lane`, else the row's lane cell, else the router-queue envelope — so a job hinted at one lane but written with
+another still counts where the market will place it. Lane-open rows are shared supply any pool may take: they count
+toward every pool's hours of work and are reported once as `open_rows`, never per pool. Rows the market would reject
+before launch never count as supply and are reported as `invalid_rows`.
 
 The hourly digest adds a `supply_low` line, naming the pool, when a pool that is behind (or has waste risk high or
 medium) has under an hour of work queued.

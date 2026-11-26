@@ -20,9 +20,13 @@ const lane = (name: string, patch: Partial<ResourceLaneRow> = {}): ResourceLaneR
 const ledger = (...lanes: ResourceLaneRow[]): ResourceLedgerV1 => ({
   v: 1, generatedAt: at(0), sources: { status: 'healthy', apiSpend: 'missing', jobs: 'missing' }, asOf: at(0), lanes, apiSpend: null, jobsMalformedRows: null,
 });
-const check = (rows: ResourceLaneRow[], ready: Record<string, number> | null, heldReasons: Record<string, string | null> = {}) => {
+const check = (rows: ResourceLaneRow[], ready: Record<string, number> | null, heldReasons: Record<string, string | null> = {}, openRows = 0) => {
   const view = buildPoolsView(ledger(...rows), NOW);
-  return buildPoolsWaste({ view, supply: ready === null ? null : buildQueueSupply({ view, readyByLane: ready, startsByLane: { claude: 6 } }), heldReasons });
+  return buildPoolsWaste({
+    view,
+    supply: ready === null ? null : buildQueueSupply({ view, readyByLane: ready, openRows, invalidRows: 0, startsByLane: { claude: 6 } }),
+    heldReasons,
+  });
 };
 
 describe('buildPoolsWaste', () => {
@@ -53,6 +57,13 @@ describe('buildPoolsWaste', () => {
   it('flags a pool with plenty queued as a lane problem, not a queue problem', () => {
     const data = check([lane('claude', { usedPct: 40, burnPctPerHour: 6 })], { claude: 30 });
     expect(data.top).toMatchObject({ fix_kind: 'check-lane' });
+  });
+
+  it('counts lane-open rows as work the pool could take before asking for more', () => {
+    // Nothing hinted to claude, but 30 lane-open rows the market may place there.
+    const data = check([lane('claude', { usedPct: 40, burnPctPerHour: 6 })], {}, {}, 30);
+    expect(data.top).toMatchObject({ fix_kind: 'check-lane' });
+    expect(data.top!.fix).toContain('30 jobs queued');
   });
 
   it('raises no alert for a healthy pool', () => {
