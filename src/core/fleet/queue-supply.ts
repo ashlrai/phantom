@@ -231,15 +231,14 @@ export async function readQueueSupply(opts: { runsDir?: string; now?: () => numb
   ]);
   // Spec-less ready rows resolve their requirements from router-queue.md
   // envelopes; an absent or over-bound queue leaves the lane column standing,
-  // exactly like the market's own fallback. The pair never rejects: a missing
-  // ready.tsv is an empty queue, any other read failure leaves the count
-  // unknown, and the rest of the report still stands.
+  // exactly like the market's own fallback. Any ready.tsv read failure leaves
+  // supply unknown while the rest of the report still stands.
   const readyByLane = Promise.all([
     readReadyText(join(runsDir, 'queue', 'ready.tsv')),
     readSource(join(runsDir, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
   ]).then(
     ([text, routerQueue]) => countReady(text, routerQueue.state === 'healthy' ? routerQueue.text : null),
-    (error: NodeJS.ErrnoException) => (error.code === 'ENOENT' ? {} : null),
+    () => null,
   );
   const [view, ready, startsByLane] = await Promise.all([
     readResourceLedger({ runsDir, now: () => nowMs }).then(async ledger => buildPoolsView(ledger, nowMs, await readUsageSamples({ nowMs }))),

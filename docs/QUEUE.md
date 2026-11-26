@@ -1278,7 +1278,8 @@ Run `phm queue supply` for one plain line per pool: usage left, hours to reset, 
 per hour over the last 6 hours, and the hours of work queued (ready jobs divided by starts per hour). Pools that need work
 come first: "Claude: 0 jobs queued, 16% left, about 3 hours of usage idle" or "codex-personal: 104 jobs queued, plan used
 up until Sat 3:30 PM". `--json` returns `queue.supply.v1` for agents. It is read-only and built from `phm pools`, the
-ready queue and the dispatch events. A figure that cannot be read is `null` and shown as unknown, never zero. Ready jobs
+ready queue and the dispatch events. A figure that cannot be read is `null` and shown as unknown. A missing `ready.tsv`
+leaves the ready count unknown and suppresses the `supply_low` alert. An observed empty file counts as zero. Ready jobs
 are counted by the lane the work market resolves for the row — its requirements `preferred_lane`, read from the row's
 spec or its router-queue.md envelope when the row carries no spec, else the lane column — so a job the market leaves
 lane-open, or one it would reject, is not counted.

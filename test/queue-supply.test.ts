@@ -1,8 +1,11 @@
 /** Fixture tests for queue.supply.v1 (`phm queue supply`) and the digest's supply_low line: synthetic ledger, ready rows and launch log, no real home. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { cmdQueueSupply } from '../src/cli/queue-supply.js';
 import { buildPoolsView } from '../src/core/fleet/pools-view.js';
-import { buildQueueSupply, countReady, countStarts, formatQueueSupplyText, QUEUE_SUPPLY_SCHEMA, supplyLowLine } from '../src/core/fleet/queue-supply.js';
+import { buildQueueSupply, countReady, countStarts, formatQueueSupplyText, QUEUE_SUPPLY_SCHEMA, readQueueSupply, supplyLowLine } from '../src/core/fleet/queue-supply.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
 import { buildStatusDigest, type StatusDigestInput } from '../src/core/leader/status-digest.js';
 
@@ -82,6 +85,32 @@ describe('buildQueueSupply', () => {
 });
 
 describe('readers', () => {
+  it('raises a supply alert only after observing an empty ready queue', async () => {
+    const runsDir = await mkdtemp(join(tmpdir(), 'phantom-queue-supply-'));
+    try {
+      const queue = join(runsDir, 'queue');
+      const pool = 'codex-supply-test';
+      await mkdir(queue);
+      await writeFile(join(queue, 'status.json'), JSON.stringify({
+        last_tick: at(0), lanes: { [pool]: { running: 0, target: 2 } },
+        budget: { [pool]: { weekly_used_pct: 72, observed_at: at(-0.01), reset_at: at(31), burn_pct_per_hour: 0.3 } },
+      }));
+      await writeFile(join(runsDir, 'dispatch-events.log'), '');
+      const opts = { runsDir, now: () => NOW };
+
+      const missing = await readQueueSupply(opts);
+      expect(row(missing, pool)).toMatchObject({ state: 'unknown', at_risk: true, ready: null, hours_queued: null, supply_low: false });
+      expect(supplyLowLine(missing)).toBeNull();
+
+      await writeFile(join(queue, 'ready.tsv'), '');
+      const empty = await readQueueSupply(opts);
+      expect(row(empty, pool)).toMatchObject({ state: 'empty', ready: 0, hours_queued: 0, supply_low: true });
+      expect(supplyLowLine(empty)).toContain('0 queued');
+    } finally {
+      await rm(runsDir, { recursive: true, force: true });
+    }
+  });
+
   it('counts ready jobs by lane and leaves parked rows out', () => {
     const tsv = ['RQ-A\tphantom\tclaude\twork\t/p/a', 'RQ-B\tphantom\tclaude\twork\t/p/b', 'RQ-C\tphantom\tPARKED-BYHAND.codex-local\twork\t/p/c', ''].join('\n');
     expect(countReady(tsv)).toEqual({ claude: 2 });
