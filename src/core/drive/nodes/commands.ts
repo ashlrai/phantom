@@ -153,6 +153,41 @@ function liveSession(nodes: DriveNodes, nodeId: string): number | null {
   } catch { return null; }
 }
 
+/** The owner scopes a store already knows — node profiles and job owners —
+ * deduped and sorted, for the missing --owner refusal. null when the store
+ * cannot be read, so the fix never claims scopes it could not see. */
+function knownOwnerScopes(nodes: DriveNodes): string[] | null {
+  try {
+    const state = nodes.snapshot();
+    const scopes = new Set<string>();
+    for (const n of state.nodes) for (const o of n.owners ?? []) scopes.add(o);
+    for (const j of state.jobs) if (j.owner !== undefined) scopes.add(j.owner);
+    return [...scopes].sort();
+  } catch { return null; }
+}
+
+/** A missing --owner is the first-run dead end (`phm node status` on a machine
+ * that never joined): the fix names the scopes the store holds, or — on an
+ * empty store — the join that creates the first, instead of a bare "Add
+ * --owner <value>". join gets the semantic explanation because it is itself
+ * the command that creates a scope. */
+function missingOwnerFix(verb: string, scopes: string[] | null): string {
+  if (scopes === null) return 'Add --owner <scope>. Run: phm node --help';
+  if (scopes.length > 0) return `Add --owner <scope>; this store knows: ${scopes.join(', ')}. Run: phm node --help`;
+  return verb === 'join'
+    ? 'Add --owner <scope> — the label your jobs carry; this node then sees only jobs enqueued under it. Run: phm node --help'
+    : 'No owner scope exists in this store yet — --owner is any scope label. Join this computer first: phm node join --owner <scope>. Run: phm node --help';
+}
+
+/** --owner stays required on the scoped verbs; only an absent flag gets the
+ * store-aware fix. Each call site keeps its own check order, so `enqueue`
+ * still names --job before --owner. */
+function requireOwnerFlag(flags: Map<string, string>, nodes: DriveNodes, verb: string): void {
+  if (!flags.has('--owner')) {
+    throw new UsageError('missing-flag', '--owner is required.', missingOwnerFix(verb, knownOwnerScopes(nodes)));
+  }
+}
+
 export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: DriveNodes, probeAuth: () => NodeAuth): Record<string, unknown> {
   const session = (): { nodeId: string; session: number } => ({ nodeId: needId(flags, '--node'), session: num(flags, '--session') });
   const stale = (nodeId: string, attempted?: number) => {
@@ -165,6 +200,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
   };
   switch (verb) {
     case 'join': {
+      requireOwnerFlag(flags, nodes, 'join');
       const owners = needIdList(flags, '--owner');
       const caps = optCapList(flags, '--caps');
       const nodeId = needId(flags, '--node');
@@ -213,6 +249,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
     }
     case 'enqueue': {
       const jobId = needId(flags, '--job');
+      requireOwnerFlag(flags, nodes, 'enqueue');
       const owner = needId(flags, '--owner');
       const requires = optCapList(flags, '--requires');
       const pack = optId(flags, '--pack');
@@ -285,16 +322,21 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
     }
     case 'withdraw': {
       const jobId = needId(flags, '--job');
+      requireOwnerFlag(flags, nodes, 'withdraw');
       return { jobId, ...nodes.withdraw(jobId, needId(flags, '--owner')) };
     }
     case 'result': {
       // Read-only: the owner reads back what a completed job answered, or the
       // live state while it is still pending or running. Never a fence.
       const jobId = needId(flags, '--job');
+      requireOwnerFlag(flags, nodes, 'result');
       return { jobId, ...nodes.jobOutcome(jobId, needId(flags, '--owner')) };
     }
     case 'list':
-    case 'status': return { ...nodes.view(needIdList(flags, '--owner')) };
+    case 'status': {
+      requireOwnerFlag(flags, nodes, verb);
+      return { ...nodes.view(needIdList(flags, '--owner')) };
+    }
     default: {
       const s = session();
       const left = nodes.leave(s);

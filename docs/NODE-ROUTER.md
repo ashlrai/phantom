@@ -190,7 +190,10 @@ are `bad-caps` or `bad-requires`; a `--secrets` name outside
 not `sha256:<64 lowercase hex>` or does not match the text is
 `bad-task-sha256`, while text the pack cannot carry is `bad-task`. These are
 usage errors (exit 2) before anything is recorded — never an operational
-failure about the registry.
+failure about the registry. A verb missing its required `--owner` names what
+the store already knows — the scopes present, or the `phm node join --owner
+<scope>` that creates the first on an empty store — instead of a bare "add
+--owner" dead end.
 
 ## Version drift
 
