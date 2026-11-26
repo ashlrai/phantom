@@ -45,6 +45,7 @@ const probe = (over: Partial<UnifiedBusStatus> = {}): UnifiedBusStatus => ({
   deadLetters: { source: 'missing', pending: 0,
     reasons: { exhausted: 0, expired: 0, noRoute: 0, other: 0 }, truncated: false },
   sessionHandoffs: { source: 'missing', journals: 0, open: 0, awaitingFailover: 0, unreadable: 0, truncated: false },
+  fleetCoordination: { source: 'missing', messages: 0, proposals: 0, returns: 0 },
   sendGate: {
     state: 'open',
     kill: { state: 'inactive', reason: 'missing' },

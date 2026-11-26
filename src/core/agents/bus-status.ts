@@ -19,7 +19,10 @@
  * bus.dead-letter` and the unified inbox `bus-dead-letter` items surface,
  * the session-handoff
  * journal store `phm checkpoint handoff list|show` and
- * `fleet_session_handoffs` read, the claim-store
+ * `fleet_session_handoffs` read, the advisory fleet coordination ledger
+ * (`fleet.coordination.v1`) `work mine`'s coordination section,
+ * `phm fleet coordination` and the unified inbox coordination source
+ * read, the claim-store
  * drift verdict comparing the claim journal with the coordination table it
  * is dual-written to, and the outbound send gate `localWriteGate` applies
  * before every bus write lands. Each
@@ -35,6 +38,7 @@ import { inspectBusInbox, busPathMissing, listBusInboxAfter, BUS_INBOX_MAX_MESSA
   type BusInboxInspection, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { readClaimStoreDrift } from '../fleet/claim-store-drift.js';
+import { readFleetCoordinationPending } from '../fleet/coordination.js';
 import { createBusMailbox } from '../fleet/bus-mailbox.js';
 import { BusBoard, busBoardStoragePaths, type BusBoardStateSummary } from '../fleet/bus-board.js';
 import { SharedStore } from '../fleet/shared-store.js';
@@ -80,6 +84,15 @@ export interface UnifiedBusStatusOptions {
    * the probe follows the same resolution rather than inventing a
    * bus-root-relative path no verb touches. */
   agentnetBindings?: string;
+  /** Advisory fleet coordination ledger (`fleet.coordination.v1`) path
+   * override for the `fleetCoordination` section — the same
+   * `BusWorkMineOptions.coordination.path` `work mine`'s coordination
+   * section and the unified inbox coordination source resolve; default the
+   * ledger's own locator (`PHANTOM_FLEET_LEDGER_PATH`, else
+   * `$ASHLR_HOME/fleet/coordination.jsonl`). A `root` override does NOT
+   * relocate it: the consumers never read a bus-root-relative ledger, so
+   * the probe follows the same resolution rather than inventing one. */
+  coordination?: { path?: string };
   now?: () => number;
 }
 
@@ -396,6 +409,32 @@ export interface UnifiedBusStatus {
     /** More journal files exist than the bounded scan covers; null when
      * the store state is unknown. */
     truncated: boolean | null;
+  };
+  /** Advisory fleet coordination ledger (`fleet.coordination.v1`,
+   * `coordination.jsonl` under the fleet home — `PHANTOM_FLEET_LEDGER_PATH`
+   * or `$ASHLR_HOME/fleet/coordination.jsonl` by default, or the probe's
+   * `coordination.path` override — never relocated by `root`, the same
+   * resolution every consumer applies) behind `work mine`'s coordination
+   * section, `phm fleet coordination inbox|board|returns`, the unified
+   * inbox coordination source and the `fleet_coordination_*` MCP tools —
+   * all served by `readFleetCoordinationPending`, the same pure replay
+   * this probe runs (never the board read's reaping mutation path), so a
+   * corrupt, unsafe or otherwise unreadable ledger is named here instead
+   * of leaving status green while those reads report unavailable. Counts
+   * only — the pending surface's size, never agent labels, repos, task
+   * text, message bodies or record ids. */
+  fleetCoordination: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Live posted coordination messages still inside their TTL; 0 on a
+     * verified-missing ledger, null when it cannot be read. */
+    messages: number | null;
+    /** Live assignment proposals (`executionAuthorized:false`, advisory —
+     * never spawning work); same null rule. */
+    proposals: number | null;
+    /** Unpublished RESULT intents whose receipt is still inside its TTL —
+     * the `released-unposted` class only this projection names; same
+     * null rule. */
+    returns: number | null;
   };
   /** Outbound send gate behind every bus write verb — the kill-switch
    * sentinel and the comms soft-pause flag `localWriteGate` consults
@@ -880,6 +919,35 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
       awaitingFailover: null, unreadable: null, truncated: null };
   }
 
+  // The advisory fleet coordination ledger behind `work mine`'s
+  // coordination section, `phm fleet coordination inbox|board|returns`,
+  // the unified inbox coordination source and the `fleet_coordination_*`
+  // MCP tools. `readFleetCoordinationPending` is the same pure replay
+  // those surfaces serve — never the board read's reaping mutation path —
+  // under the same locator `fleetCoordinationPath` resolves or the
+  // probe's `coordination.path` override; a `root` override does not
+  // relocate it because the consumers never read a bus-root-relative
+  // ledger either. Its tri-state maps onto the probe's own: 'missing' is
+  // a verified-absent ledger (real zeros), 'known' a parsed one, 'unknown'
+  // or a throwing read reports unavailable with null counts — never an
+  // invented empty backlog. Counts only, never labels, repos, tasks,
+  // bodies or record ids.
+  let fleetCoordination: UnifiedBusStatus['fleetCoordination'];
+  try {
+    const pending = readFleetCoordinationPending({
+      ...(options.coordination?.path === undefined ? {} : { path: options.coordination.path }),
+      now: now(),
+    });
+    fleetCoordination = pending.state === 'missing'
+      ? { source: 'missing', messages: 0, proposals: 0, returns: 0 }
+      : pending.state === 'known'
+        ? { source: 'available', messages: pending.messages.length,
+            proposals: pending.proposals.length, returns: pending.returns.length }
+        : { source: 'unavailable', messages: null, proposals: null, returns: null };
+  } catch {
+    fleetCoordination = { source: 'unavailable', messages: null, proposals: null, returns: null };
+  }
+
   // The send gate every bus write passes through. Both readers are total
   // by contract, but each keeps its own try so one throwing probe cannot
   // hide the other's verdict — and an uninspectable source reports
@@ -911,5 +979,5 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     kill, pause,
   };
 
-  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, peerInbox, deadLetters, sessionHandoffs, sendGate };
+  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, peerInbox, deadLetters, sessionHandoffs, fleetCoordination, sendGate };
 }

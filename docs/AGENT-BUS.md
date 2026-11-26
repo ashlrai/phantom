@@ -1781,7 +1781,7 @@ held work, and every other store state keeps its own status. Exit 0 on
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the eighteen
+**Status.** `phm agents bus status [--json]` is a read-only probe of the nineteen
 dependencies every verb above touches plus the outbound send gate every
 write verb passes through: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
@@ -1890,7 +1890,22 @@ scanned, `open` journals whose latest signal is not `completed`,
 `handoffPressure` rule, `unreadable` journals that failed `show`'s
 validation and a `truncated` flag for journals beyond the scan cap; 0
 counts on a verified-missing store, null when unreadable, never job ids,
-lanes, models or signal payloads), plus the
+lanes, models or signal payloads), the advisory fleet coordination
+ledger (`fleet.coordination.v1`, `coordination.jsonl` under the fleet
+home — `PHANTOM_FLEET_LEDGER_PATH` or
+`$ASHLR_HOME/fleet/coordination.jsonl` by default, or the probe's
+`coordination.path` override, never relocated by `root` because the
+consumers resolve the same locator) that `work mine`'s coordination
+section, `phm fleet coordination inbox|board|returns`, the unified inbox
+coordination source and the `fleet_coordination_*` MCP tools read through the same
+`readFleetCoordinationPending` pure replay — never the board read's
+reaping mutation path — so a corrupt, unsafe or otherwise unreadable
+ledger is named here instead of leaving status green while those reads
+report unavailable (`source` plus `messages`/`proposals`/`returns`
+counts of the live pending surface — posted coordination mail, advisory
+assignment proposals and unpublished RESULT intents still inside their
+TTLs; 0 on a verified-missing ledger, null when unreadable, never agent
+labels, repos, task text, bodies or record ids), plus the
 claim-store drift verdict the claim journal and the
 coordination table imply — the same `fleet.claim-drift.v1` read
 `ashlr fleet claim-drift` serves, run over the probe's own two reads so the
