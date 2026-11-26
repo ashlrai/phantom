@@ -1,4 +1,5 @@
-import type { LaneLedgerEvent } from './lane-console.js';
+import { join } from 'node:path';
+import { parseJobsJsonl, type LaneLedgerEvent } from './lane-console.js';
 import type { IdleLane } from './idle-lanes.js';
 
 export interface IdleLaneAge extends IdleLane {
@@ -10,7 +11,7 @@ export interface IdleLaneAge extends IdleLane {
 export const DEFAULT_STUCK_AFTER_MIN = 30;
 
 // An offset is required: otherwise Date.parse depends on the host timezone.
-const ISO_WITH_OFFSET = /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/i;
+const ISO_WITH_OFFSET = /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d)$/i;
 
 function eventMs(at: string | null): number | null {
   if (!at || !ISO_WITH_OFFSET.test(at)) return null;
@@ -37,13 +38,25 @@ export function idleLaneAges(
   const newest = new Map<string, { ms: number; at: string }>();
   for (const event of events) {
     const ms = eventMs(event.at);
-    if (event.pool === null || ms === null) continue;
+    if (event.pool === null || ms === null || ms > nowMs) continue;
     if (ms > (newest.get(event.pool)?.ms ?? -Infinity)) newest.set(event.pool, { ms, at: event.at! });
   }
   return lanes.map(lane => {
     const last = newest.get(lane.lane);
     if (!last) return { ...lane, lastEventAt: null, quietMin: null, stuck: false };
-    const quietMin = Math.max(0, Math.floor((nowMs - last.ms) / 60_000));
+    const quietMin = Math.floor((nowMs - last.ms) / 60_000);
     return { ...lane, lastEventAt: last.at, quietMin, stuck: lane.status === 'red' && quietMin >= stuckAfterMin };
   });
+}
+
+export const MAX_IDLE_LANE_LEDGER_BYTES = 8 * 1024 * 1024;
+
+/** Read dispatch activity and the legacy queue journal independently. */
+export async function readIdleLaneEvents(runsDir: string, read: (path: string) => Promise<string>): Promise<LaneLedgerEvent[]> {
+  const ledgers = await Promise.allSettled([
+    read(join(runsDir, 'metrics', 'jobs.jsonl')),
+    read(join(runsDir, 'queue', 'jobs.jsonl')),
+  ]);
+  return ledgers.flatMap(ledger => ledger.status === 'fulfilled' && Buffer.byteLength(ledger.value) <= MAX_IDLE_LANE_LEDGER_BYTES
+    ? parseJobsJsonl(ledger.value).events : []);
 }
