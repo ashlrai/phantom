@@ -183,7 +183,7 @@ function lineOfIndex(text: string, index: number): number {
   return line;
 }
 
-function countLines(text: string): number {
+export function countLines(text: string): number {
   if (text.length === 0) return 0;
   let n = 1;
   for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;

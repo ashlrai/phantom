@@ -26,7 +26,7 @@ import type { AshlrConfig } from '../../types.js';
 import { isEnrolledAsync } from '../../sandbox/policy.js';
 import { scrubSecrets } from '../../util/scrub.js';
 import { verifyCitations, type CitationResolver } from './citations.js';
-import { extractFacts, type RepoFacts } from './facts.js';
+import { countLines, extractFacts, type RepoFacts } from './facts.js';
 import { snapshotGenome } from './genome.js';
 import { defaultWikiEngineResolver, repoLocalOnlyReason, runEngineChain, wikiConfig, type WikiEngine, type WikiEngineResolver } from './model.js';
 import { inputHash, planPages, specHash, treeHash, type HashContext } from './plan.js';
@@ -67,11 +67,6 @@ export type BuildWikiResult =
   | { ok: false; reason: string };
 
 const inFlight = new Map<string, Promise<BuildWikiResult>>();
-
-/** True while a build for this repo runs in this process. */
-export function wikiBuildInFlight(repo: string): boolean {
-  return inFlight.has(wikiKey(repo));
-}
 
 async function acquireLock(key: string): Promise<(() => Promise<void>) | null> {
   const file = path.join(wikiRoot(), key, 'build.lock');
@@ -148,7 +143,7 @@ function resolverFor(facts: RepoFacts, repo: string): CitationResolver {
       if (extra.has(rel)) return extra.get(rel)!;
       // Listed but not read within the facts budget: read it now to verify.
       const text = await readRepoText(repo, rel);
-      const n = text === null ? null : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+      const n = text === null ? null : countLines(text);
       extra.set(rel, n);
       if (n !== null) facts.lineIndex[rel] = n;
       return n;

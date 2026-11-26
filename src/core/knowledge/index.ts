@@ -39,7 +39,7 @@ import { localOllamaBase } from '../providers.js';
  * is filtered. Any failure keeps the list as it was (the pre-3.10 behaviour):
  * a duplicate is a nuisance, an empty scan is an outage.
  */
-function withoutFleetMirrors(enrolled: string[]): string[] {
+export function withoutFleetMirrors(enrolled: string[]): string[] {
   try {
     if (activeEnrollmentLenses().length > 0) return enrolled;
     return enrolled.filter((repo) => {
@@ -82,9 +82,14 @@ const EMBED_TIMEOUT_MS = 10_000;
 /** Upper bound on the number of components in a local embedding. */
 const MAX_VECTOR_DIMENSIONS = 16_384;
 
-function isValidVector(value: unknown): value is number[] {
+/** Reject malformed, sparse, non-finite, oversized, and (optionally) zero vectors. */
+export function isValidVector(
+  value: unknown,
+  opts?: { requireNonZero?: boolean },
+): value is number[] {
   return Array.isArray(value) && value.length > 0 && value.length <= MAX_VECTOR_DIMENSIONS &&
-    value.every((component: unknown) => typeof component === 'number' && Number.isFinite(component));
+    Array.from(value).every((component: unknown) => typeof component === 'number' && Number.isFinite(component)) &&
+    (!opts?.requireNonZero || value.some((component) => component !== 0));
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +333,7 @@ function repoHash(repoPath: string): string {
 }
 
 /** Path to the JSONL chunks file for a given repo. */
-function chunksFile(repoPath: string): string {
+export function chunksFile(repoPath: string): string {
   return path.join(knowledgeDir(), repoHash(repoPath), 'chunks.jsonl');
 }
 
@@ -462,11 +467,13 @@ function chunkText(text: string): Array<{ startLine: number; endLine: number; te
 // Local Ollama embedding (best-effort — never throws, never cloud)
 // ---------------------------------------------------------------------------
 
+const EMBED_HINTS = ['bge', 'nomic-embed', 'mxbai-embed', 'all-minilm', 'embed'] as const;
+
 /**
  * Detect an embedding-capable model at the local Ollama base URL.
  * Mirrors the approach in genome/recall.ts. Never throws.
  */
-async function detectEmbeddingModel(
+export async function detectEmbeddingModel(
   ollamaBase: string,
 ): Promise<{ available: false } | { available: true; model: string }> {
   const controller = new AbortController();
@@ -486,7 +493,6 @@ async function detectEmbeddingModel(
       return { available: false };
     }
     const models = (body as { models: { name: string }[] }).models;
-    const EMBED_HINTS = ['bge', 'nomic-embed', 'mxbai-embed', 'all-minilm', 'embed'];
     for (const hint of EMBED_HINTS) {
       const found = models.find((m) => m.name.toLowerCase().includes(hint));
       if (found) return { available: true, model: found.name };
@@ -504,13 +510,14 @@ async function detectEmbeddingModel(
  * Returns null on any error (network, model unavailable, timeout).
  * NEVER sends to a cloud endpoint — only ever hits ollamaBase (localhost).
  */
-async function fetchEmbedding(
+export async function fetchEmbedding(
   ollamaBase: string,
   model: string,
   text: string,
+  opts?: { timeoutMs?: number; requireNonZero?: boolean },
 ): Promise<number[] | null> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), EMBED_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? EMBED_TIMEOUT_MS);
   try {
     const res = await fetch(`${ollamaBase.replace(/\/+$/, '')}/api/embeddings`, {
       method: 'POST',
@@ -528,7 +535,7 @@ async function fetchEmbedding(
       return null;
     }
     const embedding = (body as { embedding: unknown[] }).embedding;
-    return isValidVector(embedding) ? embedding : null;
+    return isValidVector(embedding, opts) ? embedding : null;
   } catch {
     return null;
   } finally {
