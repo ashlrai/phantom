@@ -150,7 +150,7 @@ export function buildQueueSupply(input: QueueSupplyInput): QueueSupplyV1 {
   // Stable: pools of one state keep the order `phm pools` gave them.
   const pools = rows.map((row, index) => ({ row, index })).sort((a, b) => ORDER[a.row.state] - ORDER[b.row.state] || a.index - b.index).map(x => x.row);
   const gaps = [
-    'Ready jobs are counted by the lane the work market resolves for the row: its requirements preferred_lane — from the row\'s spec, or its router-queue.md envelope when the row carries no spec — else the lane column. Lane-open rows and rows the market rejects are not counted.',
+    'Each job ID is counted at most once, using the first valid dispatcher row. Its lane comes from preferred_lane in the row\'s spec or router-queue.md envelope, or from the lane column when neither applies. Lane-open jobs contribute to no pool.',
     `Starts per hour is the last ${windowH} hours of launches, so a pool that has not launched lately shows its hours of work as unknown.`,
   ];
   if (input.readyByLane === null) gaps.unshift('The ready queue could not be read.');
@@ -213,11 +213,14 @@ async function readTail(path: string): Promise<string> {
  */
 export function countReady(readyText: string, routerQueue?: string | null): Record<string, number> {
   const out: Record<string, number> = {};
+  const seen = new Set<string>();
   const dispatcher = readyText.split('\n').filter(line => {
     const first = line.split('\t', 1)[0] ?? '';
     return !KNOWN_STATUSES.has(first.trim().toUpperCase());
   }).join('\n');
   for (const row of parseReadyMarketRows(dispatcher, routerQueue).rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
     if (row.hint === null) continue;
     out[row.hint] = (out[row.hint] ?? 0) + 1;
   }
