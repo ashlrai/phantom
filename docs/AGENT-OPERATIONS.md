@@ -1206,10 +1206,14 @@ repos running fleet jobs touch plus the workspace checkout, it lists
 recently-merged PRs whose head is not `codex-bridge/*` and whose author is not
 the fleet App, joins each `owner/name#N` against the standing revert ledger
 (`improve/revert-outcomes.jsonl`), and rolls up per-author merged/reverted
-counts. Agent and model are always null — gh records only the PR author login.
-An unreadable revert ledger marks every verdict `unknown`, never "not
-reverted"; a missing `gh` reports `sourceState: 'missing'`. Read-only — `gh pr
-list` and the local ledger only; see
+counts plus a per-agent rollup. `agent` is convention attribution only — the
+head branch's first path segment against known agent branch namespaces
+(`devin/…`, `cursor/…`, `claude/…`, `copilot/…`, …) or a known agent-bot
+author login; unmatched stays null (an honest unknown, never a guess), and
+`model` is always null since gh records none. An unreadable revert ledger
+marks every verdict `unknown`, never "not reverted"; a missing `gh` reports
+`sourceState: 'missing'`. Read-only — `gh pr list` and the local ledger
+only; see
 [core/fleet/outside-pr-outcomes.ts](../src/core/fleet/outside-pr-outcomes.ts).
 The cloud scheduler's hourly improve tick also journals each read into
 `metrics/outside-pr-outcomes.jsonl` (`fleet.outside-pr-outcome.v1` /

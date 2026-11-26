@@ -76,8 +76,8 @@ describe('foldOutsidePrCells', () => {
 
   it('groups in-window merges per repo with verdict tallies and quoted evidence', () => {
     const cells = foldOutsidePrCells([
-      row('acme/widgets', 1, 'yes', daysAgo(2)),
-      row('acme/widgets', 2, 'yes', daysAgo(3)),
+      row('acme/widgets', 1, 'yes', daysAgo(2), { agent: 'devin' }),
+      row('acme/widgets', 2, 'yes', daysAgo(3), { agent: 'devin' }),
       row('acme/widgets', 3, 'yes', daysAgo(4)),
       row('acme/widgets', 4, 'no', daysAgo(5)),
       row('acme/widgets', 5, 'unknown', daysAgo(6)),
@@ -88,6 +88,11 @@ describe('foldOutsidePrCells', () => {
     expect(cell.repo).toBe('acme/widgets');
     expect(cell).toMatchObject({ merged: 5, reverted: 3, unknown: 1, kept: 1 });
     expect(cell.authors).toEqual([{ author: 'ext-dev', reverted: 3 }]);
+    // Reverted merges tally by journaled agent attribution; unattributed is its own bucket.
+    expect(cell.agents).toEqual([
+      { agent: 'devin', reverted: 2 },
+      { agent: null, reverted: 1 },
+    ]);
     expect(cell.examples.map((e) => e.number)).toEqual([1, 2, 3]);
     expect(cell.firstMerged).toBe(daysAgo(4));
     expect(cell.lastMerged).toBe(daysAgo(2));
@@ -164,7 +169,14 @@ describe('outsidePrBacklogItems', () => {
   ];
 
   it('emits one self-targeted item per recurring repo and validates it', async () => {
-    const dir = await runsDir('runs-hit', [...RECURRING, scanLine()]);
+    const dir = await runsDir('runs-hit', [
+      outcomeLine('acme/widgets', 11, 'yes', 2, { agent: 'devin' }),
+      outcomeLine('acme/widgets', 12, 'yes', 4, { agent: 'cursor' }),
+      outcomeLine('acme/widgets', 13, 'yes', 6),
+      outcomeLine('acme/widgets', 14, 'no', 8),
+      outcomeLine('acme/widgets', 15, 'unknown', 10),
+      scanLine(),
+    ]);
     const items = await outsidePrBacklogItems({ runsDir: dir, now: new Date(NOW) });
     expect(items).toHaveLength(1);
     const [item] = items;
@@ -175,6 +187,11 @@ describe('outsidePrBacklogItems', () => {
     expect(item!.prompt).toContain('3 of the recorded 5 outside merges');
     expect(item!.prompt).toContain('#11');
     expect(item!.prompt).toContain('agent');
+    // Journaled agent attribution is quoted; the unattributed bucket is honest, model never claimed.
+    expect(item!.prompt).toContain('devin (1)');
+    expect(item!.prompt).toContain('cursor (1)');
+    expect(item!.prompt).toContain('unattributed (1)');
+    expect(item!.prompt).toContain('model is never recorded');
     expect(item!.prompt).toContain('outside-pr-outcomes.jsonl');
     expect(item!.prompt).toContain('phm fleet outside-outcomes');
     expect(item!.prompt).toContain('no-change');
