@@ -66,6 +66,7 @@ export const readingSchema = z.object({
 const pollSchema = z.object({
   last_polled_at: instant, next_poll_at: instant, interval_s: z.number().finite().positive(),
   active: z.boolean(), fingerprint: z.string().max(256).nullable(),
+  reset_checks: z.array(instant).max(32 * 32).optional(),
 });
 const sampleSchema = z.object({ observed_at: instant, used: z.number().finite().nonnegative(), reset_at: instant.nullable() });
 const reasonSchema = z.enum(['no-supported-source', 'source-returned-nothing', 'source-error', 'source-timeout',

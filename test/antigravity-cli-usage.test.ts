@@ -86,6 +86,32 @@ describe('official Antigravity /usage', () => {
     expect(await probe(fixture, 'gemini-4-hydrogen-high')).toMatchObject({ reason: null });
   });
 
+  it('checks before and at both resets, preserving the schedule through a failed pre-reset read', async () => {
+    const runsDir = await temp();
+    const read = vi.fn((model?: string) => probe(matching(), model));
+    const sources = defaultResourceLiveSources({ runsDir, readAntigravity: read });
+    const tick = (nowMs: number) => runResourceLiveTick({ runsDir, nowMs, sources: { antigravity: sources.antigravity },
+      activeLanes: () => new Set(['agy']) });
+    const first = Date.parse(firstReset);
+    const second = Date.parse(secondReset);
+    const before = 120_000;
+    const next = (result: Awaited<ReturnType<typeof tick>>) => Date.parse(result.sidecar.poll.antigravity!.next_poll_at);
+
+    expect(next(await tick(now))).toBe(first - before);
+    expect((await tick(first - before - 1000)).polled).not.toContain('antigravity');
+    read.mockResolvedValueOnce({ groups: null, reason: 'source-error', execution_context: 'gui-resident' });
+    const failure = await tick(first - before);
+    expect(failure.sidecar.readings.find(row => row.id === 'antigravity')).toMatchObject({ reason: 'source-error', remaining: null });
+    expect(next(failure)).toBe(first);
+    expect(next(await tick(first))).toBe(first + 600_000);
+    expect(next(await tick(first + 600_000))).toBe(second - before);
+    expect(next(await tick(second - before))).toBe(second);
+    const unknown = await tick(second);
+    expect(unknown.sidecar.readings.find(row => row.id === 'antigravity')).toMatchObject({ reason: 'invalid-reading', remaining: null });
+    expect(next(unknown)).toBe(second + 300_000);
+    expect(read).toHaveBeenCalledTimes(6);
+  });
+
   it('clamps fractions, rejects malformed or non-status responses and classifies process failures', async () => {
     const raw = matching();
     raw.command.data.groups[0]!.buckets[0]!.remaining_fraction = -0.25;

@@ -11,7 +11,10 @@ const lane = (name: string, over: Partial<FleetLaneView> = {}): FleetLaneView =>
   lane: name, queueDepth: 0, liveJobs: 0, mergesPerHour: null, startsInWindow: null, credit: credit(50),
   slotTarget: 4, hold: null, health: { verdict: 'ok', reason: '' } as FleetLaneView['health'], ...over,
 });
-const snapshot = (lanes: FleetLaneView[]): FleetLaneSnapshot => ({ lanes } as FleetLaneSnapshot);
+const snapshot = (lanes: FleetLaneView[], openRows: number | null = null): FleetLaneSnapshot => ({
+  lanes,
+  starved: { lanes: {}, waiting_elsewhere: 0, open_rows: openRows },
+} as FleetLaneSnapshot);
 
 describe('lane supply verdicts', () => {
   it('raises the alarm for a lane with free slots, nothing queued and usage left', () => {
@@ -54,6 +57,31 @@ describe('lane supply verdicts', () => {
     const report = buildLaneSupply(snapshot([lane('a', { slotTarget: 2 }), lane('b', { slotTarget: 5 })]), null, NOW);
     expect(report.idle).toEqual(['b', 'a']);
   });
+
+  it('reads a free lane with usage left as open supply, not idle, while lane-open rows wait', () => {
+    const report = buildLaneSupply(snapshot([lane('claude', { liveJobs: 2, slotTarget: 8, credit: credit(68) })], 12), null, NOW);
+    expect(report.lanes[0]).toMatchObject({ verdict: 'open-supply', freeSlots: 6, leftPct: 68 });
+    expect(report.lanes[0]!.text).toBe('claude open supply: 6 free slots, 68% left, 12 open rows wait');
+    expect(report.idle).toEqual([]);
+    expect(report.alarm).toBeNull();
+  });
+
+  it('still alarms when the lane-open count is zero or unknown', () => {
+    for (const openRows of [0, null]) {
+      const report = buildLaneSupply(snapshot([lane('claude', { liveJobs: 2, slotTarget: 8, credit: credit(68) })], openRows), null, NOW);
+      expect(report.lanes[0]!.verdict).toBe('idle-with-usage-left');
+      expect(report.idle).toEqual(['claude']);
+    }
+  });
+
+  it('keeps out-of-usage and held verdicts ahead of open supply', () => {
+    const report = buildLaneSupply(snapshot([
+      lane('codex', { credit: credit(0, '2026-11-21T06:30:00Z') }),
+      lane('devin', { hold: { held: true, reason: 'weekly pool', until: null, by: 'manual', since: null } }),
+    ], 5), null, NOW);
+    expect(report.lanes.map(l => l.verdict)).toEqual(['out-of-usage', 'held']);
+    expect(report.alarm).toBeNull();
+  });
 });
 
 describe('planner and autofill facts', () => {
@@ -91,6 +119,12 @@ describe('format and guard', () => {
     ]), null, NOW));
     expect(text).toContain('codex: 0/4 running, 0 queued, 100% used, resets in 18.5 h; out of usage until 2026-11-21 06:30 UTC');
     expect(text).toContain('devin: 0/4 running, 0 queued, 50% used, resets in 48 h; held weekly pool');
+    expect(text).toContain('No lane is idle with usage left.');
+  });
+
+  it('prints the open-supply verdict plainly', () => {
+    const text = formatLaneSupply(buildLaneSupply(snapshot([lane('claude', { liveJobs: 2, slotTarget: 8, credit: credit(68) })], 3), null, NOW));
+    expect(text).toContain('claude: 2/8 running, 0 queued, 32% used, resets in 48 h; open supply');
     expect(text).toContain('No lane is idle with usage left.');
   });
 

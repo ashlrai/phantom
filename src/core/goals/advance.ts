@@ -53,7 +53,6 @@ import type {
   SwarmRun,
 } from '../types.js';
 import { assertMayMutate } from '../sandbox/policy.js';
-import { runSwarm } from '../swarm/runner.js';
 import { loadSwarm } from '../swarm/store.js';
 import { loadProposal, listProposals } from '../inbox/store.js';
 import {
@@ -63,9 +62,6 @@ import {
   resumeMilestone,
 } from './store.js';
 import { proposalCompletesGoalMilestone } from './completion.js';
-// M270: dynamic frontier trio reads the resolved registry so kimi joins when configured.
-import { engineTierOf } from '../run/sandboxed-engine.js';
-import { buildTaskBrief } from '../teams/context.js';
 
 // ---------------------------------------------------------------------------
 // HARD per-advance budget — a goal advance is ALWAYS bounded.
@@ -158,7 +154,7 @@ const M270_FRONTIER_CANDIDATES: readonly EngineId[] = ['claude', 'codex', 'kimi'
  * checks mergeAuthority config independently — an engine promoted here does NOT
  * gain merge authority.
  */
-function resolveFrontierTrio(cfg: AshlrConfig): EngineId[] {
+function resolveFrontierTrio(cfg: AshlrConfig, engineTierOf: typeof import('../run/sandboxed-engine.js').engineTierOf): EngineId[] {
   return M270_FRONTIER_CANDIDATES.filter((e) => engineTierOf(e, cfg) === 'frontier');
 }
 
@@ -183,14 +179,15 @@ export function _m229ResetRoundRobin(): void {
  * so kimi/nim join the rotation when promoted to tier:'frontier' via config.
  * WORK-ASSIGNMENT only — merge authority is not changed by this function.
  */
-function resolveFrontierEngines(cfg: AshlrConfig): EngineId[] {
+async function resolveFrontierEngines(cfg: AshlrConfig): Promise<EngineId[]> {
   try {
     const allowed = new Set<string>(cfg.foundry?.allowedBackends ?? []);
     // M270: dynamic trio based on resolved engine registry tier.
     // engineInstalled is NOT called here because this function may run in contexts
     // where engines.js is not loaded; the caller guards on an empty result and
     // falls back to the swarm path.
-    return resolveFrontierTrio(cfg).filter((e) => allowed.has(e));
+    const { engineTierOf } = await import('../run/sandboxed-engine.js');
+    return resolveFrontierTrio(cfg, engineTierOf).filter((e) => allowed.has(e));
   } catch {
     return [];
   }
@@ -532,7 +529,7 @@ export async function advanceGoal(
   // load across providers (fixes NIM 429 rate-limit) while keeping all safety
   // invariants intact. Falls back to the builtin swarm if no frontier engines
   // are configured/available.
-  const frontierEngines = opts?.allowCloud ? resolveFrontierEngines(cfg) : [];
+  const frontierEngines = opts?.allowCloud ? await resolveFrontierEngines(cfg) : [];
   const useFrontier = frontierEngines.length > 0;
 
   // SANDBOXED + PROPOSAL-ONLY — these three flags are NON-NEGOTIABLE.
@@ -555,8 +552,9 @@ export async function advanceGoal(
       beforeIds = new Set();
     }
 
-    const milestoneGoal = `${goal.objective} — ${milestone.title}${buildTaskBrief({ repo, title: milestone.title, detail: goal.objective, cfg })}`;
     try {
+      const { buildTaskBrief } = await import('../teams/context.js');
+      const milestoneGoal = `${goal.objective} — ${milestone.title}${buildTaskBrief({ repo, title: milestone.title, detail: goal.objective, cfg })}`;
       run = await dispatchFrontierWithRotation(
         frontierEngines,
         milestoneGoal,
@@ -589,6 +587,7 @@ export async function advanceGoal(
     // BUILTIN-SWARM PATH (flag-off: no allowCloud, or no frontier engines configured).
     // Byte-identical to the pre-M229 behavior.
     try {
+      const { runSwarm } = await import('../swarm/runner.js');
       run = await runSwarm(
         {
           goal: `${goal.objective} — ${milestone.title}`,
