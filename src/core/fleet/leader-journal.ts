@@ -210,6 +210,10 @@ export interface FleetBoardV1 {
   schema: typeof FLEET_BOARD_SCHEMA;
   generatedAt: string;
   lanes: FleetBoardLane[];
+  resourcePlan?: {
+    lanes: { lane: string; running: number | null; target_concurrency: number | null }[];
+    deadlines: { id: string; label: string; lane: string | null; unit: string; deadline_at: string; projected_waste_at_deadline: number | null }[];
+  } | null;
   queueDepthByTier: Record<string, number> | null;
   mergesLastHour: number | null;
   conflictingPrs: {
@@ -306,6 +310,26 @@ function parseDepthByTier(raw: unknown): Record<string, number> | null {
   return out;
 }
 
+function parseResourcePlan(raw: unknown): FleetBoardV1['resourcePlan'] {
+  const obj = rec(raw);
+  if (!obj || !Array.isArray(obj.lanes) || !Array.isArray(obj.deadlines)) return null;
+  const key = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= MAX_KEY;
+  return {
+    lanes: obj.lanes.slice(0, MAX_LANES).flatMap(entry => {
+      const row = rec(entry);
+      return row && key(row.lane) ? [{ lane: row.lane, running: countOrNull(row.running), target_concurrency: countOrNull(row.target_concurrency) }] : [];
+    }),
+    deadlines: obj.deadlines.slice(0, 256).flatMap(entry => {
+      const row = rec(entry);
+      if (!row || !key(row.id) || !key(row.unit) || typeof row.label !== 'string' || !key(row.deadline_at) ||
+          !Number.isFinite(Date.parse(row.deadline_at))) return [];
+      const waste = finiteOrNull(row.projected_waste_at_deadline);
+      return [{ id: row.id, label: row.label.slice(0, MAX_ITEM_TEXT), lane: key(row.lane) ? row.lane : null, unit: row.unit,
+        deadline_at: row.deadline_at, projected_waste_at_deadline: waste !== null && waste >= 0 ? waste : null }];
+    }),
+  };
+}
+
 function parseConflicts(raw: unknown): FleetBoardV1['conflictingPrs'] {
   const fallback: FleetBoardV1['conflictingPrs'] = { count: null, delta: null, trend: 'unknown', history: [] };
   const obj = rec(raw);
@@ -384,6 +408,7 @@ export function parseFleetBoard(text: string): FleetBoardV1 | null {
     schema: FLEET_BOARD_SCHEMA,
     generatedAt,
     lanes: parseLanes(obj['lanes']),
+    ...(obj['resourcePlan'] === undefined ? {} : { resourcePlan: parseResourcePlan(obj['resourcePlan']) }),
     queueDepthByTier: parseDepthByTier(obj['queueDepthByTier']),
     mergesLastHour: countOrNull(obj['mergesLastHour']),
     conflictingPrs: parseConflicts(obj['conflictingPrs']),

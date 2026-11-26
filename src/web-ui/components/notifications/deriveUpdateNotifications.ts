@@ -66,8 +66,8 @@ function reasonHash(text: string): string {
   return (hash >>> 0).toString(36);
 }
 
-/** Settings ▸ Desktop ▸ Updates — the same call the gear tray's update entry makes. */
-const openUpdatesSettings = (): void => setVerseSection('settings');
+/** Settings ▸ Updates — the same call the gear tray's update entry makes. */
+const openUpdatesSettings = (): void => setVerseSection('settings', 'desktop-updates');
 
 export function deriveUpdateNotifications(
   status: ServerObservation,
@@ -97,7 +97,7 @@ export function deriveUpdateNotifications(
       push({ id: `update-failed:${tag}:${reasonHash(native.reason ?? 'unknown')}`,
         category: 'action-required', severity: 'critical',
         title: `Update to ${version} failed: ${reason}`,
-        detail: 'The step log and retry live in Settings ▸ Desktop ▸ Updates.',
+        detail: 'The step log and retry live in Settings ▸ Updates.',
         ts: nowIso, actionLabel: 'Open Updates', actionRun: openUpdatesSettings });
     }
   }
@@ -120,7 +120,7 @@ export function deriveUpdateNotifications(
       push({ id: `update-failed:${target}:${reasonHash(last.reason ?? 'none')}`,
         category: 'action-required', severity: 'critical',
         title: `Update to ${target} ${last.outcome}: ${reason}`,
-        detail: 'The step log and retry live in Settings ▸ Desktop ▸ Updates.',
+        detail: 'The step log and retry live in Settings ▸ Updates.',
         ts: last.finishedAt, actionLabel: 'Open Updates', actionRun: openUpdatesSettings });
     }
     if (last !== null && last.outcome === 'updated'

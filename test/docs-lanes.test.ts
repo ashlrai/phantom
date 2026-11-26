@@ -10,7 +10,7 @@ const ROOT = join(__dirname, '..');
 const read = (path: string): string => readFileSync(join(ROOT, path), 'utf8');
 
 const LANES = [
-  'codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'codex-local',
+  'codex-personal', 'claude', 'claude-api', 'devin', 'codex-local',
   'zai', 'gemini', 'grok', 'cursor', 'agy',
 ] as const;
 

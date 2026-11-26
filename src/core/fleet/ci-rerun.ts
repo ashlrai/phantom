@@ -11,7 +11,8 @@ import { scrubSecrets } from '../util/scrub.js';
 import { defaultCiGh } from './ci-failure-groups.js';
 
 type Entry = { at: string; repo: string; head: string; runId: number; pr: number; outcome: 'attempt' | 'ok' | 'failed' | 'verdict'; test?: string; tests?: string[]; verdict?: 'pass' | 'fail' | 'inconclusive' };
-type RepoStatus = { groups: number; attempted: number; ok: number; failed: number; skippedDuplicate: number; skippedCap: number; queued: number; flakeFixesQueued: number; recurringFlakes: number; verdictsPending: number; verdictsResolved: number; queueBlocked: string | null; errors: string[] };
+type VerdictCursor = Pick<Entry, 'at' | 'repo' | 'head' | 'runId'>;
+type RepoStatus = { groups: number; attempted: number; ok: number; failed: number; skippedDuplicate: number; skippedCap: number; queued: number; flakeFixesQueued: number; recurringFlakes: number; verdictsPending: number; verdictsResolved: number; verdictCursor?: VerdictCursor; queueBlocked: string | null; errors: string[] };
 
 /** A fired rerun is only trusted for verdict reads after GitHub has registered the new attempt. */
 const VERDICT_MIN_AGE_MS = 5 * 60_000;
@@ -25,6 +26,10 @@ const VERDICTS = ['pass', 'fail', 'inconclusive'] as const;
 
 function rerunKey(e: Pick<Entry, 'repo' | 'head' | 'runId'>): string {
   return JSON.stringify([e.repo, e.head, e.runId]);
+}
+
+function compareVerdictPosition(a: VerdictCursor, b: VerdictCursor): number {
+  return Date.parse(a.at) - Date.parse(b.at) || rerunKey(a).localeCompare(rerunKey(b));
 }
 
 /** Expand attempt evidence for recurrence while keeping workflow counters per run. */
@@ -50,7 +55,7 @@ function pendingVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
   }
   return [...fired.values()]
     .filter(e => !verdicted.has(rerunKey(e)) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
-    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    .sort(compareVerdictPosition);
 }
 
 /** Map a workflow-run API payload to a verdict; null means not yet resolvable. */
@@ -118,6 +123,7 @@ export function readCiRerunStatus(path = ciRerunPaths().statusPath): { lastRunAt
 export async function runCiRerunMaintenance(opts: CiRerunOptions) {
   const paths = { ...ciRerunPaths(), ...opts }, now = opts.now ?? Date.now;
   const status = { lastRunAt: new Date(now()).toISOString(), status: 'ok', repos: {} as Record<string, RepoStatus> };
+  const previous = readCiRerunStatus(paths.statusPath);
   const journal = readCiReruns(paths.journalPath, now()).entries;
   const append = (entry: Entry) => {
     mkdirSync(dirname(paths.journalPath), { recursive: true });
@@ -144,6 +150,7 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
     for (const repo of opts.repos) {
       opts.signal.throwIfAborted();
       const s: RepoStatus = { groups: 0, attempted: 0, ok: 0, failed: 0, skippedDuplicate: 0, skippedCap: 0, queued: 0, flakeFixesQueued: 0, recurringFlakes: 0, verdictsPending: 0, verdictsResolved: 0, queueBlocked: null, errors: [] };
+      s.verdictCursor = previous?.repos?.[repo]?.verdictCursor;
       status.repos[repo] = s;
       try {
         const report = await (opts.analyzer ?? analyzeCiBaseline)(repo, gh);
@@ -200,11 +207,12 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
         const pending = pendingVerdicts(journal.filter(e => e.repo === repo), now());
         s.verdictsPending = pending.length;
         const eligible = pending.filter(e => Date.parse(e.at) <= now() - VERDICT_MIN_AGE_MS);
-        let checked = 0;
-        for (const p of eligible) {
-          if (checked >= MAX_VERDICT_CHECKS) break;
+        const cursor = s.verdictCursor;
+        const next = cursor ? eligible.findIndex(e => compareVerdictPosition(e, cursor) > 0) : 0;
+        const start = Math.max(0, next);
+        for (let offset = 0; offset < Math.min(eligible.length, MAX_VERDICT_CHECKS); offset++) {
+          const p = eligible[(start + offset) % eligible.length]!;
           opts.signal.throwIfAborted();
-          checked++;
           let verdict: Entry['verdict'] | null = null;
           try {
             const r = await gh(['api', `repos/${repo}/actions/runs/${p.runId}`]);
@@ -213,6 +221,7 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
               catch { /* malformed run payload: stays pending for a later pass */ }
             }
           } catch (error) { if (opts.signal.aborted) throw error; }
+          s.verdictCursor = { at: p.at, repo: p.repo, head: p.head, runId: p.runId };
           if (verdict === null) continue;
           append({ at: new Date(now()).toISOString(), repo: p.repo, head: p.head, runId: p.runId, pr: p.pr, outcome: 'verdict', verdict, ...(p.test ? { test: p.test } : {}) });
           s.verdictsResolved++;

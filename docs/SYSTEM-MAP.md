@@ -103,12 +103,27 @@ parent objects must already be present; the hook never fetches. It does not
 claim the rest of a multi-commit rebase, backfill missed objects, or cover
 superseding fleet PRs, Inbox merges, or other merge paths.
 
-**Before planning:** Cloud launch checks the prepared base commit and adds at
-most four valid, automatically recorded PR references for files explicitly
-named in the task. It sends no curated text or private source IDs, does not
-change the approved-lessons trial arm, and launches without the block if the
-checkout or evidence cannot be verified. Other consumers and automated
-projection of the curated source kinds are follow-ups.
+**Before planning:** The Cloud task path, including tasks whose delivery is
+later taken over by Fleet, ranks source nodes from the prepared base by
+goal-term matches and unique incoming local imports. The launch prompt gets
+at most 12 ranked source pointers and four valid merge references for ranked
+or explicitly named files, within a 3,072-byte cap. It sends no curated or
+rejection text and leaves the approved-lessons trial arm unchanged. A launched
+task records the included node IDs and bytes under its existing task ID.
+The Fleet drop-job writer uses the same context builder and adds its slice to
+the queued prompt only if the enriched job still passes the ingest contract.
+It records bytes and node IDs in the existing job metrics ledger.
+`phm wiki brain stats --json` compares the merge fraction of explicitly
+measured, resolved Fleet and Cloud jobs with and without slices, separately.
+It excludes open jobs, unmeasured jobs, and Fleet outcomes outside the
+bounded ledger tail. This is observational, not a causal estimate.
+
+**After an unmerged close:** The direct Cloud tracker writes a lesson about
+the close and any scrubbed failed-check names. The observed commit is the
+verified PR head; the changed-file projection needs its merge base with the
+local origin base ref. When objects are missing, no lesson is written. The
+same ancestry and blob checks apply: a rejected branch normally reads as
+`unknown-ancestry` from the default branch, not as a current instruction.
 
 ## Browse in the desktop app
 
@@ -125,3 +140,19 @@ If HEAD changes during navigation, the map returns to the overview rather
 than combining snapshots. Source links open the exact commit and line on
 the repo's GitHub origin. Without a GitHub origin, the map still shows the
 anchor and does not open a potentially different working-tree file.
+
+## Signed repository ecosystem
+
+`phm wiki ecosystem --json` and the read-only `phm_wiki_ecosystem` MCP tool
+build maps for the repositories in the verified standing grant, independent of
+the selected project. They prefer an existing Fleet mirror with a matching
+GitHub origin, then a matching enrolled checkout. There is no cloning,
+checkout switching, or fetching from a read: a missing checkout is shown as
+not indexed. Each repository reuses its own incremental Git snapshot.
+
+The bounded graph links unique root npm package identities via dependency
+declarations, versioned `npx` MCP declarations, and static JS/TS imports.
+Edges point to the importing repository, file, line, and exact commit as
+provenance; they do not claim live runtime connectivity. In desktop **System
+map**, open **Ecosystem** and select a repository to see its direct incoming
+and outgoing relationships.

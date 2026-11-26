@@ -35,7 +35,7 @@ import { busBodyKind, busBodyResultOutcome, parseClaimKey, WORK_RESULT_OUTCOMES,
 import type { AgentMessageKind } from '../fleet/agent-messages.js';
 import { conversationScope, readAgentConversations, type AgentConversations, type Conversation, type ConversationScope } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
-import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedJobSearchText, busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher,
+import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobCitesEnvelope, busWorkFeedJobHold, busWorkFeedJobSearchText, busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher,
   busWorkJobDispatch, busWorkJobResultSuffix, readBusWorkFeed, type BusWorkFeedHold, type BusWorkFeedHoldCoverage, type BusWorkFeedJob,
   type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodyInReplyToMatch, busBodyJobIds, busBodyJobId, busBodyJobMatch,
@@ -957,16 +957,6 @@ function feedHoldIndex(feed: Extract<BusWorkFeedReadResult, { status: 'ok' }>): 
   holdsByJob: ReadonlyMap<string, readonly BusWorkFeedHold[]>;
 } {
   return busWorkFeedHoldIndex(feed.claims);
-}
-
-/** True when the feed job's retained envelope citations include the wire
- * id — the `work.post` announcement, newest `work.status` receipt or newest
- * `work.result` receipt the job's state cites, the same ids the job lines
- * print as `post=`/`status=`/`result=`. An `--id` read keeps a job only
- * when one of those citations equals the value, so "which pending job
- * envelope X belongs to" is one filtered digest. */
-function busWorkFeedJobCitesEnvelope(job: BusWorkFeedJob, id: string): boolean {
-  return job.postId === id || job.statusId === id || job.result?.id === id;
 }
 
 /** True when the feed job cites at least one retained receipt of this body

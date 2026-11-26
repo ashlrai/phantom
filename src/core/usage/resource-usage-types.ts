@@ -11,7 +11,6 @@ export const USAGE_RESOURCES = [
   { id: 'claude-max', label: 'Claude Max' },
   { id: 'claude-api-gift', label: 'claude-api gift' },
   { id: 'claude-api-monthly', label: 'claude-api monthly' },
-  { id: 'codex-cmp', label: 'codex-cmp' },
   { id: 'codex-personal', label: 'codex-personal' },
   { id: 'devin', label: 'Devin' },
   { id: 'zai', label: 'zai' },

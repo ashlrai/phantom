@@ -46,7 +46,7 @@ export async function cmdBudget(args: string[]): Promise<number> {
     if (command === 'show') {
       if (positional.length > 1 || options.size) throw new Error('show accepts only --json');
     } else if (command === 'add') {
-      if (positional.length !== 2 || !BUDGET_POOLS.includes(pool as BudgetPool)) throw new Error('add requires a supported pool');
+      if (positional.length !== 2 || !BUDGET_POOLS.some(active => active === pool)) throw new Error('add requires a supported pool');
       const source = options.get('--source') ?? 'manual';
       const timestamp = options.get('--at') ?? new Date().toISOString();
       if (Date.parse(timestamp) > Date.now()) throw new Error('Future observations are not allowed');

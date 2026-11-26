@@ -36,6 +36,10 @@ export function readPoolConfig(): PoolConfig | null {
       Object.keys(config).sort().join() !== 'backup,node,owner,primary,role') throw new Error('Invalid node pool config');
   return config;
 }
+export function canWriteStandingGrantHere(): boolean {
+  try { return readPoolConfig()?.role !== 'worker'; }
+  catch { return false; }
+}
 export function configurePool(config: PoolConfig): void {
   if (!['primary', 'backup', 'worker'].includes(config.role) || !validSshHost(config.primary) || !validSshHost(config.backup) ||
       config.primary === config.backup || !validId(config.node) || !validId(config.owner)) throw new Error('Invalid node pool config');

@@ -5,7 +5,7 @@ import { readSource } from './runs-parked-queue.js';
 import type { UsageReading } from './usage-history.js';
 import type { PaceInput } from './pace-verdict.js';
 
-const POOLS = ['agy', 'claude', 'claude-api', 'codex-cmp', 'codex-local', 'codex-personal', 'cursor', 'devin', 'devin-flash', 'gemini', 'grok', 'zai'];
+const POOLS = ['agy', 'claude', 'claude-api', 'codex-local', 'codex-personal', 'cursor', 'devin', 'devin-flash', 'gemini', 'grok', 'zai'];
 const object = (v: unknown): Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const number = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 const time = (v: unknown): number => {
@@ -18,7 +18,7 @@ async function json(file: string) {
 
 export async function readPoolSources(root: string, budget: Record<string, unknown>, lanes: Record<string, unknown>, samples: UsageReading[], now: number, statusAt: number | null): Promise<Record<string, PaceInput>> {
   const result: Record<string, PaceInput> = {};
-  for (const id of [...new Set([...POOLS, ...Object.keys(budget), ...Object.keys(lanes), ...samples.map(s => s.pool)])].slice(0, 64)) {
+  for (const id of [...new Set([...POOLS, ...Object.keys(budget), ...Object.keys(lanes), ...samples.map(s => s.pool)])].filter(id => id !== 'codex-cmp').slice(0, 64)) {
     if (!/^[a-z0-9][a-z0-9._-]{0,79}$/.test(id)) continue;
     const b = object(budget[id]), u = b.use_it_all === undefined ? b : object(b.use_it_all), lane = object(lanes[id]);
     const file = `queue/${id}-reading.json`, recorded = await json(join(root, file));

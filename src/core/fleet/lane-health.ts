@@ -76,7 +76,7 @@ function ms(iso: string | null): number | null {
 export function stuckRun(run: FleetLiveRun, nowMs: number): StuckRun | null {
   const timeoutMs = PHASE_TIMEOUT_MS[run.phase];
   if (run.endedAt || timeoutMs === null) return null;
-  const since = ms(run.phaseStartedAt) ?? ms(run.startedAt);
+  const since = ms(run.phaseStartedAt);
   if (since === null) return null;
   const phaseAgeMs = Math.max(0, nowMs - since);
   return phaseAgeMs > timeoutMs ? { runId: run.id, repo: run.repo, phase: run.phase, phaseAgeMs, timeoutMs } : null;

@@ -19,6 +19,24 @@ Creation requires `--dry-run` and never calls the writer.
 with a timezone. The lane snapshot uses it for the merge window and falls
 back to `at` when absent. `at` continues to carry the event timestamp.
 
+`parseReadyTsv` returns `unhintedRows` entries with `id`, `repo` and `tier`
+for validated lane-open dispatcher jobs. `readyRowsForDepth`
+(`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
+`tier` for the tier tally, including lane-open jobs as `READY`.
+
+## Wiki context and ecosystem
+
+`cloudBrainContext(githubRepo, checkout, taskText)` and
+`fleetBrainContext(repoName, taskText)` return `{ text, nodeIds }`; text is
+bounded to 3,072 UTF-8 bytes. Fleet drop jobs only append context that fits the
+drop contract. `phm wiki brain stats --json` reports separate Fleet and Cloud
+merge rates for explicitly measured jobs with resolved PRs.
+
+`phm wiki ecosystem --json`, `phm_wiki_ecosystem`, and the local
+`GET /api/verse/wiki/ecosystem` return `phantom.wiki.ecosystem.v1`. The graph
+uses the active signed scope, local Git objects, and commit-pinned anchors;
+repositories without an available local index remain visible as unindexed.
+
 ## Desktop appearance
 
 `UiAppearance` (`src/core/verse/ui-appearance-file.ts`) includes
@@ -311,6 +329,13 @@ a read-only `resourceCapacity` projection with lane targets, waste by
 allowance deadline, and the proposal. Recording evidence or reading the
 proposal never consumes a reset.
 
+The Antigravity Resource Live row can carry `execution_context` and validated
+quota `groups` with per-bucket 0–1 `remaining` and UTC `reset_at`. Both
+resource JSON commands expose the `antigravity` projection; untrusted or
+unavailable quota has null groups and a reason. Only current, identity-matched
+GUI quota can set an Antigravity plan target to zero with
+`quota_exhausted_until_reset`; this is advisory, not a dispatcher hold.
+
 `postureEvidence(root)` is exported from `src/core/queue/route-explain.ts` for
 the shared bounded journal parser. It preserves receipt `ts` (epoch seconds or
 ISO timestamp) as optional `observedAt`, plus lane `lane`, `account_id`, `model`,
@@ -382,7 +407,10 @@ tallies, `pending` unresolved fired reruns inside 24 hours, and
 `resolutionRate` = pass/(pass+fail) or null when none resolved);
 `readCiRerunStatus(path?)` returns the persisted status or null, whose per-repo
 records gain `recurringFlakes`, `flakeFixesQueued`, `verdictsPending` and
-`verdictsResolved` counts.
+`verdictsResolved` counts. An optional `verdictCursor` records the last
+checked rerun (`at` from the successful call row, `repo`, `head`, and
+`runId`). Polling resumes after that position in timestamp and identity
+order and wraps to the oldest eligible rerun.
 Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
 Resident off-tick ticks launch it only with repositories and an elapsed interval.
 Attempt entries use `test` for a singleton or `tests` for multiple eligible
@@ -643,7 +671,7 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
-`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?})`,
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?, mergeEventsTruncated?})`,
 `authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
 `foldRouteDecisionWorkClasses(text)`, `foldRouteDecisions(text)`,
 `foldMarketHandoffAdvisories(text)`,
@@ -1487,7 +1515,9 @@ jobsTruncated?)`,
 `phm fleet unfed` (`fleet.unfed.v1`). The report's `marketTruncated` boolean
 is true when the bounded work-market journal read omitted older bytes.
 History, overrides, rejections and decision outcomes may then be incomplete
-for the requested window. A missing or unreadable journal is indicated by
+for the requested window. The additive `resourcePlan` block compares the
+advisory resource-plan target with running jobs and waiting work; it does
+not reinterpret dispatcher decisions or change the exit status. A missing or unreadable journal is indicated by
 the market folds' `available: false`. `foldMarketOverrides` collapses the
 window's `route_decision` rows to each job's latest decision and tallies
 `lane_override`s by reason and hinted-to-chosen lane; the report's
@@ -2200,6 +2230,11 @@ cohorts, observation coverage, unknowns, thresholds and exit codes.
 [CONTRACT-AGENTNET-PEERBUS](docs/contracts/CONTRACT-AGENTNET-PEERBUS.md) pins
 session-bound callsigns, team-only peer messages, Slack provisioning drafts,
 the approval-gated broker and bounded chief-of-staff delegation.
+`phm agentnet peers read` additionally accepts post-admission filters
+(`--from`, `--exclude-from`, `--to`, `--since`, `--before`, `--contains`,
+`--id`, `--kind`, `--peer-kind`, `--thread`, `--job`, `--result`) owned by
+`agentnet/peer-inbox.ts`; they narrow the admitted page only and never affect
+admission or cursor semantics.
 ## Persistent specialist identities (RQ-GROK-SPECIALISTS-1)
 
 `src/core/fleet/roster.ts` owns `fleet-specialist-roster.v1`: named identities,
@@ -2341,6 +2376,15 @@ optional `providerBinaries`; `NodeRunnerDeps` gains `resolveBinary`.
 `codex-pack.ts` exports `CODEX_OUTPUT_LIMIT` (48 KiB), `nodeWorkDir`, `codexFileArgv`
 and `runCodexFilePack`, which writes a mode-0600 `node-results/<jobId>.json` artifact on success only.
 See [node runner](docs/NODES.md#reference-runner-security-review-before-installation).
+
+## Node route fleet footprint costs
+
+`src/core/drive/nodes/autoscale-router.ts` exports `fleetFootprints(docs)`.
+For each harness it returns the maximum `mem_bytes_max` and maximum measured
+`cpu_cores_per_session` across the supplied documents. The maxima can come
+from different nodes. CPU stays `null` when all supplied costs are unknown.
+`planAutoscaleRoutes` supplies only fresh, non-conflicting snapshots and uses
+the aggregate when the candidate node has no footprint for that harness.
 
 ## Node route lane outcomes (`phantom.node-route-outcomes.v1`)
 
@@ -2843,12 +2887,14 @@ read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
 answer 503. Its query is the feed CLIs' filter set: `claims=true` adds the
 claims hold join, `open=true`/`claimable=true` imply it like the CLI flags,
 and `status`, `job`, `repo`, `provider`, `tier`, `to`, `owner`, `since`,
-`before`, `contains`, `channel` and `result` narrow the answer through the same
+`before`, `contains`, `channel`, `result` and `id` narrow the answer through the same
 `projectBusWorkFeedView` the
 CLIs use — jobs answer newest-first, `to`/`owner` resolve through the
 server-side identity registry with exact-label fallback, `channel` is the
 strict channel-name grammar prefix-matching `group:<channel>:` on the
-announcement address, and `repo`,
+announcement address, `id` keeps only jobs whose retained envelope
+citations (`postId`/`statusId`/`result.id`, the `busWorkFeedJobCitesEnvelope`
+match the feed `--id` flag and `work mine --id` share), and `repo`,
 `since` and `contains` share the CLI normalization. `limit` (1–200,
 `BUS_WORK_FEED_LIMIT_MAX`) pages the filtered view through the shared
 `sliceBusWorkFeedView`, reporting `matched`/`omitted`; absent, the whole
@@ -2905,7 +2951,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
 client-side feed filters (`{status?, jobId?, repo?, provider?, tier?, claimable?, open?,
-since?, before?, toMatch?, ownerMatch?, contains?, channel?, result?}`),
+since?, before?, toMatch?, ownerMatch?, contains?, channel?, result?, id?}`),
 newest-first order and per-job hold regrouping; `repo` is the lowercase
 `owner/name` key `busWorkFeedRepoKey(repo)` normalizes a `--repo` argument to
 (undefined for a non-slug, so callers reject it as usage) and matches a job's
@@ -2965,12 +3011,16 @@ footer adds `receipt=<id>` when the projection blamed a retained envelope,
 and a paged read's footer adds `matched=N omitted=M` —
 both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>`,
-`--channel <name>`, `--result <reserved|admitted|complete|failed>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--contains <text>` and
+`--channel <name>`, `--result <reserved|admitted|complete|failed>`, `--id <envelope-id>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--contains <text>` and
 `--limit <1-200>` beside
 `--status`; `--claimable`
 implies the claims join, `--since` and `--before` parse through the shared `parseSince`
 grammar — `since` inclusive, `before` exclusive on `updatedAt` — `--limit` runs `sliceBusWorkFeedView` after the filters (absent,
-the whole filtered view answers), and `--contains` takes a non-empty needle of at most
+the whole filtered view answers), `--id` keeps only jobs whose retained
+envelope citations include that wire id — the `work.post` announcement,
+newest `work.status` receipt or newest `work.result` receipt, the same
+`busWorkFeedJobCitesEnvelope` match `work mine --id` applies — and
+`--contains` takes a non-empty needle of at most
 `BUS_WORK_FEED_CONTAINS_MAX` (512) characters, refusing unparseable or
 overlong values as usage errors.
 `phm fleet work-feed [--claims]
@@ -4265,7 +4315,7 @@ and bound, each bracket naming `#<channel>:<topic>`. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the twelve dependencies the unified verbs touch — the
+read-only probe over the thirteen dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -4305,7 +4355,15 @@ resolve — `agentnetPaths().busRoot` = `realHome()/.ashlr/fleet`, or the
 probe's `root` override — `source` plus a `liveRows` count of unexpired
 coordination rows the send budget still counts; 0 on a verified-missing
 ledger, null when unreadable, never peer names, claim keys, digests, threads
-or bodies), and — as a verdict over the claim journal and
+or bodies), the session-handoff journal store (`listSessionHandoffs` over
+`<runsRoot>/handoffs` under the same runs root the wake probe resolves —
+`options.runsRoot`, else `ASHLR_RUNS_DIR` or `~/.ashlr-runs` — the read
+`phm checkpoint handoff list|show` and `fleet_session_handoffs` serve;
+`source` plus `journals` scanned, `open` non-`completed` journals,
+`awaitingFailover` open journals whose signal satisfies `handoffPressure`,
+`unreadable` journals that failed `show`'s validation and a `truncated`
+flag; 0 counts on a verified-missing store, null when unreadable, never job
+ids, lanes, models or signal payloads), and — as a verdict over the claim journal and
 coordination table rather than another dependency — the claim-store drift
 comparison (`readClaimStoreDrift` run over the probe's own two reads, the
 same `fleet.claim-drift.v1` read `ashlr fleet claim-drift` serves:
@@ -4529,3 +4587,17 @@ device human after that signature check and does not read agent env markers.
 `POST /api/approvals/team/:id/decision` accepts `decision`, optional `team` and
 optional `assertion`. An `actor` field is refused. A bare token on a
 human-required decision is HTTP 403 `human-presence-required`.
+
+## Managed repositories and freshness evidence
+
+`phantom.repos.v1` lists the union of the ecosystem catalog, local enrollment,
+and effective signed repository scope. Effective stage and local enrollment
+are separate fields. `canManageGrant` is false on configured workers.
+`prioritySync: "local-only"` applies to list and priority mutation results
+until leader replication is available.
+
+`allocateRepos(evidence, freshness?, now?)` takes an optional
+`repo-freshness.v1` snapshot and an epoch-millisecond evaluation time. The
+snapshot's `repos` map keys are canonical `owner/name` strings; each maps to
+optional `docs` and `site` records with integer UTC seven-day `period` and a
+`verdict` as specified in [Queue](docs/QUEUE.md#repository-shares).

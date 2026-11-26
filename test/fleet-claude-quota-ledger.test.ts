@@ -58,10 +58,31 @@ describe('claude native quota in the resource ledger', () => {
     await put(root, reading({}, 100));
     expect((await claudeLane(root)).lane.quotaEvidence?.state).toBe('exhausted');
   });
+  it('keeps the active weekly reading and omits only model scopes whose reset has arrived', async () => {
+    const root = await setup();
+    await put(root, reading({ windows: [
+      { id: 'seven_day', usedPct: 61, resetAt: '2026-11-07T16:02:00Z' },
+      { id: 'seven_day_fable', usedPct: 100, resetAt: '2026-11-02T12:00:00Z' },
+      { id: 'seven_day_opus', usedPct: 30, resetAt: '2026-11-02T12:00:01Z' },
+      { id: 'seven_day_sonnet', usedPct: 20, resetAt: null },
+    ] }));
+    const { lane } = await claudeLane(root);
+    expect(lane.usedPct).toBe(61);
+    expect(lane.quotaScopes).toEqual([
+      { id: 'seven_day_opus', usedPct: 30, resetAt: '2026-11-02T12:00:01Z' },
+      { id: 'seven_day_sonnet', usedPct: 20, resetAt: null },
+    ]);
+  });
   it.each([
     ['a reading over 6 hours old', reading({ observedAt: '2026-11-02T04:59:00Z' })],
     ['a not-fresh reading', reading({ fresh: false, windows: [] })],
     ['a future reading', reading({ observedAt: '2026-11-02T13:00:00Z' })],
+    ['a weekly window ending now', reading({ windows: [
+      { id: 'seven_day', usedPct: 100, resetAt: '2026-11-02T12:00:00Z' },
+    ] })],
+    ['a weekly window that ended after observation', reading({ windows: [
+      { id: 'seven_day', usedPct: 100, resetAt: '2026-11-02T11:59:00Z' },
+    ] })],
     ['a reading with no seven_day window', reading({ windows: [{ id: 'five_hour', usedPct: 3, resetAt: null }] })],
   ])('leaves the row unchanged for %s', async (_name, value) => {
     const root = await setup();

@@ -22,9 +22,9 @@ describe('laneLabel', () => {
   });
 
   it('appends the parsed reason and a future reset as until', () => {
-    const label = laneLabel({ lane: 'codex-cmp', running: 0, target: 30, held: true, heldReason: 'out of usage until 2026-11-01 01:22' }, now);
+    const label = laneLabel({ lane: 'codex-personal', running: 0, target: 30, held: true, heldReason: 'out of usage until 2026-11-01 01:22' }, now);
     expect(label).toContain('held: out of usage until');
-    expect(label).toContain('codex-cmp 0/30 · ');
+    expect(label).toContain('codex-personal 0/30 · ');
   });
 
   it('appends a past or non-until timestamp as since', () => {

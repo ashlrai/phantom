@@ -38,16 +38,18 @@ import { capacitySource } from './capacity-source.js';
 import { anthropicCostSource } from '../../fabric/readers/anthropic-cost.js';
 import { operatorPageSources, type OperatorUsagePageReader } from './operator-page.js';
 import { publishCodexResetBank } from './banked-resets.js';
+import { ANTIGRAVITY_USAGE_TIMEOUT_MS, readAntigravityUsage } from '../../fabric/readers/antigravity-usage.js';
+import { ANTIGRAVITY_SOURCE } from './antigravity-quota.js';
 
 export interface ResourceLiveSourceOptions extends LiveSourcesConfig {
   readCapacity?: () => CapacitySnapshot | null;
   operatorPageReader?: OperatorUsagePageReader;
   runAnthropicCost?: () => Promise<string>;
+  readAntigravity?: typeof readAntigravityUsage;
   /** Runs dir holding metrics/claude-quota.json and queue/resources.json. */
   runsDir: string;
   operatorHome?: string;
   /** Explicit Codex pool homes. Refused when they are the operator home or under ~/.codex*. */
-  codexCmpHome?: string;
   codexPersonalHome?: string;
   /** Accounts root of the Claude API grant store. Absent leaves the credit unverified. */
   accountsRoot?: string;
@@ -98,22 +100,13 @@ function claudeFable(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
   } }];
 }
 
-function codex(o: ResourceLiveSourceOptions, home: string | undefined): ResourceLiveSource[] {
-  return [{ tier: 'official', read: async () => {
-    if (!home || !codexPoolHomeAllowed(home, o.operatorHome ?? homedir())) return null;
-    const reading = await (o.readCodex ?? (dir => readCodexUsage({ home: dir })))(home);
-    if (reading.pctUsed === null) return null;
-    return { used: reading.pctUsed, limit: 100, unit: 'percent', reset_at: reading.resetAt, source: 'codex-app-server', observed_at: reading.fetchedAt };
-  } }];
-}
-
 function codexPersonal(o: ResourceLiveSourceOptions): Record<'5h' | 'weekly', ResourceLiveSource> {
   let last: { at: number; reading: ReturnType<NonNullable<ResourceLiveSourceOptions['readCodex']>> } | undefined;
   const source = (kind: '5h' | 'weekly'): ResourceLiveSource => ({ tier: 'official', read: async now => {
     const home = o.codexPersonalHome;
     if (!home || !codexPoolHomeAllowed(home, o.operatorHome ?? homedir())) return null;
     if (last?.at !== now) {
-      const reading = (o.readCodex ?? (dir => readCodexUsage({ home: dir, includeResetBank: true })))(home).then(async row => {
+      const reading = (o.readCodex ?? (dir => readCodexUsage({ personalHome: dir, includeResetBank: true })))(home).then(async row => {
         const fetched = Date.parse(row.fetchedAt);
         if ((row.resetBank || row.resetBankUnknownReason) && Number.isFinite(fetched) && now - fetched < RESOURCE_LIVE_STALE_MS) {
           await publishCodexResetBank(o.runsDir, iso(Math.min(now, fetched)), row.resetBank ?? null, row.resetBankUnknownReason).catch(() => {});
@@ -231,6 +224,22 @@ function agentCheck(load: () => Promise<unknown>, id: EvidenceId): ResourceLiveS
   } };
 }
 
+export function antigravityAgentCheck(runsDir: string): ResourceLiveSource {
+  return agentCheck(() => readResourceEvidenceFile(runsDir), 'antigravity');
+}
+
+function antigravity(o: ResourceLiveSourceOptions): ResourceLiveSource {
+  return { tier: 'official', deadlineMs: ANTIGRAVITY_USAGE_TIMEOUT_MS + 2_000, read: async now => {
+    const result = await (o.readAntigravity ?? readAntigravityUsage)(o.antigravityModel);
+    if (result.groups === null) return { reason: result.reason, execution_context: result.execution_context };
+    const future = result.groups.flatMap(group => group.buckets.map(bucket => bucket.reset_at))
+      .filter(at => Date.parse(at) > now).sort();
+    if (future.length === 0) return { reason: 'invalid-reading', execution_context: result.execution_context };
+    return { groups: result.groups, execution_context: result.execution_context, used: null, limit: null, unit: 'percent',
+      reset_at: future[0]!, source: ANTIGRAVITY_SOURCE, observed_at: iso(now) };
+  } };
+}
+
 function visible(o: ResourceLiveSourceOptions, siteId: UsageSite['id']): ResourceLiveSource[] {
   const site = USAGE_SITES.find(row => row.id === siteId);
   const session = o.browser;
@@ -270,7 +279,7 @@ function devinPreview(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
 
 export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): ResourceLiveSources {
   const personal = codexPersonal(o);
-  const operator = (provider: 'claude' | 'codex-personal' | 'codex-cmp') => operatorPageSources(o.operatorPageFallback, provider, o.operatorPageReader);
+  const operator = (provider: 'claude' | 'codex-personal') => operatorPageSources(o.operatorPageFallback, provider, o.operatorPageReader);
   const evidence = (id: EvidenceId) => agentCheck(() => readResourceEvidenceFile(o.runsDir), id);
   const anthropic = o.anthropicCost ? [anthropicCostSource(o.anthropicCost, o.runAnthropicCost)] : [];
   return {
@@ -282,7 +291,6 @@ export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): Resour
     'codex-personal': [personal.weekly, codexBudgetWeekly(o.runsDir), capacitySource('codex-personal', o.codexSeatMap, o.readCapacity),
       ...visible(o, 'chatgpt-codex'), ...operator('codex-personal')],
     'codex-personal-5h': [personal['5h']],
-    'codex-cmp': [...codex(o, o.codexCmpHome), capacitySource('codex-cmp', o.codexSeatMap, o.readCapacity), ...operator('codex-cmp')],
     'openai-api': [evidence('openai-api')],
     devin: [registry(o, 'devin', 'official'), ...devinWeekly(o), ...visible(o, 'devin')],
     // Zero-cost SWE-2 Lightning/Flash previews the CLI lists as free, until they expire.
@@ -290,7 +298,7 @@ export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): Resour
     // The lane's own quota window, published by the dispatcher from its own calls.
     'glm-lite': [registry(o, 'zai', 'own-call'), ...visible(o, 'zai')],
     gemini: visible(o, 'gemini'),
-    antigravity: [evidence('antigravity')],
+    antigravity: [antigravity(o)],
     'google-workspace': [evidence('google-workspace')],
     dot: [evidence('dot')],
     instinct: [],

@@ -777,6 +777,34 @@ describe('text output names outcomes in plain words', () => {
       expect(last(lines)).toContain('slots=0 held=memory-pressure');
     } finally { vi.restoreAllMocks(); }
   });
+  it('status names the rejoin command for each expired node, restoring its full profile', async () => {
+    const { deps, nodes, lines, advance } = harness();
+    try {
+      // A live node carries no hint; the expired one names the exact rejoin.
+      executeNodeFleet('join', ['--node', 'box', '--owner', 'acme', '--caps', 'build'], nodes());
+      executeNodeFleet('join', ['--node', 'old', '--owner', 'acme,ops', '--caps', 'gh', '--slots', '2'], nodes());
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).not.toContain('rejoin:');
+      advance(31_000);
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      const out = last(lines);
+      expect(out).toContain('node box expired');
+      expect(out).toContain('node old expired');
+      // The hint restores the last advertised profile — owners outside the
+      // queried scope included — so a rejoin never silently downgrades it.
+      expect(out).toContain('rejoin: phm node join --node box --owner acme --caps build');
+      expect(out).toContain('rejoin: phm node join --node old --owner acme,ops --caps gh --slots 2');
+      // list renders the same hints; --json stays the bare scoped view.
+      expect(await cmdNodeFleet('list', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('rejoin: phm node join --node old --owner acme,ops');
+      expect(await cmdNodeFleet('status', ['--owner', 'acme', '--json'], deps)).toBe(0);
+      const view = JSON.parse(last(lines)) as { nodes: { nodeId: string; live: boolean }[] };
+      // --json keeps the scoped view: expired nodes stay visible via live:false,
+      // and no rejoin text leaks into the envelope.
+      expect(view.nodes.map(n => [n.nodeId, n.live])).toEqual([['box', false], ['old', false]]);
+      expect(last(lines)).not.toContain('rejoin:');
+    } finally { vi.restoreAllMocks(); }
+  });
   it('an empty pull names this node\'s own hold in plain words', async () => {
     const { deps, nodes, lines } = harness();
     try {

@@ -22,6 +22,11 @@ const BOARD: FleetBoardResponse['board'] & object = {
     { lane: 'devin', ready: 3, parked: 1, running: 2, mergesLastHour: 4, oldestWaitSeconds: 540 },
     { lane: 'claude', ready: 0, parked: 0, running: 1, mergesLastHour: null, oldestWaitSeconds: null },
   ],
+  resourcePlan: {
+    lanes: [{ lane: 'devin', running: 2, target_concurrency: 11 }],
+    deadlines: [{ id: 'claude-weekly', label: 'Claude weekly', lane: 'claude', unit: 'percent',
+      deadline_at: '2026-11-09T13:00:00.000Z', projected_waste_at_deadline: 38 }],
+  },
   queueDepthByTier: { frontier: 2, work: 5, mid: 1 },
   mergesLastHour: 7,
   conflictingPrs: {
@@ -61,9 +66,14 @@ it('fetches /api/fleet/board and renders lanes, depth and the needs-Mason item',
   await waitFor(() => expect(screen.getByText('devin')).toBeInTheDocument());
   expect(screen.getByText('Fleet Board')).toBeInTheDocument();
   expect(screen.getByText('claude')).toBeInTheDocument();
+  expect(screen.getByRole('columnheader', { name: 'Plan target' })).toBeInTheDocument();
+  expect(screen.getByRole('cell', { name: '11' })).toBeInTheDocument();
+  expect(screen.getByText('Projected waste by deadline')).toBeInTheDocument();
+  expect(screen.getByText(/38 percent/)).toBeInTheDocument();
+  expect(screen.getByText('2026-11-09T13:00:00.000Z')).toHaveAttribute('datetime', '2026-11-09T13:00:00.000Z');
   expect(screen.getByText('Queue depth')).toBeInTheDocument();
   expect(screen.getByText('8')).toBeInTheDocument();
-  expect(screen.getAllByText('Needs Mason').length).toBeGreaterThanOrEqual(1);
+  expect(screen.getAllByText('Needs the owner').length).toBeGreaterThanOrEqual(1);
   expect(screen.getByText('approve the staging deploy')).toBeInTheDocument();
   // A lane the tick could not measure prints 'unknown', never 0.
   expect(screen.getAllByText('unknown').length).toBeGreaterThanOrEqual(1);

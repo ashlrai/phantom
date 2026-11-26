@@ -21,7 +21,7 @@ The desktop is one window with distinct places for distinct questions. Status la
 | **⚙ menu ▸ Update** | Is a desktop update available? | `GET /api/verse/ops/self-update` [^landing] | On request |
 | **Window title** | Which fleet state is visible at a glance? | `GET /api/verse/fleet/runs` [^landing] | 5 s |
 | **Resources drawer (⌘.)** | What is each account's live usage? Claude has no session cap now; show its weekly window only. | Shared capacity, health, budget and provider readings; preserve unknown and stale states [^master] | While open, using each source's cadence |
-| **Settings ▸ Desktop ▸ Updates** | Is an update available, and can the desktop apply it and restart? | `GET /api/verse/ops/self-update`; apply and restart follow [^landing] | On request |
+| **Settings ▸ Updates** | Is an update available, and can the desktop apply it and restart? | `GET /api/verse/ops/self-update`; apply and restart follow [^landing] | On request |
 
 [^master]: On master: the named route or existing resource surface is present; placement and new behavior may still be landing.
 [^landing]: Landing: proposed contract, not yet available on master. Do not treat it as current behavior.

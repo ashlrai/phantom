@@ -45,6 +45,8 @@ export const USAGE_SENSOR_LANES = [
 ] as const;
 export type UsageSensorLane = (typeof USAGE_SENSOR_LANES)[number];
 
+export const ACTIVE_USAGE_SENSOR_LANES = USAGE_SENSOR_LANES.filter(lane => lane !== 'codex-cmp');
+
 export const USAGE_SENSOR_SOURCES = [
   'anthropic-admin-cost',
   'devin-api-v3-daily',
@@ -258,7 +260,7 @@ export function presentUsageSensors(readings: readonly unknown[], nowMs: number)
   return {
     schema: USAGE_SENSOR_SCHEMA,
     generatedAt: new Date(nowMs).toISOString(),
-    lanes: USAGE_SENSOR_LANES.map((lane) => viewLane(groups.get(lane) ?? [unmeasuredSensor(lane, nowMs)], nowMs)),
+    lanes: ACTIVE_USAGE_SENSOR_LANES.map((lane) => viewLane(groups.get(lane) ?? [unmeasuredSensor(lane, nowMs)], nowMs)),
   };
 }
 

@@ -22,6 +22,12 @@ import {
 } from './agent-os-epoch-coordination.js';
 import { AGENT_OS_EPOCH_RECORD_AUTHORITY_V1 } from './agent-os-epoch-records.js';
 import {
+  epochPlainRecord,
+  exactEpochKeys,
+  isValidEpoch,
+  isValidPrefixedEpochDigest,
+} from './agent-os-epoch-shared.js';
+import {
   recoverAgentOsEpochSnapshotStoreV2,
   type AgentOsEpochSnapshotStoreDependenciesV1,
 } from './agent-os-epoch-snapshot-store.js';
@@ -30,7 +36,7 @@ import {
   type AgentOsEpochSourceStoreDependenciesV1,
 } from './agent-os-epoch-source-store.js';
 
-export const AGENT_OS_EPOCH_STAGE_RECOVERY_PROTOCOL_V1 =
+const AGENT_OS_EPOCH_STAGE_RECOVERY_PROTOCOL_V1 =
   'ashlr-agent-os-epoch-stage-recovery-v1' as const;
 
 export interface AgentOsEpochRecoveryIdentityV1 {
@@ -124,7 +130,10 @@ export interface AgentOsEpochStageRecoveryResultV1 {
 interface RecoveryOperation { reentered: boolean }
 
 const activeRecoveries = new Map<string, RecoveryOperation>();
-const PREFIXED_SHA256_RE = /^sha256:[a-f0-9]{64}$/;
+const RECOVERY_IDENTITY_KEYS = [
+  'attemptNamespaceDigest', 'epoch', 'epochHeadDigest', 'epochManifestDigest',
+  'writerProtocolDigest',
+] as const;
 
 function canonicalRoot(path: string): string | null {
   try {
@@ -139,30 +148,15 @@ function canonicalRoot(path: string): string | null {
 }
 
 function pinIdentity(value: unknown): Readonly<AgentOsEpochRecoveryIdentityV1> | null {
-  try {
-    if (value === null || typeof value !== 'object' || Array.isArray(value) ||
-      (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const expected = [
-      'attemptNamespaceDigest', 'epoch', 'epochHeadDigest', 'epochManifestDigest',
-      'writerProtocolDigest',
-    ].sort();
-    const keys = Reflect.ownKeys(value);
-    if (keys.some((key) => typeof key !== 'string') ||
-      keys.map(String).sort().some((key, index) => key !== expected[index]) ||
-      keys.length !== expected.length || keys.some((key) =>
-        descriptors[String(key)]?.enumerable !== true ||
-        !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    const row = value as AgentOsEpochRecoveryIdentityV1;
-    if (!Number.isSafeInteger(row.epoch) || row.epoch < 1 || row.epoch > 999_999_999_999 ||
-      !PREFIXED_SHA256_RE.test(row.epochHeadDigest) ||
-      !PREFIXED_SHA256_RE.test(row.epochManifestDigest) ||
-      !PREFIXED_SHA256_RE.test(row.attemptNamespaceDigest) ||
-      !PREFIXED_SHA256_RE.test(row.writerProtocolDigest)) return null;
-    return Object.freeze({ ...row });
-  } catch {
-    return null;
-  }
+  const plain = epochPlainRecord(value);
+  if (!plain || !exactEpochKeys(plain, RECOVERY_IDENTITY_KEYS)) return null;
+  const row = plain as unknown as AgentOsEpochRecoveryIdentityV1;
+  if (!isValidEpoch(row.epoch) ||
+    !isValidPrefixedEpochDigest(row.epochHeadDigest) ||
+    !isValidPrefixedEpochDigest(row.epochManifestDigest) ||
+    !isValidPrefixedEpochDigest(row.attemptNamespaceDigest) ||
+    !isValidPrefixedEpochDigest(row.writerProtocolDigest)) return null;
+  return Object.freeze({ ...row });
 }
 
 function sameIdentity(left: AgentOsEpochRecoveryIdentityV1, right: AgentOsEpochRecoveryIdentityV1): boolean {

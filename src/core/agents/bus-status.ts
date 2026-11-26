@@ -9,7 +9,9 @@
  * receipts, the agentnet peer work-dispatch
  * journal `consumePeerWork` and the unified inbox peer-dispatch source read,
  * the agentnet peer coordination ledger `sendPeerMessage`, `readPeerInbox`,
- * `peers dispatch` and `phm fleet peer-ledger` parse, the claim-store
+ * `peers dispatch` and `phm fleet peer-ledger` parse, the session-handoff
+ * journal store `phm checkpoint handoff list|show` and
+ * `fleet_session_handoffs` read, the claim-store
  * drift verdict comparing the claim journal with the coordination table it
  * is dual-written to, and the outbound send gate `localWriteGate` applies
  * before every bus write lands. Each
@@ -18,6 +20,7 @@
  * takes no writer lock, writes nothing, makes no network calls and grants
  * nothing. */
 import { dirname, isAbsolute, join } from 'node:path';
+import { homedir } from 'node:os';
 import { inspectBusInbox, busPathMissing, type BusInboxInspection } from '../fleet/bus-inbox.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { readClaimStoreDrift } from '../fleet/claim-store-drift.js';
@@ -35,6 +38,8 @@ import { readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-rea
 import { ownerChatRoot, ownerReceiptDir, readOwnerChatReceipts } from './chat-owner-receipts.js';
 import { readWorkDispatchJournal } from '../agentnet/work-dispatch-journal.js';
 import { readPeerLedger } from '../agentnet/peer-ledger.js';
+import { listSessionHandoffs } from './session-handoff.js';
+import { handoffPressure } from './session-handoff-schema.js';
 import { probePauseState } from '../comms/pause.js';
 import { readKillSwitch } from '../sandbox/policy.js';
 import { realHome } from '../real-home.js';
@@ -220,6 +225,35 @@ export interface UnifiedBusStatus {
     /** Live (unexpired) coordination rows the peer send budget still
      * counts; 0 on a verified-missing ledger, null when it cannot be read. */
     liveRows: number | null;
+  };
+  /** Session-handoff journal store (`<runsRoot>/handoffs/*.jsonl`) behind
+   * `phm checkpoint handoff list|show` and `fleet_session_handoffs` — read
+   * by `listSessionHandoffs`,
+   * the same bounded fleet-wide scan those surfaces serve under the same
+   * runs root `options.runsRoot` selects (default `ASHLR_RUNS_DIR` or
+   * `~/.ashlr-runs`), so a corrupt journal, unreadable directory or unsafe
+   * store is named here instead of leaving status green while those reads
+   * report unavailable. Counts only, never job ids, lanes, models or
+   * signal payloads. */
+  sessionHandoffs: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Journal files the bounded scan covered; 0 on a verified-missing
+     * store, null when the directory cannot be read. */
+    journals: number | null;
+    /** Journals whose latest signal is not 'completed' — parked or
+     * in-flight checkpoints; same null rule. */
+    open: number | null;
+    /** Open journals whose latest signal requests failover — rate-limit,
+     * quota-exhausted or budget at/under its threshold, the
+     * `handoffPressure` rule `planSessionFailover` enforces; same null
+     * rule. */
+    awaitingFailover: number | null;
+    /** Journals that failed the same validation `handoff show` applies;
+     * same null rule. */
+    unreadable: number | null;
+    /** More journal files exist than the bounded scan covers; null when
+     * the store state is unknown. */
+    truncated: boolean | null;
   };
   /** Outbound send gate behind every bus write verb — the kill-switch
    * sentinel and the comms soft-pause flag `localWriteGate` consults
@@ -457,6 +491,36 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     peerLedger = { source: 'unavailable', liveRows: null };
   }
 
+  // `phm checkpoint handoff list|show` and `fleet_session_handoffs` both
+  // serve `listSessionHandoffs` over `<runsRoot>/handoffs` — the same
+  // bounded scan under the same runs root the wake probe resolves
+  // (`ASHLR_RUNS_DIR` or `~/.ashlr-runs` by default) — so a corrupt
+  // journal, unreadable directory or unsafe store is named here instead of
+  // leaving status green while those reads report unavailable. Counts
+  // only, never job ids, lanes, models or signal payloads; a store the
+  // reader cannot inspect reports every count null, matching the
+  // unavailable convention the peer-ledger section applies.
+  let sessionHandoffs: UnifiedBusStatus['sessionHandoffs'];
+  try {
+    const list = listSessionHandoffs(options.runsRoot ??
+      process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs'));
+    if (list.status === 'unavailable' || list.handoffs === null) {
+      sessionHandoffs = { source: 'unavailable', journals: null, open: null,
+        awaitingFailover: null, unreadable: null, truncated: null };
+    } else {
+      const open = list.handoffs.filter(entry => entry.state === 'open');
+      sessionHandoffs = { source: list.status === 'ok' ? 'available' : 'missing',
+        journals: list.handoffs.length + (list.unreadable?.length ?? 0),
+        open: open.length,
+        awaitingFailover: open.filter(entry => handoffPressure(entry.signal)).length,
+        unreadable: list.unreadable?.length ?? 0,
+        truncated: list.status === 'ok' ? list.truncated : false };
+    }
+  } catch {
+    sessionHandoffs = { source: 'unavailable', journals: null, open: null,
+      awaitingFailover: null, unreadable: null, truncated: null };
+  }
+
   // The send gate every bus write passes through. Both readers are total
   // by contract, but each keeps its own try so one throwing probe cannot
   // hide the other's verdict — and an uninspectable source reports
@@ -488,5 +552,5 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     kill, pause,
   };
 
-  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, sendGate };
+  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, sessionHandoffs, sendGate };
 }

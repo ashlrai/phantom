@@ -99,7 +99,9 @@ the node holding each running claim (`claimed by`, or `no live claim` once the
 claim lapsed or was fenced), show each node's advertised slot bound (`slots=N`,
 or `slots=unbounded` when no bound was ever reported — an absent bound is
 legacy routing, not a measured zero) and its last measured hold as
-`held=<reason>` while one is reported, mark producer withdrawals, carry the
+`held=<reason>` while one is reported, name the `phm node join` command that
+restores each expired node's last advertised profile (the same hint a
+session-expired error prints), mark producer withdrawals, carry the
 same fix `phm node plan` prints on a job that still has no taker, and an
 empty scope says so with the join command; `enqueue` says when the job id already
 exists;
@@ -174,8 +176,11 @@ carrying the node's last advertised owner scopes, caps and slots while the
 registry still holds the record (placeholders when it does not). If the node
 already rejoined under a newer session, the fix names that session and the
 exact `leave` command instead, so an operator who lost track of the number can
-resume without re-joining again. A `node-live` error from `join` names the live
-session the same way. `leave` under a stale session answers `"left":false` with
+resume without re-joining again. A `node-live` error from a standalone `join`
+names the live session the same way; a pool `join` reports `node-live` when
+this computer's node id already holds a live session (a running worker or an
+unexpired join) and its fix points at `phm node status --json`. `leave` under
+a stale session answers `"left":false` with
 `liveSession` and a ready `next` command; use the current session number.
 `pull` answers `{"pulled":false}` only while the session is live, so "no job"
 never masks a dead session. The same answer carries this node's own admission
@@ -233,7 +238,9 @@ reported as zero. Owner, capability, local-auth and fencing checks still apply.
 and queued counts from dispatcher status. Lane `available` counts slots against
 the launch target — the configured target tightened by the controller's
 `effective_target` load-shed ceiling (`effectiveTarget`, null when unpublished)
-— so a shed lane never reports phantom room. Four local reads run concurrently,
+— so a shed lane never reports phantom room. A fresh dispatcher pause or
+explicit fleet admission stop sets every lane's `available` to zero, including
+when the fleet-wide cap is reached. Four local reads run concurrently,
 each capped at 2 MiB and 250 ms, with phase status; no SSH probes or writes.
 Lane availability expires after two 30-second dispatcher intervals.
 
@@ -311,7 +318,10 @@ work_market gives remote built-ins), `requirement_unverifiable` (`min_tier`,
 `caps_missing`, `slots_unknown` (a node sent no slot telemetry, which is
 unknown, not zero), `pass_limit` or `no_free_slot`. Free slots are a node's
 `slots` minus its running claims, after router jobs that are still waiting have
-been placed.
+been placed. Nodes that report a capacity sample share one physical host's
+measured slots, so their free capacity is counted once per host — the smallest
+advertisement minus every claim on it — the same grouping the router's
+`nodeCapacityView` uses; a node without a sample is its own host.
 
 ### Capabilities come from a local probe
 
@@ -368,8 +378,9 @@ CPU headroom is 85% of cores minus busy cores. Measured zero CPU headroom
 blocks placements even when CPU cost per session is unknown or recorded as zero.
 It also reduces measured runnable counts to zero, including in fleet totals
 that read older capacity documents. Unmeasured harness counts remain null.
-Kernel pressure above normal,
-or swapouts at memguard's growth rate, stop every harness on that node. A cloud
+Kernel pressure above normal or swap growth stop placements and reduce
+measured runnable counts to zero in fleet totals. Both reads honor direct
+measurements and recorded limiter labels. A cloud
 CLI therefore costs a node only its own measured footprint. A whole-host
 backoff only happens when one of those gates is hit. A harness never seen on
 the node reports `null` (unknown), never a guess. The previous document supplies swap growth and footprints
@@ -386,6 +397,8 @@ cannot increase capacity and a newer hold takes precedence. Conflicting
 inputs at the same newest timestamp leave that node's capacity unknown.
 For a node without its own harness footprint, routing can borrow measurements
 from other nodes whose latest snapshots pass the same freshness check.
+A borrowed footprint uses the largest observed memory and CPU costs for the
+harness independently. CPU cost stays `null` when no donor measured it.
 A fresh snapshot from a node under pressure or swap growth can still supply
 a footprint. If no eligible measurement exists, the router reports
 `footprint-unmeasured` for that candidate.

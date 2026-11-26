@@ -977,8 +977,8 @@ function senseCodexState(): BackendResourceState {
     lastCodexHome = home;
     if (!home) return fallback();
     const usages = collectCodexSessionUsages({
-      env: { CODEX_HOME: home, CODEX_HOME_ALT: home }, homeDir: os.homedir(),
-    }).map(usage => ({ ...usage, accountId: 'codex-personal', slot: 'secondary' as const }));
+      env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: home }, homeDir: os.homedir(),
+    });
     const report = buildCodexResourceReport(usages, [], nowMs).resources[0];
     const usage = usages[0];
     if (!report || !usage) return fallback();
