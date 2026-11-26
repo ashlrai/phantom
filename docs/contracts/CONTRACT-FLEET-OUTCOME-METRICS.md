@@ -92,6 +92,10 @@ emits policy. Plain output is Markdown. Nothing schedules or sends a brief.
   regardless of launch time. `outcome` MERGED (including raw
   `metrics-outcomes-reconciler` rows) requires `mergedAt`; `merged` may use
   its event timestamp. Missing/conflicting times increment `unknownMergeTimes`.
+  Eventless MERGED rows and reconciler rows retaining a publication event
+  also contribute merge evidence. Reconciled merges and closures supply no
+  publication evidence for attempt rates or time-to-merge. Eventless
+  PUBLISHED rows can supply that evidence.
   Repeated observations cannot inflate merges. `mergesPerDay = merged*24/hours`.
   Time-to-merge is explicit `ttm_s`, else merge minus earliest observed
   publication. Conflicting `ttm_s` stays unknown. Percentiles p50/p90/p95 use
