@@ -24,7 +24,7 @@ describe('generated CLI reference', () => {
     expect(dispatched.length).toBeGreaterThan(70);
     expect(dispatched.filter(command => !documented.has(command)), `Missing commands in ${path}`).toEqual([]);
 
-    for (const prefix of ['home ', 'map ', 'worklog ', 'nodes [', 'nodes pool ', 'nodes plan ', 'nodes offload ', 'autonomy ', 'admission explain ', 'job pause|resume|stop|move ']) {
+    for (const prefix of ['home ', 'map ', 'worklog ', 'nodes [', 'nodes pool ', 'nodes plan ', 'nodes offload ', 'nodes doctor ', 'autonomy ', 'admission explain ', 'job pause|resume|stop|move ']) {
       const entries = HELP_ENTRIES.filter(entry => entry.cmd.startsWith(prefix));
       expect(entries, `Expected one registered help row for ${prefix}`).toHaveLength(1);
       const command = entries[0]!.cmd;

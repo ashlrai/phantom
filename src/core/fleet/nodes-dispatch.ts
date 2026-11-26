@@ -1,6 +1,7 @@
 /**
  * core/fleet/nodes-dispatch.ts: hand one planned job to another computer.
- * Backs `phm nodes dispatch <job-id> --node <name> [--dry-run] [--json]`.
+ * Decision seam for a future `phm nodes dispatch`; no CLI verb is wired to
+ * it yet (see docs/fleet/unwired-modules.md).
  *
  * It decides; a NodeDispatchAdapter touches the other computer. The adapter
  * is the only seam: the default one cannot reach any computer, so every
