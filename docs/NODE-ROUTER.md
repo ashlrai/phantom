@@ -98,10 +98,11 @@ advertised. A manual runner can also read the printed task, do the work and
 runner executes, not a requirement on the result.
 
 `phm node result --job <id> --owner <scope>` is the read-only way back to a
-job's outcome: `pending`, `running` (naming the node whose live claim can act),
-`completed` with the accepted `--result` text, executor and completion time, or
-`absent` for an unknown id or another owner's job. It never mutates state —
-`withdraw` stays the only fence, and a producer withdrawal reads back as
+job's outcome: `pending`, `running` (naming the node whose live claim can act,
+or `no live claim` once the claim lapsed or was fenced — the same words
+`status` prints), `completed` with the accepted `--result` text, executor and
+completion time, or `absent` for an unknown id or another owner's job. It never
+mutates state — `withdraw` stays the only fence, and a producer withdrawal reads back as
 `completed` with `producerWithdrawn` set, not as node work.
 
 A text `pull` (no `--json`) prints the same claim for a person: the job's

@@ -771,9 +771,15 @@ describe('text output names outcomes in plain words', () => {
       // A lapsed claim drops the claimant from the status line.
       executeNodeFleet('enqueue', ['--job', 'j4', '--owner', 'acme'], nodes());
       executeNodeFleet('pull', ['--node', 'box', '--session', session], nodes());
+      // result names the live claimant the same way status does.
+      expect(await cmdNodeFleet('result', ['--job', 'j4', '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe('job j4: running (claimed by box)');
       advance(31_000);
       expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
       expect(last(lines)).toContain('job j4 running (no live claim)');
+      // A lapsed claim reads the same on result: still running, but no live claimant is named.
+      expect(await cmdNodeFleet('result', ['--job', 'j4', '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe('job j4: running (no live claim)');
       // leave names the live session on a refusal, then succeeds.
       const live = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
       expect(await cmdNodeFleet('leave', ['--node', 'box', '--session', session], deps)).toBe(0);
