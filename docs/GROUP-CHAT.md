@@ -23,6 +23,16 @@ counts scanned live bus records before room filtering, so keep reading until the
 cursor stops advancing. The bus retains messages locally subject to its existing
 TTL and capacity limits; expiry does not free capacity. No event is executed.
 
+Read accepts the same filters every other bus read applies, after the cursor:
+`--id`, `--in-reply-to`, `--from`, `--exclude-from`, `--priority`, `--thread`,
+`--job`, `--body-kind`, `--result`, `--since`, `--before` and `--contains`.
+`--body-kind` matches the body's own kind discriminator, so
+`--body-kind group.message` keeps posts and drops `group.presence` heartbeats;
+`--from`/`--exclude-from` resolve sender labels through the agent identity
+registry with exact-label matching kept on an unresolvable ref. A filtered read
+is a view of the page, not a subscription: `nextCursor` still advances over
+every scanned row, so an unfiltered poll sees everything.
+
 Presence is an untrusted, five-minute observation per room/topic and member.
 Heartbeats refresh it; `offline` removes it until a later online heartbeat.
 Expired observations disappear. The result is a snapshot, not a membership list,

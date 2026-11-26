@@ -1,4 +1,5 @@
-import { groupPresence, publishGroupMessage, publishGroupPresence, subscribeGroup } from '../core/fleet/bus-group.js';
+import { groupPresence, publishGroupMessage, publishGroupPresence } from '../core/fleet/bus-group.js';
+import { readGroupTopic } from '../core/fleet/bus-group-read.js';
 import { failedBusBatch, MAX_BUS_BATCH_BYTES, postBusBatch } from '../core/fleet/bus-batch-post.js';
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -16,11 +17,20 @@ import { busBodyThread } from '../core/agents/bus-v2-schema.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
-const HELP = `phm comms bus group read <room> <topic> <cursor>
+const HELP = `phm comms bus group read <room> <topic> <cursor> [--id <id>] [--in-reply-to <id>] [--from <agent>] [--exclude-from <agent>] [--priority <P0|P1|P2|P3>] [--thread <t>] [--job <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
 phm comms bus group presence <room> <topic>
 phm comms bus group heartbeat <room> <topic> <id> <member> <online|offline>
 phm comms bus group publish <room> <topic> <id> <from> <ttl-ms> <json-body>
 Group labels are local routing labels, not identities; group read advances the shared bus cursor.
+Group read filters are the same rules comms bus read applies: --id the exact envelope id;
+--in-reply-to the body's own inReplyTo citation; --from/--exclude-from sender labels resolved
+through the agent identity registry (an unresolvable ref or unreadable registry keeps exact
+matching); --priority one P0..P3 band; --thread the v2 thread label on note/context bodies;
+--job the shared job-citation match; --body-kind the exact body discriminator, so
+group.presence heartbeats and group.message posts are separable; --result the outcome a
+work.result body reports; --since/--before the [since, before) receivedAt window; --contains
+the scrubbed one-line summary needle. The cursor still advances over every scanned row — a
+filtered read is a view of the page, not a subscription.
 phm comms bus post --file <envelope.json|->
 phm comms bus post --reply-to <id> --id <new-id> --from <address> --text <text> [--ttl-ms <ms>]
 phm comms bus post-batch --file <batch.json|->
@@ -384,12 +394,46 @@ async function peers(args: string[], deps: CommsBusDependencies): Promise<number
   }
 }
 
+/** The value flags `group read` accepts after its cursor; each takes `--flag <value>` or `--flag=<value>`. */
+const GROUP_READ_FLAGS = new Set(['--id', '--in-reply-to', '--from', '--exclude-from', '--priority',
+  '--thread', '--job', '--body-kind', '--result', '--since', '--before', '--contains']);
+
+/**
+ * Collect `group read`'s trailing flags: known names only, no duplicates, a
+ * separate value never starts with `--` (inline `--flag=<value>` carries any
+ * text, including a leading dash). Anything else — an unknown flag, a stray
+ * positional, a missing value — is a usage error, never a silently dropped
+ * filter.
+ */
+function groupReadFlagValues(args: readonly string[]): Map<string, string> | null {
+  const values = new Map<string, string>();
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i]!;
+    const inline = /^--([a-z-]+)=(.*)$/s.exec(token);
+    const key = inline === null ? token : `--${inline[1]}`;
+    if (!GROUP_READ_FLAGS.has(key) || values.has(key)) return null;
+    if (inline !== null) { values.set(key, inline[2]!); continue; }
+    const value = args[++i];
+    if (value === undefined || value.startsWith('--')) return null;
+    values.set(key, value);
+  }
+  return values;
+}
+
 async function groupCommand(args: string[], options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
   const [verb, room, topic, ...rest] = args;
   let result: { status: string } = { status: 'invalid' };
   if (room && topic) {
-    if (verb === 'read' && rest.length === 1 && /^(0|[1-9][0-9]*)$/.test(rest[0]!)) {
-      result = subscribeGroup(room, topic, Number(rest[0]), 100, options);
+    if (verb === 'read' && rest.length >= 1 && /^(0|[1-9][0-9]*)$/.test(rest[0]!)) {
+      const flagValues = groupReadFlagValues(rest.slice(1));
+      result = flagValues === null ? { status: 'invalid' } : readGroupTopic(room, topic, Number(rest[0]), 100, {
+        id: flagValues.get('--id'), inReplyTo: flagValues.get('--in-reply-to'),
+        from: flagValues.get('--from'), excludeFrom: flagValues.get('--exclude-from'),
+        priority: flagValues.get('--priority'), thread: flagValues.get('--thread'),
+        job: flagValues.get('--job'), bodyKind: flagValues.get('--body-kind'),
+        result: flagValues.get('--result'), since: flagValues.get('--since'),
+        before: flagValues.get('--before'), contains: flagValues.get('--contains'),
+      }, options);
     } else if (verb === 'presence' && rest.length === 0) {
       result = groupPresence(room, topic, options);
     } else if (verb === 'heartbeat' && rest.length === 3 && (rest[2] === 'online' || rest[2] === 'offline')) {
