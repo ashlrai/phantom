@@ -13,6 +13,11 @@ export interface QueueShapeRepo {
   share: number;
 }
 
+/** A lane-open READY row: the market's requirements resolved no lane hint, so any capable lane may claim it. */
+export interface QueueShapeOpenRow {
+  repo: string;
+}
+
 export interface QueueShapeLane {
   lane: string;
   ready: number;
@@ -32,7 +37,12 @@ export interface QueueShapeLane {
 
 export interface QueueShapeReport {
   v: 1;
+  /** READY rows across every lane plus lane-open rows any lane may claim. */
   totalReady: number;
+  /** Lane-open READY rows — the market resolved no lane hint; they deepen no single lane's queue. */
+  openReady: number;
+  /** Repo mix of the lane-open rows, ranked like a lane's topRepos. */
+  openRepos: QueueShapeRepo[];
   totalTarget: number;
   lanes: QueueShapeLane[];
   /** Lane ids flagged overDeep, in report order. */
@@ -55,12 +65,15 @@ const NO_REPO = '(none)';
 /**
  * Fold ready.tsv rows and lane slot targets into a per-lane depth report:
  * how deep each lane's READY queue is against its target, and which repos
- * fill it. Pure — no I/O, no clock, never throws.
+ * fill it. Lane-open rows (the market resolved no lane hint — parseReadyTsv's
+ * unhintedRows) count as open supply in the totals and repo mix, never as a
+ * lane's depth. Pure — no I/O, no clock, never throws.
  */
 export function queueShape(
   rows: readonly FleetLaneQueueRow[],
   targets: readonly QueueShapeTargetRow[],
   opts: QueueShapeOptions = {},
+  openRows: readonly QueueShapeOpenRow[] = [],
 ): QueueShapeReport {
   const factor = typeof opts.overDeepFactor === 'number' && Number.isFinite(opts.overDeepFactor) && opts.overDeepFactor > 0
     ? opts.overDeepFactor : DEFAULT_FACTOR;
@@ -77,6 +90,20 @@ export function queueShape(
   const targetRows = new Map<string, QueueShapeTargetRow>();
   for (const row of targets) if (typeof row.lane === 'string' && row.lane !== '') targetRows.set(row.lane, row);
 
+  /** Repo mix of a row set ranked by count; share is the repo's fraction of the set. */
+  const repoMix = (repos: readonly (string | undefined)[]): QueueShapeRepo[] => {
+    const counts = new Map<string, number>();
+    for (const repo of repos) {
+      const name = typeof repo === 'string' && repo !== '' ? repo : NO_REPO;
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    const total = repos.length;
+    return [...counts]
+      .map(([repo, count]) => ({ repo, ready: count, share: total === 0 ? 0 : count / total }))
+      .sort((a, b) => b.ready - a.ready || a.repo.localeCompare(b.repo))
+      .slice(0, topN);
+  };
+
   const lanes: QueueShapeLane[] = [];
   for (const lane of new Set([...readyRows.keys(), ...targetRows.keys()])) {
     const queue = readyRows.get(lane) ?? [];
@@ -84,15 +111,7 @@ export function queueShape(
     const ready = queue.length;
     const ratio = target === undefined || target.target === 0 ? null : ready / target.target;
     const overDeep = target !== undefined && (target.target === 0 ? ready > 0 : ready / target.target > factor);
-    const counts = new Map<string, number>();
-    for (const row of queue) {
-      const repo = typeof row.repo === 'string' && row.repo !== '' ? row.repo : NO_REPO;
-      counts.set(repo, (counts.get(repo) ?? 0) + 1);
-    }
-    const topRepos = [...counts]
-      .map(([repo, count]) => ({ repo, ready: count, share: ready === 0 ? 0 : count / ready }))
-      .sort((a, b) => b.ready - a.ready || a.repo.localeCompare(b.repo))
-      .slice(0, topN);
+    const topRepos = repoMix(queue.map(row => row.repo));
     // Oldest = smallest `at`. A row whose time cannot be trusted is counted as untimed, never guessed.
     let oldestAt: number | null = null, untimedReady = 0;
     for (const row of queue) {
@@ -107,9 +126,13 @@ export function queueShape(
     });
   }
   lanes.sort((a, b) => Number(b.overDeep) - Number(a.overDeep) || b.ready - a.ready || a.lane.localeCompare(b.lane));
+  const openReady = openRows.length;
+  const laneReady = lanes.reduce((sum, lane) => sum + lane.ready, 0);
   return {
     v: 1,
-    totalReady: lanes.reduce((sum, lane) => sum + lane.ready, 0),
+    totalReady: laneReady + openReady,
+    openReady,
+    openRepos: repoMix(openRows.map(row => row.repo)),
     totalTarget: lanes.reduce((sum, lane) => sum + (lane.target ?? 0), 0),
     lanes,
     overDeep: lanes.filter(lane => lane.overDeep).map(lane => lane.lane),

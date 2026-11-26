@@ -119,6 +119,43 @@ it('rejects bad arguments with exit 2 and answers --help', async () => {
   expect(log).toHaveBeenCalledWith('queue: missing (ready.tsv)');
 });
 
+it('counts lane-open ready rows as open supply, never a lane depth', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    'RQ-HINT-1\tashlrai/phantom\tdevin\twork\tprompts/a.md',
+    'RQ-OPEN-1\tashlrai/phantom\t\twork\tprompts/b.md',
+    'RQ-OPEN-2\tashlrai/stack\tclaude\twork\tprompts/c.md\t{"preferred_lane":null}',
+    'RQ-BAD-1\tashlrai/phantom\tdevin\twork\tprompts/d.md\t{"preferred_lane":"CLAUDE!"}',
+  ].join('\n'));
+  await writeFile(join(queueDir, 'slots.json'), JSON.stringify({ devin: slot(2) }));
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  expect(await cmdFleetQueueShape(['--queue-dir', queueDir, '--json'])).toBe(0);
+  const report = JSON.parse(String(log.mock.calls.at(-1)![0]));
+  // The spec-null row is open even though its lane cell names claude; the
+  // invalid spec row is dead work the market rejects — neither is supply.
+  expect(report).toMatchObject({ v: 1, openReady: 2, totalReady: 3 });
+  expect(report.openRepos).toEqual([
+    { repo: 'ashlrai/phantom', ready: 1, share: 0.5 },
+    { repo: 'ashlrai/stack', ready: 1, share: 0.5 },
+  ]);
+  expect(report.lanes).toEqual([
+    expect.objectContaining({ lane: 'devin', ready: 1, target: 2, ratio: 0.5, overDeep: false }),
+  ]);
+  log.mockClear();
+  expect(await cmdFleetQueueShape(['--queue-dir', queueDir])).toBe(0);
+  const out = log.mock.calls.map(call => String(call[0]));
+  expect(out.some(line => line.startsWith('devin  ready 1 / target 2 (0.5x)'))).toBe(true);
+  expect(out).toContain('open  ready 2  lane-open, any capable lane may claim  top: ashlrai/phantom 50%, ashlrai/stack 50%');
+});
+
+it('never calls a queue holding only lane-open rows empty', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), 'RQ-OPEN-1\tashlrai/phantom\t\twork\tprompts/b.md\n');
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  expect(await cmdFleetQueueShape(['--queue-dir', queueDir])).toBe(0);
+  const out = log.mock.calls.map(call => String(call[0]));
+  expect(out).not.toContain('queue: empty (no lanes)');
+  expect(out).toContain('open  ready 1  lane-open, any capable lane may claim  top: ashlrai/phantom 100%');
+});
+
 it('loads through the fleet subcommand registry', async () => {
   const mod = await FLEET_SUBCOMMAND_LOADERS['queue-shape']!();
   expect(typeof mod['cmdFleetQueueShape']).toBe('function');
