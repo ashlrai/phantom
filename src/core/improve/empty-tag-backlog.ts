@@ -36,8 +36,7 @@
  *    precheck_skip/skipped_empty rows empty because the dispatcher never
  *    launched them; they are gate decisions, not jobs that ran and
  *    produced nothing, so they are tallied apart and never feed a tag
- *    bucket (the sync still tags them 'unknown' — their absent log — and
- *    this feed deliberately does not inherit that noise).
+ *    bucket, even if a historical tag already exists.
  *  - Only the actionable buckets emit. 'blocked' (missing file, tool or
  *    permission) and 'unknown' (the classifier's own could-not-classify
  *    bucket) recur as repo-fixable machinery gaps; 'untagged' — a

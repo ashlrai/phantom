@@ -79,11 +79,13 @@ off-tick job on the same cadence folds the same tail into candidate shadow
 skill cards (`src/core/fleet/skill-nudge.ts`), discounting merges the
 standing revert set proves did not hold; it writes only candidate
 records under `~/.ashlr/skills`. An `empty-tag-sync` off-tick job on the
-same cadence folds the tail's windowed empty finishes into
+same cadence folds the tail's windowed worker empty finishes into
 `metrics/empty-tags.jsonl` and the matching dupcheck outcome rows
 (`src/core/fleet/empty-tag-sync.ts`) — the records `phm jobs empty
 --record` appends by hand, now automatic; it is best-effort, never throws,
-and writes only under the runs dir. A `visit-sync` off-tick job on the
+and writes only under the runs dir. Precheck skips stay out of both
+the log-classification budget and the dupcheck outcome feed.
+A `visit-sync` off-tick job on the
 same cadence folds the same jobs-ledger tail plus the live READY rows of
 `queue/router-queue.md` into the queue visit journal
 (`src/core/queue/visit-sync.ts`) — the records `phm queue visits-sync

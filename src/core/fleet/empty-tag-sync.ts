@@ -14,7 +14,8 @@
  *
  * THE RULES, sharing the finish and tag classification with `--record`:
  *   - WINDOWED FINISHES ONLY. Candidates are the jobs whose newest finish
- *     inside the retained window recorded `empty` — the same
+ *     inside the retained window recorded `empty` and was not a precheck
+ *     skip — the same
  *     finish fold `phm jobs empty` runs (empty-finishes.ts, the
  *     pure ledger projection split out of empties.ts), over the same
  *     jobs-ledger dialect, here bounded to the newest
@@ -157,7 +158,7 @@ export async function syncEmptyTagsFromJobsLedger(
     const seen = tagsRead.state === 'read' ? recordedTags(tagsRead.text) : new Map<string, EmptyTag>();
 
     const candidates = currentAttemptFinishes(jobs.text, nowMs, EMPTY_TAG_SYNC_HOURS)
-      .filter(finish => finish.empty === true)
+      .filter(finish => finish.empty && !finish.skipped)
       .map(finish => ({ id: finish.id, lane: finish.lane }));
     const fresh = candidates.filter(candidate => !seen.has(candidate.id));
     const toClassify = fresh.slice(0, Math.max(0, opts.maxClassify ?? EMPTY_TAG_SYNC_MAX_CLASSIFY));
