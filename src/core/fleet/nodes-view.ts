@@ -18,6 +18,7 @@ import { sampleHostStats } from '../drive/nodes/capacity.js';
 import { joinHintCommand } from '../drive/nodes/commands.js';
 import { readPoolConfig } from '../drive/nodes/pool-host.js';
 import { isHostStats, parseState, type HostStats, type NodeRecord, type NodesState } from '../drive/nodes/state.js';
+import { isVersionCap } from '../drive/nodes/phm-version.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { aliasMatches } from './pool-reach.js';
 import { sanitizeIdentityText, UNKNOWN } from './runtime-identity.js';
@@ -137,6 +138,12 @@ function standaloneRejoin(records: NodeRecord[]): string {
   return rec ? joinHintCommand(rec.nodeId, rec) : 'phm node join --owner <scope>';
 }
 
+/** The lane view of a record's advertised caps. `phm-<version>` is the
+ * self-update build marker — observation metadata, not work a job can name —
+ * so it stays in `caps` for drift checks but never lists or matches as a
+ * lane here. */
+const laneCaps = (record: NodeRecord): string[] => (record.caps ?? []).filter(cap => !isVersionCap(cap));
+
 /** Pure join of the tailnet read, the registry snapshot and this computer's sample. */
 export function buildNodesView(
   peers: TailnetPeers, registry: NodesRegistry | null, local: { name: string; stats: HostStats | null },
@@ -231,7 +238,7 @@ export function buildNodesView(
     return {
       name: machine.name, isSelf: machine.isSelf, reachable: silent ? false : machine.reachable, lastSeen: machine.lastSeen, heartbeatAgeSeconds, phantom,
       ...headroom(machine.isSelf ? local.stats ?? undefined : newest?.hostStats),
-      lanes: machine.records.length ? [...new Set((live.length ? live : machine.records).flatMap(record => record.caps ?? []))].sort() : UNKNOWN,
+      lanes: machine.records.length ? [...new Set((live.length ? live : machine.records).flatMap(laneCaps))].sort() : UNKNOWN,
       jobsRunning: jobs, freeSlots: slots, stateCode, state: words,
       joined, joinCommand: joined ? null : enroll,
     };

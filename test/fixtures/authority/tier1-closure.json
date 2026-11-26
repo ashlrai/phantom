@@ -601,6 +601,7 @@
     "src/core/drive/nodes/host-slots.ts",
     "src/core/drive/nodes/index.ts",
     "src/core/drive/nodes/local-store.ts",
+    "src/core/drive/nodes/phm-version.ts",
     "src/core/drive/nodes/pool-host.ts",
     "src/core/drive/nodes/pool.ts",
     "src/core/drive/nodes/profiles.ts",

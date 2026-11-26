@@ -242,6 +242,21 @@ describe('chooseNodeForLane', () => {
     expect(view.nodes[1]?.lanes).toEqual(['claude', 'codex']);
     expect(chooseNodeForLane(view, 'gemini')).toMatchObject({ node: null, reason: 'no-ready-node' });
   });
+
+  it('keeps the phm-<version> build marker out of lanes while caps keep it', () => {
+    // Every join advertises `phm-<version>` for self-update drift; it is build
+    // metadata, not a lane a job can name, so the lanes projection drops it —
+    // `--can-take` and the plain-words row must not offer it as work.
+    const view = readNodesView(deps(tailnet([peer('node-b', true)]), registry([
+      node('node-a', { caps: ['claude', 'phm-3.30.77', 'pack:codex-file'] }),
+      node('node-b', { caps: ['phm-3.30.40'] }),
+    ])));
+    expect(view.nodes[0]?.lanes).toEqual(['claude', 'pack:codex-file']);
+    expect(view.nodes[1]?.lanes).toEqual([]);
+    expect(nodesThatCanTake(view, 'claude').map(row => row.name)).toEqual(['node-a']);
+    expect(nodesThatCanTake(view, 'phm-3.30.77')).toEqual([]);
+    expect(chooseNodeForLane(view, 'phm-3.30.77')).toMatchObject({ node: null, reason: 'no-ready-node' });
+  });
 });
 
 describe('machines: one, two with one offline, none', () => {
