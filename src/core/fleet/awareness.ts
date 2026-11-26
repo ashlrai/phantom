@@ -21,9 +21,9 @@ export function projectFleetAwareness(state: NodesState | null, now: number, dis
     const row = obj(value), running = dispatcherFresh ? count(row.running) : null, target = count(row.target),
       effectiveTarget = count(row.effective_target);
     let available: number | null = null;
-    if (dispatcherFresh && stopped) available = 0;
-    else if (unpaused && typeof row.held === 'boolean' && running !== null && target !== null) {
-      available = row.held ? 0 : Math.min(headroom ?? Infinity, Math.max(0, laneLaunchTarget(target, effectiveTarget) - running));
+    if (dispatcherFresh && (stopped || row.held === true)) available = 0;
+    else if (unpaused && row.held === false && running !== null && target !== null) {
+      available = Math.min(headroom ?? Infinity, Math.max(0, laneLaunchTarget(target, effectiveTarget) - running));
     }
     return { lane, running, target, effectiveTarget, floor: count(row.floor), queued: dispatcherFresh ? count(row.queued) : null,
       available };
