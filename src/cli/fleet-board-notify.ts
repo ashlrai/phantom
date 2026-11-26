@@ -195,7 +195,10 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   }
   if (killed) return emit({ status: 'halted', planned: plan.notices.length, lines: ['board-notify: KILL is armed; sends halted, snapshot kept for the next pass'] });
   if (prev === null) {
-    writeBoardNotifySnapshot(dir, next);
+    if (!writeBoardNotifySnapshot(dir, next).ok) return emit({
+      status: 'snapshot-persistence-failed', reason: 'snapshot-write-failed',
+      lines: ['board-notify: baseline snapshot could not be saved; retry after restoring state storage'],
+    }, 1);
     return emit({ status: 'baselined', items: next.length, planned: plan.notices.length,
       lines: [`board-notify: baseline recorded for ${next.length} item(s); transitions post from the next pass`] });
   }
@@ -231,17 +234,19 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   // A truncated listing is a bounded projection, not the whole board:
   // preserve prior rows for items outside the page so their baselines —
   // including pending undelivered updates — are not silently discarded.
-  writeBoardNotifySnapshot(dir, snapshotAfterSend(prev, next, pending, { preserveUnseen: board.truncated }));
+  const saved = writeBoardNotifySnapshot(dir, snapshotAfterSend(prev, next, pending, { preserveUnseen: board.truncated })).ok;
   return emit({
-    status: 'completed', transitions: transitions.length, planned: plan.notices.length,
+    status: saved ? 'completed' : 'snapshot-persistence-failed',
+    ...(!saved ? { reason: 'snapshot-write-failed' } : {}), transitions: transitions.length, planned: plan.notices.length,
     // `sent` is the legacy count of durable sender receipts (incl. dedupes). It
     // is NOT a count of Slack deliveries: see `queued`, `busPosted`, `deliveries`.
     sent: delivered.length, queued, busPosted, pending: pending.size, dropped: plan.dropped,
     deliveries,
     lines: [
+      ...(!saved ? ['board-notify: snapshot could not be saved; retry after restoring state storage'] : []),
       `board-notify: transitions=${transitions.length} planned=${plan.notices.length} receipts=${delivered.length} queued=${queued} bus-posted=${busPosted} pending=${pending.size} dropped=${plan.dropped.length}`,
       ...results.map(r => `${describeResult(r.status, evidence.get(r.notice))} [${r.notice.sourceChannel}${r.notice.sourceThread ? ` ${r.notice.sourceThread}` : ''}] ${r.notice.text}${r.reason ? ` (${r.reason})` : ''}`),
       ...plan.dropped.map(d => `dropped ${d.itemId}: ${d.reason}`),
     ],
-  });
+  }, saved ? 0 : 1);
 }
