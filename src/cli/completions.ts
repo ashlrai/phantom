@@ -92,6 +92,9 @@ const SUBCOMMANDS: Record<string, string[]> = {
     '--json', '--watch', '--write-advice', '--runs-dir', '--resource', '--resets', '--expires', '--source', '--kind', '--observed-at', '--help'],
   docs: ['cli', '--agent', '--check', '--json', '--help'],
   approvals: ['ask', 'answer', '--team', '--question', '--options', '--expires', '--by', '--json', '--help'],
+  // Mirror the verb switch in src/cli/team.ts (cmdTeam); flags are the ones every verb accepts.
+  team: ['list', 'add', 'show', 'view', 'join', 'invite', 'remove', 'role', 'link', 'approve', 'deny', 'claim', 'release', 'say',
+    '--team', '--as', '--json', '--help'],
   subagent: ['spawn', 'list', 'result'],
   graph: ['nodes', 'edges', 'status', '--fleet', '--seats', '--json', '--help'],
   sweep: ['report'],

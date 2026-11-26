@@ -14,7 +14,7 @@ function options(args: string[], flags: string[], values: string[]): Record<stri
 export async function runBotsCli(argv: string[], out = console.log, home?: string): Promise<number> {
   try {
     const [verb, ...args] = argv;
-    if (!verb || ['help', '--help', '-h'].includes(verb) || args.includes('--help')) {
+    if (!verb || ['help', '--help', '-h'].includes(verb) || args.includes('--help') || args.includes('-h')) {
       out('phm bots list|seats|handoffs [--apply]|handoff --seat <id> [--apply]|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id>|message --from <seat> --to <seat|owner> --text <text> [--json]'); return 0;
     }
     const name = ['show', 'explain'].includes(verb) ? args.shift()! : '';

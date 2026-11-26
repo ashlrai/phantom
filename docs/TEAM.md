@@ -69,7 +69,7 @@ budget; inspect its source, author and timestamp and re-read stale sources.
 An empty pack can mean a scope mismatch or missing context; ask the context
 owner to confirm the scope and add a cited entry using `phm_team_context_add`.
 Never widen client scope to find missing data. These tools are available through
-the MCP gateway, not `phm team context` subcommands. Use Phantom Secrets
+the MCP gateway — `phm team` has no `context` subcommand. Use Phantom Secrets
 references for credentials and Locus for scoped account access; never paste
 credentials into a message, context entry or blocker report.
 

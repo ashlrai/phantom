@@ -47,6 +47,10 @@ function flag(args: string[], name: string): string | undefined {
 
 export async function cmdTeam(argv: string[]): Promise<number> {
   const args = [...argv];
+  // `--help`/`-h` anywhere prints usage and exits before any verb runs: the
+  // flag must never reach a verb as an operand — `join --help` used to join
+  // the team and `say --help` used to post "--help" to the channel.
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   const json = args.includes('--json'); if (json) args.splice(args.indexOf('--json'), 1);
   const team = flag(args, '--team') ?? DEFAULT_TEAM;
   const name = (flag(args, '--as') ?? process.env['PHM_TEAM_USER'] ?? userInfo().username).toLowerCase().replace(/[^a-z0-9._-]/g, '');
