@@ -1,3 +1,4 @@
+import { parseLedgerTs } from '../metrics/loop.js';
 import { ledgerEventName } from './empty-cause.js';
 import { prKeyOf } from './eval-report.js';
 import { isNodePoolLedgerRow, ledgerEventTs, ledgerJobId } from './jobs-ledger-dialect.js';
@@ -145,7 +146,13 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
     // Batch members carry their own evidence. The session is a shared worker.
     if (id?.startsWith('RQ-BATCH-')) continue;
     if (id === null || event === undefined) { ignored++; continue; }
-    const at = ledgerEventTs(row, event.toUpperCase()) ?? NaN;
+    // Reconciled publish rows can retain the original publish timestamp.
+    // Only the terminal timestamp proves when the PR merged or closed.
+    const copiedPublish = ledgerEventName(row) === 'publish' || row.source === 'metrics-outcomes-reconciler';
+    const timestamp = copiedPublish && event === 'merged' ? parseLedgerTs(row.mergedAt)
+      : copiedPublish && event === 'closed' ? parseLedgerTs(row.closedAt)
+      : ledgerEventTs(row, event.toUpperCase());
+    const at = timestamp ?? NaN;
     const events: Events = jobs.get(id) ?? new Map();
     const boundary = events.get(event) ?? { times: new Set<number>(), prsByTime: new Map<number, Set<string>>() };
     if (!Number.isFinite(at)) ignored++;
