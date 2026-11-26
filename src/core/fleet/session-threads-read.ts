@@ -20,6 +20,7 @@ import { buildSessionThreads, threadSessions, type SessionThreadsParts, type Ses
 import type { FleetSessionMap } from './sessions-view.js';
 import type { SubagentRecord } from '../subagent/spawn.js';
 import { sanitizePublicJson } from '../util/public-json.js';
+import { readOwnerDisplayName } from '../owner-display-read.js';
 
 export interface SessionThreadsReadOptions extends Pick<LiveSessionsFilter, 'lane' | 'repo' | 'live'> {
   now?: number;
@@ -78,16 +79,17 @@ async function readParts(options: SessionThreadsReadOptions, pick: (list: LiveSe
       }));
     }
   })();
-  const [bus, owner, replies, orders, controls] = await Promise.all([
+  const [bus, owner, replies, orders, controls, ownerName] = await Promise.all([
     guarded(options.readBus ?? (() => readAgentMessages({ limit: AGENT_MESSAGES_MAX_LIMIT }))),
     shown.some(entry => entry.kind !== 'subagent') ? guarded(options.readOwner ?? (() => readInboxEntries({ limit: THREAD_OWNER_WINDOW }))) : undefined,
     shown.some(entry => entry.kind === 'leader') ? guarded(options.readReplies ?? (() => readLeaderReplies({ limit: whole ? THREAD_LIMITS.full.replies : THREAD_REPLIES_SHOWN }))) : undefined,
     shown.some(entry => entry.kind === 'leader' || (entry.kind === 'worker' && entry.jobId !== null))
       ? guarded(options.readOrders ?? (() => readOrderTrace({ now: () => now }))) : undefined,
     jobs.length > 0 ? guarded(options.readControls ?? (() => readJobControlLedger())) : undefined,
+    shown.some(entry => entry.kind !== 'subagent') ? readOwnerDisplayName() : undefined,
     activities,
   ]);
-  return { list, now, parts: { sessionsRead: true, bus, activity, output,
+  return { list, now, parts: { sessionsRead: true, bus, activity, output, ownerName,
     ...(owner === undefined ? {} : { owner }), ...(replies === undefined ? {} : { replies }),
     ...(orders === undefined ? {} : { orders }), ...(controls === undefined ? {} : { controls }) } };
 }
