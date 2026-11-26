@@ -337,6 +337,33 @@ it.each([
     .toMatchObject({ total_seconds: seconds, measured_jobs: seconds === null ? 0 : 1 });
 });
 
+it.each([
+  ['check_wait', 'publish', 'ci_start', 'closed'],
+  ['ci', 'ci_start', 'ci_complete', 'publish'],
+  ['merge', 'ci_complete', 'merged', 'closed'],
+] as const)('checks intervening PR evidence for %s', (phase, from, to, intervening) => {
+  const first = 'https://github.com/acme/phantom/pull/1';
+  const second = 'https://github.com/acme/phantom/pull/2';
+  for (const [at, url, expected] of [
+    ['2026-01-01T00:00:30Z', second, null],
+    [null, second, null],
+    ['2026-01-01T00:00:30Z', first, 60],
+    ['2026-01-01T00:01:01Z', second, 60],
+  ] as const) {
+    const text = [
+      { ...event(from, start), url: first },
+      { ...event(intervening, at), url },
+      event(to, end),
+    ].map(row => JSON.stringify(row)).join('\n');
+    const reports = phase === 'check_wait' ? [mergeQueueLatency(text)] : [mergeQueueLatency(text), jobLatency(text)];
+    for (const report of reports) {
+      expect(report.phases.find(row => row.phase === phase)).toMatchObject({
+        total_seconds: expected, measured_jobs: expected === null ? 0 : 1,
+      });
+    }
+  }
+});
+
 it('reads the remaining timestamp aliases and the kind event key', () => {
   const rows = [
     { job: 'attempt-1', kind: 'enqueue', time: '2026-01-01T00:00:00Z' },
