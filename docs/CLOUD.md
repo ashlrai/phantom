@@ -378,8 +378,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   and the trajectory outcome projection's recurring adverse skill
   tallies, the per-(skill, revision) selection counts and deterministic
   post-merge realized verdicts `trajectoryLearning.skillOutcomes`
-  publishes for learned skill cards once the skill-observation sample
-  gate passes (otherwise only visible through
+  publishes for learned skill cards once at least three learning-eligible
+  trajectories contribute joined skill selections (otherwise only visible through
   `phm skills list --outcomes` and `phm fleet status` — reports someone
   had to run and read, even though the skill library is the
   self-improvement loop's own memory). A (skill, revision) row becomes
