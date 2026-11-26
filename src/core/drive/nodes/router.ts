@@ -148,9 +148,13 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
         ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
       : reasons.has('declined') && !reasons.has('caps')
         ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
-      : reasons.has('caps')
-        ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
-        : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
+        // An auth blocker is only recorded for a node that passed the caps
+        // check, so when both appear some node does advertise every required
+        // cap and "no node advertises" would be false; gh auth is the nearer
+        // unblock (one login on an already-capable node, no rejoin).
+        : reasons.has('caps') && !reasons.has('auth')
+          ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
+          : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
   return plan;

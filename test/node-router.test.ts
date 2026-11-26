@@ -64,6 +64,23 @@ describe('node router', () => {
     expect(f.box.plan()[0]!.nodeId).toBe('n');
   });
 
+  it('names gh auth, not a caps rejoin, when one node lacks the cap and another lacks auth', () => {
+    const f = fixture();
+    // 'nocap' cannot advertise gh; 'noauth' advertises gh but never confirmed a
+    // local login. The auth blocker proves 'noauth' does advertise every
+    // required cap, so "no node advertises gh" would be a false claim — the
+    // nearer unblock is gh auth login on the already-capable node.
+    f.box.join('nocap', { owners: ['o'], caps: ['build'] });
+    const noauth = f.box.join('noauth', { owners: ['o'], caps: ['build', 'gh'] })!;
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    expect(f.box.plan()[0]).toMatchObject({ nodeId: null,
+      fix: expect.stringContaining('gh auth login') });
+    expect(f.box.plan()[0]!.fix).not.toContain('advertises');
+    // With the auth blocker gone the caps claim is true again and returns.
+    f.box.heartbeat(noauth, { auth: 'ok' });
+    expect(f.box.plan()[0]!.nodeId).toBe('noauth');
+  });
+
   it('skips expired nodes and tells the operator how to add one', () => {
     const f = fixture();
     f.box.join('n', { owners: ['o'] });
