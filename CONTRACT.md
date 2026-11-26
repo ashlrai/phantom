@@ -2563,7 +2563,8 @@ count as ignored events. Merge and close verdicts across
 claim, even when that claim is carried in an earlier field. A phase is
 unmeasured when a recorded launch falls
 after its start and at or before its end, or when a launch has no usable
-timestamp. A phase that ends at launch instead requires a unique, dated
+timestamp. A launch tied with the start also makes the phase unmeasured
+unless launch is itself the start boundary. A phase that ends at launch instead requires a unique, dated
 launch boundary. This keeps retries that reuse a job ID from
 joining timestamps across dispatch attempts. Publish, CI and merge boundaries
 also retain canonical GitHub PR identities from their URL aliases. A phase

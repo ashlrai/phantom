@@ -172,8 +172,10 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
         }
       }
       if (prs.size > 1) continue;
-      // An undated launch could fall anywhere in the interval.
-      if (end !== 'launch' && [...(events.get('launch')?.times ?? [])].some(at => !Number.isFinite(at) || (from < at && at <= to))) continue;
+      // With tied timestamps, only a launch boundary itself proves which
+      // attempt started the phase. An undated launch could fall anywhere.
+      if (end !== 'launch' && [...(events.get('launch')?.times ?? [])].some(at =>
+        !Number.isFinite(at) || (at <= to && (at > from || (at === from && start !== 'launch'))))) continue;
       // A member claim may start another attempt, but does not prove execution.
       if ([...(events.get('batch_claim')?.times ?? [])].some(at => !Number.isFinite(at) || (from <= at && at <= to))) continue;
       samples.push((to - from) / 1000);
