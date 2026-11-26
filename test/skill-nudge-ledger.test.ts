@@ -422,6 +422,25 @@ describe('syncSkillNudgesFromJobsLedger', () => {
     expect(cards.map(card => card.sourceJobIds)).toEqual(beforeMerge ? [['RQ-F1', 'RQ-F2', 'RQ-F3', 'RQ-REC']] : []);
   });
 
+  it.each([true, false])('preserves recurrence across a terminal replay (third failure before merge: %s)', async beforeMerge => {
+    const failures = ['RQ-F1', 'RQ-F2'].flatMap(id => [
+      launch(id), finish(id, { failure_class: 'quota' }), outcome(id, 'CLOSED'),
+    ]);
+    const thirdFailure = outcome('RQ-F3', 'CLOSED');
+    const merge = outcome('RQ-REC', 'MERGED', { ts: undefined, mergedAt: '2026-10-28T15:00:00Z' });
+    const [first, second] = beforeMerge ? [thirdFailure, merge] : [merge, thirdFailure];
+    const text = [
+      ...failures,
+      launch('RQ-F3'), finish('RQ-F3', { failure_class: 'quota' }),
+      launch('RQ-REC'), finish('RQ-REC', { failure_class: 'quota', exit_code: 0 }),
+      first, second, first,
+    ].join('\n');
+
+    await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+
+    expect(cards.map(card => card.sourceJobIds)).toEqual(beforeMerge ? [['RQ-F1', 'RQ-F2', 'RQ-F3', 'RQ-REC']] : []);
+  });
+
   it('folds injected ledger text into persisted candidate cards', async () => {
     const failed = (id: string) => [
       launch(id, 'codex', `2026-10-28T10:0${id.slice(-1)}:00-0400`),

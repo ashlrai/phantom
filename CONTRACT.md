@@ -4880,4 +4880,6 @@ required-check bucket lacks resolved outcomes.
 observation cutoff in Unix milliseconds, defaulting to the current time.
 Rows with a recognized receipt timestamp or effective merge or close timestamp
 after the cutoff are excluded from the fold and from PR claim attribution.
-Receipts at the cutoff are included. Undated receipts retain ledger order.
+Receipts at the cutoff are included. Exact replays of dated terminal
+receipts preserve the first occurrence's position and evidence snapshot.
+Undated receipts retain ledger order.

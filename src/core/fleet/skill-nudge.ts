@@ -296,7 +296,11 @@ export function skillNudgeJobsFromLedger(
     const event = ledgerEventName(row);
     const dispatched = (event !== null && ATTEMPT_EVENTS.has(event))
       || (event === 'claim' && row['launch_dedupe'] !== true);
-    if ((dispatched || event === 'recut_admission') && rowAt !== null) {
+    // A replay must not move a verdict past later failures or capture
+    // execution evidence recorded after the original verdict.
+    const datedVerdict = outcome !== undefined && (rowAt !== null || terminalAt !== null);
+    const datedRecovery = rowAt !== null && (dispatched || event === 'recut_admission');
+    if (datedVerdict || datedRecovery) {
       const receipt = line.trim();
       if (recoveryReceipts.has(receipt)) continue;
       recoveryReceipts.add(receipt);
