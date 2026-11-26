@@ -23,6 +23,7 @@
  *     vocabulary: reverted:true, reverted_at/revertedAt, revert event/state
  *     names) at or after the latest effective merge resolves the job as merged:false —
  *     the v1 schema has no revert dimension and consumers score held merges.
+ *     A revert that names a PR can only discount that PR's merge.
  *     A later merge is a fresh held merge. For a known merge, its merge time
  *     bounds dispatch and CI evidence even when a revert changes the verdict.
  *     Reverts only git history or the
@@ -204,8 +205,8 @@ interface RewardJobAccum {
   merge: (ResolutionMark & { url: string | null }) | null;
   /** Latest closed-unmerged resolution time, falling back to the row stamp. */
   close: ResolutionMark | null;
-  /** Latest effective revert time, falling back to the row stamp. */
-  revertMs: number | null;
+  /** Latest effective revert per PR, with null for receipts lacking PR identity. */
+  reverts: Map<string | null, number>;
   /** True when the standing revert set proves the held merge's PR was reverted. */
   standingReverted: boolean;
   /** ci_start/ci_complete boundary stamps, deduped like job-latency's boundary lists. */
@@ -218,7 +219,7 @@ function newAccum(): RewardJobAccum {
   return {
     dispatches: [],
     dispatchUndated: false,
-    merge: null, close: null, revertMs: null, standingReverted: false,
+    merge: null, close: null, reverts: new Map(), standingReverted: false,
     ciBoundaryUndated: false, ciStartAts: [], ciCompleteAts: [],
   };
 }
@@ -312,7 +313,11 @@ export function foldJobsLedgerRewards(
     }
     if (hasRevertEvidence(row)) {
       const revertedAtMs = resolutionAt(row, REVERTED_AT_KEYS) ?? at;
-      if (revertedAtMs <= nowMs) acc.revertMs = Math.max(acc.revertMs ?? 0, revertedAtMs);
+      if (revertedAtMs <= nowMs) {
+        const url = firstString(row, URL_KEYS);
+        const key = url === null ? null : pullRequestKey(url);
+        acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
+      }
     }
     const state = outcomeStateOf(row);
     if (row['merged'] === true || MERGE_STATES.has(state)) {
@@ -377,10 +382,11 @@ function rewardInput(
   id: string, acc: RewardJobAccum, costUsd: number | undefined,
 ): RewardSignalInput | null {
   const cost = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : null;
-  const heldMerge = acc.merge !== null && !acc.standingReverted &&
-    (acc.revertMs === null || acc.merge.resolvedMs > acc.revertMs);
   if (acc.merge !== null) {
     const merge = acc.merge;
+    const key = merge.url === null ? null : pullRequestKey(merge.url);
+    const revertedAt = Math.max(acc.reverts.get(null) ?? -Infinity, acc.reverts.get(key) ?? -Infinity);
+    const heldMerge = !acc.standingReverted && merge.resolvedMs > revertedAt;
     const dispatch = dispatchBefore(acc, merge.resolvedMs);
     if (dispatch === null) return null;
     return {
@@ -391,7 +397,8 @@ function rewardInput(
       ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs),
     };
   }
-  const closedMs = Math.max(acc.close?.resolvedMs ?? 0, acc.revertMs ?? 0);
+  let closedMs = acc.close?.resolvedMs ?? 0;
+  for (const revertedAt of acc.reverts.values()) closedMs = Math.max(closedMs, revertedAt);
   if (closedMs > 0) {
     const dispatch = dispatchBefore(acc, closedMs);
     if (dispatch === null) return null;
