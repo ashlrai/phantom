@@ -83,6 +83,35 @@ describe('node router', () => {
     expect(plan.find(r => r.jobId === 'j-plain')).toMatchObject({ nodeId: null,
       fix: "No live node belongs to owner 'o'. Run: phm node join --owner o" });
   });
+
+  it('caps and auth fixes name the live nodes that block the job', () => {
+    const f = fixture();
+    f.box.join('box', { owners: ['acme'], caps: ['build'] });
+    f.mac.join('mac', { owners: ['acme'], caps: ['gh'] });
+    f.box.enqueue('j-deploy', { owner: 'acme', requires: ['deploy'] });
+    f.box.enqueue('j-gh', { owner: 'acme', requires: ['gh'] });
+    const plan = f.box.plan();
+    // deploy: both live nodes lack the cap, so both are named (node-id order).
+    expect(plan.find(r => r.jobId === 'j-deploy')).toMatchObject({ nodeId: null,
+      fix: "No node owned by 'acme' advertises deploy. Live nodes missing caps: box, mac. Leave and rejoin one with --caps including them." });
+    // gh: box misses the cap while mac has it but never reported auth ok — the
+    // caps fix still wins while any node misses a cap, and names only box.
+    expect(plan.find(r => r.jobId === 'j-gh')).toMatchObject({ nodeId: null,
+      fix: "No node owned by 'acme' advertises gh. Live nodes missing caps: box. Leave and rejoin one with --caps including them." });
+  });
+
+  it('the gh-auth fix names the live nodes not reporting ok auth', () => {
+    const f = fixture();
+    const s = f.box.join('box', { owners: ['acme'], caps: ['gh'] })!;
+    f.box.enqueue('j-gh', { owner: 'acme', requires: ['gh'] });
+    // Never probed and probed-missing both block; the fix names the node either way.
+    expect(f.box.plan()[0]).toMatchObject({ nodeId: null,
+      fix: expect.stringContaining('Live nodes not reporting ok gh auth: box') });
+    f.box.heartbeat(s, { auth: 'missing' });
+    expect(f.box.plan()[0]!.fix).toContain('Live nodes not reporting ok gh auth: box');
+    f.box.heartbeat(s, { auth: 'ok' });
+    expect(f.box.plan()[0]!.nodeId).toBe('box');
+  });
 });
 
 describe('job leases: no job runs twice', () => {

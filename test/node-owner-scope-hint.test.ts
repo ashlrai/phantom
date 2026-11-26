@@ -206,8 +206,9 @@ describe('unrouted-job join fixes carry --watch on the standalone path', () => {
     for (const verb of ['status', 'list'] as const) {
       const out = runNodeFleet(verb, parseNodeFleetFlags(verb, ['--owner', 'acme,ops']), nodes, () => 'unknown', { rejoinWatch: true });
       expect(fixOf(out, 'j1'), verb).toContain('phm node join --owner acme --watch');
-      // The caps fix names no join command, so it is never rewritten.
-      expect(fixOf(out, 'j2'), verb).toBe("No node owned by 'ops' advertises build. Rejoin a node with --caps including them.");
+      // The caps fix names no join command, so it is never rewritten; it does
+      // name the live node missing the cap.
+      expect(fixOf(out, 'j2'), verb).toBe("No node owned by 'ops' advertises build. Live nodes missing caps: box. Leave and rejoin one with --caps including them.");
     }
   });
 

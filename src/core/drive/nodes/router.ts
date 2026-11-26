@@ -64,6 +64,12 @@ function shortfall(node: NodeRecord, job: QueueJobV1): string | null {
   return jobBlockers(node, job)[0] ?? null;
 }
 
+/** Live node ids one blocker kind kept off a job, named up to three then "+N more". */
+function blockedNodeIds(blocked: ReadonlyMap<string, string[]>, kind: string): string {
+  const ids = blocked.get(kind) ?? [];
+  return ids.length ? `${ids.slice(0, 3).join(', ')}${ids.length > 3 ? ` +${ids.length - 3} more` : ''}` : '';
+}
+
 /** Shared capacity slice of fleet.awareness.v1. Pool dispatch recomputes it inside the
  * witness transaction; file mirrors can never grant claims. No IO or state mutation. */
 export function nodeCapacityView(state: NodesState | null, now: number) {
@@ -119,10 +125,18 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
     const reasons = new Map<string, number>();
+    const blocked = new Map<string, string[]>();
     let best: NodeRecord | null = null;
     for (const node of nodes) {
       const why = shortfall(node, job);
-      if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
+      if (why) {
+        const kind = why.split(':')[0]!;
+        reasons.set(kind, 1);
+        const ids = blocked.get(kind) ?? [];
+        ids.push(node.nodeId);
+        blocked.set(kind, ids);
+        continue;
+      }
       if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) { reasons.set('capacity', 1); continue; }
       const host = hosts.get(node.nodeId);
       if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
@@ -142,15 +156,24 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       continue;
     }
     const requires = job.requires ?? [];
+    // The caps and auth fixes send the operator to a machine, so they name the
+    // live nodes that blocker kept off the job — node ids are already public
+    // through status, sessions never appear here.
+    const capsIds = blockedNodeIds(blocked, 'caps');
+    const authIds = blockedNodeIds(blocked, 'auth');
+    const capsFix = capsIds
+      ? `No node owned by '${job.owner}' advertises ${requires.join(',')}. Live nodes missing caps: ${capsIds}. Leave and rejoin one with --caps including them.`
+      : `No node owned by '${job.owner}' advertises ${requires.join(',')}. Rejoin a node with --caps including them.`;
+    const authFix = authIds
+      ? `Nodes owned by '${job.owner}' lack local gh auth. Live nodes not reporting ok gh auth: ${authIds}. Run 'gh auth login' on one, then: phm node beat --probe-auth`
+      : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
     const fix = !nodes.some(n => n.owners?.includes(job.owner!))
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
       : reasons.has('capacity')
         ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
       : reasons.has('declined') && !reasons.has('caps')
         ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
-      : reasons.has('caps')
-        ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
-        : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
+      : reasons.has('caps') ? capsFix : authFix;
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
   return plan;

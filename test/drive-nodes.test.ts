@@ -899,7 +899,7 @@ describe('text output names outcomes in plain words', () => {
       expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
       const jobLines = last(lines).split('\n').filter(l => l.startsWith('job '));
       expect(jobLines).toContain('job j1 pending');
-      expect(jobLines).toContain("job j2 pending — No node owned by 'acme' advertises gh. Rejoin a node with --caps including them.");
+      expect(jobLines).toContain("job j2 pending — No node owned by 'acme' advertises gh. Live nodes missing caps: box. Leave and rejoin one with --caps including them.");
       expect(jobLines).toContain('job j3 pending');
       // list renders the same annotations.
       expect(await cmdNodeFleet('list', ['--owner', 'acme'], deps)).toBe(0);
