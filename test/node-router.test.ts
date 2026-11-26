@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DriveNodes, LocalNodesStore, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
+import { initializePool } from '../src/core/drive/nodes/pool.js';
 import { probeLocalAuth } from '../src/core/drive/nodes/auth-probe.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { localPhmVersion, versionCap } from '../src/core/drive/nodes/phm-version.js';
@@ -81,6 +82,68 @@ describe('node router', () => {
       fix: "No live node belongs to owner 'o'. Run: phm node join --owner o --caps build,gh" });
     expect(plan.find(r => r.jobId === 'j-plain')).toMatchObject({ nodeId: null,
       fix: "No live node belongs to owner 'o'. Run: phm node join --owner o" });
+  });
+});
+
+describe('plan fixes name the node and print runnable commands', () => {
+  it('the caps fix names a live node and prints its leave and rejoin commands', () => {
+    const f = fixture();
+    const s = f.box.join('mac-1', { owners: ['o', 'ops'], caps: ['build'], slots: 2 })!;
+    f.box.enqueue('j', { owner: 'o', requires: ['gh', 'build'] });
+    const route = f.box.plan('o')[0]!;
+    expect(route.nodeId).toBeNull();
+    expect(route.fix).toContain("Node 'mac-1' is live without gh");
+    expect(route.fix).toContain(`phm node leave --node mac-1 --session ${s.session}`);
+    // The rejoin keeps every advertised owner, cap and slot — only the missing cap is added.
+    expect(route.fix).toContain('phm node join --node mac-1 --owner o,ops --caps build,gh --slots 2');
+  });
+
+  it('the caps fix prefers a caps-only node over one that would still refuse on auth', () => {
+    const f = fixture();
+    const blocked = f.box.join('auth-blocked', { owners: ['o'], caps: ['build'] })!;
+    f.box.heartbeat(blocked, { auth: 'missing' });
+    const clean = f.box.join('caps-only', { owners: ['o'], caps: ['build', 'gh'], slots: 1 })!;
+    f.box.heartbeat(clean, { auth: 'ok' });
+    f.box.enqueue('j', { owner: 'o', requires: ['gh', 'build', 'codex'] });
+    const route = f.box.plan('o')[0]!;
+    // 'caps-only' misses codex alone and its gh auth is ok (score 1);
+    // 'auth-blocked' misses gh+codex and would still refuse on auth after
+    // rejoin (score 1002), so the fix names the node rejoin actually unblocks.
+    expect(route.fix).toContain("Node 'caps-only' is live without codex");
+    expect(route.fix).not.toContain('auth-blocked');
+  });
+
+  it('the auth fix names the node and prints a runnable probe beat', () => {
+    const f = fixture();
+    const s = f.box.join('gh-box', { owners: ['o'], caps: ['gh'] })!;
+    f.box.heartbeat(s, { auth: 'missing' });
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    const route = f.box.plan('o')[0]!;
+    expect(route.nodeId).toBeNull();
+    expect(route.fix).toContain("gh auth login' on gh-box");
+    expect(route.fix).toContain(`phm node beat --node gh-box --session ${s.session} --probe-auth`);
+  });
+
+  it('a pool witness names the machine to fix, never a session command it cannot run', () => {
+    const f = fixture();
+    initializePool(f.store, 'primary-mac', 'backup-mac', 1_000);
+    f.box.join('mac-1', { owners: ['o1'], caps: ['build'] });
+    const gh = f.box.join('gh-box', { owners: ['o2'], caps: ['gh'] })!;
+    f.box.heartbeat(gh, { auth: 'missing' });
+    f.box.enqueue('j-caps', { owner: 'o1', requires: ['gh'] });
+    f.box.enqueue('j-auth', { owner: 'o2', requires: ['gh'] });
+    const plan = f.box.plan();
+    const caps = plan.find(r => r.jobId === 'j-caps')!;
+    const auth = plan.find(r => r.jobId === 'j-auth')!;
+    expect(caps.nodeId).toBeNull();
+    expect(caps.fix).toContain("Node 'mac-1' is live without gh");
+    expect(caps.fix).toContain('restart its worker');
+    expect(caps.fix).not.toContain('phm node leave');
+    expect(caps.fix).not.toContain('phm node join --node');
+    expect(auth.nodeId).toBeNull();
+    expect(auth.fix).toContain("gh auth login' on gh-box");
+    expect(auth.fix).toContain('restart its worker');
+    expect(auth.fix).not.toContain('phm node beat');
   });
 });
 
