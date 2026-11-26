@@ -1304,6 +1304,7 @@ import { precheckSkipBacklogItems } from './precheck-skip-backlog.js';
 import { recheckBacklogItems } from './recheck-backlog.js';
 import { sourceYieldBacklogItems } from './source-yield-backlog.js';
 import { gatewayShadowBacklogItems } from './gateway-shadow-backlog.js';
+import { seatShadowBacklogItems } from './seat-shadow-backlog.js';
 import { stuckJobBacklogItems } from './stuck-job-backlog.js';
 import { strayStopBacklogItems } from './stray-stop-backlog.js';
 import { lessonTrialBacklogItems } from './lesson-trial-backlog.js';
@@ -1686,6 +1687,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // decisions for the rate to mean something, and only for the fleet's
   // own repository.
   items.push(...await gatewayShadowBacklogItems({ repo }));
+
+  // Shadow seat-decision journal: the seat router's own comparison log —
+  // ~/.ashlr/routing/decisions.jsonl (+ rotated .1) records each
+  // routeSeat evaluation beside the actual {engine, seatId} that ran —
+  // becomes backlog items too. Until now its only readers were the
+  // budget API's shadow view, `phm telemetry`, the autonomy ladder and
+  // the FleetRouterPane, reports someone had to run and read, so a
+  // router whose pick keeps differing from what dispatch honors (or a
+  // dispatch that keeps bypassing the seat layer's answer) never became
+  // work. Same checked bounded tail reads of both retained generations;
+  // a (kind, source, task, pair) cell emits only at the recurring bar
+  // inside the window and only for the fleet's own repository.
+  items.push(...await seatShadowBacklogItems({ repo }));
 
   // Fleet recheck verdict history: the self-tick recheck-record step's
   // retained per-pass verdicts — recurring overall UNKNOWN/BLOCKED
