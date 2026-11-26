@@ -114,11 +114,14 @@ describe('fleet resource plan', () => {
     ] } };
     const grant = { count: 1, kind: 'full', source: 'owner-screenshot', expires_at: iso(now + hr / 2) } as const;
     const bank = { observed_at: iso(now), grants: [grant], queued: 3 };
-    const plan = (evidence: typeof bank) => buildFleetResourcePlan(weekly, [node], status(), ledger, now, [], evidence);
+    const plan = (evidence: typeof bank, demand?: ReadonlyMap<string, readonly string[]> | null) =>
+      buildFleetResourcePlan(weekly, [node], status(), ledger, now, [], evidence, demand);
     expect(plan(bank).reset_proposal).toMatchObject({
       action: 'use-reset-now', requires_explicit_request: true, grant, window: 'weekly', queued_jobs: 3,
     });
     expect(plan({ ...bank, queued: 0 }).reset_proposal).toBeNull();
+    expect(plan(bank, null).reset_proposal).toBeNull();
+    expect(plan(bank, new Map()).reset_proposal).toBeNull();
   });
 
   it('reroutes eligible rows once toward the earliest included deadline and shares the plan with readers', async () => {
@@ -150,6 +153,28 @@ describe('fleet resource plan', () => {
         readings: readings.map(row => row.id === 'antigravity' ? { ...row, reset_at: sooner } : row),
         history: { ...live.history, antigravity: live.history.antigravity!.map(row => ({ ...row, reset_at: sooner })) },
       }));
+      const fallbackCounts = { ...dispatch, lanes: Object.fromEntries(lanes.map(lane =>
+        [lane, { ...dispatch.lanes[lane], queued: 10 }])) };
+      // Even current dispatcher totals cannot prove that a waiting row fits a lane.
+      await write('queue/status.json', fallbackCounts);
+      await writeFile(join(dir, 'PAUSE'), '');
+      const paused = await readFleetResourcePlan(dir, now);
+      for (const name of lanes) {
+        expect(paused.lanes.find(lane => lane.lane === name)).toMatchObject({ queued_jobs: null, additional_slots: null });
+      }
+      expect(paused.allowances.find(row => row.id === 'codex-personal')?.projected_waste_at_deadline).toBeNull();
+      await rm(join(dir, 'PAUSE'));
+      await writeFile(join(dir, 'queue/ready.tsv'), '');
+      const empty = await readFleetResourcePlan(dir, now);
+      expect(empty.lanes.filter(lane => lanes.includes(lane.lane)).map(lane => [lane.queued_jobs, lane.additional_slots]))
+        .toEqual([[0, 0], [0, 0]]);
+      await write('queue/status.json', { ...fallbackCounts, lanes: {
+        ...fallbackCounts.lanes, agy: { ...fallbackCounts.lanes['agy'], target: null },
+      } });
+      const partial = await readFleetResourcePlan(dir, now);
+      expect(partial.lanes.find(lane => lane.lane === 'agy')).toMatchObject({ queued_jobs: null, additional_slots: null });
+      await write('queue/status.json', dispatch);
+      await writeFile(join(dir, 'queue/ready.tsv'), ready);
       const plan = await readFleetResourcePlan(dir, now);
       expect(plan.lanes.filter(lane => lanes.includes(lane.lane)).map(lane => [lane.queued_jobs, lane.additional_slots])).toEqual([[2, 1], [2, 1]]);
       const readCapacity = async () => plan;

@@ -1651,7 +1651,13 @@ is true when the bounded work-market journal read omitted older bytes.
 History, overrides, rejections and decision outcomes may then be incomplete
 for the requested window. The additive `resourcePlan` block compares the
 advisory resource-plan target with running jobs and waiting work; it does
-not reinterpret dispatcher decisions or change the exit status. A missing or unreadable journal is indicated by
+not reinterpret dispatcher decisions or change the exit status.
+`buildFleetResourcePlan` accepts a final `demand` argument mapping included
+lanes to eligible job IDs. An empty list establishes zero demand. A missing
+entry or explicit `null` leaves demand unknown. Omitting the argument permits
+aggregate dispatcher queue counts for snapshot-only callers. The live
+`readFleetResourcePlan` always supplies the map or `null`.
+A missing or unreadable journal is indicated by
 the market folds' `available: false`. `foldMarketOverrides` collapses the
 window's `route_decision` rows to each job's latest decision and tallies
 `lane_override`s by reason and hinted-to-chosen lane; the report's

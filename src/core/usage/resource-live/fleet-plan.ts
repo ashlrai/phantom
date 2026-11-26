@@ -48,7 +48,7 @@ function machine(node: NodeRow) {
 
 export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: unknown, ledger: JobsTailRead, now: number,
   custom: readonly ResourceLiveAllowance[] = [], resets?: Awaited<ReturnType<typeof readBankedResets>>,
-  demand?: ReadonlyMap<string, readonly string[]>) {
+  demand?: ReadonlyMap<string, readonly string[]> | null) {
   const sidecar = parseResourceLiveSidecar(raw, custom);
   const measured = new Map<string, typeof sidecar.readings[number]>(sidecar.readings.map(row => [row.id, row]));
   const readings = new Map([...RESOURCE_LIVE_ALLOWANCES, ...custom]
@@ -61,13 +61,17 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
   const age = now - time(dispatch['last_tick']);
   const statusLanes = dispatch['schema'] === 'dispatchd.status.v1' && age >= 0 && age < 5 * MINUTE ? object(dispatch['lanes']) : {};
   const antigravity = antigravityQuota(measured.get('antigravity'), now);
+  // Live readers pass null for unavailable evidence. Only snapshot-only callers
+  // that omit demand use the dispatcher's aggregate queue count.
+  const queuedFor = (lane: string, fallback: number | null) =>
+    demand === undefined ? fallback : demand?.get(lane)?.length ?? null;
   const laneNames = [...new Set([...plan.allowances.flatMap(row => row.lane ? [row.lane] : []), ...Object.keys(statusLanes)])];
   const lanes = laneNames.map(lane => {
     const row = object(statusLanes[lane]);
     const running = count(row['running']), ceiling = count(row['ceiling']), hard = count(row['hard_cap']);
     const cap = ceiling === null || hard === null ? null : Math.min(ceiling, hard);
     const held = typeof row['held'] === 'boolean' ? row['held'] || Boolean(dispatch['paused']) : null;
-    const queued = demand?.get(lane)?.length ?? count(row['queued']);
+    const queued = queuedFor(lane, count(row['queued']));
     const recent = jobs.filter(job => job.lane === lane);
     const tokenJobs = recent.filter(job => job.tokens !== null);
     const exhaustedUntil = (lane === 'agy' || lane === 'agy-neon') ? antigravity.reset_at : null;
@@ -104,7 +108,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
       projected_jobs: null as number | null, projected_waste_at_deadline: null as number | null,
       action: row.action };
   });
-  const resetProposal = resets ? planBankedReset({ ...resets, queued: demand?.get('codex-personal')?.length ?? resets.queued },
+  const resetProposal = resets ? planBankedReset({ ...resets, queued: queuedFor('codex-personal', resets.queued) },
     plan.allowances, new Map([...readings].map(([id, row]) => [id, row.source])), now).proposal : null;
   const deadlines = new Map<string, number>();
   for (const row of allowances) {
@@ -123,13 +127,13 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const active = candidates.filter(row => row.action === 'burn' && row.remaining !== null && row.jobs_per_slot !== null &&
       row.jobs_per_slot > 0 && row.estimated_quota_per_job !== null);
     const eligible = machines.flatMap((row, index) => row.lanes?.some(cap => capServesLane(cap, name)) ? [index] : []);
-    if (lane.running === null || lane.max_concurrency === null || lane.queued_jobs === null || lane.held === null) continue;
+    if (lane.running === null || lane.max_concurrency === null || lane.held === null) continue;
     if (lane.held || lane.queued_jobs === 0 || lane.running >= lane.max_concurrency || candidates.some(row => row.action === 'hold')) {
       lane.target_concurrency = lane.running;
       lane.additional_slots = 0;
       continue;
     }
-    if (!active.length || !eligible.length || eligible.some(index => slots[index] === null)) continue;
+    if (lane.queued_jobs === null || !active.length || !eligible.length || eligible.some(index => slots[index] === null)) continue;
     const need = Math.max(...active.map(row => Math.ceil(row.remaining! / row.estimated_quota_per_job! / row.jobs_per_slot!)));
     const total = eligible.reduce((sum, index) => sum + slots[index]!, 0);
     const available = demand?.get(name)?.filter(job => !reserved.has(job));
@@ -192,7 +196,7 @@ export async function readFleetResourcePlan(runsDir: string, now = Date.now()) {
     lane, queue.rows.filter(({ row, spec }) => (row.hint === lane || spec !== null) && queue.eligible(row, lane, false))
       .sort((a, b) => Number(b.row.hint === lane) - Number(a.row.hint === lane)).map(({ row }) => row.id),
   ] as const).filter(([lane]) => queue.lanes.get(lane)?.costClass === 'included'));
-  return buildFleetResourcePlan(live, readNodesView(defaultNodesViewDeps()).nodes, status, ledger, now, custom, resets, demand ?? undefined);
+  return buildFleetResourcePlan(live, readNodesView(defaultNodesViewDeps()).nodes, status, ledger, now, custom, resets, demand);
 }
 
 export function writeFleetResourceAdvice(runsDir: string, plan: Awaited<ReturnType<typeof readFleetResourcePlan>>): void {
