@@ -155,6 +155,26 @@ describe('foldJobsLedgerRewards', () => {
     ]);
   });
 
+  it.each(['MERGED', 'CLOSED'])('leaves the fallback repository unknown for a %s verdict when a tied dispatch conflicts', (state) => {
+    const job = 'RQ-TIED-DISPATCH-REPO';
+    const conflict = line({
+      job, event: 'claim', ts: DISPATCH_ISO, lane: 'codex-cmp',
+      url: 'https://github.com/ashlrai/phantom/pull/12',
+      pr_url: 'https://github.com/ashlrai/lexicon/pull/12',
+    });
+    const verdict = line({ job, state, ts: MERGED_ISO });
+    const matching = launch(job);
+    for (const dispatches of [[conflict, matching], [matching, conflict, matching]]) {
+      expect(foldJobsLedgerRewards([...dispatches, verdict].join('\n'), NOW_MS)).toMatchObject([
+        { jobId: job, repo: null, pool: 'codex-cmp', merged: state === 'MERGED' },
+      ]);
+    }
+    const retry = launch(job, 'devin', '2026-10-28T15:00:00Z');
+    expect(foldJobsLedgerRewards([conflict, matching, retry, verdict].join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, repo: 'ashlrai/phantom', pool: 'devin' },
+    ]);
+  });
+
   it.each([merged, closed])('leaves the pool unknown for conflicting latest dispatch lanes (%o)', (resolve) => {
     const job = 'RQ-TIED-DISPATCH';
     const dispatches = [claim(job, 'devin', DISPATCH_ISO), launch(job, 'codex-cmp', DISPATCH_ISO)];

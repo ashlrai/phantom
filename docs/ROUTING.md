@@ -789,6 +789,11 @@ CI receipts outside that window are ignored when
 checking for ambiguity, so earlier attempts can coexist with a measured
 retry. A merge uses its recorded merge time even if its ledger receipt
 arrived later. The latest effective merge time selects the rewarded attempt.
+When the verdict has no repository evidence, the reward uses the repository
+from the latest dispatch timestamp. Conflicting repository claims at that
+timestamp, including different repository URLs on a single receipt, leave
+repository attribution unknown. Receipts with no repository evidence can
+share that timestamp with a receipt that identifies the repository.
 Receipt, merge, close and revert timestamps accept ISO strings or numeric
 epoch milliseconds. Merge and close receipts enter the reward fold only once
 both their receipt and effective resolution timestamps are within the evaluation
