@@ -6,6 +6,7 @@ import type { OperatorRequest, OperatorResult } from '../src/core/desktop/operat
 import { collectResourceEvidence } from '../src/core/usage/resource-live/evidence-collector.js';
 import { defaultResourceLiveSources } from '../src/core/usage/resource-live/sources.js';
 import { readResourceEvidenceFile } from '../src/core/usage/resource-live/store.js';
+import { cmdResourcesEvidence } from '../src/cli/resources-evidence.js';
 
 describe('scheduled desktop resource evidence', () => {
   const at = Date.parse('2026-12-01T12:03:00Z');
@@ -36,6 +37,33 @@ describe('scheduled desktop resource evidence', () => {
     operator.mockClear();
   });
   afterEach(async () => { await rm(runsDir, { force: true, recursive: true }); });
+
+  it('records an owner observation then replaces it with a complete visible reset bank', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const args = ['record', '--resource', 'codex-personal', '--resets', '2', '--source', 'owner-screenshot', '--runs-dir', runsDir, '--json'];
+      expect(await cmdResourcesEvidence([...args, '--expires', '2026-12-01T22:31:00Z'], now)).toBe(2);
+      expect(await readResourceEvidenceFile(runsDir)).toBeNull();
+      expect(await cmdResourcesEvidence([...args, '--expires', '2026-12-01T22:31:00Z,2026-12-12T22:26:00Z'], now)).toBe(0);
+      const recorded = JSON.parse(log.mock.lastCall![0]);
+      expect(recorded).toMatchObject({ count: 2, grants: [{ source: 'owner-screenshot' }, { source: 'owner-screenshot' }] });
+      await configure({ 'codex-personal-resets': 'Usage limit resets' });
+      now += 11 * 60_000;
+      text['codex-personal-resets'] = 'AXHeading Usage limit resets\nAXStaticText Available: 2\nAXStaticText Full reset expires Dec 1, 5:31 PM EST';
+      expect(await collect()).toMatchObject({ checked: ['codex-personal-resets'], nextAt: now + 5 * 60_000 });
+      expect(await readResourceEvidenceFile(runsDir)).toMatchObject({ readings: { 'codex-personal-resets': recorded } });
+      now += 5 * 60_000;
+      text['codex-personal-resets'] += '\nAXStaticText Weekly reset expires Dec 12, 5:26 PM EST\nAXHeading Credits\nAXStaticText Available: 0';
+      expect(await collect()).toMatchObject({ checked: ['codex-personal-resets'] });
+      expect(await readResourceEvidenceFile(runsDir)).toMatchObject({ readings: { 'codex-personal-resets': {
+        count: 2, grants: [
+          { count: 1, kind: 'full', expires_at: '2026-12-01T22:31:00.000Z', source: 'chatgpt-settings-usage' },
+          { count: 1, kind: 'weekly', expires_at: '2026-12-12T22:26:00.000Z', source: 'chatgpt-settings-usage' },
+        ],
+      } } });
+    } finally { log.mockRestore(); error.mockRestore(); }
+  });
 
   it('collects all six target types through bounded reads and feeds existing resource-live sources', async () => {
     await configure({

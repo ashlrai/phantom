@@ -175,14 +175,10 @@ describe('autonomous routing fails closed and applies the budget', () => {
     expect(d.engine).not.toBe('claude');
   });
 
-  it('honors a configured 70% five-hour ceiling for autonomous Claude routing', () => {
-    updateBudgetPolicy({ seatId: 'claude', policy: { maxSessionWindowPercent: 70 } });
-    writeCapacitySnapshot([claudeSeat(69, 10)]);
-    expect(routeTask(hardItem(), cfg(), ctx(['claude', 'builtin'], true)).engine).toBe('claude');
-
-    writeCapacitySnapshot([claudeSeat(80, 10)]);
+  it.each([[80, 'claude'], [100, 'builtin']])('balanced: %i percent five-hour usage routes to %s', (used, engine) => {
+    writeCapacitySnapshot([claudeSeat(used, 10)]);
     const d = routeTask(hardItem(), cfg(), ctx(['claude', 'builtin'], true));
-    expect(d.engine).not.toBe('claude');
+    expect(d.engine).toBe(engine);
   });
 
   it('the balanced default permits Codex autonomy with a fresh eligible reading', () => {

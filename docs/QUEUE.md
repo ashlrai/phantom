@@ -817,6 +817,7 @@ phm fleet launchable --json
 `ready` count splits into `filler` and `real` rows. Parked rows are excluded
 whether the `PARKED` marker is in the first column or the lane column.
 `queued` comes from the status snapshot, so it can differ from `ready`.
+Lanes with `held: true` in the dispatcher snapshot are excluded.
 
 `launchable` compares each lane's `free` slots with ready rows whose prompt
 file exists. A row counts toward the lane its market hint resolves to: the
@@ -830,6 +831,9 @@ jobs marked `drop` or `defer` in `skipped-empty.tsv`, and filler while
 `FILLER_HOLD` exists. Both commands use the launch target described below and
 read `~/.ashlr-runs/queue` (including `router-queue.md` for `launchable`);
 set `ASHLR_RUNS_DIR` to inspect another runs directory.
+
+`launchable` reports zero free slots for a lane with `held: true`, while
+keeping its published occupancy, launch target and ready supply visible.
 
 `lane-starve` exits 1 when it finds a starved lane; `launchable` exits 1 when
 any lane has more free slots than launchable rows plus lane-open supply — a

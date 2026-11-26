@@ -8,13 +8,14 @@ import { fileOperationsPathKey, validFileOperationsPath } from '../universe/gene
 
 type Oracle = { command: string[]; executableDigest: string };
 type Lane = { workerId: string; tier: QueueTier };
+type WorkerLane = Lane & { fleetLane?: string };
 export interface SwarmPilotSpec {
   id: string;
   goal: string;
   seed: { repo: string; revision: string };
   githubRepo: string;
   planner: Lane;
-  workers: Lane[];
+  workers: WorkerLane[];
   files: string[];
   oracles: Record<string, Oracle>;
   integrationOracle: string;
@@ -31,8 +32,10 @@ export interface SwarmPilotNode {
 
 const text = (v: unknown, max: number): v is string =>
   typeof v === 'string' && v.trim().length > 0 && v.length <= max && !v.includes('\0');
-const lane = (v: unknown): v is Lane =>
-  object(v) && exact(v, ['workerId', 'tier']) && id(v.workerId) && text(v.tier, 8) && isQueueTier(v.tier);
+const lane = (v: unknown, worker = false): v is WorkerLane =>
+  object(v) && exact(v, worker && Object.hasOwn(v, 'fleetLane') ? ['workerId', 'tier', 'fleetLane'] : ['workerId', 'tier']) &&
+  id(v.workerId) && text(v.tier, 8) && isQueueTier(v.tier) &&
+  (!Object.hasOwn(v, 'fleetLane') || id(v.fleetLane));
 const files = (v: unknown): v is string[] => Array.isArray(v) && v.length > 0 &&
   v.length <= QUEUE_TIER_SCOPE.frontier.maxFiles && v.every(validFileOperationsPath) &&
   new Set(v.map(fileOperationsPathKey)).size === v.length;
@@ -45,7 +48,7 @@ export function readSwarmPilotSpec(v: unknown): SwarmPilotSpec {
     !text(v.seed.revision, 64) || !UNIVERSE_GIT_OID_RE.test(v.seed.revision) ||
     !text(v.githubRepo, 201) || !/^[\w-]+\/[\w.-]+$/.test(v.githubRepo) ||
     !lane(planner) || planner.tier !== 'frontier' || !Array.isArray(v.workers) || v.workers.length < 1 ||
-    v.workers.length > 16 || !v.workers.every(lane) || v.workers.some(w => w.tier === 'frontier' || w.workerId === planner.workerId) ||
+    v.workers.length > 16 || !v.workers.every(w => lane(w, true)) || v.workers.some(w => w.tier === 'frontier' || w.workerId === planner.workerId) ||
     new Set(v.workers.map(w => w.workerId)).size !== v.workers.length || !files(v.files) ||
     !object(v.oracles) || Object.keys(v.oracles).length > 16 || !id(v.integrationOracle) ||
     !Object.hasOwn(v.oracles, v.integrationOracle) || !(v.baselineUsdEstimate === null ||

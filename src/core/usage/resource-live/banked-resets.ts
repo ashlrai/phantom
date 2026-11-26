@@ -8,9 +8,9 @@ const grantSchema = z.object({
   count: z.number().int().min(1).max(100),
   kind: z.enum(['full', '5h', 'weekly']),
   expires_at: time,
-  source: z.literal('chatgpt-settings-usage'),
+  source: z.enum(['chatgpt-settings-usage', 'owner-screenshot']),
 }).strict();
-const bankSchema = z.object({ observed_at: time, count: z.number().int().min(0).max(100), grants: z.array(grantSchema).max(100) })
+export const bankSchema = z.object({ observed_at: time, count: z.number().int().min(0).max(100), grants: z.array(grantSchema).max(100) })
   .strict().refine(row => row.grants.reduce((n, grant) => n + grant.count, 0) === row.count);
 
 interface ResetInputs { observed_at: string | null; grants: BankedResetGrant[] | null; queued: number | null }

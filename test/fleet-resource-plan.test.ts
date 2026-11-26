@@ -55,4 +55,19 @@ describe('fleet resource plan', () => {
     expect(buildFleetResourcePlan(live, [node], status(iso(now - hr)), ledger, now).lanes.every(row => row.target_concurrency === null)).toBe(true);
     expect(buildFleetResourcePlan(null, [], null, ledger, now).allowances.find(row => row.id === 'codex-personal')?.remaining).toBeNull();
   });
+
+  it('includes an expiring reset proposal only when the allowance and bank evidence support it', () => {
+    const reading = { ...readings[0]!, used: 95, source: 'codex-budget-overrides-weekly' };
+    const weekly = { ...live, readings: [reading], history: { [reading.id]: [
+      { observed_at: iso(now - hr), used: 90, reset_at: deadline },
+      { observed_at: iso(now), used: 95, reset_at: deadline },
+    ] } };
+    const grant = { count: 1, kind: 'full', source: 'owner-screenshot', expires_at: iso(now + hr / 2) } as const;
+    const bank = { observed_at: iso(now), grants: [grant], queued: 3 };
+    const plan = (evidence: typeof bank) => buildFleetResourcePlan(weekly, [node], status(), ledger, now, [], evidence);
+    expect(plan(bank).reset_proposal).toMatchObject({
+      action: 'use-reset-now', requires_explicit_request: true, grant, window: 'weekly', queued_jobs: 3,
+    });
+    expect(plan({ ...bank, queued: 0 }).reset_proposal).toBeNull();
+  });
 });
