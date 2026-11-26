@@ -743,8 +743,11 @@ and resolution window contains exactly one distinct CI start and one distinct
 completion in order. CI receipts outside that window are ignored when
 checking for ambiguity, so earlier attempts can coexist with a measured
 retry. A merge uses its recorded merge time even if its ledger receipt
-arrived later. A recorded revert changes the verdict of a known merge
-while the original merge time still bounds dispatch and CI evidence.
+arrived later. The latest effective merge time selects the rewarded attempt.
+A revert at or after that merge changes its verdict. The fold uses the
+recorded revert time when available and the receipt timestamp otherwise.
+Replayed merge receipts cannot restore credit for a reverted merge, and the
+original merge time still bounds dispatch and CI evidence.
 Missing or ambiguous timing stays unknown, and existing
 reward rows retain their original values.
 `foldRewardSignals` collapses the bounded tail to
