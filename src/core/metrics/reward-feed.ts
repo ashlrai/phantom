@@ -481,7 +481,8 @@ export async function syncRewardSignalsFromJobsLedger(
 
     const spend = await tailOrInjected(opts.spendText, join(runsDir, ROUTER_SPEND_LEDGER_RELATIVE));
     const spendState: RewardFeedResult['spendState'] = spend.state === 'read' ? 'read' : spend.state;
-    const costs = spend.state === 'read' ? foldSpendCosts(spend.text) : undefined;
+    // Reward rows are first-write-wins and carry no coverage flag for USD.
+    const costs = spend.state === 'read' && !spend.truncated ? foldSpendCosts(spend.text) : undefined;
 
     const folded = foldJobsLedgerRewards(jobs.text, nowMs, costs, opts.revertedPrKeys);
     const recorded = new Set(latestRewardSignals(path).map((row) => row.jobId));
