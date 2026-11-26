@@ -179,6 +179,37 @@ describe('resident CI reruns', () => {
     try { queue = readFileSync(opts.queueFile!, 'utf8'); } catch { /* absent */ }
     expect(queue).not.toContain('RQ-CIFLAKE-');
   });
+  it.each([123, 456])('attributes a singleton verdict only if the other failure is on a different run (%s)', async otherRunId => {
+    const { opts, gh, report } = setup();
+    const [flake] = report.groups;
+    report.groups.push({
+      ...flake!,
+      testId: 'test/b.test.ts > b',
+      classification: 'pr-caused',
+      action: 'pr-caused',
+      runs: [{ ...flake!.runs[0]!, runId: otherRunId }],
+    });
+    await runCiRerunMaintenance(opts);
+    expect(gh).toHaveBeenCalledExactlyOnceWith(['run', 'rerun', '123', '--failed', '--repo', 'org/repo']);
+
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    gh.mockResolvedValue({
+      ok: true,
+      stdout: JSON.stringify({
+        id: 123, status: 'completed', conclusion: 'failure', head_sha: 'a'.repeat(40),
+        updated_at: '2026-01-01T12:09:00Z', run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z',
+      }),
+      stderr: '',
+    });
+    await runCiRerunMaintenance(opts);
+
+    const read = readCiReruns(opts.journalPath, opts.now());
+    expect(read.entries.find(row => row.outcome === 'attempt')?.test).toBe(flake!.testId);
+    const verdict = read.entries.find(row => row.outcome === 'verdict');
+    expect(verdict?.verdict).toBe('fail');
+    expect(verdict?.test).toBe(otherRunId === 123 ? undefined : flake!.testId);
+    expect(read.verdicts).toMatchObject({ fail: 1, pending: 0 });
+  });
   it('resolves a fired rerun to a pass verdict on a later pass and reports it once', async () => {
     const { opts, gh } = setup();
     await runCiRerunMaintenance(opts);
