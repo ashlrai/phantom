@@ -4,7 +4,7 @@ import { realpathSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { validateResourcePool, validateResourceObservations, type ResourceExclusionReason, type ResourceWorker } from '../resources/pool-policy.js';
 import { readResourceJson, resourcePoolStatus } from '../resources/pool-runtime.js';
-import { validateResourceBindings } from '../resources/worker.js';
+import { validateResourceBindings, type ResourceBinding } from '../resources/worker.js';
 import { validateResourceQuotaRefreshConfig } from '../resources/quota-refresh.js';
 import { validateResourceLocalModelConfig } from '../resources/local-model-refresh.js';
 import { canonical, digest } from './artifacts.js';
@@ -25,7 +25,7 @@ export interface ResourceGenerationRuntimeWorkerCheck {
   workerId: string;
   provider: ResourceWorker['provider'];
   capacityKey: string;
-  transport: 'native-cli' | 'local-chat';
+  transport: ResourceBinding['kind'];
   quotaRefreshConfigured: boolean;
   localModelRefreshConfigured: boolean;
   /** Existing local-evidence preview only; dispatch must repeat all admission checks. */

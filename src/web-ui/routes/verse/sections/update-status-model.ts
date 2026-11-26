@@ -32,7 +32,7 @@ export function describeUpdateStatus({ native, server, appVersion, desktopVersio
     case 'installed': headline = `Installed ${version}${native?.version === (desktopVersion ?? appVersion) ? '' : '; reopen Phantom'}`; tone = 'success'; break;
     case 'staged': headline = `Update${readyVersion} ready · checking host admission`; tone = 'info'; break;
     case 'waiting-for-idle': headline = `Update${readyVersion} ready · waiting for idle`; tone = 'info'; break;
-    case 'waiting-for-app-quit': headline = `Quit Phantom to install ${version}`; tone = 'info'; break;
+    case 'waiting-for-app-quit': headline = `Phantom will restart to install ${version}`; tone = 'info'; break;
     case 'adoption-held': headline = `Update held: ${describeDesktopUpdateReason(native.reason)}`; tone = 'warning'; break;
     case 'downloading': headline = `Downloading ${version}${native.bytesTotal ? ` · ${Math.floor(native.bytesReceived / native.bytesTotal * 100)}%` : ''}`; tone = 'info'; break;
     case 'failed': headline = `Update failed: ${describeDesktopUpdateReason(native.reason)}`; tone = 'danger'; break;
@@ -50,6 +50,7 @@ export function describeUpdateStatus({ native, server, appVersion, desktopVersio
       else if (facts?.behind === 0) { headline = `Up to date with ${facts.branch ?? 'master'}`; tone = 'success'; }
       else if (server && 'kind' in server) headline = 'Update status is not in this build yet';
   }
+  if (native?.reason && (native.phase === 'adoption-held' || native.phase === 'waiting-for-idle' || native.phase === 'failed')) parts.push(native.reason);
   return { headline, detail: parts.join(' · '), tone, canRefresh: nativeBridge };
 }
 

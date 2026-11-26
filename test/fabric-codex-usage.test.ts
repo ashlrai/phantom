@@ -152,6 +152,18 @@ describe('CMP isolated status and log pipeline', () => {
     expect(stdout).not.toHaveBeenCalled(); expect(stderr).not.toHaveBeenCalled();
   });
 
+  it('reports each personal window by duration without changing the binding percentage', async () => {
+    nativePayload = payload({ ...window(45, RESET + 86400), windowDurationMins: 10_080 }, window(91));
+    const reading = await readCodexUsage({ home, logPath: join(root, 'usage-readings.log') });
+    expect(reading).toMatchObject({
+      pctUsed: 91,
+      windows: {
+        '5h': { pctUsed: 91, resetAt: new Date(RESET * 1000).toISOString() },
+        weekly: { pctUsed: 45, resetAt: new Date((RESET + 86400) * 1000).toISOString() },
+      },
+    });
+  });
+
   it.each(['missing', 'relative', 'operator', 'auth-dir', 'secondary-auth-dir', 'symlink-home', 'symlink-profile', 'missing-profile', 'file-profile'])(
     'refuses unsafe or unbound HOME without spawning: %s', async kind => {
       let candidate: string | undefined;

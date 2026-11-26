@@ -56,7 +56,7 @@ import { engineTierOf as _engineTierOf } from './sandboxed-engine.js';
 import { engineInstalled } from './engines.js';
 import {
   canonicalModelTag, CODEX_TERRA_MODEL_ID, CODEX_ASTRA_MODEL_ID,
-  resolveSelectedEngineModel, DEFAULT_CODEX_MODEL_ID, KNOWN_MODELS, type ModelEntry, type ModelRoutingTier,
+  resolveSelectedEngineModel, DEFAULT_CODEX_MODEL_ID, KNOWN_MODELS, MODEL_DEFAULTS_BY_TIER, type ModelEntry, type ModelRoutingTier,
 } from './model-catalog.js';
 import { resolveEngineSpec } from './engine-registry.js';
 import type { TaskRouteDecision } from './router.js';
@@ -204,7 +204,7 @@ export function codexArmPriors(
 
 /** Default model only; availability, quota, local-only and config remain caller gates. */
 export function codexModelForTier(tier: ModelRoutingTier): string {
-  return tier === 'frontier' ? CODEX_ASTRA_MODEL_ID : DEFAULT_CODEX_MODEL_ID;
+  return MODEL_DEFAULTS_BY_TIER.codex[tier === 'computer' ? 'work' : tier];
 }
 
 

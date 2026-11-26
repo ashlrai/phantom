@@ -77,6 +77,7 @@ export const RESOURCE_LIVE_ALLOWANCES = [
   { id: 'claude-fable', label: 'Claude Fable share', lane: 'claude', class: 'included', sensor_lane: null, expires_at: null },
   { id: 'claude-api', label: 'Claude API included credit', lane: 'claude-api', class: 'metered-included', sensor_lane: 'claude-api', expires_at: null },
   { id: 'codex-personal', label: 'ChatGPT / Codex personal', lane: 'codex-personal', class: 'included', sensor_lane: 'codex-personal', expires_at: null },
+  { id: 'codex-personal-5h', label: 'ChatGPT / Codex personal · 5-hour', lane: 'codex-personal', class: 'included', sensor_lane: null, expires_at: null },
   { id: 'codex-cmp', label: 'Codex CMP', lane: 'codex-cmp', class: 'expiring', sensor_lane: 'codex-cmp', expires_at: CODEX_CMP_EXPIRES_AT },
   { id: 'openai-api', label: 'OpenAI API promotional credit', lane: null, class: 'metered-included', sensor_lane: null, expires_at: null },
   { id: 'devin', label: 'Devin Cloud', lane: 'devin', class: 'included', sensor_lane: 'devin', expires_at: null },
@@ -167,6 +168,26 @@ export interface BurnDownPlan {
   /** Lanes in spend order, each once. Lanes whose every allowance is held are absent. */
   lane_order: string[];
   allowances: BurnDownRow[];
+  banked_resets?: { observed_at: string | null; count: number | null; grants: BankedResetGrant[] | null; proposal: BankedResetProposal | null };
+}
+
+export interface BankedResetGrant {
+  count: number;
+  kind: 'full' | '5h' | 'weekly';
+  expires_at: string;
+  source: 'chatgpt-settings-usage' | 'owner-screenshot';
+}
+
+export interface BankedResetProposal {
+  action: 'use-reset-now';
+  requires_explicit_request: true;
+  grant: BankedResetGrant;
+  window: '5h' | 'weekly';
+  usage_source: string;
+  used_pct: number;
+  reset_at: string;
+  projected_exhaustion_at: string;
+  queued_jobs: number;
 }
 
 export type ResetDraftKind = 'fable' | 'weekly';

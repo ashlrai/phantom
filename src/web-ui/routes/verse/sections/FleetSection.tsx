@@ -55,6 +55,7 @@ import { GateFunnelCards, LanesStrip, LiveSwimlane, OvernightCard, ParkedCard, W
 import { MainHealthRows } from '../fleet/MainHealthRows.js';
 import { AutonomyCard } from '../fleet/AutonomyCard.js';
 import { RepoTable } from '../fleet/RepoTable.js';
+import { ReposManager } from '../fleet/ReposManager.js';
 import { FleetScheduling } from '../resources/SchedulingEvidence.js';
 import { ExecutionFeedback } from '../fleet/ExecutionFeedback.js';
 import { GrokUltraRunway } from '../fleet/GrokUltraRunway.js';
@@ -224,6 +225,7 @@ export function FleetSection() {
         <OvernightCard read={overnight.data} onOpenAdvanced={openAdvanced} dark={live?.state === 'dark'} />
       </Cell>
       <Cell span={12}>
+        <ReposManager grantFlow={grantFlow} readOnly={actions.readOnly} />
         <RepoTable read={fleet.data} actions={actions} now={now} compact={compact} />
       </Cell>
       <Cell span={12}>

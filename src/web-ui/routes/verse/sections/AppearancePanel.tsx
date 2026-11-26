@@ -1,8 +1,8 @@
 /**
  * routes/verse/sections/AppearancePanel.tsx — the "Linux" part of the design
  * language: theme, accent, display size, density, display face, radius,
- * layout, motion. Theme, accent, density and display size are also the four
- * keys of `phm settings appearance` (core/settings-appearance.ts), written to
+ * layout, motion and sidebar mark. The core settings are exposed by
+ * `phm settings appearance`, written to
  * the same shared record, so an agent and this panel change one setting.
  *
  * Every control applies IMMEDIATELY (design doc §3: live preview, no save
@@ -17,7 +17,7 @@
  * under 4.5:1 — the operator keeps the hue they asked for, but is never
  * allowed to make it unreadable without being told.
  */
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { PRODUCT_NAME } from '../../../app/product-brand.js';
 import { Button, Input, Meter, Segmented, Slider, StatusBadge, Switch, Tag } from '../../../components/primitives/index.js';
 import { IconAlert, IconCheck, IconMonitor, IconMoon, IconSun } from '../../../components/primitives/icons.js';
@@ -33,6 +33,8 @@ import {
   type UiScale,
 } from '../../../data/appearance-store.js';
 import { ACCENT_PRESETS, isDefaultAppearance, matchingAccentPreset } from '../../../data/appearance-presets.js';
+import { uploadSidebarBrand } from '../../../data/sidebar-brand.js';
+import { isRemoteMobileMode } from '../../../data/remote-mode.js';
 import { AgentGhost } from '../rail-icons.js';
 import { Panel, SettingRow } from './SettingRow.js';
 import styles from './SettingsSection.module.css';
@@ -131,6 +133,9 @@ export function AppearancePanel({ appearance, onChange, onReset }: AppearancePan
   const satId = useId();
   const lightId = useId();
   const motionId = useId();
+  const brandInput = useRef<HTMLInputElement>(null);
+  const [brandError, setBrandError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   const preset = matchingAccentPreset(appearance);
   // Uncontrolled after mount: dragging back onto a preset must not snap the
@@ -146,13 +151,52 @@ export function AppearancePanel({ appearance, onChange, onReset }: AppearancePan
           variant="ghost"
           size="sm"
           onClick={onReset}
-          disabled={isDefaultAppearance(appearance)}
-          title="Restore the shipped theme, accent, display size, density, font, radius, layout and motion"
+          disabled={uploading || isDefaultAppearance(appearance)}
+          title="Restore the shipped sidebar mark, theme, accent, display size, density, font, radius, layout and motion"
         >
           Reset to defaults
         </Button>
       }
     >
+      {!isRemoteMobileMode() && (
+        <SettingRow label="Sidebar mark" description="Use the Phantom P, the legacy Ghost, or upload an SVG, PNG or WebP (512 KB max).">
+          <div className={styles.brandControls}>
+            <div className={styles.brandChoices} role="group" aria-label="Sidebar mark">
+              {([['p', 'Phantom P'], ['ghost', 'Ghost']] as const).map(([brand, label]) => (
+                <Button key={brand} size="sm" variant={appearance.brand === brand ? 'subtle' : 'ghost'}
+                  aria-pressed={appearance.brand === brand} disabled={uploading}
+                  onClick={() => { setBrandError(null); onChange({ brand }); }}>
+                  {label}
+                </Button>
+              ))}
+              <Button size="sm" variant={appearance.brand === 'upload' ? 'subtle' : 'ghost'}
+                disabled={uploading} onClick={() => brandInput.current?.click()}>
+                {appearance.brand === 'upload' ? 'Replace image' : 'Upload image'}
+              </Button>
+            </div>
+            <input
+              ref={brandInput}
+              type="file"
+              accept=".svg,.png,.webp,image/svg+xml,image/png,image/webp"
+              aria-label="Upload sidebar image"
+              hidden
+              disabled={uploading}
+              onChange={async (event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = '';
+                if (!file) return;
+                setUploading(true);
+                setBrandError(null);
+                try { await uploadSidebarBrand(file); }
+                catch (error) { setBrandError(error instanceof Error ? error.message : 'Could not upload the brand image.'); }
+                finally { setUploading(false); }
+              }}
+            />
+            {uploading && <span role="status">Uploading image…</span>}
+            {brandError && <span role="alert">{brandError}</span>}
+          </div>
+        </SettingRow>
+      )}
       <SettingRow label="Theme" description="System follows your OS appearance setting.">
         <Segmented
           aria-label="Theme"

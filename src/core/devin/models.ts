@@ -73,6 +73,8 @@ export interface DevinModelPricing {
 }
 
 export interface DevinModel {
+  /** A fallback-only candidate not confirmed by the native model listing. */
+  unverified?: true;
   /** The family's slug, e.g. `swe-2`. */
   family: string;
   /** The family's display name, e.g. "SWE-2". */
@@ -231,7 +233,18 @@ export function fallbackDevinModelCatalog(): DevinModelCatalog {
     pricing: { free: true, inPerM: null, outPerM: null, cachedPerM: null }, isNew: false, isBeta: false, aliases: ['swe'],
   });
   const models = [variant('swe-2-high', 'SWE-2 High'), variant('swe-2-medium', 'SWE-2 Medium'), variant('swe-2-max', 'SWE-2 Max')];
-  return { source: 'fallback', fetchedAt: null, declaredFamilyCount: null, families: [{ id: 'swe-2', label: 'SWE-2', aliases: ['swe'], models }] };
+  const unverified: DevinModel[] = [
+    ['swe-2-1', 'SWE-2.1'],
+    ['swe-2-1-lightning', 'SWE-2.1 Lightning'],
+  ].map(([id, label]) => ({
+    ...variant(id!, label!), family: 'swe-2-1', familyLabel: 'SWE-2.1',
+    aliases: [], pricing: { free: false, inPerM: null, outPerM: null, cachedPerM: null },
+    unverified: true,
+  }));
+  return { source: 'fallback', fetchedAt: null, declaredFamilyCount: null, families: [
+    { id: 'swe-2', label: 'SWE-2', aliases: ['swe'], models },
+    { id: 'swe-2-1', label: 'SWE-2.1', aliases: [], models: unverified },
+  ] };
 }
 
 // ---------------------------------------------------------------------------
@@ -256,12 +269,12 @@ export function resolveDevinModel(idOrAlias: string | null | undefined, catalog:
   if (!wanted || wanted.length > 120) return null;
   const cat = catalog ?? current ?? fallbackDevinModelCatalog();
   for (const family of cat.families) {
-    const exact = family.models.find((m) => m.id.toLowerCase() === wanted);
+    const exact = family.models.find((m) => !m.unverified && m.id.toLowerCase() === wanted);
     if (exact) return exact;
   }
   const family = cat.families.find((f) => f.id === wanted)
     ?? cat.families.find((f) => f.aliases.includes(wanted));
-  return family?.models[0] ?? null;
+  return family?.models.find(model => !model.unverified) ?? null;
 }
 
 /** `devin.defaultModel` from config, else SWE-2 High. Just the configured string — resolve it against a catalog. */
@@ -278,7 +291,7 @@ export function devinDefaultModelId(section: AshlrConfig['devin'] | undefined, c
   const cat = catalog ?? current ?? fallbackDevinModelCatalog();
   return resolveDevinModel(devinDefaultModelOf(section), cat)?.id
     ?? resolveDevinModel(DEVIN_DEFAULT_MODEL, cat)?.id
-    ?? devinCatalogModels(cat)[0]?.id
+    ?? devinCatalogModels(cat).find(model => !model.unverified)?.id
     ?? DEVIN_DEFAULT_MODEL;
 }
 

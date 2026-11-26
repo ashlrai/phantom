@@ -176,11 +176,23 @@ export async function cmdSwarms(args: string[]): Promise<number>;
 ## Resource-pool pilot
 
 - `readSwarmPilotSpec(input: unknown): SwarmPilotSpec` validates operator enrollment.
+  Workers may declare an optional `fleetLane` for capacity planning (default:
+  `workerId`); it does not authorize dispatch.
 - `parseSwarmPilotGraph(output: string, spec: SwarmPilotSpec): SwarmPilotNode[]`
   validates model-authored task data and returns it in topological order.
 - `runSwarmPilot(input: unknown, runtimePath: string, options?: { apply?: boolean; root?: string })`
   previews by default; apply returns the persisted run report after held or local delivery.
+  Worker waves use advisory fleet-plan slots shared by lane; unknown capacity
+  uses the existing bounded allocation. No worker wave runs when all its
+  lanes have known zero available slots.
 - `readSwarmPilotReport(id: string, root?: string, pr?: number)` is read-only;
   a PR number requests a fresh merge receipt before projecting cost per merge.
 
 See [the resource-pool swarm pilot](../SWARM-PILOT.md) for inputs and evidence semantics.
+
+- `inspectSwarmFleetLane(id, deps?)` returns advisory evidence and a dispatch
+  refusal for recognized uncommissioned fleet lanes; it never grants admission.
+- `verifyLmStudioModelInventory({ baseUrl, model, signal, fetchImpl? })` performs
+  bounded numeric-loopback inventory verification. The resource local model
+  refresh accepts an LM Studio `runtime` row alongside legacy Ollama digest rows
+  and can inject the LM Studio fetch for tests.

@@ -501,8 +501,11 @@ fn owned_metadata(path: &Path, directory: bool) -> Result<fs::Metadata, String> 
     Ok(m)
 }
 fn private_dirs(home: &Path) -> Result<PathBuf, String> {
+    ensure_private_dirs(home, &[".ashlr", "updates", "staged"])
+}
+fn ensure_private_dirs(home: &Path, components: &[&str]) -> Result<PathBuf, String> {
     let mut p = home.to_path_buf();
-    for piece in [".ashlr", "updates", "staged"] {
+    for piece in components {
         p.push(piece);
         match fs::DirBuilder::new().mode(0o700).create(&p) {
             Ok(()) => {}
@@ -708,6 +711,27 @@ pub fn remembered_stage(home: &Path) -> Result<Option<String>, String> {
     Ok(Some(pointer.stage_id))
 }
 
+pub fn publish_status(home: &Path, state: &UpdateState) -> Result<(), String> {
+    let parent = ensure_private_dirs(home, &[".ashlr", "updates"])?;
+    let path = parent.join("native-status.json");
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {
+            owned_metadata(&path, false)?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(held("unsafe-stage")),
+    }
+    let mut value = serde_json::to_value(state).map_err(|_| held("stage-write"))?;
+    value["schema"] = serde_json::json!("desktop.native-update-status.v1");
+    let temporary = parent.join(format!("native-status-{}.tmp", random_id()));
+    let result = write_new(&temporary, value.to_string().as_bytes())
+        .and_then(|_| fs::rename(&temporary, &path).map_err(|_| held("stage-write")));
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HostResult {
@@ -720,6 +744,7 @@ pub struct HostResult {
 const HOST_REASONS: &[&str] = &[
     "app-inventory-mismatch",
     "app-source-unverified",
+    "app-version-unverified",
     "applied",
     "artifact-mismatch",
     "artifact-size-refused",
@@ -747,6 +772,7 @@ const HOST_REASONS: &[&str] = &[
     "package-archive-refused",
     "pointer-recovery-unknown",
     "result-persistence-unknown",
+    "resident-stop-failed",
     "running-current-mismatch",
     "stage-changed",
     "stop-required",

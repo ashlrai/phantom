@@ -63,7 +63,7 @@ This does not enroll a worker, authorize overage, or reserve spend.
 | Claude promotional API credit | Official cost inputs combined with an explicitly configured grant; alternatively recorded grant or agent check | [Anthropic Usage and Cost API](https://platform.claude.com/docs/en/build-with-claude/usage-cost-api) and the [credit balance console](https://platform.claude.com/settings/billing). Costs do not enumerate grants; only configure `usage.liveSources.anthropicCost.expiresAt` with a verified expiry, matching grant scope and window start. A grant-store cutoff may be conservative when only an expiry date is known. |
 | ChatGPT / Codex personal | Official native App Server reading on an explicitly configured pool home, then capacity receipts or signed-in display | [Codex App Server account limits](https://developers.openai.com/codex/app-server#account), [Codex slash commands](https://developers.openai.com/codex/cli/slash-commands) (`/status`). Not the OpenAI API balance. |
 | OpenAI promotional API credit | Agent check of the signed-in credit-grant view | [OpenAI organization usage and costs](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage) reports consumption, not promotional grant expiry. Verify the grant in [OpenAI billing](https://platform.openai.com/settings/organization/billing/credit-grants); do not use undocumented billing endpoints or infer grant balance from organization spend. |
-| OpenAI Dot (iMessage) | Agent check only when a numeric quota is actually visible | No documented quota source established. Inspect the owner-approved Dot conversation's own quota display; do not send messages or use Codex's quota as a proxy. |
+| OpenAI Dot (iMessage) | Agent check only when a numeric quota is actually visible | No documented quota source established. The desktop operator denies Messages; use a separately available quota-only Dot display if one exists, or leave it unknown. Do not send messages or use Codex's quota as a proxy. |
 | Google AI Ultra (personal Antigravity) | Agent captures the official interactive Antigravity CLI quota | [Antigravity `/usage` (`/quota`)](https://antigravity.google/docs/cli/commands/usage) refreshes from the backend and displays five-hour and weekly windows per model group. Record the five-hour Gemini group window applicable to the enrolled model and actual reset displayed; do not derive a reset from the clock. [`/credits`](https://antigravity.google/docs/cli/commands/credits) is a separate balance. |
 | Google Workspace Business (Antigravity) | Separate agent check of the signed-in Workspace starter quota | [Antigravity for Workspace](https://antigravity.google/docs/workspace) describes starter access but not a paid-plan refresh entitlement. Do not copy the Ultra window to this account. |
 | Cursor | Agent check of personal usage and cycle | [Cursor Dashboard](https://cursor.com/dashboard?tab=usage); the [Cursor Admin API](https://cursor.com/docs/account/teams/admin-api) documents team usage and is not proof of this personal entitlement. |
@@ -74,7 +74,7 @@ This does not enroll a worker, authorize overage, or reserve spend.
 
 For an agent check, give the operator or a designated agent one read-only task:
 inspect only the named, already signed-in usage surface (or use the
-[desktop operator's read action](DESKTOP-OPERATOR.md)), then record only the
+[desktop operator's read action](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-OPERATOR.md)), then record only the
 measured allowance and UTC observation time. Don't sign in, switch the active
 dispatch account, send messages, capture credentials or make purchases. Stop if
 the account, model group or numbers cannot be established. A quota shown as
@@ -92,6 +92,115 @@ For Antigravity's five-hour window, record `window_start` alongside the reset
 when the surface identifies that window (the reset minus five hours). A
 weekly window must not be recorded as a five-hour window.
 There is no automatic desktop or browser session launch.
+
+### Scheduled desktop evidence
+
+On a Mac with the [desktop operator](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-OPERATOR.md) set up, create
+a private targets file and run `phm usage resource-evidence --targets /absolute/path/to/resource-evidence-targets.json --watch`.
+Omit `--watch` for a single pass. Only configured targets are checked; the
+collector does not start automatically. Leave the exact, already signed-in,
+quota-only windows open. Do not configure a login, API-key or chat window,
+or a browser window that will be reused for other pages. In particular, do not
+target Messages or republish conversation contents to make Dot readable.
+
+```json
+{
+  "schema": "resource-evidence-targets.v1",
+  "targets": {
+    "cursor": {
+      "app": "Safari",
+      "window": "Cursor Usage",
+      "heading": "Included usage"
+    }
+  }
+}
+```
+
+The app, exact window title and unique in-window heading above are examples;
+use the names actually displayed on your Mac. Target keys are `antigravity`,
+`dot`, `cursor`, `grok-bot`, `claude-api`, `openai-api` and `codex-personal-resets`. Use a heading
+specific to the enrolled account's quota, five-hour model group or promotional
+grant, not a general billing summary. The collector uses the same read path as
+`phm desktop read`, including its bounded in-memory OCR fallback, with no
+separate screenshot file. It does not click, type, navigate, launch, contact a
+model or send the text to an agent. Only numeric and UTC timestamp fields are
+stored for these targets; no window text, screenshots or credentials are saved.
+
+The parser accepts unambiguous visible labels such as `Used: 42%` or
+`58% remaining`, and `Resets at: 2026-12-01T17:00:00Z`. Antigravity requires
+a `5-hour` heading and a visible absolute reset; it does not estimate one from
+a countdown. A credit reading needs a promotional heading, one `Grant total`
+and a `Used` or `Remaining` USD amount, plus a visible UTC `Expires at`
+timestamp for the same grant. Localized dates, aggregates, ambiguous labels
+and missing data remain unknown. The collector does not establish that a given
+provider currently exposes those fields; verify the target against the actual
+surface before relying on it.
+
+The watch loop refreshes at most ten minutes apart during a measured window,
+checks two minutes before a known reset or expiry, and checks again at the
+boundary. Unavailable or unparseable readings store null usage and retry in
+five minutes. Unconfigured rows, including custom resources and Workspace,
+are preserved; don't use a separate writer for the same configured keys.
+
+### Banked ChatGPT and Codex resets
+
+The personal App Server reader separates the 300-minute and 10,080-minute
+windows using the provider's duration, not their position or which one is fuller.
+The weekly row can also use a fresh non-estimated
+`queue/budget-overrides.json` weekly reading from the personal App Server
+reader. Five-hour usage is not inferred from the weekly window.
+
+App Server rate limits do not establish ownership or expiry of banked resets.
+Record the count and each separately expiring grant with the local CLI:
+
+```sh
+phm resources evidence record --resource codex-personal --resets 2 \
+  --expires 2026-12-01T22:31:00Z,2026-12-12T22:26:00Z \
+  --observed-at 2026-11-26T04:45:00Z --source owner-screenshot --json
+```
+
+Use the actual observation time for a saved screenshot; omit `--observed-at`
+only for a current observation. Use one UTC expiry per grant and omit
+`--expires` for an explicitly observed empty bank. The command defaults to full
+resets; `--kind 5h` or `--kind weekly` declares a bank of that kind. It
+uses the same private, atomic evidence writer as the scheduled collector.
+
+To collect automatically, configure the `codex-personal-resets` target with
+the exact quota-only ChatGPT Settings → Usage window and unique
+`Usage limit resets` heading. The collector needs a single `Available` count
+and matching `Full reset expires`, `5-hour reset expires` or
+`Weekly reset expires` lines with UTC timestamps or unambiguous English
+month/day, time and EST/EDT. If it cannot read a complete bank, it retries
+without overwriting an existing observation or inferring zero.
+
+Evidence is stored as `readings["codex-personal-resets"]` in the private
+`resource-evidence.v1` file.
+For example, a ChatGPT Settings → Usage observation at 23:45 ET on
+November 25 displayed 55% weekly quota left and two full resets (separate
+from the 0 reloadable credits). The reset evidence for that example is:
+
+```json
+{
+  "observed_at": "2026-11-26T04:45:00Z",
+  "count": 2,
+  "grants": [
+    {"kind":"full","count":1,"expires_at":"2026-12-01T22:31:00Z","source":"chatgpt-settings-usage"},
+    {"kind":"full","count":1,"expires_at":"2026-12-12T22:26:00Z","source":"chatgpt-settings-usage"}
+  ]
+}
+```
+
+A grant kind is `full`, `5h` or `weekly`. Do not reuse example values
+or refresh a timestamp without a new observation. Old evidence is unknown,
+not zero. `phm usage resource-live --json` reports the bank and at most
+one `use-reset-now` proposal. It requires a fresh ready count for the
+personal Codex lane, at least 90% used, and measured burn in that same
+window indicating the grant will expire before projected exhaustion, which
+must itself precede the natural reset. It never issues a provider reset,
+and the assistant setting does not replace the required explicit request.
+The Fleet resource bar shows fresh advisor targets, allowance waste estimates at
+their deadlines and the reset proposal from `phm resources plan`. These are
+read-only; the reset chip does not spend a grant.
 
 ### Custom resources
 

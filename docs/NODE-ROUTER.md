@@ -364,7 +364,11 @@ The document (`phantom.node-capacity.v1`) carries `node`, `measured_at`, `cpu`,
 A harness session is the vendor CLI plus every child it spawns (MCP servers,
 tool runners), measured with `ps`, or with `pgrep` and `footprint` where `ps` is
 denied. Memory headroom is the memory above memguard's raise line (30% free).
-CPU headroom is 85% of cores minus busy cores. Kernel pressure above normal,
+CPU headroom is 85% of cores minus busy cores. Measured zero CPU headroom
+blocks placements even when CPU cost per session is unknown or recorded as zero.
+It also reduces measured runnable counts to zero, including in fleet totals
+that read older capacity documents. Unmeasured harness counts remain null.
+Kernel pressure above normal,
 or swapouts at memguard's growth rate, stop every harness on that node. A cloud
 CLI therefore costs a node only its own measured footprint. A whole-host
 backoff only happens when one of those gates is hit. A harness never seen on
@@ -375,9 +379,15 @@ learned in the last 7 days.
 rate per token and per minute, using one or more capacity documents, a
 cost/latency file (`[{provider, model, harness, tokensPerJob, minutesPerJob}]`)
 and lane outcomes (`{provider: {attempts, merged}}`). It prints a plan only; it
-never launches work. Providers passed with `--exhausted` are never routed. An
-unplaced job's `rejected` counts name why: `provider-not-in-job` and
+never launches work. Providers passed with `--exhausted` are never routed.
+Input can contain several snapshots for one node ID. Routing and fleet-wide
+runnable totals use the newest timestamp per node, so copying a snapshot
+cannot increase capacity and a newer hold takes precedence. Conflicting
+inputs at the same newest timestamp leave that node's capacity unknown.
+
+An unplaced job's `rejected` counts name why: `provider-not-in-job` and
 `model-not-in-job` count cost rows the job's own provider/model lists excluded,
+`node-capacity-conflict` marks conflicting current inputs for one node, and
 `no-costs`/`no-nodes` mean the inputs held no usable cost rows or node
 documents, and the remaining keys (`node-stale`, `node-pressure`, `memory`,
 `cpu`, `provider-not-on-node`, ...) count per-node or per-candidate failures.

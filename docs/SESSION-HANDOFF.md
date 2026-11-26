@@ -55,7 +55,16 @@ the provider adapter or measured budget; arbitrary transcript text is not a sign
 `{"kind":"completed"}` requires every plan step done and closes the journal.
 
 `phm checkpoint handoff show /absolute/runs JOB --json` validates the full journal
-and prints the latest row. `phm checkpoint handoff plan resume.json --json` is
+and prints the latest row. `phm checkpoint handoff list /absolute/runs --json`
+indexes every journal without knowing job ids: each entry reports job, attempt,
+revision, timestamp, lane, model, tier, repo, signal, required capabilities,
+open-or-completed state and HEAD — never goal, plan, decisions or context
+digest, which stay behind `show`. The scan is bounded to the newest 256 journals
+by file time and sets `truncated` when more exist; a journal that fails the same
+validation `show` applies lands in `unreadable` by job id instead of poisoning
+the index. A never-written store reports `status: "missing"` (verified absent,
+empty lists); a store that cannot be read reports `status: "unavailable"` with
+null lists — unknown stays unknown. `phm checkpoint handoff plan resume.json --json` is
 read-only. Its request contains `runs`, `worktree`, `job`, `attempt`, `repo`,
 `lane`, `model`, `tier`, `owner` and `capabilities`. For example, a target can be
 `lane: "claude", model: "model-b", tier: "work", capabilities: ["typescript"]`.
