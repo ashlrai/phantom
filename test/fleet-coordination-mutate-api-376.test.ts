@@ -172,7 +172,7 @@ describe('coordination-claims claim/return over HTTP (real ledger)', () => {
     const after = await call(chained, 'GET', CLAIMS);
     expect(after.status).toBe(200);
     expect(after.text).toBe(before.text);
-    expect(after.text).toBe('{"v":1,"generatedAt":"2026-11-14T12:00:00.000Z","source":"coordination-ledger","state":"known","claims":[],"expiredClaims":0}');
+    expect(after.text).toBe('{"v":1,"generatedAt":"2026-11-14T12:00:00.000Z","source":"coordination-ledger","state":"known","claims":[],"expiredClaims":0,"matched":0,"omitted":0}');
   });
 });
 

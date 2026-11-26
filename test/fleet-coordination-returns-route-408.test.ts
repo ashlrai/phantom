@@ -76,6 +76,7 @@ describe('coordination returns route', () => {
     expect(r.status).toBe(200);
     expect(r.body).toEqual({
       v: 1, generatedAt: NOW.toISOString(), source: 'coordination-ledger', state: 'known', expiredClaims: 0,
+      matched: 1, omitted: 0,
       claims: [{
         id: 'claim-fake-1', repo: 'fake/repo', task: 'fake task', agent: 'agent-fake-1',
         claimedAt: new Date(T - 1000).toISOString(), expiresAt: new Date(T + 60_000).toISOString(), expiresInSeconds: 60,
