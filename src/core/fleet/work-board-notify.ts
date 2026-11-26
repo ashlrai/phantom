@@ -386,6 +386,8 @@ export type BoardNotifySenders = Readonly<Partial<Record<string, BoardNotifySend
 
 export interface BoardSendResult {
   notice: BoardNotice;
+  /** Exact normalized sender receipt, present only after durable ledger append. */
+  receipt?: string;
   /** 'no-sender' when no sender is injected for the source channel. */
   status: 'sent' | 'duplicate' | 'refused' | 'unavailable' | 'no-sender';
   reason?: string;
@@ -612,7 +614,7 @@ export async function sendNotifications(
       results.push({ notice, status: 'unavailable', reason: 'ledger-append-failed' });
       continue;
     }
-    results.push({ notice, status: receipt.status });
+    results.push({ notice, status: receipt.status, receipt: senderReceipt });
   }
   return results;
 }
