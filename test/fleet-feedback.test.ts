@@ -132,11 +132,11 @@ describe('feedback scan and digest', () => {
     await mkdir(join(root, 'queue')); await writeFile(join(root, 'queue/router-queue.md'), ''); await writeFile(join(root, 'queue/ready.tsv'), '');
     const s = snapshot([...Array.from({ length: 6 }, (_, i) => signal(`Bug component ${i} crashes`)), signal('Regression: login stopped working')]);
     const d = { ingest: async () => s };
-    const out = await runFeedback({ ...options(), apply: true }, d);
-    expect(out.sources.queue).toBe('ok'); expect(out.candidates[0]?.kind).toBe('regression'); expect(out.queued).toHaveLength(5);
     const digest = await runFeedback({ ...options(), command: 'digest' }, d);
     expect(digest.sources.jobs).toBe('unavailable');
     expect('digest' in digest && digest.digest).toMatchObject({ needsReview: null, failures: null, stillRunning: null });
+    const out = await runFeedback({ ...options(), apply: true }, d);
+    expect(out.sources.queue).toBe('ok'); expect(out.candidates[0]?.kind).toBe('regression'); expect(out.queued).toHaveLength(5);
   });
   it('folds unordered outcomes without calling a finished job shipped or alive', () => {
     const s = snapshot(); s.shipped = [{ ref: `${url}/pull/3`, at: now - 1000 }, { ref: `${url}/pull/4`, at: now - 86400000 }];
