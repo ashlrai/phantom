@@ -316,6 +316,22 @@ describe('foldJobsLedgerRewards', () => {
     ]);
   });
 
+  it.each(['ledger', 'standing set'])('keeps PR identity for a %s revert across a sparse replay', (source) => {
+    const job = 'RQ-SPARSE-REPLAY';
+    const url = 'https://github.com/ashlrai/phantom/pull/4';
+    const rows = [
+      launch(job),
+      line({ job, state: 'MERGED', mergedAt: MERGED_ISO, url }),
+      line({ job, state: 'MERGED', mergedAt: MERGED_ISO, ts: '2026-10-28T19:00:00.000Z' }),
+    ];
+    const standing = source === 'standing set' ? new Set(['ashlrai/phantom#4']) : undefined;
+    if (source === 'ledger') {
+      rows.push(line({ job, event: 'revert', url, ts: '2026-10-28T17:00:00.000Z' }));
+    }
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS, undefined, standing))
+      .toMatchObject([{ jobId: job, merged: false, mergedAt: null, dispatchedAt: DISPATCH_ISO }]);
+  });
+
   it('credits the later merge even when receipts for the earlier merge and revert arrive last', () => {
     const job = 'RQ-LATE-RECEIPTS';
     const dispatchAt = '2026-10-28T17:00:00.000Z';
@@ -441,20 +457,24 @@ describe('foldJobsLedgerRewards', () => {
       .toMatchObject([{ jobId: job, merged: true }]);
   });
 
-  it.each(['MERGED', 'CLOSED'])('preserves conflicting PR claims across tied %s receipts and replays', (state) => {
+  it.each(['MERGED', 'CLOSED'])('preserves conflicting PR claims at the same effective %s time', (state) => {
     const job = 'RQ-TIED-RESOLUTION';
     const url = 'https://github.com/ashlrai/phantom/pull/101';
     const other = 'https://github.com/ashlrai/companion/pull/102';
     const receipt = { job, state, ts: MERGED_ISO };
     const left = line({ ...receipt, url });
     const right = line({ ...receipt, url: other });
+    const replay = line({
+      ...receipt, url, ts: '2026-10-28T19:00:00.000Z',
+      [state === 'MERGED' ? 'mergedAt' : 'closedAt']: MERGED_ISO,
+    });
     const standing = new Set(['ashlrai/phantom#101']);
     const ci = [
       line({ job, event: 'ci_start', ts: '2026-10-28T14:30:00.000Z', url }),
       line({ job, event: 'ci_complete', ts: '2026-10-28T14:45:00.000Z', url }),
     ];
 
-    for (const tied of [[left, right, left], [right, left, right]]) {
+    for (const tied of [[left, right, left], [right, left, right], [left, right, replay], [replay, right, left]]) {
       const inputs = foldJobsLedgerRewards([launch(job), ...ci, ...tied].join('\n'), NOW_MS, undefined, standing);
       expect(inputs).toEqual([
         expect.objectContaining({ jobId: job, repo: null, merged: state === 'MERGED' }),

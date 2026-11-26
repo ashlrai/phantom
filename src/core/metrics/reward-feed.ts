@@ -186,7 +186,6 @@ interface DispatchMark {
 }
 
 interface ResolutionMark {
-  atMs: number;
   resolvedMs: number;
   /** null means conflicting evidence, undefined means no repository was observed. */
   repo: string | null | undefined;
@@ -206,10 +205,8 @@ function receiptPrKeys(row: Record<string, unknown>): string[] {
 function latestResolution(current: ResolutionMark | null, next: ResolutionMark): ResolutionMark {
   if (current === null || next.resolvedMs > current.resolvedMs) return next;
   if (next.resolvedMs < current.resolvedMs) return current;
-  if (next.atMs > current.atMs) return next;
-  if (next.atMs < current.atMs) return current;
-
-  // Tied receipts cannot establish which PR supplied the verdict.
+  // Receipt time controls visibility, not identity. A delayed replay of the
+  // same resolution cannot erase earlier PR claims or settle a conflict.
   const repo = current.repo === undefined ? next.repo
     : next.repo === undefined || current.repo === next.repo ? current.repo : null;
   return { ...current, repo, prKeys: [...new Set([...current.prKeys, ...next.prKeys])] };
@@ -371,11 +368,11 @@ export function foldJobsLedgerRewards(
     if (at === null) continue;
     if (isMerge) {
       acc.merge = latestResolution(acc.merge, {
-        atMs: at, resolvedMs: resolvedAt ?? at, repo: repoOf(row, prKeys), prKeys,
+        resolvedMs: resolvedAt ?? at, repo: repoOf(row, prKeys), prKeys,
       });
     } else if (isClose) {
       acc.close = latestResolution(acc.close, {
-        atMs: at, resolvedMs: resolvedAt ?? at, repo: repoOf(row, prKeys), prKeys,
+        resolvedMs: resolvedAt ?? at, repo: repoOf(row, prKeys), prKeys,
       });
     }
   }
