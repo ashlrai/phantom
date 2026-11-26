@@ -4,6 +4,8 @@ import {
   initUniverse, readUniverseOverview, runUniverse,
   type UniverseManifest, type UniverseOverview, type UniverseRun,
 } from '../core/universe/index.js';
+import { isUniverseId } from '../core/universe/artifacts.js';
+import { containsControlChars, formatUniverseRootFlag as rootFlag } from '../core/universe/input-guards.js';
 import { runUniverseDemo } from './universe-demo.js';
 
 const USAGE = `usage: ashlr universe <command> [--root <private directory>] [--json]
@@ -63,10 +65,6 @@ Exit codes: 0 success, 1 failed/degraded execution, 2 invalid arguments.
 
 class UsageError extends Error {}
 
-function rootFlag(root?: string): string {
-  return root ? ` --root '${root.replaceAll("'", "'\\''")}'` : '';
-}
-
 function parse(args: string[]): {
   command: string; id?: string; root?: string; manifestPath?: string; resourceRuntime?: string; json: boolean;
 } {
@@ -84,8 +82,9 @@ function parse(args: string[]): {
       if (!value?.trim() || value.startsWith('--')) throw new UsageError(`${arg} requires a path`);
       if (arg === '--resource-runtime') {
         if (resourceRuntime) throw new UsageError('--resource-runtime may only be specified once');
-        if (!isAbsolute(value) || Buffer.byteLength(value) > 4096 || [...value].some((character) => character.charCodeAt(0) < 32 ||
-          character.charCodeAt(0) >= 127 && character.charCodeAt(0) <= 159)) throw new UsageError('--resource-runtime requires a private absolute JSON path');
+        if (!isAbsolute(value) || Buffer.byteLength(value) > 4096 || containsControlChars(value)) {
+          throw new UsageError('--resource-runtime requires a private absolute JSON path');
+        }
         resourceRuntime = resolve(value);
       } else if (arg === '--root') {
         if (root) throw new UsageError('--root may only be specified once');
@@ -104,7 +103,7 @@ function parse(args: string[]): {
   }
   const acceptsId = ['run', 'status', 'archive'].includes(command);
   if (positional.length > (acceptsId ? 2 : 1)) throw new UsageError(`Too many arguments for ${command}`);
-  if (id && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)) throw new UsageError('Invalid universe id');
+  if (id && !isUniverseId(id)) throw new UsageError('Invalid universe id');
   if (command === 'run' && !id) throw new UsageError('run requires a universe id');
   if (command === 'init' && !manifestPath) throw new UsageError('init requires --manifest <file.json>');
   if (manifestPath && command !== 'init') throw new UsageError('--manifest is only valid with init');

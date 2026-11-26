@@ -1,6 +1,6 @@
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, type Stats } from 'node:fs';
-import { isAbsolute, parse as parsePath, resolve } from 'node:path';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { TextDecoder } from 'node:util';
+import { containsControlChars as controls, isCanonicalAbsolutePath, isSameRegularFile as sameFile } from '../core/universe/input-guards.js';
 import { parsePreparationMeasurementReport, summarizePreparationMeasurementReport,
   type PreparationMeasurementSummary } from '../core/universe/preparation-measurement-report.js';
 
@@ -16,9 +16,6 @@ Exit codes: 0 reported checks satisfied, 1 failed/unavailable report, 2 invalid 
 `;
 class UsageError extends Error {}
 interface Options { input?: string; json: boolean; help: boolean }
-const controls = (value: string) => [...value].some(character => {
-  const code = character.charCodeAt(0); return code < 32 || code >= 127 && code <= 159;
-});
 
 function options(args: string[]): Options {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) return { help: true, json: false };
@@ -29,18 +26,12 @@ function options(args: string[]): Options {
     if (arg === '--json' && !json) json = true;
     else if (arg === '--input' && input === undefined) {
       const value = args[++index];
-      if (typeof value !== 'string' || !value || controls(value) || Buffer.byteLength(value) > 4096 ||
-          !isAbsolute(value) || resolve(value) !== value || parsePath(value).root === value) throw new UsageError();
+      if (!isCanonicalAbsolutePath(value)) throw new UsageError();
       input = value;
     } else throw new UsageError();
   }
   if (input === undefined) throw new UsageError();
   return { input, json, help: false };
-}
-
-function sameFile(before: Stats, after: Stats): boolean {
-  return after.isFile() && !after.isSymbolicLink() && before.dev === after.dev && before.ino === after.ino &&
-    before.size === after.size && before.mtimeMs === after.mtimeMs && before.ctimeMs === after.ctimeMs;
 }
 
 /** Descriptor reads are bounded independently of the initial size observation. */

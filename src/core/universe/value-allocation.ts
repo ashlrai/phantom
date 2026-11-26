@@ -5,6 +5,7 @@ import { buildPortfolioShadowV1, digestResourceEnvelopeV1, verifyPortfolioShadow
 import { canonical, digest, isDataObject, isSha256Hex as hash } from './artifacts.js';
 import { signDecisionTraceV1, validateDecisionTraceV1, verifyDecisionTraceV1,
   type DecisionTraceKeyOptions, type DecisionTraceV1, type UnsignedDecisionTraceV1 } from './decision-trace.js';
+import { snapshotBoundedJson } from './input-guards.js';
 
 const DOMAIN = 'ashlr:universe:value-allocation:v1\0';
 const MAX_SOURCE_BYTES = 256 * 1024;
@@ -48,31 +49,7 @@ function exact(value: unknown, required: string[], optional: string[] = []): val
 }
 /** Snapshot bounded JSON without invoking accessors, toJSON methods or custom prototypes. */
 function detached(value: unknown): unknown {
-  let nodes = 0;
-  const copy = (item: unknown, depth: number): unknown => {
-    if (++nodes > 30_000 || depth > 32) throw new Error('Bounded JSON required');
-    if (item === null || typeof item === 'boolean') return item;
-    if (typeof item === 'number' && Number.isFinite(item)) return item;
-    if (typeof item === 'string' && Buffer.byteLength(item) <= MAX_SOURCE_BYTES) return item;
-    if (!item || typeof item !== 'object') throw new Error('JSON required');
-    if (Array.isArray(item)) {
-      if (Object.getPrototypeOf(item) !== Array.prototype || item.length > 4_096 || Reflect.ownKeys(item).length !== item.length + 1) throw new Error('Dense array required');
-      return Array.from({ length: item.length }, (_, index) => {
-        const descriptor = Object.getOwnPropertyDescriptor(item, index);
-        if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) throw new Error('Data required');
-        return copy(descriptor.value, depth + 1);
-      });
-    }
-    if (![Object.prototype, null].includes(Object.getPrototypeOf(item))) throw new Error('Plain JSON required');
-    const output: Record<string, unknown> = Object.create(null);
-    for (const key of Reflect.ownKeys(item)) {
-      const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
-      if (typeof key !== 'string' || key.length > 256 || !descriptor.enumerable || !('value' in descriptor)) throw new Error('Data required');
-      output[key] = copy(descriptor.value, depth + 1);
-    }
-    return output;
-  };
-  const result = copy(value, 0);
+  const result = snapshotBoundedJson(value, { maxStringBytes: MAX_SOURCE_BYTES, errorMessage: 'Bounded JSON required' });
   if (Buffer.byteLength(canonical(result)) > 1024 * 1024) throw new Error('Input exceeds bound');
   return result;
 }

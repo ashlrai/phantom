@@ -1,10 +1,11 @@
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, type Stats } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import {
   readUniversePortfolioPlan, runUniversePortfolio, validateUniversePortfolioDefinition,
   type UniverseCampaignSummary, type UniversePortfolioDefinition, type UniversePortfolioPlan, type UniversePortfolioResult,
   type UniverseCampaignDeliveryPlan, type UniversePortfolioGraphProjection,
 } from '../core/universe/index.js';
+import { containsControlChars as containsControls, isCanonicalAbsolutePath, isSameRegularFile as sameFile } from '../core/universe/input-guards.js';
 
 const MAX_MANIFEST_BYTES = 256 * 1024;
 const USAGE = `usage: ashlr universe portfolio <plan|run> --manifest <file.json>
@@ -61,13 +62,6 @@ Exit codes: 0 healthy unblocked plan/completed run, 1 incomplete/source failure,
 class UsageError extends Error {}
 interface Options { command: 'plan' | 'run' | 'help'; manifest?: string; root?: string; resourceRuntime?: string; deliveryPlanPath?: string; json: boolean }
 
-function containsControls(value: string): boolean {
-  return [...value].some((character) => {
-    const code = character.charCodeAt(0);
-    return code < 32 || (code >= 127 && code <= 159);
-  });
-}
-
 function parse(args: string[]): Options {
   const positional: string[] = [];
   const values = new Map<string, string>();
@@ -91,8 +85,7 @@ function parse(args: string[]): Options {
       if (arg === '--resource-runtime' && (!isAbsolute(value) || Buffer.byteLength(value, 'utf8') > 4_096)) {
         throw new UsageError('--resource-runtime requires a bounded private absolute JSON path');
       }
-      if (arg === '--delivery-plan' && (!isAbsolute(value) || resolve(value) !== value ||
-          resolve(value, '..') === value || Buffer.byteLength(value, 'utf8') > 4_096)) {
+      if (arg === '--delivery-plan' && !isCanonicalAbsolutePath(value)) {
         throw new UsageError('--delivery-plan requires a bounded private canonical absolute JSON path');
       }
       values.set(arg, value);
@@ -118,11 +111,6 @@ function parse(args: string[]): Options {
   return { command, manifest: resolve(manifest), root: root === undefined ? undefined : resolve(root),
     ...(resourceRuntime === undefined ? {} : { resourceRuntime: resolve(resourceRuntime) }),
     ...(deliveryPlanPath === undefined ? {} : { deliveryPlanPath }), json };
-}
-
-function sameFile(before: Stats, after: Stats): boolean {
-  return after.isFile() && before.dev === after.dev && before.ino === after.ino && before.size === after.size &&
-    before.mtimeMs === after.mtimeMs && before.ctimeMs === after.ctimeMs;
 }
 
 /** Bound the bytes read, not just the initial stat; never block opening a FIFO. */

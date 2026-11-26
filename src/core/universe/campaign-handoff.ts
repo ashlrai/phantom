@@ -1,7 +1,7 @@
 /** Read-only exact campaign delivery proof for successor enrollment. */
-import { isAbsolute, resolve } from 'node:path';
 import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
-import { canonical, digest, inspectPrivateDirectory } from './artifacts.js';
+import { canonical, digest, inspectPrivateDirectory, isSha256Hex, isUniverseId } from './artifacts.js';
+import { isCanonicalAbsolutePath } from './input-guards.js';
 import { readUniverseCampaign } from './campaign-store.js';
 import { validateUniverseCampaignDeliveryPlan } from './campaign-delivery.js';
 import { readCompletedCampaignDeliveryProjection } from './campaign-delivery-recovery.js';
@@ -9,20 +9,16 @@ import { assertComparatorUnchanged, manifestRecord, universePath } from './store
 import type { UniverseCampaignDeliveryOrigin, UniverseCampaignDeliverySource } from './campaign-handoff-types.js';
 export type { UniverseCampaignDeliveryOrigin, UniverseCampaignDeliverySource } from './campaign-handoff-types.js';
 
-const HASH = /^[a-f0-9]{64}$/;
 export function validateUniverseCampaignDeliverySource(input: unknown): UniverseCampaignDeliverySource {
   const text = canonicalEvidencePackJsonV3(input);
   if (text === null || Buffer.byteLength(text) > 16 * 1024) throw new Error('Invalid campaign delivery source');
   const value = JSON.parse(text) as UniverseCampaignDeliverySource;
   const keys = ['root', 'campaignId', 'expectedDefinitionDigest', 'expectedManifestDigest', 'expectedComparatorDigest', 'delivery', 'expectedDeliveryDigest'];
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== keys.length ||
-      !keys.every(key => Object.hasOwn(value, key)) || typeof value.root !== 'string' || !isAbsolute(value.root) || resolve(value.root) !== value.root ||
-      Buffer.byteLength(value.root) > 4096 || [...value.root].some(character => {
-        const code = character.charCodeAt(0); return code < 32 || code >= 127 && code <= 159;
-      }) ||
-      typeof value.campaignId !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(value.campaignId) ||
+      !keys.every(key => Object.hasOwn(value, key)) || !isCanonicalAbsolutePath(value.root, { allowRoot: true }) ||
+      !isUniverseId(value.campaignId) ||
       ![value.expectedDefinitionDigest, value.expectedManifestDigest, value.expectedComparatorDigest, value.expectedDeliveryDigest]
-        .every(item => typeof item === 'string' && HASH.test(item))) throw new Error('Invalid campaign delivery source');
+        .every(isSha256Hex)) throw new Error('Invalid campaign delivery source');
   // The shared closed target codec preserves explicit initial-repair policy.
   if (!value.delivery || typeof value.delivery !== 'object' || Array.isArray(value.delivery) ||
       Object.keys(value.delivery).some(key => !['branch', 'baseCommit', 'allowInitialRepair'].includes(key))) throw new Error('Invalid campaign delivery target');
@@ -33,7 +29,7 @@ export function validateUniverseCampaignDeliverySource(input: unknown): Universe
 
 export function readUniverseCampaignDeliverySource(input: unknown, requestDigest: string): UniverseCampaignDeliveryOrigin {
   const source = validateUniverseCampaignDeliverySource(input);
-  if (typeof requestDigest !== 'string' || !HASH.test(requestDigest)) throw new Error('Invalid campaign successor request digest');
+  if (!isSha256Hex(requestDigest)) throw new Error('Invalid campaign successor request digest');
   const root = inspectPrivateDirectory(source.root);
   const campaign = readUniverseCampaign(source.campaignId, { root });
   if (campaign.sourceState !== 'healthy' || campaign.state !== 'completed' || campaign.definitionDigest !== source.expectedDefinitionDigest ||

@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { isAbsolute, parse as parsePath, resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
+import { isUniverseId, UNIVERSE_GIT_OID_RE } from '../core/universe/artifacts.js';
 import {
   initUniverseCampaign, readUniverseCampaign, readUniverseCampaigns, requestUniverseCampaignControl, runUniverseCampaign,
   runUniverseCampaignAndDeliver, validUniverseDeliveryBranch, type UniverseCampaignDeliveryResult, type UniverseCampaignSummary,
 } from '../core/universe/index.js';
+import { containsControlChars, formatUniverseRootFlag as rootFlag, isCanonicalAbsolutePath } from '../core/universe/input-guards.js';
 import type { UniverseCampaignReadiness } from '../core/universe/campaign-readiness.js';
 
 const USAGE = `usage: ashlr universe campaign <command> [id] [--root <private directory>] [--json]
@@ -71,7 +73,7 @@ function parse(args: string[]): { command: string; id?: string; manifest?: strin
         if (deliveryBranch || !validUniverseDeliveryBranch(value)) throw new UsageError('--deliver-branch requires one valid codex/ branch');
         deliveryBranch = value;
       } else {
-        if (deliveryBase || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)) throw new UsageError('--deliver-base requires one full pinned seed commit');
+        if (deliveryBase || !UNIVERSE_GIT_OID_RE.test(value)) throw new UsageError('--deliver-base requires one full pinned seed commit');
         deliveryBase = value;
       }
       continue;
@@ -81,8 +83,9 @@ function parse(args: string[]): { command: string; id?: string; manifest?: strin
       if (!value?.trim() || value.startsWith('--')) throw new UsageError(`${arg} requires a path`);
       if (arg === '--resource-runtime') {
         if (resourceRuntime) throw new UsageError('--resource-runtime may only be specified once');
-        if (!isAbsolute(value) || Buffer.byteLength(value) > 4096 || [...value].some((character) => character.charCodeAt(0) < 32 ||
-          character.charCodeAt(0) >= 127 && character.charCodeAt(0) <= 159)) throw new UsageError('--resource-runtime requires a private absolute JSON path');
+        if (!isAbsolute(value) || Buffer.byteLength(value) > 4096 || containsControlChars(value)) {
+          throw new UsageError('--resource-runtime requires a private absolute JSON path');
+        }
         resourceRuntime = resolve(value);
       } else if (arg === '--root') {
         if (root) throw new UsageError('--root may only be specified once');
@@ -100,7 +103,7 @@ function parse(args: string[]): { command: string; id?: string; manifest?: strin
   if (!['help', 'init', 'run', 'status', 'check', 'pause', 'stop'].includes(command)) throw new UsageError(`Unknown campaign command: ${requested}`);
   const acceptsId = ['run', 'status', 'check', 'pause', 'stop'].includes(command);
   if (positional.length > (acceptsId ? 2 : 1)) throw new UsageError(`Too many arguments for ${requested}`);
-  if (id && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)) throw new UsageError('Invalid campaign id');
+  if (id && !isUniverseId(id)) throw new UsageError('Invalid campaign id');
   if (['run', 'check', 'pause', 'stop'].includes(command) && !id) throw new UsageError(`${requested} requires a campaign id`);
   if (command === 'init' && !manifest) throw new UsageError('init requires --manifest <file.json>');
   if (manifest && command !== 'init') throw new UsageError('--manifest is only valid with init');
@@ -108,18 +111,11 @@ function parse(args: string[]): { command: string; id?: string; manifest?: strin
   if ((deliveryBranch || deliveryBase) && (command !== 'run' || !deliveryBranch || !deliveryBase)) {
     throw new UsageError('--deliver-branch and --deliver-base must be paired with campaign run/resume');
   }
-  if (command === 'check' && (!suppliedRoot || !isAbsolute(suppliedRoot) || root !== suppliedRoot ||
-      root === parsePath(suppliedRoot).root || Buffer.byteLength(suppliedRoot) > 4096 ||
-      [...suppliedRoot].some((character) => character.charCodeAt(0) < 32 ||
-        character.charCodeAt(0) >= 127 && character.charCodeAt(0) <= 159))) {
+  if (command === 'check' && (!suppliedRoot || root !== suppliedRoot || !isCanonicalAbsolutePath(suppliedRoot))) {
     throw new UsageError('check requires --root <canonical absolute private directory>');
   }
   return { command, id, root, manifest, resourceRuntime, json,
     ...(deliveryBranch && deliveryBase ? { delivery: { branch: deliveryBranch, baseCommit: deliveryBase } } : {}) };
-}
-
-function rootFlag(root?: string): string {
-  return root ? ` --root '${root.replaceAll("'", "'\\''")}'` : '';
 }
 
 function renderReadiness(report: UniverseCampaignReadiness): string {
