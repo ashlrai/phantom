@@ -3,10 +3,10 @@
  * authentication challenge is persisted here. Each read reloads the file so a
  * revocation in another store instance is visible before the next operation.
  */
-import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { defaultVerseRoot } from '../verse/preferences.js';
 import { writePrivateFileAtomically } from '../verse/session-store.js';
+import { assertPrivatePath, lstatOrNull, readPrivateJsonFile, withPrivateExclusiveLock } from './remote-storage.js';
 
 export interface RemoteDevice {
   id: string;
@@ -30,14 +30,6 @@ const FILE = 'remote-devices.json';
 const MAX_BYTES = 1_048_576;
 const ENCODED = /^[A-Za-z0-9_-]+$/;
 const TRANSPORTS = new Set(['ble', 'cable', 'hybrid', 'internal', 'nfc', 'smart-card', 'usb']);
-
-function privatePath(path: string, directory: boolean): void {
-  const stat = lstatSync(path);
-  if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile())
-    || (stat.mode & 0o077) !== 0 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
-    throw new Error('Remote device registry is not private');
-  }
-}
 
 function validDevice(value: unknown): value is RemoteDevice {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -71,22 +63,15 @@ export function createRemoteDeviceStore(root = defaultVerseRoot()) {
   const path = join(root, FILE);
   const lockPath = `${path}.lock`;
   const revokeListeners = new Set<(id: string) => void>();
-  function statOrNull(target: string) {
-    try { return lstatSync(target); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      throw error;
-    }
-  }
   function read(): Registry {
-    if (!statOrNull(root)) return { v: 1, devices: [] };
-    privatePath(root, true);
-    if (!statOrNull(path)) return { v: 1, devices: [] };
-    privatePath(path, false);
-    if (lstatSync(path).size > MAX_BYTES) throw new Error('Remote device registry is too large');
-    let data: unknown;
-    try { data = JSON.parse(readFileSync(path, 'utf8')) as unknown; }
-    catch { throw new Error('Remote device registry is unreadable'); }
+    if (!lstatOrNull(root)) return { v: 1, devices: [] };
+    assertPrivatePath(root, 'directory', 'Remote device registry is not private');
+    if (!lstatOrNull(path)) return { v: 1, devices: [] };
+    const data = readPrivateJsonFile(path, MAX_BYTES, {
+      notPrivate: 'Remote device registry is not private',
+      tooLarge: 'Remote device registry is too large',
+      unreadable: 'Remote device registry is unreadable',
+    });
     if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Remote device registry is invalid');
     const registry = data as Record<string, unknown>;
     if (registry.v !== 1 || !Array.isArray(registry.devices) || registry.devices.length > 256
@@ -97,24 +82,17 @@ export function createRemoteDeviceStore(root = defaultVerseRoot()) {
     return { v: 1, devices };
   }
   function mutate<T>(update: (registry: Registry) => T): T {
-    mkdirSync(root, { recursive: true, mode: 0o700 });
-    privatePath(root, true);
-    const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
-    const fd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o600);
-    try {
-      writeSync(fd, `${process.pid}\n`);
-      fsyncSync(fd);
-      if ((fstatSync(fd).mode & 0o077) !== 0) throw new Error('Remote device registry lock is not private');
+    return withPrivateExclusiveLock(root, lockPath, {
+      dirNotPrivate: 'Remote device registry is not private',
+      lockNotPrivate: 'Remote device registry lock is not private',
+    }, () => {
       const registry = read();
       const result = update(registry);
       const bytes = `${JSON.stringify(registry)}\n`;
       if (Buffer.byteLength(bytes) > MAX_BYTES) throw new Error('Remote device registry is too large');
       writePrivateFileAtomically(root, path, bytes);
       return result;
-    } finally {
-      closeSync(fd);
-      rmSync(lockPath, { force: true });
-    }
+    });
   }
   return {
     list(): RemoteDevice[] { return read().devices.map(clone); },

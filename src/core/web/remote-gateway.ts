@@ -18,6 +18,7 @@ import type { RemoteDeviceStore } from './remote-device-store.js';
 import type { PhoneSessionCustody } from './phone-session-custody.js';
 import type { createRemotePairing } from './remote-pairing.js';
 import type { createRemotePush } from './remote-push.js';
+import { readBoundedResponseBuffer } from './remote-storage.js';
 import { isImmutableAssetPath, serveStatic } from './static.js';
 
 const READ_SESSION_ROUTES = new Set(['/api/verse/agent-bus', '/api/verse/agent-bus/status']);
@@ -96,23 +97,6 @@ async function jsonBody(req: IncomingMessage): Promise<Record<string, unknown> |
   if (text === null) return null;
   try { const parsed: unknown = JSON.parse(text); return object(parsed) ? parsed : null; }
   catch { return null; }
-}
-async function boundedResponse(response: Response, maxBytes: number): Promise<Buffer | null> {
-  const declared = Number(response.headers.get('content-length') ?? '0');
-  if (declared > maxBytes || !response.body) return null;
-  const reader = response.body.getReader();
-  const chunks: Buffer[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) { await reader.cancel(); return null; }
-      chunks.push(Buffer.from(value));
-    }
-    return Buffer.concat(chunks, total);
-  } finally { reader.releaseLock(); }
 }
 function parsedMutation(decision: RemoteRouteDecision, body: string): unknown | null {
   try {
@@ -256,7 +240,7 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
       if (response.status >= 300 && response.status < 400) return null;
       if (response.status === 204) return { status: 204, body: '' };
       if (!(response.headers.get('content-type') ?? '').startsWith('application/json')) return null;
-      const bytes = await boundedResponse(response, MAX_JSON_BYTES);
+      const bytes = await readBoundedResponseBuffer(response, MAX_JSON_BYTES);
       if (!bytes || bytes.includes(options.hub.mutationToken)
         || bytes.includes(options.hub.readToken)) return null;
       return { status: response.status, body: bytes.toString('utf8') };
@@ -460,7 +444,7 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
               redirect: 'manual', signal: AbortSignal.timeout(5_000),
             });
             const contentType = upstream.headers.get('content-type') ?? '';
-            const bytes = upstream.status === 200 ? await boundedResponse(upstream, MAX_JSON_BYTES) : null;
+            const bytes = upstream.status === 200 ? await readBoundedResponseBuffer(upstream, MAX_JSON_BYTES) : null;
             if (upstream.status !== 200) await upstream.body?.cancel();
             if (bytes && /^(?:text\/html|text\/css|application\/(?:javascript|manifest\+json)|image\/(?:svg\+xml|png|webp)|font\/woff2?)(?:;|$)/.test(contentType)) {
               hubAsset = { bytes, contentType };
@@ -541,7 +525,7 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
         if (route.kind === 'read') {
           const type = upstream.headers.get('content-type') ?? '';
           if (!type.startsWith('application/json')) { json(res, 502, { code: 'HUB_BAD_RESPONSE', error: 'Local Hub returned unexpected content' }); return; }
-          const bytes = await boundedResponse(upstream, MAX_JSON_BYTES);
+          const bytes = await readBoundedResponseBuffer(upstream, MAX_JSON_BYTES);
           if (!bytes || [...hubSecrets, localCookie, upstreamHeaders.cookie ?? '']
             .filter(Boolean).some((secret) => bytes.includes(secret) || bytes.includes(secret.replace(/^ashlr_read_session=/, '')))) {
             json(res, 502, { code: 'HUB_BAD_RESPONSE', error: 'Local Hub response rejected' }); return;

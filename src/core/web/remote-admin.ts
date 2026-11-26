@@ -1,45 +1,29 @@
 /** Mac-only Unix socket for pairing custody. Never route this through Tunnel. */
-import { chmodSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, unlinkSync } from 'node:fs';
 import { createConnection, createServer, type Server } from 'node:net';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { defaultVerseRoot } from '../verse/preferences.js';
 import type { createRemotePairing } from './remote-pairing.js';
 import type { RemoteDeviceStore } from './remote-device-store.js';
+import { ensurePrivateDirectory, isPrivateStat, lstatOrNull } from './remote-storage.js';
 
 const SOCKET_NAME = 'remote-admin.sock';
 const MAX_COMMAND = 4096;
+const DIR_ERROR = 'Remote operator directory is not private';
 type Pairing = ReturnType<typeof createRemotePairing>;
 type OperatorAction = 'invite' | 'approve' | 'deny' | 'revoke';
 export type ConfirmMacOperator = (action: OperatorAction, id: string) => Promise<boolean>;
 
 export function remoteAdminSocketPath(root = defaultVerseRoot()): string { return join(root, SOCKET_NAME); }
 
-function privateDirectory(root: string): void {
-  mkdirSync(root, { recursive: true, mode: 0o700 });
-  const stat = lstatSync(root);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
-    || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
-    throw new Error('Remote operator directory is not private');
-  }
-}
-
-function existingSocket(path: string) {
-  try { return lstatSync(path); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
 /** A killed sidecar leaves its Unix socket pathname behind. Reclaim only a
  * private socket owned by this user after a connection proves no listener is
  * alive; never remove a regular file, symlink, or another process's socket. */
 async function clearStaleSocket(root: string, path: string): Promise<void> {
-  const before = existingSocket(path);
+  const before = lstatOrNull(path);
   if (!before) return;
-  if (!before.isSocket() || (before.mode & 0o077) !== 0
-    || (typeof process.getuid === 'function' && before.uid !== process.getuid())) {
+  if (!isPrivateStat(before, 'socket')) {
     throw new Error('Remote admin socket path is not a private owned socket');
   }
   const stale = await new Promise<boolean>((resolve, reject) => {
@@ -54,12 +38,10 @@ async function clearStaleSocket(root: string, path: string): Promise<void> {
     });
   });
   if (!stale) throw new Error('Remote admin socket already has a live listener');
-  privateDirectory(root);
-  const after = existingSocket(path);
+  ensurePrivateDirectory(root, DIR_ERROR);
+  const after = lstatOrNull(path);
   if (!after) return;
-  if (!after.isSocket() || (after.mode & 0o077) !== 0
-    || (typeof process.getuid === 'function' && after.uid !== process.getuid())
-    || after.ino !== before.ino || after.dev !== before.dev) {
+  if (!isPrivateStat(after, 'socket') || after.ino !== before.ino || after.dev !== before.dev) {
     throw new Error('Remote admin socket changed during stale recovery');
   }
   unlinkSync(path);
@@ -117,7 +99,7 @@ async function command(pairing: Pairing, devices: RemoteDeviceStore, input: unkn
 /** The socket is mode 0600 in a private directory; never expose it through the phone gateway. */
 export async function startRemoteAdminSocket(pairing: Pairing, devices: RemoteDeviceStore, root = defaultVerseRoot(),
   confirmOperator: ConfirmMacOperator = confirmMacOperator, info?: { publicOrigin: string }) {
-  privateDirectory(root);
+  ensurePrivateDirectory(root, DIR_ERROR);
   const path = remoteAdminSocketPath(root);
   await clearStaleSocket(root, path);
   let confirmationBusy = false;
@@ -176,7 +158,7 @@ export async function startRemoteAdminSocket(pairing: Pairing, devices: RemoteDe
 }
 
 export async function sendRemoteAdminCommand(input: unknown, root = defaultVerseRoot()): Promise<unknown> {
-  privateDirectory(root);
+  ensurePrivateDirectory(root, DIR_ERROR);
   return new Promise((resolve, reject) => {
     const socket = createConnection(remoteAdminSocketPath(root));
     let text = '';

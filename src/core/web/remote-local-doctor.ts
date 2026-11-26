@@ -1,43 +1,14 @@
 /** Read-only, local evidence about the opt-in phone gateway. */
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { dirname } from 'node:path';
-import { parseRemoteAccessConfig } from './remote-access.js';
 import { remoteAdminSocketPath } from './remote-admin.js';
+import { assertPrivatePath, readRemoteGatewayConfig, type RemoteGatewayConfig } from './remote-storage.js';
 
 type AdminAction = 'pending' | 'devices';
 export interface RemoteDoctorDeps {
   probe?: (port: number) => Promise<boolean>;
   admin?: (action: AdminAction) => Promise<unknown>;
   adminSocketPath?: string;
-}
-
-function readConfig(path: string): { publicOrigin: string; port: number } {
-  const before = lstatSync(path);
-  if (!before.isFile() || before.isSymbolicLink()) throw new Error('invalid');
-  const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
-  try {
-    const stat = fstatSync(fd);
-    if (!before.isFile() || before.isSymbolicLink() || !stat.isFile() || stat.ino !== before.ino || stat.dev !== before.dev
-      || (stat.mode & 0o077) !== 0 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())
-      || stat.size > 8192) throw new Error('insecure');
-    const buffer = Buffer.alloc(8193);
-    let size = 0;
-    while (size < buffer.length) {
-      const count = readSync(fd, buffer, size, buffer.length - size, null);
-      if (!count) break;
-      size += count;
-    }
-    if (size > 8192) throw new Error('oversized');
-    const value: unknown = JSON.parse(buffer.subarray(0, size).toString('utf8'));
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid');
-    const record = value as Record<string, unknown>;
-    const access = parseRemoteAccessConfig(record.access);
-    const port = record.gatewayPort;
-    if (Object.keys(record).some((key) => key !== 'access' && key !== 'gatewayPort') || !access
-      || !Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) throw new Error('invalid');
-    return { publicOrigin: access.publicOrigin, port: port as number };
-  } finally { closeSync(fd); }
 }
 
 function probeListener(port: number): Promise<boolean> {
@@ -52,11 +23,8 @@ function probeListener(port: number): Promise<boolean> {
 
 /** Speak the existing read-only admin protocol without its directory-creating client. */
 function readAdmin(action: AdminAction, path = remoteAdminSocketPath()): Promise<unknown> {
-  for (const [name, directory] of [[dirname(path), true], [path, false]] as const) {
-    const stat = lstatSync(name);
-    if ((directory ? !stat.isDirectory() : !stat.isSocket()) || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
-      || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw new Error('unavailable');
-  }
+  assertPrivatePath(dirname(path), 'directory', 'unavailable');
+  assertPrivatePath(path, 'socket', 'unavailable');
   return new Promise((resolve, reject) => {
     const socket = createConnection(path);
     let text = '';
@@ -87,14 +55,14 @@ export async function diagnoseRemoteLocal(path: string, deps: RemoteDoctorDeps =
     publicReachability: 'unknown', accessPolicy: 'unknown', localReady: false,
     nextStep: 'Provide a valid private remote gateway config with --config.',
   };
-  let config: ReturnType<typeof readConfig>;
-  try { config = readConfig(path); } catch { return report; }
+  let config: RemoteGatewayConfig;
+  try { config = readRemoteGatewayConfig(path); } catch { return report; }
   report.config = 'valid';
-  report.phoneUrl = `${config.publicOrigin}/verse/m/`;
-  report.gatewayPort = config.port;
+  report.phoneUrl = `${config.access.publicOrigin}/verse/m/`;
+  report.gatewayPort = config.gatewayPort;
   const admin = deps.admin ?? ((action: AdminAction) => readAdmin(action, deps.adminSocketPath));
   const [listener, pending, devices] = await Promise.allSettled([
-    Promise.resolve().then(() => (deps.probe ?? probeListener)(config.port)),
+    Promise.resolve().then(() => (deps.probe ?? probeListener)(config.gatewayPort)),
     Promise.resolve().then(() => admin('pending')), Promise.resolve().then(() => admin('devices')),
   ]);
   report.listener = listener.status === 'fulfilled' && listener.value ? 'listening' : 'unavailable';

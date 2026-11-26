@@ -5,12 +5,13 @@
  * gateway's other session tickets.
  */
 import { randomBytes } from 'node:crypto';
-import { lstatSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { writePrivateFileAtomically } from '../verse/session-store.js';
 import { defaultVerseRoot } from '../verse/preferences.js';
+import { lstatOrNull, readPrivateJsonFile } from './remote-storage.js';
 
-export const PHONE_SESSION_HANDLE = /^phm_phone_session_[a-f0-9]{32}$/;
+const PHONE_SESSION_HANDLE = /^phm_phone_session_[a-f0-9]{32}$/;
 const FILE = 'phone-session-handles.json';
 const MAX_BYTES = 65_536;
 
@@ -40,16 +41,12 @@ export function createPhoneSessionCustody(root = defaultVerseRoot(), now: () => 
   const tokens = new Map<string, string>();
 
   function read(): PhoneSessionRecord[] {
-    let stat: ReturnType<typeof lstatSync> | null = null;
-    try { stat = lstatSync(path); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-      throw error;
-    }
-    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > MAX_BYTES) {
-      throw new Error('Phone session handle file is not private');
-    }
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (!lstatOrNull(path)) return [];
+    const parsed = readPrivateJsonFile(path, MAX_BYTES, {
+      notPrivate: 'Phone session handle file is not private',
+      tooLarge: 'Phone session handle file is not private',
+      unreadable: 'Phone session handle file is invalid',
+    });
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Phone session handle file is invalid');
     const body = parsed as Record<string, unknown>;
     if (body.v !== 1 || !Array.isArray(body.sessions) || body.sessions.length > 256 || !body.sessions.every(validRecord)) {
@@ -83,9 +80,10 @@ export function createPhoneSessionCustody(root = defaultVerseRoot(), now: () => 
         expiresAt: input.expiresAt,
       };
       if (!validRecord(record)) throw new Error('Invalid phone session record');
-      const sessions = live().filter((item) => item.deviceId !== input.deviceId || item.subject !== input.subject);
+      const sessions: PhoneSessionRecord[] = [];
       for (const previous of live()) {
         if (previous.deviceId === input.deviceId && previous.subject === input.subject) tokens.delete(previous.handle);
+        else sessions.push(previous);
       }
       sessions.push(record);
       write(sessions);
