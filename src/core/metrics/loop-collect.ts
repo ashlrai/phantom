@@ -15,7 +15,7 @@ import { availableParallelism, homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
-import { NODE_PROFILES } from '../drive/nodes/profiles.js';
+import { readConfiguredNodeProfiles } from '../drive/nodes/profiles.js';
 import { buildNodesSnapshot, type NodesSnapshot } from '../nodes/view.js';
 import { parseReadyRows } from '../fleet/ready-row-edit.js';
 import { globalCap } from '../queue/admission.js';
@@ -91,7 +91,7 @@ export function defaultLoopReaders(env: NodeJS.ProcessEnv = process.env): LoopRe
   return {
     runsDir: runsRoot(env), now: Date.now,
     readText: readTail, gh: ghDefault, installed: installedDefault,
-    nodes: () => { try { return buildNodesSnapshot({ profiles: NODE_PROFILES }); } catch { return null; } },
+    nodes: () => { try { return buildNodesSnapshot({ profiles: readConfiguredNodeProfiles() }); } catch { return null; } },
     peerTasks: async () => {
       try {
         const { listTeammateTasks } = await import('../comms/imessage-teammate-tasks.js');
