@@ -357,6 +357,51 @@ describe('cmdOrg', () => {
     vi.unstubAllEnvs();
   });
 
+  it('join without --machine hands back the runnable fix or names the declared machines', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = 'docs/examples/org.toml';
+    // Every member in the example declares exactly one machine, and `phm org
+    // show` does not list machine ids — so the refusal prints the complete
+    // join command, lanes included, instead of dead-ending on a lookup.
+    expect(await cmdOrg(['join', '--file', file, '--member', 'evan-deloria', '--lane', 'claude=20', '--json'])).toBe(1);
+    const single = JSON.parse(logs.pop()!);
+    expect(single).toMatchObject({ schema: 'org.error.v1', command: 'join', error: { code: 'rejected' } });
+    expect(single.error.message).toContain('join needs --machine');
+    expect(single.error.message).toContain('run: phm org join --member evan-deloria --machine evan-mac --lane claude=20');
+    // The fix is a command to run, not a silent join: nothing was recorded.
+    expect(readJoins()).toEqual([]);
+    // A member with several declared machines gets the choice named, not a guess.
+    const multi = join(home, 'multi.toml');
+    writeFileSync(multi, [
+      'version = 1', 'leader = "ada"', '',
+      '[[members]]', 'id = "ada"', 'name = "Ada"', 'role = "founder"',
+      'machines = [{ id = "ada-mac" }, { id = "ada-laptop" }]',
+      'contributions = [{ lane = "claude", share = 50 }]', '',
+    ].join('\n'));
+    expect(await cmdOrg(['join', '--file', multi, '--member', 'ada', '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message)
+      .toContain('join needs --machine. ada declares machines: ada-mac, ada-laptop — pass --machine <id>.');
+    // A member declaring no machines is told to ask the leader, not handed a command.
+    const empty = join(home, 'empty.toml');
+    writeFileSync(empty, [
+      'version = 1', 'leader = "ada"', '',
+      '[[members]]', 'id = "ada"', 'name = "Ada"', 'role = "founder"',
+      'contributions = [{ lane = "claude", share = 50 }]', '',
+    ].join('\n'));
+    expect(await cmdOrg(['join', '--file', empty, '--member', 'ada', '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message).toContain('ada declares no machines in org.toml');
+    // Unknown member and missing --member keep naming what is actually missing.
+    expect(await cmdOrg(['join', '--file', file, '--member', 'ghost', '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message).toContain('Unknown member ghost');
+    expect(await cmdOrg(['join', '--file', file, '--machine', 'evan-mac', '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message).toContain('join needs --member.');
+    expect(await cmdOrg(['join', '--file', file, '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message).toContain('join needs --member and --machine.');
+    vi.unstubAllEnvs();
+  });
+
   it('refuses malformed arguments instead of silently ignoring them', async () => {
     const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
     const logs: string[] = [], errs: string[] = [];

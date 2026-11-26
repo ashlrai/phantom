@@ -181,7 +181,24 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       const member = one(rest, '--member'), machine = one(rest, '--machine');
       const laneArgs = take(rest, '--lane');
       noLeftovers(rest);
-      if (!member || !machine) throw new OrgError('join needs --member and --machine.');
+      if (!member || !machine) {
+        // --machine asserts which of the member's declared computers this join
+        // records, so it stays explicit — but the refusal can still hand back
+        // the runnable command when org.toml leaves exactly one choice, and
+        // name the declared machines or members when it does not.
+        const row = member === undefined ? undefined : org.members.find((m) => m.id === member);
+        if (machine === undefined && row?.machines.length === 1) {
+          const fix = `phm org join --member ${member} --machine ${row.machines[0]!.id}${laneArgs.map((l) => ` --lane ${l}`).join('')}`;
+          throw new OrgError(`join needs --machine: ${member} declares one machine — run: ${fix}`);
+        }
+        const missing = member === undefined && machine === undefined ? '--member and --machine'
+          : member === undefined ? '--member' : '--machine';
+        const detail = row === undefined
+          ? (member === undefined ? '' : ` Unknown member ${member}. This org.toml declares: ${org.members.map((m) => m.id).join(', ')}.`)
+          : row.machines.length === 0 ? ` ${member} declares no machines in org.toml; ask the leader to add one before join.`
+          : ` ${member} declares machines: ${row.machines.map((x) => x.id).join(', ')} — pass --machine <id>.`;
+        throw new OrgError(`join needs ${missing}.${detail}`);
+      }
       // --lane takes <lane> or <lane>=<share>; a second '=', an empty name or a
       // non-numeric share is a usage error, and the same lane is never repeated.
       const optIn = laneArgs.map((s) => {
