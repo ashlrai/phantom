@@ -320,6 +320,12 @@ so the bridge stays out of the daemon's Tier-1 import closure. On abort the
 phase sends SIGTERM, then SIGKILL after 2 s. Optional settings are `maxPerPass`
 (default 4) and `pendingTtlMs` (default 300000).
 
+In a pool, the bridge uses the witness's remaining node and host slots after
+active claims and planned assignments across all owner scopes. It shares each
+host's remaining budget across its workers. A stale or missing capacity sample,
+or a witness that does not report this headroom, leaves the affected pool
+capacity unknown and keeps those rows available to the local dispatcher.
+
 The bridge uses the claim that dispatchd already honors, so the pinned
 dispatcher needs no change:
 

@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { parseNodeFleetFlags, runNodeFleet } from '../src/core/drive/nodes/commands.js';
+import { initializePool } from '../src/core/drive/nodes/pool.js';
 import { NODE_TASK_LIMIT, nodeTaskArgs, validNodeTask, type EmbeddedNodeTask } from '../src/core/drive/nodes/task.js';
 import { poolBridgeRouter, runNodeBridge, type NodeBridgeHost } from '../src/core/drive/nodes/ready-bridge.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
@@ -45,9 +46,14 @@ function fixture(prompt: string | Buffer | null, opts: { link?: 'file' | 'outsid
   if (prompt === null && !opts.link) path = join(root, 'missing.md');
   writeFileSync(join(host.runsRoot, 'queue', 'ready.tsv'), [job, 'phantom', 'codex-cmp', 'work', path].join('\t') + '\n');
   const now = 1_000_000;
-  const nodes = new DriveNodes(new MemoryStore(), { now: () => now, nodeTtlMs: 600_000, leaderTtlMs: 600_000, claimTtlMs: 1_000 });
+  const store = new MemoryStore();
+  initializePool(store, 'primary', 'backup', now);
+  const nodes = new DriveNodes(store, { now: () => now, nodeTtlMs: 600_000, leaderTtlMs: 600_000, claimTtlMs: 1_000 });
   const worker = nodes.join('fake-worker', { owners: ['ashlr'], caps: READ, slots: 1 })!;
   const stranger = nodes.join('fake-stranger', { owners: ['other'], caps: READ, slots: 1 })!;
+  for (const session of [worker, stranger]) {
+    nodes.heartbeat(session, { capacity: { hostId: session.nodeId, ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: now } });
+  }
   // The pool transport, but served in-process through the real flag parser and command runner.
   const calls: string[][] = [];
   const router = poolBridgeRouter((verb, args) => {
