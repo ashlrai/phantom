@@ -910,10 +910,26 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
 
   const mergeCounts = new Map<string, number>();
   const candidates: Array<{ pool: string; job: string | null; pr: string | null }> = [];
+  // Index explicit merge times before filtering by window. Legacy receipts
+  // may arrive much later and must not move the same merge into this window.
+  const timedPrs = new Set<string>();
+  const timedJobs = new Set<string>();
+  const receiptPools = new Map<string, string>();
   for (const event of ledgerEvents) {
+    const identity = event.pr ? `pr:${event.pr}` : event.job ? `job:${event.job}` : null;
+    if (event.merge && identity && event.pool && !receiptPools.has(identity)) receiptPools.set(identity, event.pool);
+    if (event.mergedAt === undefined) continue;
+    if (event.pr !== null) timedPrs.add(event.pr);
+    if (event.job !== null) timedJobs.add(event.job);
+  }
+  for (const event of ledgerEvents) {
+    const hasTimedReceipt = event.pr !== null ? timedPrs.has(event.pr) : event.job !== null && timedJobs.has(event.job);
+    if (event.mergedAt === undefined && hasTimedReceipt) continue;
     const at = eventTimestamp(event.mergedAt ?? event.at);
     if (!event.merge || at === null || at > now.getTime() || at < cutoff) continue;
-    const pool = event.pool ?? (event.job ? queueState?.jobPool.get(event.job) ?? readyPoolOf(queueRows, event.job) : undefined);
+    const receiptPool = event.mergedAt === undefined ? undefined :
+      (event.pr ? receiptPools.get(`pr:${event.pr}`) : undefined) ?? (event.job ? receiptPools.get(`job:${event.job}`) : undefined);
+    const pool = event.pool ?? receiptPool ?? (event.job ? queueState?.jobPool.get(event.job) ?? readyPoolOf(queueRows, event.job) : undefined);
     if (!pool) continue;
     candidates.push({ pool, job: event.job, pr: event.pr });
   }
@@ -921,6 +937,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   // export the whole queue, lands included, in one file.
   for (const row of queueRows) {
     const at = eventTimestamp(row.at);
+    if (row.id !== null && timedJobs.has(row.id)) continue;
     if (!MERGE_WORDS.has(row.status.toLowerCase()) || at === null || at > now.getTime() || at < cutoff) continue;
     candidates.push({ pool: row.pool, job: row.id, pr: null });
   }
