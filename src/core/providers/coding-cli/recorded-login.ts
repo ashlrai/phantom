@@ -11,6 +11,8 @@
  * are joined by '\n', so no phrase spans streams; fixed reason codes, no output echoed.
  */
 
+import { isExitCode } from './validation.js';
+
 export const RECORDED_LOGIN_PROVENANCE = Object.freeze({
   sourcePr: 5952,
   sourceSha: '3d6c8fb7c7f7d52655fb3e0f13ef239686f7b886',
@@ -65,8 +67,7 @@ export function classifyRecordedLogin(evidence: RecordedLoginEvidence): Recorded
   const { observed, exitCode, stdout, stderr } = shape as Record<string, unknown>;
   if (typeof observed !== 'boolean') return result('unknown', 'invalid-evidence');
   if (!observed) return result('unknown', 'no-recorded-execution');
-  const validExit = Number.isInteger(exitCode) && (exitCode as number) >= 0 && (exitCode as number) <= 0xffff_ffff;
-  if (!validExit || typeof stdout !== 'string' || typeof stderr !== 'string') {
+  if (!isExitCode(exitCode) || typeof stdout !== 'string' || typeof stderr !== 'string') {
     return result('unknown', 'invalid-evidence');
   }
   const text = `${stdout}\n${stderr}`;

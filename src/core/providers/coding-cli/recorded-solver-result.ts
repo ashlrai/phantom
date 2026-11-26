@@ -36,6 +36,8 @@
  * current model is feasible, not current quota, and not permission to dispatch.
  */
 
+import { isFiniteNumber, isRecord } from './validation.js';
+
 /** Provenance attached to every normalized result. Recorded, never current. */
 export const RECORDED_SOLVER_RESULT_PROVENANCE = Object.freeze({
   source: 'historical-offline',
@@ -93,12 +95,6 @@ export interface NormalizedRecordedSolverResult {
   feasibilityAsserted: false;
   grantsMergeAuthority: false;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const isFiniteNumber = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value);
 
 function outcome(
   status: RecordedSolverStatus,

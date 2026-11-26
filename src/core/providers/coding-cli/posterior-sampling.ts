@@ -38,6 +38,12 @@
 
 import { mulberry32 } from '../../eval/router-eval.js';
 import type { PosteriorUpdateArm } from './posterior-update.js';
+import {
+  assertFiniteNumber,
+  clamp01,
+  isRecord,
+  validatePosteriorArmState,
+} from './validation.js';
 
 /** Caller-supplied numeric formula inputs. There are no defaults. */
 export interface PosteriorSamplingParams {
@@ -55,61 +61,30 @@ export class PosteriorSamplingError extends Error {
 }
 
 const MAX_SEED = 0xffffffff;
-
-function finite(value: unknown, name: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new PosteriorSamplingError(`${name} must be a finite number`);
-  }
-  return value;
-}
-
-function count(value: unknown, name: string): number {
-  if (!Number.isInteger(value) || (value as number) < 0) {
-    throw new PosteriorSamplingError(`${name} must be a non-negative integer`);
-  }
-  return value as number;
-}
+const samplingError = (message: string): Error => new PosteriorSamplingError(message);
 
 /** Throws PosteriorSamplingError unless `arm` is a state the source could have produced. */
-export function validatePosteriorSamplingArm(arm: PosteriorUpdateArm): void {
-  for (const name of ['alpha', 'beta'] as const) {
-    if (finite(arm[name], `arm.${name}`) <= 0) throw new PosteriorSamplingError(`arm.${name} must be > 0`);
-  }
-  for (const name of ['qualityMean', 'latencyMean', 'tokenMean'] as const) finite(arm[name], `arm.${name}`);
-  for (const name of ['qualityM2', 'latencyM2', 'tokenM2'] as const) {
-    if (finite(arm[name], `arm.${name}`) < 0) throw new PosteriorSamplingError(`arm.${name} must be >= 0`);
-  }
-  const observations = count(arm.observations, 'arm.observations');
-  const tokenObservations = count(arm.tokenObservations, 'arm.tokenObservations');
-  if (tokenObservations > observations) {
-    throw new PosteriorSamplingError('arm.tokenObservations must not exceed arm.observations');
-  }
-  if (tokenObservations === 0 && (arm.tokenMean !== 0 || arm.tokenM2 !== 0)) {
-    throw new PosteriorSamplingError('arm token statistics must be zero when tokenObservations is 0');
-  }
+function validatePosteriorSamplingArm(arm: PosteriorUpdateArm): void {
+  validatePosteriorArmState(arm, samplingError, { requireZeroTokensWhenUnobserved: true });
 }
 
 /** Throws PosteriorSamplingError unless the formula parameters are finite with positive reference denominators. */
-export function validatePosteriorSamplingParams(params: PosteriorSamplingParams): void {
-  finite(params.latencyWeight, 'params.latencyWeight');
-  finite(params.tokenWeight, 'params.tokenWeight');
+function validatePosteriorSamplingParams(params: PosteriorSamplingParams): void {
+  assertFiniteNumber(params.latencyWeight, 'params.latencyWeight', samplingError);
+  assertFiniteNumber(params.tokenWeight, 'params.tokenWeight', samplingError);
   for (const name of ['latencyReferenceMs', 'tokenReference'] as const) {
-    if (finite(params[name], `params.${name}`) <= 0) throw new PosteriorSamplingError(`params.${name} must be > 0`);
+    if (assertFiniteNumber(params[name], `params.${name}`, samplingError) <= 0) {
+      throw new PosteriorSamplingError(`params.${name} must be > 0`);
+    }
   }
 }
 
 /** Validates the seed as a uint32 so the generator never truncates it silently. */
-export function validatePosteriorSeed(seed: unknown): number {
+function validatePosteriorSeed(seed: unknown): number {
   if (!Number.isInteger(seed) || (seed as number) < 0 || (seed as number) > MAX_SEED) {
     throw new PosteriorSamplingError(`seed must be an integer in [0, ${MAX_SEED}]`);
   }
   return seed as number;
-}
-
-function clamp01(value: number): number {
-  if (value < 0) return 0;
-  if (value > 1) return 1;
-  return value;
 }
 
 /** Box-Muller standard normal, as in the source. */
@@ -194,9 +169,6 @@ const ARM_KEYS = [
   'tokenMean', 'tokenM2', 'tokenObservations', 'observations',
 ] as const;
 const PARAM_KEYS = ['latencyWeight', 'latencyReferenceMs', 'tokenWeight', 'tokenReference'] as const;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 function exactObject(value: unknown, keys: readonly string[], path: string): Record<string, unknown> {
   if (!isRecord(value)) throw new PosteriorSamplingError(`${path} must be an object`);

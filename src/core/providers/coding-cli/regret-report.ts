@@ -12,15 +12,15 @@
  * proof that a pool is currently eligible or has quota.
  */
 
-export const REGRET_REPORT_SCHEMA = 'fleet.coding-regret.v1';
-export const REGRET_SOURCE = 'posterior' as const;
-export const REGRET_NOTICE =
+const REGRET_REPORT_SCHEMA = 'fleet.coding-regret.v1';
+const REGRET_SOURCE = 'posterior' as const;
+const REGRET_NOTICE =
   'modelled posterior scores from the supplied evidence only; alternatives are not proof of current eligibility, quota or availability';
 /** Same default as the source computeRegret. */
-export const DEFAULT_REGRET_EPSILON = 1e-6;
+const DEFAULT_REGRET_EPSILON = 1e-6;
 
 /** Pool order matters: on an exact tie the earlier candidate wins, as in the source. */
-export const REGRET_POOL_IDS = [
+const REGRET_POOL_IDS = [
   'codex-primary',
   'codex-secondary',
   'claude',
@@ -33,10 +33,10 @@ export const REGRET_POOL_IDS = [
 export type RegretPoolId = (typeof REGRET_POOL_IDS)[number];
 
 /** Consumers of the single Grok Ultra weekly limit. They are separate arms, not pools. */
-export const REGRET_ULTRA_CONSUMERS = ['orchestrator', 'cloud-agent'] as const;
+const REGRET_ULTRA_CONSUMERS = ['orchestrator', 'cloud-agent'] as const;
 export type RegretConsumer = (typeof REGRET_ULTRA_CONSUMERS)[number];
 
-export const REGRET_JOB_KINDS = [
+const REGRET_JOB_KINDS = [
   'coding',
   'investigation',
   'test-fixing',
@@ -93,8 +93,8 @@ export interface RegretItem {
 }
 
 export interface RegretReport {
-  schema: typeof REGRET_REPORT_SCHEMA;
-  source: typeof REGRET_SOURCE;
+  schema: 'fleet.coding-regret.v1';
+  source: 'posterior';
   postIssues: false;
   notice: string;
   epsilon: number;
@@ -138,7 +138,7 @@ function clamp01(value: number): number {
 }
 
 /** Grok Ultra has two consumer arms; every other pool has one arm with a null consumer. */
-export function regretConsumersFor(poolId: RegretPoolId): readonly (RegretConsumer | null)[] {
+function regretConsumersFor(poolId: RegretPoolId): readonly (RegretConsumer | null)[] {
   return poolId === 'grok-ultra-weekly' ? REGRET_ULTRA_CONSUMERS : [null];
 }
 
