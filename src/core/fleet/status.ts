@@ -4064,6 +4064,7 @@ export async function buildFleetStatus(
   const windowHours = RECENT_WINDOW_MS / (60 * 60 * 1000);
   const skillUseSource = readSkillUseEventsWithDiagnostics({
     sinceMs: Date.parse(generatedAt) - RECENT_WINDOW_MS,
+    asOfMs: Date.parse(generatedAt),
     limit: Math.max(500 * 8, 400),
     maxFiles: 3,
   });
@@ -4081,6 +4082,7 @@ export async function buildFleetStatus(
     try {
       const skillUseSourceAfter = readSkillUseEventsWithDiagnostics({
         sinceMs: Date.parse(generatedAt) - RECENT_WINDOW_MS,
+        asOfMs: Date.parse(generatedAt),
         limit: Math.max(500 * 8, 400),
         maxFiles: 3,
       });
@@ -4127,6 +4129,7 @@ export async function buildFleetStatus(
     try {
       const trajectoryRecords = listTrajectoryRecords({
         windowHours,
+        asOfMs: Date.parse(generatedAt),
         limit: 500,
         deps: {
           readDispatchProductionEvents: () => learningDispatchEvents,

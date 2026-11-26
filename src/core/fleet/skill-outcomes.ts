@@ -58,6 +58,7 @@ export function readSkillTrajectoryOutcomes(
     // and the join see the same skill-use snapshot.
     const skillRead = readEvents({
       sinceMs,
+      asOfMs,
       limit: Math.max(limit * 8, 400),
       maxFiles: trajectoryWindowMaxFiles(windowHours),
     });
