@@ -42,9 +42,9 @@ const MAX_JSON_CHARS = 512 * 1024;
 const MAX_TEXT_CHARS = 256;
 const MAX_PATH_CHARS = 512;
 
-const FLEET_BRANCH_PREFIX = 'codex-bridge/';
+export const FLEET_BRANCH_PREFIX = 'codex-bridge/';
 /** The fleet App's logins — host-merge.ts FLEET_APP_BOT_LOGIN plus gh's `app/<name>` spelling. */
-const FLEET_BOT_LOGINS = new Set(['ashlr-fleet[bot]', 'app/ashlr-fleet']);
+export const FLEET_BOT_LOGINS = new Set(['ashlr-fleet[bot]', 'app/ashlr-fleet']);
 const NAME_WITH_OWNER = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
 const PR_LIST_FIELDS = 'number,title,author,headRefName,updatedAt';
 
@@ -209,6 +209,63 @@ async function mapConcurrent<T, R>(items: readonly T[], limit: number, fn: (item
   return out;
 }
 
+export interface FleetRepoDiscoveryOptions {
+  /** Runs directory. Default ASHLR_RUNS_DIR, then `~/.ashlr-runs`. */
+  runsDir?: string;
+  homeDir?: string;
+  /** The workspace checkout also scanned. Default process.cwd(). */
+  workspaceDir?: string;
+  runningJobs?: ListOutsidePrsOptions['runningJobs'];
+  jobWorktree?: ListOutsidePrsOptions['jobWorktree'];
+  repoIdentity?: ListOutsidePrsOptions['repoIdentity'];
+}
+
+export interface FleetRepoDiscovery {
+  /** `owner/name` → checkout cwd (running-job repos first, workspace repo last), insertion-ordered. */
+  repoCwds: Map<string, string>;
+  /** Fleet job id → `owner/name` for jobs whose worktree resolved to a repo. */
+  jobRepo: Map<string, string>;
+  /** Validated running job ids considered, bounded by MAX_JOBS. */
+  jobs: string[];
+  /** A source (claimed set, job worktree, repo identity, repo cap) could not be fully read. */
+  degraded: boolean;
+}
+
+/**
+ * The repos fleet work touches: every running job's `.base` worktree resolved
+ * to `owner/name`, plus the workspace checkout. Shared by this module's
+ * open-PR collision scan and outside-pr-outcomes.ts's merged-PR outcome fold
+ * so both agree on which repos count as fleet surface.
+ */
+export async function discoverFleetRepos(opts: FleetRepoDiscoveryOptions = {}): Promise<FleetRepoDiscovery> {
+  const home = opts.homeDir ?? homedir();
+  const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(home, '.ashlr-runs');
+  const workspaceDir = opts.workspaceDir ?? process.cwd();
+  const out: FleetRepoDiscovery = { repoCwds: new Map(), jobRepo: new Map(), jobs: [], degraded: false };
+  try {
+    const found = opts.runningJobs ? { jobs: [...await opts.runningJobs()], degraded: false } : await defaultRunningJobs(runsDir);
+    if (found.degraded) out.degraded = true;
+    out.jobs = [...new Set(found.jobs.filter(isFleetJobId))].slice(0, MAX_JOBS);
+  } catch {
+    out.degraded = true;
+  }
+  const identityOf = (path: string): string | null => {
+    try { return repoLabel((opts.repoIdentity ?? repoIdentityOfPath)(path)); } catch { return null; }
+  };
+  const jobWorktree = opts.jobWorktree ?? ((job: string) => readJobWorktree(job, runsDir, home));
+  for (const job of out.jobs) {
+    const worktree = await jobWorktree(job).catch(() => null);
+    const repo = worktree === null ? null : identityOf(worktree);
+    if (repo === null) continue;
+    out.jobRepo.set(job, repo);
+    if (!out.repoCwds.has(repo)) out.repoCwds.set(repo, worktree!);
+  }
+  const workspaceRepo = identityOf(workspaceDir);
+  if (workspaceRepo !== null && !out.repoCwds.has(workspaceRepo)) out.repoCwds.set(workspaceRepo, workspaceDir);
+  if (out.repoCwds.size > MAX_REPOS) out.degraded = true;
+  return out;
+}
+
 /**
  * Open PRs on the repos running fleet jobs touch (plus the workspace repo)
  * that are not fleet work, each collided against the running jobs' changed
@@ -230,31 +287,12 @@ async function computeOutsidePrs(opts: ListOutsidePrsOptions): Promise<OutsidePr
     return result;
   }
 
-  let jobs: string[] = [];
-  try {
-    const found = opts.runningJobs ? { jobs: [...await opts.runningJobs()], degraded: false } : await defaultRunningJobs(runsDir);
-    if (found.degraded) degrade();
-    jobs = [...new Set(found.jobs.filter(isFleetJobId))].slice(0, MAX_JOBS);
-  } catch {
-    degrade();
-  }
-
-  const identityOf = (path: string): string | null => {
-    try { return repoLabel((opts.repoIdentity ?? repoIdentityOfPath)(path)); } catch { return null; }
-  };
-  const jobWorktree = opts.jobWorktree ?? ((job: string) => readJobWorktree(job, runsDir, home));
-  const jobRepo = new Map<string, string>();
-  const repoCwds = new Map<string, string>();
-  for (const job of jobs) {
-    const worktree = await jobWorktree(job).catch(() => null);
-    const repo = worktree === null ? null : identityOf(worktree);
-    if (repo === null) continue;
-    jobRepo.set(job, repo);
-    if (!repoCwds.has(repo)) repoCwds.set(repo, worktree!);
-  }
-  const workspaceRepo = identityOf(workspaceDir);
-  if (workspaceRepo !== null && !repoCwds.has(workspaceRepo)) repoCwds.set(workspaceRepo, workspaceDir);
-  if (repoCwds.size > MAX_REPOS) degrade();
+  const discovery = await discoverFleetRepos({
+    runsDir, homeDir: home, workspaceDir,
+    runningJobs: opts.runningJobs, jobWorktree: opts.jobWorktree, repoIdentity: opts.repoIdentity,
+  });
+  if (discovery.degraded) degrade();
+  const { repoCwds, jobRepo, jobs } = discovery;
 
   const jobChanges = opts.jobChanges ?? ((job: string) => getFleetJobChanges(job, { runsDir, homeDir: home }));
   const changedByJob = new Map<string, { paths: string[]; degraded: boolean }>();
