@@ -42,7 +42,7 @@ import { ashlrHome } from '../cloud/store.js';
 // Types and constants
 // ---------------------------------------------------------------------------
 
-export const PAGES_SCHEMA_VERSION = 1;
+const PAGES_SCHEMA_VERSION = 1 as const;
 
 /** A page slug is a short lowercase web-safe id: `weekly-report`, `q3-cos`. */
 export const PAGE_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/;
@@ -50,9 +50,9 @@ export const PAGE_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/;
 /** Largest report source publish will read (512 KiB). */
 export const MAX_SOURCE_BYTES = 512 * 1024;
 /** Largest stored page record list/read will trust (1 MiB). */
-export const MAX_PAGE_FILE_BYTES = 1024 * 1024;
+const MAX_PAGE_FILE_BYTES = 1024 * 1024;
 /** Physical directory entries inspected per list call, noise included. */
-export const MAX_LIST_ENTRIES = 512;
+const MAX_LIST_ENTRIES = 512;
 /** Most pages one list call returns. */
 export const MAX_LIST = 200;
 /** Front matter is scanned only this far into a Markdown source. */
@@ -63,7 +63,7 @@ const SLUG_MAX = 80;
 const DESCRIPTION_MAX = 200;
 
 export interface PublishedPage {
-  schemaVersion: typeof PAGES_SCHEMA_VERSION;
+  schemaVersion: 1;
   slug: string;
   title: string;
   description?: string;
@@ -156,6 +156,12 @@ function titleFromMarkdown(markdown: string): string | undefined {
   return undefined;
 }
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const truncateDescription = (text: string): string =>
+  text.length > DESCRIPTION_MAX ? `${text.slice(0, DESCRIPTION_MAX - 1).trimEnd()}…` : text;
+
 /** First non-heading, non-fence paragraph line, shortened. */
 function descriptionFromMarkdown(markdown: string): string | undefined {
   let inFence = false;
@@ -165,7 +171,7 @@ function descriptionFromMarkdown(markdown: string): string | undefined {
     if (inFence || trimmed === '' || trimmed.startsWith('#')) continue;
     const text = trimmed.replace(/[*_`>[\]()#]/g, '').trim();
     if (text === '') continue;
-    return text.length > DESCRIPTION_MAX ? `${text.slice(0, DESCRIPTION_MAX - 1).trimEnd()}…` : text;
+    return truncateDescription(text);
   }
   return undefined;
 }
@@ -223,10 +229,10 @@ function parseJsonSource(text: string, filePath: string): ParsedSource | { reaso
   } catch {
     return { reason: 'invalid-json' };
   }
-  if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) {
+  if (!isPlainObject(doc)) {
     return { reason: 'invalid-json' };
   }
-  const record = doc as Record<string, unknown>;
+  const record = doc;
   const str = (key: string): string | undefined =>
     typeof record[key] === 'string' && (record[key] as string).trim() !== ''
       ? (record[key] as string).trim() : undefined;
@@ -304,9 +310,7 @@ export function publishPage(opts: PublishOptions): PublishResult {
 
   const title = (opts.title ?? parsed.title ?? titleFromMarkdown(markdown) ?? titleFromFilename(filePath)).slice(0, 200);
   const rawDescription = parsed.description ?? descriptionFromMarkdown(markdown);
-  const description = rawDescription !== undefined && rawDescription.length > DESCRIPTION_MAX
-    ? `${rawDescription.slice(0, DESCRIPTION_MAX - 1).trimEnd()}…`
-    : rawDescription;
+  const description = rawDescription !== undefined ? truncateDescription(rawDescription) : undefined;
 
   const page: PublishedPage = {
     schemaVersion: PAGES_SCHEMA_VERSION,
@@ -344,8 +348,8 @@ export function publishPage(opts: PublishOptions): PublishResult {
 // ---------------------------------------------------------------------------
 
 function parsePageRecord(raw: unknown, slug: string): PublishedPage | null {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
-  const record = raw as Record<string, unknown>;
+  if (!isPlainObject(raw)) return null;
+  const record = raw;
   if (
     record.schemaVersion !== PAGES_SCHEMA_VERSION
     || record.slug !== slug
@@ -421,7 +425,7 @@ export function listPages(limit = MAX_LIST): PageSummary[] {
 // Loopback API payload (mounted by src/core/web/server.ts under read authority)
 // ---------------------------------------------------------------------------
 
-export const PAGES_API_PATH = '/api/pages';
+const PAGES_API_PATH = '/api/pages';
 
 export function isPagesApiPath(pathname: string): boolean {
   return pathname === PAGES_API_PATH || pathname.startsWith(`${PAGES_API_PATH}/`);
@@ -450,18 +454,5 @@ export function pagesApiGetResponse(pathname: string): { status: number; body: u
   if (!page) {
     return { status: 404, body: { error: 'page not found' } };
   }
-  return {
-    status: 200,
-    body: {
-      schemaVersion: PAGES_SCHEMA_VERSION,
-      slug: page.slug,
-      title: page.title,
-      ...(page.description !== undefined ? { description: page.description } : {}),
-      markdown: page.markdown,
-      sourceFormat: page.sourceFormat,
-      sourceName: page.sourceName,
-      publishedAt: page.publishedAt,
-      bytes: page.bytes,
-    },
-  };
+  return { status: 200, body: page };
 }

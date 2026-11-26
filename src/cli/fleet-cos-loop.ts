@@ -28,8 +28,8 @@
  * whichever bound occurs first stops admission. Unknown or duplicate
  * options are refused before any pass runs.
  */
-import { isAbsolute, join, resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { isAbsolute, resolve } from 'node:path';
+import { resolveCosRunsDir } from '../core/cos/intake.js';
 import {
   runCosLoop,
   COS_LOOP_DEFAULT_INTERVAL_MS,
@@ -92,11 +92,6 @@ export async function cmdFleetCosLoop(args: string[], deps: Dependencies = {}): 
   let json = false, stream = false, peerPlan = false, peerApply = false;
   let durationMs: number | undefined, intervalMs: number | undefined, runsDir: string | undefined;
   let maxPasses: number | undefined;
-  const parseMs = (value: string | undefined): number | undefined => {
-    if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined;
-    const parsed = Number(value);
-    return Number.isSafeInteger(parsed) ? parsed : undefined;
-  };
   const parsePositiveInt = (value: string | undefined): number | undefined => {
     if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined;
     const parsed = Number(value);
@@ -109,10 +104,10 @@ export async function cmdFleetCosLoop(args: string[], deps: Dependencies = {}): 
     else if (arg === '--peer-plan' && !peerPlan) peerPlan = true;
     else if (arg === '--peer-apply' && !peerApply) peerApply = true;
     else if (arg === '--duration-ms' && durationMs === undefined) {
-      durationMs = parseMs(args[++i]);
+      durationMs = parsePositiveInt(args[++i]);
       if (durationMs === undefined || durationMs < 1_000 || durationMs > COS_LOOP_MAX_DURATION_MS) return invalid();
     } else if (arg === '--interval-ms' && intervalMs === undefined) {
-      intervalMs = parseMs(args[++i]);
+      intervalMs = parsePositiveInt(args[++i]);
       if (intervalMs === undefined || intervalMs < COS_LOOP_MIN_INTERVAL_MS) return invalid();
     } else if (arg === '--max-passes' && maxPasses === undefined) {
       const parsed = parsePositiveInt(args[++i]);
@@ -140,7 +135,7 @@ export async function cmdFleetCosLoop(args: string[], deps: Dependencies = {}): 
   }
   // One root for every pass, resolved here once — same fallbacks as
   // cos-work, so nothing can drift between passes.
-  const root = resolve(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'));
+  const root = resolve(resolveCosRunsDir(runsDir));
   const controller = new AbortController();
   const onSignal = deps.onSignal ?? ((handler: () => void) => {
     process.on('SIGINT', handler);

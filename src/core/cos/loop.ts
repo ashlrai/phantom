@@ -48,8 +48,8 @@ export const COS_LOOP_MAX_DURATION_MS = 24 * 60 * 60 * 1000;
 export const COS_LOOP_DEFAULT_INTERVAL_MS = 30_000;
 export const COS_LOOP_MIN_INTERVAL_MS = 5_000;
 export const COS_LOOP_MAX_PASSES = 1_000;
-export const COS_LOOP_BLOCKED_STREAK_LIMIT = 5;
-export const COS_LOOP_DEFAULT_PASS_TIMEOUT_MS = 10 * 60 * 1000;
+const COS_LOOP_BLOCKED_STREAK_LIMIT = 5;
+const COS_LOOP_DEFAULT_PASS_TIMEOUT_MS = 10 * 60 * 1000;
 
 /** The pass seam; each call is one bounded cos-work pass. */
 export type CosLoopWork = (options: CosWorkOptions) => Promise<CosWorkResult>;
