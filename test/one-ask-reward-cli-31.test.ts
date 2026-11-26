@@ -216,6 +216,20 @@ describe('fleet lane-reward', () => {
     expect(fold.attempts.get('RQ-FAKE-W3')?.outcome).toBe('merged');
   });
 
+  it('resolves terminal evidence behind generic lifecycle fields', () => {
+    const text = rows(
+      { job: 'RQ-FAKE-P1', event: 'publish', state: 'PUBLISHED', outcome: 'MERGED', mergedAt: '2026-10-31T08:00:00Z' },
+      { job: 'RQ-FAKE-P1', event: 'outcome', status: 'completed', conclusion: 'CLOSED', closedAt: '2026-11-01T08:00:00Z' },
+      { job: 'RQ-FAKE-P2', event: 'closed', status: 'completed' },
+      { job: 'RQ-FAKE-P3', state: 'completed', outcome: 'PUBLISHED' },
+    );
+    const fold = foldLaneRewardAttempts(text, NOW);
+    expect(fold.attempts.get('RQ-FAKE-P1')).toMatchObject({ published: true, outcome: 'merged' });
+    expect(fold.attempts.get('RQ-FAKE-P2')?.outcome).toBe('closed');
+    expect(fold.attempts.get('RQ-FAKE-P3')).toMatchObject({ published: true, outcome: null });
+    expect(foldLaneRewardAttempts(text).attempts.get('RQ-FAKE-P1')?.outcome).toBe('closed');
+  });
+
   it('wires the real inspector by default and reports degraded sources', async () => {
     expect(defaultLaneRewardDeps.score).toBe(inspectOneAskReward);
     expect(defaultLaneRewardDeps.score({ outcome: { kind: 'published' }, tokens: 10, weight: 1, nowMs: NOW }))

@@ -96,7 +96,18 @@ const laneOf = (row: Row): string | null => {
 };
 const urlOf = (row: Row): string | null => pickString(row, 'url', 'pr_url', 'prUrl', 'pr', 'html_url');
 const eventOf = (row: Row): string => (pickString(row, 'event', 'type', 'kind') ?? '').toLowerCase();
-const phaseOf = (row: Row): string => (pickString(row, 'state', 'outcome', 'status', 'phase', 'result', 'conclusion') ?? '').toUpperCase();
+function phaseOf(row: Row, event: string): string {
+  let published = false;
+  for (const key of ['state', 'outcome', 'status', 'phase', 'result', 'conclusion']) {
+    const phase = pickString(row, key)?.toUpperCase();
+    if (phase === undefined) continue;
+    if (TERMINAL_PHASES.has(phase)) return phase;
+    published ||= phase === 'PUBLISHED';
+  }
+  const eventPhase = event.toUpperCase();
+  if (TERMINAL_PHASES.has(eventPhase)) return eventPhase;
+  return published ? 'PUBLISHED' : '';
+}
 const tokensOf = (row: Row): number | null => {
   const value = row['tokens_total'] ?? row['tokens'] ?? row['total_tokens'];
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000 ? value : null;
@@ -113,7 +124,7 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
     try { row = asRow(JSON.parse(line)); } catch { dropped++; continue; }
     if (!row) { dropped++; continue; }
     const event = eventOf(row);
-    const phase = phaseOf(row) || (TERMINAL_PHASES.has(event.toUpperCase()) ? event.toUpperCase() : '');
+    const phase = phaseOf(row, event);
     const receiptAt = ledgerEventTs(row, null);
     const outcomeAt = TERMINAL_PHASES.has(phase) ? ledgerEventTs(row, phase) : null;
     if ((receiptAt !== null && receiptAt > asOfMs) || (outcomeAt !== null && outcomeAt > asOfMs)) continue;
