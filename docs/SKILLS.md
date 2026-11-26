@@ -27,9 +27,10 @@ terminal phases `phase|state|outcome|status|result|conclusion`, and
 resolves. Reverted covers the ledger's own revert spellings plus the
 standing revert set the daemon supplies (`revertedPrKeys` — outcome-ledger,
 cloud-task and `phm fleet reverts --record` detections): a merged job whose
-standing verdict row's pull URL is claimed by exactly that job and whose
-`owner/repo#n` key stands in the set counts as reverted, the same
-unambiguous-claim rule the outcome learners apply, so a merge git history
+standing verdict row identifies a PR claimed by exactly that job and whose
+lowercase `owner/repo#n` key stands in the set counts as reverted, the same
+unambiguous-claim rule the outcome learners apply. Repository case and a
+trailing slash do not distinguish claims on the same PR, so a merge git history
 proved did not hold never seeds a "recovery" draft. A merged,
 non-reverted job that needed a retry, a
 recut, or recovered a failure class seen on three earlier failed jobs seeds
