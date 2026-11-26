@@ -1299,7 +1299,10 @@ recorded timestamps, with ledger order breaking ties. Late arrivals with
 older timestamps cannot overwrite newer recorded measurements. Merge and
 close receipts use their parseable `mergedAt` or `closedAt` timestamps when
 available, including when a reconciliation row still carries its original
-publish timestamp. PRs and merges
+publish timestamp. Window placement and merge credit use the first terminal
+verdict in `state`, `outcome`, `status`, `phase`, `result` or `conclusion`.
+A `merged` or `closed` event supplies the verdict when those fields carry
+no terminal value. PRs and merges
 count jobs with recorded PRs and merges. A batch member counts as launched
 when the window contains its `batch_claim` and the matching worker's launch
 receipt has an equal or later recorded timestamp. Each member counts once.
