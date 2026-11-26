@@ -27,7 +27,7 @@ it('shows the paired reading after Bus and opens the Settings Connection anchor'
   window.addEventListener(VERSE_ANCHOR_EVENT, anchors);
   try {
     render(<FleetHubPane visible />);
-    const tile = (await screen.findByText('1 paired · last read 0 m ago')).closest('button')!;
+    const tile = (await screen.findByText(/^1 paired · last read \d+ s ago$/)).closest('button')!;
     expect(tile).toHaveAttribute('data-tone', 'ok');
     expect(tile.previousElementSibling).toHaveTextContent('Bus');
     fireEvent.click(tile);
@@ -45,7 +45,7 @@ it('shows pending approvals ahead of paired devices', async () => {
 });
 it('shows a warning when either query fails, including after a successful read', async () => {
   render(<FleetHubPane visible />);
-  await screen.findByText('1 paired · last read 0 m ago');
+  await screen.findByText(/^1 paired · last read \d+ s ago$/);
   await act(async () => { await refetchQuery(pairedDevicesQuery.key, async () => { throw new Error('fake failure'); }, true); });
   expect(screen.getByText('Phone status unavailable').closest('button')).toHaveAttribute('data-tone', 'warn');
 });

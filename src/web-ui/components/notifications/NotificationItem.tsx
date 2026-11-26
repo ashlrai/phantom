@@ -5,21 +5,11 @@
  * can quiet it without losing the rest (non-negotiable: never nag).
  */
 import { Epistemic } from '../primitives/Epistemic.js';
+import { RelativeTime } from '../primitives/RelativeTime.js';
 import { StatusBadge } from '../primitives/StatusBadge.js';
 import { severityToTone, NOTIFICATION_CATEGORY_LABEL, type AppNotification } from './types.js';
 import { isMuted, setMuted } from './notification-store.js';
 import styles from './NotificationItem.module.css';
-
-function formatRelative(iso: string): string {
-  const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
-  if (seconds < 5) return 'just now';
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
 
 export function NotificationItem({ item }: { item: AppNotification }) {
   const muted = isMuted(item.category);
@@ -30,8 +20,8 @@ export function NotificationItem({ item }: { item: AppNotification }) {
           {item.severity.toUpperCase()}
         </StatusBadge>
         <span className={styles.category}>{NOTIFICATION_CATEGORY_LABEL[item.category]}</span>
-        <span className={styles.time} title={new Date(item.ts).toLocaleString()}>
-          {formatRelative(item.ts)}
+        <span className={styles.time}>
+          <RelativeTime value={item.ts} recentSeconds={5} />
         </span>
       </div>
       <h3 className={styles.title}>{item.title}</h3>

@@ -49,9 +49,9 @@ function Mark({ engine }: { engine: LaneEngine }) {
     case 'grok':
     case 'local':
     case 'devin':
-      return <BrandMark brand={engine} size={14} />;
     case 'cursor':
-      return <span className={styles.monogram} aria-hidden="true">Cu</span>;
+    case 'gemini':
+      return <BrandMark brand={engine} size={14} />;
     case 'dot':
       return <span className={styles.monogram} aria-hidden="true">Dt</span>;
     case 'other':
@@ -70,7 +70,7 @@ function Bar({ row, expanded }: { row: WorldLaneRow; expanded: boolean }) {
 }
 
 const PROVIDER: Record<LaneEngine, string> = {
-  claude: 'Claude', codex: 'Codex', devin: 'Devin', grok: 'Grok', cursor: 'Cursor', dot: 'Dot', local: 'Local', other: 'Other',
+  claude: 'Claude', codex: 'Codex', devin: 'Devin', grok: 'Grok', cursor: 'Cursor', gemini: 'Gemini', dot: 'Dot', local: 'Local', other: 'Other',
 };
 
 /** The one state chip an expanded row shows: live, stale with its age, or not connected. */
@@ -107,7 +107,7 @@ const LaneButton = memo(function LaneButton({ row, expanded, now }: { row: World
         <div className={styles.tipLine}>Burn {row.burn}</div>
         <div className={styles.tipLine}>Forecast {row.forecastText}</div>
         <div className={styles.tipLine}>Source {row.source}</div>
-        <div className={styles.tipLine}>Observed {row.observedAt ? <time dateTime={row.observedAt}>{row.freshness} · {row.age}</time> : row.freshness}</div>
+        <div className={styles.tipLine}>Observed {row.observedAt ? <time dateTime={row.observedAt} title={row.observedAt}>{row.freshness} · {row.age}</time> : row.freshness}</div>
       </div>
     }>
       <button
@@ -122,7 +122,7 @@ const LaneButton = memo(function LaneButton({ row, expanded, now }: { row: World
           <Mark engine={row.engine} />
           {expanded ? <span className={styles.name}>{row.label}</span> : null}
           {expanded && row.bar.figure ? <span className={styles.figure} data-figure>{row.bar.figure}</span> : null}
-          <time className={styles.badge} data-freshness={row.freshness} dateTime={row.observedAt ?? undefined}>{badge}</time>
+          <time className={styles.badge} data-freshness={row.freshness} dateTime={row.observedAt ?? undefined} title={row.observedAt ?? undefined}>{badge}</time>
         </span>
         <Bar row={row} expanded={expanded} />
         {expanded && row.bar.used !== null ? <span className={styles.note} data-ending={row.bar.ending}>{row.bar.note}</span> : null}
@@ -182,7 +182,7 @@ export function WorldLaneRows({ expanded, enabled = true, now: fixedNow, onLive,
       {pools?.length ? <PoolAllowanceBar lanes={pools} expanded={expanded} now={now} /> : null}
       {expanded ? providerGroups(rows).map((group) => (
         <div key={group.engine} className={styles.provider} role="group" aria-label={`${PROVIDER[group.engine]} resources`}>
-          <span className={styles.providerName} aria-hidden="true">{PROVIDER[group.engine]}</span>
+          <span className={styles.providerName} aria-hidden="true"><Mark engine={group.engine} /> {PROVIDER[group.engine]}</span>
           {group.rows.map((row) => <LaneButton key={row.key} row={row} expanded now={now} />)}
         </div>
       )) : rows.map((row) => <LaneButton key={row.key} row={row} expanded={false} now={now} />)}

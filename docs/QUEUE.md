@@ -138,6 +138,20 @@ underperformance; it does not infer a causal yield gain or train a tier optimize
 
 ### Resource posture: the lane is a hint
 
+Among otherwise eligible executors, a fresh unused allowance can put the
+earliest reset or promotional expiry ahead of the lane hint and ordinary
+posture scoring. Antigravity can be prioritized before a burn rate exists when
+the enrolled personal Ultra seat has a verified five-hour window with capacity
+left. The dispatcher reads that window from `use-it-all.v1` or the matching
+`resource-live.v1` observation. Workspace evidence never substitutes for it.
+Missing, stale, spent, or passed windows get no deadline preference. This is a
+ranking rule for ready work, not a promise to launch without compatible demand.
+API lanes classified as metered still require a job to declare
+`max_cost_class=metered`. An executor already configured as included may
+retain that classification for a fresh, unspent promotional window; missing
+credit evidence is treated as metered. An observation never upgrades a
+metered executor to included or authorizes spending.
+
 Measured `work-market.v1` posture entries carry `lane`, `account_id`, `model`,
 `window_start` and `reset_at`, with the journal row's `ts` proving freshness.
 Only usage-derived posture carries reading provenance; host declarations, free

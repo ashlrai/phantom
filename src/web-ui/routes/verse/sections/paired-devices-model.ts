@@ -1,3 +1,4 @@
+import { ageInSeconds, relativeTime } from '../../../lib/relative-time.js';
 export interface PairedDevice {
   id: string;
   label: string;
@@ -23,10 +24,8 @@ export function sortDevices(devices: readonly PairedDevice[]): PairedDevice[] {
 
 export function lastUsedText(at: string | null, now: number): string {
   if (at === null) return 'never';
-  const minutes = Math.max(0, Math.floor((now - Date.parse(at)) / 60_000));
-  if (minutes < 60) return `last used ${minutes} m ago`;
-  if (minutes < 1440) return `last used ${Math.floor(minutes / 60)} h ago`;
-  return `last used ${Math.floor(minutes / 1440)} d ago`;
+  const reading = relativeTime(at, now);
+  return reading ? `last used ${ageInSeconds(reading.seconds, 'spaced').replace(/min/g, 'm')}` : 'last used at an unknown time';
 }
 
 export function revokeCommand(id: string): string | null {

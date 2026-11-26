@@ -1,4 +1,5 @@
-import { relativeText, type FleetRuns } from '../ops/ops-runs-model.js';
+import { ageInSeconds, relativeTime } from '../../../lib/relative-time.js';
+import type { FleetRuns } from '../ops/ops-runs-model.js';
 import { mergeSpeedReading } from './hub-merge-speed.js';
 
 const panes = [
@@ -40,12 +41,8 @@ function dispatchTileCount(lanes: { running: number; target: number; held: boole
 
 /** Age of the /api/fleet/runs snapshot for the hub header. */
 export function snapshotAge(generatedAt: string | null, nowMs: number): string {
-  const at = generatedAt === null ? NaN : Date.parse(generatedAt);
-  if (!Number.isFinite(at)) return 'reading not timed';
-  const seconds = Math.floor((nowMs - at) / 1_000);
-  if (seconds < 10) return 'read just now';
-  if (seconds < 60) return `read ${seconds}s ago`;
-  return `read ${relativeText(generatedAt, nowMs)}`;
+  const reading = relativeTime(generatedAt, nowMs);
+  return reading ? `read ${reading.seconds < 10 ? 'just now' : reading.seconds < 60 ? reading.text : ageInSeconds(reading.seconds, 'words')}` : 'reading not timed';
 }
 
 /** How long a "Not actually running" row has been stuck, as " · for 3 d"; empty when the start is unknown. */

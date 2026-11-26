@@ -9,6 +9,7 @@
  * goes through the shared guard (the unlock prompt appears only if the hold
  * has lapsed), and the answer is only recorded: nothing is paid or sent.
  */
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import { useState } from 'react';
 import type { Approval, ApprovalAnswerResult, ApprovalsList } from '../../../../core/fleet/approvals.js';
 import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
@@ -29,10 +30,7 @@ const label = (option: string): string => option.charAt(0).toUpperCase() + optio
 
 export function ageText(seconds: number | null): string {
   if (seconds === null) return 'asked at an unknown time';
-  if (seconds < 90) return 'asked just now';
-  if (seconds < 90 * 60) return `asked ${Math.round(seconds / 60)} min ago`;
-  if (seconds < 36 * 3600) return `asked ${Math.round(seconds / 3600)} h ago`;
-  return `asked ${Math.round(seconds / 86400)} days ago`;
+  return seconds < 90 ? 'asked just now' : `asked ${ageInSeconds(seconds, 'spaced')}`;
 }
 
 function expiryText(expires: string | null, asOf: string): string | null {
@@ -110,7 +108,7 @@ export function ApprovalsCard({ visible = true, from = 'desktop', canAnswer = tr
           `reply “${approval.options[0]} ${approval.ref}” from your phone`].filter(Boolean).join(' · ');
         return <li key={approval.id} className={styles.ask} aria-label={approval.question}>
           <p className={styles.request}>{KIND[approval.kind] ? <strong>{KIND[approval.kind]} </strong> : null}{approval.question}</p>
-          <p className={styles.meta}>{meta}</p>
+          <p className={styles.meta} title={approval.created ?? undefined}>{meta}</p>
           {canAnswer && <div className={styles.buttons} role="group" aria-label={`Answer: ${approval.question}`}>
             {approval.options.map((option, index) => <button key={option} type="button" className={styles.button} data-primary={index === 0 || undefined}
               disabled={busy !== ''} onClick={() => answer(approval, option)}>{label(option)}</button>)}
