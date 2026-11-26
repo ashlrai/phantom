@@ -184,7 +184,13 @@ execution or delivery across independent systems.
 `agents bus status`'s seats section probes the same store files — roster,
 state map, handoff journal and this receipts map — so a corrupt
 `handoff-notices.json` is named there (`notices: null`) instead of leaving
-status green while every apply fails or resends notices.
+status green while every apply fails or resends notices. `phm comms inbox`'s
+`seat-notices` source reads the same journal and receipts and lists each
+journaled handoff whose bus or owner notice is not proven delivered — an
+unrecorded channel is what the next apply retries, a recorded non-delivery
+outcome is final — as a `seat-notice` item, so a notice that never provably
+landed is visible in the one pending view instead of only inside the apply
+receipt.
 
 ## Bus and console participation
 

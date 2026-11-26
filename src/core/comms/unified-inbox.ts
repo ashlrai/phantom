@@ -551,6 +551,27 @@
  *               The job id is the item's own citation, so `--job` matches.
  *               Act: `phm queue stuck`, `phm fleet unfed --json`,
  *               `phm queue`.
+ *   seat-notices  journaled seat handoffs (`<home>/.phantom/bots/
+ *               handoffs.jsonl`) whose per-channel notification receipts
+ *               (`handoff-notices.json`) do not prove delivery — the
+ *               delivery side of `applySeatHandoff` the `seats` source's
+ *               pending plan cannot see, because the plan lists only
+ *               records not yet journaled. A channel receipt that was
+ *               never written ('unrecorded') is what the next
+ *               `bots handoffs --apply` retries; a recorded non-delivery
+ *               outcome ('halted', 'refused', 'unavailable', 'failed',
+ *               'unknown') is final — apply does not re-send a recorded
+ *               outcome — so the fleet bus and owner thread may never
+ *               have learned the seat released its work. Each gap lists
+ *               as a warn `seat-notice` naming the seat and handed-off
+ *               work, `since` the journal record's own createdAt and
+ *               `expiresAt` null — a notice waits for a decision, never a
+ *               guessed deadline; a `node-job` ref is the item's job
+ *               citation like the `seats` source's. An absent journal is
+ *               'missing' (verified no handoff was ever applied) and an
+ *               unsafe or malformed store 'unavailable', never an empty
+ *               gap list passed off as fact. Act: `phm bots handoffs`,
+ *               `phm bots handoff --seat <id>`, `phm bots handoffs --apply`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -602,7 +623,7 @@ import type { SentReceipt } from '../agents/slack-reply-binding.js';
 import { isSlackChannelId, isSlackTs } from '../agents/slack-network.js';
 import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
 import { classifyNeedsYou } from '../needs-you/classify.js';
-import { planSeatHandoffs, type SeatHandoffsPlan } from '../bots/seats.js';
+import { planSeatHandoffs, readSeatHandoffNotices, type SeatHandoffNoticesRead, type SeatHandoffsPlan } from '../bots/seats.js';
 import type { WorkDispatchJournal } from '../agentnet/work-dispatch-journal.js';
 import { workResultBodySchema } from '../agents/bus-v2-schema.js';
 import { realHome } from '../real-home.js';
@@ -639,7 +660,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
-  'send-gate', 'router-queue',
+  'send-gate', 'router-queue', 'seat-notices',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -667,7 +688,7 @@ export const UNIFIED_INBOX_KINDS = [
   'leader-reply-failed', 'leader-reply-orphaned',
   'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
   'claim-drift-bus', 'claim-drift-coordination', 'claim-drift-owner',
-  'send-gate-kill', 'send-gate-pause', 'router-queue-job',
+  'send-gate-kill', 'send-gate-pause', 'router-queue-job', 'seat-notice',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -923,6 +944,10 @@ export interface UnifiedInboxOptions {
    * `dispatch-events.log` through `readStuckQueue` — the same bounded read
    * `phm queue stuck` and the desktop Queue view serve. */
   readRouterQueue?: (options: { runsDir?: string; now?: () => number }) => Promise<RouterQueueStuckRead>;
+  /** Seat-notice seam; default reads `handoffs.jsonl` + `handoff-notices.json`
+   * under the seat store like `readSeatHandoffNotices` — the same files
+   * `phm bots handoffs --apply` journals and receipts against. */
+  readSeatNotices?: typeof readSeatHandoffNotices;
   /** Optional narrowing of the returned item list by stored source, severity,
    * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
@@ -2212,6 +2237,51 @@ async function seatItems(read: NonNullable<UnifiedInboxOptions['readSeatHandoffs
         ],
       };
     });
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+/**
+ * Journaled seat handoffs whose bus or owner notice is not proven delivered —
+ * the same `readSeatHandoffNotices` read the seat store serves, so this
+ * source and `phm bots handoffs` receipts can never disagree. One item per
+ * handoff record (receipts are keyed per handoffId, so each gap stands
+ * alone): `since` is the journal record's own createdAt, `expiresAt` stays
+ * null — a notice waits for a decision, never a guessed deadline. Warn and
+ * non-blocking like the `seats` source — agent coordination work, never
+ * Mason-blocking. The detail names each unconfirmed channel and its state:
+ * 'unrecorded' channels are what the next apply retries, recorded
+ * non-delivery outcomes are final and the detail says so rather than
+ * implying an apply fixes them. A `node-job` ref is the job citation the
+ * `seats` source applies; a `bus-claim` ref is a claim key, not a job.
+ */
+async function seatNoticeItems(read: NonNullable<UnifiedInboxOptions['readSeatNotices']>,
+  now: () => number): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  let result: SeatHandoffNoticesRead;
+  try { result = await read({ now }); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.status === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  if (result.source === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  const items = result.gaps.map((gap): Omit<UnifiedInboxItem, 'priority'> => {
+    const unconfirmed = gap.unconfirmed
+      .map(c => `${c.channel} ${c.state === 'unrecorded' ? 'unrecorded' : `recorded ${c.state}`}`).join(' · ');
+    const retryable = gap.unconfirmed.some(c => c.state === 'unrecorded');
+    return {
+      id: `seat-notices:${gap.handoffId}`,
+      source: 'seat-notices',
+      kind: 'seat-notice',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Seat ${gap.seatId} ${gap.work.kind} ${gap.work.ref}: notice unconfirmed`, TITLE_MAX),
+      detail: oneLine(`${unconfirmed}${retryable ? ' — apply retries unrecorded channels' : ' — recorded outcomes are not re-sent'}`, DETAIL_MAX),
+      since: gap.createdAt,
+      expiresAt: null,
+      ...jobIdsField(gap.work.kind === 'node-job' ? [gap.work.ref] : []),
+      act: [
+        `phm bots handoff --seat ${gap.seatId}`,
+        `phm bots handoff --seat ${gap.seatId} --apply`,
+        'phm bots handoffs',
+      ],
+    };
+  });
   return { report: { state: 'healthy', pending: items.length }, items };
 }
 
@@ -3635,6 +3705,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const claimDrift = claimDriftItems(options.readClaimDrift ?? readClaimStoreDrift, options);
   const sendGate = sendGateItems(options.readKillSwitch ?? readKillSwitch, options.probePause ?? probePauseState);
   const routerQueue = await routerQueueItems(options.readRouterQueue ?? readRouterQueueSource, options);
+  const seatNotices = await seatNoticeItems(options.readSeatNotices ?? readSeatHandoffNotices, now);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -3670,8 +3741,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'claim-drift': claimDrift.report,
     'send-gate': sendGate.report,
     'router-queue': routerQueue.report,
+    'seat-notices': seatNotices.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...seatNotices.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

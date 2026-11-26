@@ -141,6 +141,7 @@ increase above 20%. Refusal leaves the active harness unchanged.
 
 `src/core/bots/seats.ts` exports `BotSeat`, `QuotaEvidence`, `SeatAdapter`,
 `SeatState`, `SeatHandoff`, `SeatHandoffPlanEntry`, `SeatHandoffsPlan`,
+`SeatHandoffNoticeGap`, `SeatHandoffNoticesRead`,
 `SeatStoreInspection` and `SeatOptions`. The strict on-disk roster schema is
 `phantom-bot-seats.v1` at `~/.phantom/bots/seats.json`; missing means empty.
 Kinds are devin-bot, grok-bot, openai-bot, local and other; other requires a bus
@@ -223,6 +224,18 @@ Exports:
   that cannot
   be read or validated. It reads no seat contents, claims or quota evidence
   and writes nothing.
+- `readSeatHandoffNotices(opts?: SeatOptions): Promise<SeatHandoffNoticesRead>`
+  is the read-only delivery-side read of the same `handoffs.jsonl` journal
+  and `handoff-notices.json` receipts `inspectSeatStore` counts: `{status:'ok',
+  source:'missing'|'available', gaps}` — 'missing' for an absent journal
+  (verified no handoff was ever applied) — or `{status:'unavailable', reason}`
+  when the store fails the `safe()`/schema checks, never an empty gap list
+  passed off as fact. Each `SeatHandoffNoticeGap` names one journaled
+  handoff (`handoffId`, `seatId`, `work`, `createdAt`) whose bus/owner
+  notice is unproven: an 'unrecorded' channel is what the next apply
+  retries, a recorded non-delivery status is final — apply does not re-send
+  a recorded outcome. It takes no lock, writes nothing and sends nothing;
+  the unified inbox `seat-notices` source serves it.
 
 `SeatOptions` injects home, runs, clock, fleet root, quota reader, node store,
 node-release
@@ -4663,7 +4676,7 @@ citations, board tasks by `itemId` with deliveries riding their thread's
 citations, conversations by `thread.jobs`, wake hints by their cited job —
 a claim-holder hint's `jobId` or a resolved referent's feed citation —
 teammate tasks by `jobId`, seat
-handoffs by `node-job` refs, peer-dispatch receipts by their peer-announced
+handoffs and seat-notice gaps by `node-job` refs, peer-dispatch receipts by their peer-announced
 `jobId`, session-handoff items by their journal's job id) for `comms inbox
 --job` to match against,
 absent when no job relation is provable; `busReadContains(value)` and

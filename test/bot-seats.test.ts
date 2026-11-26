@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { applySeatHandoff, applySeatHandoffs, listSeats, nextSeatState, planSeatHandoff, planSeatHandoffs, seatMayClaim, seatParticipants, sendSeatMessage, transitionSeatState, type QuotaEvidence, type SeatOptions, type SeatState } from '../src/core/bots/seats.js';
+import { applySeatHandoff, applySeatHandoffs, listSeats, nextSeatState, planSeatHandoff, planSeatHandoffs, readSeatHandoffNotices, seatMayClaim, seatParticipants, sendSeatMessage, transitionSeatState, type QuotaEvidence, type SeatOptions, type SeatState } from '../src/core/bots/seats.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../src/core/fleet/local-store-lock.js';
 import { createDevinBotAdapter } from '../src/core/bots/devin-bot-adapter.js';
 import { participantSchema } from '../src/core/agents/bus-v2-schema.js';
@@ -271,6 +271,43 @@ it('reports notification failures without undoing or throwing after release', as
   expect(result.handoffs[0].notifications).toEqual({ bus: 'failed', owner: 'halted' });
   expect(JSON.stringify(result)).not.toContain('sk-');
   expect((await applySeatHandoff('helper', opts)).handoffs).toEqual([]);
+});
+it('reads journaled handoffs whose notice receipts do not prove delivery', async () => {
+  const o = await fixture();
+  expect(await readSeatHandoffNotices(o)).toEqual({ status: 'ok', source: 'missing', gaps: [] });
+  const record = (id: string, kind: 'node-job' | 'bus-claim', ref: string, at = now) =>
+    JSON.stringify({ schema: 'phantom-bot-handoff.v1', handoffId: id, seatId: 'helper',
+      work: { kind, ref }, done: 'unknown', left: 'unknown', branch: null, pr: null, createdAt: iso(at) });
+  const failed = 'a'.repeat(64), partial = 'b'.repeat(64), delivered = 'c'.repeat(64);
+  await writeFile(join(o.root, 'handoffs.jsonl'),
+    [record(failed, 'bus-claim', 'pr:o/r#7'), record(partial, 'node-job', 'job-9', now - 1000),
+      record(delivered, 'bus-claim', 'pr:o/r#8'), record(delivered, 'bus-claim', 'pr:o/r#8')].join('\n') + '\n');
+  // No receipts file: every journaled handoff owes both channels.
+  const allUnrecorded = await readSeatHandoffNotices(o);
+  expect(allUnrecorded).toMatchObject({ status: 'ok', source: 'available' });
+  if (allUnrecorded.status !== 'ok') throw new Error('expected ok');
+  expect(allUnrecorded.gaps).toHaveLength(3);
+  expect(allUnrecorded.gaps[0]).toMatchObject({ handoffId: failed, seatId: 'helper',
+    work: { kind: 'bus-claim', ref: 'pr:o/r#7' }, createdAt: iso(now),
+    unconfirmed: [{ channel: 'bus', state: 'unrecorded' }, { channel: 'owner', state: 'unrecorded' }] });
+  // Recorded non-delivery is final; a missing channel key is still owed.
+  await writeFile(join(o.root, 'handoff-notices.json'), JSON.stringify({
+    [failed]: { bus: 'posted', owner: 'halted' },
+    [partial]: { bus: 'sent' },
+    [delivered]: { bus: 'accepted', owner: 'duplicate' },
+  }));
+  const read = await readSeatHandoffNotices(o);
+  expect(read).toMatchObject({ status: 'ok', source: 'available' });
+  if (read.status !== 'ok') throw new Error('expected ok');
+  expect(read.gaps).toHaveLength(2);
+  expect(read.gaps.find(g => g.handoffId === failed)?.unconfirmed).toEqual([{ channel: 'owner', state: 'halted' }]);
+  expect(read.gaps.find(g => g.handoffId === partial)?.unconfirmed).toEqual([{ channel: 'owner', state: 'unrecorded' }]);
+  // A malformed journal or receipts file is unavailable, never an empty gap list.
+  await writeFile(join(o.root, 'handoffs.jsonl'), '{"schema":"phantom-bot-handoff.v1"}\n');
+  expect(await readSeatHandoffNotices(o)).toMatchObject({ status: 'unavailable' });
+  await writeFile(join(o.root, 'handoffs.jsonl'), record(failed, 'bus-claim', 'pr:o/r#7') + '\n');
+  await writeFile(join(o.root, 'handoff-notices.json'), '{"' + failed + '":{"bus":"posted","owner":"bogus"}}');
+  expect(await readSeatHandoffNotices(o)).toMatchObject({ status: 'unavailable' });
 });
 it('CLI apply posts a real owner-thread notice with default options', async () => {
   const o = await fixture();

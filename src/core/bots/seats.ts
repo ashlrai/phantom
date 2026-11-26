@@ -710,6 +710,91 @@ export async function applySeatHandoffs(o: SeatOptions = {}): Promise<SeatHandof
     seats: seats.map(({ handoffs, ...rest }) => ({ ...rest, handoffs: handoffs.map(({ handoffId: _id, ...h }) => h) })) }));
   return { schema: 'phantom-bot-handoffs-apply.v1', apply: true, seats };
 }
+
+/** Notice outcomes that prove the handoff note reached its surface; every
+ * other recorded status — and a missing receipt — leaves delivery unproven. */
+const SEAT_NOTICE_DELIVERED: ReadonlySet<NoticeStatus> = new Set(['posted', 'accepted', 'sent', 'duplicate']);
+
+/** One journaled handoff whose bus or owner notice is not proven delivered. */
+export interface SeatHandoffNoticeGap {
+  handoffId: string;
+  seatId: string;
+  work: { kind: 'node-job' | 'bus-claim'; ref: string };
+  /** ISO time the handoff record was journaled — the item's `since`. */
+  createdAt: string;
+  /** Channels whose notice delivery is unproven, bus then owner: 'unrecorded'
+   * means apply never wrote a receipt for the channel — the next apply
+   * retries it; a NoticeStatus is the recorded non-delivery outcome apply
+   * does not re-send. Delivered channels never appear. */
+  unconfirmed: { channel: 'bus' | 'owner'; state: 'unrecorded' | NoticeStatus }[];
+}
+
+export type SeatHandoffNoticesRead =
+  | { status: 'ok'; source: 'missing' | 'available'; gaps: SeatHandoffNoticeGap[] }
+  | { status: 'unavailable'; reason: string };
+
+const seatNoticeStatusSchema = z.enum(['posted', 'accepted', 'sent', 'duplicate',
+  'halted', 'refused', 'unavailable', 'failed', 'unknown']);
+const seatHandoffRecordSchema = z.object({
+  schema: z.literal('phantom-bot-handoff.v1'),
+  handoffId: z.string().regex(/^[a-f0-9]{64}$/),
+  seatId: z.string().min(1),
+  work: z.object({ kind: z.enum(['node-job', 'bus-claim']), ref: z.string().min(1) }).strict(),
+  done: z.string(), left: z.string(),
+  branch: z.string().nullable(), pr: z.string().nullable(),
+  createdAt: z.string(),
+}).strict();
+const seatNoticeReceiptsSchema = z.record(z.string().regex(/^[a-f0-9]{64}$/),
+  z.object({ bus: seatNoticeStatusSchema.optional(), owner: seatNoticeStatusSchema.optional() }).strict());
+
+/**
+ * Journaled seat handoffs whose bus or owner notice is not proven delivered —
+ * the delivery side of the handoff journal `applySeatHandoff` writes. Each
+ * apply attempt records a per-channel NoticeStatus in handoff-notices.json;
+ * a missing entry or channel means apply never reached that send (the next
+ * apply retries it), while a recorded non-delivery status is final — apply
+ * does not re-send a recorded outcome, so the fleet bus and the owner thread
+ * may never have learned the seat released its work. Read-only: no lock, no
+ * writes, no quota or claim reads — the journal and receipts files alone
+ * decide. An absent journal is 'missing' (verified no handoff was ever
+ * applied); an unsafe, malformed or unvalidatable store is 'unavailable',
+ * never an empty gap list passed off as fact.
+ */
+export async function readSeatHandoffNotices(o: SeatOptions = {}): Promise<SeatHandoffNoticesRead> {
+  try {
+    const journalText = await read(o, 'handoffs.jsonl');
+    if (journalText === null) return { status: 'ok', source: 'missing', gaps: [] };
+    const records: z.infer<typeof seatHandoffRecordSchema>[] = [];
+    const seen = new Set<string>();
+    for (const line of journalText.split('\n')) {
+      if (!line) continue;
+      const parsed = seatHandoffRecordSchema.safeParse(JSON.parse(line));
+      if (!parsed.success) return { status: 'unavailable', reason: 'Seat handoff journal is not valid.' };
+      if (!seen.has(parsed.data.handoffId)) { seen.add(parsed.data.handoffId); records.push(parsed.data); }
+    }
+    const receiptsText = await read(o, 'handoff-notices.json');
+    let receipts: z.infer<typeof seatNoticeReceiptsSchema> = {};
+    if (receiptsText !== null) {
+      const parsed = seatNoticeReceiptsSchema.safeParse(JSON.parse(receiptsText));
+      if (!parsed.success) return { status: 'unavailable', reason: 'Seat handoff notices are not valid.' };
+      receipts = parsed.data;
+    }
+    const gaps = records.flatMap((record): SeatHandoffNoticeGap[] => {
+      const receipt = receipts[record.handoffId];
+      const unconfirmed: SeatHandoffNoticeGap['unconfirmed'] = [];
+      for (const channel of ['bus', 'owner'] as const) {
+        const state = receipt?.[channel];
+        if (state === undefined) unconfirmed.push({ channel, state: 'unrecorded' });
+        else if (!SEAT_NOTICE_DELIVERED.has(state)) unconfirmed.push({ channel, state });
+      }
+      return unconfirmed.length === 0 ? [] : [{ handoffId: record.handoffId, seatId: record.seatId,
+        work: record.work, createdAt: record.createdAt, unconfirmed }];
+    });
+    return { status: 'ok', source: 'available', gaps };
+  } catch {
+    return { status: 'unavailable', reason: 'Seat handoff store unavailable.' };
+  }
+}
 export async function sendSeatMessage(input: { from: string; to: string; text: string }, o: SeatOptions = {}) {
   assertMetadata(input.text);
   const seats = await roster(o);
