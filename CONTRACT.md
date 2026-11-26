@@ -61,9 +61,10 @@ alone decides. The optional third argument `uniqueReady` defaults to `false`.
 When true, the parser keeps the first valid READY row for each job ID across
 hinted and lane-open rows in file order. Rows without an ID and rows with
 other statuses retain their usual handling. `readyRowsForDepth`
-(`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
-`tier` for the tier tally, including lane-open jobs as `READY`, with READY
-job IDs deduplicated by the parser.
+(`src/core/fleet/leader-board.ts`) accepts the same optional `routerQueue`
+text for spec-less envelope resolution and returns rows with a `status` and
+optional `tier` for the tier tally, including lane-open jobs as `READY`,
+with READY job IDs deduplicated by the parser.
 `readyTsvHeader(cells)` returns the canonical column map for a recognized
 queue TSV header, or `null` for a data row. `conflictingPrIds(readyTsvText)`
 reads rebase identifiers from the job ID field, including parked rows.

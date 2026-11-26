@@ -1,12 +1,12 @@
 import { describe, test, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { computeRank, SEEDS, updateRank, readRank, validRank, localMerges } from '../src/core/fleet/repo-rank.js';
 import { allocateRepos, readRepoPriority, setRepoPriority, type RepoMarketEvidence } from '../src/core/fleet/repo-market.js';
-import { managedRepoCatalog, parseRepoMarketFacts, planRepoChange } from '../src/core/fleet/repos-manager.js';
+import { listManagedRepos, managedRepoCatalog, parseRepoMarketFacts, planRepoChange } from '../src/core/fleet/repos-manager.js';
 const now = new Date('2026-11-04T12:00:00Z');
 
 test('repository management distinguishes unknown metrics and routes scope changes to grant review', () => {
@@ -40,6 +40,21 @@ test('allocation responds to evidence, and boost and pause are bounded', () => {
     expect(readRepoPriority('ashlrai/locus', directory)).toBe('pause');
     expect(readRepoPriority('ashlrai/lexicon', directory)).toBe('normal');
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('managed repo queue depth counts lane-open and envelope-resolved ready rows', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'repos-depth-'));
+  try {
+    mkdirSync(join(dir, 'queue'), { recursive: true });
+    writeFileSync(join(dir, 'queue', 'ready.tsv'),
+      'RQ-OPEN\tphantom\t\twork\tprompts/open.md\n' +
+      'RQ-ENV\tphantom\tNOT-A-LANE\twork\tprompts/env.md\n');
+    writeFileSync(join(dir, 'queue', 'router-queue.md'),
+      '- READY RQ-ENV (preferred_lane=devin): spec\n');
+    const report = await listManagedRepos({ runsDir: dir, now: +now,
+      run: async () => ({ code: 0, stdout: '{"data":{}}', stderr: '', timedOut: false, truncated: false, missing: false }) });
+    expect(report.repos.find(row => row.repo === 'ashlrai/phantom')?.queueDepth).toBe(2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('the manager includes the effective stage for repos beyond the ecosystem seed list', () => {

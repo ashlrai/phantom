@@ -105,6 +105,14 @@ describe('recordLeaderBoard', () => {
     expect(result.board.conflictingPrs.history).toHaveLength(1); // the earlier sample is retained
   });
 
+  it('counts envelope-resolved ready rows in queueDepthByTier', async () => {
+    await writeFile(join(queueDir, 'ready.tsv'), 'RQ-ENV\tphantom\tNOT-A-LANE\twork\tprompt.md\n');
+    await writeFile(join(queueDir, 'router-queue.md'), '- READY RQ-ENV (preferred_lane=devin): spec\n');
+    const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+    if (!result.wrote) throw new Error('unreachable');
+    expect(result.board.queueDepthByTier).toEqual({ work: 1 });
+  });
+
   it('still writes with an empty runs dir and never throws on a hostile path', async () => {
     const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
     expect(result.wrote).toBe(true);
@@ -166,6 +174,13 @@ describe('the conflict proxy and tier counts are pure', () => {
       row('READY', 'RQ-HINTED', 'codex', 'fast'),
     ].join('\n');
     expect(queueDepthByTier(readyRowsForDepth(text))).toEqual({ frontier: 1, work: 1, mid: 1 });
+  });
+
+  it('resolves spec-less rows through the router-queue envelope for tier depth', () => {
+    const text = 'RQ-ENV\tphantom\tNOT-A-LANE\twork\tprompt.md\nRQ-OPEN\tphantom\t\tfast\tprompt.md';
+    expect(queueDepthByTier(readyRowsForDepth(text))).toEqual({ fast: 1 });
+    const routerQueue = '- READY RQ-ENV (preferred_lane=devin): spec\n';
+    expect(queueDepthByTier(readyRowsForDepth(text, routerQueue))).toEqual({ work: 1, fast: 1 });
   });
 });
 

@@ -21,6 +21,7 @@ type RepoFacts = {
   lastRelease: { tag: string; publishedAt: string } | null;
 };
 const UNKNOWN: RepoFacts = { openPrs: null, issues: null, bugs: null, stars: null, ciHealth: null, mergesPerDay: null, lastRelease: null };
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' ? value as Record<string, unknown> : {};
 const count = (value: unknown): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
@@ -72,9 +73,12 @@ const root = () => process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs
 let factsCache: { key: string; at: number; facts: Promise<Map<string, RepoFacts>> } | undefined;
 
 async function readyDepth(runsDir: string): Promise<Map<string, number> | null> {
-  const source = await readSource(join(runsDir, 'queue', 'ready.tsv'), 2 * 1024 * 1024, false);
+  const [source, router] = await Promise.all([
+    readSource(join(runsDir, 'queue', 'ready.tsv'), 2 * 1024 * 1024, false),
+    readSource(join(runsDir, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
+  ]);
   if (source.state !== 'healthy') return null;
-  const parsed = parseReadyTsv(source.text);
+  const parsed = parseReadyTsv(source.text, router.state === 'healthy' ? router.text : null);
   const depths = new Map<string, number>();
   const rows = [...parsed.rows.filter(row => row.status === 'READY'), ...parsed.unhintedRows];
   for (const row of rows) {
