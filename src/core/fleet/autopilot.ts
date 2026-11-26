@@ -260,15 +260,17 @@ export function autopilotLanes(state: FleetAutopilotState): AutopilotLane[] {
   });
 }
 
-function starvedAction(lane: AutopilotLane, lanes: AutopilotLane[], atCap: boolean, nonCapClosed: boolean, admitReason: string | null): AutopilotAction {
-  if (nonCapClosed) {
+function starvedAction(lane: AutopilotLane, lanes: AutopilotLane[], global: FleetAdmissionReport['global']): AutopilotAction {
+  if (global.non_cap_closed) {
+    const admitReason = global.admit_reason;
     return { kind: 'no-op', reason: 'admission-closed', detail: `'${lane.lane}' has launchable work and free slots, but fleet admission is closed${admitReason ? ` (${admitReason})` : ''}; nothing launches until it reopens.` };
   }
-  if (atCap) {
-    // Free the cap for the starved lane: hold the running lane whose READY
-    // depth can most afford a pause (over-deep queues outlive one pause).
+  if (global.at_cap) {
+    // A hold lets existing work drain. The candidate must be able to bring
+    // running strictly below the cap, even after a global cap reduction.
+    const slotsNeeded = global.running - global.cap + 1;
     const holdable = lanes
-      .filter((row) => row.lane !== lane.lane && !row.held && (row.running ?? 0) > 0 &&
+      .filter((row) => row.lane !== lane.lane && !row.held && row.running !== null && row.running >= slotsNeeded &&
         (row.target ?? 0) > 0 && (row.ready ?? 0) > (row.target ?? 0) * AUTOPILOT_OVER_DEEP_FACTOR)
       .sort((a, b) => (b.ready ?? 0) / (b.target || 1) - (a.ready ?? 0) / (a.target || 1) || a.lane.localeCompare(b.lane));
     if (holdable.length > 0) {
@@ -278,7 +280,7 @@ function starvedAction(lane: AutopilotLane, lanes: AutopilotLane[], atCap: boole
         detail: `Hold '${target.lane}' (ready ${target.ready} > ${AUTOPILOT_OVER_DEEP_FACTOR}x target ${target.target}) so '${lane.lane}' queued work can reach the freed cap.`,
       };
     }
-    return { kind: 'no-op', reason: 'capacity-bound', detail: `'${lane.lane}' has queued work under target but the global cap is full; no over-deep lane is safe to hold.` };
+    return { kind: 'no-op', reason: 'capacity-bound', detail: `'${lane.lane}' has queued work under target but the global cap is full; no eligible sibling can drain enough running jobs to free a slot.` };
   }
   return { kind: 'no-op', reason: 'dispatch-stall', detail: `'${lane.lane}' has launchable work and free slots under the cap but is not running to target — the dispatcher should be launching.` };
 }
@@ -369,7 +371,9 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
         break;
       }
       case 'starved-lane':
-        action = starvedAction(lanes.find((row) => row.lane === topGap.lane)!, lanes, atCap === true, nonCapClosed === true, admission?.global.admit_reason ?? null);
+        action = admission === null
+          ? { kind: 'no-op', reason: 'state-unreadable', detail: 'Fleet admission is unknown, so starvation cannot be diagnosed.' }
+          : starvedAction(lanes.find((row) => row.lane === topGap.lane)!, lanes, admission.global);
         break;
       case 'stale-parked-deps':
         action = {

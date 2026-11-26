@@ -110,6 +110,26 @@ describe('planFleetAutopilot', () => {
     expect(report.action).toMatchObject({ kind: 'no-op', reason: 'capacity-bound' });
   });
 
+  it.each([
+    { cap: 2, expected: { kind: 'hold-lane', lane: 'claude' } },
+    { cap: 1, expected: { kind: 'no-op', reason: 'capacity-bound' } },
+  ])('checks whether a sibling can drain below a reduced cap of $cap', ({ cap, expected }) => {
+    const report = planFleetAutopilot(state({
+      admission: admission([
+        admissionLane('devin', 0, 2, 6),
+        admissionLane('codex', 1, 1, 12),
+        admissionLane('claude', 2, 2, 8),
+      ], cap, 3),
+      queue: queueView({ byLane: [
+        { lane: 'devin', ready: 6, parked: 0 },
+        { lane: 'codex', ready: 12, parked: 0 },
+        { lane: 'claude', ready: 8, parked: 0 },
+      ] }),
+    }));
+    expect(report.topGap).toMatchObject({ kind: 'starved-lane', lane: 'devin' });
+    expect(report.action).toMatchObject(expected);
+  });
+
   it('answers dispatch-stall when a lane is starved while the fleet is under the cap', () => {
     const report = planFleetAutopilot(state({
       admission: admission([admissionLane('devin', 0, 2, 4), admissionLane('codex-local', 2, 2, 2)], 18, 2),
