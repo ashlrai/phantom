@@ -165,10 +165,17 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       const lines = [`Org (leader ${org.leader})`];
       for (const m of org.members) {
         lines.push(`  ${m.name}${m.nickname ? ` "${m.nickname}"` : ''} [${m.id}] ${m.role}`);
-        for (const c of m.contributions) lines.push(`    lane ${c.lane}: ${c.share}% declared, ${joins.some((j) => j.member === m.id && j.lanes.some((l) => l.lane === c.lane)) ? 'opted in' : 'not opted in'}`);
+        for (const c of m.contributions) {
+          // Opt-in counts only the join records this machine holds; naming the
+          // machines behind it keeps a member's partial view (its own records
+          // only) from reading as the org's admitted set.
+          const machines = [...new Set(joins.filter((j) => j.member === m.id && j.lanes.some((l) => l.lane === c.lane)).map((j) => j.machine))].sort();
+          lines.push(`    lane ${c.lane}: ${c.share}% declared, ${machines.length ? `opted in on ${machines.join(', ')}` : 'not opted in'}`);
+        }
         for (const a of m.agents) lines.push(`    agent ${a.id} (${a.lane} on ${a.machine}; ${a.roles.join('/')}) reports to ${a.reports_to ?? 'nobody'}`);
       }
-      return print({ schema: 'org.show.v1', file, org, joins }, lines.join('\n'));
+      lines.push(`Opt-in counts join records held on this machine (${joinsDir()}); each machine sees only its own joins directory.`);
+      return print({ schema: 'org.show.v1', file, org, joins, joinsDir: joinsDir() }, lines.join('\n'));
     }
     if (sub === 'join') {
       const member = one(rest, '--member'), machine = one(rest, '--machine');
@@ -238,10 +245,13 @@ export async function cmdOrg(argv: string[]): Promise<number> {
         : `on that member's machine run: phm org join --member ${h.member} --machine ${machineArg} --lane ${h.lane}`;
       return `  held ${h.member}/${h.lane}: ${h.reason} — ${fix}`;
     });
-    return print(plan, [`Plan for ${plan.leader}: ${plan.assignments.length} assigned, ${plan.unassigned.length} unassigned, ${plan.held.length} lanes held`,
+    // The plan covers only the join records this machine holds; a member's
+    // machine sees a partial org, so say which records counted.
+    return print({ ...plan, joinsDir: joinsDir() }, [`Plan for ${plan.leader}: ${plan.assignments.length} assigned, ${plan.unassigned.length} unassigned, ${plan.held.length} lanes held`,
       ...plan.assignments.map((a) => `  ${a.job} -> ${a.agent} (${a.member}/${a.lane}, ~${a.costPct}%)`),
       ...plan.unassigned.map((u) => `  ! ${u.job}: ${u.reason}`),
-      ...heldLines].join('\n'));
+      ...heldLines,
+      `Opt-in counts join records held on this machine (${joinsDir()}); the plan covers only those records.`].join('\n'));
   } catch (err) {
     return orgFailure(json, command, err);
   }
