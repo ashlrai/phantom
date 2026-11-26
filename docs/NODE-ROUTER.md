@@ -112,7 +112,10 @@ job carries one, the lease token pair and expiry, and paste-ready `renew`,
 node can never run.
 
 `phm node plan` prints one `job -> node` line per routable job, or `nobody`
-with the fix when no live node can take it. An empty route set is not the
+with the fix when no live node can take it. With `--owner`, the plan shows only
+that owner's routes while honoring the same shared slot reservations as
+`pull`. Earlier jobs from other owners can reserve slots on shared nodes.
+An empty route set is not the
 same as an empty queue, so the text answer reads the scope once more: with no
 jobs queued it names the `phm node enqueue` command, and otherwise it counts
 the scope's jobs by state (`pending`, `running`, `completed`) — claimed or
