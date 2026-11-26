@@ -125,6 +125,9 @@ describe('fleet_imessage_tasks over MCP', () => {
       type: 'object',
       properties: {
         jobId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$', description: 'Exact job id selector such as RQ-PHX-EXAMPLE-1; applied before limit truncation.' },
+        peer: { type: 'string', enum: ['dot', 'instinct'], description: 'Exact peer selector; ANDed with the other selectors.' },
+        state: { type: 'string', enum: ['queued', 'sending', 'pending', 'replied', 'expired', 'cancelled'], description: 'Exact local ledger-state selector; ANDed with the other selectors.' },
+        kind: { type: 'string', enum: ['research', 'triage', 'report', 'rebase'], description: 'Exact work-kind selector; ANDed with the other selectors.' },
         limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_IMESSAGE_TASKS, default: DEFAULT_FLEET_IMESSAGE_TASKS },
       },
       additionalProperties: false,

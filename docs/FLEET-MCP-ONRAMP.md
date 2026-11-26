@@ -86,7 +86,8 @@ is a coordination receipt, not proof a job executed.
 `fleet_imessage_path` takes no arguments. `fleet_imessage_acks` accepts
 `limit` 1–100 (default 20); the CLI also supports an exact `--rowid` selector.
 `fleet_imessage_tasks` accepts `limit` 1–100 (default 20) and optional exact
-`jobId`; selection happens before truncation. These tools return local
+`jobId`, `peer`, `state` and `kind` selectors, all ANDed; selection happens
+before truncation. These tools return local
 metadata without message bodies, handles or task correlation tokens.
 Acknowledgement records do not establish delivery, and peer-reported results
 remain unverified. See [iMessage](IMESSAGE.md) and

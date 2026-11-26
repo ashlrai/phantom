@@ -225,6 +225,15 @@ phm fleet imessage-tasks peers --json
 phm fleet imessage-tasks list --json
 ```
 
+`imessage-tasks list` accepts `--job <id>` plus the bounded `--peer
+dot|instinct`, `--state queued|sending|pending|replied|expired|cancelled` and
+`--kind research|triage|report|rebase` selectors; every supplied flag must
+match the stored row, and the report echoes the selection with an honest
+`matched` flag. The MCP `fleet_imessage_tasks` tool (`jobId`, `peer`,
+`state`, `kind`, `limit`) and the
+`/api/verse/fleet/control/teammate-tasks` read (`?job=`, `?peer=`, `?state=`,
+`?kind=`) apply the same ANDed selectors.
+
 `imessage-tasks enqueue` requires `--peer dot|instinct`, `--job`,
 `--kind research|triage|report|rebase`, bounded `--scope`, `--repo owner/name`,
 `--format` and a future ISO `--deadline`; optional repeated `--pr` values

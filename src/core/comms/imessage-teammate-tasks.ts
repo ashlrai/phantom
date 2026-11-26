@@ -32,16 +32,50 @@ const safeText = (max: number) => z.string().trim().min(1).max(max)
   .refine(text => !/[\p{Cc}\p{Cf}]/u.test(text) && scrubSecrets(text) === text);
 const millis = z.number().int().nonnegative().max(8640000000000000);
 const rowid = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+/** The roster of teammate peers a task can name — the same two senders the
+ * transport allowlist binds; every ledger read's `peer` selector validates
+ * against this one list. */
+export const TEAMMATE_TASK_PEERS = ['dot', 'instinct'] as const;
+export type TeammateTaskPeer = (typeof TEAMMATE_TASK_PEERS)[number];
+/** The ledger lifecycle states a task row can carry, in lifecycle order —
+ * the same enum `taskSchema.state` validates stored rows against. */
+export const TEAMMATE_TASK_STATES = ['queued', 'sending', 'pending', 'replied', 'expired', 'cancelled'] as const;
+export type TeammateTaskState = (typeof TEAMMATE_TASK_STATES)[number];
+/** The bounded work kinds a teammate task can request. */
+export const TEAMMATE_TASK_KINDS = ['research', 'triage', 'report', 'rebase'] as const;
+export type TeammateTaskKind = (typeof TEAMMATE_TASK_KINDS)[number];
+/** The bounded selector every teammate-task ledger read applies — CLI
+ * `imessage-tasks list`, MCP `fleet_imessage_tasks` and the Verse
+ * teammate-tasks API all validate the same values and AND them, so a row
+ * matches only when every supplied dimension equals its stored field. A
+ * field the row does not carry never matches a selector for it. */
+export interface TeammateTaskLedgerFilter {
+  jobId?: string;
+  peer?: TeammateTaskPeer;
+  state?: TeammateTaskState;
+  kind?: TeammateTaskKind;
+}
+/** One match rule for the selector above; takes the smallest row shape the
+ * surfaces project so CLI receipts, MCP list rows and API rows share it. */
+export function teammateTaskLedgerMatch(
+  task: { jobId: string; peer: string; state: string; kind?: string | null },
+  filter: TeammateTaskLedgerFilter,
+): boolean {
+  return (filter.jobId === undefined || task.jobId === filter.jobId)
+    && (filter.peer === undefined || task.peer === filter.peer)
+    && (filter.state === undefined || task.state === filter.state)
+    && (filter.kind === undefined || (task.kind ?? undefined) === filter.kind);
+}
 const inputSchema = z.object({
   jobId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/).refine(text => scrubSecrets(text) === text),
-  peer: z.enum(['dot', 'instinct']), kind: z.enum(['research', 'triage', 'report', 'rebase']),
+  peer: z.enum(TEAMMATE_TASK_PEERS), kind: z.enum(TEAMMATE_TASK_KINDS),
   scope: safeText(1200), repo: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/).max(200).refine(text => scrubSecrets(text) === text),
   prRefs: z.array(rowid).max(20).default([]), format: safeText(300),
   deadline: z.string().datetime({ offset: true }),
 }).strict();
 const taskSchema = inputSchema.extend({
   token: z.string().regex(/^[a-f0-9]{32}$/), createdAt: millis,
-  state: z.enum(['queued', 'sending', 'pending', 'replied', 'expired', 'cancelled']), attemptedAt: millis.optional(),
+  state: z.enum(TEAMMATE_TASK_STATES), attemptedAt: millis.optional(),
   receipt: z.object({ rowid, sent: z.boolean(), delivered: z.boolean(), error: z.number().finite() }).strict().optional(),
   result: z.object({ rowid, status: z.enum(['DONE', 'BLOCKED', 'FAILED']), summary: safeText(1600), at: millis }).strict().optional(),
   metrics: z.array(z.enum(['launch', 'finish'])).max(2).default([]),
