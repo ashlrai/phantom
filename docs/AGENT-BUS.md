@@ -1067,6 +1067,45 @@ free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 
+**Next-job claim.** `phm agents bus work claim-next [<agent>] --lease-ms
+<1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>]
+[--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>]
+[--channel <name>] [--topic <topic>] [--result <reserved|admitted|complete|failed>]
+[--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>]
+[--contains <text>]` is the job-level companion to `work next`: where `work
+next` atomically claims the next claimable v1 envelope addressed to an
+agent, `claim-next` atomically claims the next claimable v2 work-feed job,
+so "give me work" never degrades into a `work feed --claimable` read
+followed by a `work claim --job` that can lose the race between the two
+calls. The candidate set is one claims-joined feed read narrowed by the
+same filters `work feed` accepts — `--job`, `--repo`, `--provider`,
+`--tier`, `--channel`, `--topic`, `--result`, `--id` (the retained-envelope
+citation, never an operation id: each call mints its own), `--since`,
+`--before` and `--contains` — plus the pending-work address rule the
+positional `<agent>` applies (default `PHM_AGENT_ID`) and `--announcer`,
+the feed `--owner` job-announcer filter under a name that cannot collide
+with the lease `--owner`. Candidates are the filtered open jobs
+(`queued`/`rescheduled`) with declared claim keys in the feed view's
+newest-first `updatedAt` order — the `--open` rule minus its
+complete-coverage exclusion, so a job whose every key is provably held
+still counts as a held candidate the way `work next`'s drained `empty`
+reports held work rather than a dry well. Each candidate then runs the
+same `claimBusWorkJob` path per key — `queue:<jobId>` preferred, then the
+provably-free set the claims join computed, else every declared key under
+unknown coverage — with a fresh feed and coordination read per attempt, so
+a job that moved between the scan and its turn refuses rather than
+claiming stale state; a conflict on one key still lets a sibling free key
+take the lease. `acquired` returns the `work claim` acquired shape (job,
+scope holds, fencing token for its acquirer only) plus `attempted`, the
+key-level acquire calls made; `empty` reports the observed
+`{candidates, held, attempted}` totals — candidates the filtered open
+keyed jobs, held the ones whose declared keys are all provably or
+observably held — and every other status passes the feed or coordination
+store's own state through, so an unreadable feed or hold table never
+produces a guessed claim. Exit 0 on `acquired`/`empty`, 2 on invalid, 1
+otherwise. Claims still coordinate scope only — holding one never permits
+a merge, a push, or spending.
+
 **Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the

@@ -1578,6 +1578,58 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('RQ-CLI-CLAIM(queued)');
   });
 
+  it('claims the next claimable work-feed job in one step', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-NEXT-A', '--title', 'Older job',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-NEXT-A', '--to', 'agent:atlas', '--id', 'cn-a'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-NEXT-B', '--title', 'Newer job',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-NEXT-B', '--claim', 'repo:ashlrai/phantom',
+      '--to', 'agent:atlas', '--id', 'cn-b'])).json).toMatchObject({ status: 'posted' });
+
+    // The newest open job's declared queue key is claimed atomically; --owner
+    // defaults to PHM_AGENT_ID and the positional agent scopes the to-filter.
+    const claimed = await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '600000', '--owner', 'worker-1'],
+      { PHM_AGENT_ID: 'atlas' });
+    expect(claimed.code).toBe(0);
+    expect(claimed.json).toMatchObject({ status: 'acquired', attempted: 1,
+      job: { id: 'RQ-NEXT-B', owner: 'agent:atlas', status: 'queued' },
+      claim: { claimKey: 'queue:RQ-NEXT-B', owner: 'worker-1' } });
+    expect(claimed.json.claim.token).toMatch(/^[a-f0-9]{64}$/);
+    // RQ-NEXT-B declared a second key, so holding its queue key leaves the
+    // job claimable: the next pass takes the provably-free sibling in the
+    // same step, and only a fully-held job stops being a candidate.
+    const sibling = await run(['work', 'claim-next', '--lease-ms', '60000'], { PHM_AGENT_ID: 'atlas' });
+    expect(sibling.code).toBe(0);
+    expect(sibling.json).toMatchObject({ status: 'acquired', attempted: 1,
+      job: { id: 'RQ-NEXT-B' }, claim: { claimKey: 'repo:ashlrai/phantom' } });
+    // The new hold joins the feed read like any other claim.
+    const feed = await run(['work', 'feed', '--claims']);
+    expect(feed.json.claims.holds).toEqual(expect.arrayContaining([
+      expect.objectContaining({ jobId: 'RQ-NEXT-B', claimKey: 'queue:RQ-NEXT-B', owner: 'worker-1' }),
+      expect.objectContaining({ jobId: 'RQ-NEXT-B', claimKey: 'repo:ashlrai/phantom' })]));
+
+    // The next pass claims the remaining job; once both are fully held the
+    // well reads empty with the observed candidate/held totals.
+    const second = await run(['work', 'claim-next', '--lease-ms', '60000'], { PHM_AGENT_ID: 'atlas' });
+    expect(second.code).toBe(0);
+    expect(second.json).toMatchObject({ status: 'acquired', job: { id: 'RQ-NEXT-A' } });
+    const drained = await run(['work', 'claim-next', '--lease-ms', '60000'], { PHM_AGENT_ID: 'atlas' });
+    expect(drained.code).toBe(0);
+    expect(drained.json).toMatchObject({ status: 'empty', candidates: 2, held: 2 });
+
+    // Usage errors exit 2; a filtered miss is an honest empty, not a guess.
+    expect(await run(['work', 'claim-next', '--lease-ms', '60000'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '60000', '--job', 'RQ-GONE']))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+
+    // Human output names the job, the claim and the attempt count.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'claim-next', 'agent:atlas', '--lease-ms', '60000',
+      '--owner', 'worker-2', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('empty candidates=');
+  });
+
   it('claims the next pending work envelope addressed to an agent', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
