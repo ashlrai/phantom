@@ -295,6 +295,25 @@ class ExclusionTests(unittest.TestCase):
         self.assertEqual(skips(r.stdout).get('hold-list-pr'), 1, r.stdout)
         self.assertEqual(dry_ids(r.stdout), ['RQ-FREE-PR'])
 
+    def test_hold_with_repo_first_does_not_block_same_pr_number_in_another_repo(self):
+        rows = [
+            '- HOLD RQ-OLD (repo=ashlrai/phantom): PR=124 reason=owner hold',
+            line('RQ-HELD-PR', pool='devin', tier='work', repo='phantom', text='LAND PR=124'),
+            line('RQ-FREE-PR', pool='devin', tier='work', repo='binshield', text='LAND PR=124'),
+        ]
+        tmp = build('\n'.join(rows) + '\n', repos=('phantom', 'binshield'))
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        (home / '.fixture-restock-authority.json').write_text(json.dumps({
+            'v': 1, 'kill': False, 'effectiveSwitch': 'propose',
+            'policy': {'repos': [{'nameWithOwner': f'ashlrai/{repo}', 'stage': 'propose'}
+                                 for repo in ('phantom', 'binshield')]},
+        }))
+        r = restock(home, '--dry-run', '--per-lane', '4')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(skips(r.stdout).get('hold-list-pr'), 1, r.stdout)
+        self.assertEqual(dry_ids(r.stdout), ['RQ-FREE-PR'])
+
     def test_security_pinned_line_never_selected(self):
         rows = [
             line('RQ-SEC-DISP', P=1, pool='devin', tier='mid', repo='phantom',

@@ -34,6 +34,7 @@ def family_paused(job):
 
 REPO_NAME = r"[a-z0-9][a-z0-9._-]{0,99}"
 REPO_ATTR = re.compile(r"(?:^|[,;\s])repo=([^,;\s)]*)", re.I)
+HOLD_REPO_ATTR = re.compile(r"(?:^|[,;\s(])repo=((?:ashlrai/)?" + REPO_NAME + r")(?=$|[,;:\s)])", re.I | re.ASCII)
 
 
 def signed_repo_names():
@@ -187,7 +188,7 @@ for i, l in enumerate(lines):
     for j in ids[:1]: status.setdefault(j, m.group(1))
     for j in re.findall(r"\b(?:CLAIMED|DONE|PR-OPEN)[^A-Z]{0,40}?([A-Z][A-Z0-9-]*-[A-Za-z0-9._-]+)", l[:160])[:1]: status[j] = l.split()[1]
     if m.group(1) in ("HOLD", "HOLD-SECURITY"):   # hold-list PRs (amendment #5): (repo|*, pr#) pairs never selectable
-        hr = REPO_ATTR.search(l)
+        hr = HOLD_REPO_ATTR.search(l)
         hold_repo = hr[1].lower().removeprefix("ashlrai/") if hr else "*"
         for n in re.findall(r"(?:pull/|PR=|#)(\d+)", l, re.I): held_pr.add((hold_repo, n))
         for rr, n in re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", l): held_pr.add((rr.lower(), n))
