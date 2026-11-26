@@ -326,6 +326,24 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   window — jobs the dispatcher still counts as running are excluded, so
   a long job never queues work — and an unreadable ledger or run-marker
   directory emits nothing —
+  and the jobs ledger's claude_recovery rows, the dispatcher's own
+  auto-recovery record — the `claude_recovery` rows
+  claudeRecoveryBacklogItems folds from `metrics/jobs.jsonl`, appended
+  by the claim loop when `claude_recoveries()` in
+  contrib/mac/launch_precheck.py sees two fresh exit-1 empty claude
+  finishes on distinct attempts inside a day and dispatchd spawns a
+  `<job>-CR1` child carrying the same prompt (until now the one
+  jobs.jsonl lifecycle event with no reader at all: every other event
+  folds somewhere, but the fleet's record that the claude lane kept
+  producing empty exit-1 finishes never became work). A
+  recorded-reason cell becomes an item while its distinct parent_job
+  count reaches the recurring bar inside the 72-hour window — each
+  counted job already burned two exit-1 empty finishes, so three
+  recoveries stand for six wasted attempts — truncated tails are
+  stated as lower bounds, the row's `line`/`source` local path fields
+  never reach a prompt, and items emit only for the fleet's own
+  repository since the recovery machinery is this install's
+  dispatcher —
   and the swapout-rate ledger's recurring memory evidence, the per-sample
   `free_pct`/`swap_gb`/`swapouts_per_min` rows the daemon's swapout-sync
   job folds from the bridge's memstat.json into
@@ -1356,7 +1374,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
-  memory-pressure, fleet-controller, skill-outcome, precheck-skip,
+  claude-recovery, memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, stray-stop, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
@@ -1400,7 +1418,12 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   evidence, keep the find-which-side-owns-the-cause framing — pinned ops
   machinery versus the queue/job lifecycle this repository owns — and
   emit only for the fleet's own repository since the launch machinery is
-  this install's. Memory-pressure items name the swapout-rate ledger,
+  this install's. Claude-recovery items name the jobs ledger and the
+  claude-recoveries state file, keep the find-which-side-owns-the-cause
+  framing — a lane or job-spec defect this repository owns versus pinned
+  ops machinery or host state — and emit only for the fleet's own
+  repository since the recovery machinery is this install's
+  dispatcher. Memory-pressure items name the swapout-rate ledger,
   `phm fleet vitals` and the lane-memory-pressure throttle, keep the
   find-what-is-holding-the-memory framing for recorded pressure and the
   retune-the-unmeasured-guard-constants framing for withheld raises —
