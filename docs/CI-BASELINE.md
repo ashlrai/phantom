@@ -540,9 +540,11 @@ job-memory, lifecycle (`started`/`exited`), aggregate
 unparsed: `exited` lines fire on ordinary test failures and on the
 stop-others SIGTERM cascade, so they can never be runner identities.
 
-Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
-brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
-with an explicit test pass on master's current run produces
+Two unaffected fresh PRs sharing a failure produce `queue-master-fix` and a
+ready brief. One unaffected fresh PR also qualifies when a verified failing
+job on current master reports the same failure identity. Test/import changes
+produce `pr-caused` when all affected PRs touch the failure's inputs. An
+unaffected singleton with an explicit test pass on master's current run produces
 `rerun-failed`. Other evidence stays `unknown`. Relative imports are followed
 transitively from master (100-file cap) with bundler resolution: `.js`/`.jsx`
 specifiers map to `.ts`/`.tsx` sources, extensionless specifiers try file then
