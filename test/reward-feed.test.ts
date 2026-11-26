@@ -304,6 +304,27 @@ describe('foldJobsLedgerRewards', () => {
     ]);
   });
 
+  it('uses html_url to scope ledger reverts and join standing reverts', () => {
+    const job = 'RQ-HTML-URL';
+    const rows = [
+      launch(job),
+      line({ job, state: 'MERGED', mergedAt: MERGED_ISO, html_url: 'https://github.com/ashlrai/companion/pull/102' }),
+      line({ job, event: 'reverted', html_url: 'https://github.com/ashlrai/companion/pull/101', ts: '2026-10-28T18:00:00.000Z' }),
+    ];
+    const ledger = rows.join('\n');
+    expect(foldJobsLedgerRewards(ledger, NOW_MS)).toMatchObject([
+      { jobId: job, repo: 'ashlrai/companion', merged: true },
+    ]);
+    const reverted = new Set(['ashlrai/companion#102']);
+    expect(foldJobsLedgerRewards(ledger, NOW_MS, undefined, reverted)).toMatchObject([
+      { jobId: job, repo: 'ashlrai/companion', merged: false },
+    ]);
+    const contested = [...rows, line({ job: 'RQ-OTHER', html_url: 'https://github.com/ashlrai/companion/pull/102' })];
+    expect(foldJobsLedgerRewards(contested.join('\n'), NOW_MS, undefined, reverted)).toMatchObject([
+      { jobId: job, repo: 'ashlrai/companion', merged: true },
+    ]);
+  });
+
   it.each(['ledger', 'standing set'])('attributes a revert from the %s to the original merge attempt', (source) => {
     const job = 'RQ-REUSED';
     const original = launch(job);

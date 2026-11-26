@@ -82,7 +82,7 @@ const MERGED_AT_KEYS = ['mergedAt', 'merged_at', 'closedAt', 'closed_at'] as con
 const CLOSED_AT_KEYS = ['closedAt', 'closed_at'] as const;
 const REVERTED_AT_KEYS = ['revertedAt', 'reverted_at'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
-const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
+const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 
 /** Same id alphabet the reward writer accepts (JOB_ID in reward-signal.ts). */
