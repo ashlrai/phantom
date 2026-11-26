@@ -181,6 +181,10 @@ describe('fleet resource plan', () => {
       await writeFile(join(dir, 'PAUSE'), '');
       expect(await routeExpiringCapacity(dir, plan, () => now, quiet)).toEqual([]);
       await rm(join(dir, 'PAUSE'));
+      await write('queue/status.json', { ...dispatch, admission: { ...dispatch.admission, ts: iso(now - 1000) } });
+      expect(await routeExpiringCapacity(dir, plan, () => now, quiet)).toEqual([]);
+      expect(await readFile(join(dir, 'queue/ready.tsv'), 'utf8')).toBe(ready);
+      await write('queue/status.json', { ...dispatch, admission: { ...dispatch.admission, ts: dispatch.last_tick } });
       const receipts = await routeExpiringCapacity(dir, plan, () => now, quiet);
       expect(receipts.map(r => [r.job, r.target_lane])).toEqual([['first', 'agy'], ['second', 'codex-personal']]);
       expect(receipts[0]).toMatchObject({ schema: 'work-market.v1', event: 'queue_reroute',
