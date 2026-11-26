@@ -1821,14 +1821,17 @@ There are two ways to launch backlog items:
   module first loads, never under a test runner. Every 10 minutes it refreshes
   task states from GitHub. Two minutes after start, and then every 60 minutes,
   it launches the next backlog item. Before each launch pick it also registers
-  every backlog task whose item declares a metric and whose carrier PR is
+  every backlog task — cloud or Devin lane, which claims items from the same
+  backlog — whose item declares a metric and whose carrier PR is
   still live into the outcome ledger — the same records `phm improve
   sync-backlog` writes by hand — so measured outcomes keep feeding the order
   above. When the standing-pass intake has superseded a task's cloud PR, the
   carrier is the fleet App PR (`supersededBy`): that is the PR number the
   ledger records, measures and watches. The same pass records
-  checkout-free post-merge observations (`syncCloudOutcomeObservations`):
-  merged task outcomes, the fleet merge-state landing record for a
+  checkout-free post-merge observations (`syncCloudOutcomeObservations`)
+  for both lanes: merged task outcomes (cloud tasks only — a Devin task
+  carries no outcome block, so its merge evidence is the fleet merge-state
+  record and the revert journal), the fleet merge-state landing record for a
   superseded task's intake proposal, and the revert-outcomes journal become
   `observed` events — a proposal still naming the closed cloud PR is
   re-pointed at the fleet PR — so standing reverts discount the proposals
