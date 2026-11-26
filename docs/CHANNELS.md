@@ -490,7 +490,25 @@ only — owner recipient ids and channel refs never leave the reader, and
 request text is scrubbed like every other source; source state is the
 read's own — `missing` a verified-absent store, `unavailable` any
 refusal — never an empty backlog passed off as fact; deep links `phm
-leader inbox` and `phm comms thread`) — and each item carries `act` deep-link commands (`phm fleet
+leader inbox` and `phm comms thread`) — and pending fleet-coordination
+ledger mail and work proposals (the advisory plane `phm fleet
+coordination post|assign|return` writes to
+`<ashlr-home>/fleet/coordination.jsonl`, read through the same
+`readFleetBoard` (`reap:false`) `phm fleet coordination board|inbox`
+serve: the per-agent `inbox --agent` projection needs the agent's
+coordination name ahead of time and proposals list nowhere else, so the
+fleet-wide read lists every live unexpired message — expired rows drop
+and superseded return receipts collapse to their latest correction, the
+same `boardMessages` window — and every live proposal; live claims are
+held work, never pending, and never list; message items are info —
+advisory mail with no priority field — and proposals warn — assigned
+work waiting on its addressee — every item agent work, never
+Mason-blocking; `since` is the record's `at` stamp and `expiresAt` its
+real TTL deadline; records name repos and tasks, not bus job ids, so
+items carry no `jobIds` and `--job` never matches them; an absent ledger
+is `missing`, an unreadable or unparseable one `unavailable`, never an
+empty board passed off as fact; deep links `phm fleet coordination
+inbox --agent` and `phm fleet coordination board`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -503,7 +521,7 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 `phm team approve|deny`, `phm inbox approve|reject`,
 `phm fleet slack-trace`, `phm channels slack status`, `phm channels slack
-run`, `phm channels`, `phm comms cycle`, `phm leader inbox`). It never claims, replies, or mutates; a source
+run`, `phm channels`, `phm comms cycle`, `phm leader inbox`, `phm fleet coordination inbox`, `phm fleet coordination board`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:

@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates twenty-three local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates twenty-seven local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -358,6 +358,29 @@
  *               source. `missing` is a verified-absent store,
  *               `unavailable` any refusal — never an empty backlog passed
  *               off as fact. Act: `phm leader inbox`, `phm comms thread`.
+ *   coordination  pending fleet-coordination-ledger mail and work proposals —
+ *               the advisory plane `phm fleet coordination post|assign|return`
+ *               writes (`<ashlr-home>/fleet/coordination.jsonl`,
+ *               docs/FLEET-COORDINATION.md), read through the same
+ *               `readFleetBoard` (`reap:false`) `phm fleet coordination
+ *               board|inbox` serve. The per-agent `inbox --agent` projection
+ *               needs the agent's coordination name ahead of time and
+ *               proposals list nowhere else, so the fleet-wide read lists
+ *               every live unexpired message (expired rows drop and
+ *               superseded return receipts collapse to their latest
+ *               correction — the same `boardMessages` window) and every live
+ *               proposal; live claims are held work, never pending, and
+ *               never list. Message items are info — advisory mail with no
+ *               priority field; proposals are warn — assigned work waiting
+ *               on its addressee; every item is agent work, never
+ *               Mason-blocking. `since` is the record's `at` stamp and
+ *               `expiresAt` its real TTL deadline — both ledger-stored.
+ *               Records name repos and tasks, not bus job ids, so items
+ *               carry no `jobIds` and `--job` never matches them. An absent
+ *               ledger is 'missing' (verified empty); an unreadable or
+ *               unparseable one 'unavailable', never an empty board passed
+ *               off as fact. Act: `phm fleet coordination inbox --agent`,
+ *               `phm fleet coordination board`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -391,6 +414,7 @@ import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bu
 import { busReplyCitations, handoffAnswerScope, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation, type HandoffAnswerScope } from '../fleet/handoff-body.js';
 import { readAgentRegistry, resolveAgent } from '../agents/bus-identity.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
+import { fleetCoordinationPath, readFleetBoard, type FleetBoard } from '../fleet/coordination.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } from '../fleet/needs-mason-relay.js';
 import { loadConfigReadOnly } from '../config.js';
@@ -434,7 +458,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
-  'slack-sends', 'leader-delivery', 'leader-network',
+  'slack-sends', 'leader-delivery', 'leader-network', 'coordination',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -456,6 +480,7 @@ export const UNIFIED_INBOX_KINDS = [
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
   'inbox-proposal', 'slack-request', 'slack-send-unconfirmed', 'leader-message-undelivered',
   'leader-request', 'leader-request-incomplete', 'leader-reply-unconfirmed', 'leader-digest-unconfirmed',
+  'coordination-message', 'coordination-assignment',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -601,6 +626,15 @@ export interface MailboxPendingRead {
  * empty list passed off as fact. */
 export type BoardPendingRead = BusBoardPendingRead;
 
+/** The resolved fleet-coordination-ledger read: 'missing' a verified-absent
+ * ledger (coordination never ran on this host), 'unavailable' any refusal —
+ * never an empty board passed off as fact — and 'known' the live board. */
+export interface CoordinationBoardRead {
+  status: 'missing' | 'unavailable' | 'known';
+  /** The live board, present only when `status` is 'known'. */
+  board?: FleetBoard;
+}
+
 /** One org.membership bus event the org-plane ledger recorded but `phm fleet org-sync --apply` has not yet confirmed posted — the same stable envelope id the apply pass would post. */
 export interface OrgOutboxEvent {
   /** Stable bus envelope id (`org-<storeId>-<revision>-<roleId>`) the apply pass dedupes on. */
@@ -645,6 +679,8 @@ export interface UnifiedInboxOptions {
   readMailbox?: (options: { busRoot?: string; now?: () => number }) => MailboxPendingRead;
   /** Shared task board seam; default reads `BusBoard.pendingAll` through the shared `readBusBoardPending` under the same `busBoardStoragePaths` derivation `phm bus board`, `work mine` and `agents bus status` share. */
   readBoard?: (options: { busRoot?: string; now?: () => number }) => BoardPendingRead;
+  /** Fleet-coordination ledger seam; default reads `readFleetBoard` (`reap:false`) at `fleetCoordinationPath()` — the same board `phm fleet coordination board|inbox` serve. */
+  readCoordinationBoard?: (options: { now?: () => number }) => CoordinationBoardRead;
   readClaims?: (root?: string) => BusWorkClaimsInspection;
   readCoordination?: typeof listCoordination;
   readFeed?: typeof readBusWorkFeed;
@@ -2683,6 +2719,99 @@ function leaderNetworkItems(read: NonNullable<UnifiedInboxOptions['readLeaderNet
 }
 
 /**
+ * Default fleet-coordination-ledger read: the same `readFleetBoard`
+ * (`reap:false`, so a pending view never appends an expiry row) `phm fleet
+ * coordination board|inbox|returns` serve, resolved at `fleetCoordinationPath()`.
+ * An absent ledger file is 'missing' — coordination never ran on this host,
+ * verified empty; a present path `readFleetBoard` cannot replay is
+ * 'unavailable', never an empty board passed off as fact.
+ */
+function readCoordinationBoardSource(options: { now?: () => number }): CoordinationBoardRead {
+  let path: string;
+  try { path = fleetCoordinationPath(); } catch { return { status: 'unavailable' }; }
+  try { lstatSync(path); } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? { status: 'missing' } : { status: 'unavailable' };
+  }
+  const board = readFleetBoard({ path, now: options.now?.() ?? Date.now(), reap: false });
+  return board.state === 'known' ? { status: 'known', board } : { status: 'unavailable' };
+}
+
+/** The coordination ledger's `to` labels are idents its own shape checks
+ * enforce; re-checked before one reaches a command line, the same rule
+ * `BOARD_ID` applies to board peers. */
+const COORDINATION_LABEL = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+/**
+ * Pending fleet-coordination-ledger mail and work proposals — the advisory
+ * plane `phm fleet coordination post|assign|return` writes and
+ * `phm fleet coordination inbox --agent <name>`/`board` read
+ * (docs/FLEET-COORDINATION.md). The per-agent inbox projection hides the
+ * ledger from the one pending view: an agent must already know its
+ * coordination name to see its mail, and proposals — work assignments that
+ * never spawn an agent — list nowhere else. The fleet-wide read lists every
+ * live unexpired message (the same `boardMessages` window `inbox`/`board`
+ * apply: expired rows drop and superseded return receipts collapse to their
+ * latest correction) and every live proposal. Live claims are held work —
+ * in-flight, not pending — and never list, the same exclusion
+ * `projectCoordinationInbox` makes. Message items are info — advisory mail
+ * with no priority field, like board deliveries; proposals are warn —
+ * assigned work waiting on its addressee — and every item is agent work,
+ * never Mason-blocking. `since` is the record's `at` stamp and `expiresAt`
+ * its real TTL deadline — both ledger-stored, never invented. Coordination
+ * records name repos and tasks, not bus job ids, so items carry no `jobIds`
+ * and `--job` never matches them. An absent ledger is 'missing' (verified
+ * empty); an unreadable or unparseable one 'unavailable', never an empty
+ * board passed off as fact. Act: `phm fleet coordination inbox --agent`,
+ * `phm fleet coordination board`.
+ */
+function coordinationItems(read: NonNullable<UnifiedInboxOptions['readCoordinationBoard']>,
+  options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: CoordinationBoardRead;
+  try { result = read({ now: options.now }); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.status === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.status !== 'known' || result.board === undefined || result.board.state !== 'known') {
+    return { report: { state: 'unavailable', pending: null }, items: [] };
+  }
+  const { board } = result;
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const message of board.messages) {
+    const to = COORDINATION_LABEL.test(message.to) ? message.to : null;
+    items.push({
+      id: `coordination:message:${message.id}`,
+      source: 'coordination',
+      kind: 'coordination-message',
+      severity: 'info',
+      blocking: false,
+      title: oneLine(message.body, TITLE_MAX) || `coordination message ${message.id}`,
+      detail: oneLine(`from ${message.from} → ${message.to}`, DETAIL_MAX) || null,
+      since: iso(message.at),
+      expiresAt: iso(message.expiresAt),
+      act: to === null
+        ? ['phm fleet coordination board']
+        : [`phm fleet coordination inbox --agent ${to}`, 'phm fleet coordination board'],
+    });
+  }
+  for (const proposal of board.proposals) {
+    const to = COORDINATION_LABEL.test(proposal.to) ? proposal.to : null;
+    items.push({
+      id: `coordination:proposal:${proposal.id}`,
+      source: 'coordination',
+      kind: 'coordination-assignment',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(proposal.task, TITLE_MAX) || `coordination proposal ${proposal.id}`,
+      detail: oneLine(`repo ${proposal.repo} · assigned to ${proposal.to}`, DETAIL_MAX) || null,
+      since: iso(proposal.at),
+      expiresAt: iso(proposal.expiresAt),
+      act: to === null
+        ? ['phm fleet coordination board']
+        : [`phm fleet coordination inbox --agent ${to}`, 'phm fleet coordination board'],
+    });
+  }
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+/**
  * The same drop inbox `runEmailDropOnce` scans, resolved at the shared runs
  * dir: saved email-drop config → `inboxDir` → `readEmailDropInbox`. A missing
  * config or inbox dir is 'missing' (the pass treats an absent inbox as an
@@ -2847,6 +2976,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const slackSends = slackSendItems(options.readSlackSends ?? readSlackSendReceipts);
   const leaderDelivery = leaderDeliveryItems(options.readLeaderUndelivered ?? readLeaderThreadUndelivered, now);
   const leaderNetwork = leaderNetworkItems(options.readLeaderNetwork ?? readLeaderNetworkState, options.runsDir);
+  const coordination = coordinationItems(options.readCoordinationBoard ?? readCoordinationBoardSource, options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -2875,8 +3005,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'slack-sends': slackSends.report,
     'leader-delivery': leaderDelivery.report,
     'leader-network': leaderNetwork.report,
+    coordination: coordination.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...coordination.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

@@ -39,6 +39,7 @@ import type { LeaderThreadUndeliveredItem, LeaderThreadUndeliveredRead } from '.
 import type { LeaderNetworkDigestFact, LeaderNetworkRequestFact, LeaderNetworkStateRead } from '../src/core/agents/leader-network-read.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
+import type { FleetAssignment, FleetBoard, FleetMessage } from '../src/core/fleet/coordination.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { listNeedsMason } from '../src/core/fleet/needs-mason-resolve.js';
 import { writeDelivery } from '../src/core/fleet/needs-mason-reply-delivery.js';
@@ -138,6 +139,7 @@ describe('readUnifiedInbox sources', () => {
         'email-outbox': { state: 'missing', pending: 0 },
         'team-approvals': { state: 'healthy', pending: 0 },
         proposals: { state: 'healthy', pending: 0 },
+        coordination: { state: 'missing', pending: 0 },
       },
     });
   });
@@ -2429,6 +2431,151 @@ describe('readUnifiedInbox leader network', () => {
     });
     expect(byKind.items.map(i => i.id)).toEqual([`leader-network:request-${REQ_A}`]);
     expect(inbox.items.filter(i => i.kind === 'leader-request')).toHaveLength(1);
+  });
+});
+
+describe('readUnifiedInbox coordination ledger', () => {
+  const message = (over: Partial<FleetMessage> = {}): FleetMessage => ({
+    id: 'm-1', from: 'leader', to: 'worker-a', body: 'fake coordination ping',
+    at: now - 3_600_000, expiresAt: now + 3_600_000, ...over,
+  });
+  const proposal = (over: Partial<FleetAssignment> = {}): FleetAssignment => ({
+    id: 'p-1', repo: 'ashlrai/phantom', task: 'fake assigned work', to: 'worker-b',
+    at: now - 1_800_000, expiresAt: now + 7_200_000, executionAuthorized: false, ...over,
+  });
+  const board = (over: Partial<FleetBoard> = {}): FleetBoard => ({
+    schema: 'fleet.coordination.v1', state: 'known',
+    claims: [], messages: [], proposals: [], expiredClaims: 0, ...over,
+  });
+  const readWith = (readCoordinationBoard: NonNullable<UnifiedInboxOptions['readCoordinationBoard']>) =>
+    readUnifiedInbox({ runsDir, busRoot, now: () => now, readCoordinationBoard });
+
+  it('lists live ledger messages and proposals with real times and deep links; claims never list', async () => {
+    const inbox = await readWith(() => ({
+      status: 'known' as const,
+      board: board({
+        messages: [
+          message(),
+          message({ id: 'm-2', from: 'worker-a', to: 'all', body: 'fake broadcast', at: now - 600_000, expiresAt: now + 86_400_000 }),
+        ],
+        proposals: [proposal()],
+        // Held work is in-flight, not pending — the same exclusion
+        // projectCoordinationInbox makes.
+        claims: [{ id: 'c-1', repo: 'ashlrai/phantom', task: 'held work', agent: 'worker-a',
+          claimedAt: now - 60_000, expiresAt: now + 600_000 }],
+      }),
+    }));
+    expect(inbox.sources.coordination).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'coordination');
+    expect(items).toHaveLength(3);
+    const mail = items.find(i => i.id === 'coordination:message:m-1')!;
+    expect(mail).toMatchObject({
+      kind: 'coordination-message', severity: 'info', blocking: false,
+      title: 'fake coordination ping',
+      detail: 'from leader → worker-a',
+      since: new Date(now - 3_600_000).toISOString(),
+      expiresAt: new Date(now + 3_600_000).toISOString(),
+      act: ['phm fleet coordination inbox --agent worker-a', 'phm fleet coordination board'],
+    });
+    expect(mail.jobIds).toBeUndefined();
+    const broadcast = items.find(i => i.id === 'coordination:message:m-2')!;
+    expect(broadcast.act).toEqual(['phm fleet coordination inbox --agent all', 'phm fleet coordination board']);
+    const assign = items.find(i => i.id === 'coordination:proposal:p-1')!;
+    expect(assign).toMatchObject({
+      kind: 'coordination-assignment', severity: 'warn', blocking: false,
+      title: 'fake assigned work',
+      detail: 'repo ashlrai/phantom · assigned to worker-b',
+      since: new Date(now - 1_800_000).toISOString(),
+      expiresAt: new Date(now + 7_200_000).toISOString(),
+      act: ['phm fleet coordination inbox --agent worker-b', 'phm fleet coordination board'],
+    });
+  });
+
+  it('reports missing, unavailable and unknown boards honestly, never an empty board as fact', async () => {
+    const missing = await readWith(() => ({ status: 'missing' as const }));
+    expect(missing.sources.coordination).toEqual({ state: 'missing', pending: 0 });
+    const unavailable = await readWith(() => ({ status: 'unavailable' as const }));
+    expect(unavailable.sources.coordination).toEqual({ state: 'unavailable', pending: null });
+    const unknown = await readWith(() => ({ status: 'known' as const, board: board({ state: 'unknown' }) }));
+    expect(unknown.sources.coordination).toEqual({ state: 'unavailable', pending: null });
+    const empty = await readWith(() => ({ status: 'known' as const, board: board() }));
+    expect(empty.sources.coordination).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('reports unavailable on a throwing seam while other sources still list', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now,
+      readCoordinationBoard: () => { throw new Error('boom'); },
+    });
+    expect(inbox.sources.coordination).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'coordination')).toHaveLength(0);
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('filters by its own source and kinds like every other source', async () => {
+    const seam = () => ({
+      status: 'known' as const,
+      board: board({ messages: [message()], proposals: [proposal()] }),
+    });
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, readCoordinationBoard: seam,
+      filter: { source: 'coordination' },
+    });
+    expect(inbox.items.map(i => i.id).sort()).toEqual(['coordination:message:m-1', 'coordination:proposal:p-1']);
+    expect(inbox.filter).toEqual({ source: 'coordination' });
+    const mailOnly = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, readCoordinationBoard: seam,
+      filter: { kind: 'coordination-message' },
+    });
+    expect(mailOnly.items.map(i => i.id)).toEqual(['coordination:message:m-1']);
+    const assignsOnly = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, readCoordinationBoard: seam,
+      filter: { kind: 'coordination-assignment' },
+    });
+    expect(assignsOnly.items.map(i => i.id)).toEqual(['coordination:proposal:p-1']);
+  });
+
+  it('keeps --job and --contains honest: no job citation, text match on shown fields', async () => {
+    const seam = () => ({
+      status: 'known' as const,
+      board: board({
+        messages: [message({ body: 'ping about RQ-FAKE-1 rollout' })],
+        proposals: [proposal({ task: 'audit the rollout checklist' })],
+      }),
+    });
+    const byJob = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, readCoordinationBoard: seam,
+      filter: { job: 'RQ-FAKE-1' },
+    });
+    // Coordination records name repos and tasks, never bus job ids.
+    expect(byJob.items.filter(i => i.source === 'coordination')).toHaveLength(0);
+    const byText = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, readCoordinationBoard: seam,
+      filter: { source: 'coordination', contains: 'rollout' },
+    });
+    expect(byText.items.filter(i => i.source === 'coordination').map(i => i.id).sort())
+      .toEqual(['coordination:message:m-1', 'coordination:proposal:p-1']);
+  });
+
+  it('scrubs secret-shaped ledger text before it reaches the item', async () => {
+    const secret = `sk-ant-api03-${'x'.repeat(24)}`;
+    const inbox = await readWith(() => ({
+      status: 'known' as const,
+      board: board({ messages: [message({ body: `rotate ${secret} please` })] }),
+    }));
+    const item = inbox.items.find(i => i.source === 'coordination')!;
+    expect(JSON.stringify(item)).not.toContain(secret);
+    expect(item.title).toContain('[REDACTED]');
+  });
+
+  it('falls back to the board act when a label fails the ident grammar', async () => {
+    const inbox = await readWith(() => ({
+      status: 'known' as const,
+      board: board({ messages: [message({ to: 'bad label!' })] }),
+    }));
+    const item = inbox.items.find(i => i.source === 'coordination')!;
+    expect(item.act).toEqual(['phm fleet coordination board']);
   });
 });
 
