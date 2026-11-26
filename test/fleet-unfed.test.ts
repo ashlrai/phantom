@@ -1130,6 +1130,22 @@ describe('derived market reasons', () => {
     ]);
   });
 
+  it('keeps one unavailable verdict when a metered API lane also advertises bad capabilities', () => {
+    const ready = [mrow('RQ-OPEN', 'claude', 'work')].join('\n');
+    const report = currentUnfed(JSON.stringify({
+      lanes: { 'openai-api': { running: 0, target: 2, held: false } },
+    }), ready, {
+      slots: JSON.stringify({
+        'openai-api': { cost_class: 'metered', tiers: ['work'], capabilities: ['Bad_Cap'] },
+      }),
+    });
+    // lane_view's invalid_capability_advertisement is overwritten by the
+    // dispatcher's metered-API gate, so choose records one unavailable code.
+    expect(report.resources.map(({ lane, blocked }) => [lane, blocked])).toEqual([
+      ['openai-api', { metered_api_opt_in_required: 1 }],
+    ]);
+  });
+
   it('does not recompute reasons when the dispatcher published its verdict', () => {
     const status = JSON.stringify({
       lanes: MLANES,

@@ -527,9 +527,13 @@ export function derivedRowCodes(row: ReadyMarketRow, lane: string, v: MarketLane
   if (v.quota !== null && v.quota <= 0) reasons.push('quota_exhausted');
   if (v.backoff) reasons.push('provider_backoff');
   if (v.running >= v.target) reasons.push('saturated');
-  if (v.capabilities === null) reasons.push('invalid_capability_advertisement');
+  // The dispatcher keeps one `unavailable` verdict per lane: lane_view's
+  // invalid_capability_advertisement is overwritten by the per-destination
+  // metered-API opt-in gate, and choose appends that single code — never both.
   if (METERED_API_LANES.has(lane) && v.costClass === 'metered' && row.maxCostClass !== 'metered') {
     reasons.push('metered_api_opt_in_required');
+  } else if (v.capabilities === null) {
+    reasons.push('invalid_capability_advertisement');
   }
   return reasons.length ? reasons : ['deferred_after_selection'];
 }
