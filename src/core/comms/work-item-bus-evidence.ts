@@ -206,6 +206,8 @@ export function deriveBusWorkItemEvidence(
       blockerCursor = row.cursor;
     }
   }
+  // A reply carrying both valid fields ties on cursor; verified wins that tie.
+  if (verifiedCursor > -Infinity && blockerCursor > verifiedCursor) evidence.terminalOutcome = 'BLOCKED';
   if (request) {
     evidence.receivedAt = new Date(request.receivedAt).toISOString();
     claimEvidence(evidence, authoritativeBusClaims(claims, authority, now), request, now);
