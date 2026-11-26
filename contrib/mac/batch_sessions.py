@@ -14,9 +14,9 @@ This module is the config plus pure planning half. dispatchd.py calls it; batch-
 prepares the member worktrees and then execs the unchanged launch.sh. Both changes reach the host only through
 the Security pin package in staging/RQ-BATCH-SESSIONS-2.
 
-Model mix (subscriptions only, no API-credit lanes): Sonnet is Claude's workhorse, Opus takes hard or
-architectural lines, Fable stays under the broker's own `fable-share` control (never assigned here). Codex lanes
-run GPT-6.2 Astra for frontier and GPT-6.2 Sol otherwise. Devin runs the free flash model first; lines from repos Devin is not set up for, or without a declared
+Model mix (subscriptions only, no API-credit lanes): Claude uses Opus for work and hard lines,
+Sonnet for mid, and Haiku for fast. Fable stays under the broker's own `fable-share` control.
+Codex uses Astra for frontier, Luna for fast, and Sol otherwise. Devin runs the free flash model first; lines from repos Devin is not set up for, or without a declared
 small size, are routed to other lanes.
 
 Also: northstar metrics (tasks finished per session, iterations per hour, merged PRs per iteration) computed from
@@ -42,8 +42,8 @@ DEFAULTS = {
     # Hosted subscription lanes only. claude-api spends API credits and codex-local is a 6-slot local model.
     "lanes": ["claude", "codex-personal", "codex-cmp", "devin"],
     "models": {
-        "claude": {"workhorse": "sonnet", "hard": "opus"},
-        "codex": {"default": "gpt-6.2-sol", "frontier": "gpt-6.2-astra"},
+        "claude": {"workhorse": "claude-opus-5-5", "hard": "claude-opus-5-5", "mid": "claude-sonnet-5-5", "fast": "claude-haiku-5-5"},
+        "codex": {"default": "gpt-6.2-sol", "frontier": "gpt-6.2-astra", "fast": "gpt-6-luna"},
         "devin": {"default": "swe-2-flash"},
     },
     # A line is "hard" for the Opus pick when its tier is frontier or its prompt names one of these.
@@ -77,6 +77,8 @@ def load_config(path):
         if fam in cfg["models"] and isinstance(picks, dict):
             if fam == "codex" and "default" in picks and "frontier" not in picks and isinstance(picks["default"], str) and JID.fullmatch(picks["default"]):
                 cfg["models"]["codex"].pop("frontier", None)
+            if fam == "codex" and "default" in picks and "fast" not in picks and isinstance(picks["default"], str) and JID.fullmatch(picks["default"]):
+                cfg["models"]["codex"].pop("fast", None)
             cfg["models"][fam].update({k: v for k, v in picks.items() if isinstance(v, str) and JID.match(v)})
     dv = raw.get("devin")
     cfg["devin"]["route"] = True
@@ -109,7 +111,7 @@ def is_hard(tier, prompt, cfg):
 def model_for(lane, tier, prompt, cfg):
     """(model, reason) for one line on its lane. Fable is never picked here: the broker's fable-share owns it."""
     if lane == "claude":
-        pick = "hard" if is_hard(tier, prompt, cfg) else "workhorse"
+        pick = "hard" if is_hard(tier, prompt, cfg) else tier if tier in ("mid", "fast") else "workhorse"
         return cfg["models"]["claude"][pick], "claude %s" % pick
     if lane.startswith("codex") and lane != "codex-local":
         return cfg["models"]["codex"].get(tier, cfg["models"]["codex"]["default"]), "codex default"

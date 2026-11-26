@@ -114,7 +114,8 @@ Every command, grouped by topic.
     runs [--json]                                                         List past runs (newest first).
     models [--json]                                                       List the model registry (verified, unverified, stale) and local models.
     models check [--json] [--diff <file>]                                 Report every model the router can pick: confirmed, stale or unconfirmed (not routable).
-    models radar [--json] [--from <folder>] [--fetch]                     List new, retired and renamed model ids from saved provider release notes, with a proposed registry patch.
+    models radar [--json] [--from <folder>] [--fetch [--propose]]         Find new and retiring models; optionally file pending inbox notes with an unapplied registry patch.
+    models radar schedule [--install] [--hour <hour>]                     Print or explicitly install the daily official-source model radar job.
     models verify <id> --source <url>                                     Mark one model verified once its official doc page names the exact id.
     models verify [--text]                                                Show model verification status and age (JSON by default).
     models pull <name> [--yes]                                            Explicitly pull an Ollama model (large download; confirm first).

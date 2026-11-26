@@ -1686,6 +1686,56 @@ describe('phm agents bus (unified)', () => {
       .toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
   });
 
+  it('filters the next-work claim by group-address topic', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'eng', '--from', 'atlas'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas'])).json)
+      .toMatchObject({ status: 'created' });
+    const post = (id: string, to: string, priority: BusEnvelope['priority']): void => {
+      expect(appendBusInbox({ id, from: 'agent:nova', to, priority, ttl: 3_600_000,
+        body: { kind: 'work', text: id } }, { root }).status).toBe('posted');
+    };
+    post('wn-tp-eng-deploy', 'group:eng:deploy', 'P0');
+    post('wn-tp-eng-general', 'group:eng:general', 'P1');
+    post('wn-tp-ops-deploy', 'group:ops:deploy', 'P2');
+    post('wn-tp-direct', 'agent:atlas', 'P3');
+    const env = { PHM_AGENT_ID: 'atlas' };
+    const complete = async (id: string, token: string): Promise<void> => {
+      expect(await run(['claim', 'message', 'complete', '--id', id, '--token', token], env))
+        .toMatchObject({ code: 0, json: { status: 'completed' } });
+    };
+
+    // --topic keeps the exact topic component across every member room:
+    // the P0 eng deploy claims first, then the P2 ops deploy — the general
+    // post and the direct mail never enter the filtered scan.
+    const byTopic = await run(['work', 'next', '--lease-ms', '60000', '--topic', 'deploy'], env);
+    expect(byTopic.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-tp-eng-deploy' } } });
+    await complete('wn-tp-eng-deploy', byTopic.json.token);
+    const byTopicAgain = await run(['work', 'next', '--lease-ms', '60000', '--topic', 'deploy'], env);
+    expect(byTopicAgain.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-tp-ops-deploy' } } });
+    await complete('wn-tp-ops-deploy', byTopicAgain.json.token);
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--topic', 'deploy'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 2, held: 0 } });
+    // --channel composes into one room AND one topic.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--channel', 'eng', '--topic', 'deploy'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 1, held: 0 } });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--channel', 'ops', '--topic', 'deploy'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 1, held: 0 } });
+    // A well-formed topic nothing addresses is an honest empty match.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--topic', 'absent'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+
+    // A topic outside the channel grammar is a usage error, never a
+    // widened claim.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--topic', 'Bad Name'], env))
+      .toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--topic', 'deploy:extra'], env))
+      .toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+  });
+
   it('claims one envelope id and renews, releases and completes its message claim', async () => {
     expect(appendBusInbox({ id: 'mc-work', from: 'agent:nova', to: 'agent:atlas', priority: 'P2',
       ttl: 3_600_000, body: { kind: 'work', text: 'named work' } }, { root }).status).toBe('posted');

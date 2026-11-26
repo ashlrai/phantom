@@ -181,6 +181,26 @@ describe('CI baseline evidence', () => {
     expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', master: 'fail' });
     expect(report.freshness.every(p => p.state === 'fresh')).toBe(true);
   });
+  it('keeps verified sibling evidence when an incomplete job has no log', async () => {
+    const { gh } = github({ extraMasterJob: 'cancelled' });
+    const report = await analyzeCiBaseline('owner/repo', args => args[1]?.endsWith('/jobs/30/logs')
+      ? Promise.resolve({ ok: false, stdout: '', stderr: 'HTTP 404: Not Found' })
+      : gh(args));
+    expect(report.master.known).toBe(false);
+    expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', master: 'fail' });
+  });
+  it('reports incomplete PR checks even when their logs are unavailable', async () => {
+    const { gh } = github({ extraPrJob: 'cancelled' });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      if (args[1]?.endsWith('/jobs/40/logs')) throw new Error('Log unavailable');
+      return gh(args);
+    });
+    expect(report.freshness).toMatchObject([
+      { state: 'unknown', reason: 'incomplete-check' },
+      { state: 'unknown', reason: 'incomplete-check' },
+    ]);
+    expect(report.groups).toEqual([]);
+  });
   it('reads a jobless run that did not succeed as incomplete evidence', async () => {
     for (const conclusion of ['startup_failure', 'cancelled', 'timed_out', 'action_required', 'stale', 'failure']) {
       const report = await analyzeCiBaseline('owner/repo', github({ noJobs: true, runConclusion: conclusion }).gh);

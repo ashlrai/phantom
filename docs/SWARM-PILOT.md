@@ -36,6 +36,17 @@ are supported. Unknown IDs return `unsupported-worker-lane`; uncommissioned
 native lanes return `subscription-only-lane-required`. Dispatch checks current
 account-specific billing and quota. There is no metered fallback.
 
+On apply, the pilot reads the same fleet plan as `phm resources plan` before
+each worker wave. Set a worker's optional `fleetLane` to the plan's lane ID
+when it differs from `workerId`. Workers for the same lane share its additional
+slots (target minus running), and lanes with earlier burn deadlines get first
+pick. The pilot gives ready leaves one attempt each before adding a second,
+within its existing caps of two leaves and two attempts per leaf. A measured
+zero defers that lane; if no ready leaf can run, the pilot reports
+`worker-capacity-unavailable`. Missing or unknown targets keep the existing
+bounded allocation. The plan is advisory, not a reservation or permission to
+use an unenrolled worker, bypass quota checks, or spend.
+
 For local workers, set `localModelConfigPath` in the private runtime and enroll
 every selected local worker there; otherwise the pilot holds with
 `local-model-readiness-required`. Use the existing pool digest and either

@@ -3,7 +3,7 @@ import { mutateBusWorkClaim, type BusClaimRequest } from '../core/fleet/bus-work
 import { BUS_PRIORITIES } from '../core/fleet/bus-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
-export const COMMS_BUS_CLAIM_HELP = `phm comms bus next --to <address|topic> --owner <label> --lease-ms <1..3600000> [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority <P0|P1|P2|P3>] [--channel <name>] [--from <agent>] [--exclude-from <agent>]
+export const COMMS_BUS_CLAIM_HELP = `phm comms bus next --to <address|topic> --owner <label> --lease-ms <1..3600000> [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority <P0|P1|P2|P3>] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]
 phm comms bus claim acquire --id <message-id> --owner <label> --lease-ms <1..3600000>
 phm comms bus claim renew|release|complete --id <message-id> --token <claim-token>
 Leases make one claimant per message ID: a live lease answers 'conflict' to everyone else.
@@ -16,6 +16,8 @@ receipts whose scrubbed one-line summary carries the text, --since only receipts
 after the cutoff (15m, 2h, 1d, epoch ms or an ISO time), --before only receipts received strictly
 before its own cutoff so the two compose one [since, before) window, --priority only one
 P0..P3 band, --channel only receipts addressed to group:<name>:* of one bus channel,
+--topic only receipts addressed to a well-formed group:<room>:<topic> address carrying
+that exact topic — composing with --channel into one room and one topic —
 --from only receipts one sender wrote and --exclude-from drops receipts sent under
 every registered spelling of one identity —
 the same rules every bus read applies, so the claimable set is exactly what the matching read
@@ -51,7 +53,7 @@ function leaseMs(value: string | undefined): number | undefined {
 export function cmdCommsBusClaim(verb: 'next' | 'claim', args: string[], root: string | undefined): number {
   const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
   if (verb === 'next') {
-    const values = flagValues(args, ['--to', '--owner', LEASE_FLAG, '--contains', '--since', '--before', '--priority', '--channel', '--from', '--exclude-from']);
+    const values = flagValues(args, ['--to', '--owner', LEASE_FLAG, '--contains', '--since', '--before', '--priority', '--channel', '--topic', '--from', '--exclude-from']);
     const to = values?.get('--to'), owner = values?.get('--owner'), lease = leaseMs(values?.get(LEASE_FLAG));
     const sinceRaw = values?.get('--since');
     const since = sinceRaw === undefined ? undefined : parseSince(sinceRaw);
@@ -65,7 +67,7 @@ export function cmdCommsBusClaim(verb: 'next' | 'claim', args: string[], root: s
     const result = claimNextBusWork({ to, owner, leaseMs: lease, root,
       contains: values.get('--contains'), since: since ?? undefined, before: before ?? undefined,
       priority: priority as (typeof BUS_PRIORITIES)[number] | undefined,
-      channel: values.get('--channel'), from: values.get('--from'), excludeFrom: values.get('--exclude-from') });
+      channel: values.get('--channel'), topic: values.get('--topic'), from: values.get('--from'), excludeFrom: values.get('--exclude-from') });
     console.log(JSON.stringify(result));
     return result.status === 'acquired' || result.status === 'empty' ? 0 : result.status === 'invalid' ? 2 : 1;
   }
