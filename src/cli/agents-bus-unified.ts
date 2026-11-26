@@ -361,7 +361,11 @@ channel it
 belongs
 to in bus-next order with their hold state, the worker-handoff assignments
 addressed the same way (each item carries the to label handoff-receive and
-handoff-reply take verbatim), the conversation threads waiting on its
+handoff-reply take verbatim), the transport dead-letter reports whose
+original recipient is one of its labels — mail the bus router proved
+undeliverable, each citing the original sender, recipient, kind, reason,
+attempt count and whether the payload survived, never the letter's own
+body — the conversation threads waiting on its
 answer — asks and handoffs whose latest message it or a channel it belongs
 to still owes, each citing the envelope id show resolves — the
 conversation threads it is waiting on — its own asks and handoffs nobody
@@ -388,7 +392,8 @@ the same citation rule inbox --job applies plus the feed-id and board
 itemId joins: feed jobs and announced jobs match by id, claims by
 declared-key overlap with an announced job or a leased body's job
 citations, next and handoffs by body citation (claimable work names none,
-so next is empty under --job), threads/awaiting/blocked by
+so next is empty under --job), deadLetters report honestly empty — a
+transport envelope carries no job citation — threads/awaiting/blocked by
 the conversations job query, wakes and inbox by their own job filters,
 mailbox by body citation, the board by its job-carrying-thread rule, the
 sessions section by journal job id, the coordination section reporting
@@ -400,7 +405,9 @@ rows whose displayed descriptive text carries the needle as a
 case-insensitive substring — the same rule every other bus --contains
 read applies: feed and announced jobs match the feed's job search text,
 claims match a blocked job's title/detail or a resolved leased message's
-summary, next/handoffs/mailbox match the body summary,
+summary, next/handoffs/mailbox match the body summary, deadLetters match the
+report facts (reason, attempt count, kind, dropped payload — never the
+parties or original id, which keep their own filters),
 threads/awaiting/blocked match member-message subjects through the
 conversations read, wakes match the resolved referent's summary or
 citing status detail, inbox matches the inbox read's own contains rule,
@@ -418,7 +425,8 @@ mine keeps only pending items whose recorded time reaches the cutoff —
 takes — so a polling agent reads the delta since its last check instead
 of the whole pending set: claims match the lease's recorded started (a
 null start never matches), feed jobs and announced jobs match
-updatedAt, next/handoffs/inbox match the envelope receipt, mailbox
+updatedAt, next/handoffs/inbox match the envelope receipt, deadLetters
+match the letter envelope's receipt, mailbox
 matches acceptance, threads/awaiting/blocked and wakes inherit their own
 reads' since rules on latest activity, board deliveries match createdAt
 while board tasks — which keep no timestamp — never match, sessions
@@ -435,7 +443,8 @@ the exclusive upper bound on the same grammar --since takes, so the
 pair reads one [since, before) window and "what was pending before
 time T" is one filtered digest: claims match the lease's recorded
 started, feed jobs and announced jobs match updatedAt, next/handoffs
-match the envelope receipt, threads/awaiting/blocked inherit the shared
+match the envelope receipt, deadLetters match the letter envelope's
+receipt, threads/awaiting/blocked inherit the shared
 conversations read's lastAt bound, mailbox matches acceptance, inbox
 matches receivedAt and wakes the hint's queue time inside their own
 reads' exclusive upper bounds, board deliveries match createdAt while
@@ -451,7 +460,9 @@ pending items stamped with that exact P0..P3 band — the same match inbox
 pending for me" is one filtered digest: next and handoffs keep envelopes
 of that band, inbox and mailbox keep mail of that band, wakes keep hints
 whose resolved referent reports it (unresolved or unknown referents
-never match), and claims keep only message claims whose resolved leased
+never match), deadLetters keep reports on letter envelopes of that band
+(a letter carrying no provable band never lists), and claims keep only
+message claims whose resolved leased
 envelope reports that band — a claim naming no provable band never lists;
 feed jobs, announced jobs, the thread sections, board rows, channels,
 sessions, coordination and
@@ -463,7 +474,10 @@ this room" is one filtered digest: feed jobs and announced jobs keep
 announcements whose to carries the prefix, next, handoffs and mailbox
 keep envelopes whose to carries it, claims keep only message claims whose
 resolved leased envelope sits in the room (a claim naming no resolved
-message never lists), the thread sections keep threads whose latest
+message never lists), deadLetters keep reports whose ORIGINAL recipient
+carries the room prefix — the room the lost mail was bound for, not the
+letter's own bus.dead-letter address — the thread sections keep threads
+whose latest
 message is addressed to the room, and wakes and inbox pass the name to
 their own reads' channel filters; board, channels, sessions,
 coordination and seats
@@ -476,7 +490,10 @@ announced jobs keep announcements whose owner resolves to the ref, next,
 handoffs and mailbox keep envelopes whose from the identity-label
 matcher accepts, claims keep only message claims whose resolved leased
 envelope's from matches (a claim naming no resolved message never
-lists), the thread sections pass the ref into the shared conversations
+lists), deadLetters keep reports whose ORIGINAL sender the identity-label
+matcher accepts — the sender the lost mail carried, a report naming no
+provable original sender never lists — the thread sections pass the ref
+into the shared conversations
 read's own from filter, and wakes and inbox pass it to their own reads'
 sender filters; board deliveries keep only posts whose sender label
 matches while board tasks — which record no author — never match,
@@ -492,7 +509,9 @@ match — a section keeps an item unless its sender evidence resolves to
 the excluded ref, so a sender that cannot be proven excluded is never
 dropped while board tasks stay listed under it and coordination drops
 only ledger records whose recorded sender label equals the excluded
-value — proposals carrying no sender stay listed; the two compose so a
+value — proposals carrying no sender stay listed; deadLetters drop only
+reports whose ORIGINAL sender resolves to the excluded ref, a report
+naming no provable original sender staying listed; the two compose so a
 sender both included and excluded matches nothing. --id on work mine keeps
 only pending items that ARE the retained envelope the value names — the
 same exact-envelope match every bus read's --id applies, so "is envelope X
@@ -500,7 +519,9 @@ still pending for me, and where" is one filtered digest: feed jobs and
 announced jobs keep the jobs whose cited wire ids the value equals (the
 work.post announcement, newest work.status receipt or newest work.result
 receipt the job line prints as post=/status=/result=), next, handoffs and
-mailbox keep envelopes whose own id equals it, claims keep only message
+mailbox keep envelopes whose own id equals it, deadLetters keep reports
+whose letter wire id or ORIGINAL envelope id equals it — the two ids the
+item carries — claims keep only message
 claims whose resolved leased envelope's id equals it (a claim naming no
 resolved message never lists), inbox, wakes and the thread sections pass
 the value to their own reads' id filters (inbox and wakes the item
@@ -519,7 +540,9 @@ envelopes whose body the citation rule accepts, claims keep only message
 claims whose resolved leased envelope's own inReplyTo equals it (a claim
 naming no resolved message or no citation never lists), and inbox, wakes
 and the thread sections pass the value to their own reads' in-reply-to
-filters; feed jobs, announced jobs, board rows, channels, sessions,
+filters; deadLetters report honestly empty — a transport envelope's
+protocol-v1 bus body declares no inReplyTo field — feed jobs, announced
+jobs, board rows, channels, sessions,
 coordination and
 seats carry
 no retained body citation in their projections and stay unfiltered, and
@@ -532,7 +555,9 @@ kind (claimable work under work or task, worker-handoff assignments under
 worker-handoff, kindless legacy mail never), claims keep only message
 claims whose resolved leased envelope reports it (a claim naming no
 resolved message never lists), inbox, wakes and the thread sections pass
-the value to their own reads' body-kind filters, jobs and announced keep
+the value to their own reads' body-kind filters, deadLetters keep reports
+whose ORIGINAL transport kind equals the value — the kind the arrived
+mail's protocol-v1 body would report — jobs and announced keep
 the feed jobs citing a retained receipt of that kind — every job cites
 its work.post announcement so work.post keeps them all, work.status keeps
 jobs a status receipt has moved, work.result keeps jobs a result receipt
@@ -555,7 +580,9 @@ and wakes pass the value to their own reads' result filters, and the
 thread sections pass it to the shared conversations read's member-message
 result filter — a thread survives when a member message is a work.result
 reporting that outcome, the same whole-thread member match agents
-conversations --result applies — while board, channels, sessions,
+conversations --result applies — deadLetters report honestly empty, a
+transport envelope's protocol-v1 bus body never being a work.result —
+while board, channels, sessions,
 coordination and
 seats carry no
 per-item result evidence the digest can prove and stay unfiltered; an
@@ -573,7 +600,9 @@ and wakes pass the value to their own reads' thread filters, and the
 thread sections pass it to the shared conversations read's thread filter
 — a thread survives on any member message whose declared conversation
 bucket equals the label, the same whole-thread member match agents
-conversations --thread applies — while jobs, announced, board, channels,
+conversations --thread applies — deadLetters report honestly empty, a
+transport envelope's protocol-v1 bus body declaring no thread label —
+while jobs, announced, board, channels,
 sessions, coordination and
 seats carry no per-item thread label the digest can prove and stay
 unfiltered; a label nothing on the bus carries is an honest empty match
