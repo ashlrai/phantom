@@ -117,7 +117,7 @@ import {
   recordHarnessOutcome,
 } from '../learn/harness-registry.js';
 import type { AutonomousBestOfNPlan } from '../run/best-of-n-policy.js';
-import type { MirrorTickPreparation } from './mirrors.js';
+import { MIRROR_TICK_ABORT_GRACE_MS, MIRROR_TICK_PREP_DEADLINE_MS, type MirrorTickPreparation } from './mirrors.js';
 import type { CloudIntakeMirror, CloudIntakeResult } from './cloud-intake.js';
 import type { DevinFleetTickResult } from '../devin/fleet-launcher.js';
 import { overnightRunInProgress } from '../daemon/overnight-status.js';
@@ -1403,11 +1403,10 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       const mirrorPaused: { path: string; repo: string; reason: string }[] = [];
       let readyMirrors: MirrorTickPreparation['ready'] = [];
       if (!hookCtx.dryRun) {
-        const { MIRROR_TICK_PREP_DEADLINE_MS, MIRROR_TICK_ABORT_GRACE_MS } = await import('./mirrors.js');
         const mirrorPhase = await runTickPhase('mirror-prep', async (signal) => {
           noteTickPhase('mirror prep', `${policy.repos.length} repo(s)`);
           // Lane observations belong to the running tick, not its completion.
-          // Re-probe while mirror prep waits; never renew an old usage reading.
+          // Re-probe while mirror prep waits, without gating prep on sensor I/O.
           let observing = false;
           let observationClosed = false;
           const observe = async (): Promise<void> => {
@@ -1417,11 +1416,12 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
               const at = deps.now();
               const currentPolicy = deps.standingPolicy();
               if (!currentPolicy || currentPolicy.grantId !== policy.grantId) return;
+              const directives = clampLeaderDirectives(deps.directives(), currentPolicy);
               const snapshot = deps.capacitySnapshot();
               const reading = await deps.probeLocalRuntime(cfg, snapshot);
               const observed = await planLanes({
                 policy: currentPolicy,
-                directives: clampLeaderDirectives(deps.directives(), currentPolicy),
+                directives,
                 presence: await deps.presence(at),
                 ...(await loadSchedulerPace(at)),
                 localServingSlots: reading.reachable === true ? reading.slots : null,
@@ -1449,15 +1449,17 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
             } catch { /* A failed observation expires naturally; no fabricated capacity. */ }
             finally { observing = false; }
           };
-          await observe();
           if (signal.aborted) throw new Error('Mirror preparation cancelled.');
           const laneTimer = setInterval(() => { void observe(); }, 60_000);
           laneTimer.unref?.();
           const stopObserving = (): void => { observationClosed = true; clearInterval(laneTimer); };
           signal.addEventListener('abort', stopObserving, { once: true });
           if (signal.aborted) stopObserving();
-          try { return await deps.prepareMirrors(policy, signal); }
-          finally { stopObserving(); signal.removeEventListener('abort', stopObserving); }
+          const initialObservation = observe();
+          try {
+            const [prepared] = await Promise.all([deps.prepareMirrors(policy, signal), initialObservation]);
+            return prepared;
+          } finally { stopObserving(); signal.removeEventListener('abort', stopObserving); }
         }, {
           deadlineMs: MIRROR_TICK_PREP_DEADLINE_MS + MIRROR_TICK_ABORT_GRACE_MS + 30_000,
           parentSignal: hookCtx.signal,

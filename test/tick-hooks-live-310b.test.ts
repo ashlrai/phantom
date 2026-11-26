@@ -367,6 +367,7 @@ describe('lanes, presence and the router seam', () => {
     try {
       await vi.advanceTimersByTimeAsync(0);
       await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+      await vi.waitFor(() => expect(h.ticks.at(-1)?.holdProduction).toBe('Mirror preparation is in progress.'));
       expect(h.ticks.at(-1)).toMatchObject({ at: new Date(NOW).toISOString(),
         holdProduction: 'Mirror preparation is in progress.' });
       expect(h.ticks.at(-1)!.lanes.find(l => l.lane === 'local')?.slots).toBeGreaterThan(0);
@@ -396,6 +397,29 @@ describe('lanes, presence and the router seam', () => {
       await running;
       vi.useRealTimers();
     }
+  });
+
+  it('starts mirror preparation without waiting for the first lane observation', async () => {
+    const prepare = vi.fn(h.deps.prepareMirrors!);
+    h.deps.prepareMirrors = prepare;
+    const probe = h.deps.probeLocalRuntime!;
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    h.deps.probeLocalRuntime = async (...args) => {
+      await blocked;
+      return probe(...args);
+    };
+    const hooks = createLiveTickHooks({ deps: h.deps });
+    hooks.effectiveConfig(CFG);
+    const running = hooks.beforeTick(hookCtx);
+    try {
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+      expect(h.ticks).toHaveLength(0);
+    } finally {
+      release();
+      await running;
+    }
+    expect(h.ticks.map(tick => tick.holdProduction)).toEqual(['Mirror preparation is in progress.', null]);
   });
 
   it('stops lane observations when mirror preparation reaches its deadline', async () => {
