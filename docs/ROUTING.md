@@ -825,8 +825,11 @@ Every valid PR reference counts when checking for competing standing revert
 claims. Ledger reverts without any PR reference retain job-level attribution.
 The fold uses the recorded revert time when available and the receipt
 timestamp otherwise.
-Replayed merge receipts cannot restore credit for a reverted merge, and the
-original merge time still bounds dispatch and CI evidence. An explicit
+Receipts for the same effective merge or close time retain all observed PR
+and repository identities, even when they arrive at different times. A sparse
+replay preserves earlier identity evidence, and conflicting claims still
+withhold PR-specific discounts and CI timing. The original merge time still
+bounds dispatch and CI evidence. An explicit
 closed-unmerged outcome likewise uses its close time to bound dispatch and
 CI evidence. A revert supplies the resolution time only when the job has
 neither a merge nor a close receipt.
