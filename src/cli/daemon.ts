@@ -1023,6 +1023,10 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
   }
 
   if (jsonMode) {
+    const phases = state.lastTickPhases ?? [];
+    const bridgeReceipts = phases.some(phase => phase.name === 'node-bridge')
+      ? await import('../core/drive/nodes/ready-bridge-receipts.js')
+      : null;
     console.log(
       JSON.stringify(
         {
@@ -1044,7 +1048,7 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
                 lastTickAt: state.lastTickAt ?? null,
                 outcome: state.lastTickOutcome ?? null,
                 lastError: state.lastTickError ?? null,
-                phases: state.lastTickPhases ?? [],
+                phases: bridgeReceipts?.bridgePhasesWithReceipts(phases, state.pid, state.startedAt) ?? phases,
               }
             : null,
           // Additive: the tick in progress right now, or null.

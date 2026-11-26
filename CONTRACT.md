@@ -2316,6 +2316,9 @@ optional `routerScope`; reconciliation holds owner mismatches as
 without withdrawing or requeueing those leases.
 `src/core/drive/nodes/ready-bridge-run.ts` exports `readNodeBridgeConfig`,
 `runConfiguredNodeBridge`, `NodeBridgeConfig` and `NodeBridgeRunOptions`.
+`NodeBridgeOptions` and `NodeBridgeRunOptions` accept an optional `trace`
+observer for named step starts and outcomes; daemon timing output is described in
+[daemon tick phases](docs/daemon-tick-phases.md#deadlines).
 `DriveNodes.withdraw(jobId, owner)` returns a `WithdrawOutcome`
 (`withdrawn | held | completed | absent`). It fences a pending or lapsed job
 with a fresh token (`WITHDRAWN_RESULT`) and persists `producerWithdrawn: true`;

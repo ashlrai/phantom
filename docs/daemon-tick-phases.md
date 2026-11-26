@@ -184,6 +184,18 @@ running detached, so later refreshes in the same tick are skipped rather than
 stacked on top of it. The 60-minute `DAEMON_TICK_DEADLINE_MS` remains the
 backstop for an await that is not a phase.
 
+The `node-bridge` entry in `phm daemon status --json | jq .tick.phases`
+includes `bridgeTiming` when the current daemon has a timing receipt. It
+contains `startedAt`, `endedAt` (null until the bridge ends or handles
+cancellation), and up to 32 recent `steps` of
+`{step, startedAt, ms, outcome}`. Outcomes are `ok`, `error`, or
+`in-flight`. Lock acquisition and release, synchronous router calls, and
+queue reads are timed separately. An interrupted pass retains completed
+steps and the step it was waiting on. For an unfinished step, `ms` is
+elapsed time at cancellation or, if cancellation was not observed by the
+child, elapsed time at the status read. Receipts are written separately by
+the bridge child, so reading them does not require another daemon tick.
+
 `~/.ashlr/daemon-tick-progress.json` always says `"authority": "none"`. That
 marks the file as observational, meaning it grants nothing. It is not the
 standing grant; read that with `phm authority status`.

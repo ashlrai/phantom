@@ -18,6 +18,7 @@ import { NODE_TASK_LIMIT, validNodeTask, nodeTaskArgs, type EmbeddedNodeTask } f
 import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
 import { validCap } from './state.js';
 import { scrubSecrets } from '../../util/scrub.js';
+import { traceBridgeSync, traceBridgeWait, type BridgeTrace } from './ready-bridge-receipts.js';
 
 export const NODE_BRIDGE_SCHEMA = 'phantom.node-bridge.v1';
 /** dispatchd keeps a lease only when its owner starts with RQ-BATCH- and has a manifest. */
@@ -347,6 +348,7 @@ export interface NodeBridgeOptions {
   pendingTtlMs?: number;
   maxPerPass?: number;
   signal?: AbortSignal;
+  trace?: BridgeTrace;
   /** Overrides host readiness (e.g. a pool backup/worker never claims). */
   inert?: string | null;
 }
@@ -363,16 +365,18 @@ function leaseAction(m: Manifest, job: JobView | undefined, owner: string | null
 
 /** One bounded bridge pass. Dry-run (`apply: false`) reads only. */
 export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridgeReport> {
-  const { host, owner, now } = opts;
+  const { host, owner, now, trace } = opts;
   const report: NodeBridgeReport = { schema: NODE_BRIDGE_SCHEMA, mode: opts.apply ? 'apply' : 'dry-run', owner, inert: null, held: null,
     nodes: [], rows: [], leases: [], claimed: [], requeued: [], completed: [], lostRace: [] };
   report.inert = !owner ? 'bridge-owner-unset' : opts.inert !== undefined && opts.inert !== null ? opts.inert
-    : nodeBridgeReadiness(host) ?? (opts.router ? null : 'router-unavailable');
+    : traceBridgeSync(trace, 'check-readiness', () => nodeBridgeReadiness(host)) ?? (opts.router ? null : 'router-unavailable');
   const ttl = opts.pendingTtlMs ?? NODE_BRIDGE_PENDING_TTL_MS;
   const emptyView = { nodes: [], jobs: [] };
   const readView = (): { nodes: NodeView[]; jobs: JobView[] } => {
     if (!owner || !opts.router) return emptyView;
-    try { return opts.router.view(owner); } catch { report.inert ??= 'router-unavailable'; return emptyView; }
+    const router = opts.router;
+    try { return traceBridgeSync(trace, 'router-view', () => router.view(owner)); }
+    catch { report.inert ??= 'router-unavailable'; return emptyView; }
   };
   const recordSnapshot = (view: { nodes: NodeView[]; jobs: JobView[] }, manifests: Manifest[], fresh: { text: string; rows: ReadyRow[] }) => {
     report.leases = manifests.map(m => {
@@ -381,27 +385,31 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
         action: leaseAction(m, job, owner, opts.router?.scope ?? null, now, ttl) };
     });
     const bridged = new Set(manifests.map(m => m.job));
-    const plan = planNodeBridge({ rows: fresh.rows, claimed: j => bridged.has(j) || claimedLocally(host, j),
-      nodes: view.nodes, jobs: view.jobs, ...(opts.maxPerPass !== undefined ? { maxPerPass: opts.maxPerPass } : {}) });
+    const plan = traceBridgeSync(trace, 'build-plan', () => planNodeBridge({
+      rows: fresh.rows, claimed: j => bridged.has(j) || claimedLocally(host, j),
+      nodes: view.nodes, jobs: view.jobs, ...(opts.maxPerPass !== undefined ? { maxPerPass: opts.maxPerPass } : {}),
+    }));
     report.nodes = plan.nodes;
     report.rows = plan.rows;
     return plan;
   };
 
+  const manifestsForHost = () => traceBridgeSync(trace, 'read-manifests', () => readManifests(host));
+  const rowsForHost = () => traceBridgeSync(trace, 'read-ready', () => readRows(host));
   if (!opts.apply || report.inert || !owner || !opts.router) {
-    recordSnapshot(readView(), readManifests(host), readRows(host));
+    recordSnapshot(readView(), manifestsForHost(), rowsForHost());
     return report;
   }
   if (opts.signal?.aborted) { report.held = 'aborted'; return report; }
 
   const router = opts.router;
-  const lock = await (opts.lock ?? flockDispatcher)(queueDir(host), opts.signal);
+  const lock = await traceBridgeWait(trace, 'acquire-lock', () => (opts.lock ?? flockDispatcher)(queueDir(host), opts.signal));
   if ('busy' in lock) { report.held = lock.busy; return report; }
   try {
     if (opts.signal?.aborted) { report.held = 'aborted'; return report; }
     const view = readView();
-    const manifests = readManifests(host);
-    const fresh = readRows(host);
+    const manifests = manifestsForHost();
+    const fresh = rowsForHost();
     const plan = recordSnapshot(view, manifests, fresh);
     if (report.inert) return report;
 
@@ -410,7 +418,7 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
       const action = report.leases.find(l => l.leaseOwner === m.id)!.action;
       if (action === 'keep-completed' || action === 'wait' || action === 'hold-owner-mismatch' || action === 'hold-router-mismatch') continue;
       let outcome: WithdrawOutcome;
-      try { outcome = router.withdraw(m.routerJobId, owner); } catch { continue; }
+      try { outcome = traceBridgeSync(trace, 'router-withdraw', () => router.withdraw(m.routerJobId, owner)); } catch { continue; }
       if (outcome.state === 'withdrawn' || outcome.state === 'absent') requeue.push(m);
       else if (outcome.state === 'completed') {
         writeAtomic(join(batchesDir(host), `${m.id}.json`), JSON.stringify({ ...m, state: 'completed', completedAt: now, result: (outcome.result ?? '').slice(0, 200) }) + '\n');
@@ -425,11 +433,11 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
     let safeRequeue = requeue;
     if (requeue.length) {
       let currentView: { nodes: NodeView[]; jobs: JobView[] };
-      try { currentView = router.view(owner); } catch {
+      try { currentView = traceBridgeSync(trace, 'router-recheck', () => router.view(owner)); } catch {
         report.held = 'router-unavailable';
         return report;
       }
-      const currentManifests = readManifests(host);
+      const currentManifests = manifestsForHost();
       safeRequeue = requeue.filter(m => {
         const currentManifest = currentManifests.find(current => current.id === m.id && current.job === m.job &&
           current.line === m.line && current.routerJobId === m.routerJobId && current.owner === m.owner &&
@@ -466,7 +474,7 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
       let task: EmbeddedNodeTask | undefined;
       if (decision.pack === 'codex-file') {
         // Embed the bounded prompt so the receiving host needs no access to this host's prompt root.
-        try { task = readBridgeTask(host, row); }
+        try { task = traceBridgeSync(trace, 'read-prompt', () => readBridgeTask(host, row)); }
         catch (error) {
           decision.offload = false;
           decision.reasons.push((error as Error).message);
@@ -493,10 +501,13 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
 
     for (const { decision, manifest, task } of staged) {
       let enqueued = false;
-      try { enqueued = router.enqueue(manifest.routerJobId, { owner, requires: decision.requires, pack: decision.pack!, ...(task ? { task } : {}) }); } catch { /* next pass */ }
+      try {
+        enqueued = traceBridgeSync(trace, 'router-enqueue', () =>
+          router.enqueue(manifest.routerJobId, { owner, requires: decision.requires, pack: decision.pack!, ...(task ? { task } : {}) }));
+      } catch { /* next pass */ }
       if (enqueued) writeAtomic(join(batchesDir(host), `${manifest.id}.json`), JSON.stringify({ ...manifest, state: 'offloaded' }) + '\n');
       report.claimed.push(decision.job);
     }
     return report;
-  } finally { await lock.release(); }
+  } finally { await traceBridgeWait(trace, 'release-lock', () => lock.release()); }
 }

@@ -9,6 +9,7 @@ import { LocalNodesStore } from './local-store.js';
 import { callPool, readPoolConfig } from './pool-host.js';
 import { localBridgeRouter, poolBridgeRouter, runNodeBridge, type BridgeRouter, type NodeBridgeReport } from './ready-bridge.js';
 import { validId } from './state.js';
+import { traceBridgeSync, type BridgeTrace } from './ready-bridge-receipts.js';
 
 export interface NodeBridgeConfig { enabled: boolean; owner: string | null; maxPerPass?: number; pendingTtlMs?: number }
 
@@ -26,32 +27,35 @@ export function readNodeBridgeConfig(home: string = ashlrHome()): NodeBridgeConf
   } catch { return 'invalid'; }
 }
 
-export interface NodeBridgeRunOptions { apply: boolean; owner?: string; signal?: AbortSignal; now?: number }
+export interface NodeBridgeRunOptions { apply: boolean; owner?: string; signal?: AbortSignal; now?: number; trace?: BridgeTrace }
 
 /** Resolve config, router and host, then run one pass. Apply needs `enabled: true`. */
 export async function runConfiguredNodeBridge(opts: NodeBridgeRunOptions): Promise<NodeBridgeReport> {
-  const config = readNodeBridgeConfig();
+  const config = traceBridgeSync(opts.trace, 'load-config', () => readNodeBridgeConfig());
   let pool: ReturnType<typeof readPoolConfig> = null;
   let poolInvalid = false;
-  try { pool = readPoolConfig(); } catch { poolInvalid = true; }
+  try { pool = traceBridgeSync(opts.trace, 'read-pool-config', () => readPoolConfig()); } catch { poolInvalid = true; }
   const owner = opts.owner ?? (config !== 'invalid' ? config.owner : null) ?? pool?.owner ?? null;
   let inert: string | null = config === 'invalid' ? 'bridge-config-invalid'
     : opts.apply && !config.enabled ? 'bridge-disabled' : poolInvalid ? 'pool-config-invalid' : null;
   let router: BridgeRouter | null = null;
-  if (pool) {
-    if (pool.role !== 'primary') inert ??= 'not-pool-primary';
-    else if (owner !== pool.owner) inert ??= 'owner-not-pool-scope';
-    else router = poolBridgeRouter((verb, args) => callPool(pool!, verb, args), join(ashlrHome(), 'node-pool'));
-  } else if (existsSync(join(ashlrHome(), 'nodes'))) {
-    const directory = join(ashlrHome(), 'nodes');
-    const store = new LocalNodesStore(directory);
-    router = localBridgeRouter(new DriveNodes(store), directory);
-  }
+  traceBridgeSync(opts.trace, 'resolve-router', () => {
+    if (pool) {
+      if (pool.role !== 'primary') inert ??= 'not-pool-primary';
+      else if (owner !== pool.owner) inert ??= 'owner-not-pool-scope';
+      else router = poolBridgeRouter((verb, args) => callPool(pool!, verb, args), join(ashlrHome(), 'node-pool'));
+    } else if (existsSync(join(ashlrHome(), 'nodes'))) {
+      const directory = join(ashlrHome(), 'nodes');
+      const store = new LocalNodesStore(directory);
+      router = localBridgeRouter(new DriveNodes(store), directory);
+    }
+  });
   return runNodeBridge({
-    host: { runsRoot: runsRoot(), wtRoot: join(homedir(), 'Projects', 'ashlrai', 'wt') },
+    host: { runsRoot: traceBridgeSync(opts.trace, 'resolve-runs-dir', runsRoot), wtRoot: join(homedir(), 'Projects', 'ashlrai', 'wt') },
     router, owner, apply: opts.apply, now: opts.now ?? Date.now(), inert,
     ...(config !== 'invalid' && config.maxPerPass ? { maxPerPass: config.maxPerPass } : {}),
     ...(config !== 'invalid' && config.pendingTtlMs ? { pendingTtlMs: config.pendingTtlMs } : {}),
     ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.trace ? { trace: opts.trace } : {}),
   });
 }

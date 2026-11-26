@@ -9,6 +9,8 @@ import { bridgeLeaseOwner, localBridgeRouter, nodeBridgeReadiness, runNodeBridge
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { probeNodeLanes } from '../src/core/drive/nodes/worker.js';
 import { probeRunnerPacks } from '../src/core/drive/nodes/runner-packs.js';
+import { runTickPhase } from '../src/core/daemon/tick-phases.js';
+import { bridgePhasesWithReceipts, createBridgeReceipts } from '../src/core/drive/nodes/ready-bridge-receipts.js';
 
 class MemoryStore implements NodesStore {
   state = emptyState();
@@ -60,6 +62,40 @@ function fixture(rows: string[], nodes: { id: string; caps: string[]; slots?: nu
 }
 
 describe('ready.tsv -> node router bridge', () => {
+  it('keeps the blocked lock step and prior receipts in the timed-out daemon phase', async () => {
+    const f = fixture([]);
+    const started = Date.parse('2026-11-24T12:00:00Z');
+    let now = started;
+    const receipts = createBridgeReceipts(process.pid, f.host.runsRoot, () => now);
+    const phase = await runTickPhase('node-bridge', signal => {
+      signal.addEventListener('abort', () => { now = started + 10; receipts.finish(); }, { once: true });
+      return f.pass(true, { signal, trace: receipts.trace, lock: () => new Promise(() => undefined) });
+    }, { deadlineMs: 10, graceMs: 0, detached: true });
+    expect(phase.status).toBe('timeout');
+    expect(bridgePhasesWithReceipts([phase.record], process.pid, new Date(started).toISOString(), f.host.runsRoot, started + 500)).toMatchObject([{
+      status: 'timeout', bridgeTiming: { endedAt: new Date(started + 10).toISOString(), steps: [
+        { step: 'check-readiness', outcome: 'ok', ms: 0, startedAt: new Date(started).toISOString() },
+        { step: 'acquire-lock', outcome: 'in-flight', ms: 10, startedAt: new Date(started).toISOString() },
+      ] },
+    }]);
+  });
+
+  it('reports failed steps without attributing receipts to an unrelated daemon', async () => {
+    const f = fixture([]);
+    const started = Date.parse('2026-11-24T12:00:00Z');
+    const startedAt = new Date(started).toISOString();
+    const phases = [{ name: 'node-bridge', status: 'degraded', durationMs: 5 }] as const;
+    const read = (pid: number) => bridgePhasesWithReceipts([...phases], pid, startedAt, f.host.runsRoot, started + 5);
+    expect(read(process.pid)).toEqual(phases);
+    const receipts = createBridgeReceipts(process.pid, f.host.runsRoot, () => started);
+    await expect(f.pass(true, { trace: receipts.trace, lock: async () => { throw new Error('fixture lock failed'); } })).rejects.toThrow('fixture lock failed');
+    receipts.finish();
+    expect(read(process.pid + 1)).toEqual(phases);
+    expect(read(process.pid)).toMatchObject([{ bridgeTiming: { steps: [
+      { step: 'check-readiness', outcome: 'ok' }, { step: 'acquire-lock', outcome: 'error' },
+    ] } }]);
+  });
+
   it('offloads an eligible row under a dispatchd-honored lease and a router job', async () => {
     const f = fixture([row('RQ-REVIEW-A')]);
     const dry = await f.pass(false);
