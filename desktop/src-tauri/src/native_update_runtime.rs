@@ -331,7 +331,7 @@ mod platform {
             Phase::WaitingForAppQuit
         } else if matches!(
             result.reason.as_deref(),
-            Some("stop-required" | "work-active-or-unknown")
+            Some("stop-required" | "work-active-or-unknown" | "drain-interlock-unsupported")
         ) {
             Phase::WaitingForIdle
         } else {

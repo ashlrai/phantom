@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { Header, type HeaderData } from 'tar';
 import { canonicalJson } from '../src/core/authority/canonical-json.js';
+import { beginDesktopUpdateInterlock, desktopUpdateInterlockPath, releaseDesktopUpdateInterlock } from '../src/core/desktop/update-interlock.js';
+import { killSwitchOn, killSwitchPath, readKillSwitch, setKill } from '../src/core/sandbox/policy.js';
 import { applyQualifiedDesktopUpdate, desktopUpdateStagePath, downloadQualifiedUpdateArtifact,
   inspectQualifiedDesktopUpdate, inspectSignedAppArchive, prepareQualifiedDesktopUpdate, readQualifiedDesktopUpdateResult,
   loadInstalledDesktopTransaction,
@@ -17,6 +19,38 @@ import {extractPinnedRuntimeArchive,readPinnedRuntimeArchive} from '../src/core/
 import {getDesktopUpdateProfile, type DesktopUpdateProfileName, type CompatibleUpdateManifest, type UpdateTrust } from '../src/core/desktop/update-manifest.js';
 
 const roots: string[] = [];
+describe('local desktop update interlock', () => {
+  it.each([true, false])('preserves independent operator Stop (already active: %s)', operatorFirst => {
+    const home = process.env.HOME!;
+    fs.mkdirSync(join(home, '.ashlr'), {mode: 0o700, recursive: true});
+    if (operatorFirst) expect(setKill(true).ok).toBe(true);
+    const marker = beginDesktopUpdateInterlock(home, 'a'.repeat(32), 'b'.repeat(64), 42);
+    expect(marker).not.toBeNull();
+    try {
+      expect(fs.lstatSync(desktopUpdateInterlockPath(home)).mode & 0o777).toBe(0o600);
+      expect(readKillSwitch().state).toBe(operatorFirst ? 'active' : 'inactive');
+      expect(killSwitchOn()).toBe(true);
+      expect(beginDesktopUpdateInterlock(home, 'a'.repeat(32), 'b'.repeat(64), 42)).toBeNull();
+      expect(releaseDesktopUpdateInterlock(home, {...marker!, nonce: 'c'.repeat(32)})).toBe(false);
+      if (!operatorFirst) expect(setKill(true).ok).toBe(true);
+      const operator = fs.readFileSync(killSwitchPath());
+      expect(releaseDesktopUpdateInterlock(home, marker!)).toBe(true);
+      expect(fs.readFileSync(killSwitchPath())).toEqual(operator);
+      expect(readKillSwitch().state).toBe('active');
+    } finally {
+      if (marker) releaseDesktopUpdateInterlock(home, marker);
+      setKill(false);
+    }
+  });
+  it('falls back to manual Stop when drain compatibility is unproven', async () => {
+    const f = pairedFixture();
+    const unpaused = { ...f.deps, admission: () => ({...f.deps.admission(), stop: false}) };
+    expect(inspectQualifiedDesktopUpdate(f.id, unpaused))
+      .toMatchObject({state: 'blocked', reason: 'drain-interlock-unsupported'});
+    expect(await applyQualifiedDesktopUpdate(f.id, unpaused)).toMatchObject({state: 'blocked', reason: 'stop-required'});
+    expect(f.installations()).toBe(0);
+  });
+});
 afterEach(() => {vi.unstubAllGlobals(); for (const root of roots.splice(0)) fs.rmSync(root, {recursive:true,force:true});});
 const {publicKey,privateKey} = generateKeyPairSync('ed25519'); const keyId = Buffer.from('1122334455667788','hex');
 const key = Buffer.from(`untrusted comment: ephemeral test key\n${Buffer.concat([Buffer.from('Ed'),keyId,publicKey.export({format:'der',type:'spki'}).subarray(-32)]).toString('base64')}\n`).toString('base64');

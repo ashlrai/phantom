@@ -3,10 +3,13 @@ import {applyConsumerDesktopInstall, createConsumerInstallDependencies, inspectC
 import {cmdDesktopOperator, type DesktopOperatorCliDeps} from './desktop-operator.js';
 import {applyConsumerDesktopUpgrade, createConsumerUpgradeDependencies, inspectConsumerDesktopUpgrade,
   type ConsumerUpgradeDependencies, type ConsumerUpgradeOptions, type ConsumerUpgradeResult} from '../core/desktop/consumer-upgrade.js';
+import { desktopUpdateInterlockPresent } from '../core/desktop/update-interlock.js';
+import { readHostedReleaseTrainPause } from '../core/release/train.js';
 
 const USAGE = `usage: phm desktop install [--apply]
        phm desktop install --upgrade [--apply] [--require-app] [--to x.y.z]
        phm desktop install --rollback [--apply]
+       phm desktop update status --json
        phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]
 
 Inspect this installed CLI's original signed macOS arm64 app and paired CLI.
@@ -37,6 +40,21 @@ export async function cmdDesktop(args: string[], dependencies?: ConsumerInstallD
   emit: (result: ConsumerInstallResult|ConsumerUpgradeResult)=>void|Promise<void> = value=>{console.log(JSON.stringify(value));},
   operatorDeps?: DesktopOperatorCliDeps, upgradeDeps?:ConsumerUpgradeDependencies): Promise<number> {
   const head = args[0];
+  if (head === 'update') {
+    if (args.length === 3 && args[1] === 'status' && args[2] === '--json') {
+      console.log(JSON.stringify({
+        schema: 'desktop.update-drain-status.v1',
+        automaticDrain: false,
+        reason: 'drain-interlock-unsupported',
+        localInterlock: desktopUpdateInterlockPresent() ? 'held-or-unreadable' : 'clear',
+        hostedReleaseTrain: readHostedReleaseTrainPause(),
+        remedy: 'Engage operator Stop and let local work drain before installing.',
+      }));
+      return 0;
+    }
+    if (args.length === 2 && ['--help', '-h', 'help'].includes(args[1]!)) {console.log(USAGE);return 0;}
+    console.error(USAGE);return 2;
+  }
   if (head && !['install', 'help', '--help', '-h'].includes(head)) return cmdDesktopOperator(args, operatorDeps);
   let options: ReturnType<typeof parseDesktopInstallArgs>;
   try {options=parseDesktopInstallArgs(args);} catch {console.error(USAGE);return 2;}

@@ -46,6 +46,7 @@ import { readEnvironmentCredential } from './secrets.js';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { desktopUpdateInterlockPresent } from '../desktop/update-interlock.js';
 import type { DepEdge } from './dep-parser.js';
 import {
   acquireOutwardMutationFence,
@@ -202,7 +203,7 @@ function globalKillSwitchOn(): boolean {
     lstatSync(join(homedir(), '.ashlr', 'KILL'));
     return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT' || desktopUpdateInterlockPresent();
   }
 }
 

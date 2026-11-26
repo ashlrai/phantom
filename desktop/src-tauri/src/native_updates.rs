@@ -732,6 +732,7 @@ const HOST_REASONS: &[&str] = &[
     "current-version-unverified",
     "download-failed",
     "download-origin-refused",
+    "drain-interlock-unsupported",
     "grant-unavailable",
     "incomplete-app-archive",
     "installation-recovery-required",

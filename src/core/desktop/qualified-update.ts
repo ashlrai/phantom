@@ -11,6 +11,7 @@ import { Header } from 'tar';
 import { evaluateStandingAuthority } from '../authority/effective-config.js';
 import { runningPackageRoot, verifyAuthoritySurfaceAt } from '../authority/surface.js';
 import { censusExecutionLeases } from '../sandbox/execution-leases.js';
+import { readKillSwitch } from '../sandbox/policy.js';
 import { readPinnedRuntimeArchive, extractPinnedRuntimeArchive, type PinnedRuntimeArchiveOptions } from '../local-runtime/archive.js';
 import { parseBuildIdentity } from '../build-identity.js';
 import { fsyncDirectory } from '../util/durability.js';
@@ -144,7 +145,8 @@ export function inspectQualifiedDesktopUpdate(stageId: string, deps: DesktopUpda
     try {bytes(join(staged.stage, 'consumer-attempt.json'), 8192); return result('blocked', version, 'update-attempt-already-recorded');}
     catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
     updateMode(deps, staged.manifest);
-    const reason = admissionReason(deps.admission());
+    const admission = deps.admission();
+    const reason = !admission.stop ? 'drain-interlock-unsupported' : admissionReason(admission);
     return result(reason ? 'blocked' : 'ready', version, reason);
   } catch (error) { return result('blocked', version, error instanceof Held ? error.reason : 'verification-failed'); }
 }
@@ -562,7 +564,7 @@ export function createDesktopUpdateDependencies(trust: UpdateTrust | null): Desk
       const evaluated = evaluateStandingAuthority({mode: 'fresh', surface: 'running'}); const leases = censusExecutionLeases();
       return {grantId: evaluated.grant?.grantId ?? null, envelopeDigest: evaluated.envelopeDigest,
         surfaceDigest: evaluated.surface.ok ? evaluated.surface.digest : null,
-        active: evaluated.grantState === 'active' && evaluated.ledger.chain === 'ok', stop: evaluated.kill,
+        active: evaluated.grantState === 'active' && evaluated.ledger.chain === 'ok', stop: readKillSwitch().state === 'active',
         leaseCount: leases.leases.length, unknownLeases: leases.unknown};
     },
     currentPackageRoot: () => {try {return fs.realpathSync(join(userInfo().homedir, '.local', 'share', 'ashlr', 'current'));} catch {return null;}},
