@@ -55,6 +55,20 @@ describe('generator yield', () => {
       { generator: 'fixup', jobs: 2, prs: 2, merged: 2 },
     ]);
   });
+  it('uses terminal fields ahead of nonterminal aliases and event names', () => {
+    const report = generatorYield([
+      row({ job: 'FIXUP-1', state: 'PUBLISHED', outcome: ' merged ', event: 'publish',
+        ts: '2026-11-08T11:59:00Z', mergedAt: '2026-11-09T11:00:00Z', tokens_total: 20 }),
+      row({ job: 'FIXUP-2', state: 'unknown', phase: 'MERGED', event: 'publish',
+        mergedAt: '2026-11-09T12:01:00Z' }),
+      row({ job: 'FIXUP-3', status: 'unknown', conclusion: 'CLOSED', event: 'merged',
+        mergedAt: '2026-11-09T12:01:00Z', closedAt: '2026-11-09T11:00:00Z',
+        prUrl: 'https://github.com/x/y/pull/3', tokens_total: 10 }),
+    ].join('\n'), 24, now);
+    expect(report.generators).toMatchObject([
+      { generator: 'fixup', jobs: 2, prs: 2, merged: 1, tokensPerMergedPr: 30 },
+    ]);
+  });
   it('reads the jobs-ledger field dialect', () => {
     const report = generatorYield([
       JSON.stringify({ job_id: 'RQ-FOOA9Q8', type: 'finish', timestamp: '2026-11-09T10:00:00Z', result: 'empty', pr_url: 'https://github.com/x/y/pull/1' }),

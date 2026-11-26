@@ -36,6 +36,15 @@ const pickString = (r: Record<string, unknown>, keys: readonly string[]): string
   }
   return null;
 };
+function terminalVerdict(row: Record<string, unknown>, event: string | undefined): 'MERGED' | 'CLOSED' | null {
+  for (const key of PHASE_KEYS) {
+    const phase = string(row[key])?.toUpperCase();
+    if (phase === 'MERGED' || phase === 'CLOSED') return phase;
+  }
+  if (event === 'merged') return 'MERGED';
+  if (event === 'closed') return 'CLOSED';
+  return null;
+}
 function generator(id: string): string {
   if (/^FIXUP-/i.test(id)) return 'fixup';
   if (/^RQ-DRAIN-/i.test(id)) return 'drain';
@@ -50,7 +59,7 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   const generation = new Map<string, Map<string, { drafted: boolean; reasons: Set<string> }>>();
   const launchedBatches = new Map<string, number>();
   const memberBatches = new Map<string, Map<string, number>>();
-  const rows: { id: string; at: number; row: Record<string, unknown> }[] = [];
+  const rows: { id: string; at: number; event: string | undefined; terminal: ReturnType<typeof terminalVerdict>; row: Record<string, unknown> }[] = [];
   const since = now - hours * 3600000;
   for (const line of `${raw}\n${decisions}`.split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -60,22 +69,21 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     const r = value as Record<string, unknown>;
     if (isNodePoolLedgerRow(r)) continue;
     const id = pickString(r, JOB_ID_KEYS);
-    const phase = pickString(r, PHASE_KEYS)?.toUpperCase();
     const event = pickString(r, EVENT_KEYS)?.toLowerCase();
+    const terminal = terminalVerdict(r, event);
     // Reconciled outcomes can retain the original publish timestamp.
-    const terminalAt = phase === 'MERGED' || event === 'merged' ? string(r.mergedAt)
-      : phase === 'CLOSED' || event === 'closed' ? string(r.closedAt) : null;
+    const terminalAt = terminal === 'MERGED' ? string(r.mergedAt)
+      : terminal === 'CLOSED' ? string(r.closedAt) : null;
     const timestamp = pickString(r, TS_KEYS);
     const terminalMs = terminalAt === null ? NaN : Date.parse(terminalAt);
     const at = Number.isFinite(terminalMs) ? terminalMs : Date.parse(timestamp ?? '');
     if (!id || !Number.isFinite(at)) { malformedLines++; continue; }
     if (at < since || at > now) continue;
-    rows.push({ id, at, row: r });
+    rows.push({ id, at, event, terminal, row: r });
   }
   // Late receipts can be appended out of order. Stable sorting preserves
   // ledger order when receipts share a timestamp.
-  for (const { id, at, row: r } of rows.sort((a, b) => a.at - b.at)) {
-    const event = pickString(r, EVENT_KEYS)?.toLowerCase();
+  for (const { id, at, event, terminal, row: r } of rows.sort((a, b) => a.at - b.at)) {
     const launch = event === 'launch' || event === 'launched';
     if (id.startsWith('RQ-BATCH-')) {
       if (launch) launchedBatches.set(id, at);
@@ -110,7 +118,7 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     if (typeof r.empty === 'boolean') job.empty = r.empty;
     if (phase?.toLowerCase() === 'empty') job.empty = true;
     if (pickString(r, PR_KEYS) !== null) job.pr = true;
-    if (phase?.toUpperCase() === 'MERGED' || event?.toLowerCase() === 'merged') { job.merged = true; job.pr = true; }
+    if (terminal === 'MERGED') { job.merged = true; job.pr = true; }
     job.diff = count(r.diff_lines) ?? job.diff;
     job.tokens = count(r.tokens_total ?? r.tokens) ?? job.tokens;
     jobs.set(id, job);
