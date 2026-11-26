@@ -109,6 +109,26 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
 }
 
 describe('CI baseline evidence', () => {
+  it('queues a baseline fix when current master reproduces an unaffected singleton', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1, flaky: true, extraMasterJob: 'cancelled' }).gh);
+    expect(report.master.known).toBe(false);
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]).toMatchObject({
+      testId: 'test/example.test.ts > owner status reports delivery',
+      classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', unaffectedPrs: [1],
+    });
+    expect(report.groups[0]?.brief).toContain('Blocked PRs: 1.');
+    expect(report.updates).toEqual([expect.objectContaining({ pr: 1, ready: false })]);
+  });
+
+  it('requires independence before using a matching master failure to queue a fix', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1, imports: "import helper from '#helper';" }).gh);
+    expect(report.groups[0]).toMatchObject({
+      classification: 'unknown', action: 'unknown', master: 'fail', unaffectedPrs: [],
+    });
+    expect(report.updates).toEqual([]);
+  });
+
   it('groups independent failures and keeps analysis read-only', async () => {
     const { gh, calls } = github();
     const report = await analyzeCiBaseline('owner/repo', gh);
@@ -129,8 +149,14 @@ describe('CI baseline evidence', () => {
     const pass = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true }).gh);
     expect(pass.groups[0]?.action).toBe('rerun-failed');
     expect(pass.groups[0]?.runs).toEqual([{ pr: 1, head, runId: 2 }]);
-    const fail = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
-    expect(fail.groups[0]?.action).toBe('unknown');
+    const { gh } = github({ count: 1 });
+    const unrelatedFailure = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      return args[1]?.endsWith('/jobs/10/logs')
+        ? { ...result, stdout: result.stdout.replaceAll('test/example.test.ts', 'test/other.test.ts') }
+        : result;
+    });
+    expect(unrelatedFailure.groups[0]).toMatchObject({ action: 'unknown', master: 'unknown' });
   });
   it('reads default-reporter file-pass lines as master pass evidence', async () => {
     // The default reporter prints `✓ file (N tests)` for a green module and
