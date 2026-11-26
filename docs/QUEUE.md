@@ -400,10 +400,11 @@ count of headroom and rows waiting elsewhere, capped by total waiting rows
 because lanes can see the same work. If `ready.tsv` is unavailable, queue-derived
 counts show as unknown. Published dispatcher counts still apply, and a free
 lane with no waiting evidence has an unknown unfed verdict. A readable empty
-queue supplies measured zero counts in the derived report. When the dispatcher
-publishes a partial block, a missing tick total stays unknown. Missing lane
-counts also stay unknown for lanes with spare capacity unless the tick recorded
-zero waiting rows. A lane count above the tick's total is invalid, so it follows
+queue supplies measured zero counts in the derived report. A partial dispatcher
+block remains the source for tick counts even when its lane map is missing or
+invalid. A missing tick total stays unknown. Missing lane counts also stay
+unknown for lanes with spare capacity unless the tick recorded zero waiting
+rows. A lane count above the tick's total is invalid, so it follows
 the same fallback and its blocker counts are omitted. A separate ready-file read
 still supplies current hint counts.
 Actual placement depends on eligibility

@@ -333,7 +333,7 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
   const nowMs = market?.nowMs;
   const statusFresh = nowMs === undefined || !Number.isFinite(nowMs) ? null
     : data.schema === 'dispatchd.status.v1' && Number.isFinite(tickMs) && nowMs >= tickMs && nowMs - tickMs <= STATUS_FRESH_MS;
-  const published = isRecord(data.unfed_capacity) && isRecord(data.unfed_capacity.lanes) ? data.unfed_capacity : null;
+  const published = isRecord(data.unfed_capacity) ? data.unfed_capacity : null;
   const ctx = published === null ? marketContext(market) : null;
   const operatorHolds = published === null && ctx === null
     ? new Set((market?.hold ?? '').split(/\s+/u).filter(Boolean)) : null;

@@ -1006,6 +1006,28 @@ describe('phm fleet unfed', () => {
     expect(JSON.parse(result.lines[0]!)).toMatchObject({ statusFresh: false, unfedSlots: 0 });
   });
 
+  it.each([
+    { waiting: 2, lanes: undefined, ready: '', hinted: 0, unfed: null, code: 2 },
+    { waiting: 0, lanes: [], ready: row('RQ-A', 'b'), hinted: 1, unfed: false, code: 0 },
+  ])('preserves a fresh dispatcher total of $waiting without a usable lane map', async ({
+    waiting, lanes, ready, hinted, unfed, code,
+  }) => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(),
+      lanes: { b: { running: 0, target: 2 } },
+      unfed_capacity: { waiting, lanes },
+    }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), ready);
+
+    const result = await run();
+    expect(result.code).toBe(code);
+    expect(JSON.parse(result.lines[0]!)).toMatchObject({
+      source: 'dispatcher', statusFresh: true, waiting, unfedLanes: [], invalidRows: 0,
+      unfedSlots: waiting === 0 ? 0 : null,
+      resources: [{ lane: 'b', readyHinted: hinted, waitingElsewhere: waiting === 0 ? 0 : null, unfed }],
+    });
+  });
+
   it('signals a confirmed unfed lane even when the fleet-wide bound is unknown', async () => {
     writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
       schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(),
