@@ -43,6 +43,7 @@ import {
   claude5ExcludeIds,
   CLAUDE5_CATALOG_IDS,
   GEMINI_API_DEFAULT_MODEL,
+  MODEL_DEFAULTS_BY_TIER,
   resolveSelectedEngineModel,
   type ModelEntry,
   type ModelCapability,
@@ -490,6 +491,12 @@ export function modelForSelectedEngine(item: WorkItem, engine: EngineId, cfg: As
         reason: 'M323 qualified learned model for the selected engine.' };
     }
     if (engine === 'codex') return codexDefaultForTask(item, cfg);
+    if (engine === 'claude' && !cfg.foundry?.engines?.claude) {
+      const tier = modelTierForTask(item);
+      const model = MODEL_DEFAULTS_BY_TIER.claude[tier === 'computer' ? 'work' : tier];
+      return { engine, model, catalogEntry: KNOWN_MODELS.find(entry => entry.id === `claude:${model}`) ?? null,
+        reason: `Claude ${tier} model default.` };
+    }
     const model = resolveSelectedEngineModel({ engine, spec: resolveEngineSpec(engine, cfg) });
     return { engine, model, catalogEntry: model ? KNOWN_MODELS.find(entry => entry.engine === engine &&
       (entry.id === `${engine}:${model}` || entry.apiModelId === model)) ?? null : null,
