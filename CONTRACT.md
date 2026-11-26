@@ -4270,7 +4270,7 @@ and bound, each bracket naming `#<channel>:<topic>`. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the twelve dependencies the unified verbs touch — the
+read-only probe over the thirteen dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -4310,7 +4310,15 @@ resolve — `agentnetPaths().busRoot` = `realHome()/.ashlr/fleet`, or the
 probe's `root` override — `source` plus a `liveRows` count of unexpired
 coordination rows the send budget still counts; 0 on a verified-missing
 ledger, null when unreadable, never peer names, claim keys, digests, threads
-or bodies), and — as a verdict over the claim journal and
+or bodies), the session-handoff journal store (`listSessionHandoffs` over
+`<runsRoot>/handoffs` under the same runs root the wake probe resolves —
+`options.runsRoot`, else `ASHLR_RUNS_DIR` or `~/.ashlr-runs` — the read
+`phm checkpoint handoff list|show` and `fleet_session_handoffs` serve;
+`source` plus `journals` scanned, `open` non-`completed` journals,
+`awaitingFailover` open journals whose signal satisfies `handoffPressure`,
+`unreadable` journals that failed `show`'s validation and a `truncated`
+flag; 0 counts on a verified-missing store, null when unreadable, never job
+ids, lanes, models or signal payloads), and — as a verdict over the claim journal and
 coordination table rather than another dependency — the claim-store drift
 comparison (`readClaimStoreDrift` run over the probe's own two reads, the
 same `fleet.claim-drift.v1` read `ashlr fleet claim-drift` serves:
