@@ -1130,7 +1130,8 @@ filling the value from an older reward row), mean
 recorded `publish_wait_s` (the job's publish-station wait from its
 single recorded `finish`/`publish` boundary pair — the same pair
 job-latency's publish_wait phase and visit-sync's publish station
-read. A missing, repeated or reversed pair, or any boundary with a
+read. Queue, CI and publish timing use the first parseable jobs-ledger
+timestamp alias on each boundary or claim. A missing, repeated or reversed pair, or any boundary with a
 missing or invalid timestamp, leaves the duration unknown. Both durations
 exclude pairs with a `batch_claim` at or between their boundaries or with
 an undated claim. CI timing in those cases also stays out of the reward
