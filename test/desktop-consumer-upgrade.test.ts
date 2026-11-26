@@ -121,7 +121,7 @@ function oldApp(f:ReturnType<typeof fixture>):string {
   const info=JSON.parse(fs.readFileSync(plist,'utf8'));info.CFBundleShortVersionString='3.30.24';info.CFBundleVersion='3.30.24';write(plist,JSON.stringify(info),0o644);
   return app;
 }
-describe.skipIf(process.platform === 'win32')('managed consumer upgrade',()=> {
+describe('managed consumer upgrade',()=> {
   function coveredFixture() {
     const f=fixture('3.30.76'), app=oldApp(f), marker=desktopUpdateInterlockPath(f.home);
     write(join(f.old,'package.json'),JSON.stringify({name:'@ashlr/phantom',version:'3.30.75',type:'module',bin:{ashlr:'bin/ashlr'}}));
