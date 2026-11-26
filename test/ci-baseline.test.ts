@@ -223,6 +223,32 @@ describe('CI baseline evidence', () => {
     expect(report.master.known).toBe(false);
     expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
   });
+  it('withholds master pass evidence when a failed workflow has only green verified jobs', async () => {
+    const { gh } = github({ count: 1, pass: true, runConclusion: 'failure' });
+    const report = await analyzeCiBaseline('owner/repo', gh);
+    expect(report.master.known).toBe(false);
+    expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
+    expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+  });
+  it('withholds PR freshness when only an unverified aggregator failed', async () => {
+    const { gh } = github({ count: 1, gate: true, runConclusion: 'failure' });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      if (args[1]?.includes('/runs/2/jobs?')) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            total_count: 1,
+            jobs: [{ id: 21, name: 'Merge Gate', conclusion: 'failure', head_sha: head }],
+          }),
+          stderr: '',
+        };
+      }
+      return gh(args);
+    });
+    expect(report.master.known).toBe(true);
+    expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
+    expect(report.groups).toEqual([]);
+  });
   it('reads a jobless run that did not succeed as incomplete evidence', async () => {
     for (const conclusion of ['startup_failure', 'cancelled', 'timed_out', 'action_required', 'stale', 'failure']) {
       const report = await analyzeCiBaseline('owner/repo', github({ noJobs: true, runConclusion: conclusion }).gh);
