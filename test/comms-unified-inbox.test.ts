@@ -42,6 +42,8 @@ import { replyTextHash } from '../src/core/fleet/mason-outbox.js';
 import type { FleetAssignment, FleetCoordinationPending, FleetMessage, FleetPendingReturn } from '../src/core/fleet/coordination.js';
 import type { ClaimDriftRow, ClaimStoreDrift } from '../src/core/fleet/claim-store-drift.js';
 import type { SessionHandoffList, SessionHandoffListEntry } from '../src/core/agents/session-handoff.js';
+import type { WorkBoardItem, WorkBoardResult } from '../src/core/comms/work-board.js';
+import type { WorkItemState } from '../src/core/comms/work-item-state.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
@@ -70,6 +72,10 @@ afterEach(() => { vi.restoreAllMocks(); roots.splice(0).forEach(r => rmSync(r, {
 const read = (extra: Partial<UnifiedInboxOptions> = {}): Promise<UnifiedInbox> => readUnifiedInbox({
   runsDir, busRoot, now: () => now,
   readRequests: () => ({ status: 'missing', requests: [] }),
+  // The work board classifies every durable bus envelope as a request, so the
+  // fixtures this suite posts would all list as RECEIVED; pin a verified-empty
+  // board so only the dedicated describe block exercises the real projection.
+  readWorkBoard: () => ({ items: [], inbox: 'ok', truncated: false, claims: 'available', coordination: 'available' }),
   ...extra,
 });
 
@@ -3182,6 +3188,114 @@ describe('shared task board in the unified inbox', () => {
     const task = inbox.items.find(i => i.id === 'board:task:t-bad id')!;
     expect(task.title).toBe('[REDACTED] task');
     expect(task.act).toEqual(['phm bus board pending --peer <label>']);
+  });
+});
+
+describe('coordination work board in the unified inbox', () => {
+  const boardItem = (id: string, state: WorkItemState, over: Partial<WorkBoardItem> = {}): WorkBoardItem => ({
+    id, channel: 'bus', channelRef: null,
+    receivedAt: new Date(now - 60_000).toISOString(),
+    state, asOf: new Date(now).toISOString(), source: 'bus',
+    missing: [], owner: null, claimReceipt: null,
+    ...over,
+  });
+  const boardResult = (items: WorkBoardItem[], over: Partial<WorkBoardResult> = {}): WorkBoardResult => ({
+    items, inbox: 'ok', truncated: false, claims: 'available', coordination: 'available',
+    ...over,
+  });
+  const readBoard = (result: WorkBoardResult, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readWorkBoard: () => result, ...extra });
+
+  it('lists RECEIVED, ASSIGNED and BLOCKED requests with their classification, never RUNNING or VERIFIED', async () => {
+    const inbox = await readBoard(boardResult([
+      boardItem('env-received', 'RECEIVED', { missing: ['named owner', 'durable claim receipt'] }),
+      boardItem('env-assigned', 'ASSIGNED', {
+        owner: 'agent:peer', claimReceipt: 'bus-claim:env-assigned:4:1762619940000',
+        missing: ['fresh running evidence'], channelRef: 'team/ch/123.456',
+      }),
+      boardItem('env-blocked', 'BLOCKED', {
+        owner: 'agent:peer', claimReceipt: 'bus-claim:env-blocked:2:1762619940000',
+        result: { kind: 'blocked', dependency: 'env-dep' },
+      }),
+      boardItem('env-running', 'RUNNING', { owner: 'agent:peer', claimReceipt: 'bus-claim:env-running:1:x' }),
+      boardItem('env-verified', 'VERIFIED', { result: { kind: 'verified', pr: 12, head: 'abc', tests: null, artifact: null } }),
+    ]));
+    expect(inbox.sources['work-board']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'work-board');
+    expect(items.map(i => i.id).sort()).toEqual(['work-board:env-assigned', 'work-board:env-blocked', 'work-board:env-received']);
+
+    const received = items.find(i => i.id === 'work-board:env-received')!;
+    expect(received).toMatchObject({
+      kind: 'work-board-received', severity: 'warn', blocking: false,
+      title: 'Work board · RECEIVED · env-received',
+      since: new Date(now - 60_000).toISOString(), expiresAt: null,
+      act: ['phm fleet work-board --state RECEIVED', 'phm fleet work-trace --id env-received'],
+    });
+    expect(received.detail).toContain('unclaimed request');
+    expect(received.detail).toContain('missing named owner, durable claim receipt');
+    expect(received.jobIds).toBeUndefined();
+
+    const assigned = items.find(i => i.id === 'work-board:env-assigned')!;
+    expect(assigned).toMatchObject({ kind: 'work-board-assigned', severity: 'info', blocking: false });
+    expect(assigned.detail).toContain('assigned');
+    expect(assigned.detail).toContain('agent:peer');
+    expect(assigned.detail).toContain('team/ch/123.456');
+
+    const blocked = items.find(i => i.id === 'work-board:env-blocked')!;
+    expect(blocked).toMatchObject({ kind: 'work-board-blocked', severity: 'warn', blocking: false });
+    expect(blocked.detail).toContain('blocked');
+    expect(blocked.detail).toContain('waiting on env-dep');
+  });
+
+  it('leaves envelopes the bus source already represents under bus — one pending thing, one item', async () => {
+    postWork('wb-claimable');                    // a claimable work body → bus: item → covered.envelopes
+    const feedEnv = postJob('job-feed');         // a work.post announcement → covered.posts
+    const inbox = await readBoard(boardResult([
+      boardItem('wb-claimable', 'RECEIVED', { missing: ['named owner'] }),
+      boardItem(feedEnv, 'RECEIVED', { missing: ['named owner'] }),
+      boardItem('wb-unique', 'RECEIVED', { missing: ['named owner'] }),
+    ]));
+    const wb = inbox.items.filter(i => i.source === 'work-board');
+    expect(wb.map(i => i.id)).toEqual(['work-board:wb-unique']);
+    // Both covered envelopes still surface once, under the bus source.
+    expect(inbox.items.filter(i => i.id === 'bus:wb-claimable')).toHaveLength(1);
+    expect(inbox.items.some(i => i.id === 'bus-feed:job-feed')).toBe(true);
+  });
+
+  it('reports an unreadable board scan unavailable and partial evidence degraded', async () => {
+    const unavailable = await read({ readWorkBoard: () => ({ items: [], inbox: 'unavailable', truncated: false }) });
+    expect(unavailable.sources['work-board']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'work-board')).toHaveLength(0);
+
+    const throwing = await read({ readWorkBoard: () => { throw new Error('board boom'); } });
+    expect(throwing.sources['work-board']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'work-board')).toHaveLength(0);
+
+    for (const over of [
+      { truncated: true },
+      { claims: 'unavailable' as const },
+      { coordination: 'unavailable' as const },
+    ]) {
+      const degraded = await readBoard(boardResult([boardItem('env-1', 'RECEIVED', { missing: ['named owner'] })], over));
+      expect(degraded.sources['work-board']).toEqual({ state: 'degraded', pending: 1 });
+      expect(degraded.items.filter(i => i.source === 'work-board')).toHaveLength(1);
+    }
+  });
+
+  it('narrows under --source and --kind like every other source, and never matches --job', async () => {
+    const pending = boardResult([
+      boardItem('env-received', 'RECEIVED', { missing: ['named owner', 'durable claim receipt'] }),
+      boardItem('env-blocked', 'BLOCKED', { result: { kind: 'blocked', dependency: 'env-dep' } }),
+    ]);
+    const bySource = await readBoard(pending, { filter: { source: 'work-board' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'work-board')).toBe(true);
+    const byKind = await readBoard(pending, { filter: { kind: 'work-board-received' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['work-board:env-received']);
+    expect(byKind.sources['work-board']).toEqual({ state: 'healthy', pending: 2 });
+    // A board item provably names no job — --job never matches it.
+    const byJob = await readBoard(pending, { filter: { job: 'job-1' } });
+    expect(byJob.items.filter(i => i.source === 'work-board')).toHaveLength(0);
   });
 });
 
