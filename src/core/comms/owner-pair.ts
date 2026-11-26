@@ -217,6 +217,15 @@ export async function checkOwnerPair(deps: PairDeps): Promise<PairCheckResult> {
   if (!pending) return { status: 'none' };
   if (pending.expiresAt <= now) { writePairState(deps.configDir, { ...state, pending: null }); return { status: 'expired' }; }
   const inbound = await deps.bridge.replies(pending.afterRowId, pending.handles);
+  // Another poll, unpair, or explicit pairing may have changed this operation while
+  // Messages was being read. Never consume a reply or write a cursor for that state.
+  const current = readPairState(deps.configDir);
+  const active = current.pending;
+  if (!active || current.autoOff || active.startedAt !== pending.startedAt || active.expiresAt !== pending.expiresAt
+    || active.afterRowId !== pending.afterRowId || active.handles.length !== pending.handles.length
+    || active.handles.some((handle, i) => handle !== pending.handles[i])) {
+    return { status: active ? 'waiting' : 'none' };
+  }
   if (inbound === null) return { status: 'unreadable' };
   const own = new Set(pending.handles.map(h => h.toLowerCase()));
   // Rows at or before the send are older than the pairing; only the chats with pending own handles count.
@@ -224,11 +233,11 @@ export async function checkOwnerPair(deps: PairDeps): Promise<PairCheckResult> {
   const yes = mine.find(isYes);
   if (!yes) {
     const top = mine.reduce((max, m) => Math.max(max, m.rowid), pending.afterRowId);
-    if (top > pending.afterRowId) writePairState(deps.configDir, { ...state, pending: { ...pending, afterRowId: top } });
+    if (top > pending.afterRowId) writePairState(deps.configDir, { ...current, pending: { ...active, afterRowId: top } });
     return { status: 'waiting' };
   }
   const handle = pending.handles.find(h => h.toLowerCase() === yes.handle.toLowerCase())!;
-  return bindOwnerHandle(deps.configDir, handle, state, () => new Date(now));
+  return bindOwnerHandle(deps.configDir, handle, current, () => new Date(now));
 }
 
 async function bindOwnerHandle(configDir: string, handle: string, state: PairState, at: () => Date): Promise<PairCheckResult> {
