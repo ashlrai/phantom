@@ -533,6 +533,68 @@ describe('phm node CLI', () => {
     expect((await cli('--help')).out).toContain('phm node pull');
   });
 
+  it('scopes --help to the verb asked instead of leading with bootstrap', async () => {
+    // A first-run user typing `phm node join --help` (or any verb's --help)
+    // must land on that verb's usage, not the whole command list led by the
+    // bootstrap stub. Unknown and bare verbs keep the full list.
+    const join = await cli('join', '--help');
+    expect(join.code).toBe(0);
+    expect(join.out).toContain('Usage: phm node join [--node <id>] --owner <scope[,scope]>');
+    expect(join.out).toContain('All node commands: phm node --help');
+    expect(join.out).not.toContain('Usage: phm node bootstrap');
+
+    const beat = await cli('beat', '--help');
+    expect(beat.out).toContain('Usage: phm node beat --node <id> --session <n>');
+    expect(beat.out).toContain('--watch');
+
+    const status = await cli('status', '--help');
+    expect(status.out).toContain('Usage: phm node list|status --owner');
+
+    const capacity = await cli('capacity', '--help');
+    expect(capacity.out).toContain('Usage: phm node capacity');
+    expect(capacity.out).toContain('--outcomes-ledger');
+
+    const route = await cli('route', '--help');
+    expect(route.out).toContain('phm node route --capacity');
+
+    const measure = await cli('measure', '--help');
+    expect(measure.out).toContain('Usage: phm node measure');
+
+    const pool = await cli('pool', '--help');
+    expect(pool.out).toContain('phm node pool --role primary|backup');
+    expect(pool.out).toContain('phm node worker');
+    expect(pool.out).not.toContain('phm node capacity');
+
+    const light = await cli('light', '--help');
+    expect(light.out).toContain('phm node light restock');
+    expect(light.out).toContain('phm node light run');
+    expect(light.out).not.toContain('phm node pool --role');
+
+    const lanes = await cli('lanes', '--help');
+    expect(lanes.out).toContain('phm node lanes [--json]');
+
+    // Pool enrollment is `join --primary`, not the standalone fleet join.
+    const joinPrimary = await cli('join', '--primary', 'mbp', '--help');
+    expect(joinPrimary.out).toContain('phm node pool --role primary|backup');
+
+    const bridge = await cli('bridge', '--help');
+    expect(bridge.out).toContain('Usage: phm node bridge');
+    expect(bridge.out).toContain('Dry run by default');
+
+    // Bare and unknown verbs still print the full command list; bootstrap's
+    // own scoped help keeps its usage line without the rest of the list.
+    for (const args of [['--help'], ['-h'], ['frobnicate', '--help']]) {
+      const res = await cli(...args);
+      expect(res.code).toBe(0);
+      expect(res.out).toContain('Usage: phm node bootstrap --dry-run');
+      expect(res.out).toContain('phm node bridge [--owner');
+    }
+    const bootstrapHelp = await cli('bootstrap', '--execute', '--help');
+    expect(bootstrapHelp.code).toBe(0);
+    expect(bootstrapHelp.out).toContain('Usage: phm node bootstrap --dry-run');
+    expect(bootstrapHelp.out).not.toContain('phm node bridge [--owner');
+  });
+
   it('help advertises the embedded-task enqueue flags a producer needs', async () => {
     // The codex-file task path is how a job carries real work to a node; it
     // must be discoverable from `phm node --help`, not only from source.
