@@ -1461,7 +1461,11 @@ describe('router outcome spend join', () => {
       '{"job":"J1","cost_usd":1.25}',
       '{"job":"J1","usd":0.5}',
       '{"job":"J2","cost_usd":9}',
+      '{"job":"J3","cost_usd":1}',
       '{"job":"J3","model":"m"}',
+      '{"job":"J3","cost_usd":2}',
+      '{"job":"J4","cost_usd":1e308}',
+      '{"job":"J4","cost_usd":1e308}',
       '{"job":"J-UNKNOWN","cost_usd":7}',
       '{"cost_usd":3}',
     ].join('\n'));
@@ -1473,8 +1477,8 @@ describe('router outcome spend join', () => {
     // Spend sum fills the null; the explicit ledger cost wins over spend.
     expect(byId.get('J1')?.cost_usd).toBeCloseTo(1.75);
     expect(byId.get('J2')?.cost_usd).toBe(2);
-    // Calls with no reported cost stay unknown, never zero; spend rows for
-    // jobs outside the jobs window never create outcomes.
+    // A partial or non-finite total stays unknown. Spend rows for jobs
+    // outside the jobs window never create outcomes.
     expect(byId.get('J3')?.cost_usd).toBeNull();
     expect(byId.get('J4')?.cost_usd).toBeNull();
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3', 'J4']);

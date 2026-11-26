@@ -2242,13 +2242,13 @@ function foldRouterOutcomesWithCiCoverage(
  * collector's per-call spend feed. A row attributes to a job through
  * job|job_id|id and reports cost as cost_usd|usd|cost, the precedence the
  * fleet spend readers (runs-job-cost, runs-resource-ledger) already use.
- * Rows that are not objects, name no job, or report no usable cost are
- * skipped; a job whose calls never reported a cost stays absent from the map
- * so its outcome keeps cost_usd null — unknown, never zero. Estimated costs
- * (cost_estimated) still report a USD figure and count toward the sum.
+ * Rows that are not objects or name no job are skipped. A job with any
+ * attributed call that lacks a usable price stays absent from the map.
+ * Estimated costs (cost_estimated) report a USD figure and count toward the sum.
  */
 export function foldSpendCosts(text: string): Map<string, number> {
   const costs = new Map<string, number>();
+  const incomplete = new Set<string>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     let value: unknown;
@@ -2260,10 +2260,15 @@ export function foldSpendCosts(text: string): Map<string, number> {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
     const r = value as Row;
     const j = str(r, 'job', 'job_id', 'id');
-    if (!j) continue;
+    if (!j || incomplete.has(j)) continue;
     const cost = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']);
-    if (cost === null) continue;
-    costs.set(j, (costs.get(j) ?? 0) + cost);
+    const total = cost === null ? null : (costs.get(j) ?? 0) + cost;
+    if (total === null || !Number.isFinite(total)) {
+      incomplete.add(j);
+      costs.delete(j);
+      continue;
+    }
+    costs.set(j, total);
   }
   return costs;
 }
