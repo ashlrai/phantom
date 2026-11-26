@@ -943,8 +943,10 @@ source joins under the same claim rule:
 `$ASHLR_HOME/improve/revert-outcomes.jsonl`, the bounded append-only
 ledger `phm fleet reverts --record` writes from its 72h-window
 git-history scan — reverts of fleet PRs that no jobs-ledger or
-authority row ever named. Its newest record per `owner/repo#n` key
-decides, so a later detection whose `relandedBy` is set clears the key,
+authority row ever named. Only detections whose recorded revert time is at
+or before report start can contribute. The newest eligible record per
+`owner/repo#n` key decides, so a later eligible detection whose `relandedBy`
+is set clears the key,
 and `revert_ledger_state` reports that ledger's health (`read`/`missing`/
 `unreadable`/`too-large`); anything but `read` contributes no keys —
 corrupt evidence never marks a merge reverted. Evidence is sticky-true like
