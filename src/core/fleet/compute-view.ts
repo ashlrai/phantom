@@ -67,8 +67,7 @@ export async function readFleetCompute(options: {
         if (nodes.get(n.nodeId)?.heartbeatAt === n.heartbeatAt && (versions.get(n.nodeId) ?? 0) > state.observedAt) continue;
         versions.set(n.nodeId, state.observedAt);
         const age = now - n.heartbeatAt;
-        // Claims count only while this record is unexpired — the router's
-        // actionableClaim rule — so a fenced claim frees a dead node's slots.
+        // Claims count only while this record is unexpired, so a dead node's claim is omitted.
         const claims = n.expiresAt <= now ? [] : state.jobs.filter(j => j.state === 'running' && j.claim?.nodeId === n.nodeId &&
           j.claim.session === n.session && j.claim.expiresAt > now);
         if (claims.length > 512) truncated = true;
