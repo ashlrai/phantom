@@ -40,6 +40,21 @@ describe('generator yield', () => {
       { generator: 'drain', jobs: 1, merged: 1, emptyRate: 0, medianDiffLines: 10, tokensPerMergedPr: 100 },
     ]);
   });
+  it('uses terminal timestamps to place reconciled receipts in the report window', () => {
+    const report = generatorYield([
+      row({ job: 'RQ-DRAIN-1', event: 'publish', outcome: 'MERGED',
+        mergedAt: '2026-11-09T12:01:00Z' }),
+      row({ job: 'FIXUP-1', event: 'publish', outcome: 'MERGED',
+        ts: '2026-11-08T11:59:00Z', mergedAt: '2026-11-08T12:00:00Z' }),
+      row({ job: 'RQ-DRAIN-2', event: 'publish', outcome: 'CLOSED',
+        closedAt: '2026-11-09T12:01:00Z', prUrl: 'https://github.com/x/y/pull/2' }),
+      row({ job: 'FIXUP-2', event: 'merged', mergedAt: 'invalid' }),
+    ].join('\n'), 24, now);
+    expect(report.malformedLines).toBe(0);
+    expect(report.generators).toMatchObject([
+      { generator: 'fixup', jobs: 2, prs: 2, merged: 2 },
+    ]);
+  });
   it('reads the jobs-ledger field dialect', () => {
     const report = generatorYield([
       JSON.stringify({ job_id: 'RQ-FOOA9Q8', type: 'finish', timestamp: '2026-11-09T10:00:00Z', result: 'empty', pr_url: 'https://github.com/x/y/pull/1' }),

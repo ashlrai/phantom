@@ -60,8 +60,14 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     const r = value as Record<string, unknown>;
     if (isNodePoolLedgerRow(r)) continue;
     const id = pickString(r, JOB_ID_KEYS);
+    const phase = pickString(r, PHASE_KEYS)?.toUpperCase();
+    const event = pickString(r, EVENT_KEYS)?.toLowerCase();
+    // Reconciled outcomes can retain the original publish timestamp.
+    const terminalAt = phase === 'MERGED' || event === 'merged' ? string(r.mergedAt)
+      : phase === 'CLOSED' || event === 'closed' ? string(r.closedAt) : null;
     const timestamp = pickString(r, TS_KEYS);
-    const at = timestamp ? Date.parse(timestamp) : NaN;
+    const terminalMs = terminalAt === null ? NaN : Date.parse(terminalAt);
+    const at = Number.isFinite(terminalMs) ? terminalMs : Date.parse(timestamp ?? '');
     if (!id || !Number.isFinite(at)) { malformedLines++; continue; }
     if (at < since || at > now) continue;
     rows.push({ id, at, row: r });
