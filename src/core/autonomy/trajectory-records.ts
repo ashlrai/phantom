@@ -1639,7 +1639,7 @@ function listTrajectoryRecordsAt(
   // stream so cross-ledger bridges cannot change meaning with read order.
   const causalEvents = [
     ...dispatches.map((event) => ({ ts: event.ts, rank: 0, apply: () => processDispatch(event) })),
-    ...outcomes.map((outcome) => ({
+    ...outcomes.filter((outcome) => Date.parse(outcome.proposal.createdAt) <= asOfMs).map((outcome) => ({
       ts: outcome.proposal.createdAt,
       rank: 1,
       apply: () => processOutcome(outcome),
@@ -1973,7 +1973,7 @@ export function listTrajectoryJoinQuality(
   const dispatchQuality = (({ events: _events, ...quality }) => quality)(dispatchRead);
   const actionQuality = (({ events: _events, ...quality }) => quality)(actionRead);
   const outcomesInWindow = outcomeRead.records.filter(
-    (outcome) => eventMs(outcome.lastActivityAt) >= sinceMs,
+    (outcome) => Date.parse(outcome.proposal.createdAt) <= asOfMs && eventMs(outcome.lastActivityAt) >= sinceMs,
   );
   const dispatches = attachReadQuality(
     dispatchRead.events.filter((event) => Date.parse(event.ts) <= asOfMs),

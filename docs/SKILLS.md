@@ -150,6 +150,8 @@ trajectories for that sample or contribute to dispatch join diagnostics.
 Direct trajectory reads also exclude future UTC dispatch partitions from
 the file cap and future dispatches from the event cap. Physical scan limits
 still apply to every selected file.
+Proposal snapshots whose creation timestamps fall after report time cannot
+supply trajectory outcomes or enter trajectory join diagnostics.
 The skill-outcome report anchors its ledger read and trajectory join to one
 report time, so time spent reading the ledger cannot shift either boundary.
 The trajectory timeline, join diagnostics and outcome tallies use only
