@@ -4114,12 +4114,16 @@ and `fleet_bus_inbox`'s `before` apply — it also takes `id`/`inReplyTo` — th
 envelope-id and own-property reply-correlation matches — `kind`/`topic` —
 the protocol-v1 `protocolOf(body)?.kind` and `topicMatches` rules —
 `bodyKind`, the `busBodyKind` own-field discriminator match the addressed
-inbox/channel/wakes/conversations reads and `phm messages` share (the v2
+inbox/channel/wakes/conversations reads, `phm messages` and the raw bus
+page reads — `comms bus read|watch --body-kind`, `fleet bus-follow
+--body-kind`, `phm bus inbox --body-kind` and `fleet_bus_inbox`'s
+`bodyKind` — share (the v2
 `kind`, else `protocol.kind`, else the `type`/`schema` a kindless notice
 keys on; exact and case-sensitive, a kindless body never matching) —
 `result`, the `busBodyResultOutcome` own-field outcome match the
 `WORK_RESULT_OUTCOMES` vocabulary `phm messages --result`, `agents
-messages --result`, `fleet messages`, `bus recent`,
+messages --result`, `fleet messages`, `bus recent`, `phm bus inbox
+--result`, `comms bus read|watch --result`, `fleet_bus_inbox`'s `result`,
 `fleet_agent_messages`'s `result` and the work feed's `--result` share
 (only `work.result` bodies whose own `outcome` strictly equals the code
 emit; a `work.release` body's own `released`/`completed` outcome, every
