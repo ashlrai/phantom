@@ -92,6 +92,32 @@ it('counts lane-open work by tier without attributing it to a lane', async () =>
   expect(board?.lanes.find((lane) => lane.lane === 'codex')?.ready).toBe(1);
 });
 
+it('compares conflict counts across distinct ticks through report time', async () => {
+  await seed();
+  const record = async (nowMs: number) => {
+    const result = await recordLeaderBoard({ runsDir: root, nowMs });
+    expect(result.wrote).toBe(true);
+    if (!result.wrote) throw new Error(result.reason);
+    return result.board.conflictingPrs;
+  };
+
+  await record(NOW_MS - 60_000);
+  await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'RQ-REBASE-PHANTOM-1234-abc1234', 'devin', 'work'));
+  await record(NOW_MS);
+  expect(await record(NOW_MS)).toEqual({
+    count: 1, delta: -1, trend: 'falling',
+    history: [{ at: minutesAgo(1), count: 2 }, { at: minutesAgo(0), count: 1 }],
+  });
+
+  await writeFile(join(queueDir, 'ready.tsv'), '');
+  await record(NOW_MS + 60_000);
+  const rolledBack = NOW_MS - 30_000;
+  expect(await record(rolledBack)).toEqual({
+    count: 0, delta: -2, trend: 'falling',
+    history: [{ at: minutesAgo(1), count: 2 }, { at: new Date(rolledBack).toISOString(), count: 0 }],
+  });
+});
+
 it('reports honest failures for hostile paths and the reader stays truthful', async () => {
   expect(await recordLeaderBoard({ runsDir: 'relative/path', nowMs: NOW_MS })).toMatchObject({ wrote: false });
   expect(await recordLeaderBoard({ runsDir: '/dev/null/impossible', nowMs: NOW_MS })).toMatchObject({ wrote: false });
