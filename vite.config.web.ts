@@ -80,6 +80,20 @@ const webUiRoot = fileURLToPath(new URL('./src/web-ui', import.meta.url));
  *    the workbench's share to paint its frame). The other consoles' code is
  *    still never captured.
  *
+ * 1c. What the shell shares with the other consoles ships as one chunk too.
+ *
+ *    §1 leaves a module out when another console (App, Resources, Universe,
+ *    owner assist) reaches it, and Rolldown gave each such module its own
+ *    chunk: by 3.30 the chat's first paint fetched 91 files, ~22 KB of it
+ *    import/export glue. `VerseCommon` collects them; `VerseBoot` collects
+ *    the entry's own imports (React included) and what both Verse first
+ *    paints load. Another console that needs one of them downloads the group.
+ *
+ * 1d. The Chat section's and the phone app's own closures are one chunk each.
+ *
+ *    `ChatFirstPaint` and `VerseMobileFirstPaint`: the rest of each cold
+ *    load's static closure that §1–§1c left loose.
+ *
  * 2. Preload lists skip what the importing chunk has already loaded.
  *
  *    When a chunk runs, every chunk in its own static-import closure has
@@ -109,6 +123,14 @@ const VERSE_MOBILE_ROOT = fileURLToPath(new URL('./src/web-ui/app/VerseMobileApp
 const verseShellModules = new Set<string>();
 /** FIRST-PAINT CHUNKING §1b: the workbench shell's first-paint modules the phone app also reaches. */
 const verseSharedModules = new Set<string>();
+/** FIRST-PAINT CHUNKING §1c: the workbench shell's first-paint modules the other consoles also reach. */
+const verseCommonModules = new Set<string>();
+/** FIRST-PAINT CHUNKING §1c: what both Verse first paints load besides the entry. */
+const verseBootModules = new Set<string>();
+/** FIRST-PAINT CHUNKING §1d: the rest of the Chat section's and the phone app's own first-paint closures. */
+const chatFirstPaintModules = new Set<string>();
+const mobileFirstPaintModules = new Set<string>();
+const CHAT_SECTION_ROOT = fileURLToPath(new URL('./src/web-ui/routes/verse/sections/ChatSection.tsx', import.meta.url));
 /** Small pure display helpers share one lazy request and one preload-map entry. */
 const presentationFormatModules = new Set([
   fileURLToPath(new URL('./src/core/vision/leader-display-text.ts', import.meta.url)),
@@ -139,6 +161,10 @@ function verseFirstPaintChunks(): Plugin {
     buildEnd() {
       verseShellModules.clear();
       verseSharedModules.clear();
+      verseCommonModules.clear();
+      verseBootModules.clear();
+      chatFirstPaintModules.clear();
+      mobileFirstPaintModules.clear();
       const info = (id: string) => this.getModuleInfo(id);
       /** Everything reachable from `roots` (lazily too, unless `staticOnly`), never passing through `stop`. */
       const reach = (roots: string[], stop: ReadonlySet<string>, staticOnly = false): Set<string> => {
@@ -161,10 +187,32 @@ function verseFirstPaintChunks(): Plugin {
       const mobileFirstPaint = reach([VERSE_MOBILE_ROOT], new Set([VERSE_SHELL_ROOT]), true);
       // The console's static closure, minus anything the other consoles share (§1),
       // with what the phone app also reaches split off into the shared group (§1b).
+      const entryStatic = reach(entries, new Set(), true);
+      // §1c: the entry's own imports (React included) load with every console; one chunk, not one each.
+      // Vite's preload helper is one of them: every first-paint chunk calls it.
+      for (const id of entryStatic) {
+        if (!info(id)?.isEntry && (!id.startsWith('\0') || id.includes('preload-helper'))) verseBootModules.add(id);
+      }
       for (const id of reach([VERSE_SHELL_ROOT], new Set(), true)) {
-        if (elsewhere.has(id)) continue;
+        if (elsewhere.has(id)) {
+          // §1c: never the entry's own modules or a package (React keeps its chunks).
+          if (entryStatic.has(id) || id.includes('/node_modules/') || id.startsWith('\0')) continue;
+          if (mobileFirstPaint.has(id)) verseBootModules.add(id);
+          else verseCommonModules.add(id);
+          continue;
+        }
         if (!mobileAll.has(id)) verseShellModules.add(id);
         else if (!mobileFirstPaint.has(id)) verseSharedModules.add(id);
+      }
+      // §1d: what is still loose in a first paint, one chunk per paint instead of one per module.
+      const grouped = (id: string) => verseShellModules.has(id) || verseSharedModules.has(id)
+        || verseCommonModules.has(id) || verseBootModules.has(id) || presentationFormatModules.has(id);
+      const loose = (id: string) => !grouped(id) && !info(id)?.isEntry && !id.includes('/node_modules/') && !id.startsWith('\0');
+      for (const id of reach([CHAT_SECTION_ROOT], new Set(), true)) {
+        if (loose(id)) chatFirstPaintModules.add(id);
+      }
+      for (const id of mobileFirstPaint) {
+        if (loose(id) && !chatFirstPaintModules.has(id)) mobileFirstPaintModules.add(id);
       }
     },
     generateBundle: {
@@ -253,6 +301,30 @@ export default defineConfig(({ mode }) => {
                 // FIRST-PAINT CHUNKING §1b.
                 name: 'VerseShared',
                 test: (id: string) => verseSharedModules.has(id),
+                includeDependenciesRecursively: false,
+              },
+              {
+                // FIRST-PAINT CHUNKING §1c.
+                name: 'VerseCommon',
+                test: (id: string) => verseCommonModules.has(id),
+                includeDependenciesRecursively: false,
+              },
+              {
+                // FIRST-PAINT CHUNKING §1d.
+                name: 'ChatFirstPaint',
+                test: (id: string) => chatFirstPaintModules.has(id),
+                includeDependenciesRecursively: false,
+              },
+              {
+                // FIRST-PAINT CHUNKING §1d.
+                name: 'VerseMobileFirstPaint',
+                test: (id: string) => mobileFirstPaintModules.has(id),
+                includeDependenciesRecursively: false,
+              },
+              {
+                // FIRST-PAINT CHUNKING §1c.
+                name: 'VerseBoot',
+                test: (id: string) => verseBootModules.has(id),
                 includeDependenciesRecursively: false,
               },
             ],

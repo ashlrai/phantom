@@ -4,10 +4,13 @@
  * carry unread chips: Feed derives its badge from shared queries. Plain buttons, so Tab reaches them and Enter/Space activate; the current one carries
  * aria-current.
  */
+import { lazy, Suspense } from 'react';
 import type { HomeChoice } from './home-view.js';
-import { FeedNavBadge } from '../feed/FeedNavBadge.js';
 import styles from './CompactNavStrip.module.css';
 import { unreadLabel, type UnreadCounts } from './unread-counts.js';
+
+/** The badge derives the whole feed from ten queries; it loads after first paint. */
+const FeedNavBadge = lazy(() => import('../feed/FeedNavBadge.js').then((m) => ({ default: m.FeedNavBadge })));
 
 export type CompactNavId = HomeChoice | 'needs-you' | 'fleet';
 
@@ -41,7 +44,7 @@ export function CompactNavStrip({ active, needsYouCount, unread, onSelect }: Com
           <button key={item.id} type="button" className={styles.item}
             aria-current={active === item.id ? 'page' : undefined} onClick={() => onSelect(item.id)}>
             {item.label}
-            {item.id === 'feed' ? <FeedNavBadge /> : null}
+            {item.id === 'feed' ? <Suspense fallback={null}><FeedNavBadge /></Suspense> : null}
             {count !== null ? <span className={styles.count} aria-label={`${count} waiting`}>{count}</span> : null}
             {fresh ? <span className={styles.count} aria-label={`${fresh} new`}>{unreadLabel(fresh)}</span> : null}
           </button>

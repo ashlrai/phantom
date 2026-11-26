@@ -104,7 +104,7 @@ describe('PhantomApp keeps non-first-paint modules out of its static imports', (
   const statics = staticValueImports(SOURCE);
 
   it('sees the static imports it should (the parser works)', () => {
-    expect(statics).toContain('./shell/run-command.js');
+    expect(statics).toContain('./shell/run-command-lazy.js');
     expect(statics).toContain('./useVerseUi.js');
   });
 
@@ -210,6 +210,8 @@ const NEVER_FIRST_PAINT: Readonly<Record<string, string>> = {
   'web-ui/components/primitives/icons.tsx': 'the rail draws from icon-base.tsx',
   'web-ui/routes/verse/verse-icons.tsx': 'the rail draws from rail-icons.tsx',
   'web-ui/routes/verse/shell/reveal-anchor.ts': 'preloaded by anchor-requests.ts',
+  'web-ui/routes/verse/shell/run-command.ts': 'run-command-lazy.ts loads the command routing after first paint',
+  'web-ui/routes/verse/feed/FeedNavBadge.tsx': 'CompactNavStrip loads the Feed badge (ten queries) after first paint',
   'web-ui/routes/verse/shell/guarded-runners.ts': 'run-command imports it when a guarded run is confirmed',
   'web-ui/routes/verse/shell/copy-setup.ts': 'run-command imports it when ⌘K "Copy autonomy setup command" runs',
   'web-ui/routes/verse/shell/CommandPalette.tsx': 'PhantomApp overlay',
@@ -245,7 +247,7 @@ describe('the chat first-paint static closure (whole graph)', () => {
       'web-ui/routes/verse/rail-icons.tsx',
       'web-ui/components/primitives/icon-base.tsx',
       'web-ui/routes/verse/shell/anchor-requests.ts',
-      'web-ui/routes/verse/shell/run-command.ts',
+      'web-ui/routes/verse/shell/run-command-lazy.ts',
       'web-ui/routes/verse/shell/command-keys.ts',
       'core/verse/transient-events.ts',
     ]) expect(closure).toContain(expected);
