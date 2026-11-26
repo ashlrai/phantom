@@ -115,10 +115,10 @@ function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string
     const mems = sessions.map(x => x.memBytes).filter((bytes): bytes is number => finite(bytes) && bytes > 0);
     if (sessions.length && mems.length === sessions.length) {
       const cpus = sessions.map(x => x.cpuPercent).filter(finite);
-      let cpu: number | null = cpus.length === sessions.length ? round(cpus.reduce((a, b) => a + b, 0) / cpus.length / 100, 3) : null;
+      let cpu: number | null = cpus.length === sessions.length ? cpus.reduce((a, b) => a + b, 0) / cpus.length / 100 : null;
       // Without per-process CPU, charge every live session an equal share of all busy cores:
       // an upper bound per session, so the CPU rule errs toward fewer launches.
-      if (cpu === null && busyCores !== null && live.length) { cpu = round(busyCores / live.length, 3); cpuFromHost = true; }
+      if (cpu === null && busyCores !== null && live.length) { cpu = busyCores / live.length; cpuFromHost = true; }
       out[adapter.id] = { sessions: sessions.length, mem_bytes_max: Math.max(...mems), mem_bytes_median: median(mems),
         cpu_cores_per_session: cpu, source: 'measured', learned_at: null };
       continue;
@@ -149,7 +149,7 @@ export function computeNodeCapacity(s: NodeSnapshot, prev: NodeCapacityDoc | nul
 
   const busy = s.cpu.busyPercent;
   const headroomCores = finite(busy) && s.cpu.cores > 0
-    ? round(Math.max(0, s.cpu.cores * CAPACITY_POLICY.cpuTargetFraction - s.cpu.cores * busy / 100)) : null;
+    ? Math.max(0, s.cpu.cores * (CAPACITY_POLICY.cpuTargetFraction * 100 - busy) / 100) : null;
 
   const per = footprints(s, prev, notes);
   const runnable: Record<string, number | null> = {};
