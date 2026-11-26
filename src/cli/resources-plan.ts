@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path';
 import { defaultResourceLiveRunsDir } from '../core/usage/resource-live/feed.js';
 import { readFleetResourcePlan, writeFleetResourceAdvice } from '../core/usage/resource-live/fleet-plan.js';
+import { formatAntigravityQuota } from '../core/usage/resource-live/antigravity-quota.js';
 
 const usage = 'Usage: phm resources plan [--json] [--write-advice] [--runs-dir <absolute-path>]';
 
@@ -21,7 +22,9 @@ export async function cmdResourcesPlan(args: string[]): Promise<number> {
   }
   if (json) console.log(JSON.stringify(plan));
   else {
-    for (const lane of plan.lanes) console.log(`${lane.lane}: target=${lane.target_concurrency ?? 'unknown'} (advisory)`);
+    for (const lane of plan.lanes) console.log(`${lane.lane}: target=${lane.target_concurrency ?? 'unknown'} (advisory)${lane.reason
+      ? ` · ${lane.reason} ${lane.reset_at}` : ''}`);
+    for (const line of formatAntigravityQuota(plan.antigravity)) console.log(line);
     for (const row of plan.allowances) console.log(`${row.id}: projected waste=${row.projected_waste_at_deadline ?? 'unknown'} ${row.unit ?? ''}`.trimEnd());
     const bank = plan.codex_reset_bank;
     if (bank) console.log(`Codex reset bank: unknown (${bank.unknown_reason})${bank.hint ? `. ${bank.hint}` : ''}`);

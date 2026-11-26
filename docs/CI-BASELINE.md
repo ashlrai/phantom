@@ -610,8 +610,10 @@ toward each test's recurrence and consumes one slot in the hourly cap. A test th
 rerun-attempted on at least three distinct heads within the last seven days is
 a recurring flake: maintenance appends one `RQ-CIFLAKE-*`
 stabilization brief (tier `work`) per (repository, test) to the router queue,
-capped at ten new rows per run, under the same standing-authority and KILL
-gates as shared-baseline fixes. Deduplication is generation-aware like the
+capped at ten new rows per repository per maintenance pass, under the same
+standing-authority and KILL gates as shared-baseline fixes. Suppressed
+candidates do not consume the cap, so later eligible flakes can enter the
+queue on subsequent passes. Deduplication is generation-aware like the
 master fixes: an open row suppresses queueing, dropped or retired rows stay
 suppressed, and a flake that keeps recurring after earlier stabilization
 generations reached DONE re-queues as the next `RQ-CIFLAKE-*-G<n>` id (at
@@ -640,8 +642,10 @@ runs and incomplete, mismatched or stale reads stay pending for a later pass. At
 yet so a stale pre-rerun read cannot be mistaken for the new attempt's result;
 unresolved attempts older than 24 hours stop being polled. Each pass performs
 at most eight verdict reads per repository inside the same five-minute
-deadline, and transient read failures leave the rerun pending rather than
-recording a guess.
+deadline. Each repository resumes after its last checked rerun, wrapping
+to the oldest eligible rerun when it reaches the end. The polling position
+persists across restarts, so transient read failures leave reruns pending
+for retry while later reruns still get checked.
 
 `phm ci reruns --json` reports `verdicts` tallies over the retained journal
 window: `pass`/`fail`/`inconclusive` counts, `pending` fired reruns still
