@@ -396,4 +396,6 @@ Solid is used, light is projected use, and the right mark is reset or expiry.
 `phm fleet usage-history` requires a quota measurement timestamp for each
 point. Dispatcher ticks can republish cached values. Status quotas with a
 missing measurement timestamp or a stale or estimated flag contribute no
-new point. Prior measured history retains its original timestamps.
+new point. Stored history and the live overlay both exclude observations
+timestamped after the report time. Prior measured history retains its original
+timestamps.
