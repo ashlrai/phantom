@@ -1,5 +1,8 @@
 # Mac queue lane scripts (repo copies)
 
+See the [Security re-pin queue](../../docs/SECURITY-REPIN-QUEUE.md) for
+merged changes awaiting review and live adoption.
+
 `restock.py` and `dispatchd.py` are reviewable repository copies of the
 deterministic Mac queue scripts that run under `~/.ashlr-runs` on the dispatch
 host. A repository snapshot can be older than the installed controller: compare

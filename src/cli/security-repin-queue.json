@@ -1,6 +1,6 @@
 {
   "schema": "fleet.repin-queue.v1",
-  "snapshotCommit": "239f194549ba7426c9275a41c25df7fdb8e0f0ef",
+  "snapshotCommit": "8d7262ec38e55a67537e0ae3bc1940860f8bc9d2",
   "entries": [
     {
       "pr": 9120,
@@ -73,7 +73,7 @@
       "title": "Guarded pool reservation bridge",
       "previewCommand": "contrib/mac/install.sh --dry-run --json",
       "installCommand": null,
-      "notes": "The emitter and reservation entry point have no repo installer. Validate Seatbelt containment, cancellation, and provider evidence on macOS before any adoption. The installer change only previews the historical launcher by default; do not supply its digest to replace the guarded live launcher.",
+      "notes": "The emitter and reservation entry point have no repo installer. Use the #9152 reservation successor. Validate Seatbelt containment, cancellation, and provider evidence on macOS before adoption. The installer only previews the historical launcher by default; do not supply its digest to replace the guarded live launcher.",
       "files": [
         {
           "path": "contrib/mac/host-integration/agy-pace.py",
@@ -147,13 +147,58 @@
         },
         {
           "path": "contrib/mac/pool_bridge_reservation.py",
-          "action": "held",
+          "action": "superseded",
           "liveSha256": null,
           "liveEvidence": null,
           "reviewedSha256": "95bc91fde3b748cd87586c3e72358261c8de1956caad32d7334cdcc3731fbfe8"
         }
       ],
       "mergeCommit": "3d18da57f16e4b588cad541c6604be4d4f6490ee"
+    },
+    {
+      "pr": 9152,
+      "title": "Guarded Flash reservations and offline bridge verifier",
+      "previewCommand": "/bin/bash contrib/mac/host-integration/verify-pool-bridge.sh",
+      "installCommand": null,
+      "notes": "Supersedes the #9132 reservation entry point. Run the offline verifier on the Mac and have Security and ops review the derived profile, pins, and settlement before adoption; Linux fixtures do not verify Seatbelt.",
+      "files": [
+        {
+          "path": "contrib/mac/host-integration/agent.sb",
+          "action": "unchanged-reference",
+          "liveSha256": "975545e57a00070ec72d5308cb33f9e611636b570a0977b2316bfb9c33bf641d",
+          "liveEvidence": "Leader snapshot recorded by #9152; not an installer input.",
+          "reviewedSha256": "975545e57a00070ec72d5308cb33f9e611636b570a0977b2316bfb9c33bf641d"
+        },
+        {
+          "path": "contrib/mac/host-integration/devin-overage-stop.py",
+          "action": "unchanged-reference",
+          "liveSha256": "9d92f38c2107522285f40b7ff18553c043d40e9b3dcf717db7dccd2f5fc56a60",
+          "liveEvidence": "Leader snapshot recorded by #9152; not an installer input.",
+          "reviewedSha256": "9d92f38c2107522285f40b7ff18553c043d40e9b3dcf717db7dccd2f5fc56a60"
+        },
+        {
+          "path": "contrib/mac/host-integration/launcher-snapshot.json",
+          "action": "repo-only",
+          "liveSha256": null,
+          "liveEvidence": null,
+          "reviewedSha256": "dcb3cf76986b361fe1eae308ec1c757e5253c593406d3e2f10f651ae90e7e5a6"
+        },
+        {
+          "path": "contrib/mac/host-integration/verify-pool-bridge.sh",
+          "action": "repo-only",
+          "liveSha256": null,
+          "liveEvidence": null,
+          "reviewedSha256": "34bdb7e7a60b274b3511bc9be01842cc6e41494627bb2472a6c27484dd6f6430"
+        },
+        {
+          "path": "contrib/mac/pool_bridge_reservation.py",
+          "action": "held",
+          "liveSha256": null,
+          "liveEvidence": null,
+          "reviewedSha256": "1bcbe3ded1d89d13ac22ee448d263462f3d58fcceff65ff0bad6e6f84238f894"
+        }
+      ],
+      "mergeCommit": "8d7262ec38e55a67537e0ae3bc1940860f8bc9d2"
     },
     {
       "pr": 9078,

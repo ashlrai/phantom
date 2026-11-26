@@ -1,13 +1,13 @@
 # Security re-pin queue
 
 Read the same inventory as JSON with `phm fleet repin-queue --json`.
-It is a read-only repository snapshot at `239f194549ba7426c9275a41c25df7fdb8e0f0ef`, not
+It is a read-only repository snapshot at `8d7262ec38e55a67537e0ae3bc1940860f8bc9d2`, not
 a live probe, a Security approval, or an installation receipt.
 
 Each proposed SHA-256 is computed from the file bytes at that PR's merge
 commit on master. A live SHA-256 is a recorded expectation or historical
-snapshot, not a fresh measurement; `unknown` means no live digest is
-established. Recheck the actual destination before adoption. Test and
+snapshot, not a fresh measurement; `unknown` (JSON `null`) means no live digest
+is established. Recheck the actual destination before adoption. Test and
 documentation files are not install inputs. Superseded rows are retained
 for review of the cumulative diff, not for installation.
 
@@ -47,7 +47,7 @@ Merge: `3d18da57f16e4b588cad541c6604be4d4f6490ee`
 - Preview: `contrib/mac/install.sh --dry-run --json`.
 - Install after approval: no supported repository command for this entry.
 
-The emitter and reservation entry point have no repo installer. Validate Seatbelt containment, cancellation, and provider evidence on macOS before any adoption. The installer change only previews the historical launcher by default; do not supply its digest to replace the guarded live launcher.
+The emitter and reservation entry point have no repo installer. Use the #9152 reservation successor. Validate Seatbelt containment, cancellation, and provider evidence on macOS before adoption. The installer only previews the historical launcher by default; do not supply its digest to replace the guarded live launcher.
 
 | File | Reviewed SHA-256 | Live SHA-256 | Action | Live pin evidence |
 |---|---|---|---|---|
@@ -61,7 +61,24 @@ The emitter and reservation entry point have no repo installer. Validate Seatbel
 | `contrib/mac/host-integration/zai.sb` | `84ece944dcc9d325d67b91883d05c998a2d2371518338b0b03ea534c4e6b8f70` | `84ece944dcc9d325d67b91883d05c998a2d2371518338b0b03ea534c4e6b8f70` | unchanged-reference | Leader snapshot recorded by #9132; not an installer input. |
 | `contrib/mac/install.sh` | `3da19669e71820d0d910d330e33cdbfe6587a519bb6cab215f910f87f1d8c62b` | `unknown` | repo-only | — |
 | `contrib/mac/pool_bridge_evidence.py` | `c1206633972b52311b87598dae1c2126527a384c7bb6da91f017362f2aaf50d0` | `unknown` | held | — |
-| `contrib/mac/pool_bridge_reservation.py` | `95bc91fde3b748cd87586c3e72358261c8de1956caad32d7334cdcc3731fbfe8` | `unknown` | held | — |
+| `contrib/mac/pool_bridge_reservation.py` | `95bc91fde3b748cd87586c3e72358261c8de1956caad32d7334cdcc3731fbfe8` | `unknown` | superseded | — |
+
+## [#9152](https://github.com/ashlrai/phantom/pull/9152): Guarded Flash reservations and offline bridge verifier
+
+Merge: `8d7262ec38e55a67537e0ae3bc1940860f8bc9d2`
+
+- Preview: `/bin/bash contrib/mac/host-integration/verify-pool-bridge.sh`.
+- Install after approval: no supported repository command for this entry.
+
+Supersedes the #9132 reservation entry point. Run the offline verifier on the Mac and have Security and ops review the derived profile, pins, and settlement before adoption; Linux fixtures do not verify Seatbelt.
+
+| File | Reviewed SHA-256 | Live SHA-256 | Action | Live pin evidence |
+|---|---|---|---|---|
+| `contrib/mac/host-integration/agent.sb` | `975545e57a00070ec72d5308cb33f9e611636b570a0977b2316bfb9c33bf641d` | `975545e57a00070ec72d5308cb33f9e611636b570a0977b2316bfb9c33bf641d` | unchanged-reference | Leader snapshot recorded by #9152; not an installer input. |
+| `contrib/mac/host-integration/devin-overage-stop.py` | `9d92f38c2107522285f40b7ff18553c043d40e9b3dcf717db7dccd2f5fc56a60` | `9d92f38c2107522285f40b7ff18553c043d40e9b3dcf717db7dccd2f5fc56a60` | unchanged-reference | Leader snapshot recorded by #9152; not an installer input. |
+| `contrib/mac/host-integration/launcher-snapshot.json` | `dcb3cf76986b361fe1eae308ec1c757e5253c593406d3e2f10f651ae90e7e5a6` | `unknown` | repo-only | — |
+| `contrib/mac/host-integration/verify-pool-bridge.sh` | `34bdb7e7a60b274b3511bc9be01842cc6e41494627bb2472a6c27484dd6f6430` | `unknown` | repo-only | — |
+| `contrib/mac/pool_bridge_reservation.py` | `1bcbe3ded1d89d13ac22ee448d263462f3d58fcceff65ff0bad6e6f84238f894` | `unknown` | held | — |
 
 ## [#9078](https://github.com/ashlrai/phantom/pull/9078): Guarded pool evidence emitter
 
