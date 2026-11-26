@@ -608,7 +608,8 @@ never executed. status is a read-only probe of the store, registry, wake queue, 
 table, message-id claim journal, work feed, owner-chat share receipts, the
 dead-letter sink's retained delivery-failure reports, the
 legacy mailbox, the shared task board with its fleet queue, the claim-drift
-verdict comparing the claim journal with the coordination table, and the
+verdict comparing the claim journal with the coordination table, the
+advisory fleet coordination ledger's pending surface, and the
 outbound send gate every write verb passes through — its sendGate section
 reports open, blocked or unknown plus the kill-switch and comms-pause
 verdicts separately, so an agent learns sends are gated before a write
@@ -934,6 +935,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           `awaitingFailover=${result.sessionHandoffs.awaitingFailover ?? unknown} ` +
           `unreadable=${result.sessionHandoffs.unreadable ?? unknown} ` +
           `truncated=${result.sessionHandoffs.truncated ?? unknown}`,
+        `fleetCoordination ${result.fleetCoordination.source} messages=${result.fleetCoordination.messages ?? unknown} ` +
+          `proposals=${result.fleetCoordination.proposals ?? unknown} returns=${result.fleetCoordination.returns ?? unknown}`,
         `sendGate ${result.sendGate.state} kill=${result.sendGate.kill.state}:${result.sendGate.kill.reason} ` +
           `pause=${result.sendGate.pause.state}` +
           `${result.sendGate.pause.reason === null ? '' : `:${result.sendGate.pause.reason}`}` +

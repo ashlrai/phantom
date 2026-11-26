@@ -4701,7 +4701,7 @@ and bound, each bracket naming `#<channel>:<topic>`. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the eighteen dependencies the unified verbs touch — the
+read-only probe over the nineteen dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -4797,7 +4797,19 @@ session-handoff journal store (`listSessionHandoffs` over
 `awaitingFailover` open journals whose signal satisfies `handoffPressure`,
 `unreadable` journals that failed `show`'s validation and a `truncated`
 flag; 0 counts on a verified-missing store, null when unreadable, never job
-ids, lanes, models or signal payloads), and — as a verdict over the claim journal and
+ids, lanes, models or signal payloads), the advisory fleet coordination
+ledger (`readFleetCoordinationPending` over `fleet.coordination.v1` —
+`coordination.jsonl` at the ledger's own locator
+(`PHANTOM_FLEET_LEDGER_PATH`, else `$ASHLR_HOME/fleet/coordination.jsonl`)
+or the probe's `coordination.path` override, never relocated by `root`
+because `work mine`'s coordination section, `phm fleet coordination` and
+the unified inbox coordination source resolve the same path — the same
+pure replay those surfaces serve, never the board read's reaping mutation
+path; `source` plus `messages`/`proposals`/`returns` counts of the live
+pending surface — posted coordination mail, advisory assignment proposals
+and unpublished RESULT intents still inside their TTLs; 0 on a
+verified-missing ledger, null when unreadable, never agent labels, repos,
+task text, bodies or record ids), and — as a verdict over the claim journal and
 coordination table rather than another dependency — the claim-store drift
 comparison (`readClaimStoreDrift` run over the probe's own two reads, the
 same `fleet.claim-drift.v1` read `ashlr fleet claim-drift` serves:

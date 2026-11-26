@@ -15,6 +15,7 @@ import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import { SharedStore } from '../src/core/fleet/shared-store.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { appendBusHop } from '../src/core/fleet/bus-hoplog.js';
+import { claimFleetWork, concludeFleetClaim, postFleetMessage, proposeFleetAssignment } from '../src/core/fleet/coordination.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
@@ -27,7 +28,11 @@ function setup(at = 1_000): UnifiedBusStatusOptions & { clock: { now: number } }
   dirs.push(base);
   const clock = { now: at };
   return { root: join(base, 'fleet'), runsRoot: join(base, 'runs'), now: () => clock.now, clock,
-    seats: { home: join(base, 'seat-home') } };
+    seats: { home: join(base, 'seat-home') },
+    // The fleet coordination ledger never derives from `root` — its own
+    // locator or this override — so every test gets a per-test ledger path
+    // instead of sharing the worker home's default one.
+    coordination: { path: join(base, 'coordination.jsonl') } };
 }
 
 describe('readUnifiedBusStatus', () => {
@@ -77,6 +82,9 @@ describe('readUnifiedBusStatus', () => {
     // A verifiably absent handoff store holds no journals: 0 is the real count.
     expect(status.sessionHandoffs).toEqual({ source: 'missing', journals: 0, open: 0,
       awaitingFailover: 0, unreadable: 0, truncated: false });
+    // A verifiably absent fleet coordination ledger holds no pending
+    // surface: real zeros across all three classes.
+    expect(status.fleetCoordination).toEqual({ source: 'missing', messages: 0, proposals: 0, returns: 0 });
     expect(Number.isNaN(Date.parse(status.asOf))).toBe(false);
   });
 
@@ -1003,6 +1011,95 @@ describe('sessionHandoffs section', () => {
   });
 });
 
+describe('fleetCoordination section', () => {
+  const ledgerPath = (options: UnifiedBusStatusOptions) => options.coordination!.path!;
+  const ledger = (options: UnifiedBusStatusOptions, now?: number) =>
+    ({ path: ledgerPath(options), now: now ?? options.now!() });
+  /** A claim concluded `intended` whose receipt publish never ran — the
+   * unpublished RESULT intent class only this projection names. */
+  function pendingReturn(options: UnifiedBusStatusOptions, agent: string, now?: number): void {
+    const at = ledger(options, now);
+    const claim = claimFleetWork({ repo: 'ashlrai/phantom', task: 'claimed work', agent }, at);
+    if (!claim.ok) throw new Error('fixture claim failed');
+    const concluded = concludeFleetClaim({
+      id: claim.value.claim.id, agent, lease: claim.value.lease,
+      message: { id: `return-${claim.value.claim.id}`, from: agent, to: 'all',
+        body: `RESULT VERIFIED ashlrai/phantom claim ${claim.value.claim.id} task "claimed work": tests passed`,
+        ttlMs: 86_400_000 },
+    }, at);
+    if (!concluded.ok || concluded.value.outcome !== 'intended') throw new Error('fixture return failed');
+  }
+
+  it('reports a verified-absent ledger as missing with real zeros and never creates it', () => {
+    const options = setup();
+    const status = readUnifiedBusStatus(options);
+    expect(status.fleetCoordination).toEqual({ source: 'missing', messages: 0, proposals: 0, returns: 0 });
+    // Read-only: the pure replay takes no lock and writes nothing — neither
+    // the ledger nor its lock file may appear.
+    expect(existsSync(ledgerPath(options))).toBe(false);
+    expect(existsSync(`${ledgerPath(options)}.lock`)).toBe(false);
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('counts the live pending surface — messages, proposals and unposted returns', () => {
+    const options = setup();
+    const at = options.now!();
+    expect(postFleetMessage({ id: 'cm-1', from: 'agent:nova', to: 'atlas', body: 'coordination ping' },
+      ledger(options, at)).ok).toBe(true);
+    expect(postFleetMessage({ id: 'cm-2', from: 'agent:nova', to: 'agent:nova', body: 'expired note', ttlMs: 500 },
+      ledger(options, at)).ok).toBe(true);
+    expect(proposeFleetAssignment({ repo: 'ashlrai/phantom', task: 'advisory review', to: 'atlas' },
+      ledger(options, at)).ok).toBe(true);
+    pendingReturn(options, 'atlas', at);
+    // One message already past its TTL: the count is the pending surface,
+    // never raw retained records.
+    options.clock.now += 1_000;
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.fleetCoordination).toEqual({ source: 'available', messages: 1, proposals: 1, returns: 1 });
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('keeps a parsed ledger available with real zeros once every record expires', () => {
+    const options = setup();
+    expect(postFleetMessage({ id: 'cm-short', from: 'agent:nova', to: 'atlas', body: 'short lived', ttlMs: 500 },
+      ledger(options)).ok).toBe(true);
+    expect(readUnifiedBusStatus(options).fleetCoordination)
+      .toEqual({ source: 'available', messages: 1, proposals: 0, returns: 0 });
+    options.clock.now += 1_000;
+    // The file exists and parses — available — but nothing sits inside its
+    // TTL, so 0 is the proven pending count, not a missing-store placeholder.
+    expect(readUnifiedBusStatus(options).fleetCoordination)
+      .toEqual({ source: 'available', messages: 0, proposals: 0, returns: 0 });
+  });
+
+  it('keeps an unreadable ledger unavailable with null counts while the rest of the bus stays readable', () => {
+    const options = setup();
+    const path = ledgerPath(options);
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    writeFileSync(path, '{not json\n', { mode: 0o600 });
+
+    const status = readUnifiedBusStatus(options);
+    // The same corrupt ledger that makes `phm fleet coordination` and the
+    // unified inbox report unavailable is named here; nulls, never zeros.
+    expect(status.fleetCoordination).toEqual({ source: 'unavailable', messages: null, proposals: null, returns: null });
+    expect(status.store.source).toBe('missing');
+    expect(status.feed.status).toBe('ok');
+
+    // Custody failure is the same verdict: a group/other-readable ledger
+    // fails the reader's privateFile check exactly like the write-side
+    // open does.
+    unlinkSync(path);
+    expect(postFleetMessage({ id: 'cm-custody', from: 'agent:nova', to: 'atlas', body: 'custody' },
+      ledger(options)).ok).toBe(true);
+    chmodSync(path, 0o644);
+    try {
+      expect(readUnifiedBusStatus(options).fleetCoordination)
+        .toEqual({ source: 'unavailable', messages: null, proposals: null, returns: null });
+    } finally { chmodSync(path, 0o600); }
+  });
+});
+
 describe('hoplog section', () => {
   const hoplogFile = (options: UnifiedBusStatusOptions) => join(options.root!, 'bus', 'hops.jsonl');
 
@@ -1063,6 +1160,9 @@ describe('phm agents bus status', () => {
       reasons: { exhausted: 0, expired: 0, noRoute: 0, other: 0 }, truncated: false });
     expect(json.sessionHandoffs).toEqual({ source: 'missing', journals: 0, open: 0,
       awaitingFailover: 0, unreadable: 0, truncated: false });
+    // The CLI forwards only --root, so the ledger resolves its own locator
+    // under the isolated worker home — verified absent there too.
+    expect(json.fleetCoordination).toEqual({ source: 'missing', messages: 0, proposals: 0, returns: 0 });
     expect(json.sendGate).toEqual({ state: 'open',
       kill: { state: 'inactive', reason: 'missing' },
       pause: { state: 'clear', since: null, reason: null } });
@@ -1085,6 +1185,7 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('peerInbox missing pending=0 truncated=false');
     expect(lines.join('\n')).toContain('deadLetters missing pending=0 exhausted=0 expired=0 noRoute=0 other=0 truncated=false');
     expect(lines.join('\n')).toContain('sessionHandoffs missing journals=0 open=0 awaitingFailover=0 unreadable=0 truncated=false');
+    expect(lines.join('\n')).toContain('fleetCoordination missing messages=0 proposals=0 returns=0');
     expect(lines.join('\n')).toContain('sendGate open kill=inactive:missing pause=clear');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
     expect(lines.join('\n')).toContain('hoplog missing bytes=0 hops=0 skipped=0 truncated=false');

@@ -17,7 +17,11 @@
  * delivery-failure reports (pending count by recorded reason and
  * truncation — never envelope ids or bodies), the
  * session-handoff journal store behind
- * `phm checkpoint handoff list|show` and `fleet_session_handoffs`, and the
+ * `phm checkpoint handoff list|show` and `fleet_session_handoffs`, the
+ * advisory fleet coordination ledger's pending surface (`fleetCoordination`
+ * — live messages, proposals and unposted returns counts behind `work
+ * mine`'s coordination section, `phm fleet coordination` and the unified
+ * inbox coordination source), and the
  * outbound send gate (`sendGate.state`
  * open/blocked/unknown with the kill-switch and comms-pause verdicts
  * kept separate) an agent can check before assuming a write would land.
