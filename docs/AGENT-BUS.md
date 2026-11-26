@@ -1297,7 +1297,14 @@ matches the journal job id, `contains` matches the checkpoint's
 scrubbed lane/model/repo/signal/tier/needs text, and `since`/`before`
 bound the latest revision's `at` on the same `[since, before)` window
 the list grammar applies; every other filter leaves it whole, the same
-"unknown stays unfiltered" rule `channels`/`seats` follow.
+"unknown stays unfiltered" rule `channels`/`seats` follow. The unified
+comms inbox's `session-handoff` source lists the same open set as
+ranked items — one warn per open journal carrying the job citation,
+the revision's recorded `since`, the 24-hour resume bound as
+`expiresAt` and `phm checkpoint handoff show|list` deep links — so
+checkpointed work pending resume or failover is visible in the one
+pending view too, with the read's `unreadable`/`truncated` flags
+degrading the source rather than padding it.
 The `coordination` section is the digest's window into the advisory
 fleet coordination ledger (`fleet.coordination.v1`,
 `~/.ashlr/fleet/coordination.jsonl`) — the same

@@ -4449,7 +4449,8 @@ citations, conversations by `thread.jobs`, wake hints by their cited job —
 a claim-holder hint's `jobId` or a resolved referent's feed citation —
 teammate tasks by `jobId`, seat
 handoffs by `node-job` refs, peer-dispatch receipts by their peer-announced
-`jobId`) for `comms inbox --job` to match against,
+`jobId`, session-handoff items by their journal's job id) for `comms inbox
+--job` to match against,
 absent when no job relation is provable; `busReadContains(value)` and
 `busReadContainsMatch(body, needle)` — bounded by `BUS_READ_CONTAINS_MAX` —
 are the shared `--contains` validation and match every bus read applies:

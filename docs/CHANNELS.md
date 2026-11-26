@@ -371,7 +371,25 @@ names the peer, outcome, consumer and receipt with `since`/`expiresAt` null
 because the journal stamps receipt creation, not the last outcome move, and
 deep-links `phm agentnet peers dispatch --apply`; an absent journal is
 `missing`, an unreadable one `unavailable`, never an empty backlog passed off
-as fact) — plus org-membership bus events the org plane still owes the bus
+as fact) — plus open session-handoff checkpoints (the same
+`listSessionHandoffs` bounded journal scan `phm checkpoint handoff
+list`, `fleet_session_handoffs`, the bus-status probe and `work mine`'s
+`sessions` section serve, so a checkpointed session waiting for a
+resume or failover pass lists beside seat handoffs and feed jobs
+instead of behind a third command; each open journal lists one warn,
+non-blocking item — checkpointed work is agent work, never
+Mason-blocking — with `since` the latest revision's recorded time,
+`expiresAt` the 24-hour resume bound `planSessionResume` refuses past,
+the journal's job id as its `--job` citation and the lane, model,
+minimum tier, repo, attempt, revision, needs and head as its scrubbed
+detail; a pressure signal — rate-limit, quota-exhausted or a budget at
+its threshold, the same `handoffPressure` verdict `planSessionFailover`
+applies — marks the item for failover, journals that fail validation or
+sit past the bounded scan degrade the source so pending stays a stated
+floor, an absent store is `missing` and an uninspectable one
+`unavailable`; items deep-link `phm checkpoint handoff show <runs-dir>
+<job>` and `phm checkpoint handoff list <runs-dir> --state open`) — plus
+org-membership bus events the org plane still owes the bus
 (`<runsDir>/org/agents.json` ledger entries with `busDelivered:false` — the
 exact set `previewOrgOutbox` replays and `phm fleet org-sync --apply` posts,
 one event per distinct `(revision, role)` edit under the stable id
@@ -556,7 +574,7 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 `phm drafts approve`, `phm comms-agent drafts`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
-`phm bots handoff`, `phm agentnet peers dispatch`, `phm fleet org-sync --apply`, `phm fleet org-board`, `phm agents bus post`, `phm comms email-cycle`,
+`phm bots handoff`, `phm agentnet peers dispatch`, `phm checkpoint handoff show|list`, `phm fleet org-sync --apply`, `phm fleet org-board`, `phm agents bus post`, `phm comms email-cycle`,
 `phm fleet email-outbox`,
 `phm bus inbox`, `phm bus ack`, `phm bus thread pending`, `phm bus thread
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
@@ -578,8 +596,8 @@ severity band, `--blocking` only items that block, `--job <id>` only items
 that provably name that job — a bus or mailbox body's `busBodyJobMatch`
 citation, a feed job's id, a board task's fleet item or a delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
-seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job) or a
-peer-dispatch receipt's job —
+seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
+peer-dispatch receipt's job or a session-handoff journal's job id —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound
