@@ -123,6 +123,27 @@ Radar only reads the public catalogue. A scheduled run does the same
 unauthenticated, bounded fetches as `phm radar run`, and the six-hour cooldown
 per source still applies.
 
+## Official-source model radar
+
+The model-specific job is separate from the general Docs Radar automation.
+Preview the daily launchd or systemd user job, then explicitly install it if
+desired:
+
+```sh
+phm models radar schedule
+phm models radar schedule --install --hour 3
+```
+
+Nothing is installed by default. The job runs at 03:47 local time by default
+and invokes `phm models radar --fetch --propose --json`. It uses bounded,
+unauthenticated public GETs (15 seconds, 2 MiB per page, no redirects), does
+not call models or spend, and writes pending inbox notes only for fresh
+high-confidence additions. Each note has the source URL, matched line,
+retrieval date and an unapplied registry patch. Cached pages remain usable
+for diagnosis but cannot create new notes. Configured lane retirements are
+reported alongside candidates. Review notes with `phm inbox --json`; the
+job does not edit the registry, launch work, or open PRs.
+
 ## Offline verification
 
 All test responses are synthetic. With a temporary test home:

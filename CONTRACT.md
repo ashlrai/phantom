@@ -287,6 +287,17 @@ null usage/age and an invalid-timestamp reason. A lane name alone never proves
 cost. Fresh verified USD readings map to `api-credit`; included/metered receipt
 classes require fresh matching provenance, and unrecognized classes stay unknown.
 `GET /api/usage/lanes` returns this projection without refreshing providers.
+
+`recordResetEvidence(runsDir, count, expiries, kind, observedAt, now?)`
+atomically stores a complete, timestamped owner observation in
+`resource-evidence.v1`; older observations cannot replace newer ones.
+`buildFleetResourcePlan(raw, nodes, status, ledger, now, custom?, resets?)`
+returns allowance labels and a nullable `reset_proposal` from the recent
+reset-bank and usage evidence. `GET /api/verse/world?resourcePools=1` exposes
+a read-only `resourceCapacity` projection with lane targets, waste by
+allowance deadline, and the proposal. Recording evidence or reading the
+proposal never consumes a reset.
+
 `postureEvidence(root)` is exported from `src/core/queue/route-explain.ts` for
 the shared bounded journal parser. It preserves receipt `ts` (epoch seconds or
 ISO timestamp) as optional `observedAt`, plus lane `lane`, `account_id`, `model`,

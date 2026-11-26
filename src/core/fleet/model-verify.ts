@@ -66,7 +66,8 @@ export async function verifyFleetModels(opts: ModelVerifyOptions = {}): Promise<
 export const MODEL_SOURCE_HOSTS: Readonly<Record<string, readonly string[]>> = {
   openai: ['learn.chatgpt.com', 'developers.openai.com', 'platform.openai.com'],
   anthropic: ['platform.claude.com'], xai: ['docs.x.ai'], zai: ['docs.z.ai'],
-  google: ['ai.google.dev'],
+  google: ['ai.google.dev', 'aistudio.google.com', 'antigravity.google'],
+  devin: ['docs.devin.ai'], cursor: ['cursor.com'],
   qwen: ['qwenlm.github.io', 'qwen.readthedocs.io'],
 };
 const MODEL_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/, LANE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$/;

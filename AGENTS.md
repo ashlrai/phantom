@@ -419,6 +419,11 @@ are under `~/.phantom/radar/snapshots/` with mode 0600. Failed discovery preserv
 the last successful evidence. Remote content never authorizes actions or sends.
 Individual fetch failures are warnings and retain the last successful snapshot.
 
+For provider model evidence, use the separate `phm models radar schedule`:
+it previews a disabled-by-default daily user job. When explicitly installed,
+it reports configured lane retirements and files evidence-backed pending inbox
+notes without applying a patch or opening PRs. See [model radar](docs/RADAR.md#official-source-model-radar).
+
 ## GitHub stable-release finalization
 
 `finalize-github-release.yml` accepts `version`, `publish_run_id`,
