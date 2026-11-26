@@ -102,7 +102,8 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
 }
 
 /** Deterministic plan: pools rank measured free host slots per observed execution millisecond;
- * standalone legacy queues retain their load policy. Ties break by node ID.
+ * pool ties prefer fewer active and planned claims, then node ID.
+ * Standalone legacy queues retain their load policy.
  * Pure: the same state and clock always produce the same plan. Jobs without an
  * owner scope are never routed, so a legacy job cannot leak across scopes.
  */
@@ -120,6 +121,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
     const reasons = new Map<string, number>();
     let best: NodeRecord | null = null;
+    let bestScore = -Infinity;
     for (const node of nodes) {
       const why = shortfall(node, job);
       if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
@@ -127,11 +129,14 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       const host = hosts.get(node.nodeId);
       if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
           (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) { reasons.set('capacity', 1); continue; }
-      const score = (n: NodeRecord) => {
-        const h = hosts.get(n.nodeId)!;
-        return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
-      };
-      if (!best || score(node) > score(best)) best = node;
+      const score = state.pool && host
+        ? ((host.freeSlots ?? 0) - (reserved.get(host.hostId) ?? 0)) / Math.max(1, host.latency.medianMs ?? neutralLatency)
+        : -load.get(node.nodeId)!;
+      if (!best || score > bestScore ||
+          (state.pool && score === bestScore && claims.get(node.nodeId)! < claims.get(best.nodeId)!)) {
+        best = node;
+        bestScore = score;
+      }
     }
     if (best) {
       const host = hosts.get(best.nodeId);
