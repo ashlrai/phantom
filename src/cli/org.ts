@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FleetOrgTree } from '../core/fleet/org-tree.js';
-import { droppedJoinLanes, initOrg, joinOrg, joinsDir, loadOrg, openJoinLanes, orgFile, parseQueue, planOrg, readJoins, OrgError } from '../core/org/org.js';
+import { droppedJoinLanes, initOrg, joinOrg, joinsDir, loadOrg, openJoinLanes, orgFile, parseQueue, planOrg, readJoins, OrgError, OrgNotConfiguredError } from '../core/org/org.js';
 
 export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
        phm org <show|join|plan|init> [--file <org.toml>] [--json]
@@ -22,6 +22,7 @@ export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
                                 A re-join replaces this machine's opt-ins; dropped lanes are listed. Nothing is sent
                                 and no provider auth is read; sign in to your own CLIs here.
   plan [--queue <jobs.json>]    Propose queue assignments and agent roles within each member's contributed limits
+                                Skips team planning when no org.toml is configured.
   init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]... [--agent <id>:<lane>]...
                                 Write a starter org.toml (default ~/.ashlr/org.toml, or --file)
                                 declaring <member> as leader (founder) of a new org on <machine>.
@@ -174,6 +175,8 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       return print({ schema: 'org.init.v1', file: r.file, leader: r.org.leader, member: m.id, machine: m.machines[0]!.id, lanes: m.contributions, agents: m.agents },
         `Wrote ${r.file}: ${r.org.leader} leads ${m.name} on ${m.machines[0]!.id} with lanes ${laneText}${agentText}.\nEdit the file to add members, agents and lanes. Each machine opts in with:\n  phm org join --member ${m.id} --machine ${m.machines[0]!.id}${m.contributions.length ? ` --lane ${m.contributions.map((c) => c.lane).join(' --lane ')}` : ''} --json\nThe leader plans with: phm org plan --json`);
     }
+    const queueFile = sub === 'plan' ? one(rest, '--queue') : undefined;
+    if (sub === 'plan') noLeftovers(rest);
     const org = loadOrg(file);
     if (sub === 'show') {
       noLeftovers(rest);
@@ -258,8 +261,6 @@ export async function cmdOrg(argv: string[]): Promise<number> {
         : '';
       return print({ schema: 'org.join.v1', record: r, dir: joinsDir(), recordFile, droppedLanes: dropped, availableLanes: open }, `${r.member} joined on ${r.machine} with ${r.lanes.length ? r.lanes.map((l) => `${l.lane} ${l.share}%`).join(', ') : 'no lanes (nothing contributed)'}.\n${droppedNote}${openNote}Record: ${recordFile}\nSign in to your own provider CLIs on this machine; nothing was sent and no auth was read. Copy the record file into the leader's joins directory to count this machine.`);
     }
-    const queueFile = one(rest, '--queue');
-    noLeftovers(rest);
     const queue = queueFile ? parseQueue(readFileSync(queueFile, 'utf8')) : [];
     let view = null;
     try { view = await (await import('../core/fabric/resource-view-store.js')).readResourceView(); } catch { /* unknown usage is planned conservatively */ }
@@ -300,6 +301,11 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       ...heldLines,
       `Opt-in counts join records held on this machine (${joinsDir()}); the plan covers only those records.`].join('\n'));
   } catch (err) {
+    if (command === 'plan' && err instanceof OrgNotConfiguredError) {
+      return print({ schema: 'org.plan.v1', state: 'not-configured', generatedAt: null, leader: null,
+        budgets: null, roles: null, assignments: null, unassigned: null, held: null, joinsDir: null },
+      'Team org not configured; planning skipped.');
+    }
     return orgFailure(json, command, err);
   }
 }

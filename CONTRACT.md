@@ -2988,6 +2988,14 @@ read, 1 list unreadable, 2 usage or unknown id).
 200, 400, 401, 404, 405, 503). It adds no source and writes nothing. Fields
 are listed in `docs/FLEET-API.md`.
 
+**Team org planning.** Without an org configuration file, `phm org plan --json`
+exits 0 with `schema: "org.plan.v1"`, `state: "not-configured"`, and
+`generatedAt`, `leader`, `budgets`, `roles`, `assignments`, `unassigned`,
+`held` and `joinsDir` all null. Consumers, including the leader, skip team assignment
+planning without treating this as an empty plan or changing solo fleet capacity.
+Present but invalid or unreadable files still return `org.error.v1` with
+`code: "rejected"`. Configured plans keep their existing shape.
+
 **Org tree states (RQ-ORGVIEWN18BQ8).** `fleet.org.v1` gains `version: 1` and,
 on the leader, every lane and every job, `state` (`OrgState`: `running`,
 `idle`, `held`, `done`, `unknown`) and `doing` (plain words). The leader gains

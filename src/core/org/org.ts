@@ -3,7 +3,7 @@
  * they contribute. Metadata only: no credential, mail or message content lives here or in the
  * join record, and nothing in this module sends anything or reads provider auth.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parse, stringify, TomlError } from 'smol-toml';
@@ -13,6 +13,7 @@ import { assertMetadata } from '../connectors/profile.js';
 import type { ResourceView } from '../fabric/resource-view.js';
 
 export class OrgError extends Error {}
+export class OrgNotConfiguredError extends OrgError {}
 const fail = (message: string): never => { throw new OrgError(message); };
 
 const id = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
@@ -86,7 +87,14 @@ export function validateOrg(value: unknown): Org {
 
 export function loadOrg(file = orgFile()): Org {
   let text: string;
-  try { text = readFileSync(file, 'utf8'); } catch { return fail(`No org file at ${file}. org.toml holds org ids and lane shares only, never credentials: get a copy from your org leader, or start a new org with phm org init --member <id> --machine <id>.`); }
+  try { text = readFileSync(file, 'utf8'); } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      let missing: boolean;
+      try { missing = !lstatSync(file, { throwIfNoEntry: false }); } catch { return fail('Could not read org.toml.'); }
+      if (missing) throw new OrgNotConfiguredError(`No org file at ${file}. org.toml holds org ids and lane shares only, never credentials: get a copy from your org leader, or start a new org with phm org init --member <id> --machine <id>.`);
+    }
+    return fail('Could not read org.toml.');
+  }
   if (text.length > 256 * 1024) fail('org.toml is too large.');
   let doc: unknown;
   try { doc = parse(text); } catch (err) {
