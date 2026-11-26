@@ -1204,9 +1204,15 @@ repos running fleet jobs touch plus the workspace checkout, it lists
 recently-merged PRs whose head is not `codex-bridge/*` and whose author is not
 the fleet App, joins each `owner/name#N` against the standing revert ledger
 (`improve/revert-outcomes.jsonl`), and rolls up per-author merged/reverted
-counts. Agent and model are always null — gh records only the PR author login.
-An unreadable revert ledger marks every verdict `unknown`, never "not
-reverted"; a missing `gh` reports `sourceState: 'missing'`. Read-only — `gh pr
+counts. Each PR also carries the outcome evidence gh records on the merged
+head: the check-rollup summary (`checks.state` plus passed/failed/pending
+counts — `unknown` when gh returned no rollup), the normalized review
+decision, the additions/deletions/changedFiles size and the merging
+account's login; author rows tally failing-check, approved and
+fleet-merged counts beside merged/reverted. Agent and model are always
+null — gh records only the PR author login. An unreadable revert ledger
+marks every verdict `unknown`, never "not reverted"; a missing `gh` reports
+`sourceState: 'missing'`. Read-only — `gh pr
 list` and the local ledger only; see
 [core/fleet/outside-pr-outcomes.ts](../src/core/fleet/outside-pr-outcomes.ts).
 
