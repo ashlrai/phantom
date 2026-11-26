@@ -546,6 +546,12 @@ in `ready.tsv`. It includes parked rebase jobs, expands batches into their
 member PRs, and counts each PR once across job IDs. References in titles,
 prompts, and requirements do not contribute to the estimate.
 
+The Leader board's conflict trend compares distinct observations in timestamp
+order. A retry at the same timestamp replaces the earlier observation for that
+tick. After a clock rollback, samples dated after the current tick are dropped.
+The delta and trend are unknown until the current count has an earlier
+observation to compare against.
+
 `phm queue` owns the separate `queue.v1` coordination snapshot at
 `~/.ashlr-runs/queue/queue.v1.json`. `--dir <directory>` selects an isolated store.
 The CLI accepts and round-trips the same requirements. Adding to this snapshot
