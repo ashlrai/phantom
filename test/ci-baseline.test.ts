@@ -129,8 +129,31 @@ describe('CI baseline evidence', () => {
     const pass = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true }).gh);
     expect(pass.groups[0]?.action).toBe('rerun-failed');
     expect(pass.groups[0]?.runs).toEqual([{ pr: 1, head, runId: 2 }]);
-    const fail = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
-    expect(fail.groups[0]?.action).toBe('unknown');
+    const { gh } = github({ count: 1 });
+    const unrelated = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      return args[1]?.endsWith('/jobs/10/logs')
+        ? { ...result, stdout: result.stdout.replace('test/example.test.ts', 'test/other.test.ts') }
+        : result;
+    });
+    expect(unrelated.groups[0]).toMatchObject({ action: 'unknown', master: 'unknown' });
+  });
+  it('uses a matching master failure to corroborate one unaffected PR', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
+    expect(report.groups[0]).toMatchObject({
+      classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', unaffectedPrs: [1],
+    });
+    expect(report.updates).toMatchObject([{ pr: 1, ready: false }]);
+
+    const { gh } = github({ count: 1, contents: {}, contentsError: ['test/example.test.ts'] });
+    const unresolved = await analyzeCiBaseline('owner/repo', gh);
+    expect(unresolved.groups[0]).toMatchObject({ action: 'unknown', master: 'fail', unaffectedPrs: [] });
+    expect(unresolved.updates).toEqual([]);
+  });
+  it.each(['timed_out', 'neutral', 'success'])('requires a failed master job to corroborate a singleton when the job concluded %s', async masterJobConclusion => {
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1, masterJobConclusion }).gh);
+    expect(report.groups[0]).toMatchObject({ action: 'unknown', unaffectedPrs: [1] });
+    expect(report.updates).toEqual([]);
   });
   it('reads default-reporter file-pass lines as master pass evidence', async () => {
     // The default reporter prints `✓ file (N tests)` for a green module and
