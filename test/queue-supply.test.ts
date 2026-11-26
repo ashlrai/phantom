@@ -65,8 +65,16 @@ describe('buildQueueSupply', () => {
     expect(row(noQueue, 'claude')).toMatchObject({ state: 'unknown', ready: null, hours_queued: null, supply_low: false });
     expect(noQueue.gaps[0]).toBe('The ready queue could not be read.');
     const noLog = supply([lane('claude')], { claude: 4 }, null);
-    expect(row(noLog, 'claude')).toMatchObject({ state: 'healthy', ready: 4, starts_per_hour: null, hours_queued: null });
+    expect(row(noLog, 'claude')).toMatchObject({ state: 'unknown', ready: 4, starts_per_hour: null, hours_queued: null, supply_low: false });
     expect(row(noLog, 'claude').reason).toBe('launch window unavailable');
+  });
+
+  it('keeps observed zero starts distinct from an unknown queue duration', () => {
+    const data = supply([lane('claude', { usedPct: 72, resetAt: at(31), burnPctPerHour: 0.3 })], { claude: 4 }, {});
+    expect(row(data, 'claude')).toMatchObject({
+      state: 'unknown', at_risk: true, ready: 4, starts_per_hour: 0, hours_queued: null, supply_low: false,
+    });
+    expect(supplyLowLine(data)).toBeNull();
   });
 
   it('under an hour of work on a pool that is behind is supply_low and named in the digest line', () => {
