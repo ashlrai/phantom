@@ -31,6 +31,23 @@ phm mcp doctor
 companion lists with `.mcp.json`. Tool counts in the historical sections below
 are snapshot observations; use discovery for current counts.
 
+### Current project marks
+
+These marks use the [same assets as the workbench](https://github.com/ashlrai/phantom/tree/master/src/web-ui/public/logos)
+and identify projects, not installed or authorized integrations. The historical
+inventory below keeps text names for entries outside the workbench brand registry.
+
+- <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/phantom-workbench-logo.svg" width="20" height="20" alt=""> [Phantom](https://github.com/ashlrai/phantom)
+- <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/phantom-secrets-logo.svg" width="20" height="20" alt=""> [Phantom Secrets](https://github.com/ashlrai/phantom-secrets)
+- <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/locus-logo.svg" width="20" height="20" alt=""> [Locus](https://github.com/ashlrai/locus)
+- <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/ashlr-plugin-logo.svg" width="20" height="20" alt=""> [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin)
+- <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/lexicon-logo.svg" width="20" height="20" alt=""> [Lexicon](https://github.com/ashlrai/lexicon)
+- <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/ashlr-md-logo.svg" width="20" height="20" alt=""> [Ashlr MD](https://github.com/ashlrai/ashlr-md)
+- <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/ashlr-stack-logo.svg" width="20" height="20" alt=""> [Ashlr Stack](https://github.com/ashlrai/ashlr-stack)
+- <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/ashlrcode-logo.svg" width="20" height="20" alt=""> [AshlrCode](https://ashlr.ai/ashlrcode)
+- <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/binshield-logo.svg" width="20" height="20" alt=""> [Binshield](https://github.com/ashlrai/binshield)
+- <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/cortex-logo.svg" width="20" height="20" alt=""> [Cortex](https://ashlr.ai/cortex)
+
 ## Historical inventory (23 entries after October amendment)
 
 This table began with the local `dev-tools/` workspace on 2026-07-02; the

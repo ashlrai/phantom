@@ -1,4 +1,4 @@
-# Phantom
+# <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/phantom-workbench-logo.svg" width="48" height="48" alt=""> Phantom
 
 **Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work.**
 
@@ -198,13 +198,16 @@ The repo's `.mcp.json` declares six companion MCP servers: `phantom-secrets`, `l
 
 | Project | Purpose |
 | --- | --- |
-| [Phantom](https://github.com/ashlrai/phantom) (this repo) | The factory floor: console, CLI, MCP gateway, agent bus and fleet that run and record agent work. |
-| [Phantom Secrets](https://github.com/ashlrai/phantom-secrets) | Local vault, placeholders and a proxy for supported API credential use. |
-| [Locus](https://github.com/ashlrai/locus) | Account and tenant bindings for agent tools. |
-| [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin) | Compact tool results and a local usage ledger; the `ashlr` server above. |
-| [Lexicon](https://github.com/ashlrai/lexicon) | Correct recurring speech-to-text errors before agents read them. |
-| [Ashlr MD](https://github.com/ashlrai/ashlr-md) | Markdown editing with CLI and MCP interfaces. |
-| [Ashlr Stack](https://github.com/ashlrai/ashlr-stack) | Configure supported development services through CLI and MCP. |
+| <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/phantom-workbench-logo.svg" width="20" height="20" alt=""> [Phantom](https://github.com/ashlrai/phantom) (this repo) | The factory floor: console, CLI, MCP gateway, agent bus and fleet that run and record agent work. |
+| <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/phantom-secrets-logo.svg" width="20" height="20" alt=""> [Phantom Secrets](https://github.com/ashlrai/phantom-secrets) | Local vault, placeholders and a proxy for supported API credential use. |
+| <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/locus-logo.svg" width="20" height="20" alt=""> [Locus](https://github.com/ashlrai/locus) | Account and tenant bindings for agent tools. |
+| <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/ashlr-plugin-logo.svg" width="20" height="20" alt=""> [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin) | Compact tool results and a local usage ledger; the `ashlr` server above. |
+| <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/lexicon-logo.svg" width="20" height="20" alt=""> [Lexicon](https://github.com/ashlrai/lexicon) | Correct recurring speech-to-text errors before agents read them. |
+| <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/ashlr-md-logo.svg" width="20" height="20" alt=""> [Ashlr MD](https://github.com/ashlrai/ashlr-md) | Markdown editing with CLI and MCP interfaces. |
+| <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/ashlr-stack-logo.svg" width="20" height="20" alt=""> [Ashlr Stack](https://github.com/ashlrai/ashlr-stack) | Configure supported development services through CLI and MCP. |
+| <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/ashlrcode-logo.svg" width="20" height="20" alt=""> [AshlrCode](https://ashlr.ai/ashlrcode) | Terminal coding agent. |
+| <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/binshield-logo.svg" width="20" height="20" alt=""> [Binshield](https://github.com/ashlrai/binshield) | Dependency safety gate. |
+| <img src="https://raw.githubusercontent.com/ashlrai/phantom/master/src/web-ui/public/logos/cortex-logo.svg" width="20" height="20" alt=""> [Cortex](https://ashlr.ai/cortex) | AshlrAI's Cortex project. |
 
 ## How agents work on Phantom
 
