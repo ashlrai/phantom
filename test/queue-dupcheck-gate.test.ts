@@ -69,6 +69,26 @@ describe('dupcheck record and stats', () => {
     expect(await readFile(join(dir, 'metrics', 'dupcheck.jsonl'), 'utf8')).not.toMatch(/Check this first/);
   });
 
+  it('measures relaunches only among jobs initially skipped and ignores unknown actions', async () => {
+    const dir = await setup();
+    const events = [
+      ['RQ-LAUNCHED-FIRST', 'launch'],
+      ['RQ-LAUNCHED-FIRST', 'skip'],
+      ['RQ-LAUNCHED-FIRST', 'launch'],
+      ['RQ-SKIPPED-FIRST', 'skip'],
+      ['RQ-SKIPPED-FIRST', 'unrecognized'],
+      ['RQ-RELAUNCHED', 'skip'],
+      ['RQ-RELAUNCHED', 'warn'],
+      ['RQ-UNKNOWN', 'unrecognized'],
+    ].map(([job, action]) => JSON.stringify({ schema: 'queue.dupcheck-event.v1', job, action }));
+    await writeFile(join(dir, 'metrics', 'dupcheck.jsonl'), events.join('\n'));
+
+    expect(await readDupcheckStats(dir)).toMatchObject({
+      checked: 3, launches: 1, skips: 2, false_skips: 1,
+      false_skip_jobs: ['RQ-RELAUNCHED'], skip_precision: 0.5,
+    });
+  });
+
   it('shows no record as empty stats and an unreadable record as unknown', async () => {
     const dir = await setup();
     expect(await readDupcheckStats(dir)).toMatchObject({ checked: 0, skip_precision: null });
