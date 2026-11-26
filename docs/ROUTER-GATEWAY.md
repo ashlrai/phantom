@@ -198,12 +198,13 @@ The gateway uses the same function: a verified model that the docs call
 used. A docs list can only take a model away. With no list, `docs` is `unknown`
 and routing follows the registry alone.
 
-`phm models radar [--json] [--from <folder>] [--fetch]` finds models the day
+`phm models radar [--json] [--from <folder>] [--fetch [--propose]]` finds models the day
 they ship. It reads saved release notes, one file per provider (`anthropic.md`,
-`openai.md`, `xai.md`, `google.md`, `zai.md`, `qwen.md`, `devin.md`; `.txt` and
+`openai.md`, `xai.md`, `google.md`, `zai.md`, `qwen.md`, `devin.md`, `cursor.md`; `.txt` and
 `.html` work too) from `--from`, or from `$ASHLR_HOME/model-radar` when no
-folder is given. `--fetch` first saves today's official pages into that folder,
-so a daily job runs one command: `phm models radar --fetch --json`. The report
+folder is given. `--fetch` first saves today's official pages into that folder
+and reports individual pages' URLs, matching lines and UTC retrieval dates.
+The report
 is `models.radar.v1` with `version: 1`: `new_models`, `retired_models` and
 `renamed`, each with `provider`, the `id` as the page writes it, the `line` it
 came from and `confidence`, plus `unchanged_count` and a one-line `summary`
@@ -217,7 +218,10 @@ provider with no saved file, an empty one, or no recorded doc site is shown as
 `unknown` or `empty`, never as unchanged. `fetch` lists each page `--fetch`
 tried and whether it was saved (`null` when no fetch was asked for). Exit 0
 means every provider was read, no page failed for a whole provider and no
-high-confidence change is waiting.
+high-confidence change or configured lane notice is waiting. With `--propose`,
+findings are not execution failures: exit 1 means no page was fetched, the
+report could not be built, or an inbox write failed. See the
+[opt-in schedule](RADAR.md#official-source-model-radar).
 
 To qualify a new model on release day, confirm its exact ID in official docs, then
 run `phm models verify <id> --source <url>` (add `--provider <name>` for an ID that
