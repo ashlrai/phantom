@@ -11,7 +11,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import { homedir, hostname, platform } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readInstalledBundleVersion } from '../app-update-status.js';
 import { defaultStatePath } from './main-red-age.js';
@@ -164,8 +164,64 @@ export function defaultRuntimeIdentityDeps(): RuntimeIdentityDeps {
     // src/core/fleet and dist/core/fleet both sit three levels under the package root.
     readSourcePackageJson: () => readFileSync(join(fileURLToPath(new URL('../../../', import.meta.url)), 'package.json'), 'utf8'),
     installedVersion: readInstalledBundleVersion,
-    exec: (cmd, args) => execFileSync(cmd, [...args], {
-      encoding: 'utf8', timeout: 5_000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
-    }),
+    // tailscale resolves PATH, then the known install locations (the macOS
+    // app bundle and the fixed bin dirs); anything else is a plain exec.
+    exec: (cmd, args) => execTailscaleAware(cmd, args),
   };
+}
+
+/** Runs one candidate binary with the read's fixed args; throws when missing or failing. */
+export type TailscaleSpawn = (file: string, args: readonly string[]) => string;
+
+/** The bounds the fleet's tailscale reads already use: fixed args, 5 s cap. */
+const liveTailscaleSpawn: TailscaleSpawn = (file, args) => execFileSync(file, [...args], {
+  encoding: 'utf8', timeout: 5_000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+});
+
+/**
+ * Absolute tailscale CLI locations a PATH lookup can miss, most likely
+ * first: the macOS app bundle (system, then per-user install) covers the
+ * standard desktop install — the GUI app is the common Tailscale install and
+ * its CLI is not on PATH — and the fixed bin dirs cover headless and minimal
+ * environments. Only absolute paths are returned.
+ */
+export function tailscaleCliCandidates(home: string = homedir()): string[] {
+  const user = isAbsolute(home) ? home : null;
+  return [
+    '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
+    ...(user === null ? [] : [join(user, 'Applications', 'Tailscale.app', 'Contents', 'MacOS', 'Tailscale')]),
+    '/opt/homebrew/bin/tailscale',
+    '/usr/local/bin/tailscale',
+    '/usr/bin/tailscale',
+    '/usr/sbin/tailscale',
+    ...(user === null ? [] : [join(user, '.local', 'bin', 'tailscale')]),
+  ];
+}
+
+const tailscaleMissing = (error: unknown): boolean =>
+  (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ||
+  /ENOENT/.test(String((error as Error | null)?.message ?? ''));
+
+/**
+ * deps.exec-compatible runner for the fleet's tailscale reads: `tailscale`
+ * resolves PATH first, then each install location in order; any other
+ * command is a plain exec. The first candidate that spawns wins. Only a
+ * missing binary (ENOENT) advances — a binary that ran and failed keeps the
+ * caller's unavailable contract and its single timeout. When every candidate
+ * is missing the last ENOENT is rethrown, so callers keep their
+ * "unavailable" path.
+ */
+export function execTailscaleAware(cmd: string, args: readonly string[], spawn: TailscaleSpawn = liveTailscaleSpawn, home?: string): string {
+  if (cmd !== 'tailscale') return spawn(cmd, args);
+  const candidates = ['tailscale', ...tailscaleCliCandidates(home)];
+  let missing: unknown;
+  for (const file of candidates) {
+    try {
+      return spawn(file, args);
+    } catch (error) {
+      if (!tailscaleMissing(error)) throw error;
+      missing = error;
+    }
+  }
+  throw missing;
 }

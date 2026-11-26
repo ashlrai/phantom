@@ -8,10 +8,9 @@
  * field that cannot be read is the string "unknown" plus a `reasons[]` entry;
  * nothing is guessed and nothing throws.
  */
-import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { stripVTControlCharacters } from 'node:util';
-import { sanitizeIdentityText, UNKNOWN } from './runtime-identity.js';
+import { execTailscaleAware, sanitizeIdentityText, UNKNOWN } from './runtime-identity.js';
 
 /** Never report more peers than this; the rest are summarized in reasons[]. */
 export const TAILNET_PEER_LIMIT = 64;
@@ -189,13 +188,13 @@ export function readTailnetPeers(deps: TailnetPeersDeps): TailnetPeers {
   return parseTailnetStatus(raw, now, home);
 }
 
-/** Live dependencies: `tailscale status --json` only, fixed args, 5 s cap. */
+/** Live dependencies: `tailscale status --json` only, fixed args, 5 s cap. The
+ * CLI resolves PATH first, then the known install locations (the macOS app
+ * bundle and the fixed bin dirs), so the standard Tailscale.app install counts. */
 export function defaultTailnetPeersDeps(): TailnetPeersDeps {
   return {
     now: () => new Date(),
     homeDir: () => homedir(),
-    exec: (cmd, args) => execFileSync(cmd, [...args], {
-      encoding: 'utf8', timeout: 5_000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
-    }),
+    exec: (cmd, args) => execTailscaleAware(cmd, args),
   };
 }

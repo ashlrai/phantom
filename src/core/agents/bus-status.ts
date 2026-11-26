@@ -14,7 +14,10 @@
  * session bindings `peers send|post|read|list|dispatch` authenticate
  * against and the host-provisioned dispatch policy `consumePeerWork`
  * requires, the pending peer-mail backlog `peers read` would return for
- * this host's live-enrolled callsigns, the session-handoff
+ * this host's live-enrolled callsigns, the transport dead-letter sink's
+ * retained delivery-failure reports `phm comms bus read --to
+ * bus.dead-letter` and the unified inbox `bus-dead-letter` items surface,
+ * the session-handoff
  * journal store `phm checkpoint handoff list|show` and
  * `fleet_session_handoffs` read, the claim-store
  * drift verdict comparing the claim journal with the coordination table it
@@ -339,6 +342,32 @@ export interface UnifiedBusStatus {
      * `pending` is a floor; null when the store state is unknown. */
     truncated: boolean | null;
   };
+  /** Transport dead-letter sink (`bus.dead-letter`, docs/AGENT-BUS.md
+   * "Dead letters") behind `phm comms bus read --to bus.dead-letter` and
+   * the unified inbox `bus-dead-letter` items — the `status` envelopes the
+   * router files when delivery provably never landed, kept in the same
+   * bus store under their own TTL. Each live letter is mail that never
+   * arrived, so a growing backlog means routing or transports are failing
+   * somewhere the per-message surfaces only show one item at a time. The
+   * probe pages the same bounded live-receipt scan `peerInbox` runs and
+   * counts envelopes addressed to the sink, tallying the reason the router
+   * recorded (`exhausted`, `expired`, `no-route`; `other` for a letter
+   * whose stored body the defensive read cannot parse — stored envelopes
+   * are untrusted data, so an unreadable reason never drops the letter
+   * from `pending`). Counts and reason buckets only, never envelope ids,
+   * original parties or bodies. */
+  deadLetters: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Live envelopes addressed to `bus.dead-letter`; 0 on a
+     * verified-missing or verified-empty store, null when unreadable. */
+    pending: number | null;
+    /** Pending letters by recorded reason — the four buckets always sum
+     * to `pending`; null when `pending` is null. */
+    reasons: { exhausted: number; expired: number; noRoute: number; other: number } | null;
+    /** The bounded scan did not cover every retained receipt, so `pending`
+     * and `reasons` are a floor; null when the store state is unknown. */
+    truncated: boolean | null;
+  };
   /** Session-handoff journal store (`<runsRoot>/handoffs/*.jsonl`) behind
    * `phm checkpoint handoff list|show` and `fleet_session_handoffs` — read
    * by `listSessionHandoffs`,
@@ -525,6 +554,64 @@ function probePeerInbox(input: {
     if (page === maxPages - 1) truncated = true;
   }
   return { source: 'available', pending, truncated };
+}
+
+/** The transport dead-letter sink address (docs/AGENT-BUS.md "Dead
+ * letters"): the router files delivery-failure reports as `status`
+ * envelopes under this `to` label in the same bus store. Kept a literal —
+ * the same convention `fleet-edges` and the unified inbox apply, so this
+ * probe's import closure stays exactly what it was. */
+const BUS_DEAD_LETTER_ADDRESS = 'bus.dead-letter';
+
+/** The reason the router recorded on a dead-letter letter, read
+ * defensively from `body.payload.deadLetter.reason` — the sink's wire
+ * shape in bus-transport-file. Stored envelopes are untrusted data, so a
+ * body that does not carry the summary, or a reason outside the closed
+ * `DeadLetterReason` set, reports 'other' rather than guessing. */
+function deadLetterReason(body: unknown): 'exhausted' | 'expired' | 'no-route' | 'other' {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return 'other';
+  const payload = (body as Record<string, unknown>).payload;
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return 'other';
+  const letter = (payload as Record<string, unknown>).deadLetter;
+  if (letter === null || typeof letter !== 'object' || Array.isArray(letter)) return 'other';
+  const reason = (letter as Record<string, unknown>).reason;
+  return reason === 'exhausted' || reason === 'expired' || reason === 'no-route' ? reason : 'other';
+}
+
+/** Count the live envelopes addressed to the dead-letter sink — the same
+ * bounded live-receipt paging `probePeerInbox` runs over the same store,
+ * so a corrupt snapshot or an unreadable page degrades only this section.
+ * `listBusInboxAfter` already skips expired receipts, so every counted
+ * letter is one the unified inbox would still list as pending attention. */
+function probeDeadLetters(input: { root: string | undefined; now: () => number }): UnifiedBusStatus['deadLetters'] {
+  const unavailable: UnifiedBusStatus['deadLetters'] =
+    { source: 'unavailable', pending: null, reasons: null, truncated: null };
+  const store = inspectBusInbox({ root: input.root, now: input.now });
+  if (store.source === 'missing') {
+    return { source: 'missing', pending: 0,
+      reasons: { exhausted: 0, expired: 0, noRoute: 0, other: 0 }, truncated: false };
+  }
+  if (store.source !== 'available') return unavailable;
+  const reasons = { exhausted: 0, expired: 0, noRoute: 0, other: 0 };
+  let pending = 0, truncated = false, after = 0;
+  const maxPages = Math.ceil(BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ);
+  for (let page = 0; page < maxPages; page++) {
+    const result = listBusInboxAfter(after, BUS_INBOX_MAX_READ, { root: input.root, now: input.now });
+    if (result.status !== 'ok') {
+      if (page === 0) return unavailable;
+      truncated = true; break;
+    }
+    for (const receipt of result.messages) {
+      if (receipt.envelope.to !== BUS_DEAD_LETTER_ADDRESS) continue;
+      pending++;
+      const reason = deadLetterReason(receipt.envelope.body);
+      reasons[reason === 'no-route' ? 'noRoute' : reason]++;
+    }
+    after = result.nextCursor;
+    if (result.messages.length < BUS_INBOX_MAX_READ) break;
+    if (page === maxPages - 1) truncated = true;
+  }
+  return { source: 'available', pending, reasons, truncated };
 }
 
 /** Compose the dependency reads. Each probe is isolated: one failing
@@ -752,6 +839,17 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     peerInbox = { source: 'unavailable', pending: null, truncated: null };
   }
 
+  // Dead letters share the bus store `store` already inspected, so the
+  // probe reuses that same root — `options.root`, never the agentnet
+  // override the peer sections resolve — and each keeps its own try so a
+  // throwing page read cannot hide the peer verdict or vice versa.
+  let deadLetters: UnifiedBusStatus['deadLetters'];
+  try {
+    deadLetters = probeDeadLetters({ root: options.root, now });
+  } catch {
+    deadLetters = { source: 'unavailable', pending: null, reasons: null, truncated: null };
+  }
+
   // `phm checkpoint handoff list|show` and `fleet_session_handoffs` both
   // serve `listSessionHandoffs` over `<runsRoot>/handoffs` — the same
   // bounded scan under the same runs root the wake probe resolves
@@ -813,5 +911,5 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     kill, pause,
   };
 
-  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, peerInbox, sessionHandoffs, sendGate };
+  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, peerInbox, deadLetters, sessionHandoffs, sendGate };
 }

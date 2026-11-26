@@ -1003,6 +1003,20 @@ describe('derived market reasons', () => {
     }
   });
 
+  it('uses the first valid row per job for derived waiting and blocker counts', () => {
+    const ready = [
+      mrow('RQ-DUP', 'codex-personal', 'work', '{broken'),
+      mrow('RQ-DUP', 'claude', 'work', '{"needs":["browser"]}'),
+      mrow('RQ-DUP', 'claude', 'work'),
+      mrow('RQ-DUP', 'codex-personal', 'work'),
+    ].join('\n');
+    const report = currentUnfed(JSON.stringify({ lanes: MLANES }), ready, { slots: SLOTS });
+    expect(report).toMatchObject({ waiting: 1, invalidRows: 1, unfedSlots: 1 });
+    const lane = report.resources.find(r => r.lane === 'codex-personal');
+    expect(lane).toMatchObject({ readyHinted: 0, waitingElsewhere: 1 });
+    expect(lane?.blocked).toEqual({ missing_capability: 1 });
+  });
+
   it('requires explicit metered opt-in for API lanes with a known metered cost class', () => {
     const ready = [
       mrow('RQ-DEFAULT', 'claude', 'work'),
@@ -1030,11 +1044,12 @@ describe('derived market reasons', () => {
       lanes: MLANES,
       unfed_capacity: { waiting: 1, lanes: { 'codex-personal': { waiting_elsewhere: 1, blocked: { saturated: 1 } } } },
     });
-    const report = currentUnfed(status, READY2, { slots: SLOTS, hold: 'codex-personal' });
+    const hinted = mrow('RQ-HINTED', 'codex-personal', 'work');
+    const report = currentUnfed(status, [READY2, hinted, hinted].join('\n'), { slots: SLOTS, hold: 'codex-personal' });
     expect(report.source).toBe('dispatcher');
     expect(report.derivedReasons).toBe(false);
     expect(report.resources.find(r => r.lane === 'codex-personal')).toMatchObject({
-      held: false, unfed: true, blocked: { saturated: 1 },
+      held: false, unfed: true, readyHinted: 1, waitingElsewhere: 1, blocked: { saturated: 1 },
     });
   });
 });
@@ -1157,11 +1172,12 @@ describe('ready row validation', () => {
     expect(byLane.claude!.blocked).toEqual({ repo_unserved: 1 });
   });
 
-  it('counts every JID+tier-valid row by raw lane column when admission stopped', () => {
+  it('counts the first JID+tier-valid row per job by raw lane when admission stopped', () => {
     const status = JSON.stringify({ lanes: VLANES, paused: 'hold' });
     const ready = [
       vrow('RQ-OK', 'a'),
       vrow('RQ-BADSPEC', 'a', 'work', '{"bogus":1}'),
+      vrow('RQ-BADSPEC', 'b'),
       vrow('RQ-BADTIER', 'a', 'bogus-tier'),
     ].join('\n');
     const report = currentUnfed(status, ready);

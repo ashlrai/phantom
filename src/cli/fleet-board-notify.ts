@@ -27,7 +27,7 @@ import { boardNotifyDir, boardNotifyLedgerPath, diffBoard, planNotifications,
 import { killSwitchOn } from '../core/sandbox/policy.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 
-const usage = 'Usage: ashlr fleet board-notify [--root <absolute>] [--state-dir <absolute>] [--limit <1..100>] [--dry-run] [--json]\n'
+const usage = 'Usage: ashlr fleet board-notify [--root <absolute>] [--state-dir <absolute>] [--limit <1..100>] [--channel <source-channel>] [--dry-run] [--json]\n'
   + 'Diffs the work board against the last snapshot and replies in each item\'s source thread: ASSIGNED <id> — owner,\n'
   + 'BLOCKED <id> — dependency, VERIFIED <id> — PR/head/test artifact. RUNNING and RECEIVED are never posted.\n'
   + 'First live pass only records the baseline snapshot; --dry-run prints the plan without sending or writing.';
@@ -135,16 +135,18 @@ export interface BoardNotifyDeps {
 export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
   let root: string | undefined, stateDir: string | undefined, limit: number | undefined;
+  let channel: string | undefined;
   let dryRun = false, json = false;
   for (let i = 0; i < args.length; i++) {
     const key = args[i]!;
     if (key === '--dry-run' && !dryRun) { dryRun = true; continue; }
     if (key === '--json' && !json) { json = true; continue; }
-    if (key !== '--root' && key !== '--state-dir' && key !== '--limit') { console.error(usage); return 2; }
+    if (key !== '--root' && key !== '--state-dir' && key !== '--limit' && key !== '--channel') { console.error(usage); return 2; }
     const value = args[++i];
     if (!value || value.startsWith('--')) { console.error(usage); return 2; }
     if (key === '--root' && root === undefined) root = value;
     else if (key === '--state-dir' && stateDir === undefined) stateDir = value;
+    else if (key === '--channel' && channel === undefined && value.trim() !== '') channel = value;
     else if (key === '--limit' && limit === undefined && /^\d+(?![\s\S])/.test(value)
       && Number(value) >= 1 && Number(value) <= 100) limit = Number(value);
     else { console.error(usage); return 2; }
@@ -158,9 +160,12 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   const dir = stateDir ?? boardNotifyDir();
   const now = (deps.now ?? Date.now)();
   const ledgerPath = boardNotifyLedgerPath(dir);
+  let deferred: number | null = null; // Unknown until the bounded board has been planned.
   const emit = (report: Record<string, unknown>, code = 0): number => {
-    if (json) console.log(JSON.stringify(report));
-    else for (const line of (report.lines as string[] | undefined) ?? []) console.log(line);
+    const selection = `board-notify selection: channel=${channel === undefined ? 'all' : scrubSecrets(channel)} deferred=${deferred ?? 'unknown'} (bounded board)`;
+    const lines = [...((report.lines as string[] | undefined) ?? []), ...(channel === undefined ? [] : [selection])];
+    if (json) console.log(JSON.stringify({ ...report, channel: channel === undefined ? null : scrubSecrets(channel), deferred, lines }));
+    else for (const line of lines) console.log(line);
     return code;
   };
 
@@ -176,30 +181,33 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   const killed = deps.killed ?? killSwitchOn();
   const transitions = diffBoard(prev ?? [], next);
   const plan = planNotifications(transitions, sent, line => { if (!json) console.error(line); });
+  const notices = plan.notices.filter(n => channel === undefined || n.sourceChannel === channel);
+  const excluded = plan.notices.filter(n => channel !== undefined && n.sourceChannel !== channel);
+  deferred = excluded.length;
 
   if (dryRun) {
     return emit({
       status: 'dry-run', baselined: prev === null, killed, inbox: board.inbox,
-      transitions: transitions.length, planned: plan.notices.length, dropped: plan.dropped,
-      notices: plan.notices.map(n => ({
+      transitions: transitions.length, planned: notices.length, dropped: plan.dropped,
+      notices: notices.map(n => ({
         itemId: scrubSecrets(n.itemId), state: n.state, sourceChannel: scrubSecrets(n.sourceChannel),
         sourceThread: n.sourceThread === null ? null : scrubSecrets(n.sourceThread),
         asOf: scrubSecrets(n.asOf), source: scrubSecrets(n.source), detail: scrubSecrets(n.detail), text: n.text,
       })),
       lines: [
-        `board-notify dry-run: transitions=${transitions.length} planned=${plan.notices.length} dropped=${plan.dropped.length}${prev === null ? ' (first pass would baseline)' : ''}${killed ? ' (KILL armed)' : ''}`,
-        ...plan.notices.map(n => `would-post [${n.sourceChannel}${n.sourceThread ? ` ${n.sourceThread}` : ''}] ${n.text}`),
+        `board-notify dry-run: transitions=${transitions.length} planned=${notices.length} dropped=${plan.dropped.length}${prev === null ? ' (first pass would baseline)' : ''}${killed ? ' (KILL armed)' : ''}`,
+        ...notices.map(n => `would-post [${n.sourceChannel}${n.sourceThread ? ` ${n.sourceThread}` : ''}] ${n.text}`),
         ...plan.dropped.map(d => `dropped ${d.itemId}: ${d.reason}`),
       ],
     });
   }
-  if (killed) return emit({ status: 'halted', planned: plan.notices.length, lines: ['board-notify: KILL is armed; sends halted, snapshot kept for the next pass'] });
+  if (killed) return emit({ status: 'halted', planned: notices.length, lines: ['board-notify: KILL is armed; sends halted, snapshot kept for the next pass'] });
   if (prev === null) {
     if (!writeBoardNotifySnapshot(dir, next).ok) return emit({
       status: 'snapshot-persistence-failed', reason: 'snapshot-write-failed',
       lines: ['board-notify: baseline snapshot could not be saved; retry after restoring state storage'],
     }, 1);
-    return emit({ status: 'baselined', items: next.length, planned: plan.notices.length,
+    return emit({ status: 'baselined', items: next.length, planned: notices.length,
       lines: [`board-notify: baseline recorded for ${next.length} item(s); transitions post from the next pass`] });
   }
 
@@ -223,7 +231,7 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
       return receipt;
     };
   }
-  const results = await sendNotifications(plan.notices, { senders: tracked, ledgerPath });
+  const results = await sendNotifications(notices, { senders: tracked, ledgerPath });
   const delivered = results.filter(r => r.status === 'sent' || r.status === 'duplicate');
   const deliveries = results.map(r => ({ itemId: r.notice.itemId, state: r.notice.state, status: r.status,
     ...(evidence.get(r.notice) ?? { evidence: 'none', transport: 'none' }) }));
@@ -231,20 +239,22 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   const queued = count('slack-bus-note-enqueued');
   const busPosted = count('bus-reply-posted');
   const pending = new Set(results.filter(r => r.status !== 'sent' && r.status !== 'duplicate').map(r => r.notice.itemId));
+  const pendingCount = pending.size; // Selected send failures; exclusions are reported separately.
+  for (const notice of excluded) pending.add(notice.itemId);
   // A truncated listing is a bounded projection, not the whole board:
   // preserve prior rows for items outside the page so their baselines —
   // including pending undelivered updates — are not silently discarded.
   const saved = writeBoardNotifySnapshot(dir, snapshotAfterSend(prev, next, pending, { preserveUnseen: board.truncated })).ok;
   return emit({
     status: saved ? 'completed' : 'snapshot-persistence-failed',
-    ...(!saved ? { reason: 'snapshot-write-failed' } : {}), transitions: transitions.length, planned: plan.notices.length,
+    ...(!saved ? { reason: 'snapshot-write-failed' } : {}), transitions: transitions.length, planned: notices.length,
     // `sent` is the legacy count of durable sender receipts (incl. dedupes). It
     // is NOT a count of Slack deliveries: see `queued`, `busPosted`, `deliveries`.
-    sent: delivered.length, queued, busPosted, pending: pending.size, dropped: plan.dropped,
+    sent: delivered.length, queued, busPosted, pending: pendingCount, dropped: plan.dropped,
     deliveries,
     lines: [
       ...(!saved ? ['board-notify: snapshot could not be saved; retry after restoring state storage'] : []),
-      `board-notify: transitions=${transitions.length} planned=${plan.notices.length} receipts=${delivered.length} queued=${queued} bus-posted=${busPosted} pending=${pending.size} dropped=${plan.dropped.length}`,
+      `board-notify: transitions=${transitions.length} planned=${notices.length} receipts=${delivered.length} queued=${queued} bus-posted=${busPosted} pending=${pendingCount} dropped=${plan.dropped.length}`,
       ...results.map(r => `${describeResult(r.status, evidence.get(r.notice))} [${r.notice.sourceChannel}${r.notice.sourceThread ? ` ${r.notice.sourceThread}` : ''}] ${r.notice.text}${r.reason ? ` (${r.reason})` : ''}`),
       ...plan.dropped.map(d => `dropped ${d.itemId}: ${d.reason}`),
     ],

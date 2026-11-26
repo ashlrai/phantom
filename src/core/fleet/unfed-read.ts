@@ -15,9 +15,8 @@ import { readTail, runsRoot } from '../metrics/loop-collect.js';
 import { readFleetResourcePlan } from '../usage/resource-live/fleet-plan.js';
 import {
   currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides,
-  foldRouteRejections, foldUnfedHistory, type UnfedReport,
+  foldRouteRejections, foldUnfedHistory, readyHints, type UnfedReport,
 } from './unfed-capacity.js';
-import { parseReadyMarketRows } from './unfed-market.js';
 
 export const UNFED_DEFAULT_WINDOW_HOURS = 24;
 export const UNFED_MAX_WINDOW_HOURS = 24 * 7;
@@ -93,22 +92,14 @@ export async function readUnfedReport(options: UnfedReadOptions = {}): Promise<U
   const window = options.windowHours ?? UNFED_DEFAULT_WINDOW_HOURS;
   const jobsTruncated = jobsRead?.truncated ?? false;
   const current = currentUnfed(status, ready, { slots, models, budget, adaptive, hold, routerQueue, nowMs });
-  const advisoryJobs = capacity && ready !== null && current.statusFresh ? new Set<string>() : null;
-  const advisoryByLane = new Map<string, number>();
-  if (advisoryJobs !== null && ready !== null) {
-    for (const row of parseReadyMarketRows(ready, routerQueue).rows) {
-      if (advisoryJobs.has(row.id)) continue;
-      advisoryJobs.add(row.id);
-      if (row.hint !== null) advisoryByLane.set(row.hint, (advisoryByLane.get(row.hint) ?? 0) + 1);
-    }
-  }
+  const advisory = capacity && ready !== null && current.statusFresh ? readyHints(ready, routerQueue) : null;
   return {
     ...current,
     resourcePlan: capacity?.lanes.map(({ lane, running, target_concurrency, additional_slots }) => {
-      const readyHere = advisoryByLane.get(lane) ?? 0;
+      const readyHere = advisory?.byLane.get(lane) ?? 0;
       return { lane, running, target: target_concurrency,
-        unfedSlots: advisoryJobs === null || additional_slots === null ? null
-          : Math.min(Math.max(0, additional_slots - readyHere), advisoryJobs.size - readyHere) };
+        unfedSlots: advisory === null || additional_slots === null ? null
+          : Math.min(Math.max(0, additional_slots - readyHere), advisory.waiting - readyHere) };
     }) ?? null,
     marketTruncated: marketRead?.truncated ?? false,
     history: foldUnfedHistory(history, nowMs, window),
