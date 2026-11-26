@@ -50,8 +50,9 @@
  *  - Bounded reads stay honest. listRetros returns the newest
  *    MAX_RETROS ended runs; when every retained retro lands inside the
  *    window the tallies are lower bounds and the prompt says so.
- *    Malformed playbookRef shapes and unparseable endedAt rows never
- *    reach a cell.
+ *    Malformed playbookRef shapes, unparseable endedAt rows and
+ *    endedAt stamps beyond the evaluation time plus the sibling feeds'
+ *    one-minute future skew never reach a cell.
  *  - Fleet machinery only. Playbooks and trajectory outcomes describe
  *    this install's procedure memory, so items emit only for the
  *    fleet's own repository ('phantom' last-segment match, the same
@@ -109,6 +110,14 @@ export const PLAYBOOK_OUTCOME_ADVERSE_DAYS = 2;
  * lets the recurring bar mean recurring.
  */
 export const PLAYBOOK_OUTCOME_WINDOW_HOURS = 24 * 7;
+/**
+ * Future-skew ceiling on retro endedAt, the sibling feeds' one-minute
+ * tolerance for same-host clock drift: a retro stamped further ahead than
+ * this is corrupt or replayed evidence and never reaches a tally — the
+ * same bound every other windowed backlog fold applies to its journal
+ * timestamps.
+ */
+export const PLAYBOOK_OUTCOME_FUTURE_SKEW_MS = 60_000;
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
 const MAX_TITLE_CHARS = 200;
 /** The fleet's own repository label: playbook evidence is this install's machinery. */
@@ -233,7 +242,7 @@ export async function playbookOutcomeBacklogItems(opts: PlaybookOutcomeItemsOpti
       const endedMs = Date.parse(retro.endedAt);
       if (!Number.isFinite(endedMs)) continue;
       if (endedMs < oldestMs) oldestMs = endedMs;
-      if (endedMs < windowStart) continue;
+      if (endedMs < windowStart || endedMs > now + PLAYBOOK_OUTCOME_FUTURE_SKEW_MS) continue;
       const ref = retro.playbookRef;
       if (!ref || typeof ref.id !== 'string' || !PLAYBOOK_ID_PATTERN.test(ref.id)) continue;
       if (!live.has(ref.id)) continue;

@@ -90,6 +90,13 @@ const BRANCH_GARDENER_ITEM_HARD_MAX = 25;
 /** The window every fold anchors on: the fleet's recurring-evidence week. */
 export const BRANCH_GARDENER_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /**
+ * Future-skew ceiling on journal `at` stamps, the sibling feeds'
+ * one-minute tolerance for same-host clock drift: an event stamped
+ * further ahead than the evaluation time is corrupt or replayed
+ * evidence and never reaches a tally.
+ */
+export const BRANCH_GARDENER_FUTURE_SKEW_MS = 60_000;
+/**
  * Flag observations for one branch must span at least this long before the
  * branch counts as stranded — roughly four gardener passes, so a branch
  * flagged and resolved inside a day never queues a session.
@@ -260,8 +267,9 @@ const newRepoFold = (): RepoFold => ({
 
 /**
  * Pure: fold validated `result` events for one repository into the three
- * bucket tallies. Events outside the window or naming another repository
- * contribute nothing.
+ * bucket tallies. Events outside the window — before its start or past
+ * the evaluation time plus the sibling feeds' future skew — or naming
+ * another repository contribute nothing.
  */
 export function foldBranchGardenerEvents(
   events: readonly ResultEvent[],
@@ -272,9 +280,10 @@ export function foldBranchGardenerEvents(
   const fold = newRepoFold();
   const target = repo.toLowerCase();
   const windowStart = nowMs - windowMs;
+  const until = nowMs + BRANCH_GARDENER_FUTURE_SKEW_MS;
   for (const event of events) {
     if (event.repo.toLowerCase() !== target) continue;
-    if (event.atMs < windowStart) continue;
+    if (event.atMs < windowStart || event.atMs > until) continue;
     if (event.error !== null) {
       fold.auditErrorEvents += 1;
       fold.auditErrorDays.add(event.utcDay);

@@ -93,6 +93,13 @@ export const BET_OUTCOME_KILLED_RECURRING = 3;
  * so the window is what lets the recurring bar mean recurring.
  */
 export const BET_OUTCOME_WINDOW_HOURS = 24 * 7;
+/**
+ * Future-skew ceiling on bet decidedAt stamps, the sibling feeds'
+ * one-minute tolerance for same-host clock drift: a bet decided further
+ * ahead than the evaluation time is corrupt or replayed evidence and
+ * never reaches a cell.
+ */
+export const BET_OUTCOME_FUTURE_SKEW_MS = 60_000;
 /** Ledger tail cap — mirrors the LEDGER_MAX bets-store reads through. */
 const BET_OUTCOME_LEDGER_MAX_BYTES = 8 * 1024 * 1024;
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
@@ -176,7 +183,9 @@ const scorerKilled = (bet: Bet): boolean =>
 /**
  * Pure: fold the ledger's bets into per-metric scorer-kill cells. Only
  * bets decided inside the window count — kept bets tally as context on
- * the same metric, operator kills and in-flight bets never do. Cells
+ * the same metric, operator kills and in-flight bets never do, and a
+ * decidedAt stamp beyond the evaluation time plus the sibling feeds'
+ * future skew is corrupt evidence that never reaches a cell. Cells
  * below the recurring bar are dropped here so callers see only emittable
  * evidence.
  */
@@ -185,6 +194,7 @@ export function foldBetOutcomeCells(
   opts: { nowMs: number; windowHours: number },
 ): BetOutcomeCell[] {
   const sinceMs = opts.nowMs - opts.windowHours * 60 * 60 * 1000;
+  const untilMs = opts.nowMs + BET_OUTCOME_FUTURE_SKEW_MS;
   const cells = new Map<string, {
     metric: string;
     killed: number;
@@ -196,7 +206,7 @@ export function foldBetOutcomeCells(
   for (const bet of bets) {
     if (bet.status !== 'killed' && bet.status !== 'kept') continue;
     const at = decidedMs(bet);
-    if (!Number.isFinite(at) || at < sinceMs) continue;
+    if (!Number.isFinite(at) || at < sinceMs || at > untilMs) continue;
     const killed = scorerKilled(bet);
     if (!killed && bet.status !== 'kept') continue;
     const metric = fieldText(bet.metric, MAX_FIELD_CHARS) || 'unknown';

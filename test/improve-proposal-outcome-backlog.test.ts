@@ -170,6 +170,32 @@ describe('proposalOutcomeBacklogItems', () => {
     expect(unknown!.prompt).toContain('no-change');
   });
 
+  it('never counts ledger records stamped past the evaluation-time future skew', async () => {
+    // Null measurements all stamped beyond now + skew: corrupt or replayed
+    // evidence — the unknown-measurement signal stays quiet.
+    seed(ledgerPath, [
+      [registered(pid(1), 'runner one'), 5],
+      [measured(pid(1), 'base', SHA_A, null, 'future failure'), -1],
+      [measured(pid(1), 'head', SHA_B, null, 'future failure'), -1],
+      [registered(pid(2), 'runner two'), 5],
+      [measured(pid(2), 'base', SHA_A, null, 'future failure'), -2],
+      [registered(pid(3), 'runner three'), 5],
+      [measured(pid(3), 'base', SHA_A, null, 'future failure'), -3],
+    ]);
+    expect(await proposalOutcomeBacklogItems({ repo: REPO, now: NOW })).toEqual([]);
+    // Inside the one-minute skew the stamp still counts as same-host drift.
+    seed(ledgerPath, [
+      [measured(pid(1), 'head', SHA_B, null, 'skewed failure'), -0.0004],
+      [measured(pid(2), 'head', SHA_B, null, 'skewed failure'), -0.0004],
+      [measured(pid(3), 'head', SHA_B, null, 'skewed failure'), -0.0004],
+    ]);
+    const items = await proposalOutcomeBacklogItems({ repo: REPO, now: NOW });
+    const unknown = items.find((i) => i.area === 'outcome-unknown');
+    expect(unknown).toBeDefined();
+    expect(unknown!.prompt).toContain('3 \'measured\' event(s)');
+    expect(unknown!.prompt).toContain('3 distinct proposal(s)');
+  });
+
   it('stays quiet on unknown measurements outside the window or below the proposal bar', async () => {
     seed(ledgerPath, [
       // Three null events but all older than the 7-day window.
