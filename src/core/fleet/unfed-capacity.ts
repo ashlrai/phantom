@@ -430,7 +430,9 @@ export function foldUnfedHistory(jsonl: string | null, nowMs: number, windowHour
     if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > until) continue;
     let any = false;
     for (const [lane, value] of Object.entries(row.lanes)) {
-      if (!LANE.test(lane) || !isRecord(value) || value.unfed !== true || !count(value.headroom) || !count(value.waiting_elsewhere)) continue;
+      if (!LANE.test(lane) || !isRecord(value) || value.unfed !== true
+        || !count(value.headroom) || value.headroom === 0
+        || !count(value.waiting_elsewhere) || value.waiting_elsewhere === 0) continue;
       any = true;
       const entry = lanes.get(lane) ?? { lane, unfedTicks: 0, slotTicks: 0, lastUnfedAt: null, blocked: {}, last: 0 };
       entry.unfedTicks++;

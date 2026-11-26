@@ -358,6 +358,8 @@ now, then folds the unfed ticks of the last `--window` hours (default 24, at
 most 168): ticks unfed and slot-ticks lost per lane, with the leading reasons.
 The history includes both endpoints of the trailing window and excludes ticks
 timestamped after the report time.
+Each historical lane needs an unfed flag, positive headroom and waiting work
+elsewhere. A tick counts when at least one lane meets all three conditions.
 The separate `resourcePlan` comparison uses the same advisory lane targets as
 `phm resources plan` and shows how many additional slots lack waiting rows
 hinted to that lane. The advisory `unfedSlots` count stays null when plan
