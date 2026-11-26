@@ -116,6 +116,11 @@ receipt proves coordination, not job execution.
 
 ## Leader
 
+The Leader board's conflict trend uses distinct observation times from the
+local ready queue. A measured retry replaces the sample at the same instant,
+and samples later than the current report time are excluded. The delta needs
+two distinct samples and a measured current count.
+
 | Method | Path | Query | Response type / source | Handler | Curl example |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/verse/leader` | none | [LeaderStateV1](../src/core/vision/leader-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader'` |

@@ -92,6 +92,23 @@ it('counts lane-open work by tier without attributing it to a lane', async () =>
   expect(board?.lanes.find((lane) => lane.lane === 'codex')?.ready).toBe(1);
 });
 
+it('uses distinct conflict observation times when a tick is retried or the clock moves back', async () => {
+  await seed();
+  await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS - 60_000 });
+  await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  await writeFile(join(queueDir, 'ready.tsv'), '');
+  const retry = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  expect(retry.wrote && retry.board.conflictingPrs).toEqual({
+    count: 0, delta: -2, trend: 'falling',
+    history: [{ at: minutesAgo(1), count: 2 }, { at: minutesAgo(0), count: 0 }],
+  });
+  const earlier = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS - 60_000 });
+  expect(earlier.wrote && earlier.board.conflictingPrs).toEqual({
+    count: 0, delta: null, trend: 'unknown',
+    history: [{ at: minutesAgo(1), count: 0 }],
+  });
+});
+
 it('reports honest failures for hostile paths and the reader stays truthful', async () => {
   expect(await recordLeaderBoard({ runsDir: 'relative/path', nowMs: NOW_MS })).toMatchObject({ wrote: false });
   expect(await recordLeaderBoard({ runsDir: '/dev/null/impossible', nowMs: NOW_MS })).toMatchObject({ wrote: false });
