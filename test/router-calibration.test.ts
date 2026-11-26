@@ -27,6 +27,29 @@ describe('router calibration', () => {
     expect(report.arms[0]!.tokens).toEqual({ predicted: 300, actual: 240, paired: 1 });
     expect(report.unmatchedPosthogRuns).toBe(0);
   });
+  it('calibrates dispatcher measurements against a reconciled merge in the jobs ledger', () => {
+    const report = calibrateRouting(
+      row({ event: 'launch', job: 'RQ-A', lane: 'codex', ts: '2026-01-01T00:00:00+0000' }) +
+      row({ event: 'finish', job: 'RQ-A', lane: 'codex', ts: '2026-01-01T00:00:03+0000',
+        wall_s: 2.5, tokens_total: 240 }) +
+      row({ event: 'publish', jobId: 'RQ-A', outcome: 'MERGED', source: 'metrics-outcomes-reconciler' }) +
+      row({ event: 'launch', job: 'RQ-B', lane: 'codex', ts: '2026-01-01T00:00:00+0000',
+        predicted_wall_time_ms: 2000 }) +
+      row({ event: 'finish', job: 'RQ-B', ts: '2026-01-01T00:00:02+0000' }) +
+      row({ event: 'publish', jobId: 'RQ-B', outcome: 'MERGED' }) +
+      row({ event: 'launch', job: 'RQ-C', lane: 'codex' }) +
+      row({ jobId: 'RQ-C', outcome: 'CLOSED' }) +
+      row({ event: 'launch', job: 'RQ-BATCH-A', lane: 'codex' }) +
+      row({ event: 'launch', job: 'node-attempt', jobId: 'RQ-A', schema: 'fleet.session-pool.v1' }),
+      JSON.stringify([{ job_id: 'RQ-A', predicted_merge_rate: 0.8, predicted_tokens: 300,
+        predicted_wall_time_ms: 2000 }]),
+    );
+    expect(report.arms).toMatchObject([{ arm: 'codex', jobs: 3, resolved: 2,
+      mergeRate: { predicted: 0.8, actual: 1, paired: 1 },
+      tokens: { predicted: 300, actual: 240, paired: 1 },
+      wallTimeMs: { predicted: 2000, actual: 2250, paired: 2 } }]);
+    expect(report.unmatchedPosthogRuns).toBe(0);
+  });
   it('rejects ambiguous, malformed, contradictory and invalid evidence', () => {
     expect(() => calibrateRouting(jobs + row({ event: 'launch', job_id: 'TEST-job-1', arm: 'codex' }))).toThrow('Duplicate launch');
     expect(() => calibrateRouting(jobs + row({ event: 'outcome', job_id: 'TEST-job-1', outcome: 'closed' }))).toThrow('Conflicting merged');
