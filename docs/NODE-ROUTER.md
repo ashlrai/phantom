@@ -544,6 +544,31 @@ recorded outcomes, while an unreadable one refuses the route. Explicit `--outcom
 entries win per provider over ledger tallies, and the JSON plan reports the
 ledger state, truncation and provider count under `outcomes_ledger`.
 
+## Contributor fleet (planned)
+
+`phm node contributor [join|status|leave] [--json]` is the planned surface for
+enrolling outside machines in a public, open compute fleet — the enrollment
+contract in
+[the open-fleet strategy](strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md).
+No public broker is deployed, so the command is a plan, not a service:
+
+- bare `phm node contributor` prints the plan — broker status (`not-deployed`),
+  the revocable-grant enrollment contract, the public-only data boundary,
+  contributor custody rules, the three tiers (guest, verified-community,
+  enrolled-team) and the verbs once the broker ships. `--json` emits the same
+  plan as one object with `dryRun:true` and `executable:false`.
+- `join` cannot enroll today: it exits 1 with `unavailable` and names the
+  contribution paths that work now.
+- `status` and `leave` answer truthfully — `enrolled:false` and
+  `left:false`/`no-contributor-session` — so scripts never mistake the stub
+  for a live enrollment.
+
+What works today for an outside machine: code through a fork pull request
+([contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md)), this machine as a
+local node ([add a computer](add-a-computer.md)), and the multi-Mac team pool
+by invitation ([NODES](NODES.md)). None of those pool credentials or share a
+queue across trust boundaries.
+
 ## Limits
 
 State is a private local directory (`~/.ashlr/nodes`, or `$ASHLR_HOME/nodes`)

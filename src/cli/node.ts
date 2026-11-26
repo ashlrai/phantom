@@ -75,6 +75,12 @@ export async function cmdNode(args: string[]): Promise<number> {
     }
     return 0;
   }
+  // `contributor` is the planned public compute enrollment surface (a plan,
+  // not a registry verb): it answers before the fleet parser and before the
+  // dispatcher --help, so `contributor --help` prints its own usage.
+  if (args[0] === 'contributor') {
+    return (await import('./node-contributor.js')).cmdNodeContributor(args.slice(1));
+  }
   const fleetVerb = NODE_FLEET_VERBS.find(verb => verb === args[0]);
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`${USAGE}\nbootstrap is a planning stub: no VM creation, login, or registry calls.\n\n${NODE_FLEET_USAGE}\n\nMulti-Mac pool (explicit team SSH aliases only):
@@ -93,7 +99,8 @@ phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json] (mea
 phm node measure [--json] (print the measured --capacity sample for phm node beat)
 phm node route --capacity <file>... --costs <file> --jobs <file> [--outcomes <file>] [--outcomes-ledger] [--runs-dir <dir>] [--nodes <file>] [--exhausted <p,p>] [--json] (node, provider, model scoring; --outcomes-ledger derives lane merge tallies from metrics/jobs.jsonl)
 phm node self-update [--owner <scope>] [--target <x.y.z>] [--json] (plan only: per-node phm version drift)
-phm node bridge [--owner <scope>] [--apply] [--json] (ready.tsv rows that would offload to nodes and why; dry run by default)`);
+phm node bridge [--owner <scope>] [--apply] [--json] (ready.tsv rows that would offload to nodes and why; dry run by default)
+phm node contributor [join|status|leave] [--json] (planned public compute enrollment; broker not deployed — prints the plan and today's real paths)`);
     return 0;
   }
   // `beat --watch` / `renew --watch` are dispatcher-level keep-alives, not

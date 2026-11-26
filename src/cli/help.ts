@@ -350,6 +350,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'schemaVersion 1; dryRun=true, executable=false, registry.status=stub, steps',
   },
   {
+    usage: 'phm node contributor [join|status|leave] [--json]',
+    description: 'Planned open contributor fleet: the enrollment plan (broker not deployed), plus join/status/leave answers that stay truthful until the public broker ships. join exits 1 (cannot enroll), status and leave report enrolled:false/left:false. Exit 0 plan or reads, 1 join, 2 bad usage.',
+    safety: 'read',
+    jsonShape: '{schemaVersion:1, command:"contributor", dryRun:true, executable:false, broker.status:"not-deployed", tiers, verbs, today, steps} | verb answers {verb, registered|enrolled|left:false, broker:"not-deployed"}',
+  },
+  {
     usage: 'phm node join|beat|enqueue|plan|pull|renew|complete|release|list|status|leave|pool|watch|worker|rpc|light [flags] [--json]',
     description: 'Node router: nodes advertise caps and live usage, jobs carry an owner scope and a fenced lease so no job runs twice. A node only sees and pulls jobs of its own owner scopes; auth stays local to each node. Exit 0 ok, 1 lease/session lost or store unavailable, 2 bad usage; errors include a Fix.',
     safety: 'append',
@@ -1515,6 +1521,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'nodes offload [--dry-run] [--json]', desc: 'Opt-in: when this computer would hold a launch and another passes doctor, choose that computer for a ready job and record why. --dry-run shows what would move; `nodes offload on|off` flips the setting.', topic: 'safety' },
   { cmd: 'node join|beat|enqueue|plan|pull|complete|status [--json]', desc: 'Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.', topic: 'safety' },
   { cmd: 'node bootstrap --dry-run [--json]', desc: 'Plan a persistent Linux node; registry integration is a stub, no provisioning.', topic: 'safety' },
+  { cmd: 'node contributor [join|status|leave] [--json]', desc: 'Planned public compute enrollment: prints the broker plan (not deployed) and today\'s real contribution paths; join exits 1 until the broker ships.', topic: 'safety' },
   { cmd: 'sandbox list',                 desc: 'List active git-worktree sandboxes (M21 safety foundation).', topic: 'safety' },
   { cmd: 'sandbox diff <id>',            desc: 'Show diff of a sandbox vs its base HEAD.', topic: 'safety' },
   { cmd: 'sandbox cleanup <id>',         desc: 'Remove a sandbox worktree and scratch branch.', topic: 'safety' },
