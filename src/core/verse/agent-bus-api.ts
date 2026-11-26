@@ -75,7 +75,7 @@ const WORK_FEED = `${PATH}/work-feed`;
 /** The query keys the work-feed read accepts — the `claims` hold join, the
  * filter set `parseBusWorkFeedQuery` validates into `projectBusWorkFeedView`,
  * and the `limit` page bound `sliceBusWorkFeedView` applies after it. */
-const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'before', 'contains', 'channel', 'result', 'open', 'claimable', 'limit'] as const;
+const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'before', 'contains', 'channel', 'result', 'id', 'open', 'claimable', 'limit'] as const;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
 const ASKS = `${NEEDS_MASON}/asks`;
 const ASKS_ANSWER = `${ASKS}/answer`;

@@ -36,6 +36,8 @@ export interface BusWorkFeedQueryInput {
   channel?: string;
   /** Newest `work.result` citation outcome to keep; one of WORK_RESULT_OUTCOMES. */
   result?: string;
+  /** Retained envelope wire id to keep; matches the job's postId/statusId/result citations. */
+  id?: string;
   open?: string;
   claimable?: string;
   /** Newest-first page bound applied after the filters; absent means the whole filtered view. */
@@ -65,7 +67,11 @@ const invalid = (error: string): BusWorkFeedQuery => ({ ok: false, error });
  * bus channel-name grammar — a raw `group:<channel>:` prefix match on the
  * announcement address, never a registry-dependent guess. `result` keeps
  * jobs whose newest `work.result` citation carries that outcome — one of the
- * `WORK_RESULT_OUTCOMES` codes — and `limit` is the
+ * `WORK_RESULT_OUTCOMES` codes — `id` keeps only jobs whose retained
+ * envelope citations (the `work.post` announcement, newest `work.status`
+ * receipt or newest `work.result` receipt) include that wire id — the same
+ * `busWorkFeedJobCitesEnvelope` match the feed `--id` flag and the `work
+ * mine` digest's job sections apply — and `limit` is the
  * page bound `sliceBusWorkFeedView` applies after the filters — an integer
  * in 1..BUS_WORK_FEED_LIMIT_MAX, absent meaning the whole filtered view.
  */
@@ -86,11 +92,12 @@ export function parseBusWorkFeedQuery(
     }
     filters.status = input.status as WorkJob['status'];
   }
-  for (const key of ['job', 'to', 'owner'] as const) {
+  for (const key of ['job', 'to', 'owner', 'id'] as const) {
     const value = input[key];
     if (value === undefined) continue;
     if (!LABEL.test(value)) return invalid(`${key} takes a printable routing label of 1-128 characters.`);
     if (key === 'job') filters.jobId = value;
+    else if (key === 'id') filters.id = value;
     else if (key === 'to') filters.toMatch = busWorkFeedPendingToMatcher(value, { root: options.root });
     else filters.ownerMatch = busWorkFeedOwnerMatcher(value, { root: options.root });
   }
