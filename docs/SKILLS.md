@@ -137,6 +137,10 @@ observed on joined trajectories, and the report carries `outcomeState`
 (`"observed"` or `"withheld"`) so a missing tally is never mistaken for a
 zero. Plain-text output prints the tallies under each skill.
 
+Skill-use receipts become eligible at their recorded timestamp. Partitions
+after the report time do not consume the file budget, and later receipts
+in an eligible partition do not consume the event budget.
+
 The projection is sample-gated exactly like `skillObservation`: per-skill
 counts publish only after at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)
 production trajectories carry skill-use coverage, and the whole section is

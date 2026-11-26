@@ -51,12 +51,14 @@ export function readSkillTrajectoryOutcomes(
   try {
     const windowHours = opts.windowHours && opts.windowHours > 0 ? opts.windowHours : DEFAULT_WINDOW_HOURS;
     const limit = opts.limit && opts.limit > 0 ? Math.floor(opts.limit) : DEFAULT_LIMIT;
-    const sinceMs = Date.now() - windowHours * 60 * 60 * 1000;
+    const untilMs = Date.now();
+    const sinceMs = untilMs - windowHours * 60 * 60 * 1000;
     const readEvents = deps.readSkillUseEvents ?? readSkillUseEventsWithDiagnostics;
     // Mirror the windowed read trajectory-records performs so the health gate
     // and the join see the same skill-use snapshot.
     const skillRead = readEvents({
       sinceMs,
+      untilMs,
       limit: Math.max(limit * 8, 400),
       maxFiles: trajectoryWindowMaxFiles(windowHours),
     });
