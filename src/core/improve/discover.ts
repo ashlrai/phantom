@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Seventy-eight sources, all of which Phantom
+ * evidence instead of a hand-kept list. Seventy-nine sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -1138,6 +1138,23 @@
  *     stated as lower bounds or proven coverage edges, and items emit
  *     only for the fleet's own repository since the evidence describes
  *     this install's dispatcher and carries no repository column;
+ *   - the learned-skill evidence ledgers' own degradation verdicts:
+ *     the signed skill-card corpus read's sourceState
+ *     (readSkillCardCorpus over ~/.ashlr/skills/cards) and its
+ *     conflicting current revisions, plus the skill-use event read's
+ *     eventState (readSkillUseEventsWithDiagnostics over
+ *     ~/.ashlr/skills/uses — the same gate
+ *     readSkillTrajectoryOutcomes applies before publishing
+ *     trajectoryLearning.skillOutcomes) (skillEvidenceBacklogItems
+ *     below). Until now a degraded corpus emptied the verified
+ *     selection set and a degraded use-event ledger shrank the
+ *     trajectory join's event set before the failed-join cells could
+ *     count it — diagnostics that only ever reached `phm fleet
+ *     status`, `phm skills list` and the withheld outcome feeds,
+ *     reports someone had to run and read. Cells are the readers'
+ *     own recorded verdicts; 'missing' and clean reads never emit,
+ *     and only the fleet's own repository inherits the items since
+ *     the ledgers describe this install's learned memory;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1187,6 +1204,7 @@ import { diskBacklogItems } from './disk-backlog.js';
 import { controllerBacklogItems } from './controller-backlog.js';
 import { skillOutcomeBacklogItems } from './skill-outcome-backlog.js';
 import { trajectoryGapBacklogItems } from './trajectory-gap-backlog.js';
+import { skillEvidenceBacklogItems } from './skill-evidence-backlog.js';
 import { precheckSkipBacklogItems } from './precheck-skip-backlog.js';
 import { recheckBacklogItems } from './recheck-backlog.js';
 import { sourceYieldBacklogItems } from './source-yield-backlog.js';
@@ -1497,6 +1515,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // recurring bars inside the window and only for the fleet's own
   // repository.
   items.push(...await trajectoryGapBacklogItems({ repo }));
+
+  // Learned-skill evidence ledgers: the signed skill-card corpus's own
+  // read verdict and current-revision conflicts, plus the skill-use
+  // event ledger's degraded bounded read — the same diagnostics
+  // `phm fleet status` folds into skillCorpusReadiness and
+  // learningMetrics, the same gate readSkillTrajectoryOutcomes applies
+  // before publishing skillOutcomes, and the same healthy-only bar
+  // skillOutcomeBacklogItems enforces. Until now a degraded corpus
+  // emptied the verified selection set silently and a degraded
+  // use-event ledger shrank the trajectory join's event set before the
+  // failed-join cells could ever count it — reports someone had to run
+  // and read, never work. Cells are the readers' own recorded verdicts
+  // (sourceState 'degraded', conflicting revisions inside a healthy
+  // corpus, eventState 'degraded'), 'missing' and clean reads never
+  // emit, and only the fleet's own repository inherits the items
+  // since the ledgers describe this install's learned memory.
+  items.push(...await skillEvidenceBacklogItems({ repo }));
 
   // Precheck-skip ledger: the dispatcher's own DONE-NOOP record —
   // recurring (code, reason) skip groups across distinct jobs and job
