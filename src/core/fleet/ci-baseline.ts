@@ -2175,13 +2175,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   }
   async function runs(ref: string): Promise<Run[] | null> {
     const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?head_sha=${encodeURIComponent(ref)}&per_page=100`);
-    if (!Array.isArray(data?.workflow_runs) || data.total_count > 100) return null;
+    if (!Array.isArray(data?.workflow_runs) || data.total_count !== data.workflow_runs.length || data.total_count > 100) return null;
     const seen = new Set<number>();
     return data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
   }
   async function logs(run: Run, head: string): Promise<{ entries: { conclusion: string; text: string }[]; incomplete: boolean } | null> {
     const data = await json<{ jobs: Job[]; total_count: number }>(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
-    if (!Array.isArray(data?.jobs) || data.total_count > 100) return null;
+    if (!Array.isArray(data?.jobs) || data.total_count !== data.jobs.length || data.total_count > 100) return null;
     // A job that never reached a verdict — cancelled while queued, timed
     // out, awaiting action, failed to start, or marked stale — is
     // incomplete evidence even when its log is absent or empty: the run
@@ -2564,9 +2564,12 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   const observations: Observation[] = [];
   for (const pr of prs) {
     const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?branch=${encodeURIComponent(pr.headRefName)}&per_page=100`);
+    if (!Array.isArray(data?.workflow_runs) || !data.workflow_runs.length || data.total_count !== data.workflow_runs.length || data.total_count > 100) {
+      freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'unknown', reason: 'missing-or-capped-runs' });
+      continue;
+    }
     const seen = new Set<number>();
-    const latest = data?.workflow_runs?.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
-    if (!latest?.length || data!.total_count > 100) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'unknown', reason: 'missing-or-capped-runs' }); continue; }
+    const latest = data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
     if (latest.some(r => r.head_sha !== pr.headRefOid)) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'stale', reason: 'stale-head' }); continue; }
     let known = true;
     let incomplete = false;
