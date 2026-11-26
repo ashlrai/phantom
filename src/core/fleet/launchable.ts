@@ -26,6 +26,7 @@ export interface LaunchableLane {
   running: number;
   /** The launch target: configured target tightened by the controller's effective_target shed. */
   target: number;
+  /** Additional slots usable under the published lane hold and launch target. */
   free: number;
   launchable: number;
 }
@@ -38,7 +39,7 @@ export interface LaunchablePlan {
 }
 
 export interface LaunchableInputs {
-  /** queue/status.json text: lanes with running, target and optional effective_target. */
+  /** queue/status.json text: lanes with running, target and optional effective_target and held. */
   statusJson: string;
   /** queue/ready.tsv text; '' when absent. */
   readyTsv: string;
@@ -91,7 +92,8 @@ export async function planLaunchable(
   for (const [lane, value] of Object.entries(data.lanes)) {
     if (!isRecord(value) || !count(value.running) || !count(value.target)) throw new Error('invalid lane');
     const target = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
-    lanes.set(lane, { lane, running: value.running, target, free: Math.max(0, target - value.running), launchable: 0 });
+    const free = value.held === true ? 0 : Math.max(0, target - value.running);
+    lanes.set(lane, { lane, running: value.running, target, free, launchable: 0 });
   }
   const excluded = dropDeferIds(inputs.skippedEmpty);
   const fillerHold = options.fillerHold === true;

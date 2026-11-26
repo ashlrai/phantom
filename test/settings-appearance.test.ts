@@ -52,7 +52,7 @@ afterEach(() => {
 
 const os = (value: boolean | null) => ({ osPrefersDark: async () => value });
 const lastJson = (): Record<string, any> => JSON.parse(out.at(-1)!);
-const DEFAULTS = { theme: 'system', accent: '#5447e1', density: 'comfortable', fontSize: 'default' };
+const DEFAULTS = { theme: 'system', accent: '#5447e1', density: 'comfortable', fontSize: 'default', brand: 'p' };
 
 describe('defaults', () => {
   it('are safe and match the app (system, indigo, comfortable, default size)', () => {
@@ -70,7 +70,7 @@ describe('CLI --json shape', () => {
     expect(await cmdSettings(['appearance', '--theme', 'dark', '--json'], os(null))).toBe(0);
     const v = lastJson();
     expect(Object.keys(v).sort()).toEqual(['appearance', 'ok', 'resolvedTheme', 'revision', 'saved', 'schema', 'updatedAt', 'updatedBy']);
-    expect(Object.keys(v.appearance).sort()).toEqual(['accent', 'density', 'fontSize', 'theme']);
+    expect(Object.keys(v.appearance).sort()).toEqual(['accent', 'brand', 'density', 'fontSize', 'theme']);
     expect(v.schema).toBe(SETTINGS_APPEARANCE_SCHEMA);
     expect(typeof v.revision).toBe('number');
     expect(typeof v.updatedAt).toBe('string');

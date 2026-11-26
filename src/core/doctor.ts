@@ -57,6 +57,17 @@ function check(
   return c;
 }
 
+async function checkCodexResetBank(): Promise<DoctorCheck | null> {
+  try {
+    const [{ readBankedResets, codexResetBankUpgradeHint }, { defaultResourceLiveRunsDir }] = await Promise.all([
+      import('./usage/resource-live/banked-resets.js'), import('./usage/resource-live/feed.js'),
+    ]);
+    const { unknown_reason } = await readBankedResets(defaultResourceLiveRunsDir(), Date.now());
+    return unknown_reason ? check('codex-reset-bank', 'Codex reset bank', 'warn', unknown_reason,
+      codexResetBankUpgradeHint(unknown_reason)) : null;
+  } catch { return null; }
+}
+
 /** Keep process startup off the critical path shared with network probes. */
 function runCmd(cmd: string, args: string[]): Promise<string | null> {
   return new Promise(resolve => {
@@ -1510,7 +1521,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   // plugin check and the loopback local-inference probe run here too so their
   // imports and bounded waits overlap the rest of the wave instead of sitting
   // in a serial tail; results land at their original position in `checks`.
-  const [mcpRegistry, toolsRegistry, budgetRollup, genomeHealth, identity, governance, telemetrySinkInfo, poolCliChecks, receiptMod, reaperMod, pluginsCheck, localInferenceCheck] = await Promise.all([
+  const [mcpRegistry, toolsRegistry, budgetRollup, genomeHealth, identity, governance, telemetrySinkInfo, poolCliChecks, receiptMod, reaperMod, pluginsCheck, localInferenceCheck, codexResetBank] = await Promise.all([
     tryDiscoverMcpServers(),
     tryGetToolsRegistry(),
     tryGetBudgetAlert(cfg),
@@ -1523,6 +1534,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
     import('./inbox/temp-worktree-reaper.js').catch(() => null),
     checkPlugins(cfg),
     checkLocalInference(cfg),
+    checkCodexResetBank(),
   ]);
 
   // --- Synchronous checks ---
@@ -1531,6 +1543,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
     'pool-cli', 'Pool CLI versions', 'warn',
     'Pool CLI version checks unavailable — rerun phm doctor',
   )]));
+  if (codexResetBank) checks.push(codexResetBank);
   checks.push(await git);
   const phm = await phmPath;
   checks.push(checkLocalBin(phm));

@@ -35,6 +35,10 @@ export function remotePackFor(job: string, cap: string): { pack: string; writes:
 }
 export const NODE_BRIDGE_PENDING_TTL_MS = 5 * 60_000;
 export const NODE_BRIDGE_MAX_PER_PASS = 4;
+/** One router call's worst case: the node SSH transport's own timeout (ssh.ts). */
+export const NODE_BRIDGE_CALL_MS = 12_000;
+/** The daemon phase's pass budget, under its 30 s deadline (TICK_PHASE_NODE_BRIDGE_MS). */
+export const NODE_BRIDGE_PASS_BUDGET_MS = 25_000;
 
 const JID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const LOCAL_LANES = new Set(['codex-local', 'omlx']);
@@ -349,6 +353,9 @@ export interface NodeBridgeOptions {
   maxPerPass?: number;
   signal?: AbortSignal;
   trace?: BridgeTrace;
+  /** Wall-clock end of the pass: no router call starts unless it can finish before it. */
+  deadlineAt?: number;
+  clock?: () => number;
   /** Overrides host readiness (e.g. a pool backup/worker never claims). */
   inert?: string | null;
 }
@@ -371,6 +378,10 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
   report.inert = !owner ? 'bridge-owner-unset' : opts.inert !== undefined && opts.inert !== null ? opts.inert
     : traceBridgeSync(trace, 'check-readiness', () => nodeBridgeReadiness(host)) ?? (opts.router ? null : 'router-unavailable');
   const ttl = opts.pendingTtlMs ?? NODE_BRIDGE_PENDING_TTL_MS;
+  const clock = opts.clock ?? Date.now;
+  /** Router calls that still fit before the deadline; each may block for NODE_BRIDGE_CALL_MS. */
+  const callsLeft = (): number => opts.signal?.aborted ? 0 : opts.deadlineAt === undefined ? Infinity
+    : Math.max(0, Math.floor((opts.deadlineAt - clock()) / NODE_BRIDGE_CALL_MS));
   const emptyView = { nodes: [], jobs: [] };
   const readView = (): { nodes: NodeView[]; jobs: JobView[] } => {
     if (!owner || !opts.router) return emptyView;
@@ -417,6 +428,8 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
     for (const m of manifests) {
       const action = report.leases.find(l => l.leaseOwner === m.id)!.action;
       if (action === 'keep-completed' || action === 'wait' || action === 'hold-owner-mismatch' || action === 'hold-router-mismatch') continue;
+      // Out of time: the rest wait for the next pass (each lease's action is recomputed then).
+      if (callsLeft() < 1) { report.held = 'deadline'; break; }
       let outcome: WithdrawOutcome;
       try { outcome = traceBridgeSync(trace, 'router-withdraw', () => router.withdraw(m.routerJobId, owner)); } catch { continue; }
       if (outcome.state === 'withdrawn' || outcome.state === 'absent') requeue.push(m);
@@ -426,9 +439,12 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
       }
     }
 
-    const claims = plan.rows.filter(r => r.offload);
+    let claims = plan.rows.filter(r => r.offload);
     if (!requeue.length && !claims.length) return report;
     if (opts.signal?.aborted) { report.held = 'aborted'; return report; }
+    // A withdrawn lease is requeued only after a second view; with no time for it, it is
+    // requeued by the next pass (its router job is gone, so its action is requeue).
+    if (requeue.length && callsLeft() < 1) { report.held = 'deadline'; return report; }
 
     let safeRequeue = requeue;
     if (requeue.length) {
@@ -466,6 +482,19 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
       report.requeued.push(m.job);
     }
 
+    // Claim only rows whose enqueue still fits: a staged claim leaves ready.tsv before it is enqueued.
+    const fits = callsLeft();
+    if (claims.length > fits) {
+      for (const decision of claims.slice(Math.max(0, fits))) {
+        decision.offload = false;
+        decision.reasons.push('deadline');
+        decision.nodeId = null;
+        decision.routerJobId = null;
+        decision.requires = [];
+      }
+      claims = claims.slice(0, Math.max(0, fits));
+      report.held ??= 'deadline';
+    }
     const staged: { decision: BridgeRowDecision; manifest: Manifest; task?: EmbeddedNodeTask }[] = [];
     for (const decision of claims) {
       const row = fresh.rows.find(r => r.job === decision.job);

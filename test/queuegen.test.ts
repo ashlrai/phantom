@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { QUEUE_TIERS, QUEUE_TIER_SCOPE } from '../src/core/drive/queue-tier.js';
 import type { JobOutcome } from '../src/core/queue/job-outcomes.js';
+import { signedQueueRepos } from '../src/core/fleet/signed-queue-scope.js';
 import { coveredPrNumbers, rebaseWorkState, type RebasePlanExistingJob } from '../src/core/fleet/rebase-plan.js';
 import {
-  runQueuegenCycle, firstErrorLine, errorFile, acceptanceCommand,
+  runQueuegenCycle as cycle, firstErrorLine, errorFile, acceptanceCommand,
   securityPinnedPath, normalizeState, fixupLine, rebaseLine,
-  QUEUEGEN_SECURITY_PIN, QUEUEGEN_PR_WINDOW_MS,
+  QUEUEGEN_SECURITY_PIN, QUEUEGEN_PR_WINDOW_MS, QUEUEGEN_FRESHNESS_PERIOD_MS,
   type QueuegenCheck, type QueuegenEmission, type QueuegenIo, type QueuegenPr, type QueuegenState,
 } from '../src/core/drive/queuegen.js';
 
@@ -50,6 +51,7 @@ function makeIo(options: {
   conflicts?: Map<string, string[]>;
   hold?: Set<string>;
   queueIds?: Set<string>;
+  activeFreshnessIds?: Set<string>;
   state?: unknown;
   checkLogError?: Set<string>;
   conflictError?: Set<string>;
@@ -84,6 +86,7 @@ function makeIo(options: {
       return options.conflicts?.get(`${repo}#${p.number}`) ?? [];
     },
     readQueueIds: () => new Set(options.queueIds ?? []),
+    readActiveFreshnessIds: () => options.activeFreshnessIds ?? new Set(),
     readRebaseWork: () => ({ active: new Set(), failed: new Set() }),
     appendQueueLine: (line) => { lines.push(line); },
     readHoldList: () => {
@@ -106,7 +109,38 @@ function makeIo(options: {
   };
 }
 
+function runQueuegenCycle(io: QueuegenIo, options: Parameters<typeof cycle>[1] = {}) {
+  return cycle(io, { repos: ['ashlrai/phantom'], ...options });
+}
+
 const ONE = new Map([['ashlrai/phantom', [pr({})]]]);
+
+it('queues both freshness checks from active signed scope without duplicating active work', () => {
+  const repos = signedQueueRepos({ repos: [
+    { nameWithOwner: 'AshlrAI/MorphKit', stage: 'merge' },
+    { nameWithOwner: 'ashlrai/morphkit', stage: 'propose' },
+    { nameWithOwner: 'ashlrai/binshield', stage: 'propose' },
+    { nameWithOwner: 'outside/morphkit', stage: 'merge' },
+  ] });
+  expect(repos).toEqual(['ashlrai/binshield', 'ashlrai/morphkit']);
+  expect(signedQueueRepos(null)).toEqual([]);
+  const queueIds = new Set<string>();
+  const activeFreshnessIds = new Set<string>();
+  const fake = makeIo({ queueIds, activeFreshnessIds });
+  const settings = { repos, freshness: true, cycleCap: 3 };
+  expect(cycle(fake.io, settings)).toMatchObject({ emitted: 3, capped: true });
+  const ids = () => fake.lines.map((line) => line.split(' ')[2]!);
+  ids().forEach((id) => queueIds.add(id));
+  expect(cycle(fake.io, settings)).toMatchObject({ emitted: 1, capped: false });
+  ids().forEach((id) => queueIds.add(id));
+  expect(cycle(fake.io, settings).emitted).toBe(0);
+  expect(fake.lines.filter((line) => /repo=morphkit/u.test(line))).toHaveLength(2);
+  activeFreshnessIds.add(ids()[0]!);
+  fake.setNow(NOW + QUEUEGEN_FRESHNESS_PERIOD_MS);
+  expect(cycle(fake.io, settings).emitted).toBe(3);
+  expect(fake.lines.slice(4).some((line) => line.includes('RQ-DOCS-FRESHNESS-binshield-'))).toBe(false);
+});
+
 const oneOptions = (over: object) => ({ prs: ONE, repos: ['ashlrai/phantom'], ...over });
 const failChecks = (name = 'typecheck') =>
   new Map([['ashlrai/phantom#1', [check({ name })]]]);

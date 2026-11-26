@@ -366,8 +366,7 @@ describe('lanes, presence and the router seam', () => {
     };
     try {
       await vi.advanceTimersByTimeAsync(0);
-      await flushObservations();
-      expect(release).toBeTypeOf('function');
+      await vi.waitFor(() => expect(release).toBeTypeOf('function'));
       expect(h.ticks.at(-1)).toMatchObject({ at: new Date(NOW).toISOString(),
         holdProduction: 'Mirror preparation is in progress.' });
       expect(h.ticks.at(-1)!.lanes.find(l => l.lane === 'local')?.slots).toBeGreaterThan(0);
@@ -821,7 +820,13 @@ describe('seatAllows', () => {
   });
 
   it('refuses a seat over its budget', async () => {
-    const hooks = createLiveTickHooks({ deps: { ...h.deps, capacitySnapshot: () => ({ v: 1, publishedAt: NOW_ISO, seats: [grokSeat(), claudeSeat(80)] }) } });
+    const hooks = createLiveTickHooks({ deps: {
+      ...h.deps,
+      loadBudget: () => ({ ...defaultBudgetPolicy(), seats: {
+        claude: { ...defaultSeatPolicy('balanced', 'claude', 'claude'), maxSessionWindowPercent: 70 },
+      } }),
+      capacitySnapshot: () => ({ v: 1, publishedAt: NOW_ISO, seats: [grokSeat(), claudeSeat(80)] }),
+    } });
     hooks.effectiveConfig(CFG);
     await hooks.beforeTick(hookCtx);
     expect(hooks.seatAllows('claude' as EngineId, { maxPercent: 90 }).reason).toMatch(/held back by the balanced budget/);

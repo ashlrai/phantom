@@ -334,6 +334,7 @@ const HomeSurface = lazy(() => import('./shell/HomeSurface.js').then((m) => ({ d
 const ShellUpdates = lazy(() => import('./shell/ShellUpdates.js'));
 const WindowTitle = lazy(() => import('./shell/WindowTitle.js'));
 const HomeUnread = lazy(() => import('./shell/WindowTitle.js').then((m) => ({ default: m.HomeUnread })));
+const SidebarBrandMark = lazy(() => import('../../components/brand/SidebarBrandMark.js').then((m) => ({ default: m.SidebarBrandMark })));
 const NO_UNREAD: UnreadCounts = { leader: 0, feed: 0 };
 
 export function PhantomApp() {
@@ -565,7 +566,7 @@ export function PhantomApp() {
         <span className={styles.railDragStrip} data-app-region="drag" aria-hidden="true" />
         <Tooltip label={PRODUCT_NAME} placement="right" disabled={expanded}>
           <span className={styles.mark}>
-            <VerseMark size={36} />
+            <Suspense fallback={<VerseMark size={36} />}><SidebarBrandMark size={36} /></Suspense>
             <span className="visually-hidden">{PRODUCT_NAME}</span>
           </span>
         </Tooltip>

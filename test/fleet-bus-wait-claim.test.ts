@@ -71,13 +71,33 @@ it('applies the read filters to each poll of the wait', async () => {
     .toEqual({ status: 'timeout' });
 });
 
+it('applies the topic filter to each poll of the wait', async () => {
+  post('gen-work', 'group:eng:general');
+  post('dep-work', 'group:eng:deploy');
+  // --topic keeps only well-formed group:<room>:<topic> addresses carrying
+  // that exact topic on every poll: the deploy receipt claims while the
+  // general post — addressed to a different topic — never enters the scan.
+  const acquired = await waitClaimBusWork({ ...request(), to: 'group:eng:deploy', topic: 'deploy', waitMs: 5000 });
+  expect(acquired.status).toBe('acquired');
+  if (!('token' in acquired)) throw new Error('missing claim');
+  expect(acquired.receipt.envelope.id).toBe('dep-work');
+  expect(mutateBusWorkClaim({ action: 'complete', id: 'dep-work', token: acquired.token, root }).status).toBe('completed');
+  // The held deploy receipt and the unaddressed general post leave nothing
+  // for the general topic under this claim address: an honest timeout.
+  expect(await waitClaimBusWork({ ...request(), to: 'group:eng:deploy', topic: 'general', waitMs: 30 }))
+    .toEqual({ status: 'timeout' });
+  // A malformed topic refuses before any poll, never a widened claim.
+  expect(await waitClaimBusWork({ ...request(), topic: 'Bad Name' })).toEqual({ status: 'invalid' });
+});
+
 it('rejects malformed arguments before creating storage', async () => {
   const output = vi.spyOn(console, 'log').mockImplementation(() => {});
   for (const bad of [[], [...args(), '--json'], [...args(), '--to', 'duplicate'], [...args(), '--bad'],
     args().slice(0, -1), args().map(x => x === '12000' ? '0' : x), args().map(x => x === '12000' ? '300001' : x),
     args().map(x => x === '12000' ? '1e2' : x), args().map(x => x === '60000' ? '3600001' : x),
     args().map(x => x === root ? 'relative' : x), args().slice(0, -2),
-    [...args(), '--priority', 'P9'], [...args(), '--since', 'bogus'], [...args(), '--before', 'bogus'], [...args(), '--contains', '   ']]) {
+    [...args(), '--priority', 'P9'], [...args(), '--since', 'bogus'], [...args(), '--before', 'bogus'], [...args(), '--contains', '   '],
+    [...args(), '--topic', 'Bad Name'], [...args(), '--topic', 'deploy:extra']]) {
     expect(await cmdFleetBusWaitClaim(bad)).toBe(2);
     expect(JSON.parse(String(output.mock.calls.at(-1)![0]))).toEqual({ status: 'invalid' });
   }

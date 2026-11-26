@@ -1,5 +1,6 @@
 """Shared market contracts plus real dispatcher ticks, all in synthetic homes."""
 import ast
+import datetime
 import json
 from pathlib import Path
 import sys
@@ -26,6 +27,22 @@ def view(**overrides):
 
 
 class MarketUnit(unittest.TestCase):
+    def test_fresh_unused_deadline_reorders_only_eligible_executors(self):
+        earlier = dict(known=True, stale=False, used_pct=50, reset_at=11000, projected_unused_pct=40)
+        later = dict(earlier, reset_at=12000, projected_unused_pct=45)
+        self.assertIsNone(market.deadline_priority(dict(earlier, stale=True), 10000))
+        self.assertIsNone(market.deadline_priority(dict(earlier, reset_at=9999), 10000))
+        self.assertIsNone(market.deadline_priority(dict(earlier, used_pct=100), 10000))
+        self.assertEqual(market.deadline_priority(dict(earlier, projected_unused_pct=None), 10000, short_window=True), 11000)
+        self.assertEqual(market.deadline_priority(dict(earlier, expires_at=10500), 10000, promotional=True), 10500)
+        lanes = view()
+        lanes['claude']['deadline_priority'] = market.deadline_priority(earlier, 10000)
+        lanes['codex-personal']['deadline_priority'] = market.deadline_priority(later, 10000)
+        spec = {'preferred_lane': 'codex-personal', 'needs': []}
+        self.assertEqual(self.choose(spec, lanes)[0]['chosen_lane'], 'claude')
+        lanes['claude']['quota'] = 0
+        self.assertEqual(self.choose(spec, lanes)[0]['chosen_lane'], 'codex-personal')
+
     def test_producer_infers_gh_without_losing_declared_requirements(self):
         for job, prompt in CAPABILITY_PROMPTS['c499'].items():
             with self.subTest(job=job):
@@ -434,9 +451,27 @@ class MarketTick(unittest.TestCase):
     def rows(self, home):
         return [json.loads(row) for row in (home / '.ashlr-runs/metrics/work-market.jsonl').read_text().splitlines()]
 
+    def routes(self, home):
+        return [row for row in self.rows(home) if row['event'] == 'route_decision']
+
     def run_tick(self, home):
         result = tick(home)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_resource_advice_reaches_market_but_cannot_raise_target(self):
+        home, queue = self.fixture({'codex-personal': 2, 'claude': 1})
+        now = int(time.time())
+        document = {'schema': 'phantom.fleet-resource-plan.v1',
+                    'generated_at': datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+                    'targets': {'claude': 1000, 'codex-personal': True}}
+        self.assertEqual(market.advisory_targets(document, now), {'claude': 1000})
+        self.assertEqual(market.advisory_targets(document, now + 300), {})
+        (queue / 'resource-capacity-advice.json').write_text(json.dumps(document))
+        self.add(home, 'RQ-ADVICE', 'codex-personal')
+        self.run_tick(home)
+        receipt = next(row for row in self.rows(home) if row.get('job') == 'RQ-ADVICE' and row.get('event') == 'route_decision')
+        self.assertEqual(receipt['ranking_inputs']['claude']['advisory_target'], 1)
+        self.assertIsNone(receipt['ranking_inputs']['codex-personal']['advisory_target'])
 
     def devin_accounting(self, home, used=20):
         now = time.time()
@@ -555,7 +590,7 @@ class MarketTick(unittest.TestCase):
         self.add(home, 'RQ-MARKET-A', needs=['git', 'node'])
         self.add(home, 'RQ-MARKET-B', lane='codex-personal', preferred_lane='codex-personal')
         self.run_tick(home)
-        rows = self.rows(home)
+        rows = self.routes(home)
         self.assertEqual([r['chosen_lane'] for r in rows], ['codex-personal', 'claude'])
         self.assertIn('preferred_lane_fallback', rows[1]['reason_codes'])
         for job, lane in [('RQ-MARKET-A', 'codex-personal'), ('RQ-MARKET-B', 'claude')]:
@@ -565,14 +600,14 @@ class MarketTick(unittest.TestCase):
             self.assertTrue(state['launched'])
         self.assertEqual((q / 'ready.tsv').read_text(), '')
         self.run_tick(home)
-        self.assertEqual(len(self.rows(home)), 2)
+        self.assertEqual(len(self.routes(home)), 2)
 
     def test_legacy_lane_still_launches_and_unknown_lane_is_a_hint(self):
         home, q = self.fixture()
         queue_job(home, 'RQ-LEGACY', 'codex-personal', size=20)
         queue_job(home, 'RQ-UNKNOWN', 'retired-lane', size=20)
         self.run_tick(home)
-        self.assertEqual([r['chosen_lane'] for r in self.rows(home)], ['codex-personal', 'claude'])
+        self.assertEqual([r['chosen_lane'] for r in self.routes(home)], ['codex-personal', 'claude'])
         self.assertTrue(dispatched(home, 'RQ-LEGACY'))
         self.assertTrue(dispatched(home, 'RQ-UNKNOWN'))
 
@@ -585,7 +620,7 @@ class MarketTick(unittest.TestCase):
         self.assertTrue(dispatched(home, 'RQ-IMPORTANT'))
         self.assertFalse(dispatched(home, 'LAND-NOISE'))
         self.assertFalse(dispatched(home, 'RQ-BLOCKED'))
-        self.assertEqual(self.rows(home)[0]['reason_codes'], ['no_runnable_lane'])
+        self.assertEqual(self.routes(home)[0]['reason_codes'], ['no_runnable_lane'])
 
     def test_recovered_launch_receipt_cannot_move_to_another_lane(self):
         home, q = self.fixture({'claude': 1})
@@ -593,7 +628,7 @@ class MarketTick(unittest.TestCase):
         (q / 'run/RQ-LOCKED.line').write_text(f'RQ-LOCKED\tphantom\tcodex-personal\twork\t{q}/prompts/RQ-LOCKED.md\n')
         self.run_tick(home)
         self.assertFalse(dispatched(home, 'RQ-LOCKED'))
-        self.assertIn('hysteresis_launched', self.rows(home)[0]['reason_codes'])
+        self.assertIn('hysteresis_launched', self.routes(home)[0]['reason_codes'])
 
     def jobs(self, home):
         return [json.loads(row) for row in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
@@ -606,7 +641,7 @@ class MarketTick(unittest.TestCase):
         claim = next(r for r in self.jobs(home) if r['event'] == 'claim')
         self.assertEqual((claim['lane'], claim['lane_hint'], claim['lane_override'], claim['lane_hint_blocked_by']),
                          ('codex-cmp', 'codex-personal', 'resource_fit', []))
-        self.assertEqual(self.rows(home)[0]['override']['reason'], 'resource_fit')
+        self.assertEqual(self.routes(home)[0]['override']['reason'], 'resource_fit')
         self.assertIn('FLEET_REBALANCE RQ-HINTED codex-personal->codex-cmp (shared market: resource_fit)',
                       (home / '.ashlr-runs/dispatch-events.log').read_text())
         self.assertEqual(json.loads((q / 'route-state.json').read_text())['RQ-HINTED']['pool'], 'codex-cmp')
@@ -674,7 +709,7 @@ class MarketTick(unittest.TestCase):
         fields = (q / 'ready.tsv').read_text().strip().split('\t')
         self.assertEqual(json.loads(fields[5])['needs'], ['claude-cli'])
         self.run_tick(home)
-        self.assertEqual(self.rows(home)[0]['chosen_lane'], 'claude')
+        self.assertEqual(self.routes(home)[0]['chosen_lane'], 'claude')
         self.assertTrue(dispatched(home, 'RQ-RESTOCK'))
 
     def test_restock_routes_gh_repairs_to_capable_lane_through_dispatch(self):
@@ -736,7 +771,7 @@ class MarketTick(unittest.TestCase):
         (q / 'slots.json').write_text(json.dumps(slots))
         self.add(home, 'RQ-REGISTERED', needs=['browser'])
         self.run_tick(home)
-        self.assertEqual(self.rows(home)[0]['chosen_lane'], 'cursor')
+        self.assertEqual(self.routes(home)[0]['chosen_lane'], 'cursor')
         self.assertTrue(dispatched(home, 'RQ-REGISTERED'))
 
     def test_retired_executor_receipts_do_not_block_the_rest_of_the_market(self):

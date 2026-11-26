@@ -3,13 +3,13 @@
 import { updateWhy } from '../desktop/update-why.js';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
-import { fetchLatestRelease, observeMilestones, type MilestoneReader, type ReleaseRunner } from '../fleet/release-live-notice.js';
+import { fetchLatestRelease, observeMilestones, readPublicReleaseFeed, type MilestoneReader, type ReleaseRunner } from '../fleet/release-live-notice.js';
 
 export const VERSE_UPDATE_WHY_PATH = '/api/verse/update/why';
 export const VERSE_RELEASE_STAGES_PATH = '/api/verse/release/stages';
 export const RELEASE_STAGES_SCHEMA = 'verse.release-stages.v1';
 const REPO = 'ashlrai/phantom';
-const DEFAULT_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_TTL_MS = 15_000;
 
 export interface ReleaseStage { stage: 'published' | 'feed-ready'; status: 'observed' | 'unknown'; version: string | null; reason: string | null }
 export interface ReleaseStagesResponse {
@@ -28,7 +28,7 @@ export function createReleaseStagesApi(deps: ReleaseStagesApiDeps = {}): ApiModu
   const now = deps.now ?? (() => new Date());
   const ttlMs = deps.ttlMs ?? DEFAULT_TTL_MS;
   let cached: { at: number; body: ReleaseStagesResponse } | null = null;
-  let inflight: Promise<ReleaseStagesResponse> | null = null;
+  let inflight: Promise<{ at: number; body: ReleaseStagesResponse }> | null = null;
 
   async function read(): Promise<ReleaseStagesResponse> {
     const at = now();
@@ -36,11 +36,16 @@ export function createReleaseStagesApi(deps: ReleaseStagesApiDeps = {}): ApiModu
     try {
       const newest = await fetchLatestRelease(REPO, deps.run);
       if (!newest) return unavailable;
-      const fact = await fetchLatestRelease(REPO, deps.run, newest.tag);
-      const observed = await observeMilestones(REPO, newest.tag, fact, at, deps.feed);
+      const feed = deps.feed ?? readPublicReleaseFeed;
+      const [fact, evidence] = await Promise.all([
+        fetchLatestRelease(REPO, deps.run, newest.tag),
+        Promise.resolve().then(() => feed(REPO, newest.tag)).catch(() => null),
+      ]);
+      const checked = now();
+      const observed = await observeMilestones(REPO, newest.tag, fact, checked, async () => evidence);
       const stages = observed.filter(o => o.stage !== 'installed')
         .map(o => ({ stage: o.stage as ReleaseStage['stage'], status: o.status, version: o.version, reason: o.reason }));
-      return { schema: RELEASE_STAGES_SCHEMA, repo: REPO, tag: newest.tag, checkedAt: at.toISOString(), stages };
+      return { schema: RELEASE_STAGES_SCHEMA, repo: REPO, tag: newest.tag, checkedAt: checked.toISOString(), stages };
     } catch { return unavailable; }
   }
 
@@ -61,9 +66,9 @@ export function createReleaseStagesApi(deps: ReleaseStagesApiDeps = {}): ApiModu
       return true;
     }
     if (!cached || now().getTime() - cached.at >= ttlMs) {
-      inflight ??= read().finally(() => { inflight = null; });
-      const body = await inflight;
-      cached = { at: now().getTime(), body };
+      const at = now().getTime();
+      inflight ??= read().then(body => ({ at, body })).finally(() => { inflight = null; });
+      cached = await inflight;
     }
     sendJson(res, 200, cached.body);
     return true;

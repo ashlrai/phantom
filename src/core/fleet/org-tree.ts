@@ -5,7 +5,7 @@
  */
 import type { FleetLiveLaneState } from './fleet-types.js';
 import type { FleetReplicaSource } from './fleet-replica.js';
-import { ORG_LANES, type FleetOrgMap } from './org-map.js';
+import type { FleetOrgMap } from './org-map.js';
 import type { ProviderName } from './provider.js';
 import type { ResourceLedgerV1 } from './runs-resource-ledger.js';
 import type { FleetRunsDirState } from './runs-dir-state.js';
@@ -171,7 +171,8 @@ export function fleetOrgTree(map: FleetOrgMap, inputs: OrgTreeInputs = {}): Flee
   const healths = new Map(inputs.laneHealth?.map(row => [row.lane, row.health ?? null]));
   const launches = new Map(inputs.models?.lanes.map(row => [row.lane, row.lastLaunch?.model ?? null]));
   const lanes = map.nodes.filter(node => node.kind === 'lane').map((node): OrgTreeLane => {
-    const row = laneCounts.get(node.label), pool = usageRows.get(node.label), engine = engines.get(node.label);
+    const lane = node.lane ?? node.label;
+    const row = laneCounts.get(lane), pool = usageRows.get(lane), engine = engines.get(lane);
     const jobs = map.nodes.filter(job => job.kind === 'job' && parent.get(job.id) === node.id).map((job): OrgTreeJob => {
       const startedAt = job.startedAt ?? null, event = lastEvent(job.jobId!);
       const last = event ? { at: event.at, kind: event.kind } : startedAt ? { at: startedAt, kind: 'started' } : null;
@@ -188,16 +189,14 @@ export function fleetOrgTree(map: FleetOrgMap, inputs: OrgTreeInputs = {}): Flee
     const state: OrgState = held ? 'held' : (running ?? 0) > 0 || live > 0 ? 'running' : running === 0 || (jobsKnown && !jobs.length) ? 'idle' : 'unknown';
     const models = [...new Set(jobs.map(job => job.model))];
     const target = row ? row.target : count(pool?.target) ?? count(engine?.slots);
-    return { lane: node.label, provider: node.provider,
-      model: (models.length === 1 ? models[0] : null) ?? launches.get(node.label) ?? null, state,
+    return { lane, provider: node.provider,
+      model: (models.length === 1 ? models[0] : null) ?? launches.get(lane) ?? null, state,
       doing: laneDoing(state, row?.heldReason ?? null, target, queued, running || live),
-      heldReason: row?.heldReason ?? null, running, target, queued, held, health: healths.get(node.label) ?? null,
+      heldReason: row?.heldReason ?? null, running, target, queued, held, health: healths.get(lane) ?? null,
       usage: { usedPct: count(pool?.usedPct), asOf: pool ? pool.observation?.asOf ?? usage?.asOf ?? null : null, resetAt: pool?.resetAt ?? null },
       jobs };
   });
-  const rank = (lane: string) => { const index = (ORG_LANES as readonly string[]).indexOf(lane); return index < 0 ? ORG_LANES.length : index; };
-  lanes.sort((a, b) => rank(a.lane) - rank(b.lane) || (a.lane < b.lane ? -1 : 1));
-
+  lanes.sort((a, b) => a.lane < b.lane ? -1 : a.lane > b.lane ? 1 : 0);
   const leader = map.nodes.find(node => node.kind === 'leader');
   const messages = map.sources.messages !== 'available' ? null : map.edges.filter(edge => edge.kind === 'message')
     .map(edge => ({ from: label.get(edge.from) ?? 'unknown', to: label.get(edge.to) ?? 'unknown', count: edge.count ?? null, ...(edge.lastAt ? { lastAt: edge.lastAt } : {}) }))
@@ -246,6 +245,7 @@ export function renderOrgTreeText(tree: FleetOrgTree, now = Date.now()): string 
   const lines = [`${tree.leader.label}: ${tree.leader.state}. ${tree.leader.doing}. Dispatcher ${dispatcher.paused === null ? 'state unknown' : dispatcher.paused ? 'paused' : 'running'}, last tick ${orgAgo(dispatcher.lastTick, now)}.`];
   if (tree.source) lines.push(`Source: ${tree.source.machine ?? 'unknown'} (${tree.source.via}), as of ${tree.source.asOf ?? 'unknown'}${tree.source.reason ? `; ${tree.source.reason}` : ''}.`);
   if (tree.planners) lines.push('  Planners:', ...tree.planners.map(row => `    ${row.label}: ${row.state}. ${row.doing}. Last sign ${orgAgo(row.lastActivityAt, now)}.`));
+  if (!tree.lanes.length) lines.push(tree.jobsKnown ? '  No lanes reported.' : '  No lanes reported; jobs unknown.');
   for (const lane of tree.lanes) {
     // A bare "Idle" would only repeat the state word.
     const why = lane.source || lane.state === 'held' || (lane.state === 'idle' && lane.doing !== 'Idle') ? `${lane.doing}. ` : '';

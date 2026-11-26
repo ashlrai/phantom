@@ -81,6 +81,38 @@ describe('steerQueue', () => {
     expect(await read('ready.tsv')).toBe(START.replace(row('RQ-ONE', 'claude'), row('RQ-ONE', 'devin')));
     expect(await steerQueue({ action: 'lane', id: 'RQ-ONE', lane: 'devin' }, opts())).toMatchObject({ changed: false, message: 'RQ-ONE is already on devin.' });
   });
+  it('lane moves the market hint: the spec preferred_lane moves with the column', async () => {
+    // Restock rows carry a requirements spec whose preferred_lane outranks the
+    // lane column; a column-only rewrite left the market's hint unmoved.
+    const spec = (pref: string | null) => JSON.stringify({ needs: ['gh'], preferred_lane: pref, min_tier: 'work' });
+    const pinned = `RQ-PINNED\tphantom\tcodex-personal\tmid\t${queue}/prompts/RQ-PINNED.md\t${spec('claude')}`;
+    const open = `RQ-OPEN\tphantom\tclaude\tmid\t${queue}/prompts/RQ-OPEN.md\t${spec(null)}`;
+    const bare = `RQ-BARE\tphantom\tclaude\tmid\t${queue}/prompts/RQ-BARE.md`;
+    await writeFile(ready, `${pinned}\n${open}\n${bare}\n`);
+    const report = await steerQueue({ action: 'lane', id: 'RQ-PINNED', lane: 'devin' }, opts());
+    expect(report).toMatchObject({ changed: true, verified: true, from: { lane: 'claude' }, to: { lane: 'devin' }, message: 'Moved RQ-PINNED from claude to devin.' });
+    expect(await read('ready.tsv')).toBe(`${pinned.replace('codex-personal', 'devin').replace(spec('claude'), spec('devin'))}\n${open}\n${bare}\n`);
+    // explicit null is the open hint: steering pins the lane inside the spec too
+    await steerQueue({ action: 'lane', id: 'RQ-OPEN', lane: 'devin' }, opts());
+    expect(await read('ready.tsv')).toContain(`RQ-OPEN\tphantom\tdevin\tmid\t${queue}/prompts/RQ-OPEN.md\t${spec('devin')}`);
+    // a spec-less row has no requirements cell to sync: the column is the hint
+    await steerQueue({ action: 'lane', id: 'RQ-BARE', lane: 'devin' }, opts());
+    expect(await read('ready.tsv')).toContain(`RQ-BARE\tphantom\tdevin\tmid\t${queue}/prompts/RQ-BARE.md\n`);
+  });
+  it('lane is not a no-op when only the spec disagrees, and leaves a matching spec cell untouched', async () => {
+    // The column already says devin but the spec still prefers claude: the
+    // market would keep the job on claude, so the steer must rewrite the spec.
+    await writeFile(ready, `RQ-SAME\tphantom\tdevin\tmid\t${queue}/prompts/RQ-SAME.md\t${JSON.stringify({ preferred_lane: 'claude' })}\n`);
+    const moved = await steerQueue({ action: 'lane', id: 'RQ-SAME', lane: 'devin' }, opts());
+    expect(moved).toMatchObject({ changed: true, from: { lane: 'claude' }, to: { lane: 'devin' }, message: 'Moved RQ-SAME from claude to devin.' });
+    expect(await read('ready.tsv')).toBe(`RQ-SAME\tphantom\tdevin\tmid\t${queue}/prompts/RQ-SAME.md\t${JSON.stringify({ preferred_lane: 'devin' })}\n`);
+    expect(await steerQueue({ action: 'lane', id: 'RQ-SAME', lane: 'devin' }, opts())).toMatchObject({ changed: false, message: 'RQ-SAME is already on devin.' });
+    // A spec that already prefers the target keeps its original text byte-for-byte.
+    const spaced = '{ "preferred_lane": "devin", "needs": ["gh"] }';
+    await writeFile(ready, `RQ-FMT\tphantom\tclaude\tmid\t${queue}/prompts/RQ-FMT.md\t${spaced}\n`);
+    await steerQueue({ action: 'lane', id: 'RQ-FMT', lane: 'devin' }, opts());
+    expect(await read('ready.tsv')).toBe(`RQ-FMT\tphantom\tdevin\tmid\t${queue}/prompts/RQ-FMT.md\t${spaced}\n`);
+  });
   it('drop archives the row instead of deleting it and marks its router line', async () => {
     const report = await steerQueue({ action: 'drop', id: 'RQ-ONE' }, opts());
     expect(report).toMatchObject({ changed: true, verified: true, to: { position: null, lane: 'claude' }, backup: 'ready.tsv.bak', archive: 'dropped.tsv',

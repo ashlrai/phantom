@@ -65,7 +65,12 @@ function line(r: Omit<ReplyState, 'text'>): string {
   switch (r.state) {
     case 'VERIFIED': {
       const v = e.verified;
-      body = v?.pr != null ? `PR ${v.pr}${v.head ? ` at ${v.head}` : ''}` : v?.tests ? `tests ${v.tests}` : `artifact ${v?.artifact ?? 'unknown'}`;
+      const proof = [
+        v?.pr != null ? `PR ${v.pr}${v.head ? ` at ${safe(v.head)}` : ''}` : v?.head ? `head ${safe(v.head)}` : null,
+        v?.tests ? `tests ${safe(v.tests)}` : null,
+        v?.artifact ? `artifact ${safe(v.artifact)}` : null,
+      ];
+      body = proof.filter(part => part !== null).join('; ');
       break;
     }
     case 'BLOCKED': body = `waiting on ${e.blocked?.dependency ?? 'unknown'}`; break;
@@ -85,12 +90,12 @@ function line(r: Omit<ReplyState, 'text'>): string {
 function firstInThread(id: string, receipts: readonly BusInboxReceipt[]): string {
   const own = receipts.find(row => row.envelope.id === id);
   const ref = own?.envelope.channel_ref;
-  if (!own || ref === undefined || !isRequest(own)) return id;
+  if (!own || ref === undefined || ref.trim() === '' || !isRequest(own)) return id;
   const channel = own.envelope.channel ?? 'bus';
   let first = own;
   for (const row of receipts) {
     if ((row.envelope.channel ?? 'bus') !== channel || row.envelope.channel_ref !== ref ||
-        row.envelope.to !== own.envelope.to || !isRequest(row)) continue;
+        row.envelope.to !== own.envelope.to || row.envelope.from !== own.envelope.from || !isRequest(row)) continue;
     if (row.cursor < first.cursor) first = row;
   }
   return first.envelope.id;

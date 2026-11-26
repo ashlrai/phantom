@@ -40,6 +40,7 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_surface_owner',
   'fleet_peer_ledger',
   'fleet_session_handoff',
+  'fleet_session_handoffs',
   'fleet_claim_execution',
   'fleet_channel_health',
   'fleet_channels_overview',
@@ -99,5 +100,6 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_self_tick_last',
   'fleet_recheck',
   'fleet_recheck_history',
+  'fleet_desktop_update_status',
   'fleet_bridge_check',
 ]);

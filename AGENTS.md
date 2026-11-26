@@ -38,7 +38,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 
 - Cross-provider subagents: `phm subagent spawn --parent session-id --tier fast --task "Review a bounded change" --json` plans a scope-limited child through the provider-neutral router. Dry-run writes nothing; `--apply` stores held records only, never dispatches. No metered fallback. See [subagents](docs/SUBAGENTS.md).
 
-- CI baseline analysis: `phm ci baseline --json` groups fresh Vitest (including the qualification lane's retry-flake verdicts), node:test TAP, TypeScript typecheck, eslint lint plus the realio-lane and verse-sync-io lint guards, check:docs, generated-file, version-sync, npm run build step, perf-budget, dependency-audit, memory-benchmark floor, pack-smoke/artifact gate, first-paint budget gate, ci.yml helper-gate step, npm ci install step, test-runner watchdog verdicts and trust-boundary (secret-shape, secret-scan, version-provenance) failures and plans narrow master fixes. Queueing and post-merge updates are opt-in; see [CI baseline analyzer](docs/CI-BASELINE.md).
+- CI baseline analysis: `phm ci baseline --json` groups fresh Vitest (including the qualification lane's retry-flake verdicts), node:test TAP, TypeScript typecheck, eslint lint plus the realio-lane and verse-sync-io lint guards, check:docs, generated-file, version-sync, npm run build step, perf-budget, dependency-audit, memory-benchmark floor, pack-smoke/artifact gate, first-paint budget gate, ci.yml helper-gate step, npm ci install step, install-smoke commit/release steps, test-runner watchdog verdicts and trust-boundary (secret-shape, secret-scan, version-provenance) failures and plans narrow master fixes. Queueing and post-merge updates are opt-in; see [CI baseline analyzer](docs/CI-BASELINE.md).
 
 - Ecosystem onboarding: `phm onboard --ecosystem --json` previews names/state only.
   Grant a reviewed selection with `phm onboard --ecosystem --grant --plan <planId> --select lexicon,stack --json`.
@@ -418,6 +418,11 @@ Runs enforce a six-hour per-source floor, including failures. Private snapshots
 are under `~/.phantom/radar/snapshots/` with mode 0600. Failed discovery preserves
 the last successful evidence. Remote content never authorizes actions or sends.
 Individual fetch failures are warnings and retain the last successful snapshot.
+
+For provider model evidence, use the separate `phm models radar schedule`:
+it previews a disabled-by-default daily user job. When explicitly installed,
+it reports configured lane retirements and files evidence-backed pending inbox
+notes without applying a patch or opening PRs. See [model radar](docs/RADAR.md#official-source-model-radar).
 
 ## GitHub stable-release finalization
 

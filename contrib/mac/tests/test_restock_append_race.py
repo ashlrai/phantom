@@ -76,7 +76,7 @@ def restock_with_append(home, appended):
     fake.write_text(FAKE_PS % (started, release))
     fake.chmod(0o755)
     env = {'HOME': str(home),
-           'PATH': str(fakebin) + ':' + os.environ.get('PATH', '/usr/bin:/bin')}
+           'PATH': str(SCRIPT.parent / 'tests/fixtures/restock-authority') + ':' + str(fakebin) + ':' + os.environ.get('PATH', '/usr/bin:/bin')}
     proc = subprocess.Popen([sys.executable, '-B', str(SCRIPT), '--per-lane', '4'],
                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True)

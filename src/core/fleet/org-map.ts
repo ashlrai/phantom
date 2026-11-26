@@ -3,6 +3,7 @@ import type { FleetSessionV1, FleetSessionsV1 } from './runs-sessions.js';
 import type { FleetEdges } from './fleet-edges.js';
 import { providerFor, type ProviderName } from './provider.js';
 import type { FleetOrgTree } from './org-tree.js';
+import type { PortableFleetLane } from './portable-lanes.js';
 
 export interface FleetMapNode {
   id: string; kind: 'leader' | 'lane' | 'job' | 'guardian' | 'channel';
@@ -57,6 +58,8 @@ export function mapWindowMinutesOrNull(value: string | undefined): number | null
 /** Pure graph shared by CLI and both views. Reporting edges are structure, never health evidence. */
 export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
   sessions?: FleetSessionsV1 | null; messages?: FleetEdges | null; minutes?: number; now?: number;
+  profileLanes?: readonly PortableFleetLane[];
+  observedLanes?: readonly string[];
 } = {}): FleetOrgMap {
   const { sessions, messages } = options;
   const now = options.now ?? Date.now();
@@ -69,16 +72,22 @@ export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
   const reportsTo = (from: FleetMapNode, to: string) => edges.push({ id: `reports:${from.id}:${to}`, kind: 'reports-to', from: from.id, to, provider: from.provider });
   nodes.slice(1).forEach(node => reportsTo(node, 'leader'));
   const lanes = new Set<string>();
+  const profileLanes = new Map(options.profileLanes?.map(lane => [lane.id, lane]));
   const addLane = (lane: string | null | undefined) => {
     const name = known(lane), id = `lane:${name}`;
     if (!lanes.has(name)) {
-      const node: FleetMapNode = { id, kind: 'lane', label: name, provider: providerFor(name).name, status: 'unknown' };
+      const profile = profileLanes.get(name);
+      const node: FleetMapNode = { id, kind: 'lane', lane: name, label: profile?.label ?? name,
+        provider: providerFor(profile?.provider, name).name, status: profile?.state ?? 'unknown' };
       lanes.add(name); nodes.push(node); reportsTo(node, 'leader');
     }
     return id;
   };
-  ORG_LANES.forEach(addLane);
-  snapshot?.lanes.forEach(lane => addLane(lane.lane));
+  for (const profile of profileLanes.values()) if (profile.state === 'ready') addLane(profile.id);
+  options.observedLanes?.forEach(addLane);
+  for (const lane of snapshot?.lanes ?? []) {
+    if ((lane.slots !== null && lane.slots > 0) || (lane.busy !== null && lane.busy > 0)) addLane(lane.lane);
+  }
   const jobs = new Set<string>();
   interface JobFacts { jobId: string; lane: string | null; model: string | null; repo: string | null; status: string; seconds: number | null;
     startedAt: string | null; processLive?: FleetMapNode['processLive']; title?: string | null; tier?: string | null; published?: boolean; prUrl?: string | null }
@@ -87,7 +96,7 @@ export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
     jobs.add(jobId);
     const parent = addLane(lane), id = `job:${jobId}`, goal = oneLine(title, jobId);
     const node: FleetMapNode = { id, kind: 'job', label: goal ?? jobId, jobId, lane: known(lane), model: known(model), repo: known(repo),
-      provider: providerFor(model, lane).name, status, ageSeconds: age(seconds),
+      provider: providerFor(model, profileLanes.get(known(lane))?.provider, lane).name, status, ageSeconds: age(seconds),
       startedAt: startedAt && Number.isFinite(Date.parse(startedAt)) ? startedAt : null, processLive, tier: tier?.trim() || null, goal, prUrl, ...(published ? { published } : {}) };
     nodes.push(node); reportsTo(node, parent);
   };
@@ -113,7 +122,7 @@ export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
   // Resolve only exact observed addresses. Unknown peers are counted, never guessed into a lane.
   const byId = new Map(nodes.map(node => [node.id, node]));
   const addresses = new Map<string, string | null>();
-  for (const node of nodes) for (const address of [node.id, node.jobId ?? node.label]) {
+  for (const node of nodes) for (const address of new Set([node.id, node.jobId ?? node.lane ?? node.label])) {
     addresses.set(address, addresses.has(address) && addresses.get(address) !== node.id ? null : node.id);
   }
   let unmappedMessages = messages?.source === 'available' ? 0 : null;

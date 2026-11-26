@@ -132,6 +132,8 @@ describe('resolveDevinModel / defaults / notes', () => {
     expect(devinDefaultModelId({ defaultModel: 'not-a-model' }, catalog)).toBe('swe-2-high');
     expect(devinDefaultModelId({ defaultModel: 'bad id with spaces' }, catalog)).toBe('swe-2-high');
     expect(devinDefaultModelId({ defaultModel: 'swe-2-max' }, fallbackDevinModelCatalog())).toBe('swe-2-max');
+    expect(devinDefaultModelId({ defaultModel: 'swe-2-1' }, fallbackDevinModelCatalog())).toBe('swe-2-high');
+    expect(resolveDevinModel('swe-2-1-lightning', fallbackDevinModelCatalog())).toBeNull();
   });
 
   it('price and context notes', () => {
@@ -182,7 +184,7 @@ describe('getDevinModelCatalog', () => {
   it('returns at once (the fallback), lists in the background, then serves memory; the listing is persisted privately', async () => {
     const first = await getDevinModelCatalog({ cliPath: '/fake/devin', runList, cachePath, now: () => 1_000_000 });
     expect(first.source).toBe('fallback');
-    expect(first.families.map((f) => f.id)).toEqual(['swe-2']);
+    expect(first.families.map((f) => f.id)).toEqual(['swe-2', 'swe-2-1']);
     const waited = await getDevinModelCatalog({ cliPath: '/fake/devin', runList, cachePath, wait: true, now: () => 1_000_000 });
     expect(waited.source).toBe('cli');
     expect(waited.families).toHaveLength(12);
@@ -292,7 +294,9 @@ describe('Devin (CLI) seat models', () => {
         modelCatalog: async () => fallbackDevinModelCatalog(),
         defaultModel: () => null,
       });
-      expect(cold.seats.find((s) => s.id === 'devin-cli')!.models.map((m) => m.id)).toEqual(['swe-2-high', 'swe-2-medium', 'swe-2-max']);
+      const coldModels = cold.seats.find((s) => s.id === 'devin-cli')!.models;
+      expect(coldModels.filter(m => !m.unavailableReason).map(m => m.id)).toEqual(['swe-2-high', 'swe-2-medium', 'swe-2-max']);
+      expect(coldModels.filter(m => m.unavailableReason).map(m => m.id)).toEqual(['swe-2-1', 'swe-2-1-lightning']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -43,9 +43,9 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localS
 it('shows and routes interjections on the worker timeline in both layouts', async () => {
   serve();
   const { container } = render(<FleetTimelinePane visible />);
-  const first = await screen.findByRole('button', { name: 'Mason: inspect the fleet' });
-  expect(screen.getByRole('button', { name: 'Mason: start the next job' })).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Mason: too early' })).not.toBeInTheDocument();
+  const first = await screen.findByRole('button', { name: 'Operator: inspect the fleet' });
+  expect(screen.getByRole('button', { name: 'Operator: start the next job' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Operator: too early' })).not.toBeInTheDocument();
   expect(screen.getByText(/2 interjections in view$/)).toBeInTheDocument();
   const lane = container.querySelector('g[data-lane="mason"]')!;
   expect(lane.parentElement?.querySelector('g[data-lane]')).toBe(lane);
@@ -61,9 +61,9 @@ it('shows and routes interjections on the worker timeline in both layouts', asyn
   expect(openDockPane).toHaveBeenCalledWith('worker-log');
 
   fireEvent.click(screen.getByRole('button', { name: 'Group by lane' }));
-  expect(screen.getAllByLabelText('Mason: 2 runs (2 interjection)')).toHaveLength(1);
-  expect(within(screen.getByRole('group', { name: /Mason: 2 runs across/ })).getAllByRole('button')).toHaveLength(2);
-  expect(screen.getByRole('button', { name: 'Mason: inspect the fleet' })).toBeInTheDocument();
+  expect(screen.getAllByLabelText('Operator: 2 runs (2 interjection)')).toHaveLength(1);
+  expect(within(screen.getByRole('group', { name: /Operator: 2 runs across/ })).getAllByRole('button')).toHaveLength(2);
+  expect(screen.getByRole('button', { name: 'Operator: inspect the fleet' })).toBeInTheDocument();
 });
 
 it('hides the lane without an error when the bus refresh fails', async () => {
@@ -72,10 +72,10 @@ it('hides the lane without an error when the bus refresh fails', async () => {
     ? Response.json(fail ? {} : bus, { status: fail ? 500 : 200 })
     : Response.json(runs)));
   render(<FleetTimelinePane visible />);
-  expect(await screen.findByRole('button', { name: 'Mason: inspect the fleet' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Operator: inspect the fleet' })).toBeInTheDocument();
   fail = true;
   await act(async () => { await refetchQuery(busFeedQuery.key, () => busFeedQuery.fetch()); });
-  expect(screen.queryByLabelText(/Mason:/)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/Operator:/)).not.toBeInTheDocument();
   expect(screen.queryByText(/interjections in view/)).not.toBeInTheDocument();
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'first-job' })).toBeInTheDocument();
@@ -86,7 +86,7 @@ it('leaves the worker timeline unchanged when the bus route is missing', async (
   render(<FleetTimelinePane visible />);
   expect(await screen.findByRole('button', { name: 'first-job' })).toBeInTheDocument();
   await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/live/bus'), expect.anything()));
-  expect(screen.queryByLabelText(/Mason:/)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/Operator:/)).not.toBeInTheDocument();
   expect(screen.queryByText(/interjections in view/)).not.toBeInTheDocument();
   expect(screen.getByText('Click a bar to open its log.')).toBeInTheDocument();
   expect(screen.queryByRole('status')).not.toBeInTheDocument();

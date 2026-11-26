@@ -31,7 +31,9 @@ even when its log is absent or empty: the run cannot prove the ref's
 checks, so the PR reads `unknown` rather than `fresh` — freshness reason
 `incomplete-check`, distinct from `unreadable-log-or-unverified-checkout` —
 and master's known state drops while the run's verified job logs still
-feed failure parsing. `skipped` and `neutral` conclusions are
+feed failure parsing. If an incomplete job's log is unavailable, the
+analyzer retains verified sibling logs. A missing log for a job that
+reached a verdict still makes the run's logs unusable. `skipped` and `neutral` conclusions are
 deliberate non-verdicts, not incomplete checks. A completed run that
 instantiated no jobs at all reads the same way when its own conclusion is
 not `success`/`neutral`/`skipped` — the jobless `startup_failure` case has
@@ -475,6 +477,31 @@ vitest harness ambient set, so a PR touching any of them is
 `pr-caused` and the rest classify `shared-baseline`, `pr-caused` or
 `unknown` -- never `probable-flake`.
 
+The install-smoke jobs' "Install this commit" and "Install the
+published release" steps run `node
+.github/scripts/ci-install-smoke.mjs <verb>` on the linux lane whenever
+a pull request or merge group trips the `xplat_install` path filter (and
+on the daily schedule and dispatch). The script funnels every refusal --
+an npm pack/install exit, a missing packed tarball or `phm` shim, a
+version mismatch, a bad published-release checksum or download -- through
+one `console.error` line plus the runner's step-failure marker, so the
+analyzer tracks the same `##[group]Run` step boundaries and attributes
+the marker when every script line is the same install-smoke invocation.
+The two verbs are different gates with different closed input lists:
+`commit` builds, packs and installs this checkout, so `package.json`
+(version, files, bin), `package-lock.json`, the packed `bin/ashlr` shim
+and `.github/workflows/ci.yml` count as inputs and group under
+`.github/scripts/ci-install-smoke.mjs > (install-smoke-commit)`;
+`release` fetches and installs the published npm artifact, which no diff
+can change, so only the script and the workflow step count and failures
+group under `> (install-smoke-release)`. Build diagnostics the step's own
+`npm run build`/`npm pack` prints still belong to the typecheck and
+build-step parsers. Mixed bash, `uses:` actions, other scripts,
+ambiguous multi-command steps and cancelled steps stay unattributed, and
+like the other non-test identities these groups can never resolve
+through a vitest pass line: `shared-baseline`, `pr-caused` or `unknown`
+-- never `probable-flake`.
+
 The test runners' own watchdog verdicts get the same treatment.
 `scripts/test-ci.mjs` wraps every `npm run test:ci` invocation -- the
 fast-gate affected-test shards (through `ci-fast-run.mjs`), the quick
@@ -601,10 +628,11 @@ An `ok` journal row only proves the `gh run rerun` call succeeded, not that the
 flake passed. On each maintenance pass, after queueing work, the loop resolves
 pending reruns by reading `repos/<repo>/actions/runs/<runId>`: a completed run
 with conclusion `success` journals a `pass` verdict, `failure` or `timed_out`
-a `fail`, and any other completed conclusion (cancelled, skipped, neutral,
-startup failure, stale) an `inconclusive` one. A run still in progress, a read
-whose `updated_at` predates the rerun call, or a head SHA mismatch stays
-pending for a later pass. Attempts younger than five minutes are not checked
+a `fail`, and any other reported conclusion (cancelled, skipped, neutral,
+startup failure, stale) an `inconclusive` one. Verdicts require a matching run
+ID and head SHA, a nonempty conclusion, and a parseable `updated_at` no earlier
+than one minute before the successful rerun call was journaled. In-progress
+runs and incomplete, mismatched or stale reads stay pending for a later pass. Attempts younger than five minutes are not checked
 yet so a stale pre-rerun read cannot be mistaken for the new attempt's result;
 unresolved attempts older than 24 hours stop being polled. Each pass performs
 at most eight verdict reads per repository inside the same five-minute
