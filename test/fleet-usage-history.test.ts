@@ -107,6 +107,17 @@ describe('pool series', () => {
     expect(s!.pace).toBe('behind');
   });
 
+  it('keeps stale quota history visible while withholding current pace until a fresh reading arrives', () => {
+    const history = [read(8, 10), read(4, 30)];
+    const [stale] = projectUsageHistory(history, NOW);
+    expect(stale).toMatchObject({ pace: 'unknown', reason: 'Latest reading is stale.',
+      used_pct: 30, observed_at: iso(NOW - 4 * H),
+      points: [{ at: iso(NOW - 8 * H), used_pct: 10 }, { at: iso(NOW - 4 * H), used_pct: 30 }],
+      runway: { verdict: 'unknown', advice: null } });
+    const [fresh] = projectUsageHistory(history, NOW, [read(3, 30)]);
+    expect(fresh).toMatchObject({ pace: 'behind', reason: null, used_pct: 30, observed_at: iso(NOW - 3 * H) });
+  });
+
   it('excludes future current readings from the live overlay and reset history', () => {
     const history = [read(20, 10), read(10, 30)];
     const current = [read(0, 30)];
