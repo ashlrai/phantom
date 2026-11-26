@@ -8,7 +8,7 @@ import { gzipSync } from 'node:zlib';
 import { Header, type HeaderData } from 'tar';
 import { canonicalJson } from '../src/core/authority/canonical-json.js';
 import { applyQualifiedDesktopUpdate, desktopUpdateStagePath, downloadQualifiedUpdateArtifact,
-  inspectQualifiedDesktopUpdate, inspectSignedAppArchive, readQualifiedDesktopUpdateResult,
+  inspectQualifiedDesktopUpdate, inspectSignedAppArchive, prepareQualifiedDesktopUpdate, readQualifiedDesktopUpdateResult,
   loadInstalledDesktopTransaction,
   type DesktopUpdateDependencies, type UpdateAdmission } from '../src/core/desktop/qualified-update.js';
 import { authoritySurfaceDigest } from '../src/core/authority/surface.js';
@@ -224,6 +224,28 @@ function pairedFixture(profile: DesktopUpdateProfileName = 'legacy-v1', currentR
 }
 
 describe.skipIf(process.platform === 'win32')('original package extraction and installed-byte readback',()=>{
+  it('prepares both signed artifacts before Stop and reuses the verified download on apply',async()=>{
+    const f=pairedFixture();
+    const admission=vi.fn(f.deps.admission), download=vi.fn(f.deps.download), residentStop=vi.fn(async()=>true);
+    Object.assign(f.deps,{admission,download,residentStop});
+    f.admission.stop=false;
+    expect(await prepareQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'ready'});
+    expect(admission).not.toHaveBeenCalled();
+    expect(residentStop).not.toHaveBeenCalled();
+    expect(f.installations()).toBe(0);
+    expect(fs.readFileSync(join(f.stage,'package.tgz'))).toEqual(f.cli);
+    expect(fs.readdirSync(f.stage).sort()).toEqual(['app.tar.gz','manifest.json','manifest.sig','package.tgz']);
+    f.admission.stop=true;
+    expect(await applyQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'applied'});
+    expect(download).toHaveBeenCalledOnce();
+  });
+  it('does not treat a tampered prepared archive as authority to update',async()=>{
+    const f=pairedFixture();
+    expect(await prepareQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'ready'});
+    fs.writeFileSync(join(f.stage,'package.tgz'),Buffer.alloc(f.cli.length));
+    expect(await prepareQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'blocked',reason:'artifact-mismatch'});
+    expect(f.installations()).toBe(0);
+  });
   it('extracts original signed package without lifecycle execution, binds native record, and verifies final installed bytes',async()=>{
     const f=pairedFixture();
     expect(await applyQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'applied',reason:'operator-restart-required'});

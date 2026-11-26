@@ -264,6 +264,10 @@ install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
 The native `DesktopUpdateDependencies` port includes lowering-only
 `residentStop`; native installation requires Stop and known idle work, not a
 standing authority grant.
+`phm desktop-update prepare --stage <id> --json` verifies the private staged
+app and the original CLI archive before Stop, including the app inventory and
+the candidate authority surface. It caches only the verified original package
+in the stage and does not change installed files, fleet state, or authority.
 The install module also exports `ConsumerInstallHeld` for shared error
 classification and the `directory`, `parents`, `owned`, `regular`, `write`,
 `sha`, `ioRead` and `packageReady` guards.
@@ -298,6 +302,8 @@ classes require fresh matching provenance, and unrecognized classes stay unknown
 `recordResetEvidence(runsDir, count, expiries, kind, observedAt, now?)`
 atomically stores a complete, timestamped owner observation in
 `resource-evidence.v1`; older observations cannot replace newer ones.
+The personal Resource Live App Server poll records complete native reset-bank
+observations in the same evidence row; missing details do not overwrite it.
 `buildFleetResourcePlan(raw, nodes, status, ledger, now, custom?, resets?)`
 returns allowance labels and a nullable `reset_proposal` from the recent
 reset-bank and usage evidence. `GET /api/verse/world?resourcePools=1` exposes

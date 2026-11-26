@@ -1151,6 +1151,13 @@ Rejections never claim another generator's results. `generationKnown: false`
 means the generation ledger is unavailable; `jobsKnown` does the same for the
 jobs ledger. Counts cover recorded evidence only.
 
+The self-improvement discovery feed queues recurring refusals after four
+distinct recorded rejection observations for one source and reason across
+at least two UTC days in the last seven days. Replayed decisions with the
+same job, source, event, reason and recorded instant count once in both the
+recurrence threshold and the refusal share. Later observations for the
+same job still count.
+
 ## Fleet resource capacity advice
 
 `phm resources plan --json` joins verified allowance deadlines and remaining
@@ -1248,7 +1255,7 @@ Three actions change one queued job. Each takes `--dry-run`, which prints the
 change and writes nothing, and `--json` (schema `queue.action.v1`):
 
 - `phm queue top <id>` moves the job to the front.
-- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused.
+- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused. The row's lane column and its requirements cell's `preferred_lane` move together — the market prefers the spec hint, so a column-only rewrite would leave the job on its old lane.
 - `phm queue drop <id>` takes it out. The row is copied to `queue/dropped.tsv` and its router line is marked `DROPPED`.
 
 Every write holds `queue/ready.lock`, edits a fresh read of `queue/ready.tsv` and

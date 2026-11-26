@@ -1,0 +1,25 @@
+{
+  "schema": "fleet.profile.v1",
+  "nodes": [
+    {
+      "id": "mbp8",
+      "label": "MacBook Pro (8 GB)",
+      "hostname": "worker.example",
+      "tailnetIp": "100.64.0.9",
+      "owners": ["example-owner"],
+      "ramBytes": 8589934592,
+      "maxCliAgents": 2,
+      "localModels": false,
+      "memoryFloorPercent": 15,
+      "maxSwapGb": 2
+    }
+  ],
+  "lanes": [
+    {
+      "id": "review-studio",
+      "label": "Review Studio",
+      "resource": "custom:studio-plan",
+      "authorized": false
+    }
+  ]
+}

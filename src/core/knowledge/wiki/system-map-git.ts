@@ -20,8 +20,8 @@ export function mapGit(repo: string, args: readonly string[], input?: string): P
 
 const regular = (mode: string) => mode === '100644' || mode === '100755';
 
-export async function mapTree(repo: string, commit: string): Promise<Array<[string, string]>> {
-  const raw = await mapGit(repo, ['ls-tree', '-rz', '--full-tree', commit]);
+export async function mapTree(repo: string, commit: string, paths: readonly string[] = []): Promise<Array<[string, string]>> {
+  const raw = await mapGit(repo, ['--literal-pathspecs', 'ls-tree', '-rz', '--full-tree', commit, '--', ...paths]);
   return raw.toString('utf8').split('\0').filter(Boolean).flatMap(record => {
     const tab = record.indexOf('\t');
     const [mode, type, oid] = record.slice(0, tab).split(' ');

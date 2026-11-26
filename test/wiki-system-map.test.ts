@@ -4,6 +4,9 @@ import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cmdWiki } from '../src/cli/wiki.js';
+import { launchCloudTask, type CloudServiceDeps } from '../src/core/cloud/service.js';
+import { refreshCloudTasks } from '../src/core/cloud/tracker.js';
+import { queryBrain } from '../src/core/knowledge/wiki/brain.js';
 import { querySystemMap } from '../src/core/knowledge/wiki/system-map.js';
 import { wikiKey, wikiRoot } from '../src/core/knowledge/wiki/store.js';
 import { callNativeTool, nativeToolSafety } from '../src/core/mcp-native.js';
@@ -46,6 +49,119 @@ beforeEach(() => {
     'src/core/verse/verse-api.ts': "  if (path === '/api/verse/fixture') return true;\n",
     'test/entry.test.ts': 'import "../src/cli/index.js";\n',
   } });
+});
+
+describe('Wiki Brain', () => {
+  it('links five source kinds through the CLI and reads exact provenance through enrolled-only MCP', async () => {
+    const symbol = (await current(TARGET)).nodes.find(node => node.kind === 'symbol')!;
+    const focus = symbol.id;
+    const commit = symbol.anchor.commit;
+    const digest = 'a'.repeat(64);
+    const kinds = ['decision', 'lesson', 'pr', 'failure', 'owner-direction'];
+    const toolName = 'phm_wiki_brain';
+    expect(nativeToolSafety(toolName)).toBe('read');
+    expect((await callNativeTool(toolName, { repo: wikiKey(repo.dir) })).isError).toBe(true);
+    repo.enroll();
+    const name = basename(repo.dir);
+    expect((await callNativeTool(toolName, { repo: repo.dir })).isError).toBe(true);
+    expect((await callNativeTool(toolName, { repo: name, write: true })).isError).toBe(true);
+    const output = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+    try {
+      for (const kind of kinds) {
+        const link = ['brain', name, '--link', focus, '--source-kind', kind, '--source-id', kind + ':entry-1', '--source-digest', digest, '--json'];
+        expect(await cmdWiki(link)).toBe(0);
+        expect(JSON.parse(String(output.mock.lastCall?.[0]))).toEqual({ status: 'recorded' });
+        expect(await cmdWiki(link)).toBe(0);
+        expect(JSON.parse(String(output.mock.lastCall?.[0]))).toEqual({ status: 'replayed' });
+      }
+      expect(await cmdWiki(['brain', name, '--focus=' + focus, '--json'])).toBe(0);
+      const cli = JSON.parse(String(output.mock.lastCall?.[0]));
+      const reply = await callNativeTool(toolName, { repo: wikiKey(repo.dir), focus });
+      expect(reply.isError).toBeUndefined();
+      expect(JSON.parse(reply.content[0]!.text)).toEqual(cli);
+      expect(cli.commit).toBe(commit);
+      expect(cli.links).toHaveLength(kinds.length);
+      for (const kind of kinds) expect(cli.links).toContainEqual({
+        nodeId: focus, file: TARGET, line: 1, observedCommit: commit, staleness: 'valid',
+        source: { kind, id: kind + ':entry-1', digest },
+      });
+    } finally {
+      output.mockRestore();
+    }
+  });
+
+  it('distinguishes pinned validity, a changed matching node, removal, and non-ancestor history', async () => {
+    const prior = git('rev-parse', 'HEAD');
+    const branch = git('branch', '--show-current');
+    const node = (await current(TARGET)).nodes.find(node => node.kind === 'symbol')!;
+    repo.enroll();
+    const output = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+    try {
+      expect(await cmdWiki(['brain', basename(repo.dir), '--link', node.id, '--source-kind', 'lesson',
+        '--source-id', 'retro:123', '--source-digest', 'a'.repeat(64)])).toBe(0);
+    } finally {
+      output.mockRestore();
+    }
+    repo.writeFile(TARGET, 'export const value = 2;\n');
+    const staleness = async () => (await queryBrain(repo.dir, { focus: node.id })).links[0]?.staleness;
+    expect(await staleness()).toBe('valid');
+    commit();
+    expect(await staleness()).toBe('target-changed');
+    repo.writeFile(TARGET, 'export const replacement = 2;\n');
+    commit();
+    expect(await staleness()).toBe('target-removed');
+    git('switch', '--orphan', 'unrelated');
+    repo.writeFile(TARGET, 'export const value = 1;\n');
+    commit();
+    expect(await staleness()).toBe('unknown-ancestry');
+    git('switch', branch);
+    expect((await queryBrain(repo.dir, { revision: prior })).links[0]?.staleness).toBe('valid');
+  });
+
+  it('projects a tracked merge only after the exact SHA is observed, then includes its receipt in the next Cloud launch', async () => {
+    const identity = 'example/wiki-brain-fixture';
+    git('remote', 'add', 'origin', 'https://github.com/' + identity + '.git');
+    repo.enroll();
+    const baseBranch = git('branch', '--show-current');
+    const prompts: string[] = [];
+    const deps: CloudServiceDeps = {
+      checkout: { git: async (args, opts) => {
+        if (args[0] === 'clone') execFileSync('git', ['clone', '--quiet', '--', repo.dir, args.at(-1)!], { cwd: opts.cwd });
+        if (args[0] === 'checkout') execFileSync('git', ['-C', opts.cwd, 'pull', '--quiet', '--ff-only']);
+        return { ok: true, stdout: '', stderr: '' };
+      } },
+      launcher: {
+        seatArgv: () => ['/fake/claude'], platform: 'darwin', trustFolder: () => undefined,
+        run: async argv => {
+          prompts.push(argv.at(-1)!);
+          return { code: 0, timedOut: false, output: 'Created cloud session: Wiki Brain\nView: https://claude.ai/code/session_wikibrain' };
+        },
+      },
+    };
+    const req = { repo: identity, baseBranch, origin: 'operator' as const, prompt: 'Review ' + TARGET };
+    const initial = await launchCloudTask(req, deps);
+    expect(initial).toMatchObject({ ok: true });
+    expect(prompts[0]).not.toContain('Related Wiki Brain');
+    repo.writeFile(TARGET, 'export const value = 7;\n');
+    const mergeSha = commit();
+    const task = initial.task!;
+    const gh = async (args: string[]) => ({
+      ok: true, stderr: '', stdout: args[1] === 'view' ? JSON.stringify({ mergeCommit: { oid: mergeSha } }) : JSON.stringify([{
+        number: 7, url: 'https://github.com/' + identity + '/pull/7', state: 'MERGED', isDraft: false,
+        title: task.title, body: null, headRefName: task.branch, baseRefName: task.baseBranch,
+        headRepository: { name: 'wiki-brain-fixture' }, headRepositoryOwner: { login: 'example' }, isCrossRepository: false,
+      }]),
+    });
+    expect(await refreshCloudTasks({ gh })).toEqual({ checked: 1, updated: 1 });
+    expect(await refreshCloudTasks({ gh })).toEqual({ checked: 0, updated: 0 });
+    const brain = await queryBrain(repo.dir);
+    expect(brain.links).toEqual([expect.objectContaining({
+      nodeId: 'file:' + TARGET, observedCommit: mergeSha, staleness: 'valid',
+      source: { kind: 'pr', id: 'github:' + identity + '/pull/7', digest: expect.stringMatching(/^[a-f0-9]{64}$/) },
+    })]);
+    expect((await launchCloudTask(req, deps)).ok).toBe(true);
+    expect(prompts[1]).toContain(TARGET + ' — PR #7 at ' + mergeSha.slice(0, 12));
+  });
 });
 
 afterEach(() => fixture.cleanup());

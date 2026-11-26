@@ -32,6 +32,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import '../src/core/fabric/gateway.js';
 
 // ---------------------------------------------------------------------------
 // Environment isolation + module reset between tests to avoid cache bleed
