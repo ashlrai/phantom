@@ -363,6 +363,11 @@ lane cell carries the dispatcher's `PARKED-` hold marker (either ready.tsv
 dialect) stays local with `parked_row`, whatever its requirements spec says —
 held work is never offloaded.
 
+A malformed row leaves a later usable copy of the same job eligible for
+offload. The first parseable row still determines eligibility for its job ID,
+and an earlier parked row blocks later copies. Apply leases the selected row
+and recovery restores it when only malformed copies remain.
+
 A five-column row without a requirements spec inherits one from the matching
 `(attrs)` envelope in `queue/router-queue.md`, resolved like dispatchd's
 `work_market.from_envelope`: the envelope's `preferred_lane`/`lane`/`pool`,
