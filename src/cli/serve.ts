@@ -179,6 +179,15 @@ export async function cmdServe(args: string[]): Promise<number> {
 
   // ── Output ────────────────────────────────────────────────────────────────
 
+  let consoleAssets: { ready: boolean; fix: string | null } = { ready: true, fix: null };
+  try {
+    const { inspectConsoleAssets } = await import('../core/web/console-assets.js');
+    const status = inspectConsoleAssets();
+    consoleAssets = { ready: status.ready, fix: status.fix };
+  } catch {
+    // Best-effort check; server handles missing assets directly on request.
+  }
+
   if (json) {
     const consoleUrl = `${handle.url}/next/`;
     const out: Record<string, unknown> = {
@@ -186,6 +195,8 @@ export async function cmdServe(args: string[]): Promise<number> {
       consoleUrl,
       port: handle.port,
       allowDispatch,
+      consoleAssetsReady: consoleAssets.ready,
+      ...(consoleAssets.fix ? { consoleAssetsFix: consoleAssets.fix } : {}),
     };
     out.readToken = handle.readToken;
     out.readTokenHeader = 'X-Ashlr-Token';
@@ -194,6 +205,9 @@ export async function cmdServe(args: string[]): Promise<number> {
       out.tokenHeader = 'X-Ashlr-Token';
     }
     console.log(JSON.stringify(out));
+    if (!consoleAssets.ready && consoleAssets.fix) {
+      console.error(`Warning: Web console UI is not built yet. ${consoleAssets.fix}`);
+    }
   } else {
     console.log('');
     console.log(bold('  phm serve') + gray(' — local web dashboard'));
@@ -201,6 +215,11 @@ export async function cmdServe(args: string[]): Promise<number> {
     console.log(`  ${green('✓')} Listening on ${cyan(handle.url)}`);
     console.log(`  ${green('✓')} Operator console ${cyan(`${handle.url}/next/`)}`);
     console.log(`  ${dim('Bound to 127.0.0.1 only — not externally reachable.')}`);
+    if (!consoleAssets.ready && consoleAssets.fix) {
+      console.log('');
+      console.log(`  ${yellow('⚠')}  ${bold('Web console UI is not built yet')} ${gray(`(${handle.url}/next/ will return 503 until built)`)}`);
+      console.log(`  ${dim(consoleAssets.fix)}`);
+    }
     console.log('');
 
     console.log(`  ${dim('Read token')}  ${bold(handle.readToken)}`);

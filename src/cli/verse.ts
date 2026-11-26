@@ -473,6 +473,15 @@ export async function cmdVerse(args: string[], command: VerseCommandName = 'vers
 
   // ── Output (same token wording as serve.ts) ──────────────────────────────
 
+  let consoleAssets: { ready: boolean; fix: string | null } = { ready: true, fix: null };
+  try {
+    const { inspectConsoleAssets } = await import('../core/web/console-assets.js');
+    const status = inspectConsoleAssets();
+    consoleAssets = { ready: status.ready, fix: status.fix };
+  } catch {
+    // Best-effort check; server handles missing assets directly on request.
+  }
+
   if (json) {
     const out: Record<string, unknown> = {
       url: handle.url,
@@ -483,16 +492,26 @@ export async function cmdVerse(args: string[], command: VerseCommandName = 'vers
       ...verseStartupTokenFields(remote !== null, desktopTokenHandoff, handle),
       accountTelemetry: accounts,
       accountTelemetryNote: collectorBanner,
+      consoleAssetsReady: consoleAssets.ready,
+      ...(consoleAssets.fix ? { consoleAssetsFix: consoleAssets.fix } : {}),
       remoteGateway: remote ? { url: remote.gateway.url, publicOrigin: remote.publicOrigin,
         operatorSocket: remote.admin.path } : null,
     };
     console.log(JSON.stringify(out));
+    if (!consoleAssets.ready && consoleAssets.fix) {
+      console.error(`Warning: Web console UI is not built yet. ${consoleAssets.fix}`);
+    }
   } else {
     console.log('');
     console.log(bold('  Phantom') + '  ' + cyan(verseUrl));
     console.log('');
     console.log(`  ${green('✓')} Listening on ${cyan(handle.url)}`);
     console.log(`  ${dim('Bound to 127.0.0.1 only — not externally reachable.')}`);
+    if (!consoleAssets.ready && consoleAssets.fix) {
+      console.log('');
+      console.log(`  ${yellow('⚠')}  ${bold('Web console UI is not built yet')} ${gray(`(${verseUrl} will return 503 until built)`)}`);
+      console.log(`  ${dim(consoleAssets.fix)}`);
+    }
     console.log('');
 
     if (remote) {
