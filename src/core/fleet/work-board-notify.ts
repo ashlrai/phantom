@@ -512,12 +512,13 @@ export function readBoardNotifySnapshot(stateDir: string): BoardSnapshotItem[] |
 }
 
 /** Persist this pass's board for the next diff; never throws. */
-export function writeBoardNotifySnapshot(stateDir: string, items: readonly BoardSnapshotItem[]): void {
+export function writeBoardNotifySnapshot(stateDir: string, items: readonly BoardSnapshotItem[]): { ok: true } | { ok: false } {
   try {
     ensurePrivateDirectory(stateDir);
     writePrivateFileAtomic(boardNotifySnapshotPath(stateDir),
       JSON.stringify({ v: 1, at: new Date().toISOString(), items }));
-  } catch { /* a lost snapshot only replays; the ledger still fences sends */ }
+    return { ok: true };
+  } catch { return { ok: false }; }
 }
 
 /** What the next pass diffs against: delivered items advance; items whose
