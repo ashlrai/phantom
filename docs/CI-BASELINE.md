@@ -650,6 +650,10 @@ Attempt totals, the hourly cap, and flake recurrence use the earliest
 observed attempt receipt for each repository, head SHA and run ID within
 the retained journal. Ties use journal order. Replays leave the original
 attempt time in effect, and recent entries still show each observed receipt.
+If visible attempt receipts disagree on the set of triggering tests, the
+attempt still consumes its hourly slot but supplies no per-test attempt
+evidence to stabilization or discovery. Test order and duplicate test IDs
+within a receipt do not affect the comparison.
 Successful and failed call totals likewise count one result per repository,
 head SHA and run ID. When visible receipts disagree on whether the call
 succeeded, the result is unknown and excluded from both call totals and

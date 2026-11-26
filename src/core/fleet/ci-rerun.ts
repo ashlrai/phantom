@@ -51,25 +51,34 @@ function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
     .map(({ first, testConflict }) => testConflict ? { ...first, test: undefined } : first);
 }
 
-/** Count the first durable attempt for each rerun identity in the retained journal. */
-function observedAttempts(entries: readonly Entry[], nowMs: number): Entry[] {
-  const attempts = new Map<string, Entry>();
+function triggeringTests(entry: Entry): string[] {
+  const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
+  return [...new Set(tests.filter((test): test is string =>
+    typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX))].sort();
+}
+
+/** Keep the earliest attempt time and only attribute consistent test evidence. */
+export function observedAttempts(entries: readonly Entry[], nowMs: number): Entry[] {
+  const attempts = new Map<string, { first: Entry; testsKey: string; testConflict: boolean }>();
   for (const entry of entries) {
     if (entry.outcome !== 'attempt' || Date.parse(entry.at) > nowMs) continue;
     const key = rerunKey(entry);
-    const first = attempts.get(key);
-    if (!first || Date.parse(entry.at) < Date.parse(first.at)) attempts.set(key, entry);
+    const testsKey = JSON.stringify(triggeringTests(entry));
+    const attempt = attempts.get(key);
+    if (!attempt) {
+      attempts.set(key, { first: entry, testsKey, testConflict: false });
+      continue;
+    }
+    attempt.testConflict ||= attempt.testsKey !== testsKey;
+    if (Date.parse(entry.at) < Date.parse(attempt.first.at)) attempt.first = entry;
   }
-  return [...attempts.values()];
+  return [...attempts.values()].map(({ first, testConflict }) =>
+    testConflict ? { ...first, test: undefined, tests: undefined } : first);
 }
 
 /** Expand each observed attempt once for each triggering test. */
 function summarizeFlakes(attempts: readonly Entry[], nowMs: number, verdicts: readonly Entry[]) {
-  const testsByAttempt = attempts.flatMap(entry => {
-    if (!Array.isArray(entry.tests)) return [entry];
-    const tests = new Set(entry.tests.filter(test => typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX));
-    return [...tests].map(test => ({ ...entry, test }));
-  });
+  const testsByAttempt = attempts.flatMap(entry => triggeringTests(entry).map(test => ({ ...entry, test })));
   return recurringFlakes([...testsByAttempt, ...verdicts], { nowMs });
 }
 

@@ -206,6 +206,18 @@ describe('ciRerunBacklogItems', () => {
     expect(await discover([...rows, ...third, { ...replay, test: undefined }])).toEqual([]);
   });
 
+  it('omits disputed attempts from per-test backlog context', async () => {
+    const rows = [
+      ...rerun(REPO, TEST_A, sha(1), 11, 'fail', 1),
+      ...rerun(REPO, TEST_A, sha(2), 12, 'fail', 2),
+      ...rerun(REPO, TEST_A, sha(3), 13, 'fail', 3),
+    ];
+    const journalPath = writeJournal([...rows, { ...rows[0]!, at: daysAgo(0.5), test: TEST_B }]);
+    const items = await ciRerunBacklogItems({ repo: REPO, journalPath, now: NOW });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('2 distinct rerun attempts were recorded for the same test');
+  });
+
   it('ignores verdict rows without a test id and rows for other repositories', async () => {
     const untaged: Row[] = [
       { at: daysAgo(1), repo: REPO, head: sha(31), runId: 31, pr: 31, outcome: 'verdict', verdict: 'fail' },

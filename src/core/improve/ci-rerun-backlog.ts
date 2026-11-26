@@ -72,7 +72,7 @@ import { join } from 'node:path';
 
 import { ashlrHome, CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
-import { readCiReruns } from '../fleet/ci-rerun.js';
+import { observedAttempts, readCiReruns } from '../fleet/ci-rerun.js';
 import { JOURNAL_TEST_MAX, RECURRING_FLAKE_WINDOW_MS } from '../fleet/ci-flakes.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -214,16 +214,15 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
     const windowMs = CI_RERUN_WINDOW_MS;
     const journalPath = opts.journalPath ?? join(ashlrHome(), CI_RERUN_JOURNAL_RELATIVE);
     const { entries } = readCiReruns(journalPath, nowMs);
+    const repoEntries = entries.filter(entry => entry.repo.toLowerCase() === repoKey);
 
     // Every folded row names the target repo (case-insensitive), so test
     // alone keys a verdict group and the call tally is a single pair.
     const verdicts = new Map<string, VerdictGroup>();
     const runVerdicts = new Map<number, RerunEntry | null>();
-    const attemptsByRun = new Map<string, RerunEntry>();
     const attempts = new Map<string, number>();
     const callResults = new Map<string, RerunEntry | null>();
-    for (const entry of entries) {
-      if (typeof entry.repo !== 'string' || entry.repo.toLowerCase() !== repoKey) continue;
+    for (const entry of repoEntries) {
       if (Date.parse(entry.at) > nowMs) continue;
       if (entry.outcome === 'ok' || entry.outcome === 'failed') {
         const key = `${entry.runId}:${entry.head}`;
@@ -231,12 +230,6 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
         if (prior === null) continue;
         if (prior && prior.outcome !== entry.outcome) callResults.set(key, null);
         else if (!prior || Date.parse(entry.at) < Date.parse(prior.at)) callResults.set(key, entry);
-        continue;
-      }
-      if (entry.outcome === 'attempt') {
-        const key = `${entry.runId}:${entry.head}`;
-        const prior = attemptsByRun.get(key);
-        if (!prior || Date.parse(entry.at) < Date.parse(prior.at)) attemptsByRun.set(key, entry);
         continue;
       }
       if (entry.outcome !== 'verdict') continue;
@@ -248,7 +241,7 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
         runVerdicts.set(entry.runId, entry);
       }
     }
-    for (const entry of attemptsByRun.values()) {
+    for (const entry of observedAttempts(repoEntries, nowMs)) {
       if (!inWindow(entry, nowMs, windowMs)) continue;
       const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
       for (const test of new Set(tests)) {
