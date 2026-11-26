@@ -226,6 +226,8 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   const results = await sendNotifications(plan.notices, { senders: tracked, ledgerPath });
   const delivered = results.filter(r => r.status === 'sent' || r.status === 'duplicate');
   const deliveries = results.map(r => ({ itemId: r.notice.itemId, state: r.notice.state, status: r.status,
+    // Sender text is untrusted; keep the structured reason single-line and bounded to 512 characters.
+    ...(r.reason !== undefined ? { reason: scrubSecrets(r.reason).replace(/[\r\n\u2028\u2029]+/g, ' ').slice(0, 512) } : {}),
     ...(evidence.get(r.notice) ?? { evidence: 'none', transport: 'none' }) }));
   const count = (e: NoticeDelivery['evidence']): number => deliveries.filter(d => d.evidence === e).length;
   const queued = count('slack-bus-note-enqueued');
