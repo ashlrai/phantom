@@ -1726,6 +1726,32 @@ class DispatchPriorityTests(unittest.TestCase):
             os.utime(path, (old, old))
         (q / 'run' / f'{job}.rc').write_text('0\n')
 
+    def test_weekly_freshness_from_finished_worktree_changes_repo_share(self):
+        home, env = self.fixture()
+        r = home / '.ashlr-runs'
+        q = r / 'queue'
+        period = int(time.time()) // (7 * 86400)
+        for job, repo, verdict in [(f'RQ-DOCS-FRESHNESS-locus-{period}', 'locus', 'drift'),
+                                   (f'RQ-SITE-FRESHNESS-phantom-{period}', 'phantom', 'unhealthy'),
+                                   (f'RQ-DOCS-FRESHNESS-phantom-{period - 2}', 'phantom', 'drift')]:
+            self.finished_worktree(home, job, repo)
+            (home / 'Projects/ashlrai/wt' / job / 'BRIDGE_NOTES.md').write_text(f'FRESHNESS: {verdict}\nprivate evidence\n')
+        (r / 'PUBLISH_HOLD').write_text('fixture hold')
+        self.run_tick(home, env)
+        snapshot = (q / 'repo-freshness.json').read_text()
+        self.assertNotIn('private evidence', snapshot)
+        self.assertEqual(json.loads(snapshot)['repos'], {
+            'ashlrai/locus': {'docs': {'period': period, 'verdict': 'drift'}},
+            'ashlrai/phantom': {'site': {'period': period, 'verdict': 'unhealthy'}},
+        })
+        queue_job(home, 'RQ-LOCUS-READY', 'codex-cmp', repo='locus')
+        queue_job(home, 'RQ-PHANTOM-READY', 'codex-cmp')
+        self.run_tick(home, env)
+        shares = json.loads((q / 'repo-shares.json').read_text())['repos']
+        self.assertIn('docs_freshness_drift', shares['ashlrai/locus']['reason_codes'])
+        self.assertIn('site_freshness_unhealthy', shares['ashlrai/phantom']['reason_codes'])
+        self.assertNotIn('docs_freshness_drift', shares['ashlrai/phantom']['reason_codes'])
+
     def publish_stubs(self, home):
         r = home / '.ashlr-runs'
         (r / 'phantom-open-prs').write_text(f'{int(time.time())} 0\n')

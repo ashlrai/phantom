@@ -4536,3 +4536,17 @@ device human after that signature check and does not read agent env markers.
 `POST /api/approvals/team/:id/decision` accepts `decision`, optional `team` and
 optional `assertion`. An `actor` field is refused. A bare token on a
 human-required decision is HTTP 403 `human-presence-required`.
+
+## Managed repositories and freshness evidence
+
+`phantom.repos.v1` lists the union of the ecosystem catalog, local enrollment,
+and effective signed repository scope. Effective stage and local enrollment
+are separate fields. `canManageGrant` is false on configured workers.
+`prioritySync: "local-only"` applies to list and priority mutation results
+until leader replication is available.
+
+`allocateRepos(evidence, freshness?, now?)` takes an optional
+`repo-freshness.v1` snapshot and an epoch-millisecond evaluation time. The
+snapshot's `repos` map keys are canonical `owner/name` strings; each maps to
+optional `docs` and `site` records with integer UTC seven-day `period` and a
+`verdict` as specified in [Queue](docs/QUEUE.md#repository-shares).
