@@ -5,7 +5,9 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
-import { NODE_BRIDGE_CALL_MS, NODE_BRIDGE_PASS_BUDGET_MS, bridgeLeaseOwner, localBridgeRouter, nodeBridgeReadiness, runNodeBridge, type BridgeRouter, type NodeBridgeHost } from '../src/core/drive/nodes/ready-bridge.js';
+import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
+import { initializePool } from '../src/core/drive/nodes/pool.js';
+import { NODE_BRIDGE_CALL_MS, NODE_BRIDGE_PASS_BUDGET_MS, bridgeLeaseOwner, localBridgeRouter, nodeBridgeReadiness, poolBridgeRouter, runNodeBridge, type BridgeRouter, type NodeBridgeHost } from '../src/core/drive/nodes/ready-bridge.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { probeNodeLanes } from '../src/core/drive/nodes/worker.js';
 import { probeRunnerPacks } from '../src/core/drive/nodes/runner-packs.js';
@@ -26,7 +28,7 @@ const READ = ['codex', 'pack:codex-file'];
 const row = (job: string, lane = 'codex-cmp', spec?: object) =>
   [job, 'phantom', lane, 'work', `/prompts/${job}.md`, ...(spec ? [JSON.stringify(spec)] : [])].join('\t');
 
-function fixture(rows: string[], nodes: { id: string; caps: string[]; slots?: number }[] = [{ id: 'air-w4', caps: READ, slots: 2 }, { id: 'muse-w2', caps: READ, slots: 1 }]) {
+function fixture(rows: string[], nodes: { id: string; caps: string[]; slots?: number }[] = [{ id: 'air-w4', caps: READ, slots: 2 }, { id: 'muse-w2', caps: READ, slots: 1 }], pooled = false) {
   const root = mkdtempSync(join(tmpdir(), 'node-bridge-'));
   roots.push(root);
   const host: NodeBridgeHost = { runsRoot: join(root, 'runs'), wtRoot: join(root, 'wt') };
@@ -47,9 +49,13 @@ function fixture(rows: string[], nodes: { id: string; caps: string[]; slots?: nu
   });
   writeFileSync(join(host.runsRoot, 'queue', 'ready.tsv'), materialized.map(r => r + '\n').join(''));
   let now = 1_000_000;
-  const nodes_ = new DriveNodes(new MemoryStore(), { now: () => now, nodeTtlMs: 600_000, leaderTtlMs: 600_000, claimTtlMs: 1_000 });
+  const store = new MemoryStore();
+  if (pooled) initializePool(store, 'primary', 'backup', now);
+  const nodes_ = new DriveNodes(store, { now: () => now, nodeTtlMs: 600_000, leaderTtlMs: 600_000, claimTtlMs: 1_000 });
   const sessions = new Map(nodes.map(n => [n.id, nodes_.join(n.id, { owners: ['ashlr'], caps: n.caps, ...(n.slots === undefined ? {} : { slots: n.slots }) })!]));
-  const router = localBridgeRouter(nodes_, root);
+  const router = pooled
+    ? poolBridgeRouter((verb, args) => ({ demoted: false, result: executeNodeFleet(verb, args, nodes_) }), root)
+    : localBridgeRouter(nodes_, root);
   const pass = (apply = true, extra: Partial<Parameters<typeof runNodeBridge>[0]> = {}) =>
     runNodeBridge({ host, router, owner: 'ashlr', apply, now, pendingTtlMs: 60_000, ...extra });
   const ready = () => readFileSync(join(host.runsRoot, 'queue', 'ready.tsv'), 'utf8');
@@ -60,6 +66,40 @@ function fixture(rows: string[], nodes: { id: string; caps: string[]; slots?: nu
 }
 
 describe('ready.tsv -> node router bridge', () => {
+  it('keeps work local when the pool witness has no fresh capacity sample', async () => {
+    const f = fixture([row('RQ-REVIEW-A')], [{ id: 'worker', caps: READ, slots: 2 }], true);
+    const worker = f.sessions.get('worker')!;
+    const capacity = { hostId: 'mac', ramBytes: 8 * 1024 ** 3, slots: 2, held: null, sampledAtMs: 1_000_000 };
+    f.nodes.heartbeat(worker, { capacity });
+    f.advance(6_001);
+    f.nodes.heartbeat(worker, { slots: 2 });
+
+    const stale = await f.pass();
+    expect(stale.nodes[0]).toMatchObject({ slots: 2, freeSlots: null });
+    expect(stale.rows[0]).toMatchObject({ offload: false, reasons: ['slots_unknown'] });
+    expect(stale.claimed).toEqual([]);
+    expect(f.ready()).toContain('RQ-REVIEW-A');
+
+    f.nodes.heartbeat(worker, { capacity: { ...capacity, sampledAtMs: 1_006_001 } });
+    expect((await f.pass()).claimed).toEqual(['RQ-REVIEW-A']);
+  });
+
+  it('budgets shared pool slots after reservations across owner scopes', async () => {
+    const f = fixture([row('RQ-REVIEW-A'), row('RQ-REVIEW-B')], [
+      { id: 'worker-a', caps: READ, slots: 3 }, { id: 'worker-b', caps: READ, slots: 3 },
+    ], true);
+    const other = f.nodes.join('other-worker', { owners: ['other'], caps: READ })!;
+    const capacity = { hostId: 'mac', ramBytes: 8 * 1024 ** 3, slots: 3, held: null, sampledAtMs: 1_000_000 };
+    for (const worker of [...f.sessions.values(), other]) f.nodes.heartbeat(worker, { capacity });
+    f.nodes.enqueue('other-job', { owner: 'other', requires: READ });
+    f.nodes.enqueue('own-job', { owner: 'ashlr', requires: READ });
+
+    const plan = await f.pass(false);
+    expect(plan.nodes.map(node => node.freeSlots)).toEqual([1, 1]);
+    expect(plan.rows.map(decision => decision.offload)).toEqual([true, false]);
+    expect(f.nodes.pull(other)?.job.id).toBe('other-job');
+    expect((await f.pass(false)).nodes.map(node => node.freeSlots)).toEqual([1, 1]);
+  });
   it('offloads an eligible row under a dispatchd-honored lease and a router job', async () => {
     const f = fixture([row('RQ-REVIEW-A')]);
     const dry = await f.pass(false);

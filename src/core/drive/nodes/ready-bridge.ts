@@ -74,6 +74,7 @@ interface BridgeRouterView {
   nodes: NodeView[];
   jobs: JobView[];
   routes?: RouteAssignment[];
+  pooled?: boolean;
 }
 export interface BridgeRouter {
   scope: string;
@@ -156,19 +157,18 @@ export function planNodeBridge(input: BridgeRouterView & {
 }): { nodes: BridgeNodeView[]; rows: BridgeRowDecision[] } {
   const live = input.nodes.filter(n => n.live).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const running = (id: string) => input.jobs.filter(j => j.state === 'running' && j.claimedBy === id).length;
-  const free = new Map<string, number | null>(live.map(n => [n.nodeId, n.slots === undefined ? null : Math.max(0, n.slots - running(n.nodeId))]));
-  // Capacity-reporting nodes on one physical host share its measured slots —
-  // the router's nodeCapacityView groups by capacity.hostId the same way. Each
-  // node's advertised `slots` already includes host headroom, so free capacity
-  // is accounted once per host (the smallest advertisement minus every claim
-  // on it), never summed per node; a node without a capacity sample is its own
-  // host, which leaves standalone accounting exactly as before.
+  const free = new Map<string, number | null>(live.map(n => [n.nodeId, input.pooled
+    ? n.poolHeadroom?.node ?? null
+    : n.slots === undefined ? null : Math.max(0, n.slots - running(n.nodeId))]));
+  // Pool headroom already accounts for all jobs at the witness. Standalone
+  // capacity-reporting nodes share the smallest advertised budget per host.
   const hostOf = (n: NodeView): string => n.capacity?.hostId ?? n.nodeId;
   const hostGroups = new Map<string, NodeView[]>();
   for (const n of live) { const host = hostOf(n); const members = hostGroups.get(host) ?? []; members.push(n); hostGroups.set(host, members); }
   const hostFree = new Map<string, number | null>();
   for (const [host, members] of hostGroups) {
-    hostFree.set(host, members.every(m => m.slots !== undefined)
+    hostFree.set(host, input.pooled ? members[0]?.poolHeadroom?.host ?? null
+      : members.every(m => m.slots !== undefined)
       ? Math.max(0, Math.min(...members.map(m => m.slots!)) - members.reduce((sum, m) => sum + running(m.nodeId), 0))
       : null);
   }
@@ -193,13 +193,13 @@ export function planNodeBridge(input: BridgeRouterView & {
     reserve(fits[0]);
     return fits[0];
   };
-  if (input.routes) {
+  if (!input.pooled && input.routes) {
     const byId = new Map(live.map(node => [node.nodeId, node]));
     for (const route of input.routes) {
       const node = route.nodeId === null ? undefined : byId.get(route.nodeId);
       if (node) reserve(node);
     }
-  } else {
+  } else if (!input.pooled) {
     // Older router views lack assignments. Keep their capability-based estimate.
     for (const job of input.jobs) if (job.state === 'pending' || (job.state === 'running' && !job.claimedBy)) take(job.requires);
   }
@@ -396,7 +396,7 @@ export function poolBridgeRouter(call: (verb: string, args: string[]) => { demot
   };
   return {
     scope: realpathSync(storeDirectory),
-    view: owner => ok('status', ['--owner', owner]) as unknown as BridgeRouterView,
+    view: owner => ({ ...ok('status', ['--owner', owner]) as unknown as BridgeRouterView, pooled: true }),
     enqueue: (jobId, spec) => ok('enqueue', ['--job', jobId, '--owner', spec.owner, '--requires', spec.requires.join(','), '--pack', spec.pack, ...nodeTaskArgs(spec.task)])['enqueued'] === true,
     withdraw: (jobId, owner) => {
       const r = ok('withdraw', ['--job', jobId, '--owner', owner]);

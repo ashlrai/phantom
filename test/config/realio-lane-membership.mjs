@@ -44,6 +44,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  */
 export const REAL_IO_TEST_FILES = [
   'test/install-process.test.ts', // Runs isolated real Node and npm child processes.
+  'test/node-task-transport-615s.test.ts', // Spawns the real node runner to verify task transport.
   'test/update-release-directory.test.ts', // Extracts real archives and smoke-tests a candidate executable.
   'test/channel-health-ingress-failure-322s.test.ts', // Spawns real ingress health probes.
   'test/comms-confirm-http-original-264s.test.ts', // Runs confirmation transport child processes.

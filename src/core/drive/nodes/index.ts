@@ -88,6 +88,8 @@ export interface JobOutcome {
 
 export interface NodeView {
   capacity?: NodeCapacitySample;
+  /** Witness headroom after active claims and all planned routes, including other scopes. */
+  poolHeadroom?: { node: number | null; host: number | null };
   nodeId: string;
   live: boolean;
   owners: string[];
@@ -121,6 +123,29 @@ function sameSession(a: NodeSession, b: NodeSession): boolean {
 function nextToken(state: NodesState): number {
   if (state.sequence === Number.MAX_SAFE_INTEGER) throw new Error('Drive fencing counter exhausted');
   return ++state.sequence;
+}
+
+function poolHeadroom(state: NodesState, now: number, routes: RouteAssignment[]): Map<string, NonNullable<NodeView['poolHeadroom']>> {
+  const headroom = new Map<string, NonNullable<NodeView['poolHeadroom']>>();
+  if (!state.pool) return headroom;
+  const occupied = new Map<string, number>();
+  const reserved = new Map<string, number>();
+  const increment = (counts: Map<string, number>, id: string) => counts.set(id, (counts.get(id) ?? 0) + 1);
+  for (const job of state.jobs) if (actionableClaim(state, job, now)) increment(occupied, job.claim!.nodeId);
+  for (const route of routes) if (route.nodeId !== null) increment(reserved, route.nodeId);
+  const nodes = new Map(state.nodes.map(node => [node.nodeId, node]));
+  for (const host of nodeCapacityView(state, now)) {
+    const planned = host.nodeIds.reduce((sum, id) => sum + (reserved.get(id) ?? 0), 0);
+    const hostFree = host.freeSlots === null ? null : Math.max(0, host.freeSlots - planned);
+    for (const id of host.nodeIds) {
+      const slots = nodes.get(id)?.slots;
+      const nodeFree = hostFree === 0 ? 0
+        : !host.eligibleNodeIds.includes(id) || hostFree === null ? null
+        : slots === undefined ? hostFree : Math.min(hostFree, Math.max(0, slots - (occupied.get(id) ?? 0) - (reserved.get(id) ?? 0)));
+      headroom.set(id, { node: nodeFree, host: hostFree });
+    }
+  }
+  return headroom;
 }
 
 /** Registry, election and queue completion share one serialization boundary. */
@@ -319,19 +344,24 @@ export class DriveNodes implements QueueV1 {
    */
   view(owners: string[]): { owners: string[]; nodes: NodeView[]; jobs: JobView[]; routes: RouteAssignment[] } {
     const scope = new Set(names(owners, validId, 'owner scope'));
-    return this.transaction((state, now) => ({
-      owners: [...scope],
-      nodes: state.nodes.filter(n => n.owners?.some(o => scope.has(o)))
-        .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
-          caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
-          heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? null, auth: n.auth ?? 'unknown',
-          ...(n.capacity ? { capacity: n.capacity } : {}),
-          ...(n.slots === undefined ? {} : { slots: n.slots }) }))
-        .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
-      jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => ({ ...this.jobView(j),
-        ...(actionableClaim(state, j, now) ? { claimedBy: j.claim!.nodeId } : {}) })),
-      routes: planRoutes(state, now).filter(a => scope.has(a.owner)),
-    }));
+    return this.transaction((state, now) => {
+      const routes = planRoutes(state, now);
+      const headroom = poolHeadroom(state, now, routes);
+      return {
+        owners: [...scope],
+        nodes: state.nodes.filter(n => n.owners?.some(o => scope.has(o)))
+          .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
+            caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
+            heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? null, auth: n.auth ?? 'unknown',
+            ...(n.capacity ? { capacity: n.capacity } : {}),
+            ...(headroom.has(n.nodeId) ? { poolHeadroom: headroom.get(n.nodeId)! } : {}),
+            ...(n.slots === undefined ? {} : { slots: n.slots }) }))
+          .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
+        jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => ({ ...this.jobView(j),
+          ...(actionableClaim(state, j, now) ? { claimedBy: j.claim!.nodeId } : {}) })),
+        routes: routes.filter(a => scope.has(a.owner)),
+      };
+    });
   }
 
   private currentClaim(state: NodesState, claim: JobClaim, now: number): boolean {

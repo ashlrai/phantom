@@ -2517,7 +2517,14 @@ store location; `localBridgeRouter(nodes, storeDirectory)` and
 The `BridgeRouter.view(owner)` result and `planNodeBridge(input)` input may
 include `routes: RouteAssignment[]` alongside the scoped node and job lists.
 Assigned routes reserve slots on their destination node and host. Older views
-that omit routes use capability-based reservation estimates.
+that omit routes use capability-based reservation estimates in standalone mode.
+`poolBridgeRouter` sets `pooled: true` on its view. In that mode
+`planNodeBridge` uses each scoped node's optional
+`poolHeadroom: { node: number | null, host: number | null }` from
+`DriveNodes.view` (also returned by pool `status`). The witness deducts active
+claims and all planned routes, including other owners' work, before exposing
+these counts. The bridge shares the host budget and deducts only its own new
+placements. Missing headroom is unknown and cannot admit a row.
 Bridge manifests bind `owner` and
 optional `routerScope`; reconciliation holds owner mismatches as
 `hold-owner-mismatch` and missing or changed scopes as `hold-router-mismatch`,
