@@ -54,6 +54,45 @@ describe('node router', () => {
     expect(nodes).toEqual(['a', 'b', 'a', 'b']);
   });
 
+  it('keeps the newest pool capacity and slot bound through delayed and replayed beats', () => {
+    const f = fixture();
+    f.store.state.pool = { primary: 'n', backup: 'backup', active: 'primary', epoch: 1, heartbeatAt: 1_000 };
+    const worker = f.box.join('n', { owners: ['o'] })!;
+    f.box.enqueue('job', { owner: 'o' });
+    const ready = { hostId: 'host', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000 };
+    const held = { ...ready, slots: 0, held: 'memory-pressure' as const, sampledAtMs: 1_010 };
+    f.box.heartbeat(worker, { capacity: ready });
+    f.advance(10);
+    f.box.heartbeat(worker, { capacity: held });
+    f.advance(10);
+    f.box.heartbeat(worker, { capacity: ready, slots: 1 });
+    expect(f.box.snapshot().nodes[0]).toMatchObject({ capacity: held, slots: 0, heartbeatAt: 1_020 });
+    expect(f.box.plan()[0]?.nodeId).toBeNull();
+    expect(f.box.pull(worker)).toBeNull();
+
+    const recovered = { ...ready, sampledAtMs: 1_020 };
+    f.box.heartbeat(worker, { capacity: recovered });
+    f.box.heartbeat(worker, { capacity: held, slots: 0 });
+    f.box.heartbeat(worker, { capacity: { ...held, sampledAtMs: 1_030 } });
+    expect(f.box.snapshot().nodes[0]).toMatchObject({ capacity: recovered, slots: 1 });
+    expect(f.box.plan()[0]?.nodeId).toBe('n');
+
+    f.box.heartbeat(worker, { slots: 0 });
+    f.box.heartbeat(worker, { capacity: recovered });
+    expect(f.box.pull(worker)).toBeNull();
+    f.box.heartbeat(worker, { slots: 1 });
+    expect(f.box.pull(worker)?.job.id).toBe('job');
+  });
+
+  it('lets a usable capacity sample replace a future-dated first report', () => {
+    const f = fixture();
+    const worker = f.box.join('n', { owners: ['o'] })!;
+    const ready = { hostId: 'host', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000 };
+    f.box.heartbeat(worker, { capacity: { ...ready, sampledAtMs: 2_000 } });
+    f.box.heartbeat(worker, { capacity: ready });
+    expect(f.box.snapshot().nodes[0]?.capacity).toEqual(ready);
+  });
+
   it('requires a live local gh-auth heartbeat for gh jobs and explains the fix', () => {
     const f = fixture();
     const s = f.box.join('n', { owners: ['o'], caps: ['gh'] })!;
