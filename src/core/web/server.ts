@@ -32,7 +32,8 @@ import { handleApi, drainSseConnections, drainSseSession, invalidateWebReadCache
 import { createReadProjectionWorker, type ReadProjectionReader } from './read-projections.js';
 import { governReadProjections } from './read-projection-governor.js';
 import { createReadSessionBoundary, headerValue, isAllowedHost, requestUrl, safeEqual, sendJson } from './read-session.js';
-import { isPhoneShellPath, serveStatic } from './static.js';
+import { inspectConsoleAssets, missingConsoleAssetsResponseBody } from './console-assets.js';
+import { isConsoleShellPath, isPhoneShellPath, serveStatic } from './static.js';
 import { isPagesApiPath, pagesApiGetResponse, PAGE_SLUG_RE } from '../cos/pages.js';
 import { gcRunStreams } from '../run/streaming.js';
 import { resetVerseEngine } from '../verse/verse-api.js';
@@ -52,6 +53,9 @@ import { PHANTOM_DISCOVERY_PATH, PHANTOM_PING_PATH, phantomManifest } from './ph
 // assetsDir: resolve the bundled SPA assets directory relative to this module.
 // Works from both:
 //   src/  (tsx / ts-node dev)  → <repo>/src/core/web/public
+//                                (startServer also falls back to sibling
+//                                 <repo>/dist/core/web/public for built /next/
+//                                 console assets via console-assets.ts)
 //   dist/ (compiled)           → <repo>/dist/core/web/public
 //   Bun SEA binary             → set ASHLR_WEB_PUBLIC=<path/to/public>
 //
@@ -63,14 +67,15 @@ import { PHANTOM_DISCOVERY_PATH, PHANTOM_PING_PATH, phantomManifest } from './ph
 //   that static assets are resolved correctly at runtime.
 // ---------------------------------------------------------------------------
 
+const SERVER_MODULE_PATH = fileURLToPath(import.meta.url);
+
 export function assetsDir(): string {
   // Honor an explicit override — used by the Bun SEA binary and Tauri sidecar.
   if (process.env.ASHLR_WEB_PUBLIC) {
     return process.env.ASHLR_WEB_PUBLIC;
   }
   // Fallback: import.meta.url points to this file (server.ts / server.js after build)
-  const thisFile = fileURLToPath(import.meta.url);
-  return join(dirname(thisFile), 'public');
+  return join(dirname(SERVER_MODULE_PATH), 'public');
 }
 
 // ---------------------------------------------------------------------------
@@ -249,8 +254,30 @@ export async function startServer(
         if (handled) return;
 
         // ── 3. Static assets ───────────────────────────────────────────────
-        const served = serveStatic(req, res, assetsDir());
+        const assetStatus = inspectConsoleAssets({
+          primaryDir: assetsDir(),
+          modulePath: SERVER_MODULE_PATH,
+          env: process.env,
+        });
+        let served = false;
+        for (const dir of assetStatus.dirs) {
+          if (serveStatic(req, res, dir)) {
+            served = true;
+            break;
+          }
+        }
         if (!served) {
+          if ((method === 'GET' || method === 'HEAD') && isConsoleShellPath(path) && !assetStatus.ready) {
+            const body = missingConsoleAssetsResponseBody(assetStatus);
+            res.writeHead(503, {
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Cache-Control': 'no-store',
+              'X-Content-Type-Options': 'nosniff',
+              'Content-Length': String(Buffer.byteLength(body, 'utf8')),
+            });
+            res.end(method === 'HEAD' ? undefined : body);
+            return;
+          }
           res.writeHead(404, { 'Content-Type': 'text/plain' });
           res.end('Not found');
         }

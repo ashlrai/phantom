@@ -206,6 +206,7 @@ To install the CLI while developing:
 | `npm run authority:regen` | After authority drift, regenerate `.github/CODEOWNERS` and the Tier-1 closure snapshot (`test/fixtures/authority/tier1-closure.json`) and print what changed; list each new Tier-1 root in the pull request body |
 | `npm run install:worktree` | Shared pnpm install for trusted local worktrees (see [Shared installs](#shared-installs-for-trusted-local-worktrees)) |
 | `npm run build` | Check candidate version sync, compile the backend, generate the authority surface, copy assets, build the built-in preparation evaluator and the web console, then generate dependency inventory and Git build identity in `dist/` |
+| `npm run build:web` | Build only the React web console bundle into `dist/core/web/public/next/`, so `npm run dev -- verse` (and `serve`) can serve `/verse/`, `/app/` and `/next/` without a full `npm run build` |
 
 For explicit Bun-compatible test inventories, see the standalone
 [Bun shard planner and timings recorder](docs/BUN-SHARDS.md). Workflow adoption

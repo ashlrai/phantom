@@ -37,7 +37,9 @@ Requires Node 22.15 or newer and git. If you run several agents in parallel
 worktrees on one machine, use `npm run install:worktree` instead of `npm ci`
 in each worktree: it needs pnpm 10.28.2 and shares one dependency store
 across worktrees (details in [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#shared-installs-for-trusted-local-worktrees)).
-Run the CLI from source with `npm run dev -- --help`.
+Run the CLI from source with `npm run dev -- --help`. To open the web console
+from source (`npm run dev -- verse`), build the console UI assets once with
+`npm run build:web` (or `npm run build`).
 
 ## 3. Make one change
 

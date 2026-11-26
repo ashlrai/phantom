@@ -39,6 +39,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Install dependencies in a single clone, in CI or for release packaging | `npm ci` |
 | Install dependencies in several trusted local worktrees sharing one store | `npm run install:worktree` (pnpm 10.28.2; same volume; see [setup](../CONTRIBUTING.md#shared-installs-for-trusted-local-worktrees)) |
 | Build `dist/` (CLI, assets, web console, build identity) | `npm run build` |
+| Build web console UI bundle only (`dist/core/web/public/next/`, used by `npm run dev -- verse`) | `npm run build:web` |
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |

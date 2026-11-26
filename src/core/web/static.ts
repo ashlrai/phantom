@@ -88,6 +88,13 @@ export function isPhoneShellPath(pathname: string): boolean {
   return PHONE_SHELL_PATHS.has(pathname);
 }
 
+/** Console and phone HTML shell routes served from `/next/index.html`. */
+export function isConsoleShellPath(pathname: string): boolean {
+  return pathname === '/next' || pathname === '/next/'
+    || CONSOLE_SHELL_PATHS.has(pathname)
+    || PHONE_SHELL_PATHS.has(pathname);
+}
+
 export const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 export const HTML_CACHE_CONTROL = 'no-store';
 export const REVALIDATE_CACHE_CONTROL = 'no-cache';
@@ -246,8 +253,7 @@ export function serveStatic(
     // "/verse/m" (Phantom on a phone, routes/verse/mobile/), plus their
     // "/app" and "/app/m" aliases, all resolve to the console shell; the SPA picks the app by pathname.
     let rel = pathname === '/' ? '/index.html'
-      : (pathname === '/next' || pathname === '/next/') ? '/next/index.html'
-      : (CONSOLE_SHELL_PATHS.has(pathname) || PHONE_SHELL_PATHS.has(pathname)) ? '/next/index.html'
+      : isConsoleShellPath(pathname) ? '/next/index.html'
       // The phone surface's service worker is served from INSIDE the scope it
       // controls: a worker's maximum scope is its own script's directory, so
       // this path (not /next/verse-m/sw.js) is what lets it cover /verse/m/

@@ -134,6 +134,44 @@ export function serveStatic(
   res: ServerResponse,
   dir: string,
 ): boolean;
+
+/** Console and phone HTML shell routes served from `/next/index.html`. */
+export function isConsoleShellPath(pathname: string): boolean;
+```
+
+### `src/core/web/console-assets.ts`
+```ts
+export type ConsoleAssetsSource = 'override' | 'sibling' | 'source-dist';
+
+export interface ConsoleAssetsStatus {
+  ready: boolean;
+  source: ConsoleAssetsSource | null;
+  sourceCheckout: boolean;
+  dirs: string[];
+  fix: string | null;
+}
+
+export interface ResolveConsoleAssetsOptions {
+  primaryDir?: string;
+  modulePath?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Resolve ordered static asset directories and check whether the built web
+ * console shell (`next/index.html`) is available as a contained, non-symlink
+ * regular file. When running from `<repo>/src/core/web/` without an explicit
+ * `ASHLR_WEB_PUBLIC`, falls back to `<repo>/dist/core/web/public` for Vite's
+ * `/next/` bundle while keeping `ASHLR_WEB_PUBLIC` authoritative when set.
+ */
+export function inspectConsoleAssets(
+  opts?: ResolveConsoleAssetsOptions,
+): ConsoleAssetsStatus;
+
+/** Plain-text 503 guidance when a console shell route is requested before build. */
+export function missingConsoleAssetsResponseBody(
+  status: ConsoleAssetsStatus,
+): string;
 ```
 
 ### `src/cli/serve.ts`
