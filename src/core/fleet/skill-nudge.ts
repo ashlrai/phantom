@@ -122,8 +122,8 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 //     claim rows not flagged launch_dedupe — dedupe claims pair with their
 //     launch and are one attempt) plus launch_failed rows whose action is
 //     'retry' (bounded launch-retry receipts for attempts that never spawned).
-//   - recuts: recut_admission rows whose action is defer or ready — skip only
-//     records an already-merged prior, not an attempt.
+//   - recuts: dispatch attempts preceded by an unconsumed ready recut
+//     decision. Polling the admission gate does not count as execution.
 //   - failureClass: the last identifier-safe classification a finish row
 //     carries (failure_class, then failure_reason, then pool_error) or a
 //     launch_failed/launch_terminal reason. Prose reasons never qualify.
@@ -168,6 +168,7 @@ interface NudgeJobAccum {
   /** Canonical PR key on the standing verdict row, when available. */
   verdictPrKey: string | null;
   reverted: boolean;
+  recutReady: boolean;
   lastLine: number;
   outcomeLine: number | null;
 }
@@ -291,7 +292,7 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     if (acc === undefined) {
       acc = {
         evidence: { lane: null, attempts: 0, retryReceipts: 0, recuts: 0, failureClass: null },
-        verdictEvidence: null, outcome: undefined, verdictPrKey: null, reverted: false,
+        verdictEvidence: null, outcome: undefined, verdictPrKey: null, reverted: false, recutReady: false,
         lastLine: lineNo, outcomeLine: null,
       };
       jobs.set(id, acc);
@@ -308,19 +309,22 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
         break;
       }
     }
-    if (event !== null && ATTEMPT_EVENTS.has(event)) evidence.attempts += 1;
-    else if (event === 'claim' && row['launch_dedupe'] !== true) evidence.attempts += 1;
+    if ((event !== null && ATTEMPT_EVENTS.has(event)) || (event === 'claim' && row['launch_dedupe'] !== true)) {
+      evidence.attempts += 1;
+      if (acc.recutReady) evidence.recuts += 1;
+      acc.recutReady = false;
+    }
     if (event === 'launch_failed' && firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase() === 'retry') {
       evidence.retryReceipts += 1;
     }
     if (event === 'recut_admission') {
-      const action = firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase();
-      if (action === 'defer' || action === 'ready') evidence.recuts += 1;
+      acc.recutReady = firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase() === 'ready';
     }
     const failureClass = failureClassOf(row, event);
     if (failureClass !== null) evidence.failureClass = failureClass;
     if (hasRevertEvidence(row)) acc.reverted = true;
     if (outcome !== undefined) {
+      acc.recutReady = false;
       acc.verdictEvidence = { ...evidence };
       acc.outcome = outcome;
       acc.outcomeLine = lineNo;
