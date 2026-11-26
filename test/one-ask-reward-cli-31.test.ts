@@ -298,6 +298,31 @@ describe('fleet lane-reward', () => {
     expect(fold.attempts.get('RQ-FAKE-W3')?.outcome).toBe('merged');
   });
 
+  it.each([false, true])('withholds conflicting terminal receipts (reverse order: %s)', async reverse => {
+    const job = 'RQ-FAKE-CONFLICT';
+    const at = '2026-10-31T08:00:00Z';
+    const merged = { event: 'merged', job, mergedAt: at };
+    const closed = { event: 'closed', url: URL(40), closedAt: at };
+    const first = reverse ? closed : merged;
+    const second = reverse ? merged : closed;
+    const text = rows(
+      { event: 'finish', job, lane: 'lane-a', tokens_total: 100 },
+      { event: 'publish', job, url: URL(40) },
+      first, second, first,
+      { event: 'merged', job },
+    );
+    expect(foldLaneRewardAttempts(text).attempts.get(job))
+      .toMatchObject({ published: true, outcome: null, outcomeConflict: true });
+    const report = await readLaneReward({ deps: deps({ jobsText: read(text) }) });
+    expect(report).toMatchObject({
+      tokensMeasured: 100, scored: 0, meanReward: null,
+      lanes: [{ unscored: 1, reasons: { 'conflicting-outcome': 1 } }],
+    });
+    const newer = { ...closed, closedAt: '2026-10-31T09:00:00Z' };
+    const resolved = await readLaneReward({ deps: deps({ jobsText: read(text + rows(newer, first)) }) });
+    expect(resolved).toMatchObject({ scored: 1, lanes: [{ outcomes: { published: 1 } }] });
+  });
+
   it('resolves terminal evidence behind generic lifecycle fields', () => {
     const text = rows(
       { job: 'RQ-FAKE-P1', event: 'publish', state: 'PUBLISHED', outcome: 'MERGED', mergedAt: '2026-10-31T08:00:00Z' },
