@@ -377,7 +377,7 @@ export function saveReport(report: BenchReport): string {
 }
 
 /** Load all persisted reports sorted by ts ascending. */
-export function loadReports(): BenchReport[] {
+function loadReports(): BenchReport[] {
   const dir = evalReportDir();
   if (!fs.existsSync(dir)) return [];
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));

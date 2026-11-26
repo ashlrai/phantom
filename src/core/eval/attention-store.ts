@@ -1,17 +1,17 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import type { AttentionEvalReport } from './attention.js';
+import { atomicWriteText, resolveEvalRoot } from './dataset-jsonl.js';
 
 export interface AttentionReportStoreOptions {
   rootDir?: string;
 }
 
-export function attentionEvalRoot(opts: AttentionReportStoreOptions = {}): string {
-  return path.join(ashlrRoot(opts.rootDir), 'eval', 'attention');
+function attentionEvalRoot(opts: AttentionReportStoreOptions = {}): string {
+  return path.join(resolveEvalRoot(opts.rootDir), 'eval', 'attention');
 }
 
-export function attentionReportsDir(opts: AttentionReportStoreOptions = {}): string {
+function attentionReportsDir(opts: AttentionReportStoreOptions = {}): string {
   return path.join(attentionEvalRoot(opts), 'reports');
 }
 
@@ -20,22 +20,10 @@ export function saveAttentionReport(
   opts: AttentionReportStoreOptions = {},
 ): string {
   const dir = attentionReportsDir(opts);
-  mkdirSync(dir, { recursive: true });
   const id = safeReportId(report.id);
   const file = path.join(dir, `${id}.json`);
-  const tmp = path.join(dir, `.${id}.${process.pid}.${Date.now()}.tmp`);
-  try {
-    writeFileSync(tmp, JSON.stringify(report, null, 2) + '\n', 'utf8');
-    renameSync(tmp, file);
-    return file;
-  } catch (err) {
-    try {
-      unlinkSync(tmp);
-    } catch {
-      // best-effort cleanup only
-    }
-    throw err;
-  }
+  atomicWriteText(file, JSON.stringify(report, null, 2) + '\n');
+  return file;
 }
 
 export function loadAttentionReports(
@@ -53,13 +41,6 @@ export function loadAttentionReports(
     }
   }
   return reports.sort((a, b) => a.generatedAt.localeCompare(b.generatedAt));
-}
-
-function ashlrRoot(rootDir: string | undefined): string {
-  if (rootDir && rootDir.trim() !== '') return rootDir;
-  const configuredHome = process.env.ASHLR_HOME;
-  if (typeof configuredHome === 'string' && configuredHome.trim() !== '') return configuredHome;
-  return path.join(homedir(), '.ashlr');
 }
 
 function safeReportId(id: string): string {
