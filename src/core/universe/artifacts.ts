@@ -202,7 +202,7 @@ export function pinSeed(repo: string, revision: string): { repo: string; revisio
   const physical = realpathSync(repo);
   const root = git(physical, ['rev-parse', '--show-toplevel']).toString().trim();
   if (realpathSync(root) !== physical) throw new Error('Seed path must be the Git repository root');
-  if (!/^[a-f0-9]{40}$|^[a-f0-9]{64}$/.test(revision)) throw new Error('Seed revision must be a full immutable Git commit');
+  if (!UNIVERSE_GIT_OID_RE.test(revision)) throw new Error('Seed revision must be a full immutable Git commit');
   const resolved = git(physical, ['rev-parse', '--verify', `${revision}^{commit}`]).toString().trim();
   if (resolved !== revision) throw new Error('Seed revision did not resolve to the exact commit');
   return { repo: physical, revision: resolved };
@@ -245,4 +245,80 @@ export function executable(command: string[], cwd: string): string[] {
     } catch { /* Try the next explicitly configured PATH location. */ }
   }
   throw new Error(`Executable unavailable: ${first}`);
+}
+
+/** Shared validation primitives used across Universe stores, codecs and planners. */
+export const UNIVERSE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+export const UNIVERSE_SHA256_RE = /^[a-f0-9]{64}$/;
+export const UNIVERSE_UUID_V4_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+export const UNIVERSE_GIT_OID_RE = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const METRIC_KEY_RE = /^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/;
+const STRICT_ISO_RE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+}
+
+/** Own keys match `keys` exactly (rejects symbol keys and missing/extra keys). */
+export function hasExactOwnKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const own = Reflect.ownKeys(value);
+  return own.length === keys.length && own.every((key) => typeof key === 'string' && keys.includes(key));
+}
+
+/** Own keys match `keys` exactly and every property is a data descriptor (no accessors). */
+export function hasExactDataKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const own = Reflect.ownKeys(value);
+  return own.length === keys.length && own.every((key) => typeof key === 'string' &&
+    keys.includes(key) && Object.hasOwn(Object.getOwnPropertyDescriptor(value, key)!, 'value'));
+}
+
+/** Enumerable keys are a subset of `keys` (allows omitted optional keys). */
+export function hasOnlyAllowedKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).every((key) => keys.includes(key));
+}
+
+/** Plain object with all `required` own keys and only `required`/`optional` data descriptors. */
+export function isDataObject(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[] = [],
+  enumerableOnly = false,
+): value is Record<string, unknown> {
+  if (!isPlainObject(value)) return false;
+  return required.every((key) => Object.hasOwn(value, key)) && Reflect.ownKeys(value).every((key) => {
+    if (typeof key !== 'string' || (!required.includes(key) && !optional.includes(key))) return false;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+    return (!enumerableOnly || descriptor.enumerable) && 'value' in descriptor;
+  });
+}
+
+export function isUniverseId(value: unknown): value is string {
+  return typeof value === 'string' && UNIVERSE_ID_RE.test(value);
+}
+
+export function isSha256Hex(value: unknown): value is string {
+  return typeof value === 'string' && UNIVERSE_SHA256_RE.test(value);
+}
+
+export function isSafeIntegerInRange(value: unknown, min: number, max: number): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= min && (value as number) <= max;
+}
+
+export function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+export function isIsoTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+}
+
+export function isStrictIsoTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && STRICT_ISO_RE.test(value) &&
+    Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+}
+
+export function isValidMetricsMap(value: unknown): value is Record<string, number> {
+  return isPlainObject(value) && Object.keys(value).length <= 32 &&
+    Object.entries(value).every(([key, item]) => METRIC_KEY_RE.test(key) && isFiniteNumber(item));
 }

@@ -5,7 +5,10 @@ import { performance } from 'node:perf_hooks';
 import type { LocalStoreLock } from '../fleet/local-store-lock.js';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
-import { canonical, defaultUniverseRoot, digest, inspectPrivateDirectory, readArtifactSnapshot } from './artifacts.js';
+import {
+  canonical, defaultUniverseRoot, digest, inspectPrivateDirectory, isIsoTimestamp as timestamp,
+  readArtifactSnapshot, UNIVERSE_GIT_OID_RE as OID, UNIVERSE_ID_RE as ID, UNIVERSE_SHA256_RE as HASH,
+} from './artifacts.js';
 import { deliveryGit } from './delivery-git.js';
 import { assertUniverseExecution, withUniverseExecution } from './execution.js';
 import { assertComparatorUnchanged, manifestRecord, projectUniverse, readRecords, universePath, type ManifestRecord } from './store.js';
@@ -37,9 +40,6 @@ export interface UniverseDeliveryReport {
   reasons: string[];
 }
 type RecordEntry = { id: string; kind: 'intent' | 'receipt'; delivery: UniverseDeliveryReceipt };
-const HASH = /^[a-f0-9]{64}$/;
-const OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const TRIAL_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 const MAX_DELIVERIES = 128;
 
@@ -48,9 +48,6 @@ export function validUniverseDeliveryBranch(value: unknown): value is string {
     ![...value].some((part) => part.charCodeAt(0) <= 32 || part.charCodeAt(0) === 127 || '~^:?*[\\'.includes(part)) &&
     !value.includes('..') && !value.includes('@{') && !value.endsWith('.') &&
     value.split('/').every((part) => !!part && !part.startsWith('.') && !part.endsWith('.lock'));
-}
-function timestamp(value: unknown): value is string {
-  return typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 function deliveryId(universeId: string, branch: string): string { return digest(canonical({ domain: 'universe-delivery-v1', universeId, branch })); }
 function parse(value: unknown): RecordEntry | null {

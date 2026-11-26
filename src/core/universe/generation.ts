@@ -1,37 +1,23 @@
 import { normalizeNumericLoopbackOllamaBaseUrl } from '../run/ollama-identity.js';
 import { resourceUsageScopeForProvider } from '../resources/performance.js';
+import {
+  hasOnlyAllowedKeys as exact, isDataObject as dataObject, isPlainObject as object,
+  isSha256Hex as hash, isUniverseId as resourceId,
+} from './artifacts.js';
 import { validSeedContextReceipt } from './seed-context.js';
 import type { UniverseGenerationConfig, UniverseGenerationReceipt, UniverseGenerationUsage, UniverseResourceGenerationEvidence,
   UniverseRun, UniverseTrial } from './types.js';
 
-const RESOURCE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
-
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-function exact(value: Record<string, unknown>, keys: string[]): boolean {
-  return Object.keys(value).every((key) => keys.includes(key));
-}
 function count(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) >= 0; }
 function boundedText(value: unknown, max: number): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= max &&
     [...value].every((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127);
-}
-function dataObject(value: unknown, required: string[], optional: string[] = []): value is Record<string, unknown> {
-  if (!object(value)) return false;
-  const keys = Reflect.ownKeys(value);
-  return required.every((key) => keys.includes(key)) && keys.every((key) => typeof key === 'string' &&
-    [...required, ...optional].includes(key) && 'value' in Object.getOwnPropertyDescriptor(value, key)!);
 }
 function denseArray(value: unknown, minimum: number, maximum: number): value is unknown[] {
   return Array.isArray(value) && value.length >= minimum && value.length <= maximum &&
     Reflect.ownKeys(value).length === value.length + 1 && Array.from({ length: value.length }, (_, index) =>
       Object.hasOwn(value, index) && 'value' in Object.getOwnPropertyDescriptor(value, index)!).every(Boolean);
 }
-function resourceId(value: unknown): value is string { return typeof value === 'string' && RESOURCE_ID.test(value); }
-function hash(value: unknown): value is string { return typeof value === 'string' && HASH.test(value); }
 function resourceWorkers(value: unknown): value is string[] {
   return denseArray(value, 1, 32) && value.every(resourceId) && new Set(value).size === value.length;
 }

@@ -3,7 +3,11 @@ import { join, resolve } from 'node:path';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
-import { canonical, defaultUniverseRoot, digest, inspectPrivateDirectory } from './artifacts.js';
+import {
+  canonical, defaultUniverseRoot, digest, hasExactDataKeys as exact, inspectPrivateDirectory,
+  isPlainObject as object, isSafeIntegerInRange, isSha256Hex as hash, isStrictIsoTimestamp as iso,
+  isUniverseId as id, UNIVERSE_UUID_V4_RE as DISPATCH_ID,
+} from './artifacts.js';
 import { validateUniverseCampaignDeliveryPlan } from './campaign-delivery.js';
 import { validateUniversePortfolioDefinition } from './portfolio-plan.js';
 import type { PortfolioControllerEnrollment, PortfolioControllerEvent, PortfolioControllerPin, PortfolioControllerGraphDispatch,
@@ -12,27 +16,11 @@ import type { PortfolioControllerEnrollment, PortfolioControllerEvent, Portfolio
 import { PORTFOLIO_CONTROLLER_DIAGNOSTIC_CODES } from './portfolio-controller-types.js';
 import type { UniverseStoreOptions } from './types.js';
 
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
-const DISPATCH_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const MAX_EVENTS = 512;
 const MAX_BYTES = 4 * 1024 * 1024;
 const EVENT_BYTES = 4_096;
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(value));
-}
-function exact(value: Record<string, unknown>, keys: string[]): boolean {
-  return Reflect.ownKeys(value).length === keys.length && Reflect.ownKeys(value).every((key) => typeof key === 'string' &&
-    keys.includes(key) && Object.hasOwn(Object.getOwnPropertyDescriptor(value, key)!, 'value'));
-}
-function hash(value: unknown): value is string { return typeof value === 'string' && HASH.test(value); }
-function id(value: unknown): value is string { return typeof value === 'string' && ID.test(value); }
-function iso(value: unknown): value is string {
-  return typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) &&
-    Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
-}
 function reason(value: unknown): value is string { return typeof value === 'string' && /^[a-z][a-z0-9-]{0,79}$/.test(value); }
-function sequence(value: unknown): value is number { return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) < MAX_EVENTS; }
+function sequence(value: unknown): value is number { return isSafeIntegerInRange(value, 0, MAX_EVENTS - 1); }
 
 /** Strict detached linkage. Graph IDs intentionally share the graph's mixed-case grammar. */
 export function validatePortfolioControllerGraphDispatch(value: unknown): PortfolioControllerGraphDispatch {

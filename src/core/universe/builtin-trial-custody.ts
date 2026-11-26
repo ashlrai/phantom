@@ -1,6 +1,9 @@
 import { isAbsolute, join, resolve } from 'node:path';
 import { types } from 'node:util';
-import { canonical, digest } from './artifacts.js';
+import {
+  canonical, digest, isStrictIsoTimestamp as timestamp, UNIVERSE_ID_RE,
+  UNIVERSE_SHA256_RE as HASH, UNIVERSE_UUID_V4_RE as UUID,
+} from './artifacts.js';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
 
@@ -25,8 +28,6 @@ export interface BuiltinTrialCustodyRecord {
   intent: BuiltinTrialIntent;
   settlement: null | { intentDigest: string; finishedAt: string; state: 'not-started' | 'group-exit-confirmed' };
 }
-const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const HASH = /^[a-f0-9]{64}$/;
 const MAX_RECORDS = 4096;
 const unavailable = (): Error => new Error('Built-in trial evaluator custody unavailable');
 function own(value: unknown, keys: string[]): Record<string, unknown> {
@@ -37,15 +38,13 @@ function own(value: unknown, keys: string[]): Record<string, unknown> {
   return Object.fromEntries(keys.map(key => [key, descriptors[key]!.value]));
 }
 const matches = (value: unknown, pattern: RegExp): value is string => typeof value === 'string' && pattern.test(value);
-const timestamp = (value: unknown): value is string => typeof value === 'string' && value.length === 24 && Number.isFinite(Date.parse(value)) &&
-  new Date(value).toISOString() === value;
 function codec(directory: string): ImmutablePrivateRecordCodec<BuiltinTrialCustodyRecord> {
   return {
     parse(input) { try {
       const row = own(input, ['id', 'kind', 'intent', 'settlement']);
       const intent = own(row.intent, ['schemaVersion', 'universeId', 'runId', 'trialId', 'startedAt',
         'manifestDigest', 'comparatorDigest', 'evaluatorId', 'evaluatorDigest', 'artifactPath', 'artifactDigest', 'scratchPath']);
-      if (intent.schemaVersion !== 1 || !matches(intent.universeId, /^[a-z0-9][a-z0-9_-]{0,63}$/) ||
+      if (intent.schemaVersion !== 1 || !matches(intent.universeId, UNIVERSE_ID_RE) ||
         !matches(intent.runId, UUID) || !matches(intent.trialId, UUID) || !timestamp(intent.startedAt) ||
         !['manifestDigest', 'comparatorDigest', 'evaluatorDigest', 'artifactDigest'].every(key => matches(intent[key], HASH)) ||
         (intent.evaluatorId !== 'preparation-measurement-v1' && intent.evaluatorId !== 'preparation-process-score-v1') || join(directory, '..', intent.universeId) !== directory ||

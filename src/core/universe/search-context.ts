@@ -1,31 +1,19 @@
-import { canonical, digest } from './artifacts.js';
+import {
+  canonical, digest, hasExactOwnKeys as exact, isFiniteNumber as finite, isPlainObject as object,
+  isSafeIntegerInRange as integer, isSha256Hex as hash, UNIVERSE_ID_RE as ID,
+} from './artifacts.js';
 import type {
   UniverseElite, UniverseSearchAttempt, UniverseSearchContext, UniverseSearchContextReceipt,
   UniverseSummary, UniverseTrial, UniverseVariant,
 } from './types.js';
 
-export const MAX_SEARCH_CONTEXT_ATTEMPTS = 16;
+const MAX_SEARCH_CONTEXT_ATTEMPTS = 16;
 const MAX_HISTORY_RUNS = 10_000;
 const MAX_CONTEXT_BYTES = 16 * 1024;
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const RECORD_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
 type Parent = UniverseSearchContext['parent'];
 
 function invalid(detail: string): never { throw new Error(`Invalid Universe search context: ${detail}`); }
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-function exact(value: Record<string, unknown>, keys: string[]): boolean {
-  const own = Reflect.ownKeys(value);
-  return own.length === keys.length && own.every((key) => typeof key === 'string' && keys.includes(key));
-}
-function finite(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value); }
-function integer(value: unknown, low: number, high: number): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= low && Number(value) <= high;
-}
-function hash(value: unknown): value is string { return typeof value === 'string' && HASH.test(value); }
 function identity(value: unknown, record = false): value is string {
   return typeof value === 'string' && (record ? RECORD_ID : ID).test(value);
 }

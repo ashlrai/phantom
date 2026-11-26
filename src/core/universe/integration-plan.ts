@@ -1,4 +1,7 @@
-import { canonical, digest, MAX_ARTIFACT_BYTES } from './artifacts.js';
+import {
+  canonical, digest, hasExactOwnKeys as exact, isPlainObject as object, isSha256Hex,
+  MAX_ARTIFACT_BYTES, UNIVERSE_GIT_OID_RE as OID, UNIVERSE_ID_RE as ID,
+} from './artifacts.js';
 import * as delivery from './delivery.js';
 import { deliveryGit, type GitTreeEntry } from './delivery-git.js';
 import { fileOperationsPathKey, validFileOperationsPath } from './generation.js';
@@ -6,20 +9,10 @@ import type { UniverseIntegrationConflict, UniverseIntegrationDefinition, Univer
   UniverseIntegrationPlan, UniverseIntegrationSourceSummary } from './integration-types.js';
 import type { UniverseStoreOptions } from './types.js';
 
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const MAX_SOURCES = 8;
 const MAX_PATHS = 8_192;
 const MAX_CONFLICTS = 128;
 
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-function exact(value: Record<string, unknown>, keys: string[]): boolean {
-  const own = Reflect.ownKeys(value);
-  return own.length === keys.length && own.every((key) => typeof key === 'string' && keys.includes(key));
-}
 function validPath(value: unknown): value is string {
   return validFileOperationsPath(value) && ![...value].some((part) => {
     const code = part.charCodeAt(0); return code >= 127 && code <= 159;
@@ -50,7 +43,7 @@ export function validateUniverseIntegrationDefinition(value: unknown): UniverseI
   const seen = new Set<string>();
   for (const source of value.sources) {
     if (!object(source) || !exact(source, ['universeId', 'deliveryId', 'commit', 'tree']) || typeof source.universeId !== 'string' || !ID.test(source.universeId) ||
-        typeof source.deliveryId !== 'string' || !/^[a-f0-9]{64}$/.test(source.deliveryId) ||
+        !isSha256Hex(source.deliveryId) ||
         typeof source.commit !== 'string' || !OID.test(source.commit) || typeof source.tree !== 'string' || !OID.test(source.tree)) {
       throw new Error('Invalid Universe integration: exact delivered source pins required');
     }
