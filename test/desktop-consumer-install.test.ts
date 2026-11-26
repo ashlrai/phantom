@@ -8,6 +8,9 @@ import {gzipSync} from 'node:zlib';
 import {Header} from 'tar';
 import {canonicalJson} from '../src/core/authority/canonical-json.js';
 import {authoritySurfaceDigest} from '../src/core/authority/surface.js';
+import {acquireResourceQuotaRefreshLease} from '../src/core/resources/quota-refresh-lease.js';
+import * as bootIdentity from '../src/core/resources/native-boot-identity.js';
+import {canonical, digest} from '../src/core/universe/artifacts.js';
 import {extractSignedAppArchive} from '../src/core/desktop/qualified-update.js';
 import {applyConsumerDesktopInstall,consumerInstallerOsCommand,createConsumerInstallDependencies,inspectConsumerDesktopInstall,parseConsumerShellTargets,type ConsumerInstallDependencies,type ConsumerTransaction} from '../src/core/desktop/consumer-install.js';
 import {cmdDesktop,parseDesktopInstallArgs} from '../src/cli/desktop.js';
@@ -90,6 +93,68 @@ function fixture(version='3.29.3') {
 }
 
 describe('public consumer first installation',()=> {
+  it('recovers a proven same-boot dead collector before quiescence on apply',async()=> {
+    const f=fixture(),ledger=join(f.home,'.ashlr/account-connections/ledger');
+    fs.mkdirSync(ledger,{recursive:true,mode:0o700});
+    vi.spyOn(bootIdentity,'readNativeBootIdentity').mockReturnValue({machineDigest:'a'.repeat(64),bootId:'11111111-2222-3333-4444-555555555555'});
+    const lease=await acquireResourceQuotaRefreshLease(ledger,{scope:'native-connection-metadata',trackNativeActivity:true});
+    lease.markPending();lease.close(true);
+    const pending=join(ledger,'.resource-quota-refresh-pending.json'),activity=join(ledger,'.resource-quota-refresh-activity.json');
+    const record=JSON.parse(fs.readFileSync(pending,'utf8')),pid=2147483000;
+    record.ownerPid=pid;write(pending,canonical(record)+'\n');
+    write(activity,canonical({...JSON.parse(fs.readFileSync(activity,'utf8')),markerDigest:digest(canonical(record))})+'\n');
+    const kill=process.kill;
+    vi.spyOn(process,'kill').mockImplementation((target,signal)=>{
+      if(target===pid)throw Object.assign(new Error('fixture owner absent'),{code:'ESRCH'});
+      return kill(target,signal);
+    });
+    const emit=vi.fn();
+    expect(await cmdDesktop(['install','--apply'],f.deps,emit)).toBe(0);
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({state:'installed'}));
+    expect(fs.existsSync(pending)).toBe(false);
+  });
+  it('reports the exact private path in inspection and tightens it only on explicit apply',async()=> {
+    const f=fixture(),local=join(f.home,'.local'),share=join(local,'share');
+    fs.mkdirSync(share,{recursive:true,mode:0o700});
+    fs.chmodSync(local,0o755);fs.chmodSync(share,0o751);
+    expect(await inspectConsumerDesktopInstall(f.deps)).toMatchObject({state:'held',reason:'unsafe-local-path',path:local,remedyCommand:`chmod go-rwx '${local}'`});
+    expect(fs.statSync(local).mode&0o777).toBe(0o755);
+    const emit=vi.fn();
+    expect(await cmdDesktop(['install','--apply'],f.deps,emit)).toBe(0);
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({state:'installed',tightenedPaths:[local,share]}));
+    expect(fs.statSync(local).mode&0o777).toBe(0o700);
+    expect(fs.statSync(share).mode&0o777).toBe(0o700);
+  });
+  it('holds an unproven collector marker and provides a remedy command',async()=> {
+    const f=fixture(),pending=join(f.home,'.ashlr/account-connections/ledger/.resource-quota-refresh-pending.json');
+    write(pending,'{}');
+    const emit=vi.fn(),code=await cmdDesktop(['install','--apply'],f.deps,emit);
+    expect(code).toBe(1);
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({state:'held',reason:'collector-pending',remedyCommand:expect.any(String)}));
+    expect(fs.readFileSync(pending,'utf8')).toBe('{}');
+  });
+  it('never tightens a symlink to a directory outside HOME',async()=> {
+    const f=fixture(),local=join(f.home,'.local'),outside=join(f.root,'external');
+    fs.mkdirSync(outside,{mode:0o755});fs.chmodSync(outside,0o755);
+    fs.symlinkSync(outside,local);
+    const emit=vi.fn();
+    expect(await cmdDesktop(['install','--apply'],f.deps,emit)).toBe(1);
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({state:'held',reason:'unsafe-local-path',path:local}));
+    expect(fs.lstatSync(local).isSymbolicLink()).toBe(true);
+    expect(fs.statSync(outside).mode&0o777).toBe(0o755);
+  });
+  it.each(['leases-active','app-running','sidecar-live'])('surfaces %s and a remedy before moving the app',async reason=> {
+    const f=fixture();
+    if(reason==='leases-active') f.census.leases.push({pid:100});
+    else vi.mocked(f.io.exec).mockImplementation((bin,args)=>{
+      expect(consumerInstallerOsCommand(bin,args)).toBe(true);
+      expect(bin).toBe('/bin/ps');
+      const executable=reason==='app-running'?'ashlr-desktop':'ashlr verse';
+      return {status:0,stdout:`100 1 Thu Oct 8 00:00:00 2026 /Applications/Phantom.app/Contents/MacOS/${executable}\n`};
+    });
+    expect(await inspectConsumerDesktopInstall(f.deps)).toMatchObject({state:'held',reason,remedyCommand:expect.any(String)});
+    expect(f.io.renameExclusive).not.toHaveBeenCalled();
+  });
   it('defaults to inspection; accepts only explicit apply and no authority/path/key overrides',()=> {
     expect(parseDesktopInstallArgs(['install'])).toEqual({apply:false});expect(parseDesktopInstallArgs(['install','--apply'])).toEqual({apply:true});
     expect(parseDesktopInstallArgs([])).toBeNull();

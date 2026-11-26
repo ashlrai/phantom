@@ -920,11 +920,11 @@ fn reap_sidecar(handle: &AppHandle) {
     let Some(state) = handle.try_state::<AppState>() else {
         return;
     };
-    clear_sidecar_tokens(&state, 0);
     let mut guard = match state.sidecar.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
+    clear_sidecar_tokens(&state, 0);
     let Some(child) = guard.take() else {
         // No child of ours to reap. Crucially, do NOT clear the ownership
         // record here: on startup this runs *before* `reclaim_orphan`, and
@@ -944,14 +944,12 @@ fn reap_sidecar(handle: &AppHandle) {
     // was one that was already dead, and the workers leaked on the ordinary ⌘Q
     // path — the exact failure the extra call was added to prevent.
     //
-    // `terminate_tree` walks the tree while the parent is still alive and gives
-    // it a bounded SIGTERM grace first, so `ashlr verse` gets to run the
-    // shutdown that releases its resource-quota lease.
+    // Give Verse the first chance to shut down its workers and release its
+    // quota lease before escalating to tree cleanup.
     let pid = child.pid() as i32;
     sidecar_guard::terminate_tree(pid);
     // Now let Tauri reap its own handle; the process is already gone.
     let _ = child.kill();
-    drop(guard);
     sidecar_guard::clear();
 }
 
@@ -1120,20 +1118,26 @@ fn spawn_server_sidecar(handle: AppHandle, mode: SidecarMode, attempt: u64, kind
             "[ashlr-desktop] web assets (public/) not found next to the app — static routes may 404; run desktop/scripts/prepare-sidecar.mjs"
         ),
     }
+    let Some(state) = handle.try_state::<AppState>() else {
+        return;
+    };
+    let mut guard = lock(&state.sidecar);
+    if is_exiting(&handle) {
+        return;
+    }
     let spawned = command.spawn();
 
     let (mut rx, child) = match spawned {
         Ok(pair) => pair,
         Err(e) => {
+            drop(guard);
             eprintln!("[ashlr-desktop] failed to spawn {}: {e}", mode.label());
             if kind == SpawnKind::Restart {
                 // No new generation was taken, so the crashed one is still the
                 // live one and the policy decides whether to try again.
-                if let Some(state) = handle.try_state::<AppState>() {
-                    let generation = state.live_generation.load(Ordering::SeqCst);
-                    if generation != 0 && !is_exiting(&handle) {
-                        handle_unexpected_exit(&handle, mode, attempt, generation, Duration::ZERO);
-                    }
+                let generation = state.live_generation.load(Ordering::SeqCst);
+                if generation != 0 && !is_exiting(&handle) {
+                    handle_unexpected_exit(&handle, mode, attempt, generation, Duration::ZERO);
                 }
                 return;
             }
@@ -1151,34 +1155,18 @@ fn spawn_server_sidecar(handle: AppHandle, mode: SidecarMode, attempt: u64, kind
     let spawned_at = Instant::now();
     let pid = child.pid();
 
-    // Record who owns this sidecar before anything else can go wrong, so a
-    // crash from here on is repairable by the next launch.
-    sidecar_guard::record(pid, SERVE_PORT, &arg_refs);
-
     // Take a generation and store the child so we can kill it on exit
     // (replacing a previous one on fallback).
-    let generation = match handle.try_state::<AppState>() {
-        Some(state) => {
-            let generation = state.next_generation.fetch_add(1, Ordering::SeqCst) + 1;
-            // Live BEFORE the previous child is signalled below, so its
-            // Terminated event reads as a replacement, not a crash.
-            clear_sidecar_tokens(&state, generation);
-            let mut guard = lock(&state.sidecar);
-            if let Some(previous) = guard.take() {
-                // Same ordering rule as `reap_sidecar`: the tree has to be
-                // walked while the parent is alive, or `pgrep -P` finds nothing.
-                let previous_pid = previous.pid() as i32;
-                sidecar_guard::terminate_tree(previous_pid);
-                let _ = previous.kill();
-            }
-            *guard = Some(child);
-            generation
-        }
-        None => {
-            eprintln!("[ashlr-desktop] app state slot missing — child will not be reaped on quit");
-            0
-        }
-    };
+    let generation = state.next_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    // The previous child's Terminated event must read as a replacement.
+    clear_sidecar_tokens(&state, generation);
+    if let Some(previous) = guard.take() {
+        sidecar_guard::terminate_tree(previous.pid() as i32);
+        let _ = previous.kill();
+    }
+    sidecar_guard::record(pid, SERVE_PORT, &arg_refs);
+    *guard = Some(child);
+    drop(guard);
 
     let ready = Arc::new(AtomicBool::new(false));
     // True once this sidecar has actually served (a startup record, or a
@@ -1307,16 +1295,15 @@ fn spawn_server_sidecar(handle: AppHandle, mode: SidecarMode, attempt: u64, kind
                     // belongs to whoever did that.
                     let was_live = match handle.try_state::<AppState>() {
                         Some(state) if generation != 0 => {
-                            let live = state.live_generation.load(Ordering::SeqCst) == generation;
+                            let mut guard = lock(&state.sidecar);
+                            let live = state.live_generation.load(Ordering::SeqCst) == generation
+                                && guard.as_ref().map(|c| c.pid()) == Some(pid);
                             if live {
                                 // Drop the handle to the dead child: its pid can
                                 // be recycled, and the replacement path above
                                 // would otherwise signal whatever inherits it.
-                                let mut guard = lock(&state.sidecar);
-                                if guard.as_ref().map(|c| c.pid()) == Some(pid) {
-                                    guard.take();
-                                }
-                                drop(guard);
+                                guard.take();
+                                sidecar_guard::clear();
                                 let mut read = lock(&state.read_token);
                                 if state.live_generation.load(Ordering::SeqCst) == generation {
                                     *lock(&state.mutation_token) = None;
@@ -1325,29 +1312,8 @@ fn spawn_server_sidecar(handle: AppHandle, mode: SidecarMode, attempt: u64, kind
                             }
                             live
                         }
-                        _ => true,
+                        _ => false,
                     };
-                    if was_live {
-                        // Disarm the guard: this pid is dead. Without this,
-                        // `SIDECAR_PID` kept pointing at it for the rest of the
-                        // app's life — the common case, since the app then parks
-                        // on the "sidecar stopped while starting" screen — and a
-                        // later SIGTERM/SIGINT/SIGHUP ran `terminate_handler`,
-                        // which signals unconditionally with no argv check. Once
-                        // the kernel recycled that pid, the victim was a
-                        // stranger's process. `reclaim_orphan` goes to real
-                        // trouble to prove a pid is ours before killing it; the
-                        // warm paths cannot, so they must not stay armed on a pid
-                        // known to be gone.
-                        //
-                        // ONLY when live: a reaped or replaced child's late
-                        // Terminated must not wipe the record and armed pid of
-                        // the sidecar that replaced it.
-                        //
-                        // The fallback below re-`record()`s via
-                        // `spawn_server_sidecar`, so the Serve child stays covered.
-                        sidecar_guard::clear();
-                    }
                     if !was_live || is_exiting(&handle) {
                         break;
                     }
@@ -1564,9 +1530,8 @@ fn start_health_watch(handle: AppHandle) {
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle().clone();
 
-    // `pkill`, a `kill` from a terminal, or Ctrl-C on a foreground run never
-    // reach Tauri's event loop. Arm the reaper before a sidecar can exist.
-    sidecar_guard::install_signal_handlers();
+    let signal_handle = handle.clone();
+    sidecar_guard::install_signal_handlers(move |code| signal_handle.exit(code))?;
 
     // ── restore the saved window geometry + theme ────────────────────────────
     let saved = window_state::load().unwrap_or_default();
@@ -2448,7 +2413,7 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error building Phantom desktop app");
 
-    app.run(|handle, event| match event {
+    app.run(|handle, event| match &event {
         // Every quit path lands here: ⌘Q, the app menu, the tray, or a signal.
         // Reaping the sidecar in one place is what keeps orphan `ashlr verse`
         // processes off the machine.
@@ -2469,7 +2434,9 @@ fn main() {
                 }
             }
             reap_sidecar(handle);
-            native_update_runtime::normal_quit(handle);
+            if matches!(event, RunEvent::ExitRequested { code: None | Some(0), .. }) {
+                native_update_runtime::normal_quit(handle);
+            }
         }
         // Clicking the Dock icon while the window is closed to the tray: bring
         // it back, the way every Mac app does.

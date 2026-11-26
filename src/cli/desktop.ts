@@ -51,7 +51,7 @@ export async function cmdDesktop(args: string[], dependencies?: ConsumerInstallD
   let observed: ConsumerInstallResult;
   try {
     const deps=dependencies??createConsumerInstallDependencies();
-    observed=await inspectConsumerDesktopInstall(deps);
+    observed=await inspectConsumerDesktopInstall(deps,options.apply);
     if (options.apply && observed.state==='ready') observed=await applyConsumerDesktopInstall(observed);
   } catch {
     observed={state:'held',version:null,reason:'consumer-unavailable',installationAccepted:false,authorityResumed:false,shell:[]};
