@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, scanBusInbox, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxOptions, type BusInboxPost, type BusInboxReceipt, type BusInboxScan } from '../fleet/bus-inbox.js';
 import { BUS_PRIORITIES, isClaimableWork, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
-import { groupAddress, isGroupPresenceBody } from '../fleet/bus-group.js';
+import { groupAddress, groupAddressTopicOf, isGroupPresenceBody } from '../fleet/bus-group.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { createBusWakeHook, type BusWakeResult } from '../fleet/bus-wake.js';
@@ -1178,7 +1178,15 @@ export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean
  * reported kind, so `--channel` composes with `--kind` to read just one
  * room's direct mail or just its assignments; DMs and label-addressed mail
  * never match, and a channel the agent is not a member of simply has no
- * mail to show. `contains` keeps only mail whose scrubbed one-line
+ * mail to show. `topic` keeps only mail addressed to a well-formed
+ * `group:<room>:<topic>` label carrying that exact topic component — the
+ * same `groupAddressTopicOf` parse `channel read --topic`,
+ * `work feed --topic`, `work next --topic` and `comms bus next --topic`
+ * apply, decided on the raw routing label so it composes with `--channel`
+ * into one room and one topic; mail addressed to an agent label, a bare
+ * `group:<room>` or a malformed address never matches, the value takes the
+ * same strict channel-name grammar, and the filter needs no registry.
+ * `contains` keeps only mail whose scrubbed one-line
  * summary — the same text the frame renders per row — carries the needle
  * as a case-insensitive substring, so "did anyone send me mail about X"
  * is one filtered read instead of a page through the backlog; matching
@@ -1242,7 +1250,7 @@ export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
     excludeFrom?: string; with?: string; matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number;
-    before?: number; channel?: string; contains?: string; inReplyTo?: string; id?: string; bodyKind?: string;
+    before?: number; channel?: string; topic?: string; contains?: string; inReplyTo?: string; id?: string; bodyKind?: string;
     result?: WorkResultOutcome } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
@@ -1295,6 +1303,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (channelFilter !== undefined && (typeof channelFilter !== 'string' || !agentChannelNameSchema.safeParse(channelFilter).success)) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
+  }
+  if (page.topic !== undefined && (typeof page.topic !== 'string' || !agentChannelNameSchema.safeParse(page.topic).success)) {
+    return { status: 'invalid', reason: 'Invalid channel topic.' };
   }
   const containsNeedle = busReadContains(page.contains);
   if (containsNeedle === null) {
@@ -1367,6 +1378,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         (since === undefined || row.receivedAt >= since) &&
         (before === undefined || row.receivedAt < before) &&
         (channelFilter === undefined || channel === channelFilter) &&
+        (page.topic === undefined || groupAddressTopicOf(envelope.to) === page.topic) &&
         (bodyKindFilter === undefined || busBodyKind(envelope.body) === bodyKindFilter) &&
         (resultOutcome === undefined || busBodyResultOutcome(envelope.body) === resultOutcome) &&
         (containsNeedle === undefined || busReadContainsMatch(envelope.body, containsNeedle)) ? kind : null;

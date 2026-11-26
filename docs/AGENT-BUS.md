@@ -509,6 +509,7 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>]
+[--topic <topic>]
 [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]`
 returns one page of
@@ -573,7 +574,14 @@ handoffs alike, matched on the delivery address rather than the reported
 kind — so an agent in several rooms reads one room's pending mail in one
 filtered read; it composes with `--kind` to separate a room's direct mail
 from its assignments, and a channel the agent is not a member of simply
-has no mail to show. `--contains` keeps only mail whose scrubbed
+has no mail to show. `--topic` keeps only mail addressed to a well-formed
+`group:<room>:<topic>` label carrying that exact topic component — the
+same `groupAddressTopicOf` parse `channel read --topic`, `work feed
+--topic`, `work next --topic` and `comms bus next --topic` apply,
+decided on the raw routing label so it composes with `--channel` into
+one room and one topic; mail addressed to an agent label, a bare
+`group:<room>` or a malformed address never matches, and the value takes
+the same strict channel-name grammar `--channel` does. `--contains` keeps only mail whose scrubbed
 one-line summary — the same text the `--frame` read renders per row —
 carries the needle as a case-insensitive substring, whitespace collapsed
 on both sides, so "did anyone send me mail about X" is one filtered read
