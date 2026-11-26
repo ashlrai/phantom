@@ -254,7 +254,11 @@ mod platform {
             "--json",
         ]);
         cmd.env_clear()
-            .envs(crate::fleet_ops::base_env(&home, &stage.path_env));
+            .envs(crate::fleet_ops::base_env(&home, &stage.path_env))
+            .env(
+                "PHANTOM_NATIVE_UPDATE_INTERLOCK",
+                "phantom.desktop-update-interlock.v1",
+            );
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -337,7 +341,7 @@ mod platform {
             Phase::WaitingForAppQuit
         } else if matches!(
             result.reason.as_deref(),
-            Some("stop-required" | "work-active-or-unknown")
+            Some("stop-required" | "work-active-or-unknown" | "drain-interlock-unsupported")
         ) {
             Phase::WaitingForIdle
         } else {

@@ -279,13 +279,33 @@ for explicit CLI-only rollback, which holds when an app is installed. Neither
 mode grants authority or restarts the resident. `cmdDesktop` accepts optional upgrade dependencies as
 its fifth parameter; `parseDesktopInstallArgs` preserves `{apply}` for plain
 install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
-The native `DesktopUpdateDependencies` port includes lowering-only
-`residentStop`; native installation requires Stop and known idle work, not a
-standing authority grant.
+The native `DesktopUpdateDependencies` port retains read-only
+`residentQuiescent` for manual Stop, which does not require a standing grant
+or unregister the resident. With interlock support and a verified running
+managed resident, verified apply may acquire its own transaction-bound local
+Stop. It records the resident, grant and surface before switching. A verified
+installation or abort can consume one in-process capability to restore that
+resident on the corresponding managed release only while those proofs still
+agree. Ownership, grant, surface and recovery failures return fixed holds.
 `phm desktop-update prepare --stage <id> --json` verifies the private staged
 app and the original CLI archive before Stop, including the app inventory and
 the candidate authority surface. It caches only the verified original package
 in the stage and does not change installed files, fleet state, or authority.
+`phm desktop update status --json` adds local interlock details under `drain`
+and the hosted release train's read-only `hostedReleaseTrain` state
+(`paused`, `enabled`, or `unknown`) to the native observation.
+Where interlock compatibility is unproven it reports
+`drain-interlock-unsupported`; on those hosts native installation still requires operator Stop.
+`~/.ashlr/KILL` remains operator-owned and separate from
+`~/.ashlr/DESKTOP_UPDATE_STOP`. The hosted status query never pauses or resumes
+publishing.
+On macOS, the CLI reports the dispatcher under `drain.hostCensus`. A missing
+capability marker on any installed host launcher reports `unsupported`, and a
+busy or unreadable census reports unknown work rather than idle. Qualified
+updates count active and unknown dispatcher work alongside native execution
+leases when the host supports the census. The dispatcher and its launchers
+refuse new work while `DESKTOP_UPDATE_STOP` is present. These source changes
+do not install or update any live host files; Security re-pinning still applies.
 The install module also exports `ConsumerInstallHeld` for shared error
 classification and the `directory`, `parents`, `owned`, `regular`, `write`,
 `sha`, `ioRead` and `packageReady` guards.

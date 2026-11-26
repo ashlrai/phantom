@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+# phantom.desktop-update-interlock.v1
 """Bound the entire host launcher, including preparation, for local lanes.
 
 The child retains the existing launcher and its sandbox checks. No provider call,
@@ -36,6 +37,17 @@ def supervise(command, marker, cap=WALL_CAP_S):
 
 
 def main():
+    stop = Path.home() / '.ashlr' / 'DESKTOP_UPDATE_STOP'
+    try:
+        stop.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        print('HELD: desktop update interlock unreadable')
+        return 3
+    else:
+        print('HELD: desktop update interlock')
+        return 3
     job, repo, lane, tier = sys.argv[1:]
     if lane not in ('codex-local', 'omlx') or not job or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-' for c in job):
         raise SystemExit('invalid local job')

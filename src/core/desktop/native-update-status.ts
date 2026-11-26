@@ -8,10 +8,18 @@ const phases = new Set(['uncommissioned', 'disabled', 'checking', 'idle', 'avail
   'staged', 'waiting-for-idle', 'waiting-for-app-quit', 'adoption-held', 'installing', 'installed', 'current', 'failed']);
 const remedies: Readonly<Record<string, string>> = {
   'stop-required': 'Engage Stop with phm authority stop, then let local work drain.',
+  'drain-interlock-unsupported': 'Engage Stop with phm authority stop, then let local work drain.',
   'work-active-or-unknown': 'Wait for local work and execution leases to finish.',
   'authority-reapproval-required': 'Review and approve the changed authority before resuming the fleet.',
   'grant-unavailable': 'Review the standing grant in Fleet.',
   'operator-restart-required': 'Resume the fleet when ready with phm authority resident start.',
+  'owned-pause-aborted': 'The update did not switch releases. Stage a fresh update when ready.',
+  'resume-abort-unverified': 'Inspect the previous managed installation before resuming the fleet.',
+  'resume-grant-changed': 'Review the standing grant in Fleet before resuming.',
+  'resume-install-unverified': 'Inspect the managed installation before resuming the fleet.',
+  'resume-ownership-lost': 'Check operator Stop and the local update pause before resuming.',
+  'resume-resident-unverified': 'Inspect the managed resident registration before resuming.',
+  'resume-surface-changed': 'Review and approve the changed authority before resuming.',
   'host-unavailable': 'Inspect the managed installation with phm desktop install --upgrade --require-app.',
   'running-current-mismatch': 'Inspect the managed installation with phm desktop install --upgrade --require-app.',
   'disabled': 'Enable Automatic updates in Phantom Settings.',

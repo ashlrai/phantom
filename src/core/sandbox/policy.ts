@@ -42,6 +42,7 @@ import {
 import type { Enrollment } from '../types.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { realHome } from '../real-home.js';
+import { desktopUpdateInterlockPresent } from '../desktop/update-interlock.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import {
   acquireOutwardMutationFence,
@@ -1675,7 +1676,7 @@ export function readKillSwitch(): KillSwitchReadResult {
  * This restrictive projection preserves mutation authority for legacy callers.
  */
 export function killSwitchOn(): boolean {
-  return readKillSwitch().state !== 'inactive';
+  return readKillSwitch().state !== 'inactive' || desktopUpdateInterlockPresent();
 }
 
 /**
