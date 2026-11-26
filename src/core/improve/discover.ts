@@ -1008,6 +1008,23 @@
  *     stated as lower bounds, and only the fleet's own repository
  *     inherits the items since the ledger is this install's rescue
  *     record and carries no repository column;
+ *   - the route shadow journal's recurring adverse divergence: the
+ *     advisory route.shadow.v1 records `phm route shadow eval
+ *     --record` appends to metrics/route.shadow.jsonl under the fleet
+ *     runs directory — each carrying the live router's pick, the
+ *     class-failure-avoidance policy's pick, the support verdict and
+ *     the per-lane outcome stats it ranked on
+ *     (shadowRouteBacklogItems below). Until now the journal's only
+ *     readers were `phm route shadow report` and the shadow_comparison
+ *     inside `phm route explain` — reports someone had to run — so a
+ *     (repo, task_class) cell where the two routers kept disagreeing
+ *     and the live lane's resolved picks kept failing never became
+ *     work. A cell emits only at the recurring bars of supported
+ *     disagreements across distinct UTC days inside the 7-day window
+ *     with resolved live failures at the adverse bar, truncated tails
+ *     are stated as lower bounds, and only the fleet's own repository
+ *     inherits the items since the journal describes this install's
+ *     routing;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -1115,6 +1132,7 @@ import { efficiencyBacklogItems } from './efficiency-backlog.js';
 import { landingsBacklogItems } from './landings-backlog.js';
 import { gitContentionBacklogItems } from './git-contention-backlog.js';
 import { jobReissueBacklogItems } from './job-reissue-backlog.js';
+import { shadowRouteBacklogItems } from './shadow-route-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2436,6 +2454,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the ledger is this install's rescue
   // record and carries no repository column.
   items.push(...await jobReissueBacklogItems({ repo }));
+
+  // Route shadow journal: the advisory route.shadow.v1 records
+  // `phm route shadow eval --record` appends to
+  // metrics/route.shadow.jsonl under the fleet runs directory — the
+  // live router's pick next to the class-failure-avoidance policy's
+  // pick per evaluation. Until now the journal's only readers were
+  // `phm route shadow report` and the shadow_comparison inside `phm
+  // route explain` — reports someone had to run — so recurring
+  // divergence where the live lane's resolved picks kept failing
+  // never became work. A (repo, task_class) cell emits only at the
+  // recurring bars of supported disagreements across distinct UTC
+  // days inside the 7-day window with resolved live failures at the
+  // adverse bar; the outcome join runs only once a cell is already
+  // recurring on disagreements and days, truncated tails are stated
+  // as lower bounds, and only the fleet's own repository inherits the
+  // items since the journal describes this install's routing.
+  items.push(...await shadowRouteBacklogItems({ repo }));
   return { items, errors };
 }
 
