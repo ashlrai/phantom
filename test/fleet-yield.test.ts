@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fleetYield, jobFamily, jobYield } from '../src/core/fleet/slot-yield.js';
+import { fleetYield, jobFamily, jobYield, yieldTally } from '../src/core/fleet/slot-yield.js';
 import { cmdFleetYield, familyYieldLines, type YieldLineReader } from '../src/cli/fleet-yield.js';
 import { readFamilyYield } from '../src/core/fleet/family-yield.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
@@ -91,6 +91,32 @@ describe('fleetYield', () => {
 });
 
 describe('jobs-ledger dialect', () => {
+  it.each(['outcome', 'publish'])('credits the launch that published the PR named by a %s receipt', (event) => {
+    const job = 'RQ-PR-RETRY';
+    const report = fleetYield([
+      launch(job, 4, 'codex'),
+      pr(job, 1),
+      launch(job, 2, 'claude'),
+      pr(job, 2),
+      row({ event, jobId: job, prUrl: 'https://example.invalid/pr/1', outcome: 'MERGED', mergedAt: at(1) }),
+    ], now, 24);
+    expect(report.lanes).toEqual([
+      expect.objectContaining({ name: 'claude', launches: 1, prs: 1, merged: 0 }),
+      expect.objectContaining({ name: 'codex', launches: 1, prs: 1, merged: 1 }),
+    ]);
+  });
+
+  it('replaces derived merge credit when later evidence records a revert', () => {
+    const job = 'RQ-PR-REVERT';
+    const tally = yieldTally(now, 24);
+    tally.add(launch(job, 4));
+    tally.add(pr(job, 1));
+    tally.add(outcome(job, 'MERGED'));
+    expect(tally.jobYield()).toMatchObject({ merged: 1, reverted: 0 });
+    tally.add(row({ event: 'revert', job, ts: at(1) }));
+    expect(tally.jobYield()).toMatchObject({ merged: 0, reverted: 1 });
+  });
+
   it('credits reconciler PUBLISHED and MERGED rows keyed by jobId/prUrl/outcome', () => {
     const lines = [
       launch('RQ-DIALECT-1', 3),

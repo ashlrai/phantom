@@ -1268,6 +1268,13 @@ medium) has under an hour of work queued.
 
 ## Which producer earns its slots?
 
+The launch-based `phm fleet yield` and `phm jobs yield` reports credit a
+merge to the launch that published the PR URL named by the outcome receipt.
+A reconciler receipt that repeats the publish event preserves an existing
+claim for that URL. If the outcome URL has no matching claim, credit falls
+back to the latest launch with a PR claim, then the latest launch. A later
+revert replaces the merge credit in subsequent reports.
+
 Run `phm jobs yield --by source` for a scoreboard per producer over the last 24 hours (`--since 7d` for a week). Each row
 has launches, PRs opened, merged, empty, aborted, merged per launch and median minutes to merge; the lowest merged per
 launch comes first, under one plain verdict line such as "filler: 2 merged of 40 launches, consider stopping it". A job's
