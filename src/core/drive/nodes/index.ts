@@ -133,7 +133,7 @@ export class DriveNodes implements QueueV1 {
 
   constructor(private readonly store: NodesStore, options: NodesOptions = {}) {
     this.nodeTtl = options.nodeTtlMs ?? 30_000;
-    this.leaderTtl = options.leaderTtlMs ?? 10_000;
+    this.leaderTtl = options.leaderTtlMs ?? 30_000;
     this.claimTtl = options.claimTtlMs ?? 30_000;
     this.clock = options.now ?? Date.now;
     for (const ttl of [this.nodeTtl, this.leaderTtl, this.claimTtl]) {
