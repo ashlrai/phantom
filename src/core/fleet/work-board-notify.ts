@@ -256,12 +256,22 @@ export function boardNoticeText(state: BoardNotifyState, itemId: string, asOf: s
   return scrubSecrets(`${state} ${field(itemId, 80)} as of ${field(asOf, 40)} — ${detail} (source: ${field(source, 120)})`);
 }
 
+/** VERIFIED detail budget: at most 1600 printable characters (three
+ * 512-character fields, labels, separators and PR number). Snapshot-reader
+ * evidence fits in full. Oversized direct inputs reserve space for an
+ * explicit omission marker; scrub BEFORE bounding to avoid partial secrets. */
+function proofField(value: string): string {
+  const clean = field(scrubSecrets(value), Infinity);
+  const omitted = ' [... omitted]';
+  return clean.length <= 512 ? clean : `${clean.slice(0, 512 - omitted.length)}${omitted}`;
+}
+
 /** The bounded evidence a postable state cites: ASSIGNED names the owner
  * with its durable claim receipt labeled alongside, BLOCKED names the
  * dependency, and VERIFIED joins every supplied field with its label so
  * combined evidence stays parseable. A lone artifact already cites
  * itself, so it keeps the unlabeled single-field form. Every untrusted
- * value goes through `field`, keeping the line single and bounded. */
+ * value goes through `field` or `proofField`, keeping the line single and bounded. */
 function detail(t: BoardTransition, state: BoardNotifyState): string | null {
   const e = t.evidence;
   if (state === 'ASSIGNED') {
@@ -271,9 +281,9 @@ function detail(t: BoardTransition, state: BoardNotifyState): string | null {
   if (state === 'BLOCKED') return e.dependency ? field(e.dependency, 160) : null;
   const parts: string[] = [];
   if (e.pr !== undefined) parts.push(`PR #${e.pr}`);
-  if (e.head) parts.push(`head ${field(e.head, 40)}`);
-  if (e.tests) parts.push(`tests ${field(e.tests, 120)}`);
-  if (e.artifact) parts.push(parts.length === 0 ? field(e.artifact, 160) : `artifact ${field(e.artifact, 160)}`);
+  if (e.head) parts.push(`head ${proofField(e.head)}`);
+  if (e.tests) parts.push(`tests ${proofField(e.tests)}`);
+  if (e.artifact) parts.push(parts.length === 0 ? proofField(e.artifact) : `artifact ${proofField(e.artifact)}`);
   return parts.length === 0 ? null : parts.join(' ');
 }
 
