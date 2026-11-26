@@ -177,6 +177,9 @@ reports `memory-unmeasured`. `held` is `null` or `memory-unmeasured`,
 reading wrongly ready. A `--capacity`
 value that is not one JSON object in that shape is refused as `bad-capacity`
 (exit 2) before the beat is recorded; its fix prints the `measure` command.
+When a heartbeat includes both `--slots` and `--capacity`, the lower slot
+count limits that session. The router retains the measured sample for
+shared host admission.
 
 A standalone session expires 30 seconds after its last beat, so
 `phm node beat --watch [--every <seconds>]` keeps one alive in the foreground:
