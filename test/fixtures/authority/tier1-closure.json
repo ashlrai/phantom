@@ -507,6 +507,7 @@
     "src/core/daemon/count-preferences.ts",
     "src/core/daemon/cutoff-checkpoint-scheduler.ts",
     "src/core/daemon/guard-health.ts",
+    "src/core/daemon/idle-park.ts",
     "src/core/daemon/launchd-plist-transaction.ts",
     "src/core/daemon/liveness.ts",
     "src/core/daemon/local-fleet.ts",

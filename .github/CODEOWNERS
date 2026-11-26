@@ -361,6 +361,7 @@
 /test/daemon-cli-help-safety.test.ts @masonwyatt23
 /test/daemon-first-tick-314.test.ts @masonwyatt23
 /test/daemon-health-revive.test.ts @masonwyatt23
+/test/daemon-idle-park-budget.test.ts @masonwyatt23
 /test/daemon-liveness-310b.test.ts @masonwyatt23
 /test/daemon-resident-capacity-publisher-310.test.ts @masonwyatt23
 /test/daemon-start-temp-worktree-sweep.test.ts @masonwyatt23
