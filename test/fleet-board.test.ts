@@ -154,6 +154,19 @@ describe('the conflict proxy and tier counts are pure', () => {
     ].join('\n');
     expect(queueDepthByTier(readyRowsForDepth(text))).toEqual({ work: 1, fast: 1, unknown: 1 });
   });
+
+  it('keeps unsupported tier labels from creating buckets or crowding out dispatch tiers', () => {
+    const text = [
+      ...Array.from({ length: 20 }, (_, index) => row('READY', `RQ-OTHER-${index}`, 'devin', `other-${index}`)),
+      row('READY', 'RQ-LEGACY', 'devin', 'standard'),
+      'READY\tRQ-MISSING\tdevin',
+      row('READY', 'RQ-FRONTIER', 'devin', 'frontier'),
+      row('READY', 'RQ-WORK', 'devin', 'work'),
+      row('READY', 'RQ-MID', 'devin', 'mid'),
+      row('READY', 'RQ-FAST', 'devin', 'FAST'),
+    ].join('\n');
+    expect(queueDepthByTier(readyRowsForDepth(text))).toEqual({ unknown: 22, frontier: 1, work: 1, mid: 1, fast: 1 });
+  });
 });
 
 describe('phm fleet board --leader', () => {
