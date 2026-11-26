@@ -374,8 +374,9 @@ A five-column row without a requirements spec inherits one from the matching
 `work_market.from_envelope`: the envelope's `preferred_lane`/`lane`/`pool`,
 `needs`, `data_class`, `exclusive` and tier or cost bounds replace the lane
 cell's defaults, so declared constraints reach the offload decision instead of
-the raw lane cell standing in for them. A spec-less row whose lane cell is
-not a lane id, or whose envelope is malformed, stays local with
+the raw lane cell standing in for them — the lane cell is never consulted
+once an envelope matches. A spec-less row whose envelope is malformed, or
+whose lane cell is not a lane id with no matching envelope, stays local with
 `invalid_requirements`; with no matching envelope the lane cell stands.
 
 The bridge does nothing and reports `inert` with one of these reason codes:

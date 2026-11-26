@@ -274,11 +274,13 @@ export function readyMarketLine(
     if (cell === 'invalid' || cell === null) return 'invalid';
     spec = cell;
   } else {
-    // Spec-less rows are validated like work_market.requirements first: the
-    // lane column defaults to preferred_lane, so a non-empty cell that is
-    // not a lane id rejects the row before its router-queue envelope is read.
-    const laneCell = cols[2] ?? '';
-    if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) return 'invalid';
+    // Like dispatchd's routed pass, a matching router-queue.md `(attrs)`
+    // envelope replaces the requirements wholesale: its spec decides the hint
+    // and the lane column is never consulted — the dispatcher's routed pass
+    // writes that spec into the row's requirements cell before launch, so a
+    // lane cell that is not a lane id cannot reject an enveloped row. Only a
+    // spec-less row with no envelope falls back to work_market.requirements
+    // on the row itself, where the lane column defaults to preferred_lane.
     const env = readyEnvelopeSpec(routerQueue, job);
     if (env === 'invalid') return 'invalid';
     if (env !== null) spec = env;

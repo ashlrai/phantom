@@ -1148,10 +1148,12 @@ describe('ready row validation', () => {
     expect(hints.invalid).toBe(1);
   });
 
-  it('rejects an envelope row whose lane column is not a lane id', () => {
-    // dispatchd runs work_market.requirements on the raw row before the
-    // envelope replaces the spec: the lane column defaults to preferred_lane
-    // and must be a lane id or empty, or the row is invalid — never open supply.
+  it('lets the envelope replace a bad lane cell, while a bare bad lane cell still rejects', () => {
+    // dispatchd's routed pass resolves the `(attrs)` envelope before launch
+    // and writes the spec into the requirements cell, so the lane column is
+    // never consulted for an enveloped row — a bad lane cell cannot reject
+    // it. With no envelope the requirements fallback still applies: the lane
+    // column defaults to preferred_lane and must be a lane id or empty.
     const routerQueue = [
       '- READY RQ-BADLANE (P1, pool=codex-cmp): valid envelope',
       '- READY RQ-OPENLANE (P1, pool=claude): envelope supplies the hint',
@@ -1159,15 +1161,17 @@ describe('ready row validation', () => {
     const ready = [
       vrow('RQ-BADLANE', 'NOT_A_LANE'),
       vrow('RQ-OPENLANE', ''),
+      vrow('RQ-NOENV', 'NOT_A_LANE'),
       'RQ-RAWOPEN\tphantom\t\twork\t/q/prompts/RQ-RAWOPEN.md',
     ].join('\n');
     const hints = readyHints(ready, routerQueue);
-    expect(hints.waiting).toBe(2);
+    expect(hints.waiting).toBe(3);
     expect(hints.invalid).toBe(1);
-    // An empty lane cell stays open: the envelope's pool= hint applies, and a
-    // spec-less row with no envelope line stays unhinted.
-    expect(hints.rows[0]).toMatchObject({ hint: 'claude' });
-    expect(hints.rows[1]).toMatchObject({ hint: null });
+    // The envelope's pool= hint applies past the bad lane cell; an empty lane
+    // cell with no envelope stays open.
+    expect(hints.rows[0]).toMatchObject({ hint: 'codex-cmp' });
+    expect(hints.rows[1]).toMatchObject({ hint: 'claude' });
+    expect(hints.rows[2]).toMatchObject({ hint: null });
   });
 
   it('keeps the row repo through the envelope like the dispatcher re-parse', () => {

@@ -127,19 +127,19 @@ export function parseReadyRow(text: string, routerQueue?: string | null): ReadyR
       spec = parsed as Record<string, unknown>;
     } catch { return { job, lane: f[2]!, line, spec: null, invalid: 'invalid_requirements' }; }
   } else {
-    // Spec-less rows are validated like work_market.requirements first: the
-    // lane cell defaults to preferred_lane, so a non-empty cell that is not a
-    // lane id rejects the row before its router-queue envelope is read. A
-    // matching `- STATUS ... (attrs):` envelope then replaces the requirements
+    // A matching `- STATUS ... (attrs):` envelope replaces the requirements
     // wholesale — exactly like dispatchd's from_envelope — so the envelope's
     // preferred_lane (or explicit open) and declared needs/data_class reach the
-    // offload decision instead of the raw lane cell standing in for them.
-    if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) {
-      return { job, lane: f[2]!, line, spec: null, invalid: 'invalid_requirements' };
-    }
+    // offload decision and the lane cell is never consulted: the dispatcher's
+    // routed pass writes the envelope spec into the requirements cell before
+    // launch. With no envelope the requirements fallback applies: a non-empty
+    // lane cell that is not a lane id is invalid_requirements.
     const env = readyEnvelopeSpec(routerQueue, job);
     if (env === 'invalid') return { job, lane: f[2]!, line, spec: null, invalid: 'invalid_requirements' };
     if (env !== null) spec = env;
+    else if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) {
+      return { job, lane: f[2]!, line, spec: null, invalid: 'invalid_requirements' };
+    }
   }
   return { job, lane: f[2]!, line, spec, invalid: null };
 }

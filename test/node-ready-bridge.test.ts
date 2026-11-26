@@ -210,19 +210,23 @@ describe('ready.tsv -> node router bridge', () => {
 
   it('rejects spec-less rows the market would call invalid_requirements', async () => {
     const f = fixture([
-      // Lane cell is not a lane id: requirements() rejects before the envelope is read.
+      // No envelope: a lane cell that is not a lane id fails requirements().
       ['RQ-REVIEW-ENV-BADLANE', 'phantom', 'Not A Lane', 'work', '/prompts/RQ-REVIEW-ENV-BADLANE.md'].join('\t'),
+      // A matching envelope replaces requirements wholesale, so the lane cell
+      // is never consulted — the row offloads on the envelope's lane.
+      ['RQ-REVIEW-ENV-RESCUED', 'phantom', 'Not A Lane', 'work', '/prompts/RQ-REVIEW-ENV-RESCUED.md'].join('\t'),
       // Malformed envelope exclusive: from_envelope raises before the market sees the row.
       row('RQ-REVIEW-ENV-BADENV', 'codex-cmp'),
       row('RQ-REVIEW-ENV-FINE', 'codex-cmp'),
     ]);
     writeFileSync(join(f.host.runsRoot, 'queue', 'router-queue.md'),
-      '- READY RQ-REVIEW-ENV-BADLANE (priority=P2, pool=codex-cmp, tier=work, repo=phantom): bad lane\n' +
+      '- READY RQ-REVIEW-ENV-RESCUED (priority=P2, pool=codex-cmp, tier=work, repo=phantom): rescued\n' +
       '- READY RQ-REVIEW-ENV-BADENV (priority=P2, pool=codex-cmp, tier=work, repo=phantom, exclusive=maybe): bad env\n');
     const report = await f.pass(false);
     const reasons = Object.fromEntries(report.rows.map(r => [r.job, r.reasons]));
     expect(reasons['RQ-REVIEW-ENV-BADLANE']).toEqual(['invalid_requirements']);
     expect(reasons['RQ-REVIEW-ENV-BADENV']).toEqual(['invalid_requirements']);
+    expect(report.rows.find(r => r.job === 'RQ-REVIEW-ENV-RESCUED')!.offload).toBe(true);
     expect(report.rows.find(r => r.job === 'RQ-REVIEW-ENV-FINE')!.offload).toBe(true);
   });
 
