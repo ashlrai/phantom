@@ -208,6 +208,7 @@ import { repoIdentityOfPath, resolveRepoLabel } from './repo-identity.js';
 import { noteTickPhase } from '../daemon/tick-progress.js';
 import { runTickPhase } from '../daemon/tick-phases.js';
 import { DEVIN_CLI_LANE, FLEET_ENGINES, grantEngineOfLane, type DispatchOutcome, type FleetEngine, type LandingRecord, type RepoHold, type RepoHoldChange, type SetRepoHoldRequest } from './fleet-types.js';
+import { laneAutoBillingAllows, loadLaneAutoEvidence, readLaneAutoNativeModels, type LaneAutoEvidence } from './lane-auto-model.js';
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -303,6 +304,8 @@ export interface LiveHooksDeps {
   subscriptionAllows(engine: EngineId, opts: { maxPercent: number; autonomous: true; budget?: BudgetPolicy }): SubscriptionAllowResult;
   isSubscriptionEngine(engine: EngineId): boolean;
   legacyRoute(item: WorkItem, cfg: AshlrConfig): RouteDecision;
+  laneAutoEvidence?: (cfg: AshlrConfig) => Promise<LaneAutoEvidence | null>;
+  laneAutoNativeModels?: typeof readLaneAutoNativeModels;
   localFleetEngine(cfg: AshlrConfig): EngineId | null;
   readTasks(): TaskQueueRead;
   /** Optional release-backed company content lane; absence never blocks fleet work. */
@@ -759,6 +762,8 @@ export function defaultLiveHooksDeps(): LiveHooksDeps {
     subscriptionAllows: (engine, opts) => subscriptionAllows(engine, opts),
     isSubscriptionEngine: (engine) => isSubscriptionEngine(engine),
     legacyRoute: (item, cfg) => routeBackend(item, cfg),
+    laneAutoEvidence: (cfg) => loadLaneAutoEvidence(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), cfg),
+    laneAutoNativeModels: readLaneAutoNativeModels,
     localFleetEngine: (cfg) => (localFleetEnabled(cfg) ? LOCAL_FLEET_ENGINE : null),
     readTasks: () => readTaskQueue(),
     syncReleaseArticles: async (signal) => (await import('../release-articles.js')).syncReleaseArticles(undefined, signal),
@@ -1151,7 +1156,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       if (!seat || !task || !Object.hasOwn(hints,seatId) || (seat.accountHint ?? null) !== hints[seatId]) return false;
       try {
         const actual = executionForSeat(task,deps.legacyRoute(task,current.cfg),seat,current.router);
-        return actual?.backend === forecast.cohort.engine && (actual.model ?? null) === forecast.cohort.model;
+        return actual?.autoModel?.reason !== 'held' && actual?.backend === forecast.cohort.engine && (actual.model ?? null) === forecast.cohort.model;
       } catch { return false; }
     }));
     const result = taskResetBudget(current.budget, current.capacity, current.policy, current.nowMs, forecasts, {maxPercent,...(deps.executionAccountMatches ? {executionAccountMatches:deps.executionAccountMatches} : {})});
@@ -2002,6 +2007,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       if (budget === null) {
         return finish(heldResult(holdProduction ?? 'The budget is unavailable.', enrolled), state);
       }
+      const laneAuto = await deps.laneAutoEvidence?.(cfg).catch(() => null);
       // The loop stopped waiting for this beforeTick (its deadline passed, or
       // the daemon is stopping) and already held production: a context
       // published now would be read by a tick that never asked for it.
@@ -2027,6 +2033,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
           capacity,
           lanes,
           laneEngines: laneEngines.engines,
+          ...(laneAuto ? { laneAuto } : {}),
           demotions,
           // Land-first scheduling reads the same reconciled open-PR counts
           // backpressure computed for this tick (null when they could not be
@@ -2161,7 +2168,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
           // model/context/demotion checks before asking for optional advice.
           const candidateLanes = Object.fromEntries(FLEET_ENGINES.map(lane=>[lane,{...current.lanes[lane],slots:current.routeLaneCaps[lane]}])) as Record<FleetEngine,LanePlan>;
           const execution = executionForSeat(item, legacy, seat, current.router);
-          if (!execution) continue;
+          if (!execution || execution.autoModel?.reason === 'held') continue;
           const forecast = taskForecast(item,execution.backend,execution.model ?? null,history,current.nowMs,seat.seatId,seat.accountHint);
           forecasts[seat.seatId] = forecast; hints[seat.seatId] = seat.accountHint ?? null;
           const taskBudget = budgetForItem(current,item.id,resolveSubscriptionMaxPercent(cfg));
@@ -2352,6 +2359,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
         ...(decision.model ? { model: decision.model } : {}),
         reason: decision.reason,
         seatDecision: decision.seatDecision,
+        ...(decision.autoModel ? { autoModel: decision.autoModel } : {}),
         ...(decision.selectedAccountHint !== undefined ? {selectedAccountHint:decision.selectedAccountHint} : {}),
         hold: decision.hold,
       };
@@ -2409,6 +2417,20 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       if (selectedCodex && routed && (typeof routed.selectedAccountHint !== 'string' ||
           current.capacity.find(seat => seat.engine === 'codex' && seat.seatId === opts.seatId)?.accountHint !== routed.selectedAccountHint)) {
         return {allowed:false,reason:'The selected Codex account identity changed or is unavailable; a fresh route is required.'};
+      }
+      if (routed?.autoModel) {
+        const selected = current.capacity.filter(seat => seat.seatId === routed.seatDecision?.seatId && laneOfSeat(seat) === lane);
+        const seat = selected.length === 1 ? selected[0] : undefined;
+        if (!seat || !routed.model || (opts.seatId !== undefined && seat.seatId !== opts.seatId)
+          || !laneAutoBillingAllows(seat, current.nowMs)) {
+          return { allowed: false, reason: 'Lane auto no longer has an admitted subscription or local seat.' };
+        }
+        const offered = deps.laneAutoNativeModels
+          ? deps.laneAutoNativeModels(current.cfg, seat)
+          : current.router.laneAuto?.nativeModels(seat);
+        if (offered ? !offered.has(routed.model) : current.router.laneAuto?.nativeModels(seat) != null) {
+          return { allowed: false, reason: 'The lane auto model is no longer confirmed on this seat.' };
+        }
       }
       const taskBudget = budgetForItem(current,opts.itemId,opts.maxPercent);
       if (!current.policy.engines.includes(grantEngineOfLane(lane))) {
@@ -2510,6 +2532,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
         proposalId: outcome.proposalId,
         spentUsd: outcome.spentUsd,
         seatDecision: cached?.seatDecision ?? null,
+        ...(cached?.autoModel ? { autoModel: cached.autoModel } : {}),
         ...(resetStatus && chosenReset && chosenSeat ? {resetSpending:{...resetStatus,accounts:{[chosenSeat]:chosenReset}}} : {}),
         hold,
         // Only a tick that knew its harness may attribute the run to one.

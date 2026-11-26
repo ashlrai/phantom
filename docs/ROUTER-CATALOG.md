@@ -32,3 +32,37 @@ user units. Add `--install` to install them as a regular user with a built CLI.
 The scheduled command is `phm router catalog refresh --json`: it only writes
 report and patch artifacts, never applies catalog changes. Installation does
 not run discovery immediately.
+
+## Resident lane auto
+
+Set a per-lane model to `auto` in the resident daemon's isolated
+`$ASHLR_RUNS_DIR/models.json`, for example `{"codex.work":"auto"}`. The
+lookup order is lane+tier, lane, family+tier, family. An explicit pin still
+takes precedence if it matches first. This setting is separate from gateway
+`auto`, which selects a seat, and does not enable new seats or spending.
+
+The resident daemon resolves the model before reserving a slot. It uses
+the lane's provider, registry/catalog evidence, the seat's native model
+list when available, and current subscription-only or local admission.
+Deprecated, retired, historical and explicit-only entries are excluded.
+Without native model-list evidence, only the existing tier default is
+considered. Local execution is limited to its bound runtime default;
+Devin's separate native admission is unchanged and its CLI auto is held.
+If the default cannot be admitted and no ranked candidate qualifies,
+the lane is held rather than switching providers or using metered capacity.
+
+Ranking requires five resolved jobs per model in the same lane, tier and
+recorded work class. Without a class recorded for the exact job, the
+daemon uses the default instead of guessing a class. Ranking uses held
+merges (reverts do not count), first-pass CI,
+then lower observed USD per held merge when all tied costs are known.
+Unknown evidence stays unknown. The resident dispatch journal
+(`~/.ashlr/fleet/runtime/runs.jsonl`) records an `autoModel` receipt with
+the candidates, scores, sample counts, and `scored`, `threshold-fallback`,
+or `held` reason. `phm route explain` does not read this journal.
+
+Do not enable this in the Mac dispatcher's runs directory until Security
+reviews and re-pins the launcher candidate. The re-pinned launcher uses
+its existing lane/tier defaults, not the resident scorer, and holds
+lanes with no non-metered concrete fallback. `phm models check` warns
+when `auto` is present beside an installed Mac dispatcher.

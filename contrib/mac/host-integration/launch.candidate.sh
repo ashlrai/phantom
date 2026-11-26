@@ -71,7 +71,15 @@ F
 } | sed "s/REPO_/$REPO/" > $R/$J.prompt
 cd $WT
 case $POOL in codex-local) FAM=codex-local; DM=fast;; codex*) FAM=codex; DM=gpt-6.1-sol;; claude) FAM=claude; DM=opus;; claude-api) FAM=claude-api; DM=sonnet;; gemini) FAM=gemini; DM=gemini-2.5-pro;; zai) FAM=zai; DM=glm-5.3;; agy) FAM=agy; DM=gemini-3.8-flash-high;; grok) FAM=grok; DM=grok-4.7;; cursor) FAM=cursor; DM=auto;; devin-flash) FAM=devin-flash; DM=swe-2-flash-max;; *) FAM=$POOL; DM=swe-2-max;; esac
-M=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(next((str(d[k]) for k in (p+"."+t,p,f+"."+t,f) if d.get(k)),""))' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ "$M" =~ ^[A-Za-z0-9._-]+$ ]] || M=$DM; EF=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(d.get("effort."+p+"."+t) or d.get("effort."+f+"."+t) or "")' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ -z "$EF" || "$EF" =~ ^[a-z]+$ ]] || EF=
+M=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(next((str(d[k]) for k in (p+"."+t,p,f+"."+t,f) if d.get(k)),""))' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null)
+if [ "$M" = auto ]; then
+  case "$POOL" in
+    codex-cmp|codex-personal|codex-local|claude|gemini|agy|grok|devin-flash) M=$DM;;
+    *) echo "HELD: lane auto has no non-metered concrete fallback for $POOL"; exit 3;;
+  esac
+fi
+[[ "$M" =~ ^[A-Za-z0-9._-]+$ ]] || M=$DM
+EF=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(d.get("effort."+p+"."+t) or d.get("effort."+f+"."+t) or "")' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ -z "$EF" || "$EF" =~ ^[a-z]+$ ]] || EF=
 # Paid Devin variants must never reach the launcher, even from models.json.
 if [[ ( "$POOL" == devin || "$POOL" == devin-flash ) && "$M" == *-[lL][iI][gG][hH][tT][nN][iI][nN][gG] ]]; then
   echo "PAID_MODEL_BLOCKED $J $M -> $DM" >> "$R/$J.base.meta"

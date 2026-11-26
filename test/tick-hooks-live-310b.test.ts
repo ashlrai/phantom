@@ -851,6 +851,33 @@ describe('afterDispatch / afterLanding', () => {
     expect(h.journal.at(-1)).toMatchObject({ type: 'dispatch', backend: route.backend, repo: REPO, title: 'Fix the parser', source: 'todo', seatId: 'local', proposalId: 'p-1', seatDecision: { seatId: 'local' } });
   });
 
+  it('routes a concrete auto model before dispatch, rechecks current billing, and journals the receipt', async () => {
+    let onDemandEnabled = false;
+    const model = 'grok-4.7';
+    const offers = () => new Set([model]);
+    const hooks = createLiveTickHooks({ deps: { ...h.deps,
+      standingPolicy: () => policyFixture({ engines: ['grok-cli'] }),
+      capacitySnapshot: () => ({ v: 1, publishedAt: NOW_ISO, seats: [{ ...grokSeat(), onDemandEnabled }] }),
+      laneAutoEvidence: async () => ({ models: new Map([['grok-cli.work', 'auto']]), registry: [], docs: [],
+        score: (_lane, _tier, id) => ({ model: id, samples: 0, heldMergeRate: null, firstPassCiRate: null, usdPerHeldMerge: null }),
+        nativeModels: offers }),
+      laneAutoNativeModels: offers,
+    } });
+    const cfg = hooks.effectiveConfig(CFG);
+    await hooks.beforeTick(hookCtx);
+    const job = item({ tags: ['tier:work'] });
+    const route = hooks.route(job, cfg);
+    expect(route).toMatchObject({ backend: 'grok-cli', model, hold: null, seatDecision: { seatId: 'grok' } });
+    const request = { maxPercent: 90, itemId: job.id, model, seatId: 'grok' };
+    expect(hooks.seatAllows(route.backend, request).allowed).toBe(true);
+    onDemandEnabled = true;
+    expect(hooks.seatAllows(route.backend, request)).toMatchObject({ allowed: false, reason: expect.stringContaining('Lane auto') });
+    await hooks.afterDispatch(outcome({ itemId: job.id, model, seatId: 'grok', dispatched: false, skipReason: 'admission changed' }));
+    expect(h.journal.at(-1)).toMatchObject({ autoModel: {
+      schema: 'route.lane-auto.v1', reason: 'threshold-fallback', via: 'grok-cli.work', model,
+    } });
+  });
+
   it('records a held item in the tick state (the parked Gantt)', async () => {
     const hooks = createLiveTickHooks({ deps: h.deps });
     hooks.effectiveConfig(CFG);

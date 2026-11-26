@@ -139,6 +139,9 @@ export async function cmdModels(args: string[]): Promise<number>;
   is the pure comparison with provider docs; `readDocsRecords` reads the
   `models.docs.v1` list, and `selectVerifiedModel(models, registry, docs?)`
   skips a model the docs call retired or do not name.
+  If `models.json` contains `auto` and the runs directory contains
+  `bin/dispatchd.py`, the report summary warns that the Mac launcher
+  needs a Security re-pin.
 - `ashlr models radar [--json] [--from <folder>] [--fetch]`: `runModelRadar` in
   `src/core/fleet/model-radar.ts`, returning `ModelRadarReport` (`models.radar.v1`,
   `version: 1`). `scanModelReleaseNotes(docs, registry)` is the pure scan
@@ -153,6 +156,17 @@ export async function cmdModels(args: string[]): Promise<number>;
   then `pullModel`. Honor `--yes` to skip the prompt.
 - `ashlr models start`: `startOllama` (best-effort, local installed only).
 - Returns a process exit code. Register in `src/cli/index.ts`.
+
+Resident lane auto: `readLaneModelConfig(runsDir)` reads the bounded flat
+lane model map. `executionForSeat` and the resident `TickRouteDecision`
+can include an additive `autoModel` receipt (`route.lane-auto.v1`), also
+written on the resident dispatch journal row. The receipt records lane,
+tier, matching key, concrete model (or null on hold), minimum samples,
+candidate outcomes, and chosen reason. It is historical evidence, not
+permission to launch; `seatAllows` rechecks the selected model and
+current account billing boundary. The optional `onRecordedWorkClasses`
+callback on `readRouterOutcomes` receives the work-market class by exact
+job ID without changing the outcome report.
 
 ## `src/core/run/orchestrator.ts` (EDIT — orchestrator agent)
 

@@ -4,7 +4,9 @@
  * list from provider docs when a docs-watch job has written one. Read-only and offline.
  * The Models card and `GET /api/verse/fleet/control/models/check` return the same report.
  */
-import { basename } from 'node:path';
+import { lstat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { basename, join } from 'node:path';
 import { checkModelsAgainstDocs, loadVerifiedRegistry, MODEL_ALIASES, readDocsRecords, readRouterChoices, readText, selectVerifiedModel, type DocsModelRecord, type DocsVerdict, type ModelVerifyOptions, type VerifiedModelRegistryEntry } from './model-verify.js';
 
 export const MODEL_CHECK_STALE_DAYS = 14;
@@ -113,8 +115,14 @@ export async function checkModels(opts: ModelCheckOptions = {}): Promise<ModelCh
   let registry: VerifiedModelRegistryEntry[];
   try { registry = await loadVerifiedRegistry({ ...opts, now: () => now }); } catch { return report; }
   const used = new Map<string, string[]>();
+  let macAuto = false;
   try {
-    for (const { key, model } of await readRouterChoices(opts))
+    const choices = await readRouterChoices(opts);
+    if (choices.some(choice => choice.model === 'auto')) {
+      const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+      macAuto = await lstat(join(runsDir, 'bin', 'dispatchd.py')).then(info => info.isFile() || info.isSymbolicLink(), () => false);
+    }
+    for (const { key, model } of choices)
       if (model && !MODEL_ALIASES.has(model)) used.set(model, [...used.get(model) ?? [], key.split('.')[0]!]);
     report.router_choices = 'ok';
   } catch { /* stays unknown */ }
@@ -149,6 +157,7 @@ export async function checkModels(opts: ModelCheckOptions = {}): Promise<ModelCh
   report.registry = 'ok';
   report.error = null;
   report.summary = check?.summary ?? 'Provider docs are unknown: no confirmed list yet, so models are checked against the registry only.';
+  if (macAuto) report.summary += ' Warning: auto is configured in the Mac dispatcher runs directory; it needs the Security re-pinned launcher before use.';
   if (check) Object.assign(report, { docs: 'ok', docs_as_of: records.reduce<string | null>((max, record) => max !== null && max > record.seen_at ? max : record.seen_at, null), missing: check.missing });
   report.ok = !report.counts.stale && !report.counts.unconfirmed && !(check && (check.counts.unconfirmed || check.counts.retired || check.counts.deprecated || check.missing.length)) && (!diff || !diff.error && !diff.new.length && !diff.renamed.length && !diff.retired.length);
   return report;

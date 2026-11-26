@@ -68,6 +68,16 @@ it('degrades each source independently and never throws on missing files', async
   expect((await getLaneModelSnapshot({ runsDir: dir })).sources.models.state).toBe('degraded');
 });
 
+it('does not mistake the concrete result of auto for a pin mismatch or accept a literal auto launch', async () => {
+  await seed({ 'codex.work': 'auto' }, [
+    launch('codex-personal', 'gpt-6.2-sol', 'work'),
+    launch('codex-cmp', 'auto', 'work'),
+  ]);
+  const snap = await getLaneModelSnapshot({ runsDir: dir });
+  expect(snap.lanes.find(row => row.lane === 'codex-personal')).toMatchObject({ mismatch: false });
+  expect(snap.lanes.find(row => row.lane === 'codex-cmp')).toMatchObject({ mismatch: true });
+});
+
 it('cli emits --json and a table through --runs-dir, refusing bad options', async () => {
   await seed(MODELS, [launch('codex-local', 'gpt-5.3-codex', 'frontier')]);
   const logs: string[] = [];

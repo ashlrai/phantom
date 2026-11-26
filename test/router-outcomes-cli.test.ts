@@ -342,4 +342,18 @@ describe('phm router outcomes', () => {
     const report = JSON.parse(h.out());
     expect(report).toMatchObject({ state: 'missing', total: 0, returned: 0, outcomes: [] });
   });
+
+  it('can return recorded work classes for waiting jobs without inventing outcomes', async () => {
+    const root = runsDir();
+    mkdirSync(join(root, 'metrics'));
+    writeFileSync(join(root, 'metrics', 'work-market.jsonl'), [
+      '{"schema":"work-market.v1","event":"route_decision","job":"waiting","ts":1,"work_class":"repair"}',
+      '{"schema":"work-market.v1","event":"route_decision","job":"waiting","ts":2,"work_class":"feature"}',
+      '{"schema":"work-market.v1","event":"route_decision","job":"unknown","ts":2}',
+    ].join('\n'));
+    const onRecordedWorkClasses = vi.fn();
+    const report = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null, onRecordedWorkClasses });
+    expect(onRecordedWorkClasses).toHaveBeenCalledWith(new Map([['waiting', 'feature']]));
+    expect(report).toMatchObject({ state: 'missing', outcomes: [] });
+  });
 });

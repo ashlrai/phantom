@@ -109,7 +109,7 @@ async function readModels(path: string): Promise<{ raw: Record<string, unknown>;
 /**
  * Set (`model` string) or unset (`model` null) one `<lane>[.<tier>]` key.
  * `resolved` always reports the map's post-change state for the key's lane —
- * on a dry run it is the exact outcome a launch would see. Writes nothing
+ * on a dry run it shows the configured choice, not a dispatch-time auto decision. Writes nothing
  * when `input.dryRun`; the audit row lands only on an applied change.
  */
 export async function setLaneModel(input: LaneModelSetInput, opts: LaneModelWriteOptions = {}): Promise<LaneModelChangeV1> {

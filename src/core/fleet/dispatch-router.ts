@@ -69,6 +69,11 @@ import { LEADER_LIMITS, type LeaderDirectivesV1 } from '../vision/leader-types.j
 import type { HarnessRoutingWeights } from '../learn/harness-types.js';
 import { registryEngineForFleetEngine, resolveEngineSpec } from '../run/engine-registry.js';
 import { GROK_CLI_FAST_MODEL, pickModel, resolveSelectedEngineModel } from '../run/model-catalog.js';
+import { modelTierForTask } from '../run/learned-router.js';
+import { validateLocalBaseUrl } from '../run/local-inference.js';
+import { LANE_AUTO_MIN_SAMPLES } from '../router/lane-auto-score.js';
+import { chooseLaneAuto, type LaneAutoEvidence, type LaneAutoReceipt } from './lane-auto-model.js';
+import { resolveLaneModel } from './lane-models.js';
 import { planAutonomousBestOfN, type AutonomousBestOfNPlan } from '../run/best-of-n-policy.js';
 import {
   DEVIN_CLI_CONTEXT_TOKENS,
@@ -640,10 +645,12 @@ export interface LegacyRoute {
   backend: EngineId;
   tier: EngineTier | null;
   model?: string | null;
+  autoModel?: LaneAutoReceipt;
   reason: string;
 }
 
 export interface DispatchRouterContext {
+  laneAuto?: LaneAutoEvidence;
   scheduling?: Readonly<Record<string,import('../routing/scheduling-types.js').AccountSchedulingView>>;
   advisorySeatId?: string | null;
   nowMs: number;
@@ -683,6 +690,7 @@ export interface DispatchRoute {
   backend: EngineId;
   tier: EngineTier;
   model?: string;
+  autoModel?: LaneAutoReceipt;
   reason: string;
   seatDecision: SeatDecision | null;
   hold: RouteHold | null;
@@ -763,13 +771,23 @@ export function executionForSeat(item: WorkItem, legacy: LegacyRoute, seat: Seat
     (lane !== 'local' || supportsRoleExecution(legacy.backend, ctx.cfg ?? {} as AshlrConfig)) &&
     (!isOutcomeManagerWorkItem(item) || supportsRoleExecution(legacy.backend, ctx.cfg ?? {} as AshlrConfig));
   const backend = keepLegacy ? legacy.backend : installed;
+  const tier = backend === legacy.backend ? legacyTier(legacy, ctx) : ctx.tierOf(backend) ?? 'local';
+  const taskTier = modelTierForTask(item);
+  const localSpec = ctx.laneAuto && lane === 'local' ? resolveEngineSpec(backend, ctx.cfg) : null;
+  const localApi = localSpec?.api;
+  const localUrl = localApi?.baseUrlEnv && process.env[localApi.baseUrlEnv]?.trim() || localApi?.defaultBaseUrl;
+  const autoModel = ctx.laneAuto && chooseLaneAuto(ctx.laneAuto, lane, backend, taskTier, seat, ctx.nowMs,
+    localSpec && !localApi?.envKey && validateLocalBaseUrl(localUrl).ok
+      ? resolveSelectedEngineModel({ engine: backend, spec: localSpec }) : null,
+    !Object.hasOwn(ctx.cfg?.foundry?.engines ?? {}, backend), item.id);
+  if (autoModel) return { backend, tier, autoModel, model: autoModel.model, reason: `Lane auto: ${autoModel.reason}.` };
   // Capture one concrete candidate before forecasting/admission. A configured
   // pin beats retained same-engine metadata; another backend's model never does.
   const captured = backend === legacy.backend ? { engine: legacy.backend, model: legacy.model } : null;
   const selected = { engine: backend, configured: configuredModel(ctx.cfg, backend), captured };
   const model = resolveSelectedEngineModel(selected) ??
     resolveSelectedEngineModel({ ...selected, spec: resolveEngineSpec(backend, ctx.cfg) });
-  return { backend, reason: 'Exact candidate execution for observed task fit.', tier: backend === legacy.backend ? legacyTier(legacy, ctx) : ctx.tierOf(backend) ?? 'local',
+  return { backend, reason: 'Exact candidate execution for observed task fit.', tier,
     ...(model ? { model } : {}) };
 }
 
@@ -819,12 +837,14 @@ export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: Dispatch
   const kind = item.source;
   let chosenSeat: string | null = null;
   let chosenLane: FleetEngine | null = null;
-  let chosenEngine: EngineId | null = null;
+  let chosenExecution: LegacyRoute | null = null;
+  let heldAuto: LaneAutoReceipt | null = null;
 
   for (const seatId of decision.candidates) {
     const seat = ctx.capacity.find((s) => s.seatId === seatId);
     if (!seat) continue;
     const lane = laneOfSeat(seat);
+    if (heldAuto && lane !== heldAuto.lane) continue;
     if (lane === null) {
       // routeSeat never admits a Devin seat (router.ts devinVerdict); this
       // keeps a laneless seat from ever being dispatched even if it did.
@@ -857,6 +877,12 @@ export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: Dispatch
       // operator's preferred local runtime).
       const execution = executionForSeat(item, legacy, seat, ctx);
       if (!execution) continue;
+      if (execution.autoModel?.reason === 'held') {
+        heldAuto = execution.autoModel;
+        add({ kind: 'lane', text: 'Lane auto has no admitted subscription or local model for this tier.' });
+        extra.push({ seatId, reasons, nextEligibleAt: null, details });
+        continue;
+      }
       const candidateEngine = execution.backend;
       if ((lane === 'local' && !supportsRoleExecution(candidateEngine, ctx.cfg ?? {} as AshlrConfig)) || (isOutcomeManagerWorkItem(item) && !supportsRoleExecution(candidateEngine, ctx.cfg ?? {} as AshlrConfig))) {
         add({ kind: 'lane', text: lane === 'local'
@@ -877,7 +903,7 @@ export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: Dispatch
       } else {
         chosenSeat = seatId;
         chosenLane = lane;
-        chosenEngine = candidateEngine;
+        chosenExecution = execution;
         break;
       }
     }
@@ -886,6 +912,20 @@ export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: Dispatch
 
   // 3.15: the Devin CLI lane takes what no seat-router seat could — see
   // devinCliOverflow. It never displaces a seat the router chose.
+  if (chosenSeat === null && !heldAuto && ctx.laneAuto) {
+    const tier = modelTierForTask(item);
+    const configured = resolveLaneModel(ctx.laneAuto.models, DEVIN_CLI_LANE, tier);
+    if (configured?.model === 'auto' && 'engine' in devinCliOverflow(request, repo, kind, ctx)) {
+      // Devin has no SeatCapacity candidate; the separate native admission
+      // stays authoritative rather than widening it to an unverified id.
+      heldAuto = { schema: 'route.lane-auto.v1', lane: DEVIN_CLI_LANE, tier, via: configured.via,
+        model: null, reason: 'held', minimumSamples: LANE_AUTO_MIN_SAMPLES, candidates: [] };
+    }
+  }
+  if (chosenSeat === null && heldAuto) return {
+    ...held(legacy, ctx, repo, null, { kind: 'park', reason: 'Lane auto has no admitted subscription or local model for this tier.', nextEligibleAt: null }),
+    autoModel: heldAuto,
+  };
   if (chosenSeat === null) {
     let devin = devinCliOverflow(request, repo, kind, ctx);
     if ('engine' in devin && isOutcomeManagerWorkItem(item) &&
@@ -924,7 +964,7 @@ export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: Dispatch
     ? []
     : decision.candidates.filter((id) => !extra.some((e) => e.seatId === id));
 
-  if (chosenSeat === null || chosenLane === null || chosenEngine === null) {
+  if (chosenSeat === null || chosenLane === null || chosenExecution === null) {
     const seatDecision: SeatDecision = {
       seatId: null,
       candidates: [],
@@ -973,14 +1013,15 @@ export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: Dispatch
           + `${decision.seatId ? ` (${decision.seatId})` : ''} is not a producer the grant allows right now.`,
         mode: decision.mode,
       };
-  const execution = executionForSeat(item, legacy, ctx.capacity.find(seat => seat.seatId === chosenSeat)!, ctx)!;
+  const execution = chosenExecution;
   const tier = execution.tier ?? 'local';
   const model = execution.model;
   return {
-    backend: chosenEngine,
+    backend: execution.backend,
     tier,
     ...(model ? { model } : {}),
-    reason: `standing router: ${seatDecision.why}`,
+    ...(execution.autoModel ? { autoModel: execution.autoModel } : {}),
+    reason: `standing router: ${seatDecision.why}${execution.autoModel ? ` ${execution.reason}` : ''}`,
     seatDecision,
     hold: null,
     lane: chosenLane,

@@ -4,7 +4,7 @@
  * and temp dirs, no network, no real home.
  */
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +33,17 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); await rm(runsDir, { recursive: true, force: true }); });
 
 describe('checkModels', () => {
+  it('warns about a configured auto only when this runs directory has the Mac dispatcher', async () => {
+    await writeFile(join(runsDir, 'models.json'), JSON.stringify({ codex: 'auto' }));
+    const input = opts('registry-confirmed.json');
+    expect((await checkModels(input)).summary).toBe(NO_DOCS);
+    await mkdir(join(runsDir, 'bin'));
+    await writeFile(join(runsDir, 'bin', 'dispatchd.py'), '');
+    const report = await checkModels(input);
+    expect(formatModelCheck(report)[0]).toContain('it needs the Security re-pinned launcher before use');
+    expect(report.models.some(row => row.id === 'auto')).toBe(false);
+  });
+
   it('reports an all-confirmed registry with a stable, versioned shape', async () => {
     const report = await checkModels(opts('registry-confirmed.json'));
     expect(report).toEqual({

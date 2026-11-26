@@ -534,6 +534,12 @@ tier name itself. The vocabulary lives in
 [`queue-tier.ts`](../src/core/drive/queue-tier.ts). Keep it identical to
 `TIERS` in `contrib/mac/dispatchd.py`.
 
+The resident TypeScript daemon can resolve a configured `auto` model at
+dispatch time; see [resident lane auto](ROUTER-CATALOG.md#resident-lane-auto).
+Keep its runs directory separate from the Mac queue until the launcher
+has been reviewed and re-pinned. The Mac launcher falls back to the
+existing tier default and does not run the resident scorer.
+
 ### Tier-scaled session scope
 
 Choose a job's tier for the model that will actually run it. Use `frontier`
