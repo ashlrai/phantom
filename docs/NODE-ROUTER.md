@@ -99,7 +99,9 @@ the node holding each running claim (`claimed by`, or `no live claim` once the
 claim lapsed or was fenced), show each node's advertised slot bound (`slots=N`,
 or `slots=unbounded` when no bound was ever reported — an absent bound is
 legacy routing, not a measured zero) and its last measured hold as
-`held=<reason>` while one is reported, mark producer withdrawals, carry the
+`held=<reason>` while one is reported, name the `phm node join` command that
+restores each expired node's last advertised profile (the same hint a
+session-expired error prints), mark producer withdrawals, carry the
 same fix `phm node plan` prints on a job that still has no taker, and an
 empty scope says so with the join command; `enqueue` says when the job id already
 exists;
