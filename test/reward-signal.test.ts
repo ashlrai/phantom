@@ -188,6 +188,20 @@ describe('router consumption', () => {
     expect(report.arms[0]!.brier).toBeCloseTo(0.36, 5);
   });
 
+  it.each([false, true])('uses the reverted reward verdict with reward row first: %s', (rewardFirst) => {
+    const input = fixture({ merged: false, mergedAt: null });
+    run(input);
+    const reward = readFileSync(path, 'utf8').trim();
+    const launch = JSON.stringify({ event: 'launch', job: input.jobId, lane: input.pool,
+      predicted_merge_rate: 0.4 });
+    const merge = JSON.stringify({ job: input.jobId, outcome: 'MERGED' });
+    const rows = rewardFirst ? [reward, launch, merge] : [launch, merge, reward];
+    const report = calibrateRouting(rows.join('\n'));
+    expect(report.arms[0]).toMatchObject({ jobs: 1, resolved: 1, observedMergeRate: 0,
+      mergeRate: { predicted: 0.4, actual: 0, paired: 1 } });
+    expect(report.arms[0]!.brier).toBeCloseTo(0.16);
+  });
+
   it.each([null, 600_000])('leaves execution wall time unknown with reward CI time %s', (ciWallMs) => {
     const input = fixture({ ciWallMs });
     run(input);

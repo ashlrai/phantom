@@ -32,8 +32,8 @@ interface Job {
   finished?: number;
   merged?: boolean;
   launched: boolean;
-  /** A reward-signal row was seen: a self-contained outcome record, not a launch. */
-  rewarded?: boolean;
+  /** Reward signals can account for reversions after the PR merged. */
+  rewardMerged?: boolean;
 }
 
 function object(value: unknown): Row | undefined {
@@ -126,9 +126,8 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       recognized++;
       const job = jobs.get(row.jobId) ?? { launched: false };
       jobs.set(row.jobId, job);
-      job.rewarded = true;
       if (row.pool !== null) assign(job, 'arm', row.pool);
-      assign(job, 'merged', row.merged);
+      assign(job, 'rewardMerged', row.merged);
       continue;
     }
     const id = ledgerJobId(row);
@@ -163,16 +162,17 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
   if (posthogJson !== undefined) for (const row of parseExport(posthogJson)) {
     const id = stringField(row, 'jobId', 'job_id');
     const job = id ? jobs.get(id) : undefined;
-    if (!job || (!job.launched && !job.rewarded)) { unmatchedPosthogRuns++; continue; }
+    if (!job || (!job.launched && job.rewardMerged === undefined)) { unmatchedPosthogRuns++; continue; }
     metrics(job, row);
   }
   const groups = new Map<string, Job[]>();
   for (const job of jobs.values()) {
-    if (!job.launched && !job.rewarded) throw new Error('Event has no matching launch');
+    if (!job.launched && job.rewardMerged === undefined) throw new Error('Event has no matching launch');
     if (!job.arm) {
-      if (!job.rewarded) throw new Error('Launch is missing arm');
+      if (job.rewardMerged === undefined) throw new Error('Launch is missing arm');
       job.arm = 'unknown';
     }
+    job.merged = job.rewardMerged ?? job.merged;
     if (job.started !== undefined && job.finished !== undefined) {
       if (job.finished < job.started) throw new Error('Finish precedes launch');
       const duration = job.finished - job.started;
