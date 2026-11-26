@@ -1,5 +1,6 @@
 """Shared market contracts plus real dispatcher ticks, all in synthetic homes."""
 import ast
+import datetime
 import json
 from pathlib import Path
 import sys
@@ -453,6 +454,21 @@ class MarketTick(unittest.TestCase):
     def run_tick(self, home):
         result = tick(home)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_resource_advice_reaches_market_but_cannot_raise_target(self):
+        home, queue = self.fixture({'codex-personal': 2, 'claude': 1})
+        now = int(time.time())
+        document = {'schema': 'phantom.fleet-resource-plan.v1',
+                    'generated_at': datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+                    'targets': {'claude': 1000, 'codex-personal': True}}
+        self.assertEqual(market.advisory_targets(document, now), {'claude': 1000})
+        self.assertEqual(market.advisory_targets(document, now + 300), {})
+        (queue / 'resource-capacity-advice.json').write_text(json.dumps(document))
+        self.add(home, 'RQ-ADVICE', 'codex-personal')
+        self.run_tick(home)
+        receipt = next(row for row in self.rows(home) if row.get('job') == 'RQ-ADVICE' and row.get('event') == 'route_decision')
+        self.assertEqual(receipt['ranking_inputs']['claude']['advisory_target'], 1)
+        self.assertIsNone(receipt['ranking_inputs']['codex-personal']['advisory_target'])
 
     def devin_accounting(self, home, used=20):
         now = time.time()
