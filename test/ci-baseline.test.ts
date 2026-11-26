@@ -101,7 +101,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     } else if (endpoint.includes('/actions/runs?')) {
       const isMaster = endpoint.includes(master);
       const conclusion = (isMaster ? options.masterRunConclusion : undefined) ?? options.runConclusion;
-      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : head, ...(conclusion !== undefined ? { conclusion } : {}) }] };
+      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, status: 'completed', head_branch: isMaster ? 'master' : 'feature', head_sha: isMaster ? master : options.stale ? master : head, ...(conclusion !== undefined ? { conclusion } : {}) }] };
     } else throw new Error(`unexpected call ${args.join(' ')}`);
     return success(JSON.stringify(value));
   };
@@ -109,6 +109,29 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
 }
 
 describe('CI baseline evidence', () => {
+  it.each([true, false])('uses only master branch runs at the master SHA (master run present: %s)', async includeMaster => {
+    const { gh, calls } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const endpoint = args[1] ?? '';
+      const response = await gh(args);
+      if (!endpoint.includes('/actions/runs?head_sha=')) return response;
+      const { workflow_runs: [masterRun] } = JSON.parse(response.stdout);
+      const workflow_runs = [
+        { ...masterRun, id: 99, head_branch: 'feature' },
+        ...(includeMaster ? [masterRun] : []),
+      ];
+      return { ...response, stdout: JSON.stringify({ workflow_runs, total_count: workflow_runs.length }) };
+    });
+
+    expect(calls).toContainEqual(['api', `repos/owner/repo/actions/runs?head_sha=${master}&branch=master&per_page=100`]);
+    expect(calls.some(args => args[1]?.includes('/runs/99/jobs'))).toBe(false);
+    expect(report.master.known).toBe(includeMaster);
+    expect(report.groups[0]).toMatchObject({
+      master: includeMaster ? 'pass' : 'unknown',
+      classification: includeMaster ? 'probable-flake' : 'unknown',
+    });
+  });
+
   it('groups independent failures and keeps analysis read-only', async () => {
     const { gh, calls } = github();
     const report = await analyzeCiBaseline('owner/repo', gh);
