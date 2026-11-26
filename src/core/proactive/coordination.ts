@@ -1,37 +1,38 @@
 /** Manual local coordinator. It neither sends tasks nor qualifies saved provider profiles. */
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
-import { CompanionCoordinationStore, companionHash, companionId, companionObject, companionText, companionSafeText, companionTime, companionToken,
+import { CompanionCoordinationStore, companionId, companionText, companionSafeText, companionToken,
   companionTaskScope, normalizeCompanionTaskInput, validCompanionIdentity, validCompanionReviewer, validCompanionTaskInput } from './coordination-store.js';
-import { COMPANION_LIMITS, companionCanonical, companionDigest, companionIdentityEqual, companionTaskId, companionTextDigest,
+import { COMPANION_LIMITS, companionDigest, companionIdentityEqual, companionTaskId, companionTextDigest,
   type CompanionAttempt, type CompanionCommand, type CompanionCoordinator, type CompanionEvent, type CompanionFailure,
   type CompanionHostHooks, type CompanionHostObservation, type CompanionLedger, type CompanionNotification,
   type CompanionTask, type CompanionWrite } from './coordination-types.js';
+import { canonicalJson, hasPlainDataKeys, isCanonicalIsoTimestamp, isSha256Hex } from './validation.js';
 export type * from './coordination-types.js';
 
 function refuse(reason: CompanionFailure): never { throw { reason }; }
 function failure(reason: CompanionFailure): CompanionWrite { return { ok: false, reason, dispatchAuthorized: false }; }
 function validateCommand(value: unknown): value is CompanionCommand {
-  if (!companionObject(value, ['kind', 'commandId', 'expectedRevision'], ['task', 'taskId', 'assignee', 'ownerId', 'leaseMs',
+  if (!hasPlainDataKeys(value, ['kind', 'commandId', 'expectedRevision'], ['task', 'taskId', 'assignee', 'ownerId', 'leaseMs',
     'attemptId', 'epoch', 'packetDigest', 'result', 'report', 'sourceReference', 'reportId', 'checkedResultDigest', 'reviewer', 'acceptanceMet', 'eventId'])) return false;
-  const command = value as CompanionCommand;
+  const command = value as unknown as CompanionCommand;
   const base = ['kind', 'commandId', 'expectedRevision'];
-  const shape = (keys: string[]) => companionObject(command, [...base, ...keys]);
+  const shape = (keys: string[]) => hasPlainDataKeys(command, [...base, ...keys]);
   if (!companionToken(command.commandId) || !Number.isSafeInteger(command.expectedRevision) || command.expectedRevision < 0) return false;
   if (command.kind === 'create') return shape(['task']) && validCompanionTaskInput(command.task);
   if (!companionId('taskId' in command ? command.taskId : null)) return false;
   switch (command.kind) {
     case 'assign': return shape(['taskId', 'assignee', 'ownerId', 'leaseMs']) && validCompanionIdentity(command.assignee) &&
       companionToken(command.ownerId) && Number.isSafeInteger(command.leaseMs) && command.leaseMs > 0 && command.leaseMs <= COMPANION_LIMITS.leaseMaxMs;
-    case 'handoff': return shape(['taskId', 'attemptId', 'epoch', 'ownerId']) && companionHash(command.attemptId) &&
+    case 'handoff': return shape(['taskId', 'attemptId', 'epoch', 'ownerId']) && isSha256Hex(command.attemptId) &&
       Number.isSafeInteger(command.epoch) && command.epoch > 0 && companionToken(command.ownerId);
     case 'report': return shape(['taskId', 'attemptId', 'epoch', 'packetDigest', 'result', 'report', 'sourceReference']) &&
-      companionHash(command.attemptId) && Number.isSafeInteger(command.epoch) && command.epoch > 0 && companionHash(command.packetDigest) &&
+      isSha256Hex(command.attemptId) && Number.isSafeInteger(command.epoch) && command.epoch > 0 && isSha256Hex(command.packetDigest) &&
       companionSafeText(command.result, COMPANION_LIMITS.resultBytes) && companionSafeText(command.report, COMPANION_LIMITS.reportBytes) && companionSafeText(command.sourceReference, 2000);
-    case 'operator-review': return shape(['taskId', 'reportId', 'checkedResultDigest', 'reviewer', 'acceptanceMet']) && companionHash(command.reportId) &&
-      companionHash(command.checkedResultDigest) && validCompanionReviewer(command.reviewer) && typeof command.acceptanceMet === 'boolean';
-    case 'cancel': return shape(['taskId', 'attemptId']) && companionHash(command.attemptId);
-    case 'notification-ack': return shape(['taskId', 'eventId']) && companionHash(command.eventId);
+    case 'operator-review': return shape(['taskId', 'reportId', 'checkedResultDigest', 'reviewer', 'acceptanceMet']) && isSha256Hex(command.reportId) &&
+      isSha256Hex(command.checkedResultDigest) && validCompanionReviewer(command.reviewer) && typeof command.acceptanceMet === 'boolean';
+    case 'cancel': return shape(['taskId', 'attemptId']) && isSha256Hex(command.attemptId);
+    case 'notification-ack': return shape(['taskId', 'eventId']) && isSha256Hex(command.eventId);
     default: return false;
   }
 }
@@ -54,7 +55,7 @@ function apply(state: CompanionLedger, command: CompanionCommand, taskId: string
     const scope = normalizeCompanionTaskInput(command.task);
     const existing = state.tasks[taskId];
     if (existing) {
-      if (companionCanonical(companionTaskScope(existing)) !== companionCanonical(scope)) refuse('conflict');
+      if (canonicalJson(companionTaskScope(existing)) !== canonicalJson(scope)) refuse('conflict');
       // Semantic duplicate creation retains the existing task; no second task or notification.
       return;
     }
@@ -147,10 +148,10 @@ function apply(state: CompanionLedger, command: CompanionCommand, taskId: string
   }
 }
 function validObservation(value: unknown): value is CompanionHostObservation {
-  if (!companionObject(value, ['taskId', 'attemptId', 'epoch', 'assignee', 'packetDigest', 'state', 'providerRunId', 'evidenceReference'])) return false;
-  const observation = value as CompanionHostObservation;
-  return companionId(observation.taskId) && companionHash(observation.attemptId) && Number.isSafeInteger(observation.epoch) && observation.epoch > 0 &&
-    validCompanionIdentity(observation.assignee) && companionHash(observation.packetDigest) &&
+  if (!hasPlainDataKeys(value, ['taskId', 'attemptId', 'epoch', 'assignee', 'packetDigest', 'state', 'providerRunId', 'evidenceReference'])) return false;
+  const observation = value as unknown as CompanionHostObservation;
+  return companionId(observation.taskId) && isSha256Hex(observation.attemptId) && Number.isSafeInteger(observation.epoch) && observation.epoch > 0 &&
+    validCompanionIdentity(observation.assignee) && isSha256Hex(observation.packetDigest) &&
     ['accepted', 'unknown', 'proved-unstarted', 'cancel-confirmed'].includes(observation.state) &&
     (observation.providerRunId === null || companionToken(observation.providerRunId)) &&
     (observation.state !== 'accepted' || observation.providerRunId !== null) && companionText(observation.evidenceReference, 2000);
@@ -159,11 +160,11 @@ export function createCompanionCoordinator(options: { directory?: string; now?: 
   const store = new CompanionCoordinationStore(options.directory ?? join(ashlrHome(), 'companion-coordination'));
   const timestamp = (): string => {
     const at = (options.now?.() ?? new Date()).toISOString();
-    if (!companionTime(at)) refuse('invalid'); return at;
+    if (!isCanonicalIsoTimestamp(at)) refuse('invalid'); return at;
   };
   return {
     list(filter = {}) {
-      if (!companionObject(filter, [], ['tenantId', 'projectBindingId']) ||
+      if (!hasPlainDataKeys(filter, [], ['tenantId', 'projectBindingId']) ||
         filter.tenantId !== undefined && !companionToken(filter.tenantId) || filter.projectBindingId !== undefined && !companionToken(filter.projectBindingId)) {
         return { sourceState: 'degraded', revision: 0, tasks: [] };
       }
@@ -192,7 +193,7 @@ export function createCompanionCoordinator(options: { directory?: string; now?: 
     },
     reconcile(commandId, expectedRevision, taskId, attemptId) {
       if (!companionToken(commandId) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 ||
-        !companionId(taskId) || !companionHash(attemptId)) return failure('held');
+        !companionId(taskId) || !isSha256Hex(attemptId)) return failure('held');
       try {
         const request = { kind: 'reconcile', commandId, expectedRevision, taskId, attemptId };
         const replay = store.replay(commandId, request);

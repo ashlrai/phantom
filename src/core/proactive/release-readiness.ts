@@ -3,50 +3,33 @@ import type {
   ReleaseBinding, ReleaseEvidenceKind, ReleaseEvidenceReceipt, ReleaseReadinessGate,
   ReleaseReadinessHost, ReleaseReadinessInput, ReleaseReadinessResult,
 } from './release-readiness-types.js';
+import {
+  canonicalJson, hasNoControlChars, isCanonicalIsoTimestamp, isDenseDataArray, isPlainDataObject, isSha256Hex,
+} from './validation.js';
 
 const SHA = /^[a-f0-9]{40}$/;
-const DIGEST = /^[a-f0-9]{64}$/;
 const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[a-zA-Z0-9.-]+)?$/;
-const KINDS: ReleaseEvidenceKind[] = ['tests', 'qualification', 'provenance', 'commissioning', 'provider-status', 'replay'];
-const REQUIRED = [...KINDS];
+const KINDS: readonly ReleaseEvidenceKind[] = ['tests', 'qualification', 'provenance', 'commissioning', 'provider-status', 'replay'];
 const emptyBinding: ReleaseBinding = {channel: 'npm', targetId: '', version: '', sourceRevision: '', artifactDigest: '', attemptId: ''};
 function text(value: unknown, max = 256): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= max && [...value].every(c => c.charCodeAt(0) >= 32 && c.charCodeAt(0) !== 127);
-}
-function instant(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= 32 && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
-}
-function object(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return (prototype === Object.prototype || prototype === null) && Reflect.ownKeys(value).every(key =>
-    typeof key === 'string' && Object.hasOwn(Object.getOwnPropertyDescriptor(value, key) ?? {}, 'value'));
+  return typeof value === 'string' && value.length > 0 && value.length <= max && hasNoControlChars(value);
 }
 /** Copy data properties only; callbacks cannot change the remaining evaluation inputs. */
 function snapshot(value: unknown, depth = 0): unknown {
   if (depth > 12) throw new Error('projection nesting exceeds limit');
   if (value === null || ['string', 'boolean', 'number', 'undefined'].includes(typeof value)) return value;
   if (Array.isArray(value)) {
-    if (value.length > 256 || Reflect.ownKeys(value).length !== value.length + 1) throw new Error('invalid projection array');
-    return Array.from({length: value.length}, (_, i) => {
-      const property = Object.getOwnPropertyDescriptor(value, String(i));
-      if (!property || !Object.hasOwn(property, 'value')) throw new Error('invalid projection entry');
-      return snapshot(property.value, depth + 1);
-    });
+    if (!isDenseDataArray(value, 256)) throw new Error('invalid projection array');
+    return Array.from({length: value.length}, (_, i) => snapshot(value[i], depth + 1));
   }
-  if (!object(value) || Object.keys(value).length > 32) throw new Error('invalid projection object');
+  if (!isPlainDataObject(value, {maxKeys: 32})) throw new Error('invalid projection object');
   return Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(value)).map(([key, property]) => [key, snapshot(property.value, depth + 1)]));
 }
-function canonical(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`;
-}
 function validBinding(value: unknown): value is ReleaseBinding {
-  return object(value) && ['npm', 'website', 'desktop'].includes(String(value.channel)) && text(value.targetId) &&
+  return isPlainDataObject(value) && ['npm', 'website', 'desktop'].includes(String(value.channel)) && text(value.targetId) &&
     text(value.version, 128) && (value.channel === 'website' || VERSION.test(value.version)) &&
     typeof value.sourceRevision === 'string' && SHA.test(value.sourceRevision) &&
-    typeof value.artifactDigest === 'string' && DIGEST.test(value.artifactDigest) && text(value.attemptId);
+    isSha256Hex(value.artifactDigest) && text(value.attemptId);
 }
 function sameBinding(a: ReleaseBinding, b: ReleaseBinding): boolean {
   return a.channel === b.channel && a.targetId === b.targetId && a.version === b.version &&
@@ -56,9 +39,9 @@ function strings(value: unknown, max = 32): value is string[] {
   return Array.isArray(value) && value.length > 0 && value.length <= max && value.every(v => text(v, 512)) && new Set(value).size === value.length;
 }
 function validReceipt(value: unknown): value is ReleaseEvidenceReceipt {
-  return object(value) && text(value.id) && KINDS.includes(value.kind as ReleaseEvidenceKind) && validBinding(value.binding) &&
+  return isPlainDataObject(value) && text(value.id) && KINDS.includes(value.kind as ReleaseEvidenceKind) && validBinding(value.binding) &&
     ['local-readonly', 'host-observed', 'fixture', 'declared'].includes(String(value.source)) &&
-    ['passed', 'failed', 'unknown', 'revoked'].includes(String(value.status)) && instant(value.observedAt) && instant(value.expiresAt) &&
+    ['passed', 'failed', 'unknown', 'revoked'].includes(String(value.status)) && isCanonicalIsoTimestamp(value.observedAt) && isCanonicalIsoTimestamp(value.expiresAt) &&
     Date.parse(value.expiresAt) > Date.parse(value.observedAt) && text(value.reference, 512) &&
     (value.providerState === undefined || ['not-contacted', 'available', 'published', 'installed', 'unknown', 'failed'].includes(String(value.providerState))) &&
     (value.replayState === undefined || ['unconsumed', 'consumed', 'unknown'].includes(String(value.replayState))) &&
@@ -113,7 +96,7 @@ function newerVersion(next: string, current: string): boolean {
 function recoveryGate(input: ReleaseReadinessInput): ReleaseReadinessGate {
   const plan = input.recovery;
   if (!plan) return gate('recovery', 'unknown', 'No channel-specific recovery plan is supplied.');
-  if (!object(plan) || !validBinding(plan.binding) || !sameBinding(plan.binding, input.binding) || plan.channel !== input.binding.channel || !text(plan.ownerId)) {
+  if (!isPlainDataObject(plan) || !validBinding(plan.binding) || !sameBinding(plan.binding, input.binding) || plan.channel !== input.binding.channel || !text(plan.ownerId)) {
     return gate('recovery', 'blocked', 'Recovery plan does not bind the exact release and responsible owner.');
   }
   if (plan.channel === 'npm') {
@@ -125,8 +108,8 @@ function recoveryGate(input: ReleaseReadinessInput): ReleaseReadinessGate {
     if (plan.strategy !== 'restore-deployment' || !text(plan.previousDeploymentId) || !strings(plan.affectedTargets) || !plan.affectedTargets.includes(input.binding.targetId)) {
       return gate('recovery', 'blocked', 'Website recovery must pin the prior deployment and include the exact affected target.');
     }
-  } else if (plan.strategy !== 'signed-recovery-update' || typeof plan.previousSignedInstallerDigest !== 'string' ||
-      !DIGEST.test(plan.previousSignedInstallerDigest) || plan.previousSignedInstallerDigest === input.binding.artifactDigest ||
+  } else if (plan.strategy !== 'signed-recovery-update' || !isSha256Hex(plan.previousSignedInstallerDigest) ||
+      plan.previousSignedInstallerDigest === input.binding.artifactDigest ||
       !text(plan.updateChannel) || !text(plan.customerUpdatePath, 512) || !strings(plan.compatibilityChecks)) {
     return gate('recovery', 'blocked', 'Desktop recovery must name a distinct prior signed installer, update channel, customer update path and compatibility checks.');
   }
@@ -141,7 +124,7 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput, host?: Re
   let evidenceLayer: ReleaseReadinessResult['evidenceLayer'] = 'source';
   try {
     input = snapshot(input) as ReleaseReadinessInput;
-    if (!object(input) || !validBinding(input.binding) || !instant(input.asOf) ||
+    if (!isPlainDataObject(input) || !validBinding(input.binding) || !isCanonicalIsoTimestamp(input.asOf) ||
         ![true, false, null].includes(input.sourceClean) || !Array.isArray(input.evidence) || input.evidence.length > 64 || !input.evidence.every(validReceipt)) {
       gates.push(gate('input', 'blocked', 'Release binding, time or receipt projection is invalid.'));
     } else {
@@ -152,18 +135,18 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput, host?: Re
       const seen = new Map<string, string>();
       let conflict = false;
       const unique = evidence.filter(r => {
-        const value = canonical(r);
+        const value = canonicalJson(r);
         if (seen.has(r.id)) { if (seen.get(r.id) !== value) conflict = true; return false; }
         seen.set(r.id, value); return true;
       });
       gates.push(gate('receipt-identity', conflict ? 'blocked' : 'passed', conflict ? 'One receipt ID has conflicting projections.' : 'Receipt identities are consistent.'));
       gates.push(gate('source-clean', input.sourceClean === false ? 'blocked' : input.sourceClean === null ? 'unknown' : 'passed',
         input.sourceClean === false ? 'Source contains unqualified edits.' : input.sourceClean === null ? 'Source cleanliness is unknown.' : 'Exact source is reported clean.'));
-      for (const kind of REQUIRED) gates.push(evidenceGate(kind, unique, binding, asOf, host));
+      for (const kind of KINDS) gates.push(evidenceGate(kind, unique, binding, asOf, host));
       const checks = input.postChecks;
       gates.push(!checks ? gate('post-checks', 'unknown', 'No post-release acceptance plan is supplied.') :
-        !object(checks) || !validBinding(checks.binding) || !sameBinding(checks.binding, binding) || !strings(checks.checks) ||
-        !text(checks.ownerId) || !instant(checks.deadlineAt) || Date.parse(checks.deadlineAt) <= Date.parse(asOf) ?
+        !isPlainDataObject(checks) || !validBinding(checks.binding) || !sameBinding(checks.binding, binding) || !strings(checks.checks) ||
+        !text(checks.ownerId) || !isCanonicalIsoTimestamp(checks.deadlineAt) || Date.parse(checks.deadlineAt) <= Date.parse(asOf) ?
           gate('post-checks', 'blocked', 'Post-checks must bind this release, an owner, checks and a future deadline.') :
           gate('post-checks', 'passed', 'Post-release checks are planned; they have not been executed.'));
       gates.push(recoveryGate(input));

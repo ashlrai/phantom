@@ -5,6 +5,9 @@ import type { CreditPoolReadView } from '../resources/credit-pool-types.js';
 import type { ProactiveProfile } from './types.js';
 import type { ProactiveEvidenceState, ProactiveResourceCost, ProactiveResourceCredit,
   ProactiveResourceEvidenceResponse, ProactiveResourceEvidenceRow, ProactiveResourceIdentity, ProactiveResourceKind } from './resource-evidence-types.js';
+import {
+  hasNoControlChars, isCanonicalIsoTimestamp, isDenseDataArray, isPlainDataObject, isProactiveSlug,
+} from './validation.js';
 
 export interface ProactiveCapacityEvidence { identity: ProactiveResourceIdentity; capacity: SeatCapacity }
 /** Caller must supply cost evidence explicitly; percent usage never becomes currency or tokens. */
@@ -29,25 +32,23 @@ export interface ProactiveResourceSnapshots {
 export interface ProactiveResourceProjectionOptions { nowMs: number; maxAgeMs?: number }
 const MAX_ROWS = 512, MAX_WINDOWS = 64, DEFAULT_MAX_AGE = 15 * 60_000;
 function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error('Invalid snapshot object');
-  const keys = Reflect.ownKeys(value);
-  if (keys.length > 64 || keys.some(key => typeof key !== 'string' || !('value' in Object.getOwnPropertyDescriptor(value, key)!))) throw new Error('Invalid snapshot fields');
-  return value as Record<string, unknown>;
+  if (!isPlainDataObject(value, { maxKeys: 64 })) throw new Error('Invalid snapshot object');
+  return value;
 }
 function array(value: unknown, max = MAX_ROWS): unknown[] {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > max ||
-    Reflect.ownKeys(value).length !== value.length + 1 || Array.from({ length: value.length }, (_, i) => Object.getOwnPropertyDescriptor(value, String(i))).some(d => !d || !('value' in d))) throw new Error('Invalid snapshot list');
+  if (!isDenseDataArray(value, max, { exactPrototype: true })) throw new Error('Invalid snapshot list');
   return value;
 }
 function text(value: unknown, max = 256): string {
-  if (typeof value !== 'string' || !value || value.length > max || [...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) throw new Error('Invalid snapshot reference');
+  if (typeof value !== 'string' || !value || value.length > max || !hasNoControlChars(value)) throw new Error('Invalid snapshot reference');
   return value;
 }
-function slug(value: unknown): string { const result = text(value, 64); if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(result)) throw new Error('Invalid slug'); return result; }
+function slug(value: unknown): string { if (!isProactiveSlug(value)) throw new Error('Invalid slug'); return value; }
 function nullableText(value: unknown, max = 256): string | null { return value === null || value === undefined ? null : text(value, max); }
 function instant(value: unknown): string | null {
   if (value === null || value === undefined) return null;
-  const result = text(value, 32); if (!Number.isFinite(Date.parse(result)) || new Date(result).toISOString() !== result) throw new Error('Invalid timestamp'); return result;
+  if (!isCanonicalIsoTimestamp(value)) throw new Error('Invalid timestamp');
+  return value;
 }
 function number(value: unknown, max = Number.MAX_SAFE_INTEGER): number | null {
   if (value === null || value === undefined) return null;

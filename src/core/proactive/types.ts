@@ -15,8 +15,6 @@ export type ProactiveOperation = 'dispatch' | 'status' | 'cancel' | 'result';
 export interface ProactiveOperationReadiness {
   state: 'unverified' | 'unsupported'; verifiedAt: null; note: string;
 }
-/** Acceptance, provider completion and independently verified outcome are different observations. */
-export type ProactiveRunState = 'accepted' | 'running' | 'completed' | 'result-verified' | 'failed' | 'unknown';
 export interface ProactiveProfileInput {
   identity: ProactiveIdentity; displayName: string; avatar?: ProactiveAvatar; responsibility?: string;
   computer?: ProactiveComputer; services?: ProactiveService[]; fundingReference?: ProactiveFundingReference | null;

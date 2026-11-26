@@ -12,32 +12,38 @@ import { join } from 'node:path';
 import { inspectPrivateDirectory } from '../universe/artifacts.js';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
+import { canonicalJson, hasPlainDataKeys, isSha256Hex } from './validation.js';
 
 export interface ReplayWatermarkLimits { maxRecords: number; maxBytes?: number }
 export interface ReplayWatermarkReservation { revision: number; ledgerDigest: string; previousLedgerDigest: string | null }
 export interface ReplayWatermarkRead { sourceState: 'healthy' | 'missing' | 'degraded'; revision: number; ledgerDigest: string | null }
 export type ReplayWatermarkDisposition = 'recorded' | 'replayed' | 'conflict' | 'unavailable';
+export interface RevisionRecord { revision: number; digest: string }
 interface WatermarkRecord extends ReplayWatermarkReservation {
   schemaVersion: 1; previousWatermarkDigest: string | null; digest: string;
 }
 const RECORD_BYTES = 1024, HARD_RECORDS = 100_000, HARD_BYTES = 64 * 1024 * 1024;
-const hash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
-function exact(value: unknown, keys: string[]): value is Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
-  const own = Reflect.ownKeys(value);
-  return own.length === keys.length && keys.every(key => {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key); return !!descriptor && 'value' in descriptor;
-  });
+/** Shared 16-digit zero-padded revision codec for immutable private proactive ledgers. */
+export function createRevisionRecordCodec<T extends RevisionRecord>(
+  parse: (value: unknown) => T | null,
+  serialize: (value: T) => string = value => `${canonicalJson(value)}\n`,
+): ImmutablePrivateRecordCodec<T> {
+  return {
+    parse, serialize, recordId: value => String(value.revision),
+    recordFileName: value => `${String(value.revision).padStart(16, '0')}.json`,
+    isRecordFileName: name => /^\d{16}\.json$/.test(name), stageToken: value => value.digest,
+    equivalent: (left, right) => left.digest === right.digest, compare: (left, right) => left.revision - right.revision,
+  };
 }
 function validReservation(value: unknown): value is ReplayWatermarkReservation {
-  if (!exact(value, ['revision', 'ledgerDigest', 'previousLedgerDigest'])) return false;
-  return Number.isSafeInteger(value.revision) && Number(value.revision) >= 1 && hash(value.ledgerDigest) &&
-    (value.previousLedgerDigest === null || hash(value.previousLedgerDigest));
+  if (!hasPlainDataKeys(value, ['revision', 'ledgerDigest', 'previousLedgerDigest'])) return false;
+  return Number.isSafeInteger(value.revision) && Number(value.revision) >= 1 && isSha256Hex(value.ledgerDigest) &&
+    (value.previousLedgerDigest === null || isSha256Hex(value.previousLedgerDigest));
 }
 function normalizedLimits(value: ReplayWatermarkLimits): Required<ReplayWatermarkLimits> | null {
   if (!value || typeof value !== 'object') return null;
   const maxBytesDescriptor = Object.getOwnPropertyDescriptor(value, 'maxBytes');
-  if (!exact(value, maxBytesDescriptor ? ['maxRecords', 'maxBytes'] : ['maxRecords']) ||
+  if (!hasPlainDataKeys(value, maxBytesDescriptor ? ['maxRecords', 'maxBytes'] : ['maxRecords']) ||
     !Number.isSafeInteger(value.maxRecords) || value.maxRecords < 1 || value.maxRecords > HARD_RECORDS) return null;
   const maxBytes = value.maxBytes ?? Math.min(HARD_BYTES, value.maxRecords * RECORD_BYTES);
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > HARD_BYTES) return null;
@@ -49,18 +55,13 @@ function payload(record: Omit<WatermarkRecord, 'digest'>): Omit<WatermarkRecord,
 }
 function digest(value: Omit<WatermarkRecord, 'digest'>): string { return createHash('sha256').update(JSON.stringify(payload(value))).digest('hex'); }
 function parse(value: unknown): WatermarkRecord | null {
-  if (!exact(value, ['schemaVersion', 'revision', 'ledgerDigest', 'previousLedgerDigest', 'previousWatermarkDigest', 'digest']) ||
+  if (!hasPlainDataKeys(value, ['schemaVersion', 'revision', 'ledgerDigest', 'previousLedgerDigest', 'previousWatermarkDigest', 'digest']) ||
     value.schemaVersion !== 1 || !validReservation({ revision: value.revision, ledgerDigest: value.ledgerDigest, previousLedgerDigest: value.previousLedgerDigest }) ||
-    !(value.previousWatermarkDigest === null || hash(value.previousWatermarkDigest)) || !hash(value.digest)) return null;
+    !(value.previousWatermarkDigest === null || isSha256Hex(value.previousWatermarkDigest)) || !isSha256Hex(value.digest)) return null;
   const record = value as unknown as WatermarkRecord;
   return digest(record) === record.digest ? record : null;
 }
-const codec: ImmutablePrivateRecordCodec<WatermarkRecord> = {
-  parse, serialize: record => `${JSON.stringify({ ...payload(record), digest: record.digest })}\n`,
-  recordId: record => String(record.revision), recordFileName: record => `${String(record.revision).padStart(16, '0')}.json`,
-  isRecordFileName: name => /^[0-9]{16}\.json$/u.test(name), stageToken: record => record.digest,
-  equivalent: (left, right) => left.digest === right.digest, compare: (left, right) => left.revision - right.revision,
-};
+const codec = createRevisionRecordCodec(parse, record => `${JSON.stringify({ ...payload(record), digest: record.digest })}\n`);
 function config(directory: string, limits: Required<ReplayWatermarkLimits>): ImmutablePrivateRecordStoreConfig<WatermarkRecord> {
   return { label: 'Local replay watermark', anchorPath: directory, rootPath: join(directory, 'replay-watermarks'), lockFileName: '.watermarks.lock',
     maxRecordBytes: RECORD_BYTES, defaultMaxFiles: limits.maxRecords, hardMaxFiles: limits.maxRecords,

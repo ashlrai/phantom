@@ -1,22 +1,18 @@
 import { taskContextTimestamp } from '../context/task-temporal-context.js';
-import { outcomeCanonical, outcomeDigest, outcomeToken } from '../goals/outcome-types.js';
+import { outcomeToken } from '../goals/outcome-types.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { companionDigest, companionIdentityEqual } from './coordination-types.js';
 import type { CompanionPacketAuthorization, CompanionPacketDestination, CompanionPacketFreshness,
   CompanionPacketInput, CompanionPacketV1 } from './packet-types.js';
+import { canonicalJson, hasPlainDataKeys, isDenseDataArray } from './validation.js';
 
 const PACKET_KEYS = ['schemaVersion', 'projectBindingId', 'tenantId', 'taskId', 'goal', 'acceptance', 'accountRefs',
   'allowedDestination', 'artifact', 'evidence', 'asOf', 'coverage', 'deadline', 'limits'];
 const INPUT_KEYS = PACKET_KEYS.filter(key => key !== 'schemaVersion');
 const MAX_PACKET_BYTES = 256 * 1024;
 
-function record(value: unknown, required: string[], optional: string[] = []): value is Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const keys = Reflect.ownKeys(value);
-  return required.every(key => descriptors[key] && 'value' in descriptors[key]!) &&
-    keys.every(key => typeof key === 'string' && [...required, ...optional].includes(key) &&
-      'value' in descriptors[key]! && descriptors[key]!.enumerable);
+function record(value: unknown, required: readonly string[], optional: readonly string[] = []): value is Record<string, unknown> {
+  return hasPlainDataKeys(value, required, optional, { requireEnumerable: true });
 }
 function text(value: unknown, max: number): value is string {
   if (typeof value !== 'string' || value.trim().length === 0 || value.length > max ||
@@ -28,11 +24,7 @@ function text(value: unknown, max: number): value is string {
   return true;
 }
 function list(value: unknown, max: number, valid: (item: unknown) => boolean): value is unknown[] {
-  if (!Array.isArray(value) || value.length > max) return false;
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  return Reflect.ownKeys(value).length === value.length + 1 &&
-    Array.from({ length: value.length }, (_, index) => descriptors[index])
-      .every(descriptor => descriptor && 'value' in descriptor && valid(descriptor.value));
+  return isDenseDataArray(value, max) && value.every(valid);
 }
 function strings(value: unknown, count: number, max: number, nonempty = false): value is string[] {
   return list(value, count, item => text(item, max)) && (!nonempty || value.length > 0) && new Set(value).size === value.length;
@@ -40,9 +32,6 @@ function strings(value: unknown, count: number, max: number, nonempty = false): 
 function destination(value: unknown): value is CompanionPacketDestination {
   return record(value, ['provider', 'accountId', 'agentId']) && text(value.provider, 128) &&
     text(value.accountId, 256) && text(value.agentId, 256);
-}
-function sameDestination(a: CompanionPacketDestination, b: CompanionPacketDestination): boolean {
-  return a.provider === b.provider && a.accountId === b.accountId && a.agentId === b.agentId;
 }
 
 /** Strict data-only parsing. A parsed packet is not authorized, connected or executable. */
@@ -81,7 +70,7 @@ export function parseScopedCompanionPacket(value: unknown): CompanionPacketV1 | 
     const deadline = value.deadline === null ? null : taskContextTimestamp(value.deadline);
     if (!asOf || (value.deadline !== null && (!deadline || deadline <= asOf))) return null;
     // Clone only after the complete data-only shape has been admitted; no getters execute.
-    const packet = JSON.parse(outcomeCanonical(value)) as CompanionPacketV1;
+    const packet = JSON.parse(canonicalJson(value)) as CompanionPacketV1;
     packet.asOf = asOf;
     packet.deadline = deadline;
     for (const item of packet.evidence) {
@@ -91,11 +80,11 @@ export function parseScopedCompanionPacket(value: unknown): CompanionPacketV1 | 
     // Canonical set ordering makes equivalent scope and provenance order independent.
     packet.accountRefs.sort();
     packet.evidence.sort((a, b) => {
-      const left = outcomeCanonical(a), right = outcomeCanonical(b);
+      const left = canonicalJson(a), right = canonicalJson(b);
       return left < right ? -1 : left > right ? 1 : 0;
     });
-    if (new Set(packet.evidence.map(item => outcomeCanonical(item.source))).size !== packet.evidence.length ||
-        Buffer.byteLength(outcomeCanonical(packet), 'utf8') > packet.limits.maxContextBytes) return null;
+    if (new Set(packet.evidence.map(item => canonicalJson(item.source))).size !== packet.evidence.length ||
+        Buffer.byteLength(canonicalJson(packet), 'utf8') > packet.limits.maxContextBytes) return null;
     return packet;
   } catch { return null; }
 }
@@ -118,7 +107,7 @@ export function isScopedCompanionPacketAuthorized(packet: CompanionPacketV1, aut
     if (!parsed || !authorization || typeof authorization.stillAuthorized !== 'function' ||
         !strings(authorization.accountRefs, 128, 256) || !destination(authorization.allowedDestination) ||
         parsed.tenantId !== authorization.tenantId || parsed.projectBindingId !== authorization.projectBindingId ||
-        parsed.taskId !== authorization.taskId || !sameDestination(parsed.allowedDestination, authorization.allowedDestination) ||
+        parsed.taskId !== authorization.taskId || !companionIdentityEqual(parsed.allowedDestination, authorization.allowedDestination) ||
         parsed.accountRefs.some(account => !authorization.accountRefs.includes(account))) return false;
     return authorization.stillAuthorized(freezePacket(parsed)) === true;
   } catch { return false; }
@@ -127,7 +116,7 @@ export function isScopedCompanionPacketAuthorized(packet: CompanionPacketV1, aut
 export function companionPacketDigest(packet: CompanionPacketV1): string {
   const parsed = parseScopedCompanionPacket(packet);
   if (!parsed) throw new Error('Invalid companion evidence packet.');
-  return outcomeDigest(parsed);
+  return companionDigest(parsed);
 }
 
 export function buildScopedCompanionPacket(input: CompanionPacketInput, authorization: CompanionPacketAuthorization): { packet: CompanionPacketV1; digest: string } {
@@ -135,7 +124,7 @@ export function buildScopedCompanionPacket(input: CompanionPacketInput, authoriz
   try { if (record(input, INPUT_KEYS)) packet = parseScopedCompanionPacket({ ...input, schemaVersion: 1 }); } catch { /* Bound error below. */ }
   if (!packet) throw new Error('Invalid companion evidence packet.');
   if (!isScopedCompanionPacketAuthorized(packet, authorization)) throw new Error('Companion packet scope is not authorized.');
-  const digest = outcomeDigest(packet);
+  const digest = companionDigest(packet);
   // A host may revoke the grant while preparing a projection. Publication/contact must
   // perform its own final check; this second check does not confer lasting permission.
   if (!isScopedCompanionPacketAuthorized(packet, authorization)) throw new Error('Companion packet scope is no longer authorized.');
