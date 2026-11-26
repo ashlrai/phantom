@@ -75,7 +75,14 @@ export async function readGapQueueInputs(runsDir: string, room: GapLaneRoom | nu
   const q = await readFleetQueue({ runsDir }).catch(() => null);
   const readyRows = q && q.sources.ready !== 'degraded' ? q.ready : null;
   const deadRows = room?.live && q ? q.byLane.filter(row => !room.live!.has(row.lane)).reduce((sum, row) => sum + row.ready, 0) : 0;
-  const parkedRows = (room?.stuck ?? 0) + deadRows;
+  // room.stuck sums each waiting lane's queued figure — the dispatcher's own
+  // per-lane count when status.json publishes one, which reads the raw lane
+  // column and includes rows the market would reject. readyRows and byLane
+  // come from the shared parser's market-resolved attribution, so the parked
+  // subtraction must use the same units or launchableRows miscounts exactly
+  // where preferred_lane overrides and market-dead rows live.
+  const stuckRows = room && q ? room.waiting.reduce((sum, w) => sum + (q.byLane.find(row => row.lane === w.lane)?.ready ?? 0), 0) : 0;
+  const parkedRows = stuckRows + deadRows;
   const launchableRows = readyRows === null ? null : Math.max(0, readyRows - parkedRows);
   return { readyRows, parkedRows, launchableRows, limit: DROP_JOB_QUEUE_LIMIT, lanesSource: room ? 'lane readings' : 'unavailable', full: launchableRows !== null && launchableRows >= DROP_JOB_QUEUE_LIMIT };
 }
