@@ -11,6 +11,10 @@ line from 0% at window start (reset minus 7 days) to 100% at reset, with a pace 
 (within 5 points of the line is on pace) or `unknown` (fewer than two readings, no reset time, the reset passed,
 or the newest reading is more than three hours old). Older measurements remain visible in the history.
 A drop in `used_pct` with the same or a later reset time starts a new window and is listed in `resets`.
+The runway forecast uses the first reading at the latest used share to date
+the most recent change. When that change is more than three hours old, the
+runway verdict and burn rate are unknown and advice is withheld, even if a
+newer reading confirms the same used share.
 
 ## Interface: `ResourceLedgerV1`
 
