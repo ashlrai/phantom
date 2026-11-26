@@ -65,6 +65,23 @@ describe('generator yield', () => {
     ]);
   });
   it.each([
+    { src: undefined, attributed: 'unknown' },
+    { src: 'ideas', attributed: 'ideas' },
+  ])('attributes competing drafts to $attributed using the job evidence', ({ src, attributed }) => {
+    const job = 'RQ-FOOA123Q8';
+    const jobs = [row({ job, src, event: 'launch' }), row({ job, state: 'MERGED' })].join('\n');
+    const drafts = ['ideas', 'ideas', 'bets'].map(source => row({ job, src: source, event: 'drafted' }));
+
+    for (const decisions of [drafts, [...drafts].reverse()]) {
+      const { generators } = generatorYield(jobs, 24, now, decisions.join('\n'));
+      expect(generators.filter(group => group.drafted > 0).map(group => [group.generator, group.drafted]))
+        .toEqual([['bets', 1], ['ideas', 1]]);
+      expect(generators.filter(group => group.jobs > 0)).toMatchObject([
+        { generator: attributed, jobs: 1, launched: 1, prs: 1, merged: 1 },
+      ]);
+    }
+  });
+  it.each([
     { unreadable: 'jobs.jsonl', readable: 'generation.jsonl', event: 'drafted', jobsKnown: false, generationKnown: true },
     { unreadable: 'generation.jsonl', readable: 'jobs.jsonl', event: 'launch', jobsKnown: true, generationKnown: false },
   ])('retains readable evidence when $unreadable cannot be read', async ({ unreadable, readable, event, jobsKnown, generationKnown }) => {

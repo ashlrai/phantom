@@ -45,7 +45,7 @@ function generator(id: string): string {
 /** Events in the window are grouped by job ID; repeated events never count twice. */
 export function generatorYield(raw: string, hours = 24, now = Date.now(), decisions = ''): GeneratorYieldReport {
   const jobs = new Map<string, Job>(); let malformedLines = 0;
-  const drafts = new Map<string, string>();
+  const drafts = new Map<string, Set<string>>();
   const generation = new Map<string, Map<string, { drafted: boolean; reasons: Set<string> }>>();
   const rows: { id: string; at: number; row: Record<string, unknown> }[] = [];
   const since = now - hours * 3600000;
@@ -69,7 +69,12 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     if (event === 'drafted' || event === 'rejected') {
       const source = string(r.src) ?? 'unknown', group = generation.get(source) ?? new Map<string, { drafted: boolean; reasons: Set<string> }>();
       const decision = group.get(id) ?? { drafted: false, reasons: new Set<string>() };
-      if (event === 'drafted') { decision.drafted = true; drafts.set(id, source); }
+      if (event === 'drafted') {
+        decision.drafted = true;
+        const sources = drafts.get(id) ?? new Set<string>();
+        sources.add(source);
+        drafts.set(id, sources);
+      }
       else decision.reasons.add(string(r.reason) ?? 'unknown');
       group.set(id, decision); generation.set(source, group); continue;
     }
@@ -88,7 +93,16 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     jobs.set(id, job);
   }
   const groups = new Map<string, Job[]>();
-  for (const [id, job] of jobs) { const name = drafts.get(id) ?? job.generator ?? 'unknown'; groups.set(name, [...(groups.get(name) ?? []), job]); }
+  for (const [id, job] of jobs) {
+    const sources = drafts.get(id);
+    let name = job.generator ?? 'unknown';
+    if (!job.explicit && sources) {
+      name = sources.size === 1 ? [...sources][0]! : 'unknown';
+    }
+    const group = groups.get(name) ?? [];
+    group.push(job);
+    groups.set(name, group);
+  }
   const generators = [...new Set([...groups.keys(), ...generation.keys()])].map(name => {
     const rows = groups.get(name) ?? [], decisions = [...(generation.get(name)?.values() ?? [])];
     const diffs = rows.map(r => r.diff).filter((n): n is number => n !== null).sort((a, b) => a - b);
