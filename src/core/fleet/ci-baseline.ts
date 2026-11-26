@@ -2207,18 +2207,20 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
         return null;
       }
       const output = lines(r.stdout);
-      const checkout = output.findIndex(line => /(?:^|\/)git log -1 --format=%H$/.test(line));
-      if (checkout >= 0) {
-        if (output[checkout + 1] !== head) return null;
-        result.push({ conclusion: job.conclusion, text: r.stdout });
-        continue;
+      // Check every explicit revision proof before using the job's evidence.
+      // A later checkout can contradict an initially correct proof.
+      let explicitProof = false;
+      for (const [index, line] of output.entries()) {
+        const bound = BOUND_LINE.exec(line);
+        if (bound) {
+          if (bound[1] !== head) return null;
+          explicitProof = true;
+        } else if (/(?:^|\/)git log -1 --format=%H$/.test(line)) {
+          if (output[index + 1] !== head) return null;
+          explicitProof = true;
+        }
       }
-      // Bound CI jobs prove the checkout through the source-binding receipt
-      // instead of a raw `git log -1` echo; the bound revision must equal the
-      // analyzed head exactly like the marker's following line does.
-      const bound = output.find(line => BOUND_LINE.test(line));
-      if (bound !== undefined) {
-        if (BOUND_LINE.exec(bound)![1] !== head) return null;
+      if (explicitProof) {
         result.push({ conclusion: job.conclusion, text: r.stdout });
         continue;
       }
