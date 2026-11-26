@@ -60,18 +60,33 @@ export interface UnfedReadOptions {
 }
 
 /**
- * One unfed report through the shared `fleet.unfed.v1` projection. Throws
- * when queue/status.json is absent or its lanes map cannot be read — the
- * same failure `phm fleet unfed` reports as its exit-2 error — and when a
- * required input exceeds its read bound. Every other input is optional:
- * an unavailable ready.tsv leaves queue-derived counts unknown, a missing market file
- * leaves the matching fold `available: false`, and a tail-truncated jobs
- * ledger marks its claim/outcome counts a lower bound.
+ * One unfed report through the shared `fleet.unfed.v1` projection. Throws a
+ * coded error when queue/status.json cannot serve the read — `unfed-status-missing`
+ * when no dispatcher has published it, `unfed-status-unreadable` when it exists
+ * but cannot be read, `unfed-status-invalid` when it is not a dispatchd status
+ * document — and when a required input exceeds its read bound. Every other
+ * input is optional: an unavailable ready.tsv leaves queue-derived counts
+ * unknown, a missing market file leaves the matching fold `available: false`,
+ * and a tail-truncated jobs ledger marks its claim/outcome counts a lower bound.
  */
 export async function readUnfedReport(options: UnfedReadOptions = {}): Promise<UnfedReport> {
   const root = options.runsDir ?? runsRoot();
-  const status = await readBounded(join(root, 'queue', 'status.json'));
-  if (status === null) throw new Error('unfed-status-unreadable');
+  const statusPath = join(root, 'queue', 'status.json');
+  let status: string | null;
+  try {
+    status = await readBounded(statusPath);
+  } catch {
+    throw new Error('unfed-status-unreadable');
+  }
+  if (status === null) throw new Error('unfed-status-missing');
+  // currentUnfed re-parses this document; parse it once here so a malformed
+  // status.json is a status problem, not a raw SyntaxError surfacing from
+  // inside the fold (a SyntaxError could also come from a market input).
+  try {
+    JSON.parse(status);
+  } catch {
+    throw new Error('unfed-status-invalid');
+  }
   const ready = await readOptional(join(root, 'queue', 'ready.tsv'));
   const [slots, models, budget, adaptive, hold, routerQueue] = await Promise.all([
     readOptional(join(root, 'queue', 'slots.json')),
@@ -91,7 +106,18 @@ export async function readUnfedReport(options: UnfedReadOptions = {}): Promise<U
   const jobsText = jobsRead?.text ?? null;
   const window = options.windowHours ?? UNFED_DEFAULT_WINDOW_HOURS;
   const jobsTruncated = jobsRead?.truncated ?? false;
-  const current = currentUnfed(status, ready, { slots, models, budget, adaptive, hold, routerQueue, nowMs });
+  let current: ReturnType<typeof currentUnfed>;
+  try {
+    current = currentUnfed(status, ready, { slots, models, budget, adaptive, hold, routerQueue, nowMs });
+  } catch (error) {
+    // Only status.json shape errors carry currentUnfed's 'invalid status'/
+    // 'invalid lane' markers; a malformed market input (slots.json,
+    // models.json, ...) keeps its own error rather than being misreported
+    // as a status problem.
+    const message = error instanceof Error ? error.message : '';
+    if (message === 'invalid status' || message === 'invalid lane') throw new Error('unfed-status-invalid');
+    throw error;
+  }
   const advisory = capacity && ready !== null && current.statusFresh ? readyHints(ready, routerQueue) : null;
   return {
     ...current,

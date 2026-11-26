@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { renderUnfed, unfedExitCode, FLEET_UNFED_SCHEMA, type UnfedReport } from '../core/fleet/unfed-capacity.js';
 import { UNFED_MAX_WINDOW_HOURS, readUnfedReport } from '../core/fleet/unfed-read.js';
 import { runsRoot } from '../core/metrics/loop-collect.js';
@@ -25,9 +26,22 @@ export async function cmdFleetUnfed(args: string[]): Promise<number> {
   let report: UnfedReport;
   try {
     report = await readUnfedReport({ runsDir: runsRoot(), windowHours });
-  } catch {
-    const error = 'Cannot read lane status. Expected lanes with running and target in queue/status.json.';
-    console.log(json ? JSON.stringify({ schema: FLEET_UNFED_SCHEMA, readOnly: true, error }) : error);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    const statusPath = join(runsRoot(), 'queue', 'status.json');
+    let message: string;
+    if (code === 'unfed-status-missing') {
+      message = `No dispatcher status at ${statusPath}: this machine has no fleet publishing queue/status.json. `
+        + 'phm fleet unfed reads the local dispatcher\'s live state — run it on a node running the fleet, or set ASHLR_RUNS_DIR to a runs root that has one.';
+    } else if (code === 'unfed-status-unreadable' || code === 'unfed-status-invalid') {
+      const detail = code === 'unfed-status-unreadable'
+        ? `${statusPath} exists but cannot be read`
+        : `${statusPath} is not a valid dispatchd status document`;
+      message = `Cannot read lane status: ${detail}. Expected lanes with running and target.`;
+    } else {
+      message = 'Cannot read lane status. Expected lanes with running and target in queue/status.json.';
+    }
+    console.log(json ? JSON.stringify({ schema: FLEET_UNFED_SCHEMA, readOnly: true, error: message }) : message);
     return 2;
   }
   if (json) console.log(JSON.stringify(report));

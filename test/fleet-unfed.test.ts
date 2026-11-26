@@ -779,6 +779,32 @@ describe('phm fleet unfed', () => {
     expect((await run([])).code).toBe(2);
   });
 
+  it('names the status path and the no-dispatcher case when status.json is absent', async () => {
+    const statusPath = join(dir, 'queue', 'status.json');
+    const missing = await run();
+    expect(missing.code).toBe(2);
+    const payload = JSON.parse(missing.lines[0]!);
+    expect(payload).toMatchObject({ schema: 'fleet.unfed.v1', readOnly: true });
+    expect(payload.error).toContain(statusPath);
+    expect(payload.error).toMatch(/no fleet publishing|no dispatcher/i);
+    vi.restoreAllMocks();
+    const text = await run([]);
+    expect(text.code).toBe(2);
+    expect(text.lines.join('\n')).toContain(statusPath);
+  });
+
+  it('distinguishes a malformed status.json from an absent one', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), 'not json{');
+    const bad = await run();
+    expect(bad.code).toBe(2);
+    expect(JSON.parse(bad.lines[0]!).error).toContain('not a valid dispatchd status document');
+    vi.restoreAllMocks();
+    writeFileSync(join(dir, 'queue', 'status.json'), '{"lanes":[]}');
+    const wrongShape = await run();
+    expect(wrongShape.code).toBe(2);
+    expect(JSON.parse(wrongShape.lines[0]!).error).toContain('not a valid dispatchd status document');
+  });
+
   it.each(['missing', 'unreadable'])('preserves unknown queue counts when ready.tsv is %s', async unavailable => {
     writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
       schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(), lanes: LANES,
