@@ -23,7 +23,7 @@ const snapshot = (): FleetLaneSnapshot => ({
   holdSource: 'healthy', notes: [], schema: 'fleet.lanes.v1', generatedAt: '2026-10-31T11:59:48Z', mergeWindowMinutes: 60,
   sources: {
     queue: { state: 'healthy', file: 'ready.tsv', rows: 4, dropped: 0, unhinted: 0 }, queueState: { state: 'healthy', file: 'queue.v1.json', jobs: 3 },
-    ledger: { state: 'healthy', file: 'jobs.jsonl', events: 7, dropped: 0 }, usage: { state: 'healthy', files: ['usage-readings.log'], pools: 2, dropped: 0 },
+    ledger: { state: 'healthy', file: 'jobs.jsonl', events: 7, dropped: 0, mergeWindow: 'complete' }, usage: { state: 'healthy', files: ['usage-readings.log'], pools: 2, dropped: 0 },
     budgets: { state: 'healthy' },
   },
   lanes: [],
@@ -77,7 +77,7 @@ describe('ops-lane-model', () => {
     expect(sourceNotes(snapshot())).toEqual([]);
     const snap = snapshot();
     snap.sources.queue = { state: 'missing', file: 'ready.tsv', rows: 0, dropped: 0, unhinted: 0 };
-    snap.sources.ledger = { state: 'degraded', file: 'jobs.jsonl', events: 3, dropped: 2 };
+    snap.sources.ledger = { state: 'degraded', file: 'jobs.jsonl', events: 3, dropped: 2, mergeWindow: 'partial' };
     snap.sources.usage = { state: 'missing', files: [], pools: 0, dropped: 0 };
     snap.sources.budgets = { state: 'unavailable' };
     expect(sourceNotes(snap)).toEqual([

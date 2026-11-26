@@ -303,6 +303,36 @@ it('flags stale parked rows whose dependency gates are all merged', async () => 
   expect(report.totals.stale).toBe(1);
 });
 
+it('counts merges from a truncated ledger tail that covers the window', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
+  // The byte cut lands inside the padding row, so the first retained event
+  // predates the merge window — the tail provably covers it even though the
+  // file itself was only partially read.
+  const pad = JSON.stringify({ event: 'launch', job: 'RQ-PAD', lane: 'devin', ts: minutesAgo(600), padding: 'x'.repeat(600) });
+  await writeFile(join(queueDir, 'jobs.jsonl'), [
+    pad,
+    JSON.stringify({ event: 'outcome', job: 'RQ-PRE', state: 'MERGED', lane: 'devin', ts: minutesAgo(120) }),
+    merge('m-in', 'devin', minutesAgo(30)),
+  ].join('\n'));
+  const report = await getLaneQueueCounts({ runsDir: root, now, ledgerBytes: 512 });
+  expect(report.lanes.find(l => l.lane === 'devin')).toMatchObject({ merges: 1 });
+  expect(report.totals.merges).toBe(1);
+  expect(report.sources.ledger).toBe('healthy');
+});
+
+it('keeps merge totals unknown when the ledger window is only partially covered', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
+  // The retained tail starts inside the window, so an earlier in-window
+  // merge could sit in the unread bytes — the count stays unknown, not zero.
+  await writeFile(join(queueDir, 'jobs.jsonl'), [
+    JSON.stringify({ event: 'outcome', job: 'RQ-CUT', state: 'MERGED', lane: 'devin', ts: minutesAgo(30), padding: 'x'.repeat(500) }),
+    JSON.stringify({ event: 'launch', job: 'RQ-LATE', lane: 'devin', ts: minutesAgo(15) }),
+  ].join('\n'));
+  const report = await getLaneQueueCounts({ runsDir: root, now, ledgerBytes: 512 });
+  expect(report.sources.ledger).toBe('degraded');
+  expect(report.totals.merges).toBeNull();
+});
+
 it('marks a malformed queue as degraded and keeps counts null-safe', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), `${row('READY', 'a-1', 'devin')}\nthis is not a row`);
   await writeFile(join(queueDir, 'jobs.jsonl'), 'not json');

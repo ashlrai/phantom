@@ -163,7 +163,18 @@ export interface FleetLaneSnapshot {
       unhinted: number;
     };
     queueState: { state: FleetLaneSourceState; file: string; jobs: number };
-    ledger: { state: FleetLaneSourceState; file: string; events: number; dropped: number };
+    ledger: {
+      state: FleetLaneSourceState; file: string; events: number; dropped: number;
+      /**
+       * Whether the retained ledger bytes provably cover the whole merge
+       * window: 'complete' = every in-window merge event was observed (a
+       * truncated tail still counts when its first retained event predates
+       * the window and no rows were dropped); 'partial' = merges may be
+       * missing, so a zero count is unknown, not zero; 'absent' = no ledger
+       * file was read at all.
+       */
+      mergeWindow: 'complete' | 'partial' | 'absent';
+    };
     usage: { state: FleetLaneSourceState; files: string[]; pools: number; dropped: number };
     budgets: { state: 'healthy' | 'unavailable' };
   };
@@ -191,6 +202,8 @@ export interface FleetLaneConsoleOptions {
   now?: () => Date;
   /** Trailing window for mergesPerHour. Default 60 minutes. */
   mergeWindowMs?: number;
+  /** Per-ledger read bound in bytes. Default 8 MiB; tests inject a small bound to exercise truncation. */
+  ledgerBytes?: number;
   /** Where the Leader remembers when a lane first looked starved. Default `~/.ashlr/vision/leader`. */
   starvedStateDir?: string;
   /** Badge-tooltip notes per lane. Absent means no notes — never an error. */
@@ -610,8 +623,10 @@ function prIdentity(value: string | null): string | null {
 }
 
 // An offset is essential: otherwise Date.parse depends on the host timezone.
+// dispatchd writes basic-format offsets (`-0500`, no colon); both spellings
+// name the same unambiguous zone, so the colon is optional.
 function eventTimestamp(value: string | null | undefined): number | null {
-  if (!value || !/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/i.test(value)) return null;
+  if (!value || !/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d)$/i.test(value)) return null;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : null;
 }
@@ -821,7 +836,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   const sources: FleetLaneSnapshot['sources'] = {
     queue: { state: 'missing', file: 'ready.tsv', rows: 0, dropped: 0, unhinted: 0 },
     queueState: { state: 'missing', file: 'queue.v1.json', jobs: 0 },
-    ledger: { state: 'missing', file: 'jobs.jsonl', events: 0, dropped: 0 },
+    ledger: { state: 'missing', file: 'jobs.jsonl', events: 0, dropped: 0, mergeWindow: 'absent' },
     usage: { state: 'missing', files: [], pools: 0, dropped: 0 },
     budgets: { state: 'healthy' },
   };
@@ -864,24 +879,49 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   }
 
   // ── 3. jobs.jsonl — merge events in the trailing window ──────────────────
+  const cutoff = now.getTime() - mergeWindowMs;
   const ledgerEvents: LaneLedgerEvent[] = [];
+  let sawLedgerFile = false;
+  let ledgersRead = 0;
+  let mergeWindowGap = false;
   try {
+    const ledgerBytes = options.ledgerBytes ?? MAX_LEDGER_FILE_BYTES;
     const ledgers = await Promise.all([
-      readLedgerTail(join(queueDir, 'jobs.jsonl'), MAX_LEDGER_FILE_BYTES),
-      readLedgerTail(join(dirname(queueDir), 'metrics', 'jobs.jsonl'), MAX_LEDGER_FILE_BYTES),
+      readLedgerTail(join(queueDir, 'jobs.jsonl'), ledgerBytes),
+      readLedgerTail(join(dirname(queueDir), 'metrics', 'jobs.jsonl'), ledgerBytes),
     ]);
     for (const ledger of ledgers) {
       if (ledger.state === 'missing') continue;
-      if (ledger.state !== 'read') { sources.ledger.state = 'degraded'; continue; }
+      sawLedgerFile = true;
+      if (ledger.state !== 'read') { sources.ledger.state = 'degraded'; mergeWindowGap = true; continue; }
       const parsed = parseJobsJsonl(ledger.text);
       ledgerEvents.push(...parsed.events);
       sources.ledger.events += parsed.events.length;
       sources.ledger.dropped += parsed.dropped;
       sources.ledger.state = parsed.dropped || ledger.truncated || sources.ledger.state === 'degraded' ? 'degraded' : 'healthy';
+      ledgersRead++;
+      // A dropped row could itself be an in-window merge, and a truncated
+      // tail covers the window only when its first retained event still
+      // lands at or before the window's start — otherwise in-window merges
+      // may sit in the unread bytes. Either gap makes a zero count unknown.
+      if (parsed.dropped > 0) mergeWindowGap = true;
+      if (ledger.truncated) {
+        let windowStart: number | null = null;
+        for (const event of parsed.events) {
+          const at = eventTimestamp(event.at);
+          if (at !== null) { windowStart = at; break; }
+        }
+        if (windowStart === null || windowStart > cutoff) mergeWindowGap = true;
+      }
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') sources.ledger.state = 'degraded';
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      sources.ledger.state = 'degraded';
+      sawLedgerFile = true;
+      mergeWindowGap = true;
+    }
   }
+  sources.ledger.mergeWindow = !sawLedgerFile ? 'absent' : ledgersRead > 0 && !mergeWindowGap ? 'complete' : 'partial';
 
   // ── 4. usage journals — per-pool window readings ─────────────────────────
   const usagePaths = options.usageLogPaths ?? defaultUsageLogPaths(queueDir);
@@ -931,7 +971,6 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   const holds = new Map(holdRows.map(row => [row.lane, row]));
 
   // ── 7. fold into lanes ────────────────────────────────────────────────────
-  const cutoff = now.getTime() - mergeWindowMs;
   const lanes = new Set<string>([
     ...usage.latest.keys(),
     ...queueRows.map(r => r.pool),
@@ -941,6 +980,13 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     ...dispatchLanes.keys(),
   ]);
   for (const pool of Object.keys(budgets.pools)) lanes.add(pool);
+
+  // Merge outcome rows carry no lane; the same job's launch/publish/finish
+  // rows do. Last write wins in ledger order — the lane that ran the job.
+  const ledgerJobPool = new Map<string, string>();
+  for (const event of ledgerEvents) {
+    if (event.job !== null && event.pool !== null) ledgerJobPool.set(event.job, event.pool);
+  }
 
   const mergeCounts = new Map<string, number>();
   const candidates: Array<{ pool: string; job: string | null; pr: string | null }> = [];
@@ -968,7 +1014,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     if (!event.merge || at === null || at > now.getTime() || at < cutoff) continue;
     const receiptPool = event.mergedAt === undefined ? undefined :
       (event.pr ? receiptPools.get(`pr:${event.pr}`) : undefined) ?? (event.job ? receiptPools.get(`job:${event.job}`) : undefined);
-    const pool = event.pool ?? receiptPool ?? (event.job ? queueState?.jobPool.get(event.job) ?? readyPoolOf(queueRows, event.job) : undefined);
+    const pool = event.pool ?? receiptPool ?? (event.job ? queueState?.jobPool.get(event.job) ?? readyPoolOf(queueRows, event.job) ?? ledgerJobPool.get(event.job) : undefined);
     if (!pool) continue;
     candidates.push({ pool, job: event.job, pr: event.pr });
   }
@@ -996,7 +1042,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   for (const event of ledgerEvents) {
     const at = eventTimestamp(event.at);
     if (!event.launch || at === null || at > now.getTime() || at < cutoff) continue;
-    const pool = event.pool ?? (event.job ? queueState?.jobPool.get(event.job) ?? readyPoolOf(queueRows, event.job) : undefined);
+    const pool = event.pool ?? (event.job ? queueState?.jobPool.get(event.job) ?? readyPoolOf(queueRows, event.job) ?? ledgerJobPool.get(event.job) : undefined);
     if (!pool) continue;
     const jobs = startJobs.get(pool) ?? new Set<string>();
     jobs.add(event.job ?? String(at));
@@ -1015,7 +1061,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   const jobLane = new Map<string, string>();
   for (const row of queueRows) { if (row.id) jobLane.set(row.id, row.pool); }
   for (const [job, pool] of queueState?.jobPool ?? []) jobLane.set(job, pool);
-  for (const event of ledgerEvents) if (event.job && event.pool) jobLane.set(event.job, event.pool);
+  for (const [job, pool] of ledgerJobPool) jobLane.set(job, pool);
   const heldByLane = summarizeLaneHeld({
     launches: await readLaunchFiles(dirname(queueDir), now.getTime()),
     laneOf: job => jobLane.get(job) ?? null,
@@ -1038,7 +1084,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
         ? liveFromTsv.get(lane) ?? (sources.queue.state === 'healthy' && liveFromTsv.size > 0 ? 0 : null)
         : null);
     const mergeCount = mergeCounts.get(lane) ?? 0;
-    const mergesPerHour = mergeCount === 0 && sources.ledger.state !== 'healthy' ? null
+    const mergesPerHour = mergeCount === 0 && sources.ledger.mergeWindow !== 'complete' ? null
       : Math.round((mergeCount / (mergeWindowMs / 3_600_000)) * 100) / 100;
     const row = holds.get(lane);
     // Either source can observe a hold before the other catches up.

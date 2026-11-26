@@ -12,7 +12,7 @@ const SNAPSHOT = {
   sources: {
     queue: { state: 'healthy', file: 'ready.tsv', rows: 12, dropped: 0, unhinted: 0 },
     queueState: { state: 'healthy', file: 'queue.v1.json', jobs: 14 },
-    ledger: { state: 'healthy', file: 'jobs.jsonl', events: 40, dropped: 0 },
+    ledger: { state: 'healthy', file: 'jobs.jsonl', events: 40, dropped: 0, mergeWindow: 'complete' },
     usage: { state: 'healthy', files: ['u.jsonl'], pools: 3, dropped: 0 },
     budgets: { state: 'healthy' },
   },
