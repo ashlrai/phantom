@@ -2275,6 +2275,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     else if (fetched.ok && fetched.source !== null) auditExceptions = parseAuditExceptions(fetched.source);
   }
   const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
+  const masterCaseFailureFiles = new Set(masterFailures.filter(f => !f.names.startsWith('(')).map(f => f.file));
   // Parenthesized identities are gate checks, not vitest tests: only
   // '(suite)' resolves through pass evidence, because the file loading is
   // what failed. '(lint)', '(typecheck)' and the other gate names can never
@@ -2284,12 +2285,15 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   // A suite failure has no per-test pass line to match: the file loading and
   // running at all is what resolves it. The default reporter's green-module
   // line (`✓ file (N tests)`) proves the module loaded. For a named test,
-  // require an unqualified summary or an explicit case pass.
+  // require an explicit case pass or an unqualified summary from a file
+  // with no case failures in any verified master log. Another job may
+  // have run a different subset or reported the same case under a
+  // differently formatted title.
   const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
     if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
     const modulePass = FILE_PASS_LINE.exec(line);
-    return modulePass?.[1] === f.file && (f.names === SUITE_NAMES || modulePass[2] === undefined);
+    return modulePass?.[1] === f.file && (f.names === SUITE_NAMES || (modulePass[2] === undefined && !masterCaseFailureFiles.has(f.file)));
   }));
   // Bundler-resolution candidates for one normalized repo-relative spec base.
   // Explicit extensions keep TypeScript precedence (.js -> .ts before .tsx,

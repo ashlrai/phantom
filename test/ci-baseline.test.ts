@@ -156,6 +156,20 @@ describe('CI baseline evidence', () => {
     const suite = await analyzeCiBaseline('owner/repo', github({ suite: true, pass: true, filePass: true, count: 1 }).gh);
     expect(suite.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
   });
+  it.each([
+    ['test/example.test.ts', 'unknown', 'unknown'],
+    ['test/other.test.ts', 'pass', 'rerun-failed'],
+  ])('checks module pass evidence against a master case failure in %s', async (failedFile, masterVerdict, action) => {
+    const { gh } = github({ count: 1, pass: true, filePass: true, extraMasterJob: 'failure' });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      return args[1]?.endsWith('/jobs/30/logs')
+        ? { ...result, stdout: `/usr/bin/git log -1 --format=%H\n${master}\n${fixture('flaky-shared').replace('test/example.test.ts', failedFile)}` }
+        : result;
+    });
+    expect(report.master.known).toBe(true);
+    expect(report.groups[0]).toMatchObject({ master: masterVerdict, action });
+  });
   it.each(['1 skipped', '1 todo', '1 skipped | 1 todo'])(
     'withholds a named master pass from a module summary with %s',
     async qualifier => {
