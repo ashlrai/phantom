@@ -219,17 +219,48 @@ function runsRoot(opts: FleetTruthOptions): string {
   return opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
 }
 
+/** router-queue.md is append-mostly Markdown history; same bound the unfed read uses. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
+
 async function readQueue(root: string): Promise<{ ready: number; blocked: number } | null> {
   try {
-    const { parseReadyTsv } = await import('./lane-console.js');
-    const text = await readFile(join(root, 'queue', 'ready.tsv'), 'utf8');
-    const rows = parseReadyTsv(text).rows;
+    const [{ parseReadyTsv }, { readSource }] = await Promise.all([
+      import('./lane-console.js'), import('./runs-parked-queue.js'),
+    ]);
+    const [text, routerQueue] = await Promise.all([
+      readFile(join(root, 'queue', 'ready.tsv'), 'utf8'),
+      readSource(join(root, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
+    ]);
+    // Spec-less rows resolve their requirements through the router-queue.md
+    // `(attrs)` envelope like every other market reader; an absent or
+    // over-bound queue leaves the lane column standing.
+    const parsed = parseReadyTsv(text, routerQueue.state === 'healthy' ? routerQueue.text : null);
     const parked = (pool: string): boolean => /^PARKED[^.]*\./i.test(pool);
+    // Ready supply counts jobs, not rows: the first valid READY row for each
+    // job id wins across hinted and lane-open rows, the same rule the shared
+    // fleet queue projection applies. Lane-open rows are real supply the
+    // market may place on any lane. A row that cannot name a job id still
+    // counts — it is queued work the queue cannot dedupe.
+    const seenReady = new Set<string>();
+    let ready = 0;
+    for (const row of parsed.rows) {
+      if (row.status !== 'READY' || parked(row.pool)) continue;
+      if (row.id !== null) {
+        if (seenReady.has(row.id)) continue;
+        seenReady.add(row.id);
+      }
+      ready++;
+    }
+    for (const row of parsed.unhintedRows) {
+      if (seenReady.has(row.id)) continue;
+      seenReady.add(row.id);
+      ready++;
+    }
     return {
-      ready: rows.filter((r) => r.status === 'READY' && !parked(r.pool)).length,
+      ready,
       // PARKED-<reason>[.<lane>] statuses are held work too — parked rows no
       // longer hide inside READY once the dispatcher dialect parses natively.
-      blocked: rows.filter((r) => ['BLOCKED', 'HOLD'].includes(r.status) || parked(r.pool) || r.status.startsWith('PARKED')).length,
+      blocked: parsed.rows.filter((r) => ['BLOCKED', 'HOLD'].includes(r.status) || parked(r.pool) || r.status.startsWith('PARKED')).length,
     };
   } catch {
     return null;
