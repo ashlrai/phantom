@@ -15,6 +15,7 @@
  * only their local CLI plus MCP footprint, never a whole-host memory backoff.
  * Node-wide integrity gates (kernel pressure, swap growth) still block a node.
  */
+import { isDeepStrictEqual } from 'node:util';
 import { HARNESS_ADAPTERS } from './harness-adapters.js';
 import type { HarnessFootprint, NodeCapacityDoc } from './capacity-model.js';
 
@@ -90,6 +91,23 @@ export const ROUTER_DEFAULTS = Object.freeze({ maxAgeMs: 120_000, tokenWeight: 0
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
+/** Select one observation per node, retaining conflicts at the newest timestamp. */
+function latestByNode<T>(items: readonly T[], docOf: (item: T) => NodeCapacityDoc) {
+  const latest = new Map<string, { item: T; at: number; conflict: boolean }>();
+  for (const item of items) {
+    const doc = docOf(item);
+    const parsed = Date.parse(doc.measured_at);
+    const at = finite(parsed) ? parsed : -Infinity;
+    const previous = latest.get(doc.node);
+    if (!previous || at > previous.at) {
+      latest.set(doc.node, { item, at, conflict: false });
+    } else if (at === previous.at && !isDeepStrictEqual(item, previous.item)) {
+      previous.conflict = true;
+    }
+  }
+  return [...latest.values()];
+}
+
 export function mergeRate(o: LaneOutcomes | undefined): number {
   const attempts = o && Number.isSafeInteger(o.attempts) && o.attempts >= 0 ? o.attempts : 0;
   const merged = o && Number.isSafeInteger(o.merged) && o.merged >= 0 ? Math.min(o.merged, attempts) : 0;
@@ -120,21 +138,23 @@ interface NodeState {
 
 function nodeStates(input: RouterInput): NodeState[] {
   const maxAge = input.maxAgeMs ?? ROUTER_DEFAULTS.maxAgeMs;
-  return [...input.nodes].sort((a, b) => a.doc.node.localeCompare(b.doc.node)).map(node => {
-    const age = input.nowMs - Date.parse(node.doc.measured_at);
-    const limits = Object.values(node.doc.basis?.limiting ?? {});
-    const blocked = !finite(age) || age < -60_000 || age > maxAge ? 'stale'
-      : limits.includes('pressure') ? 'pressure'
-      : limits.includes('swap-growth') ? 'swap-growth'
-      : node.doc.mem_free.headroom_bytes === null ? 'unmeasured' : null;
-    return { node, loaded: new Set(node.localModels ?? []), bytes: node.doc.mem_free.headroom_bytes ?? 0, cores: node.doc.cpu.headroom_cores, blocked };
-  });
+  return latestByNode(input.nodes, node => node.doc)
+    .sort((a, b) => a.item.doc.node.localeCompare(b.item.doc.node)).map(({ item: node, at, conflict }) => {
+      const age = input.nowMs - at;
+      const limits = Object.values(node.doc.basis?.limiting ?? {});
+      const blocked = conflict ? 'capacity-conflict'
+        : !finite(age) || age < -60_000 || age > maxAge ? 'stale'
+        : limits.includes('pressure') ? 'pressure'
+        : limits.includes('swap-growth') ? 'swap-growth'
+        : node.doc.mem_free.headroom_bytes === null ? 'unmeasured' : null;
+      return { node, loaded: new Set(node.localModels ?? []), bytes: node.doc.mem_free.headroom_bytes ?? 0, cores: node.doc.cpu.headroom_cores, blocked };
+    });
 }
 
 /** Plan every job in order; each placement consumes the node's measured headroom. */
 export function planAutoscaleRoutes(input: RouterInput): Placement[] {
   const states = nodeStates(input);
-  const fleet = fleetFootprints(input.nodes.map(n => n.doc));
+  const fleet = fleetFootprints(states.filter(s => s.blocked !== 'capacity-conflict').map(s => s.node.doc));
   const exhausted = new Set(input.exhausted ?? []);
   const known = new Set(HARNESS_ADAPTERS.map(a => a.id));
   const costs = input.costs.filter(c => known.has(c.harness) && finite(c.tokensPerJob) && c.tokensPerJob > 0 &&
@@ -200,12 +220,14 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
  * fresh node has a measured answer for that harness.
  */
 export function fleetRunnable(docs: NodeCapacityDoc[], nowMs: number, maxAgeMs = ROUTER_DEFAULTS.maxAgeMs): Record<string, number | null> {
+  const current = latestByNode(docs, doc => doc).filter(({ at, conflict }) => {
+    const age = nowMs - at;
+    return !conflict && finite(age) && age >= -60_000 && age <= maxAgeMs;
+  });
   const out: Record<string, number | null> = {};
   for (const adapter of HARNESS_ADAPTERS) {
     let sum: number | null = null;
-    for (const doc of docs) {
-      const age = nowMs - Date.parse(doc.measured_at);
-      if (!finite(age) || age < -60_000 || age > maxAgeMs) continue;
+    for (const { item: doc } of current) {
       const n = doc.agents_runnable_now[adapter.id];
       if (Number.isSafeInteger(n)) sum = (sum ?? 0) + (n as number);
     }
