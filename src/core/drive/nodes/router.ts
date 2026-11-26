@@ -80,7 +80,10 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
     const nodeIds = nodes.map(n => n.nodeId).sort();
     const onHost = (j: NodesState['jobs'][number]) => j.executionHostId ? j.executionHostId === hostId : !!j.claim && nodeIds.includes(j.claim.nodeId);
     const live = nodes.filter(n => n.expiresAt > now && fresh(n.heartbeatAt, now, NODE_HEARTBEAT_MS));
-    const measured = live.filter(n => isNodeCapacity(n.capacity) && fresh(n.capacity.sampledAtMs, now, NODE_HEARTBEAT_MS));
+    // A slots-only zero heartbeat can carry a hold the sample format cannot
+    // express. Keep its host identity, but withhold the old positive budget.
+    const measured = live.filter(n => isNodeCapacity(n.capacity) && fresh(n.capacity.sampledAtMs, now, NODE_HEARTBEAT_MS) &&
+      (n.slots !== 0 || n.capacity.slots === 0));
     const held = measured.map(n => n.capacity!.held).find(Boolean) ?? null;
     // Stale workers' old grants are not capacity. Live claims still occupy the physical host.
     const known = !unplacedClaims && measured.length > 0 && measured.length === live.length;

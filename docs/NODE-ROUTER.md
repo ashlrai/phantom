@@ -289,6 +289,11 @@ inside their existing fenced `plan` and `pull` transactions. Workers report capa
 `held`), host identity and a sample timestamp on each three-second heartbeat.
 After two intervals, missing, future or stale samples are unknown and admit no
 new work. A heartbeat without a capacity sample cannot refresh old capacity.
+A live worker that reports `--slots 0` without a new sample invalidates its
+previous positive budget. The router retains its host identity and treats the
+shared budget as unknown while that worker lacks a usable sample, even when
+its siblings have fresh positive samples. A fresh measured hold on the same
+host still establishes zero capacity.
 Upgrade the witness and workers together; older workers stay unknown in a pool.
 Standalone legacy queues retain their existing compatibility policy.
 
