@@ -1387,6 +1387,7 @@
 /test/support/pool-commissioning-independent-fixture.ts @masonwyatt23
 /test/support/pool-commissioning-transaction-fixture.ts @masonwyatt23
 /test/swarm-fence-inference-release.test.ts @masonwyatt23
+/test/swarm-pilot.test.ts @masonwyatt23
 /test/task-source-310b.test.ts @masonwyatt23
 /test/task-temporal-context.test.ts @masonwyatt23
 /test/teammate-reply-age-router-preserved-186s.test.ts @masonwyatt23
