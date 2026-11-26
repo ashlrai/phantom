@@ -10,7 +10,7 @@ import { cmdAgentnet } from '../src/cli/agentnet.js';
 import { localWriteGate } from '../src/core/agents/send-gate.js';
 import type { SlackCall, SlackDeliveryPolicy } from '../src/core/agents/slack-transport.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
-import { readPeerFleet } from '../src/core/agentnet/mesh-read.js';
+import { readPeerFleet, type PeerWorkFeedQuery } from '../src/core/agentnet/mesh-read.js';
 vi.mock('../src/core/agents/send-gate.js', () => ({ localWriteGate: vi.fn(() => null) }));
 let root: string, bindings: string, peers: PeerBinding[], now: number, shared: boolean, approved: boolean;
 const session = (n = 0) => ({ lane: `lane-${n}`, sessionId: `session-${n}`, token: `synthetic-session-${n}-` + 'a'.repeat(32) });
@@ -54,6 +54,63 @@ describe('team peer mesh', () => {
     expect(() => readPeerFleet('mesh', { ...session(), token: 'wrong' }, options())).toThrow();
     now += 3600_000;
     expect(() => readPeerFleet('work-feed', session(), options())).toThrow();
+  });
+  it('serves the shared work-feed query to authenticated peers and refuses feed flags elsewhere', async () => {
+    const announce = (id: string, jobId: string, body: Record<string, unknown>, at = now) =>
+      appendBusInbox({ id, from: 'agent0', to: 'leaders', priority: 'P2', ttl: 60000,
+        body: { kind: 'work.post', jobId, title: `Title for ${jobId}`, repo: 'fake/repo',
+          provider: 'claude', claimKeys: ['repo:fake/repo'], ...body } }, { root, now: () => at });
+    announce('feed-post-a', 'RQ-FEED-A', {});
+    announce('feed-post-b', 'RQ-FEED-B', { repo: 'other/repo', provider: 'devin', claimKeys: ['repo:other/repo'],
+      dispatch: { tier: 'fast', scope: 'the scope', acceptance: 'the check' } }, now + 1);
+    const feed = (query?: PeerWorkFeedQuery) => {
+      const view = readPeerFleet('work-feed', session(), options(), query);
+      if (!('jobs' in view)) throw new Error(`feed refused: ${JSON.stringify(view)}`);
+      return view;
+    };
+    const ids = (view: { jobs: { id: string }[] }) => view.jobs.map(job => job.id);
+    // Unfiltered parity: every announced job, newest first — the order the other feed surfaces serve.
+    expect(ids(feed())).toEqual(['RQ-FEED-B', 'RQ-FEED-A']);
+    // The shared filter set narrows the same view phm fleet work-feed, phm agents bus work feed,
+    // the work-feed HTTP route and fleet_work_feed serve — one parseBusWorkFeedQuery contract.
+    for (const [filters, expected] of [
+      [{ jobId: 'RQ-FEED-A' }, ['RQ-FEED-A']],
+      [{ repo: 'other/repo' }, ['RQ-FEED-B']],
+      [{ provider: 'devin' }, ['RQ-FEED-B']],
+      [{ tier: 'fast' }, ['RQ-FEED-B']],
+      [{ status: 'queued' }, ['RQ-FEED-B', 'RQ-FEED-A']],
+      [{ status: 'done' }, []],
+      [{ owner: 'agent0' }, ['RQ-FEED-B', 'RQ-FEED-A']],
+      [{ to: 'leaders' }, ['RQ-FEED-B', 'RQ-FEED-A']],
+      [{ contains: 'title for rq-feed-b' }, ['RQ-FEED-B']],
+      [{ id: 'feed-post-a' }, ['RQ-FEED-A']],
+    ] as const) {
+      expect(ids(feed({ claims: false, filters }))).toEqual(expected);
+    }
+    // --claims joins hold coverage (an absent table reads missing, never zeroed);
+    // --limit pages the filtered view with honest matched/omitted counts.
+    expect(feed({ claims: true, filters: {} })).toMatchObject({ status: 'ok', claims: { source: 'missing', holds: [] } });
+    expect(feed({ claims: false, filters: {}, limit: 1 })).toMatchObject({ matched: 2, omitted: 1 });
+    expect(ids(feed({ claims: false, filters: {}, limit: 1 }))).toEqual(['RQ-FEED-B']);
+    // The mesh view takes no query — passing one is a contract violation, never a silent no-op.
+    expect(() => readPeerFleet('mesh', session(), options(), { claims: false, filters: {} })).toThrow('work-feed');
+    // The CLI parses the same flags into the same query and refuses them on every other verb.
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdAgentnet(['peers', 'work-feed', '--job', 'RQ-FEED-A', '--json'], options(), session())).toBe(0);
+    expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ status: 'ok', jobs: [{ id: 'RQ-FEED-A' }] });
+    expect(await cmdAgentnet(['peers', 'work-feed', '--repo', 'other/repo', '--limit', '1', '--json'], options(), session())).toBe(0);
+    expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ matched: 1, omitted: 0, jobs: [{ id: 'RQ-FEED-B' }] });
+    expect(await cmdAgentnet(['peers', 'work-feed', '--claims', '--open', '--json'], options(), session())).toBe(0);
+    expect(JSON.parse(log.mock.calls.at(-1)![0] as string).claims.source).toBe('missing');
+    expect(await cmdAgentnet(['peers', 'work-feed', '--status', 'bogus', '--json'], options(), session())).toBe(2);
+    expect(await cmdAgentnet(['peers', 'work-feed', '--from', 'agent0', '--json'], options(), session())).toBe(2);
+    expect(await cmdAgentnet(['peers', 'work-feed', '--peer-kind', 'task', '--json'], options(), session())).toBe(2);
+    expect(await cmdAgentnet(['peers', 'work-feed', '--thread', 't1', '--json'], options(), session())).toBe(2);
+    expect(await cmdAgentnet(['peers', 'work-feed', '--after', '0', '--json'], options(), session())).toBe(2);
+    expect(await cmdAgentnet(['peers', 'mesh', '--status', 'queued', '--json'], options(), session())).toBe(2);
+    expect(await cmdAgentnet(['peers', 'read', '--status', 'queued', '--json'], options(1), session(1))).toBe(2);
+    expect(await cmdAgentnet(['peers', 'list', '--claims', '--json'], options(), session())).toBe(2);
+    expect(await cmdAgentnet(['peers', 'send', 'agent1', 'query', 'hi', '--open', '--json'], options(), session())).toBe(2);
   });
   it('binds callsigns across arbitrary lanes and sends through the existing authenticated broker', async () => {
     const call = api(), result = await sendPeerMessage(request, session(), options(0, call));
