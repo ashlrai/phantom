@@ -7,9 +7,12 @@
  * and callers that arrive while a build is running share it, so the map costs
  * at most one fleet read per 5 s however many panes or agents poll it.
  *
- * GET /api/verse/fleet/control/map-edges[?since=10m&before=1h] is `phm map edges --json`
- * (fleet.map-edges.v1): who messaged whom, for the map's message lines. The
- * default window is throttled the same way; 503 carries the typed "unknown" body.
+ * GET /api/verse/fleet/control/map-edges[?since=10m&before=1h&agent=claude&job=RQ-1&…] is
+ * `phm map edges --json` (fleet.map-edges.v1): who messaged whom, for the map's
+ * message lines. Every `phm messages` filter is a param of the same name
+ * (camelCase where the flag is dashed), validated by the same parser; the
+ * default window is throttled the same way and a filtered read is never
+ * served from that cache; 503 carries the typed "unknown" body.
  *
  * GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude&bodyKind=work.post] is
  * `phm agents messages --json` (agents.messages.v1): the recent messages with
@@ -27,9 +30,9 @@
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { buildFleetLiveMap, LIVE_MAP_WINDOW_MINUTES, type FleetLiveMap } from '../fleet/live-map.js';
-import { MAP_EDGES_DEFAULT_SINCE, readMapEdges, type MapEdges } from '../fleet/map-edges.js';
+import { MAP_EDGES_DEFAULT_SINCE, readMapEdges, type MapEdges, type MapEdgesOptions } from '../fleet/map-edges.js';
 import { readAgentsMessages } from '../fleet/agents-messages.js';
-import { AGENT_MESSAGE_KINDS, parseSince, type AgentMessageKind } from '../fleet/agent-messages.js';
+import { AGENT_MESSAGE_KINDS, parseAgentMessagesQuery, parseSince, type AgentMessageKind } from '../fleet/agent-messages.js';
 import { readAgentConversations } from '../fleet/agent-conversations.js';
 import { CONVERSATION_STATES, type ConversationState } from '../fleet/agent-conversation-model.js';
 import { BUS_PRIORITIES, type BusPriority } from '../fleet/bus-envelope.js';
@@ -79,7 +82,7 @@ export function throttledLiveMap<T = FleetLiveMap>(read: () => Promise<T>, clock
 }
 
 export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = throttledLiveMap(() => readFleetLiveMap()),
-  edges: (since: string, options?: { before?: string }) => MapEdges | null = readMapEdges, messages: typeof readAgentsMessages = readAgentsMessages,
+  edges: (since: string, options?: MapEdgesOptions) => MapEdges | null = readMapEdges, messages: typeof readAgentsMessages = readAgentsMessages,
   conversations: typeof readAgentConversations = readAgentConversations, replay: typeof readMapReplay = readMapReplay): ApiModule {
   const defaultEdges = throttledLiveMap(async () => edges(MAP_EDGES_DEFAULT_SINCE));
   return async (ctx, req, res, path, method) => {
@@ -160,13 +163,30 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
       return true;
     }
     if (path === MAP_EDGES_PATH) {
-      if ([...params.keys()].some(key => key !== 'since' && key !== 'before') || params.getAll('since').length > 1 || params.getAll('before').length > 1) {
-        sendJson(res, 400, { error: 'Use since and before only, once each.' }); return true;
+      // The same filter vocabulary `phm messages` parses — every param of
+      // the same name the agent-messages read takes, minus `limit`: edges
+      // aggregate the whole matched set and never paginate. Each param once.
+      const FILTER_KEYS = ['agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains',
+        'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to', 'result'];
+      const KEYS = ['since', 'before', ...FILTER_KEYS];
+      if ([...params.keys()].some(key => !KEYS.includes(key)) || KEYS.some(key => params.getAll(key).length > 1)) {
+        sendJson(res, 400, { error: `Use since, before and the phm messages filters (${FILTER_KEYS.join(', ')}) only, once each.` }); return true;
       }
       const rawBefore = params.get('before');
       if (rawBefore !== null && parseSince(rawBefore) === null) { sendJson(res, 400, { error: 'before takes 10m, 2h, 1d, epoch ms or an ISO time.' }); return true; }
+      const filterInput: Record<string, string> = {};
+      for (const key of FILTER_KEYS) {
+        const value = params.get(key);
+        if (value !== null) filterInput[key] = value;
+      }
+      const parsed = parseAgentMessagesQuery(filterInput);
+      if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
+      const filtered = Object.keys(parsed.query).length > 0;
       try {
-        const since = params.get('since'), result = since === null && rawBefore === null ? await defaultEdges() : edges(since ?? MAP_EDGES_DEFAULT_SINCE, { before: rawBefore ?? undefined });
+        const since = params.get('since');
+        // A filtered read never shares the unfiltered 5 s cache.
+        const result = since === null && rawBefore === null && !filtered ? await defaultEdges()
+          : edges(since ?? MAP_EDGES_DEFAULT_SINCE, { before: rawBefore ?? undefined, filters: parsed.query });
         if (!result) sendJson(res, 400, { error: 'since takes 10m, 2h, 1d, epoch ms or an ISO time.' });
         else sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } catch { sendJson(res, 503, { error: 'Map edges unavailable.' }); }

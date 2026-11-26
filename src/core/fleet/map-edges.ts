@@ -8,7 +8,8 @@
  * lines (fleet-edges.ts). Names are routing labels, not proven identities.
  * A role or lane no label proves stays "unknown" / null.
  */
-import { parseSince, projectAgentMessages, type AgentRef } from './agent-messages.js';
+import { matchAgentMessages, parseSince, projectAgentMessages,
+  type AgentMessage, type AgentMessagesQuery, type AgentRef } from './agent-messages.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 import { agentToAgent } from './fleet-edges.js';
 import { ORG_LANES } from './org-map.js';
@@ -60,6 +61,20 @@ export interface MapEdgesOptions extends BusInboxOptions {
    * spelling resolves against the same `now` `since` does; an invalid value
    * makes the read null like a bad `since`. */
   before?: string;
+  /**
+   * The shared `phm messages` filter set, already parsed by
+   * `parseAgentMessagesQuery` — agent/with, kind, priority, job, thread,
+   * channel, contains, from/exclude-from, in-reply-to, id, body-kind, to and
+   * result — narrowed onto the matched rows before the edges aggregate, the
+   * same `matchAgentMessages` pipeline `agents messages`, `fleet map
+   * messages` and `bus recent` run, so "who messaged whom about job X" or
+   * "which lines reach agent Y" is one filtered read here too. `since` and
+   * `before` inside it are ignored: the read's own window params (`since`,
+   * `options.before`) decide the `[since, before)` bounds, and edges
+   * aggregate the whole matched set so `limit` never applies. An absent or
+   * empty filter is the unfiltered read, unchanged.
+   */
+  filters?: AgentMessagesQuery;
 }
 
 const JOB = /^(?:job:)?((?:RQ|FIXUP|LAND|FIX)-[A-Z0-9][A-Z0-9-]{2,80})$/;
@@ -73,15 +88,17 @@ export function mapEdgeAgent(ref: AgentRef): MapEdgeAgent {
   return { name, role: ref.lane ? 'worker' : 'unknown', lane: ref.lane, node: null };
 }
 
-/** Pure: bus receipts in, edges out. The same rows and clock always give the same JSON. `before` is the exclusive upper bound in epoch ms. */
-export function buildMapEdges(scan: { source: MapEdges['source']; rows: readonly BusInboxReceipt[]; skipped?: number }, since: number, now: number, before?: number): MapEdges {
-  const head = { schema: 'fleet.map-edges.v1' as const, version: 1 as const, generatedAt: new Date(now).toISOString(), since: new Date(since).toISOString(), source: scan.source };
-  if (scan.source === 'unavailable') return { ...head, edges: null, agents: null, messages: null, skipped: scan.skipped ?? 0 };
+const mapEdgesHead = (source: MapEdges['source'], since: number, now: number) =>
+  ({ schema: 'fleet.map-edges.v1' as const, version: 1 as const, generatedAt: new Date(now).toISOString(),
+    since: new Date(since).toISOString(), source });
+
+/** Pure: matched agent messages, newest first, in — the sorted edge lines
+ * and the role buckets out. The first message seen on an edge is its last
+ * one, so `lastSummary`/`lastAt`/`count` agree with an unfiltered read of
+ * the same rows. */
+function aggregateMapEdges(messages: readonly AgentMessage[]): Pick<MapEdges, 'edges' | 'agents'> {
   const edges = new Map<string, MapEdge>();
-  const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt >= since && row.receivedAt <= now
-    && (before === undefined || row.receivedAt < before));
-  // Newest first, so the first message seen on an edge is its last one.
-  for (const message of projectAgentMessages(rows)) {
+  for (const message of messages) {
     const id = `${message.from.name}->${message.to.name}`, edge = edges.get(id);
     if (edge) edge.count++;
     else edges.set(id, { id, from: mapEdgeAgent(message.from), to: mapEdgeAgent(message.to), count: 1, lastAt: message.ts, lastSummary: message.summary.slice(0, MAP_EDGE_SUMMARY_MAX) });
@@ -90,15 +107,36 @@ export function buildMapEdges(scan: { source: MapEdges['source']; rows: readonly
   const agents: Record<MapEdgeRole, string[]> = { leader: [], lane: [], worker: [], unknown: [] };
   for (const agent of list.flatMap(edge => [edge.from, edge.to])) if (!agents[agent.role].includes(agent.name)) agents[agent.role].push(agent.name);
   for (const role of MAP_EDGE_ROLES) agents[role].sort();
-  return { ...head, edges: list, agents, messages: rows.length, skipped: scan.skipped ?? 0 };
+  return { edges: list, agents };
 }
 
-/** The one read behind the CLI, the API and the pane. `since`/`options.before` take `10m`, `2h`, `1d`, epoch ms or an ISO time; null when either is none of those. */
+/** Pure: bus receipts in, edges out. The same rows and clock always give the same JSON. `before` is the exclusive upper bound in epoch ms. */
+export function buildMapEdges(scan: { source: MapEdges['source']; rows: readonly BusInboxReceipt[]; skipped?: number }, since: number, now: number, before?: number): MapEdges {
+  const head = mapEdgesHead(scan.source, since, now), skipped = scan.skipped ?? 0;
+  if (scan.source === 'unavailable') return { ...head, edges: null, agents: null, messages: null, skipped };
+  const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt >= since && row.receivedAt <= now
+    && (before === undefined || row.receivedAt < before));
+  const { edges, agents } = aggregateMapEdges(projectAgentMessages(rows));
+  return { ...head, edges, agents, messages: rows.length, skipped };
+}
+
+/** The one read behind the CLI, the API and the pane. `since`/`options.before` take `10m`, `2h`, `1d`, epoch ms or an ISO time; null when either is none of those. `options.filters` is the shared `phm messages` filter set, already parsed — the matched rows run the same `matchAgentMessages` pipeline `agents messages`, `fleet map messages` and `bus recent` share, so a filtered question gets the same answer on every bus read; `messages` then counts exactly the rows the filters kept. An absent or empty filter keeps the `buildMapEdges` path byte-identical. */
 export function readMapEdges(since: string = MAP_EDGES_DEFAULT_SINCE, options: MapEdgesOptions = {}): MapEdges | null {
   const now = (options.now ?? Date.now)(), from = parseSince(since, now);
   const beforeMs = options.before === undefined ? undefined : parseSince(options.before, now);
   if (from === null || beforeMs === null) return null;
-  return buildMapEdges(scanBusInbox(options), from, now, beforeMs);
+  const filters = options.filters, scan = scanBusInbox(options);
+  if (filters === undefined || Object.keys(filters).length === 0) return buildMapEdges(scan, from, now, beforeMs);
+  const head = mapEdgesHead(scan.source, from, now), skipped = scan.skipped ?? 0;
+  if (scan.source === 'unavailable') return { ...head, edges: null, agents: null, messages: null, skipped };
+  // The same row gate every map read keeps — agent-to-agent mail inside the
+  // clock-skew bound — then the shared filter pipeline decides the matched
+  // set; `since`/`before` re-apply on the projected receipt time, the same
+  // `[since, before)` window `buildMapEdges` enforces on the raw rows.
+  const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt <= now);
+  const matched = matchAgentMessages(rows, { ...filters, since: from, before: beforeMs }, options, false);
+  const { edges, agents } = aggregateMapEdges(matched);
+  return { ...head, edges, agents, messages: matched.length, skipped };
 }
 
 /** `phm map edges` for people: one line per edge, then who is who. */
