@@ -103,6 +103,32 @@ describe('resident CI reruns', () => {
     expect(status.repos[report.repo]).toMatchObject({ attempted: 1, skippedDuplicate: 1, skippedCap: 0 });
     expect(gh.mock.calls).toEqual([[['run', 'rerun', '126', '--failed', '--repo', report.repo]]]);
   });
+  it('withholds disputed triggering tests from stabilization once the conflict is visible', async () => {
+    const { opts, report } = setup();
+    const test = report.groups[0]!.testId;
+    const other = 'test/b.test.ts > b';
+    const attempts = ['a', 'b', 'c'].map((head, i) => ({
+      at: '2026-01-01T11:30:00Z', repo: report.repo, head: head.repeat(40),
+      runId: 123 + i, pr: i + 1, outcome: 'attempt', tests: [test, other],
+    }));
+    const rows = [
+      ...attempts,
+      { ...attempts[0]!, tests: [other, test, test] },
+      { ...attempts[0]!, at: '2026-01-01T12:01:00Z', tests: [other] },
+    ];
+    appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    expect(readCiReruns(opts.journalPath!, opts.now!()).recurringFlakes).toHaveLength(2);
+
+    opts.now = () => Date.parse('2026-01-01T12:01:00Z');
+    const read = readCiReruns(opts.journalPath!, opts.now());
+    expect(read.counts.attempted).toBe(3);
+    expect(read.lastHour).toBe(3);
+    expect(read.recurringFlakes).toEqual([]);
+    report.groups[0]!.runs = [];
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos[report.repo]).toMatchObject({ recurringFlakes: 0, flakeFixesQueued: 0 });
+  });
+
   it('excludes future attempts from the hourly cap while preserving deduplication', async () => {
     const { opts, gh, report } = setup();
     opts.maxPerHour = 1;

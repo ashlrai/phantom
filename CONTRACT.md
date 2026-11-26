@@ -457,6 +457,10 @@ eight pending reruns per repository. `success` maps to `pass`, `failure` and
 still in progress stay pending, as do reads without a matching run ID and
 head SHA, a nonempty conclusion, or a parseable update time within the
 rerun's freshness guard.
+The same module exports `observedAttempts(entries, nowMs)` for journal
+consumers. It returns the earliest visible attempt per case-insensitive
+repository, head SHA and workflow run ID. Conflicting sets of triggering
+test IDs clear both per-test fields while preserving the attempt count.
 `src/core/fleet/ci-flakes.ts` exports `recurringFlakes(rows, opts?)`,
 `flakeJobId(repo, test)` and `enqueueFlakeFixes(flakes, absoluteQueuePath)`:
 a test probable-flaking on at least three distinct heads within seven days
