@@ -8,6 +8,14 @@ export function laneLaunchTarget(target: number, effectiveTarget: number | null 
   return Math.min(target, effectiveTarget ?? target);
 }
 
+/** Dispatcher ticks are usable from their timestamp through 60 seconds later. */
+export function requireFreshDispatcherTick(lastTick: unknown, nowMs: number): void {
+  const tick = typeof lastTick === 'string' ? Date.parse(lastTick) : NaN;
+  if (!Number.isFinite(tick) || !Number.isFinite(nowMs) || tick > nowMs || nowMs - tick > 60_000) {
+    throw new Error('unusable dispatcher tick');
+  }
+}
+
 /** Remaining fleet slots from the admission snapshot embedded in this tick. */
 export function dispatcherAdmissionHeadroom(admission: unknown, lastTick: unknown): number | null {
   if (!admission || typeof admission !== 'object' || Array.isArray(admission)) return null;
