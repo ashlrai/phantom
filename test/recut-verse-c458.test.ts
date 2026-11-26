@@ -28,9 +28,9 @@ it('awaits an asynchronous report while preserving active binding and privacy', 
       receipt: { rowid: 1, sent: true, delivered: false, error: 0 },
     }],
   };
-  const api = createFleetTeammateTasksApi(async () => report, undefined, (raw, jobId) => {
+  const api = createFleetTeammateTasksApi(async () => report, undefined, (raw, filter) => {
     expect(raw).toBe(report);
-    expect(jobId).toBe('RQ-FAKE-C458');
+    expect(filter).toEqual({ jobId: 'RQ-FAKE-C458' });
     return new Map([['RQ-FAKE-C458', { queueBinding: 'bound', queueClaim: 'active' }]]);
   });
   const response = await call(api, '?job=RQ-FAKE-C458');

@@ -3,7 +3,9 @@ import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { scrubSecrets } from '../core/util/scrub.js';
 import { loadConfigReadOnlyStrict } from '../core/config.js';
-import { cancelTeammateTask, enqueueTeammateTask, listTeammateTasks, runTeammateTasks, teammateTaskPeers } from '../core/comms/imessage-teammate-tasks.js';
+import { cancelTeammateTask, enqueueTeammateTask, listTeammateTasks, runTeammateTasks, teammateTaskLedgerMatch, teammateTaskPeers,
+  TEAMMATE_TASK_KINDS, TEAMMATE_TASK_PEERS, TEAMMATE_TASK_STATES,
+  type TeammateTaskKind, type TeammateTaskLedgerFilter, type TeammateTaskPeer, type TeammateTaskState } from '../core/comms/imessage-teammate-tasks.js';
 
 const USAGE = `Usage: phm fleet imessage-tasks enqueue --peer dot|instinct --job <id>
   --kind research|triage|report|rebase --scope <text> --repo <owner/name>
@@ -11,7 +13,9 @@ const USAGE = `Usage: phm fleet imessage-tasks enqueue --peer dot|instinct --job
   [--apply|--dry-run] [--json]
        phm fleet imessage-tasks cancel --job <id> [--apply|--dry-run] [--json]
        phm fleet imessage-tasks dispatch [--apply|--dry-run] [--json]
-       phm fleet imessage-tasks list [--job <id>] [--json]
+       phm fleet imessage-tasks list [--job <id>] [--peer dot|instinct]
+         [--state queued|sending|pending|replied|expired|cancelled]
+         [--kind research|triage|report|rebase] [--json]
        phm fleet imessage-tasks peers [--json]
 Enqueue, cancel and dispatch preview by default. Apply reserves work or uses the
 existing approved teammate transport. Reports omit message bodies and handles.`;
@@ -70,7 +74,7 @@ export async function cmdFleetImessageTasks(args: string[], deps: FleetImessageT
     const { values, positionals, tokens } = parseArgs({ args, allowPositionals: true, strict: true, tokens: true, options: {
       json: { type: 'boolean' }, apply: { type: 'boolean' }, 'dry-run': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
-      peer: { type: 'string' }, job: { type: 'string' }, kind: { type: 'string' },
+      peer: { type: 'string' }, job: { type: 'string' }, kind: { type: 'string' }, state: { type: 'string' },
       scope: { type: 'string' }, repo: { type: 'string' }, format: { type: 'string' },
       deadline: { type: 'string' }, pr: { type: 'string', multiple: true },
     } });
@@ -85,9 +89,15 @@ export async function cmdFleetImessageTasks(args: string[], deps: FleetImessageT
     if (positionals.length !== 1 || !['enqueue', 'cancel', 'dispatch', 'list', 'peers'].includes(command)) throw new Error('Invalid command');
     const allowed = command === 'enqueue'
       ? ['json', 'apply', 'dry-run', 'peer', 'job', 'kind', 'scope', 'repo', 'format', 'deadline', 'pr']
-      : command === 'cancel' ? ['json', 'apply', 'dry-run', 'job'] : command === 'dispatch' ? ['json', 'apply', 'dry-run'] : command === 'list' ? ['json', 'job'] : ['json'];
+      : command === 'cancel' ? ['json', 'apply', 'dry-run', 'job'] : command === 'dispatch' ? ['json', 'apply', 'dry-run']
+        : command === 'list' ? ['json', 'job', 'peer', 'state', 'kind'] : ['json'];
     if (Object.keys(values).some(key => !allowed.includes(key)) || values.apply && values['dry-run']) throw new Error('Invalid options');
-    if (command === 'list' && values.job !== undefined && !envelope.shape.jobId.safeParse(values.job).success) throw new Error('Invalid job');
+    if (command === 'list') {
+      if (values.job !== undefined && !envelope.shape.jobId.safeParse(values.job).success) throw new Error('Invalid job');
+      if (values.peer !== undefined && !(TEAMMATE_TASK_PEERS as readonly string[]).includes(values.peer)) throw new Error('Invalid peer');
+      if (values.state !== undefined && !(TEAMMATE_TASK_STATES as readonly string[]).includes(values.state)) throw new Error('Invalid state');
+      if (values.kind !== undefined && !(TEAMMATE_TASK_KINDS as readonly string[]).includes(values.kind)) throw new Error('Invalid kind');
+    }
     let result: object;
     if (command === 'enqueue') {
       const { peer, kind, job: jobId, scope, repo, format, deadline } = values;
@@ -121,11 +131,19 @@ export async function cmdFleetImessageTasks(args: string[], deps: FleetImessageT
       coverage: 'local-evidence-only-peer-reported-results-unverified',
       claimKeyEvidence: 'label-only-queue-binding-unverified',
     };
-    if (command === 'list' && values.job !== undefined) {
-      const report = taskReport.parse(visible);
-      const healthy = report.state === 'healthy' && report.ok !== false;
-      const tasks = healthy ? (report.tasks ?? []).filter(task => task.jobId === values.job) : [];
-      visible = { ...visible, selection: { jobId: values.job }, matched: healthy ? tasks.length > 0 : null, tasks };
+    if (command === 'list') {
+      const filter: TeammateTaskLedgerFilter = {
+        ...(values.job !== undefined ? { jobId: values.job } : {}),
+        ...(values.peer !== undefined ? { peer: values.peer as TeammateTaskPeer } : {}),
+        ...(values.state !== undefined ? { state: values.state as TeammateTaskState } : {}),
+        ...(values.kind !== undefined ? { kind: values.kind as TeammateTaskKind } : {}),
+      };
+      if (Object.keys(filter).length > 0) {
+        const report = taskReport.parse(visible);
+        const healthy = report.state === 'healthy' && report.ok !== false;
+        const tasks = healthy ? (report.tasks ?? []).filter(task => teammateTaskLedgerMatch(task, filter)) : [];
+        visible = { ...visible, selection: filter, matched: healthy ? tasks.length > 0 : null, tasks };
+      }
     }
     output(JSON.stringify(visible, null, json ? undefined : 2));
     const report = result as { state?: string; ok?: boolean };

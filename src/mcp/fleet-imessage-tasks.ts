@@ -28,8 +28,9 @@ import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
-  listTeammateTasks, teammateQueueJobMatchesIdentity, teammateTaskQueueIdentities,
-  type TeammateTaskOptions,
+  listTeammateTasks, teammateQueueJobMatchesIdentity, teammateTaskLedgerMatch, teammateTaskQueueIdentities,
+  TEAMMATE_TASK_KINDS, TEAMMATE_TASK_PEERS, TEAMMATE_TASK_STATES,
+  type TeammateTaskKind, type TeammateTaskOptions, type TeammateTaskPeer, type TeammateTaskState,
 } from '../core/comms/imessage-teammate-tasks.js';
 import { imessageStateDir } from '../core/integrations/imessage.js';
 import { QueueStore } from '../core/queue/store.js';
@@ -48,6 +49,12 @@ export type FleetImessageLedgerState = 'present' | 'missing' | 'unavailable';
 export interface FleetImessageTasksArgs {
   /** Optional exact jobId selector, applied before limit truncation. */
   jobId?: string;
+  /** Optional exact peer selector (dot|instinct), ANDed with the others. */
+  peer?: TeammateTaskPeer;
+  /** Optional exact ledger-state selector, ANDed with the others. */
+  state?: TeammateTaskState;
+  /** Optional exact work-kind selector, ANDed with the others. */
+  kind?: TeammateTaskKind;
   /** Cap on returned rows after filtering; the newest matches are kept. */
   limit: number;
 }
@@ -78,8 +85,13 @@ export interface FleetImessageTasksReport {
   authority: 'none';
   generatedAt: string;
   limit: number;
-  /** Echo of the exact selector; null when the read is unfiltered. */
+  /** Echo of the exact jobId selector; null when that dimension is unfiltered. */
   jobId: string | null;
+  /** Echo of each supplied enum selector; absent when that dimension is unfiltered, so an
+   * unfiltered report never carries a `kind` key (kind stays off the row projection). */
+  peer?: TeammateTaskPeer;
+  state?: TeammateTaskState;
+  kind?: TeammateTaskKind;
   /** Selector outcome on a healthy read; null when unfiltered or unavailable. */
   matched: boolean | null;
   /** 'ok' only for a healthy collector report; otherwise 'unavailable'. */
@@ -107,19 +119,31 @@ type ListedTask = ReturnType<typeof listTeammateTasks>['tasks'][number];
 /**
  * Runtime argument validation: low-level SDK servers never check the
  * tools/list schema, so the server re-validates on every call. Only
- * `jobId` (an exact envelope-shaped id) and `limit` are accepted; any
- * other key — including caller dir, root, cwd, path, config, send,
- * enqueue, poll or claim options — is an argument error rejected before
- * any filesystem read.
+ * `jobId` (an exact envelope-shaped id), the bounded `peer`/`state`/`kind`
+ * selectors and `limit` are accepted; any other key — including caller
+ * dir, root, cwd, path, config, send, enqueue, poll or claim options — is
+ * an argument error rejected before any filesystem read.
  */
 export function parseFleetImessageTasksArgs(args: Record<string, unknown>): FleetImessageTasksArgs | null {
   const limit = args['limit'] ?? DEFAULT_FLEET_IMESSAGE_TASKS;
   const jobId = args['jobId'];
-  if (Object.keys(args).some(key => key !== 'jobId' && key !== 'limit') ||
-    args['jobId'] === null || args['limit'] === null ||
+  const peer = args['peer'];
+  const state = args['state'];
+  const kind = args['kind'];
+  const member = (value: unknown, allowed: readonly string[]) =>
+    value === undefined || typeof value === 'string' && (allowed as readonly string[]).includes(value);
+  if (Object.keys(args).some(key => !['jobId', 'peer', 'state', 'kind', 'limit'].includes(key)) ||
+    args['jobId'] === null || args['peer'] === null || args['state'] === null || args['kind'] === null || args['limit'] === null ||
     jobId !== undefined && (typeof jobId !== 'string' || !JOB_ID_PATTERN.test(jobId) || scrubSecrets(jobId) !== jobId) ||
+    !member(peer, TEAMMATE_TASK_PEERS) || !member(state, TEAMMATE_TASK_STATES) || !member(kind, TEAMMATE_TASK_KINDS) ||
     typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > MAX_FLEET_IMESSAGE_TASKS) return null;
-  return { ...(jobId === undefined ? {} : { jobId: jobId as string }), limit };
+  return {
+    ...(jobId === undefined ? {} : { jobId: jobId as string }),
+    ...(peer === undefined ? {} : { peer: peer as TeammateTaskPeer }),
+    ...(state === undefined ? {} : { state: state as TeammateTaskState }),
+    ...(kind === undefined ? {} : { kind: kind as TeammateTaskKind }),
+    limit,
+  };
 }
 
 /** Presence of the ledger file only — never its contents. */
@@ -190,6 +214,9 @@ export async function readFleetImessageTasks(
     generatedAt: new Date().toISOString(),
     limit: input.limit,
     jobId: input.jobId ?? null,
+    ...(input.peer === undefined ? {} : { peer: input.peer }),
+    ...(input.state === undefined ? {} : { state: input.state }),
+    ...(input.kind === undefined ? {} : { kind: input.kind }),
     coverage: 'local-evidence-only-peer-reported-results-unverified' as const,
   };
   const ledgerState = probeLedger(runsDir);
@@ -204,7 +231,14 @@ export async function readFleetImessageTasks(
   } catch {
     return { ...base, sourceState: 'unavailable', ledgerState, queueState, matched: null, tasks: null };
   }
-  const matchedTasks = input.jobId === undefined ? tasks : tasks.filter(task => task.jobId === input.jobId);
+  const filter = {
+    ...(input.jobId === undefined ? {} : { jobId: input.jobId }),
+    ...(input.peer === undefined ? {} : { peer: input.peer }),
+    ...(input.state === undefined ? {} : { state: input.state }),
+    ...(input.kind === undefined ? {} : { kind: input.kind }),
+  };
+  const filtered = Object.keys(filter).length > 0;
+  const matchedTasks = filtered ? tasks.filter(task => teammateTaskLedgerMatch(task, filter)) : tasks;
   let identities: ReturnType<typeof teammateTaskQueueIdentities> | null = null;
   try { identities = (deps.listIdentities ?? teammateTaskQueueIdentities)({ runsDir }); } catch { /* Unverifiable identity is not a match. */ }
   return {
@@ -212,7 +246,7 @@ export async function readFleetImessageTasks(
     sourceState: 'ok',
     ledgerState,
     queueState,
-    matched: input.jobId === undefined ? null : matchedTasks.length > 0,
+    matched: filtered ? matchedTasks.length > 0 : null,
     tasks: matchedTasks.slice(-input.limit).map(task => projectTask(task, jobs, identities)),
   };
 }

@@ -3,7 +3,9 @@ import { sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { listTeammateTasks } from '../comms/imessage-teammate-tasks.js';
+import { listTeammateTasks, teammateTaskLedgerMatch,
+  TEAMMATE_TASK_KINDS, TEAMMATE_TASK_PEERS, TEAMMATE_TASK_STATES,
+  type TeammateTaskKind, type TeammateTaskLedgerFilter, type TeammateTaskPeer, type TeammateTaskState } from '../comms/imessage-teammate-tasks.js';
 import { readFleetImessageTasks, type FleetImessageTaskReceipt } from '../../mcp/fleet-imessage-tasks.js';
 
 const MAX_ROWS = 50;
@@ -35,9 +37,9 @@ function workState(t: RawTask, b?: TeammateBinding): string {
 }
 
 /** Allow-list projection: token, receipt, claimKey, resource, metrics, result summary never leave this function. */
-export function projectTeammateTasks(raw: Raw, nowIso: string, jobId?: string, bindings?: TeammateBindings) {
+export function projectTeammateTasks(raw: Raw, nowIso: string, filter?: TeammateTaskLedgerFilter, bindings?: TeammateBindings) {
   // Counts cover the complete selected set before the presentation cap, as in the unfiltered view.
-  const selected = jobId === undefined ? raw.tasks : raw.tasks.filter(t => t.jobId === jobId);
+  const selected = filter === undefined ? raw.tasks : raw.tasks.filter(t => teammateTaskLedgerMatch(t, filter));
   const counts = Object.fromEntries(COUNT_KEYS.map(k => [k, 0])) as Record<typeof COUNT_KEYS[number], number>;
   for (const t of selected) counts[t.state]++;
   const sorted = [...selected].sort((a, b) => b.createdAt - a.createdAt);
@@ -49,31 +51,47 @@ export function projectTeammateTasks(raw: Raw, nowIso: string, jobId?: string, b
       ...(b === undefined ? {} : { queueBinding: b.queueBinding, queueClaim: b.queueClaim, executionVerified: false as const }),
     };
   });
+  const filtered = filter !== undefined && Object.keys(filter).length > 0;
   return { schema: raw.schema, asOf: nowIso, counts, rows, truncated: sorted.length > MAX_ROWS,
-    ...(jobId === undefined ? {} : { selection: { jobId }, matched: selected.length > 0 }) };
+    ...(filtered ? { selection: filter, matched: selected.length > 0 } : {}) };
 }
 
-/** Default binding read: the MCP reader joined by exact jobId over the same snapshot; unreadable evidence is 'unavailable'. */
-async function readBindings(raw: Raw, jobId?: string): Promise<TeammateBindings> {
+/** Default binding read: the MCP reader joined by exact selectors over the same snapshot; unreadable evidence is 'unavailable'. */
+async function readBindings(raw: Raw, filter?: TeammateTaskLedgerFilter): Promise<TeammateBindings> {
   const runsDir = process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
-  const report = await readFleetImessageTasks({ ...(jobId === undefined ? {} : { jobId }), limit: Math.max(raw.tasks.length, 1) },
+  const report = await readFleetImessageTasks({ ...(filter ?? {}), limit: Math.max(raw.tasks.length, 1) },
     { runsDir, listTasks: () => raw });
   return new Map((report.tasks ?? []).map(t => [t.jobId, { queueBinding: t.queueBinding, queueClaim: t.queueClaim }]));
 }
 
 /** Read-only: never enqueues, cancels, runs or takes the store lock. `bind` is a test seam for binding evidence. */
 export function createFleetTeammateTasksApi(read: () => Raw | Promise<Raw> = () => listTeammateTasks(), now: () => Date = () => new Date(),
-  bind: (raw: Raw, jobId?: string) => Promise<TeammateBindings> | TeammateBindings = readBindings): ApiModule {
+  bind: (raw: Raw, filter?: TeammateTaskLedgerFilter) => Promise<TeammateBindings> | TeammateBindings = readBindings): ApiModule {
   return async (_ctx, req, res, path, method) => {
     if (path !== '/api/verse/fleet/control/teammate-tasks') return false;
     if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
     const params = new URL(req.url ?? path, 'http://localhost').searchParams;
-    const entries = [...params.entries()];
-    const jobId = entries[0]?.[1];
-    if (entries.length > 1 || (entries.length === 1 && (entries[0]![0] !== 'job' ||
-      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(jobId!) || scrubSecrets(jobId!) !== jobId))) {
-      sendJson(res, 400, { error: 'invalid query parameters' }); return true;
+    const filter: TeammateTaskLedgerFilter = {};
+    const seen = new Set<string>();
+    let invalid = false;
+    for (const [key, value] of params.entries()) {
+      if (seen.has(key) || !['job', 'peer', 'state', 'kind'].includes(key)) { invalid = true; break; }
+      seen.add(key);
+      if (key === 'job') {
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(value) || scrubSecrets(value) !== value) { invalid = true; break; }
+        filter.jobId = value;
+      } else if (key === 'peer') {
+        if (!(TEAMMATE_TASK_PEERS as readonly string[]).includes(value)) { invalid = true; break; }
+        filter.peer = value as TeammateTaskPeer;
+      } else if (key === 'state') {
+        if (!(TEAMMATE_TASK_STATES as readonly string[]).includes(value)) { invalid = true; break; }
+        filter.state = value as TeammateTaskState;
+      } else {
+        if (!(TEAMMATE_TASK_KINDS as readonly string[]).includes(value)) { invalid = true; break; }
+        filter.kind = value as TeammateTaskKind;
+      }
     }
+    if (invalid) { sendJson(res, 400, { error: 'invalid query parameters' }); return true; }
     let body;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -83,8 +101,8 @@ export function createFleetTeammateTasksApi(read: () => Raw | Promise<Raw> = () 
       ]);
       if (raw.state !== 'healthy') throw new Error('unavailable');
       // A failed binding read never drops tasks: every row degrades to an unavailable, unconfirmed state.
-      const bindings = await Promise.resolve().then(() => bind(raw, jobId)).catch(() => new Map() as TeammateBindings);
-      body = projectTeammateTasks(raw, now().toISOString(), jobId, bindings);
+      const bindings = await Promise.resolve().then(() => bind(raw, filter)).catch(() => new Map() as TeammateBindings);
+      body = projectTeammateTasks(raw, now().toISOString(), filter, bindings);
     }
     catch { sendJson(res, 503, { error: 'teammate tasks unavailable' }); return true; }
     finally { if (timer !== undefined) clearTimeout(timer); }
