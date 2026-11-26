@@ -795,7 +795,7 @@ export function buildDefaultGrantPayload(input: GrantDraftInput): StandingGrantV
     if (!STANDING_GRANT_PATTERNS.seatId.test(seat.seatId) || seats[seat.seatId]) continue;
     seats[seat.seatId] = defaultSeat(seat.engine);
   }
-  if (sawLocal || Object.keys(seats).length === 0) seats[LOCAL_SEAT_WILDCARD] = defaultSeat('local');
+  if (sawLocal) seats[LOCAL_SEAT_WILDCARD] = defaultSeat('local');
   const devin = input.devin === true;
   if (devin) seats[DEVIN_SEAT_ID] = defaultSeat('devin');
 
@@ -863,6 +863,8 @@ export function buildReapprovalGrantPayload(
   current: StandingGrantV1,
   currentStageIndex: number,
   input: Omit<GrantDraftInput, 'repos' | 'seats'> & {
+    /** Current seats. A re-approval drops disconnected seats without adding paid scope. */
+    seats?: readonly DraftSeatInput[];
     /**
      * What GitHub enforces per repo today (lower-cased owner/name → state).
      * A `server` repo GitHub definitively cannot / does not protect
@@ -911,6 +913,12 @@ export function buildReapprovalGrantPayload(
     authoritySurfaceDigest: input.authoritySurfaceDigest,
     rollout: { stages: structuredClone(current.rollout.stages.slice(from)), autoAdvance: true },
   };
+  if (input.seats) {
+    const configured = new Set(input.seats.map((seat) => seat.seatId));
+    if (input.seats.some((seat) => seat.engine === 'local')) configured.add(LOCAL_SEAT_WILDCARD);
+    payload.spend.seats = Object.fromEntries(Object.entries(payload.spend.seats)
+      .filter(([seatId]) => configured.has(seatId) || engineOfSeatId(seatId) === 'devin'));
+  }
   if (input.devin === false) {
     payload.engines = withoutDevin(payload.engines);
     payload.rollout.stages = payload.rollout.stages.map((stage) => ({ ...stage, engines: withoutDevin(stage.engines) }));
@@ -950,10 +958,10 @@ export function describeGrantScope(grant: StandingGrantV1): string[] {
   for (const [seatId, seat] of Object.entries(grant.spend.seats)) {
     if (engineOfSeatId(seatId) === 'devin') {
       // No window to keep a percentage of: say where Devin's limits live.
-      lines.push(`  seat ${seatId}: ${seat.enabled ? 'on' : 'off'}, Devin sessions (${seat.roles.join('/')} only, never a judge) within the Devin ACU budget and its reserve for Mason`);
+      lines.push(`  seat ${seatId}: ${seat.enabled ? 'on' : 'off'}, Devin sessions (${seat.roles.join('/')} only, never a judge) within the Devin ACU budget and its reserve for the owner`);
       continue;
     }
-    lines.push(`  seat ${seatId}: ${seat.enabled ? 'on' : 'off'}, keep ${seat.reserveFloorPercent}% for Mason${seat.maxSessionWindowPercent !== undefined ? `, idle while 5 h > ${seat.maxSessionWindowPercent}%` : ''}, ${seat.roles.join('/')}`);
+    lines.push(`  seat ${seatId}: ${seat.enabled ? 'on' : 'off'}, keep ${seat.reserveFloorPercent}% for the owner${seat.maxSessionWindowPercent !== undefined ? `, idle while 5 h > ${seat.maxSessionWindowPercent}%` : ''}, ${seat.roles.join('/')}`);
   }
   grant.rollout.stages.forEach((stage, i) => {
     lines.push(`  stage ${i + 1} ${stage.id} Leader: ${stage.leaderClasses.length ? stage.leaderClasses.join('+') : 'advisory only'}`);
