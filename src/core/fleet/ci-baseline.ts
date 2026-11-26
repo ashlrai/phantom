@@ -45,9 +45,9 @@ const PASS_LINE = /^[\u2713\u2714\u221a]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui
 // The default reporter emits no per-test pass line for a green file; it
 // summarizes the whole module instead:
 //   ✓ |unit| test/example.test.ts (4 tests) 4ms
-// A green module means every test it contains passed on that run -- the
-// finest pass evidence the default reporter produces.
-const FILE_PASS_LINE = /^[✓✔√]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?)\s+\(\d+ tests?(?:\s*\|[^)]*)?\)(?:\s+\d+(?:\.\d+)?m?s)?$/;
+// The reported total includes skipped and todo tests. A module summary
+// only proves a named case passed when every case ran.
+const FILE_PASS_LINE = /^[✓✔√]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?)\s+\((\d+) tests?(?:\s*\|\s*(\d+) skipped)?(?:\s*\|\s*(\d+) todo)?\)(?:\s+\d+(?:\.\d+)?m?s)?$/;
 
 // .github/scripts/ci-source-binding.mjs verifies `git rev-parse HEAD` equals
 // the candidate revision and prints this receipt in every bound CI job:
@@ -2172,12 +2172,16 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   const filePassable = (names: string) => names === SUITE_NAMES || !names.startsWith('(');
   // A suite failure has no per-test pass line to match: the file loading and
   // running at all is what resolves it. The default reporter's green-module
-  // line (`✓ file (N tests)`) is the same evidence at file granularity -- a
-  // green module means every test it contains passed on master.
+  // line (`✓ file (N tests)`) proves a suite ran if any case passed,
+  // and proves a named case passed if all cases passed.
   const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
     if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
-    return FILE_PASS_LINE.exec(line)?.[1] === f.file;
+    const module = FILE_PASS_LINE.exec(line);
+    if (module?.[1] !== f.file) return false;
+    const total = Number(module[2]);
+    const omitted = Number(module[3] ?? 0) + Number(module[4] ?? 0);
+    return f.names === SUITE_NAMES ? total > omitted : total > 0 && omitted === 0;
   }));
   // Bundler-resolution candidates for one normalized repo-relative spec base.
   // Explicit extensions keep TypeScript precedence (.js -> .ts before .tsx,
