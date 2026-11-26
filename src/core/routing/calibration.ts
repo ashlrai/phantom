@@ -1,4 +1,7 @@
 import { readFileSync } from 'node:fs';
+import { ledgerPhase } from '../fleet/empty-cause.js';
+import { isNodePoolLedgerRow, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
+import { parseLedgerTs } from '../metrics/loop.js';
 import { isRewardSignalV1 } from '../metrics/reward-signal.js';
 
 type Row = Record<string, unknown>;
@@ -50,10 +53,11 @@ function numberField(row: Row, names: string[], max = Infinity): number | undefi
   return value;
 }
 function timestamp(row: Row): number | undefined {
-  const value = field(row, 'timestamp', 'at', 'time');
+  const value = field(row, 'timestamp', 'at', 'time', 'ts');
   if (value === undefined) return undefined;
-  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) throw new Error('Invalid event timestamp');
-  return Date.parse(value);
+  const parsed = parseLedgerTs(value);
+  if (parsed === null) throw new Error('Invalid event timestamp');
+  return parsed;
 }
 function assign<K extends keyof Job>(job: Job, key: K, value: Job[K] | undefined): void {
   if (value === undefined) return;
@@ -72,7 +76,7 @@ function metrics(job: Job, row: Row): void {
   assign(job, 'prediction', numberField(row, ['predictedMergeRate', 'predicted_merge_rate', 'predictedMergeProbability', 'predicted_merge_probability'], 1));
   assign(job, 'predictedTokens', numberField(row, ['predictedTokens', 'predicted_tokens']));
   assign(job, 'predictedWallTimeMs', numberField(row, ['predictedWallTimeMs', 'predicted_wall_time_ms']));
-  assign(job, 'tokens', numberField(row, ['tokens', 'totalTokens', 'total_tokens']));
+  assign(job, 'tokens', numberField(row, ['tokens', 'totalTokens', 'total_tokens', 'tokens_total', 'tokensTotal']));
   assign(job, 'wallTimeMs', numberField(row, ['wallTimeMs', 'wall_time_ms', 'duration_ms']));
 }
 function parseJsonl(input: string): Row[] {
@@ -126,21 +130,31 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       assign(job, 'merged', row.merged);
       continue;
     }
-    const event = stringField(row, 'event', 'type');
-    if (!event || !['launch', 'finish', 'publish', 'outcome'].includes(event)) continue;
+    const id = ledgerJobId(row);
+    if (isNodePoolLedgerRow(row) || id?.startsWith('RQ-BATCH-')) continue;
+    const phase = ledgerPhase(row);
+    const event = ledgerLifecycleEvent(row, phase);
+    const state = ledgerOutcomeState(row, event, phase);
+    if (state === null && !['launch', 'finish', 'publish', 'outcome'].includes(event ?? '')) continue;
     recognized++;
-    const id = stringField(row, 'jobId', 'job_id', 'id');
     if (!id) throw new Error('Event is missing job ID');
     const job = jobs.get(id) ?? { launched: false };
     jobs.set(id, job);
     if (event === 'launch') {
       if (job.launched) throw new Error('Duplicate launch for a job');
       job.launched = true;
-      assign(job, 'arm', stringField(row, 'arm'));
+      assign(job, 'arm', stringField(row, 'arm', 'lane', 'pool'));
       assign(job, 'started', timestamp(row));
     }
-    if (event === 'finish') assign(job, 'finished', timestamp(row));
-    if (event === 'outcome') assign(job, 'merged', outcome(row));
+    if (event === 'finish') {
+      assign(job, 'finished', timestamp(row));
+      const seconds = numberField(row, ['wall_s'], Number.MAX_VALUE / 1000);
+      if (field(row, 'wallTimeMs', 'wall_time_ms', 'duration_ms') === undefined && seconds !== undefined) {
+        assign(job, 'wallTimeMs', seconds * 1000);
+      }
+    }
+    const verdict = event === 'outcome' ? outcome(row) : undefined;
+    assign(job, 'merged', verdict ?? (state === 'MERGED' ? true : state === 'CLOSED' ? false : undefined));
     metrics(job, row);
   }
   if (rows.length && !recognized) throw new Error('No recognized dispatch events');
