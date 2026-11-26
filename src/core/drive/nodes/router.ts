@@ -1,5 +1,5 @@
 import { scrubSecrets } from '../../util/scrub.js';
-import { isNodeCapacity, NODE_HEARTBEAT_MS, type NodeRecord, type NodesState } from './state.js';
+import { isNodeCapacity, NODE_HEARTBEAT_MS, type NodeAuth, type NodeRecord, type NodesState } from './state.js';
 import type { QueueJobV1 } from './queue-v1.js';
 
 /** Load added per claim a node already holds or is planned to receive (permille). */
@@ -64,6 +64,22 @@ function shortfall(node: NodeRecord, job: QueueJobV1): string | null {
   return jobBlockers(node, job)[0] ?? null;
 }
 
+/** The gh fix names the unblock the auth-blocked nodes actually reported.
+ * 'missing' is the only state proving gh is installed but signed out, so
+ * `gh auth login` is the step; a node that never reported auth might already
+ * be signed in, so its own --probe-auth beat is the discovery; 'unknown'
+ * confirms no usable gh, so installing the CLI comes before login can matter.
+ * An empty set keeps the generic login answer. */
+function ghAuthFix(owner: string, states: ReadonlySet<NodeAuth | undefined>): string {
+  if (states.size === 0 || states.has('missing')) {
+    return `Nodes owned by '${owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
+  }
+  if (states.has(undefined)) {
+    return `Nodes owned by '${owner}' have not confirmed a gh login. Run 'phm node beat --probe-auth' on a node — it reports whether that machine's own gh is signed in; where gh is signed out run 'gh auth login' there, and where gh is not installed install the GitHub CLI first.`;
+  }
+  return `Nodes owned by '${owner}' could not confirm a gh login — the GitHub CLI may be missing on them. Install gh and run 'gh auth login' on a node, then: phm node beat --probe-auth`;
+}
+
 /** Shared capacity slice of fleet.awareness.v1. Pool dispatch recomputes it inside the
  * witness transaction; file mirrors can never grant claims. No IO or state mutation. */
 export function nodeCapacityView(state: NodesState | null, now: number) {
@@ -119,10 +135,11 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
     const reasons = new Map<string, number>();
+    const authStates = new Set<NodeAuth | undefined>();
     let best: NodeRecord | null = null;
     for (const node of nodes) {
       const why = shortfall(node, job);
-      if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
+      if (why) { reasons.set(why.split(':')[0]!, 1); if (why === 'auth') authStates.add(node.auth); continue; }
       if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) { reasons.set('capacity', 1); continue; }
       const host = hosts.get(node.nodeId);
       if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
@@ -150,7 +167,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
         ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
       : reasons.has('caps')
         ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
-        : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
+        : ghAuthFix(job.owner!, authStates);
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
   return plan;

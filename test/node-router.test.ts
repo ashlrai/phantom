@@ -64,6 +64,34 @@ describe('node router', () => {
     expect(f.box.plan()[0]!.nodeId).toBe('n');
   });
 
+  it('the gh fix follows the auth state the blocked nodes actually reported', () => {
+    // 'missing' proves gh is installed but signed out: login is the step.
+    let f = fixture();
+    const signedOut = f.box.join('signed-out', { owners: ['o'], caps: ['gh'] })!;
+    f.box.heartbeat(signedOut, { auth: 'missing' });
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    expect(f.box.plan()[0]!.fix).toContain('gh auth login');
+
+    // Never reported: the node's own --probe-auth beat is the discovery step —
+    // it may already be signed in, so login is only the follow-up.
+    f = fixture();
+    f.box.join('unprobed', { owners: ['o'], caps: ['gh'] });
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    const unprobed = f.box.plan()[0]!.fix;
+    expect(unprobed).toContain('--probe-auth');
+    expect(unprobed).toContain('gh auth login');
+
+    // 'unknown' means the probe found no usable gh: install the CLI first —
+    // 'gh auth login' alone cannot fix a machine without gh.
+    f = fixture();
+    const noGh = f.box.join('no-gh', { owners: ['o'], caps: ['gh'] })!;
+    f.box.heartbeat(noGh, { auth: 'unknown' });
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    const unknown = f.box.plan()[0]!.fix;
+    expect(unknown).toContain('Install gh');
+    expect(unknown).not.toBe(unprobed);
+  });
+
   it('skips expired nodes and tells the operator how to add one', () => {
     const f = fixture();
     f.box.join('n', { owners: ['o'] });

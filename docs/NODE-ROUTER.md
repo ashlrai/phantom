@@ -193,8 +193,11 @@ before the lease lapses.
 
 Every error ends with a fix. A job with no taker is shown by `phm node plan`
 with the reason: no live node in that owner (join one), no node advertising the
-caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,
-then `phm node beat --probe-auth`). A `session-expired` error — from `beat` or
+caps (rejoin with them), or no node with a confirmed local `gh` login — the fix
+follows what the blocked nodes reported: `gh auth login` where gh is installed
+but signed out, `phm node beat --probe-auth` where auth was never reported (the
+node's own probe discovers an existing login), and installing the GitHub CLI
+where the probe found none. A `session-expired` error — from `beat` or
 `pull` — means the node's heartbeat lapsed: its `fix` prints the rejoin command,
 carrying the node's last advertised owner scopes, caps and slots while the
 registry still holds the record (placeholders when it does not). If the node
