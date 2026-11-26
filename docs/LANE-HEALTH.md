@@ -60,6 +60,9 @@ between the current phase start and report time, inclusive.
 provider window. Readings with unreadable observation timestamps are excluded
 from ordering and reset detection. If an observed window has no dated reading,
 the lane verdict is unknown.
+An out-of-range Codex reset timestamp is recorded as an unknown reset without
+discarding the other readings in the rollout. If it is the latest reading for
+its window, the lane verdict stays unknown.
 
 The `idle_with_work` verdict requires a positive lane target, queued work,
 zero running workers and no hold. A measured target of zero is valid and

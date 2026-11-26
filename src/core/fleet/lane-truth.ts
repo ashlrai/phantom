@@ -203,8 +203,9 @@ export function defaultLaneTruthReaders(home = homedir(), now = Date.now()): Lan
             for (const name of ['primary', 'secondary']) {
               const window = object(limits[name]);
               if (!Object.keys(window).length) continue;
-              const reset = typeof window.resets_at === 'number' && Number.isFinite(window.resets_at) ? instant(new Date(window.resets_at * 1000).toISOString()) : null;
-              samples.push({ provider: 'codex-personal', window: count(window.window_minutes) !== null && Number(window.window_minutes) > 0 ? `${name}:${window.window_minutes}` : '', usedPercent: typeof window.used_percent === 'number' ? window.used_percent : null, resetAt: reset, sampledAt: instant(row.timestamp) ?? '' });
+              const reset = typeof window.resets_at === 'number' ? new Date(window.resets_at * 1000) : null;
+              const resetAt = reset && Number.isFinite(reset.getTime()) ? reset.toISOString() : null;
+              samples.push({ provider: 'codex-personal', window: count(window.window_minutes) !== null && Number(window.window_minutes) > 0 ? `${name}:${window.window_minutes}` : '', usedPercent: typeof window.used_percent === 'number' ? window.used_percent : null, resetAt, sampledAt: instant(row.timestamp) ?? '' });
             }
           }
           if (samples.length) return samples;
