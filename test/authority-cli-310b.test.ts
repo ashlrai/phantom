@@ -140,6 +140,14 @@ describe('basic commands', () => {
       expect(grant.out).toContain('Not signed.');
       expect(grant.deps.custody?.signGrant).not.toHaveBeenCalled();
 
+      writeFileSync(join(home, '.ashlr', 'config.json'), JSON.stringify({ user: { id: 'owner@example.test', name: '  Alex Rivera  ' } }));
+      const namedDraft = harness();
+      expect(await runAuthorityCli(['draft', '--new'], namedDraft.deps), namedDraft.err.join('\n')).toBe(0);
+      expect(namedDraft.out.join('\n')).toContain('seat codex-personal: on, keep 0% for Alex Rivera');
+      const namedGrant = harness();
+      expect(await runAuthorityCli(['grant', '--no-elite-direct'], namedGrant.deps)).toBe(1);
+      expect(namedGrant.out.join('\n')).toContain('seat codex-personal: on, keep 0% for Alex Rivera');
+
       configure('codex-personal', 'codex-cmp');
       const connected = harness();
       expect(await runAuthorityCli(['draft', '--new', '--json'], connected.deps), connected.err.join('\n')).toBe(0);

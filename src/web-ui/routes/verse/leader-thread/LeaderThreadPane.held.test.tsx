@@ -35,7 +35,7 @@ describe('Leader thread pane held inbox', () => {
     serve(held);
     const input = await sendDraft('Keep me');
     const note = await screen.findByText(/Held: comms approval is not confirmed, so this did not reach MASON-INBOX\./);
-    expect(note).toHaveTextContent('Only Mason edits this file');
+    expect(note).toHaveTextContent('Only the owner edits this file');
     expect(screen.getByText('~/.ashlr/comms.toml')).toBeTruthy();
     expect(screen.getByText('confirmedByMason = true')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();

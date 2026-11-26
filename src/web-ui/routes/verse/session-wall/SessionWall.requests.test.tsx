@@ -26,7 +26,7 @@ const THREADS = [
 const read = (threads: unknown[] = THREADS) => narrowSessionWall({ schema: 'fleet.session-threads.v1', generatedAt: AT, filter: { lane: null, repo: null, live: false },
   counts: { sessions: threads.length }, threads, gaps: [] })!;
 const shownIds = () => within(screen.getByRole('list', { name: 'Conversations' })).getAllByRole('listitem').map(item => item.querySelector('strong')?.textContent);
-const strip = () => screen.getByRole('region', { name: 'What Mason asked' });
+const strip = () => screen.getByRole('region', { name: 'What the owner asked' });
 const requestButtons = () => within(strip()).getAllByRole('button').filter(button => button.hasAttribute('data-request'));
 
 beforeEach(() => { evictAll(); forgetWallSeen(); forgetWallView(); });
@@ -62,8 +62,8 @@ describe('the messages the sessions on screen serve', () => {
     expect(requestWords(wall)).toBe('2 of 4 routed jobs on screen · 1 helper · 1 running, 1 quiet, 1 done');
     expect(requestWords(docs)).toBe('1 routed job · 1 done');
     expect(requestWords({ ...docs, jobs: null })).toBe('1 job on screen, routed jobs unknown · 1 done');
-    expect(requestName(wall)).toBe('Mason\'s message of 11-20 09:14 ET from desktop: Put every session on one screen.');
-    expect(requestName(docs)).toBe('Mason\'s message of 11-20 10:02 ET from imessage');
+    expect(requestName(wall)).toBe('the owner\'s message of 11-20 09:14 ET from desktop: Put every session on one screen.');
+    expect(requestName(docs)).toBe('the owner\'s message of 11-20 10:02 ET from imessage');
     expect([requestTime('2026-11-20 09:14 ET'), requestTime('yesterday')]).toEqual(['11-20 09:14 ET', 'yesterday']);
   });
 
@@ -76,15 +76,15 @@ describe('the messages the sessions on screen serve', () => {
   });
 });
 
-describe('"What Mason asked" above the wall', () => {
+describe('"What the owner asked" above the wall', () => {
   const mount = (threads?: unknown[], find = '') => render(<WallView read={read(threads)} onOpen={vi.fn()} find={find} />);
 
   it('lists each served message with its words, its routing and a last button for sessions citing none', () => {
     mount();
-    expect(within(strip()).getByRole('heading', { name: /What Mason asked/ }).textContent).toContain('2 messages have sessions on screen');
+    expect(within(strip()).getByRole('heading', { name: /What the owner asked/ }).textContent).toContain('2 messages have sessions on screen');
     expect(requestButtons().map(button => button.getAttribute('aria-label'))).toEqual([
-      'Mason\'s message of 11-20 10:02 ET from imessage (1 routed job · 1 done)',
-      'Mason\'s message of 11-20 09:14 ET from desktop: Put every session on one screen. (2 of 4 routed jobs on screen · 1 helper · 1 running, 1 quiet, 1 done)',
+      'the owner\'s message of 11-20 10:02 ET from imessage (1 routed job · 1 done)',
+      'the owner\'s message of 11-20 09:14 ET from desktop: Put every session on one screen. (2 of 4 routed jobs on screen · 1 helper · 1 running, 1 quiet, 1 done)',
       'No message cited: 1 session',
     ]);
     // A message whose words the read does not hold says so instead of showing nothing.
@@ -102,7 +102,7 @@ describe('"What Mason asked" above the wall', () => {
     const states = within(screen.getByRole('group', { name: 'Show sessions by state' })).getAllByRole('button').map(button => button.textContent);
     expect(states).toEqual(['All 3', 'running 1', 'quiet 1', 'done 1']);
     const status = within(strip()).getByRole('status');
-    expect(status.textContent).toContain('Showing the 3 sessions serving Mason\'s message of 11-20 09:14 ET; 2 more of its jobs are not on screen. Put every session on one screen.');
+    expect(status.textContent).toContain('Showing the 3 sessions serving the owner\'s message of 11-20 09:14 ET; 2 more of its jobs are not on screen. Put every session on one screen.');
     fireEvent.click(within(status).getByRole('button', { name: 'Every session' }));
     expect(shownIds()).toHaveLength(6);
     expect(within(strip()).queryByRole('status')).toBeNull();
@@ -117,7 +117,7 @@ describe('"What Mason asked" above the wall', () => {
     mount();
     fireEvent.click(requestButtons()[2]!);
     expect(shownIds()).toEqual(['RQ-STANDING']);
-    expect(within(strip()).getByRole('status').textContent).toContain('Showing the session whose job cites none of Mason\'s messages.');
+    expect(within(strip()).getByRole('status').textContent).toContain('Showing the session whose job cites none of the owner\'s messages.');
   });
 
   it('moves along the row with Left, Right, Home and End, and Esc lets go of the chosen message', () => {
@@ -141,14 +141,14 @@ describe('"What Mason asked" above the wall', () => {
   it('counts only the sessions the find box leaves', () => {
     mount(undefined, 'codex');
     expect(requestButtons().map(button => button.getAttribute('aria-label'))).toEqual([
-      'Mason\'s message of 11-20 09:14 ET from desktop: Put every session on one screen. (1 of 4 routed jobs on screen · 1 quiet)',
+      'the owner\'s message of 11-20 09:14 ET from desktop: Put every session on one screen. (1 of 4 routed jobs on screen · 1 quiet)',
       'No message cited: 1 session',
     ]);
   });
 
   it('draws nothing when no session on screen serves a message, as with a server that does not say', () => {
     mount(THREADS.map(({ serves: _serves, ...rest }) => rest));
-    expect(screen.queryByRole('region', { name: 'What Mason asked' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'What the owner asked' })).toBeNull();
     expect(shownIds()).toHaveLength(6);
   });
 
