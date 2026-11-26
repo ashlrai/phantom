@@ -885,6 +885,51 @@ describe('text output names outcomes in plain words', () => {
         error: { code: 'missing-flag' } });
     } finally { vi.restoreAllMocks(); }
   });
+  it('status names each node\'s phm-build drift and points at self-update', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const nodes = new DriveNodes(store);
+      const deps = { store, phmVersion: () => '9.9.9' };
+      // executeNodeFleet joins bypass the CLI's version stamping, so caps carry
+      // exactly the build each node claims: behind, current, ahead, unreported.
+      executeNodeFleet('join', ['--node', 'old', '--owner', 'acme', '--caps', 'build,phm-1.0.0'], nodes);
+      executeNodeFleet('join', ['--node', 'new', '--owner', 'acme', '--caps', 'build,phm-9.9.9'], nodes);
+      executeNodeFleet('join', ['--node', 'ahead', '--owner', 'acme', '--caps', 'build,phm-99.0.0'], nodes);
+      executeNodeFleet('join', ['--node', 'bare', '--owner', 'acme', '--caps', 'build'], nodes);
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      const out = last(lines);
+      const nodeLine = (id: string) => out.split('\n').find(l => l.startsWith(`node ${id} `))!;
+      // Non-current builds annotate; the version itself stays in caps.
+      expect(nodeLine('old')).toContain('caps=build,phm-1.0.0 phm=behind');
+      expect(nodeLine('new')).toContain('caps=build,phm-9.9.9');
+      expect(nodeLine('new')).not.toContain('phm=');
+      expect(nodeLine('ahead')).toContain('phm=ahead');
+      expect(nodeLine('bare')).toContain('phm=unreported');
+      // behind and unreported are drift: the footer names the plan command.
+      expect(out).toContain('phm node self-update --owner acme');
+      // list renders the same annotations; --json stays the bare scoped view.
+      expect(await cmdNodeFleet('list', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('phm=behind');
+      expect(await cmdNodeFleet('status', ['--owner', 'acme', '--json'], deps)).toBe(0);
+      expect(last(lines)).not.toContain('phm=behind');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('status keeps the self-update owner placeholder for a multi-scope view', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const nodes = new DriveNodes(store);
+      executeNodeFleet('join', ['--node', 'old', '--owner', 'acme,ops', '--caps', 'build,phm-1.0.0'], nodes);
+      const deps = { store, phmVersion: () => '9.9.9' };
+      expect(await cmdNodeFleet('status', ['--owner', 'acme,ops'], deps)).toBe(0);
+      // self-update accepts one --owner scope, so the hint keeps the placeholder
+      // rather than silently checking only the first scope.
+      expect(last(lines)).toContain('phm node self-update --owner <scope>');
+    } finally { vi.restoreAllMocks(); }
+  });
 });
 
 describe('beat --capacity sample honesty', () => {
