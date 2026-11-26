@@ -1282,6 +1282,7 @@
 /test/resource-engineering-supervisor-acceptance.test.ts @masonwyatt23
 /test/resource-engineering-supervisor-admission-acceptance.test.ts @masonwyatt23
 /test/resource-engineering-supervisor.test.ts @masonwyatt23
+/test/resource-evidence-collector.test.ts @masonwyatt23
 /test/resource-identity-history-expiry.test.ts @masonwyatt23
 /test/resource-native-profile-identity.test.ts @masonwyatt23
 /test/resource-native-profile-review.test.ts @masonwyatt23
