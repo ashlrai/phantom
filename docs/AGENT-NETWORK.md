@@ -477,10 +477,14 @@ phm agentnet identity register reviewer --json
 ```
 
 `peers read` accepts the shared bus filters (`--from`, `--exclude-from`,
-`--to`, `--since`, `--before`, `--contains`, `--id`, `--kind`, `--peer-kind`,
-`--thread`, `--job`, `--result`) applied to the admitted page only — they
-narrow the view, never the admission, and the cursor still advances over every
-scanned row. `peers work-feed` accepts the shared work-feed query instead —
+`--to`, `--since`, `--before`, `--contains`, `--id`, `--kind`, `--body-kind`,
+`--priority`, `--peer-kind`, `--thread`, `--job`, `--result`) applied to the
+admitted page only — they narrow the view, never the admission, and the cursor
+still advances over every scanned row. `--body-kind` is the shared bus reads'
+spelling of the body-kind discriminator `--kind` also selects; both may appear
+but must agree. `--priority` keeps one exact P0..P3 envelope band — the same
+match every other bus read's `--priority` applies. `peers work-feed` accepts
+the shared work-feed query instead —
 `--claims`, `--open`, `--claimable`, `--status`, `--job`, `--repo`,
 `--provider`, `--tier`, `--to`, `--owner`, `--channel`, `--result`, `--id`,
 `--since`, `--before`, `--contains` and `--limit` — the same

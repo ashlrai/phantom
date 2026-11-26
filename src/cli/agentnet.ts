@@ -10,18 +10,18 @@ import { PROVIDERS, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS } from '../c
 const usage = `phm agentnet peers mesh [--json]
 phm agentnet peers work-feed [--claims] [--open] [--claimable] [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <${PROVIDERS.join('|')}>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>] [--json]
 phm agentnet peers list [--json]
-phm agentnet peers read [--after <cursor>] [--from <callsign>] [--exclude-from <callsign>] [--to <label>] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains <text>] [--id <id>] [--kind <kind>] [--peer-kind <task|review|handoff|query|social>] [--thread <id>] [--job <id>] [--result <reserved|admitted|complete|failed>] [--json]
+phm agentnet peers read [--after <cursor>] [--from <callsign>] [--exclude-from <callsign>] [--to <label>] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains <text>] [--id <id>] [--kind <kind>] [--body-kind <kind>] [--priority P0..P3] [--peer-kind <task|review|handoff|query|social>] [--thread <id>] [--job <id>] [--result <reserved|admitted|complete|failed>] [--json]
 phm agentnet peers send <to|#channel-id> <task|review|handoff|query|social> <text> [--reply-to <id>] [--thread <id>] [--json]
 phm agentnet peers post <to> <work-json> [--json]
 phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]
 phm agentnet channels propose <name> [--apply] [--json]
 phm agentnet identity register <callsign> [--json]`;
 /** The flags only `peers read` accepts; every other verb refuses them. */
-const READ_FILTER_FLAGS = new Set(['--from', '--exclude-from', '--to', '--since', '--before', '--contains', '--id', '--kind', '--peer-kind', '--job', '--result']);
+const READ_FILTER_FLAGS = new Set(['--from', '--exclude-from', '--to', '--since', '--before', '--contains', '--id', '--kind', '--body-kind', '--priority', '--peer-kind', '--job', '--result']);
 /** The value flags only `peers work-feed` accepts beyond the read-filter names it shares (`--to`, `--since`, `--before`, `--contains`, `--id`, `--job`, `--result`); every other verb refuses them. */
 const FEED_VALUE_FLAGS = new Set(['--status', '--repo', '--provider', '--tier', '--owner', '--channel', '--limit']);
 /** The read-only filter names `peers work-feed` refuses — its query has no sender, kind or thread dimension. */
-const FEED_READ_ONLY_FLAGS = ['--from', '--exclude-from', '--kind', '--peer-kind'] as const;
+const FEED_READ_ONLY_FLAGS = ['--from', '--exclude-from', '--kind', '--body-kind', '--priority', '--peer-kind'] as const;
 /** Every flag name `peers work-feed` consumes; each maps to the same-named `parseBusWorkFeedQuery` key. */
 const FEED_QUERY_KEYS = ['status', 'job', 'repo', 'provider', 'tier', 'to', 'owner',
   'since', 'before', 'contains', 'channel', 'result', 'id', 'limit'] as const;
@@ -67,7 +67,9 @@ export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, 
       const query = parsePeerInboxFilters({
         from: readFilters['--from'], excludeFrom: readFilters['--exclude-from'], to: readFilters['--to'],
         since: readFilters['--since'], before: readFilters['--before'], contains: readFilters['--contains'],
-        id: readFilters['--id'], kind: readFilters['--kind'], peerKind: readFilters['--peer-kind'],
+        id: readFilters['--id'], kind: readFilters['--kind'], bodyKind: readFilters['--body-kind'],
+        priority: readFilters['--priority'],
+        peerKind: readFilters['--peer-kind'],
         thread: threadId, job: readFilters['--job'], result: readFilters['--result'],
       }, (options.now ?? Date.now)());
       if (!query.ok) return 2;
