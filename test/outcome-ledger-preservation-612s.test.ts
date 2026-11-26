@@ -1925,6 +1925,36 @@ describe('router outcome market handoff advisory join', () => {
     expect(advisories.size).toBe(3);
   });
 
+  it('excludes jobs receipts after report start before folding outcomes or PR claims', async () => {
+    const boundary = '2026-11-25T12:00:00.123Z';
+    const future = '2026-11-25T12:00:00.124Z';
+    const url = 'https://github.com/ashlrai/phantom/pull/42';
+    const root = runsDir([
+      { job: 'J1', event: 'launch', lane: 'alpha' },
+      { job: 'J1', event: 'publish', url, ts: boundary },
+      { url, phase: 'MERGED', mergedAt: boundary },
+      { job: 'J1', event: 'finish', wall_s: 10, at: boundary },
+      { job: 'J1', event: 'finish', wall_s: 99, timestamp: future },
+      { job: 'J1', event: 'session_handoff_advisory', schema: 'session-failover.v1',
+        lane: 'alpha', trigger: 'rate-limit', target: 'future-lane', ts: future },
+      { job: 'J2', event: 'publish', url, ts: future },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    const asOfMs = Date.parse(boundary);
+    writeMarket(root, [marketAdvisory('J1', 'quota-exhausted', asOfMs / 1000, { target: 'beta' })]);
+
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(asOfMs + 1).mockReturnValueOnce(asOfMs);
+    try {
+      const result = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null });
+      expect(result).toMatchObject({
+        ambiguous_urls: 0,
+        outcomes: [{ job_id: 'J1', lane: 'alpha', merged: true, wall_s: 10,
+          handoff_trigger: 'quota-exhausted', handoff_target: 'beta' }],
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('joins market receipts only through report start, including its exact boundary', async () => {
     const asOfMs = Date.parse('2026-11-25T12:00:00.123Z');
     const boundary = asOfMs / 1000;
