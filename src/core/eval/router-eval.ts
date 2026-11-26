@@ -25,8 +25,7 @@
  * not counterfactual certainty.
  */
 
-import { asRecord, fail, optString, parseDatasetLine } from './dataset-jsonl.js';
-import { createHash } from 'node:crypto';
+import { asRecord, fail, optString, parseVersionedJsonlDataset } from './dataset-jsonl.js';
 
 // ---------------------------------------------------------------------------
 // Dataset schema (router-eval.v1)
@@ -145,83 +144,71 @@ function parseArmCatalog(file: string, line: number, value: unknown): Record<str
  * jobs than were written.
  */
 export function parseRouterEvalDataset(text: string, file = 'jobs.jsonl'): RouterEvalDataset {
-  let meta: RouterEvalMeta = {};
-  let seenMeta = false;
-  const jobs: RouterEvalJob[] = [];
-  const seen = new Set<string>();
-  const lines = text.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i]!.trim();
-    if (raw === '' || raw.startsWith('#')) continue;
-    const rec = parseDatasetLine(raw, file, i + 1);
-    if (rec!.v !== 1) fail(file, i + 1, `unsupported v ${JSON.stringify(rec!.v)}`);
-    if (rec!.kind === 'meta') {
-      if (jobs.length > 0) fail(file, i + 1, 'meta must precede job lines');
-      if (seenMeta) fail(file, i + 1, 'duplicate meta line');
-      seenMeta = true;
-      meta = {
-        id: optString(file, i + 1, rec!, 'id'),
-        day: optString(file, i + 1, rec!, 'day'),
-        note: optString(file, i + 1, rec!, 'note'),
-        arms: parseArmCatalog(file, i + 1, rec!.arms),
-      };
-      continue;
-    }
-    if (rec!.kind !== undefined && rec!.kind !== 'job') fail(file, i + 1, `unknown kind ${JSON.stringify(rec!.kind)}`);
-    const id = rec!.id;
-    if (typeof id !== 'string' || id === '') fail(file, i + 1, 'job needs an id');
-    if (seen.has(id)) fail(file, i + 1, `duplicate id ${id}`);
-    seen.add(id);
-    let candidates: string[] | undefined;
-    if (rec!.candidates !== undefined) {
-      if (!Array.isArray(rec!.candidates) || rec!.candidates.length === 0
-        || rec!.candidates.some((c) => typeof c !== 'string' || c === '')) {
-        fail(file, i + 1, 'bad candidates');
+  const { meta, items: jobs, sha256 } = parseVersionedJsonlDataset<RouterEvalMeta, RouterEvalJob>(text, file, {
+    itemKind: 'job',
+    initialMeta: {},
+    parseMeta: (rec, f, line) => ({
+      id: optString(f, line, rec, 'id'),
+      day: optString(f, line, rec, 'day'),
+      note: optString(f, line, rec, 'note'),
+      arms: parseArmCatalog(f, line, rec.arms),
+    }),
+    parseItem: (rec, f, line, seen) => {
+      const id = rec.id;
+      if (typeof id !== 'string' || id === '') fail(f, line, 'job needs an id');
+      if (seen.has(id)) fail(f, line, `duplicate id ${id}`);
+      seen.add(id);
+      let candidates: string[] | undefined;
+      if (rec.candidates !== undefined) {
+        if (!Array.isArray(rec.candidates) || rec.candidates.length === 0
+          || rec.candidates.some((c) => typeof c !== 'string' || c === '')) {
+          fail(f, line, 'bad candidates');
+        }
+        candidates = rec.candidates as string[];
+        if (new Set(candidates).size !== candidates.length) fail(f, line, 'duplicate candidate');
       }
-      candidates = rec!.candidates as string[];
-      if (new Set(candidates).size !== candidates.length) fail(file, i + 1, 'duplicate candidate');
-    }
-    const chosen = rec!.chosen === undefined ? undefined : rec!.chosen;
-    if (chosen !== null && typeof chosen !== 'string') fail(file, i + 1, 'bad chosen');
-    const outcome = rec!.outcome;
-    if (!OUTCOMES.includes(outcome as RouterOutcome)) fail(file, i + 1, `bad outcome ${JSON.stringify(outcome)}`);
-    // Held means never dispatched (chosen must be null); pending means
-    // dispatched but unresolved (chosen must be a real arm).
-    if (outcome === 'held' && chosen !== null) fail(file, i + 1, 'held outcome requires chosen=null');
-    if (outcome !== 'held' && chosen === null) fail(file, i + 1, 'dispatched outcome requires a chosen arm');
-    if (typeof chosen === 'string' && candidates && !candidates.includes(chosen)) {
-      fail(file, i + 1, 'chosen is not a candidate');
-    }
-    const arms = parseArmOutcomes(file, i + 1, rec!.arms, candidates);
-    // A counterfactual entry for the arm that ran is the same realized
-    // outcome; a frozen record may not disagree with itself.
-    if (typeof chosen === 'string' && arms?.[chosen]) {
-      const a = arms[chosen]!;
-      if (a.outcome !== outcome) fail(file, i + 1, `arms.${chosen} contradicts the recorded outcome`);
-      for (const key of ['costUsd', 'tokens', 'wallTimeMs'] as const) {
-        if (rec![key] !== undefined && a[key] !== undefined && a[key] !== rec![key]) {
-          fail(file, i + 1, `arms.${chosen}.${key} contradicts the recorded value`);
+      const chosen = rec.chosen === undefined ? undefined : rec.chosen;
+      if (chosen !== null && typeof chosen !== 'string') fail(f, line, 'bad chosen');
+      const outcome = rec.outcome;
+      if (!OUTCOMES.includes(outcome as RouterOutcome)) fail(f, line, `bad outcome ${JSON.stringify(outcome)}`);
+      // Held means never dispatched (chosen must be null); pending means
+      // dispatched but unresolved (chosen must be a real arm).
+      if (outcome === 'held' && chosen !== null) fail(f, line, 'held outcome requires chosen=null');
+      if (outcome !== 'held' && chosen === null) fail(f, line, 'dispatched outcome requires a chosen arm');
+      if (typeof chosen === 'string' && candidates && !candidates.includes(chosen)) {
+        fail(f, line, 'chosen is not a candidate');
+      }
+      const arms = parseArmOutcomes(f, line, rec.arms, candidates);
+      // A counterfactual entry for the arm that ran is the same realized
+      // outcome; a frozen record may not disagree with itself.
+      if (typeof chosen === 'string' && arms?.[chosen]) {
+        const a = arms[chosen]!;
+        if (a.outcome !== outcome) fail(f, line, `arms.${chosen} contradicts the recorded outcome`);
+        for (const key of ['costUsd', 'tokens', 'wallTimeMs'] as const) {
+          if (rec[key] !== undefined && a[key] !== undefined && a[key] !== rec[key]) {
+            fail(f, line, `arms.${chosen}.${key} contradicts the recorded value`);
+          }
         }
       }
-    }
-    jobs.push({
-      id,
-      at: optString(file, i + 1, rec!, 'at'),
-      repo: optString(file, i + 1, rec!, 'repo'),
-      pool: optString(file, i + 1, rec!, 'pool'),
-      tier: optString(file, i + 1, rec!, 'tier'),
-      priority: optString(file, i + 1, rec!, 'priority'),
-      task: optString(file, i + 1, rec!, 'task'),
-      candidates: candidates ?? [],
-      chosen: (chosen ?? null) as string | null,
-      outcome: outcome as RouterOutcome,
-      costUsd: optNumber(file, i + 1, rec!, 'costUsd'),
-      tokens: optNumber(file, i + 1, rec!, 'tokens', true),
-      wallTimeMs: optNumber(file, i + 1, rec!, 'wallTimeMs'),
-      arms,
-    });
-  }
-  return { meta, jobs, sha256: createHash('sha256').update(text, 'utf8').digest('hex') };
+      return {
+        id,
+        at: optString(f, line, rec, 'at'),
+        repo: optString(f, line, rec, 'repo'),
+        pool: optString(f, line, rec, 'pool'),
+        tier: optString(f, line, rec, 'tier'),
+        priority: optString(f, line, rec, 'priority'),
+        task: optString(f, line, rec, 'task'),
+        candidates: candidates ?? [],
+        chosen: (chosen ?? null) as string | null,
+        outcome: outcome as RouterOutcome,
+        costUsd: optNumber(f, line, rec, 'costUsd'),
+        tokens: optNumber(f, line, rec, 'tokens', true),
+        wallTimeMs: optNumber(f, line, rec, 'wallTimeMs'),
+        arms,
+      };
+    },
+  });
+  return { meta, jobs, sha256 };
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +315,7 @@ export interface DecisionRow {
   reason?: string;
 }
 
-export interface ResolvedJob {
+interface ResolvedJob {
   decision: DecisionRow;
   /** Set on recorded/counterfactual rows. */
   outcome?: TerminalOutcome;
@@ -337,13 +324,14 @@ export interface ResolvedJob {
   wallTimeMs?: number;
 }
 
-function viewOf(job: RouterEvalJob): PolicyJobView {
+/** Project a frozen router job onto its decision-time fields (outcomes stripped). */
+export function policyJobView(job: RouterEvalJob): PolicyJobView {
   const { id, at, repo, pool, tier, priority, task, candidates } = job;
   return { id, at, repo, pool, tier, priority, task, candidates };
 }
 
 function decide(policy: RouterPolicy, job: RouterEvalJob, catalog: Readonly<Record<string, ArmMeta>>): PolicyDecision {
-  const d = policy.decide(viewOf(job), catalog);
+  const d = policy.decide(policyJobView(job), catalog);
   if (d === null || typeof d !== 'object' || (d.arm !== null && typeof d.arm !== 'string')) {
     throw new Error(`Policy ${policy.name} returned an invalid decision for ${job.id}`);
   }
@@ -572,10 +560,10 @@ export function evaluateRouterPolicy(dataset: RouterEvalDataset, policy: RouterP
 // Reporting
 // ---------------------------------------------------------------------------
 
-const usd = (n: number) => `$${n.toFixed(2)}`;
+export const formatEvalUsd = (n: number): string => `$${n.toFixed(2)}`;
 const tok = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n));
-const minutes = (ms: number) => `${Math.round(ms / 60_000)}m`;
-const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+export const formatEvalMinutes = (ms: number): string => `${Math.round(ms / 60_000)}m`;
+export const formatEvalPct = (n: number): string => `${(n * 100).toFixed(1)}%`;
 
 function metricText(m: MetricReport, fmt: (n: number) => string): string {
   if (m.value === null) return 'unknown';
@@ -596,10 +584,10 @@ export function formatRouterEvalMarkdown(report: RouterEvalReport): string {
     '',
     `| Metric | Value |`,
     `| --- | --- |`,
-    `| Merge rate | ${metricText(report.mergeRate, pct)} |`,
-    `| Cost per merged PR | ${metricText(report.costPerMergedPrUsd, usd)} |`,
+    `| Merge rate | ${metricText(report.mergeRate, formatEvalPct)} |`,
+    `| Cost per merged PR | ${metricText(report.costPerMergedPrUsd, formatEvalUsd)} |`,
     `| Tokens per merged PR | ${metricText(report.tokensPerMergedPr, tok)} |`,
-    `| Wall time (mean) | ${metricText(report.wallTimeMsMean, minutes)} |`,
+    `| Wall time (mean) | ${metricText(report.wallTimeMsMean, formatEvalMinutes)} |`,
     '',
     '## Coverage',
     '',
@@ -611,7 +599,7 @@ export function formatRouterEvalMarkdown(report: RouterEvalReport): string {
     '| --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |',
   ];
   for (const a of report.perArm) {
-    lines.push(`| ${a.arm.replace(/[|\\\r\n]/g, ' ')} | ${a.decided} | ${a.observed} | ${a.merged} | ${a.resolved} | ${a.mergeRate === null ? 'unknown' : pct(a.mergeRate)} | ${usd(a.costUsd)} | ${tok(a.tokens)} | ${a.wallTimeMsMean === null ? 'unknown' : minutes(a.wallTimeMsMean)} |`);
+    lines.push(`| ${a.arm.replace(/[|\\\r\n]/g, ' ')} | ${a.decided} | ${a.observed} | ${a.merged} | ${a.resolved} | ${a.mergeRate === null ? 'unknown' : formatEvalPct(a.mergeRate)} | ${formatEvalUsd(a.costUsd)} | ${tok(a.tokens)} | ${a.wallTimeMsMean === null ? 'unknown' : formatEvalMinutes(a.wallTimeMsMean)} |`);
   }
   lines.push(
     '',

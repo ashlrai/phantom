@@ -46,7 +46,9 @@ import {
 } from '../core/eval/passk.js';
 import { buildDefaultRunner, type EngineRunner } from '../core/eval/swe-bench.js';
 import { evalPassKSchedule } from '../core/eval/passk-schedule.js';
+import { formatEvalPct } from '../core/eval/router-eval.js';
 import type { ScheduleUnit } from '../core/steward/schedule.js';
+import { isEvalHelpRequest } from './eval-args.js';
 import { installScheduleUnits } from './steward.js';
 import { makeColors, isTty, pad } from './ui.js';
 
@@ -163,7 +165,7 @@ function parseRunArgs(args: string[]): ParsedRunArgs {
 // ---------------------------------------------------------------------------
 
 function pct(v: number | null): string {
-  return v === null ? 'n/a' : `${(v * 100).toFixed(1)}%`;
+  return v === null ? 'n/a' : formatEvalPct(v);
 }
 
 function renderReport(report: PassKReport): void {
@@ -275,7 +277,7 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
   const err = overrides.err ?? ((t: string) => console.error(t));
   const readFile = overrides.readFile ?? ((p: string) => readFileSync(p, 'utf8'));
 
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
+  if (isEvalHelpRequest(args)) {
     out(USAGE);
     return 0;
   }

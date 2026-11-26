@@ -52,6 +52,7 @@ import {
   type ReportDelta,
   type EngineRunner,
 } from '../core/eval/swe-bench.js';
+import { formatEvalPct } from '../core/eval/router-eval.js';
 import { makeColors, isTty, pad } from './ui.js';
 
 const { bold, dim, cyan, red, green, yellow, gray } = makeColors(isTty());
@@ -210,13 +211,12 @@ function buildFixtureRepo(taskId: string): string {
 // ---------------------------------------------------------------------------
 
 function renderReport(report: BenchReport, delta: ReportDelta | null): void {
-  const pct = (r: number) => `${(r * 100).toFixed(1)}%`;
   console.log('');
   console.log(bold('  ashlr eval swe-bench') + dim(` — ${report.ts}`));
   console.log('');
   console.log(`  Engine  : ${cyan(report.engine)}`);
   console.log(`  Tasks   : ${report.total}`);
-  console.log(`  Resolved: ${report.resolved}/${report.total} (${pct(report.resolveRate)})`);
+  console.log(`  Resolved: ${report.resolved}/${report.total} (${formatEvalPct(report.resolveRate)})`);
   console.log('');
 
   // Per-task table

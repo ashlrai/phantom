@@ -35,13 +35,20 @@
  * (the same one steward and disk-maint use).
  */
 
-import { asRecord, fail, optString, parseDatasetLine } from './dataset-jsonl.js';
-import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import {
+  asRecord,
+  evalAshlrRoot,
+  fail,
+  loadSortedEvalJsonFiles,
+  optString,
+  parseVersionedJsonlDataset,
+  writeEvalFileAtomically,
+} from './dataset-jsonl.js';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 
-import { scoreGoldenOutput, type EvalLane } from './agent-output.js';
+import { assertValidEvalLanes, scoreGoldenOutput, type EvalLane } from './agent-output.js';
 import { wilsonInterval } from './router-eval.js';
 import { applyDiff, cleanupDir, isSafeTestCommand, isolateRepo, runTests, type EngineRunner } from './swe-bench.js';
 
@@ -49,14 +56,12 @@ import { applyDiff, cleanupDir, isSafeTestCommand, isolateRepo, runTests, type E
 // Dataset schema (eval.passk.v1)
 // ---------------------------------------------------------------------------
 
-export const PASSK_DATASET_SCHEMA = 'eval.passk.v1' as const;
-export const PASSK_REPORT_SCHEMA = 'eval.passk.v1' as const;
-export const LANE_SCORES_SCHEMA = 'eval.lane-scores.v1' as const;
-export const PASSK_ALERT_SCHEMA = 'eval.passk-alert.v1' as const;
+const PASSK_REPORT_SCHEMA = 'eval.passk.v1' as const;
+const LANE_SCORES_SCHEMA = 'eval.lane-scores.v1' as const;
 
 /** Bounds on inline `files` snapshots — a dataset is operator-supplied input. */
-export const PASSK_MAX_TASK_FILES = 64;
-export const PASSK_MAX_FILE_BYTES = 128 * 1024;
+const PASSK_MAX_TASK_FILES = 64;
+const PASSK_MAX_FILE_BYTES = 128 * 1024;
 const MAX_ID_LEN = 128;
 
 /**
@@ -145,62 +150,50 @@ function parseTaskFiles(file: string, line: number, value: unknown): Record<stri
  * fewer tasks than were written.
  */
 export function parsePassKDataset(text: string, file = 'golden-tasks.jsonl'): PassKDataset {
-  let meta: PassKDatasetMeta = {};
-  let seenMeta = false;
-  const tasks: PassKTask[] = [];
-  const seen = new Set<string>();
-  const lines = text.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i]!.trim();
-    if (raw === '' || raw.startsWith('#')) continue;
-    const rec = parseDatasetLine(raw, file, i + 1);
-    if (rec!.v !== 1) fail(file, i + 1, `unsupported v ${JSON.stringify(rec!.v)}`);
-    if (rec!.kind === 'meta') {
-      if (tasks.length > 0) fail(file, i + 1, 'meta must precede task lines');
-      if (seenMeta) fail(file, i + 1, 'duplicate meta line');
-      seenMeta = true;
-      meta = {
-        id: optString(file, i + 1, rec!, 'id'),
-        note: optString(file, i + 1, rec!, 'note'),
+  const { meta, items: tasks, sha256 } = parseVersionedJsonlDataset<PassKDatasetMeta, PassKTask>(text, file, {
+    itemKind: 'task',
+    initialMeta: {},
+    emptyMessage: 'dataset carries no tasks',
+    parseMeta: (rec, f, line) => ({
+      id: optString(f, line, rec, 'id'),
+      note: optString(f, line, rec, 'note'),
+    }),
+    parseItem: (rec, f, line, seen) => {
+      const id = reqString(f, line, rec, 'id');
+      if (id.length > MAX_ID_LEN) fail(f, line, 'id too long');
+      if (seen.has(id)) fail(f, line, `duplicate id ${id}`);
+      seen.add(id);
+      const problemStatement = reqString(f, line, rec, 'problemStatement');
+      const goldTestCommand = reqString(f, line, rec, 'goldTestCommand');
+      if (!isSafeTestCommand(goldTestCommand)) {
+        fail(f, line, 'goldTestCommand is not a safe test-runner command');
+      }
+      const files = parseTaskFiles(f, line, rec.files);
+      const repoPath = optString(f, line, rec, 'repoPath');
+      if (files !== undefined && repoPath !== undefined) {
+        fail(f, line, 'task carries both files and repoPath — pick one snapshot');
+      }
+      if (files === undefined && repoPath === undefined) {
+        fail(f, line, 'task needs a snapshot: files or repoPath');
+      }
+      const maxChangedLines = rec['maxChangedLines'];
+      if (typeof maxChangedLines !== 'number' || !Number.isSafeInteger(maxChangedLines) || maxChangedLines < 1) {
+        fail(f, line, 'maxChangedLines must be a positive integer');
+      }
+      return {
+        id,
+        problemStatement,
+        ...(repoPath !== undefined ? { repoPath } : {}),
+        ...(files !== undefined ? { files } : {}),
+        goldTestCommand,
+        failToPassTests: stringList(f, line, rec, 'failToPassTests'),
+        required: stringList(f, line, rec, 'required'),
+        forbidden: stringList(f, line, rec, 'forbidden'),
+        maxChangedLines,
       };
-      continue;
-    }
-    if (rec!.kind !== undefined && rec!.kind !== 'task') fail(file, i + 1, `unknown kind ${JSON.stringify(rec!.kind)}`);
-    const id = reqString(file, i + 1, rec!, 'id');
-    if (id.length > MAX_ID_LEN) fail(file, i + 1, 'id too long');
-    if (seen.has(id)) fail(file, i + 1, `duplicate id ${id}`);
-    seen.add(id);
-    const problemStatement = reqString(file, i + 1, rec!, 'problemStatement');
-    const goldTestCommand = reqString(file, i + 1, rec!, 'goldTestCommand');
-    if (!isSafeTestCommand(goldTestCommand)) {
-      fail(file, i + 1, 'goldTestCommand is not a safe test-runner command');
-    }
-    const files = parseTaskFiles(file, i + 1, rec!.files);
-    const repoPath = optString(file, i + 1, rec!, 'repoPath');
-    if (files !== undefined && repoPath !== undefined) {
-      fail(file, i + 1, 'task carries both files and repoPath — pick one snapshot');
-    }
-    if (files === undefined && repoPath === undefined) {
-      fail(file, i + 1, 'task needs a snapshot: files or repoPath');
-    }
-    const maxChangedLines = rec!['maxChangedLines'];
-    if (typeof maxChangedLines !== 'number' || !Number.isSafeInteger(maxChangedLines) || maxChangedLines < 1) {
-      fail(file, i + 1, 'maxChangedLines must be a positive integer');
-    }
-    tasks.push({
-      id,
-      problemStatement,
-      ...(repoPath !== undefined ? { repoPath } : {}),
-      ...(files !== undefined ? { files } : {}),
-      goldTestCommand,
-      failToPassTests: stringList(file, i + 1, rec!, 'failToPassTests'),
-      required: stringList(file, i + 1, rec!, 'required'),
-      forbidden: stringList(file, i + 1, rec!, 'forbidden'),
-      maxChangedLines,
-    });
-  }
-  if (tasks.length === 0) fail(file, 0, 'dataset carries no tasks');
-  return { meta, tasks, sha256: createHash('sha256').update(text, 'utf8').digest('hex') };
+    },
+  });
+  return { meta, tasks, sha256 };
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +307,7 @@ export interface PassKAlert {
 }
 
 export interface PassKReport {
-  schema: typeof PASSK_REPORT_SCHEMA;
+  schema: 'eval.passk.v1';
   id: string;
   generatedAt: string;
   dataset: { id?: string; sha256: string; tasks: number };
@@ -357,7 +350,7 @@ async function runTaskTrials(
       if (applied === 'traversal-rejected') {
         error = 'patch path traversal rejected';
       } else if (!applied) {
-        error = diff.trim() === '' ? 'no patch produced' : 'patch application failed';
+        error = 'patch application failed';
       } else {
         resolved = runTests(task.goldTestCommand, workDir).ok;
         if (!resolved && diff.trim() === '') error = 'no patch produced';
@@ -415,10 +408,7 @@ export async function runPassKEval(
     throw new Error('k must be an integer 1..trials');
   }
   if (!lanes.length) throw new Error('at least one lane is required');
-  if (lanes.some((l) => !l.lane || !l.model)
-    || new Set(lanes.map((l) => JSON.stringify([l.lane, l.model]))).size !== lanes.length) {
-    throw new Error('invalid or duplicate lane/model');
-  }
+  assertValidEvalLanes(lanes);
   const tasks = opts.limit != null ? dataset.tasks.slice(0, opts.limit) : dataset.tasks;
   const laneReports: PassKLaneReport[] = [];
   for (const lane of lanes) {
@@ -515,18 +505,11 @@ export interface PassKStoreOptions {
   rootDir?: string;
 }
 
-function ashlrRoot(rootDir: string | undefined): string {
-  if (rootDir && rootDir.trim() !== '') return rootDir;
-  const configuredHome = process.env.ASHLR_HOME;
-  if (typeof configuredHome === 'string' && configuredHome.trim() !== '') return configuredHome;
-  return path.join(homedir(), '.ashlr');
-}
-
 export function passkDir(opts: PassKStoreOptions = {}): string {
-  return path.join(ashlrRoot(opts.rootDir), 'eval', 'passk');
+  return path.join(evalAshlrRoot(opts.rootDir), 'eval', 'passk');
 }
 
-export function passkReportsDir(opts: PassKStoreOptions = {}): string {
+function passkReportsDir(opts: PassKStoreOptions = {}): string {
   return path.join(passkDir(opts), 'reports');
 }
 
@@ -542,23 +525,6 @@ function passkLatestPath(opts: PassKStoreOptions = {}): string {
   return path.join(passkDir(opts), 'latest.json');
 }
 
-/** Atomic write (tmp + rename), same stance as the prompt-promotions store. */
-function atomicWrite(file: string, text: string): void {
-  mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    writeFileSync(tmp, text, 'utf8');
-    renameSync(tmp, file);
-  } catch (err) {
-    try {
-      unlinkSync(tmp);
-    } catch {
-      // best-effort cleanup only
-    }
-    throw err;
-  }
-}
-
 /**
  * Publish a report: persist reports/<id>.json, the atomic latest.json
  * pointer, the lane-scores projection, and append alerts to alerts.jsonl.
@@ -566,10 +532,10 @@ function atomicWrite(file: string, text: string): void {
  */
 export function publishPassKReport(report: PassKReport, opts: PassKStoreOptions = {}): { reportPath: string; scoresPath: string } {
   const reportPath = path.join(passkReportsDir(opts), `${report.id}.json`);
-  atomicWrite(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-  atomicWrite(passkLatestPath(opts), `${JSON.stringify({ schema: PASSK_REPORT_SCHEMA, id: report.id, generatedAt: report.generatedAt }, null, 2)}\n`);
+  writeEvalFileAtomically(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  writeEvalFileAtomically(passkLatestPath(opts), `${JSON.stringify({ schema: PASSK_REPORT_SCHEMA, id: report.id, generatedAt: report.generatedAt }, null, 2)}\n`);
   const scoresPath = laneScoresPath(opts);
-  atomicWrite(scoresPath, `${JSON.stringify(laneScoresProjection(report), null, 2)}\n`);
+  writeEvalFileAtomically(scoresPath, `${JSON.stringify(laneScoresProjection(report), null, 2)}\n`);
   if (report.alerts.length > 0) {
     appendPassKAlerts(report.alerts, report, opts);
   }
@@ -585,20 +551,8 @@ function isPassKReport(value: unknown): value is PassKReport {
 }
 
 /** Load all persisted reports sorted by generatedAt ascending. */
-export function loadPassKReports(opts: PassKStoreOptions = {}): PassKReport[] {
-  const dir = passkReportsDir(opts);
-  if (!existsSync(dir)) return [];
-  const reports: PassKReport[] = [];
-  for (const f of readdirSync(dir)) {
-    if (!f.endsWith('.json')) continue;
-    try {
-      const parsed = JSON.parse(readFileSync(path.join(dir, f), 'utf8')) as unknown;
-      if (isPassKReport(parsed)) reports.push(parsed);
-    } catch {
-      // skip malformed files
-    }
-  }
-  return reports.sort((a, b) => a.generatedAt.localeCompare(b.generatedAt));
+function loadPassKReports(opts: PassKStoreOptions = {}): PassKReport[] {
+  return loadSortedEvalJsonFiles(passkReportsDir(opts), isPassKReport, (report) => report.generatedAt);
 }
 
 /** Load the most recent persisted report (or undefined if none). */
@@ -652,7 +606,7 @@ export interface LaneScoreRow {
 }
 
 export interface LaneScores {
-  schema: typeof LANE_SCORES_SCHEMA;
+  schema: 'eval.lane-scores.v1';
   generatedAt: string;
   reportId: string;
   k: number;
@@ -661,7 +615,7 @@ export interface LaneScores {
 }
 
 /** Project a report into the routing-facing lane-scores shape. */
-export function laneScoresProjection(report: PassKReport): LaneScores {
+function laneScoresProjection(report: PassKReport): LaneScores {
   return {
     schema: LANE_SCORES_SCHEMA,
     generatedAt: report.generatedAt,
@@ -754,7 +708,7 @@ export function readLaneScores(opts: PassKStoreOptions & { readFile?: (path: str
 // Alerts journal — appended on publish, capped at PASSK_MAX_ALERT_LINES
 // ---------------------------------------------------------------------------
 
-export const PASSK_MAX_ALERT_LINES = 500;
+const PASSK_MAX_ALERT_LINES = 500;
 
 export interface PassKAlertLine {
   v: 1;
@@ -765,7 +719,7 @@ export interface PassKAlertLine {
 }
 
 /** Append alert lines to alerts.jsonl, keeping the newest PASSK_MAX_ALERT_LINES. */
-export function appendPassKAlerts(alerts: readonly PassKAlert[], report: PassKReport, opts: PassKStoreOptions = {}): void {
+function appendPassKAlerts(alerts: readonly PassKAlert[], report: PassKReport, opts: PassKStoreOptions = {}): void {
   if (alerts.length === 0) return;
   const file = passkAlertsPath(opts);
   mkdirSync(path.dirname(file), { recursive: true });
@@ -776,7 +730,7 @@ export function appendPassKAlerts(alerts: readonly PassKAlert[], report: PassKRe
   try {
     const all = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim() !== '');
     if (all.length > PASSK_MAX_ALERT_LINES) {
-      atomicWrite(file, `${all.slice(-PASSK_MAX_ALERT_LINES).join('\n')}\n`);
+      writeEvalFileAtomically(file, `${all.slice(-PASSK_MAX_ALERT_LINES).join('\n')}\n`);
     }
   } catch {
     // best-effort truncation only
