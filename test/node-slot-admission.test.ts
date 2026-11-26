@@ -71,6 +71,37 @@ describe('node slot admission', () => {
     expect(nodes.claim(leader, session, 'job')).toBeNull();
   });
 
+  it('keeps newer capacity when delayed beats arrive out of order', () => {
+    const store = new MemoryStore();
+    let now = 1_000;
+    const nodes = new DriveNodes(store, { now: () => now });
+    const session = nodes.join('pro', { owners: ['mason'] })!;
+    const held = { hostId: 'mac', ramBytes: 8 * 1024 ** 3, sampledAtMs: now, slots: 0, held: 'memory-pressure' as const };
+    nodes.heartbeat(session, { capacity: held });
+    nodes.enqueue('job', { owner: 'mason' });
+
+    now++;
+    const ready = { ...held, sampledAtMs: held.sampledAtMs - 1, slots: 2, held: null };
+    const leader = nodes.heartbeat(session, { capacity: ready, slots: 2 })!.leader!;
+    expect(nodes.view(['mason']).nodes[0]).toMatchObject({ heartbeatAt: now, capacity: held, slots: 0 });
+    expect(nodes.claim(leader, session, 'job')).toBeNull();
+    expect(nodes.pull(session)).toBeNull();
+
+    nodes.heartbeat(session, { capacity: { ...ready, sampledAtMs: now } });
+    now++;
+    nodes.heartbeat(session, { capacity: held });
+    expect(nodes.pull(session)?.job.id).toBe('job');
+  });
+
+  it('accepts corrected capacity after a future-dated sample', () => {
+    const { nodes } = fixture();
+    const session = nodes.join('pro', { owners: ['mason'] })!;
+    const sample = { hostId: 'mac', ramBytes: 8 * 1024 ** 3, slots: 1, held: null };
+    nodes.heartbeat(session, { capacity: { ...sample, sampledAtMs: 2_000 } });
+    nodes.heartbeat(session, { capacity: { ...sample, sampledAtMs: 1_000 } });
+    expect(nodes.view(['mason']).nodes[0]?.capacity?.sampledAtMs).toBe(1_000);
+  });
+
   it('keeps existing records without slots compatible', () => {
     const { nodes } = fixture();
     nodes.join('legacy', { owners: ['mason'] });
