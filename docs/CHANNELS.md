@@ -453,7 +453,23 @@ repeated keys collapsing to one item, deep links `phm channels slack
 status`, `phm fleet slack-trace --channel … [--thread …]` and `phm
 channels slack run --seconds 60` — the bounded pass that re-drives the
 delivery and marks the receipt `sent` without reposting — with source
-state the send-store read's own, never fabricated) — and each item carries `act` deep-link commands (`phm fleet
+state the send-store read's own, never fabricated) — and Leader-thread
+messages whose Telegram delivery the drain can no longer finish (the same
+`readLeaderThreadUndelivered` read-only scan of the thread log and delivery
+index `drainLeaderThread` drains — every listing path syncs memos first, a
+write, so the inbox reads the store directly: a memo, question, update or
+reply `failed` after its retries or `pending` past the 72 h offer window
+means Mason may never have seen it on his phone, a class until now visible
+only as the comms cycle's one-line outcome for the newest memo and in the
+Verse thread; each lists as a warn naming the message kind and state with a
+scrubbed text snippet, `since` the recorded post time and `expiresAt` null —
+a failed send waits for a decision, never a guessed deadline; fresh pending
+messages are the drain's own queue and never list, `sent` and never-queued
+messages are proved or out of scope; source state is the read's own —
+`missing` a verified-absent thread, `degraded` a truncated log,
+`unavailable` an unreadable or malformed store — never an empty list passed
+off as fact; deep links `phm channels`, `phm comms cycle` and `phm comms
+send-owner`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -466,7 +482,7 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 `phm team approve|deny`, `phm inbox approve|reject`,
 `phm fleet slack-trace`, `phm channels slack status`, `phm channels slack
-run`). It never claims, replies, or mutates; a source
+run`, `phm channels`, `phm comms cycle`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:

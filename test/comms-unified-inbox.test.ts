@@ -35,6 +35,7 @@ import type { AgentConversations } from '../src/core/fleet/agent-conversations.j
 import type { SlackJournalRead, SlackObservation } from '../src/core/agents/slack-journal.js';
 import type { SlackSendReceiptRead } from '../src/core/agents/slack-send-receipts.js';
 import type { SentReceipt } from '../src/core/agents/slack-reply-binding.js';
+import type { LeaderThreadUndeliveredItem, LeaderThreadUndeliveredRead } from '../src/core/vision/leader-thread.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
@@ -2181,6 +2182,92 @@ describe('readUnifiedInbox slack sends', () => {
     });
     expect(byKind.items.map(i => i.id)).toEqual([`slack-sends:${KEY_A}`]);
     expect(inbox.items.filter(i => i.kind === 'slack-send-unconfirmed')).toHaveLength(1);
+  });
+});
+
+describe('readUnifiedInbox leader deliveries', () => {
+  const AT = '2026-11-07T06:00:00.000Z';
+  const entry = (over: Partial<LeaderThreadUndeliveredItem> = {}): LeaderThreadUndeliveredItem => ({
+    id: 'lt-20261107060000-abc123', at: AT, channel: 'system', kind: 'memo',
+    text: 'Memo lm-20261107060000-aaaaaa — Bottleneck: fake bottleneck', telegram: 'failed', attempts: 3, ...over,
+  });
+  const pinned = {
+    readRequests: () => ({ status: 'missing' as const, requests: [] }),
+  };
+  const readWith = (readLeaderUndelivered: NonNullable<UnifiedInboxOptions['readLeaderUndelivered']>) =>
+    readUnifiedInbox({ runsDir, busRoot, now: () => now, ...pinned, readLeaderUndelivered });
+  const ok = (items: LeaderThreadUndeliveredItem[]): LeaderThreadUndeliveredRead => ({ status: 'ok', items });
+
+  it('lists failed and stalled deliveries as warn items naming kind, state and acts', async () => {
+    const inbox = await readWith(() => ok([
+      entry(),
+      entry({ id: 'lt-20261107070000-def456', kind: 'question', channel: 'telegram', telegram: 'pending', attempts: 1, text: 'fake question text' }),
+      entry({ id: 'lt-20261107080000-ghi789', kind: 'update', telegram: 'failed', attempts: 1 }),
+    ]));
+    expect(inbox.sources['leader-delivery']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'leader-delivery');
+    expect(items).toHaveLength(3);
+    const failed = items.find(i => i.id === 'leader-delivery:lt-20261107060000-abc123')!;
+    expect(failed).toMatchObject({
+      kind: 'leader-message-undelivered', severity: 'warn', blocking: false,
+      title: 'Leader memo Telegram delivery failed',
+      detail: 'system · Telegram failed after 3 send attempts · "Memo lm-20261107060000-aaaaaa — Bottleneck: fake bottleneck"',
+      since: AT, expiresAt: null,
+      act: ['phm channels --json', 'phm comms cycle', 'phm comms send-owner --text "<same message text>"'],
+    });
+    const stalled = items.find(i => i.id === 'leader-delivery:lt-20261107070000-def456')!;
+    expect(stalled).toMatchObject({
+      title: 'Leader question Telegram delivery stalled',
+      detail: 'telegram · Telegram pending past the 72 h drain window — the comms drain no longer offers it · "fake question text"',
+    });
+    // Singular attempt count reads correctly.
+    expect(items.find(i => i.id === 'leader-delivery:lt-20261107080000-ghi789')!.detail).toContain('failed after 1 send attempt');
+  });
+
+  it('scrubs secret-shaped text out of the item detail', async () => {
+    const secret = `sk-ant-api03-${'x'.repeat(24)}`;
+    const inbox = await readWith(() => ok([entry({ text: `memo mentions ${secret} inline` })]));
+    const item = inbox.items.find(i => i.source === 'leader-delivery')!;
+    expect(JSON.stringify(item)).not.toContain(secret);
+    expect(item.detail).toContain('[REDACTED]');
+  });
+
+  it('reports the read state as the source state, never a fabricated healthy', async () => {
+    const missing = await readWith(() => ({ status: 'missing' as const, items: [] }));
+    expect(missing.sources['leader-delivery']).toEqual({ state: 'missing', pending: 0 });
+    const degraded = await readWith(() => ({ status: 'degraded' as const, items: [entry()] }));
+    expect(degraded.sources['leader-delivery']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'leader-delivery')).toHaveLength(1);
+    const unavailable = await readWith(() => ({ status: 'unavailable' as const, items: [] }));
+    expect(unavailable.sources['leader-delivery']).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('reports unavailable on a throwing seam while other sources still list', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readLeaderUndelivered: () => { throw new Error('boom'); },
+    });
+    expect(inbox.sources['leader-delivery']).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'leader-delivery')).toHaveLength(0);
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('filters by its own source and kind like every other source', async () => {
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readLeaderUndelivered: () => ok([entry()]),
+      filter: { source: 'leader-delivery' },
+    });
+    expect(inbox.items.map(i => i.id)).toEqual(['leader-delivery:lt-20261107060000-abc123']);
+    expect(inbox.filter).toEqual({ source: 'leader-delivery' });
+    const byKind = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readLeaderUndelivered: () => ok([entry()]),
+      filter: { kind: 'leader-message-undelivered' },
+    });
+    expect(byKind.items.map(i => i.id)).toEqual(['leader-delivery:lt-20261107060000-abc123']);
+    expect(inbox.items.filter(i => i.kind === 'leader-message-undelivered')).toHaveLength(1);
   });
 });
 
