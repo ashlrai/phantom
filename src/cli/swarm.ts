@@ -1196,9 +1196,11 @@ async function promptConfirm(question: string): Promise<boolean> {
  * - rollback is the ONLY potentially-destructive op; ALWAYS confirm-gated.
  */
 export async function cmdSwarm(args: string[]): Promise<number> {
+  const pilot = args[0] === 'pilot' || args[0] === 'pilot-report';
   // Help shortcircuit. `--help`/`-h` anywhere prints usage and runs nothing:
   // `swarm approve <id> --help` resumed the swarm's agents.
   if (args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    if (pilot) return (await import('./swarm-pilot.js')).cmdSwarmPilot(args);
     printSwarmHelp();
     return 0;
   }
@@ -1216,6 +1218,7 @@ export async function cmdSwarm(args: string[]): Promise<number> {
     return 3;
   }
 
+  if (pilot) return (await import('./swarm-pilot.js')).cmdSwarmPilot(args);
   const parsed = parseSwarmArgs(args);
 
   if (parsed.usageError) {
@@ -1576,6 +1579,8 @@ function printSwarmHelp(): void {
   console.log(`    ashlr swarm ${cyan('"<goal>"')} [options]`);
   console.log(`    ashlr swarm ${cyan('<specId>')} [options]`);
   console.log(`    ashlr swarm show ${cyan('<id>')}`);
+  console.log('    ashlr swarm pilot <spec.json> --runtime <file> [--apply] [--json]');
+  console.log('    ashlr swarm pilot-report <id> [--pr <number>] [--json]');
   console.log(`    ashlr swarm verify ${cyan('<id>')}              ${dim('# M17: verify task output signatures')}`);
   console.log(`    ashlr swarm approve ${cyan('<id>')}             ${dim('# M17: resume a paused (needs-approval) swarm')}`);
   console.log(`    ashlr swarm rollback ${cyan('<id>')} [--yes] [--force]  ${dim('# M17: restore pre-swarm git state')}`);
