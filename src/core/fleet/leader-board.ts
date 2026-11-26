@@ -42,6 +42,7 @@ export const LEADER_BOARD_SCHEMA = 'fleet.leader-board.v1' as const;
 export const LEADER_BOARD_FILE = 'leader-board.json';
 
 const MAX_READY_BYTES = 2 * 1024 * 1024;
+const MAX_ROUTER_QUEUE_BYTES = 32 * 1024 * 1024;
 const MAX_BOARD_BYTES = 256 * 1024;
 /** Rolling conflict observations kept on the board (a few hours of ticks). */
 const MAX_HISTORY = 96;
@@ -75,7 +76,7 @@ export interface LeaderBoardV1 {
   generatedAt: string;
   lanes: LeaderBoardLane[];
   resourcePlan?: FleetBoardV1['resourcePlan'];
-  /** READY jobs by queue tier; 'unknown' covers rows naming no/invalid tier. null when ready.tsv was unreadable. */
+  /** READY jobs by queue tier. 'unknown' covers missing or invalid tiers. Null when queue evidence is unreadable. */
   queueDepthByTier: Record<string, number> | null;
   /** Unique merged jobs/PRs in the trailing hour across lanes; null without a healthy merge ledger. */
   mergesLastHour: number | null;
@@ -150,13 +151,13 @@ export function queueDepthByTier(rows: readonly { status: string; tier?: string 
  * depth — left in, a PARKED cell lands in the positional id or pool slot and
  * would inflate the READY count.
  */
-export function readyRowsForDepth(text: string): { status: string; tier?: string }[] {
+export function readyRowsForDepth(text: string, routerQueue?: string): { status: string; tier?: string }[] {
   const kept = text.split('\n').filter((line) => {
     if (!line.trim() || line.trimStart().startsWith('#')) return true;
     const cells = line.split('\t');
     return !parkedCell(cells[0]) && !parkedCell(cells[2]);
   });
-  const { rows, unhintedRows } = parseReadyTsv(kept.join('\n'), undefined, true);
+  const { rows, unhintedRows } = parseReadyTsv(kept.join('\n'), routerQueue, true);
   return [...rows, ...unhintedRows.map(({ tier }) => ({ status: 'READY', tier }))];
 }
 
@@ -259,8 +260,9 @@ function previousHistory(board: LeaderBoardV1 | null): LeaderBoardConflictSample
 async function buildLeaderBoard(runsDir: string, nowMs: number, previous: LeaderBoardConflictSample[],
   capacity: ReturnType<typeof readFleetResourcePlan>): Promise<LeaderBoardV1> {
   const at = new Date(nowMs);
-  const [readySource, counts, needs, plan] = await Promise.all([
+  const [readySource, routerQueueSource, counts, needs, plan] = await Promise.all([
     readSource(join(runsDir, 'queue', 'ready.tsv'), MAX_READY_BYTES, false),
+    readSource(join(runsDir, 'queue', 'router-queue.md'), MAX_ROUTER_QUEUE_BYTES, false),
     getLaneQueueCounts({ runsDir, now: () => at }).then(
       (report) => ({ state: 'ok' as const, report }),
       () => ({ state: 'unavailable' as const, report: null }),
@@ -271,7 +273,8 @@ async function buildLeaderBoard(runsDir: string, nowMs: number, previous: Leader
     capacity.catch(() => null),
   ]);
 
-  const depthRows = readySource.state === 'healthy' ? readyRowsForDepth(readySource.text) : null;
+  const depthRows = readySource.state === 'healthy' && routerQueueSource.state !== 'degraded'
+    ? readyRowsForDepth(readySource.text, routerQueueSource.text) : null;
   const lanes: LeaderBoardLane[] = (counts.report?.lanes ?? []).map((row) => ({
     lane: row.lane,
     ready: row.ready,

@@ -93,6 +93,32 @@ describe('recordLeaderBoard', () => {
     ]);
   });
 
+  it('uses routing envelopes to validate READY tier depth before deduplication', async () => {
+    await writeFile(join(queueDir, 'ready.tsv'), [
+      'RQ-BADENV\tphantom\tcodex\twork\tprompts/bad.md',
+      row('READY', 'RQ-BADENV', 'devin', 'mid'),
+      'RQ-OPEN\tphantom\tNOT_A_LANE\tfrontier\tprompts/open.md',
+      row('READY', 'RQ-OPEN', 'devin', 'fast'),
+      'RQ-PLAIN\tphantom\tcodex\twork\tprompts/plain.md',
+    ].join('\n'));
+    await writeFile(join(queueDir, 'router-queue.md'), [
+      '- READY RQ-BADENV (P1, exclusive=maybe): malformed requirements',
+      '- READY RQ-OPEN (P2): open to eligible lanes',
+    ].join('\n'));
+
+    const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+    if (!result.wrote) throw new Error('unreachable');
+    expect(result.board.queueDepthByTier).toEqual({ frontier: 1, mid: 1, work: 1 });
+  });
+
+  it('reports unknown tier depth when the routing envelope source is unreadable', async () => {
+    await writeFile(join(queueDir, 'ready.tsv'), 'RQ-JOB\tphantom\tcodex\twork\tprompts/job.md');
+    await mkdir(join(queueDir, 'router-queue.md'));
+
+    const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+    expect(result).toMatchObject({ wrote: true, board: { queueDepthByTier: null, sources: { readyTsv: 'healthy' } } });
+  });
+
   it('reports unknown conflict figures, not a stale trend, when ready.tsv is unreadable', async () => {
     await seed();
     await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS - 3_600_000 });

@@ -555,6 +555,10 @@ including rows with an empty lane column or an explicit
 `"preferred_lane": null` in the requirements. The first valid READY row in
 file order supplies each job's tier, whether it has a lane hint or is open.
 Open jobs have no per-lane attribution.
+For five-column dispatcher rows, the board uses matching requirements
+envelopes from `router-queue.md` and excludes rows with invalid requirements.
+If the Markdown file is absent, the parser uses the lane column. If the file
+exists but cannot be read within the 32 MiB bound, tier depth is unknown.
 
 The Leader board estimates the number of conflicting PRs from rebase job IDs
 in `ready.tsv`. It includes parked rebase jobs, expands batches into their
