@@ -1050,7 +1050,7 @@ node desktop/scripts/prepare-sidecar.mjs    # → desktop/src-tauri/binaries/ash
 npm --prefix desktop run build
 ```
 
-The native app icon is generated from the tracked Phantom ghost SVG on the existing rounded-square canvas. The five bundle icon outputs are generated locally, not checked in; the monochrome `tray.png` remains a separate tracked template icon. See [icon generation and provenance](src-tauri/icons/PLACEHOLDER.md). This artwork change preserves the stable `ai.ashlr.desktop` bundle identifier and signing identity.
+The native app icon is generated from the official Phantom workbench P. The release workflow regenerates the bundle icons, and the monochrome `tray.png` is a separately generated template of the same mark. See [icon generation and provenance](src-tauri/icons/PLACEHOLDER.md). The stable `ai.ashlr.desktop` bundle identifier and signing identity are unchanged.
 
 Timing on this Mac: about 6 minutes cold (the release profile is `lto = true`,
 `codegen-units = 1`, `panic = "abort"`), about 90 seconds when only the bundling
