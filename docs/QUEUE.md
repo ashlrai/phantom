@@ -334,6 +334,9 @@ phm pool admission --json
 identify starved lanes or propose restock. When that read is missing or
 degraded, per-lane `ready` stays null. The dispatcher’s `queued` count remains
 visible and can include parked work.
+Autopilot honors a hold reported by either dispatcher status or the configured
+slots, so a newly held lane is excluded from starvation, restock and suggestions
+to hold a sibling while the dispatcher catches up.
 
 An executor is unfed when it has free slots while runnable rows wait under
 another lane's hint. Each tick the dispatcher computes this after its launches
