@@ -61,7 +61,7 @@ import { useGuardState } from './shell/guard-store.js';
 import { gearUpdateSpoken } from './shell/gear-update-dot.js';
 import type { RailBadge } from './shell/RailStatus.js';
 import { subscribeAnchorRequests } from './shell/anchor-requests.js';
-import { executeCatalogCommand, useShellCommands } from './shell/run-command.js';
+import { runCatalogCommand, useLazyShellCommands } from './shell/run-command-lazy.js';
 import { SectionVisibilityProvider, usePollWhileVisible } from './shell/section-visibility.js';
 import { FLEET_CI_RUNS_POLL_MS, fleetCiRunsQuery } from './shell/fleet-ci-runs-query.js';
 import { ciNeedsYouCount } from './shell/ci-runs-facts.js';
@@ -77,7 +77,7 @@ import { setHomeChoice, useHomeView } from './shell/home-view-store.js';
 import type { UnreadCounts } from './shell/unread-counts.js';
 import type { WarmupOptions } from './shell/warmup.js';
 import { useVerseUi } from './useVerseUi.js';
-import { useLayoutMode } from './layout-mode.js';
+import { useLayoutMode } from './use-layout-mode.js';
 import { useFocusMode } from './shell/focus-mode.js';
 import { openPaneInChat } from './dock/dock-store.js';
 // Only the event name: validation and the handler are the lazy open-terminal chunk.
@@ -325,7 +325,7 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
 function navigateSection(section: VerseSectionId): void {
   // Home pressed while a landing view is already showing goes back to the Home summary.
   if (section === 'live' && getVerseUiState().section === 'live') setHomeChoice('home');
-  if (section === 'fleet') executeCatalogCommand('surface.fleet', { via: 'button' });
+  if (section === 'fleet') runCatalogCommand('surface.fleet', { via: 'button' });
   else setVerseSection(section);
 }
 
@@ -395,7 +395,7 @@ export function PhantomApp() {
   }, []);
 
   // ── the global commands the shell serves, and run-command's toasts ─────
-  useShellCommands();
+  useLazyShellCommands();
 
   // ── global keys ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -411,7 +411,7 @@ export function PhantomApp() {
       // keeps one press from running two handlers. stopPropagation is not
       // used — other listeners still see the event, they just know it is taken.
       event.preventDefault();
-      executeCatalogCommand(command.id, { via: 'key' });
+      runCatalogCommand(command.id, { via: 'key' });
     }
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -439,7 +439,7 @@ export function PhantomApp() {
         // focus (and every key) for itself. The drawer opener, the theme and
         // Settings leave overlays alone — open-needs-you REPLACES the overlay.
         if (command.name === 'new-chat' || command.name === 'focus-composer' || command.name === 'open-fleet') closeVerseOverlay();
-        executeCatalogCommand(command.commandId, { via: 'menu' });
+        runCatalogCommand(command.commandId, { via: 'menu' });
       }),
     [],
   );
@@ -612,7 +612,7 @@ export function PhantomApp() {
               aria-label={needsYouCount === null ? 'Needs you' : `Needs you, ${needsYouCount}`}
               aria-expanded={ui.overlay === 'needs-you'}
               data-needs-you={needsYouCount ?? undefined}
-              onClick={() => executeCatalogCommand('needs-you.open', { via: 'button' })}
+              onClick={() => runCatalogCommand('needs-you.open', { via: 'button' })}
             >
               <span className={styles.railIcon}>
                 <NeedsYouIcon />

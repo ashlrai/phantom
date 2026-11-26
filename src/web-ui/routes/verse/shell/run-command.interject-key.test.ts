@@ -1,15 +1,17 @@
-import { fireEvent, render, cleanup } from '@testing-library/react';
+import { act, fireEvent, render, cleanup } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createElement } from 'react';
 import { ToastProvider } from '../../../components/primitives/Toast.js';
 import { PhantomApp } from '../VerseApp.js';
 import { registerCommandHandler, resetCommandBus } from './command-bus.js';
 import { keyPassesToPage } from '../terminal/panel-keys.js';
+import { loadRunCommand } from './run-command-lazy.js';
 
 afterEach(() => { cleanup(); resetCommandBus(); });
 
-it('dispatches the global interjection chord from a focused non-input element', () => {
+it('dispatches the global interjection chord from a focused non-input element', async () => {
   render(createElement(ToastProvider, null, createElement(PhantomApp)));
+  await act(async () => { await loadRunCommand(); });
   const handler = vi.fn();
   const unregister = registerCommandHandler('fleet.interject', handler);
   const button = document.createElement('button');
