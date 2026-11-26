@@ -561,8 +561,9 @@ resolution; any other fetch failure, unresolvable spec, alias, or computed
 import prevents independence claims. Pass evidence comes in two shapes: a
 verbose per-test line (`✓ file > suite > test`) resolves only the named
 test, while the default reporter's green-module line (`✓ file (N tests)`)
-resolves any failure identity in that file because every test the module
-contains passed on that run. Other pass output does not establish a test
+resolves a named test only when it reports a positive test count and zero
+skipped or todo tests. A green module with skipped or todo tests can still
+resolve a suite-load failure when at least one test ran. Other pass output does not establish a test
 pass. The scan caps open PRs, runs, and jobs
 at 100 each and reports unknown rather than drawing conclusions from truncated
 run/job listings. Master reproduction remains an explicit step in the fix brief.
