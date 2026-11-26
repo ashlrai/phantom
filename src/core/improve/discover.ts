@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Seventy-four sources, all of which Phantom
+ * evidence instead of a hand-kept list. Seventy-five sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -1067,6 +1067,26 @@
  *     and — unlike the sibling machinery feeds — items self-target
  *     each outside PR's own repository since the fix lives where the
  *     merges land;
+ *   - the work market's repo-share journal's recurring adverse
+ *     freshness verdicts: the per-repo `repo_share` rows dispatchd's
+ *     market_metric appends to metrics/work-market.jsonl whenever the
+ *     share allocation changes — each row's score, share, priority
+ *     and reason_codes computed by work_market.py repo_shares() from
+ *     the ready queue's job mix, declared impacts, observed merge
+ *     rates and the repo-freshness verdicts written from the weekly
+ *     RQ-DOCS-FRESHNESS/RQ-SITE-FRESHNESS jobs' BRIDGE_NOTES.md
+ *     FRESHNESS lines (repoShareBacklogItems below). Until now the
+ *     rows' only reader was `phm repos`' allocation display over the
+ *     queue/repo-shares.json snapshot — a report someone had to run —
+ *     so a docs/site freshness verdict that kept coming back adverse
+ *     never became work even though the market kept weighting the
+ *     repo's share up for it. A (repo, code) cell emits only for the
+ *     three adverse verdict codes at the recurring bars of recorded
+ *     share rows across distinct UTC days inside the 7-day window;
+ *     designed and owner-state codes never emit, truncated tails are
+ *     stated as lower bounds, and — like the outside-PR feed — items
+ *     self-target the repository the verdict belongs to since the
+ *     fix lands where the drift lives;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1179,6 +1199,7 @@ import { jobReissueBacklogItems } from './job-reissue-backlog.js';
 import { shadowRouteBacklogItems } from './shadow-route-backlog.js';
 import { feedbackSubmissionsBacklogItems } from './feedback-submissions-backlog.js';
 import { outsidePrBacklogItems } from './outside-pr-backlog.js';
+import { repoShareBacklogItems } from './repo-share-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2548,6 +2569,22 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // lower bounds, and items self-target the outside PRs' own
   // repository — the fix lives where the merges land.
   items.push(...await outsidePrBacklogItems());
+
+  // Work-market share journal: the same journal's change-triggered
+  // `repo_share` rows — the last unfolded work-market.v1 event — folded
+  // per (repo, code) cell for the three adverse repo-freshness verdict
+  // codes only: docs_freshness_drift, site_freshness_unhealthy and
+  // site_freshness_stale, each recording that a repo's weekly
+  // freshness job reported drift/unhealthy/stale and the market kept
+  // weighting its share up while nothing queued the investigation.
+  // Until now the rows' only reader was `phm repos`' allocation
+  // display, a report someone had to run. Same bounded tail read the
+  // sibling market feeds use; a cell emits only at the recurring bars
+  // of recorded share rows across distinct UTC days, designed and
+  // owner-state codes never emit, truncated tails are stated as lower
+  // bounds, and items self-target the repository the verdict belongs
+  // to — the fix lands where the drift lives.
+  items.push(...await repoShareBacklogItems());
   return { items, errors };
 }
 
