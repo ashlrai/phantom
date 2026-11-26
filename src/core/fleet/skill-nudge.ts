@@ -207,9 +207,12 @@ function standingReverted(
 }
 
 /** Event names (post-normalization, lowercase) that carry a terminal verdict with no phase field. */
-const EVENT_OUTCOMES: Readonly<Record<string, NudgeOutcome>> = {
-  merged: 'merged', closed: 'failed', revert: 'merged', reverted: 'merged',
-};
+const EVENT_OUTCOMES: ReadonlyMap<string, NudgeOutcome> = new Map([
+  ['merged', 'merged'],
+  ['closed', 'failed'],
+  ['revert', 'merged'],
+  ['reverted', 'merged'],
+]);
 
 /**
  * The job's terminal outcome on one row: the phase fields decide first (the
@@ -227,7 +230,7 @@ function outcomeOf(row: Record<string, unknown>): NudgeOutcome | undefined {
     if (CANCELLED_PHASES.has(phase)) return 'cancelled';
   }
   const event = ledgerEventName(row);
-  return event === null ? undefined : EVENT_OUTCOMES[event];
+  return event === null ? undefined : EVENT_OUTCOMES.get(event);
 }
 
 /** Fixed-label failure classifications only; anything else stays unknown. */
