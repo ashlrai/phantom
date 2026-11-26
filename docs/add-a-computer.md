@@ -102,8 +102,9 @@ phm node status --owner acme --json
 
 Every command above runs on this computer: the standalone registry is local,
 so producer and node are the same machine and a job enqueued elsewhere never
-reaches this node — that needs the pool or team path
-([NODES.md](NODES.md)).
+reaches this node. To share one queue across computers you control — or to
+join a team's pool — set up the SSH pool: [NODES.md](NODES.md) covers the
+design and [AGENT-NETWORK.md](AGENT-NETWORK.md) the join commands.
 
 ## Leave
 
