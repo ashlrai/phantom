@@ -11,8 +11,9 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
+function github(options: { count?: number; sameHead?: boolean; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
+  const prHead = (index: number) => options.sameHead || index === 0 ? head : (index + 13).toString(16).padStart(40, '0');
   const gh: CloudGh = async args => {
     calls.push(args);
     const endpoint = args[1] ?? '';
@@ -21,7 +22,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     if (args.includes('PUT')) return success('{}');
     if (args[0] === 'pr') {
       if (args.includes('merged')) value = options.merged ? [{ body: args[args.indexOf('--search') + 1], mergeCommit: { oid: merged } }] : [];
-      else value = Array.from({ length: options.count ?? 2 }, (_, i) => ({ number: i + 1, headRefOid: head, headRefName: 'feature', files: [{ path: options.touched ?? 'docs/README.md' }] }));
+      else value = Array.from({ length: options.count ?? 2 }, (_, i) => ({ number: i + 1, headRefOid: prHead(i), headRefName: `feature-${i}`, files: [{ path: options.touched ?? 'docs/README.md' }] }));
     } else if (endpoint.includes('/branches/')) value = { commit: { sha: master } };
     else if (endpoint.includes('/compare/')) value = { status: 'ahead' };
     else if (endpoint.includes('/git/trees/')) {
@@ -54,7 +55,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     }
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
-      if (endpoint.includes('/jobs/11/') || endpoint.includes('/jobs/21/')) {
+      if (endpoint.includes('/jobs/11/') || /\/jobs\/\d*21\//.test(endpoint)) {
         // Merge Gate style aggregator: no checkout step, so no marker line.
         const gatePass = endpoint.includes('/jobs/11/') && options.pass;
         const gateLog = options.gateEvidence === 'fail' ? fixture('shared') : options.gateEvidence === 'pass' ? fixture('pass') : gatePass
@@ -64,7 +65,8 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
       }
       const isMaster = endpoint.includes('/jobs/10/') || endpoint.includes('/jobs/30/');
       const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.installSmoke ? 'install-smoke-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
-      const sha = isMaster ? master : head;
+      const jobId = Number(endpoint.split('/jobs/')[1]!.split('/')[0]);
+      const sha = isMaster ? master : prHead(Math.floor(jobId / 100));
       let prefix: string;
       if (options.checkoutRef !== undefined) {
         // Unbound gate jobs (secret-shape, quick, clean-tree, fast-gate,
@@ -88,20 +90,24 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
       const conclusion = isMaster && options.pass ? 'success' : 'failure';
-      const head_sha = isMaster ? master : head;
+      const runId = Number(endpoint.split('/runs/')[1]!.split('/')[0]);
+      const index = runId === 1 ? 0 : runId - 2;
+      const jobOffset = 100 * index;
+      const head_sha = isMaster ? master : prHead(index);
       if (options.noJobs) {
         value = { total_count: 0, jobs: [] };
       } else {
-        const jobs: { id: number; name?: string; conclusion: string; head_sha: string }[] = [{ id: isMaster ? 10 : 20, conclusion: (isMaster ? options.masterJobConclusion : options.prJobConclusion) ?? conclusion, head_sha }];
-        if (options.gate) jobs.push({ id: isMaster ? 11 : 21, name: 'Merge Gate', conclusion: (isMaster ? options.masterJobConclusion : options.prJobConclusion) ?? conclusion, head_sha });
+        const jobs: { id: number; name?: string; conclusion: string; head_sha: string }[] = [{ id: isMaster ? 10 : jobOffset + 20, conclusion: (isMaster ? options.masterJobConclusion : options.prJobConclusion) ?? conclusion, head_sha }];
+        if (options.gate) jobs.push({ id: isMaster ? 11 : jobOffset + 21, name: 'Merge Gate', conclusion: (isMaster ? options.masterJobConclusion : options.prJobConclusion) ?? conclusion, head_sha });
         if (isMaster && options.extraMasterJob) jobs.push({ id: 30, conclusion: options.extraMasterJob, head_sha });
-        if (!isMaster && options.extraPrJob) jobs.push({ id: 40, conclusion: options.extraPrJob, head_sha });
+        if (!isMaster && options.extraPrJob) jobs.push({ id: jobOffset + 40, conclusion: options.extraPrJob, head_sha });
         value = { total_count: jobs.length, jobs };
       }
     } else if (endpoint.includes('/actions/runs?')) {
       const isMaster = endpoint.includes(master);
+      const index = Number(/branch=feature-(\d+)/.exec(endpoint)?.[1] ?? 0);
       const conclusion = (isMaster ? options.masterRunConclusion : undefined) ?? options.runConclusion;
-      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : head, ...(conclusion !== undefined ? { conclusion } : {}) }] };
+      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : index + 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : prHead(index), ...(conclusion !== undefined ? { conclusion } : {}) }] };
     } else throw new Error(`unexpected call ${args.join(' ')}`);
     return success(JSON.stringify(value));
   };
@@ -116,6 +122,15 @@ describe('CI baseline evidence', () => {
     expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
     expect(calls.some(c => c.includes('PUT'))).toBe(false);
     expect(report.updates.every(u => !u.ready)).toBe(true);
+  });
+  it('requires distinct unaffected heads to propose a shared-baseline fix', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ sameHead: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups[0]).toMatchObject({
+      classification: 'unknown', action: 'unknown', unaffectedPrs: [1, 2],
+      runs: [{ head, runId: 2 }, { head, runId: 3 }],
+    });
+    expect(report.updates).toEqual([]);
   });
   it('identifies PR changes to a test or its imports', async () => {
     for (const touched of ['test/example.test.ts', 'package.json']) {

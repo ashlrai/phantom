@@ -2620,9 +2620,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const { file, names, testId: id, excerpt } = rows[0]!.failure;
     const failure = { file, names, testId: id, excerpt };
     const runs = [...new Map(rows.map(o => [`${o.pr.headRefOid}:${o.runId}`, { pr: o.pr.number, head: o.pr.headRefOid, runId: o.runId }])).values()];
-    const unaffected = [...new Set(rows.filter(o => o.touched === false).map(o => o.pr.number))];
+    const unaffectedRows = rows.filter(o => o.touched === false);
+    const unaffected = [...new Set(unaffectedRows.map(o => o.pr.number))];
+    const unaffectedHeads = new Set(unaffectedRows.map(o => o.pr.headRefOid));
     const prNumbers = [...new Set(rows.map(o => o.pr.number))];
-    const classification = unaffected.length >= 2 ? 'shared-baseline' : rows.every(o => o.touched === true) ? 'pr-caused' : prNumbers.length === 1 && rows[0]!.touched === false && passes(failure) ? 'probable-flake' : 'unknown';
+    const classification = unaffected.length >= 2 && unaffectedHeads.size >= 2 ? 'shared-baseline' : rows.every(o => o.touched === true) ? 'pr-caused' : prNumbers.length === 1 && rows[0]!.touched === false && passes(failure) ? 'probable-flake' : 'unknown';
     const action = classification === 'shared-baseline' ? 'queue-master-fix' : classification === 'probable-flake' ? 'rerun-failed' : classification === 'pr-caused' ? 'pr-caused' : 'unknown';
     const evidence = { ...failure, runs };
     const jobId = `RQ-CIBASE-${createHash('sha256').update(repo + ':' + testId).digest('hex').slice(0, 16).toUpperCase()}`;
