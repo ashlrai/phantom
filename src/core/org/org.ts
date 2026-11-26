@@ -253,9 +253,14 @@ export function planOrg(org: Org, joins: readonly JoinRecord[], view: ResourceVi
   capacity?: readonly { lane: string; additional_slots: number | null }[]): OrgPlan {
   const budgets: LaneBudget[] = [], held: OrgPlan['held'] = [];
   for (const m of org.members) for (const c of m.contributions) {
-    const joined = joins.filter((j) => j.member === m.id).flatMap((j) => j.lanes).find((l) => l.lane === c.lane);
-    if (!joined) { held.push({ member: m.id, lane: c.lane, reason: 'not opted in' }); continue; }
-    const share = Math.min(joined.share, c.share);
+    // A member's machines each hold their own join record for the lane, and
+    // every offer draws on the one declared pool for this member+lane — the
+    // offers are not additive. The member's ceiling is the largest share any
+    // machine committed; taking the first record would make the plan depend
+    // on join-filename order and could starve a lane the member fully offered.
+    const offers = joins.filter((j) => j.member === m.id).flatMap((j) => j.lanes).filter((l) => l.lane === c.lane);
+    if (!offers.length) { held.push({ member: m.id, lane: c.lane, reason: 'not opted in' }); continue; }
+    const share = Math.min(Math.max(...offers.map((o) => o.share)), c.share);
     if (share <= 0) { held.push({ member: m.id, lane: c.lane, reason: 'zero share' }); continue; }
     const pool = c.pool ?? POOL_OF[c.lane] ?? null;
     const reading = view && pool ? view.pools.find((p) => p.pool === pool) : undefined;
