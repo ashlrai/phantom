@@ -1,6 +1,6 @@
 # Router calibration
 
-`phm router-calibration --jobs jobs.jsonl [--posthog runs.json] [--json]` reads local files and prints Markdown by default or JSON with `--json`. It makes no network requests. Each JSONL record has `event` (or `type`) and `job_id` (also `jobId` or `id`). Recognized events are `launch`, `finish`, `publish`, and `outcome`. There must be exactly one launch per job ID; its `arm` identifies the routing arm. A job ID identifies one attempt, including retries. Unrecognized events are ignored, but a nonempty ledger with no recognized events is rejected.
+`phm router-calibration --jobs jobs.jsonl [--posthog runs.json] [--json]` reads local files and prints Markdown by default or JSON with `--json`. It makes no network requests. Each JSONL record has `event` (or `type`) and `job_id` (also `jobId` or `id`). A standalone launch's `arm` identifies the routing arm. A job ID identifies one attempt, including retries. Unrecognized events are ignored, but a nonempty ledger with no recognized events is rejected.
 
 Use numeric `predicted_merge_rate` (probability from 0 to 1), `predicted_tokens`, and `predicted_wall_time_ms` for predictions. Actual usage is `tokens` or `total_tokens` and `wall_time_ms` or `duration_ms`. Camel-case equivalents are accepted. A finish and launch with ISO timestamp fields `timestamp`, `at`, or `time` supply wall time if it is otherwise absent. An outcome of `merged` is positive; `closed`, `rejected`, `failed`, or `not_merged` is negative. A boolean `merged` is also accepted. Publishing, unknown outcomes and missing outcomes are not evidence of a merge or failure.
 
@@ -12,8 +12,11 @@ finish row's `wall_s` to milliseconds when that row has no millisecond
 measurement. Launch and finish `ts` stamps provide the elapsed-time fallback.
 Eventless `MERGED` or `CLOSED` verdicts and those carried on reconciler publish
 rows resolve the job. An ordinary publish claim alone leaves it unresolved.
-Batch session wrappers and node-pool telemetry are excluded. Supply records
-with one launch per included job or a matching reward signal.
+Supply a launch, a `batch_claim`, or a reward signal for each included job.
+A batch member's recorded claim lane supplies the arm when neither a launch
+nor a reward signal supplies one. Missing or conflicting claim lanes use
+the `unknown` arm. Claim timestamps provide no execution timing. Batch
+session wrappers and node-pool telemetry are excluded.
 
 The jobs input also accepts reward-signal rows. Each supplies the resolved
 merge outcome and any recorded pool and joins launch or PostHog evidence by

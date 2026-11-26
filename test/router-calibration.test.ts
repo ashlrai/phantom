@@ -60,6 +60,33 @@ describe('router calibration', () => {
     expect(() => calibrateRouting(jobs, JSON.stringify([{ job_id: 'TEST-job-2', total_tokens: 999 }]))).toThrow('Conflicting tokens');
     expect(() => calibrateRouting(jobs, '{}')).toThrow('PostHog export');
   });
+  it('calibrates a batch member from its claim and reconciled verdict', () => {
+    const report = calibrateRouting(
+      row({ event: 'batch_claim', job: 'RQ-MEMBER', batch: 'RQ-BATCH-A',
+        lane: 'codex', lane_hint: 'other', ts: '2026-01-01T00:00:00Z' }) +
+      row({ event: 'launch', job: 'RQ-BATCH-A', lane: 'codex' }) +
+      row({ event: 'finish', job: 'RQ-MEMBER', ts: '2026-01-01T00:00:03Z' }) +
+      row({ event: 'publish', jobId: 'RQ-MEMBER', outcome: 'MERGED', source: 'metrics-outcomes-reconciler' }),
+      JSON.stringify([{ job_id: 'RQ-MEMBER', predicted_merge_rate: 0.8, predicted_wall_time_ms: 3000 }]),
+    );
+    expect(report.unmatchedPosthogRuns).toBe(0);
+    expect(report.arms).toMatchObject([{ arm: 'codex', jobs: 1, resolved: 1,
+      mergeRate: { actual: 1, paired: 1 }, wallTimeMs: { actual: null, paired: 0 } }]);
+  });
+  it('uses a standalone launch after a batch claim and withholds ambiguous batch lanes', () => {
+    const report = calibrateRouting(
+      row({ event: 'batch_claim', job: 'RQ-SOLO', lane: 'other' }) +
+      row({ event: 'launch', job: 'RQ-SOLO', lane: 'codex' }) +
+      row({ event: 'batch_claim', job: 'RQ-AMBIGUOUS', lane: 'other' }) +
+      row({ event: 'batch_claim', job: 'RQ-AMBIGUOUS', lane: 'codex' }) +
+      row({ jobId: 'RQ-AMBIGUOUS', outcome: 'CLOSED' }) +
+      row({ event: 'batch_claim', job: 'RQ-NO-LANE', lane_hint: 'other' }),
+    );
+    expect(report.arms).toMatchObject([
+      { arm: 'codex', jobs: 1, resolved: 0 },
+      { arm: 'unknown', jobs: 2, resolved: 1 },
+    ]);
+  });
   it('does not treat publish or an unknown outcome as a negative merge', () => {
     const report = calibrateRouting(row({ event: 'launch', id: 'TEST-a', arm: 'a', predicted_merge_rate: 0.5 }) +
       row({ event: 'publish', id: 'TEST-a', status: 'published' }) + row({ event: 'outcome', id: 'TEST-a', outcome: 'pending' }));
