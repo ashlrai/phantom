@@ -155,6 +155,21 @@ test('unattributed live claims hold capacity and executor identity binds latency
   expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.freeSlots === null)).toBe(true);
 });
 
+test('a completion without a recorded execution host does not follow a worker to a new host', () => {
+  const f = fixture();
+  const worker = f.add('worker', { hostId: 'old-mac' });
+  f.enqueue();
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  const { claim } = nodes.pull(worker)!;
+  f.advance(100);
+  expect(nodes.complete(claim, 'done')).toBe(true);
+  delete f.state.jobs[0]!.executionHostId;
+  f.beat('worker', { hostId: 'new-mac' });
+  expect(projectFleetAwareness(f.state, f.now()).hosts[0]).toMatchObject({
+    hostId: 'new-mac', latency: { samples: 0, medianMs: null },
+  });
+});
+
 test('bounded projection reads actual fixture mirrors and rejects symlinks, oversized files and stale lanes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'fleet-aware-')); const f = fixture(); f.add('mac');
   try {
