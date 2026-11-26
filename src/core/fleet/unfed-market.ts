@@ -29,6 +29,7 @@ const MARKET_COSTS: Readonly<Record<string, number>> = { local: 0, included: 1, 
 const MARKET_DATA: Readonly<Record<string, number>> = { public: 0, internal: 1, confidential: 2, restricted: 3 };
 const MARKET_BUILTIN = new Set(['codex-personal', 'claude', 'devin', 'claude-api', 'codex-local', 'omlx']);
 const MARKET_LOCAL = new Set(['codex-local', 'omlx']);
+const METERED_API_LANES = new Set(['claude-api', 'openai-api']);
 const MARKET_CAP = /^(?:[a-z][a-z0-9-]*|secrets:[A-Za-z0-9_.-]+)$/;
 const MARKET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 /** work_market preferred_lane spelling: lowercase lane ids only. */
@@ -452,5 +453,8 @@ export function derivedRowCodes(row: ReadyMarketRow, lane: string, v: MarketLane
   if (v.backoff) reasons.push('provider_backoff');
   if (v.running >= v.target) reasons.push('saturated');
   if (v.capabilities === null) reasons.push('invalid_capability_advertisement');
+  if (METERED_API_LANES.has(lane) && v.costClass === 'metered' && row.maxCostClass !== 'metered') {
+    reasons.push('metered_api_opt_in_required');
+  }
   return reasons.length ? reasons : ['deferred_after_selection'];
 }

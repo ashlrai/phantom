@@ -746,6 +746,28 @@ describe('derived market reasons', () => {
     }
   });
 
+  it('requires explicit metered opt-in for API lanes with a known metered cost class', () => {
+    const ready = [
+      mrow('RQ-DEFAULT', 'claude', 'work'),
+      mrow('RQ-INCLUDED', 'claude', 'work', '{"max_cost_class":"included"}'),
+      mrow('RQ-METERED', 'claude', 'work', '{"max_cost_class":"metered"}'),
+    ].join('\n');
+    const lanes = {
+      'claude-api': { running: 0, target: 2, held: false },
+      'openai-api': { running: 0, target: 2, held: false },
+    };
+    const report = currentUnfed(JSON.stringify({ lanes }), ready, {
+      slots: JSON.stringify({
+        'claude-api': {},
+        'openai-api': { cost_class: 'metered', tiers: ['work'] },
+      }),
+    });
+    expect(report.resources.map(({ lane, blocked }) => [lane, blocked])).toEqual([
+      ['claude-api', { metered_api_opt_in_required: 2, cost_class_exceeded: 1, deferred_after_selection: 1 }],
+      ['openai-api', { metered_api_opt_in_required: 2, cost_class_exceeded: 1, deferred_after_selection: 1 }],
+    ]);
+  });
+
   it('does not recompute reasons when the dispatcher published its verdict', () => {
     const status = JSON.stringify({
       lanes: MLANES,
