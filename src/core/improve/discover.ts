@@ -1269,6 +1269,24 @@
  *     finishes or taking most of a day never became work, and the
  *     repo's default branch sat unverified or red with no fleet trace
  *     beyond the enqueue;
+ *   - the seat-router shadow decision journal's recurring adverse
+ *     evidence: the routeSeat evaluations recordShadowDecision appends
+ *     to ~/.ashlr/routing/decisions.jsonl — the beside-dispatch shadows
+ *     for the non-standing paths (swarm, single, best-of-N) plus the
+ *     gateway and Leader request paths the fleet dispatch journal
+ *     never sees — folded per (seat, evidence-broken reason kind) and
+ *     per recurring empty decision (no seat chosen, split
+ *     all-excluded/no-seats) across distinct UTC days inside the
+ *     7-day window, the standing tick's own evaluations skipped as
+ *     runs.jsonl duplicates and 'test' traffic never counting
+ *     (seatShadowEvidenceBacklogItems below — the sibling
+ *     seatShadowBacklogItems feed folds the same journal's
+ *     live-vs-shadow divergence cells). Until now the log's only
+ *     readers were point-in-time surfaces — the budget decisions
+ *     route, telemetry, the reserve-breach attributor and the autonomy
+ *     ladder — so seat evidence that stayed broken, or routing
+ *     requests that kept finding no eligible seat, on the paths nobody
+ *     routes by never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1395,6 +1413,7 @@ import { reasoningInsightBacklogItems } from './reasoning-insight-backlog.js';
 import { fleetGapBacklogItems } from './fleet-gap-backlog.js';
 import { needsYouAutoBacklogItems } from './needs-you-auto-backlog.js';
 import { commsRequestsBacklogItems } from './comms-requests-backlog.js';
+import { seatShadowEvidenceBacklogItems } from './seat-shadow-evidence-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -3010,6 +3029,28 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // distinct UTC days, truncated tails are stated as lower bounds, and
   // only enqueues naming this repository inherit the items.
   items.push(...await guardianRepairBacklogItems({ repo }));
+
+  // Seat-router shadow decision journal — evidence-quality cells: every
+  // shadow-mode routeSeat evaluation recordShadowDecision appends to
+  // ~/.ashlr/routing/decisions.jsonl — what the SeatRouter would have
+  // chosen beside the path that actually ran. The standing fleet
+  // tick's own evaluations duplicate the seatDecision runs.jsonl
+  // already journals (runtime-journal-backlog's evidence) and are
+  // skipped; the sibling seatShadowBacklogItems feed folds the same
+  // journal's live-vs-shadow divergence cells. What folds here is the
+  // evidence no other journal carries — the beside-dispatch shadows
+  // for swarm/single/best-of-N runs and the gateway/Leader request
+  // paths whose actual is never recorded: (seatId,
+  // evidence-broken reason kind) exclusions — unknown-usage,
+  // unreachable, signed-out, other; capacity and policy kinds never
+  // emit — and empty decisions (seatId null) keyed by source, task,
+  // autonomy and all-excluded/no-seats, each emitting only at the
+  // recurring bars of rows across distinct UTC days inside the
+  // 7-day window, truncated tails stated as lower bounds, and only
+  // the fleet's own repository inheriting the items since the journal
+  // describes this install's seat routing and carries no repository
+  // column.
+  items.push(...await seatShadowEvidenceBacklogItems({ repo }));
   return { items, errors };
 }
 
