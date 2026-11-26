@@ -46,13 +46,21 @@ jobs:
         env:
           RELEASE_CADENCE_MINUTES: ${{ vars.RELEASE_CADENCE_MINUTES || '5' }}
         run: node .github/scripts/release-cadence.mjs
-      - name: Reconcile tags created by auto-tag with pending release PRs
+      # Cadence reads are anonymous and cannot see this token's quota. Defer
+      # low-budget attempts to the next push, timer or manual run.
+      - name: Require API headroom for release PR discovery and updates
+        id: budget
         if: steps.cadence.outputs.due == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/release-pr-budget.mjs
+      - name: Reconcile tags created by auto-tag with pending release PRs
+        if: steps.cadence.outputs.due == 'true' && steps.budget.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/release-pr-labels.mjs
       - id: rp
-        if: steps.cadence.outputs.due == 'true'
+        if: steps.cadence.outputs.due == 'true' && steps.budget.outputs.ready == 'true'
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ github.token }}
