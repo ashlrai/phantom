@@ -957,8 +957,9 @@ class is unknown. A merged
 outcome recorded as reverted counts as known evidence (`reverted_n` reports
 the count) but never as a held merge. Groups below the evidence
 floor are refused and keep their baseline; `merged: null` outcomes count as
-unknown, never as failures, and jobs with no recorded class count as
-unclassified. The report also resolves *why* the unknown cohort has no
+unknown, never as failures. Jobs with a missing or invalid lane or class,
+including a case-insensitive `unknown` placeholder, count as unclassified
+and supply no samples to a weight proposal. The report also resolves *why* the unknown cohort has no
 merge verdict, from the same recorded finish and launch evidence:
 `unknown_empty` counts
 jobs whose newest finish recorded `empty: true` (the run produced no

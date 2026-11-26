@@ -202,6 +202,19 @@ describe('insufficient evidence', () => {
 });
 
 describe('isolation between work classes and lanes', () => {
+  it('excludes unknown lane and class placeholders even at the proposal threshold', async () => {
+    writeLedger([
+      ...merged(20, 'unknown', 'code'),
+      ...merged(20, 'alpha', 'UNKNOWN'),
+      ...merged(20, 'alpha', 'code'),
+    ]);
+
+    const { report } = await runJson();
+    expect(report).toMatchObject({ known_outcomes: 20, unclassified_outcomes: 40 });
+    expect(report.proposals).toHaveLength(1);
+    expect(report.proposals[0]).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 20, status: 'proposed' });
+  });
+
   it('keeps each (work_class, lane) group separate and counts unclassified rows', async () => {
     writeLedger([
       ...merged(20, 'alpha', 'code'), ...merged(19, 'alpha', 'docs'), ...closed(20, 'beta', 'code'),
