@@ -242,7 +242,7 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
     const jobId = String(out['jobId']), state = out['state'];
     if (state === 'absent') return `job ${jobId}: absent (no such job in this owner scope)`;
     if (state === 'pending') return `job ${jobId}: pending`;
-    if (state === 'running') return `job ${jobId}: running${out['claimedBy'] ? ` (claimed by ${out['claimedBy']})` : ''}`;
+    if (state === 'running') return `job ${jobId}: ${jobStateWords({ state, claimedBy: out['claimedBy'] as string | undefined })}`;
     const head = out['producerWithdrawn'] === true ? 'withdrawn by the producer'
       : `completed by ${String(out['completedBy'] ?? 'unknown')}`;
     const when = typeof out['completedAt'] === 'number' ? ` at ${new Date(out['completedAt']).toISOString()}` : '';
