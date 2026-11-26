@@ -55,10 +55,12 @@ small, test-only rows. The yield fold reads the fleet's jobs-ledger dialect, so
 GitHub-resolved merges recorded by the outcome reconciler (`jobId`/`prUrl`/
 `outcome` rows) count the same as dispatcher outcome rows. Rows with explicit
 `launched: false` supply no finish or empty evidence, even when an earlier
-attempt used the same job ID. Finish and empty evidence must follow the job's
-latest launch by timestamp. When timestamps tie or either receipt lacks one,
-ledger order determines whether the finish follows the launch. A retry with
-only earlier finish evidence contributes no finished job to the lane verdict.
+attempt used the same job ID. Finish, empty, merge and revert evidence must
+follow the job's latest launch by timestamp. A reconciled merge uses its
+recorded merge time when available. When timestamps tie or either receipt
+lacks one, ledger order determines whether the outcome follows the launch.
+A retry with only earlier outcome evidence contributes a launch to the yield
+window and no finished job to the lane verdict.
 `phm lanes yield` also gives every lane a verdict over `--since`
 (default 24h): "low-yield" when 80% or more of at least 20 finished jobs ended empty,
 "unknown" under 10 finished jobs, else "productive". The router skips a low-yield lane
