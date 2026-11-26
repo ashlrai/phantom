@@ -919,7 +919,10 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     const mergedAt = eventTimestamp(event.mergedAt);
     if (mergedAt !== null && mergedAt > now.getTime()) continue;
     const identity = event.pr ? `pr:${event.pr}` : event.job ? `job:${event.job}` : null;
-    if (event.merge && identity && event.pool && !receiptPools.has(identity)) receiptPools.set(identity, event.pool);
+    const receiptAt = mergedAt ?? eventTimestamp(event.at);
+    if (event.merge && identity && event.pool && receiptAt !== null && receiptAt <= now.getTime() && !receiptPools.has(identity)) {
+      receiptPools.set(identity, event.pool);
+    }
     if (mergedAt === null) continue;
     if (event.pr !== null) timedPrs.add(event.pr);
     if (event.job !== null) timedJobs.add(event.job);

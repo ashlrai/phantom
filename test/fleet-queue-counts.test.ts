@@ -111,6 +111,20 @@ it('keeps late duplicate receipts out of the trailing-hour merge count', async (
   expect(report.totals.merges).toBe(3);
 });
 
+it('attributes timed merges only from duplicate receipts with usable timestamps', async () => {
+  const prUrl = 'https://github.com/example/phantom/pull/10';
+  await writeFile(join(queueDir, 'jobs.jsonl'), [
+    { lane: 'claude', state: 'MERGED', prUrl },
+    { lane: 'devin', state: 'MERGED', prUrl, ts: minutesAgo(-1) },
+    { lane: 'codex', state: 'MERGED', prUrl, ts: minutesAgo(5) },
+    { state: 'MERGED', prUrl, mergedAt: minutesAgo(10) },
+  ].map(receipt => JSON.stringify(receipt)).join('\n'));
+
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.lanes.map(({ lane, merges }) => ({ lane, merges }))).toEqual([{ lane: 'codex', merges: 1 }]);
+  expect(report.totals.merges).toBe(1);
+});
+
 it('reports unknown (null), not zero, when sources are absent', async () => {
   const report = await getLaneQueueCounts({ runsDir: root, now });
   expect(report.lanes).toEqual([]);
