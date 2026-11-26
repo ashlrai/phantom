@@ -10,7 +10,10 @@
  * receipts, the agentnet peer work-dispatch
  * journal `consumePeerWork` and the unified inbox peer-dispatch source read,
  * the agentnet peer coordination ledger `sendPeerMessage`, `readPeerInbox`,
- * `peers dispatch` and `phm fleet peer-ledger` parse, the session-handoff
+ * `peers dispatch` and `phm fleet peer-ledger` parse, the agentnet peer
+ * session bindings `peers send|post|read|list|dispatch` authenticate
+ * against and the host-provisioned dispatch policy `consumePeerWork`
+ * requires, the session-handoff
  * journal store `phm checkpoint handoff list|show` and
  * `fleet_session_handoffs` read, the claim-store
  * drift verdict comparing the claim journal with the coordination table it
@@ -39,7 +42,9 @@ import { inspectSeatStore } from '../bots/seats.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { ownerChatRoot, ownerReceiptDir, readOwnerChatReceipts } from './chat-owner-receipts.js';
 import { readWorkDispatchJournal } from '../agentnet/work-dispatch-journal.js';
+import { inspectPeerDispatchPolicy } from '../agentnet/work-dispatch.js';
 import { readPeerLedger } from '../agentnet/peer-ledger.js';
+import { inspectPeerBindings } from '../agentnet/slack-identities.js';
 import { listSessionHandoffs } from './session-handoff.js';
 import { handoffPressure } from './session-handoff-schema.js';
 import { probePauseState } from '../comms/pause.js';
@@ -60,6 +65,14 @@ export interface UnifiedBusStatusOptions {
    * runs here: quota evidence, live claims and node jobs stay with the
    * async `planSeatHandoffs` read. */
   seats?: { home?: string };
+  /** Peer bindings path override — the same `PeerBusOptions.bindings`
+   * `peers list` and every authenticated peer verb resolves; default
+   * `agentnetPaths().bindings` under `realHome()`. A `root` override does
+   * NOT relocate it: the peer verbs keep reading the host-enrolled
+   * bindings regardless of which bus root their journals land under, so
+   * the probe follows the same resolution rather than inventing a
+   * bus-root-relative path no verb touches. */
+  agentnetBindings?: string;
   now?: () => number;
 }
 
@@ -254,6 +267,44 @@ export interface UnifiedBusStatus {
     /** Live (unexpired) coordination rows the peer send budget still
      * counts; 0 on a verified-missing ledger, null when it cannot be read. */
     liveRows: number | null;
+  };
+  /** Agentnet peer session bindings (`agentnetPaths().bindings` —
+   * `<realHome>/.ashlr/agentnet/bindings.json` — or the probe's
+   * `agentnetBindings` override) behind `phm agentnet peers
+   * send|post|read|list|dispatch` and `consumePeerWork`'s consumer
+   * authentication — read by `inspectPeerBindings`, the count-only
+   * counterpart of the `readPeerBindings` validation every peer verb
+   * runs. Like `sendGate`, the path resolves under `realHome()` and is
+   * never relocated by the probe's `root` override: the peer verbs keep
+   * authenticating against the host-enrolled file whatever bus root
+   * their journals use, so a corrupt, public-mode or conflicting
+   * bindings file is named here instead of leaving status green while
+   * every peer verb refuses closed. Counts only, never callsigns, lanes,
+   * session ids, hashes or team/user/bot ids. */
+  peerBindings: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Binding rows retained; 0 on a verified-missing file, null when it
+     * cannot be read or validated. */
+    peers: number | null;
+    /** Rows whose `expiresAt` is still ahead of the probe's clock —
+     * sessions that can authenticate now; same null rule. */
+    active: number | null;
+  };
+  /** Agentnet peer dispatch policy (`dispatch.json` beside the resolved
+   * bindings path — the sibling-of-bindings path `consumePeerWork`
+   * resolves) behind `phm agentnet peers dispatch --apply` — read by
+   * `inspectPeerDispatchPolicy`, validated by the same `policySchema`
+   * the consumer enforces, so a missing or invalid policy is named here
+   * instead of leaving status green while dispatch refuses
+   * 'dispatch-unavailable-or-gated'. Counts only, never peer callsigns,
+   * repository names, tier ceilings or path grants. */
+  peerDispatchPolicy: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Peer callsigns the policy allows; 0 on a verified-missing file,
+     * null when it cannot be read or validated. Counts only. */
+    peers: number | null;
+    /** Repository capability rows the policy carries; same null rule. */
+    repositories: number | null;
   };
   /** Session-handoff journal store (`<runsRoot>/handoffs/*.jsonl`) behind
    * `phm checkpoint handoff list|show` and `fleet_session_handoffs` — read
@@ -544,6 +595,39 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     peerLedger = { source: 'unavailable', liveRows: null };
   }
 
+  // The peer plane's auth root and dispatch policy resolve exactly as the
+  // peer verbs resolve them: `bindings` is an independent
+  // `PeerBusOptions` field — `agentnetPaths().bindings` under realHome(),
+  // or the probe's `agentnetBindings` override — that a `busRoot`/`root`
+  // override never relocates, and `dispatch.json` is its sibling, the
+  // path `consumePeerWork` derives. A sick file here refuses every peer
+  // call while the journal and ledger sections stay green. Counts only,
+  // never callsigns, session hashes, repo names, tiers or path grants;
+  // each inspector is total by contract but keeps its own try so one
+  // cannot hide the other's verdict.
+  // `agentnetPaths()` itself throws without a real home before any
+  // `PeerBusOptions` override applies, so the verbs refuse there too —
+  // the override only redirects an otherwise resolvable store.
+  const peerBindingsPath = agentnetHome === null ? undefined :
+    options.agentnetBindings ?? join(agentnetHome, '.ashlr', 'agentnet', 'bindings.json');
+  let peerBindings: UnifiedBusStatus['peerBindings'];
+  let peerDispatchPolicy: UnifiedBusStatus['peerDispatchPolicy'];
+  if (peerBindingsPath === undefined) {
+    peerBindings = { source: 'unavailable', peers: null, active: null };
+    peerDispatchPolicy = { source: 'unavailable', peers: null, repositories: null };
+  } else {
+    try {
+      peerBindings = inspectPeerBindings(peerBindingsPath, now());
+    } catch {
+      peerBindings = { source: 'unavailable', peers: null, active: null };
+    }
+    try {
+      peerDispatchPolicy = inspectPeerDispatchPolicy(peerBindingsPath);
+    } catch {
+      peerDispatchPolicy = { source: 'unavailable', peers: null, repositories: null };
+    }
+  }
+
   // `phm checkpoint handoff list|show` and `fleet_session_handoffs` both
   // serve `listSessionHandoffs` over `<runsRoot>/handoffs` — the same
   // bounded scan under the same runs root the wake probe resolves
@@ -605,5 +689,5 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     kill, pause,
   };
 
-  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, sessionHandoffs, sendGate };
+  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, sessionHandoffs, sendGate };
 }

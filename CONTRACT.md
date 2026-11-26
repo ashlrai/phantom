@@ -4382,7 +4382,7 @@ and bound, each bracket naming `#<channel>:<topic>`. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the fourteen dependencies the unified verbs touch — the
+read-only probe over the sixteen dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -4429,7 +4429,25 @@ resolve — `agentnetPaths().busRoot` = `realHome()/.ashlr/fleet`, or the
 probe's `root` override — `source` plus a `liveRows` count of unexpired
 coordination rows the send budget still counts; 0 on a verified-missing
 ledger, null when unreadable, never peer names, claim keys, digests, threads
-or bodies), the session-handoff journal store (`listSessionHandoffs` over
+or bodies), the agentnet peer session bindings
+(`agentnetPaths().bindings` — `<realHome>/.ashlr/agentnet/bindings.json`, or
+the probe's `agentnetBindings` override, never relocated by `root` because
+the peer verbs keep authenticating against the host-enrolled file whatever
+bus root their journals use) behind `phm agentnet peers
+send|post|read|list|dispatch` and `consumePeerWork`'s consumer
+authentication — `inspectPeerBindings`, the count-only counterpart of the
+`readPeerBindings` validation every peer verb runs; `source` plus retained
+`peers` and `active` counts of sessions still inside their `expiresAt`; 0
+counts on a verified-missing file, null when unreadable, never callsigns,
+lanes, session ids, hashes or team/user/bot ids), the host-provisioned
+dispatch policy (`dispatch.json` beside the resolved bindings path — the
+sibling path `consumePeerWork` derives) behind `phm agentnet peers
+dispatch --apply` — `inspectPeerDispatchPolicy`, validated by the same
+`policySchema` the consumer enforces; `source` plus `peers` and
+`repositories` counts, 'missing' a verified-unprovisioned policy with real
+zeros, null when the file cannot be read or validated, never peer
+callsigns, repository names, tier ceilings or path grants), the
+session-handoff journal store (`listSessionHandoffs` over
 `<runsRoot>/handoffs` under the same runs root the wake probe resolves —
 `options.runsRoot`, else `ASHLR_RUNS_DIR` or `~/.ashlr-runs` — the read
 `phm checkpoint handoff list|show` and `fleet_session_handoffs` serve;

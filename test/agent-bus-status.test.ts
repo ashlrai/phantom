@@ -63,6 +63,11 @@ describe('readUnifiedBusStatus', () => {
     expect(status.peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
     // A verifiably absent coordination ledger holds no live rows: 0 is proven.
     expect(status.peerLedger).toEqual({ source: 'missing', liveRows: 0 });
+    // A verifiably absent bindings file enrolls no peers: 0 is the real
+    // count, and no session can authenticate — active is a real 0 too.
+    expect(status.peerBindings).toEqual({ source: 'missing', peers: 0, active: 0 });
+    // A verifiably absent dispatch policy allows no peers or repos: real zeros.
+    expect(status.peerDispatchPolicy).toEqual({ source: 'missing', peers: 0, repositories: 0 });
     // A verifiably absent handoff store holds no journals: 0 is the real count.
     expect(status.sessionHandoffs).toEqual({ source: 'missing', journals: 0, open: 0,
       awaitingFailover: 0, unreadable: 0, truncated: false });
@@ -590,6 +595,100 @@ describe('peerLedger section', () => {
   });
 });
 
+describe('peerBindings section', () => {
+  const agentnetDir = (options: UnifiedBusStatusOptions) => join(dirname(options.root!), 'agentnet');
+  const bindingsFile = (options: UnifiedBusStatusOptions) => join(agentnetDir(options), 'bindings.json');
+  const binding = (n: number, expiresAt: number) => ({ callsign: `agent${n}`, lane: `lane-${n}`,
+    sessionId: `session-${n}`, sessionHash: n.toString(16).padStart(64, 'a'),
+    expiresAt, teamId: 'TTEAM', userId: `UAGENT${n}`, botId: `BAGENT${n}`, topic: 'mesh' });
+  /** The bindings file `readPeerBindings` validates for every peers verb —
+   * mode 0600 under a private dir, the same custody `agentnetPaths()` files get. */
+  const writeBindings = (options: UnifiedBusStatusOptions, peers: unknown[]) => {
+    options.agentnetBindings = bindingsFile(options);
+    mkdirSync(agentnetDir(options), { recursive: true, mode: 0o700 });
+    writeFileSync(bindingsFile(options), JSON.stringify({ version: 1, peers }), { mode: 0o600 });
+  };
+
+  it('counts retained bindings and the sessions still inside their expiry', () => {
+    const options = setup();
+    const at = options.now();
+    writeBindings(options, [binding(0, at + 60_000), binding(1, at - 1)]);
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.peerBindings).toEqual({ source: 'available', peers: 2, active: 1 });
+    expect(status.store.source).toBe('missing');
+
+    // Read-only: a fresh probe over a never-written path reports missing.
+    const fresh = setup();
+    fresh.agentnetBindings = join(dirname(fresh.root!), 'agentnet', 'bindings.json');
+    expect(readUnifiedBusStatus(fresh).peerBindings).toEqual({ source: 'missing', peers: 0, active: 0 });
+    expect(existsSync(dirname(fresh.agentnetBindings!))).toBe(false);
+  });
+
+  it('keeps a corrupt bindings file unavailable with null counts while the rest of the bus stays readable', () => {
+    const options = setup();
+    mkdirSync(agentnetDir(options), { recursive: true, mode: 0o700 });
+    writeFileSync(bindingsFile(options), '{not json', { mode: 0o600 });
+    options.agentnetBindings = bindingsFile(options);
+
+    const status = readUnifiedBusStatus(options);
+    // The same corrupt file that makes readPeerBindings throw — and every
+    // peers verb refuse — is named here; nulls, never zeros.
+    expect(status.peerBindings).toEqual({ source: 'unavailable', peers: null, active: null });
+    expect(status.store.source).toBe('missing');
+    expect(status.feed.status).toBe('ok');
+    // The sibling dispatch policy is probed independently: still unprovisioned.
+    expect(status.peerDispatchPolicy).toEqual({ source: 'missing', peers: 0, repositories: 0 });
+  });
+});
+
+describe('peerDispatchPolicy section', () => {
+  const agentnetDir = (options: UnifiedBusStatusOptions) => join(dirname(options.root!), 'agentnet');
+  const bindingsFile = (options: UnifiedBusStatusOptions) => join(agentnetDir(options), 'bindings.json');
+  const policyFile = (options: UnifiedBusStatusOptions) => join(agentnetDir(options), 'dispatch.json');
+  const policy = (over: Record<string, unknown> = {}) => ({ version: 1, enabled: true,
+    peers: ['agent0', 'agent1'],
+    repositories: [{ repo: 'ashlrai/phantom', tierCeiling: 'mid', paths: ['docs/AGENT-BUS.md'] }],
+    ...over });
+  const provision = (options: UnifiedBusStatusOptions, value: unknown) => {
+    options.agentnetBindings = bindingsFile(options);
+    mkdirSync(agentnetDir(options), { recursive: true, mode: 0o700 });
+    writeFileSync(policyFile(options), JSON.stringify(value), { mode: 0o600 });
+  };
+
+  it('counts the peers and repositories a valid policy allows', () => {
+    const options = setup();
+    provision(options, policy());
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.peerDispatchPolicy).toEqual({ source: 'available', peers: 2, repositories: 1 });
+    expect(status.store.source).toBe('missing');
+    // No bindings file beside it: the auth probe stays honestly missing.
+    expect(status.peerBindings).toEqual({ source: 'missing', peers: 0, active: 0 });
+  });
+
+  it('reports a schema-invalid policy unavailable with null counts — the same refusal consumePeerWork hits', () => {
+    const options = setup();
+    // enabled must be literal true; a disabled or shapeless policy is not provisioned.
+    provision(options, policy({ enabled: false }));
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.peerDispatchPolicy).toEqual({ source: 'unavailable', peers: null, repositories: null });
+    expect(status.store.source).toBe('missing');
+    expect(status.feed.status).toBe('ok');
+  });
+
+  it('keeps a corrupt policy file unavailable with null counts', () => {
+    const options = setup();
+    options.agentnetBindings = bindingsFile(options);
+    mkdirSync(agentnetDir(options), { recursive: true, mode: 0o700 });
+    writeFileSync(policyFile(options), '{not json', { mode: 0o600 });
+
+    expect(readUnifiedBusStatus(options).peerDispatchPolicy)
+      .toEqual({ source: 'unavailable', peers: null, repositories: null });
+  });
+});
+
 describe('sendGate section', () => {
   // The gate reads realHome() — the worker's isolated HOME under the test
   // harness — never the probe's `root`, exactly like the send path.
@@ -767,6 +866,8 @@ describe('phm agents bus status', () => {
     expect(json.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0, notices: 0 });
     expect(json.peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
     expect(json.peerLedger).toEqual({ source: 'missing', liveRows: 0 });
+    expect(json.peerBindings).toEqual({ source: 'missing', peers: 0, active: 0 });
+    expect(json.peerDispatchPolicy).toEqual({ source: 'missing', peers: 0, repositories: 0 });
     expect(json.sessionHandoffs).toEqual({ source: 'missing', journals: 0, open: 0,
       awaitingFailover: 0, unreadable: 0, truncated: false });
     expect(json.sendGate).toEqual({ state: 'open',
@@ -786,6 +887,8 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('seats missing seats=0 states=0 handoffs=0');
     expect(lines.join('\n')).toContain('peerDispatch missing receipts=0 unpublished=0');
     expect(lines.join('\n')).toContain('peerLedger missing liveRows=0');
+    expect(lines.join('\n')).toContain('peerBindings missing peers=0 active=0');
+    expect(lines.join('\n')).toContain('peerDispatchPolicy missing peers=0 repositories=0');
     expect(lines.join('\n')).toContain('sessionHandoffs missing journals=0 open=0 awaitingFailover=0 unreadable=0 truncated=false');
     expect(lines.join('\n')).toContain('sendGate open kill=inactive:missing pause=clear');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');

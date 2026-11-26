@@ -1600,7 +1600,7 @@ held work, and every other store state keeps its own status. Exit 0 on
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the fourteen
+**Status.** `phm agents bus status [--json]` is a read-only probe of the sixteen
 dependencies every verb above touches plus the outbound send gate every
 write verb passes through: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
@@ -1654,7 +1654,25 @@ resolve — `realHome()/.ashlr/fleet` by default — read by the same
 `readPeerLedger` those surfaces use; `source` plus a `liveRows` count of
 unexpired coordination rows the send budget still counts; 0 on a
 verified-missing ledger, null when unreadable, never peer names, claim
-keys, digests, threads or bodies), the session-handoff journal store
+keys, digests, threads or bodies), the agentnet peer session bindings
+`agentnetPaths().bindings` — `<realHome>/.ashlr/agentnet/bindings.json`,
+or the probe's `agentnetBindings` override, never relocated by `root`
+because the peer verbs keep authenticating against the host-enrolled
+file whatever bus root their journals use — that `phm agentnet peers
+send|post|read|list|dispatch` and `consumePeerWork`'s consumer check
+authenticate against (read by `inspectPeerBindings`, the count-only
+counterpart of the `readPeerBindings` validation every peer verb runs;
+`source` plus retained `peers` and `active` counts of sessions still
+inside their `expiresAt`; 0 counts on a verified-missing file, null when
+unreadable, never callsigns, lanes, session ids, hashes or
+team/user/bot ids), the host-provisioned dispatch policy `dispatch.json`
+beside the resolved bindings path — the sibling path `consumePeerWork`
+derives — that `phm agentnet peers dispatch --apply` requires (read by
+`inspectPeerDispatchPolicy`, validated by the same `policySchema` the
+consumer enforces; `source` plus `peers` and `repositories` counts;
+'missing' is a verified-unprovisioned policy with real zeros, null when
+the file cannot be read or validated, never peer callsigns, repository
+names, tier ceilings or path grants), the session-handoff journal store
 `<runsRoot>/handoffs` that `phm checkpoint handoff list|show` and
 `fleet_session_handoffs` read through the same `listSessionHandoffs`
 bounded scan under the same runs root the wake probe resolves

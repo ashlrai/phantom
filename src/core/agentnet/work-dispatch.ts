@@ -1,6 +1,6 @@
 /** Authenticated work.post -> existing queue claims. No engine, shell or transport execution. */
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { parseClaimKey, workPostBodySchema } from '../agents/bus-v2-schema.js';
@@ -31,6 +31,47 @@ const policySchema = z.object({ version: z.literal(1), enabled: z.literal(true),
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const queueDigest = (job: QueueJob) => hash([job.id, job.repo, job.tier, job.priority, job.scope, job.acceptance,
   job.deps, job.exclusive, job.min_tier, job.max_cost_class, job.pool, job.preferred_lane, job.needs]);
+
+/** What `inspectPeerDispatchPolicy` reports about the host-provisioned
+ * dispatch policy `consumePeerWork` requires — retained counts only,
+ * never the peer or repository names the policy carries. */
+export interface PeerDispatchPolicyInspection {
+  /** 'missing' when dispatch.json is verifiably absent — peer dispatch
+   * was never provisioned and `consumePeerWork` refuses; 'unavailable'
+   * when the file exists but fails the same custody or schema checks the
+   * consumer applies; 'available' when it validated. */
+  source: 'missing' | 'available' | 'unavailable';
+  /** Peer callsigns the policy allows; 0 on a verified-missing file,
+   * null when it cannot be read or validated. Counts only, never names. */
+  peers: number | null;
+  /** Repository capability rows the policy carries; same null rule. */
+  repositories: number | null;
+}
+/**
+ * Read-only probe of `<dirname(bindings)>/dispatch.json` — the same
+ * sibling-of-bindings path `consumePeerWork` resolves — validated by the
+ * same `policySchema` the consumer enforces. Never throws and never
+ * writes: an absent file is a verified-unprovisioned policy (real
+ * zeros); a file failing custody or schema reports `unavailable` with
+ * null counts. Peer callsigns, repository names, tier ceilings and path
+ * grants are never read out, only counted.
+ */
+export function inspectPeerDispatchPolicy(bindingsPath: string): PeerDispatchPolicyInspection {
+  const policyPath = join(dirname(bindingsPath), 'dispatch.json');
+  try { lstatSync(policyPath); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { source: 'missing', peers: 0, repositories: 0 };
+    }
+    return { source: 'unavailable', peers: null, repositories: null };
+  }
+  try {
+    const policy = policySchema.parse(readPeerJson(policyPath, dirname(policyPath)));
+    return { source: 'available', peers: policy.peers.length,
+      repositories: policy.repositories.length };
+  } catch {
+    return { source: 'unavailable', peers: null, repositories: null };
+  }
+}
 
 /** One cursor page, at most eight conversions. Host policy is never accepted in a message/CLI flag. */
 export async function consumePeerWork(session: PeerSession, input: { apply?: boolean; after?: number } = {}, options: PeerBusOptions = {}) {

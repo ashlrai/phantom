@@ -10,7 +10,9 @@
  * table, message-id claim journal, claim-drift verdict, work-feed
  * projection, legacy mailbox, owner-chat receipts ledger, shared task
  * board and fleet queue, bot-seat store, peer work-dispatch journal, peer
- * coordination ledger, the session-handoff journal store behind
+ * coordination ledger, the agentnet peer session bindings and dispatch
+ * policy every `peers` verb authenticates and gates against, the
+ * session-handoff journal store behind
  * `phm checkpoint handoff list|show` and `fleet_session_handoffs`, and the
  * outbound send gate (`sendGate.state`
  * open/blocked/unknown with the kill-switch and comms-pause verdicts
