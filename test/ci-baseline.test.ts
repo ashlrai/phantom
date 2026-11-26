@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
+function github(options: { count?: number; touched?: string; changedFiles?: number | null; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -21,7 +21,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     if (args.includes('PUT')) return success('{}');
     if (args[0] === 'pr') {
       if (args.includes('merged')) value = options.merged ? [{ body: args[args.indexOf('--search') + 1], mergeCommit: { oid: merged } }] : [];
-      else value = Array.from({ length: options.count ?? 2 }, (_, i) => ({ number: i + 1, headRefOid: head, headRefName: 'feature', files: [{ path: options.touched ?? 'docs/README.md' }] }));
+      else value = Array.from({ length: options.count ?? 2 }, (_, i) => ({ number: i + 1, headRefOid: head, headRefName: 'feature', files: [{ path: options.touched ?? 'docs/README.md' }], changedFiles: options.changedFiles === null ? undefined : options.changedFiles ?? 1 }));
     } else if (endpoint.includes('/branches/')) value = { commit: { sha: master } };
     else if (endpoint.includes('/compare/')) value = { status: 'ahead' };
     else if (endpoint.includes('/git/trees/')) {
@@ -124,6 +124,18 @@ describe('CI baseline evidence', () => {
     }
     const imported = await analyzeCiBaseline('owner/repo', github({ count: 1, touched: 'test/helper.ts', imports: "import './helper.js';" }).gh);
     expect(imported.groups[0]?.action).toBe('pr-caused');
+  });
+  it.each([2, null])('requires complete PR paths before proposing a flake rerun (changedFiles=%s)', async (changedFiles) => {
+    const { gh, calls } = github({ count: 1, pass: true, changedFiles });
+    const report = await analyzeCiBaseline('owner/repo', gh);
+    expect(calls.find(args => args[0] === 'pr' && args.includes('open'))?.at(-1))
+      .toBe('number,headRefOid,headRefName,files,changedFiles');
+    expect(report.groups[0]).toMatchObject({ classification: 'unknown', master: 'pass', unaffectedPrs: [] });
+  });
+  it('keeps positive dependency matches when the PR file listing is partial', async () => {
+    const { gh } = github({ count: 1, touched: 'test/helper.ts', imports: "import './helper.js';", changedFiles: 2 });
+    const report = await analyzeCiBaseline('owner/repo', gh);
+    expect(report.groups[0]?.classification).toBe('pr-caused');
   });
   it('requires an explicit same-test master pass for a singleton flake', async () => {
     const pass = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true }).gh);
