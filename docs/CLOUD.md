@@ -507,7 +507,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   target slots while runnable rows waited under other lanes' hints —
   a (lane, reason-code) cell becomes an item while distinct jobs keep
   recording that lane's rejection for the same non-mechanical code
-  across days (lower_rank, saturated, held and hysteresis_* never
+  across days. Each exact lane and code pair must meet the recurrence
+  threshold independently (lower_rank, saturated, held and hysteresis_* never
   emit — the market working as designed), and unrouted decisions and
   unknown_preference overrides become umbrella items at the same
   recurring bar; route decisions collapse to each job's latest
