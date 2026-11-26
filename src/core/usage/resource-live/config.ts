@@ -7,6 +7,7 @@ export const liveSourcesSchema = z.object({
   codexCmpHome: path.optional(), codexPersonalHome: path.optional(), accountsRoot: path.optional(),
   codexSeatMap: z.record(z.string().min(1).max(256), z.enum(['codex-personal', 'codex-cmp'])).optional(),
   operatorPageFallback: z.boolean().optional(),
+  antigravityModel: z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9 ()_-]*$/).optional(),
   anthropicCost: z.object({
     adminKeyHandle: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
     creditUsd: z.number().finite().positive(),
