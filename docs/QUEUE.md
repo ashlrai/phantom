@@ -342,6 +342,10 @@ slots and independent dependency or rebase evidence remain available.
 Autopilot honors a hold reported by either dispatcher status or the configured
 slots, so a newly held lane is excluded from starvation, restock and suggestions
 to hold a sibling while the dispatcher catches up.
+For utilization, starvation and restock, autopilot uses the lower of the
+configured lane target and the last fresh tick's launch target (which includes
+any controller shed). A target decrease can suppress a recommendation before
+the next tick. A higher target needs dispatcher confirmation.
 
 An executor is unfed when it has free slots while runnable rows wait under
 another lane's hint. Each tick the dispatcher computes this after its launches
