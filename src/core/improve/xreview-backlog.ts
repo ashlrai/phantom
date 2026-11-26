@@ -30,9 +30,9 @@
  *    so evidence can only under-count (a hidden row delays a cell crossing
  *    the bar), never invent a finding.
  *  - Recurring means recorded and current. A cell emits only with at
- *    least XREVIEW_MIN_ROWS contributing rows spanning at least
- *    XREVIEW_MIN_PRS distinct pull requests whose newest row lands inside
- *    XREVIEW_WINDOW_MS — the fleet's RECURRING_FAILURES convention applied
+ *    least XREVIEW_MIN_ROWS distinct contributing rows spanning at least
+ *    XREVIEW_MIN_PRS distinct pull requests inside the window ending at
+ *    the evaluation time — the fleet's RECURRING_FAILURES convention applied
  *    to review evidence, so one PR's repeated re-reviews, or a stale
  *    journal on a fleet whose reviews stopped, never queue a session.
  *  - Repo attribution is exact. Review rows carry the pull request's
@@ -302,18 +302,21 @@ export async function crossReviewBacklogItems(opts: XreviewItemsOptions): Promis
     const nowMs = (opts.now ?? new Date()).getTime();
     const windowMs = opts.windowMs ?? XREVIEW_WINDOW_MS;
     const cells = new Map<string, FindingCell>();
+    const seenReceipts = new Set<string>();
     for (const line of read.text.split('\n')) {
-      if (!line.trim()) continue;
+      const receipt = line.trim();
+      if (!receipt || seenReceipts.has(receipt)) continue;
       let value: unknown;
       try {
-        value = JSON.parse(line);
+        value = JSON.parse(receipt);
       } catch {
         continue;
       }
       const row = parseReview(value);
       if (row === null) continue;
-      if (nowMs - row.atMs > windowMs) continue;
+      if (row.atMs > nowMs || nowMs - row.atMs > windowMs) continue;
       if (row.repoKey !== repoKey) continue;
+      seenReceipts.add(receipt);
       if (row.outcome === 'reject') {
         for (const reason of row.reasons) {
           addToCell(cells, JSON.stringify(['reject', row.repoKey, row.producerPool, reason]), row, reason);
