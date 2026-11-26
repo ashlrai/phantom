@@ -415,7 +415,7 @@ import { readBusBoardPending, type BusBoardPendingRead } from '../fleet/bus-boar
 import { busBoardDeliveryText } from '../fleet/bus-delivery.js';
 import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bus-envelope.js';
 import { busReplyCitations, handoffAnswerScope, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation, type HandoffAnswerScope } from '../fleet/handoff-body.js';
-import { readAgentRegistry, resolveAgent } from '../agents/bus-identity.js';
+import { agentChannelNameSchema, readAgentRegistry, resolveAgent } from '../agents/bus-identity.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } from '../fleet/needs-mason-relay.js';
@@ -515,6 +515,18 @@ export interface UnifiedInboxItem extends AttentionItem {
    * `--job` match rather than being guessed in.
    */
   readonly jobIds?: readonly string[];
+  /**
+   * Every bus channel name the item provably names, sorted — the citation
+   * set `comms inbox --channel` matches: a bus or mailbox envelope's `to`
+   * under the `group:<name>:*` room prefix, a feed job's announcement
+   * address, a wake hint's addressee label, or a conversation member
+   * message's recipient. This is the bus channel namespace every bus
+   * read's `--channel` shares (strict name grammar, no registry
+   * dependence), never the owner-thread channel names. Absent when the
+   * item names no bus channel — unknown stays out of a `channel` match
+   * rather than being guessed in.
+   */
+  readonly channels?: readonly string[];
   /** Deep-link commands that act on this item, most direct first. */
   readonly act: readonly string[];
 }
@@ -576,6 +588,12 @@ export interface UnifiedInboxFilter {
    * stay out of the match; source/kind labels have their own dimensions.
    * Callers bound the raw value to UNIFIED_INBOX_CONTAINS_MAX. */
   contains?: string;
+  /** Keep only items that provably name this bus channel — the same
+   * `group:<name>:*` room namespace every bus read's `--channel` filter
+   * shares (strict channel-name grammar, no registry dependence), matched
+   * against each item's `channels` citation set. An item that names no
+   * bus channel never matches: unknown stays out of the match. */
+  channel?: string;
 }
 
 export interface UnifiedInbox {
@@ -729,6 +747,23 @@ const pendingCount = (state: UnifiedInboxSourceState, count: number): number | n
 const jobIdsField = (ids: Iterable<string>): { jobIds?: readonly string[] } => {
   const sorted = [...new Set(ids)].sort();
   return sorted.length === 0 ? {} : { jobIds: sorted };
+};
+/** The bus channel names one `group:<name>:<topic>` address cites — the room
+ * prefix every bus read's `--channel` shares, strict name grammar with no
+ * registry dependence. A non-room label, a bare `group:<name>` with no
+ * topic, or an invalid name cites none. */
+const busAddressChannels = (address: string | undefined): string[] => {
+  if (address === undefined || !address.startsWith('group:')) return [];
+  const rest = address.slice('group:'.length);
+  const sep = rest.indexOf(':');
+  if (sep <= 0) return [];
+  const name = rest.slice(0, sep);
+  return agentChannelNameSchema.safeParse(name).success ? [name] : [];
+};
+/** `channels` only when the citation set is non-empty — absent means the item names no bus channel, never a guess. */
+const channelsField = (names: Iterable<string>): { channels?: readonly string[] } => {
+  const sorted = [...new Set(names)].sort();
+  return sorted.length === 0 ? {} : { channels: sorted };
 };
 
 function needsYouItems(read: NonNullable<UnifiedInboxOptions['readNeeds']>, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
@@ -1099,6 +1134,8 @@ interface BusFeedPost {
   priority: BusPriority;
   receivedAt: number;
   expiresAt: number;
+  /** The announcement envelope's `to` — the bus channel citation `--channel` matches. */
+  to: string;
 }
 
 /** The newest `work.status` envelope the scan saw for a job: its wire id (the `agents bus show` handle) and its scrubbed reason. */
@@ -1202,6 +1239,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
         since: iso(job.updatedAt),
         expiresAt: post ? iso(post.expiresAt) : null,
         jobIds: [job.id],
+        ...channelsField(busAddressChannels(post?.to)),
         act: [
           ...(report === undefined ? [] : [`phm agents bus show ${report.id}`]),
           `phm agents bus work feed --job ${job.id} --claims`,
@@ -1247,6 +1285,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
           since: iso(job.updatedAt),
           expiresAt: post ? iso(post.expiresAt) : null,
           jobIds: [job.id],
+          ...channelsField(busAddressChannels(post?.to)),
           act: [
             ...(jobResult === undefined ? [] : [`phm agents bus show ${jobResult.id}`]),
             ...(report === undefined ? [] : [`phm agents bus show ${report.id}`]),
@@ -1275,6 +1314,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
         since: iso(post?.receivedAt ?? job.updatedAt),
         expiresAt: post ? iso(post.expiresAt) : null,
         jobIds: [job.id],
+        ...channelsField(busAddressChannels(post?.to)),
         act: [`phm agents bus show ${job.postId}`, `phm agents bus work feed --job ${job.id} --claims`],
       });
       continue;
@@ -1302,6 +1342,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
       since: iso(post?.receivedAt ?? job.updatedAt),
       expiresAt: post ? iso(post.expiresAt) : null,
       jobIds: [job.id],
+      ...channelsField(busAddressChannels(post?.to)),
       act: [
         `phm agents bus claim acquire --key ${claimKey} --owner <label> --lease-ms ${SUGGESTED_LEASE_MS}`,
         'phm agents bus work feed --claims',
@@ -1414,6 +1455,7 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
             receivedAt: receipt.receivedAt,
             // The reader decrements ttl to what remains; expiry is a real deadline.
             expiresAt: now + envelope.ttl,
+            to: envelope.to,
           });
         }
         // Cursor order is append order, so the last status seen per job is the
@@ -1486,6 +1528,7 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
             since: iso(receipt.receivedAt),
             expiresAt: iso(now + envelope.ttl),
             ...jobIdsField(busBodyJobIds(envelope.body)),
+            ...channelsField(busAddressChannels(envelope.to)),
             act: [
               `phm fleet handoff-receive --id ${envelope.id} --to ${envelope.to} --snapshot <abs-json> -- <program> [args...]`,
               `phm agents bus show ${envelope.id}`,
@@ -1511,6 +1554,7 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
         // The reader decrements ttl to what remains; expiry is a real deadline.
         expiresAt: iso(now + envelope.ttl),
         ...jobIdsField(busBodyJobIds(body)),
+        ...channelsField(busAddressChannels(envelope.to)),
         act: [`phm fleet bus-claim acquire --id ${envelope.id} --owner <label> --lease-ms ${SUGGESTED_LEASE_MS}`],
       });
     }
@@ -1601,6 +1645,7 @@ function mailboxItems(read: NonNullable<UnifiedInboxOptions['readMailbox']>, opt
       since: isoOrNull(message.acceptedAt),
       expiresAt: isoOrNull(message.acceptedAt + envelope.ttl),
       ...jobIdsField(busBodyJobIds(envelope.body)),
+      ...channelsField(busAddressChannels(envelope.to)),
       act: [`phm bus inbox --to ${envelope.to}`, `phm bus ack ${envelope.id} --to ${envelope.to}`],
     };
   });
@@ -1752,6 +1797,13 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
     }
     const title = oneLine(thread.subject, TITLE_MAX) || `agent thread ${thread.id}`;
     const count = `${thread.messageCount} message${thread.messageCount === 1 ? '' : 's'}`;
+    // The thread's bus-channel citation: every member message recipient
+    // under a `group:<name>:*` room — the same raw prefix the conversations
+    // read's own `--channel` matches.
+    const channels = new Set<string>();
+    for (const message of thread.messages) {
+      for (const name of busAddressChannels(message.to)) channels.add(name);
+    }
     if (thread.state === 'waiting' && thread.waiting !== null) {
       items.push({
         id: `conversations:${thread.id}`,
@@ -1766,6 +1818,7 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
         since: thread.waiting.since,
         expiresAt: null,
         ...jobIdsField(thread.jobs),
+        ...channelsField(channels),
         act,
       });
     } else if (thread.state === 'blocked') {
@@ -1782,6 +1835,7 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
         since: thread.lastAt,
         expiresAt: null,
         ...jobIdsField(thread.jobs),
+        ...channelsField(channels),
         act,
       });
     }
@@ -1836,7 +1890,11 @@ function wakeItems(read: NonNullable<UnifiedInboxOptions['readWakes']>,
     const newest = newestFirst[0]!;
     const count = group.rows.length;
     const jobIds = new Set<string>();
+    const channels = new Set<string>();
     const refs: string[] = [];
+    for (const wake of newestFirst) {
+      for (const name of busAddressChannels(wake.to)) channels.add(name);
+    }
     for (const wake of newestFirst.slice(0, WAKE_DETAIL_REFS)) {
       const holder = wake.claimHolder;
       const message = wake.message;
@@ -1863,6 +1921,7 @@ function wakeItems(read: NonNullable<UnifiedInboxOptions['readWakes']>,
       since: iso(newest.at),
       expiresAt: null,
       ...jobIdsField(jobIds),
+      ...channelsField(channels),
       act: [`phm agents bus wakes ${group.label}`, 'phm agents bus wakes --all'],
     };
   });
@@ -3005,7 +3064,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
       requested.severity !== undefined ||
       requested.blocking !== undefined || requested.job !== undefined ||
       requested.since !== undefined || requested.before !== undefined ||
-      requested.contains !== undefined)
+      requested.contains !== undefined || requested.channel !== undefined)
     ? requested : undefined;
   // --contains is a case-insensitive substring over the item's scrubbed
   // title/detail — the text the row actually shows, so a match is always
@@ -3023,6 +3082,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     // A job filter keeps only items whose own citation set names the job —
     // an item with no provable job relation stays out of the match.
     (filter.job === undefined || item.jobIds?.includes(filter.job) === true) &&
+    // A channel filter keeps only items whose citation set names the bus
+    // channel — an item with no provable channel relation stays out.
+    (filter.channel === undefined || item.channels?.includes(filter.channel) === true) &&
     // A since filter keeps only items whose recorded appearance time reaches
     // the cutoff — an undated or unparseable item cannot prove it appeared
     // then and stays out of the match rather than being counted as new.

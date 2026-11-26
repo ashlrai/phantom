@@ -4332,7 +4332,15 @@ a claim-holder hint's `jobId` or a resolved referent's feed citation —
 teammate tasks by `jobId`, seat
 handoffs by `node-job` refs, peer-dispatch receipts by their peer-announced
 `jobId`) for `comms inbox --job` to match against,
-absent when no job relation is provable; `busReadContains(value)` and
+absent when no job relation is provable; the same citation-set pattern
+carries each item's `channels` — the bus channel names it provably names
+under the `group:<name>:*` room prefix every bus read's `--channel`
+shares (a bus or mailbox envelope's `to`, a feed job's announcement
+address, a wake hint's addressee label, a conversation member message's
+recipient; strict name grammar, no registry dependence — the bus channel
+namespace, never the owner-thread channel names) — for `comms inbox
+--channel` (`UnifiedInboxFilter.channel`) to match against, absent when
+the item names no bus channel; `busReadContains(value)` and
 `busReadContainsMatch(body, needle)` — bounded by `BUS_READ_CONTAINS_MAX` —
 are the shared `--contains` validation and match every bus read applies:
 `readAgentInbox`, `readAgentChannel`, `comms bus read`/`watch --contains`
@@ -4372,6 +4380,13 @@ source emits several kinds (the `bus` source's
 `bus-work`/`bus-handoff`/`bus-dead-letter` split, the `board` source's
 `board-delivery`/`board-task` split) — and
 ANDs with every other view dimension while the per-source `pending`
+reports stay the unfiltered store truth;
+`UnifiedInboxFilter.channel` (`comms inbox --channel`,
+`fleet_comms_inbox`'s `channel`, the `channel` query param) keeps only
+items whose `channels` citation set names the bus channel — the same
+`group:<name>:*` room namespace and strict name grammar every bus read's
+`--channel` applies — an item that names no bus channel never matching,
+ANDing with every other view dimension while the per-source `pending`
 reports stay the unfiltered store truth;
 and
 `jobAnnotationFromFeed(feed, jobId)` maps one already-read
@@ -4440,8 +4455,8 @@ queueId/receiptId never appear in a summary.
 shared validation `GET /api/verse/comms/inbox`
 (`src/core/verse/comms-inbox-api.ts`) applies to its query — `limit`
 (1–200, default 50) plus the `UnifiedInboxFilter` dimensions `source`,
-`kind`, `severity`, `blocking` (`true`/`false`), `job`, `since`, `before`
-and `contains`, each at most once — `since` the inclusive appearance-time
+`kind`, `severity`, `blocking` (`true`/`false`), `job`, `since`, `before`,
+`contains` and `channel`, each at most once — `since` the inclusive appearance-time
 lower bound, `before` (`UnifiedInboxFilter.before`, `comms inbox --before`)
 the exclusive `<` upper bound composing with it into one
 `[since, before)` window under the same `parseSince` grammar every bus

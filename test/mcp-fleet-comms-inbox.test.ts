@@ -94,13 +94,13 @@ it('lists and routes the tool through the fleet server', async () => {
   const tool = (await client.listTools()).tools.find(tool => tool.name === 'fleet_comms_inbox');
   expect(tool).toBeDefined();
   expect(Object.keys((tool!.inputSchema as { properties: Record<string, unknown> }).properties))
-    .toEqual(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains']);
+    .toEqual(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains', 'channel']);
   const result = await client.callTool({ name: 'fleet_comms_inbox', arguments: { limit: 1 } });
   expect(JSON.parse((result.content as Array<{ text: string }>)[0].text)).toMatchObject({ items: [item], omitted: 2 });
   const filtered = await client.callTool({ name: 'fleet_comms_inbox',
-    arguments: { source: 'bus', kind: 'bus-work', contains: 'fake' } });
+    arguments: { source: 'bus', kind: 'bus-work', contains: 'fake', channel: 'eng' } });
   expect(JSON.parse((filtered.content as Array<{ text: string }>)[0].text))
-    .toMatchObject({ total: 1, filter: { source: 'bus', kind: 'bus-work', contains: 'fake' } });
+    .toMatchObject({ total: 1, filter: { source: 'bus', kind: 'bus-work', contains: 'fake', channel: 'eng' } });
   await expect(client.callTool({ name: 'fleet_comms_inbox', arguments: { limit: 0 } })).rejects.toThrow();
   await expect(client.callTool({ name: 'fleet_comms_inbox', arguments: { source: 'bogus' } })).rejects.toThrow();
 });
