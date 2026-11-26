@@ -1010,6 +1010,59 @@ describe('channel-filtered inbox reads', () => {
   });
 });
 
+describe('topic-filtered inbox reads', () => {
+  it('keeps only mail addressed to a group:<room>:<topic> carrying that topic across every room', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'ops', createdBy: 'atlas', members: ['nova'] }, options);
+    // Channel posts land on group:<channel>:<topic>; the default topic is general.
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'deploy', text: 'release deploy', id: 'tp-rel-deploy' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'release general', id: 'tp-rel-gen' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'ops', topic: 'deploy', text: 'ops deploy', id: 'tp-ops-deploy' }, options);
+    // A worker-handoff addressed to a topic room is topic mail too — the
+    // filter matches the delivery address, not the reported kind.
+    expect(appendBusInbox({ id: 'tp-ho', from: 'agent:atlas', to: 'group:release:deploy', priority: 'P2', ttl: 60_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-TP-1', prompt: 'room assignment' } }, options).status).toBe('posted');
+    // Direct mail and the general topic never match a topic filter.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm', id: 'tp-dm' }, options);
+
+    const deploy = readAgentInbox('nova', { topic: 'deploy' }, options);
+    if (deploy.status !== 'ok') throw new Error(`unexpected ${deploy.status}`);
+    expect(deploy.messages.map(m => m.envelope.id).sort()).toEqual(['tp-ho', 'tp-ops-deploy', 'tp-rel-deploy']);
+    // --channel composes into one room AND one topic.
+    const releaseDeploy = readAgentInbox('nova', { topic: 'deploy', channel: 'release' }, options);
+    if (releaseDeploy.status !== 'ok') throw new Error(`unexpected ${releaseDeploy.status}`);
+    expect(releaseDeploy.messages.map(m => m.envelope.id).sort()).toEqual(['tp-ho', 'tp-rel-deploy']);
+    expect(readAgentInbox('nova', { topic: 'general' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'tp-rel-gen' } }] });
+    // --matched counts only the rows the topic accepts.
+    const counted = readAgentInbox('nova', { topic: 'deploy', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(3);
+    // A well-formed topic no mail addresses reads ok-empty, never an error.
+    const absent = readAgentInbox('nova', { topic: 'absent' }, options);
+    expect(absent).toMatchObject({ status: 'ok', messages: [] });
+    if (absent.status !== 'ok') throw new Error(`unexpected ${absent.status}`);
+    expect(absent.nextCursor).toBeGreaterThan(0);
+    // The unfiltered page still sees everything the filter skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(5);
+  });
+
+  it('refuses a topic outside the channel-name grammar', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'deploy', text: 'post', id: 'tpi-1' }, options);
+    expect(readAgentInbox('nova', { topic: 'Bad Name' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { topic: '../x' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { topic: 'x'.repeat(33) }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'tpi-1' } }] });
+  });
+});
+
 describe('contains-filtered reads', () => {
   it('narrows inbox and channel pages to rows whose summary carries the needle', async () => {
     const options = setup();
@@ -3594,6 +3647,54 @@ describe('fleet-wide wakes read', () => {
     expect(orionOnly).toMatchObject({ status: 'ok', matched: 1 });
     if (orionOnly.status !== 'ok') throw new Error('unreachable');
     expect(orionOnly.wakes.map(row => row.id)).toEqual(['w-rel-orion']);
+  });
+
+  it('filters hints by the topic component of the group address their to label carries', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    expect(createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options).status).toBe('created');
+    expect(createAgentChannel({ name: 'ops', createdBy: 'atlas' }, options).status).toBe('created');
+    // P0 posts wake the room's group:<channel>:<topic> address.
+    expect(await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'deploy', text: 'cut',
+      id: 'wt-rel-deploy', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await postChannelMessage({ from: 'atlas', channel: 'release', text: 'general',
+      id: 'wt-rel-gen', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await postChannelMessage({ from: 'atlas', channel: 'ops', topic: 'deploy', text: 'ops deploy',
+      id: 'wt-ops-deploy', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm',
+      id: 'wt-dm', priority: 'P0', wake: true }, options)).toMatchObject({ status: 'posted' });
+
+    // Fleet-wide: the topic component matches across every room.
+    const deploy = readAllWakes(undefined, options, { topic: 'deploy' });
+    expect(deploy).toMatchObject({ status: 'ok', scope: 'fleet', matched: 2 });
+    if (deploy.status !== 'ok') throw new Error('unreachable');
+    expect(deploy.wakes.map(row => row.id)).toEqual(['wt-rel-deploy', 'wt-ops-deploy']);
+    expect(deploy.wakes.map(row => row.to)).toEqual(['group:release:deploy', 'group:ops:deploy']);
+    // --channel composes into one room AND one topic; a bare agent address,
+    // a different topic and a room with no such topic never match.
+    const releaseDeploy = readAllWakes(undefined, options, { topic: 'deploy', channel: 'release' });
+    expect(releaseDeploy).toMatchObject({ status: 'ok', matched: 1 });
+    if (releaseDeploy.status !== 'ok') throw new Error('unreachable');
+    expect(releaseDeploy.wakes.map(row => row.id)).toEqual(['wt-rel-deploy']);
+    expect(readAllWakes(undefined, options, { topic: 'general' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    expect(readAllWakes(undefined, options, { topic: 'absent' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAllWakes(undefined, options, { topic: 'Bad Name' }))
+      .toMatchObject({ status: 'invalid' });
+
+    // The per-agent read narrows inside the same addressee scope: nova
+    // belongs to release but not ops, so only the release deploy hint shows.
+    const novaDeploy = readAgentWakes('nova', undefined, options, { topic: 'deploy' });
+    expect(novaDeploy).toMatchObject({ status: 'ok', matched: 1 });
+    if (novaDeploy.status !== 'ok') throw new Error('unreachable');
+    expect(novaDeploy.wakes.map(row => row.id)).toEqual(['wt-rel-deploy']);
+    expect(readAgentWakes('nova', undefined, options, { topic: 'general' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    // The topic match needs no referent resolution, like channel — it counts
+    // inside the queue-tail match and composes with the sender filters.
+    const atlasOnly = readAllWakes(undefined, options, { topic: 'deploy', from: 'atlas' });
+    expect(atlasOnly).toMatchObject({ status: 'ok', matched: 2 });
   });
 
   it('resolves claim-holder hints and fails closed on an unreadable bus store', async () => {
