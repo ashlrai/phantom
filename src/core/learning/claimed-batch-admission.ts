@@ -1,4 +1,3 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -30,12 +29,21 @@ import {
   type ImmutablePrivateRecordReadStopReason,
   type ImmutablePrivateRecordStoreConfig,
 } from '../util/immutable-private-record-store.js';
-import { policyAssignmentUnitId } from './policy-assignment-identity.js';
+import {
+  LEARNING_WORK_SOURCES as WORK_SOURCES,
+  POLICY_IDENTIFIER_RE as POLICY_RE,
+  SHA256_HEX_RE as SHA256_RE,
+  equalSha256Hex as equalDigest,
+  exactKeys,
+  hmacSha256Tuple as hmacTuple,
+  isCanonicalIsoTimestamp as canonicalTimestamp,
+  isSha256JsonFileName,
+  policyAssignmentUnitId,
+  sha256Tuple as shaTuple,
+} from './policy-assignment-identity.js';
 
 const PROTOCOL = 'claimed-batch-admission-v1' as const;
 const COMMIT_PROTOCOL = 'claimed-batch-admission-commit-v1' as const;
-const SHA256_RE = /^[a-f0-9]{64}$/;
-const POLICY_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const MAX_MEMBERS = 512;
 const MAX_SERIALIZED_BYTES = 128 * 1024;
 const MAX_ID_BYTES = 1_024;
@@ -100,10 +108,6 @@ const REPAIR_METADATA_KEYS = [
   'repairParentTier',
   'repairParentObjectiveHash',
 ] as const satisfies readonly (keyof WorkItem)[];
-const WORK_SOURCES = new Set<WorkItem['source']>([
-  'issue', 'todo', 'test', 'dep', 'doc', 'security', 'plugin', 'self', 'lint',
-  'goal', 'hygiene', 'invent',
-]);
 
 export interface ClaimedBatchAdmissionMemberV1 {
   admissionUnitId: string;
@@ -190,7 +194,7 @@ export interface ClaimedBatchAdmissionV1 {
   attestation: string;
 }
 
-export interface ClaimedBatchAdmissionCommitV1 {
+interface ClaimedBatchAdmissionCommitV1 {
   schemaVersion: 1;
   protocol: typeof COMMIT_PROTOCOL;
   authority: 'observation-only';
@@ -223,39 +227,9 @@ interface DerivedMember {
   admissionUnitId: string;
 }
 
-function exactKeys(value: object, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const sortedExpected = [...expected].sort();
-  return actual.length === sortedExpected.length &&
-    actual.every((key, index) => key === sortedExpected[index]);
-}
-
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
 function boundedString(value: unknown, maxBytes: number): value is string {
   return typeof value === 'string' && value.length > 0 &&
     Buffer.byteLength(value, 'utf8') <= maxBytes;
-}
-
-function hmacTuple(key: Buffer, domain: string, values: readonly unknown[]): string {
-  return createHmac('sha256', key)
-    .update(JSON.stringify([domain, ...values]), 'utf8')
-    .digest('hex');
-}
-
-function shaTuple(domain: string, values: readonly unknown[]): string {
-  return createHash('sha256')
-    .update(JSON.stringify([domain, ...values]), 'utf8')
-    .digest('hex');
-}
-
-function equalDigest(left: string, right: string): boolean {
-  if (!SHA256_RE.test(left) || !SHA256_RE.test(right)) return false;
-  return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
 }
 
 function exactClaimGenerationDigest(
@@ -805,20 +779,12 @@ export function decodeClaimedBatchAdmission(serialized: string): ClaimedBatchAdm
   }
 }
 
-function admissionRoot(): string {
+export function claimedBatchAdmissionRootPath(): string {
   return resolve(join(homedir(), '.ashlr', 'claimed-batch-admissions'));
 }
 
-function admissionCommitRoot(): string {
-  return resolve(join(homedir(), '.ashlr', 'claimed-batch-admission-commits'));
-}
-
-export function claimedBatchAdmissionRootPath(): string {
-  return admissionRoot();
-}
-
 export function claimedBatchAdmissionCommitRootPath(): string {
-  return admissionCommitRoot();
+  return resolve(join(homedir(), '.ashlr', 'claimed-batch-admission-commits'));
 }
 
 function admissionCodec(key: Buffer): ImmutablePrivateRecordCodec<ClaimedBatchAdmissionV1> {
@@ -827,7 +793,7 @@ function admissionCodec(key: Buffer): ImmutablePrivateRecordCodec<ClaimedBatchAd
     serialize: (record) => `${JSON.stringify(record)}\n`,
     recordId: (record) => record.batchId,
     recordFileName: (record) => `${record.batchId}.json`,
-    isRecordFileName: (fileName) => /^[a-f0-9]{64}\.json$/.test(fileName),
+    isRecordFileName: isSha256JsonFileName,
     stageToken: (record) => hmacTuple(
       key,
       'ashlr:claimed-batch-publication-stage:v1',
@@ -849,7 +815,7 @@ function admissionCommitCodec(
     serialize: (record) => `${JSON.stringify(record)}\n`,
     recordId: (record) => record.batchId,
     recordFileName: (record) => `${record.batchId}.json`,
-    isRecordFileName: (fileName) => /^[a-f0-9]{64}\.json$/.test(fileName),
+    isRecordFileName: isSha256JsonFileName,
     stageToken: (record) => hmacTuple(
       key,
       'ashlr:claimed-batch-commit-publication-stage:v1',
@@ -863,15 +829,20 @@ function admissionCommitCodec(
   };
 }
 
-function admissionStoreConfig(
+function createAdmissionStoreConfig<RecordType>(
   mode: 'write' | 'read',
-): ImmutablePrivateRecordStoreConfig<ClaimedBatchAdmissionV1> {
-  const anchorPath = resolve(join(homedir(), '.ashlr'));
+  spec: {
+    label: string;
+    rootPath: string;
+    lockFileName: string;
+    codec: (key: Buffer) => ImmutablePrivateRecordCodec<RecordType>;
+  },
+): ImmutablePrivateRecordStoreConfig<RecordType> {
   return {
-    label: 'claimed batch admission',
-    anchorPath,
-    rootPath: admissionRoot(),
-    lockFileName: '.claimed-batch-admissions.lock',
+    label: spec.label,
+    anchorPath: resolve(join(homedir(), '.ashlr')),
+    rootPath: spec.rootPath,
+    lockFileName: spec.lockFileName,
     maxRecordBytes: MAX_SERIALIZED_BYTES + 1,
     defaultMaxFiles: 4_096,
     hardMaxFiles: 16_384,
@@ -880,41 +851,36 @@ function admissionStoreConfig(
     codecForWrite: () => {
       if (mode !== 'write') return null;
       const key = loadExistingProvenanceKey();
-      return key?.length === 32 ? admissionCodec(key) : null;
+      return key?.length === 32 ? spec.codec(key) : null;
     },
     codecForRead: () => {
       if (mode !== 'read') return null;
       const key = loadExistingProvenanceKeyReadOnly();
-      return key?.length === 32 ? admissionCodec(key) : null;
+      return key?.length === 32 ? spec.codec(key) : null;
     },
   };
+}
+
+function admissionStoreConfig(
+  mode: 'write' | 'read',
+): ImmutablePrivateRecordStoreConfig<ClaimedBatchAdmissionV1> {
+  return createAdmissionStoreConfig(mode, {
+    label: 'claimed batch admission',
+    rootPath: claimedBatchAdmissionRootPath(),
+    lockFileName: '.claimed-batch-admissions.lock',
+    codec: admissionCodec,
+  });
 }
 
 function admissionCommitStoreConfig(
   mode: 'write' | 'read',
 ): ImmutablePrivateRecordStoreConfig<ClaimedBatchAdmissionCommitV1> {
-  const anchorPath = resolve(join(homedir(), '.ashlr'));
-  return {
+  return createAdmissionStoreConfig(mode, {
     label: 'claimed batch admission commit',
-    anchorPath,
-    rootPath: admissionCommitRoot(),
+    rootPath: claimedBatchAdmissionCommitRootPath(),
     lockFileName: '.claimed-batch-admission-commits.lock',
-    maxRecordBytes: MAX_SERIALIZED_BYTES + 1,
-    defaultMaxFiles: 4_096,
-    hardMaxFiles: 16_384,
-    defaultMaxBytes: 16 * 1024 * 1024,
-    hardMaxBytes: 128 * 1024 * 1024,
-    codecForWrite: () => {
-      if (mode !== 'write') return null;
-      const key = loadExistingProvenanceKey();
-      return key?.length === 32 ? admissionCommitCodec(key) : null;
-    },
-    codecForRead: () => {
-      if (mode !== 'read') return null;
-      const key = loadExistingProvenanceKeyReadOnly();
-      return key?.length === 32 ? admissionCommitCodec(key) : null;
-    },
-  };
+    codec: admissionCommitCodec,
+  });
 }
 
 export function admitClaimedBatchAfterExactFence(

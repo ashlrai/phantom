@@ -1,4 +1,5 @@
 import type { ProductionAttemptShape, RunActionCounts } from '../types.js';
+import { optionalBoolean } from './policy-assignment-identity.js';
 
 export interface ProductionAttemptShapeSignals {
   outcome?: string | null;
@@ -24,7 +25,7 @@ export type ProductionAttemptLearningKind =
   | 'blocked'
   | 'unknown';
 
-export const PRODUCTION_ATTEMPT_LEARNING_LABEL_SCHEMA_VERSION = 1;
+const PRODUCTION_ATTEMPT_LEARNING_LABEL_SCHEMA_VERSION = 1 as const;
 export const PRODUCTION_ATTEMPT_LEARNING_CLASSIFIER_VERSION = 'attempt-shape-v2';
 
 // Keep the envelope stable so v1 readers can drop an unknown label without dropping its event row.
@@ -39,7 +40,7 @@ export interface ProductionAttemptLearningClassification {
 }
 
 export interface ProductionAttemptLearningLabel {
-  schemaVersion: typeof PRODUCTION_ATTEMPT_LEARNING_LABEL_SCHEMA_VERSION;
+  schemaVersion: 1;
   classifierVersion: typeof PRODUCTION_ATTEMPT_LEARNING_CLASSIFIER_VERSION;
   authoritative: true;
   learningKind: ProductionAttemptLearningKind;
@@ -95,11 +96,11 @@ export function hasProductionAttemptShape(shape: ProductionAttemptShape): boolea
     shape.policyDisabled > 0;
 }
 
-export function productionAttemptShapeFromSignals(
+function productionAttemptShapeFromSignals(
   signals: ProductionAttemptShapeSignals,
 ): ProductionAttemptShape {
   const shape = emptyProductionAttemptShape();
-  const outcome = normalizeOutcome(signals.outcome);
+  const outcome = normalizeSignalText(signals.outcome);
   const captureMissing = isCaptureMissingSignal(signals);
   const counts = actionCountsRecord(signals.actionCounts);
   const diffFiles = nonNegativeInteger(counts?.diffFiles);
@@ -139,7 +140,7 @@ export function classifyProductionAttemptForLearning(
   signals: ProductionAttemptShapeSignals,
 ): ProductionAttemptLearningClassification {
   const attemptShape = productionAttemptShapeFromSignals(signals);
-  const outcome = normalizeOutcome(signals.outcome);
+  const outcome = normalizeSignalText(signals.outcome);
   const produced = signals.proposalCreated === true || outcome === 'proposal-created';
   const cancelled = !produced && isCancellationSignal(signals);
   const observationOnly = outcome === 'shadow-observation';
@@ -184,7 +185,7 @@ export function productionAttemptLearningLabelFromSignals(
   return productionAttemptLearningLabelFromClassification(classifyProductionAttemptForLearning(signals));
 }
 
-export function productionAttemptLearningLabelFromClassification(
+function productionAttemptLearningLabelFromClassification(
   classification: ProductionAttemptLearningClassification,
 ): ProductionAttemptLearningLabel {
   return {
@@ -274,27 +275,21 @@ function actionCountsRecord(counts: RunActionCounts | undefined): Record<string,
     : undefined;
 }
 
-function normalizeOutcome(value: string | null | undefined): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const normalized = value.trim().toLowerCase();
-  return normalized || undefined;
-}
-
-function normalizeReason(value: string | null | undefined): string | undefined {
+function normalizeSignalText(value: string | null | undefined): string | undefined {
   if (typeof value !== 'string') return undefined;
   const normalized = value.trim().toLowerCase();
   return normalized || undefined;
 }
 
 function isCaptureMissingSignal(signals: ProductionAttemptShapeSignals): boolean {
-  const reason = normalizeReason(signals.reason);
+  const reason = normalizeSignalText(signals.reason);
   return reason?.includes('capture-missing') === true;
 }
 
 function isCancellationSignal(signals: ProductionAttemptShapeSignals): boolean {
-  const outcome = normalizeOutcome(signals.outcome);
+  const outcome = normalizeSignalText(signals.outcome);
   if (outcome === 'cancelled' || outcome === 'canceled') return true;
-  const reason = normalizeReason(signals.reason);
+  const reason = normalizeSignalText(signals.reason);
   if (!reason) return false;
   return /\bselection cancell?ed\b/.test(reason) ||
     /\bdaemon lock ownership lost\b/.test(reason) ||
@@ -305,13 +300,13 @@ function isCancellationSignal(signals: ProductionAttemptShapeSignals): boolean {
 export function generatedRepairAttemptKindFromSignals(
   signals: Pick<ProductionAttemptShapeSignals, 'itemId' | 'title' | 'source'>,
 ): GeneratedRepairAttemptKind | undefined {
-  const itemId = normalizeReason(signals.itemId);
+  const itemId = normalizeSignalText(signals.itemId);
   if (itemId) {
     if (/(^|:)proposal-repair-capture:[0-9a-f]{12}\b/i.test(itemId)) return 'capture-repair';
     if (/(^|:)proposal-repair-nodiff:[0-9a-f]{12}\b/i.test(itemId)) return 'no-diff-reslice';
     if (/(^|:)proposal-repair:[0-9a-f]{12}\b/i.test(itemId)) return 'proposal-repair';
   }
-  const title = normalizeReason(signals.title);
+  const title = normalizeSignalText(signals.title);
   if (title?.startsWith('repair dispatch capture failure for ') === true) return 'capture-repair';
   if (title?.startsWith('reslice no-diff dispatch for ') === true) return 'no-diff-reslice';
   if (title?.startsWith('repair proposal ') === true) return 'proposal-repair';
@@ -321,10 +316,6 @@ export function generatedRepairAttemptKindFromSignals(
 function nonNegativeInteger(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
   return Math.min(Number.MAX_SAFE_INTEGER, Math.trunc(value));
-}
-
-function optionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined;
 }
 
 function productionAttemptShapeFromUnknown(value: unknown): ProductionAttemptShape | undefined {
