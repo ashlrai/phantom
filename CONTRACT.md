@@ -19,6 +19,19 @@ Creation requires `--dry-run` and never calls the writer.
 with a timezone. The lane snapshot uses it for the merge window and falls
 back to `at` when absent. `at` continues to carry the event timestamp.
 
+## Wiki context and ecosystem
+
+`cloudBrainContext(githubRepo, checkout, taskText)` and
+`fleetBrainContext(repoName, taskText)` return `{ text, nodeIds }`; text is
+bounded to 3,072 UTF-8 bytes. Fleet drop jobs only append context that fits the
+drop contract. `phm wiki brain stats --json` reports separate Fleet and Cloud
+merge rates for explicitly measured jobs with resolved PRs.
+
+`phm wiki ecosystem --json`, `phm_wiki_ecosystem`, and the local
+`GET /api/verse/wiki/ecosystem` return `phantom.wiki.ecosystem.v1`. The graph
+uses the active signed scope, local Git objects, and commit-pinned anchors;
+repositories without an available local index remain visible as unindexed.
+
 ## Desktop appearance
 
 `UiAppearance` (`src/core/verse/ui-appearance-file.ts`) includes

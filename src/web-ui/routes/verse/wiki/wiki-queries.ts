@@ -21,6 +21,7 @@ import type {
   WikiReposView,
 } from '../../../../core/knowledge/wiki/types.js';
 import type { querySystemMap } from '../../../../core/knowledge/wiki/system-map.js';
+import type { queryWikiEcosystem } from '../../../../core/knowledge/wiki/ecosystem.js';
 import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
 import { apiGet, apiPost } from '../../../data/client.js';
 import { invalidate } from '../../../data/cache.js';
@@ -54,6 +55,11 @@ export function wikiGraphQuery(key: string): QueryDef<WikiGraphView> {
 }
 
 export type SystemMapResult = Awaited<ReturnType<typeof querySystemMap>>;
+export type WikiEcosystemResult = Awaited<ReturnType<typeof queryWikiEcosystem>>;
+export const wikiEcosystemQuery: QueryDef<WikiEcosystemResult> = {
+  key: 'verse-wiki-ecosystem',
+  fetch: (signal) => apiGet<WikiEcosystemResult>(`${WIKI_PATH}/ecosystem`, signal),
+};
 
 export function wikiSystemMapQuery(key: string, focus?: string, commit?: string | null): QueryDef<SystemMapResult> {
   const query = focus ? `?${new URLSearchParams({ focus })}` : '';

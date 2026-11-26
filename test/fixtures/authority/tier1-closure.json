@@ -1089,6 +1089,7 @@
     "src/core/knowledge/wiki/brain-cloud.ts",
     "src/core/knowledge/wiki/brain.ts",
     "src/core/knowledge/wiki/citations.ts",
+    "src/core/knowledge/wiki/ecosystem.ts",
     "src/core/knowledge/wiki/facts.ts",
     "src/core/knowledge/wiki/plan.ts",
     "src/core/knowledge/wiki/scan.ts",

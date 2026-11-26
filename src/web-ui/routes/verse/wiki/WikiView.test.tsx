@@ -99,10 +99,11 @@ function systemGraph(focus: string | null, commit = SHA): SystemGraph {
   };
 }
 
-function server(over: { repo?: () => WikiRepoView; ask?: WikiAskResult; onPost?: (c: RecordedCall) => void; map?: (focus: string | null) => SystemGraph } = {}) {
+function server(over: { repo?: () => WikiRepoView; ask?: WikiAskResult; onPost?: (c: RecordedCall) => void; map?: (focus: string | null) => SystemGraph; ecosystem?: unknown } = {}) {
   return installFetch((call) => {
     if (call.method === 'POST') over.onPost?.(call);
     if (call.path === '/api/verse/wiki') return json(reposView);
+    if (call.path === '/api/verse/wiki/ecosystem' && over.ecosystem) return json(over.ecosystem);
     if (call.path === `/api/verse/wiki/repo/${KEY}`) return json(over.repo ? over.repo() : repoView());
     if (call.path === `/api/verse/wiki/repo/${OTHER}`) return json(repoView({ status: status({ key: OTHER, exists: false, pages: [], stalePages: 0, generatedCommit: null }), githubUrl: null }));
     if (call.path === `/api/verse/wiki/repo/${KEY}/graph` || call.path === `/api/verse/wiki/repo/${OTHER}/graph`) return json(GRAPH);
@@ -152,6 +153,26 @@ describe('wiki-model', () => {
 });
 
 describe('WikiView', () => {
+  it('opens the signed-scope ecosystem and cites the source repository at its indexed commit', async () => {
+    const { calls } = server({ map: systemGraph, ecosystem: {
+      status: 'current',
+      repos: [{ repo: 'acme/notes', commit: SHA }, { repo: 'acme/storage', commit: null }],
+      edges: [{ from: 'acme/notes', to: 'acme/storage', kind: 'npm-dependency', anchor: { commit: SHA, file: 'package.json', line: 8 } }],
+    } });
+    render(<WikiView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'System map' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ecosystem' }));
+    const map = within(await screen.findByRole('region', { name: 'Signed-grant ecosystem map' }));
+    expect(await map.findByText('signed repos indexed', { exact: false })).toHaveTextContent('1 of 2');
+    const source = map.getByRole('link', { name: /Open pinned source/ });
+    expect(source).toHaveAttribute('href', `https://github.com/acme/notes/blob/${SHA}/package.json#L8`);
+    fireEvent.keyDown(map.getByRole('button', { name: 'acme/storage', pressed: false }), { key: 'Enter' });
+    expect(map.getByText('No matching local checkout was indexed.')).toBeInTheDocument();
+    fireEvent.keyDown(map.getByRole('heading', { name: 'Ecosystem' }), { key: 'Escape' });
+    expect(await screen.findByRole('heading', { name: 'Subsystem overview' })).toBeInTheDocument();
+    expect(calls.find(call => call.path === '/api/verse/wiki/ecosystem')?.method).toBe('GET');
+  });
+
   it('drills from subsystem to file to symbol with keyboard and breadcrumbs, and links to the pinned revision', async () => {
     const { calls } = server({ map: systemGraph, repo: () => repoView({ status: status({ currentCommit: 'b'.repeat(40) }) }) });
     render(<WikiView />);

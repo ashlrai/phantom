@@ -212,6 +212,7 @@ export function isCloudTask(value: unknown): value is CloudTaskV1 {
     && (value['intake'] === undefined || isIntakeMemo(value['intake']))
     && (value['playbookRef'] === undefined || isPlaybookRef(value['playbookRef']))
     && (value['lessons'] === undefined || isLessons(value['lessons']))
+    && (value['wikiSlice'] === undefined || isWikiSlice(value['wikiSlice']))
     && (value['outcome'] === undefined || isOutcome(value['outcome']))
     && typeof value['estimatedCostUsd'] === 'number' && Number.isFinite(value['estimatedCostUsd']) && value['estimatedCostUsd'] >= 0
     && isNullableString(value['backlogItemId'])
@@ -225,6 +226,14 @@ function isLessons(v: unknown): boolean {
     && (l['family'] === undefined || (typeof l['family'] === 'string' && /^[a-z0-9][a-z0-9_-]{0,79}$/.test(l['family'])))
     && Array.isArray(l['noteIds']) && l['noteIds'].length <= 64
     && l['noteIds'].every((id) => typeof id === 'string' && id.length > 0 && id.length <= 80);
+}
+
+function isWikiSlice(v: unknown): boolean {
+  if (!v || typeof v !== 'object') return false;
+  const { bytes, nodeIds } = v as Record<string, unknown>;
+  return typeof bytes === 'number' && Number.isSafeInteger(bytes) && bytes >= 0 && bytes <= 3072
+    && Array.isArray(nodeIds) && nodeIds.length <= 16
+    && nodeIds.every(id => typeof id === 'string' && id.length > 0 && id.length <= 1200);
 }
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -267,6 +276,21 @@ export function listCloudTasks(limit: number = DEFAULT_LIST_LIMIT): CloudTaskV1[
   }
   tasks.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id));
   return tasks.slice(0, cap);
+}
+
+export function wikiCloudSliceStats() {
+  const withSlice = { resolved: 0, merged: 0 };
+  const withoutSlice = { resolved: 0, merged: 0 };
+  for (const task of listCloudTasks(Number.MAX_SAFE_INTEGER)) {
+    if (!task.wikiSlice || (task.state !== 'merged' && task.state !== 'closed')) continue;
+    const cohort = task.wikiSlice.bytes ? withSlice : withoutSlice;
+    cohort.resolved++;
+    if (task.state === 'merged') cohort.merged++;
+  }
+  const summarize = (cohort: typeof withSlice) => ({
+    ...cohort, mergeRate: cohort.resolved ? cohort.merged / cohort.resolved : null,
+  });
+  return { schema: 'phantom.wiki.slice-stats.v1', withSlice: summarize(withSlice), withoutSlice: summarize(withoutSlice) };
 }
 
 export function readCloudTask(id: string): CloudTaskV1 | null {
