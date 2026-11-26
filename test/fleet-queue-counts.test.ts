@@ -43,6 +43,27 @@ it('counts ready, parked, running and last-hour merges per lane', async () => {
   expect(report.totals).toEqual({ ready: 3, parked: 1, running: 2, merges: 3, blockedReasons: [{ reason: 'DEP', count: 1 }], stale: 0 });
 });
 
+it('counts lane-open jobs in total ready supply without attributing them to a lane', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    'RQ-OPEN\tphantom\t\tfrontier\tprompts/open.md',
+    'RQ-RESET-HINT\tphantom\tcodex\twork\tprompts/reset.md\t{"preferred_lane":null}',
+    row('READY', 'RQ-HINTED', 'devin'),
+  ].join('\n'));
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.sources.ready).toBe('healthy');
+  expect(report.totals).toMatchObject({ ready: 3, parked: 0 });
+  expect(report.lanes).toMatchObject([{ lane: 'devin', ready: 1 }]);
+});
+
+it('keeps ready and parked counts unknown when ready.tsv cannot be read', async () => {
+  await mkdir(join(queueDir, 'ready.tsv'));
+  await writeFile(join(queueDir, 'jobs.jsonl'), merge('m-1', 'devin', minutesAgo(5)));
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.sources.ready).toBe('degraded');
+  expect(report.totals).toMatchObject({ ready: null, parked: null, stale: null, merges: 1 });
+  expect(report.lanes).toMatchObject([{ lane: 'devin', ready: null, parked: null, stale: null, merges: 1 }]);
+});
+
 it('ignores merge events with missing or invalid timestamps', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
   await writeFile(join(queueDir, 'jobs.jsonl'), [
@@ -309,6 +330,7 @@ it('marks a malformed queue as degraded and keeps counts null-safe', async () =>
   const report = await getLaneQueueCounts({ runsDir: root, now });
   expect(report.sources.ready).toBe('degraded');
   expect(report.sources.ledger).toBe('degraded');
+  expect(report.totals).toMatchObject({ ready: 1, parked: 0 });
   expect(report.notes.some(n => n.includes('unreadable or has malformed rows'))).toBe(true);
 });
 
