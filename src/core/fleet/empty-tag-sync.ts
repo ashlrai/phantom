@@ -42,8 +42,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { ledgerEventName, ledgerRows } from './empty-cause.js';
-import { finishesIn } from './empty-finishes.js';
+import { currentAttemptFinishes } from './empty-finishes.js';
 import { EMPTY_TAGS, recordEmptyTags, tagEmpty, type EmptyTag, type TaggedEmptyJob } from './empty-tags.js';
 import { readSource } from './runs-parked-queue.js';
 import { recordDupcheckOutcomes } from '../queue/dupcheck-gate.js';
@@ -125,18 +124,6 @@ function recordedTags(text: string): Map<string, EmptyTag> {
   return tags;
 }
 
-function currentAttemptFinishes(text: string, nowMs: number) {
-  const { rows } = ledgerRows(text, nowMs, EMPTY_TAG_SYNC_HOURS);
-  // Use receipt time, with ledger order breaking ties between same-time rows.
-  rows.sort((a, b) => a.at - b.at);
-  const latestDispatch = new Map<string, number>();
-  for (const [index, { id, row }] of rows.entries()) {
-    const event = ledgerEventName(row);
-    if (event === 'launch' || event === 'batch_claim') latestDispatch.set(id, index);
-  }
-  return finishesIn(rows.filter(({ id }, index) => index >= (latestDispatch.get(id) ?? 0)));
-}
-
 /**
  * Refresh the empty-job evidence ledgers from the fleet jobs ledger. Runs
  * inside the daemon's empty-tag-sync off-tick job on the self-improvement
@@ -169,7 +156,7 @@ export async function syncEmptyTagsFromJobsLedger(
     if (tagsState !== 'read' && tagsState !== 'missing') return base;
     const seen = tagsRead.state === 'read' ? recordedTags(tagsRead.text) : new Map<string, EmptyTag>();
 
-    const candidates = currentAttemptFinishes(jobs.text, nowMs)
+    const candidates = currentAttemptFinishes(jobs.text, nowMs, EMPTY_TAG_SYNC_HOURS)
       .filter(finish => finish.empty === true)
       .map(finish => ({ id: finish.id, lane: finish.lane }));
     const fresh = candidates.filter(candidate => !seen.has(candidate.id));

@@ -54,3 +54,16 @@ export function ledgerFinishes(ledger: string, now: number, hours: number): { fi
   const { rows, malformed } = ledgerRows(ledger, now, hours);
   return { finishes: finishesIn(rows).map(({ at: _at, ...finish }) => finish), malformed };
 }
+
+/** Windowed finishes from the latest observed dispatch attempt for each job. */
+export function currentAttemptFinishes(text: string, nowMs: number, hours: number) {
+  const { rows } = ledgerRows(text, nowMs, hours);
+  // Use receipt time, with ledger order breaking ties between same-time rows.
+  rows.sort((a, b) => a.at - b.at);
+  const latestDispatch = new Map<string, number>();
+  for (const [index, { id, row }] of rows.entries()) {
+    const event = ledgerEventName(row);
+    if (event === 'launch' || event === 'batch_claim') latestDispatch.set(id, index);
+  }
+  return finishesIn(rows.filter(({ id }, index) => index >= (latestDispatch.get(id) ?? 0)));
+}

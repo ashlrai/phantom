@@ -1220,6 +1220,12 @@ jobs ledger. If either journal is missing or unreadable, the report still
 includes evidence from the readable journal. Interpret counts using the
 availability flag for the journal they depend on.
 
+Empty-tag backlog discovery and the daemon's empty-tag sync both use
+finishes from each job's latest observed dispatch attempt in their ledger
+windows. A launch or batch claim supersedes earlier finishes, so a retry
+awaiting its own finish is excluded from the backlog's empty and untagged
+counts. Receipt timestamps determine the order, with ledger order breaking ties.
+
 The self-improvement discovery feed queues recurring refusals after four
 distinct recorded rejection observations for one source and reason across
 at least two UTC days in the last seven days. Replayed decisions with the

@@ -78,6 +78,22 @@ describe('foldEmptyTagWindow', () => {
 });
 
 describe('emptyTagBacklogItems', () => {
+  it.each(['launch', 'batch_claim'])('uses only current-attempt finishes after a %s', async (event) => {
+    const ids = ['RQ-RETRY-1', 'RQ-RETRY-2', 'RQ-RETRY-3'];
+    const receipts = ids.flatMap((job) => [
+      finishRow(job, 4),
+      JSON.stringify({ ts: iso(4), job, event }),
+    ]);
+    const options = { repo: 'ashlrai/phantom', now: NOW, tagsText: '' };
+    expect(await emptyTagBacklogItems({ ...options, jobsText: receipts.join('\n') })).toEqual([]);
+
+    // New finishes count even when their receipts were appended out of timestamp order.
+    const jobsText = [...ids.map((job) => finishRow(job, 2)), ...receipts].join('\n');
+    const items = await emptyTagBacklogItems({ ...options, jobsText });
+    expect(items.map((item) => item.id)).toEqual(['fleet-empty-tag-untagged']);
+    expect(items[0]?.prompt).toContain('untagged=3');
+  });
+
   it('turns a recurring recorded tag into a valid priority-3 backlog item', async () => {
     const jobs = [finishRow('RQ-AAA-1', 5), finishRow('RQ-AAA-2', 4), finishRow('RQ-AAA-3', 3)].join('\n');
     const tags = [tagRow('RQ-AAA-1', 'blocked'), tagRow('RQ-AAA-2', 'blocked'), tagRow('RQ-AAA-3', 'blocked')].join('\n');
