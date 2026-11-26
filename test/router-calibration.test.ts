@@ -20,7 +20,7 @@ describe('router calibration', () => {
     expect(report.arms[0]!.brier).toBeCloseTo(0.1);
     expect(report.arms[1]).toMatchObject({ arm: 'other', jobs: 1, resolved: 0,
       brier: null, mergeRate: { predicted: null, actual: null, paired: 0 } });
-    expect(calibrationMarkdown(report)).toContain('| codex | 2 | 2 | 0.6 / 0.5 (2) | 0.1 | 200 / 180 (2) | 2500 / 2500 (2) |');
+    expect(calibrationMarkdown(report)).toContain('| codex | 2 | 2 | 0.6 / 0.5 (2) | 0.1 | 200 / 180 (2) | 2500 / 2500 (2) | 0.5 |');
   });
   it('works without the export and only averages matched measurements', () => {
     const report = calibrateRouting(jobs);
@@ -44,7 +44,7 @@ describe('router calibration', () => {
       JSON.stringify([{ job_id: 'RQ-A', predicted_merge_rate: 0.8, predicted_tokens: 300,
         predicted_wall_time_ms: 2000 }]),
     );
-    expect(report.arms).toMatchObject([{ arm: 'codex', jobs: 3, resolved: 2,
+    expect(report.arms).toMatchObject([{ arm: 'codex', jobs: 3, resolved: 2, observedMergeRate: 0.5,
       mergeRate: { predicted: 0.8, actual: 1, paired: 1 },
       tokens: { predicted: 300, actual: 240, paired: 1 },
       wallTimeMs: { predicted: 2000, actual: 2250, paired: 2 } }]);
@@ -63,7 +63,7 @@ describe('router calibration', () => {
   it('does not treat publish or an unknown outcome as a negative merge', () => {
     const report = calibrateRouting(row({ event: 'launch', id: 'TEST-a', arm: 'a', predicted_merge_rate: 0.5 }) +
       row({ event: 'publish', id: 'TEST-a', status: 'published' }) + row({ event: 'outcome', id: 'TEST-a', outcome: 'pending' }));
-    expect(report.arms[0]).toMatchObject({ resolved: 0, brier: null });
+    expect(report.arms[0]).toMatchObject({ resolved: 0, observedMergeRate: null, brier: null });
   });
   it('rejects reverse time and escapes markdown arm names', () => {
     expect(() => calibrateRouting(row({ event: 'launch', id: 'TEST-a', arm: 'a', timestamp: '2026-01-02T00:00:00Z' }) +

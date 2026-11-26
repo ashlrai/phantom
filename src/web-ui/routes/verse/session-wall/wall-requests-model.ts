@@ -101,5 +101,5 @@ export function requestWords(request: WallRequest): string {
 /** What a message's button is called: its time, where it came from, and its words when the read holds them. */
 export function requestName(request: WallRequest): string {
   const from = request.source ? ` from ${request.source}` : '';
-  return `Mason's message of ${requestTime(request.at)}${from}${request.text ? `: ${request.text}` : ''}`;
+  return `the owner's message of ${requestTime(request.at)}${from}${request.text ? `: ${request.text}` : ''}`;
 }

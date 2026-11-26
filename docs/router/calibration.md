@@ -23,3 +23,9 @@ and `ciWallMs` measures CI, so a reward row alone leaves execution wall time
 unknown.
 
 Each predicted / actual average uses only jobs with both values, with the paired count shown alongside it. Brier is the mean squared difference between each recorded merge probability and its binary resolved outcome for that same population. `resolved` counts all known outcomes, including jobs without predictions. Missing pairs produce null in JSON and `n/a` in Markdown. These are descriptive statistics of recorded evidence, not proof that the sample is representative. The files supplied by the operator determine schema compatibility and coverage.
+
+Observed merge rate (`observedMergeRate` in JSON) divides positive outcomes
+by all resolved jobs in the arm, including reward-only jobs. With zero resolved
+jobs the rate is null in JSON and `n/a` in Markdown. When `--baseline-jobs` is
+provided, the delta subtracts the baseline's observed rate from the current
+rate and is available only when both rates are known.

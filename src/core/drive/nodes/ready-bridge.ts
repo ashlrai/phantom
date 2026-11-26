@@ -136,11 +136,28 @@ export function planNodeBridge(input: {
   const live = input.nodes.filter(n => n.live).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const running = (id: string) => input.jobs.filter(j => j.state === 'running' && j.claimedBy === id).length;
   const free = new Map<string, number | null>(live.map(n => [n.nodeId, n.slots === undefined ? null : Math.max(0, n.slots - running(n.nodeId))]));
+  // Capacity-reporting nodes on one physical host share its measured slots —
+  // the router's nodeCapacityView groups by capacity.hostId the same way. Each
+  // node's advertised `slots` already includes host headroom, so free capacity
+  // is accounted once per host (the smallest advertisement minus every claim
+  // on it), never summed per node; a node without a capacity sample is its own
+  // host, which leaves standalone accounting exactly as before.
+  const hostOf = (n: NodeView): string => n.capacity?.hostId ?? n.nodeId;
+  const hostGroups = new Map<string, NodeView[]>();
+  for (const n of live) { const host = hostOf(n); const members = hostGroups.get(host) ?? []; members.push(n); hostGroups.set(host, members); }
+  const hostFree = new Map<string, number | null>();
+  for (const [host, members] of hostGroups) {
+    hostFree.set(host, members.every(m => m.slots !== undefined)
+      ? Math.max(0, Math.min(...members.map(m => m.slots!)) - members.reduce((sum, m) => sum + running(m.nodeId), 0))
+      : null);
+  }
   const take = (requires: string[]): NodeView | null => {
-    const fits = live.filter(n => requires.every(c => n.caps.includes(c)) && (free.get(n.nodeId) ?? 0) > 0)
-      .sort((a, b) => (free.get(b.nodeId)! - free.get(a.nodeId)!) || (a.nodeId < b.nodeId ? -1 : 1));
-    if (fits[0]) free.set(fits[0].nodeId, free.get(fits[0].nodeId)! - 1);
-    return fits[0] ?? null;
+    const fits = live.filter(n => requires.every(c => n.caps.includes(c)) && (free.get(n.nodeId) ?? 0) > 0 && (hostFree.get(hostOf(n)) ?? 0) > 0)
+      .sort((a, b) => ((hostFree.get(hostOf(b)) ?? 0) - (hostFree.get(hostOf(a)) ?? 0)) || (a.nodeId < b.nodeId ? -1 : 1));
+    if (!fits[0]) return null;
+    free.set(fits[0].nodeId, free.get(fits[0].nodeId)! - 1);
+    hostFree.set(hostOf(fits[0]), hostFree.get(hostOf(fits[0]))! - 1);
+    return fits[0];
   };
   // Router jobs still waiting (or held by an unreported node) reserve a slot before any new row.
   for (const job of input.jobs) if (job.state === 'pending' || (job.state === 'running' && !job.claimedBy)) take(job.requires);

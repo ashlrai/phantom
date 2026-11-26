@@ -226,6 +226,22 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(skillNudgeJobsFromLedger(text)[0]).toMatchObject({ lane: 'devin' });
   });
 
+  it('uses eventless terminal lane evidence and preserves known lanes through unknown values', () => {
+    const text = [
+      enqueue('RQ-N1', 'fast'),
+      line({ job: 'RQ-N1', state: 'MERGED', pool: 'devin' }),
+      launch('RQ-N2', 'codex'),
+      line({ job: 'RQ-N2', state: 'MERGED', lane: 'unknown' }),
+      enqueue('RQ-N3', 'fast'),
+      line({ job: 'RQ-N3', state: 'MERGED' }),
+    ].join('\n');
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: 'RQ-N1', lane: 'devin', outcome: 'merged' },
+      { id: 'RQ-N2', lane: 'codex', outcome: 'merged' },
+      { id: 'RQ-N3', lane: 'unknown', outcome: 'merged' },
+    ]);
+  });
+
   it('keeps only identifier-safe failure classes and prefers finish fields', () => {
     const text = [
       launch('RQ-O'),

@@ -33,7 +33,7 @@ export function draftSkillNudges(jobs: readonly SkillNudgeJob[], ts: string): Sk
   const byId = new Map<string, SkillNudgeJob>();
   const conflicts = new Set<string>();
   for (const job of jobs) {
-    if (!validId(job.id) || !validId(job.lane) ||
+    if (!validId(job.id) || !hasKnownLane(job.lane) ||
       (job.failureClass !== undefined && !validId(job.failureClass))) continue;
     const old = byId.get(job.id);
     if (old && JSON.stringify(old) !== JSON.stringify(job)) conflicts.add(job.id);
@@ -70,6 +70,10 @@ export function draftSkillNudges(jobs: readonly SkillNudgeJob[], ts: string): Sk
     }));
   }
   return [...drafts.values()].sort((a, b) => a.skillId.localeCompare(b.skillId));
+}
+
+function hasKnownLane(lane: string): boolean {
+  return validId(lane) && lane.toLowerCase() !== 'unknown';
 }
 
 /** Append candidates to the existing ledger; never attest or promote them. */
@@ -282,9 +286,10 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     }
     acc.lastLine = lineNo;
     const event = ledgerEventName(row);
-    if (event !== null && !QUEUE_HINT_EVENTS.has(event)) {
+    const outcome = outcomeOf(row);
+    if (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event)) {
       const lane = firstString(row, LEDGER_LANE_KEYS);
-      if (lane !== null && LEDGER_ID_PATTERN.test(lane)) acc.lane = lane;
+      if (lane !== null && hasKnownLane(lane)) acc.lane = lane;
     }
     if (event !== null && ATTEMPT_EVENTS.has(event)) acc.attempts += 1;
     else if (event === 'claim' && row['launch_dedupe'] !== true) acc.attempts += 1;
@@ -298,7 +303,6 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     const failureClass = failureClassOf(row, event);
     if (failureClass !== null) acc.failureClass = failureClass;
     if (hasRevertEvidence(row)) acc.reverted = true;
-    const outcome = outcomeOf(row);
     if (outcome !== undefined) {
       acc.outcome = outcome;
       acc.outcomeLine = lineNo;

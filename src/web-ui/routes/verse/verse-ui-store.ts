@@ -425,6 +425,16 @@ export interface VerseAnchorRequest {
   anchor: string;
 }
 
+let lastAnchor: (VerseAnchorRequest & { at: number }) | null = null;
+
+/**
+ * The newest anchor request, for a surface whose own chunk mounted after the
+ * event fired (Settings picks the group that holds the anchor).
+ */
+export function lastVerseAnchor(): (VerseAnchorRequest & { at: number }) | null {
+  return lastAnchor;
+}
+
 /**
  * Switch surface; with `anchor`, also ask the shell to scroll that card or
  * row into view once the surface has painted. The anchor travels as a window
@@ -434,6 +444,7 @@ export interface VerseAnchorRequest {
  */
 export function setVerseSection(section: VerseSectionId, anchor: string | null = null): void {
   go(section, { history: true });
+  lastAnchor = anchor ? { section, anchor, at: Date.now() } : null;
   if (!anchor || typeof window === 'undefined') return;
   const detail: VerseAnchorRequest = { section, anchor };
   window.dispatchEvent(new CustomEvent(VERSE_ANCHOR_EVENT, { detail }));

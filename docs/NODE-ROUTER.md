@@ -87,8 +87,9 @@ job's outcome: `pending`, `running` (naming the node whose live claim can act),
 
 A text `pull` (no `--json`) prints the same claim for a person: the job's
 owner, requirements, pack and secret names, the embedded task text when the
-job carries one, the lease token pair and expiry, and paste-ready `renew` and
-`complete` commands.
+job carries one, the lease token pair and expiry, and paste-ready `renew`,
+`complete` and `release` commands — the last names `--decline` for a job this
+node can never run.
 
 The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
@@ -99,7 +100,9 @@ the node holding each running claim (`claimed by`, or `no live claim` once the
 claim lapsed or was fenced), show each node's advertised slot bound (`slots=N`,
 or `slots=unbounded` when no bound was ever reported — an absent bound is
 legacy routing, not a measured zero) and its last measured hold as
-`held=<reason>` while one is reported, mark producer withdrawals, carry the
+`held=<reason>` while one is reported, name the `phm node join` command that
+restores each expired node's last advertised profile (the same hint a
+session-expired error prints), mark producer withdrawals, carry the
 same fix `phm node plan` prints on a job that still has no taker, and an
 empty scope says so with the join command; `enqueue` says when the job id already
 exists;
@@ -174,8 +177,11 @@ carrying the node's last advertised owner scopes, caps and slots while the
 registry still holds the record (placeholders when it does not). If the node
 already rejoined under a newer session, the fix names that session and the
 exact `leave` command instead, so an operator who lost track of the number can
-resume without re-joining again. A `node-live` error from `join` names the live
-session the same way. `leave` under a stale session answers `"left":false` with
+resume without re-joining again. A `node-live` error from a standalone `join`
+names the live session the same way; a pool `join` reports `node-live` when
+this computer's node id already holds a live session (a running worker or an
+unexpired join) and its fix points at `phm node status --json`. `leave` under
+a stale session answers `"left":false` with
 `liveSession` and a ready `next` command; use the current session number.
 `pull` answers `{"pulled":false}` only while the session is live, so "no job"
 never masks a dead session. The same answer carries this node's own admission
@@ -313,7 +319,10 @@ work_market gives remote built-ins), `requirement_unverifiable` (`min_tier`,
 `caps_missing`, `slots_unknown` (a node sent no slot telemetry, which is
 unknown, not zero), `pass_limit` or `no_free_slot`. Free slots are a node's
 `slots` minus its running claims, after router jobs that are still waiting have
-been placed.
+been placed. Nodes that report a capacity sample share one physical host's
+measured slots, so their free capacity is counted once per host — the smallest
+advertisement minus every claim on it — the same grouping the router's
+`nodeCapacityView` uses; a node without a sample is its own host.
 
 ### Capabilities come from a local probe
 

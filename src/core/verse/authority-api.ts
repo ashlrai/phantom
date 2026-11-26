@@ -48,6 +48,7 @@ import type { NeedsYouItem, VerseAutonomyBadge } from './workbench-types.js';
 import { passesMutationGate, readBody } from '../web/api-http-helpers.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { ownerDisplayName } from '../owner-display.js';
 import { clearStop, revokeStandingAndDrain, stopAutonomyAndDrain } from '../authority/clamp.js';
 import { custodyStatus, signGrant, type CustodyStatus } from '../authority/custody-client.js';
 import { grantHasEliteDirect } from '../authority/elite-models.js';
@@ -637,10 +638,11 @@ async function draftRepos(): Promise<DraftRepoInput[]> {
 }
 
 /** The current resource roster, not the last published capacity snapshot. */
-async function draftSeats(): Promise<DraftSeatInput[]> {
+async function draftResources(): Promise<{ seats: DraftSeatInput[]; owner: string }> {
   const [{ loadConfigReadOnly }, { discoverSeats }] = await Promise.all([import('../config.js'), import('./seats.js')]);
-  const { seats } = await discoverSeats(loadConfigReadOnly());
-  return seats.map((seat) => ({ seatId: seat.id, engine: seat.engine }));
+  const cfg = loadConfigReadOnly();
+  const { seats } = await discoverSeats(cfg);
+  return { seats: seats.map((seat) => ({ seatId: seat.id, engine: seat.engine })), owner: ownerDisplayName(cfg.user?.name) };
 }
 
 /**
@@ -745,7 +747,7 @@ export async function buildStandingGrantDraft(
     authoritySurfaceDigest: surface.digest,
   };
   let payload: StandingGrantV1;
-  const [devin, seats] = await Promise.all([(opts.devin ?? devinDraftChoice)(), draftSeats()]);
+  const [devin, { seats, owner }] = await Promise.all([(opts.devin ?? devinDraftChoice)(), draftResources()]);
   // Server enforcement only where GitHub enforces required checks today
   // (authority/server-enforcement.ts): a re-approval switches a `server` repo
   // GitHub cannot protect to `local`; a new grant names `server` only for
@@ -795,12 +797,13 @@ export async function buildStandingGrantDraft(
   // rather than letting a later choice target the old stage identity.
   editable.startingStageLeaderClasses.stageId = payload.rollout.stages[0]!.id;
   const digest = rememberDraft(payload, resolved);
-  const summary = describeGrantScope(payload);
+  const summary = describeGrantScope(payload, owner);
   if (devin.note) summary.push(devin.note);
   const current = installed.state === 'ok' && evaluation.grantState !== 'none' ? installed.envelope.payload : null;
   return {
     payload,
     digest,
+    ownerDisplayName: owner,
     kind: resolved,
     summary,
     startStageId: payload.rollout.stages[0]!.id,
