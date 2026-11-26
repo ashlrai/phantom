@@ -334,13 +334,13 @@ lines that miss the end-of-tick `ready.tsv` write (lock busy) are carried in
 as `queue/batches/<batch>.notes.md` before the worktree is removed. A line runs in at
 most 2 bundles (`<job>.batch-attempts`) and then only solo.
 
-Model mix (`batch-sessions.json`, subscriptions only): Claude lines get Sonnet
-subagents, and Opus for `tier=frontier` or hard markers (architecture, migration,
-concurrency, security and similar). The Claude bundle session itself runs at `work`
+Model mix (`batch-sessions.json`, subscriptions only): Claude lines get Opus for
+work/frontier, Sonnet for mid, and Haiku for fast. Hard markers (architecture, migration,
+concurrency, security and similar) still select Opus. The Claude bundle session itself runs at `work`
 tier. Fable is never assigned here; the broker's `fable-share` keeps its benchmarked
-share. Codex lanes run `gpt-6.2-astra` for `frontier` and `gpt-6.2-sol` for all
-lower tiers. The `models.codex.frontier` override falls back to `models.codex.default`
-when absent; older configs with only `default` still apply it to every tier.
+share. Codex lanes run `gpt-6.2-astra` for `frontier`, `gpt-6-luna` for
+`fast`, and `gpt-6.2-sol` otherwise. Configs with only `models.codex.default`
+still apply it to every tier.
 Devin runs the free `swe-2-flash`. With the
 file installed, Devin keeps only lines from `eligible_repos` declaring `size<=100`
 or less; the rest log `DEVIN_ROUTE <job> repo-not-eligible|size-not-sm -> <lane>`

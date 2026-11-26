@@ -156,7 +156,8 @@ export function devinCliModelOptions(catalog: DevinModelCatalog, defaultId: stri
         windowSource: 'fallback',
         group: family.label,
         ...(price ? { priceNote: price } : {}),
-        ...(unavailableReason ? { unavailableReason } : {}),
+        ...(model.unverified ? { unavailableReason: 'Not verified by the Devin CLI catalog' } :
+          unavailableReason ? { unavailableReason } : {}),
       });
     }
   }

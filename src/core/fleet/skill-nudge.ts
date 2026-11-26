@@ -162,6 +162,7 @@ interface NudgeJobAccum {
   recuts: number;
   failureClass: string | null;
   lastLine: number;
+  outcomeLine: number | null;
 }
 
 function firstString(row: Record<string, unknown>, keys: readonly string[]): string | null {
@@ -242,8 +243,9 @@ function failureClassOf(row: Record<string, unknown>, event: string | null): str
 
 /**
  * Fold jobs.jsonl text into one SkillNudgeJob per job id, ordered by each
- * job's last ledger position. Pure; never throws; malformed lines and rows
- * without a usable job id are ignored.
+ * job's latest terminal outcome position (last ledger position for unresolved
+ * jobs). Pure; never throws; malformed lines and rows without a usable job id
+ * are ignored.
  */
 export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: ReadonlySet<string> | null): SkillNudgeJob[] {
   const jobs = new Map<string, NudgeJobAccum>();
@@ -277,7 +279,7 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     let acc = jobs.get(id);
     if (acc === undefined) {
       acc = { lane: null, outcome: undefined, verdictUrl: null, reverted: false, attempts: 0,
-        retryReceipts: 0, recuts: 0, failureClass: null, lastLine: lineNo };
+        retryReceipts: 0, recuts: 0, failureClass: null, lastLine: lineNo, outcomeLine: null };
       jobs.set(id, acc);
     }
     acc.lastLine = lineNo;
@@ -301,13 +303,14 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     const outcome = outcomeOf(row);
     if (outcome !== undefined) {
       acc.outcome = outcome;
+      acc.outcomeLine = lineNo;
       // The standing verdict row's own PR URL is what the revert-set join
       // binds to — a later verdict of a different PR is a fresh merge era.
       acc.verdictUrl = rowPrUrl(row);
     }
   }
   return [...jobs.entries()]
-    .sort((a, b) => a[1].lastLine - b[1].lastLine)
+    .sort((a, b) => (a[1].outcomeLine ?? a[1].lastLine) - (b[1].outcomeLine ?? b[1].lastLine))
     .map(([id, acc]) => {
       const retries = Math.max(0, acc.attempts - 1) + acc.retryReceipts;
       const reverted = acc.reverted || standingReverted(id, acc, claims, revertedPrKeys);

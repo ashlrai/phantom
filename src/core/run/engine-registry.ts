@@ -32,7 +32,7 @@ import type {
   EngineSpec,
   EngineTier,
 } from '../types.js';
-import { DEFAULT_CLAUDE_MODEL_ID, DEFAULT_CODEX_MODEL_ID, DEFAULT_LOCAL_MODEL_TAG, GROK_CLI_DEFAULT_MODEL } from './model-catalog.js';
+import { CLAUDE_SONNET_MODEL_ID, DEFAULT_CLAUDE_MODEL_ID, DEFAULT_CODEX_MODEL_ID, DEFAULT_LOCAL_MODEL_TAG, GROK_CLI_DEFAULT_MODEL } from './model-catalog.js';
 import { resolveNativeSeatLaunch, type NativeSeatLaunchResult } from '../resources/native-profile.js';
 import {
   DEVIN_CLI_ENGINE_ID,
@@ -201,7 +201,7 @@ export const BUILTIN_ENGINE_REGISTRY: Readonly<Record<string, EngineSpec>> = Obj
     api: {
       envKey: 'ANTHROPIC_API_KEY',
       defaultBaseUrl: 'https://api.anthropic.com/v1',
-      defaultModel: 'claude-sonnet-4-6',
+      defaultModel: CLAUDE_SONNET_MODEL_ID,
       protocol: 'anthropic-messages',
     },
     capabilities: ['agent', 'edit', 'tools'],
@@ -390,7 +390,7 @@ export const BUILTIN_ENGINE_REGISTRY: Readonly<Record<string, EngineSpec>> = Obj
       envKey: 'XAI_API_KEY',
       baseUrlEnv: 'XAI_BASE_URL',
       defaultBaseUrl: 'https://api.x.ai/v1',
-      defaultModel: 'grok-4',
+      defaultModel: GROK_CLI_DEFAULT_MODEL,
       protocol: 'openai' as const,
     },
     capabilities: ['agent', 'edit', 'architecture'],

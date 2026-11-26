@@ -101,6 +101,41 @@ it('filters next by contains, since and priority', async () => {
   }
 });
 
+it('filters next by the group-address topic', async () => {
+  const { root, last } = setup();
+  const options = { root };
+  const task = (id: string, to: string, priority: string): string => postTask(root, {
+    id, from: 'fake-sender', to, priority, ttl: 600_000,
+    body: { kind: 'work', text: id },
+  });
+  expect(await cmdCommsBus(['post', '--file', task('tp-eng-deploy', 'group:eng:deploy', 'P0')], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('tp-eng-general', 'group:eng:general', 'P1')], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('tp-ops-deploy', 'group:ops:deploy', 'P2')], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('tp-direct', 'group:eng:deploy', 'P3')], options)).toBe(0);
+
+  // --topic keeps only well-formed group:<room>:<topic> addresses carrying
+  // that exact topic — here the literal claim address names one room's
+  // deploy topic, so its two deploy receipts claim in priority order while
+  // the general post stays out.
+  expect(await cmdCommsBus(['next', '--to', 'group:eng:deploy', '--owner', 'worker-a', '--lease-ms', '60000', '--topic', 'deploy'], options)).toBe(0);
+  expect(last()).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'tp-eng-deploy' } } });
+  expect(await cmdCommsBus(['next', '--to', 'group:eng:deploy', '--owner', 'worker-a', '--lease-ms', '60000', '--topic', 'deploy'], options)).toBe(0);
+  expect(last()).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'tp-direct' } } });
+  // Both deploy receipts are held by worker-a's live leases; the general
+  // post never enters the filtered scan.
+  expect(await cmdCommsBus(['next', '--to', 'group:eng:deploy', '--owner', 'worker-a', '--lease-ms', '60000', '--topic', 'deploy'], options)).toBe(0);
+  expect(last()).toEqual({ status: 'empty', candidates: 2, held: 2 });
+  // The room's other topic claims its own receipt under its own address.
+  expect(await cmdCommsBus(['next', '--to', 'group:eng:general', '--owner', 'worker-a', '--lease-ms', '60000', '--topic', 'general'], options)).toBe(0);
+  expect(last()).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'tp-eng-general' } } });
+  // A well-formed topic nothing addresses is an honest empty match; a
+  // malformed one is invalid, never a widened claim.
+  expect(await cmdCommsBus(['next', '--to', 'group:eng:deploy', '--owner', 'worker-a', '--lease-ms', '60000', '--topic', 'absent'], options)).toBe(0);
+  expect(last()).toEqual({ status: 'empty', candidates: 0, held: 0 });
+  expect(await cmdCommsBus(['next', '--to', 'group:eng:deploy', '--owner', 'worker-a', '--lease-ms', '60000', '--topic', 'Bad Name'], options)).toBe(2);
+  expect(last()).toEqual({ status: 'invalid' });
+});
+
 it('claims a protocol task envelope addressed to a topic', async () => {
   const { root, last } = setup();
   const options = { root };
