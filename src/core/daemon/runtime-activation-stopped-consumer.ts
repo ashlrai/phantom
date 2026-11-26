@@ -14,11 +14,9 @@
  */
 
 import {
-  createHash,
   createHmac,
   createPublicKey,
   sign,
-  timingSafeEqual,
   verify,
   type KeyObject,
 } from 'node:crypto';
@@ -36,6 +34,17 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { canonicalizeDaemonActivationValue } from './activation-permit.js';
 import { installLaunchdPlistTransaction } from './launchd-plist-transaction.js';
+import {
+  RUNTIME_SHA256_RE as SHA256_RE,
+  decodeCanonicalBase64url as base64url,
+  equalSha256Digest as sameDigest,
+  hasExactKeys as exactKeys,
+  isCanonicalTimestamp as canonicalTimestamp,
+  isPlainRecord as plainObject,
+  runtimePermitKeyId,
+  sameStatIdentity as sameIdentity,
+  sha256Hex as sha256,
+} from './runtime-protocol-shared.js';
 import {
   activityAllowsStoppedRecovery,
   observeMaintenanceDefault,
@@ -64,7 +73,6 @@ const MAX_PERMIT_BYTES = 64 * 1024;
 const MAX_JOURNAL_BYTES = 512 * 1024;
 const MAX_VALIDITY_MS = 120_000;
 const MAX_FUTURE_SKEW_MS = 30_000;
-const SHA256_RE = /^[a-f0-9]{64}$/u;
 const SHA1_RE = /^[a-f0-9]{40}$/u;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const KEY_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
@@ -207,47 +215,8 @@ interface RuntimeActivationStoppedIdentity {
   planDigest: string;
 }
 
-function plainObject(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
-function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
-function sha256(value: string | Buffer): string {
-  return createHash('sha256').update(value).digest('hex');
-}
-
 function domainDigest(domain: string, value: unknown): string {
   return sha256(`${domain}\n${canonicalizeDaemonActivationValue(value)}`);
-}
-
-function sameDigest(left: string, right: string): boolean {
-  return SHA256_RE.test(left) && SHA256_RE.test(right) &&
-    timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
-}
-
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
-function base64url(value: unknown, bytes?: number): Buffer | null {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/u.test(value)) return null;
-  try {
-    const decoded = Buffer.from(value, 'base64url');
-    return (bytes === undefined || decoded.length === bytes) && decoded.toString('base64url') === value
-      ? decoded
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 function permitSigningBytes(payload: RuntimeActivationStoppedPermitPayloadV1): Buffer {
@@ -255,8 +224,7 @@ function permitSigningBytes(payload: RuntimeActivationStoppedPermitPayloadV1): B
 }
 
 export function runtimeActivationStoppedConsumerKeyId(publicKey: KeyObject): string {
-  const spki = publicKey.export({ format: 'der', type: 'spki' });
-  return sha256(Buffer.concat([Buffer.from(`${PERMIT_DOMAIN}:key\0`, 'utf8'), spki]));
+  return runtimePermitKeyId(PERMIT_DOMAIN, publicKey);
 }
 
 export function signRuntimeActivationStoppedPermit(
@@ -367,10 +335,6 @@ function plistPath(homePath: string): string {
 
 function rawReleaseTarget(revision: string): string {
   return join('releases', revision);
-}
-
-function sameIdentity(left: BigIntStats, right: BigIntStats): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
 }
 
 function owned(stat: BigIntStats): boolean {

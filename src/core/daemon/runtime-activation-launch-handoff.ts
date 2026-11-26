@@ -7,7 +7,6 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createHash, timingSafeEqual } from 'node:crypto';
 import {
   closeSync,
   constants as fsConstants,
@@ -29,6 +28,14 @@ import {
   type ImmutablePrivateRecordWriteDisposition,
 } from '../util/immutable-private-record-store.js';
 import { observeRuntimeActivationExecutionPlan } from './runtime-activation-authority.js';
+import {
+  RUNTIME_SHA256_RE as SHA256_RE,
+  domainCanonicalSha256 as domainDigest,
+  equalSha256Digest as sameDigest,
+  hasExactKeys as exactKeys,
+  isPlainRecord as plainObject,
+  strictCanonicalJson as canonicalJson,
+} from './runtime-protocol-shared.js';
 
 const PROTOCOL = 'runtime-activation-launch-handoff-v1' as const;
 const TRANSACTION_DOMAIN = 'ashlr:runtime-activation-launch-handoff:transaction:v1';
@@ -42,7 +49,6 @@ const CHILD_STARTUP_ERROR_TIMEOUT_MS = 1_000;
 const MAX_ACK_BYTES = 16 * 1_024;
 const MAX_CLAIMS = 25_000;
 const MAX_CLAIM_BYTES = 16 * 1_024;
-const SHA256_RE = /^[a-f0-9]{64}$/u;
 
 const AUTHORITY = Object.freeze({
   activationPermitted: false,
@@ -57,7 +63,6 @@ const AUTHORITY = Object.freeze({
   startPermitted: false,
 } as const);
 
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type DescriptorLabel = 'dependencyRoot' | 'interpreter' | 'launcher' | 'packageRoot';
 type ProofChild = ChildProcess;
 
@@ -232,64 +237,6 @@ const ack = {
 process.stdout.end(JSON.stringify(canonical(ack)) + '\n');
 setInterval(() => {}, 1000);
 `;
-
-function canonicalize(value: unknown, ancestors: Set<object>): JsonValue {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new TypeError('non-finite JSON number');
-    return Object.is(value, -0) ? 0 : value;
-  }
-  if (typeof value !== 'object' || ancestors.has(value)) throw new TypeError('invalid JSON value');
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse JSON array');
-        return canonicalize(entry, ancestors);
-      });
-    }
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new TypeError('non-plain JSON object');
-    }
-    const output = Object.create(null) as Record<string, JsonValue>;
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      output[key] = canonicalize((value as Record<string, unknown>)[key], ancestors);
-    }
-    return output;
-  } finally {
-    ancestors.delete(value);
-  }
-}
-
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalize(value, new Set<object>()));
-}
-
-function domainDigest(domain: string, value: unknown): string {
-  return createHash('sha256')
-    .update(domain, 'utf8')
-    .update('\n', 'utf8')
-    .update(canonicalJson(value), 'utf8')
-    .digest('hex');
-}
-
-function sameDigest(left: string, right: string): boolean {
-  if (!SHA256_RE.test(left) || !SHA256_RE.test(right)) return false;
-  return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
-}
-
-function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
-function plainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
 
 function ownDataProperty(
   value: Record<string, unknown>,

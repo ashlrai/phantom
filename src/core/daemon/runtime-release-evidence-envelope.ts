@@ -1,21 +1,30 @@
 import {
-  createHash,
   createPublicKey,
   sign as cryptoSign,
-  timingSafeEqual,
   verify as cryptoVerify,
   type KeyObject,
 } from 'node:crypto';
+import {
+  RUNTIME_SHA256_RE as SHA256_RE,
+  decodeCanonicalBase64url,
+  domainBytesSha256,
+  equalSha256Digest as equalHexDigest,
+  hasExactKeys,
+  isCanonicalTimestamp,
+  isPlainRecord,
+  parseStrictCanonicalJsonBytes as parseCanonicalJson,
+  strictCanonicalJson as canonicalJson,
+} from './runtime-protocol-shared.js';
 import {
   parseUnsignedRuntimeReleaseManifest,
 } from './runtime-release-manifest.js';
 
 export const RUNTIME_RELEASE_EVIDENCE_ENVELOPE_DOMAIN_V2 =
   'ashlr:runtime-release-evidence-envelope:v2' as const;
-export const RUNTIME_RELEASE_EVIDENCE_TRUST_ROOT_DOMAIN_V2 =
+const RUNTIME_RELEASE_EVIDENCE_TRUST_ROOT_DOMAIN_V2 =
   'ashlr:runtime-release-evidence-trust-root:v2' as const;
-export const RUNTIME_RELEASE_EVIDENCE_SIGNATURE_ALGORITHM_V2 = 'ed25519' as const;
-export const RUNTIME_RELEASE_EVIDENCE_MAX_LIFETIME_MS_V2 = 15 * 60 * 1_000;
+const RUNTIME_RELEASE_EVIDENCE_SIGNATURE_ALGORITHM_V2 = 'ed25519' as const;
+const RUNTIME_RELEASE_EVIDENCE_MAX_LIFETIME_MS_V2 = 15 * 60 * 1_000;
 
 const SIGNATURE_INPUT_DOMAIN = 'ashlr:runtime-release-evidence-signature-input:v2';
 const MANIFEST_CANONICAL_DIGEST_DOMAIN =
@@ -26,18 +35,8 @@ const MAX_TRUST_ROOT_BYTES = 64 * 1_024;
 const MAX_TRUST_KEYS = 32;
 const MAX_PUBLIC_KEY_BYTES = 512;
 const ED25519_SIGNATURE_BYTES = 64;
-const SHA256_RE = /^[a-f0-9]{64}$/;
 const REVISION_RE = /^[a-f0-9]{40}$/;
 const KEY_ID_RE = /^ed25519-sha256:[a-f0-9]{64}$/;
-const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
-
-type JsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | JsonValue[]
-  | { [key: string]: JsonValue };
 
 export interface RuntimeReleaseEvidenceCoverageV2 {
   artifactCoherence: 'two-complete-scans';
@@ -178,84 +177,8 @@ export type VerifyRuntimeReleaseEvidenceEnvelopeResult =
 
 type UnsignedEnvelope = Omit<SignedRuntimeReleaseEvidenceEnvelopeV2, 'signature'>;
 
-function canonicalize(value: unknown, ancestors: Set<object>): JsonValue {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new TypeError('non-finite JSON number');
-    return Object.is(value, -0) ? 0 : value;
-  }
-  if (typeof value !== 'object' || ancestors.has(value)) {
-    throw new TypeError('invalid JSON value');
-  }
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse JSON array');
-        return canonicalize(entry, ancestors);
-      });
-    }
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new TypeError('non-plain JSON object');
-    }
-    const output = Object.create(null) as Record<string, JsonValue>;
-    for (const key of Object.keys(value as Record<string, unknown>)
-      .sort((left, right) => left < right ? -1 : left > right ? 1 : 0)) {
-      output[key] = canonicalize((value as Record<string, unknown>)[key], ancestors);
-    }
-    return output;
-  } finally {
-    ancestors.delete(value);
-  }
-}
-
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalize(value, new Set<object>()));
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-
-function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length &&
-    actual.every((key, index) => key === wanted[index]);
-}
-
-function parseCanonicalJson(
-  input: string | Buffer,
-  maxBytes: number,
-  label: string,
-): { value: unknown; canonicalJson: string } {
-  const bytes = Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf8');
-  if (bytes.length === 0 || bytes.length > maxBytes) {
-    throw new Error(`${label} byte length is invalid`);
-  }
-  const text = bytes.toString('utf8');
-  if (!Buffer.from(text, 'utf8').equals(bytes)) {
-    throw new Error(`${label} is not valid UTF-8`);
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new Error(`${label} is not valid JSON`);
-  }
-  const encoded = `${canonicalJson(value)}\n`;
-  if (text !== encoded) throw new Error(`${label} encoding is not canonical`);
-  return { value, canonicalJson: encoded };
-}
-
 function canonicalTimestamp(value: unknown, label: string): string {
-  if (typeof value !== 'string' || value.length !== 24) {
-    throw new Error(`${label} is invalid`);
-  }
-  const milliseconds = Date.parse(value);
-  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value) {
+  if (typeof value !== 'string' || value.length !== 24 || !isCanonicalTimestamp(value)) {
     throw new Error(`${label} is invalid`);
   }
   return value;
@@ -323,14 +246,7 @@ function coverageSatisfiesTrustRoot(
 }
 
 function decodeBase64url(value: unknown, expectedBytes?: number): Buffer | null {
-  if (typeof value !== 'string' || !BASE64URL_RE.test(value)) return null;
-  const bytes = Buffer.from(value, 'base64url');
-  if (bytes.length === 0 || bytes.length > MAX_PUBLIC_KEY_BYTES ||
-    (expectedBytes !== undefined && bytes.length !== expectedBytes) ||
-    bytes.toString('base64url') !== value) {
-    return null;
-  }
-  return bytes;
+  return decodeCanonicalBase64url(value, expectedBytes, MAX_PUBLIC_KEY_BYTES);
 }
 
 function publicKeyDer(publicKey: KeyObject): Buffer {
@@ -346,11 +262,7 @@ function publicKeyDer(publicKey: KeyObject): Buffer {
 }
 
 function keyIdForDer(der: Buffer): string {
-  return `ed25519-sha256:${createHash('sha256')
-    .update(KEY_ID_DOMAIN, 'utf8')
-    .update('\n', 'utf8')
-    .update(der)
-    .digest('hex')}`;
+  return `ed25519-sha256:${domainBytesSha256(KEY_ID_DOMAIN, der)}`;
 }
 
 export function runtimeReleaseEvidenceKeyId(publicKey: KeyObject): string | null {
@@ -568,16 +480,7 @@ function signatureInput(envelope: UnsignedEnvelope): Buffer {
 }
 
 function manifestCanonicalSha256(canonicalManifest: string): string {
-  return createHash('sha256')
-    .update(MANIFEST_CANONICAL_DIGEST_DOMAIN, 'utf8')
-    .update('\n', 'utf8')
-    .update(canonicalManifest, 'utf8')
-    .digest('hex');
-}
-
-function equalHexDigest(left: string, right: string): boolean {
-  if (!SHA256_RE.test(left) || !SHA256_RE.test(right)) return false;
-  return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
+  return domainBytesSha256(MANIFEST_CANONICAL_DIGEST_DOMAIN, canonicalManifest);
 }
 
 export function buildRuntimeReleaseEvidenceTrustRoot(
