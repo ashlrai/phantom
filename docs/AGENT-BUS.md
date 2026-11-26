@@ -2690,8 +2690,12 @@ take the same identity-label rule every bus read's sender filter applies —
 the literal ref plus every label of the identity it resolves to, exact-label
 matching kept on an unresolvable ref or unreadable registry — and they compose
 with each other and with the window. `--root <absolute>` reads a non-default
-fleet store like the other fleet bus reads. `fleet_agent_edges` (the isolated
-fleet MCP tool) serves the same `readFleetEdges` projection with the same
+fleet store like the other fleet bus reads. `ashlr agents edges` serves the
+same `readFleetEdges` projection with the same `--window-minutes`, `--from`,
+`--to` and `--root` flags — the agent-facing CLI takes the identical filtered
+read, its flags validated before any store read like the fleet command's.
+`fleet_agent_edges` (the isolated fleet MCP tool) serves the same
+`readFleetEdges` projection with the same
 `windowMinutes`/`from`/`to` arguments — every other key refused and no caller
 root, path or working directory accepted, the bus store and registry roots
 staying server-owned. Provider labels come from sender metadata observed on
