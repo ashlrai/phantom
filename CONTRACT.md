@@ -2325,6 +2325,16 @@ repair/archival is an operator task. Exit 0 means the cycle completed without
 attention items, 1 means incomplete/refused evidence or delivery, 2 means usage.
 Hermetic end-to-end coverage lives in `test/fleet-orchestrate.test.ts`.
 
+## Fleet memory shed plan (`fleet.shed-plan.v1`)
+
+`planFleetShed(input, nowMs = Date.now())` takes a dispatcher status snapshot
+and an optional evaluation time in epoch milliseconds. The snapshot's
+`last_tick` must parse to a time within the inclusive 60-second window ending
+at `nowMs`. Outside that window, including missing or invalid timestamps,
+numeric measurements are `null` and pressure and lane recommendations are
+`unknown`. Lane names and kinds remain available, and `gaps` explains the
+freshness requirement.
+
 ## Per-lane measured history
 
 `resource-live/store.ts` exports `resourceHistoryPath`, `readResourceHistoryFile`,
