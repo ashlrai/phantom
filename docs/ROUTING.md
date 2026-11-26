@@ -706,7 +706,10 @@ leave this fallback unknown (`null`) even when the PR merged. The read degrades
 independently like the other side ledgers: the report's
 `merge_events_state` mirrors the jobs `state` vocabulary and
 `merge_events_truncated` marks a cut merge-events tail, in which case
-joined evidence covers only the newest bytes; anything but `read`
+joined evidence covers only the newest bytes. A cut tail can establish
+a recorded failure, but a green boundary alone leaves first-pass CI
+unknown because earlier failures may be outside the window. An explicit
+jobs-ledger verdict still takes precedence. Anything but `read`
 leaves every `merge_queue` `null` — unknown, never a guessed queue
 history. `cost_usd`
 is an explicit `cost_usd`/`usd`/`cost` field on a jobs row when one is
