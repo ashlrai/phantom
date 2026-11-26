@@ -1,11 +1,12 @@
 import { createPhantomSelfDrive, createDesktopAdapters, type ToolCall, type VerseRequest } from '../verse/desktop-adapters.js';
+import { isPlainRecord } from './drive-helpers.js';
 
 export const DRIVE_TARGETS = ['devin', 'claude', 'codex', 'phantom'] as const;
 export type DriveTarget = typeof DRIVE_TARGETS[number];
 export type AppAction = 'start' | 'status' | 'send-prompt' | 'read-result';
 export interface AppRequest { target: DriveTarget; action: AppAction; handle?: string; prompt?: string; seat?: string; projectPath: string }
 export interface AppPorts { request: VerseRequest; desk?: ToolCall }
-const record = (v: unknown): Record<string, unknown> => v !== null && typeof v === 'object' ? v as Record<string, unknown> : {};
+const record = (v: unknown): Record<string, unknown> => (isPlainRecord(v) ? v : {});
 const validHandle = (s: string | undefined): s is string => !!s && /^[A-Za-z0-9_-]{1,80}$/.test(s);
 
 /** Never fall back after a mutation: a lost response might already have spent. */

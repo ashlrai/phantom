@@ -3,7 +3,7 @@ import type { NodeView } from '../core/drive/nodes/index.js';
 import { localPhmVersion, planNodeSelfUpdate } from '../core/drive/nodes/phm-version.js';
 import { validId } from '../core/drive/nodes/state.js';
 
-export const SELF_UPDATE_USAGE = 'Usage: phm node self-update [--owner <scope>] [--target <x.y.z>] [--json]\n' +
+const SELF_UPDATE_USAGE = 'Usage: phm node self-update [--owner <scope>] [--target <x.y.z>] [--json]\n' +
   'Plan only: reports which pool nodes run a different phm build than --target (default: this machine). Never updates anything.\n' +
   'With --json every failure prints {"schemaVersion":1,"command":"self-update","error":{"code","message","fix"}} on stdout.';
 

@@ -41,6 +41,11 @@
  */
 
 import {
+  isPlainRecord,
+  prTouchesSecurityPin,
+  shortRepoName,
+} from './drive-helpers.js';
+import {
   FLEET_AUTHOR,
   REFIX_CYCLE_CAP,
   REFIX_PR_WINDOW_CAP,
@@ -49,7 +54,6 @@ import {
   REFIX_WINDOW_MS,
   drainKey,
   drainRow,
-  securityPinnedPath,
 } from './refix-loop.js';
 
 export const MERGEQ_REPOS = REFIX_REPOS;
@@ -231,7 +235,6 @@ export interface MergeQueueSummary {
 }
 
 const SHA = /^[0-9a-f]{40}$/i;
-const shortName = (repo: string): string => repo.split('/').pop() ?? repo;
 /** GraphQL reports a bot as `name`, REST as `name[bot]` (see prs/merge-identity.ts). */
 const bareLogin = (login: string): string => login.replace(/\[bot\]$/i, '').toLowerCase();
 /** Merge states GitHub reports for a mergeable head the queue may accept. */
@@ -260,7 +263,7 @@ export function classifyMergeQueuePr(
   if (green && repo.mergeQueue) {
     // Auto-merge can remain armed without queue membership. Only inMergeQueue
     // above proves admission; retry through the same head-pinned, bounded path.
-    return pr.filesTruncated || pr.files.some(securityPinnedPath) ? 'pinned' : 'enqueue';
+    return prTouchesSecurityPin(pr) ? 'pinned' : 'enqueue';
   }
   if (pr.mergeState === 'BEHIND') {
     // A queue repo never needs an up-to-date branch, and updating a head whose
@@ -393,11 +396,11 @@ export function normalizeMergeQueueState(value: unknown): MergeQueueState {
   for (const [key, raw] of Object.entries((row['latency'] ?? {}) as Record<string, MergeQueueLatency>)) {
     if (raw && typeof raw.headSha === 'string' && SHA.test(raw.headSha) && actions.has(raw.state)
       && Number.isSafeInteger(raw.since) && raw.since >= 0 && Number.isSafeInteger(raw.observedAt) && raw.observedAt >= raw.since
-      && raw.stateMs && typeof raw.stateMs === 'object' && !Array.isArray(raw.stateMs)
+      && isPlainRecord(raw.stateMs)
       && Object.entries(raw.stateMs).every(([s, ms]) => actions.has(s as MergeQueueAction) && Number.isSafeInteger(ms) && ms >= 0)
       && (raw.blockers === undefined || (Array.isArray(raw.blockers)
         && new Set(raw.blockers).size === raw.blockers.length && raw.blockers.every(b => BLOCKERS.includes(b))))
-      && (raw.blockerMs === undefined || (raw.blockerMs && typeof raw.blockerMs === 'object' && !Array.isArray(raw.blockerMs)
+      && (raw.blockerMs === undefined || (isPlainRecord(raw.blockerMs)
         && Object.entries(raw.blockerMs).every(([b, ms]) => BLOCKERS.includes(b as MergeQueueBlocker) && Number.isSafeInteger(ms) && ms >= 0)))
       && (raw.checks === undefined || CHECKS_SEEN.has(raw.checks))
       && (raw.blockedReason === undefined || raw.blockedReason === null || EVENT_REASONS.has(raw.blockedReason))
@@ -411,7 +414,7 @@ export function normalizeMergeQueueState(value: unknown): MergeQueueState {
     }
   }
   for (const [key, raw] of Object.entries((row['signals'] ?? {}) as Record<string, MergeQueuePrSignals>)) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    if (!isPlainRecord(raw)) continue;
     // Sanitize rather than reject: dropping the row would lose the dedupe
     // memory that keeps once-per-PR events unique for the ledger consumers.
     const autoMerge = typeof raw.autoMerge === 'boolean' ? raw.autoMerge : undefined;
@@ -493,6 +496,7 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
       for (const key of Object.keys(state.signals ?? {})) {
         if (key.startsWith(`${repo}#`) && !snapshot.prs.some(pr => key === `${repo}#${pr.number}`)) delete state.signals![key];
       }
+      const short = shortRepoName(repo);
       const seen = new Set<number>();
       const planned = snapshot.prs.slice().sort((a, b) => a.number - b.number)
         .filter((pr) => {
@@ -500,14 +504,14 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
           seen.add(pr.number);
           return true;
         }).map((pr) => ({ pr, action: classifyMergeQueuePr(pr, snapshot, {
-          fleet: authors.has(bareLogin(pr.author)), held: hold.has(`${shortName(repo)}#${pr.number}`),
+          fleet: authors.has(bareLogin(pr.author)), held: hold.has(`${short}#${pr.number}`),
         }) }));
       // Admit ready heads before slow branch updates or conflict resolution.
       // Stable sorting preserves PR-number order within each group and its caps.
       planned.sort((a, b) => Number(b.action === 'enqueue') - Number(a.action === 'enqueue'));
       for (const candidate of planned) {
         let { pr, action } = candidate;
-        const tag = `${shortName(repo)}#${pr.number}`;
+        const tag = `${short}#${pr.number}`;
         const key = `${repo}#${pr.number}`, previous = state.latency?.[key];
         const latency: MergeQueueLatency = previous?.headSha === pr.headSha && observedAt >= previous.observedAt
           ? { ...previous, stateMs: { ...previous.stateMs }, blockerMs: { ...previous.blockerMs } }
@@ -611,7 +615,7 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
             io.appendQueueLine(drainRow(repo, {
               number: pr.number, headSha: pr.headSha, mergeState: pr.mergeState,
               inMergeQueue: pr.inMergeQueue, author: pr.author, files: pr.files, filesTruncated: pr.filesTruncated,
-            }, key, 'merge conflict (DIRTY)', pr.filesTruncated || pr.files.some(securityPinnedPath)));
+            }, key, 'merge conflict (DIRTY)', prTouchesSecurityPin(pr)));
             queueIds.add(key);
             state.drained[key] = now;
             result.drained.push(pr.number);

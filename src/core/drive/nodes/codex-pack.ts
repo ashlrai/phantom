@@ -3,10 +3,9 @@ import { chmodSync, closeSync, constants, fsyncSync, lstatSync, mkdirSync, openS
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { privateDirectory } from '../../universe/artifacts.js';
+import { CODEX_FILE_PACK, isSafeNodeJobId } from '../drive-helpers.js';
 import { resolveProviderBinary } from './provider-binary.js';
 
-export const CODEX_FILE_PACK = 'codex-file';
-const JOB_DIR = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,119}$/;
 const MAX_TASK = 64 * 1024;
 /** Review output kept in the result artifact: the last 48 KiB of stdout. */
 export const CODEX_OUTPUT_LIMIT = 48 * 1024;
@@ -25,7 +24,7 @@ export interface CodexFileDeps {
 
 /** Per-job working root: `~/.ashlr-runs/node-work/<jobId>/`, never the home directory. */
 export function nodeWorkDir(jobId: string, home = homedir()): string {
-  if (!JOB_DIR.test(jobId)) throw new Error('Invalid node job id');
+  if (!isSafeNodeJobId(jobId)) throw new Error('Invalid node job id');
   return join(home, '.ashlr-runs', 'node-work', jobId);
 }
 
@@ -39,7 +38,7 @@ export function codexFileArgv(scratch: string): string[] {
 export async function runCodexFilePack(request: { jobId: string; task: string; binary?: string }, deps: CodexFileDeps = {}): Promise<CodexFileReply> {
   const fail = (packError: CodexPackError): CodexFileReply => ({ codex: 'error', packError });
   const { jobId, task } = request;
-  if (typeof jobId !== 'string' || !JOB_DIR.test(jobId) || typeof task !== 'string' || !task.trim() ||
+  if (typeof jobId !== 'string' || !isSafeNodeJobId(jobId) || typeof task !== 'string' || !task.trim() ||
       Buffer.byteLength(task) > MAX_TASK) return fail('invalid-request');
   const binary = (deps.resolveBinary ?? resolveProviderBinary)('codex');
   if (!binary) return fail('binary-unavailable');

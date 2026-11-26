@@ -13,6 +13,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { assurePrivateStoragePath } from '../../util/private-storage.js';
 import { readStableRegularFile } from '../../util/stable-file-read.js';
+import { isPlainRecord } from '../drive-helpers.js';
 
 export interface NodeResultsSummary {
   v: 1;
@@ -78,8 +79,7 @@ export function readNodeResults(opts: { dir?: string; nowMs?: number; windowMs?:
     if (read.ok) {
       try {
         const body: unknown = JSON.parse(read.text);
-        valid = typeof body === 'object' && body !== null && (body as Record<string, unknown>)['schema'] === SCHEMA &&
-          (body as Record<string, unknown>)['jobId'] === jobId;
+        valid = isPlainRecord(body) && body['schema'] === SCHEMA && body['jobId'] === jobId;
       } catch { /* counted as unreadable below */ }
     }
     if (!valid) { unreadable++; continue; }

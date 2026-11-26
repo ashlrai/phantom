@@ -21,19 +21,25 @@
  * host adapter (scripts/refix-loop.mjs) stays thin.
  */
 
+import {
+  APPROVED_FLEET_REPOS,
+  DEFAULT_FLEET_AUTHOR,
+  prTouchesSecurityPin,
+  pruneOldestEntries,
+  shortRepoName,
+} from './drive-helpers.js';
+
+export { securityPinnedPath } from './drive-helpers.js';
+
 export const REFIX_CYCLE_CAP = 20;
 export const REFIX_PR_WINDOW_CAP = 3;
 export const REFIX_RETRY_MS = 15 * 60 * 1000;
 export const REFIX_WINDOW_MS = 24 * 60 * 60 * 1000;
-export const FLEET_AUTHOR = 'ashlr-fleet[bot]';
-export const SECURITY_PIN = 'Security pin required';
+export const FLEET_AUTHOR = DEFAULT_FLEET_AUTHOR;
+const SECURITY_PIN = 'Security pin required';
 
 /** The seven approved GS_REPOS; no discovery or expansion. */
-export const REFIX_REPOS = [
-  'ashlrai/phantom', 'ashlrai/phantom-secrets', 'ashlrai/locus',
-  'ashlrai/lexicon', 'ashlrai/ashlr-md', 'ashlrai/ashlr-stack',
-  'ashlrai/ashlr-plugin',
-] as const;
+export const REFIX_REPOS = APPROVED_FLEET_REPOS;
 
 export interface RefixPr {
   number: number;
@@ -94,17 +100,6 @@ export interface RefixSummary {
   maxWaitMs: number;
 }
 
-const shortName = (repo: string): string => repo.split('/').pop() ?? repo;
-
-/** `.github` segment, publish.sh basename, or a segment containing the token. */
-export function securityPinnedPath(path: string): boolean {
-  return path.split('/').some((segment) => {
-    const s = segment.toLowerCase();
-    return s === '.github' || s === 'publish.sh' ||
-      /dispatchd|git[-_]safe|scrub|reap/.test(s);
-  });
-}
-
 function emptyState(): RefixState {
   return { v: 1, appended: {}, giveup: {}, waiting: {}, updates: {} };
 }
@@ -136,25 +131,17 @@ export function normalizeState(value: unknown): RefixState {
 
 /** Bound durable state; oldest entries are evicted first. */
 function prune(state: RefixState, cap = 8_192): void {
-  const keys = Object.keys(state.appended);
-  if (keys.length > cap) {
-    keys.sort((a, b) => state.appended[a]!.at - state.appended[b]!.at)
-      .slice(0, keys.length - cap).forEach((k) => delete state.appended[k]);
-  }
-  const given = Object.keys(state.giveup);
-  if (given.length > cap) {
-    given.sort((a, b) => state.giveup[a]! - state.giveup[b]!)
-      .slice(0, given.length - cap).forEach((k) => delete state.giveup[k]);
-  }
+  pruneOldestEntries(state.appended, (entry) => entry.at, cap);
+  pruneOldestEntries(state.giveup, (at) => at, cap);
 }
 
 /** Queue id shared by every producer of a fix-forward line for one PR head. */
 export function drainKey(repo: string, number: number, headSha: string): string {
-  return `RQ-DRAIN-${shortName(repo)}-${number}-${headSha.slice(0, 7)}`;
+  return `RQ-DRAIN-${shortRepoName(repo)}-${number}-${headSha.slice(0, 7)}`;
 }
 
 export function drainRow(repo: string, pr: RefixPr, key: string, reason: string, pinned: boolean): string {
-  const short = shortName(repo);
+  const short = shortRepoName(repo);
   const url = `https://github.com/${repo}/pull/${pr.number}`;
   const prompt = [
     ...(pinned ? [SECURITY_PIN] : []),
@@ -202,7 +189,7 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
     if (now - entry.at >= windowMs) delete updates[key];
   }
   const eligible = (repo: string, pr: RefixPr): boolean =>
-    !hold.has(`${shortName(repo)}#${pr.number}`) && authors.includes(pr.author);
+    !hold.has(`${shortRepoName(repo)}#${pr.number}`) && authors.includes(pr.author);
   const drains24h = (prTag: string): number =>
     Object.values(state.appended).filter((e) => e.pr === prTag && now - e.at < windowMs).length;
   try {
@@ -214,13 +201,14 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
         io.log(`REFIX_GH_ERROR list ${repo}`);
         throw error;
       }
-      const present = new Set(prs.map((pr) => `${shortName(repo)}#${pr.number}`));
+      const short = shortRepoName(repo);
+      const present = new Set(prs.map((pr) => `${short}#${pr.number}`));
       for (const tag of Object.keys(waiting)) {
-        if (tag.startsWith(`${shortName(repo)}#`) && !present.has(tag)) delete waiting[tag];
+        if (tag.startsWith(`${short}#`) && !present.has(tag)) delete waiting[tag];
       }
       const seen = new Set<string>();
       for (const pr of prs) {
-        const tag = `${shortName(repo)}#${pr.number}`;
+        const tag = `${short}#${pr.number}`;
         if (!eligible(repo, pr)) continue;
         if (pr.inMergeQueue || ['BEHIND', 'DIRTY'].includes(pr.mergeState)) {
           waiting[tag] ??= now;
@@ -251,7 +239,7 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
         const key = drainKey(repo, pr.number, pr.headSha);
         if (queueIds.has(key) || key in state.appended || key in state.giveup) continue;
         if (summary.drains >= cycleCap) { summary.capped = true; continue; }
-        const prTag = `${shortName(repo)}#${pr.number}`;
+        const prTag = `${short}#${pr.number}`;
         if (drains24h(prTag) >= prWindowCap) {
           state.giveup[key] = now;
           summary.giveups++;
@@ -268,7 +256,7 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
           }
         }
         if (!drain) continue;
-        const pinned = pr.filesTruncated || pr.files.some(securityPinnedPath);
+        const pinned = prTouchesSecurityPin(pr);
         io.appendQueueLine(drainRow(repo, pr, key,
           pr.mergeState === 'DIRTY' ? 'merge conflict (DIRTY)' : 'required check red', pinned));
         state.appended[key] = { pr: prTag, at: now };

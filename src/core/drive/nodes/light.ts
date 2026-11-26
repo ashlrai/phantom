@@ -2,25 +2,32 @@ import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { NODE_RUNNER_PROTOCOL } from '../drive-helpers.js';
 import type { JobView, NodeView } from './index.js';
 import { NODE_OFFLINE_MS } from './router.js';
 import { validId } from './state.js';
 
+export interface LightRecipe {
+  readonly id: 'channels-status' | 'comms-status' | 'docs-check';
+  readonly requires: readonly string[];
+  readonly args: readonly string[] | null;
+}
+
 /** Fixed, read-only recipes. Queue records never supply commands, paths or credentials. */
-export const LIGHT_RECIPES = [
+const LIGHT_RECIPES: readonly LightRecipe[] = [
   { id: 'channels-status', requires: ['light', 'comms'], args: ['channels', 'status', '--json'] },
   { id: 'comms-status', requires: ['light', 'comms'], args: ['comms', 'status', '--json'] },
   { id: 'docs-check', requires: ['light'], args: null },
-] as const;
+];
 const PREFIX = 'muse-light-';
 const packOf = (id: string) => `muse-light:${id}:v1`;
-export function lightRecipe(job: JobView) {
+export function lightRecipe(job: JobView): LightRecipe | undefined {
   if (!job || !Array.isArray(job.requires) || !Array.isArray(job.secrets)) return undefined;
   return LIGHT_RECIPES.find(r => job.owner === 'ashlr' && job.pack === packOf(r.id) &&
     validId(job.id) && new RegExp(`^${PREFIX}${r.id}-[0-9]+$`).test(job.id) && job.secrets.length === 0 &&
     job.requires.length === r.requires.length && r.requires.every(c => job.requires.includes(c)));
 }
-export interface LightView { nodes: NodeView[]; jobs: JobView[] }
+interface LightView { nodes: NodeView[]; jobs: JobView[] }
 export type NodeCall = (verb: string, args: string[]) => Record<string, unknown>;
 
 /** Called by restock independently of ready.tsv. Repeated passes reuse hourly IDs. */
@@ -55,7 +62,7 @@ export async function runLightJob(input: AsyncIterable<Buffer | string>, run: ty
     if (Buffer.byteLength(text) > 16_384) throw new Error('Light runner input too large');
   }
   const request = JSON.parse(text) as { protocol: string; job: JobView; claim: { jobId: string; token: number } };
-  const recipe = request.protocol === 'phm-node-worker/v1' && lightRecipe(request.job);
+  const recipe = request.protocol === NODE_RUNNER_PROTOCOL && lightRecipe(request.job);
   if (!recipe || request.claim.jobId !== request.job.id || !Number.isSafeInteger(request.claim.token) || request.claim.token < 1)
     throw new Error('Unsupported light job');
   const root = fileURLToPath(new URL('../../../../', import.meta.url));

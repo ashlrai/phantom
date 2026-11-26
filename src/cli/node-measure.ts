@@ -2,7 +2,7 @@
 import { readNodeCapacity, type NodeCapacity } from '../core/drive/nodes/capacity.js';
 import { nodeBeatCapacity } from '../core/drive/nodes/capacity-sample.js';
 
-export const NODE_MEASURE_USAGE = `Usage: phm node measure [--json]
+const NODE_MEASURE_USAGE = `Usage: phm node measure [--json]
 
 Measures this node's capacity (RAM headroom, disk floor, host slot registry) and prints
 the JSON object to pass as --capacity to 'phm node beat', for example:

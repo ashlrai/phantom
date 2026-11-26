@@ -11,6 +11,7 @@ import { fsyncDirectory } from '../../util/durability.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
 import { scrubSecrets } from '../../util/scrub.js';
 import { assertPermitted, endpointPermitted } from '../../policy/local-only.js';
+import { isPlainRecord, isSafeNodeJobId, NODE_RUNNER_PROTOCOL } from '../drive-helpers.js';
 import { localLanePlan } from './local-model-caps.js';
 import { callPool, readPoolConfig, type PoolConfig } from './pool-host.js';
 import { validCap, validId } from './state.js';
@@ -18,20 +19,17 @@ import { isNodeProvider, providerBinaryCandidates, resolveProviderBinary, type P
 import { nodeStopped } from './worker.js';
 import type { JobClaim, JobView } from './index.js';
 
+export { NODE_RUNNER_PROTOCOL } from '../drive-helpers.js';
+
 const exec = promisify(execFile);
-export const NODE_RUNNER_PROTOCOL = 'phm-node-worker/v1';
-const PROTOCOL = NODE_RUNNER_PROTOCOL;
 const MAX_INPUT = 16 * 1024;
 const OMLX_URL = 'http://127.0.0.1:8000/v1/chat/completions';
 const SHELL_CHECK = 'process.stdout.write("node-shell-check-ok\\n")';
 /** Packs this reference runner executes; `phm node run-once packs` reports them to the worker. */
 export const NODE_RUNNER_PACKS = ['shell-check', 'omlx-chat'] as const;
 type Pack = typeof NODE_RUNNER_PACKS[number];
-export interface NodeRunnerRequest { protocol: typeof PROTOCOL; job: JobView & { pack: Pack }; claim: JobClaim; providerBinaries?: ProviderBinaries }
+export interface NodeRunnerRequest { protocol: typeof NODE_RUNNER_PROTOCOL; job: JobView & { pack: Pack }; claim: JobClaim; providerBinaries?: ProviderBinaries }
 
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 function keys(value: Record<string, unknown>, expected: string): boolean {
   return Object.keys(value).sort().join(',') === expected;
 }
@@ -44,12 +42,12 @@ export function parseNodeRunnerRequest(text: string): NodeRunnerRequest {
   if (Buffer.byteLength(text) > MAX_INPUT) return fail();
   let value: unknown;
   try { value = JSON.parse(text); } catch { return fail(); }
-  if (!object(value) || !(keys(value, 'claim,job,protocol') || keys(value, 'claim,job,protocol,providerBinaries')) || value.protocol !== PROTOCOL ||
-      !object(value.job) || !object(value.claim)) return fail();
+  if (!isPlainRecord(value) || !(keys(value, 'claim,job,protocol') || keys(value, 'claim,job,protocol,providerBinaries')) || value.protocol !== NODE_RUNNER_PROTOCOL ||
+      !isPlainRecord(value.job) || !isPlainRecord(value.claim)) return fail();
   const j = value.job, c = value.claim;
   // validId allows paths; result filenames deliberately accept only one bounded component.
   if (!keys(j, 'id,owner,pack,requires,secrets,state') || !reference(j.id) ||
-      !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,119}$/.test(j.id) || !reference(j.owner) || j.state !== 'running' ||
+      !isSafeNodeJobId(j.id) || !reference(j.owner) || j.state !== 'running' ||
       !(NODE_RUNNER_PACKS as readonly string[]).includes(String(j.pack)) || !Array.isArray(j.secrets) || j.secrets.length ||
       !Array.isArray(j.requires) || j.requires.length > 64 || !j.requires.every(validCap) ||
       new Set(j.requires).size !== j.requires.length ||
@@ -58,7 +56,7 @@ export function parseNodeRunnerRequest(text: string): NodeRunnerRequest {
   // Optional lane receipt: one allowlisted absolute binary per required provider lane, never a command.
   if ('providerBinaries' in value) {
     const receipt = value.providerBinaries;
-    if (!object(receipt) || !Object.keys(receipt).length || !Object.entries(receipt).every(([provider, path]) =>
+    if (!isPlainRecord(receipt) || !Object.keys(receipt).length || !Object.entries(receipt).every(([provider, path]) =>
       isNodeProvider(provider) && (j.requires as unknown[]).includes(provider) && typeof path === 'string' &&
       providerBinaryCandidates(provider).includes(path))) return fail();
   }

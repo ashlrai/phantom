@@ -7,9 +7,9 @@
  */
 import { setTimeout as delay } from 'node:timers/promises';
 
-export const NODE_WATCH_DEFAULT_SECONDS = 10;
+const NODE_WATCH_DEFAULT_SECONDS = 10;
 /** Sessions and claims expire 30 s after the last beat/renew; the interval stays well inside that. */
-export const NODE_WATCH_MAX_SECONDS = 25;
+const NODE_WATCH_MAX_SECONDS = 25;
 
 export interface NodeWatchFlags {
   /** Verb arguments with --watch/--every removed; everything else passes through verbatim. */
