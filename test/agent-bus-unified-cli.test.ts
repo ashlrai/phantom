@@ -2139,4 +2139,33 @@ describe('phm agents bus (unified)', () => {
     expect(help).toMatch(/ashlr agents chat [^\n]*--after <cursor>/);
     expect(help).toMatch(/ashlr agents chat [^\n]*--limit <1-100>/);
   });
+
+  it('hops reads the recorded send tail with filters and honest bounds', async () => {
+    await run(['id', 'register', 'atlas']);
+    await run(['id', 'register', 'nova']);
+    // A P1 dm wakes the recipient, so the send appends a hop-log row.
+    const dm = await run(['dm', '--to', 'nova', '--text', 'hi', '--priority', 'P1', '--id', 'hop-1'],
+      { PHM_AGENT_ID: 'atlas' });
+    expect(dm.json).toMatchObject({ status: 'posted' });
+
+    const hops = await run(['hops']);
+    expect(hops.code).toBe(0);
+    expect(hops.json).toMatchObject({ status: 'ok', source: 'available', matched: 1, returnedHops: 1,
+      truncated: false });
+    expect(hops.json.hops[0]).toMatchObject({ id: 'hop-1', from: 'agent:atlas', to: 'agent:nova' });
+    expect(hops.json.usageSummary.hopCount).toBe(1);
+
+    expect((await run(['hops', '--from', 'atlas'])).json.matched).toBe(1);
+    expect((await run(['hops', '--to', 'atlas'])).json.matched).toBe(0);
+    expect((await run(['hops', '--id', 'hop-1'])).json.matched).toBe(1);
+    expect((await run(['hops', '--id', 'hop-'])).json.matched).toBe(0);
+    expect((await run(['hops', '--limit', '1'])).json.returnedHops).toBe(1);
+    expect((await run(['hops', '--limit', '0'])).code).toBe(2);
+    expect((await run(['hops', 'extra'])).code).toBe(2);
+
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['hops', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('hop-1 agent:atlas -> agent:nova');
+    expect(text.join('\n')).toContain('hops=1 matched=1 source=available');
+  });
 });

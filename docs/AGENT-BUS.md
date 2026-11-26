@@ -825,6 +825,35 @@ fleet's pending hints in one call — without shelling out
 to `phm`; it accepts no caller root or path and passes a refused or
 unavailable page through untouched.
 
+`phm agents bus hops [--from <agent>] [--to <agent>] [--exclude-from
+<agent>] [--id <id>] [--limit <1-50>]` reads the bus hop log — the
+bounded tail of send-attempt rows every wake-enabled `dm`, `post`,
+`channel post`, `handoff`, `wake`, work post and channel-mirror send
+appends — the same projection `fleet_bus_hops` serves through the same
+`readBusHoplogTail` bound, so `agents bus status`'s hoplog probe, this
+verb and the MCP tool describe one file and can never disagree. Each row
+reports the message `id`, the `from`/`to` routing labels and the
+nullable `inputTokens`/`outputTokens` subtotals the send recorded — a
+hop is a recorded send attempt, never a body, a delivery verdict or
+proof the receiver saw anything, and a send that recorded no usage
+reports `null`, never an invented zero. `--from`, `--to` and
+`--exclude-from` resolve through the same `agentRefAddressMatcher`
+identity-label rule `inbox --from` applies — a handle, `agent:<handle>`,
+stable id or alias matches every label of that identity, an unresolvable
+ref keeps exact-label matching, and the registry is only read when one
+of those filters is present — while `--id` keeps only the hop whose
+message id is strictly equal, never a substring. `matched` counts every
+hop the bounded tail accepted before the page slice and `truncated`
+reports the honest cut — older bytes or further matches beyond the
+window or the `--limit` page — so a capped list is never passed off as
+the whole log; `usageSummary` totals the returned rows' token counts
+with unknown samples counted separately, the same `summarizeBusHops`
+projection the fleet read reports. Hops carry no timestamp, priority or
+body fields, so no time, band, thread, job or text filter can honestly
+apply. A verified-missing log answers `ok` with `source: 'missing'` and
+real zeros; an unreadable one is `unavailable`, never an empty page
+passed off as "no hops".
+
 **Lookup.** `phm agents bus show <id>` resolves one retained envelope by the
 wire id wake hints, `work mine` items and claim operations cite — the third
 addressing mode beside labels and cursors. The scan is the same bounded page
@@ -1613,7 +1642,8 @@ the wake queue (state, observed hint count before the row cap, and whether
 the bounded tail or cap truncated older hints), the bus hop log every
 wake-enabled send and accepted channel mirror appends
 (`<root>/bus/hops.jsonl` — `state` plus on-disk `bytes`, the `hops`
-count observed inside the bounded tail `fleet_bus_hops` reads,
+count observed inside the bounded tail `fleet_bus_hops` and
+`agents bus hops` read,
 `skippedRows` for malformed or torn rows and a `truncated` flag for hops
 beyond the window; 0 counts on a verified-missing log, null when
 unreadable, never message ids, agent labels or bodies), the shared

@@ -4158,6 +4158,24 @@ the cited job resolved through the same one-read-per-page annotation
 registry answers
 `unknown-channel`, and an unreadable registry or store answers
 `unavailable`/`retryable`, never an empty page passed off as history),
+`readAgentBusHops(filters?, options?)` (the bounded hop-log tail read —
+`{from?, to?, excludeFrom?, id?, limit?}` where the three ref filters
+resolve through `agentRefAddressMatcher` under the same identity-label
+rule `readAgentInbox`'s `from` applies, `id` keeps only the hop whose
+message id is strictly equal, and `limit` pages the newest matches
+oldest-first, default 20 bounded by `AGENT_BUS_HOPS_MAX_LIMIT` = 50;
+answers `{status:'ok', source:'missing'|'available', hops, matched,
+returnedHops, skippedRows, truncated, usageSummary, asOf}` — `hops` rows
+carry `{id, from, to, inputTokens, outputTokens}` with null token counts
+where the send recorded no usage, `matched` the filter hits inside the
+bounded tail before the page slice, `truncated` the honest cut beyond
+the window or page, `skippedRows` malformed-row evidence inside the
+window, and `usageSummary` the `summarizeBusHops` token projection over
+the returned rows only (null on a verified-missing log); a verified-absent
+log answers `ok`/`source:'missing'` with real zeros, an unreadable one
+`unavailable`, and a bad limit or label `invalid` — hop rows are
+send-attempt evidence only, never bodies, delivery verdicts or proof the
+receiver saw anything),
 `readBusEnvelopeById(id, options?)` (one retained envelope by its wire id —
 the key wake hints, claim operations and `work mine` items cite — via the
 same bounded page walk; live rows only so an expired or never-posted id

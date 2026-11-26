@@ -22,6 +22,8 @@ import { appendBusInbox, listBusInboxAfter, scanBusInbox, BUS_INBOX_MAX_MESSAGES
   type BusInboxOptions, type BusInboxPost, type BusInboxReceipt, type BusInboxScan } from '../fleet/bus-inbox.js';
 import { BUS_PRIORITIES, isClaimableWork, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
 import { groupAddress, isGroupPresenceBody } from '../fleet/bus-group.js';
+import { BUS_HOPLOG_TAIL_MAX_ROWS, readBusHoplogTail } from '../fleet/bus-hoplog.js';
+import { summarizeBusHops, type BusHopSummary } from '../fleet/bus-hop-summary.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { createBusWakeHook, type BusWakeResult } from '../fleet/bus-wake.js';
@@ -2383,6 +2385,134 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   annotateLiveEvidence(messages, options);
   return { status: 'ok', channel: name, messages, nextCursor: cursor,
     ...(countMatched ? { matched } : {}) };
+}
+
+/** Newest hop rows one `agents bus hops` page returns, oldest first — the
+ * same page bound `fleet_bus_hops` applies to the same bounded tail. */
+export const AGENT_BUS_HOPS_MAX_LIMIT = 50;
+/** Default page size when `--limit` is absent; the fleet read's own default. */
+const AGENT_BUS_HOPS_DEFAULT_LIMIT = 20;
+
+/** The printable routing-label rule every bus id and address filter shares. */
+const HOPS_LABEL = /^[\x21-\x7e]{1,128}$/;
+
+export interface AgentBusHopsFilters {
+  /** Sender ref — handle, `agent:<handle>`, stable id or alias — matched against every label of the resolved identity. */
+  from?: string;
+  /** Recipient ref under the same identity-label rule as `from`. */
+  to?: string;
+  /** Sender ref to drop under the same identity-label rule, inverted — it composes with `from` so a sender both included and excluded matches nothing. */
+  excludeFrom?: string;
+  /** Keep only the hop whose message id is strictly equal to this value — never a substring. */
+  id?: string;
+  /** Newest matching hops to return, oldest first; default 20, bounded by AGENT_BUS_HOPS_MAX_LIMIT. */
+  limit?: number;
+}
+
+/**
+ * One validated hop-log row: a recorded send attempt's routing ids and token
+ * subtotals — never a body, delivery verdict or lifecycle claim. `inputTokens`/
+ * `outputTokens` are null when the send recorded no usage: unknown stays
+ * unknown, never an invented zero.
+ */
+export interface AgentBusHop {
+  id: string;
+  from: string;
+  to: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+}
+
+export type AgentBusHopsResult =
+  | { status: 'ok';
+      /** 'missing' is a verified-absent log — a real empty read, never an error. */
+      source: 'missing' | 'available';
+      /** The newest `limit` filter matches in append order (oldest first). */
+      hops: AgentBusHop[];
+      /** Every hop the bounded tail window matched before the page slice — a
+       * lower bound when `truncated` reports rows beyond the window, never a
+       * fleet-wide total the bounded read cannot prove. */
+      matched: number;
+      returnedHops: number;
+      /** Malformed, torn or unvalidated rows inside the read window — degraded
+       * evidence, never recorded activity; 0 on a verified-missing log. */
+      skippedRows: number | null;
+      /** Older bytes or further hops sit beyond the bounded read or the page;
+       * false only when the bounded read provably saw them all. */
+      truncated: boolean | null;
+      /** Token subtotals over the returned rows only — the same
+       * `summarizeBusHops` projection `fleet_bus_hops` reports; null on a
+       * verified-missing log, where no rows were read to summarize. */
+      usageSummary: BusHopSummary | null;
+      asOf: string }
+  | { status: 'invalid' | 'unavailable'; reason: string };
+
+/**
+ * The hop-log read on the unified surface — the same projection
+ * `fleet_bus_hops` serves, under the same bounded tail
+ * (`readBusHoplogTail` over `BUS_HOPLOG_TAIL_MAX_ROWS`) and the same path the
+ * send path's `hoplogFile` resolves (`options.hoplogFile`, else
+ * `<root>/bus/hops.jsonl`, else `busHoplogPath()`), so `agents bus status`'s
+ * hoplog probe, this read and the MCP tool can never disagree about which
+ * file they describe. A hop is only a recorded send attempt — every
+ * wake-enabled `dm`, `post`, `channel post`, `handoff`, `wake`, work post and
+ * channel-mirror send appends one — carrying message id, sender and
+ * recipient routing labels plus nullable token counts: it is never a body,
+ * a delivery verdict or proof the receiver saw anything. `from`, `to` and
+ * `excludeFrom` resolve through `agentRefAddressMatcher` exactly like
+ * `fleet_bus_hops` — a handle, `agent:<handle>`, stable id or alias matches
+ * every label of that identity, and an unresolvable ref or unreadable
+ * registry keeps exact-label matching, so unknown identity state never
+ * widens the read; the registry is only read when one of those filters is
+ * present. `id` is the strict own-id match on the hop's message id.
+ * Hops carry no timestamp, priority or body fields, so no time, band,
+ * thread, job or text filter can honestly apply — the read is the bounded
+ * newest tail, `matched` the filter hits inside it and `truncated` the
+ * honest cut beyond it. A verified-missing log answers `ok` with
+ * `source:'missing'` and real zeros; an unreadable one is `unavailable`,
+ * never an empty page passed off as "no hops".
+ */
+export function readAgentBusHops(filters: AgentBusHopsFilters = {}, options: UnifiedBusOptions = {}): AgentBusHopsResult {
+  const asOf = new Date((options.now ?? Date.now)()).toISOString();
+  const limit = filters.limit ?? AGENT_BUS_HOPS_DEFAULT_LIMIT;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > AGENT_BUS_HOPS_MAX_LIMIT) {
+    return { status: 'invalid', reason: `limit must be an integer from 1 to ${AGENT_BUS_HOPS_MAX_LIMIT}.` };
+  }
+  const badLabel = (['from', 'to', 'excludeFrom', 'id'] as const)
+    .find(key => filters[key] !== undefined && (typeof filters[key] !== 'string' || !HOPS_LABEL.test(filters[key]!)));
+  if (badLabel !== undefined) return { status: 'invalid', reason: `Invalid ${badLabel} filter.` };
+  let tail: ReturnType<typeof readBusHoplogTail>;
+  try { tail = readBusHoplogTail(BUS_HOPLOG_TAIL_MAX_ROWS, hoplogFile(options)); }
+  catch { return { status: 'unavailable', reason: 'Bus hop log is unreadable.' }; }
+  if (tail.state === 'unreadable') return { status: 'unavailable', reason: 'Bus hop log is unreadable.' };
+  if (tail.state === 'missing' || tail.hops === null) {
+    return { status: 'ok', source: 'missing', hops: [], matched: 0, returnedHops: 0,
+      skippedRows: 0, truncated: false, usageSummary: null, asOf };
+  }
+  // The identity registry is only consulted when a ref filter needs it; an
+  // unreadable one degrades every ref matcher to exact-label matching rather
+  // than failing the read, the same rule `fleet_bus_hops` keeps.
+  let registry: AgentRegistry | undefined;
+  if (filters.from !== undefined || filters.to !== undefined || filters.excludeFrom !== undefined) {
+    const read = readAgentRegistry(options);
+    registry = read.status === 'ok' ? read.registry : undefined;
+  }
+  const from = filters.from === undefined ? undefined : agentRefAddressMatcher(filters.from, registry);
+  const to = filters.to === undefined ? undefined : agentRefAddressMatcher(filters.to, registry);
+  const excludeFrom = filters.excludeFrom === undefined ? undefined : agentRefAddressMatcher(filters.excludeFrom, registry);
+  const matchedHops = tail.hops.filter(hop =>
+    (from === undefined || from(hop.from)) &&
+    (to === undefined || to(hop.to)) &&
+    (excludeFrom === undefined || !excludeFrom(hop.from)) &&
+    (filters.id === undefined || hop.id === filters.id));
+  const page = matchedHops.slice(-limit);
+  return { status: 'ok', source: 'available',
+    hops: page.map(hop => ({ id: hop.id, from: hop.from, to: hop.to,
+      inputTokens: hop.inputTokens, outputTokens: hop.outputTokens })),
+    matched: matchedHops.length, returnedHops: page.length,
+    skippedRows: tail.skippedRows,
+    truncated: (tail.truncated ?? false) || matchedHops.length > page.length,
+    usageSummary: summarizeBusHops(page), asOf };
 }
 
 export interface BusEnvelopeLookupMessage {

@@ -6,8 +6,8 @@ import {
 } from '../core/agents/bus-identity.js';
 import {
   agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodyFallbackSummary, busInboxJobMarker, busPageResumeCursor, listBusChannels, postChannelMessage, postLabelMessage,
-  readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
-  updateWorkStatus, INBOX_KINDS, type AllWakesPage, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WakePage, type WorkStatusInput,
+  readAgentBusHops, readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
+  updateWorkStatus, AGENT_BUS_HOPS_MAX_LIMIT, INBOX_KINDS, type AllWakesPage, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WakePage, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
@@ -30,7 +30,7 @@ import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js'
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
-export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'follow', 'wakes', 'show', 'thread', 'adapters', 'claim', 'work', 'status']);
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'follow', 'wakes', 'hops', 'show', 'thread', 'adapters', 'claim', 'work', 'status']);
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
@@ -47,6 +47,7 @@ ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
 ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
 ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
+ashlr agents bus hops [--from <agent>] [--to <agent>] [--exclude-from <agent>] [--id <id>] [--limit <1-${AGENT_BUS_HOPS_MAX_LIMIT}>]
 ashlr agents bus show <id>
 ashlr agents bus thread <id>
 ashlr agents bus adapters
@@ -566,7 +567,12 @@ ref is omitted — to its registered identity: the agt_ id, agent:<handle>
 address, aliases, runtimes and member channels, plus the detected session
 CLI on the self view; an unresolvable ref reports unknown, a malformed one
 invalid, an unreadable registry unavailable and a missing PHM_AGENT_ID
-unset — never a guessed identity.
+unset — never a guessed identity. hops reads the bounded hop log tail
+every wake-enabled send appends — the same projection fleet_bus_hops
+serves — newest matches oldest-first under --from/--to/--exclude-from
+identity-label filters, --id's exact message-id match and --limit paging;
+a hop carries routing ids and token subtotals only, never a body, so no
+time, thread, job or text filter can honestly apply.
 No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
@@ -1115,6 +1121,25 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),
         ...page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}` + agentWakeClaimHolderSuffix(w) + agentWakeMessageSuffix(w)),
       ].join('\n') || 'No wakes.');
+      return 0;
+    }
+    if (verb === 'hops') {
+      noExtra(1);
+      const result = readAgentBusHops({ from: one('--from'), to: one('--to'),
+        excludeFrom: one('--exclude-from'), id: one('--id'),
+        limit: integer(one('--limit'), '--limit') }, options);
+      if (result.status !== 'ok') {
+        out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
+        return result.status === 'invalid' ? 2 : 1;
+      }
+      out(json ? JSON.stringify(result) : [
+        ...result.hops.map(h => `${h.id} ${h.from} -> ${h.to}` +
+          (h.inputTokens === null && h.outputTokens === null ? '' :
+            ` tokens=in:${h.inputTokens ?? 'unknown'} out:${h.outputTokens ?? 'unknown'}`)),
+        ...(result.hops.length === 0 ? ['No hops recorded.'] : []),
+        `hops=${result.returnedHops} matched=${result.matched} source=${result.source} ` +
+          `skipped=${result.skippedRows ?? 'unknown'} truncated=${result.truncated ?? 'unknown'} as-of=${result.asOf}`,
+      ].join('\n'));
       return 0;
     }
     if (verb === 'work' && sub === 'feed') {

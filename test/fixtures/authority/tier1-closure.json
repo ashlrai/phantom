@@ -668,6 +668,7 @@
     "src/core/fleet/bus-delivery.ts",
     "src/core/fleet/bus-envelope.ts",
     "src/core/fleet/bus-group.ts",
+    "src/core/fleet/bus-hop-summary.ts",
     "src/core/fleet/bus-hoplog.ts",
     "src/core/fleet/bus-inbox.ts",
     "src/core/fleet/bus-leader-inbox.ts",
