@@ -1379,6 +1379,26 @@
  *     for the fleet's own repository since the receipts carry no repo
  *     column, and the prompts frame the join as association, not
  *     causation;
+ *   - the iMessage teammate inbox's recurring stale-unanswered
+ *     auto-answer texts: the {at, rowid, senderId, text} rows and
+ *     {answered, at} markers recordTeammateText and
+ *     markTeammateTextsAnswered append to <runs>/imessage/
+ *     teammates.jsonl — the responder worker's own record of which
+ *     allowlisted non-Mason texts it never closed — folded per
+ *     worker intent (reply, actionable, acknowledge) across distinct
+ *     UTC days inside the 7-day window, each text older than the
+ *     24h staleness bar and still unmarked, task-peer senders
+ *     excluded as envelope protocol, 'leader' texts counted only as
+ *     designed-escalation context, answered texts as delivered
+ *     context, truncated tails stated as lower bounds, and only the
+ *     fleet's own repository inheriting the items since the inbox
+ *     describes this install's comms machinery and carries no repo
+ *     column (teammateInboxBacklogItems below). Until now the
+ *     inbox's only readers were point-in-time surfaces — the
+ *     teammate-texts listing, the unified comms inbox, the
+ *     reply-latency report and the teammate-overdue owner notice —
+ *     so a responder path that kept not reaching texts never became
+ *     work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1511,6 +1531,7 @@ import { seatShadowEvidenceBacklogItems } from './seat-shadow-evidence-backlog.j
 import { queueRerouteBacklogItems } from './queue-reroute-backlog.js';
 import { backoffSkipBacklogItems } from './backoff-skip-backlog.js';
 import { evalGateBacklogItems } from './eval-gate-backlog.js';
+import { teammateInboxBacklogItems } from './teammate-inbox-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -3235,6 +3256,28 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since jobs.jsonl describes this install's
   // dispatch machinery.
   items.push(...await backoffSkipBacklogItems({ repo }));
+
+  // iMessage teammate inbox: every allowlisted non-Mason iMessage text
+  // that is not a fleet task peer lands in
+  // <runs>/imessage/teammates.jsonl as a {at, rowid, senderId, text}
+  // row, and every responder close lands as an {answered, at} marker —
+  // the teammate responder worker's own record of which texts it
+  // never answered. Until now the inbox's only readers were
+  // point-in-time surfaces — `phm fleet teammate-texts`, the unified
+  // comms inbox, the reply-latency report and the teammate-overdue
+  // owner notice — so a responder path that kept not reaching texts
+  // never became work. Cells key the worker's auto-answer intents
+  // (reply, actionable, acknowledge) and count only texts still
+  // unmarked past the 24h staleness bar inside the 7-day window,
+  // emitting at the recurring bars of distinct texts across distinct
+  // UTC days; task-peer senders are excluded as envelope protocol,
+  // 'leader' texts count only as designed-escalation context, 'ignore'
+  // texts are designed suppressions, answered texts are delivered
+  // context, truncated tails are stated as lower bounds, and only the
+  // fleet's own repository inherits the items since the inbox
+  // describes this install's comms machinery and carries no
+  // repository column.
+  items.push(...await teammateInboxBacklogItems({ repo }));
   return { items, errors };
 }
 
