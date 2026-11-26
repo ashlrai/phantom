@@ -499,18 +499,35 @@ function validSnapshotItem(v: unknown): v is BoardSnapshotItem {
     && blocker && verified;
 }
 
-/** The previous pass's board; null when absent or unreadable — the caller
- * baselines instead of replaying a corrupt past. */
-export function readBoardNotifySnapshot(stateDir: string): BoardSnapshotItem[] | null {
-  if (!isAbsolute(stateDir)) return null;
-  const read = readPrivateFileCapped(boardNotifySnapshotPath(stateDir), SNAPSHOT_MAX_BYTES);
-  if (read === null || read.truncated) return null;
+export type BoardNotifySnapshotRead =
+  | { status: 'missing' }
+  | { status: 'readable'; items: BoardSnapshotItem[] }
+  | { status: 'unavailable'; reason: 'unreadable' | 'capped' | 'invalid' };
+
+/** Distinguish a first pass from history that must be restored before retrying. */
+export function readBoardNotifySnapshotResult(stateDir: string): BoardNotifySnapshotRead {
+  if (!isAbsolute(stateDir)) return { status: 'unavailable', reason: 'unreadable' };
+  const path = boardNotifySnapshotPath(stateDir);
+  const read = readPrivateFileCapped(path, SNAPSHOT_MAX_BYTES);
+  if (read === null) {
+    try { lstatSync(path); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'missing' };
+    }
+    return { status: 'unavailable', reason: 'unreadable' };
+  }
+  if (read.truncated) return { status: 'unavailable', reason: 'capped' };
   try {
     const parsed = JSON.parse(read.text) as { v?: unknown; items?: unknown };
     if (parsed.v !== 1 || !Array.isArray(parsed.items) || parsed.items.length > SNAPSHOT_MAX_ITEMS
-      || !parsed.items.every(validSnapshotItem)) return null;
-    return parsed.items;
-  } catch { return null; }
+      || !parsed.items.every(validSnapshotItem)) return { status: 'unavailable', reason: 'invalid' };
+    return { status: 'readable', items: parsed.items };
+  } catch { return { status: 'unavailable', reason: 'invalid' }; }
+}
+
+/** Compatibility reader; callers needing first-run detection must use the result API. */
+export function readBoardNotifySnapshot(stateDir: string): BoardSnapshotItem[] | null {
+  const result = readBoardNotifySnapshotResult(stateDir);
+  return result.status === 'readable' ? result.items : null;
 }
 
 /** Persist this pass's board for the next diff; never throws. */

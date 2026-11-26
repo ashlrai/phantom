@@ -21,7 +21,7 @@ import { appendBusInbox } from '../core/fleet/bus-inbox.js';
 import { postBusReply } from '../core/fleet/bus-reply-post.js';
 import { CHANNEL_BUS_TTL_MS } from '../core/fleet/channel-bus-publish.js';
 import { boardNotifyDir, boardNotifyLedgerPath, diffBoard, planNotifications,
-  readBoardNotifySent, readBoardNotifySnapshot, sendNotifications, snapshotAfterSend,
+  readBoardNotifySent, readBoardNotifySnapshotResult, sendNotifications, snapshotAfterSend,
   snapshotBoard, writeBoardNotifySnapshot,
   type BoardNotice, type BoardNotifySender, type BoardNotifySenders } from '../core/fleet/work-board-notify.js';
 import { killSwitchOn } from '../core/sandbox/policy.js';
@@ -170,7 +170,12 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
     lines: ['board-notify: inbox unavailable; snapshot and sent ledger preserved'],
   }, 1);
   const next = snapshotBoard(board, id => collectBusWorkItemEvidence(id, { root: busRoot, now }).evidence);
-  const prev = readBoardNotifySnapshot(dir);
+  const snapshot = readBoardNotifySnapshotResult(dir);
+  if (snapshot.status === 'unavailable') return emit({
+    status: 'snapshot-unavailable', reason: snapshot.reason, dependency: 'snapshot-storage',
+    lines: ['board-notify: snapshot storage unavailable; restore valid notification history before retrying'],
+  }, 1);
+  const prev = snapshot.status === 'readable' ? snapshot.items : null;
   const sent = readBoardNotifySent(ledgerPath);
   if (sent === null) return emit({ status: 'ledger-unavailable', lines: ['board-notify: sent ledger unreadable; refusing to risk a second post'] }, 1);
   const killed = deps.killed ?? killSwitchOn();
