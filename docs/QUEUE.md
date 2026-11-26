@@ -348,6 +348,10 @@ phm fleet unfed --window 6 --json
 `phm fleet unfed` prints each resource's utilization and its unfed capacity
 now, then folds the unfed ticks of the last `--window` hours (default 24, at
 most 168): ticks unfed and slot-ticks lost per lane, with the leading reasons.
+The separate `resourcePlan` comparison uses the same advisory lane targets as
+`phm resources plan` and shows how many additional slots lack waiting rows
+hinted to that lane. Unknown plan capacity remains null. Dispatcher counts,
+reason codes and the command's exit status still describe the actual market.
 The same window's `route_decision` rows are folded into `overrides`:
 each waiting job counts once, by its latest in-window decision — how many
 jobs the market decided and how many left their hinted lane, by reason
@@ -420,11 +424,25 @@ and a stale or untimestamped snapshot is still reported — flagged, never
 hidden — as the dispatcher's last published state. Text output prints the same
 caveat after the utilization summary.
 It exits 1 when any lane is unfed now and 2 when status.json is unreadable. It
-is read-only: no writes, no child processes, no network. The isolated fleet
+is read-only: no writes or provider calls. The resource plan uses the same
+bounded local host and Tailnet evidence as the resource planning command. The isolated fleet
 MCP server's `fleet_unfed` tool serves the same `fleet.unfed.v1` assembly —
 the same `readUnfedReport` read this command and the tool share — with
 `windowHours` taking the `--window` bound; see
 [the fleet tool catalog](MCP-TOOLS.md#phantom-fleet--isolated-fleet-server-phm-mcp-fleet).
+
+The Leader records these targets and the projected unused quota per deadline
+on the Fleet Board. On a live tick it may also re-hint eligible READY rows
+toward under-target included lanes, earliest verified deadline first. A
+supported reset proposal may affect that order, but does not spend a reset.
+The Leader only edits the existing `queue/ready.tsv` under the dispatcher
+and ready-file locks; it leaves held, parked, retired, exclusive and legacy
+rows without an explicit requirements cell alone. A re-hinted row cannot
+fall back to metered execution. Dispatch still decides whether and where to
+launch. The move is recorded in `metrics/work-market.jsonl` as
+`work-market.v1` / `queue_reroute` with `resource_plan_under_target` and
+`expiring_included_quota` or `expiring_reset_bank`; these are not claim or
+route-decision events.
 
 ## Dispatch-neutral queue snapshot
 

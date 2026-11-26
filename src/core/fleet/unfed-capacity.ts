@@ -190,6 +190,7 @@ export interface UnfedRejections {
 export interface UnfedReport {
   schema: typeof FLEET_UNFED_SCHEMA;
   readOnly: true;
+  resourcePlan?: { lane: string; running: number | null; target: number | null; unfedSlots: number | null }[] | null;
   /**
    * `dispatcher`: the tick's own verdict from status.json, with reason codes.
    * `derived`: computed here from lane counts and ready.tsv, because the
@@ -786,6 +787,10 @@ export function renderUnfed(report: UnfedReport): string[] {
     const use = r.utilization === null ? 'no target' : `${Math.round(r.utilization * 100)}%`;
     const state = r.held ? '  HELD' : r.unfed ? `  UNFED: ${r.headroom} free, ${r.waitingElsewhere} rows waiting elsewhere${Object.keys(r.blocked).length ? ` (${topCodes(r.blocked)})` : ''}` : '';
     lines.push(`${r.lane}  ${r.running}/${r.target} running (${use}), ${r.readyHinted} hinted here${state}`);
+  }
+  for (const lane of report.resourcePlan ?? []) {
+    if (lane.target === null) continue;
+    lines.push(`plan ${lane.lane}: ${lane.running ?? 'unknown'}/${lane.target ?? 'unknown'} running, ${lane.unfedSlots ?? 'unknown'} unfilled plan slots with waiting work`);
   }
   if (report.resources.length === 0) lines.push('No lanes in queue/status.json.');
   lines.push(report.unfedLanes.length === 0

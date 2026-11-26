@@ -162,6 +162,15 @@ describe('plan', () => {
   const now = new Date(NOW);
   const jobs = (n: number, extra = {}) => Array.from({ length: n }, (_, i) => ({ id: `J${i}`, ...extra }));
 
+  it('consumes each known resource-plan slot once without treating unknown as zero', () => {
+    const joins = [joined('mason-wyatt', [['claude', 100]])];
+    const input = jobs(2, { lane: 'claude' });
+    const plan = planOrg(org, joins, view(0, 10), input, now, [{ lane: 'claude', additional_slots: 1 }]);
+    expect(plan.assignments.map(row => row.job)).toEqual(['J0']);
+    expect(plan.unassigned).toEqual([{ job: 'J1', reason: 'no resource-plan slots left' }]);
+    expect(planOrg(org, joins, view(0, 10), input, now, [{ lane: 'claude', additional_slots: null }]).assignments).toHaveLength(2);
+  });
+
   it('holds lanes nobody opted into and assigns nothing there', () => {
     const p = planOrg(org, [], view(10, 1), jobs(2), now);
     expect(p.assignments).toEqual([]);
