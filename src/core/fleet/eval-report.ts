@@ -346,8 +346,9 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
     const outcomeRow = OUTCOME_EVENTS.has(event) || (event === '' && ['MERGED', 'CLOSED', 'OPEN'].includes(phase));
     if (ROUTING_EVENTS.has(event)) {
       counts.events++;
+      if (atMs === null) continue;
       const route = {
-        atMs: atMs ?? 0,
+        atMs,
         lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'),
         repo: str(row, 'repo'), model: str(row, 'model'),
       };
@@ -363,7 +364,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
       const failed = typeof code === 'number' && Number.isFinite(code) ? code !== 0
         : typeof row['pool_error'] === 'string' && row['pool_error'] !== '';
       const empty = row['empty'] === true;
-      if (job) jobFold(job).finishes.push({ atMs: atMs ?? 0, failed, empty });
+      if (job && atMs !== null) jobFold(job).finishes.push({ atMs, failed, empty });
       if (inWindow) {
         activity.push({ kind: 'finish', jobId: job, lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed, empty });
       }
@@ -732,11 +733,11 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
     let route: RoutingRow | null = null;
     if (foldJob && foldJob.routes.length > 0) {
       const sorted = [...foldJob.routes].sort((a, b) => a.atMs - b.atMs);
-      route = [...sorted].reverse().find((r) => merged.mergedAtMs === null || r.atMs <= merged.mergedAtMs) ?? sorted[0]!;
+      route = sorted.reverse().find((r) => merged.mergedAtMs !== null && r.atMs <= merged.mergedAtMs) ?? null;
     }
     const finish = foldJob && foldJob.finishes.length > 0
       ? [...foldJob.finishes].sort((a, b) => a.atMs - b.atMs)
-          .reverse().find((f) => merged.mergedAtMs === null || f.atMs <= merged.mergedAtMs) ?? null
+          .reverse().find((f) => merged.mergedAtMs !== null && f.atMs <= merged.mergedAtMs) ?? null
       : null;
 
     // Durability. The worst evidence across channels wins: a deterministic

@@ -169,6 +169,38 @@ describe('buildFleetEvalReport', () => {
     });
   });
 
+  it('requires dated routing and finish evidence by merge time', async () => {
+    const url = 'https://github.com/ashlrai/phantom/pull/300';
+    const job = 'RQ-T1';
+    const mergedAt = '2026-11-05T10:00:00Z';
+    const rows = [
+      { event: 'launch', job, lane: 'undated', tier: 'fast' },
+      { event: 'finish', job, exit_code: 1 },
+      { event: 'outcome', job, url, state: 'MERGED', mergedAt },
+      { event: 'launch', job, lane: 'later', tier: 'frontier', ts: '2026-11-05T11:00:00Z' },
+      { event: 'finish', job, exit_code: 1, ts: '2026-11-05T12:00:00Z' },
+    ];
+    const reportFor = (events: object[]) => build({
+      jobsText: events.map((row) => JSON.stringify(row)).join('\n'), prsTexts: [],
+    });
+    const unknown = await reportFor(rows);
+    expect(pr(unknown, '/pull/300')).toMatchObject({
+      jobId: job, lane: null, tier: null, jobFinishFailed: null, ttm_s: null,
+    });
+    expect(lane(unknown, 'unattributed')?.merged).toBe(1);
+    expect(unknown.ci.jobFinishFailed.merged).toBe(0);
+
+    const observed = await reportFor([
+      ...rows,
+      { event: 'launch', job, lane: 'observed', tier: 'work', ts: '2026-11-05T09:00:00Z' },
+      { event: 'finish', job, exit_code: 0, ts: mergedAt },
+    ]);
+    expect(pr(observed, '/pull/300')).toMatchObject({
+      lane: 'observed', tier: 'work', jobFinishFailed: false, ttm_s: 3600,
+    });
+    expect(lane(observed, 'observed')?.merged).toBe(1);
+  });
+
   it('uses only resolved outcomes in required-check adverse rates and comparisons', async () => {
     const rows = JSON.parse(await prsFixture());
     const head = 'a'.repeat(40);
