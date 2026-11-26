@@ -310,6 +310,25 @@
  *               missing store is verified empty, a degraded one still lists
  *               the receipts it could read. Act: `phm channels slack
  *               status`, `phm fleet slack-trace`, `phm channels slack run`.
+ *   leader-delivery  Leader-thread messages whose Telegram delivery the
+ *               drain can no longer finish — `failed` after its retries or
+ *               `pending` past the 72 h offer window — from
+ *               `readLeaderThreadUndelivered`, the read-only scan of the
+ *               same thread log and delivery index `drainLeaderThread`
+ *               drains (every listing path syncs memos first — a write —
+ *               so the inbox reads the store directly). A stuck delivery
+ *               means Mason may never have seen a memo, question, update or
+ *               reply on his phone; until now only the comms cycle's
+ *               one-line outcome for the newest memo and the Verse thread
+ *               showed it. Each lists as a warn naming the message kind and
+ *               state with a scrubbed text snippet, `since` the recorded
+ *               post time and `expiresAt` null — a failed send waits for a
+ *               decision, never a guessed deadline; fresh pending messages
+ *               are the drain's own queue and never list. Source state is
+ *               the read's own — `missing` a verified-absent thread,
+ *               `degraded` a truncated log, `unavailable` an unreadable or
+ *               malformed store — never an empty list passed off as fact.
+ *               Act: `phm channels`, `phm comms cycle`, `phm comms send-owner`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -371,6 +390,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
 import { listTeammateTasks } from './imessage-teammate-tasks.js';
 import { imessageStateDir } from '../integrations/imessage.js';
+import { readLeaderThreadUndelivered, type LeaderThreadUndeliveredRead } from '../vision/leader-thread.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -384,7 +404,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
-  'slack-sends',
+  'slack-sends', 'leader-delivery',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -404,7 +424,7 @@ export const UNIFIED_INBOX_KINDS = [
   'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
   'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'org-membership', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
-  'inbox-proposal', 'slack-request', 'slack-send-unconfirmed',
+  'inbox-proposal', 'slack-request', 'slack-send-unconfirmed', 'leader-message-undelivered',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -624,6 +644,8 @@ export interface UnifiedInboxOptions {
   readSlackJournal?: typeof readSlackJournal;
   /** Slack send-store seam; default reads the same receipts `phm channels slack status` counts as `uncertainSends` and `phm fleet slack-trace` binds replies from. */
   readSlackSends?: typeof readSlackSendReceipts;
+  /** Leader-thread delivery seam; default reads the same thread log and delivery index `drainLeaderThread` drains — the read-only scan, never the memo-syncing list paths. */
+  readLeaderUndelivered?: typeof readLeaderThreadUndelivered;
   /** Optional narrowing of the returned item list by stored source, severity,
    * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
@@ -2443,6 +2465,55 @@ function slackSendItems(read: NonNullable<UnifiedInboxOptions['readSlackSends']>
 }
 
 /**
+ * Leader-thread messages whose Telegram delivery the drain can no longer
+ * finish — `failed` after its retries, or `pending` past the 72 h offer
+ * window — from `readLeaderThreadUndelivered`, the read-only scan of the
+ * same thread log and delivery index `drainLeaderThread` drains (every
+ * listing path syncs memos first — a write — so the inbox reads the store
+ * directly). A stuck delivery means Mason may never have seen a memo,
+ * question, update or reply on his phone, and until now the only surfaces
+ * were the comms cycle's one-line outcome for the newest memo and the Verse
+ * thread — `phm comms inbox`, the API and `fleet_comms_inbox` had no way to
+ * list the backlog. Each lists as a warn naming the message kind and state
+ * with a text snippet — the stored text is already scrubbed and `oneLine`
+ * re-scrubs — `since` the message's recorded post time and `expiresAt` null:
+ * a failed send waits for a decision, never a guessed deadline. Items are
+ * agent work — reposting the content through a proven channel or letting the
+ * next memo carry it — never Mason-blocking. `missing` is a verified-absent
+ * thread; `degraded`/`unavailable` pass the read's own state through, never
+ * an empty list passed off as fact; a throwing seam reports 'unavailable'.
+ */
+function leaderDeliveryItems(read: NonNullable<UnifiedInboxOptions['readLeaderUndelivered']>, now: () => number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: LeaderThreadUndeliveredRead;
+  try { result = read({ now: () => now() }); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  const state: UnifiedInboxSourceState = result.status === 'ok' ? 'healthy' : result.status;
+  const items = result.items.map((entry): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `leader-delivery:${entry.id}`,
+    source: 'leader-delivery',
+    kind: 'leader-message-undelivered',
+    // A Leader message Mason never got on Telegram is agent work to surface
+    // another way — warn, never blocking.
+    severity: 'warn',
+    blocking: false,
+    title: oneLine(`Leader ${entry.kind} Telegram delivery ${entry.telegram === 'failed' ? 'failed' : 'stalled'}`, TITLE_MAX),
+    detail: oneLine(
+      `${entry.channel} · Telegram ${entry.telegram === 'failed'
+        ? `failed after ${entry.attempts} send attempt${entry.attempts === 1 ? '' : 's'}`
+        : 'pending past the 72 h drain window — the comms drain no longer offers it'}` +
+      ` · "${oneLine(entry.text, 120)}"`,
+      DETAIL_MAX) || null,
+    since: entry.at,
+    expiresAt: null,
+    act: [
+      'phm channels --json',
+      'phm comms cycle',
+      'phm comms send-owner --text "<same message text>"',
+    ],
+  }));
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
+}
+
+/**
  * The same drop inbox `runEmailDropOnce` scans, resolved at the shared runs
  * dir: saved email-drop config → `inboxDir` → `readEmailDropInbox`. A missing
  * config or inbox dir is 'missing' (the pass treats an absent inbox as an
@@ -2605,6 +2676,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const proposals = proposalItems(options.readInboxProposals ?? readPendingProposals);
   const slack = slackItems(options.readSlackJournal ?? readSlackJournal, options, now);
   const slackSends = slackSendItems(options.readSlackSends ?? readSlackSendReceipts);
+  const leaderDelivery = leaderDeliveryItems(options.readLeaderUndelivered ?? readLeaderThreadUndelivered, now);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -2631,8 +2703,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     proposals: proposals.report,
     slack: slack.report,
     'slack-sends': slackSends.report,
+    'leader-delivery': leaderDelivery.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

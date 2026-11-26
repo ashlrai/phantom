@@ -310,12 +310,9 @@ function isThreadMessage(x: unknown): x is LeaderThreadMessage {
     && typeof x['text'] === 'string';
 }
 
-/** Every message in thread.jsonl, file order (= time order). Torn / foreign lines are skipped. */
-function readLog(): LeaderThreadMessage[] {
-  const read = readPrivateFileCapped(leaderThreadPath(), THREAD_LIMITS.maxBytes * 4);
-  if (!read) return [];
+function parseThreadLog(text: string): LeaderThreadMessage[] {
   const out: LeaderThreadMessage[] = [];
-  for (const line of read.text.split('\n')) {
+  for (const line of text.split('\n')) {
     if (line.length === 0) continue;
     try {
       const parsed: unknown = JSON.parse(line);
@@ -323,6 +320,13 @@ function readLog(): LeaderThreadMessage[] {
     } catch { /* a torn line from a crash mid-append */ }
   }
   return out;
+}
+
+/** Every message in thread.jsonl, file order (= time order). Torn / foreign lines are skipped. */
+function readLog(): LeaderThreadMessage[] {
+  const read = readPrivateFileCapped(leaderThreadPath(), THREAD_LIMITS.maxBytes * 4);
+  if (!read) return [];
+  return parseThreadLog(read.text);
 }
 
 function withThreadLock<T>(fn: () => T): T {
@@ -603,6 +607,80 @@ export function markDelivered(id: string, channel: 'telegram', ok: boolean): boo
     writeIndex(index, nowMs);
     return true;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Undelivered outbound (read-only)
+// ---------------------------------------------------------------------------
+
+/** One Leader-thread message whose Telegram delivery the drain can no longer finish. */
+export interface LeaderThreadUndeliveredItem {
+  /** Thread message id (`lt-…`). */
+  id: string;
+  /** ISO time the message was posted. */
+  at: string;
+  channel: LeaderThreadChannel;
+  kind: LeaderThreadKind;
+  /** The stored message text — scrubbed at write; display callers re-scrub. */
+  text: string;
+  /** Effective Telegram state: 'failed' gave up after THREAD_LIMITS.deliveryAttempts sends; 'pending' aged past the drain's offer window. */
+  telegram: 'pending' | 'failed';
+  /** Send attempts the index recorded; 0 when none was ever recorded. */
+  attempts: number;
+}
+
+export interface LeaderThreadUndeliveredRead {
+  /** 'missing' — no thread log exists (verified empty); 'degraded' — the log
+   * exceeded the read cap so older lines went unscanned; 'unavailable' — the
+   * log or index could not be read or validated; 'ok' — the scan completed. */
+  status: 'ok' | 'missing' | 'degraded' | 'unavailable';
+  items: LeaderThreadUndeliveredItem[];
+}
+
+/**
+ * Leader messages the Telegram drain owes Mason but can no longer deliver —
+ * the read-only projection `pendingOutbound`/`markDelivered` cannot express,
+ * because every read path above syncs memos first (a write) while this scan
+ * must never mutate. A message lists when its EFFECTIVE delivery state — the
+ * index override `withDelivery` applies, falling back to the state the line
+ * was appended with — is `failed` (the drain gave up after
+ * THREAD_LIMITS.deliveryAttempts) or `pending` older than
+ * THREAD_LIMITS.outboundMaxAgeMs (the drain's offer window closed, so
+ * `pendingOutbound` will never pick it up again — the two bounds are exact
+ * complements). Fresh pending messages are the drain's own queue and never
+ * list; `sent` and never-queued messages are proved or out of scope. The
+ * scan reads the same bounded log and validated index the drain reads — no
+ * lock, no sync, no write — so a torn last line is skipped exactly like
+ * `readLog`. `missing` is a verified-absent thread log; `unavailable` an
+ * unreadable or malformed log or index (the index is authoritative for
+ * delivery state, so its refusal hides the whole set rather than guessing
+ * from stale line states); `degraded` a log that exceeded the read cap.
+ * `attempts` is the index's recorded count, 0 when none was.
+ */
+export function readLeaderThreadUndelivered(options: { now?: () => number } = {}): LeaderThreadUndeliveredRead {
+  let stat: ReturnType<typeof lstatSync>;
+  try { stat = lstatSync(leaderThreadPath()); }
+  catch (err) {
+    return { status: (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unavailable', items: [] };
+  }
+  if (!stat.isFile()) return { status: 'unavailable', items: [] };
+  const read = readPrivateFileCapped(leaderThreadPath(), THREAD_LIMITS.maxBytes * 4);
+  if (!read) return { status: 'unavailable', items: [] };
+  let index: ThreadIndexV1;
+  try { index = readIndex(); }
+  catch { return { status: 'unavailable', items: [] }; }
+  const nowMs = options.now ? options.now() : deps().now();
+  const items: LeaderThreadUndeliveredItem[] = [];
+  for (const message of parseThreadLog(read.text)) {
+    if (message.from !== 'leader') continue;
+    const telegram = withDelivery(message, index).delivery?.telegram;
+    if (telegram !== 'failed' && !(telegram === 'pending' && nowMs - Date.parse(message.at) > THREAD_LIMITS.outboundMaxAgeMs)) continue;
+    items.push({
+      id: message.id, at: message.at, channel: message.channel, kind: message.kind, text: message.text,
+      telegram, attempts: index.delivery[message.id]?.attempts ?? 0,
+    });
+  }
+  return { status: read.truncated ? 'degraded' : 'ok', items };
 }
 
 // ---------------------------------------------------------------------------
