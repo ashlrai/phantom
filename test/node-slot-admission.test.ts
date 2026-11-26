@@ -71,6 +71,27 @@ describe('node slot admission', () => {
     expect(nodes.claim(leader, session, 'job')).toBeNull();
   });
 
+  it('keeps the newer capacity and slot bound when a delayed beat arrives', () => {
+    const store = new MemoryStore();
+    let now = 1000;
+    const nodes = new DriveNodes(store, { now: () => now });
+    const session = nodes.join('pro', { owners: ['mason'] })!;
+    const sample = { hostId: 'pro', ramBytes: 16 * 1024 ** 3 };
+    nodes.enqueue('job', { owner: 'mason' });
+    nodes.heartbeat(session, { capacity: { ...sample, slots: 0, held: 'memory-pressure', sampledAtMs: now } });
+
+    now++;
+    nodes.heartbeat(session, { slots: 2, capacity: { ...sample, slots: 2, held: null, sampledAtMs: now - 2 } });
+    expect(nodes.view(['mason']).nodes[0]).toMatchObject({
+      heartbeatAt: now, slots: 0, capacity: { held: 'memory-pressure', sampledAtMs: now - 1 },
+    });
+    expect(nodes.pull(session)).toBeNull();
+
+    nodes.heartbeat(session, { capacity: { ...sample, slots: 1, held: null, sampledAtMs: now } });
+    nodes.heartbeat(session, { capacity: { ...sample, slots: 0, held: 'memory-pressure', sampledAtMs: now - 1 } });
+    expect(nodes.pull(session)?.job.id).toBe('job');
+  });
+
   it('keeps existing records without slots compatible', () => {
     const { nodes } = fixture();
     nodes.join('legacy', { owners: ['mason'] });
