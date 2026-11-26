@@ -1624,6 +1624,36 @@ describe('phm agents bus (unified)', () => {
       .toMatchObject({ code: 2, json: { status: 'invalid' } });
   });
 
+  it('claims the named work envelope under --id', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    const post = (id: string, to: string, priority: BusEnvelope['priority'], body: unknown): void => {
+      expect(appendBusInbox({ id, from: 'agent:nova', to, priority, ttl: 3_600_000,
+        body: body as BusEnvelope['body'] }, { root }).status).toBe('posted');
+    };
+    post('wi-target', 'agent:atlas', 'P3', { kind: 'work', text: 'hinted fix' });
+    post('wi-decoy', 'agent:atlas', 'P0', { kind: 'work', text: 'other work' });
+    post('wi-note', 'agent:atlas', 'P0', { kind: 'note', text: 'not claimable' });
+    post('wi-foreign', 'agent:nova', 'P0', { kind: 'work', text: 'nova only' });
+    const env = { PHM_AGENT_ID: 'atlas' };
+
+    // --id claims the named P3 receipt even though a P0 claimable receipt exists.
+    const first = await run(['work', 'next', '--lease-ms', '60000', '--id', 'wi-target'], env);
+    expect(first.code).toBe(0);
+    expect(first.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wi-target' } } });
+    // The held named receipt reports held work, not a dry well.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--id', 'wi-target'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 1, held: 1 } });
+    // Foreign, non-work and absent ids are honest empty matches.
+    for (const id of ['wi-foreign', 'wi-note', 'wi-missing']) {
+      expect(await run(['work', 'next', '--lease-ms', '60000', '--id', id], env))
+        .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+    }
+    // A malformed id is a usage error, never a widened claim.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--id', 'has space'], env))
+      .toMatchObject({ code: 2 });
+  });
+
   it('filters the next-work claim by channel and sender', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'coord', '--alias', 'coordinator'])).json)

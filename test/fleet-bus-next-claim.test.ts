@@ -454,6 +454,40 @@ it('applies the topic filter to the claimable scan and its empty totals', () => 
   expect(claimNextBusWork(request())).toEqual({ status: 'empty', candidates: 6, held: 0 });
 });
 
+it('applies the id filter to the claimable scan and its empty totals', () => {
+  post('target', { priority: 'P3' });
+  post('decoy', { priority: 'P0' });
+  post('foreign', { to: 'worker-b', priority: 'P0' });
+  post('chat', { body: { kind: 'chat' }, priority: 'P0' });
+  post('old', { ttl: 1 });
+  now += 2;
+  // --id claims the named envelope even when higher-priority claimable work
+  // exists — a targeted claim never picks work the matching read would hide.
+  const result = claimNextBusWork({ ...request(), id: 'target' });
+  expect(result.status).toBe('acquired');
+  if (result.status !== 'acquired') throw new Error('expected a claim');
+  expect(result.receipt.envelope.id).toBe('target');
+  // The held named envelope answers conflict — held work, not a dry well.
+  expect(claimNextBusWork({ ...request(), id: 'target' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 1 });
+  // Another named claimable receipt claims under its own id the same way.
+  const second = claimNextBusWork({ ...request(), id: 'decoy' });
+  expect(second.status).toBe('acquired');
+  if (second.status !== 'acquired') throw new Error('expected a claim');
+  expect(second.receipt.envelope.id).toBe('decoy');
+  // An id naming no live claimable receipt addressed to --to is an honest
+  // empty match: absent, expired, foreign, or not claimable work.
+  for (const id of ['missing', 'old', 'foreign', 'chat']) {
+    expect(claimNextBusWork({ ...request(), id })).toEqual({ status: 'empty', candidates: 0, held: 0 });
+  }
+  // The filter composes: a named receipt outside another filter's slice is
+  // not a candidate, and inside it claims.
+  post('prio', { priority: 'P2' });
+  expect(claimNextBusWork({ ...request(), id: 'prio', priority: 'P0' }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+  expect(claimNextBusWork({ ...request(), id: 'prio', priority: 'P2' }).status).toBe('acquired');
+});
+
 it('rejects malformed channel, topic, from and exclude-from filters before scanning', () => {
   post('work');
   const bad: Partial<BusNextRequest>[] = [
@@ -469,6 +503,9 @@ it('rejects malformed channel, topic, from and exclude-from filters before scann
     { from: 'x'.repeat(129) },
     { excludeFrom: 'has space' },
     { excludeFrom: '' },
+    { id: 'has space' },
+    { id: '' },
+    { id: 'x'.repeat(129) },
   ];
   for (const filters of bad) {
     expect(claimNextBusWork({ ...request(), ...filters })).toEqual({ status: 'invalid' });

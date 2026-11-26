@@ -1564,7 +1564,7 @@ without shelling out to `phm`; it accepts no caller root or path and
 passes a refused or degraded section through untouched.
 
 **Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
-<1..3600000> [--owner <label>] [--contains <text>] [--since
+<1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since
 <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel
 <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]` is the claim half of the loop `work
 mine`
@@ -1572,7 +1572,12 @@ opens: it takes the next claimable work envelope addressed to the agent —
 the same live `kind:'work'`/protocol-`task` receipts the digest's `next`
 section lists — and leases it through the same message-id claim path
 `fleet bus-next`/`comms bus next` run, so the find → claim step never
-leaves this surface. `--contains`, `--since`, `--before`, `--priority`,
+leaves this surface. `--id` keeps only the receipt whose own wire id is
+strictly equal — the same exact-envelope match every bus `--id` read
+applies — so a wake hint's or a filtered read's named envelope claims in
+one atomic step under the same addressed-to, claimable-work and filter
+rules rather than through the unfiltered `claim message acquire --id`
+primitive; `--contains`, `--since`, `--before`, `--priority`,
 `--channel`, `--topic`, `--from` and `--exclude-from`
 narrow the
 claimable set under the same rules every bus read applies — the scrubbed
@@ -1583,11 +1588,13 @@ exact P0..P3 band, the `group:<name>:*` room prefix, the exact topic
 component of a well-formed `group:<room>:<topic>` address — composing
 with `--channel` into one room and one topic — and the sender
 identity-label match —
-so "claim the next work about X" or "claim the next
-urgent one" is one atomic step rather than a filtered list followed by a
+so "claim the next work about X", "claim the next
+urgent one" or "claim this hinted envelope" is one atomic step rather than a filtered list followed by a
 claim-by-id, a claim can never pick work newer than the window the
 claimant reviewed, and `empty`'s `{candidates, held}` totals count only the
-filtered scan. The bounded scan walks candidates in `bus next`
+filtered scan — under `--id` `candidates` is at most 1, so an absent,
+expired, foreign, non-work or held named receipt reads as `candidates: 0`
+or `held: 1` rather than a guessed claim. The bounded scan walks candidates in `bus next`
 order (priority band, then cursor) and matches "addressed to it" under
 the identical rule: any label of the resolved identity or a
 `group:<channel>:<topic>` address of a registry channel it belongs to,
@@ -2080,11 +2087,12 @@ reads apply, through the same identity registry the message filters use; a
 `--to` naming no identity, membership in no channel, or an unreadable registry
 keeps exact-label matching and never widens. All four claim surfaces —
 `agents bus work next`, `fleet bus-next`, `fleet bus-wait-claim` and
-`comms bus next` — take the same `--contains <text>`, `--since
+`comms bus next` — take the same `--id <envelope-id>`, `--contains <text>`, `--since
 <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--priority <P0|P1|P2|P3>`,
 `--channel <name>`, `--topic <topic>`, `--from <agent>` and `--exclude-from <agent>`
 read filters, applied inside
-the claim scan under the identical rules the reads use (the scrubbed
+the claim scan under the identical rules the reads use (the exact wire id,
+the scrubbed
 one-line summary substring, the inclusive `receivedAt` cutoff, the
 exclusive `receivedAt` ceiling composing with `--since` into one
 `[since, before)` window, the exact
