@@ -1565,6 +1565,25 @@ describe('router outcome work_class join', () => {
     expect(classes.size).toBe(2);
   });
 
+  it('requires agreement on work class at the newest decision timestamp', () => {
+    const receipts = [
+      decision('conflict', 'standard', 100),
+      decision('conflict', 'bulk', 200),
+      decision('conflict', 'judgment', 200),
+      decision('conflict', 'bulk', 200),
+      decision('missing', 'bulk', 200),
+      { ...decision('missing', 'bulk', 200), work_class: undefined },
+      decision('replay', 'bulk', 200),
+      decision('replay', 'bulk', 200),
+      decision('resolved', 'bulk', 200),
+      decision('resolved', 'judgment', 200),
+      decision('resolved', 'standard', 300),
+    ].map(row => JSON.stringify(row));
+    const expected = new Map([['replay', 'bulk'], ['resolved', 'standard']]);
+    expect(foldRouteDecisionWorkClasses(receipts.join('\n'))).toEqual(expected);
+    expect(foldRouteDecisionWorkClasses(receipts.reverse().join('\n'))).toEqual(expected);
+  });
+
   it('fills work_class from route decisions only where jobs rows recorded none', async () => {
     const root = runsDir([
       '{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
@@ -1575,7 +1594,8 @@ describe('router outcome work_class join', () => {
       decision('J1', 'bulk', 100),
       decision('J2', 'bulk', 100),   // explicit jobs-row class wins over the market join
       decision('J3', 'judgment', 100),
-      { ...decision('J3', 'judgment', 200), work_class: undefined, chosen_lane: 'beta' },
+      { ...decision('J3', 'bulk', 200), chosen_lane: 'beta' },
+      { ...decision('J3', 'judgment', 200), chosen_lane: 'beta' },
       decision('J-UNDECIDED', 'bulk', 100), // no jobs outcome: never creates one
     ]);
     const result = await readRouterOutcomes({ runsDir: root });

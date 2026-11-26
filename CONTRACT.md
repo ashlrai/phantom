@@ -732,6 +732,9 @@ decision and reads its recorded class. The fold's `workClassFor` option fills on
 outcomes whose jobs rows recorded no class, so an explicit
 jobs-ledger `work_class` always wins. With no decision row or an absent
 or non-route-identifier class on the newest decision, the class stays null.
+All decision receipts at the newest timestamp must agree on the class.
+A missing or conflicting class at that timestamp withholds the market
+fallback. A later timestamp can establish a new class.
 Rows with a missing or non-finite `ts` or a wrong schema/event are skipped.
 The same newest-decision collapse also supplies the market's
 recorded routing verdict: `foldRouteDecisions` returns each job's
