@@ -166,8 +166,8 @@ describe('parseReadyTsv', () => {
     // Lane-open rows keep their validated id and repo for supply counts; the
     // row that resolved a preferred_lane and the invalid rows are not among them.
     expect(unhintedRows).toEqual([
-      { id: 'RQ-OPEN-A', repo: 'phantom' },
-      { id: 'RQ-OPEN-B', repo: 'ashlrai/phantom' },
+      { id: 'RQ-OPEN-A', repo: 'phantom', tier: 'work' },
+      { id: 'RQ-OPEN-B', repo: 'ashlrai/phantom', tier: 'mid' },
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: 'RQ-OPEN-C', status: 'READY', pool: 'claude', tier: 'frontier', repo: 'phantom' });
@@ -190,7 +190,7 @@ describe('parseReadyTsv', () => {
     expect(dropped).toBe(2);
     expect(invalid).toBe(2);
     expect(unhinted).toBe(1);
-    expect(unhintedRows).toEqual([{ id: 'RQ-SPEC-B', repo: 'phantom' }]);
+    expect(unhintedRows).toEqual([{ id: 'RQ-SPEC-B', repo: 'phantom', tier: 'work' }]);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ id: 'RQ-SPEC-A', status: 'READY', pool: 'claude', tier: 'work', repo: 'phantom' });
     expect(rows[1]).toMatchObject({ id: 'RQ-SPEC-C', status: 'READY', pool: 'devin', tier: 'work', repo: 'phantom' });
