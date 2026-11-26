@@ -63,6 +63,30 @@ describe('node slot admission', () => {
     expect(nodes.pull(session)?.job.id).toBe('job');
   });
 
+  it('keeps pool admission on the newest capacity sample when beats arrive out of order', () => {
+    const { nodes, store } = fixture();
+    store.state.pool = { primary: 'primary', backup: 'backup', active: 'primary', epoch: 1, heartbeatAt: 1000 };
+    const worker = nodes.join('worker', { owners: ['mason'] })!;
+    const sibling = nodes.join('sibling', { owners: ['mason'] })!;
+    const ready = { hostId: 'mac', ramBytes: 8 * 1024 ** 3, slots: 2, held: null, sampledAtMs: 998 };
+    const held = { ...ready, slots: 0, held: 'memory-pressure' as const, sampledAtMs: 999 };
+    nodes.heartbeat(worker, { capacity: ready });
+    nodes.heartbeat(sibling, { capacity: held });
+    nodes.enqueue('job', { owner: 'mason' });
+
+    nodes.heartbeat(sibling, { capacity: ready, slots: 2, usage: 100 });
+    expect(nodes.view(['mason']).nodes.find(node => node.nodeId === 'sibling'))
+      .toMatchObject({ capacity: held, slots: 0, usage: 100 });
+    expect(nodes.pull(worker)).toBeNull();
+
+    const recovered = { ...ready, sampledAtMs: 1000 };
+    nodes.heartbeat(sibling, { capacity: recovered });
+    nodes.heartbeat(sibling, { capacity: held, slots: 0 });
+    expect(nodes.view(['mason']).nodes.find(node => node.nodeId === 'sibling'))
+      .toMatchObject({ capacity: recovered, slots: 2 });
+    expect(nodes.pull(sibling)?.job.id).toBe('job');
+  });
+
   it('also enforces slots on the direct queue claim API', () => {
     const { nodes } = fixture();
     const session = nodes.join('pro', { owners: ['mason'], slots: 0 })!;
