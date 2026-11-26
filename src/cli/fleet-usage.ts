@@ -9,7 +9,7 @@ export async function cmdFleetUsage(args: string[]): Promise<number> {
       const report = fleetUsageReport(readFleetUsage());
       if (args[0] === '--json') console.log(JSON.stringify(report));
       else for (const [id, pool] of Object.entries(report.pools)) {
-        console.log(`${id}: ${pool.pointsPerHour?.toFixed(2) ?? 'unknown'} points/h; 12h ${pool.pointsPerHour12h?.toFixed(2) ?? 'unknown'}; needed ${pool.paceNeeded?.toFixed(2) ?? 'unknown'}; run-out ${pool.projectedRunOutAt ?? 'unknown'}; throttle ${pool.throttle}`);
+        console.log(`${id}: ${pool.pointsPerHour?.toFixed(2) ?? 'unknown'} points/h; 12h ${pool.pointsPerHour12h?.toFixed(2) ?? 'unknown'}; needed ${pool.paceNeeded?.toFixed(2) ?? 'unknown'}; run-out ${pool.projectedRunOutAt ?? 'unknown'}; throttle ${pool.throttle}; status ${pool.status}`);
       }
       return 0;
     }

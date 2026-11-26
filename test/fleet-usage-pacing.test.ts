@@ -72,4 +72,18 @@ describe('manual fleet pacing', () => {
     expect(await cmdFleetUsage(['add', 'grok-ultra-weekly', 'bad', '--at', pool().readings[1].at])).toBe(2);
     expect(await cmdFleetUsage(['--typo'])).toBe(2);
   });
+  it('human output names each pool evidence status, not just unknown numbers', async () => {
+    // A far-future reset keeps `active` true so the status is deterministic.
+    io.read.mockReturnValue(JSON.stringify({ usage: {
+      'empty-pool': { resetAt: '2100-01-01T00:00:00Z', readings: [] },
+      'steady-pool': { resetAt: '2100-01-01T00:00:00Z', readings: [
+        { pct: 10, at: '2020-01-01T00:00:00Z' }, { pct: 20, at: '2020-01-02T00:00:00Z' }] },
+    }}));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await cmdFleetUsage([])).toBe(0);
+    const lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines.find(line => line.startsWith('empty-pool:'))).toContain('status no-readings');
+    expect(lines.find(line => line.startsWith('steady-pool:'))).toContain('status ready');
+  });
 });
