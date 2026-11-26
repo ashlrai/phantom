@@ -15,18 +15,22 @@ import {
 const repoRoot = process.cwd();
 
 describe('selectChangedFiles yaml and toml coverage', () => {
-  it('selects existing .yml, .yaml and .toml files and skips deleted or near-miss paths', () => {
+  it('selects existing .yml, .yaml, .cff and .toml files and skips deleted or near-miss paths', () => {
     const selection = selectChangedFiles(
       [
         '.github/workflows/ci.yml', 'pnpm-workspace.yaml', 'agent-network.toml',
+        'CITATION.cff', 'docs/citation.cff', 'gone.cff', 'notes.cff.txt',
         'src/core/x.ts', 'gone.yaml', 'config.yml.bak', 'notes.yml.md', 'Cargo.toml',
       ],
       [
         '.github/workflows/ci.yml', 'pnpm-workspace.yaml', 'agent-network.toml',
+        'CITATION.cff', 'docs/citation.cff', 'notes.cff.txt',
         'src/core/x.ts', 'config.yml.bak', 'notes.yml.md', 'Cargo.toml',
       ],
     );
-    expect(selection.yamlFiles).toEqual(['.github/workflows/ci.yml', 'pnpm-workspace.yaml']);
+    expect(selection.yamlFiles).toEqual([
+      '.github/workflows/ci.yml', 'CITATION.cff', 'docs/citation.cff', 'pnpm-workspace.yaml',
+    ]);
     expect(selection.tomlFiles).toEqual(['Cargo.toml', 'agent-network.toml']);
   });
 
@@ -111,6 +115,16 @@ describe('runYamlSyntaxCheck', () => {
     } finally {
       errors.mockRestore();
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('parses the committed CITATION.cff manifest when the package exists', () => {
+    if (!parserPackagePreflight(repoRoot, 'yaml').ok) return;
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(runYamlSyntaxCheck(repoRoot, [join(repoRoot, 'CITATION.cff')])).toBe(true);
+    } finally {
+      errors.mockRestore();
     }
   });
 });
