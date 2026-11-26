@@ -268,6 +268,7 @@ export function skillNudgeJobsFromLedger(
   text: string, revertedPrKeys?: ReadonlySet<string> | null, nowMs = Date.now(),
 ): SkillNudgeJob[] {
   const jobs = new Map<string, NudgeJobAccum>();
+  const dispatchReceipts = new Set<string>();
   // PR key -> claiming job ids, collected only when the caller supplied
   // standing revert keys — the same unambiguous-claim evidence pass
   // outcome-learning runs, so a contested or foreign PR never resolves.
@@ -292,6 +293,14 @@ export function skillNudgeJobsFromLedger(
     const terminalPhase = outcome === 'merged' ? 'MERGED' : outcome === 'failed' ? 'CLOSED' : null;
     const terminalAt = terminalPhase === null ? null : ledgerEventTs(row, terminalPhase);
     if ((rowAt !== null && rowAt > nowMs) || (terminalAt !== null && terminalAt > nowMs)) continue;
+    const event = ledgerEventName(row);
+    const dispatched = (event !== null && ATTEMPT_EVENTS.has(event))
+      || (event === 'claim' && row['launch_dedupe'] !== true);
+    if (dispatched && rowAt !== null) {
+      const receipt = line.trim();
+      if (dispatchReceipts.has(receipt)) continue;
+      dispatchReceipts.add(receipt);
+    }
     const prKey = claims === null ? null : rowPrKey(row);
     if (claims !== null && prKey !== null) {
       const set = claims.get(prKey) ?? new Set<string>();
@@ -309,7 +318,6 @@ export function skillNudgeJobsFromLedger(
       jobs.set(id, acc);
     }
     acc.lastLine = lineNo;
-    const event = ledgerEventName(row);
     const evidence = acc.evidence;
     if (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event)) {
       for (const key of LEDGER_LANE_KEYS) {
@@ -319,7 +327,7 @@ export function skillNudgeJobsFromLedger(
         break;
       }
     }
-    if ((event !== null && ATTEMPT_EVENTS.has(event)) || (event === 'claim' && row['launch_dedupe'] !== true)) {
+    if (dispatched) {
       evidence.attempts += 1;
       if (acc.recutReady) evidence.recuts += 1;
       acc.recutReady = false;
