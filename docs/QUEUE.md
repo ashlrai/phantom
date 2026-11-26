@@ -559,7 +559,11 @@ The Leader only edits the existing `queue/ready.tsv` under the dispatcher
 and ready-file locks; it leaves held, parked, retired, exclusive and legacy
 rows without an explicit requirements cell alone. A re-hinted row cannot
 fall back to metered execution. Dispatch still decides whether and where to
-launch. The move is recorded in `metrics/work-market.jsonl` as
+launch. During the locked read, rerouting caps the planned lane target by
+both the dispatcher tick's launch target and the configured target in
+`queue/slots.json`, when present. A target decrease takes effect immediately
+for rerouting. A target increase needs dispatcher confirmation. The move is
+recorded with the capped target in `metrics/work-market.jsonl` as
 `work-market.v1` / `queue_reroute` with `resource_plan_under_target` and
 `expiring_included_quota` or `expiring_reset_bank`; these are not claim or
 route-decision events.
