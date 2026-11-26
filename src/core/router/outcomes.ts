@@ -3485,7 +3485,6 @@ export async function readRouterOutcomes(opts: {
   const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   if (!isAbsolute(runsDir)) throw new RangeError('runsDir must be an absolute path');
   if (opts.ashlarDir !== undefined && !isAbsolute(opts.ashlarDir)) throw new RangeError('ashlarDir must be an absolute path');
-  const reportTimeMs = Date.now();
   const laneScores = readLaneScores({ rootDir: opts.ashlarDir });
   const path = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
   const read = await readLedgerTail(path);
@@ -3538,7 +3537,7 @@ export async function readRouterOutcomes(opts: {
     ? await liveAuthorityEvidence()
     : opts.authorityEvidence;
   const ambiguousCiJobs = new Set<string>();
-  const mergeEvents = mergeEventsRead.state === 'read' ? parseMergeEvents(mergeEventsRead.text, reportTimeMs) : undefined;
+  const mergeEvents = mergeEventsRead.state === 'read' ? parseMergeEvents(mergeEventsRead.text, reportStartedAt) : undefined;
   const rewards = rewardRead.state === 'read' ? foldRewardSignalsThrough(rewardRead.text, reportStartedAt) : undefined;
   const folded = foldRouterOutcomesWithCiCoverage(read.text, {
     passkFor: laneScoreLookup(laneScores),
