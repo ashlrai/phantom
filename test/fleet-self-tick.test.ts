@@ -24,6 +24,7 @@ import { SELF_TICK_LOCK } from '../src/core/fleet/self-tick.js';
 import type { SpawnedPlannerProcess, SpawnLike } from '../src/core/fleet/planner-run.js';
 import { readLaneTargets } from '../src/core/fleet/runs-lane-targets.js';
 import { readResetReleases } from '../src/core/fleet/usage-reset-release.js';
+import { assurePrivateStoragePath } from '../src/core/util/private-storage.js';
 
 const NOW_MS = Date.parse('2026-11-01T12:00:00Z'); // a whole-second boundary
 const NOW_ISO = new Date(NOW_MS).toISOString();
@@ -47,7 +48,10 @@ const lane = async (id: string) =>
 
 beforeEach(async () => {
   runsDir = await mkdtemp(join(tmpdir(), 'self-tick-'));
-  await mkdir(join(runsDir, 'queue'));
+  const queueDir = join(runsDir, 'queue');
+  await mkdir(queueDir, { mode: 0o700 });
+  const assurance = assurePrivateStoragePath(queueDir, 'directory', 'secure-created', { anchorPath: runsDir });
+  expect(assurance.ok, assurance.reason).toBe(true);
   await writeFile(SLOTS(), JSON.stringify({
     devin: { target: 2, floor: 0, ceiling: 4, held: true,
       held_reason: `autobackoff fake job=j-1 until=${HELD_UNTIL} src=fake`,
