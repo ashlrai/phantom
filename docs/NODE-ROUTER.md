@@ -186,6 +186,10 @@ reports `memory-unmeasured`. `held` is `null` or `memory-unmeasured`,
 reading wrongly ready. A `--capacity`
 value that is not one JSON object in that shape is refused as `bad-capacity`
 (exit 2) before the beat is recorded; its fix prints the `measure` command.
+When a beat includes both `--slots` and `--capacity`, the node admits work up
+to the lower of the explicit slot limit and the measured slots. The host
+capacity sample retains its measured slot count, and a measured hold still
+sets the node limit to zero.
 
 A standalone session expires 30 seconds after its last beat, so
 `phm node beat --watch [--every <seconds>]` keeps one alive in the foreground:
@@ -195,7 +199,8 @@ on this machine unless the caller passed those flags explicitly. A pass whose
 measurement reports a hold the sample cannot express (`cpu-*`, `host-slots-*`)
 omits `--capacity` but still advertises `--slots 0` — the same zero bound the
 pool worker sends — so the node holds admission instead of keeping its last
-reported slots; a caller-supplied `--slots` wins, and a measurement that fails
+reported slots; a caller-supplied `--slots` takes precedence over the watch
+loop's generated `--slots` flag, and a measurement that fails
 stays unknown rather than held. The interval
 defaults to 10 seconds and must be between 1 and 25 seconds, inside the expiry
 window. Ctrl-C or SIGTERM stops the loop and prints a confirmation; a beat that
