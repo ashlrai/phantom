@@ -14,6 +14,7 @@ import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { planBurnDown } from './burn-down.js';
 import { nextPollState, nextWakeMs, pollDue, readingFingerprint } from './cadence.js';
+import { customResourceSources, readCustomResources } from './custom.js';
 import { evaluateResetRule, renderResetDecision } from './reset-rule.js';
 import { NEEDS_SIGNIN, type ResourceLiveObservation, type ResourceLiveSource, type ResourceLiveSources } from './source-types.js';
 import {
@@ -40,6 +41,7 @@ function verifiedReading(allowance: ResourceLiveAllowance, seen: ResourceLiveObs
   const parsed = readingSchema.safeParse({
     id: allowance.id, verified: true, used: seen.used, limit: seen.limit, unit: seen.unit,
     reset_at: seen.reset_at === null ? null : normalizeInstant(seen.reset_at),
+    expires_at: seen.expires_at === undefined ? undefined : normalizeInstant(seen.expires_at),
     source: seen.source, source_tier: seen.tier ?? tier, observed_at: normalizeInstant(seen.observed_at),
     stale_after: seen.stale_after,
     account_id: seen.account_id, model: seen.model,
@@ -168,21 +170,26 @@ export async function runResourceLiveTick(options: ResourceLiveTickOptions): Pro
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
   const release = await acquireLock(join(stateDir, '.resource-live.lock'), nowMs);
   try {
-    const prior = parseResourceLiveSidecar(await readResourceLiveFile(options.runsDir));
+    const custom = await readCustomResources();
+    const customSources = customResourceSources(options.runsDir);
+    const customById = new Map<string, (typeof custom)[number]>(custom.map(row => [row.id, row]));
+    const prior = parseResourceLiveSidecar(await readResourceLiveFile(options.runsDir), custom);
     const active = await (options.activeLanes ?? (now => readActiveLanes(options.runsDir, now)))(nowMs);
     const polled: ResourceLiveId[] = [];
     const poll: Partial<Record<ResourceLiveId, PollState>> = {};
     const history: Partial<Record<ResourceLiveId, HistorySample[]>> = {};
 
-    const readings = await Promise.all(RESOURCE_LIVE_ALLOWANCES.map(async (allowance): Promise<ResourceLiveReading> => {
+    const readings = await Promise.all([...RESOURCE_LIVE_ALLOWANCES, ...custom].map(async (allowance): Promise<ResourceLiveReading> => {
       const id = allowance.id;
       const kept = prior.readings.find(row => row.id === id);
       const laneActive = allowance.lane !== null && active.has(allowance.lane);
-      const windowOver = kept?.reset_at != null && Date.parse(kept.reset_at) <= nowMs;
+      const entry = customById.get(id);
+      const windowOver = [kept?.reset_at, allowance.class === 'metered-included' || entry ? kept?.expires_at : null]
+        .some(at => at != null && Date.parse(at) <= nowMs);
       const due = options.force === true || windowOver || pollDue(prior.poll[id], laneActive, nowMs);
       let reading: ResourceLiveReading;
       if (due) {
-        reading = await readAllowance(allowance, options.sources[id] ?? [], nowMs, options.deadlineMs ?? SOURCE_DEADLINE_MS);
+        reading = await readAllowance(allowance, entry ? customSources(entry) : options.sources[id] ?? [], nowMs, options.deadlineMs ?? SOURCE_DEADLINE_MS);
         if (!reading.verified && windowOver) reading = unverified(allowance, 'window-reset');
         polled.push(id);
         poll[id] = nextPollState(prior.poll[id], readingFingerprint(reading), laneActive, nowMs);
@@ -202,7 +209,8 @@ export async function runResourceLiveTick(options: ResourceLiveTickOptions): Pro
       const samples = [...(prior.history[reading.id] ?? [])];
       if (reading.verified && reading.used !== null && reading.observed_at !== null
         && !samples.some(sample => sample.observed_at === reading.observed_at)) {
-        samples.push({ observed_at: reading.observed_at, used: reading.used, reset_at: reading.reset_at });
+        const end = [reading.reset_at, reading.expires_at].filter((at): at is string => at !== null && Date.parse(at) > nowMs).sort()[0] ?? null;
+        samples.push({ observed_at: reading.observed_at, used: reading.used, reset_at: end });
       }
       if (samples.length) history[reading.id] = samples.slice(-HISTORY_PER_ALLOWANCE);
     }

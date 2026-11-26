@@ -36,3 +36,10 @@
 .card[data-freshness='stale'] .reason { color: var(--status-warning-fg); }
 .reason { display: block; margin-top: var(--space-1); }
 .hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.poolBar { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); min-width: 0; }
+.poolBar > li { display: grid; gap: 3px; padding: var(--space-1); min-width: 0; }
+.poolName { display: flex; align-items: center; gap: var(--space-1); font-size: var(--text-xs-size); }
+.poolDetail { font-size: var(--text-xs-size); color: var(--text-secondary); overflow-wrap: anywhere; }
+.poolBar:not([data-expanded]) .poolName { justify-content: center; }
+.poolBar:not([data-expanded]) .poolName > span, .poolBar:not([data-expanded]) .poolDetail { display: none; }
+.poolBar [data-freshness='stale'] [role='meter'] { opacity: 0.45; }

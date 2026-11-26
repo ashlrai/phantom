@@ -9,3 +9,8 @@ export const worldModelQuery: QueryDef<unknown> = {
   key: 'verse-world',
   fetch: (signal) => apiGet<unknown>('/api/verse/world', signal),
 };
+
+export const resourceWorldModelQuery: QueryDef<unknown> = {
+  key: 'verse-world-resources',
+  fetch: (signal) => apiGet<unknown>('/api/verse/world?resourcePools=1', signal),
+};

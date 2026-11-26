@@ -8,16 +8,18 @@
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { WORLD_CACHE_TTL_MS } from '../../../../core/world/types.js';
+import type { LaneAllowanceRow } from '../../../../core/usage/lane-allowance.js';
 import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { WindowBar, WindowBarSwatch } from '../../../components/primitives/WindowBar.js';
 import { Tooltip } from '../../../components/primitives/Tooltip.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { openResources } from './resources-store.js';
-import { worldModelQuery } from './world-query.js';
+import { resourceWorldModelQuery } from './world-query.js';
 import { sameWorldLaneRow, WORLD_LANE_STALE_MS, worldLaneRows, type LaneEngine, type WorldLaneRow } from './world-lane-rows.js';
 import styles from './WorldLaneRows.module.css';
 import { BurnSparkline } from './BurnSparkline.js';
+import { PoolAllowanceBar } from './LaneAllowanceCards.js';
 
 const AGE_CLOCK_MS = 60_000;
 
@@ -155,8 +157,8 @@ export function WorldLaneRows({ expanded, enabled = true, now: fixedNow, onLive,
   const sectionVisible = useSectionVisible();
   const documentVisible = useDocumentVisible();
   const visible = sectionVisible && documentVisible;
-  const read = useQuery(worldModelQuery, { enabled: enabled && visible && !provided, freshMs: WORLD_CACHE_TTL_MS });
-  const refresh = useRefetch(worldModelQuery);
+  const read = useQuery(resourceWorldModelQuery, { enabled: enabled && visible && !provided, freshMs: WORLD_CACHE_TTL_MS });
+  const refresh = useRefetch(resourceWorldModelQuery);
   usePollWhileVisible(refresh, WORLD_CACHE_TTL_MS, { enabled: enabled && !provided });
   const source = provided ? snapshot : read.data;
   const live = provided || source !== undefined || read.error !== undefined;
@@ -173,9 +175,11 @@ export function WorldLaneRows({ expanded, enabled = true, now: fixedNow, onLive,
     hold.current = stable.length === prev.length && stable.every((row, index) => row === prev[index]) ? prev : stable;
     return hold.current;
   }, [live, source, now]);
-  if (!live || rows.length === 0) return null;
+  const pools = (source as { resourcePools?: LaneAllowanceRow[] } | null)?.resourcePools;
+  if (!live || rows.length === 0 && !pools?.length) return null;
   return (
     <div className={styles.group} data-expanded={expanded || undefined} data-world-lanes role="group" aria-label="Lane resources">
+      {pools?.length ? <PoolAllowanceBar lanes={pools} expanded={expanded} now={now} /> : null}
       {expanded ? providerGroups(rows).map((group) => (
         <div key={group.engine} className={styles.provider} role="group" aria-label={`${PROVIDER[group.engine]} resources`}>
           <span className={styles.providerName} aria-hidden="true">{PROVIDER[group.engine]}</span>
