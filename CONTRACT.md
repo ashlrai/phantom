@@ -4983,6 +4983,14 @@ optional `docs` and `site` records with integer UTC seven-day `period` and a
 `verdict` as specified in [Queue](docs/QUEUE.md#repository-shares).
 
 
+## Fleet autopilot
+
+`readFleetAutopilotState` can populate `FleetAutopilotState.operatorHolds` with
+a read-only set of lane names from the runs-root `HOLD` file. The planner
+combines positive matches with dispatcher and slots holds when computing
+lane eligibility for its recommendations. Missing or unreadable files supply
+no additional hold evidence. The `fleet.autopilot.v1` report shape is unchanged.
+
 ## Fleet eval report
 
 `buildFleetEvalReport` returns `fleet.eval-report.v1`. Group `revertRate` and
