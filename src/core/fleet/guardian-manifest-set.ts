@@ -17,30 +17,21 @@ import {
   writeGuardianManifest,
   type GuardianManifestEntry,
 } from './guardian-manifest.js';
+import {
+  GUARDIAN_MANIFEST_MAX_ENTRIES,
+  isValidGuardianBranch,
+  isValidGuardianRepoPath,
+} from './guardian-schema.js';
 
-export const GUARDIAN_MANIFEST_SET_MAX_REPOS = 20;
-export const GUARDIAN_MANIFEST_SET_MAX_ENTRIES = 100;
-export const GUARDIAN_MANIFEST_SET_DEFAULT_BRANCH = 'master';
+const MAX_REPOS = 20;
+const DEFAULT_BRANCH = 'master';
+export const GUARDIAN_MANIFEST_SET_MAX_ENTRIES = GUARDIAN_MANIFEST_MAX_ENTRIES;
 export const GUARDIAN_MANIFEST_SET_DEFAULT_LIMIT = 5;
 
 /** A validated spec: repo is resolved to an absolute path, branch defaulted. */
 export interface GuardianManifestSetSpec {
   repo: string;
   branch: string;
-}
-
-// eslint-disable-next-line no-control-regex -- repo strings must not contain control bytes
-const REPO_CONTROL_RE = /[\x00-\x1f\x7f]/;
-// eslint-disable-next-line no-control-regex -- branch names must not contain control bytes
-const BRANCH_BAD_RE = /[\s\x00-\x1f\x7f]/;
-
-function validRepo(value: unknown): value is string {
-  return typeof value === 'string' && isAbsolute(value) && value.length <= 4096 && !REPO_CONTROL_RE.test(value);
-}
-
-function validBranch(value: unknown): value is string {
-  return typeof value === 'string' && value.length >= 1 && value.length <= 256
-    && !value.startsWith('-') && !BRANCH_BAD_RE.test(value);
 }
 
 /**
@@ -50,7 +41,7 @@ function validBranch(value: unknown): value is string {
  * identities (`/a/b` and `/a/b/.` name one repo).
  */
 export function parseGuardianManifestSetSpecs(raw: unknown): GuardianManifestSetSpec[] {
-  if (!Array.isArray(raw) || raw.length < 1 || raw.length > GUARDIAN_MANIFEST_SET_MAX_REPOS) {
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > MAX_REPOS) {
     throw new Error('repos file must be an array of 1 to 20 entries');
   }
   const seen = new Set<string>();
@@ -63,9 +54,9 @@ export function parseGuardianManifestSetSpecs(raw: unknown): GuardianManifestSet
     if (keys !== 'repo' && keys !== 'branch,repo') {
       throw new Error('repos file entries take repo and optional branch only');
     }
-    const { repo, branch = GUARDIAN_MANIFEST_SET_DEFAULT_BRANCH } = item as { repo: unknown; branch?: unknown };
-    if (!validRepo(repo)) throw new Error('repos file repo must be an absolute path');
-    if (!validBranch(branch)) throw new Error('repos file branch is invalid');
+    const { repo, branch = DEFAULT_BRANCH } = item as { repo: unknown; branch?: unknown };
+    if (!isValidGuardianRepoPath(repo)) throw new Error('repos file repo must be an absolute path');
+    if (!isValidGuardianBranch(branch)) throw new Error('repos file branch is invalid');
     const resolved = resolve(repo);
     const identity = `${resolved}${branch}`;
     if (seen.has(identity)) throw new Error('duplicate repository and branch in repos file');
@@ -107,7 +98,7 @@ export async function runGuardianManifestSet(
 ): Promise<GuardianManifestSetSummary> {
   const { read = readFirstParentCommits, write = writeGuardianManifest } = deps;
   const { specs, limitPerRepo, out } = options;
-  if (specs.length < 1 || specs.length > GUARDIAN_MANIFEST_SET_MAX_REPOS
+  if (specs.length < 1 || specs.length > MAX_REPOS
     || !Number.isSafeInteger(limitPerRepo) || limitPerRepo < 1
     || limitPerRepo > GUARDIAN_MANIFEST_SET_MAX_ENTRIES
     || specs.length * limitPerRepo > GUARDIAN_MANIFEST_SET_MAX_ENTRIES

@@ -3,6 +3,7 @@ import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
+import { GUARDIAN_MAX_PATH_LENGTH, GUARDIAN_SHA_RE, hasNoControlChars } from './guardian-schema.js';
 
 const NAME = 'guardian-drain-latest.json';
 const MAX_BYTES = 16 * 1024;
@@ -11,14 +12,14 @@ export interface GuardianDrainCheckpoint {
 }
 
 function validate(directory: string, value: unknown): GuardianDrainCheckpoint {
-  if (!isAbsolute(directory) || directory.length > 4096 || directory.includes('\0') || resolve(directory) !== directory ||
+  if (!isAbsolute(directory) || directory.length > GUARDIAN_MAX_PATH_LENGTH || directory.includes('\0') || resolve(directory) !== directory ||
       !value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid guardian drain checkpoint');
   const v = value as Record<string, unknown>;
   if (Object.keys(v).sort().join(',') !== 'completedAt,latestOutput,repo,sha,version' || v.version !== 1 ||
-      typeof v.latestOutput !== 'string' || v.latestOutput.length > 4096 || dirname(v.latestOutput) !== directory ||
+      typeof v.latestOutput !== 'string' || v.latestOutput.length > GUARDIAN_MAX_PATH_LENGTH || dirname(v.latestOutput) !== directory ||
       !/^guardian-drain-attempt-([1-9]|1[0-9]|20)\.json$/.test(basename(v.latestOutput)) ||
-      typeof v.repo !== 'string' || !isAbsolute(v.repo) || resolve(v.repo) !== v.repo || v.repo.length > 4096 || [...v.repo].some(c => { const n = c.codePointAt(0)!; return n <= 31 || n === 127; }) ||
-      typeof v.sha !== 'string' || !/^[a-f0-9]{40}$/.test(v.sha) ||
+      typeof v.repo !== 'string' || !isAbsolute(v.repo) || resolve(v.repo) !== v.repo || v.repo.length > GUARDIAN_MAX_PATH_LENGTH || !hasNoControlChars(v.repo) ||
+      typeof v.sha !== 'string' || !GUARDIAN_SHA_RE.test(v.sha) ||
       typeof v.completedAt !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(v.completedAt) ||
       !Number.isFinite(Date.parse(v.completedAt)) || new Date(v.completedAt).toISOString() !== v.completedAt) {
     throw new Error('Invalid guardian drain checkpoint');
