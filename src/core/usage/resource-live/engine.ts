@@ -13,6 +13,7 @@ import { constants } from 'node:fs';
 import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { planBurnDown } from './burn-down.js';
+import { planBankedReset, readBankedResets } from './banked-resets.js';
 import { nextPollState, nextWakeMs, pollDue, readingFingerprint } from './cadence.js';
 import { customResourceSources, readCustomResources } from './custom.js';
 import { evaluateResetRule, renderResetDecision } from './reset-rule.js';
@@ -227,12 +228,15 @@ export async function runResourceLiveTick(options: ResourceLiveTickOptions): Pro
     }
 
     const generatedAt = new Date(nowMs).toISOString();
+    const burnDown = planBurnDown(readings, history, nowMs);
+    const sources = new Map(readings.map(row => [row.id, row.source]));
+    burnDown.banked_resets = planBankedReset(await readBankedResets(options.runsDir, nowMs), burnDown.allowances, sources, nowMs);
     const sidecar: ResourceLiveSidecar = {
       schema: RESOURCE_LIVE_SCHEMA,
       generated_at: generatedAt,
       writer: 'phm usage resource-live',
       readings,
-      burn_down: planBurnDown(readings, history, nowMs),
+      burn_down: burnDown,
       reset_rule: { ...rule.state, last_decision_file: decisionFile ?? rule.state.last_decision_file },
       poll,
       history,

@@ -1526,6 +1526,7 @@
     "src/core/usage/pace.ts",
     "src/core/usage/plan-pace.ts",
     "src/core/usage/reserve-pace.ts",
+    "src/core/usage/resource-live/banked-resets.ts",
     "src/core/usage/resource-live/burn-down.ts",
     "src/core/usage/resource-live/cadence.ts",
     "src/core/usage/resource-live/capacity-source.ts",
