@@ -74,12 +74,21 @@ before any send — `accepted`, the fixed `reason` (`ok`, `missing`,
 granted approvals and owner identities. The approval and owner lists
 themselves never leave the file: recipients and owners are handles.
 `standingApprovals` is `null` when the owner file cannot be read at all —
-the verdict is unknown, never guessed.
+the verdict is unknown, never guessed. `lastRun` reports the last pass that
+completed, read from the run journal `run` appends to `runs.jsonl`: `source`
+is `missing` when no pass ever completed (a verified-empty journal),
+`available` when a record was read — `run` then carries the completion
+time, lane, triage depth and per-status send outcome counts — and
+`unavailable` when the journal cannot be read or holds no readable record,
+so a pass may have run and the answer stays unknown rather than reported as
+never-ran. A pass that fails mid-flight appends nothing, so a stale `at` is
+itself the signal that passes are not completing.
 
 MCP tools: `ashlr_comms_agent_status`, `ashlr_comms_agent_drafts`, and
 `ashlr_comms_agent_run`.
 
-The inbox, archive and send log live under `~/.ashlr-runs/comms-agent/`
+The inbox, archive, send log, owner-thread notices and run journal live under
+`~/.ashlr-runs/comms-agent/`
 (or `--dir`). Those files must not be symlinks. The inbox is rewritten
 atomically. Standing approvals stay at the fixed owner path:
 
