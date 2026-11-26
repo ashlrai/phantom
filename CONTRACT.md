@@ -329,6 +329,13 @@ a read-only `resourceCapacity` projection with lane targets, waste by
 allowance deadline, and the proposal. Recording evidence or reading the
 proposal never consumes a reset.
 
+The Antigravity Resource Live row can carry `execution_context` and validated
+quota `groups` with per-bucket 0–1 `remaining` and UTC `reset_at`. Both
+resource JSON commands expose the `antigravity` projection; untrusted or
+unavailable quota has null groups and a reason. Only current, identity-matched
+GUI quota can set an Antigravity plan target to zero with
+`quota_exhausted_until_reset`; this is advisory, not a dispatcher hold.
+
 `postureEvidence(root)` is exported from `src/core/queue/route-explain.ts` for
 the shared bounded journal parser. It preserves receipt `ts` (epoch seconds or
 ISO timestamp) as optional `observedAt`, plus lane `lane`, `account_id`, `model`,
