@@ -4,9 +4,9 @@ import { readFleetQueue, readSourceEnds } from './runs-parked-queue.js';
 
 export interface LaneQueueCountsRow {
   lane: string;
-  /** READY rows queued for the lane; null when ready.tsv was unreadable. */
+  /** Observed READY rows; a zero requires a healthy ready.tsv read. */
   ready: number | null;
-  /** PARKED-* rows (waiting on a dependency or hold); null when ready.tsv was unreadable. */
+  /** Observed PARKED-* rows; a zero requires a healthy ready.tsv read. */
   parked: number | null;
   /** Jobs occupying a lane slot now; null when no live source exists. */
   running: number | null;
@@ -16,7 +16,7 @@ export interface LaneQueueCountsRow {
   oldestWaitSeconds: number | null;
   /** Why parked jobs are blocked, biggest group first (e.g. DEP, HOLD); empty when none or ready.tsv was unreadable. */
   blockedReasons: Array<{ reason: string; count: number }>;
-  /** Parked dependency jobs whose gates all show MERGED but were never unparked; null when ready.tsv was unreadable. */
+  /** Observed parked dependency jobs with all gates merged; a zero requires a healthy ready.tsv read. */
   stale: number | null;
 }
 
@@ -120,7 +120,8 @@ export async function getLaneQueueCounts(
     return arrival;
   };
   const byLane = new Map(queue.byLane.map(row => [row.lane, row]));
-  const readyKnown = queue.sources.ready !== 'missing';
+  const readyHealthy = queue.sources.ready === 'healthy';
+  const observedCount = (count = 0): number | null => count > 0 || readyHealthy ? count : null;
   // Budget- and hold-only lanes carry no queue activity; leave them out.
   const lanes = new Set([
     ...byLane.keys(),
@@ -139,18 +140,18 @@ export async function getLaneQueueCounts(
       if (arrival === null) { waitUnknown = true; break; }
       if (oldestArrival === null || arrival < oldestArrival) oldestArrival = arrival;
     }
-    const oldestWaitSeconds = metrics.state === 'healthy' && queue.sources.ready === 'healthy' && !waitUnknown && oldestArrival !== null
+    const oldestWaitSeconds = metrics.state === 'healthy' && readyHealthy && !waitUnknown && oldestArrival !== null
       ? Math.floor((at.getTime() - oldestArrival) / 1000) : null;
     const reasonCounts = new Map<string, number>();
-    for (const g of readyKnown ? queue.groups : []) {
+    for (const g of queue.groups) {
       if (g.lane === lane) reasonCounts.set(g.reason, (reasonCounts.get(g.reason) ?? 0) + g.count);
     }
     return {
       lane,
       blockedReasons: rankReasons(reasonCounts),
-      stale: readyKnown ? (queue.metDeps ?? []).filter(d => d.lane === lane).length : null,
-      ready: readyKnown ? counts?.ready ?? 0 : null,
-      parked: readyKnown ? counts?.parked ?? 0 : null,
+      stale: observedCount(queue.metDeps?.filter(d => d.lane === lane).length),
+      ready: observedCount(counts?.ready),
+      parked: observedCount(counts?.parked),
       running: view?.liveJobs ?? null,
       // Window is exactly one hour, so the per-hour rate is the count.
       merges: view?.mergesPerHour ?? null,
@@ -167,7 +168,9 @@ export async function getLaneQueueCounts(
     if (state === 'missing') notes.push(`${what} not found: ${effect}.`);
     else if (state === 'degraded' || state === 'unavailable') notes.push(`${what} is unreadable or has malformed rows: ${effect}.`);
   };
-  say('queue/ready.tsv', sources.ready, 'ready, parked and blocked reasons are unknown');
+  say('queue/ready.tsv', sources.ready, sources.ready === 'missing'
+    ? 'ready, parked and blocked reasons are unknown'
+    : 'observed queue counts and blocked reasons may be incomplete');
   say('queue state (queue.v1.json)', sources.running, 'running counts are unknown');
   say('merge ledger (jobs.jsonl)', sources.ledger, 'merges are unknown');
   say('metrics/jobs.jsonl', metrics.state, 'oldest waits are unknown');
@@ -176,12 +179,12 @@ export async function getLaneQueueCounts(
     generatedAt: at.toISOString(),
     windowMinutes: 60,
     totals: {
-      ready: readyKnown ? sum(rows, 'ready') : null,
-      parked: readyKnown ? sum(rows, 'parked') : null,
+      ready: readyHealthy ? sum(rows, 'ready') : null,
+      parked: readyHealthy ? sum(rows, 'parked') : null,
       running: (snapshot.sources.queueState.state === 'healthy' || snapshot.sources.queue.state === 'healthy') && rows.every(r => r.running !== null) ? sum(rows, 'running') : null,
       merges: snapshot.sources.ledger.state === 'healthy' && rows.every(r => r.merges !== null) ? sum(rows, 'merges') : null,
       blockedReasons: rankReasons(totalReasons),
-      stale: readyKnown ? sum(rows, 'stale') : null,
+      stale: readyHealthy ? sum(rows, 'stale') : null,
     },
     sources,
     notes,
