@@ -30,6 +30,26 @@ function fixture() {
 }
 
 describe('node router', () => {
+  it('keeps newer node capacity when a delayed or future sample arrives', () => {
+    const f = fixture();
+    const session = f.mac.join('mac-1', { owners: ['acme'], caps: ['build'] })!;
+    const sample = { hostId: 'mac', ramBytes: 8 * 1024 ** 3, slots: 2, held: null, sampledAtMs: 1_000 };
+    f.mac.heartbeat(session, { capacity: sample });
+    f.mac.enqueue('build', { owner: 'acme', requires: ['build'] });
+    f.advance(10);
+
+    for (const sampledAtMs of [999, 1_011]) {
+      f.mac.heartbeat(session, { capacity: { ...sample, sampledAtMs, slots: 0, held: 'disk-pressure' }, slots: 0 });
+      expect(f.store.state.nodes[0]).toMatchObject({ heartbeatAt: 1_010, capacity: sample, slots: 2 });
+      expect(f.mac.plan('acme')).toMatchObject([{ jobId: 'build', nodeId: 'mac-1' }]);
+    }
+
+    const held = { ...sample, sampledAtMs: 1_010, slots: 0, held: 'disk-pressure' as const };
+    f.mac.heartbeat(session, { capacity: held });
+    expect(f.store.state.nodes[0]).toMatchObject({ capacity: held, slots: 0 });
+    expect(f.mac.plan('acme')).toMatchObject([{ jobId: 'build', nodeId: null }]);
+  });
+
   it('routes by caps and live usage, deterministically, with the box as one more node', () => {
     const f = fixture();
     f.box.join('box-coordinator', { owners: ['acme'], caps: ['gh', 'build'] });
