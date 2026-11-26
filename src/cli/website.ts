@@ -3,6 +3,7 @@ import { displaySurfaceTarget } from '../core/authority/effective-config.js';
 import { buildStandingGrantDraft } from '../core/verse/authority-api.js';
 import { signGrant } from '../core/authority/custody-client.js';
 import { describeGrantScope, installStandingGrant, parseStandingGrantPayload } from '../core/authority/standing-grant.js';
+import { canWriteStandingGrantHere } from '../core/drive/nodes/pool-host.js';
 import { prepareWebsiteCommission } from '../core/website/host-adapter.js';
 import { requestWebsitePublication, saveWebsiteCommission, readWebsiteCommission, websiteScope, websiteStatus, setWebsiteMode, scheduleWebsitePublication } from '../core/website/host-release.js';
 
@@ -28,6 +29,7 @@ export async function cmdWebsite(args: string[]): Promise<number> {
       console.log(JSON.stringify({ state: 'prepared', profileDigest: commission.profileDigest, builderQualification: commission.builderQualification, next: 'phm website commission --yes' })); return 0;
     }
     if (command === 'commission' && args.length === 2 && args[1] === '--yes') {
+      if (!canWriteStandingGrantHere()) throw new Error('Manage signed grants on the leader, not a worker.');
       const commission = readWebsiteCommission(); if (!commission) throw new Error('Prepare and qualify the website publisher first');
       const draft = await buildStandingGrantDraft('auto');
       const parsed = parseStandingGrantPayload({ ...draft.payload, websitePublication: websiteScope(commission) });

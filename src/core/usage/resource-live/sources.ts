@@ -37,6 +37,7 @@ import type { LiveSourcesConfig } from './config.js';
 import { capacitySource } from './capacity-source.js';
 import { anthropicCostSource } from '../../fabric/readers/anthropic-cost.js';
 import { operatorPageSources, type OperatorUsagePageReader } from './operator-page.js';
+import { publishCodexResetBank } from './banked-resets.js';
 
 export interface ResourceLiveSourceOptions extends LiveSourcesConfig {
   readCapacity?: () => CapacitySnapshot | null;
@@ -46,7 +47,6 @@ export interface ResourceLiveSourceOptions extends LiveSourcesConfig {
   runsDir: string;
   operatorHome?: string;
   /** Explicit Codex pool homes. Refused when they are the operator home or under ~/.codex*. */
-  codexCmpHome?: string;
   codexPersonalHome?: string;
   /** Accounts root of the Claude API grant store. Absent leaves the credit unverified. */
   accountsRoot?: string;
@@ -58,7 +58,7 @@ export interface ResourceLiveSourceOptions extends LiveSourcesConfig {
   readClaudeQuota?: (runsDir: string) => Promise<ClaudeQuotaReadingV1 | null>;
   readClaudeEvent?: (nowMs: number) => unknown;
   readFable?: (nowMs: number) => FablePlan;
-  readCodex?: (home: string) => Promise<Pick<CodexUsageReading, 'pctUsed' | 'resetAt' | 'fetchedAt' | 'windows'>>;
+  readCodex?: (home: string) => Promise<Pick<CodexUsageReading, 'pctUsed' | 'resetAt' | 'fetchedAt' | 'windows' | 'resetBank' | 'resetBankUnknownReason'>>;
   readGrok?: (nowMs: number) => Promise<GrokUltraRunway>;
   resourceReaders?: UsageResourceReaderDeps;
   /** Devin weekly session-list measurement and the last published one. */
@@ -97,21 +97,21 @@ function claudeFable(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
   } }];
 }
 
-function codex(o: ResourceLiveSourceOptions, home: string | undefined): ResourceLiveSource[] {
-  return [{ tier: 'official', read: async () => {
-    if (!home || !codexPoolHomeAllowed(home, o.operatorHome ?? homedir())) return null;
-    const reading = await (o.readCodex ?? (dir => readCodexUsage({ home: dir })))(home);
-    if (reading.pctUsed === null) return null;
-    return { used: reading.pctUsed, limit: 100, unit: 'percent', reset_at: reading.resetAt, source: 'codex-app-server', observed_at: reading.fetchedAt };
-  } }];
-}
-
 function codexPersonal(o: ResourceLiveSourceOptions): Record<'5h' | 'weekly', ResourceLiveSource> {
   let last: { at: number; reading: ReturnType<NonNullable<ResourceLiveSourceOptions['readCodex']>> } | undefined;
   const source = (kind: '5h' | 'weekly'): ResourceLiveSource => ({ tier: 'official', read: async now => {
     const home = o.codexPersonalHome;
     if (!home || !codexPoolHomeAllowed(home, o.operatorHome ?? homedir())) return null;
-    if (last?.at !== now) last = { at: now, reading: (o.readCodex ?? (dir => readCodexUsage({ home: dir })))(home) };
+    if (last?.at !== now) {
+      const reading = (o.readCodex ?? (dir => readCodexUsage({ personalHome: dir, includeResetBank: true })))(home).then(async row => {
+        const fetched = Date.parse(row.fetchedAt);
+        if ((row.resetBank || row.resetBankUnknownReason) && Number.isFinite(fetched) && now - fetched < RESOURCE_LIVE_STALE_MS) {
+          await publishCodexResetBank(o.runsDir, iso(Math.min(now, fetched)), row.resetBank ?? null, row.resetBankUnknownReason).catch(() => {});
+        }
+        return row;
+      });
+      last = { at: now, reading };
+    }
     const reading = await last.reading;
     const window = reading.windows?.[kind];
     const fetched = Date.parse(reading.fetchedAt);
@@ -260,7 +260,7 @@ function devinPreview(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
 
 export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): ResourceLiveSources {
   const personal = codexPersonal(o);
-  const operator = (provider: 'claude' | 'codex-personal' | 'codex-cmp') => operatorPageSources(o.operatorPageFallback, provider, o.operatorPageReader);
+  const operator = (provider: 'claude' | 'codex-personal') => operatorPageSources(o.operatorPageFallback, provider, o.operatorPageReader);
   const evidence = (id: EvidenceId) => agentCheck(() => readResourceEvidenceFile(o.runsDir), id);
   const anthropic = o.anthropicCost ? [anthropicCostSource(o.anthropicCost, o.runAnthropicCost)] : [];
   return {
@@ -272,7 +272,6 @@ export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): Resour
     'codex-personal': [personal.weekly, codexBudgetWeekly(o.runsDir), capacitySource('codex-personal', o.codexSeatMap, o.readCapacity),
       ...visible(o, 'chatgpt-codex'), ...operator('codex-personal')],
     'codex-personal-5h': [personal['5h']],
-    'codex-cmp': [...codex(o, o.codexCmpHome), capacitySource('codex-cmp', o.codexSeatMap, o.readCapacity), ...operator('codex-cmp')],
     'openai-api': [evidence('openai-api')],
     devin: [registry(o, 'devin', 'official'), ...devinWeekly(o), ...visible(o, 'devin')],
     // Zero-cost SWE-2 Lightning/Flash previews the CLI lists as free, until they expire.

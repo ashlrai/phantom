@@ -57,6 +57,74 @@ at that commit, not at whatever happens to be in your working tree.
 The map complements the generated [Repo Wiki and DeepWiki grounding](DEEPWIKI.md),
 the [source guide](CODEMAP.md), and [fleet/task graph context](GRAPH-CONTEXT-CHOICES.md).
 
+## Wiki Brain: evidence links
+
+```sh
+phm wiki brain phantom --focus file:src/cli/wiki.ts --json
+phm wiki brain phantom --link file:src/cli/wiki.ts --source-kind decision \
+  --source-id fleet:decision-123 --source-digest "$SOURCE_SHA256" --json
+```
+
+`phm_wiki_brain` is the read-only MCP equivalent. It accepts the same enrolled
+repo selector as `phm_wiki_map` and an optional exact node ID as `focus`.
+Both reads return `phantom.wiki.brain.v1` evaluated at the captured HEAD.
+The private per-checkout store under `~/.ashlr/knowledge/wiki/` holds links to
+existing evidence, not copies of source records or their text.
+
+Use `--link` locally to attach a `decision`, `lesson`, `pr`, `failure`, or
+`owner-direction` receipt. Pass a namespaced record ID and the lowercase
+SHA-256 digest of the exact source record you reviewed. This is a curated
+assertion, not independent verification of the source record or approval to
+act. The target must exist in the committed map. File/test, symbol, CLI, route,
+and MCP node IDs are supported; subsystem roll-ups are not. Replay at the
+same commit is idempotent.
+
+Each link carries its target's file and line at the observed commit, the
+source kind, ID, and digest, and a target staleness verdict:
+
+| Verdict | Meaning |
+| --- | --- |
+| `valid` | The observed commit is an ancestor (or the same commit), and the target's file blob is unchanged. |
+| `target-changed` | The exact node ID still resolves, but its file blob changed. |
+| `target-removed` | The node no longer resolves in the mapped tree. A rename is not automatically relinked. |
+| `unknown-ancestry` | Git cannot prove ancestry or read the target revision; unrelated histories and missing objects are not treated as current. |
+
+Reads return up to 24 links and 24 KiB with a `truncated` flag. Focus an exact
+node ID for a narrower result. No dirty worktree content is read. Staleness
+does not re-verify the evidence source or infer whether the old advice is
+still correct.
+
+**After merge:** Cloud's direct PR tracker writes only after it matches
+the repository, PR, head and base refs on GitHub, reads the merge SHA and
+persists the terminal state. It projects the first-parent diff of that local
+Git commit to up to 32 surviving, indexed file nodes. No PR body or title is
+copied. A unique enrolled checkout for that GitHub repo and the merge and
+parent objects must already be present; the hook never fetches. It does not
+claim the rest of a multi-commit rebase, backfill missed objects, or cover
+superseding fleet PRs, Inbox merges, or other merge paths.
+
+**Before planning:** The Cloud task path, including tasks whose delivery is
+later taken over by Fleet, ranks source nodes from the prepared base by
+goal-term matches and unique incoming local imports. The launch prompt gets
+at most 12 ranked source pointers and four valid merge references for ranked
+or explicitly named files, within a 3,072-byte cap. It sends no curated or
+rejection text and leaves the approved-lessons trial arm unchanged. A launched
+task records the included node IDs and bytes under its existing task ID.
+The Fleet drop-job writer uses the same context builder and adds its slice to
+the queued prompt only if the enriched job still passes the ingest contract.
+It records bytes and node IDs in the existing job metrics ledger.
+`phm wiki brain stats --json` compares the merge fraction of explicitly
+measured, resolved Fleet and Cloud jobs with and without slices, separately.
+It excludes open jobs, unmeasured jobs, and Fleet outcomes outside the
+bounded ledger tail. This is observational, not a causal estimate.
+
+**After an unmerged close:** The direct Cloud tracker writes a lesson about
+the close and any scrubbed failed-check names. The observed commit is the
+verified PR head; the changed-file projection needs its merge base with the
+local origin base ref. When objects are missing, no lesson is written. The
+same ancestry and blob checks apply: a rejected branch normally reads as
+`unknown-ancestry` from the default branch, not as a current instruction.
+
 ## Browse in the desktop app
 
 In **Repo Wiki**, select an enrolled repository and open **System map**. No
@@ -73,4 +141,18 @@ than combining snapshots. Source links open the exact commit and line on
 the repo's GitHub origin. Without a GitHub origin, the map still shows the
 anchor and does not open a potentially different working-tree file.
 
-Memory links and planning/merge integration are separate slices.
+## Signed repository ecosystem
+
+`phm wiki ecosystem --json` and the read-only `phm_wiki_ecosystem` MCP tool
+build maps for the repositories in the verified standing grant, independent of
+the selected project. They prefer an existing Fleet mirror with a matching
+GitHub origin, then a matching enrolled checkout. There is no cloning,
+checkout switching, or fetching from a read: a missing checkout is shown as
+not indexed. Each repository reuses its own incremental Git snapshot.
+
+The bounded graph links unique root npm package identities via dependency
+declarations, versioned `npx` MCP declarations, and static JS/TS imports.
+Edges point to the importing repository, file, line, and exact commit as
+provenance; they do not claim live runtime connectivity. In desktop **System
+map**, open **Ecosystem** and select a repository to see its direct incoming
+and outgoing relationships.

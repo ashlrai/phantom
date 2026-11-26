@@ -1,9 +1,13 @@
 import { statfsSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { homedir, totalmem } from 'node:os';
+import { join } from 'node:path';
+import { z } from 'zod';
+import { ashlrHome } from '../../cloud/store.js';
 import { readPlatformHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
+import { readPrivateFileCapped } from '../../verse/preferences.js';
 import { assessNodeCapacity, nodeRamSlots, type NodeCapacity } from './capacity.js';
-
-const GIB = 1024 ** 3;
+import { validId } from './state.js';
 
 /**
  * Declared per-host node profile. Static data: a profile never grants authority, joins a node or
@@ -30,14 +34,34 @@ export interface NodeProfile {
   maxSwapGb: number;
 }
 
-export const NODE_PROFILES: readonly NodeProfile[] = [
-  {
-    id: 'mbp8', label: 'MacBook Pro (8 GB)', hostname: 'masons-macbook-pro', tailnetIp: '100.89.122.8',
-    owners: ['ashlr'], ramBytes: 8 * GIB, maxCliAgents: 2, localModels: false, memoryFloorPercent: 15, maxSwapGb: 2,
-  },
-];
+const nodeSchema = z.object({
+  id: z.string().refine(validId),
+  label: z.string().trim().min(1).max(80).regex(/^[\p{L}\p{N} ._+&()/·-]+$/u),
+  hostname: z.string().min(1).max(253).regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/),
+  tailnetIp: z.string().refine(ip => isIP(ip) !== 0),
+  owners: z.array(z.string().refine(validId)).max(64),
+  ramBytes: z.number().int().positive(),
+  maxCliAgents: z.number().int().nonnegative(),
+  localModels: z.boolean(),
+  memoryFloorPercent: z.number().min(0).max(100),
+  maxSwapGb: z.number().nonnegative(),
+}).strict();
+const fleetProfile = z.object({ schema: z.literal('fleet.profile.v1'), nodes: z.array(nodeSchema).max(64) });
 
-export function nodeProfile(id: string, profiles: readonly NodeProfile[] = NODE_PROFILES): NodeProfile | undefined {
+export function readConfiguredNodeProfiles(path = join(ashlrHome(), 'fleet-profile.json')): NodeProfile[] {
+  try {
+    const file = readPrivateFileCapped(path, 64 * 1024);
+    if (!file || file.truncated) return [];
+    const parsed = fleetProfile.safeParse(JSON.parse(file.text));
+    if (!parsed.success) return [];
+    const nodes = parsed.data.nodes;
+    return new Set(nodes.map(node => node.id)).size === nodes.length ? nodes : [];
+  } catch {
+    return [];
+  }
+}
+
+export function nodeProfile(id: string, profiles: readonly NodeProfile[] = readConfiguredNodeProfiles()): NodeProfile | undefined {
   return profiles.find(p => p.id === id);
 }
 

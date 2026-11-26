@@ -1629,6 +1629,39 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
+    name: 'phm_wiki_ecosystem',
+    description: 'Read commit-pinned relationships across the signed repository scope.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async args => Object.keys(args).length
+      ? { error: 'Invalid wiki ecosystem arguments.' }
+      : (await import('./knowledge/wiki/ecosystem.js')).queryWikiEcosystem(),
+  },
+  {
+    name: 'phm_wiki_brain',
+    description: 'Read system map evidence and staleness for an enrolled repo.',
+    inputSchema: {
+      type: 'object',
+      properties: { repo: { type: 'string', maxLength: 255 }, focus: { type: 'string', maxLength: 1200 } },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+    safety: 'read',
+    handler: async args => {
+      if (typeof args.repo !== 'string' || args.repo.length > 255 ||
+          Object.keys(args).some(key => key !== 'repo' && key !== 'focus') ||
+          ('focus' in args && (typeof args.focus !== 'string' || !args.focus || args.focus.length > 1200))) {
+        return { error: 'Invalid wiki brain arguments.' };
+      }
+      const [{ wikiCandidateRepos }, { wikiKey }, { queryBrain }] = await Promise.all([
+        import('./knowledge/wiki/status.js'), import('./knowledge/wiki/store.js'), import('./knowledge/wiki/brain.js'),
+      ]);
+      const matches = wikiCandidateRepos().filter(repo => wikiKey(repo) === args.repo || basename(repo) === args.repo);
+      if (matches.length !== 1) return { error: 'Select one enrolled repo by wiki key or unique basename.' };
+      return queryBrain(matches[0]!, { focus: args.focus as string | undefined });
+    },
+  },
+  {
     name: 'ashlr_comms_agent_status',
     description: 'Comms role status: parent Leader role, unset lane, KILL, pause, pending inbox depth, draft count, registered channel adapters and the standing-approvals file verdict (accepted/reason plus entry counts, never the approval or owner lists). Read-only. No send.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -2042,7 +2075,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       auditNativeCall(`${tool.name} keys=${argKeys} — refused: ${payload.error}`, 'refused');
       return textResult(payload, true);
     }
-    if (name === 'phm_wiki_map') {
+    if (name === 'phm_wiki_map' || name === 'phm_wiki_brain' || name === 'phm_wiki_ecosystem') {
       const failed = (payload as { status: string }).status !== 'current';
       auditNativeCall(`${tool.name} keys=${argKeys} — ${failed ? 'unavailable' : 'ok'}`, failed ? 'refused' : 'ok');
       return { content: [{ type: 'text', text: JSON.stringify(payload) }], ...(failed ? { isError: true } : {}) };

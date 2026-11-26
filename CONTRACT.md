@@ -19,6 +19,24 @@ Creation requires `--dry-run` and never calls the writer.
 with a timezone. The lane snapshot uses it for the merge window and falls
 back to `at` when absent. `at` continues to carry the event timestamp.
 
+`parseReadyTsv` returns `unhintedRows` entries with `id`, `repo` and `tier`
+for validated lane-open dispatcher jobs. `readyRowsForDepth`
+(`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
+`tier` for the tier tally, including lane-open jobs as `READY`.
+
+## Wiki context and ecosystem
+
+`cloudBrainContext(githubRepo, checkout, taskText)` and
+`fleetBrainContext(repoName, taskText)` return `{ text, nodeIds }`; text is
+bounded to 3,072 UTF-8 bytes. Fleet drop jobs only append context that fits the
+drop contract. `phm wiki brain stats --json` reports separate Fleet and Cloud
+merge rates for explicitly measured jobs with resolved PRs.
+
+`phm wiki ecosystem --json`, `phm_wiki_ecosystem`, and the local
+`GET /api/verse/wiki/ecosystem` return `phantom.wiki.ecosystem.v1`. The graph
+uses the active signed scope, local Git objects, and commit-pinned anchors;
+repositories without an available local index remain visible as unindexed.
+
 ## Desktop appearance
 
 `UiAppearance` (`src/core/verse/ui-appearance-file.ts`) includes
@@ -264,6 +282,10 @@ install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
 The native `DesktopUpdateDependencies` port includes lowering-only
 `residentStop`; native installation requires Stop and known idle work, not a
 standing authority grant.
+`phm desktop-update prepare --stage <id> --json` verifies the private staged
+app and the original CLI archive before Stop, including the app inventory and
+the candidate authority surface. It caches only the verified original package
+in the stage and does not change installed files, fleet state, or authority.
 The install module also exports `ConsumerInstallHeld` for shared error
 classification and the `directory`, `parents`, `owned`, `regular`, `write`,
 `sha`, `ioRead` and `packageReady` guards.
@@ -298,6 +320,8 @@ classes require fresh matching provenance, and unrecognized classes stay unknown
 `recordResetEvidence(runsDir, count, expiries, kind, observedAt, now?)`
 atomically stores a complete, timestamped owner observation in
 `resource-evidence.v1`; older observations cannot replace newer ones.
+The personal Resource Live App Server poll records complete native reset-bank
+observations in the same evidence row; missing details do not overwrite it.
 `buildFleetResourcePlan(raw, nodes, status, ledger, now, custom?, resets?)`
 returns allowance labels and a nullable `reset_proposal` from the recent
 reset-bank and usage evidence. `GET /api/verse/world?resourcePools=1` exposes
@@ -379,6 +403,9 @@ records gain `recurringFlakes`, `flakeFixesQueued`, `verdictsPending` and
 `verdictsResolved` counts.
 Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
 Resident off-tick ticks launch it only with repositories and an elapsed interval.
+Attempt entries use `test` for a singleton or `tests` for multiple eligible
+test IDs in the same workflow run. Each ID contributes to recurrence.
+A multi-test rerun verdict contributes only to the workflow totals.
 The CLI `ci reruns [--json]` reads recent journal entries, counts,
 recurringFlakes and verdicts without mutation.
 
@@ -634,7 +661,7 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
-`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?})`,
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?, mergeEventsTruncated?})`,
 `authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
 `foldRouteDecisionWorkClasses(text)`, `foldRouteDecisions(text)`,
 `foldMarketHandoffAdvisories(text)`,
@@ -1478,7 +1505,9 @@ jobsTruncated?)`,
 `phm fleet unfed` (`fleet.unfed.v1`). The report's `marketTruncated` boolean
 is true when the bounded work-market journal read omitted older bytes.
 History, overrides, rejections and decision outcomes may then be incomplete
-for the requested window. A missing or unreadable journal is indicated by
+for the requested window. The additive `resourcePlan` block compares the
+advisory resource-plan target with running jobs and waiting work; it does
+not reinterpret dispatcher decisions or change the exit status. A missing or unreadable journal is indicated by
 the market folds' `available: false`. `foldMarketOverrides` collapses the
 window's `route_decision` rows to each job's latest decision and tallies
 `lane_override`s by reason and hinted-to-chosen lane; the report's
@@ -2333,6 +2362,15 @@ optional `providerBinaries`; `NodeRunnerDeps` gains `resolveBinary`.
 and `runCodexFilePack`, which writes a mode-0600 `node-results/<jobId>.json` artifact on success only.
 See [node runner](docs/NODES.md#reference-runner-security-review-before-installation).
 
+## Node route fleet footprint costs
+
+`src/core/drive/nodes/autoscale-router.ts` exports `fleetFootprints(docs)`.
+For each harness it returns the maximum `mem_bytes_max` and maximum measured
+`cpu_cores_per_session` across the supplied documents. The maxima can come
+from different nodes. CPU stays `null` when all supplied costs are unknown.
+`planAutoscaleRoutes` supplies only fresh, non-conflicting snapshots and uses
+the aggregate when the candidate node has no footprint for that harness.
+
 ## Node route lane outcomes (`phantom.node-route-outcomes.v1`)
 
 `src/core/drive/nodes/route-outcomes.ts` exports `ROUTE_OUTCOMES_SCHEMA`,
@@ -2349,6 +2387,17 @@ report unusable evidence. `phm node route --outcomes-ledger [--runs-dir <dir>]`
 merges these tallies under any explicit `--outcomes` file (file wins per
 provider) and reports `outcomes_ledger` state in its JSON plan. See
 [measured capacity and routing](docs/NODE-ROUTER.md#measured-capacity-and-node-provider-model-routing).
+
+## Router queue generation
+
+`runQueuegenCycle` takes explicit repository scope in `QueuegenOptions.repos`.
+Omitted scope is empty. In the dispatch adapter, `signedQueueRepos` projects
+AshlrAI repositories from the effective signed rollout policy.
+`QueuegenIo.appendQueueLine(line, repo)` receives the qualified repository
+identity so the adapter can check active scope again before writing.
+The adapter enables `QueuegenOptions.freshness` and implements
+`QueuegenIo.readActiveFreshnessIds` to prevent duplicate work across weekly
+windows. Existing repair and freshness emissions share the configured cycle cap.
 
 ## Ready queue to node bridge (`phantom.node-bridge.v1`)
 
@@ -4085,8 +4134,9 @@ carries the needle as a case-insensitive whitespace-collapsed substring;
 `UnifiedInboxFilter.kind` (`comms inbox --kind`, validated by
 `isUnifiedInboxKind` over `UNIFIED_INBOX_KINDS`) keeps only items of that
 stored kind — the item's own classification, finer than `source` where one
-source emits several kinds (the `bus` source's `bus-work`/`bus-handoff`
-split, the `board` source's `board-delivery`/`board-task` split) — and
+source emits several kinds (the `bus` source's
+`bus-work`/`bus-handoff`/`bus-dead-letter` split, the `board` source's
+`board-delivery`/`board-task` split) — and
 ANDs with every other view dimension while the per-source `pending`
 reports stay the unfiltered store truth;
 and
@@ -4508,3 +4558,17 @@ device human after that signature check and does not read agent env markers.
 `POST /api/approvals/team/:id/decision` accepts `decision`, optional `team` and
 optional `assertion`. An `actor` field is refused. A bare token on a
 human-required decision is HTTP 403 `human-presence-required`.
+
+## Managed repositories and freshness evidence
+
+`phantom.repos.v1` lists the union of the ecosystem catalog, local enrollment,
+and effective signed repository scope. Effective stage and local enrollment
+are separate fields. `canManageGrant` is false on configured workers.
+`prioritySync: "local-only"` applies to list and priority mutation results
+until leader replication is available.
+
+`allocateRepos(evidence, freshness?, now?)` takes an optional
+`repo-freshness.v1` snapshot and an epoch-millisecond evaluation time. The
+snapshot's `repos` map keys are canonical `owner/name` strings; each maps to
+optional `docs` and `site` records with integer UTC seven-day `period` and a
+`verdict` as specified in [Queue](docs/QUEUE.md#repository-shares).

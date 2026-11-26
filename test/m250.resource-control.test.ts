@@ -32,6 +32,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import '../src/core/fabric/gateway.js';
 
 // ---------------------------------------------------------------------------
 // Environment isolation + module reset between tests to avoid cache bleed
@@ -99,7 +100,7 @@ function mockCodexSession(primary: CodexSessionWindow | null, secondary: CodexSe
   vi.doMock('../src/core/fleet/codex-session-usage.js', async (importOriginal) => ({
     ...await importOriginal<typeof import('../src/core/fleet/codex-session-usage.js')>(),
     collectCodexSessionUsages: vi.fn((options) => {
-      expect(options.env.CODEX_HOME).toBe(join(tmpHome, '.codex-2'));
+      expect(options.env.CODEX_HOME).toBe(join(tmpHome, '.codex'));
       expect(options.env.CODEX_HOME_ALT).toBe(join(tmpHome, '.codex-2'));
       return primary ? [usage] : [];
     }),

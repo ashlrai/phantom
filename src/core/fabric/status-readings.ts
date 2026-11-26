@@ -5,19 +5,19 @@ import type { UsagePool } from './usage-signal-writer.js';
 /**
  * Built-in readers for the 2-hourly router usage append. Each pool has exactly one
  * documented, non-interactive source; nothing else is ever executed or opened.
- *  - codex-cmp: the Codex App Server `account/rateLimits/read` exchange
- *    (`codex app-server --stdio`, fixed argv, explicit CMP pool HOME) in readers/codex-usage.ts.
+ *  - codex-personal: the Codex App Server `account/rateLimits/read` exchange
+ *    (`codex app-server --stdio`, fixed argv, explicit personal pool HOME) in readers/codex-usage.ts.
  *  - claude-max: Phantom's own sanitized `rate_limit_event` store under ~/.ashlr/fabric,
  *    fed by Claude CLI stream-json output. Never ~/.claude, keychain or env.
  * Devin, Grok and Cursor have no documented status output that fits the strict journal
  * schema, so they stay unread (null) rather than scraped. Output is numeric fields only.
  */
-export const STATUS_READER_POOLS = ['codex-cmp', 'claude-max'] as const satisfies readonly UsagePool[];
+export const STATUS_READER_POOLS = ['codex-personal', 'claude-max'] as const satisfies readonly UsagePool[];
 export type StatusReaderPool = typeof STATUS_READER_POOLS[number];
 
 export interface StatusReaderOptions {
-  /** Explicit CMP pool HOME for the Codex reader. Missing means codex-cmp is unknown. */
-  codexHome?: string;
+  /** Explicit personal pool HOME for the Codex reader. Missing means codex-personal is unknown. */
+  codexPersonalHome?: string;
   now?: () => Date;
   /** Test seams; default to the real readers. */
   readCodex?: (home: string | undefined) => Promise<Pick<CodexUsageReading, 'pctUsed' | 'resetAt'>>;
@@ -40,12 +40,12 @@ export function parseClaudeUsage(event: unknown, nowMs: number): { pctUsed: numb
 
 export function statusReaders(options: StatusReaderOptions = {}): Record<StatusReaderPool, () => Promise<unknown>> {
   const now = options.now ?? (() => new Date());
-  const readCodex = options.readCodex ?? ((home: string | undefined) => readCodexUsage(home ? { home } : {}));
+  const readCodex = options.readCodex ?? ((home: string | undefined) => readCodexUsage(home ? { personalHome: home } : {}));
   const readClaude = options.readClaudeEvent ?? ((nowMs: number) => readLatestClaudeRateLimitEvent({ nowMs }));
   return {
-    'codex-cmp': async () => {
-      const { pctUsed, resetAt } = await readCodex(options.codexHome);
-      return { pool: 'codex-cmp', pctUsed, resetAt, source: 'codex-reader', fetchedAt: now().toISOString() };
+    'codex-personal': async () => {
+      const { pctUsed, resetAt } = await readCodex(options.codexPersonalHome);
+      return { pool: 'codex-personal', pctUsed, resetAt, source: 'codex-reader', fetchedAt: now().toISOString() };
     },
     'claude-max': async () => {
       const at = now();

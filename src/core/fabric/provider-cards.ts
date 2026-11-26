@@ -6,7 +6,7 @@ export const PROVIDERS = ['openai', 'anthropic', 'cognition', 'xai'] as const;
 export type ProviderId = typeof PROVIDERS[number];
 
 export const PROVIDER_POOLS: Readonly<Record<ProviderId, readonly ResourcePool[]>> = {
-  openai: ['codex-cmp', 'codex-personal', 'terra'],
+  openai: ['codex-personal', 'terra'],
   anthropic: ['claude-max'],
   cognition: ['devin'],
   xai: ['grok-ultra'],

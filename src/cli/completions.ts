@@ -103,7 +103,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
   autofix: ['--apply', '--dry-run', '--json', '--only', '--older-than', '--stuck-minutes', 'release-stuck-draft', 'launchd-crashloop', 'stuck-lane', 'outside-load', '--help'],
   desktop: ['install', 'list-apps', 'windows', 'focus', 'read', 'scroll', 'type', 'click', 'screenshot', 'doctor', '--upgrade', '--rollback', '--require-app', '--to', '--apply', '--json', '--app', '--window', '--text', '--x', '--y', '--dx', '--dy', '--ref', '--help'],
-  'desktop-update': ['inspect', 'apply', '--help'],
+  'desktop-update': ['inspect', 'prepare', 'apply', '--help'],
   desktopctl: ['capabilities', 'doctor', 'status', 'run', '--task', '--timeout', '--poll', '--json', '--help'],
   app: ['update', 'status', 'steer', '--text', 'restart', '--json', '--help'],
   radar: ['list', 'run', 'diff', '--json', '--help'],
@@ -203,7 +203,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],
   ask: ['status', '--help', '--json', '--repo', '--allow-cloud', '--jobs'],
-  wiki: ['build', 'status', 'show', 'ask', 'map'],
+  wiki: ['build', 'status', 'show', 'ask', 'map', 'brain', 'ecosystem'],
   reflect: ['playbooks', 'propose'],
   health: ['propose'],
   goals: [

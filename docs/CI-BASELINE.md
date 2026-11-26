@@ -32,7 +32,9 @@ checks, so the PR reads `unknown` rather than `fresh` — freshness reason
 `incomplete-check`, distinct from `unreadable-log-or-unverified-checkout` —
 and master's known state drops while the run's verified job logs still
 feed failure parsing. If an incomplete job's log is unavailable, the
-analyzer retains verified sibling logs. A missing log for a job that
+analyzer retains verified sibling logs. These same conclusions on the
+workflow run itself mark it incomplete even when every listed job reached
+a verdict. Verified master failures still contribute evidence. A missing log for a job that
 reached a verdict still makes the run's logs unusable. `skipped` and `neutral` conclusions are
 deliberate non-verdicts, not incomplete checks. A completed run that
 instantiated no jobs at all reads the same way when its own conclusion is
@@ -477,6 +479,31 @@ vitest harness ambient set, so a PR touching any of them is
 `pr-caused` and the rest classify `shared-baseline`, `pr-caused` or
 `unknown` -- never `probable-flake`.
 
+The install-smoke jobs' "Install this commit" and "Install the
+published release" steps run `node
+.github/scripts/ci-install-smoke.mjs <verb>` on the linux lane whenever
+a pull request or merge group trips the `xplat_install` path filter (and
+on the daily schedule and dispatch). The script funnels every refusal --
+an npm pack/install exit, a missing packed tarball or `phm` shim, a
+version mismatch, a bad published-release checksum or download -- through
+one `console.error` line plus the runner's step-failure marker, so the
+analyzer tracks the same `##[group]Run` step boundaries and attributes
+the marker when every script line is the same install-smoke invocation.
+The two verbs are different gates with different closed input lists:
+`commit` builds, packs and installs this checkout, so `package.json`
+(version, files, bin), `package-lock.json`, the packed `bin/ashlr` shim
+and `.github/workflows/ci.yml` count as inputs and group under
+`.github/scripts/ci-install-smoke.mjs > (install-smoke-commit)`;
+`release` fetches and installs the published npm artifact, which no diff
+can change, so only the script and the workflow step count and failures
+group under `> (install-smoke-release)`. Build diagnostics the step's own
+`npm run build`/`npm pack` prints still belong to the typecheck and
+build-step parsers. Mixed bash, `uses:` actions, other scripts,
+ambiguous multi-command steps and cancelled steps stay unattributed, and
+like the other non-test identities these groups can never resolve
+through a vitest pass line: `shared-baseline`, `pr-caused` or `unknown`
+-- never `probable-flake`.
+
 The test runners' own watchdog verdicts get the same treatment.
 `scripts/test-ci.mjs` wraps every `npm run test:ci` invocation -- the
 fast-gate affected-test shards (through `ci-fast-run.mjs`), the quick
@@ -576,8 +603,10 @@ unknown KILL state blocks queueing. These gates do not apply to flake reruns.
 
 The append-only `ci-reruns/journal.jsonl` under ASHLR_HOME (default `~/.ashlr`)
 records an attempt durably before calling GitHub, then records its outcome.
-Attempt rows carry the failing test id (bounded to 400 characters), so the same
-test flaking on unrelated commits is visible over time. A test that was
+Attempt rows carry the eligible failing test IDs (each bounded to 400
+characters), so each test flaking on unrelated commits is visible over time.
+When multiple probable flakes share a workflow run, one attempt counts
+toward each test's recurrence and consumes one slot in the hourly cap. A test that was
 rerun-attempted on at least three distinct heads within the last seven days is
 a recurring flake: maintenance appends one `RQ-CIFLAKE-*`
 stabilization brief (tier `work`) per (repository, test) to the router queue,
@@ -618,9 +647,9 @@ recording a guess.
 window: `pass`/`fail`/`inconclusive` counts, `pending` fired reruns still
 awaiting an outcome inside 24 hours, and `resolutionRate` (pass over
 pass+fail, null when nothing has resolved). Recurring-flake entries carry the
-same per-test verdict tallies and the `RQ-CIFLAKE-*` brief names them, so a
-test whose reruns keep failing reads differently from one that passes on
-rerun. A `fail` verdict is evidence the classification may be wrong, not proof;
+same per-test verdict tallies and the `RQ-CIFLAKE-*` brief names them. Shared
+reruns contribute a workflow verdict only, since the run conclusion does
+not identify which test passed or failed. For singleton reruns, the per-test tally includes the workflow verdict. A `fail` verdict is evidence the classification may be wrong, not proof;
 rerun firing rules are unchanged.
 `ci-reruns/status.json` contains the last
 maintenance time, per-repository counts (including `recurringFlakes` detected,

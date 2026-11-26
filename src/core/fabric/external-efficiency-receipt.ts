@@ -4,19 +4,28 @@
  * bytes only: it has no filesystem discovery, provider, or execution seam.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
+
+import {
+  SEMVER_RE as SEMVER,
+  deepFreeze as immutable,
+  exactKeys,
+  isCanonicalIsoTimestamp,
+  isSafeIntegerInRange,
+  sha256Hex,
+  strictPlainRecord,
+} from './external-contract-codec.js';
 
 export const EXTERNAL_EFFICIENCY_RECEIPT_PROTOCOL =
   'ashlr-external-efficiency-receipt-v1' as const;
 export const EXTERNAL_EFFICIENCY_RECEIPT_MAX_BYTES = 16 * 1024;
-export const EXTERNAL_EFFICIENCY_RECEIPT_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
-export const EXTERNAL_EFFICIENCY_RECEIPT_MAX_FUTURE_SKEW_MS = 60_000;
+const EXTERNAL_EFFICIENCY_RECEIPT_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+const EXTERNAL_EFFICIENCY_RECEIPT_MAX_FUTURE_SKEW_MS = 60_000;
 export const EXTERNAL_EFFICIENCY_RECEIPT_DIGEST_DOMAIN =
   'ashlr:external-efficiency-receipt:v1\0';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const COMMIT = /^[0-9a-f]{40}$/;
-const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const VERSION_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 const UNSIGNED_KEYS = [
@@ -138,25 +147,16 @@ export type ExternalEfficiencyReceiptObservation = ObservationBoundary & (
 );
 
 function exactPlainRecord(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return false;
-  if (Object.values(Object.getOwnPropertyDescriptors(value)).some(
-    (descriptor) => !Object.hasOwn(descriptor, 'value'),
-  )) return false;
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+  const row = strictPlainRecord(value);
+  return row !== null && exactKeys(row, keys);
 }
 
 function canonicalIso(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length !== 24) return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+  return isCanonicalIsoTimestamp(value, 24);
 }
 
 function safeCount(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
+  return isSafeIntegerInRange(value, 0, Number.MAX_SAFE_INTEGER);
 }
 
 function sourceProduct(value: unknown): value is ExternalEfficiencySourceProduct {
@@ -264,9 +264,7 @@ export function canonicalExternalEfficiencyReceiptPayloadV1(value: unknown): Buf
 /** Domain-separated identity for one exact, semantically valid receipt payload. */
 export function digestExternalEfficiencyReceiptV1(value: unknown): string | null {
   const payload = canonicalExternalEfficiencyReceiptPayloadV1(value);
-  return payload
-    ? createHash('sha256').update(EXTERNAL_EFFICIENCY_RECEIPT_DIGEST_DOMAIN, 'utf8').update(payload).digest('hex')
-    : null;
+  return payload ? sha256Hex(EXTERNAL_EFFICIENCY_RECEIPT_DIGEST_DOMAIN, payload) : null;
 }
 
 /** Exact full receipt bytes accepted by the compiler, excluding freshness checks. */
@@ -300,10 +298,6 @@ function boundary(): ObservationBoundary {
     effectEligible: false,
     promotionEligible: false,
   };
-}
-
-function immutable<T extends object>(value: T): T {
-  return Object.freeze(value);
 }
 
 function withheld(

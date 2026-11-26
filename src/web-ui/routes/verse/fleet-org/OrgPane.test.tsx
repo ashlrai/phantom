@@ -22,9 +22,9 @@ const office = {
 function orgMap() {
   const sessions = { generatedAt: AT, sourceState: 'healthy', truncated: false, recent: [], sessions: [
     { job: 'RQ-A', lane: 'claude', repo: 'phantom', model: 'fixture-model', status: 'running', elapsedSeconds: 60, startedAt: AT, live: 'yes' }] } as unknown as FleetSessionsV1;
-  const map = fleetOrgMap(null, { sessions });
   const runs = { lastTick: AT, paused: false, events: [], sources: { status: 'healthy' }, lanes: [
     { lane: 'claude', running: 1, target: 8, queued: 0, held: false, heldReason: null }, { lane: 'grok', running: 0, target: 4, queued: 0, held: true, heldReason: 'quota' }] } as unknown as FleetRunsDirState;
+  const map = fleetOrgMap(null, { sessions, observedLanes: runs.lanes.map(row => row.lane) });
   return { ...map, tree: fleetOrgTree(map, { runs }) };
 }
 const MAP = '/api/verse/fleet/control/map', OFFICE = '/api/verse/leader/office';

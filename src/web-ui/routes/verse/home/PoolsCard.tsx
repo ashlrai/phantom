@@ -30,7 +30,7 @@ export const localRoomQuery: QueryDef<string | null> = { key: 'home-local-capaci
 } };
 /** Local has no quota window: no share left, no reset, no bar. */
 const LOCAL = 'codex-local';
-const POOLS = [['claude', 'Claude'], ['codex-personal', 'Personal Codex'], ['codex-cmp', 'CMP Codex'], ['zai', 'Z.ai'],
+const POOLS = [['claude', 'Claude'], ['codex-personal', 'Personal Codex'], ['zai', 'Z.ai'],
   ['grok', 'Grok'], ['devin', 'Devin'], [LOCAL, 'Local'], ['claude-api', 'Claude API gift']] as const;
 type PoolName = readonly [pool: string, name: string];
 const measured = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;

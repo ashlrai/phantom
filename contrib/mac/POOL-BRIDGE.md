@@ -20,9 +20,10 @@ publish atomically with mode 0600. Never pass credentials in arguments.
   fallback, paid fallback or inferred provider quota.
 - **Z.ai:** Supply `--launcher` pointing to the actual guarded launcher and
   `--executable` to its resolved Claude binary. Today only a byte-for-byte
-  match to the checkout-known candidate proves the specific file-descriptor
-  key boundary; an unknown live launcher produces no record. Do not use the
-  historical candidate as a substitute for an unknown live launcher. Pass
+  match to the checkout-known live snapshot or historical candidate proves
+  the file-descriptor key boundary; an unknown live launcher produces no
+  record. Do not substitute the historical candidate for a different live
+  launcher. Pass
   `--resources` pointing to the same guarded lane's published
   `<runs-dir>/queue/resources.json`. After any key/account rotation, refresh
   pacing state before publishing that account's quota; a reading older than
@@ -63,14 +64,49 @@ credentials, or raw CLI output goes into an evidence record.
    refusal from execution, and unknown usage from zero. Never include raw
    provider output, auth material or key values in the settlement.
 
-## Requires Security review and re-pin
+## Review entry point
 
-Supply the credential-free live launcher, pinned profiles and pacing interface
-snapshot, and redacted AGY `/help` and `/usage` fixtures captured under the
-actual pinned binary, sandbox and isolated HOME. The identity fixture must
-preserve parser-relevant account and personal-plan fields without personal data.
-Confirm runtime executable resolution, the exact Z.ai key boundary and quota
-association, and the launcher-side settlement and cancellation integration.
-The historical `launch.candidate.sh` is not installed by `install.sh`; this
-spec does not change either file or any pin. Do not install anything live
-until Security implements and re-pins the reservation entry point.
+`python3 -I contrib/mac/pool_bridge_reservation.py --request REQUEST --state STATE
+--evidence EVIDENCE --attestation ATTESTATION` reads an owner-only request and
+evidence. The caller must authorize the request before writing it; this is not
+a network endpoint. Request keys are `id`, `pool`, `worker`, `lane`, `model`,
+`workspace`, `paths`, `mode` (`read` or `write`), `tier`, `maxFiles`,
+`maxLines`, `timeoutSeconds`, `evidenceSha256`, `accountDigest`, and `prompt`.
+The caller supplies a clean, exclusively leased workspace and a private state
+directory outside it. The bridge claims the ID exactly once. Z.ai uses the
+existing pacer and refreshes account and evidence before contact. It disables
+MCP for reservation runs and charges the full pacing reservation when usage is
+unknown. The caller must discard rejected workspaces and retain capacity when
+settlement is missing, group exit is unconfirmed, or pacing did not settle.
+Devin Flash requires the pinned Free/window check, host pressure gate, and
+overage stop check. It refreshes native account-bound Free evidence and
+applies its local concurrent and hourly cap under the shared bridge state
+directory. Confirmed exits are scanned by the live overage guard before
+capacity is released; unknown provider quota remains unknown. The live Flash
+gate may reject a model that is otherwise listed as Free, including SWE-2.1.
+
+## Requires Security review and re-pin before contrib/mac/install.sh
+
+The live files and their hashes are recorded in
+[`host-integration/launcher-snapshot.json`](host-integration/launcher-snapshot.json).
+They are review copies, not installer inputs. The installer previews the
+historical `launch.candidate.sh` as `launch.sh`; it does not replace a launcher
+without an explicit matching `--launcher-pin`. That pin is not permission to
+roll back the live guards. Both the historical candidate and the new bridge
+need independent Security review before adoption.
+
+Run the offline verifier from the checkout on the Mac:
+
+```sh
+/bin/bash contrib/mac/host-integration/verify-pool-bridge.sh
+```
+
+It reports one JSON verdict and returns nonzero if either derived profile
+fails to allow scratch workspace writes or to block the outside write, or
+if cancellation does not drain all three dummy process IDs. It does not
+exercise a provider, the live state tree, or real protected host paths.
+Linux fixture results are synthetic; only the Mac run verifies Seatbelt.
+Review and pin the supplied `agent.sb` and `devin-overage-stop.py` before
+adoption. AGY remains held until Security supplies redacted
+`/help` and `/usage` fixtures from the pinned binary, profile and isolated HOME.
+Do not install or dispatch anything live as part of this review.

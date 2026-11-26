@@ -1669,10 +1669,12 @@ export interface RouterOutcomeFoldOptions {
    * no unambiguous claim or no recorded events keeps null. The joined
    * check record also resolves `ci_first_pass` fill-only — any recorded
    * check failure reads false, a `checks_passed` boundary reads true in
-   * the absence of a recorded failure, and anything else stays null. Absent means no merge-events join — every merge_queue
-   * stays null and ci_first_pass keeps its jobs-row value.
+   * an uncut ledger with no recorded failure, and anything else stays null.
+   * Absent evidence leaves merge_queue null and preserves the jobs-row verdict.
    */
   mergeEvents?: ReadonlyMap<string, MergeQueueEvidence>;
+  /** A cut merge-events tail cannot establish the absence of earlier check failures. */
+  mergeEventsTruncated?: boolean;
   /**
    * `owner/repo#n` (lowercase repo) → the PR's newest recorded cross-model
    * review verdict, e.g. `foldCrossReviews` over
@@ -2174,7 +2176,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
           // merge-queue check record resolves what the jobs rows left
           // unknown.
           if (o.ci_first_pass === null) {
-            o.ci_first_pass = mergeQueueCiFirstPass(evidence);
+            o.ci_first_pass = mergeQueueCiFirstPass(evidence, opts.mergeEventsTruncated === true);
           }
         }
       }
@@ -2759,13 +2761,13 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
  * fill-only for outcomes whose jobs rows recorded none. Any recorded
  * `check_observed` failure means CI was observed red at least once, so
  * the verdict is false even when a later `checks_passed` boundary
- * exists. With no recorded failures, only a `checks_passed` boundary
- * establishes that all required checks passed. A merge and individual
+ * exists. A `checks_passed` boundary establishes first-pass success only
+ * when the ledger is uncut and records no failures. A merge and individual
  * check observations leave the fallback verdict unknown.
  */
-function mergeQueueCiFirstPass(evidence: MergeQueueEvidence): boolean | null {
+function mergeQueueCiFirstPass(evidence: MergeQueueEvidence, truncated: boolean): boolean | null {
   if (evidence.check_failures > 0) return false;
-  return evidence.checks_passed > 0 ? true : null;
+  return !truncated && evidence.checks_passed > 0 ? true : null;
 }
 
 /**
@@ -3356,6 +3358,7 @@ export async function readRouterOutcomes(opts: {
       authorityEvidence === null ? undefined : authorityRevertedPrKeys(authorityEvidence),
       revertLedger.keys),
     mergeEvents: mergeEventsRead.state === 'read' ? foldMergeEvents(mergeEventsRead.text) : undefined,
+    mergeEventsTruncated,
     crossReviews: crossReviewRead.state === 'read' ? foldCrossReviews(crossReviewRead.text) : undefined,
   });
   if (spendRead.state === 'read') {

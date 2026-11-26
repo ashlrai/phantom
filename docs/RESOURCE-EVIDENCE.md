@@ -26,6 +26,11 @@ in-flight reservations from the Lightning/Flash preview expiry; absent preview
 pricing evidence is unknown, never assumed free. API USD credit pools are
 tagged `api-credit`; local or unrecognized router cost classes stay unknown.
 
+Custom resource cards use the provider's mark from the brand catalog. A
+`custom-resources.v1` entry can override it with a `logo` containing an embedded
+PNG data URL (at most 4,096 characters). Remote URLs and SVGs are ignored; the
+card falls back to the catalog mark, or to a monogram for an unknown provider.
+
 ## Lane history
 
 `phm usage history --lane devin --json` reads full-resolution measured points;
@@ -240,7 +245,7 @@ In the Resources drawer the open disclosure draws one card per recorded balance:
 
 ## Every-resource usage aggregate
 
-The console's **Every resource** panel (desktop Usage section and mobile Fleet screen) reads one authorized GET, `/api/verse/usage-resources`, accepting no query parameters or mutations. It returns the twelve fixed operator resources — Ultra (Cursor + Grok pool), Claude Max, claude-api gift, claude-api monthly, codex-cmp, codex-personal, Devin, zai, agy, Gemini (Workspace), local and Stacksync — each with used, limit, unit, resets-at, source and as-of, or an explicit state: `ok`, `no-reading` (a reader ran but measured nothing), `no-reader` (nothing in the repo reads that resource yet) or `unavailable` (the read failed, errored, or beat its deadline).
+The console's **Every resource** panel (desktop Usage section and mobile Fleet screen) reads one authorized GET, `/api/verse/usage-resources`, accepting no query parameters or mutations. It returns the eleven built-in resources — Ultra (Cursor + Grok pool), Claude Max, claude-api gift, claude-api monthly, codex-personal, Devin, zai, agy, Gemini (Workspace), local and Stacksync — each with used, limit, unit, resets-at, source and as-of, or an explicit state: `ok`, `no-reading` (a reader ran but measured nothing), `no-reader` (nothing in the repo reads that resource yet) or `unavailable` (the read failed, errored, or beat its deadline).
 
 Each resource is one `UsageResourceReader` in `src/core/usage/resource-usage.ts`: a small function returning the shared `UsageResourceReading` shape, or `null`. Adding a reader for an uncovered pool is a one-function change. Reader returns are boundary-checked — only finite non-negative amounts, ISO instants, and bounded printable source labels reach the wire; a malformed or oversized return degrades to `unavailable`. Reader failures are states, never thrown errors, and provider error text is never echoed. A resource with no measured value reports nulls, never a fabricated percentage or limit.
 
@@ -298,9 +303,8 @@ Configure `usage.liveSources` in `~/.ashlr/config.json`:
 {
   "usage": { "liveSources": {
     "codexPersonalHome": "/absolute/pool-personal",
-    "codexCmpHome": "/absolute/pool-company",
     "accountsRoot": "/absolute/accounts",
-    "codexSeatMap": { "personal-seat-id": "codex-personal", "company-seat-id": "codex-cmp" },
+    "codexSeatMap": { "personal-seat-id": "codex-personal" },
     "anthropicCost": { "adminKeyHandle": "ANTHROPIC_ADMIN_KEY", "creditUsd": 50, "windowStart": "2026-11-01T00:00:00Z" },
     "operatorPageFallback": false
   } }
@@ -311,7 +315,7 @@ Seat IDs come from configured native accounts; labels never infer billing
 identity. Multiple matching seats are ambiguous and stay unknown. Claude uses
 the single Claude seat's `seven_day` window; Codex uses the most-used native
 account window. Pool homes must pass the existing isolated-home checks.
-`PHANTOM_SENSOR_CODEX_PERSONAL_HOME`, `PHANTOM_SENSOR_CODEX_CMP_HOME` and
+`PHANTOM_SENSOR_CODEX_PERSONAL_HOME` and
 `PHANTOM_RESOURCE_LIVE_ACCOUNTS_ROOT` override the corresponding config paths.
 
 Anthropic's [cost report](https://platform.claude.com/docs/en/api/beta/organization/cost_report/retrieve)
@@ -328,8 +332,8 @@ lag, and Priority Tier costs are excluded by this endpoint. The legacy endpoint
 is retained as requested; Anthropic recommends its analytics API for new clients.
 This is advisory cost evidence, not promotion attribution or permission to spend.
 
-Codex personal/CMP are ChatGPT plans: OpenAI organization costs do not measure
-their subscription allowance, so their official source is `codex-app-server`.
+Personal Codex is a ChatGPT plan: OpenAI organization costs do not measure
+its subscription allowance, so its official source is `codex-app-server`.
 Claude native evidence is `claude-usage`; admin costs are `anthropic-admin-cost`.
 Cursor has no supported resource-live source. Grok already has a native account
 probe and separate runway/app/manual evidence; no new Cursor/Grok CLI reader is

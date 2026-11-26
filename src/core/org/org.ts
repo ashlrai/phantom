@@ -230,7 +230,8 @@ export interface OrgPlan {
  * opted-in lane with the most urgent (soonest reset) remaining budget, and no member's contributed
  * budget is exceeded. Lanes with unknown usage get a conservative fixed headroom; a red pool gets none.
  */
-export function planOrg(org: Org, joins: readonly JoinRecord[], view: ResourceView | null, queue: readonly QueueJob[], now = new Date()): OrgPlan {
+export function planOrg(org: Org, joins: readonly JoinRecord[], view: ResourceView | null, queue: readonly QueueJob[], now = new Date(),
+  capacity?: readonly { lane: string; additional_slots: number | null }[]): OrgPlan {
   const budgets: LaneBudget[] = [], held: OrgPlan['held'] = [];
   for (const m of org.members) for (const c of m.contributions) {
     const joined = joins.filter((j) => j.member === m.id).flatMap((j) => j.lanes).find((l) => l.lane === c.lane);
@@ -264,18 +265,20 @@ export function planOrg(org: Org, joins: readonly JoinRecord[], view: ResourceVi
   }
   const assignments: OrgPlan['assignments'] = [], unassigned: OrgPlan['unassigned'] = [];
   const load = new Map<string, number>();
+  const slots = new Map(capacity?.map(row => [row.lane, row.additional_slots]));
   const cost = (j: QueueJob) => j.costPct ?? DEFAULT_COST_PCT;
   const staffed = (b: LaneBudget) => (implementers.get(`${b.member}/${b.lane}`)?.length ?? 0) > 0;
   const ordered = [...queue].sort((a, b) => (b.priority ?? 1) / cost(b) - (a.priority ?? 1) / cost(a) || a.id.localeCompare(b.id));
   for (const job of ordered) {
     const covers = (b: LaneBudget) => !job.lane || b.lane === job.lane;
-    const fits = budgets.filter((b) => covers(b) && staffed(b) && remaining.get(`${b.member}/${b.lane}`)! >= cost(job));
+    const funded = budgets.filter((b) => covers(b) && staffed(b) && remaining.get(`${b.member}/${b.lane}`)! >= cost(job));
+    const fits = funded.filter(b => slots.get(b.lane) !== 0);
     if (fits.length === 0) {
       // The reason names the real blocker: a pinned lane nobody opted into,
       // opted-in lanes with no declared implementer (`phm org init` writes
       // none), or staffed lanes whose contributed budget is already spent.
       const covering = budgets.filter(covers);
-      unassigned.push({ job: job.id, reason: covering.length === 0
+      unassigned.push({ job: job.id, reason: funded.length ? 'no resource-plan slots left' : covering.length === 0
         ? (job.lane ? `no opted-in contribution on ${job.lane}` : 'no contributed budget left')
         : covering.every((b) => !staffed(b))
           ? `no implementer agent declared on ${[...new Set(covering.map((b) => `${b.member}/${b.lane}`))].join(', ')}`
@@ -284,6 +287,8 @@ export function planOrg(org: Org, joins: readonly JoinRecord[], view: ResourceVi
     }
     const best = fits.reduce((p, c) => c.urgency * remaining.get(`${c.member}/${c.lane}`)! > p.urgency * remaining.get(`${p.member}/${p.lane}`)! ? c : p);
     const key = `${best.member}/${best.lane}`;
+    const spare = slots.get(best.lane);
+    if (spare != null) slots.set(best.lane, spare - 1);
     const agentId = implementers.get(key)!.reduce((p, c) => (load.get(c) ?? 0) < (load.get(p) ?? 0) ? c : p);
     load.set(agentId, (load.get(agentId) ?? 0) + 1);
     remaining.set(key, remaining.get(key)! - cost(job));

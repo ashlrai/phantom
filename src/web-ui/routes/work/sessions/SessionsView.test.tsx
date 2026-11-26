@@ -100,7 +100,7 @@ describe('SessionsView', () => {
     await waitFor(() => expect(screen.getByText('JOB-RUN1')).toBeInTheDocument());
     const runRow = screen.getByText('JOB-RUN1').closest('tr')!;
     expect(runRow.textContent).toContain('running');
-    expect(runRow.textContent).toContain('codex-cmp');
+    expect(runRow.textContent).toContain('Codex CMP (retired)');
     expect(runRow.textContent).toContain('work');
     expect(runRow.textContent).toContain('gpt-5.3-codex');
     expect(runRow.textContent).toContain('4321');

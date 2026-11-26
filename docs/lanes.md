@@ -7,7 +7,6 @@ yet** only show status or are held; Phantom does not send them jobs.
 | Lane | What it runs on | Best at |
 | --- | --- | --- |
 | `codex-personal` | OpenAI Codex on your personal account (usage read from Codex's own session logs) | Landing and cleanup jobs: LAND, FIXUP, DRAIN, DAILYFIX. Nothing else. |
-| `codex-cmp` | OpenAI Codex on the second Codex seat (rate limits read through Codex App Server) | Frontier-tier work, when the router picks it. The name "cmp" is not explained in this repo. |
 | `claude` | Claude Code on your Claude subscription | Coding jobs on the Claude subscription you already pay for. |
 | `claude-api` | Anthropic API key, paid per use | Pay-per-use Anthropic work. Closed by default: the spend budget is $0 until you raise it. |
 | `devin` | Devin, a cloud coding agent by Cognition | GEN, PLAN, SELFOPT and DESK jobs, and well-scoped backlog PRs. |
@@ -17,6 +16,8 @@ yet** only show status or are held; Phantom does not send them jobs.
 | `grok` | xAI Grok API key, plus Grok Bot agents on the bus | **Not a job lane yet.** The API key is only checked. Grok Build is not an enrollable pool provider. |
 | `cursor` | Cursor's hosted cloud agents (bus participant `cursor-cloud`) | Overflow capacity, planned for when local lanes are full. No job lane runs it now. |
 | `agy` | Google Antigravity CLI on a Google AI subscription | The Mac launcher candidate uses subscription quota only. See [Gemini 4 and Antigravity](https://github.com/ashlrai/phantom/blob/master/docs/ROUTING.md#gemini-4-and-antigravity) for model availability and fallbacks. |
+
+`codex-cmp` is retired. It is still identified in historical runs, but it no longer accepts work or reserves floor slots.
 
 ## Check a lane from the command line
 

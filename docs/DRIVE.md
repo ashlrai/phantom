@@ -194,11 +194,11 @@ no inference calls and supplies no sandbox flags.
 ```json
 {
   "version": 1,
-  "pools": [{ "id": "codex-cmp", "floor": 1, "ceiling": 2 }],
+  "pools": [{ "id": "codex-personal", "floor": 1, "ceiling": 2 }],
   "maxRunning": 2,
   "paused": false,
   "admission": "open",
-  "jobs": [{ "id": "RQ-EXAMPLE", "pool": "codex-cmp", "state": "READY", "priority": 100 }]
+  "jobs": [{ "id": "RQ-EXAMPLE", "pool": "codex-personal", "state": "READY", "priority": 100 }]
 }
 ```
 

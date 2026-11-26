@@ -191,18 +191,21 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(job).not.toHaveProperty('reverted');
   });
 
-  it('excludes batch sessions and node-pool rows from PR claims', () => {
+  it('excludes batch sessions and node-pool rows from the recovery fold and PR claims', () => {
     const url = 'https://github.com/ashlrai/phantom/pull/782';
     const text = [
-      line({ event: 'launch', job: 'RQ-BATCH-9', batch_size: 1, pr_url: url,
-        ts: '2026-10-28T10:00:00-0400' }),
+      launch('RQ-BATCH-9'), launch('RQ-BATCH-9'),
+      outcome('RQ-BATCH-9', 'MERGED', { pr_url: url }),
       line({ schema: 'fleet.session-pool.v1', job: 'sess:1', jobId: 'ready:x', pr_url: url,
         ts: '2026-10-28T10:00:00-0400' }),
-      launch('RQ-POOL'), outcome('RQ-POOL', 'MERGED', { pr_url: url }),
+      line({ schema: 'phm-node-runner.v1', event: 'finish', job: 'node:1', jobId: 'RQ-POOL',
+        outcome: 'failed' }),
+      line({ event: 'batch_claim', job: 'RQ-POOL', batch: 'RQ-BATCH-9', lane: 'codex' }),
+      outcome('RQ-POOL', 'MERGED', { pr_url: url }),
     ].join('\n');
-    const byId = new Map(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#782']))
-      .map(job => [job.id, job]));
-    expect(byId.get('RQ-POOL')).toMatchObject({ outcome: 'merged', reverted: true });
+    expect(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#782']))).toEqual([
+      { id: 'RQ-POOL', lane: 'codex', outcome: 'merged', reverted: true },
+    ]);
   });
 
   it('does not mark non-merged outcomes reverted through the standing set', () => {

@@ -687,13 +687,13 @@ describe('renderUnfed', () => {
 
 describe('derived market reasons', () => {
   const MLANES = {
-    'codex-cmp': { running: 0, target: 2, held: false },
+    'codex-personal': { running: 0, target: 2, held: false },
     cursor: { running: 0, target: 2, held: false },
     'codex-local': { running: 0, target: 1, held: false },
   };
   const mrow = (job: string, lane: string, tier: string, req?: string) =>
     [job, 'phantom', lane, tier, `/q/prompts/${job}.md`, ...(req === undefined ? [] : [req])].join('\t');
-  const SLOTS = JSON.stringify({ 'codex-cmp': {}, cursor: { tiers: ['fast', 'work'] }, 'codex-local': {} });
+  const SLOTS = JSON.stringify({ 'codex-personal': {}, cursor: { tiers: ['fast', 'work'] }, 'codex-local': {} });
   const READY2 = [
     mrow('RQ-F1', 'claude', 'frontier'), mrow('RQ-F2', 'claude', 'fast'),
     mrow('RQ-F3', 'claude', 'work', '{"preferred_lane":"codex-local"}'),
@@ -711,8 +711,8 @@ describe('derived market reasons', () => {
     expect(byLane.cursor!.blocked).toEqual({
       tier_unavailable: 2, cost_class_unknown: 4, local_execution_required: 1, missing_capability: 1,
     });
-    // codex-cmp is a builtin with all tiers: only the pinned and secrets rows are truly blocked.
-    expect(byLane['codex-cmp']!.blocked).toEqual({
+    // codex-personal is a builtin with all tiers: only the pinned and secrets rows are truly blocked.
+    expect(byLane['codex-personal']!.blocked).toEqual({
       local_execution_required: 1, missing_capability: 1, deferred_after_selection: 2,
     });
     // codex-local is a local lane: open rows need local_opt_in_required.
@@ -732,12 +732,12 @@ describe('derived market reasons', () => {
   it('does not recompute reasons when the dispatcher published its verdict', () => {
     const status = JSON.stringify({
       lanes: MLANES,
-      unfed_capacity: { waiting: 1, lanes: { 'codex-cmp': { waiting_elsewhere: 1, blocked: { saturated: 1 } } } },
+      unfed_capacity: { waiting: 1, lanes: { 'codex-personal': { waiting_elsewhere: 1, blocked: { saturated: 1 } } } },
     });
     const report = currentUnfed(status, READY2, { slots: SLOTS });
     expect(report.source).toBe('dispatcher');
     expect(report.derivedReasons).toBe(false);
-    expect(report.resources.find(r => r.lane === 'codex-cmp')!.blocked).toEqual({ saturated: 1 });
+    expect(report.resources.find(r => r.lane === 'codex-personal')!.blocked).toEqual({ saturated: 1 });
   });
 });
 
@@ -843,19 +843,19 @@ describe('ready row validation', () => {
 
   it('keeps the row repo through the envelope like the dispatcher re-parse', () => {
     const routerQueue = '- READY RQ-ENV (P1): open envelope row';
-    const ready = vrow('RQ-ENV', 'codex-cmp');
+    const ready = vrow('RQ-ENV', 'codex-personal');
     const hints = readyHints(ready, routerQueue);
     expect(hints.rows[0]).toMatchObject({ hint: null, repo: 'phantom' });
-    // repo_unserved is scored by the real repo: served on codex-cmp's allowlist,
+    // repo_unserved is scored by the real repo: served on codex-personal's allowlist,
     // blocked on claude's — never reported for every envelope row at once.
     const lanes = {
-      'codex-cmp': { running: 0, target: 1, held: false },
+      'codex-personal': { running: 0, target: 1, held: false },
       claude: { running: 0, target: 1, held: false },
     };
-    const slots = JSON.stringify({ 'codex-cmp': { repos: ['phantom'] }, claude: { repos: ['other-repo'] } });
+    const slots = JSON.stringify({ 'codex-personal': { repos: ['phantom'] }, claude: { repos: ['other-repo'] } });
     const report = currentUnfed(JSON.stringify({ lanes }), ready, { slots, routerQueue });
     const byLane = Object.fromEntries(report.resources.map(r => [r.lane, r]));
-    expect(byLane['codex-cmp']!.blocked).toEqual({ deferred_after_selection: 1 });
+    expect(byLane['codex-personal']!.blocked).toEqual({ deferred_after_selection: 1 });
     expect(byLane.claude!.blocked).toEqual({ repo_unserved: 1 });
   });
 

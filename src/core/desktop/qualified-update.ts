@@ -303,6 +303,63 @@ function verifyAppReleaseRecord(appRoot: string, manifest: CompatibleUpdateManif
   if (Buffer.byteLength(text) > 8192) hold('app-source-unverified');
   try {verifyUpdateBundleRecord(text, manifest);} catch {hold('app-source-unverified');}
 }
+async function readPairedArchive(path: string, manifest: CompatibleUpdateManifest) {
+  const archive = await readPinnedRuntimeArchive({artifactPath: path, sha256: manifest.cli.sha256,
+    revision: manifest.source.revision, version: manifest.version,
+    identityProfile: manifest.schemaVersion === 1 ? 'legacy-v1' : 'canonical-v2'}).catch(() => hold('package-archive-refused'));
+  if (archive.pins.size !== manifest.cli.bytes) hold('artifact-mismatch');
+  return archive;
+}
+
+async function preparePairedArchive(staged: ReturnType<typeof readStage>, deps: DesktopUpdateDependencies) {
+  const { stage, manifest } = staged;
+  const original = join(stage, 'package.tgz');
+  try {
+    validateArtifact(bytes(original, manifest.cli.bytes), manifest.cli, deps.trust!);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    const data = await deps.download(manifest.cli.url, manifest.cli.bytes);
+    validateArtifact(data, manifest.cli, deps.trust!);
+    safeAncestors(deps.home, stage);
+    const current = directory(stage);
+    if (staged.identity.dev !== current.dev || staged.identity.ino !== current.ino) hold('stage-changed');
+    const temporary = join(stage, `package-${randomBytes(16).toString('hex')}.tmp`);
+    writeExclusive(temporary, data);
+    try {
+      await readPairedArchive(temporary, manifest);
+      try { fs.linkSync(temporary, original); }
+      catch (linkError) { if ((linkError as NodeJS.ErrnoException).code !== 'EEXIST') throw linkError; }
+    } finally { fs.unlinkSync(temporary); fsyncDirectory(stage); }
+    validateArtifact(bytes(original, manifest.cli.bytes), manifest.cli, deps.trust!);
+  }
+  return readPairedArchive(original, manifest);
+}
+
+/** Admit both signed downloads before Stop, without changing the installed app or runtime. */
+export async function prepareQualifiedDesktopUpdate(stageId: string, deps: DesktopUpdateDependencies): Promise<DesktopUpdateResult> {
+  let version: string | null = null;
+  try {
+    const staged = readStage(stageId, deps); version = staged.manifest.version;
+    updateMode(deps, staged.manifest);
+    const archive = await preparePairedArchive(staged, deps);
+    const helper = deps.transaction ? await deps.transaction() : await loadInstalledDesktopTransaction(deps.packageRoot!);
+    const io = helper.createLocalAppTransactionIo({packageRoot: deps.packageRoot!, home: deps.home});
+    const scratch = fs.mkdtempSync(join(staged.stage, 'verify-pair-'));
+    try {
+      const runtime = join(scratch, 'runtime');
+      fs.mkdirSync(runtime, {mode: 0o700});
+      extractPinnedRuntimeArchive(archive, runtime);
+      const surface = verifyAuthoritySurfaceAt(runtime, 'installed', {fresh: true});
+      if (!surface.ok || surface.digest !== staged.manifest.authoritySurfaceDigest) hold('candidate-surface-unverified');
+      const app = extractApp(staged.entries, scratch);
+      verifyAppReleaseRecord(app, staged.manifest);
+      if (helper.inspectLocalApp(app, staged.manifest.app.signer, io).inventory !== staged.manifest.app.inventorySha256) hold('app-inventory-mismatch');
+    } finally { fs.rmSync(scratch, {recursive: true}); }
+    if (readStage(stageId, deps).digest !== staged.digest) hold('stage-changed');
+    return result('ready', version, null);
+  } catch (error) { return result('blocked', version, error instanceof Held ? error.reason : 'update-unavailable'); }
+}
+
 async function installPairedUpdate(stageId: string, staged: ReturnType<typeof readStage>, deps: DesktopUpdateDependencies, mode: ReturnType<typeof updateMode>): Promise<DesktopUpdateState> {
   const root = deps.packageRoot!;
   // Only the already-running compiled package supplies the transaction implementation.
@@ -319,12 +376,7 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
     requireOlderNativeApp(selected.path, staged.manifest.version, io);
   }
   const aliases = helper.inspectLocalAliases(io);
-  const data = await deps.download(staged.manifest.cli.url, staged.manifest.cli.bytes);
-  validateArtifact(data, staged.manifest.cli, deps.trust!);
-  const original = join(staged.stage, 'package.tgz'); writeExclusive(original, data); fsyncDirectory(staged.stage);
-  const archive = await readPinnedRuntimeArchive({artifactPath: original, sha256: staged.manifest.cli.sha256,
-    revision: staged.manifest.source.revision, version: staged.manifest.version, identityProfile: staged.manifest.schemaVersion === 1 ? 'legacy-v1' : 'canonical-v2'}).catch(() => hold('package-archive-refused'));
-  if (archive.pins.size !== staged.manifest.cli.bytes) hold('artifact-mismatch');
+  const archive = await preparePairedArchive(staged, deps);
   const entries = staged.entries;
   const releases = join(deps.home, '.local', 'share', 'ashlr', 'releases'); privateParents(deps.home, releases);
   const destination = join(releases, staged.manifest.source.revision);

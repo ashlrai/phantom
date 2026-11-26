@@ -76,7 +76,7 @@ class BridgeEvidenceTest(unittest.TestCase):
     def plan_inputs(self, lane="zai"):
         synthetic_key = b"test-key-material"
         self.put(".zai-lane/api_key", synthetic_key + b"\n")
-        launcher = Path(bridge.__file__).parent / "host-integration/launch.candidate.sh"
+        launcher = Path(bridge.__file__).parent / "host-integration/launch.sh"
         pin = hashlib.sha256(synthetic_key).hexdigest()[:32]
         a = {"accountDigest": pin if lane == "zai" else "a" * 64, "attestedAt": self.now - 1000,
              "attestationExpiresAt": self.now + 100_000}
@@ -95,6 +95,12 @@ class BridgeEvidenceTest(unittest.TestCase):
         self.assertEqual(record["billing"]["kind"], "owner-attested-plan")
         self.assertEqual(record["expiresAt"], a["attestationExpiresAt"])
         self.assertNotIn("test-key-material", json.dumps(record))
+
+    def test_zai_accepts_live_launcher_review_digest(self):
+        args, a, _ = self.plan_inputs()
+        live = Path(bridge.__file__).parent / "host-integration/launch.sh"
+        record = bridge.plan_evidence(*args[:4], live, *args[5:], now=lambda: self.now)
+        self.assertEqual(record["accountDigest"], a["accountDigest"])
 
     def test_zai_wrong_fingerprint_unknown_boundary_and_invalid_attestations(self):
         args, attestation, _ = self.plan_inputs()

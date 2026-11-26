@@ -30,7 +30,7 @@ interface Parsed {
   values: Map<string, string>;
 }
 
-const VALUE_FLAGS = new Set(['--repo', '--pages', '--tokens', '--focus']);
+const VALUE_FLAGS = new Set(['--repo', '--pages', '--tokens', '--focus', '--link', '--source-kind', '--source-id', '--source-digest']);
 
 function parse(args: string[]): Parsed {
   const positional: string[] = [];
@@ -69,6 +69,11 @@ const WIKI_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> =
     allowed: { flags: ['--json'], values: ['--focus'] },
     usage: 'Usage: ashlr wiki map [repo] [--focus <node-or-file>] [--json]',
   },
+  brain: {
+    allowed: { flags: ['--json'], values: ['--focus', '--link', '--source-kind', '--source-id', '--source-digest'] },
+    usage: 'Usage: ashlr wiki brain [repo] [--focus <node-id>] [--json]\n       ashlr wiki brain [repo] --link <node-id> --source-kind <kind> --source-id <id> --source-digest <sha256> [--json]\n       ashlr wiki brain stats --json',
+  },
+  ecosystem: { allowed: { flags: ['--json'] }, usage: 'Usage: ashlr wiki ecosystem --json' },
   ask: {
     allowed: { flags: ['--no-model', '--json'], values: ['--repo'] },
     usage: 'Usage: ashlr wiki ask "<question>" [--repo <path|name>] [--no-model] [--json]',
@@ -76,10 +81,10 @@ const WIKI_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> =
 };
 
 /** `--pages=8` is the same option as `--pages 8` to the parser. */
-function withoutInlineValues(args: string[]): string[] {
+function withoutInlineValues(args: string[], allowed: AllowedOptions): string[] {
   return args.filter((a) => {
     const eq = a.indexOf('=');
-    return !(a.startsWith('--') && eq > 0 && VALUE_FLAGS.has(a.slice(0, eq)));
+    return !(a.startsWith('--') && eq > 0 && allowed.values?.includes(a.slice(0, eq)));
   });
 }
 
@@ -134,6 +139,9 @@ function printHelp(): void {
   out(`    ${cyan('status [repo]')}                Freshness: generated at <commit>, N pages stale.`);
   out(`    ${cyan('show <repo> [page]')}           Print a page (default: overview).`);
   out(`    ${cyan('map [repo] [--focus id]')}      Read the commit-pinned system map.`);
+  out(`    ${cyan('brain [repo] [--focus id]')}    Read commit-aware system map evidence (or explicitly attach a source with --link).`);
+  out(`    ${cyan('brain stats --json')}           Compare Fleet and Cloud merge rates by Wiki slice usage.`);
+  out(`    ${cyan('ecosystem --json')}             Map repositories in the signed grant scope.`);
   out(`    ${cyan('ask "<question>" [--repo r]')}  Answer from the wiki, index and genome with file:line citations.`);
   out('');
   out(`    ${dim('--force        regenerate every page')}`);
@@ -323,6 +331,44 @@ async function cmdMap(wiki: WikiModule, p: Parsed): Promise<number> {
   return result.status === 'current' ? 0 : 1;
 }
 
+async function cmdBrain(wiki: WikiModule, p: Parsed): Promise<number> {
+  if (p.positional.length === 1 && p.positional[0] === 'stats' && !p.values.size && p.flags.has('--json')) {
+    const { wikiSliceStats } = await import('../core/knowledge/wiki/slice-stats.js');
+    process.stdout.write(`${JSON.stringify(await wikiSliceStats())}\n`);
+    return 0;
+  }
+  const focus = p.values.get('--focus');
+  const node = p.values.get('--link');
+  const { brainSourceSchema, linkBrainEvidence, queryBrain } = await import('../core/knowledge/wiki/brain.js');
+  const source = {
+    kind: p.values.get('--source-kind'), id: p.values.get('--source-id'), digest: p.values.get('--source-digest'),
+  };
+  const curated = Object.values(source).some(value => value !== undefined);
+  const parsed = brainSourceSchema.safeParse(source);
+  if (p.positional.length > 1 || (focus !== undefined && (!focus || focus.length > 1200 || focus.startsWith('--'))) ||
+      (node !== undefined ? !parsed.success || focus !== undefined : curated)) {
+    process.stderr.write(`${WIKI_OPTIONS.brain!.usage}\n`);
+    return 2;
+  }
+  const target = resolveRepo(wiki, p.positional[0]);
+  if ('error' in target) {
+    process.stderr.write(`${target.error}\n`);
+    return 1;
+  }
+  if (node !== undefined && parsed.success) {
+    const status = await linkBrainEvidence(target.repo, node, parsed.data).catch(() => 'failed');
+    process.stdout.write(p.flags.has('--json') ? `${JSON.stringify({ status })}\n` : `Wiki Brain: ${status}.\n`);
+    return status === 'recorded' || status === 'replayed' ? 0 : 1;
+  }
+  const result = await queryBrain(target.repo, { focus });
+  if (p.flags.has('--json')) process.stdout.write(`${JSON.stringify(result)}\n`);
+  else if (result.status === 'current') {
+    process.stdout.write(`${result.commit}${result.truncated ? ' — truncated' : ''}\n`);
+    for (const link of result.links) process.stdout.write(`${link.nodeId}\t${link.staleness}\t${link.source.kind}: ${link.source.id}\n`);
+  } else process.stderr.write(`Wiki Brain: ${result.status}.\n`);
+  return result.status === 'current' ? 0 : 1;
+}
+
 export async function cmdWiki(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') {
@@ -337,7 +383,7 @@ export async function cmdWiki(args: string[]): Promise<number> {
   }
   const spec = Object.hasOwn(WIKI_OPTIONS, sub) ? WIKI_OPTIONS[sub] : undefined;
   if (spec) {
-    const bad = rejectUnknownOptions(withoutInlineValues(rest), spec.allowed);
+    const bad = rejectUnknownOptions(withoutInlineValues(rest, spec.allowed), spec.allowed);
     if (bad) {
       process.stderr.write(`${bad.message}\n${spec.usage}\n`);
       return 2;
@@ -355,6 +401,18 @@ export async function cmdWiki(args: string[]): Promise<number> {
       return cmdShow(wiki, p);
     case 'map':
       return cmdMap(wiki, p);
+    case 'brain':
+      return cmdBrain(wiki, p);
+    case 'ecosystem': {
+      if (p.positional.length || !p.flags.has('--json')) {
+        process.stderr.write(`${WIKI_OPTIONS.ecosystem!.usage}\n`);
+        return 2;
+      }
+      const { queryWikiEcosystem } = await import('../core/knowledge/wiki/ecosystem.js');
+      const result = await queryWikiEcosystem();
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      return result.status === 'current' ? 0 : 1;
+    }
     case 'ask':
       return cmdAsk(wiki, p);
     default:
