@@ -1030,8 +1030,10 @@ The merge rate counts a GitHub PR once across repeated observations and jobs;
 legacy transitions without a PR URL deduplicate by job, including LAND rows in
 `ready.tsv`. Rows with neither identifier remain separate observations. Event
 timestamps must include a timezone; the trailing window includes both endpoints
-and uses the event timestamp, not reconciliation time. The bounded ledger is
-read in full because backfilled events need not be ordered by event time. Credit
+and uses the event timestamp, not reconciliation time. An explicit merge time
+after the report time cannot override another receipt or supply its lane.
+The bounded ledger is read in full because backfilled events can arrive out of
+event-time order. Credit
 comes from the pool-budget ledger; a queue-local `budgets/` directory or the
 usage journal fill pools the ledger has not observed.
 
