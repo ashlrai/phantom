@@ -64,7 +64,8 @@ export interface UnfedReadOptions {
  * when queue/status.json is absent or its lanes map cannot be read — the
  * same failure `phm fleet unfed` reports as its exit-2 error — and when a
  * required input exceeds its read bound. Every other input is optional:
- * a missing ready.tsv reads as no waiting rows, a missing market file
+ * a missing ready.tsv supplies no rows to the dispatcher fallback and
+ * leaves advisory unfilled slot counts unknown, a missing market file
  * leaves the matching fold `available: false`, and a tail-truncated jobs
  * ledger marks its claim/outcome counts a lower bound.
  */
@@ -72,7 +73,7 @@ export async function readUnfedReport(options: UnfedReadOptions = {}): Promise<U
   const root = options.runsDir ?? runsRoot();
   const status = await readBounded(join(root, 'queue', 'status.json'));
   if (status === null) throw new Error('unfed-status-unreadable');
-  const ready = (await readBounded(join(root, 'queue', 'ready.tsv'))) ?? '';
+  const ready = await readBounded(join(root, 'queue', 'ready.tsv'));
   const [slots, models, budget, adaptive, hold, routerQueue] = await Promise.all([
     readOptional(join(root, 'queue', 'slots.json')),
     readOptional(join(root, 'models.json')),
@@ -91,13 +92,13 @@ export async function readUnfedReport(options: UnfedReadOptions = {}): Promise<U
   const jobsText = jobsRead?.text ?? null;
   const window = options.windowHours ?? UNFED_DEFAULT_WINDOW_HOURS;
   const jobsTruncated = jobsRead?.truncated ?? false;
-  const current = currentUnfed(status, ready, { slots, models, budget, adaptive, hold, routerQueue, nowMs });
+  const current = currentUnfed(status, ready ?? '', { slots, models, budget, adaptive, hold, routerQueue, nowMs });
   return {
     ...current,
     resourcePlan: capacity?.lanes.map(({ lane, running, target_concurrency, additional_slots }) => {
       const readyHere = current.resources.find(row => row.lane === lane)?.readyHinted;
       return { lane, running, target: target_concurrency,
-        unfedSlots: !current.statusFresh || additional_slots === null || readyHere === undefined ? null
+        unfedSlots: ready === null || !current.statusFresh || additional_slots === null || readyHere === undefined ? null
           : Math.min(Math.max(0, additional_slots - readyHere), Math.max(0, current.waiting - readyHere)) };
     }) ?? null,
     marketTruncated: marketRead?.truncated ?? false,

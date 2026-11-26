@@ -70,6 +70,28 @@ describe('fleet resource plan', () => {
     expect(buildFleetResourcePlan(null, [], null, ledger, now).allowances.find(row => row.id === 'codex-personal')?.remaining).toBeNull();
   });
 
+  it('keeps advisory unfed slots unknown when only the dispatcher total is available', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'phantom-unfed-ready-'));
+    try {
+      await mkdir(join(dir, 'queue'));
+      const snapshot = status();
+      const plan = buildFleetResourcePlan(live, [node], snapshot, ledger, now);
+      await writeFile(join(dir, 'queue/status.json'), JSON.stringify({
+        ...snapshot,
+        lanes: { agy: { ...snapshot.lanes['agy'], target: 2 } },
+        unfed_capacity: { waiting: 2, lanes: { agy: { waiting_elsewhere: 1 } } },
+      }));
+      const options = { runsDir: dir, now: () => now, readCapacity: async () => plan };
+      const missing = await readUnfedReport(options);
+      expect(missing).toMatchObject({ source: 'dispatcher', waiting: 2, unfedSlots: 1 });
+      expect(missing.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: null });
+
+      await writeFile(join(dir, 'queue/ready.tsv'), 'example\tphantom\tcodex-personal\twork\tfixture.md\n');
+      const observed = await readUnfedReport(options);
+      expect(observed.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 1 });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('includes an expiring reset proposal only when the allowance and bank evidence support it', () => {
     const reading = { ...readings[0]!, used: 95, source: 'codex-budget-overrides-weekly' };
     const weekly = { ...live, readings: [reading], history: { [reading.id]: [

@@ -353,7 +353,9 @@ now, then folds the unfed ticks of the last `--window` hours (default 24, at
 most 168): ticks unfed and slot-ticks lost per lane, with the leading reasons.
 The separate `resourcePlan` comparison uses the same advisory lane targets as
 `phm resources plan` and shows how many additional slots lack waiting rows
-hinted to that lane. Unknown plan capacity remains null. Dispatcher counts,
+hinted to that lane. The advisory `unfedSlots` count stays null when plan
+capacity is unknown or `ready.tsv` is missing. An observed empty ready file
+can still support a numeric count. Dispatcher counts,
 reason codes and the command's exit status still describe the actual market.
 The same window's `route_decision` rows are folded into `overrides`:
 each waiting job counts once, by its latest in-window decision — how many
