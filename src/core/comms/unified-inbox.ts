@@ -76,6 +76,14 @@
  *               contract `fleet handoff-receive`/`handoff-reply` accept), so a
  *               pending assignment surfaces here instead of only in
  *               `agents bus work mine` — act: `phm fleet handoff-receive`.
+ *               Every envelope addressed to the transport dead-letter sink
+ *               (`bus.dead-letter`, the router's delivery-failure report —
+ *               docs/AGENT-BUS.md "Dead letters") lists too, as
+ *               `bus-dead-letter`: the mail provably never arrived, so it is
+ *               pending attention even though the conversations, messages
+ *               and edges projections deliberately exclude it as "not agent
+ *               mail" — act: `phm agents bus show`, `phm comms bus read
+ *               --to bus.dead-letter`.
  *               When the claims table itself
  *               cannot be read the section reports 'degraded' and still lists
  *               candidates rather than hiding possibly unclaimed work; a
@@ -346,12 +354,13 @@ const UNIFIED_INBOX_SEVERITIES: readonly UnifiedInboxSeverity[] = ['info', 'warn
 export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeverity =>
   (UNIFIED_INBOX_SEVERITIES as readonly string[]).includes(value);
 /** Every pending-item kind the unified view can report. Most kinds are 1:1
- * with their source; the `bus` source splits into `bus-work`/`bus-handoff`
- * and the `board` source into `board-delivery`/`board-task`, so `kind` is
- * the finer classification `--kind` filters on. */
+ * with their source; the `bus` source splits into
+ * `bus-work`/`bus-handoff`/`bus-dead-letter` and the `board` source into
+ * `board-delivery`/`board-task`, so `kind` is the finer classification
+ * `--kind` filters on. */
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
-  'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'mailbox-message',
+  'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
   'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
   'inbox-proposal', 'slack-request',
@@ -412,7 +421,7 @@ export interface UnifiedInboxFilter {
   source?: UnifiedInboxSource;
   /** Keep only items of this kind — the item's own classification, finer
    * than `source` where one source emits several kinds (the `bus` source's
-   * `bus-work`/`bus-handoff` split, the `board` source's
+   * `bus-work`/`bus-handoff`/`bus-dead-letter` split, the `board` source's
    * `board-delivery`/`board-task` split). */
   kind?: UnifiedInboxKind;
   /** Keep only items at this severity band. */
@@ -1156,6 +1165,50 @@ interface BusItemCoverage {
   readonly feedJobs: ReadonlySet<string>;
 }
 
+/** The transport dead-letter sink (docs/AGENT-BUS.md "Dead letters"): the
+ * router files delivery-failure reports under this address. Kept a literal —
+ * the shared constant lives in bus-transport-file, whose import would pull
+ * the transport router into this read projection's closure (the same call
+ * fleet-edges makes). */
+const BUS_DEAD_LETTER_ADDRESS = 'bus.dead-letter';
+
+/** The delivery-failure summary a dead-letter letter carries under
+ * `body.payload.deadLetter` (the sink's wire shape in bus-transport-file),
+ * read defensively: stored envelopes are untrusted data, so every field is
+ * optional and a missing one stays absent rather than guessed. */
+interface DeadLetterFacts {
+  readonly id: string | null;
+  readonly from: string | null;
+  readonly to: string | null;
+  readonly kind: string | null;
+  readonly reason: string | null;
+  readonly attempts: number | null;
+  readonly correlationId: string | null;
+  readonly payloadDropped: boolean;
+}
+
+function deadLetterFacts(body: unknown): DeadLetterFacts | null {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+  const outer = body as Record<string, unknown>;
+  const payload = outer.payload;
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const letter = (payload as Record<string, unknown>).deadLetter;
+  if (letter === null || typeof letter !== 'object' || Array.isArray(letter)) return null;
+  const record = letter as Record<string, unknown>;
+  const text = (key: string): string | null => {
+    const value = record[key];
+    return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+  };
+  const correlation = outer.correlation_id;
+  const attempts = record.attempts;
+  return {
+    id: text('id'), from: text('from'), to: text('to'), kind: text('kind'), reason: text('reason'),
+    attempts: Array.isArray(attempts) ? attempts.length : null,
+    correlationId: typeof correlation === 'string' && correlation.trim() !== '' ? correlation.trim() : null,
+    payloadDropped: (payload as Record<string, unknown>).payloadDropped === true,
+  };
+}
+
 function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[]; covered: BusItemCoverage } {
   const covered: { envelopes: Set<string>; feedJobs: Set<string> } = { envelopes: new Set(), feedJobs: new Set() };
   const bus: BusInboxOptions = { root: options.busRoot, now: options.now };
@@ -1221,6 +1274,46 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
             detail: typeof detail === 'string' && detail.trim() !== '' ? oneLine(detail, STATUS_DETAIL_MAX) : null,
           });
         }
+      }
+      // A dead letter is the router's delivery-failure report, not claimable
+      // work, a handoff or feed traffic: the original envelope exhausted every
+      // live transport (or had no route, or its TTL lapsed) and the sink
+      // recorded it under the reserved address. The mail provably never
+      // arrived, so it is pending attention here even though the
+      // conversations/messages/edges projections exclude it as "not agent
+      // mail". A failed delivery always wants a look, so the severity floor
+      // is warn; an original P0 stays high like every other bus item.
+      if (envelope.to === BUS_DEAD_LETTER_ADDRESS) {
+        const facts = deadLetterFacts(body);
+        const parties = facts !== null && (facts.from !== null || facts.to !== null)
+          ? `${facts.from ?? 'unknown'} → ${facts.to ?? 'unknown'}` : 'delivery failure';
+        const detailParts = [
+          facts?.reason != null ? `reason ${facts.reason}` : null,
+          facts?.attempts != null ? `${facts.attempts} attempt${facts.attempts === 1 ? '' : 's'}` : null,
+          facts?.kind != null ? `kind ${facts.kind}` : null,
+          facts?.id != null ? `original ${facts.id}` : null,
+          facts?.correlationId != null ? `correlation ${facts.correlationId}` : null,
+          facts?.payloadDropped ? 'original payload dropped' : null,
+          `cursor ${receipt.cursor}`,
+        ].filter((part): part is string => part !== null);
+        items.push({
+          id: `bus-dead-letter:${envelope.id}`,
+          source: 'bus',
+          kind: 'bus-dead-letter',
+          severity: envelope.priority === 'P0' ? 'high' : 'warn',
+          blocking: false,
+          title: oneLine(`dead letter${facts?.reason != null ? ` ${facts.reason}` : ''}: ${parties}`, TITLE_MAX),
+          // oneLine, not cap: the facts are untrusted body text — scrubbed
+          // like every other stored-body string this view shows.
+          detail: oneLine(detailParts.join(' · '), DETAIL_MAX) || null,
+          since: iso(receipt.receivedAt),
+          expiresAt: iso(now + envelope.ttl),
+          act: [
+            `phm agents bus show ${envelope.id}`,
+            `phm comms bus read --to ${BUS_DEAD_LETTER_ADDRESS}`,
+          ],
+        });
+        continue;
       }
       // A live worker-handoff is a pending assignment, not claimable work:
       // receiving it runs `fleet handoff-receive`/`handoff-reply`, which check
@@ -1563,7 +1656,11 @@ const WAKE_DETAIL_REFS = 3;
  * under any spelling merge) and by the literal label otherwise, so unknown
  * identity state never merges distinct addressees. An unreadable queue,
  * registry, bus store or hold table reports 'unavailable', never an empty
- * page passed off as "no wakes".
+ * page passed off as "no wakes". A bounded-tail read that cut older hints
+ * or capped matched rows beyond the shown slice reports 'degraded' — the
+ * same `matched`/`truncated` honesty `agents bus wakes --all` and
+ * `fleet_agent_wakes` surface — while still listing the addressee groups
+ * it proved, never a healthy under-count passed off as the whole queue.
  */
 function wakeItems(read: NonNullable<UnifiedInboxOptions['readWakes']>,
   options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
@@ -1618,7 +1715,8 @@ function wakeItems(read: NonNullable<UnifiedInboxOptions['readWakes']>,
     };
   });
   items.sort((a, b) => (b.since ?? '').localeCompare(a.since ?? ''));
-  return { report: { state: 'healthy', pending: items.length }, items };
+  const truncated = page.truncated || page.matched > page.wakes.length;
+  return { report: { state: truncated ? 'degraded' : 'healthy', pending: items.length }, items };
 }
 
 /** Work refs named inside one seat item's detail line before the overflow count takes over. */

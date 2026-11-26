@@ -1584,7 +1584,7 @@ merges in the last hour from GitHub (`org:ashlrai`), personal Codex used %
 (read from the Codex CLI's own session logs for the personal account; no auth
 file is opened), and leader passes.
 
-The lanes table lists `codex-cmp`, `codex-personal`, `claude`, `devin`,
+The lanes table lists `codex-personal`, `claude`, `devin`,
 `claude-api` and `codex-local`, with running, target, queued and held counts,
 tokens in 1h and merged in 24h. You can also inspect workers, publishes, the
 event tail and the inbox tail. A dash means **not known**, never zero. A quiet

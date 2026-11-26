@@ -267,7 +267,18 @@ live reply routed recipient -> sender cites the handoff id through
 label of the two identities (or a member of the addressed channel) counts,
 with an unreadable registry keeping literal-label matching —
 the same durable evidence `agents conversations`
-credits when it marks the thread answered), and
+credits when it marks the thread answered), every envelope addressed to
+the transport dead-letter sink (`bus.dead-letter` — the router's
+delivery-failure report, docs/AGENT-BUS.md "Dead letters"): the original
+envelope exhausted every live transport, had no route or outlived its
+TTL, so the mail provably never arrived and lists as pending attention —
+warn at minimum, high when the original was P0 — even though the
+conversations, messages and edges projections deliberately exclude it as
+"not agent mail"; the item names the failure reason, attempt count,
+original parties/kind/id and correlation id when the letter kept them
+(`payloadDropped` says when the original body was too large to keep),
+with `agents bus show <letter-id>` and `comms bus read --to
+bus.dead-letter` acts), and
 open agent-bus v2 work-feed jobs (queued or rescheduled
 `work.post` announcements with at least one claim key not fully held, plus
 jobs the feed shows `blocked` or `failed` — stuck work needs a decision — or
@@ -329,7 +340,19 @@ and deep-links `phm agents conversations`, `phm agents bus show` and a
 reported the block, who was told and how long it has stood, with the same
 deep links. A thread whose latest message is already a pending bus item or
 whose `job:` thread the feed already lists stays under the bus source, one
-pending thing one item — plus bot seats whose projected handoff plan still has work to
+pending thing one item — plus pending wake hints fleet-wide (the same
+`readAllWakes` projection `phm agents bus wakes --all` and
+`fleet_agent_wakes` serve, grouped by addressee so the bounded queue tail
+never floods the view: each warn item names the addressee, its hint count,
+the newest hint time and up to three cited referents with the jobs they
+provably name, deep-linking `phm agents bus wakes <label>` and `--all`; a
+wake is only a pointer to read the inbox, never pending work itself, so
+items stay warn and non-blocking and `expiresAt` stays null — a hint ages
+out of the bounded tail with no deadline; a queue-tail read that cut older
+hints or capped matched rows beyond the shown slice reports `degraded`,
+the same `matched`/`truncated` honesty the wakes reads surface, while an
+unreadable queue, registry or bus store is `unavailable`, never an empty
+page passed off as "no wakes") — plus bot seats whose projected handoff plan still has work to
 move (the same `planSeatHandoffs` read `phm bots handoffs` serves; only
 eligible seats with pending, not yet journaled, handoff records list, each
 item deep-linking `phm bots handoff --seat` and `phm bots handoffs`) — plus
@@ -414,8 +437,8 @@ that cannot be read reports `missing`, `degraded`, or `unavailable` in
 items with the remainder counted in `omitted`. The bare view also narrows:
 `--source <name>` keeps one source's items, `--kind <name>` one item kind —
 the item's own classification, finer than `--source` where one source emits
-several kinds (the `bus` source's `bus-work`/`bus-handoff` split, the
-`board` source's `board-delivery`/`board-task` split) — `--severity
+several kinds (the `bus` source's `bus-work`/`bus-handoff`/`bus-dead-letter`
+split, the `board` source's `board-delivery`/`board-task` split) — `--severity
 <info|warn|high>` one
 severity band, `--blocking` only items that block, `--job <id>` only items
 that provably name that job — a bus or mailbox body's `busBodyJobMatch`

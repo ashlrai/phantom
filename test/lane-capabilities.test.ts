@@ -29,7 +29,7 @@ afterEach(async () => { vi.restoreAllMocks(); await Promise.all(dirs.splice(0).m
 describe('lane capabilities', () => {
   it('declares only what is proven: claude has no gh, three lanes have it, the rest is unknown', () => {
     expect(laneCapabilities('claude')).toEqual({ gh: false, network: null, browser: null, local_fs_outside_worktree: null });
-    for (const lane of ['codex-personal', 'codex-cmp', 'devin']) expect(laneCapabilities(lane)).toEqual({ gh: true, network: null, browser: null, local_fs_outside_worktree: null });
+    for (const lane of ['codex-personal', 'devin']) expect(laneCapabilities(lane)).toEqual({ gh: true, network: null, browser: null, local_fs_outside_worktree: null });
     expect(laneCapabilities('gemini').gh).toBeNull();
     expect(laneCapabilities('claude', { claude: { gh: true } }).gh).toBe(true);
   });

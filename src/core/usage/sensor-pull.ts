@@ -13,7 +13,7 @@ import { readCodexUsage, type CodexUsageReading } from '../fabric/readers/codex-
 import { readDevinUsage, type DevinUsageResult } from '../fabric/readers/devin-usage.js';
 import { parseClaudeSensor, parseCodexSensor, parseGrokSensor } from './sensor-refresh.js';
 import {
-  USAGE_SENSOR_LANES,
+  ACTIVE_USAGE_SENSOR_LANES,
   USAGE_SENSOR_STALE_MS,
   unmeasuredSensor,
   readingIsFresh,
@@ -39,8 +39,8 @@ export async function refreshStalePersonalUsage(
   const latest = readings.filter(row => row.lane === 'codex-personal')
     .sort((a, b) => Date.parse(b.observedAt) - Date.parse(a.observedAt))[0];
   if (!latest || readingIsFresh({ ...latest, nowMs })) return readings;
-  const refreshed = await codexLane('codex-personal', options.codexPersonalHome,
-    options.operatorHome ?? homedir(), nowMs, options.readCodex ?? (home => readCodexUsage({ home })));
+  const refreshed = await codexLane(options.codexPersonalHome,
+    options.operatorHome ?? homedir(), nowMs, options.readCodex ?? (home => readCodexUsage({ personalHome: home })));
   return refreshed ? [...readings, refreshed] : readings;
 }
 
@@ -69,21 +69,19 @@ function codexStatusPayload(status: Pick<CodexUsageReading, 'pctUsed' | 'resetAt
 }
 
 async function codexLane(
-  lane: 'codex-cmp' | 'codex-personal',
   home: string | undefined,
   operatorHome: string,
   nowMs: number,
   readCodex: (home: string) => Promise<Pick<CodexUsageReading, 'pctUsed' | 'resetAt'>>,
 ): Promise<UsageSensorReading | null> {
   if (!home || !codexPoolHomeAllowed(home, operatorHome)) return null;
-  try { return parseCodexSensor(lane, codexStatusPayload(await readCodex(home)), nowMs); }
+  try { return parseCodexSensor('codex-personal', codexStatusPayload(await readCodex(home)), nowMs); }
   catch { return null; }
 }
 
 export interface UsageSensorPullOptions {
   nowMs?: number;
   operatorHome?: string;
-  codexCmpHome?: string;
   codexPersonalHome?: string;
   readDevin?: () => Promise<DevinUsageResult>;
   readCodex?: (home: string) => Promise<Pick<CodexUsageReading, 'pctUsed' | 'resetAt'>>;
@@ -100,16 +98,13 @@ export async function pullOfficialUsageSensors(options: UsageSensorPullOptions =
   const nowMs = options.nowMs ?? Date.now();
   const operatorHome = options.operatorHome ?? homedir();
   const readDevin = options.readDevin ?? readDevinUsage;
-  const readCodex = options.readCodex ?? ((home: string) => readCodexUsage({ home }));
+  const readCodex = options.readCodex ?? ((home: string) => readCodexUsage({ personalHome: home }));
   const readClaude = options.readClaude ?? (() => readLatestClaudeRateLimitEvent({ nowMs }));
   const readGrok = options.readGrok ?? (() => null);
 
   let devin: UsageSensorReading | null = null;
   try { devin = fromDevin(await readDevin(), nowMs); } catch { devin = null; }
-  const [codexCmp, codexPersonal] = await Promise.all([
-    codexLane('codex-cmp', options.codexCmpHome, operatorHome, nowMs, readCodex),
-    codexLane('codex-personal', options.codexPersonalHome, operatorHome, nowMs, readCodex),
-  ]);
+  const codexPersonal = await codexLane(options.codexPersonalHome, operatorHome, nowMs, readCodex);
   let claude: UsageSensorReading | null = null;
   let grok: UsageSensorReading | null = null;
   try { claude = parseClaudeSensor(readClaude(), nowMs); } catch { claude = null; }
@@ -117,11 +112,10 @@ export async function pullOfficialUsageSensors(options: UsageSensorPullOptions =
 
   const readings = [
     row('devin', devin, nowMs),
-    row('codex-cmp', codexCmp, nowMs),
     row('codex-personal', codexPersonal, nowMs),
     row('claude-max', claude, nowMs),
     row('grok-ultra', grok, nowMs),
     row('terra', null, nowMs),
   ];
-  return USAGE_SENSOR_LANES.map(lane => readings.find(item => item.lane === lane) ?? unmeasuredSensor(lane, nowMs));
+  return ACTIVE_USAGE_SENSOR_LANES.map(lane => readings.find(item => item.lane === lane) ?? unmeasuredSensor(lane, nowMs));
 }

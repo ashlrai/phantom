@@ -36,7 +36,7 @@ import { readOperatorGlance } from '../fleet/operator-glance-read.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLANCE_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
 import type { SelfDriftV1 } from '../release/drift-shape.js';
-import type { WorktreesReport } from '../fleet/worktrees.js';
+import type { createWorktreeInspectionIndex, WorktreesReport } from '../fleet/worktrees.js';
 import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
 import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
 import { VERSE_FLEET_RUNS_CONTROL_PATH, isJobControlAction } from '../fleet/job-control-types.js';
@@ -248,7 +248,7 @@ async function personal(now: number): Promise<unknown> {
   // Isolate the personal home before normalizing the collector's slot identity.
   const home = homedir();
   const personalHome = join(home, '.codex-2');
-  const usages = collectCodexSessionUsages({ env: { CODEX_HOME: personalHome, CODEX_HOME_ALT: personalHome }, homeDir: home });
+  const usages = collectCodexSessionUsages({ env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: personalHome }, homeDir: home });
   const report = buildCodexResourceReport(usages.map(usage => ({ ...usage, accountId: 'codex-personal', slot: 'secondary' as const })), [], now);
   const account = report.resources.find(resource => resource.state === 'current' && resource.weekly?.usedPct != null &&
     (resource.weekly.windowMinutes === null || resource.weekly.windowMinutes > 315) &&
@@ -470,6 +470,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   // ledger yields an empty map — workers then carry no overrun field and the
   // composite read still succeeds.
   let worktreesRead: { at: number; read: Promise<WorktreesReport> } | null = null;
+  let worktreeIndex: ReturnType<typeof createWorktreeInspectionIndex> | undefined;
   let driftRead: { at: number; read: Promise<SelfDriftV1> } | null = null;
   let overrunCache: { at: number; medians: ReadonlyMap<string, number> } | undefined;
   let overrunFlight: Promise<ReadonlyMap<string, number>> | undefined;
@@ -662,7 +663,10 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       // One read per minute at most: each read may run `git status` on hundreds of candidates.
       if (!worktreesRead || now() - worktreesRead.at > 60_000) {
         const read = deps.readWorktrees ? deps.readWorktrees()
-          : import('../fleet/worktrees.js').then(m => m.readWorktrees('list', { now: now(), ...(deps.runsDir ? { runsRoot: deps.runsDir } : {}) }));
+          : import('../fleet/worktrees.js').then(m => {
+            worktreeIndex ??= m.createWorktreeInspectionIndex();
+            return m.readWorktrees('list', { now: now(), inspectionIndex: worktreeIndex, ...(deps.runsDir ? { runsRoot: deps.runsDir } : {}) });
+          });
         worktreesRead = { at: now(), read };
         read.catch(() => { if (worktreesRead?.read === read) worktreesRead = null; });
       }

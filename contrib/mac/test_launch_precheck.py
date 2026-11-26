@@ -98,7 +98,8 @@ class RestockPrecheck(unittest.TestCase):
                 (binary / 'precheck.sh').write_text(f'echo SKIP RQ-TEST code={code} reason=id_merged_pr_7\nexit {code}\n')
                 source = '- READY RQ-TEST (P0, pool=codex-cmp, repo=phantom): test task\n'
                 (queue / 'router-queue.md').write_text(source)
-                env = dict(os.environ, HOME=home, PYTHONDONTWRITEBYTECODE='1')
+                env = dict(os.environ, HOME=home, PYTHONDONTWRITEBYTECODE='1',
+                       PATH=str(script.parent / 'tests/fixtures/restock-authority') + ':' + os.environ['PATH'])
                 def run(*args):
                     return json.loads(subprocess.check_output(['python3', str(script), '--json', *args], env=env, text=True))
                 dry = run('--dry-run')
@@ -248,7 +249,8 @@ class EmptyStreakPrecheck(unittest.TestCase):
             (queue / 'router-queue.md').write_text(f'- READY {job} (repo=phantom): maintenance\n')
             (metrics / 'jobs.jsonl').write_text(json.dumps(dict(event='claim', job=job, repo='phantom', base_sha=sha)) + '\n' +
                                               json.dumps(dict(event='finish', job=job, empty=True, exit_code=0)) + '\n')
-            env = dict(os.environ, HOME=home, PYTHONDONTWRITEBYTECODE='1')
+            env = dict(os.environ, HOME=home, PYTHONDONTWRITEBYTECODE='1',
+                       PATH=str(script.parent / 'tests/fixtures/restock-authority') + ':' + os.environ['PATH'])
             for _ in range(2):
                 result = json.loads(subprocess.check_output(['python3', str(script), '--json'], env=env, text=True))
                 self.assertEqual(result['queued'], 0)

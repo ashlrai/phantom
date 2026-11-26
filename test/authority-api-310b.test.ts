@@ -11,6 +11,9 @@ import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { configurePool } from '../src/core/drive/nodes/pool-host.js';
+import { PRIVATE_STORAGE_TEST_CONTROL, _setPrivateStorageTestControlForTest } from '../src/core/util/private-storage.js';
+import { createSemanticPrivateStorageHarness, trustedWindowsSystemRootForTest } from './helpers/semantic-private-storage.js';
 
 const state = vi.hoisted(() => ({
   roots: [] as unknown[],
@@ -190,6 +193,33 @@ describe('routing and gates', () => {
 });
 
 describe('actions', () => {
+  it('refuses standing grant writes from a worker before invoking custody', async () => {
+    vi.stubEnv('ASHLR_HOME', join(process.env['HOME']!, '.ashlr'));
+    try {
+      if (process.platform === 'win32') {
+        const { runner } = createSemanticPrivateStorageHarness({ systemRoot: trustedWindowsSystemRootForTest() });
+        _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, { runner });
+      }
+      configurePool({ role: 'worker', node: 'mac-worker', owner: 'owner', primary: 'mac-primary', backup: 'mac-backup' });
+      for (const action of ['grant', 're-approve', 'revoke']) {
+        const result = await call('POST', '/api/verse/authority', { action });
+        expect(result).toMatchObject({ status: 403, body: { code: 'grant-leader-only' } });
+      }
+      const { cmdWebsite } = await import('../src/cli/website.js');
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        expect(await cmdWebsite(['commission', '--yes'])).toBe(1);
+        expect(error).toHaveBeenCalledWith('Manage signed grants on the leader, not a worker.');
+      } finally {
+        error.mockRestore();
+      }
+      expect(state.signCalls).toBe(0);
+    } finally {
+      if (process.platform === 'win32') _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, undefined);
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('raising past the grant is 409 grant-required; lowering is always fine', async () => {
     const raised = await call('POST', '/api/verse/authority', { action: 'switch', to: 'propose' });
     expect(raised?.status).toBe(409);
@@ -456,7 +486,7 @@ describe('Needs-you and the rail badge (R1)', () => {
       const original = needsYouItems()[0]!;
       const companion = { ...original, id: 'test:other-alert', title: 'Another unchanged alert' };
       orderNeedsYouWithJev([original, companion], start);
-      await vi.waitFor(() => expect(fake.fetch).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(fake.calls).toHaveLength(1));
       await new Promise((resolve) => setTimeout(resolve, 0));
       for (let poll = 1; poll <= 5; poll++) {
         const at = start + poll * 15_000;
@@ -471,7 +501,7 @@ describe('Needs-you and the rail badge (R1)', () => {
         orderNeedsYouWithJev([needsYouItems()[0]!, companion], at);
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
-      expect(fake.fetch).toHaveBeenCalledTimes(1);
+      expect(fake.calls).toHaveLength(1);
       expect(readLedger()).toHaveLength(2);
 
       // A real changed authority reason must replace the observation and reclassify now.
@@ -484,7 +514,7 @@ describe('Needs-you and the rail badge (R1)', () => {
       expect(changed.status.grant.reason).not.toBe(first.status.grant.reason);
       expect(needsYouItems()[0]?.since).toBe(changed.status.checkedAt);
       orderNeedsYouWithJev([needsYouItems()[0]!, companion], start + 90_000);
-      await vi.waitFor(() => expect(fake.fetch).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(fake.calls).toHaveLength(2));
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(readLedger()).toHaveLength(4);
 
@@ -662,12 +692,18 @@ describe('CLI explicit volume draft end to end', () => {
 describe('reviewed signed account policies', () => {
   it('advertises server-listed identities and binds explicit edits to the digest without signing on preview', async () => {
     state.roots.push(TEST_ROOT);
+    const accountsRoot = join(process.env['HOME']!, '.ashlr', 'account-connections');
+    mkdirSync(accountsRoot, { recursive: true });
+    writeFileSync(join(accountsRoot, 'connections.json'), JSON.stringify({
+      accounts: [{ id: 'codex-personal', provider: 'codex', command: [join(accountsRoot, 'codex')] }],
+    }));
     const baseline = await call('GET', '/api/verse/authority/draft');
     expect(baseline?.status).toBe(200);
     const initial = baseline!.body['payload'] as StandingGrantV1;
     const editable = baseline!.body['editable'] as { seatPolicies: Record<string, { roles: string[] }> };
     expect(Object.keys(editable.seatPolicies)).toEqual(Object.keys(initial.spend.seats));
     const id = Object.keys(initial.spend.seats)[0]!;
+    expect(id).toBe('codex-personal');
     const scoped = await call('POST', '/api/verse/authority/draft', { kind: 'new', scope: { seatPolicies: { [id]: { enabled: true, reserveFloorPercent: 0, maxSessionWindowPercent: null, roles: ['producer'] } } } });
     expect(scoped?.status).toBe(200);
     const payload = scoped!.body['payload'] as StandingGrantV1;

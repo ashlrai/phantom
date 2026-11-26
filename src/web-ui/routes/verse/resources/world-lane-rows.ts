@@ -73,7 +73,6 @@ const EXTRA: Readonly<Record<string, { label: string; engine: LaneEngine }>> = {
   'claude:fable': { label: 'Fable 5.2 · planning and orchestration', engine: 'claude' },
   'devin-swe-flash': { label: 'Devin SWE Flash', engine: 'devin' },
   'devin-weekly': { label: 'Devin weekly', engine: 'devin' },
-  'codex-cmp': { label: 'Codex company', engine: 'codex' },
   'grok-bot': { label: 'Grok Bot', engine: 'grok' },
   terra: { label: 'Terra', engine: 'other' },
   zai: { label: 'GLM Lite', engine: 'other' },
@@ -384,7 +383,7 @@ function extractWindows(document: unknown): Record<string, unknown>[] {
   });
 }
 
-function extraIdentity(lane: string): { label: string; engine: LaneEngine } {
+export function extraIdentity(lane: string): { label: string; engine: LaneEngine } {
   const known = EXTRA[lane] ?? CANONICAL.find((spec) => spec.lane === lane);
   if (known) return { label: known.label, engine: known.engine };
   if (lane.startsWith('claude')) return { label: lane, engine: 'claude' };

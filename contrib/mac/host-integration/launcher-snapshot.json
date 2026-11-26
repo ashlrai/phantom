@@ -1,0 +1,14 @@
+{
+  "schema": "mac-launcher-review.v1",
+  "files": [
+    { "name": "launch.sh", "livePath": "~/.ashlr-runs/bin/launch.sh", "class": "pinned", "sha256": "f863cb1c9b3938ad4e9ddf242fbf90142fb7e1dbab5b49d81addcb2186b73126" },
+    { "name": "devin_flash_lane.py", "livePath": "~/.ashlr-runs/bin/devin_flash_lane.py", "class": "pinned", "sha256": "f36d9e5b5d30696f82a145927abb1bc9a356290d9baf43081691d4a1f538f4d4" },
+    { "name": "agy-pace.py", "livePath": "~/.ashlr-runs/bin/agy-pace.py", "class": "pinned", "sha256": "f365f34b1e578e726f18f8e1f4b2f4a755127b31c72d34b73232f1ddd0dca891" },
+    { "name": "zai-pace.py", "livePath": "~/.ashlr-runs/bin/zai-pace.py", "class": "pinned", "sha256": "e35cb8df93a93c1903c0702fc7566126034e1a3d99f97afa18ea7e36a7c24bcc" },
+    { "name": "agy.sb", "livePath": "~/.ashlr-runs/bin/agy.sb", "class": "pinned", "sha256": "fd4847666f127ec5e64eca79ff40d41915e91f036ff3b8a82f1b06b257ca72d0" },
+    { "name": "zai.sb", "livePath": "~/.ashlr-runs/bin/zai.sb", "class": "pinned", "sha256": "84ece944dcc9d325d67b91883d05c998a2d2371518338b0b03ea534c4e6b8f70" },
+    { "name": "lane_rules.py", "livePath": "~/.ashlr-runs/bin/lane_rules.py", "class": "pinned", "sha256": "f1429cee714c9e03da9d8c449f731480ec5e3aeb20faead44b087dd8d6488eef" },
+    { "name": "agent.sb", "livePath": "~/.ashlr-runs/bin/agent.sb", "class": "pinned", "sha256": "975545e57a00070ec72d5308cb33f9e611636b570a0977b2316bfb9c33bf641d" },
+    { "name": "devin-overage-stop.py", "livePath": "~/.ashlr-runs/bin/devin-overage-stop.py", "class": "pinned", "sha256": "9d92f38c2107522285f40b7ff18553c043d40e9b3dcf717db7dccd2f5fc56a60" }
+  ]
+}

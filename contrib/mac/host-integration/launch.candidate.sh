@@ -7,6 +7,7 @@ pinsha(){ /usr/bin/awk -F'\t' -v n="$1" '$1==n{print $2}' "$HOME/.ashlr-runs/bin
 unset NODE_OPTIONS NODE_PATH OPENSSL_CONF ELECTRON_RUN_AS_NODE; export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 set -o pipefail
 J=$1; REPO=$2; POOL=$3; TIER=${4:-${TIER:-work}}; R=~/.ashlr-runs; RP=~/Projects/ashlrai/$REPO; WT=~/Projects/ashlrai/wt/$J
+[ "$POOL" != codex-cmp ] || { echo "REFUSED: retired lane" >&2; exit 3; }
 case "$TIER" in frontier|work|mid|fast) ;; *) echo "REFUSED: unknown scope tier" >&2; exit 3;; esac
 ~/.ashlr-runs/bin-locus-new/locus status >/dev/null 2>&1 || true   # rev1.4: WARN dropped (the pin lives in the locus-ashlr tmux session, not visible from launch; it was always false here)
 # RQ-CLOSE-NOWT (Masbot 18:55 Oct 27): CLOSE-* jobs only need gh, so their worktree is index-only: --no-checkout, then
@@ -70,7 +71,7 @@ F
 [ "$NOWT" = 1 ] && echo "NOTE: this worktree is index-only (no files on disk, by design). Read files with git show HEAD:<path>. Do not change code; this job only decides and closes PRs."
 } | sed "s/REPO_/$REPO/" > $R/$J.prompt
 cd $WT
-case $POOL in codex-local) FAM=codex-local; DM=fast;; codex*) FAM=codex; DM=gpt-6.1-sol;; claude) FAM=claude; DM=opus;; claude-api) FAM=claude-api; DM=sonnet;; gemini) FAM=gemini; DM=gemini-2.5-pro;; zai) FAM=zai; DM=glm-5.3;; agy) FAM=agy; DM=gemini-3.8-flash-high;; grok) FAM=grok; DM=grok-4.7;; cursor) FAM=cursor; DM=auto;; devin-flash) FAM=devin-flash; DM=swe-2-flash-max;; *) FAM=$POOL; DM=swe-2-max;; esac
+case $POOL in codex-local) FAM=codex-local; DM=fast;; codex*) FAM=codex; case $TIER in frontier) DM=gpt-6.2-astra;; fast) DM=gpt-6-luna;; *) DM=gpt-6.2-sol;; esac;; claude) FAM=claude; case $TIER in fast) DM=claude-haiku-5-5;; mid) DM=claude-sonnet-5-5;; *) DM=claude-opus-5-5;; esac;; claude-api) FAM=claude-api; DM=claude-sonnet-5-5;; gemini) FAM=gemini; DM=gemini-2.5-pro;; zai) FAM=zai; DM=glm-5.3;; agy) FAM=agy; DM=gemini-4-neon-xhigh;; grok) FAM=grok; DM=grok-4.7;; cursor) FAM=cursor; DM=auto;; devin-flash) FAM=devin-flash; DM=swe-2-flash-max;; *) FAM=$POOL; DM=swe-2-max;; esac
 M=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(next((str(d[k]) for k in (p+"."+t,p,f+"."+t,f) if d.get(k)),""))' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ "$M" =~ ^[A-Za-z0-9._-]+$ ]] || M=$DM; EF=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(d.get("effort."+p+"."+t) or d.get("effort."+f+"."+t) or "")' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ -z "$EF" || "$EF" =~ ^[a-z]+$ ]] || EF=
 # Paid Devin variants must never reach the launcher, even from models.json.
 if [[ ( "$POOL" == devin || "$POOL" == devin-flash ) && "$M" == *-[lL][iI][gG][hH][tT][nN][iI][nN][gG] ]]; then
@@ -117,7 +118,6 @@ if [[ "$J" =~ ^RQ-APP-LOCALBUILD(-[A-Za-z0-9]+)?$ ]]; then
 fi
 # <<< LOCALBUILD rev1
 case $POOL in
- codex-cmp) lm_ok "$LM/mcp.json" "$LM_MJ"; native_pressure_ok || exit 3; { nohup "${E[@]}" ${CODEX_HOME:+CODEX_HOME="$CODEX_HOME"} sandbox-exec -f $R/bin/codex-cmp.sb codex exec -m $M ${EF:+-c model_reasoning_effort=$EF} "${LMC[@]}" -c web_search=live --sandbox danger-full-access -C $WT - < $R/$J.prompt 2>&1 | $SCRUB > $R/$J.log; rcw "${PIPESTATUS[0]}"; } & ;;
  codex-personal) lm_ok "$LM/mcp.json" "$LM_MJ"; lm_ok "$HOME/.codex-2/lane.config.toml" adfc46b45a74f9589e1f9a0de0ea758c2906a54c8d1e8b1e8f04291bb85e45e96   # APPS-ALLOWLIST rev1g: deny-by-default codex_apps profile
   native_pressure_ok || exit 3; { nohup "${E[@]}" CODEX_HOME="$HOME/.codex-2" sandbox-exec -f $R/bin/codex-personal.sb codex exec -p lane -m $M ${EF:+-c model_reasoning_effort=$EF} "${LMC[@]}" -c web_search=live --sandbox danger-full-access -C $WT - < $R/$J.prompt 2>&1 | $SCRUB > $R/$J.log; rcw "${PIPESTATUS[0]}"; } & ;;
  claude) lm_ok "$LM/mcp.json" "$LM_MJ"   # >>> CLAUDE-BROKER rev1 (Security 2026-11-04)
@@ -237,7 +237,7 @@ case $POOL in
   AST=$AH/.gemini/antigravity-cli/settings.json; AST_SHA=565e3cb29356f2a2216f840b0cc1931a14977dbc38b3298e8f961a767c8b0ac5
   lm_ok "$AH/.gemini/config/mcp_config.json" a03ca83e924b412844963deac581e0c5b8432f4bfac48b9a62e3fb00d7f5951c9   # LANE-MCP rev1
   { [ -f "$AST" ] && [ ! -L "$AST" ] && [ "$(stat -f %Lp "$AST")" = 444 ] && [ "$(shasum -a 256 "$AST" | cut -d' ' -f1)" = "$AST_SHA" ]; } || { echo "REFUSED: agy settings.json missing, not 444 or sha mismatch"; exit 5; }
-  case "$TIER" in fast) M=gemini-3.8-flash-medium; AT=900s;; work|mid) M=gemini-3.8-flash-high; AT=2400s;; frontier) M=claude-opus-4-6-thinking; AT=2400s;; *) echo "HELD: agy tier must be fast, work or frontier"; exit 3;; esac
+  case "$TIER" in fast) M=gemini-4-hydrogen-medium; AT=900s;; mid) M=gemini-4-hydrogen-high; AT=2400s;; work) M=gemini-4-neon-xhigh; AT=2400s;; frontier) M=gemini-4-carbon-high; AT=2400s;; *) echo "HELD: agy tier must be fast, mid, work or frontier"; exit 3;; esac
   [ "$TIER" = mid ] && TIER=work   # rev1e: mid runs and is paced as work
   AQ=$(python3 "$R/bin/agy-pace.py" gate "$J" "$TIER"); [ $? -eq 0 ] || { echo "${AQ:-HELD: agy gate failed}"; exit 3; }
   echo "AGY $J model=$M timeout=$AT" >> "$R/$J.base.meta"
@@ -266,7 +266,7 @@ case $POOL in
   { [ -f "$GB" ] && [ ! -L "$GB" ] && [ ! -L "${GB%/grok}" ] && [ "$(stat -f %Lp "${GB%/grok}")" = 700 ] && [ "$(stat -f %Lp "$GB")" = 555 ] \
     && [ "$(shasum -a 256 "$GB" | cut -d' ' -f1)" = "$GB_SHA" ]; } || { echo "REFUSED: vendored grok binary missing, symlinked, wrong mode or sha mismatch"; exit 5; }
   { [ -x "$GB" ] && [ ! -L "$GB" ] && [[ "$(env -i HOME="$GH" PATH=/usr/bin:/bin sandbox-exec -f "$KSB" "$GB" --version 2>/dev/null </dev/null)" == "$GV"* ]]; } || { echo "HELD: grok binary is not the pinned version ($GV)"; exit 3; }
-  case "$TIER" in fast) M=grok-4.7-build-fast; GE=; GT=40;; work|mid) M=grok-4.7; GE=; GT=60;; frontier) M=grok-4.7; GE=high; GT=80;; *) echo "HELD: grok tier must be fast, work or frontier"; exit 3;; esac
+  case "$TIER" in fast) M=grok-4.7; GE=; GT=40;; work|mid) M=grok-4.7; GE=; GT=60;; frontier) M=grok-4.7; GE=high; GT=80;; *) echo "HELD: grok tier must be fast, work or frontier"; exit 3;; esac
   [ "$TIER" = mid ] && TIER=work   # rev1e: mid runs and is paced as work
   KQ=$(python3 "$R/bin/grok-pace.py" gate "$J" "$TIER"); [ $? -eq 0 ] || { echo "${KQ:-HELD: grok gate failed}"; exit 3; }
   echo "GROK $J model=$M effort=${GE:-default} max_turns=$GT" >> "$R/$J.base.meta"
@@ -312,6 +312,6 @@ esac
 child_pid=$!
 # Observation only: registration cannot alter the launch outcome or signal the child.
 case "$POOL" in
-  codex-cmp|codex-personal|devin) /usr/bin/python3 -I "$R/bin/host_session_tick.py" register "$J" "$child_pid" >/dev/null 2>&1 || : ;;
+  codex-personal|devin) /usr/bin/python3 -I "$R/bin/host_session_tick.py" register "$J" "$child_pid" >/dev/null 2>&1 || : ;;
 esac
 echo "launched $J $POOL pid $child_pid base ${BASE:0:9}"

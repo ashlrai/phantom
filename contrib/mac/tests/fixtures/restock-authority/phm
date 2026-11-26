@@ -1,0 +1,9 @@
+#!/bin/sh
+if [ "$*" = 'authority status --json' ]; then
+  if [ -f "$HOME/.fixture-restock-authority.json" ]; then
+    exec cat "$HOME/.fixture-restock-authority.json"
+  fi
+  printf '%s\n' '{"v":1,"kill":false,"effectiveSwitch":"propose","policy":{"repos":[{"nameWithOwner":"ashlrai/phantom","stage":"propose"}]}}'
+  exit 0
+fi
+PATH="${PATH#*:}" exec phm "$@"

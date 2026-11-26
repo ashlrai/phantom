@@ -15,6 +15,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { sampleHostStats } from '../drive/nodes/capacity.js';
+import { joinHintCommand } from '../drive/nodes/commands.js';
 import { readPoolConfig } from '../drive/nodes/pool-host.js';
 import { isHostStats, parseState, type HostStats, type NodeRecord, type NodesState } from '../drive/nodes/state.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
@@ -128,10 +129,12 @@ function headroom(stats: HostStats | undefined): Pick<NodeRow, 'freeMemoryBytes'
 interface Machine { name: string; isSelf: boolean; reachable: boolean | Unknown; lastSeen: string | Unknown; records: NodeRecord[] }
 
 /** The standalone rejoin for this computer's own expired session, from its newest record.
- * With no record it is a first join, which needs no --node: join defaults the id to the hostname. */
+ * With no record it is a first join, which needs no --node: join defaults the id to the hostname.
+ * A record restores the last advertised profile — owners, caps and slots — through the same
+ * hint a session-expired fix prints, so the suggested rejoin never silently downgrades the node. */
 function standaloneRejoin(records: NodeRecord[]): string {
   const rec = [...records].sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
-  return rec ? `phm node join --node ${rec.nodeId} --owner ${rec.owners?.length ? rec.owners.join(',') : '<scope>'}` : 'phm node join --owner <scope>';
+  return rec ? joinHintCommand(rec.nodeId, rec) : 'phm node join --owner <scope>';
 }
 
 /** Pure join of the tailnet read, the registry snapshot and this computer's sample. */

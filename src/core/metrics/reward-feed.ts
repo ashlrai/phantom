@@ -31,8 +31,8 @@
  *     claim never resolves, and absent keys change nothing.
  *   - dispatchedAt IS THE LAST DISPATCH BEFORE THE OUTCOME. claim,
  *     batch_claim and launch rows are dispatch evidence; the latest at or
- *     before the terminal row produced it (earliest is the fallback). No
- *     dispatch row in the window means the dispatch time is unknown: skip.
+ *     before the outcome produced it. Without an eligible dispatch row
+ *     in the window the dispatch time is unknown: skip.
  *   - ciWallMs IS THE LEDGER'S CI BOUNDARIES. jobs.jsonl's optional
  *     ci_start/ci_complete event dialect — the same boundaries
  *     queue/visit-sync and fleet/job-latency pair — supplies the reward
@@ -184,8 +184,7 @@ interface DispatchMark { ms: number; lane: string | null }
 
 interface RewardJobAccum {
   repo: string | null;
-  firstDispatch: DispatchMark | null;
-  lastDispatch: DispatchMark | null;
+  dispatches: DispatchMark[];
   /** Latest merge-resolution row: row time, the GitHub mergedAt it reported, and its PR URL. */
   merge: { atMs: number; mergedAtMs: number; url: string | null } | null;
   /** Latest closed-unmerged resolution row time. */
@@ -201,15 +200,10 @@ interface RewardJobAccum {
 
 function newAccum(): RewardJobAccum {
   return {
-    repo: null, firstDispatch: null, lastDispatch: null,
+    repo: null, dispatches: [],
     merge: null, closedMs: null, revertMs: null, standingReverted: false,
     ciStartAts: [], ciCompleteAts: [],
   };
-}
-
-function noteDispatch(acc: RewardJobAccum, mark: DispatchMark): void {
-  if (acc.firstDispatch === null || mark.ms < acc.firstDispatch.ms) acc.firstDispatch = mark;
-  if (acc.lastDispatch === null || mark.ms > acc.lastDispatch.ms) acc.lastDispatch = mark;
 }
 
 /** One CI boundary stamp per distinct row time — a repeated append cannot fake ambiguity. */
@@ -219,14 +213,15 @@ function noteCiBoundary(acc: RewardJobAccum, kind: 'start' | 'complete', at: num
 }
 
 /**
- * CI wall time from the ledger's ci_start/ci_complete boundaries — the same
- * pairing rule job-latency applies to its phases: exactly one of each, and
- * the complete stamp must not precede the start. Anything else is unknown.
+ * CI wall time requires one unambiguous pair inside the rewarded execution's
+ * dispatch-to-outcome window. Reused job ids can carry CI from earlier runs.
  */
-function ciWallMsOf(acc: RewardJobAccum): number | null {
-  if (acc.ciStartAts.length !== 1 || acc.ciCompleteAts.length !== 1) return null;
-  const ms = acc.ciCompleteAts[0]! - acc.ciStartAts[0]!;
-  return ms >= 0 ? ms : null;
+function ciWallEvidence(acc: RewardJobAccum, dispatchMs: number, outcomeMs: number): { ciWallMs?: number } {
+  if (acc.ciStartAts.length !== 1 || acc.ciCompleteAts.length !== 1) return {};
+  const start = acc.ciStartAts[0]!;
+  const complete = acc.ciCompleteAts[0]!;
+  if (start < dispatchMs || complete > outcomeMs || complete < start) return {};
+  return { ciWallMs: complete - start };
 }
 
 /**
@@ -282,7 +277,7 @@ export function foldJobsLedgerRewards(
     if (event !== null) {
       const name = event.toLowerCase();
       if (DISPATCH_EVENTS.has(name)) {
-        noteDispatch(acc, { ms: at, lane: firstString(row, LANE_KEYS) });
+        acc.dispatches.push({ ms: at, lane: firstString(row, LANE_KEYS) });
       } else if (name === 'ci_start' || name === 'ci_complete') {
         noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at);
       }
@@ -309,11 +304,15 @@ export function foldJobsLedgerRewards(
   return inputs.sort((a, b) => (a.jobId < b.jobId ? -1 : a.jobId > b.jobId ? 1 : 0));
 }
 
-/** The dispatch that produced the outcome: latest at/before it, earliest as fallback. */
+/** Latest dispatch at or before the outcome, regardless of ledger row order. */
 function dispatchBefore(acc: RewardJobAccum, boundMs: number): DispatchMark | null {
-  if (acc.lastDispatch !== null && acc.lastDispatch.ms <= boundMs) return acc.lastDispatch;
-  if (acc.firstDispatch !== null && acc.firstDispatch.ms <= boundMs) return acc.firstDispatch;
-  return null;
+  let latest: DispatchMark | null = null;
+  for (const dispatch of acc.dispatches) {
+    if (dispatch.ms <= boundMs && (latest === null || dispatch.ms > latest.ms)) {
+      latest = dispatch;
+    }
+  }
+  return latest;
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
@@ -327,7 +326,6 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 function rewardInput(
   id: string, acc: RewardJobAccum, costUsd: number | undefined,
 ): RewardSignalInput | null {
-  const ciWallMs = ciWallMsOf(acc);
   const cost = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : null;
   const heldMerge = acc.merge !== null && !acc.standingReverted &&
     (acc.revertMs === null || acc.merge.atMs > acc.revertMs);
@@ -340,7 +338,7 @@ function rewardInput(
       repo: acc.repo !== null && REPO_PATTERN.test(acc.repo) ? acc.repo : null,
       merged: true, dispatchedAt: iso(dispatch.ms), mergedAt: iso(merge.mergedAtMs),
       costUsd: cost,
-      ...(ciWallMs !== null ? { ciWallMs } : {}),
+      ...ciWallEvidence(acc, dispatch.ms, merge.mergedAtMs),
     };
   }
   // A standing-reverted held merge resolves like a row-level revert: the
@@ -357,7 +355,7 @@ function rewardInput(
       repo: acc.repo !== null && REPO_PATTERN.test(acc.repo) ? acc.repo : null,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
-      ...(ciWallMs !== null ? { ciWallMs } : {}),
+      ...ciWallEvidence(acc, dispatch.ms, closedMs),
     };
   }
   return null;

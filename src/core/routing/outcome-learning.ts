@@ -224,7 +224,7 @@ const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\
 const CLOCK = /^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
 const STAMP = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) (\S+)(?: (.*))?$/;
 const RESOURCE_WORDS: Readonly<Record<string, string>> = {
-  'codex-cmp': 'CMP Codex',
+  'codex-cmp': 'Codex CMP (retired)',
   'codex-personal': 'personal Codex',
   devin: 'Devin',
   claude: 'Claude',
@@ -1212,7 +1212,7 @@ interface ScoredOffer {
 }
 
 function validOffer(offer: ResourceOffer): boolean {
-  return ident(offer.resource) && ident(offer.model)
+  return offer.resource !== 'codex-cmp' && ident(offer.resource) && ident(offer.model)
     && Number.isInteger(offer.slots) && offer.slots >= 0 && offer.slots <= 10_000
     && (offer.usageLeftPercent === null || (typeof offer.usageLeftPercent === 'number'
       && Number.isFinite(offer.usageLeftPercent) && offer.usageLeftPercent >= 0 && offer.usageLeftPercent <= 100))
@@ -1450,6 +1450,7 @@ export function offersFromLearning(learning: OutcomeLearning): ResourceOffer[] {
   const seen = new Set<string>();
   const offers: ResourceOffer[] = [];
   for (const cell of learning.cells) {
+    if (cell.resource === 'codex-cmp') continue;
     const key = `${cell.resource}\0${cell.model}`;
     if (seen.has(key)) continue;
     seen.add(key);

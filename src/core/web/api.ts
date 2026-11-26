@@ -1245,6 +1245,32 @@ export async function handleApi(
   const method = (req.method ?? 'GET').toUpperCase();
 
   try {
+    if (path === '/api/repos' && method === 'GET') {
+      const { listManagedRepos } = await import('../fleet/repos-manager.js');
+      sendJson(res, 200, await listManagedRepos());
+      return true;
+    }
+
+    if (path === '/api/repos/priority' && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: { repo?: unknown; priority?: unknown } | null;
+      try { body = JSON.parse(await readBody(req)); }
+      catch { body = null; }
+      const { canonicalMarketRepo, isRepoPriority, setRepoPriority } = await import('../fleet/repo-market.js');
+      const repo = typeof body?.repo === 'string' ? canonicalMarketRepo(body.repo) : null;
+      if (!repo || !body || !isRepoPriority(body.priority)) {
+        sendJson(res, 400, { error: 'Use a GitHub owner/name and a priority of boost, normal, or pause.' });
+        return true;
+      }
+      setRepoPriority(repo, body.priority);
+      sendJson(res, 200, { repo, priority: body.priority, prioritySync: 'local-only' });
+      return true;
+    }
+
     if (path === '/api/agents/chat') {
       const response = agentChatResponse(method, req.url ?? '');
       sendJson(res, response.code, response.body);
@@ -2593,11 +2619,11 @@ export async function handleApi(
     }
 
     if (path === '/api/feed' && method === 'GET') {
-      const { FEED_QUERY_ERROR, parseFeedQuery, readFeed } = await import('../feed.js');
+      const { FEED_QUERY_ERROR, parseFeedQuery, readFeedShared } = await import('../feed.js');
       const params = new URL(req.url ?? '', 'http://localhost').searchParams;
       const query = parseFeedQuery({ limit: params.get('limit') ?? undefined, since: params.get('since') ?? undefined, kind: params.get('kind') ?? undefined });
       if (!query) sendJson(res, 400, { error: FEED_QUERY_ERROR });
-      else sendJson(res, 200, await readFeed(query));
+      else sendJson(res, 200, await readFeedShared(query));
       return true;
     }
 

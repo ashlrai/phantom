@@ -1,12 +1,18 @@
 """Offline shared work market. Metadata only; no auth, subprocesses or execution."""
+import datetime
 import json
 import math
+import os
 import re
+import stat
+from collections import defaultdict
+from pathlib import Path
 
 TIERS = {"fast": 0, "mid": 1, "work": 2, "frontier": 3}
 COSTS = {"local": 0, "included": 1, "metered": 2}
 CAP = re.compile(r"^(?:[a-z][a-z0-9-]*|secrets:[A-Za-z0-9_.-]+)$")
-BUILTIN = {"codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local", "omlx"}
+RETIRED_LANE = "codex-cmp"
+BUILTIN = {"codex-personal", "claude", "devin", "claude-api", "codex-local", "omlx"}
 # Data handling clearance, lowest to highest. A job without data_class is unclassified (legacy rows).
 DATA_CLASSES = {"public": 0, "internal": 1, "confidential": 2, "restricted": 3}
 WORK_CLASSES = ("bulk", "standard", "judgment")
@@ -15,7 +21,7 @@ WORK_CLASSES = ("bulk", "standard", "judgment")
 POSTURES = ("burn", "balanced", "preserve")
 SPEND_DOWN_BURN_PCT = 10
 SPEND_DOWN_PRESERVE_MARGIN_PCT = 10
-POSTURE = {"codex-cmp": "burn", "codex-personal": "preserve", "claude": "preserve"}
+POSTURE = {"codex-personal": "preserve", "claude": "preserve"}
 FIT = {"burn": {"bulk": 0, "standard": 0, "judgment": 1},
        "balanced": {"bulk": 1, "standard": 1, "judgment": 1},
        "preserve": {"bulk": 2, "standard": 1, "judgment": 0}}
@@ -106,6 +112,108 @@ def priority(spec):
     return (int(spec.get("priority", "P2")[1:]), -spec.get("impact", 0))
 
 
+def repo_key(label):
+    label = label.lower()
+    if "/" not in label: label = "ashlrai/" + label
+    return label if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,38}/[a-z0-9][a-z0-9._-]{0,99}", label) else None
+
+
+def repo_priority(home, repo):
+    if not repo: return "normal"
+    try:
+        with open(Path(home) / ".ashlr" / "repo-priority" / repo.replace("/", "@"), encoding="utf-8") as source:
+            value = source.read(16).strip()
+        return value if value in ("boost", "pause") else "normal"
+    except (OSError, UnicodeError): return "normal"
+
+
+FRESHNESS_WEEK = 7 * 86400
+FRESHNESS_JOB = re.compile(r"RQ-(DOCS|SITE)-FRESHNESS-([a-z0-9][a-z0-9._-]{0,99})-([0-9]{1,8})")
+FRESHNESS_VERDICTS = {"docs": {"clean", "drift", "unknown"},
+                      "site": {"healthy", "stale", "unhealthy", "unknown", "not-configured"}}
+
+
+def read_repo_freshness(queue):
+    try:
+        with open(Path(queue) / "repo-freshness.json", encoding="utf-8") as source:
+            text = source.read(262145)
+        if len(text) > 262144: return {}
+        data = json.loads(text)
+        if data.get("schema") == "repo-freshness.v1" and isinstance(data.get("repos"), dict):
+            return data["repos"]
+    except (OSError, ValueError, AttributeError): pass
+    return {}
+
+
+def freshness_finding(job, repo, worktree, now):
+    match = FRESHNESS_JOB.fullmatch(job)
+    if not match or repo != "ashlrai/" + match[2]: return None
+    kind, period = match[1].lower(), int(match[3])
+    if not 0 <= int(now // FRESHNESS_WEEK) - period <= 1: return None
+    try:
+        fd = os.open(Path(worktree) / "BRIDGE_NOTES.md", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as source:
+            if not stat.S_ISREG(os.fstat(fd).st_mode): return None
+            notes = source.read(65537)
+        if len(notes) > 65536: return None
+        lines = [line for line in notes.decode("utf-8").splitlines() if line.startswith("FRESHNESS:")]
+        if len(lines) != 1: return None
+        verdict = lines[0][len("FRESHNESS:"):].strip()
+        return (kind, {"period": period, "verdict": verdict}) if verdict in FRESHNESS_VERDICTS[kind] else None
+    except (OSError, UnicodeError): return None
+
+
+def freshness_signals(kinds, now):
+    if not isinstance(kinds, dict): return []
+    def verdict_of(kind):
+        record = kinds.get(kind)
+        if (isinstance(record, dict) and type(record.get("period")) is int
+                and 0 <= int(now // FRESHNESS_WEEK) - record["period"] <= 1):
+            return record.get("verdict")
+        return None
+    docs, site = verdict_of("docs"), verdict_of("site")
+    return ([("docs_freshness_drift", .35)] if docs == "drift" else []) + (
+        [("site_freshness_unhealthy", .65)] if site == "unhealthy" else
+        [("site_freshness_stale", .45)] if site == "stale" else [])
+
+
+def repo_shares(rows, home, freshness=None, now=0):
+    """Rows are (canonical repo, job ID, work spec, observed merge rate)."""
+    evidence = defaultdict(list)
+    for repo, job, spec, rate in rows:
+        if repo: evidence[repo].append((job, spec, rate))
+    result = {}
+    for repo, jobs in sorted(evidence.items()):
+        nudge = repo_priority(home, repo)
+        reasons = ["flat_baseline", "ready_work"]
+        score = 1 + min(.5, math.log2(1 + len(jobs)) / 5)
+        impact = max((max(0, job[1].get("impact", 0)) for job in jobs), default=0)
+        for present, code, bonus in (
+            (any(j.upper().startswith("RQ-FIX-MAIN-") for j, _, _ in jobs), "default_branch_ci_fix_ready", 1),
+            (any(re.search(r"(?:^|[-_])(?:BUG|REGRESSION)(?:[-_]|$)", j, re.I) for j, _, _ in jobs), "bug_fix_ready", .6),
+            (any(re.search(r"(?:^|[-_])(?:RESEARCH|EVAL)(?:[-_]|$)", j, re.I) for j, _, _ in jobs), "research_work_ready", .3),
+            (impact > 0, "declared_mission_impact", min(.75, math.log2(1 + impact) / 5)),
+        ):
+            if present:
+                score += bonus
+                reasons.append(code)
+        rates = [rate for _, _, rate in jobs if rate is not None]
+        if rates and max(rates) > 0:
+            score += .5 * max(rates)
+            reasons.append("historical_solution_yield")
+        for reason, bonus in freshness_signals((freshness or {}).get(repo), now):
+            score += bonus
+            reasons.append(reason)
+        if nudge != "normal": reasons.append("owner_" + nudge)
+        score *= {"normal": 1, "boost": 1.25, "pause": 0}[nudge]
+        result[repo] = dict(schema="work-market.v1", event="repo_share", repo=repo, priority=nudge,
+                            score=score, share=0, reason_codes=reasons)
+    total = sum(row["score"] for row in result.values())
+    if total > 0:
+        for row in result.values(): row["share"] = row["score"] / total
+    return result
+
+
 def work_class(spec, tier):
     """Declared class, else derived: frontier or P0 work needs judgment; fast and mid work is bulk."""
     if spec.get("work_class"): return spec["work_class"]
@@ -128,6 +236,38 @@ def _epoch(value):
 def _scope_names(reading):
     return {k: reading[k] for k in ("account_id", "model")
             if isinstance(reading.get(k), str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", reading[k])}
+
+
+def advisory_targets(document, now):
+    if not isinstance(document, dict) or document.get("schema") != "phantom.fleet-resource-plan.v1":
+        return {}
+    stamp, targets = document.get("generated_at"), document.get("targets")
+    if not isinstance(stamp, str) or not stamp.endswith("Z") or not isinstance(targets, dict):
+        return {}
+    try:
+        age = now - datetime.datetime.fromisoformat(stamp[:-1] + "+00:00").timestamp()
+    except (ValueError, OverflowError, OSError):
+        return {}
+    if not 0 <= age < 300:
+        return {}
+    return {lane: target for lane, target in targets.items() if type(target) is int and target > 0}
+
+
+def deadline_priority(projection, now, short_window=False, promotional=False):
+    if not isinstance(projection, dict) or projection.get("known") is not True or projection.get("stale") is not False:
+        return None
+    reset = _epoch(projection.get("reset_at"))
+    expiry = _epoch(projection.get("expires_at")) if promotional else None
+    ends = [end for end in (reset, expiry) if end is not None]
+    used = number(projection.get("used_pct"))
+    unused = number(projection.get("projected_unused_pct"))
+    if not ends or min(ends) <= now or used is None or not 0 <= used < 100:
+        return None
+    if unused is not None and not 0 <= unused <= 100 - used + 0.1:
+        return None
+    if (unused or 0) > 0 or unused is None and (short_window or promotional and expiry is not None):
+        return min(ends)
+    return None
 
 
 def _iso_instant(value):
@@ -453,7 +593,10 @@ def choose(job, spec, tier, view, record, now, decide):
     # Resource fit precedes the hint: a preserved window is not spent on bulk work while a
     # burnable one has room. Within one fit class the declared lane still wins.
     eligible.sort(key=lambda lane: (
+        view[lane]["deadline_priority"] if view[lane].get("deadline_priority") is not None else math.inf,
+        bool(view[lane].get("is_metered_api")),
         fit[lane],
+        not view[lane].get("below_advisory_target", False),
         lane != pref,
         view[lane]["running"] / max(1, view[lane]["target"]),
         view[lane]["empty_rate"] if view[lane]["empty_rate"] is not None else 0.5,
@@ -468,7 +611,9 @@ def choose(job, spec, tier, view, record, now, decide):
               "ranking_inputs": {lane: dict({key: v[key] for key in ("running", "target", "quota", "empty_rate", "yield_rate", "cost_class", "latency_s", "latency_source")},
                                             posture=v.get("posture", "balanced"), posture_reason=v.get("posture_reason"),
                                             **{k: v[k] for k in ("cost_class_reason", "zero_cost", "allowance") if k in v},
-                                            spend_down=v.get("spend_down"), fit=fit[lane]) for lane, v in view.items()}}
+                                            spend_down=v.get("spend_down"), fit=fit[lane],
+                                            deadline_priority=v.get("deadline_priority"),
+                                            advisory_target=v.get("advisory_target")) for lane, v in view.items()}}
     # Hint-only records preserve old external-proposal diagnostics without making
     # the preference a routing commitment before the first runnable assignment.
     prior = record if record and record.get("assigned", True) else None

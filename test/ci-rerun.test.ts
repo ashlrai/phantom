@@ -129,6 +129,40 @@ describe('resident CI reruns', () => {
     expect(read.recurringFlakes[0]).toMatchObject({ repo: 'org/repo', attempts: 3 });
     expect(read.recurringFlakes[0]!.heads).toEqual([...heads].sort());
   });
+  it('retains every eligible test on a shared rerun without attributing the workflow verdict to a case', async () => {
+    const { opts, report, gh } = setup();
+    const first = report.groups[0]!;
+    const second = { ...first, testId: 'test/b.test.ts > b' };
+    report.groups.push(second, { ...second }, { ...first, testId: 'test/c.test.ts > c', classification: 'pr-caused' });
+    opts.maxPerHour = 3;
+    const heads = ['a'.repeat(40), 'b'.repeat(40), 'c'.repeat(40)];
+    for (const [i, head] of heads.entries()) {
+      first.runs[0]!.head = head;
+      first.runs[0]!.runId = 123 + i;
+      await runCiRerunMaintenance(opts);
+    }
+    expect(gh).toHaveBeenCalledTimes(3);
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    gh.mockImplementation(async args => {
+      const index = Number(args[1]!.split('/').at(-1)) - 123;
+      const stdout = JSON.stringify({
+        id: 123 + index, status: 'completed', conclusion: 'failure',
+        head_sha: heads[index], updated_at: '2026-01-01T12:09:00Z',
+      });
+      return { ok: true, stdout, stderr: '' };
+    });
+    await runCiRerunMaintenance(opts);
+    const read = readCiReruns(opts.journalPath, opts.now());
+    expect(read.counts).toEqual({ attempted: 3, ok: 3, failed: 0 });
+    expect(read.verdicts).toMatchObject({ fail: 3, pending: 0 });
+    expect(read.recurringFlakes).toEqual([first, second].map(group => ({
+      repo: 'org/repo', test: group.testId, heads, attempts: 3,
+      verdicts: { pass: 0, fail: 0, inconclusive: 0 },
+    })));
+    const queue = readFileSync(opts.queueFile!, 'utf8');
+    expect(queue).toContain(first.testId);
+    expect(queue).toContain(second.testId);
+  });
   it('reports recurring flakes without queueing them while authority or KILL blocks writes', async () => {
     const { opts, report } = setup();
     opts.autonomyEffective = () => false;
@@ -150,7 +184,7 @@ describe('resident CI reruns', () => {
     await runCiRerunMaintenance(opts);
     opts.now = () => Date.parse('2026-01-01T12:10:00Z');
     gh.mockImplementation(async (args: string[]) => args[0] === 'api'
-      ? { ok: true, stdout: JSON.stringify({ status: 'completed', conclusion: 'success', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z' }), stderr: '' }
+      ? { ok: true, stdout: JSON.stringify({ id: 123, status: 'completed', conclusion: 'success', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z' }), stderr: '' }
       : { ok: true, stdout: '', stderr: '' });
     const status = await runCiRerunMaintenance(opts);
     expect(status.repos['org/repo']?.verdictsResolved).toBe(1);
@@ -175,10 +209,10 @@ describe('resident CI reruns', () => {
     expect(gh.mock.calls.filter(call => call[0][0] === 'run')).toHaveLength(4);
     opts.now = () => Date.parse('2026-01-01T12:10:00Z');
     const payloads: Record<string, unknown> = {
-      '123': { status: 'completed', conclusion: 'failure', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z' },
-      '124': { status: 'completed', conclusion: 'cancelled', head_sha: 'b'.repeat(40), updated_at: '2026-01-01T12:09:00Z' },
-      '125': { status: 'in_progress', conclusion: null, head_sha: 'c'.repeat(40), updated_at: '2026-01-01T12:09:00Z' },
-      '126': { status: 'completed', conclusion: 'success', head_sha: 'd'.repeat(40), updated_at: '2026-01-01T11:00:00Z' },
+      '123': { id: 123, status: 'completed', conclusion: 'failure', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z' },
+      '124': { id: 124, status: 'completed', conclusion: 'cancelled', head_sha: 'b'.repeat(40), updated_at: '2026-01-01T12:09:00Z' },
+      '125': { id: 125, status: 'in_progress', conclusion: null, head_sha: 'c'.repeat(40), updated_at: '2026-01-01T12:09:00Z' },
+      '126': { id: 126, status: 'completed', conclusion: 'success', head_sha: 'd'.repeat(40), updated_at: '2026-01-01T11:00:00Z' },
     };
     gh.mockImplementation(async (args: string[]) => args[0] === 'api'
       ? { ok: true, stdout: JSON.stringify(payloads[args[1]!.split('/').pop()!] ?? {}), stderr: '' }
@@ -188,6 +222,29 @@ describe('resident CI reruns', () => {
     const read = readCiReruns(opts.journalPath!, opts.now!());
     expect(read.verdicts).toMatchObject({ pass: 0, fail: 1, inconclusive: 1, pending: 2 });
     expect(read.verdicts.resolutionRate).toBe(0);
+  });
+  it.each([
+    { id: undefined },
+    { id: 124 },
+    { head_sha: undefined },
+    { head_sha: 'b'.repeat(40) },
+    { updated_at: undefined },
+    { updated_at: 'invalid' },
+    { conclusion: null },
+  ])('keeps incomplete or mismatched verdict evidence pending (%j)', async override => {
+    const { opts, gh } = setup();
+    await runCiRerunMaintenance(opts);
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    const evidence = { id: 123, status: 'completed', conclusion: 'success', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z' };
+    gh.mockResolvedValue({ ok: true, stdout: JSON.stringify({ ...evidence, ...override }), stderr: '' });
+    await runCiRerunMaintenance(opts);
+    expect(readCiReruns(opts.journalPath!, opts.now!()).verdicts).toEqual({
+      pass: 0, fail: 0, inconclusive: 0, pending: 1, resolutionRate: null,
+    });
+
+    gh.mockResolvedValue({ ok: true, stdout: JSON.stringify(evidence), stderr: '' });
+    await runCiRerunMaintenance(opts);
+    expect(readCiReruns(opts.journalPath!, opts.now!()).verdicts).toMatchObject({ pass: 1, pending: 0 });
   });
   it('does not check reruns inside the settle window and never resolves failed calls', async () => {
     const { opts, gh } = setup();
@@ -218,8 +275,9 @@ describe('resident CI reruns', () => {
     appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
     gh.mockImplementation(async (args: string[]) => {
       if (args[0] !== 'api') return { ok: true, stdout: '', stderr: '' };
-      const head = String(Number(args[1]!.split('/').pop()) - 100).padStart(40, '0');
-      return { ok: true, stdout: JSON.stringify({ status: 'completed', conclusion: 'success', head_sha: head, updated_at: '2026-01-01T11:30:00Z' }), stderr: '' };
+      const id = Number(args[1]!.split('/').pop());
+      const head = String(id - 100).padStart(40, '0');
+      return { ok: true, stdout: JSON.stringify({ id, status: 'completed', conclusion: 'success', head_sha: head, updated_at: '2026-01-01T11:30:00Z' }), stderr: '' };
     });
     const first = await runCiRerunMaintenance(opts);
     expect(first.repos['org/repo']?.verdictsPending).toBe(10);

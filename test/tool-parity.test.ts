@@ -110,8 +110,8 @@ describe('phm tools parity', () => {
   });
 });
 
-/** The org's eleven lanes, the rows of `phm tools parity`. */
-const ORG = ['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor'];
+/** The org's ten lanes, the rows of `phm tools parity`. */
+const ORG = ['codex-personal', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor'];
 const ALL = { 'github-read': true, 'web-search': true, browser: true, 'computer-use': true, mcp: ['context7', 'fetch'], cli: ['phm'], skill: ['review'], plugin: ['ashlr'] };
 /** A lane-tools.json where every org lane declares every family; `change` edits or drops lanes. */
 async function parityOf(change: (lanes: Record<string, Record<string, unknown>>) => void = () => {}, lane?: string) {
@@ -122,10 +122,10 @@ async function parityOf(change: (lanes: Record<string, Record<string, unknown>>)
 }
 
 describe('phm tools parity (lanes by tool family)', () => {
-  it('all present: eleven lanes by eight families, every cell present with its source and no fix', async () => {
+  it('all present: ten lanes by eight families, every cell present with its source and no fix', async () => {
     const m = (await parityOf())!;
     expect(Object.keys(m)).toEqual(['schema', 'version', 'parity', 'families', 'lanes', 'counts', 'sources']);
-    expect(m).toMatchObject({ schema: 'tools.parity.v2', version: 2, parity: 'full', counts: { present: 88, missing: 0, unknown: 0 } });
+    expect(m).toMatchObject({ schema: 'tools.parity.v2', version: 2, parity: 'full', counts: { present: 80, missing: 0, unknown: 0 } });
     expect(m.lanes.map(l => l.lane)).toEqual(ORG);
     expect(m.families).toEqual(TOOL_FAMILIES.map(({ id, label }) => ({ id, label })));
     expect(m.families.map(f => f.label)).toEqual(['MCP servers', 'CLI on PATH', 'Skills', 'Plugins', 'Web search', 'Browser', 'Computer use', 'gh']);
@@ -137,7 +137,7 @@ describe('phm tools parity (lanes by tool family)', () => {
 
   it('one lane missing MCP: that cell is missing with the line to add, the rest stay present', async () => {
     const m = (await parityOf(lanes => { lanes['codex-local']!.mcp = ['context7']; }))!;
-    expect(m).toMatchObject({ parity: 'gaps', counts: { present: 87, missing: 1, unknown: 0 } });
+    expect(m).toMatchObject({ parity: 'gaps', counts: { present: 79, missing: 1, unknown: 0 } });
     expect(m.lanes.find(l => l.lane === 'codex-local')!.cells.mcp).toEqual({
       state: 'missing', source: 'lane-tools.json', has: ['context7'], lacks: ['fetch'],
       fix: 'Give codex-local MCP server fetch, then add "mcp": ["context7","fetch"] under "codex-local" in <runs>/queue/lane-tools.json.',
@@ -153,7 +153,7 @@ describe('phm tools parity (lanes by tool family)', () => {
 
   it('unknown lane: a lane no source declares is unknown in every family, never missing; a lane nobody names is null', async () => {
     const m = (await parityOf(lanes => { delete lanes['devin-flash']; lanes.agy = { browser: true }; delete lanes.grok!.cli; }))!;
-    expect(m).toMatchObject({ parity: 'unknown', counts: { present: 80, missing: 0, unknown: 16 } });
+    expect(m).toMatchObject({ parity: 'unknown', counts: { present: 72, missing: 0, unknown: 16 } });
     expect(m.lanes.map(l => l.lane)).toEqual([...ORG, 'agy']);
     expect(Object.values(m.lanes.find(l => l.lane === 'devin-flash')!.cells)).toEqual(Array(8).fill({ state: 'unknown', source: null }));
     expect(m.lanes.find(l => l.lane === 'grok')!.cells.cli).toEqual({ state: 'unknown', source: null });

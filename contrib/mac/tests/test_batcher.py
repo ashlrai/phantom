@@ -188,10 +188,10 @@ class MetricsTests(unittest.TestCase):
         scores = b.lane_scores(b.throughput(self.rows(), self.NOW))
         self.assertEqual(round(scores["devin"][0], 3), round(9 / 4.5, 3))
         self.assertNotIn("claude", scores)
-        scores = {"devin": (2.0, 1.0), "codex-cmp": (3.0, 0.5)}
+        scores = {"devin": (2.0, 1.0), "codex-personal": (3.0, 0.5)}
         everything = lambda lane: True
-        self.assertEqual(b.choose_lane({"devin", "codex-cmp"}, scores, everything, "devin"), "codex-cmp")
-        self.assertEqual(b.choose_lane({"devin", "codex-cmp"}, scores, lambda l: l != "codex-cmp", "devin"), "devin")
+        self.assertEqual(b.choose_lane({"devin", "codex-personal"}, scores, everything, "devin"), "codex-personal")
+        self.assertEqual(b.choose_lane({"devin", "codex-personal"}, scores, lambda l: l != "codex-personal", "devin"), "devin")
         self.assertEqual(b.choose_lane({"devin"}, scores, everything, "devin"), "devin")   # only proposed lanes
         self.assertEqual(b.choose_lane({"claude"}, {}, everything, "claude"), "claude")
         self.assertIsNone(b.choose_lane({"codex-local"}, {}, everything, "codex-local"))

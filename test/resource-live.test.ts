@@ -16,7 +16,7 @@ import {
 import { defaultResourceLiveSources } from '../src/core/usage/resource-live/sources.js';
 import { parseResourceLiveSidecar, resetDecisionDir, resourceLivePath } from '../src/core/usage/resource-live/store.js';
 import {
-  CODEX_CMP_EXPIRES_AT, RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_SCHEMA,
+  DEVIN_FLASH_EXPIRES_AT, RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_SCHEMA,
   type ResourceLiveId, type ResourceLiveReading, type ResourceLiveSidecar,
 } from '../src/core/usage/resource-live/types.js';
 import { presentUsageSensors } from '../src/core/usage/sensor-reading.js';
@@ -55,6 +55,93 @@ const fixed = (seen: Partial<ResourceLiveObservation> | null, tier: ResourceLive
   read: (nowMs) => seen === null ? null : { used: 40, limit: 100, unit: 'percent', reset_at: WEEKLY_RESET, source: 'test-source', observed_at: iso(nowMs), ...seen },
 });
 
+describe('personal Codex resets', () => {
+  it('uses the weekly budget reading and keeps the native five-hour window separate', async () => {
+    const runsDir = tmp();
+    mkdirSync(join(runsDir, 'queue'));
+    writeFileSync(join(runsDir, 'queue', 'budget-overrides.json'), JSON.stringify({
+      'codex-personal': { weekly_used_pct: 45, reset_at: WEEKLY_RESET, as_of: iso(NOW),
+        source: 'reader-1 codex app-server rateLimits', estimated: false },
+    }));
+    const readCodex = vi.fn(async () => ({ fetchedAt: iso(NOW), pctUsed: 91, resetAt: iso(NOW + HOUR),
+      windows: { '5h': { pctUsed: 91, resetAt: iso(NOW + HOUR) }, weekly: null } }));
+    const sources = defaultResourceLiveSources({ runsDir, operatorHome: '/Users/op', codexPersonalHome: '/pools/personal', readCodex });
+    await expect(sources['codex-personal'][0]!.read(NOW)).resolves.toBeNull();
+    await expect(sources['codex-personal'][1]!.read(NOW)).resolves.toMatchObject({ used: 45, reset_at: WEEKLY_RESET });
+    await expect(sources['codex-personal-5h'][0]!.read(NOW)).resolves.toMatchObject({ used: 91, reset_at: iso(NOW + HOUR) });
+    expect(readCodex).toHaveBeenCalledTimes(1);
+    await expect(sources['codex-personal'][1]!.read(NOW + HOUR)).resolves.toBeNull();
+  });
+
+  it('publishes the personal native bank once per poll and leaves newer or unreadable evidence intact', async () => {
+    const runsDir = tmp();
+    const path = join(runsDir, 'state', 'resource-evidence.json');
+    const grant = { count: 1, kind: 'full', expires_at: iso(NOW + HOUR), source: 'codex-app-server' } as const;
+    const readCodex = vi.fn(async () => ({ fetchedAt: iso(NOW), pctUsed: null, resetAt: null,
+      resetBank: [grant] as (typeof grant)[] | null }));
+    const sources = defaultResourceLiveSources({ runsDir, operatorHome: '/Users/op', codexPersonalHome: '/pools/personal', readCodex });
+    const poll = (now: number) => Promise.all([
+      sources['codex-personal'][0]!.read(now), sources['codex-personal-5h'][0]!.read(now),
+    ]);
+    await poll(NOW);
+    expect(readCodex).toHaveBeenCalledExactlyOnceWith('/pools/personal');
+    const observed = JSON.parse(readFileSync(path, 'utf8'));
+    expect(observed).toEqual({ schema: 'resource-evidence.v1', readings: {
+      'codex-personal-resets': { count: 1, observed_at: iso(NOW), grants: [grant] },
+      'codex-personal-reset-status': { observed_at: iso(NOW), unknown_reason: null },
+    } });
+    readCodex.mockResolvedValueOnce({ fetchedAt: iso(NOW + 1000), pctUsed: null, resetAt: null, resetBank: null });
+    await poll(NOW + 1000);
+    readCodex.mockResolvedValueOnce({ fetchedAt: iso(NOW - 1000), pctUsed: null, resetAt: null, resetBank: [] });
+    await poll(NOW + 2000);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(observed);
+  });
+
+  it('reports a fresh old-CLI diagnostic with an unknown count', async () => {
+    const runsDir = tmp();
+    const reason = 'codex-cli-too-old (<0.172.0)' as const;
+    const sources = defaultResourceLiveSources({ runsDir, operatorHome: '/Users/op', codexPersonalHome: '/pools/personal',
+      readCodex: async () => ({ fetchedAt: iso(NOW), pctUsed: null, resetAt: null, resetBank: null, resetBankUnknownReason: reason }) });
+    const { sidecar } = await runResourceLiveTick({ runsDir, sources: {
+      'codex-personal-5h': sources['codex-personal-5h'],
+    }, nowMs: NOW });
+    expect(sidecar.burn_down.banked_resets).toMatchObject({ count: null, grants: null, unknown_reason: reason });
+  });
+
+  it('proposes at most one expiring full reset for queued work before measured exhaustion', async () => {
+    const runsDir = tmp();
+    mkdirSync(join(runsDir, 'state'));
+    mkdirSync(join(runsDir, 'queue'));
+    const expires = iso(NOW + HOUR / 2), reset = iso(NOW + 3 * HOUR);
+    const grant = { count: 1, kind: 'full', expires_at: expires, source: 'chatgpt-settings-usage' };
+    const evidence = { schema: 'resource-evidence.v1', readings: {
+      'codex-personal-resets': { observed_at: iso(NOW), count: 2, grants: [grant, { ...grant, expires_at: iso(NOW + 7 * HOUR) }] },
+    } };
+    const evidencePath = join(runsDir, 'state', 'resource-evidence.json');
+    writeFileSync(evidencePath, JSON.stringify(evidence));
+    const status = (queued: number) => writeFileSync(join(runsDir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: iso(NOW), lanes: { 'codex-personal': { queued } },
+    }));
+    const sourcesAt = (used: number) => sourcesOf({
+      'codex-personal-5h': [fixed({ used, reset_at: reset, source: 'codex-app-server-5h' })],
+      'codex-personal': [fixed({ used: 45, reset_at: WEEKLY_RESET, source: 'codex-budget-overrides-weekly' })],
+    });
+    await runResourceLiveTick({ runsDir, nowMs: NOW - HOUR, force: true, sources: sourcesAt(90) });
+    status(0);
+    const tick = () => runResourceLiveTick({ runsDir, nowMs: NOW, force: true, sources: sourcesAt(95) });
+    expect((await tick()).sidecar.burn_down.banked_resets).toMatchObject({ count: 2, proposal: null });
+    status(3);
+    const { sidecar } = await tick();
+    expect(sidecar.burn_down.banked_resets).toMatchObject({ count: 2, proposal: {
+      action: 'use-reset-now', requires_explicit_request: true, grant, window: '5h',
+      used_pct: 95, projected_exhaustion_at: iso(NOW + HOUR), queued_jobs: 3,
+    } });
+    expect(JSON.parse(readFileSync(evidencePath, 'utf8'))).toEqual(evidence);
+    expect((await runResourceLiveTick({ runsDir, nowMs: NOW + HOUR, sources: sourcesAt(96) })).sidecar.burn_down.banked_resets)
+      .toMatchObject({ count: null, proposal: null });
+  });
+});
+
 function sourcesOf(map: Partial<Record<ResourceLiveId, ResourceLiveSource[]>>): ResourceLiveSources {
   return Object.fromEntries(RESOURCE_LIVE_ALLOWANCES.map(row => [row.id, map[row.id] ?? []])) as unknown as ResourceLiveSources;
 }
@@ -66,11 +153,12 @@ it('registers, ranks, projects and removes user-defined resources without runnin
   const runsDir = tmp();
   vi.stubEnv('ASHLR_HOME', runsDir);
   const registry = join(runsDir, 'custom-resources.json');
-  const base = { id: 'shell-status', name: 'Studio agents', provider: 'Example AI',
+  const logo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jz1kAAAAASUVORK5CYII=';
+  const base = { id: 'shell-status', name: 'Studio agents', provider: 'Example AI', logo,
     kind: 'subscription', source: 'cli-status', unit: 'points', limit: 50, window_hours: 5 };
   const register = (resources: unknown[]) => writeFileSync(registry, JSON.stringify({ schema: 'custom-resources.v1', resources }));
   register([base, { ...base, id: 'metered', kind: 'metered', source: 'official-endpoint' },
-    { ...base, id: 'local', kind: 'local', source: 'agent-check' }, { ...base, id: 'bad', command: 'not accepted' }]);
+    { ...base, id: 'local', kind: 'local', source: 'agent-check', logo: 'https://example.com/logo.png' }, { ...base, id: 'bad', command: 'not accepted' }]);
   mkdirSync(join(runsDir, 'state'));
   const evidence = (at: number, used: number) => writeFileSync(join(runsDir, 'state', 'resource-evidence.json'),
     JSON.stringify({ schema: 'resource-evidence.v1', readings: {
@@ -93,8 +181,9 @@ it('registers, ranks, projects and removes user-defined resources without runnin
   const projected = await readLaneAllowance({ runsDir, nowMs: NOW + HOUR });
   expect(projected.lanes.find(row => row.lane === 'custom:shell-status')).toMatchObject({
     label: 'Studio agents', left: 40, freshness: 'live',
-    resource: { provider: 'Example AI', burnPerHour: 2, projectedUnused: 32 },
+    resource: { provider: 'Example AI', logo, burnPerHour: 2, projectedUnused: 32 },
   });
+  expect(projected.lanes.find(row => row.lane === 'custom:local')?.resource).not.toHaveProperty('logo');
   const stale = await tick(NOW + HOUR + 16 * 60_000);
   expect(byId(stale.sidecar, 'custom:shell-status').used).toBeNull();
   register([{ ...base, id: 'metered', kind: 'metered', source: 'official-endpoint', metered_opt_in: true }]);
@@ -180,20 +269,20 @@ describe('burn-down plan', () => {
   it('spends free and expiring first, included next, metered credit after, reserve last', () => {
     const plan = planBurnDown([
       reading('grok'), reading('cursor'), reading('claude-api', { unit: 'usd', used: 10, limit: 50, remaining: 40 }),
-      reading('claude-weekly'), reading('codex-cmp'), reading('devin-flash'), reading('dot'),
+      reading('claude-weekly'), reading('devin-flash'), reading('dot'),
       reading('local', { used: null, limit: 3, unit: 'models', used_pct: null, remaining: null, reset_at: null }),
     ], {}, NOW);
-    expect(plan.lane_order).toEqual(['codex-local', 'codex-cmp', 'devin-flash', 'dot', 'claude', 'claude-api', 'grok', 'cursor']);
-    expect(plan.allowances.map(row => row.tier)).toEqual([0, 0, 0, 0, 1, 2, 3, 3]);
-    expect(plan.allowances.map(row => row.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(plan.lane_order).toEqual(['codex-local', 'devin-flash', 'dot', 'claude', 'claude-api', 'grok', 'cursor']);
+    expect(plan.allowances.map(row => row.tier)).toEqual([0, 0, 0, 1, 2, 3, 3]);
+    expect(plan.allowances.map(row => row.rank)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(plan.allowances.filter(row => row.tier === 3).every(row => row.action === 'reserve')).toBe(true);
   });
 
   it('uses the expiry as the deadline when it comes before the reset, and drops the priority once expired', () => {
-    const before = planBurnDown([reading('codex-cmp', { reset_at: '2026-12-05T00:00:00.000Z' })], {}, NOW).allowances[0]!;
-    expect(before).toMatchObject({ tier: 0, deadline_at: CODEX_CMP_EXPIRES_AT });
-    const after = Date.parse(CODEX_CMP_EXPIRES_AT) + HOUR;
-    const expired = planBurnDown([reading('codex-cmp', { reset_at: '2026-12-05T00:00:00.000Z', observed_at: iso(after), stale_after: iso(after + HOUR) })], {}, after).allowances[0]!;
+    const before = planBurnDown([reading('devin-flash', { reset_at: '2026-12-05T00:00:00.000Z' })], {}, NOW).allowances[0]!;
+    expect(before).toMatchObject({ tier: 0, deadline_at: DEVIN_FLASH_EXPIRES_AT });
+    const after = Date.parse(DEVIN_FLASH_EXPIRES_AT) + HOUR;
+    const expired = planBurnDown([reading('devin-flash', { reset_at: '2026-12-05T00:00:00.000Z', observed_at: iso(after), stale_after: iso(after + HOUR) })], {}, after).allowances[0]!;
     expect(expired).toMatchObject({ tier: 1, deadline_at: '2026-12-05T00:00:00.000Z' });
   });
 
@@ -536,13 +625,13 @@ describe('default sources', () => {
   });
 
   it('reads Codex only from an explicit pool home and never from ~/.codex', async () => {
-    const readCodex = vi.fn(async () => ({ pctUsed: 44, resetAt: WEEKLY_RESET, fetchedAt: iso(NOW) }));
-    const allowed = defaultResourceLiveSources({ runsDir: tmp(), operatorHome: '/Users/op', codexCmpHome: '/pools/cmp', readCodex });
-    expect(await allowed['codex-cmp'][0]!.read(NOW)).toMatchObject({ used: 44, source: 'codex-app-server' });
-    expect(await allowed['codex-personal'][0]!.read(NOW)).toBeNull();
+    const weekly = { pctUsed: 44, resetAt: WEEKLY_RESET };
+    const readCodex = vi.fn(async () => ({ ...weekly, fetchedAt: iso(NOW), windows: { weekly, '5h': null } }));
+    const allowed = defaultResourceLiveSources({ runsDir: tmp(), operatorHome: '/Users/op', codexPersonalHome: '/pools/personal', readCodex });
+    expect(await allowed['codex-personal'][0]!.read(NOW)).toMatchObject({ used: 44, source: 'codex-app-server-weekly' });
+    expect(allowed).not.toHaveProperty('codex-cmp');
     for (const home of ['/Users/op', '/Users/op/.codex', '/Users/op/.codex-2/x', 'relative']) {
-      const refused = defaultResourceLiveSources({ runsDir: tmp(), operatorHome: '/Users/op', codexCmpHome: home, codexPersonalHome: home, readCodex });
-      expect(await refused['codex-cmp'][0]!.read(NOW)).toBeNull();
+      const refused = defaultResourceLiveSources({ runsDir: tmp(), operatorHome: '/Users/op', codexPersonalHome: home, readCodex });
       expect(await refused['codex-personal'][0]!.read(NOW)).toBeNull();
     }
     expect(readCodex).toHaveBeenCalledTimes(1);

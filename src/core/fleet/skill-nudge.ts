@@ -88,11 +88,8 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 // jobs.jsonl fold
 // ---------------------------------------------------------------------------
 //
-// The fleet jobs ledger is append-only and chronological, so file order is the
-// evidence order. One SkillNudgeJob is emitted per job id, sorted by the file
-// position of its last row — the closest honest stand-in for "oldest outcome
-// first" that the ledger supports (rows carry no per-job resolution stamp in
-// the fields this fold consumes).
+// One SkillNudgeJob is emitted per job id, sorted by the ledger position of
+// its latest terminal outcome (or its last row while unresolved).
 //
 // Field provenance, all real ledger evidence:
 //   - id/lane: job plus the last execution-side lane (enqueue/queued rows are
@@ -162,6 +159,7 @@ interface NudgeJobAccum {
   recuts: number;
   failureClass: string | null;
   lastLine: number;
+  outcomeLine: number | null;
 }
 
 function firstString(row: Record<string, unknown>, keys: readonly string[]): string | null {
@@ -242,16 +240,15 @@ function failureClassOf(row: Record<string, unknown>, event: string | null): str
 
 /**
  * Fold jobs.jsonl text into one SkillNudgeJob per job id, ordered by each
- * job's last ledger position. Pure; never throws; malformed lines and rows
- * without a usable job id are ignored.
+ * job's latest terminal outcome position (last ledger position for unresolved
+ * jobs). Pure; never throws; malformed lines and rows without a usable job id
+ * are ignored.
  */
 export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: ReadonlySet<string> | null): SkillNudgeJob[] {
   const jobs = new Map<string, NudgeJobAccum>();
   // PR URL -> claiming job ids, collected only when the caller supplied
   // standing revert keys — the same unambiguous-claim evidence pass
   // outcome-learning runs, so a contested or foreign URL never resolves.
-  // Node-pool producer rows are a different dialect and batch session ids
-  // are infrastructure: neither ever claims.
   const claims = revertedPrKeys === undefined || revertedPrKeys === null || revertedPrKeys.size === 0
     ? null : new Map<string, Set<string>>();
   let lineNo = 0;
@@ -265,7 +262,10 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
       row = parsed as Record<string, unknown>;
     } catch { continue; }
     const id = firstString(row, LEDGER_JOB_KEYS);
-    if (claims !== null && id !== null && !id.startsWith(BATCH_SESSION_PREFIX) && !isNodePoolLedgerRow(row)) {
+    // Batch members have their own rows. The session wrapper and node-pool
+    // attempt telemetry do not supply job-level recovery evidence.
+    if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
+    if (claims !== null) {
       const url = rowPrUrl(row);
       if (url !== null) {
         const set = claims.get(url) ?? new Set<string>();
@@ -273,11 +273,11 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
         claims.set(url, set);
       }
     }
-    if (id === null || !LEDGER_ID_PATTERN.test(id)) continue;
+    if (!LEDGER_ID_PATTERN.test(id)) continue;
     let acc = jobs.get(id);
     if (acc === undefined) {
       acc = { lane: null, outcome: undefined, verdictUrl: null, reverted: false, attempts: 0,
-        retryReceipts: 0, recuts: 0, failureClass: null, lastLine: lineNo };
+        retryReceipts: 0, recuts: 0, failureClass: null, lastLine: lineNo, outcomeLine: null };
       jobs.set(id, acc);
     }
     acc.lastLine = lineNo;
@@ -301,13 +301,14 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     const outcome = outcomeOf(row);
     if (outcome !== undefined) {
       acc.outcome = outcome;
+      acc.outcomeLine = lineNo;
       // The standing verdict row's own PR URL is what the revert-set join
       // binds to — a later verdict of a different PR is a fresh merge era.
       acc.verdictUrl = rowPrUrl(row);
     }
   }
   return [...jobs.entries()]
-    .sort((a, b) => a[1].lastLine - b[1].lastLine)
+    .sort((a, b) => (a[1].outcomeLine ?? a[1].lastLine) - (b[1].outcomeLine ?? b[1].lastLine))
     .map(([id, acc]) => {
       const retries = Math.max(0, acc.attempts - 1) + acc.retryReceipts;
       const reverted = acc.reverted || standingReverted(id, acc, claims, revertedPrKeys);

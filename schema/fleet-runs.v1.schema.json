@@ -42,6 +42,10 @@
         "ratio": {"type": ["number", "null"]}
       }
     },
+    "whyIdle": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
     "notRunning": {
       "type": "array",
       "items": {

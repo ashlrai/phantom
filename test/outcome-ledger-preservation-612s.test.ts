@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -2050,8 +2050,7 @@ describe('router outcome merge-events join', () => {
       // J2: a recorded failure beside a later checks_passed -> false; a
       // rerun or new head got it green, which is not a first pass.
       '{"job":"J2","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/52","ts":"2026-11-01T00:00:00Z"}',
-      // J3: merged with observed check activity but no boundary row ->
-      // the merge fallback reads true.
+      // J3: a merge with pending-only check observations stays unknown.
       '{"job":"J3","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/53","ts":"2026-11-01T00:00:00Z"}',
       // J4: pending-only observations on an unmerged PR -> null.
       '{"job":"J4","lane":"alpha","phase":"CLOSED","pr_url":"https://github.com/ashlrai/phantom/pull/54","ts":"2026-11-01T00:00:00Z"}',
@@ -2083,17 +2082,14 @@ describe('router outcome merge-events join', () => {
     const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
     expect(byId.get('J1')?.ci_first_pass).toBe(true);
     expect(byId.get('J2')?.ci_first_pass).toBe(false);
-    expect(byId.get('J3')?.ci_first_pass).toBe(true);
+    expect(byId.get('J3')?.ci_first_pass).toBeNull();
     expect(byId.get('J4')?.ci_first_pass).toBeNull();
     expect(byId.get('J5')?.ci_first_pass).toBe(true);
     expect(byId.get('J6')?.ci_first_pass).toBeNull();
     expect(byId.get('J7')?.ci_first_pass).toBe(true);
   });
 
-  it('lets a reward-resolved merge verdict reach the ci_first_pass fallback', async () => {
-    // The jobs tail dropped J1's merge verdict; the reward substrate
-    // resolves merged:true, and the post-reward pass applies the same
-    // fill-only derivation so observed check activity reads true.
+  it('keeps CI unknown when a reward-resolved merge has only an individual passing check', async () => {
     const root = runsDir('{"job":"J1","lane":"alpha","phase":"VERIFIED","pr_url":"https://github.com/ashlrai/phantom/pull/61","ts":"2026-11-01T00:00:00Z"}\n');
     writeMergeEvents(root, [
       mergeEvent(61, 'check_observed', { conclusion: 'success', required: true }),
@@ -2103,7 +2099,7 @@ describe('router outcome merge-events join', () => {
     const result = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlar });
     const [o] = result.outcomes;
     expect(o?.merged).toBe(true);
-    expect(o?.ci_first_pass).toBe(true);
+    expect(o?.ci_first_pass).toBeNull();
   });
 
   it('keeps merge_queue null and reports merge_events_state when the ledger is absent or refused', async () => {
@@ -2134,6 +2130,33 @@ describe('router outcome merge-events join', () => {
     const result = await readRouterOutcomes({ runsDir: root });
     expect(result).toMatchObject({ state: 'read', merge_events_state: 'read', merge_events_truncated: true });
     expect(result.outcomes[0]?.merge_queue).toBeNull();
+  });
+
+  it('keeps queue evidence without inferring first-pass success from a cut merge-events tail', async () => {
+    const root = runsDir([
+      '{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}',
+      '{"job":"J2","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/43"}',
+      '{"job":"J3","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/44","ci_first_pass":true}',
+    ].join('\n'));
+    writeMergeEvents(root, [mergeEvent(42, 'check_observed', { conclusion: 'failure' })]);
+    truncateSync(mergeEventsPath(root), ROUTER_OUTCOME_LEDGER_LIMIT + 1);
+    appendFileSync(mergeEventsPath(root), '\n' + [
+      mergeEvent(42, 'checks_passed'),
+      mergeEvent(43, 'check_observed', { conclusion: 'failure' }),
+      mergeEvent(43, 'checks_passed'),
+      mergeEvent(44, 'checks_passed'),
+    ].map(row => JSON.stringify(row)).join('\n') + '\n');
+
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', merge_events_state: 'read', merge_events_truncated: true });
+    expect(result.outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        job_id: 'J1', ci_first_pass: null,
+        merge_queue: expect.objectContaining({ checks_passed: 1, check_failures: 0 }),
+      }),
+      expect.objectContaining({ job_id: 'J2', ci_first_pass: false }),
+      expect.objectContaining({ job_id: 'J3', ci_first_pass: true }),
+    ]));
   });
 });
 
@@ -2517,18 +2540,38 @@ describe('router outcome authority revert join', () => {
       '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-01T00:00:00Z"}',
       '{"job":"J2","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/7"}',
       '{"job":"J3","phase":"MERGED","pr_url":"https://github.com/other/repo/pull/42"}',
-      '{"job":"J4","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42/"}',
-      '{"job":"J5","phase":"MERGED","url":"https://github.com/AshlrAI/Phantom/pull/42"}',
+      '{"job":"J1","pr_url":"https://github.com/ashlrai/phantom/pull/42/"}',
+      '{"url":"https://github.com/AshlrAI/Phantom/pull/42","cost_usd":9}',
       '{"job":"J6","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42?x=1"}',
       '{"job":"J7","phase":"MERGED","pr":"https://github.com/ashlrai/phantom/issues/42"}',
     ].join('\n'), { revertedPrKeys: keys });
     const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
     // Canonical claim (any url alias) + case-insensitive repo: marked.
-    expect(byId.get('J1')?.reverted).toBe(true);
-    expect(byId.get('J4')?.reverted).toBe(true);
-    expect(byId.get('J5')?.reverted).toBe(true);
+    expect(byId.get('J1')).toMatchObject({ reverted: true, cost_usd: 9 });
+    expect(fold.ambiguous_urls).toBe(0);
+    expect(fold.unattached_rows).toBe(0);
     // Different PR, different repo, non-canonical or non-pull URL: untouched.
     for (const id of ['J2', 'J3', 'J6', 'J7']) expect(byId.get(id)?.reverted).toBeNull();
+  });
+
+  it('withholds PR evidence when different jobs claim aliases of the same PR', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"A","pr_url":"https://github.com/ashlrai/phantom/pull/42"}',
+      '{"job":"B","pr_url":"https://github.com/AshlrAI/Phantom/pull/42/"}',
+      '{"pr_url":"https://github.com/ashlrai/phantom/pull/42","phase":"MERGED"}',
+    ].join('\n'), {
+      revertedPrKeys: new Set(['ashlrai/phantom#42']),
+      crossReviews: foldCrossReviews(JSON.stringify(crossReview(42, 'approve'))),
+      mergeEvents: foldMergeEvents(JSON.stringify(mergeEvent(42, 'checks_passed'))),
+    });
+    expect(fold.ambiguous_urls).toBe(1);
+    expect(fold.unattached_rows).toBe(1);
+    expect(fold.outcomes).toHaveLength(2);
+    for (const outcome of fold.outcomes) {
+      expect(outcome).toMatchObject({
+        merged: null, reverted: null, cross_review: null, merge_queue: null, ci_first_pass: null,
+      });
+    }
   });
 
   it('never marks through an ambiguous PR claim or a foreign row', () => {

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -149,7 +149,7 @@ describe('foldMarketOverrides', () => {
       decision('RQ-A', t - 300),
       decision('RQ-A', t - 60, { override: null, chosen_lane: 'codex-personal' }),
       decision('RQ-B', t - 120),
-      decision('RQ-B', t - 30, { override: { from: null, to: 'devin', reason: 'resource_fit' } }),
+      decision('RQ-B', t - 30, { chosen_lane: 'devin', override: { from: 'codex-personal', to: 'devin', reason: 'resource_fit' } }),
       decision('RQ-C', t - 90, { chosen_lane: null, override: null, reason_codes: ['no_runnable_lane'] }),
       // Out-of-window, future, missing-ts, malformed and non-decision rows never count.
       decision('RQ-D', t - 25 * 3600),
@@ -164,9 +164,9 @@ describe('foldMarketOverrides', () => {
     expect(foldMarketOverrides(journal, now, 24)).toEqual({
       available: true,
       decided: 5, // RQ-A, RQ-B, RQ-C, RQ-G, RQ-H
-      overridden: 1, // only RQ-B's latest decision left its (open) hint
+      overridden: 1, // only RQ-B's latest decision left its hint with a valid override
       byReason: { resource_fit: 1 },
-      lanes: [{ from: null, to: 'devin', reason: 'resource_fit', jobs: 1 }],
+      lanes: [{ from: 'codex-personal', to: 'devin', reason: 'resource_fit', jobs: 1 }],
     });
   });
 
@@ -174,8 +174,8 @@ describe('foldMarketOverrides', () => {
     const journal = [
       decision('RQ-A', t - 100),
       decision('RQ-B', t - 90),
-      decision('RQ-C', t - 80, { override: { from: 'codex-personal', to: 'devin', reason: 'resource_fit' } }),
-      decision('RQ-D', t - 70, { override: { from: 'claude', to: 'codex-cmp', reason: 'preferred_lane_fallback' } }),
+      decision('RQ-C', t - 80, { chosen_lane: 'devin', override: { from: 'codex-personal', to: 'devin', reason: 'resource_fit' } }),
+      decision('RQ-D', t - 70, { preferred_lane: 'claude', chosen_lane: 'codex-cmp', override: { from: 'claude', to: 'codex-cmp', reason: 'preferred_lane_fallback' } }),
     ].join('\n');
     const tally = foldMarketOverrides(journal, now, 24);
     expect(tally.decided).toBe(4);
@@ -186,6 +186,26 @@ describe('foldMarketOverrides', () => {
       { from: 'claude', to: 'codex-cmp', reason: 'preferred_lane_fallback', jobs: 1 },
       { from: 'codex-personal', to: 'devin', reason: 'resource_fit', jobs: 1 },
     ]);
+  });
+
+  it('counts contradictory override records only as decisions and classifies them by recorded lanes', () => {
+    const journal = [
+      decision('RQ-A', t - 100),
+      decision('RQ-A', t - 50, { chosen_lane: 'devin' }),
+      decision('RQ-B', t - 50, { preferred_lane: 'devin' }),
+      decision('RQ-C', t - 50, { chosen_lane: null }),
+      decision('RQ-D', t - 50, { preferred_lane: null, override: { from: null, to: 'claude', reason: 'resource_fit' } }),
+      decision('RQ-E', t - 50, { preferred_lane: 'claude', override: { from: 'claude', to: 'claude', reason: 'resource_fit' } }),
+    ].join('\n');
+    expect(foldMarketOverrides(journal, now, 24)).toEqual({
+      available: true, decided: 5, overridden: 0, byReason: {}, lanes: [],
+    });
+    const outcomes = foldDecisionOutcomes(journal, null, now, 24);
+    expect(outcomes.unexplained.decided).toBe(2);
+    expect(outcomes.unrouted.decided).toBe(1);
+    expect(outcomes.open.decided).toBe(1);
+    expect(outcomes.hinted.decided).toBe(1);
+    expect(outcomes.overridden.decided).toBe(0);
   });
 
   it('says when there is no history file', () => {
@@ -223,10 +243,11 @@ describe('foldClaimOverrides', () => {
       claim('RQ-K', iso(now - 30_000), { lane_hint: 'bad lane!', lane_override: 'resource_fit' }),
       // An invalid override code is not counted.
       claim('RQ-L', iso(now - 20_000), { lane_hint: 'devin', lane_override: 'NOT_A_CODE' }),
+      claim('RQ-M', iso(now - 10_000), { lane_hint: 'claude', lane_override: 'resource_fit' }),
     ].join('\n');
     expect(foldClaimOverrides(journal, now, 24)).toEqual({
       available: true, truncated: false,
-      claimed: 8, // RQ-A, RQ-B x2, RQ-C, RQ-D, RQ-J, RQ-K, RQ-L — events, not distinct jobs
+      claimed: 9, // RQ-A, RQ-B x2, RQ-C, RQ-D, RQ-J through RQ-M — events, not distinct jobs
       overridden: 4, // RQ-B x2, RQ-C, RQ-D
       byReason: { preferred_lane_fallback: 2, batch_session: 1, resource_fit: 1 },
       lanes: [
@@ -490,6 +511,7 @@ describe('phm fleet unfed', () => {
       unfedLanes: ['codex-cmp'], unfedSlots: 3,
       statusAsOf: expect.any(String), statusFresh: true,
     });
+    expect(report.marketTruncated).toBe(false);
     expect(report.history).toMatchObject({ windowHours: 1, available: true, ticks: 1 });
     expect(report.history.lanes[0]).toMatchObject({ lane: 'codex-cmp', unfedTicks: 1, slotTicks: 2 });
     // RQ-M1's latest in-window decision ran on-hint; only RQ-M2 counts as overridden.
@@ -554,6 +576,24 @@ describe('phm fleet unfed', () => {
     expect(body).toContain('devin: 1 job(s) rejected (quota_exhausted 1)');
   });
 
+  it('labels window folds built from a truncated work-market journal', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), '{"lanes":{}}');
+    const market = join(dir, 'metrics', 'work-market.jsonl');
+    writeFileSync(market, decisionRow('RQ-OLDER', Date.now() / 1000 - 60) + '\n');
+    truncateSync(market, 32 * 1024 * 1024);
+    appendFileSync(market, '\n' + decisionRow('RQ-RETAINED', Date.now() / 1000 - 30) + '\n');
+
+    const json = await run();
+    expect(JSON.parse(json.lines[0]!)).toMatchObject({
+      marketTruncated: true,
+      history: { available: true, ticks: 0 },
+      overrides: { available: true, decided: 1 },
+    });
+    vi.restoreAllMocks();
+    const text = await run([]);
+    expect(text.lines.join('\n')).toContain('Last 24h: work-market journal tail only.');
+  });
+
   it('exits 0 with no unfed capacity and no history file', async () => {
     writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
       schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(),
@@ -595,7 +635,7 @@ describe('status freshness', () => {
     ...(lastTick === undefined ? {} : { last_tick: lastTick }),
   });
   const render = (report: ReturnType<typeof currentUnfed>) =>
-    renderUnfed({ ...report, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) });
+    renderUnfed({ ...report, marketTruncated: false, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) });
 
   it('marks a fresh dispatcher tick fresh and reports its timestamp', () => {
     const tick = new Date(NOW - 30_000).toISOString();
@@ -638,7 +678,7 @@ describe('status freshness', () => {
 
 describe('renderUnfed', () => {
   it('says so when there are no lanes', () => {
-    const report = { ...currentUnfed('{"lanes":{}}', ''), history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) };
+    const report = { ...currentUnfed('{"lanes":{}}', ''), marketTruncated: false, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) };
     expect(renderUnfed(report)).toEqual(['No lanes in queue/status.json.', 'No unfed capacity: 0 rows waiting.',
       'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.', 'Last 24h: no unfed ticks recorded.',
       'Last 24h: no route decisions recorded.', 'Last 24h: no claims recorded.']);
@@ -647,13 +687,13 @@ describe('renderUnfed', () => {
 
 describe('derived market reasons', () => {
   const MLANES = {
-    'codex-cmp': { running: 0, target: 2, held: false },
+    'codex-personal': { running: 0, target: 2, held: false },
     cursor: { running: 0, target: 2, held: false },
     'codex-local': { running: 0, target: 1, held: false },
   };
   const mrow = (job: string, lane: string, tier: string, req?: string) =>
     [job, 'phantom', lane, tier, `/q/prompts/${job}.md`, ...(req === undefined ? [] : [req])].join('\t');
-  const SLOTS = JSON.stringify({ 'codex-cmp': {}, cursor: { tiers: ['fast', 'work'] }, 'codex-local': {} });
+  const SLOTS = JSON.stringify({ 'codex-personal': {}, cursor: { tiers: ['fast', 'work'] }, 'codex-local': {} });
   const READY2 = [
     mrow('RQ-F1', 'claude', 'frontier'), mrow('RQ-F2', 'claude', 'fast'),
     mrow('RQ-F3', 'claude', 'work', '{"preferred_lane":"codex-local"}'),
@@ -671,8 +711,8 @@ describe('derived market reasons', () => {
     expect(byLane.cursor!.blocked).toEqual({
       tier_unavailable: 2, cost_class_unknown: 4, local_execution_required: 1, missing_capability: 1,
     });
-    // codex-cmp is a builtin with all tiers: only the pinned and secrets rows are truly blocked.
-    expect(byLane['codex-cmp']!.blocked).toEqual({
+    // codex-personal is a builtin with all tiers: only the pinned and secrets rows are truly blocked.
+    expect(byLane['codex-personal']!.blocked).toEqual({
       local_execution_required: 1, missing_capability: 1, deferred_after_selection: 2,
     });
     // codex-local is a local lane: open rows need local_opt_in_required.
@@ -692,12 +732,12 @@ describe('derived market reasons', () => {
   it('does not recompute reasons when the dispatcher published its verdict', () => {
     const status = JSON.stringify({
       lanes: MLANES,
-      unfed_capacity: { waiting: 1, lanes: { 'codex-cmp': { waiting_elsewhere: 1, blocked: { saturated: 1 } } } },
+      unfed_capacity: { waiting: 1, lanes: { 'codex-personal': { waiting_elsewhere: 1, blocked: { saturated: 1 } } } },
     });
     const report = currentUnfed(status, READY2, { slots: SLOTS });
     expect(report.source).toBe('dispatcher');
     expect(report.derivedReasons).toBe(false);
-    expect(report.resources.find(r => r.lane === 'codex-cmp')!.blocked).toEqual({ saturated: 1 });
+    expect(report.resources.find(r => r.lane === 'codex-personal')!.blocked).toEqual({ saturated: 1 });
   });
 });
 
@@ -736,6 +776,18 @@ describe('ready row validation', () => {
     // Only the valid row waits, hinted at a: b still sees one row elsewhere.
     expect(report.resources.find(r => r.lane === 'b')).toMatchObject({ waitingElsewhere: 1, unfed: true });
     expect(report.resources.find(r => r.lane === 'a')).toMatchObject({ readyHinted: 1, waitingElsewhere: 0, unfed: false });
+  });
+
+  it('rejects inherited names in closed tier, cost and data-class fields', () => {
+    const ready = [
+      vrow('RQ-TIER', 'a', 'constructor'),
+      vrow('RQ-MIN', 'a', 'work', '{"min_tier":"toString"}'),
+      vrow('RQ-MAX', 'a', 'work', '{"max_tier":"valueOf"}'),
+      vrow('RQ-COST', 'a', 'work', '{"max_cost_class":"__proto__"}'),
+      vrow('RQ-DATA', 'a', 'work', '{"data_class":"hasOwnProperty"}'),
+    ].join('\n');
+    const report = currentUnfed(JSON.stringify({ lanes: VLANES }), ready);
+    expect(report).toMatchObject({ waiting: 0, invalidRows: 5, unfedLanes: [] });
   });
 
   it('resolves spec-less rows from the router-queue.md envelope like the dispatcher', () => {
@@ -791,19 +843,19 @@ describe('ready row validation', () => {
 
   it('keeps the row repo through the envelope like the dispatcher re-parse', () => {
     const routerQueue = '- READY RQ-ENV (P1): open envelope row';
-    const ready = vrow('RQ-ENV', 'codex-cmp');
+    const ready = vrow('RQ-ENV', 'codex-personal');
     const hints = readyHints(ready, routerQueue);
     expect(hints.rows[0]).toMatchObject({ hint: null, repo: 'phantom' });
-    // repo_unserved is scored by the real repo: served on codex-cmp's allowlist,
+    // repo_unserved is scored by the real repo: served on codex-personal's allowlist,
     // blocked on claude's — never reported for every envelope row at once.
     const lanes = {
-      'codex-cmp': { running: 0, target: 1, held: false },
+      'codex-personal': { running: 0, target: 1, held: false },
       claude: { running: 0, target: 1, held: false },
     };
-    const slots = JSON.stringify({ 'codex-cmp': { repos: ['phantom'] }, claude: { repos: ['other-repo'] } });
+    const slots = JSON.stringify({ 'codex-personal': { repos: ['phantom'] }, claude: { repos: ['other-repo'] } });
     const report = currentUnfed(JSON.stringify({ lanes }), ready, { slots, routerQueue });
     const byLane = Object.fromEntries(report.resources.map(r => [r.lane, r]));
-    expect(byLane['codex-cmp']!.blocked).toEqual({ deferred_after_selection: 1 });
+    expect(byLane['codex-personal']!.blocked).toEqual({ deferred_after_selection: 1 });
     expect(byLane.claude!.blocked).toEqual({ repo_unserved: 1 });
   });
 

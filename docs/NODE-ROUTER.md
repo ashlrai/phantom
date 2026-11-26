@@ -233,7 +233,9 @@ reported as zero. Owner, capability, local-auth and fencing checks still apply.
 and queued counts from dispatcher status. Lane `available` counts slots against
 the launch target — the configured target tightened by the controller's
 `effective_target` load-shed ceiling (`effectiveTarget`, null when unpublished)
-— so a shed lane never reports phantom room. Four local reads run concurrently,
+— so a shed lane never reports phantom room. A fresh dispatcher pause or
+explicit fleet admission stop sets every lane's `available` to zero, including
+when the fleet-wide cap is reached. Four local reads run concurrently,
 each capped at 2 MiB and 250 ms, with phase status; no SSH probes or writes.
 Lane availability expires after two 30-second dispatcher intervals.
 
@@ -364,8 +366,13 @@ The document (`phantom.node-capacity.v1`) carries `node`, `measured_at`, `cpu`,
 A harness session is the vendor CLI plus every child it spawns (MCP servers,
 tool runners), measured with `ps`, or with `pgrep` and `footprint` where `ps` is
 denied. Memory headroom is the memory above memguard's raise line (30% free).
-CPU headroom is 85% of cores minus busy cores. Kernel pressure above normal,
-or swapouts at memguard's growth rate, stop every harness on that node. A cloud
+CPU headroom is 85% of cores minus busy cores. Measured zero CPU headroom
+blocks placements even when CPU cost per session is unknown or recorded as zero.
+It also reduces measured runnable counts to zero, including in fleet totals
+that read older capacity documents. Unmeasured harness counts remain null.
+Kernel pressure above normal or swap growth stop placements and reduce
+measured runnable counts to zero in fleet totals. Both reads honor direct
+measurements and recorded limiter labels. A cloud
 CLI therefore costs a node only its own measured footprint. A whole-host
 backoff only happens when one of those gates is hit. A harness never seen on
 the node reports `null` (unknown), never a guess. The previous document supplies swap growth and footprints
@@ -375,9 +382,22 @@ learned in the last 7 days.
 rate per token and per minute, using one or more capacity documents, a
 cost/latency file (`[{provider, model, harness, tokensPerJob, minutesPerJob}]`)
 and lane outcomes (`{provider: {attempts, merged}}`). It prints a plan only; it
-never launches work. Providers passed with `--exhausted` are never routed. An
-unplaced job's `rejected` counts name why: `provider-not-in-job` and
+never launches work. Providers passed with `--exhausted` are never routed.
+Input can contain several snapshots for one node ID. Routing and fleet-wide
+runnable totals use the newest timestamp per node, so copying a snapshot
+cannot increase capacity and a newer hold takes precedence. Conflicting
+inputs at the same newest timestamp leave that node's capacity unknown.
+For a node without its own harness footprint, routing can borrow measurements
+from other nodes whose latest snapshots pass the same freshness check.
+A borrowed footprint uses the largest observed memory and CPU costs for the
+harness independently. CPU cost stays `null` when no donor measured it.
+A fresh snapshot from a node under pressure or swap growth can still supply
+a footprint. If no eligible measurement exists, the router reports
+`footprint-unmeasured` for that candidate.
+
+An unplaced job's `rejected` counts name why: `provider-not-in-job` and
 `model-not-in-job` count cost rows the job's own provider/model lists excluded,
+`node-capacity-conflict` marks conflicting current inputs for one node, and
 `no-costs`/`no-nodes` mean the inputs held no usable cost rows or node
 documents, and the remaining keys (`node-stale`, `node-pressure`, `memory`,
 `cpu`, `provider-not-on-node`, ...) count per-node or per-candidate failures.

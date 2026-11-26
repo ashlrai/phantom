@@ -35,6 +35,7 @@ export interface DesktopUpdateDependencies {
   parentState(parent: NativeUpdateParent): 'same' | 'gone' | 'changed' | 'unknown';
   now(): number; sleep(ms: number): Promise<void>;
   download(url: string, maximum: number): Promise<Buffer>;
+  residentStop?(): Promise<boolean>;
   /** Internal test seam; the CLI never accepts an alternate implementation. */
   transaction?(): Promise<TransactionModule>;
 }
@@ -105,7 +106,7 @@ function readStage(stageId: string, deps: DesktopUpdateDependencies): {stage: st
   return {stage, manifest: verified.manifest, digest: verified.digest, app, entries, identity};
 }
 /** The installed consumer rejects stale stages independently of native discovery. */
-function requireNewerVersion(deps: DesktopUpdateDependencies, candidate: CompatibleUpdateManifest): void {
+function updateMode(deps: DesktopUpdateDependencies, candidate: CompatibleUpdateManifest): 'paired'|'app-only' {
   const root = deps.packageRoot;
   if (!root || deps.currentPackageRoot() !== root) hold('running-current-mismatch');
   const identity = parseBuildIdentity(installedBytes(join(root, 'dist', 'build-identity.json'), 64 * 1024).toString('utf8'));
@@ -119,19 +120,21 @@ function requireNewerVersion(deps: DesktopUpdateDependencies, candidate: Compati
   if (currentProfile.name === 'canonical-v2' && candidate.schemaVersion === 1) hold('candidate-identity-regression');
   const old = identity.packageVersion.split('.').map(BigInt), next = candidate.version.split('.').map(BigInt);
   const first = next.findIndex((part, i) => part !== old[i]);
-  if (first < 0 || next[first]! < old[first]!) hold('candidate-not-newer');
+  if (first < 0) {
+    if (identity.revision !== candidate.source.revision) hold('candidate-not-newer');
+    return 'app-only';
+  }
+  if (next[first]! < old[first]!) hold('candidate-not-newer');
+  return 'paired';
 }
-function admissionReason(a: UpdateAdmission, surface: string): string | null {
-  if (!a.active || !a.grantId || !a.envelopeDigest || !a.surfaceDigest) return 'grant-unavailable';
-  if (a.surfaceDigest !== surface) return 'authority-reapproval-required';
+function admissionReason(a: UpdateAdmission): string | null {
   if (!a.stop) return 'stop-required';
   if (a.unknownLeases !== 0 || a.leaseCount !== 0) return 'work-active-or-unknown';
   return null;
 }
-function freshAdmission(deps: DesktopUpdateDependencies, expected: UpdateAdmission, surface: string): void {
-  const now = deps.admission(); const reason = admissionReason(now, surface);
+function freshAdmission(deps: DesktopUpdateDependencies): void {
+  const reason = admissionReason(deps.admission());
   if (reason) hold(reason);
-  if (now.grantId !== expected.grantId || now.envelopeDigest !== expected.envelopeDigest || now.surfaceDigest !== expected.surfaceDigest) hold('authority-changed');
 }
 
 export function inspectQualifiedDesktopUpdate(stageId: string, deps: DesktopUpdateDependencies): DesktopUpdateResult {
@@ -140,9 +143,9 @@ export function inspectQualifiedDesktopUpdate(stageId: string, deps: DesktopUpda
     const staged = readStage(stageId, deps); version = staged.manifest.version;
     try {bytes(join(staged.stage, 'consumer-attempt.json'), 8192); return result('blocked', version, 'update-attempt-already-recorded');}
     catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
-    requireNewerVersion(deps, staged.manifest);
-    const reason = admissionReason(deps.admission(), staged.manifest.authoritySurfaceDigest);
-    return result(reason ? 'blocked' : 'ready', version, reason, reason === 'authority-reapproval-required' || reason === 'grant-unavailable');
+    updateMode(deps, staged.manifest);
+    const reason = admissionReason(deps.admission());
+    return result(reason ? 'blocked' : 'ready', version, reason);
   } catch (error) { return result('blocked', version, error instanceof Held ? error.reason : 'verification-failed'); }
 }
 
@@ -252,7 +255,16 @@ interface TransactionIo {
   restoreCurrentPointer(path: string, before: Pointer | null, expected: Pointer): void;
   writeInstallJournal(owner: string, value: {phase: string}): void;
   readBoundedFile(path: string, maximum: number): string;
+  exec(bin: string, argv: string[]): {status: number; stdout: string};
   [key: string]: unknown;
+}
+function requireOlderNativeApp(path: string, target: string, io: TransactionIo): void {
+  const read = io.exec('/usr/bin/plutil', ['-extract','CFBundleShortVersionString','raw','-o','-',join(path,'Contents/Info.plist')]);
+  const observed = read.stdout.trim();
+  if (read.status !== 0 || !/^\d+\.\d+\.\d+$/.test(observed)) hold('app-version-unverified');
+  const candidate = target.split('.').map(BigInt), installed = observed.split('.').map(BigInt);
+  const first = candidate.findIndex((part,i)=>part!==installed[i]);
+  if (first < 0 || candidate[first]! < installed[first]!) hold('candidate-not-newer');
 }
 interface TransactionModule {
   createLocalAppTransactionIo(options: {packageRoot: string; home: string}): TransactionIo;
@@ -291,7 +303,64 @@ function verifyAppReleaseRecord(appRoot: string, manifest: CompatibleUpdateManif
   if (Buffer.byteLength(text) > 8192) hold('app-source-unverified');
   try {verifyUpdateBundleRecord(text, manifest);} catch {hold('app-source-unverified');}
 }
-async function installPairedUpdate(stageId: string, staged: ReturnType<typeof readStage>, deps: DesktopUpdateDependencies, expected: UpdateAdmission): Promise<DesktopUpdateState> {
+async function readPairedArchive(path: string, manifest: CompatibleUpdateManifest) {
+  const archive = await readPinnedRuntimeArchive({artifactPath: path, sha256: manifest.cli.sha256,
+    revision: manifest.source.revision, version: manifest.version,
+    identityProfile: manifest.schemaVersion === 1 ? 'legacy-v1' : 'canonical-v2'}).catch(() => hold('package-archive-refused'));
+  if (archive.pins.size !== manifest.cli.bytes) hold('artifact-mismatch');
+  return archive;
+}
+
+async function preparePairedArchive(staged: ReturnType<typeof readStage>, deps: DesktopUpdateDependencies) {
+  const { stage, manifest } = staged;
+  const original = join(stage, 'package.tgz');
+  try {
+    validateArtifact(bytes(original, manifest.cli.bytes), manifest.cli, deps.trust!);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    const data = await deps.download(manifest.cli.url, manifest.cli.bytes);
+    validateArtifact(data, manifest.cli, deps.trust!);
+    safeAncestors(deps.home, stage);
+    const current = directory(stage);
+    if (staged.identity.dev !== current.dev || staged.identity.ino !== current.ino) hold('stage-changed');
+    const temporary = join(stage, `package-${randomBytes(16).toString('hex')}.tmp`);
+    writeExclusive(temporary, data);
+    try {
+      await readPairedArchive(temporary, manifest);
+      try { fs.linkSync(temporary, original); }
+      catch (linkError) { if ((linkError as NodeJS.ErrnoException).code !== 'EEXIST') throw linkError; }
+    } finally { fs.unlinkSync(temporary); fsyncDirectory(stage); }
+    validateArtifact(bytes(original, manifest.cli.bytes), manifest.cli, deps.trust!);
+  }
+  return readPairedArchive(original, manifest);
+}
+
+/** Admit both signed downloads before Stop, without changing the installed app or runtime. */
+export async function prepareQualifiedDesktopUpdate(stageId: string, deps: DesktopUpdateDependencies): Promise<DesktopUpdateResult> {
+  let version: string | null = null;
+  try {
+    const staged = readStage(stageId, deps); version = staged.manifest.version;
+    updateMode(deps, staged.manifest);
+    const archive = await preparePairedArchive(staged, deps);
+    const helper = deps.transaction ? await deps.transaction() : await loadInstalledDesktopTransaction(deps.packageRoot!);
+    const io = helper.createLocalAppTransactionIo({packageRoot: deps.packageRoot!, home: deps.home});
+    const scratch = fs.mkdtempSync(join(staged.stage, 'verify-pair-'));
+    try {
+      const runtime = join(scratch, 'runtime');
+      fs.mkdirSync(runtime, {mode: 0o700});
+      extractPinnedRuntimeArchive(archive, runtime);
+      const surface = verifyAuthoritySurfaceAt(runtime, 'installed', {fresh: true});
+      if (!surface.ok || surface.digest !== staged.manifest.authoritySurfaceDigest) hold('candidate-surface-unverified');
+      const app = extractApp(staged.entries, scratch);
+      verifyAppReleaseRecord(app, staged.manifest);
+      if (helper.inspectLocalApp(app, staged.manifest.app.signer, io).inventory !== staged.manifest.app.inventorySha256) hold('app-inventory-mismatch');
+    } finally { fs.rmSync(scratch, {recursive: true}); }
+    if (readStage(stageId, deps).digest !== staged.digest) hold('stage-changed');
+    return result('ready', version, null);
+  } catch (error) { return result('blocked', version, error instanceof Held ? error.reason : 'update-unavailable'); }
+}
+
+async function installPairedUpdate(stageId: string, staged: ReturnType<typeof readStage>, deps: DesktopUpdateDependencies, mode: ReturnType<typeof updateMode>): Promise<DesktopUpdateState> {
   const root = deps.packageRoot!;
   // Only the already-running compiled package supplies the transaction implementation.
   const helper = deps.transaction ? await deps.transaction() : await loadInstalledDesktopTransaction(root);
@@ -302,18 +371,22 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
   if (!previous || fs.realpathSync(previous.target) !== fs.realpathSync(root)) hold('running-current-mismatch');
   const selected = helper.selectLocalApp(staged.manifest.app.signer, io);
   if (!selected) hold('installed-app-unavailable');
+  if (mode === 'app-only') {
+    if (selected.inventory === staged.manifest.app.inventorySha256) hold('candidate-not-newer');
+    requireOlderNativeApp(selected.path, staged.manifest.version, io);
+  }
   const aliases = helper.inspectLocalAliases(io);
-  const data = await deps.download(staged.manifest.cli.url, staged.manifest.cli.bytes);
-  validateArtifact(data, staged.manifest.cli, deps.trust!);
-  const original = join(staged.stage, 'package.tgz'); writeExclusive(original, data); fsyncDirectory(staged.stage);
-  const archive = await readPinnedRuntimeArchive({artifactPath: original, sha256: staged.manifest.cli.sha256,
-    revision: staged.manifest.source.revision, version: staged.manifest.version, identityProfile: staged.manifest.schemaVersion === 1 ? 'legacy-v1' : 'canonical-v2'}).catch(() => hold('package-archive-refused'));
-  if (archive.pins.size !== staged.manifest.cli.bytes) hold('artifact-mismatch');
+  const archive = await preparePairedArchive(staged, deps);
   const entries = staged.entries;
   const releases = join(deps.home, '.local', 'share', 'ashlr', 'releases'); privateParents(deps.home, releases);
   const destination = join(releases, staged.manifest.source.revision);
-  fs.mkdirSync(destination, {mode: 0o700}); // never overwrite an existing release
-  fsyncDirectory(releases); extractPinnedRuntimeArchive(archive, destination);
+  if (mode === 'paired') {
+    fs.mkdirSync(destination, {mode: 0o700}); // never overwrite an existing release
+    fsyncDirectory(releases); extractPinnedRuntimeArchive(archive, destination);
+  } else {
+    if (destination !== root || previous.target !== destination) hold('installed-current-unverified');
+    await verifyInstalledPackage(destination, staged, deps);
+  }
   const surface = verifyAuthoritySurfaceAt(destination, 'installed', {fresh: true});
   if (!surface.ok || surface.digest !== staged.manifest.authoritySurfaceDigest) hold('candidate-surface-unverified');
   const appStage = fs.mkdtempSync(join(staged.stage, 'verified-app-')); fs.chmodSync(appStage, 0o700);
@@ -321,7 +394,7 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
   const app = helper.inspectLocalApp(appRoot, staged.manifest.app.signer, io);
   if (app.inventory !== staged.manifest.app.inventorySha256) hold('app-inventory-mismatch');
   if (readStage(stageId, deps).digest !== staged.digest) hold('stage-changed');
-  freshAdmission(deps, expected, staged.manifest.authoritySurfaceDigest);
+  freshAdmission(deps);
   const attempted = join(staged.stage, 'consumer-attempt.json');
   writeExclusive(attempted, Buffer.from(JSON.stringify({schemaVersion: 1, manifestDigest: staged.digest, state: 'installation-attempted'}) + '\n'));
   fsyncDirectory(staged.stage);
@@ -335,9 +408,9 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
     await verifyInstalledPackage(destination, staged, deps);
     const observed = verifyAuthoritySurfaceAt(destination, 'installed', {fresh: true});
     if (!observed.ok || observed.digest !== staged.manifest.authoritySurfaceDigest) hold('candidate-surface-unverified');
-    requireNewerVersion(deps, staged.manifest);
+    if (updateMode(deps, staged.manifest) !== mode) hold('current-or-stage-changed');
     if (JSON.stringify(io.readCurrentPointer(current)) !== JSON.stringify(previous) || readStage(stageId, deps).digest !== staged.digest) hold('current-or-stage-changed');
-    freshAdmission(deps, expected, staged.manifest.authoritySurfaceDigest);
+    freshAdmission(deps);
   };
   let switched: Pointer | null = null; let created: unknown[] = [];
   try {
@@ -346,8 +419,10 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
       beforeSwitch: candidateReady,
       commitPointer: async () => {
         await candidateReady();
-        switched = io.switchCurrentPointer(current, previous, destination);
-        created = helper.createLocalAliases(aliases, io);
+        if (mode === 'paired') {
+          switched = io.switchCurrentPointer(current, previous, destination);
+          created = helper.createLocalAliases(aliases, io);
+        }
       },
       rollbackPointer: async () => {
         helper.removeCreatedAliases(created, io);
@@ -360,7 +435,11 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
       health: async () => {
         const deadline = io.clock() + 30_000;
         while (io.clock() < deadline) {
-          if (helper.launchedAppIsOwned(io) && await io.fetchStatus('http://127.0.0.1:7777/verse/') === 200) return true;
+          if (helper.launchedAppIsOwned(io) && await io.fetchStatus('http://127.0.0.1:7777/verse/') === 200) {
+            if (JSON.stringify(io.readCurrentPointer(current)) !== JSON.stringify(switched ?? previous)) hold('current-or-stage-changed');
+            await verifyInstalledPackage(destination, staged, deps);
+            return true;
+          }
           await io.sleep(1000);
         }
         return false;
@@ -443,22 +522,24 @@ export async function applyQualifiedDesktopUpdate(stageId: string, deps: Desktop
   let version: string | null = null; let lock: string | null = null;
   try {
     const staged = readStage(stageId, deps); version = staged.manifest.version;
-    const expected = deps.admission(); const reason = admissionReason(expected, staged.manifest.authoritySurfaceDigest);
-    if (reason) return result('blocked', version, reason, reason === 'authority-reapproval-required' || reason === 'grant-unavailable');
-    requireNewerVersion(deps, staged.manifest);
+    freshAdmission(deps);
+    const mode = updateMode(deps, staged.manifest);
     const parent = deps.captureParent(); if (!parent) hold('native-parent-unverified');
     const ackDeadline = deps.now() + 9000;
     if (!await deps.verifyParent(parent, staged.manifest)) hold('native-parent-unverified');
     if (deps.now() >= ackDeadline) hold('native-parent-proof-timeout');
-    freshAdmission(deps, expected, staged.manifest.authoritySurfaceDigest);
+    freshAdmission(deps);
+    if (deps.residentStop && !await deps.residentStop()) hold('resident-stop-failed');
+    if (deps.now() >= ackDeadline) hold('native-parent-proof-timeout');
+    freshAdmission(deps);
     await progress(result('waiting-native-exit', version, null));
     await waitForNativeUpdateParent(parent, deps);
-    freshAdmission(deps, expected, staged.manifest.authoritySurfaceDigest);
+    freshAdmission(deps);
     // Exclusive claim; uncertain/crashed attempt files remain a durable no-replay fence.
     const claim = join(staged.stage, 'consumer-lock'); fs.mkdirSync(claim, {mode: 0o700}); lock = claim; fsyncDirectory(staged.stage);
     try { fs.lstatSync(join(staged.stage, 'consumer-attempt.json')); hold('update-attempt-already-recorded'); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    const phase = await install(stageId, staged, deps, expected);
+    const phase = await install(stageId, staged, deps, mode);
     const observed = result(phase, version, phase === 'applied' ? 'operator-restart-required' : 'installation-recovery-required');
     try {saveConsumerResult(staged.stage, observed, deps);} catch {return result('rollback-held', version, 'result-persistence-unknown');}
     return observed;
@@ -485,6 +566,10 @@ export function createDesktopUpdateDependencies(trust: UpdateTrust | null): Desk
         leaseCount: leases.leases.length, unknownLeases: leases.unknown};
     },
     currentPackageRoot: () => {try {return fs.realpathSync(join(userInfo().homedir, '.local', 'share', 'ashlr', 'current'));} catch {return null;}},
+    residentStop: async () => {
+      try {const service=await import('../daemon/service.js');await service.uninstall({});return true;}
+      catch {return false;}
+    },
     captureParent: () => parentObservation(process.ppid),
     verifyParent: async (parent, manifest) => {
       if (!root) return false;

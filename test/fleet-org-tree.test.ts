@@ -54,7 +54,9 @@ describe('fleetOrgTree', () => {
   });
 
   it('says idle for an empty lane, and unknown when no job source answered', () => {
-    const tree = fleetOrgTree(map([]), { runs: runs([lane('gemini', 0, 1, 0)]) });
+    const tree = fleetOrgTree(fleetOrgMap(null, { observedLanes: ['gemini'], sessions: {
+      generatedAt: AT, sourceState: 'healthy', truncated: false, recent: [], sessions: [],
+    } as unknown as FleetSessionsV1 }), { runs: runs([lane('gemini', 0, 1, 0)]) });
     expect(find(tree, 'gemini')).toMatchObject({ running: 0, target: 1, queued: 0, jobs: [] });
     expect(tree.jobsKnown).toBe(true);
     expect(renderOrgTreeText(tree, NOW)).toMatch(/gemini \(Google, model unknown\): idle\. Idle, nothing queued\. 0 running of 1, 0 queued, usage unknown\n {4}idle/);
@@ -66,7 +68,7 @@ describe('fleetOrgTree', () => {
   it('keeps missing usage and missing counts unknown, never zero', () => {
     const tree = fleetOrgTree(map([session('RQ-A', 'devin')]), { runs: runs([]), usage: usage([{ lane: 'devin', usedPct: null, resetAt: null }]) });
     expect(find(tree, 'devin')).toMatchObject({ running: null, target: null, queued: null, held: null, usage: { usedPct: null, asOf: '2026-11-17T11:00:00Z' } });
-    expect(find(tree, 'grok').usage).toEqual({ usedPct: null, asOf: null, resetAt: null });
+    expect(tree.lanes.find(row => row.lane === 'grok')).toBeUndefined();
     const text = renderOrgTreeText(tree, NOW);
     expect(text).toContain('devin (Cognition, claude-fable-5-2): running. unknown running of unknown, unknown queued, usage unknown');
     expect(text).not.toMatch(/\b0 running|usage 0%/);
@@ -98,9 +100,10 @@ describe('fleetOrgTree', () => {
     expect(build(true)).toBe(build(false));
     const tree = JSON.parse(build(false)) as FleetOrgTree;
     expect(Object.keys(tree)).toEqual(['schema', 'version', 'generatedAt', 'leader', 'planners', 'lanes', 'jobsKnown', 'messages', 'messageWindowMinutes', 'unmappedMessages', 'sources']);
-    expect(tree.lanes.map(row => row.lane)).toEqual(['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor', 'aa-custom', 'zz-custom']);
+    expect(tree.lanes.map(row => row.lane)).toEqual(['aa-custom', 'claude', 'zz-custom']);
     expect(find(tree, 'claude').jobs.map(job => job.id)).toEqual(['RQ-C', 'RQ-A']);
-    expect(tree.messages).toEqual([{ from: 'Leader (CEO)', to: 'claude', count: 3, lastAt: '1970-01-01T00:00:00.001Z' }, { from: 'Leader (CEO)', to: 'devin', count: 1, lastAt: '1970-01-01T00:00:00.002Z' }]);
+    expect(tree.messages).toEqual([{ from: 'Leader (CEO)', to: 'claude', count: 3, lastAt: '1970-01-01T00:00:00.001Z' }]);
+    expect(tree.unmappedMessages).toBe(1);
   });
 });
 
@@ -110,8 +113,8 @@ describe('fleetOrgTree health and message times', () => {
     const tree = fleetOrgTree(map([session('RQ-A', 'claude')], edges), { runs: runs([lane('claude', 1, 8, 0)]),
       laneHealth: [{ lane: 'claude', health: { state: 'starved', reason: 'starved: 5 free slots', number: 5 } }, { lane: 'devin' }] });
     expect(find(tree, 'claude').health).toEqual({ state: 'starved', reason: 'starved: 5 free slots', number: 5 });
-    expect(find(tree, 'devin').health).toBeNull();
-    expect(find(tree, 'zai').health).toBeNull();
+    expect(tree.lanes.find(row => row.lane === 'devin')).toBeUndefined();
+    expect(tree.lanes.find(row => row.lane === 'zai')).toBeUndefined();
     expect(fleetOrgTree(map([]), {}).lanes.every(row => row.health === null)).toBe(true);
     expect(tree.messages).toEqual([{ from: 'Leader (CEO)', to: 'claude', count: 2, lastAt: '2026-11-17T11:55:00.000Z' }]);
   });

@@ -78,7 +78,7 @@ describe('personal Codex measured quota recovery', () => {
     const recovered = await getResourceSnapshot(cfg);
     const state = recovered.backends.find(b => b.backend === 'codex');
     const report = buildCodexResourceReport(collectCodexSessionUsages({
-      env: { CODEX_HOME: home, CODEX_HOME_ALT: home },
+      env: { CODEX_HOME: join(root, '.codex'), CODEX_HOME_ALT: home },
     }), [], Date.now());
     expect(state).toMatchObject({ availability: 'open', usedPct: report.resources[0]?.weekly?.usedPct, backoffUntilMs: null });
     expect(state?.usedPct).toBe(30.5);

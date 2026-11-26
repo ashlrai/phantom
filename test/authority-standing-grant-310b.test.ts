@@ -306,8 +306,21 @@ describe('drafts', () => {
   it('describes the scope in plain lines (the Touch ID sheet)', () => {
     const lines = describeGrantScope(buildDefaultGrantPayload(draftInput));
     expect(lines[0]).toMatch(/^Grant #7 /);
-    expect(lines.some((l) => l.includes('seat claude: on, keep 0% for Mason, idle while 5 h > 100%'))).toBe(true);
+    expect(lines.some((l) => l.includes('seat claude: on, keep 0% for the owner, idle while 5 h > 100%'))).toBe(true);
     expect(lines.some((l) => l.includes('stage 1 shadow') && l.includes('propose only'))).toBe(true);
+  });
+
+  it('does not invent seats or add newly connected seats during re-approval', () => {
+    expect(buildDefaultGrantPayload({ ...draftInput, seats: [] }).spend.seats).toEqual({});
+    const current = buildDefaultGrantPayload({ ...draftInput, seats: [
+      { seatId: 'codex-cmp', engine: 'codex' }, { seatId: 'codex-personal', engine: 'codex' },
+    ] });
+    const next = buildReapprovalGrantPayload(current, 0, { ...draftInput, seats: [
+      { seatId: 'codex-personal', engine: 'codex' }, { seatId: 'codex-other', engine: 'codex' },
+    ] });
+    expect(next.spend.seats).toEqual({ 'codex-personal': current.spend.seats['codex-personal'] });
+    const withDevin = buildDefaultGrantPayload({ ...draftInput, devin: true });
+    expect(describeGrantScope(withDevin).find(line => line.includes('seat devin:'))).toContain('reserve for the owner');
   });
 });
 

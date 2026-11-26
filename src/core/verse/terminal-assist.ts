@@ -223,7 +223,7 @@ async function defaultGrok(cfg: AshlrConfig): Promise<AssistModelCall | null> {
   if (!key) return null;
   const baseUrl = (api.baseUrlEnv ? process.env[api.baseUrlEnv]?.trim() : '') || api.defaultBaseUrl;
   if (!baseUrl) return null;
-  const model = api.defaultModel ?? 'grok-4';
+  const model = api.defaultModel ?? 'grok-4.7';
   const client = buildOpenAICompatibleClient(baseUrl, key, model, false);
   return async (messages, signal) => {
     const res = await client.chat(messages, undefined, signal, { maxOutputTokens: ASSIST_MAX_OUTPUT_TOKENS });

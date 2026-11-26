@@ -98,7 +98,7 @@ describe('normalizeUiAppearance', () => {
       accentH: 370, accentS: 250, accentL: 99,
       density: 'compact', uiScale: 'large', displayFont: 'mono', radius: 'soft', layout: 'wide', motion: 'reduce', theme: 'dark',
     })).toEqual({
-      theme: 'dark', accentH: 10, accentS: 100, accentL: UI_ACCENT_L_MAX,
+      brand: 'p', theme: 'dark', accentH: 10, accentS: 100, accentL: UI_ACCENT_L_MAX,
       density: 'compact', uiScale: 'large', displayFont: 'mono', radius: 'soft', layout: 'wide', motion: 'reduce',
     });
     expect(normalizeUiAppearance(base, { accentH: -10, accentS: -5, accentL: 10 }))

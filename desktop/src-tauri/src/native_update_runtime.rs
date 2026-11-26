@@ -22,6 +22,22 @@ mod platform {
 
     const ACK_LIMIT: usize = 64 * 1024;
     const EXPECTED_CURRENT: &str = ".local/share/ashlr/current";
+    const PREPARE_BUDGET: Duration = Duration::from_secs(600);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum HostVerb {
+        Inspect,
+        Prepare,
+        Apply,
+    }
+    impl HostVerb {
+        fn as_str(self) -> &'static str {
+            match self {
+                Self::Inspect => "inspect",
+                Self::Prepare => "prepare",
+                Self::Apply => "apply",
+            }
+        }
+    }
     #[derive(Clone)]
     struct Stage {
         id: String,
@@ -42,6 +58,12 @@ mod platform {
         m.lock().unwrap_or_else(|p| p.into_inner())
     }
     fn publish(app: &AppHandle, inner: &Inner) {
+        if let Some(home) = crate::fleet_ops::home_dir() {
+            let _ = policy::publish_status(&home, &inner.state);
+        }
+        publish_ui(app, inner);
+    }
+    fn publish_ui(app: &AppHandle, inner: &Inner) {
         let _ = app.emit(policy::STATE_EVENT, &inner.state);
         if let Some(window) = app.get_webview_window(crate::MAIN_WINDOW_LABEL) {
             let _ = window.eval(policy::state_script(&inner.state));
@@ -122,14 +144,14 @@ mod platform {
             }
             i.state.bytes_received = bytes.len() as u64;
             if last_report.elapsed() >= Duration::from_millis(200) {
-                publish(app, &i);
+                publish_ui(app, &i);
                 last_report = Instant::now();
             }
         }
-        publish(app, &lock(&updates.0));
+        publish_ui(app, &lock(&updates.0));
         Ok(bytes)
     }
-    fn current_cli(home: &std::path::Path) -> Result<PathBuf, &'static str> {
+    pub(crate) fn current_cli(home: &std::path::Path) -> Result<PathBuf, &'static str> {
         let pointer = home.join(EXPECTED_CURRENT);
         let named = fs::symlink_metadata(&pointer).map_err(|_| "host-unavailable")?;
         if !named.file_type().is_symlink() || named.uid() != unsafe { libc::geteuid() } {
@@ -194,7 +216,7 @@ mod platform {
     }
     fn launch(
         stage: &Stage,
-        apply: bool,
+        verb: HostVerb,
     ) -> Result<
         (
             ashlr_desktop::child_reaper::ReapOnDrop,
@@ -206,12 +228,12 @@ mod platform {
             return Err("host-unavailable");
         }
         let home = crate::fleet_ops::home_dir().ok_or("host-unavailable")?;
-        launch_at(&home, stage, apply)
+        launch_at(&home, stage, verb)
     }
     fn launch_at(
         home: &std::path::Path,
         stage: &Stage,
-        apply: bool,
+        verb: HostVerb,
     ) -> Result<
         (
             ashlr_desktop::child_reaper::ReapOnDrop,
@@ -226,7 +248,7 @@ mod platform {
         let mut cmd = Command::new(&bin);
         cmd.args([
             "desktop-update",
-            if apply { "apply" } else { "inspect" },
+            verb.as_str(),
             "--stage",
             &stage.id,
             "--json",
@@ -322,9 +344,76 @@ mod platform {
             Phase::AdoptionHeld
         }
     }
+    fn should_request_install_exit(inner: &Inner) -> bool {
+        inner.state.enabled
+            && inner.state.phase == Phase::WaitingForAppQuit
+            && inner.stage.is_some()
+            && !inner.handoff
+    }
     fn inspect(stage: &Stage) -> Result<policy::HostResult, &'static str> {
-        let (child, pipe) = launch(stage, false)?;
+        let (child, pipe) = launch(stage, HostVerb::Inspect)?;
         first_result(child, pipe, stage, Duration::from_secs(10))
+    }
+    fn prepare_then_inspect(
+        mut call: impl FnMut(HostVerb) -> Result<policy::HostResult, &'static str>,
+    ) -> Result<(bool, policy::HostResult), &'static str> {
+        let prepared = call(HostVerb::Prepare)?;
+        if prepared.state == "blocked" {
+            return Ok((false, prepared));
+        }
+        if !policy::ready_to_handoff(&prepared) {
+            return Err("host-status-unavailable");
+        }
+        Ok((true, call(HostVerb::Inspect)?))
+    }
+    async fn check_staged_candidate(
+        app: &AppHandle,
+        updates: &Updates,
+        epoch: u64,
+        stage: Stage,
+        app_bytes: u64,
+    ) -> Result<(), &'static str> {
+        {
+            let mut i = lock(&updates.0);
+            if i.epoch != epoch || !i.state.enabled {
+                return Err("disabled");
+            }
+            i.stage = None;
+            i.state.version = Some(stage.version.clone());
+            i.state.bytes_total = Some(app_bytes);
+            i.state.bytes_received = app_bytes;
+            i.state.phase = Phase::Staged;
+            publish(app, &i);
+        }
+        let worker = stage.clone();
+        let (prepared, checked) = tauri::async_runtime::spawn_blocking(move || {
+            prepare_then_inspect(|verb| {
+                if verb == HostVerb::Inspect {
+                    return inspect(&worker);
+                }
+                let (child, pipe) = launch(&worker, verb)?;
+                first_result(child, pipe, &worker, PREPARE_BUDGET)
+            })
+        })
+        .await
+        .map_err(|_| "host-status-unavailable")??;
+        let mut i = lock(&updates.0);
+        if i.epoch != epoch || !i.state.enabled {
+            return Err("disabled");
+        }
+        i.stage = prepared.then_some(stage);
+        i.state.phase = inspected_phase(&checked);
+        i.state.reason = checked.reason;
+        publish(app, &i);
+        Ok(())
+    }
+    fn retry_idle_stage(inner: &Inner, elapsed: Duration) -> bool {
+        inner.state.enabled
+            && !inner.checking
+            && !inner.handoff
+            && inner.stage.is_some()
+            && inner.state.phase == Phase::WaitingForIdle
+            && elapsed >= Duration::from_secs(30)
     }
     async fn check(app: AppHandle, updates: Updates, epoch: u64) {
         let result = async {
@@ -354,29 +443,31 @@ mod platform {
                         version: m.version().to_owned(),
                         path_env: path_env.clone(),
                     };
-                    let st = stage.clone();
-                    let checked = tauri::async_runtime::spawn_blocking(move || inspect(&st))
-                        .await
-                        .map_err(|_| "host-status-unavailable")??;
-                    if version == current && checked.state == "applied" {
-                        {
-                            let mut i = lock(&updates.0);
-                            if i.epoch != epoch || !i.state.enabled {
-                                return Err("disabled");
-                            }
-                            i.state.version = Some(stage.version);
-                            i.state.bytes_total = Some(m.app_bytes());
-                            i.state.bytes_received = m.app_bytes();
-                        }
-                        change(
-                            &app,
-                            &updates,
-                            epoch,
-                            Phase::Installed,
-                            checked.reason.as_deref(),
-                        );
-                    } else if version > current {
+                    if version > current {
                         remembered = Some((stage, m));
+                    } else {
+                        let st = stage.clone();
+                        let checked = tauri::async_runtime::spawn_blocking(move || inspect(&st))
+                            .await
+                            .map_err(|_| "host-status-unavailable")??;
+                        if checked.state == "applied" {
+                            {
+                                let mut i = lock(&updates.0);
+                                if i.epoch != epoch || !i.state.enabled {
+                                    return Err("disabled");
+                                }
+                                i.state.version = Some(stage.version);
+                                i.state.bytes_total = Some(m.app_bytes());
+                                i.state.bytes_received = m.app_bytes();
+                            }
+                            change(
+                                &app,
+                                &updates,
+                                epoch,
+                                Phase::Installed,
+                                checked.reason.as_deref(),
+                            );
+                        }
                     }
                 }
                 // Old/equal unattempted stages are history, never a downgrade or a discovery fence.
@@ -412,23 +503,8 @@ mod platform {
                     if manifest.digest != prior.digest {
                         return Err("signed-release-conflict");
                     }
-                    let st = stage.clone();
-                    let checked = tauri::async_runtime::spawn_blocking(move || inspect(&st))
-                        .await
-                        .map_err(|_| "host-status-unavailable")??;
-                    {
-                        let mut i = lock(&updates.0);
-                        if i.epoch != epoch || !i.state.enabled {
-                            return Err("disabled");
-                        }
-                        i.state.version = Some(stage.version.clone());
-                        i.state.bytes_total = Some(prior.app_bytes());
-                        i.state.bytes_received = prior.app_bytes();
-                        i.stage = Some(stage);
-                    }
-                    let phase = inspected_phase(&checked);
-                    change(&app, &updates, epoch, phase, checked.reason.as_deref());
-                    return Ok(());
+                    return check_staged_candidate(&app, &updates, epoch, stage, prior.app_bytes())
+                        .await;
                 }
             }
             {
@@ -467,37 +543,37 @@ mod platform {
                 version: manifest.version().to_owned(),
                 path_env,
             };
-            {
-                let mut i = lock(&updates.0);
-                if i.epoch != epoch || !i.state.enabled {
-                    return Err("disabled");
-                }
-                i.stage = Some(stage.clone());
-            }
-            change(&app, &updates, epoch, Phase::Staged, None);
-            let checked = tauri::async_runtime::spawn_blocking(move || inspect(&stage))
-                .await
-                .map_err(|_| "host-status-unavailable")??;
-            let phase = inspected_phase(&checked);
-            change(&app, &updates, epoch, phase, checked.reason.as_deref());
-            Ok(())
+            check_staged_candidate(&app, &updates, epoch, stage, manifest.app_bytes()).await
         }
         .await;
-        let mut i = lock(&updates.0);
-        if i.epoch == epoch {
+        let exit = {
+            let mut i = lock(&updates.0);
+            if i.epoch != epoch {
+                return;
+            }
             i.checking = false;
             i.abort = None;
-        }
-        if i.epoch == epoch && i.state.enabled {
-            if let Err(reason) = result {
-                i.state.phase = if reason == "uncommissioned-key" {
-                    Phase::Uncommissioned
-                } else {
-                    Phase::Failed
-                };
-                i.state.reason = Some(reason.to_owned());
+            if i.state.enabled {
+                if let Err(reason) = result {
+                    i.state.phase = if reason == "uncommissioned-key" {
+                        Phase::Uncommissioned
+                    } else {
+                        Phase::Failed
+                    };
+                    i.state.reason = Some(reason.to_owned());
+                }
+                publish(&app, &i);
             }
-            publish(&app, &i);
+            should_request_install_exit(&i)
+        };
+        if exit {
+            let handle = app.clone();
+            if tauri::async_runtime::spawn_blocking(move || handoff_on_quit(&handle, Some(epoch)))
+                .await
+                .unwrap_or(false)
+            {
+                app.exit(0);
+            }
         }
     }
     pub fn start(app: &AppHandle, enabled: bool) {
@@ -541,7 +617,10 @@ mod platform {
                     break;
                 }
                 let now = wall();
-                if check_due(checked, polled, now) {
+                let retry_stage = handle.try_state::<Updates>().is_some_and(|updates| {
+                    retry_idle_stage(&lock(&updates.0), now.saturating_sub(checked))
+                });
+                if retry_stage || check_due(checked, polled, now) {
                     refresh(&handle);
                     checked = now;
                 }
@@ -591,7 +670,7 @@ mod platform {
         };
         let mut i = lock(&updates.0);
         publish(app, &i);
-        if !i.state.enabled || i.checking {
+        if !i.state.enabled || i.checking || i.handoff {
             return;
         }
         i.checking = true;
@@ -628,12 +707,16 @@ mod platform {
     }
     /// One fresh idle admission and parent ACK share ≤10 seconds; normal Quit always proceeds.
     pub fn normal_quit(app: &AppHandle) {
+        handoff_on_quit(app, None);
+    }
+    fn handoff_on_quit(app: &AppHandle, automatic_epoch: Option<u64>) -> bool {
         let Some(updates) = app.try_state::<Updates>() else {
-            return;
+            return false;
         };
         let stage = {
             let mut i = lock(&updates.0);
-            if !i.state.enabled
+            if automatic_epoch.is_some_and(|epoch| epoch != i.epoch || !should_request_install_exit(&i))
+                || !i.state.enabled
                 || i.handoff
                 || !matches!(
                     i.state.phase,
@@ -641,16 +724,21 @@ mod platform {
                 )
                 || i.state.reason.as_deref() == Some("preference-save-failed")
             {
-                return;
+                return false;
             }
+            let Some(stage) = i.stage.clone() else { return false };
             i.handoff = true;
-            i.stage.clone()
+            stage
         };
-        let Some(stage) = stage else { return };
         let result = quit_sequence(
             |apply, budget| {
                 let started = Instant::now();
-                let (child, pipe) = launch(&stage, apply)?;
+                let verb = if apply {
+                    HostVerb::Apply
+                } else {
+                    HostVerb::Inspect
+                };
+                let (child, pipe) = launch(&stage, verb)?;
                 first_result(
                     child,
                     pipe,
@@ -661,6 +749,11 @@ mod platform {
             Duration::from_secs(10),
         );
         let mut i = lock(&updates.0);
+        if automatic_epoch.is_some_and(|epoch| epoch != i.epoch || !i.state.enabled) {
+            return false;
+        }
+        let acknowledged = matches!(&result, Ok(r) if r.state == "waiting-native-exit");
+        i.handoff = acknowledged;
         match result {
             Ok(r) if r.state == "waiting-native-exit" => {
                 i.state.phase = Phase::Installing;
@@ -676,6 +769,7 @@ mod platform {
             }
         }
         publish(app, &i);
+        acknowledged
     }
     #[cfg(test)]
     mod tests {
@@ -692,6 +786,31 @@ mod platform {
             ));
             fs::DirBuilder::new().mode(0o700).create(&home).unwrap();
             fs::canonicalize(home).unwrap()
+        }
+        #[test]
+        fn retries_only_an_idle_wait_with_a_stage_and_no_inflight_handoff() {
+            let mut i = Inner {
+                state: UpdateState {
+                    phase: Phase::WaitingForIdle,
+                    ..Default::default()
+                },
+                epoch: 0,
+                checking: false,
+                stage: Some(Stage {
+                    id: "a".repeat(32),
+                    version: "3.30.76".into(),
+                    path_env: "/usr/bin:/bin".into(),
+                }),
+                handoff: false,
+                abort: None,
+            };
+            assert!(!retry_idle_stage(&i, Duration::from_secs(29)));
+            assert!(retry_idle_stage(&i, Duration::from_secs(30)));
+            i.handoff = true;
+            assert!(!retry_idle_stage(&i, Duration::from_secs(30)));
+            i.handoff = false;
+            i.state.phase = Phase::AdoptionHeld;
+            assert!(!retry_idle_stage(&i, Duration::from_secs(30)));
         }
         #[test]
         fn preference_cancels_old_future_and_cannot_fabricate_a_stage() {
@@ -727,6 +846,14 @@ mod platform {
             preference_transition(&mut i, false);
             preference_transition(&mut i, true);
             assert_eq!(i.state.phase, Phase::Staged);
+            assert!(!should_request_install_exit(&i));
+            i.state.phase = Phase::WaitingForAppQuit;
+            assert!(should_request_install_exit(&i));
+            i.handoff = true;
+            assert!(!should_request_install_exit(&i));
+            i.handoff = false;
+            i.stage = None;
+            assert!(!should_request_install_exit(&i));
         }
         #[test]
         fn idle_and_authority_holds_are_distinct() {
@@ -751,6 +878,37 @@ mod platform {
                 reason: reason.map(str::to_owned),
                 requires_reapproval: reason == Some("grant-unavailable"),
             }
+        }
+        #[test]
+        fn staged_pair_requires_prepare_before_idle_inspection() {
+            let mut calls = Vec::new();
+            let (prepared, held) = prepare_then_inspect(|verb| {
+                calls.push(verb);
+                Ok(match verb {
+                    HostVerb::Prepare => result("ready", None),
+                    HostVerb::Inspect => result("blocked", Some("work-active-or-unknown")),
+                    HostVerb::Apply => panic!("staging cannot apply"),
+                })
+            })
+            .unwrap();
+            assert_eq!(calls, [HostVerb::Prepare, HostVerb::Inspect]);
+            assert!(prepared);
+            assert_eq!(inspected_phase(&held), Phase::WaitingForIdle);
+        }
+        #[test]
+        fn unprepared_pair_cannot_reach_idle_inspection() {
+            let (prepared, held) = prepare_then_inspect(|verb| {
+                assert_eq!(verb, HostVerb::Prepare);
+                Ok(result("blocked", Some("artifact-mismatch")))
+            })
+            .unwrap();
+            assert!(!prepared);
+            assert_eq!(held.reason.as_deref(), Some("artifact-mismatch"));
+            assert!(prepare_then_inspect(|verb| {
+                assert_eq!(verb, HostVerb::Prepare);
+                Ok(result("waiting-native-exit", None))
+            })
+            .is_err());
         }
         #[test]
         fn quit_rechecks_idle_once_and_only_then_requests_parent_ack() {
@@ -867,7 +1025,7 @@ mod platform {
                 version: "3.25.2".into(),
                 path_env: format!("{}:/usr/bin:/bin", node.parent().unwrap().display()),
             };
-            let (child, pipe) = launch_at(&home, &stage, false).unwrap();
+            let (child, pipe) = launch_at(&home, &stage, HostVerb::Inspect).unwrap();
             assert!(policy::ready_to_handoff(
                 &first_result(child, pipe, &stage, Duration::from_secs(2)).unwrap()
             ));
@@ -899,6 +1057,8 @@ mod platform {
         }
     }
 }
+#[cfg(target_os = "macos")]
+pub(crate) use platform::current_cli;
 #[cfg(target_os = "macos")]
 pub use platform::{normal_quit, preference, start};
 #[cfg(not(target_os = "macos"))]

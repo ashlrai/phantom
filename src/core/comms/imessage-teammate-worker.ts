@@ -35,7 +35,7 @@ const MAX_BYTES = 1024 * 1024;
 const CLAIM_MS = 120000;
 const DAY_MS = 86400000;
 const REPOS = ['phantom', 'phantom-secrets', 'locus', 'lexicon', 'ashlr-md', 'ashlr-stack', 'ashlr-plugin'];
-const LANES = ['codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local', 'omlx'];
+const LANES = ['codex-personal', 'claude', 'devin', 'claude-api', 'codex-local', 'omlx'];
 
 // Node has no built-in flock. This fixed program shares dispatchd's POSIX lock;
 // all paths, state and message-derived bytes arrive as data, never shell code.

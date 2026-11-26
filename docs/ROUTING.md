@@ -701,14 +701,15 @@ fill-only when no jobs row recorded a verdict: any recorded check
 failure — required or unrelated — reads `false` even beside a later
 `checks_passed` boundary or a merge (a rerun or a new head got it
 green, which is not a first pass); with zero recorded failures a
-`checks_passed` boundary or a recorded merge beside observed check
-activity reads `true`; pending-only observations, no check rows at
-all and unmerged PRs without the boundary stay `null` — unknown,
-never guessed from absent evidence. The read degrades
+`checks_passed` boundary reads `true`. Individual check observations
+leave this fallback unknown (`null`) even when the PR merged. The read degrades
 independently like the other side ledgers: the report's
 `merge_events_state` mirrors the jobs `state` vocabulary and
 `merge_events_truncated` marks a cut merge-events tail, in which case
-joined evidence covers only the newest bytes; anything but `read`
+joined evidence covers only the newest bytes. A cut tail can establish
+a recorded failure, but a green boundary alone leaves first-pass CI
+unknown because earlier failures may be outside the window. An explicit
+jobs-ledger verdict still takes precedence. Anything but `read`
 leaves every `merge_queue` `null` — unknown, never a guessed queue
 history. `cost_usd`
 is an explicit `cost_usd`/`usd`/`cost` field on a jobs row when one is
@@ -728,7 +729,12 @@ daemon's reward-sync feed and supervising bridges append one `v:1` row
 per terminal job (`jobId`, resolved `merged` verdict,
 `dispatchedAt`/`mergedAt`/`recordedAt` stamps, derived
 `timeToMergeMs`, `ciWallMs`, and a `cost` block carrying the metered
-pool readings). `foldRewardSignals` collapses the bounded tail to
+pool readings). The daemon records `ciWallMs` only when the job has one
+unambiguous CI start and completion pair, in order and within the dispatch
+and resolution timestamps used for that reward. A merge uses its recorded
+merge time even if its ledger receipt arrived later. Out-of-window timing
+stays unknown, and existing reward rows retain their original values.
+`foldRewardSignals` collapses the bounded tail to
 each job's recorded evidence and the read fills only what the jobs
 fold left null — `merged`, `ttm_s` (only while the standing verdict is
 a merge, the same gate the jobs-ledger dialect applies), `ci_wall_s`,

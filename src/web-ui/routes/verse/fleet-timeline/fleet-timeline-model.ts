@@ -71,10 +71,10 @@ export function masonLane(events: BusEvent[], from: number, to: number): Swimlan
   const items = events.flatMap((event): SwimlaneItem[] => {
     const at = Date.parse(event.at);
     if (event.kind !== 'inbox' || !Number.isFinite(at) || at < from || at > to) return [];
-    const label = event.text.trim().replace(/^INBOX\b\s*[:-]?\s*/i, '').replace(/^Mason,\s*/i, '').trim().slice(0, 80);
+    const label = event.text.trim().replace(/^INBOX\b\s*[:-]?\s*/i, '').replace(/^(?:Mason|Operator),\s*/i, '').trim().slice(0, 80);
     return [{ id: `inbox:${event.at}`, label, detail: label, start: at, end: at, status: 'interjection' }];
   }).sort((a, b) => a.start - b.start);
-  return items.length ? { id: 'mason', label: 'Mason', items } : null;
+  return items.length ? { id: 'mason', label: 'Operator', items } : null;
 }
 
 export function mergesLane(runs: FleetRuns, from: number, to: number): { lane: SwimlaneLane | null; unplaced: number } {
@@ -102,12 +102,13 @@ function heldStampText(ms: number): string {
   return `${part('month')} ${part('day')} ${part('hour')}:${part('minute')}`;
 }
 
-/** Lane header for the timeline: `codex-cmp 0/30`, plus `· held: <reason>`
+/** Lane header for the timeline: `codex-personal 0/30`, plus `· held: <reason>`
  *  when the lane is held so an empty lane reads as held, not idle. */
 export function laneLabel(
   lane: { lane: string; running: number; target: number; held: boolean; heldReason: string | null },
   nowMs: number,
 ): string {
+  if (lane.lane === 'codex-cmp') return 'Codex CMP (retired)';
   let label = `${lane.lane} ${lane.running}/${lane.target}`;
   if (lane.held) {
     const parsed = parseHeldReason(lane.heldReason);

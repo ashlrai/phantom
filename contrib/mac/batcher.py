@@ -31,7 +31,7 @@ TUNING_SCHEMA = "dispatchd.batch-tuning.v1"
 BATCH_PREFIX = "RQ-BATCH-"
 # Subscription lanes only (RQ-BATCH-SESSIONS-2: no new spend): codex-local is a 6-session local model and
 # claude-api spends API credits, so neither takes bundles.
-BATCH_LANES = ("codex-cmp", "codex-personal", "claude", "devin")
+BATCH_LANES = ("codex-personal", "claude", "devin")
 # Release, desktop, main-repair and PR-maintenance work stays one job per session: each targets a
 # specific branch or PR and their priority buckets must not wait for unrelated batch-mates.
 SOLO_PREFIXES = ("RQ-FIX-MAIN-", "RQ-REL-", "RQ-DESK-", "RQ-DRAIN-PHX-REB-", BATCH_PREFIX)

@@ -32,6 +32,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import '../src/core/fabric/gateway.js';
 
 // ---------------------------------------------------------------------------
 // Environment isolation + module reset between tests to avoid cache bleed
@@ -99,7 +100,7 @@ function mockCodexSession(primary: CodexSessionWindow | null, secondary: CodexSe
   vi.doMock('../src/core/fleet/codex-session-usage.js', async (importOriginal) => ({
     ...await importOriginal<typeof import('../src/core/fleet/codex-session-usage.js')>(),
     collectCodexSessionUsages: vi.fn((options) => {
-      expect(options.env.CODEX_HOME).toBe(join(tmpHome, '.codex-2'));
+      expect(options.env.CODEX_HOME).toBe(join(tmpHome, '.codex'));
       expect(options.env.CODEX_HOME_ALT).toBe(join(tmpHome, '.codex-2'));
       return primary ? [usage] : [];
     }),
@@ -480,6 +481,19 @@ describe('M250 ResourceMonitor — Codex delegation', () => {
     expect(state.resetsAt).toBeGreaterThan(0);
     expect(state.costPerMTokenOut).toBe(0);
   });
+
+  it.each(process.platform === 'win32' ? ['.codex', '.CODEX', '.codex.'] : ['.codex'])(
+    'refuses to read the retired Codex home %s',
+    async (dir) => {
+      process.env['CODEX_HOME_ALT'] = join(tmpHome, dir);
+      mockCodexSession({ usedPercent: 45, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 });
+      const { collectCodexSessionUsages } = await import('../src/core/fleet/codex-session-usage.js');
+      const { getBackendResourceState } = await import('../src/core/fabric/resource-monitor.js');
+
+      expect((await getBackendResourceState('codex', baseCfg())).availability).toBe('unknown');
+      expect(collectCodexSessionUsages).not.toHaveBeenCalled();
+    },
+  );
 
   it('maps usedPercent=95 → near', async () => {
     mockCodexSession({ usedPercent: 95, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 1800 });
@@ -1315,11 +1329,11 @@ describe('M252 Gateway — V3.10 autonomy subscription gate', () => {
     expect(decision.trace.some((t) => t.stage === 'subscriptionThrottle')).toBe(true);
   });
 
-  it('balanced budget: a fresh claude reading above the 70% five-hour ceiling is throttled', async () => {
+  it('allows fresh Claude headroom by default and enforces an explicitly configured 70% five-hour ceiling', async () => {
     vi.doMock('../src/core/observability/codex-source.js', () => ({
       readCodexRateLimits: vi.fn().mockReturnValue(null),
     }));
-    const { writeCapacitySnapshot } = await import('../src/core/routing/budget-store.js');
+    const { updateBudgetPolicy, writeCapacitySnapshot } = await import('../src/core/routing/budget-store.js');
     const now = new Date();
     writeCapacitySnapshot([{
       seatId: 'claude',
@@ -1336,6 +1350,8 @@ describe('M252 Gateway — V3.10 autonomy subscription gate', () => {
       observedAt: now.toISOString(),
       spentTodayUsd: null,
     }], now);
+    expect((await decideHardItemOn('claude')).reason).toMatch(/^frontier:/);
+    updateBudgetPolicy({ seatId: 'claude', policy: { maxSessionWindowPercent: 70 } });
     const decision = await decideHardItemOn('claude');
     expect(decision.reason).toMatch(/^throttled: subscription window/);
     expect(decision.reason).toContain('balanced budget');

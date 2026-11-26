@@ -3,8 +3,8 @@
  * from the dispatcher's published files under the runs root — the one read
  * path `phm fleet unfed` and the fleet MCP `fleet_unfed` tool both serve,
  * so the CLI and MCP can never disagree about what a lane's utilization or
- * unfed verdict means. Read-only: bounded file reads only — no writes, no
- * child processes, no network. A missing or unreadable optional input
+ * unfed verdict means. Read-only: any host capacity lookup is the same
+ * bounded local query used by the resource planner. A missing optional input
  * degrades to "reasons unknown", never to a wrong answer; an absent or
  * unreadable queue/status.json throws, and the caller decides how to
  * report the failure.
@@ -12,6 +12,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readTail, runsRoot } from '../metrics/loop-collect.js';
+import { readFleetResourcePlan } from '../usage/resource-live/fleet-plan.js';
 import {
   currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides,
   foldRouteRejections, foldUnfedHistory, type UnfedReport,
@@ -55,6 +56,7 @@ export interface UnfedReadOptions {
   windowHours?: number;
   /** Evaluation clock; defaults to Date.now. */
   now?: () => number;
+  readCapacity?: typeof readFleetResourcePlan;
 }
 
 /**
@@ -79,17 +81,26 @@ export async function readUnfedReport(options: UnfedReadOptions = {}): Promise<U
     readOptional(join(root, 'HOLD')),
     readOptional(join(root, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES),
   ]);
-  const history = (await readTail(join(root, 'metrics', 'work-market.jsonl'), HISTORY_TAIL_BYTES))?.text ?? null;
-  const jobsPath = join(root, 'metrics', 'jobs.jsonl');
-  const jobsText = (await readTail(jobsPath, CLAIMS_TAIL_BYTES))?.text ?? null;
-  // Stat after the tail read: the append-only ledger only grows, so a size
-  // over the bound here means the folded claims are a lower bound.
-  const jobsInfo = await stat(jobsPath).catch(() => null);
   const nowMs = (options.now ?? Date.now)();
+  const [marketRead, jobsRead, capacity] = await Promise.all([
+    readTail(join(root, 'metrics', 'work-market.jsonl'), HISTORY_TAIL_BYTES),
+    readTail(join(root, 'metrics', 'jobs.jsonl'), CLAIMS_TAIL_BYTES),
+    (options.readCapacity ?? readFleetResourcePlan)(root, nowMs).catch(() => null),
+  ]);
+  const history = marketRead?.text ?? null;
+  const jobsText = jobsRead?.text ?? null;
   const window = options.windowHours ?? UNFED_DEFAULT_WINDOW_HOURS;
-  const jobsTruncated = jobsInfo !== null && jobsInfo.isFile() && jobsInfo.size > CLAIMS_TAIL_BYTES;
+  const jobsTruncated = jobsRead?.truncated ?? false;
+  const current = currentUnfed(status, ready, { slots, models, budget, adaptive, hold, routerQueue, nowMs });
   return {
-    ...currentUnfed(status, ready, { slots, models, budget, adaptive, hold, routerQueue, nowMs }),
+    ...current,
+    resourcePlan: capacity?.lanes.map(({ lane, running, target_concurrency, additional_slots }) => {
+      const readyHere = current.resources.find(row => row.lane === lane)?.readyHinted;
+      return { lane, running, target: target_concurrency,
+        unfedSlots: !current.statusFresh || additional_slots === null || readyHere === undefined ? null
+          : Math.min(Math.max(0, additional_slots - readyHere), Math.max(0, current.waiting - readyHere)) };
+    }) ?? null,
+    marketTruncated: marketRead?.truncated ?? false,
     history: foldUnfedHistory(history, nowMs, window),
     overrides: foldMarketOverrides(history, nowMs, window),
     claims: foldClaimOverrides(jobsText, nowMs, window, jobsTruncated),

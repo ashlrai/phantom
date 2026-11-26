@@ -309,14 +309,14 @@ interface ParsedTsv {
   invalid: number;
   /** Dispatcher rows recognized but carrying no lane hint — open market rows the dispatcher may place on any lane. */
   unhinted: number;
-  /** The validated job id and repo of each lane-open row, for supply classification without a lane. */
-  unhintedRows: { id: string; repo: string }[];
+  /** The validated job id, repo and tier of each lane-open row. */
+  unhintedRows: { id: string; repo: string; tier: string }[];
 }
 
 /** A recognized dispatcher row: attributed to a lane, lane-open, or market-invalid. */
 type DispatcherRow =
   | { readonly kind: 'row'; readonly row: FleetLaneQueueRow }
-  | { readonly kind: 'open'; readonly id: string; readonly repo: string }
+  | { readonly kind: 'open'; readonly id: string; readonly repo: string; readonly tier: string }
   | { readonly kind: 'drop' }
   | null;
 
@@ -369,7 +369,7 @@ function dispatcherQueueRow(cells: string[]): DispatcherRow {
   if (spec === 'invalid') return { kind: 'drop' };
   const resolved = resolveReadyMarketRow(cells, spec ?? {});
   if (resolved === null) return { kind: 'drop' };
-  if (resolved.hint === null) return { kind: 'open', id, repo };
+  if (resolved.hint === null) return { kind: 'open', id, repo, tier };
   return { kind: 'row', row: { id, status: 'READY', pool: resolved.hint, tier, repo, title: prompt } };
 }
 
@@ -383,7 +383,7 @@ export function parseReadyTsv(text: string): ParsedTsv {
   let dropped = 0;
   let invalid = 0;
   let unhinted = 0;
-  const unhintedRows: { id: string; repo: string }[] = [];
+  const unhintedRows: ParsedTsv['unhintedRows'] = [];
   let header: (keyof FleetLaneQueueRow)[] | null = null;
 
   const lines = text.split('\n');
@@ -415,7 +415,10 @@ export function parseReadyTsv(text: string): ParsedTsv {
     if (header === null) {
       const dialect = dispatcherQueueRow(cells);
       if (dialect !== null) {
-        if (dialect.kind === 'open') { unhinted++; unhintedRows.push({ id: dialect.id, repo: dialect.repo }); }
+        if (dialect.kind === 'open') {
+          unhinted++;
+          unhintedRows.push({ id: dialect.id, repo: dialect.repo, tier: dialect.tier });
+        }
         else if (dialect.kind === 'drop') { dropped++; invalid++; }
         else rows.push(dialect.row);
         continue;
@@ -564,6 +567,8 @@ export interface LaneLedgerEvent {
   at: string | null;
   pr: string | null;
   merge: boolean;
+  /** Explicit merge time, when the ledger records a readable zoned timestamp. */
+  mergedAt?: string;
   /** A `launch` event: the job was started. */
   launch?: boolean;
 }
@@ -608,7 +613,11 @@ export function parseJobsJsonl(text: string): { events: LaneLedgerEvent[]; dropp
       (transition !== null && MERGE_WORDS.has(transition.toLowerCase())) ||
       (eventName !== null && MERGE_WORDS.has(eventName.toLowerCase())) ||
       row['landed'] === true || row['merged'] === true;
-    events.push({ job, pool, at, pr: prIdentity(pick('prUrl', 'pr')), merge, launch: eventName?.toLowerCase() === 'launch' });
+    const mergedAt = merge ? pick('mergedAt') : null;
+    events.push({
+      job, pool, at, pr: prIdentity(pick('prUrl', 'pr')), merge, launch: eventName?.toLowerCase() === 'launch',
+      ...(mergedAt !== null && eventTimestamp(mergedAt) !== null ? { mergedAt } : {}),
+    });
   }
   return { events, dropped };
 }
@@ -903,7 +912,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   const candidates: Array<{ pool: string; job: string | null; pr: string | null }> = [];
   let sawMergeEvidence = sources.ledger.state === 'healthy';
   for (const event of ledgerEvents) {
-    const at = eventTimestamp(event.at);
+    const at = eventTimestamp(event.mergedAt ?? event.at);
     if (!event.merge || at === null || at > now.getTime() || at < cutoff) continue;
     const pool = event.pool ?? (event.job ? queueState?.jobPool.get(event.job) ?? readyPoolOf(queueRows, event.job) : undefined);
     if (!pool) continue;

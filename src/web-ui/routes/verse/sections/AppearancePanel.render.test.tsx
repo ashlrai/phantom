@@ -13,13 +13,15 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SettingsSection } from './SettingsSection.js';
 import { ToastProvider } from '../../../components/primitives/Toast.js';
 import { evictAll } from '../../../data/cache.js';
 import { defaultAppearance, getAppearance, resetAppearance, setAppearance } from '../../../data/appearance-store.js';
 import { setSettingsView } from './settings-groups.js';
+import { SidebarBrandMark } from '../../../components/brand/SidebarBrandMark.js';
+import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 
 const root = () => document.documentElement;
 const CSS = readFileSync(resolve(__dirname, 'SettingsSection.module.css'), 'utf8');
@@ -56,9 +58,39 @@ describe('Settings ▸ Appearance renders in every theme at every width', () => 
   });
 
   afterEach(() => {
+    clearMutationToken();
     vi.unstubAllGlobals();
     localStorage.clear();
     resetAppearance();
+  });
+
+  it('changes the sidebar mark live and shows the sanitized image after upload', async () => {
+    setMutationToken('f'.repeat(64));
+    const serverSvg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
+    const brandAsset = `sha256:${'a'.repeat(64)}`;
+    const request = vi.mocked(fetch);
+    request.mockImplementation(async (path, init) => {
+      if (!String(path).endsWith('/brand-image')) return new Response('{}');
+      if (init?.method === 'POST') return Response.json({ revision: 1, appearance: { brand: 'upload', brandAsset } });
+      const response = new Response(serverSvg, { headers: { 'Content-Type': 'image/svg+xml' } });
+      vi.spyOn(response, 'blob').mockResolvedValue(new window.Blob([serverSvg], { type: 'image/svg+xml' }));
+      return response;
+    });
+    const { container } = render(<SidebarBrandMark />);
+    const sidebarMark = () => container.querySelector('img');
+    const pane = renderPane();
+    const choices = within(within(pane).getByRole('group', { name: 'Sidebar mark' }));
+    const user = userEvent.setup();
+    expect(sidebarMark()).toHaveAttribute('src', expect.stringContaining('phantom-workbench-logo.svg'));
+    await user.click(choices.getByRole('button', { name: 'Ghost' }));
+    expect(sidebarMark()).toHaveAttribute('src', expect.stringContaining('phantom-secrets-logo.svg'));
+    expect(choices.getByRole('button', { name: 'Ghost' })).toHaveAttribute('aria-pressed', 'true');
+    const upload = within(pane).getByLabelText('Upload sidebar image');
+    await user.upload(upload, new File(['<svg/>'], 'mark.svg', { type: 'image/svg+xml' }));
+    await waitFor(() => expect(sidebarMark()).toHaveAttribute('src', `data:image/svg+xml;base64,${btoa(serverSvg)}`));
+    expect(choices.getByRole('button', { name: 'Replace image' })).toBeInTheDocument();
+    act(() => setAppearance({ brand: 'p' }));
+    expect(sidebarMark()).toHaveAttribute('src', expect.stringContaining('phantom-workbench-logo.svg'));
   });
 
   for (const theme of ['light', 'dark'] as const) {
