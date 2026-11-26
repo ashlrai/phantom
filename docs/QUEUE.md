@@ -989,6 +989,11 @@ so it can differ from `ready`. When `ready.tsv` is missing, the split reads
 in JSON, and `open_rows` is `null`. An empty file yields zero counts. Lane
 selection and the exit code still use the status snapshot.
 Lanes with `held: true` in the dispatcher snapshot are excluded.
+A dispatcher pause, an explicit admission stop, or a full shared fleet cap
+suppresses all lane verdicts and yields exit 0. The lane-open row count is
+still reported. Legacy snapshots without usable fleet admission evidence
+retain lane-local verdicts. If admission publishes a timestamp, it must
+match `last_tick` to affect the verdict.
 `lane-starve` requires a readable `last_tick` at most 60 seconds old and no
 later than report time. Missing, invalid, stale or future timestamps produce
 an error and exit 2, with no lane verdict.

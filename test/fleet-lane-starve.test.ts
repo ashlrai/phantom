@@ -309,6 +309,29 @@ describe('cmdFleetLaneStarve', () => {
     expect(JSON.parse(lines[0]!).error).toMatch(/Cannot read/);
   });
   it.each([
+    { paused: true },
+    { paused: 'operator pause' },
+    { admission: { cap: 3, running: 3 } },
+    { admission: { admit: false } },
+    { admission: { decision: 'stop', cap: 4, running: 3 } },
+    { admission: { gate_reason: 'disk guard' } },
+  ])('suppresses alerts under closed fleet admission (%j)', async (evidence) => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ ...JSON.parse(STATUS), ...evidence }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), 'RQ-OPEN-1\tphantom\tclaude-api\twork\t/prompt\t{"preferred_lane":null}');
+    const { code, lines } = await run();
+    expect(code).toBe(0);
+    expect(JSON.parse(lines[0]!)).toMatchObject({ lanes: [], open_rows: 1 });
+  });
+  it.each([
+    { ts: new Date(NOW).toISOString(), cap: 4, running: 3 },
+    { ts: new Date(NOW - 1).toISOString(), admit: false },
+  ])('keeps the lane verdict when current admission does not establish a stop (%j)', async (admission) => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ ...JSON.parse(STATUS), admission }));
+    const { code, lines } = await run();
+    expect(code).toBe(1);
+    expect(JSON.parse(lines[0]!).lanes).toMatchObject([{ lane: 'claude-api', target: 3 }]);
+  });
+  it.each([
     ['missing', undefined],
     ['invalid', 'bad timestamp'],
     ['future', new Date(NOW + 1).toISOString()],

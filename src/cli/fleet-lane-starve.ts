@@ -19,6 +19,7 @@ export interface LaneStarveReport {
 const USAGE = `Usage: ashlr fleet lane-starve [--json]
 List lanes running below their launch target (the configured target tightened by the controller's effective_target shed) with work queued, and split each lane's queue/ready.tsv rows into filler and real. Dispatcher rows count toward the lane the work market's hint resolves to; lane-open rows are shared supply reported once. Says when queue/FILLER_HOLD exists. Read-only.
 Parked rows are not runnable work and are not counted.
+Lane alerts are suppressed when the dispatcher is paused or fleet admission is closed.
 Reads ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Exit 1 when any lane is starved.`;
 
 export interface LaneStarveIo {
