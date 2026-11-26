@@ -783,10 +783,13 @@ a verdict.
 A revert at or after that merge changes its verdict. When the revert
 receipt identifies a GitHub PR by URL, it can change only the verdict for
 that PR, even if another PR used the same job ID. The reward feed reads PR
-identity from `url`, `pr_url`, `prUrl`, `pr` or `html_url`, in that order,
-for ledger reverts and standing revert claims. Revert receipts without
-a usable PR URL retain job-level attribution. The fold uses the
-recorded revert time when available and the receipt timestamp otherwise.
+identity across `url`, `pr_url`, `prUrl`, `pr` and `html_url`. Equivalent
+GitHub PR URLs count once. A PR-specific discount requires one distinct PR
+identity on the merge receipt and, for a ledger revert, on the revert receipt.
+Every valid PR reference counts when checking for competing standing revert
+claims. Ledger reverts without any PR reference retain job-level attribution.
+The fold uses the recorded revert time when available and the receipt
+timestamp otherwise.
 Replayed merge receipts cannot restore credit for a reverted merge, and the
 original merge time still bounds dispatch and CI evidence. An explicit
 closed-unmerged outcome likewise uses its close time to bound dispatch and

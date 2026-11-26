@@ -172,13 +172,11 @@ function pullRequestKey(url: string): string | null {
  */
 function standingReverted(
   id: string,
-  mergeUrl: string | null,
+  key: string | null,
   claims: ReadonlyMap<string, ReadonlySet<string>> | null,
   keys: ReadonlySet<string> | null | undefined,
 ): boolean {
-  if (claims === null || keys === null || keys === undefined || mergeUrl === null) return false;
-  const key = pullRequestKey(mergeUrl);
-  if (key === null || !keys.has(key)) return false;
+  if (claims === null || keys === null || keys === undefined || key === null || !keys.has(key)) return false;
   const claimants = claims.get(key);
   return claimants?.size === 1 && claimants.has(id);
 }
@@ -193,18 +191,20 @@ interface ResolutionMark {
 }
 
 function receiptPrKeys(row: Record<string, unknown>): string[] {
-  return URL_KEYS.flatMap((field) => {
+  const keys = new Set<string>();
+  for (const field of URL_KEYS) {
     const value = row[field];
     const key = typeof value === 'string' ? pullRequestKey(value.trim()) : null;
-    return key === null ? [] : [key];
-  });
+    if (key !== null) keys.add(key);
+  }
+  return [...keys];
 }
 
 interface RewardJobAccum {
   dispatches: DispatchMark[];
   dispatchUndated: boolean;
-  /** Latest merge-resolution row: row time, the GitHub mergedAt it reported, and its PR URL. */
-  merge: (ResolutionMark & { url: string | null }) | null;
+  /** Latest merge-resolution row: row time, the GitHub mergedAt it reported, and its PR keys. */
+  merge: ResolutionMark | null;
   /** Latest closed-unmerged resolution time, falling back to the row stamp. */
   close: ResolutionMark | null;
   /** Latest effective revert per PR, with null for receipts lacking PR identity. */
@@ -295,9 +295,7 @@ export function foldJobsLedgerRewards(
     const at = timestampOf(row, TS_KEYS);
     if (at !== null && at > nowMs) continue;
     if (claims !== null) {
-      const url = firstString(row, URL_KEYS);
-      const key = url === null ? null : pullRequestKey(url);
-      if (key !== null) {
+      for (const key of receiptPrKeys(row)) {
         const set = claims.get(key) ?? new Set<string>();
         set.add(id);
         claims.set(key, set);
@@ -327,10 +325,10 @@ export function foldJobsLedgerRewards(
     if (explicitRevertMs !== null || hasRevertEvidence(row)) {
       const revertedAtMs = explicitRevertMs ?? at;
       if (revertedAtMs <= nowMs) {
-        const url = firstString(row, URL_KEYS);
-        const key = url === null ? null : pullRequestKey(url);
+        const keys = receiptPrKeys(row);
         // Only a receipt without a PR reference can apply job-wide.
-        if (url === null || key !== null) {
+        const key = keys.length === 1 ? keys[0]! : null;
+        if (key !== null || firstString(row, URL_KEYS) === null) {
           acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
         }
       }
@@ -343,7 +341,7 @@ export function foldJobsLedgerRewards(
           (mergedAtMs === acc.merge.resolvedMs && at >= acc.merge.atMs)) {
         acc.merge = {
           atMs: at, resolvedMs: mergedAtMs, repo: repoOf(row),
-          prKeys: receiptPrKeys(row), url: firstString(row, URL_KEYS),
+          prKeys: receiptPrKeys(row),
         };
       }
     } else if (row['merged'] === false || CLOSED_STATES.has(state)) {
@@ -357,7 +355,9 @@ export function foldJobsLedgerRewards(
     }
   }
   for (const [id, acc] of jobs) {
-    acc.standingReverted = standingReverted(id, acc.merge?.url ?? null, claims, revertedPrKeys);
+    const keys = acc.merge?.prKeys;
+    const key = keys?.length === 1 ? keys[0]! : null;
+    acc.standingReverted = standingReverted(id, key, claims, revertedPrKeys);
   }
   const inputs: RewardSignalInput[] = [];
   for (const [id, acc] of jobs) {
@@ -405,7 +405,7 @@ function rewardInput(
   const cost = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : null;
   if (acc.merge !== null) {
     const merge = acc.merge;
-    const key = merge.url === null ? null : pullRequestKey(merge.url);
+    const key = merge.prKeys.length === 1 ? merge.prKeys[0]! : null;
     const revertedAt = Math.max(acc.reverts.get(null) ?? -Infinity, acc.reverts.get(key) ?? -Infinity);
     const heldMerge = !acc.standingReverted && merge.resolvedMs > revertedAt;
     const dispatch = dispatchBefore(acc, merge.resolvedMs);
