@@ -252,10 +252,9 @@ async function bindOwnerHandle(configDir: string, handle: string, state: PairSta
 export function unpairOwner(configDir: string): { status: 'unpaired' | 'not-paired' | 'failed' } {
   const state = readPairState(configDir);
   const wasBound = boundHandle(configDir) !== undefined;
-  if (!wasBound && !state.pending) return { status: 'not-paired' };
   if (wasBound && !writeNetwork(configDir, (text, section) => withoutIdentity(text, section), ['mason', 'team'])) return { status: 'failed' };
   writePairState(configDir, { pending: null, lastStartAt: state.lastStartAt, autoOff: true });
-  return { status: 'unpaired' };
+  return { status: wasBound || state.pending ? 'unpaired' : 'not-paired' };
 }
 
 const sentLine = (n: number): string => `sent to ${n} handle${n === 1 ? '' : 's'}, waiting for YES`;
