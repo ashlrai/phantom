@@ -12,15 +12,17 @@
  * automates the same recording on the daemon's self-improvement cadence,
  * beside the reward-sync and skill-nudge off-tick jobs.
  *
- * THE RULES, matching the `--record` path exactly:
+ * THE RULES, sharing the finish and tag classification with `--record`:
  *   - WINDOWED FINISHES ONLY. Candidates are the jobs whose newest finish
  *     inside the retained window recorded `empty` — the same
- *     `ledgerFinishes` fold `phm jobs empty` runs (empty-finishes.ts, the
+ *     finish fold `phm jobs empty` runs (empty-finishes.ts, the
  *     pure ledger projection split out of empties.ts), over the same
  *     jobs-ledger dialect, here bounded to the newest
  *     ROUTER_OUTCOME_LEDGER_LIMIT bytes of jobs.jsonl like the sibling
  *     syncs. A job whose finish rows fell out of the tail is simply not a
- *     candidate this pass; its earlier recorded tag still stands.
+ *     candidate this pass; its earlier recorded tag still stands. A new
+ *     launch or batch claim supersedes finishes from an earlier attempt
+ *     because the job's log can already belong to the newer attempt.
  *   - LOG TAIL IS THE ONLY INPUT. The tag comes from `tagEmpty` over the
  *     job's `<runs>/<id>.log` tail — the same 64 KiB bounded read
  *     `readEmptyJobs` performs — never from notes, publish output or the
@@ -40,7 +42,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { ledgerFinishes } from './empty-finishes.js';
+import { ledgerEventName, ledgerRows } from './empty-cause.js';
+import { finishesIn } from './empty-finishes.js';
 import { EMPTY_TAGS, recordEmptyTags, tagEmpty, type EmptyTag, type TaggedEmptyJob } from './empty-tags.js';
 import { readSource } from './runs-parked-queue.js';
 import { recordDupcheckOutcomes } from '../queue/dupcheck-gate.js';
@@ -122,6 +125,18 @@ function recordedTags(text: string): Map<string, EmptyTag> {
   return tags;
 }
 
+function currentAttemptFinishes(text: string, nowMs: number) {
+  const { rows } = ledgerRows(text, nowMs, EMPTY_TAG_SYNC_HOURS);
+  // Use receipt time, with ledger order breaking ties between same-time rows.
+  rows.sort((a, b) => a.at - b.at);
+  const latestDispatch = new Map<string, number>();
+  for (const [index, { id, row }] of rows.entries()) {
+    const event = ledgerEventName(row);
+    if (event === 'launch' || event === 'batch_claim') latestDispatch.set(id, index);
+  }
+  return finishesIn(rows.filter(({ id }, index) => index >= (latestDispatch.get(id) ?? 0)));
+}
+
 /**
  * Refresh the empty-job evidence ledgers from the fleet jobs ledger. Runs
  * inside the daemon's empty-tag-sync off-tick job on the self-improvement
@@ -154,8 +169,8 @@ export async function syncEmptyTagsFromJobsLedger(
     if (tagsState !== 'read' && tagsState !== 'missing') return base;
     const seen = tagsRead.state === 'read' ? recordedTags(tagsRead.text) : new Map<string, EmptyTag>();
 
-    const candidates = ledgerFinishes(jobs.text, nowMs, EMPTY_TAG_SYNC_HOURS)
-      .finishes.filter(finish => finish.empty === true)
+    const candidates = currentAttemptFinishes(jobs.text, nowMs)
+      .filter(finish => finish.empty === true)
       .map(finish => ({ id: finish.id, lane: finish.lane }));
     const fresh = candidates.filter(candidate => !seen.has(candidate.id));
     const toClassify = fresh.slice(0, Math.max(0, opts.maxClassify ?? EMPTY_TAG_SYNC_MAX_CLASSIFY));

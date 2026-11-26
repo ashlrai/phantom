@@ -1,5 +1,5 @@
 /** Inert fixtures only. No provider calls, native profiles or credentials. */
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -100,6 +100,28 @@ describe('syncEmptyTagsFromJobsLedger', () => {
     expect(out).toMatchObject({ candidates: 1, alreadyTagged: 1, classified: 0, recorded: 0, dupcheckOutcomes: 0 });
     expect(readTags(runsDir)).toHaveLength(1);
     expect(readDupcheck(runsDir).filter(r => r['action'] === 'outcome')).toHaveLength(0);
+  });
+
+  it.each(['launch', 'batch_claim'])('waits for the current attempt after a %s', async (event) => {
+    const job = 'RQ-RETRY';
+    const dispatch = line({ event, job, ts: TS });
+    const previousFinish = finish(job, true, '2026-10-28T18:30:00.000Z');
+    // The previous finish arrived late in the ledger. The log already belongs to the retry.
+    writeJobs([dispatch, previousFinish].join('\n') + '\n');
+    writeLog(job, 'This is a duplicate of an earlier job.');
+    writeFileSync(join(runsDir, DUPCHECK_FILE), line({
+      schema: 'queue.dupcheck-event.v1', at: TS, job, action: 'launch',
+    }) + '\n');
+
+    const pending = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
+    expect(pending).toMatchObject({ state: 'read', candidates: 0, classified: 0, recorded: 0, dupcheckOutcomes: 0 });
+    expect(existsSync(join(runsDir, TAGS_FILE))).toBe(false);
+
+    // A finish at the dispatch timestamp belongs to the retry when appended after it.
+    writeJobs([dispatch, previousFinish, finish(job, true)].join('\n') + '\n');
+    const completed = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
+    expect(completed).toMatchObject({ state: 'read', candidates: 1, classified: 1, recorded: 1, dupcheckOutcomes: 1 });
+    expect(readTags(runsDir)).toEqual([expect.objectContaining({ job, tag: 'already_done' })]);
   });
 
   it('defers fresh classifications past the per-pass cap to a later sync', async () => {
