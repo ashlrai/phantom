@@ -428,17 +428,21 @@ function rewardInput(
       ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs, merge.prKeys),
     };
   }
-  let closedMs = acc.close?.resolvedMs ?? 0;
-  for (const revertedAt of acc.reverts.values()) closedMs = Math.max(closedMs, revertedAt);
-  if (closedMs > 0) {
-    const dispatch = dispatchBefore(acc, closedMs);
+  // A revert can resolve a job on its own, but it cannot extend the
+  // execution window of an explicitly closed PR.
+  let resolutionMs = acc.close?.resolvedMs ?? 0;
+  if (acc.close === null) {
+    for (const revertedAt of acc.reverts.values()) resolutionMs = Math.max(resolutionMs, revertedAt);
+  }
+  if (resolutionMs > 0) {
+    const dispatch = dispatchBefore(acc, resolutionMs);
     if (dispatch === null) return null;
     return {
       jobId: id, pool: dispatch.lane,
       repo: acc.close?.repo ?? dispatch.repo,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
-      ...ciWallEvidence(acc, dispatch.ms, closedMs, acc.close?.prKeys ?? []),
+      ...ciWallEvidence(acc, dispatch.ms, resolutionMs, acc.close?.prKeys ?? []),
     };
   }
   return null;
