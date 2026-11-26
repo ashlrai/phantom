@@ -6,7 +6,7 @@ import {
 } from '../core/agents/bus-identity.js';
 import {
   agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodyFallbackSummary, busInboxJobMarker, busPageResumeCursor, listBusChannels, postChannelMessage, postLabelMessage,
-  readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
+  readAgentChannel, readAgentChannelPresence, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
   updateWorkStatus, INBOX_KINDS, type AllWakesPage, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WakePage, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
@@ -42,6 +42,7 @@ ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--kind note|context] [--from <agent>] [--topic <t>] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
 ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
+ashlr agents bus channel presence <name> [--topic <t>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
@@ -538,7 +539,16 @@ on this surface (the same journal comms bus claim spends) — while empty
 reports
 the observed {candidates, held} scan totals so a dry well reads
 differently from held work. Claims coordinate scope only; bodies are
-never executed. status is a read-only probe of the store, registry, wake queue, coordination
+never executed. channel presence <name> [--topic <t>] is the curated read
+for the group.presence heartbeats channel read excludes from its
+transcript: it folds every live presence observation under the channel's
+group:<name>:* room-topics — or under the one --topic room — per
+(topic, member) in cursor order, the same fold comms bus group presence
+applies inside one room-topic, and reports only members whose latest
+observation says online, grouped by topic with each member's resolved
+handle or null. An unknown channel is unknown-channel, never an invented
+empty roster, and presence is an observation — never proof of identity,
+attention or authority. status is a read-only probe of the store, registry, wake queue, coordination
 table, message-id claim journal, work feed, owner-chat share receipts, the
 legacy mailbox, the shared task board with its fleet queue, the claim-drift
 verdict comparing the claim journal with the coordination table, and the
@@ -962,6 +972,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
             (m.job === undefined ? '' : ` ${busInboxJobMarker(m.job)}`)),
           ...(result.matched === undefined ? [] : [`matched ${result.matched}`]),
           `nextCursor ${nextCursor}`,
+        ].join('\n'));
+        return 0;
+      }
+      if (sub === 'presence') {
+        const result = readAgentChannelPresence(arg, { topic: one('--topic') }, options);
+        if (result.status !== 'ok') return finish(result, '');
+        out(json ? JSON.stringify(result) : [
+          ...result.topics.map(t => `#${result.channel}:${t.topic}  online=${t.members.map(m =>
+            `${m.member}${m.handle !== null && m.handle !== m.member ? ` (${m.handle})` : ''}`).join(', ') || '-'}`),
+          ...(result.topics.length === 0 ? [`#${result.channel}  no live presence observations`] : []),
         ].join('\n'));
         return 0;
       }

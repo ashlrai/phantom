@@ -453,7 +453,19 @@ naming its `#<channel>:<topic>` so a multi-topic transcript keeps per-topic
 context; it is a CLI-only rendering, so `fleet_bus_channel` takes no
 `frame` argument. Because channel addresses are bus-group addresses,
 existing `subscribeGroup`
-readers see the same posts.
+readers see the same posts. `phm agents bus channel presence <name>
+[--topic <t>]` is the curated read for the `group.presence` heartbeats the
+transcript excludes: it folds every live presence observation addressed
+to `group:<name>:*` — or to the one `--topic` room — per (topic, member)
+in cursor order, the last write winning, the same fold `comms bus group
+presence` applies inside one room-topic, and reports only members whose
+latest observation says `online`, grouped by topic with each member's
+raw label and its resolved handle or null. An unknown channel is
+`unknown-channel` — a missing registry or an unregistered name never
+invents an empty roster — an unreadable registry or store is reported,
+and presence stays an observation: never proof of identity, attention or
+authority, and a member absent from the list is simply not observed
+online, not proven offline.
 
 **Label posts.** `phm agents bus post --to <label> --text <text> [--kind
 note|context]` sends a v2 `note` (the default) or `context` body to any

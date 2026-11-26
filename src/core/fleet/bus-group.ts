@@ -28,7 +28,7 @@ export function publishGroupPresence(input: {
 }, options: BusInboxOptions = {}) {
   let to: string;
   try { to = groupAddress(input.room, input.topic); } catch { return { status: 'invalid' as const }; }
-  if (!MEMBER.test(input.member) || !['online', 'offline'].includes(input.state)) return { status: 'invalid' as const };
+  if (!isGroupMemberLabel(input.member) || !['online', 'offline'].includes(input.state)) return { status: 'invalid' as const };
   return appendBusInbox({ id: input.id, from: input.member, to, priority: 'P3', ttl: GROUP_PRESENCE_TTL_MS,
     body: { kind: 'group.presence', state: input.state } }, options);
 }
@@ -43,6 +43,12 @@ export function publishGroupPresence(input: {
 export function isGroupPresenceBody(body: unknown): boolean {
   return body !== null && typeof body === 'object' && !Array.isArray(body) &&
     (body as Record<string, unknown>).kind === 'group.presence';
+}
+
+/** The member-label grammar `publishGroupPresence` and the presence reads
+ * share: a bounded printable routing label, never an identity or authority. */
+export function isGroupMemberLabel(value: unknown): value is string {
+  return typeof value === 'string' && MEMBER.test(value);
 }
 
 /** One page of a subscription. Advance using nextCursor even when no rows match. */
@@ -64,7 +70,7 @@ export function groupPresence(room: string, topic: string, options: BusInboxOpti
     for (const row of page.messages) {
       const body = row.envelope.body;
       if (body && typeof body === 'object' && !Array.isArray(body) && body.kind === 'group.presence' &&
-          (body.state === 'online' || body.state === 'offline') && row.envelope.ttl <= GROUP_PRESENCE_TTL_MS && MEMBER.test(row.envelope.from)) {
+          (body.state === 'online' || body.state === 'offline') && row.envelope.ttl <= GROUP_PRESENCE_TTL_MS && isGroupMemberLabel(row.envelope.from)) {
         members.set(row.envelope.from, { member: row.envelope.from, state: body.state, receivedAt: row.receivedAt });
       }
     }

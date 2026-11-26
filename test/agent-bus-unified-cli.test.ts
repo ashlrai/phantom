@@ -6,6 +6,7 @@ import { runAgentsCli } from '../src/cli/agents-bus-contract.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 import * as seats from '../src/core/bots/seats.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { publishGroupPresence } from '../src/core/fleet/bus-group.js';
 import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 
@@ -372,6 +373,34 @@ describe('phm agents bus (unified)', () => {
     expect(framedText.join('\n')).toContain('#release:deploy id=rd-2 from agent:nova');
     expect(framedText.join('\n')).not.toContain('"status"');
     expect(await run(['channel', 'read', 'release', '--frame', 'gemini'])).toMatchObject({ code: 2 });
+  });
+
+  it('reads channel presence folded per topic with online members only', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova', '--alias', 'lane-nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json).toMatchObject({ status: 'created' });
+    // Presence is published through the raw group primitive; the unified read folds it.
+    expect(publishGroupPresence({ room: 'release', topic: 'general', id: 'pr-1', member: 'agent:nova', state: 'online' }, { root }).status).toBe('posted');
+    expect(publishGroupPresence({ room: 'release', topic: 'deploy', id: 'pr-2', member: 'atlas', state: 'online' }, { root }).status).toBe('posted');
+    expect(publishGroupPresence({ room: 'release', topic: 'deploy', id: 'pr-3', member: 'ghost', state: 'offline' }, { root }).status).toBe('posted');
+
+    const all = await run(['channel', 'presence', 'release']);
+    expect(all.code).toBe(0);
+    expect(all.json).toMatchObject({ status: 'ok', channel: 'release' });
+    expect(all.json.topics.map((t: { topic: string }) => t.topic)).toEqual(['deploy', 'general']);
+    const general = all.json.topics.find((t: { topic: string }) => t.topic === 'general');
+    expect(general.members).toEqual([expect.objectContaining({ member: 'agent:nova', handle: 'nova' })]);
+    const deploy = all.json.topics.find((t: { topic: string }) => t.topic === 'deploy');
+    expect(deploy.members.map((m: { member: string }) => m.member)).toEqual(['atlas']);
+
+    // --topic narrows to the one room-topic; a channel with no observations is an honest empty roster.
+    expect((await run(['channel', 'presence', 'release', '--topic', 'deploy'])).json.topics.map((t: { topic: string }) => t.topic)).toEqual(['deploy']);
+    expect(await run(['channel', 'presence', 'missing'])).toMatchObject({ code: 1, json: { status: 'unknown-channel' } });
+    expect(await run(['channel', 'presence', 'release', 'extra'])).toMatchObject({ code: 2 });
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['channel', 'presence', 'release', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('#release:general  online=agent:nova (nova)');
+    expect(text.join('\n')).toContain('#release:deploy  online=atlas');
   });
 
   it('resolves one retained envelope by id without needing an identity', async () => {
