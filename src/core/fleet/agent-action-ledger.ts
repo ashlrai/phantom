@@ -907,6 +907,8 @@ export interface AgentActionWriteResult {
 
 export interface ReadAgentActionsOptions {
   sinceMs?: number;
+  /** Inclusive report cutoff in epoch milliseconds. */
+  asOfMs?: number;
   limit?: number;
   maxFiles?: number;
   maxBytes?: number;
@@ -1205,7 +1207,7 @@ export function readAgentActionsDetailed(opts: ReadAgentActionsOptions = {}): Ag
           if (entry.name.endsWith('.jsonl')) {
             if (!DATE_LEDGER_FILE_RE.test(entry.name)) loose.push(entry.name);
             else if (!validDatePartition(entry.name)) invalidDatedPartition = true;
-            else if (opts.sinceMs === undefined || fileMayContainSince(entry.name, opts.sinceMs)) selected.push(entry.name);
+            else if (fileMayContainWindow(entry.name, opts.sinceMs, opts.asOfMs)) selected.push(entry.name);
           }
           entry = handle.readSync();
         }
@@ -1272,18 +1274,19 @@ export function readAgentActionsDetailed(opts: ReadAgentActionsOptions = {}): Ag
             result.invalidRows++;
             continue;
           }
-          if (parsed.semanticEventsState === 'rejected') {
-            result.semanticRejectedRows = (result.semanticRejectedRows ?? 0) + 1;
-          }
-          if (parsed.workTransitionsState === 'rejected') {
-            result.workTransitionRejectedRows = (result.workTransitionRejectedRows ?? 0) + 1;
-          }
           const eventMs = Date.parse(parsed.ts);
           const partitionDate = DATE_LEDGER_FILE_RE.exec(file)?.[1];
           if (!Number.isFinite(eventMs) ||
             (partitionDate !== undefined && new Date(eventMs).toISOString().slice(0, 10) !== partitionDate)) {
             result.invalidRows++;
             continue;
+          }
+          if (opts.asOfMs !== undefined && eventMs > opts.asOfMs) continue;
+          if (parsed.semanticEventsState === 'rejected') {
+            result.semanticRejectedRows = (result.semanticRejectedRows ?? 0) + 1;
+          }
+          if (parsed.workTransitionsState === 'rejected') {
+            result.workTransitionRejectedRows = (result.workTransitionRejectedRows ?? 0) + 1;
           }
           const sanitized = sanitizeEvent(parsed);
           if (opts.sinceMs !== undefined && eventMs < opts.sinceMs) continue;
@@ -1390,11 +1393,12 @@ export function filterAgentActionsByRepoScope(
   });
 }
 
-function fileMayContainSince(file: string, sinceMs: number): boolean {
+function fileMayContainWindow(file: string, sinceMs?: number, asOfMs?: number): boolean {
   const match = DATE_LEDGER_FILE_RE.exec(file);
   if (!match) return true;
-  const endOfDayMs = Date.parse(`${match[1]}T23:59:59.999Z`);
-  return !Number.isFinite(endOfDayMs) || endOfDayMs >= sinceMs;
+  const startOfDayMs = Date.parse(`${match[1]}T00:00:00.000Z`);
+  return (sinceMs === undefined || startOfDayMs + DAY_MS - 1 >= sinceMs) &&
+    (asOfMs === undefined || startOfDayMs <= asOfMs);
 }
 
 function validDatePartition(file: string): boolean {

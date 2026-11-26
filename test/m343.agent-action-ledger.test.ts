@@ -286,6 +286,26 @@ describe('M343 agent action ledger', () => {
     expect(exact.stopReasons).not.toContain('event-limit');
   });
 
+  it('excludes future actions from dated file and event limits at an inclusive cutoff', () => {
+    const boundary = makeEvent({ action: 'boundary' });
+    recordAgentAction(boundary);
+    recordAgentAction(makeEvent({ ts: '2026-07-08T12:00:00.001Z' }));
+    recordAgentAction(makeEvent({ ts: '2026-07-09T00:00:00.000Z' }));
+
+    const opts = { asOfMs: Date.parse(boundary.ts), maxFiles: 1, limit: 1 };
+    expect(readAgentActionsDetailed(opts)).toMatchObject({
+      sourceState: 'healthy',
+      complete: true,
+      filesRead: 1,
+      rowsScanned: 2,
+      events: [expect.objectContaining({ action: 'boundary' })],
+    });
+    expect(readAgentActionsDetailed({ ...opts, maxRows: 1 })).toMatchObject({
+      complete: false,
+      stopReasons: ['row-limit'],
+    });
+  });
+
   it('reads up to three legacy loose partitions and rejects impossible dated partitions', () => {
     const dir = agentActionsDir();
     mkdirSync(dir, { recursive: true, mode: 0o700 });
