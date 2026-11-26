@@ -7,6 +7,7 @@ import { probeLocalAuth } from '../src/core/drive/nodes/auth-probe.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { localPhmVersion, versionCap } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNode } from '../src/cli/node.js';
+import { cmdNodeFleet } from '../src/cli/node-fleet.js';
 
 class MemoryStore implements NodesStore {
   state = emptyState();
@@ -221,6 +222,45 @@ describe('phm node CLI', () => {
     const status = await cli('status', '--owner', 'other', '--json');
     expect(JSON.parse(status.out)).toMatchObject({ nodes: [], jobs: [], routes: [] });
     expect(status.out).not.toContain('j1');
+  });
+
+  it('rejoin hints drop the join-managed phm-<version> cap', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const marker = versionCap(localPhmVersion())!;
+    const store = new MemoryStore();
+    let now = 1_000_000;
+    const fleet = async (verb: string, args: string[]) => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const code = await cmdNodeFleet(verb, args, { store, now: () => now });
+      const out = log.mock.calls.map(c => String(c[0])).join('\n');
+      log.mockRestore();
+      return { code, out };
+    };
+    // Every standalone join stores the build marker beside the operator's caps:
+    // --caps build advertises [build, phm-<this build>], a bare join advertises
+    // only the marker. The marker is join-managed — join re-derives it from the
+    // running build and discards any version cap passed in --caps — so the
+    // paste-ready rejoin must not carry it back as a cap the operator chose.
+    const boxed = JSON.parse((await fleet('join', ['--node', 'boxed', '--owner', 'acme', '--caps', 'build', '--json'])).out);
+    expect(boxed.caps).toEqual(['build', marker]);
+    const bare = JSON.parse((await fleet('join', ['--node', 'bare', '--owner', 'acme', '--json'])).out);
+    expect(bare.caps).toEqual([marker]);
+    now += 31_000; // both 30-second sessions lapse; the records keep their profiles
+    const boxedBeat = JSON.parse((await fleet('beat', ['--node', 'boxed', '--session', String(boxed.session), '--json'])).out);
+    expect(boxedBeat.error).toMatchObject({ code: 'session-expired' });
+    expect(boxedBeat.error.fix).toContain('phm node join --node boxed --owner acme --caps build --watch');
+    expect(boxedBeat.error.fix).not.toContain(marker);
+    const bareBeat = JSON.parse((await fleet('beat', ['--node', 'bare', '--session', String(bare.session), '--json'])).out);
+    expect(bareBeat.error.fix).toContain('phm node join --node bare --owner acme --watch');
+    expect(bareBeat.error.fix).not.toContain('--caps');
+    expect(bareBeat.error.fix).not.toContain(marker);
+    // status/list print the same hint per expired node; it drops the marker too
+    // (the node line still reports the advertised caps, marker included — the
+    // exact rejoin strings above cannot match if the marker leaked back in).
+    const status = await fleet('status', ['--owner', 'acme']);
+    expect(status.out).toContain('rejoin: phm node join --node boxed --owner acme --caps build --watch');
+    expect(status.out).toContain('rejoin: phm node join --node bare --owner acme --watch');
   });
 
   it('join prints its keep-alive beat and session refusals name the live session', async () => {

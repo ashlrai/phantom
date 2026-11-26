@@ -135,7 +135,8 @@ or `slots=unbounded` when no bound was ever reported — an absent bound is
 legacy routing, not a measured zero) and its last measured hold as
 `held=<reason>` while one is reported, name the `phm node join … --watch`
 command that restores each expired node's last advertised profile and keeps it
-live (the same hint a session-expired error prints), annotate each node whose advertised
+live (the same hint a session-expired error prints; the join-managed
+`phm-<version>` build marker is left out because join re-derives it), annotate each node whose advertised
 `phm-<version>` cap is not this build (`phm=behind`, `phm=ahead` or
 `phm=unreported` — beats never re-stamp caps, so a node that outlived an
 upgrade reads as behind) and point at `phm node self-update --owner <scope>`
