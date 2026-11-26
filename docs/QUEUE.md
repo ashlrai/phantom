@@ -1572,12 +1572,13 @@ last 24 hours. A READY row's lane hint resolves like `work_market.requirements`:
 the requirements JSON's `preferred_lane` wins over the lane cell and explicit
 `null` is lane-open, while an absent key falls back to the lane cell. A row
 carrying no requirements cell resolves its spec from the matching
-`queue/router-queue.md` `(attrs)` envelope instead: the envelope's
-`preferred_lane`, `lane` or `pool` attr is the hint and the lane cell is
-never consulted, an envelope naming no lane attr is lane-open, and a
-malformed envelope — like a lane cell the market rejects, which fails the
-row before the envelope is read — is `invalid_requirements`. With no
-matching envelope the lane cell stands. Rows the market resolves to no lane —
+`queue/router-queue.md` `(attrs)` envelope instead — the dispatcher's routed
+pass writes that spec into the requirements cell before launch, so the
+envelope's `preferred_lane`, `lane` or `pool` attr is the hint and the lane
+cell is never consulted: an envelope naming no lane attr is lane-open, and a
+malformed envelope is `invalid_requirements`. With no matching envelope the
+requirements fallback applies, and a lane cell that is not a lane id fails
+the row the same way. Rows the market resolves to no lane —
 explicit `preferred_lane: null`, an envelope naming no lane attr, or no
 spec preference with an empty lane cell — are the market's open
 hint: they count in `ready`/`total`/`unhinted` and in the health ready count,

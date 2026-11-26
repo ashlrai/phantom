@@ -133,23 +133,27 @@ describe('fleet queue lane-open rows', () => {
     const dir = await queueWithFiles([
       'RQ-BADENV\tphantom\tcodex\twork\tprompts/b1.md',
       'RQ-BADLANE\tphantom\tNOT_A_LANE\twork\tprompts/b2.md',
+      'RQ-ENVBADLANE\tphantom\tNOT_A_LANE\twork\tprompts/b4.md',
       'RQ-BADSPEC\tphantom\tdevin\twork\tprompts/b3.md',
       'RQ-OK\tphantom\tcodex-local\tmid\tprompts/ok.md',
     ].join('\n'), [
       '- READY RQ-BADENV (P1, exclusive=maybe): malformed envelope',
-      '- READY RQ-BADLANE (P1, pool=claude): an envelope cannot rescue a bad lane cell',
+      '- READY RQ-ENVBADLANE (P1, pool=claude): the envelope replaces the spec, so the lane cell is never read',
       '- READY RQ-BADSPEC (P1, preferred_lane=Not_A_Lane): bad hint',
     ].join('\n'));
     try {
       const result = await readFleetQueue({ runsDir: dir, now: () => now });
-      // exclusive=maybe fails from_envelope, NOT_A_LANE fails the lane-cell
-      // pre-check the shared market applies before the envelope, and
+      // exclusive=maybe fails from_envelope, a bare NOT_A_LANE lane cell fails
+      // the requirements fallback (no envelope matched), and
       // preferred_lane=Not_A_Lane fails requirements — all invalid_requirements.
+      // RQ-ENVBADLANE's envelope supplies the spec wholesale, so its bad lane
+      // cell cannot reject it: it counts as claude supply like the dispatcher.
       expect(result).toMatchObject({
-        total: 1, ready: 1, parked: 0, malformed: 3, unhinted: 0,
+        total: 2, ready: 2, parked: 0, malformed: 3, unhinted: 0,
         sources: { ready: 'degraded' },
       });
       expect(result.byLane).toEqual([
+        { lane: 'claude', ready: 1, parked: 0, phantom: 1, other: 0, otherRepos: [] },
         { lane: 'codex-local', ready: 1, parked: 0, phantom: 1, other: 0, otherRepos: [] },
       ]);
     } finally { await rm(dir, { recursive: true, force: true }); }

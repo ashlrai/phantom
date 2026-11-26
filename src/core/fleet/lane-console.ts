@@ -77,7 +77,7 @@ import { readLaneTargets } from './runs-lane-targets.js';
 import { laneHealthFor, type LaneHealth } from './lane-badge.js';
 import { laneLaunchTarget } from './lane-launch-target.js';
 import { parseStarvedState, readStarved, STARVED_STATE_FILE, type StarvedRead } from './lane-starved.js';
-import { MARKET_LANE_ID, readyEnvelopeSpec, readySpecCell, resolveReadyMarketRow } from './unfed-market.js';
+import { readyEnvelopeSpec, readySpecCell, resolveReadyMarketRow } from './unfed-market.js';
 import { readLedgerTail } from '../router/outcomes.js';
 import { readTelemetryFile } from '../resources/telemetry.js';
 import { budgetTimestamp } from './resource-reset-evidence.js';
@@ -381,10 +381,11 @@ function dispatcherQueueRow(cells: string[], routerQueue?: string | null): Dispa
   if (extra === undefined) {
     // A five-column row carries no requirements cell: like the market's routed
     // pass, its spec comes from the matching router-queue.md `(attrs)`
-    // envelope, whose preferred_lane (or explicit open) decides the hint. A
-    // non-empty lane cell that is not a lane id rejects the row before the
-    // envelope is read — invalid_requirements, never supply.
-    if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) return { kind: 'drop' };
+    // envelope, whose preferred_lane (or explicit open) decides the hint and
+    // leaves the lane cell unread — the dispatcher's routed pass writes the
+    // envelope spec into the requirements cell before launch. With no
+    // envelope the requirements fallback validates the lane cell itself:
+    // invalid_requirements, never supply.
     const env = readyEnvelopeSpec(routerQueue, id);
     if (env === 'invalid') return { kind: 'drop' };
     spec = env;

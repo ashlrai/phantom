@@ -114,7 +114,8 @@ describe('fleet launchable', () => {
       row('RQ-ENV', 'alpha', prompt), row('RQ-ENVALPHA', 'alpha', prompt),
       row('RQ-ENVLONE', 'alpha', prompt), // no envelope line: the lane column stands
       row('RQ-ENVBAD', 'alpha', prompt), // envelope spec the market rejects: dead work
-      // a spec-less row whose lane cell is not a lane id is invalid, envelope or not
+      // a spec-less row whose lane cell is not a lane id and matches no
+      // envelope fails the requirements fallback: dead work
       [ 'RQ-BADLANE', 'repo', 'Not A Lane!', 'work', prompt ].join('\t'),
     ].join('\n'));
     // beta gets RQ-ENV through its envelope; alpha gets RQ-ENVALPHA and

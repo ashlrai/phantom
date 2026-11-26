@@ -333,9 +333,11 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     // A five-column dispatcher row carries no requirements cell: like the
     // market's routed pass, its spec comes from the matching router-queue.md
     // `(attrs)` envelope — the envelope's preferred_lane (or explicit open)
-    // beats the lane column, and a malformed envelope or lane cell is
-    // invalid_requirements, never supply. Status-first rows and parked
-    // encodings are not market rows and keep the dialect readers below.
+    // beats the lane column, which the envelope leaves unread, and a
+    // malformed envelope is invalid_requirements, never supply; with no
+    // envelope the requirements fallback still rejects a lane cell that is
+    // not a lane id. Status-first rows and parked encodings are not market
+    // rows and keep the dialect readers below.
     const specLessMarket = positional && cells.length === 5 &&
       JOB_ID.test(first) && !KNOWN_STATUSES.has(first.toUpperCase()) &&
       !PARKED.test(first) && !PARKED.test(cells[2] ?? '') &&
@@ -346,10 +348,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
         const queue = await readSource(join(root, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false);
         routerQueueText = queue.state === 'healthy' ? queue.text : null;
       }
-      const laneCell = cells[2] ?? '';
-      const spec = laneCell !== '' && !MARKET_LANE_ID.test(laneCell)
-        ? 'invalid' as const
-        : readyEnvelopeSpec(routerQueueText, first);
+      const spec = readyEnvelopeSpec(routerQueueText, first);
       const resolved = spec === 'invalid' ? null : resolveReadyMarketRow(cells, spec ?? {});
       if (resolved === null) {
         result = { rows: [], dropped: 1, invalid: 1, unhinted: 0, unhintedRows: [] };
