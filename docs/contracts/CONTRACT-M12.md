@@ -184,3 +184,10 @@ export async function cmdSwarms(args: string[]): Promise<number>;
   a PR number requests a fresh merge receipt before projecting cost per merge.
 
 See [the resource-pool swarm pilot](../SWARM-PILOT.md) for inputs and evidence semantics.
+
+- `inspectSwarmFleetLane(id, deps?)` returns advisory evidence and a dispatch
+  refusal for recognized uncommissioned fleet lanes; it never grants admission.
+- `verifyLmStudioModelInventory({ baseUrl, model, signal, fetchImpl? })` performs
+  bounded numeric-loopback inventory verification. The resource local model
+  refresh accepts an LM Studio `runtime` row alongside legacy Ollama digest rows
+  and can inject the LM Studio fetch for tests.
