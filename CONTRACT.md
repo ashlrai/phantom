@@ -1528,7 +1528,13 @@ jobsTruncated?)`,
 `foldRouteRejections(marketJsonl, nowMs, windowHours)` and
 `renderUnfed(report)` in
 `src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
-`phm fleet unfed` (`fleet.unfed.v1`). The report's `marketTruncated` boolean
+`phm fleet unfed` (`fleet.unfed.v1`). `currentUnfed` accepts `null` for an
+unavailable ready queue, distinct from an empty string. In that case
+`readyHinted` and `invalidRows` are null. `waiting` and a free, unheld lane's
+`waitingElsewhere` and `unfed` are null where dispatcher counts are missing.
+`unfedLanes` lists confirmed lanes and `unfedSlots` is null when the fleet-wide
+bound cannot be established. The CLI exit status still follows confirmed
+unfed lanes. The report's `marketTruncated` boolean
 is true when the bounded work-market journal read omitted older bytes.
 History, overrides, rejections and decision outcomes may then be incomplete
 for the requested window. The additive `resourcePlan` block compares the
