@@ -49,7 +49,7 @@
 
 import type { LocalAgentRequestDefaults } from './config.js';
 
-export interface AnthropicTextBlock {
+interface AnthropicTextBlock {
   readonly type: 'text';
   readonly text: string;
 }
@@ -65,10 +65,9 @@ interface AnthropicRequestLike {
   readonly [key: string]: unknown;
 }
 
-/** Flatten Anthropic content (string, or an array of blocks) to plain text. */
-export function anthropicContentText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
+function extractTextParts(content: unknown): string[] {
+  if (typeof content === 'string') return content ? [content] : [];
+  if (!Array.isArray(content)) return [];
   const parts: string[] = [];
   for (const block of content) {
     if (typeof block === 'string') { if (block) parts.push(block); continue; }
@@ -77,23 +76,17 @@ export function anthropicContentText(content: unknown): string {
       if (typeof text === 'string' && text) parts.push(text);
     }
   }
-  return parts.join('\n');
+  return parts;
+}
+
+/** Flatten Anthropic content (string, or an array of blocks) to plain text. */
+export function anthropicContentText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  return extractTextParts(content).join('\n');
 }
 
 function existingSystemBlocks(system: unknown): AnthropicTextBlock[] {
-  if (Array.isArray(system)) {
-    const out: AnthropicTextBlock[] = [];
-    for (const block of system) {
-      if (typeof block === 'string') { if (block) out.push({ type: 'text', text: block }); continue; }
-      if (block && typeof block === 'object') {
-        const text = (block as { text?: unknown }).text;
-        if (typeof text === 'string' && text) out.push({ type: 'text', text });
-      }
-    }
-    return out;
-  }
-  if (typeof system === 'string' && system) return [{ type: 'text', text: system }];
-  return [];
+  return extractTextParts(system).map((text) => ({ type: 'text', text }));
 }
 
 /**

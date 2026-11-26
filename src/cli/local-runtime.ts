@@ -65,7 +65,6 @@ import {
   installAnthropicProxyAgent,
   installLaunchAgent,
   isLoopbackHost,
-  launchAgentInstalled,
   launchAgentLoaded,
   launchAgentLogPaths,
   launchAgentPlistPath,
@@ -146,6 +145,14 @@ function parseFlags(args: string[]): ParsedFlags {
     return value;
   };
 
+  const strVal = (raw: string | undefined, name: string): string | undefined => {
+    if (!raw || raw.startsWith('--')) {
+      out.error = `${name} expects a value`;
+      return undefined;
+    }
+    return raw;
+  };
+
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i] as string;
     switch (arg) {
@@ -156,18 +163,8 @@ function parseFlags(args: string[]): ParsedFlags {
       case '--ctx': out.ctx = num(args[++i], '--ctx', 512, 4_194_304); break;
       case '--wait-ms': out.waitMs = num(args[++i], '--wait-ms', 1_000, 3_600_000); break;
       case '--lines': out.lines = num(args[++i], '--lines', 1, 5_000); break;
-      case '--model': {
-        const value = args[++i];
-        if (!value || value.startsWith('--')) { out.error = '--model expects a value'; break; }
-        out.model = value;
-        break;
-      }
-      case '--model-path': {
-        const value = args[++i];
-        if (!value || value.startsWith('--')) { out.error = '--model-path expects a value'; break; }
-        out.modelPath = value;
-        break;
-      }
+      case '--model': out.model = strVal(args[++i], '--model'); break;
+      case '--model-path': out.modelPath = strVal(args[++i], '--model-path'); break;
       default:
         // A bare word is a positional, not a bad flag. `reshape <plan|execute>`
         // takes one; rejecting it here made the subcommand unreachable.
@@ -337,6 +334,11 @@ async function runLifecycle(
 async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Promise<number> {
   const c = makeColors(isTty());
   const plistPath = launchAgentPlistPath();
+  const refuse = (detail: string, extra?: Record<string, unknown>): number => {
+    if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail, ...extra }, null, 2));
+    else console.error(c.red('refused') + '  ' + detail);
+    return 1;
+  };
 
   const kill = readKillSwitch();
   if (kill.state !== 'inactive') {
@@ -347,21 +349,14 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
       'when you want 24/7 operation; this command will never touch the sentinel.\n' +
       `Meanwhile \`ashlr local-runtime start\` runs it for this session.\n` +
       `Would have written: ${plistPath}`;
-    if (flags.json) {
-      console.log(JSON.stringify({ ok: false, action: 'refused', detail: message, plistPath }, null, 2));
-    } else {
-      console.error(c.red('refused') + '  ' + message);
-    }
-    return 1;
+    return refuse(message, { plistPath });
   }
 
   if (runtime.binPath === null) {
     const message =
       'llama-server is not on PATH. Install llama.cpp (`brew install llama.cpp`) or set ' +
       'LLAMA_SERVER_BIN to its absolute path.';
-    if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail: message }, null, 2));
-    else console.error(c.red('refused') + '  ' + message);
-    return 1;
+    return refuse(message);
   }
 
   // A permanently-installed, LAN-exposed, UNAUTHENTICATED inference server is
@@ -377,9 +372,7 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
       'can reach the port can run inference and read every slot\'s prompt via /slots — and ' +
       'a launch agent brings it back at every login, unattended. Bind it to 127.0.0.1, or run ' +
       '`ashlr local-runtime start` for an attended session you can see and stop.';
-    if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail: message }, null, 2));
-    else console.error(c.red('refused') + '  ' + message);
-    return 1;
+    return refuse(message);
   }
 
   // Resolve the GGUF now so a broken reference is refused at install time
@@ -393,11 +386,7 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
   let modelPath = runtime.modelPath;
   if (modelPath === null) {
     const resolved = resolveOllamaModelBlob(runtime.modelRef);
-    if (!resolved.ok) {
-      if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail: resolved.reason }, null, 2));
-      else console.error(c.red('refused') + '  ' + resolved.reason);
-      return 1;
-    }
+    if (!resolved.ok) return refuse(resolved.reason);
     modelPath = resolved.blobPath;
   }
 
@@ -640,9 +629,4 @@ export async function cmdLocalRuntime(args: string[]): Promise<number> {
     console.error(`local-runtime failed unexpectedly: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
-}
-
-/** True when the launch agent is present — exported for the doctor surface. */
-export function localRuntimeLaunchAgentInstalled(): boolean {
-  return launchAgentInstalled();
 }

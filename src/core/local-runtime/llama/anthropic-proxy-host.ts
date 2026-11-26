@@ -28,7 +28,7 @@
  * implementations again and the scratch-script problem has simply moved.
  */
 
-import { originFor, resolveLlamaRuntimeConfig } from './config.js';
+import { originFor, resolveLlamaRuntimeSettings } from './config.js';
 import { startAnthropicProxy } from './anthropic-proxy.js';
 import type { AnthropicProxyHandle, AnthropicRequestAttribution } from './anthropic-proxy.js';
 import { loadConfigReadOnly } from '../../config.js';
@@ -75,7 +75,7 @@ export function requestAttributionLogger(
  * shipping runtimes disagree about argv offsets and `node --eval` rejects a
  * trailing operand tail outright. `config.ts` already reads exactly those
  * three variables with the precedence wanted here, so resolving through
- * `resolveLlamaRuntimeConfig` gives the correct answer in every runtime AND
+ * `resolveLlamaRuntimeSettings` gives the correct answer in every runtime AND
  * keeps this process from becoming a second opinion about where the proxy
  * belongs.
  *
@@ -96,7 +96,7 @@ export async function startAnthropicProxyHost(): Promise<AnthropicProxyHandle> {
     // that starts on the documented defaults.
     cfg = undefined;
   }
-  const runtime = resolveLlamaRuntimeConfig(cfg);
+  const runtime = resolveLlamaRuntimeSettings(cfg);
 
   return startAnthropicProxy({
     cfg,
