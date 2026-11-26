@@ -7,35 +7,44 @@
  * point, and every public result is observation-only.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
+
+import {
+  AGENT_OS_EPOCH_MAX_POLICY_GENERATION_V1,
+  AGENT_OS_EPOCH_MAX_V1,
+  ROLLOVER_CANONICAL_EPOCH_BOUNDS,
+  canonicalEpochBytes,
+  deepFreezeEpochValue as deepFreeze,
+  epochPlainRecord as record,
+  exactEpochBytes as exactBytes,
+  exactEpochKeys as exactKeys,
+  isValidEpochTimestamp as validTimestamp,
+  isValidPrefixedEpochDigest as validDigest,
+  isValidRawEpochDigest as validSignedArtifactDigest,
+  matchesEpochAuthority,
+  rawEpochDigest,
+} from './agent-os-epoch-shared.js';
 
 export const AGENT_OS_EPOCH_MANIFEST_PROTOCOL_V1 =
   'ashlr-agent-os-observation-epoch-manifest-v1' as const;
 export const AGENT_OS_EPOCH_HEAD_PROTOCOL_V1 =
   'ashlr-agent-os-observation-epoch-head-v1' as const;
-export const AGENT_OS_EPOCH_MANIFEST_DIGEST_DOMAIN_V1 =
+const AGENT_OS_EPOCH_MANIFEST_DIGEST_DOMAIN_V1 =
   'ashlr:agent-os:epoch-manifest:v1\0' as const;
-export const AGENT_OS_EPOCH_HEAD_DIGEST_DOMAIN_V1 =
+const AGENT_OS_EPOCH_HEAD_DIGEST_DOMAIN_V1 =
   'ashlr:agent-os:epoch-head:v1\0' as const;
-export const AGENT_OS_ROLLOVER_OPERATION_DOMAIN_V1 =
+const AGENT_OS_ROLLOVER_OPERATION_DOMAIN_V1 =
   'ashlr:agent-os:epoch-rollover-operation:v1\0' as const;
-export const AGENT_OS_ATTEMPT_NAMESPACE_DOMAIN_V1 =
+const AGENT_OS_ATTEMPT_NAMESPACE_DOMAIN_V1 =
   'ashlr:agent-os:epoch-attempt-namespace:v1\0' as const;
 export const AGENT_OS_ROLLOVER_PROTOCOL_GENERATION_V1 = 1 as const;
-export const AGENT_OS_ROLLOVER_MAX_EPOCH_V1 = 999_999_999_999;
+const AGENT_OS_ROLLOVER_MAX_EPOCH_V1 = AGENT_OS_EPOCH_MAX_V1;
 /** Exact V1 source/snapshot capacity inherited by the M546 transition tuple. */
-export const AGENT_OS_ROLLOVER_MAX_LEDGER_SEQUENCE_V1 = 4_096;
-export const AGENT_OS_ROLLOVER_MAX_POLICY_GENERATION_V1 = 1_000_000;
+const AGENT_OS_ROLLOVER_MAX_LEDGER_SEQUENCE_V1 = 4_096;
+const AGENT_OS_ROLLOVER_MAX_POLICY_GENERATION_V1 = AGENT_OS_EPOCH_MAX_POLICY_GENERATION_V1;
 
-const MAX_CANONICAL_BYTES = 64 * 1024;
-const MAX_CANONICAL_DEPTH = 16;
-const MAX_CANONICAL_NODES = 2_048;
-/** M550-owned control-plane identities are always explicitly algorithm-tagged. */
-const CONTROL_DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
-/** Existing signed V1 source/snapshot artifacts use canonical untagged SHA-256 hex. */
-const SIGNED_ARTIFACT_DIGEST_RE = /^[a-f0-9]{64}$/;
+const MAX_CANONICAL_BYTES = ROLLOVER_CANONICAL_EPOCH_BOUNDS.maxBytes;
 const AUTHENTICATOR_RE = /^[a-f0-9]{64}$/;
-const CANONICAL_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 export interface AgentOsRolloverAuthorityV1 {
   authority: 'observation-only';
@@ -166,93 +175,13 @@ export const AGENT_OS_EPOCH_GENESIS_V1 = Object.freeze({
   coherentBindingDigest: controlGenesisDigest('coherent-binding'),
 });
 
-type Canonical = null | boolean | number | string | Canonical[] | { [key: string]: Canonical };
-
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const sorted = [...expected].sort();
-  return actual.length === sorted.length && actual.every((key, index) => key === sorted[index]);
-}
-
-function canonicalize(
-  value: unknown,
-  state = { depth: 0, nodes: 0, ancestors: new Set<object>() },
-): Canonical {
-  state.nodes += 1;
-  if (state.nodes > MAX_CANONICAL_NODES || state.depth > MAX_CANONICAL_DEPTH) {
-    throw new TypeError('canonical value exceeds bounds');
-  }
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isSafeInteger(value) || Object.is(value, -0)) throw new TypeError('non-canonical number');
-    return value;
-  }
-  if (typeof value !== 'object' || state.ancestors.has(value)) throw new TypeError('non-json value');
-  state.ancestors.add(value);
-  state.depth += 1;
-  try {
-    if (Array.isArray(value)) {
-      if (Reflect.ownKeys(value).some((key) => typeof key === 'symbol' ||
-        (key !== 'length' && !/^(?:0|[1-9][0-9]*)$/.test(key)))) throw new TypeError('invalid array');
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse array');
-        return canonicalize(entry, state);
-      });
-    }
-    const row = record(value);
-    if (!row) throw new TypeError('non-plain object');
-    const output: { [key: string]: Canonical } = Object.create(null) as { [key: string]: Canonical };
-    for (const key of Object.keys(row).sort()) output[key] = canonicalize(row[key], state);
-    return output;
-  } finally {
-    state.depth -= 1;
-    state.ancestors.delete(value);
-  }
-}
-
 function canonicalBytes(value: unknown): Buffer | null {
-  try {
-    const bytes = Buffer.from(JSON.stringify(canonicalize(value)), 'utf8');
-    return bytes.length > 0 && bytes.length <= MAX_CANONICAL_BYTES ? bytes : null;
-  } catch {
-    return null;
-  }
-}
-
-function exactBytes(left: Uint8Array, right: Uint8Array): boolean {
-  const leftBytes = Buffer.from(left);
-  const rightBytes = Buffer.from(right);
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+  return canonicalEpochBytes(value, ROLLOVER_CANONICAL_EPOCH_BOUNDS);
 }
 
 function digest(domain: string, value: unknown): string | null {
   const bytes = canonicalBytes(value);
-  return bytes
-    ? `sha256:${createHash('sha256').update(domain, 'utf8').update(bytes).digest('hex')}`
-    : null;
-}
-
-function validDigest(value: unknown): value is string {
-  return typeof value === 'string' && CONTROL_DIGEST_RE.test(value);
-}
-
-function validSignedArtifactDigest(value: unknown): value is string {
-  return typeof value === 'string' && SIGNED_ARTIFACT_DIGEST_RE.test(value);
+  return bytes ? `sha256:${rawEpochDigest(domain, bytes)}` : null;
 }
 
 function validPositiveInteger(value: unknown): value is number {
@@ -261,12 +190,6 @@ function validPositiveInteger(value: unknown): value is number {
 
 function validBoundedInteger(value: unknown, maximum: number): value is number {
   return validPositiveInteger(value) && Number(value) <= maximum;
-}
-
-function validTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || !CANONICAL_TIMESTAMP_RE.test(value)) return false;
-  const milliseconds = Date.parse(value);
-  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
 }
 
 const AUTHORITY_KEYS = Object.keys(AGENT_OS_ROLLOVER_AUTHORITY_V1) as Array<keyof AgentOsRolloverAuthorityV1>;
@@ -294,7 +217,7 @@ const HEAD_KEYS = [
 const HEAD_UNSIGNED_KEYS = HEAD_KEYS.filter((key) => key !== 'headDigest');
 
 function validAuthority(value: Record<string, unknown>): boolean {
-  return AUTHORITY_KEYS.every((key) => value[key] === AGENT_OS_ROLLOVER_AUTHORITY_V1[key]);
+  return matchesEpochAuthority(value, AGENT_OS_ROLLOVER_AUTHORITY_V1);
 }
 
 function validSourceTip(value: unknown): value is AgentOsEpochSourceTipV1 {
@@ -496,14 +419,6 @@ export function parseAgentOsObservationEpochHeadV1(
   return parseCanonical(bytes, canonicalAgentOsObservationEpochHeadBytesV1);
 }
 
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
-    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
-    Object.freeze(value);
-  }
-  return value;
-}
-
 export type AgentOsMonotonicAnchorReadResultV1 =
   | { state: 'present'; canonicalHeadBytes: Uint8Array }
   | { state: 'missing' }
@@ -516,15 +431,6 @@ export type AgentOsMonotonicAnchorCasResultV1 =
   | { state: 'conflict'; canonicalHeadBytes: Uint8Array | null }
   | { state: 'unavailable' }
   | { state: 'indeterminate' };
-
-export interface AgentOsMonotonicAnchorV1 {
-  read(): AgentOsMonotonicAnchorReadResultV1 | Promise<AgentOsMonotonicAnchorReadResultV1>;
-  compareAndSwap(input: {
-    expectedHeadDigest: string | null;
-    nextCanonicalHeadBytes: Uint8Array;
-    operationId: string;
-  }): AgentOsMonotonicAnchorCasResultV1 | Promise<AgentOsMonotonicAnchorCasResultV1>;
-}
 
 export type AgentOsRolloverOperationalStateV1 =
   | 'uncommissioned'
@@ -663,7 +569,9 @@ const STATUS_INPUT_KEYS = [
   'rolloverThresholdReached', 'firstSnapshotPresent',
 ] as const;
 
-function validAnchorReadResult(value: unknown): value is AgentOsMonotonicAnchorReadResultV1 {
+export function isValidAgentOsMonotonicAnchorReadResultV1(
+  value: unknown,
+): value is AgentOsMonotonicAnchorReadResultV1 {
   const row = record(value);
   if (!row || typeof row['state'] !== 'string') return false;
   if (row['state'] === 'present') {
@@ -671,6 +579,8 @@ function validAnchorReadResult(value: unknown): value is AgentOsMonotonicAnchorR
   }
   return ['missing', 'unavailable', 'degraded'].includes(row['state']) && exactKeys(row, ['state']);
 }
+
+const validAnchorReadResult = isValidAgentOsMonotonicAnchorReadResultV1;
 
 function validStatusInput(value: unknown): value is AgentOsRolloverStatusInputV1 {
   const row = record(value);
@@ -1083,7 +993,9 @@ const CAS_INPUT_KEYS = [
   'anchorPolicyDigest', 'operationId', 'casResult', 'readAfterCas',
 ] as const;
 
-function validCasResult(value: unknown): value is AgentOsMonotonicAnchorCasResultV1 {
+export function isValidAgentOsMonotonicAnchorCasResultV1(
+  value: unknown,
+): value is AgentOsMonotonicAnchorCasResultV1 {
   const row = record(value);
   if (!row || typeof row['state'] !== 'string') return false;
   if (row['state'] === 'advanced' || row['state'] === 'replayed') {
@@ -1095,6 +1007,8 @@ function validCasResult(value: unknown): value is AgentOsMonotonicAnchorCasResul
   }
   return (row['state'] === 'unavailable' || row['state'] === 'indeterminate') && exactKeys(row, ['state']);
 }
+
+const validCasResult = isValidAgentOsMonotonicAnchorCasResultV1;
 
 function validCasInput(value: unknown): value is AgentOsAnchorCasClassificationInputV1 {
   const row = record(value);

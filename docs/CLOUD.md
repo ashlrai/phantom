@@ -1394,7 +1394,28 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   off-contract rows drop like the sibling jobs-ledger readers' own
   parse, truncated tails are stated as lower bounds, and items emit
   only for the fleet's own repository since the rows describe this
-  install's hosts and lanes and carry no repository column.
+  install's hosts and lanes and carry no repository column —
+  and the job-reissue audit ledger's recurring rescue cells, the
+  {at, from, to, lane, tier, file} rows reissueJob (src/core/fleet/
+  job-reissue.ts) appends to queue/job-reissues.jsonl under the fleet
+  runs directory for POST /api/verse/outcomes/fleet-reissue and the
+  Fleet Outcomes pane's Reissue button — one per successful re-drop of
+  a finished job's prompt under the next <stem>R<n> id, published as
+  RQ-PHX-<to> under leader/drop/<lane>/ (otherwise only visible as
+  unrelated R-suffix generations scattered across jobs.jsonl — the
+  ledger had no reader at all, so a job family that kept needing
+  manual rescue never became work). A family emits only at the
+  recurring bars of two rescue rows across two distinct UTC days
+  inside the 7-day window, a wave cell emits only at three distinct
+  rescued families across two days, lane/tier tallies ride inside the
+  prompts while the local `file` path is never quoted, a missing or
+  unreadable ledger emits nothing, malformed lines and off-contract
+  ids drop like the sibling queue-ledger readers' own parse, whether a
+  rescue landed is left to the RQ-PHX-<to> generations' own jobs.jsonl
+  rows rather than claimed, truncated tails are stated as lower
+  bounds, and items emit only for the fleet's own repository since
+  the ledger is this install's rescue record and carries no
+  repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   claude-recovery, memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1405,7 +1426,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts, postrun and git-contention items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts, postrun, git-contention and job-reissue items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1767,13 +1788,19 @@ There are two ways to launch backlog items:
   module first loads, never under a test runner. Every 10 minutes it refreshes
   task states from GitHub. Two minutes after start, and then every 60 minutes,
   it launches the next backlog item. Before each launch pick it also registers
-  every unclosed backlog PR whose item declares a metric into the outcome
-  ledger — the same records `phm improve sync-backlog` writes by hand — so
-  measured outcomes keep feeding the order above. The same pass records
+  every backlog task whose item declares a metric and whose carrier PR is
+  still live into the outcome ledger — the same records `phm improve
+  sync-backlog` writes by hand — so measured outcomes keep feeding the order
+  above. When the standing-pass intake has superseded a task's cloud PR, the
+  carrier is the fleet App PR (`supersededBy`): that is the PR number the
+  ledger records, measures and watches. The same pass records
   checkout-free post-merge observations (`syncCloudOutcomeObservations`):
-  merged task outcomes and the revert-outcomes journal become `observed`
-  events, so standing reverts discount the proposals that caused them
-  without anyone running `phm improve observe` by hand. Scheduled launches need
+  merged task outcomes, the fleet merge-state landing record for a
+  superseded task's intake proposal, and the revert-outcomes journal become
+  `observed` events — a proposal still naming the closed cloud PR is
+  re-pointed at the fleet PR — so standing reverts discount the proposals
+  that caused them without anyone running `phm improve observe` by hand.
+  Scheduled launches need
   self-improvement switched on **and** the self-improvement gate open. So with
   the defaults Phantom starts at most 4 sessions a day on its own, and stops
   when the estimate reaches the $40 reserve. The two jobs never overlap
@@ -1918,7 +1945,10 @@ the diff that was filed, the intake comments "Superseded by #N" on the cloud
 PR, closes it, and records `supersededBy` on the task. From then on the
 tracker follows the App PR: open stays `pr-open`, merged makes the task
 `merged` (so its backlog item is done for good), and closed makes it
-`closed`. Needs you no longer offers actions on a superseded PR.
+`closed`. The App PR's own merge/CI/review verdict is kept on the task's
+`outcome` at that terminal transition, exactly as the cloud PR's was — it is
+the evidence the outcome ledger, retros and lesson trial read for the PR
+that actually landed. Needs you no longer offers actions on a superseded PR.
 
 KILL stops the intake before it reads anything. It never runs outside a
 standing tick and never merges.

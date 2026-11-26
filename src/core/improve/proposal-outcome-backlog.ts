@@ -14,13 +14,15 @@
  *
  *   - measurement stalls: registered proposals with a recorded PR but zero
  *     `measured` events past a grace period. Registration IS automated — the
- *     cloud scheduler's syncCloudBacklogOutcomes registers every unclosed
- *     backlog PR whose item declares a metric — and checkout-free post-merge
- *     observation is too (syncCloudOutcomeObservations appends merged/reverted
- *     events from task outcomes and the revert journal), but measure and
- *     promote remain manual verbs no scheduled pass runs, so the ledger can
- *     accumulate hypotheses it can never score and area-leverage ranking
- *     starves for evidence;
+ *     cloud scheduler's syncCloudBacklogOutcomes registers every backlog task
+ *     whose item declares a metric and whose carrier PR (cloud or the fleet
+ *     App PR that superseded it) is still live — and checkout-free
+ *     post-merge observation is too (syncCloudOutcomeObservations appends
+ *     merged/reverted events from task outcomes, fleet landing records and
+ *     the revert journal, re-pointing proposals at the fleet carrier), but
+ *     measure and promote remain manual verbs no scheduled pass runs, so the
+ *     ledger can accumulate hypotheses it can never score and area-leverage
+ *     ranking starves for evidence;
  *   - unknown measurements: in-window `measured` events that returned no
  *     value. measureAt yields null with a recorded reason when the checkout
  *     misses the commit, the metric script is absent, confinement refuses
@@ -221,7 +223,7 @@ function unmeasuredPrompt(t: StallTally, nowMs: number): string {
   return [
     `Phantom's self-improvement outcome ledger shows ${t.stalled} registered proposal(s) with a recorded PR but no 'measured' event — the oldest has waited ${age} since registration.`,
     '',
-    `The ledger is improve/outcomes.jsonl under the Ashlr home (~/.ashlr or $ASHLR_HOME); \`phm improve outcomes --json\` prints the same scorecard. Registration is automated — the cloud scheduler's syncCloudBacklogOutcomes registers every unclosed backlog PR whose item declares a metric — but measurement and promotion evaluation remain the manual verbs \`phm improve measure\` and \`promote\` (\`observe\` stays the deep pass that needs a local checkout), which no scheduled pass runs — though checkout-free post-merge observation IS automated: syncCloudOutcomeObservations on the scheduler tick and \`phm improve sync-backlog\` appends merged/reverted events from merged task outcomes and the revert-outcomes journal. The ledger therefore accumulates hypotheses it can never score: every stalled proposal's area-leverage ranking stays unknown and the backlog's measured-leverage ordering starves for evidence. Of ${t.withPr} registered proposal(s) with a PR, ${t.stalled} have waited past the ${Math.round(PROPOSAL_OUTCOME_UNMEASURED_GRACE_MS / 3_600_000)}h grace with no measurement.`,
+    `The ledger is improve/outcomes.jsonl under the Ashlr home (~/.ashlr or $ASHLR_HOME); \`phm improve outcomes --json\` prints the same scorecard. Registration is automated — the cloud scheduler's syncCloudBacklogOutcomes registers every backlog task whose item declares a metric and whose carrier PR (the cloud PR, or the fleet App PR that superseded it) is still live — but measurement and promotion evaluation remain the manual verbs \`phm improve measure\` and \`promote\` (\`observe\` stays the deep pass that needs a local checkout), which no scheduled pass runs — though checkout-free post-merge observation IS automated: syncCloudOutcomeObservations on the scheduler tick and \`phm improve sync-backlog\` appends merged/reverted events from merged task outcomes, fleet landing records and the revert-outcomes journal, re-pointing proposals at the fleet carrier PR. The ledger therefore accumulates hypotheses it can never score: every stalled proposal's area-leverage ranking stays unknown and the backlog's measured-leverage ordering starves for evidence. Of ${t.withPr} registered proposal(s) with a PR, ${t.stalled} have waited past the ${Math.round(PROPOSAL_OUTCOME_UNMEASURED_GRACE_MS / 3_600_000)}h grace with no measurement.`,
     '',
     'What is in scope is the pipeline around the verbs: whether measurement should run on a schedule (a cloud-scheduler tick, a daemon pass or a queue job driving measureAt and appending measured events), whether measure/promote/observe should collapse into one automated pass, or whether proposals that can never be measured — closed PRs, withdrawn items — should be recorded as terminal instead of stalling. Check src/core/improve/outcomes.ts, measure.ts, backlog-sync.ts and the scheduler tick in src/core/cloud/cloud-api.ts, fix the cause in this repository, and run the affected suite. If an operator pass has measured these proposals since this evidence — report no-change and name the evidence.',
   ].join('\n');

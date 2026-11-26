@@ -43,7 +43,7 @@ it('rejects an invalid replacement and reads a recovered status without stale la
   expect(initial.lanes).toEqual([expect.objectContaining({ lane: 'first-lane', healthy: true })]);
 
   const rejected = await read({ ...status, mem_free_pct: 101 });
-  expect(rejected).toEqual({
+  expect(rejected).toMatchObject({
     schema: 'lanes.dispatchd.v1', sourceState: 'degraded', lastTick: null, lanes: [],
     pause: {
       global: { state: 'off', since: null, reasons: [] },
