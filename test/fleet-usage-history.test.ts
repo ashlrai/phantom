@@ -6,7 +6,7 @@ import { cmdFleetUsageHistory } from '../src/cli/fleet-usage-history.js';
 import { readResourceLedger } from '../src/core/fleet/runs-resource-ledger.js';
 import {
   appendUsageReadings, parseUsageHistory, poolUsageSeries, projectUsageHistory, readUsageHistory,
-  USAGE_HISTORY_MAX_AGE_MS, USAGE_HISTORY_SCHEMA, USAGE_WINDOW_MS, usageHistoryPath, type UsageHistoryV1, type UsageReading,
+  USAGE_HISTORY_MAX_AGE_MS, USAGE_HISTORY_SCHEMA, USAGE_WINDOW_MS, usageHistoryPath, usageRunway, type UsageHistoryV1, type UsageReading,
 } from '../src/core/fleet/usage-history.js';
 
 const NOW = Date.parse('2026-11-18T12:00:00.000Z');
@@ -98,6 +98,24 @@ describe('pool series', () => {
     const s = poolUsageSeries('claude', [read(1, 30)], NOW);
     expect(s).toMatchObject({ pace: 'unknown', reason: 'Only one reading in this window.', used_pct: 30 });
     expect(s.points).toEqual([{ at: iso(NOW - H), used_pct: 30 }]);
+  });
+
+  it('counts repeated observation times only once for pace, runway and resets', () => {
+    const first = read(1, 30);
+    const sameTime = first.observed_at.replace('Z', '+00:00');
+    const duplicates = [{ ...read(1, 50), observed_at: sameTime }, read(1, 10)];
+    const [series] = projectUsageHistory([first, ...duplicates], NOW);
+    expect(series).toMatchObject({
+      points: [{ at: first.observed_at, used_pct: 30 }],
+      pace: 'unknown', resets: [], runway: { verdict: 'unknown', pace_per_hour: null },
+    });
+
+    const next = read(0, 32);
+    const [updated] = projectUsageHistory([first, ...duplicates], NOW, [next]);
+    expect(updated).toMatchObject({ resets: [], runway: { pace_per_hour: 2, pace_6h_per_hour: null } });
+    const points = [{ at: first.observed_at, used_pct: 30 }, { at: sameTime, used_pct: 50 }];
+    expect(usageRunway('claude', points, RESET, NOW))
+      .toMatchObject({ verdict: 'unknown', pace_per_hour: null });
   });
 
   it('requires two readings inside the quota window before reporting pace', () => {

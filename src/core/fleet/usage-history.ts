@@ -192,6 +192,16 @@ function startsWindow(prev: UsageReading, cur: UsageReading): boolean {
 
 const pts = (n: number): string => `${Math.round(n * 100) / 100}`;
 
+/** Match the history writer: keep the first reading at each observation time. */
+function distinctObservations<T>(readings: readonly T[], observedAt: (reading: T) => string, nowMs: number): T[] {
+  const byTime = new Map<number, T>();
+  for (const reading of readings) {
+    const at = ms(observedAt(reading));
+    if (Number.isFinite(at) && at <= nowMs && !byTime.has(at)) byTime.set(at, reading);
+  }
+  return [...byTime.entries()].sort(([a], [b]) => a - b).map(([, reading]) => reading);
+}
+
 /**
  * Pure. Pace from consecutive readings of one pool, then whether it runs dry
  * before `resetAt` or leaves usage unspent. Readings before the window start
@@ -202,8 +212,8 @@ const pts = (n: number): string => `${Math.round(n * 100) / 100}`;
 export function usageRunway(pool: string, readings: readonly UsagePoint[], resetAt: string | null, nowMs: number, windowMs = USAGE_WINDOW_MS): PoolRunwayRead {
   const name = poolLabel(pool);
   const resetMs = ms(resetAt);
-  let series = readings.filter(r => Number.isFinite(ms(r.at)) && ms(r.at) <= nowMs && (!Number.isFinite(resetMs) || ms(r.at) >= resetMs - windowMs))
-    .sort((a, b) => ms(a.at) - ms(b.at));
+  let series = distinctObservations(readings, r => r.at, nowMs)
+    .filter(r => !Number.isFinite(resetMs) || ms(r.at) >= resetMs - windowMs);
   for (let i = series.length - 1; i > 0; i--) if (series[i]!.used_pct < series[i - 1]!.used_pct) { series = series.slice(i); break; }
   const latest = series.at(-1);
   const hoursToReset = Number.isFinite(resetMs) ? (resetMs - nowMs) / 3_600_000 : null;
@@ -250,7 +260,7 @@ export function usageRunway(pool: string, readings: readonly UsagePoint[], reset
  * `rows` may hold any pools and any order; only `pool` is read.
  */
 export function poolUsageSeries(pool: string, rows: readonly UsageReading[], nowMs: number, windowMs = USAGE_WINDOW_MS): PoolUsageSeries {
-  const mine = rows.filter(r => r.pool === pool).sort((a, b) => ms(a.observed_at) - ms(b.observed_at));
+  const mine = distinctObservations(rows.filter(r => r.pool === pool), r => r.observed_at, nowMs);
   const resets: UsageResetEvent[] = [];
   let start = 0;
   for (let i = 1; i < mine.length; i++) {

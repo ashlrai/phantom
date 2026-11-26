@@ -134,7 +134,9 @@ receipt proves coordination, not job execution.
 
 Usage history charts readings that name the current quota reset and were
 observed from the window start up to, but excluding, that reset. Pace and
-runway need at least two readings from that window.
+runway need at least two distinct observation times from that window. When
+multiple readings share an observation time, the first reading supplies the
+chart point and the evidence for reset detection and runway.
 
 The Leader resource ledger keeps the Claude dispatcher quota when its recorded
 capture time is later than the usable native weekly reading, no later than
