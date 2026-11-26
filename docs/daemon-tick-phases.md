@@ -62,7 +62,10 @@ A standing revert requires
 an exclusive job claim on the merge's PR. The claim check uses the lowercase
 `owner/repo#n` key, so repository case and a trailing slash do not distinguish
 claims. Future-dated claims can contest attribution once their receipt time
-is reached. Undated claims can still make attribution ambiguous.
+is reached. A standalone revert can contest a claim once both its receipt
+time and effective revert time are reached. A merge or close receipt can
+still establish a claim while its revert metadata is future-dated. Undated
+claims can still make attribution ambiguous.
 Ledger revert receipts with a PR link apply only to that PR, including links
 under `html_url`. An unparseable link supplies no revert evidence. A receipt
 without a PR link can still supply job-wide revert evidence.

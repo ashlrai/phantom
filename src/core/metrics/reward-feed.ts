@@ -318,6 +318,14 @@ export function foldJobsLedgerRewards(
     if (receiptAt !== null && receiptAt > nowMs) continue;
     // A future verdict cannot establish PR ownership or supply other evidence yet.
     if (resolvedAt !== null && resolvedAt > nowMs) continue;
+    const name = firstLedgerString(row, LEDGER_EVENT_KEYS)?.toLowerCase();
+    const dispatch = name !== undefined && DISPATCH_EVENTS.has(name);
+    const ciBoundary = name === 'ci_start' || name === 'ci_complete';
+    // A standalone future revert cannot contest a PR claim yet. Mixed
+    // receipts can still supply independent resolution or execution evidence.
+    const publish = name === 'publish' || name === 'published';
+    if (explicitRevertMs !== null && explicitRevertMs > nowMs
+        && !isMerge && !isClose && !dispatch && !ciBoundary && !publish) continue;
     const prKeys = receiptPrKeys(row);
     if (claims !== null) {
       for (const key of prKeys) {
@@ -327,9 +335,6 @@ export function foldJobsLedgerRewards(
       }
     }
     if (!REWARD_JOB_ID_PATTERN.test(id)) continue;
-    const name = firstLedgerString(row, LEDGER_EVENT_KEYS)?.toLowerCase();
-    const dispatch = name !== undefined && DISPATCH_EVENTS.has(name);
-    const ciBoundary = name === 'ci_start' || name === 'ci_complete';
     if (receiptAt === null && !dispatch && !ciBoundary) continue;
     let acc = jobs.get(id);
     if (!acc) {
