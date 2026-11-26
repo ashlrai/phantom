@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { userInfo } from 'node:os';
 import { ashlrHome } from '../cloud/store.js';
-import type { TeamActor } from './protocol.js';
+import { normalizeHandle, type TeamActor } from './protocol.js';
 import { NON_OPERATOR_ENV_MARKERS } from '../authority/operator-context-markers.js';
 
 /** Env markers set by agent runtimes; an approval from such a process is an agent approval. */
@@ -21,19 +21,17 @@ export const AGENT_ENV_MARKERS: readonly string[] = Object.freeze([...new Set([
   ...NON_OPERATOR_ENV_MARKERS,
 ])]);
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9._-]/g, '');
-
 export function ownerConfigPath(): string { return join(ashlrHome(), 'teams', 'owner.json'); }
 
 /** Device human from the OS user and owner config. Does not read agent env and does not authorize a request. */
 export function enrolledHumanActor(): TeamActor {
-  const osUser = norm(userInfo().username);
+  const osUser = normalizeHandle(userInfo().username);
   let name = osUser;
   const p = ownerConfigPath();
   if (existsSync(p)) {
     const cfg = JSON.parse(readFileSync(p, 'utf8')) as { human?: unknown; osUser?: unknown };
-    if (typeof cfg.osUser === 'string' && norm(cfg.osUser) !== osUser) throw new Error('This OS user is not the configured team owner.');
-    if (typeof cfg.human === 'string' && norm(cfg.human)) name = norm(cfg.human);
+    if (typeof cfg.osUser === 'string' && normalizeHandle(cfg.osUser) !== osUser) throw new Error('This OS user is not the configured team owner.');
+    if (typeof cfg.human === 'string' && normalizeHandle(cfg.human)) name = normalizeHandle(cfg.human);
   }
   if (!name || name.startsWith('agent')) throw new Error('Could not derive a human approval identity.');
   return { kind: 'human', id: `human:${name}` };

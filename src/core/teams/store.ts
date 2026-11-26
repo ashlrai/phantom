@@ -9,17 +9,17 @@ import { randomBytes } from 'node:crypto';
 import { ashlrHome } from '../cloud/store.js';
 import { scrubSecrets } from '../util/scrub.js';
 import {
-  TEAM_PROTOCOL_VERSION, TEAM_EVENT_TYPES, validId,
+  TEAM_PROTOCOL_VERSION, TEAM_EVENT_TYPES, validId, validTeamId,
   type TeamActor, type TeamEvent, type TeamEventType,
 } from './protocol.js';
 
 export function teamDir(team: string): string {
-  if (!validId(team) || team.includes('/') || team.includes('..')) throw new Error('Invalid team id.');
+  if (!validTeamId(team)) throw new Error('Invalid team id.');
   return join(ashlrHome(), 'teams', team);
 }
 function logPath(team: string): string { return join(teamDir(team), 'events.jsonl'); }
 
-export function newEventId(now = Date.now()): string {
+function newEventId(now = Date.now()): string {
   return `${now.toString(36).padStart(9, '0')}-${randomBytes(4).toString('hex')}`;
 }
 

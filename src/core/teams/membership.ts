@@ -7,7 +7,7 @@
 import { localHumanActor, ownerConfigPath } from './identity.js';
 import type { TeamActor } from './protocol.js';
 import { appendUnlocked, readEvents, withTeamLock } from './store.js';
-import { teamState } from './state.js';
+import { foldTeam } from './state.js';
 import { updateWorkspace } from './workspace.js';
 
 const INVITE_PREFIX = 'phm-invite-v1.';
@@ -22,7 +22,7 @@ export function memberIdForGithubUser(input: string): string {
   return `human:${name.toLowerCase()}`;
 }
 
-export function encodeInvite(invite: TeamInvite): string {
+function encodeInvite(invite: TeamInvite): string {
   return INVITE_PREFIX + Buffer.from(JSON.stringify({ t: invite.team, m: invite.member, e: invite.event })).toString('base64url');
 }
 
@@ -50,11 +50,13 @@ export function joinWithInvite(token: string, actor: TeamActor = localHumanActor
   }
   return withTeamLock(inv.team, () => {
     const events = readEvents(inv.team);
-    const invited = events.find(e => e.id === inv.event && e.type === 'member.invited' && e.payload['memberId'] === inv.member);
-    if (!invited || !teamState(inv.team).members.some(m => m.id === inv.member)) {
+    const invitedIndex = events.findIndex(e => e.id === inv.event && e.type === 'member.invited' && e.payload['memberId'] === inv.member);
+    const invited = invitedIndex >= 0 ? events[invitedIndex] : undefined;
+    if (!invited || !foldTeam(inv.team, events).members.some(m => m.id === inv.member)) {
       throw new Error(`No live invite for ${inv.member} in this node's log of team "${inv.team}" (never synced here, or revoked). Get the owner's latest log via your sync service, or ask an owner/admin to re-run: phm team invite ${inv.member.slice(6)} --team ${inv.team}`);
     }
-    const already = events.some(e => e.type === 'member.joined' && e.actor.id === actor.id && e.id > invited.id);
+    const already = events.some((e, index) =>
+      e.type === 'member.joined' && e.actor.id === actor.id && (e.id > invited.id || (index > invitedIndex && e.id.slice(0, 9) === invited.id.slice(0, 9))));
     const ev = already ? undefined : appendUnlocked(inv.team, actor, 'member.joined', {});
     return { team: inv.team, member: actor.id, joined: true as const, alreadyJoined: already, event: ev?.id ?? null, authority: 'this-node-local-auth' as const };
   });

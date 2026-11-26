@@ -7,7 +7,9 @@ import { addTeamPerson, DirectoryInputError, DirectoryRefusedError, OWNER_ONLY, 
 import { memberRunningJobs } from '../core/teams/running-jobs.js';
 import { shareTotal, TEAM_SCHEMA, toMember } from '../shared/team-directory.js';
 import {
-  inviteMember, joinWithInvite, localHumanActor, memberIdForGithubUser, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, describeAccessAction, releaseClaim, teamState, updateWorkspace, type TeamActor,
+  inviteMember, isAssignableMemberRole, isOpenHandoff, joinWithInvite, localHumanActor, memberIdForGithubUser,
+  normalizeHandle, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, describeAccessAction, releaseClaim,
+  teamState, updateWorkspace, type TeamActor,
 } from '../core/teams/index.js';
 
 const USAGE = `Usage: phm team <list|add|show|view|join|invite|remove|role|link|approve|deny|claim|release|say> [--team <id>] [--as <name>] [--json]
@@ -49,7 +51,7 @@ export async function cmdTeam(argv: string[]): Promise<number> {
   const args = [...argv];
   const json = args.includes('--json'); if (json) args.splice(args.indexOf('--json'), 1);
   const team = flag(args, '--team') ?? DEFAULT_TEAM;
-  const name = (flag(args, '--as') ?? process.env['PHM_TEAM_USER'] ?? userInfo().username).toLowerCase().replace(/[^a-z0-9._-]/g, '');
+  const name = normalizeHandle(flag(args, '--as') ?? process.env['PHM_TEAM_USER'] ?? userInfo().username);
   const me: TeamActor = { kind: 'human', id: `human:${name || 'me'}` };
   const [sub = 'list', ...rest] = args;
   const out = (v: unknown, text: string) => { console.log(json ? JSON.stringify(v, null, 2) : text); return 0; };
@@ -87,7 +89,8 @@ export async function cmdTeam(argv: string[]): Promise<number> {
       case 'view': {
         const s = teamState(team);
         if (json) return out(s, '');
-        const lines = [`Team ${team} — ${s.members.length} members, ${s.claims.length} claims, ${s.handoffs.filter((h) => h.state !== 'completed' && h.state !== 'declined').length} open handoffs`];
+        const openHandoffs = s.handoffs.filter(isOpenHandoff);
+        const lines = [`Team ${team} — ${s.members.length} members, ${s.claims.length} claims, ${openHandoffs.length} open handoffs`];
         // Role labels state approval responsibility, so a member can see who may decide a handoff.
         const roleLabels: Record<string, string> = {
           owner: 'human owner; approves consequential actions', admin: 'human admin; approves consequential actions',
@@ -97,7 +100,7 @@ export async function cmdTeam(argv: string[]): Promise<number> {
         lines.push('  Presence: ● seen within 5 minutes; ○ inactive (membership is retained).');
         for (const repo of s.repos) lines.push(`  repo: ${repo}`);
         for (const c of s.claims) lines.push(`  ⚑ ${c.target.repo}${c.target.branch ? `@${c.target.branch}` : ''}${c.target.path ? `:${c.target.path}` : ''} by ${c.holder} until ${c.expiresAt} [${c.id}]`);
-        for (const h of s.handoffs.filter((x) => x.state !== 'completed' && x.state !== 'declined')) lines.push(`  → ${h.title} (${h.state}) ${h.from} → ${h.assignee ?? h.to ?? 'anyone'} [${h.id}]`);
+        for (const h of openHandoffs) lines.push(`  → ${h.title} (${h.state}) ${h.from} → ${h.assignee ?? h.to ?? 'anyone'} [${h.id}]`);
         const pending = s.approvals.filter((a) => a.state === 'pending');
         for (const a of pending) lines.push(`  ! approval needed: ${a.access ? `access request (${describeAccessAction(a.access)})` : a.action} requested by ${a.requestedBy}${a.note ? ` — "${a.note}"` : ''} — human owner/admin: phm team approve ${a.id} --team ${team}`);
         for (const m of s.messages.slice(-5)) lines.push(`  # ${m.channel} ${m.from} (${m.ts}): ${m.text}`);
@@ -121,7 +124,7 @@ export async function cmdTeam(argv: string[]): Promise<number> {
           const p = ev.payload as { drainedClaims: string[]; reopenedHandoffs: string[] };
           return out(ev, `Removed ${rest[0]} from ${team}: drained ${p.drainedClaims.length} claims, reopened ${p.reopenedHandoffs.length} handoffs. Re-invite with: phm team invite ${rest[0]} --team ${team}`);
         }
-        if (sub === 'role' && rest[1] !== 'admin' && rest[1] !== 'member') throw new Error('role must be admin or member.');
+        if (sub === 'role' && !isAssignableMemberRole(rest[1])) throw new Error('role must be admin or member.');
         const action = sub === 'link' ? { type: 'repo.linked' as const, repo: rest[0]! }
           : sub === 'invite' ? { type: 'member.invited' as const, memberId: rest[0]! }
           : { type: 'member.role-changed' as const, memberId: rest[0]!, role: rest[1] as 'admin' | 'member' };
