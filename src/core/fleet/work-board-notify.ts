@@ -73,6 +73,8 @@ export interface BoardTransitionEvidence {
   owner?: string;
   claimReceipt?: string;
   dependency?: string;
+  evidenceAt?: string;
+  evidenceSource?: string;
   pr?: number;
   head?: string;
   tests?: string;
@@ -95,9 +97,15 @@ function transitionEvidence(item: BoardSnapshotItem): BoardTransitionEvidence {
   const evidence: BoardTransitionEvidence = { asOf: item.asOf, source: item.source };
   if (item.owner !== null) evidence.owner = item.owner;
   if (item.claimReceipt !== null) evidence.claimReceipt = item.claimReceipt;
-  if (item.blocker) evidence.dependency = item.blocker.dependency;
-  if (item.verified) {
+  if (item.state === 'BLOCKED' && item.blocker) {
+    evidence.dependency = item.blocker.dependency;
+    evidence.evidenceAt = item.blocker.at;
+    evidence.evidenceSource = item.blocker.source;
+  }
+  if (item.state === 'VERIFIED' && item.verified) {
     const { pr, head, tests, artifact } = item.verified;
+    evidence.evidenceAt = item.verified.at;
+    evidence.evidenceSource = item.verified.source;
     if (pr !== undefined) evidence.pr = pr;
     if (head !== undefined) evidence.head = head;
     if (tests !== undefined) evidence.tests = tests;
@@ -245,8 +253,17 @@ function transitionDeltaMaterial(t: BoardTransition): string | null {
 
 /** Compose the single-line thread message; the whole line is scrubbed so
  * a secret-looking substring in untrusted evidence can never ride out. */
-export function boardNoticeText(state: BoardNotifyState, itemId: string, asOf: string, detail: string, source: string): string {
-  return scrubSecrets(`${state} ${field(itemId, 80)} as of ${field(asOf, 40)} — ${detail} (source: ${field(source, 120)})`);
+export function boardNoticeText(state: BoardNotifyState, itemId: string, asOf: string, detail: string, source: string,
+  evidenceAt?: string, evidenceSource?: string): string {
+  const date = typeof evidenceAt === 'string' ? evidenceAt.trim() : '';
+  // Require an explicit ISO timestamp and reject impossible calendar dates.
+  const match = /^(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.exec(date);
+  const day = match?.[1];
+  const validDay = day !== undefined && !Number.isNaN(Date.parse(`${day}T00:00:00Z`))
+    && new Date(`${day}T00:00:00Z`).toISOString().startsWith(day);
+  const validDate = validDay && !Number.isNaN(Date.parse(date));
+  const provenance = state === 'ASSIGNED' ? '' : ` (evidence date: ${validDate ? field(date, 40) : 'unknown'}; evidence source: ${field(evidenceSource ?? '', 120) || 'unknown'})`;
+  return scrubSecrets(`${state} ${field(itemId, 80)} as of ${field(asOf, 40)} — ${detail}${provenance} (source: ${field(source, 120)})`);
 }
 
 /** The bounded evidence a postable state cites: ASSIGNED names the owner
@@ -325,7 +342,7 @@ export function planNotifications(
     notices.push({
       itemId: t.itemId, state, asOf: t.evidence.asOf, delta, detail: text,
       source: t.evidence.source,
-      text: boardNoticeText(state, t.itemId, t.evidence.asOf, text, t.evidence.source),
+      text: boardNoticeText(state, t.itemId, t.evidence.asOf, text, t.evidence.source, t.evidence.evidenceAt, t.evidence.evidenceSource),
       sourceChannel: t.sourceChannel, sourceThread: t.sourceThread,
     });
   }
