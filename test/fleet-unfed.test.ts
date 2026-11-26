@@ -275,6 +275,27 @@ describe('foldUnfedHistory', () => {
       ],
     });
   });
+
+  it('excludes contradictory lane evidence without losing valid siblings or earlier replays', () => {
+    const lane = { unfed: true, held: false, headroom: 2, running: 1, target: 3, waiting_elsewhere: 2 };
+    const tick = (ts: number, waiting: number, lanes: Record<string, unknown>) =>
+      JSON.stringify({ schema: 'work-market.v1', event: 'unfed_capacity', ts, waiting, lanes });
+    const text = [
+      tick(t, 2, {
+        codex: { ...lane, held: true },
+        devin: { ...lane, waiting_elsewhere: 3 },
+        omlx: { ...lane, running: 3 },
+        claude: lane,
+      }),
+      tick(t, 0, { codex: lane }),
+      tick(t - 60, 1, { codex: lane }),
+    ].join('\n');
+
+    expect(foldUnfedHistory(text, now, 24)).toMatchObject({
+      ticks: 1,
+      lanes: [{ lane: 'claude', unfedTicks: 1, slotTicks: 2, lastUnfedAt: new Date(now).toISOString() }],
+    });
+  });
 });
 
 describe('foldMarketOverrides', () => {

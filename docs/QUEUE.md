@@ -404,7 +404,10 @@ most 168): ticks unfed and slot-ticks lost per lane, with the leading reasons.
 The history includes both endpoints of the trailing window and excludes ticks
 timestamped after the report time.
 Each historical lane needs an unfed flag, positive headroom and waiting work
-elsewhere. A tick counts when at least one lane meets all three conditions.
+elsewhere. The fold excludes held lanes, counts of waiting work that exceed
+the recorded tick total, and headroom that disagrees with the recorded running
+count and target. Older rows can contribute when those cross-check fields are
+missing. A tick counts when at least one lane has usable evidence.
 If several snapshots share a tick timestamp, the last one with usable unfed
 lane evidence supplies that tick's lane counts, slot-ticks and blocker counts.
 
