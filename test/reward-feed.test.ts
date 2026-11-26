@@ -623,10 +623,11 @@ describe('foldJobsLedgerRewards', () => {
     }]);
   });
 
-  it('orders a timestamp-only epoch-millisecond revert by its effective time', () => {
+  it.each([true, false])('orders an epoch-millisecond revert by its effective time (generic timestamp present: %s)', (withReceiptTime) => {
     const job = 'RQ-EPOCH-REVERT';
     const revert = (timestamp: number) => line({
-      job, reverted_at: timestamp, ts: '2026-10-28T16:00:00Z',
+      job, reverted_at: timestamp,
+      ...(withReceiptTime ? { ts: '2026-10-28T16:00:00Z' } : {}),
     });
     for (const [at, held] of [
       [Date.parse(MERGED_ISO) - 1, true],
@@ -636,6 +637,15 @@ describe('foldJobsLedgerRewards', () => {
       expect(foldJobsLedgerRewards([launch(job), merged(job), revert(at)].join('\n'), NOW_MS))
         .toMatchObject([{ merged: held, dispatchedAt: DISPATCH_ISO }]);
     }
+  });
+
+  it('does not use a revert timestamp to date an otherwise undated dispatch', () => {
+    const job = 'RQ-UNDATED-REVERT-DISPATCH';
+    const text = [
+      launch(job), merged(job),
+      line({ job, event: 'launch', lane: 'devin', revertedAt: MERGED_ISO }),
+    ].join('\n');
+    expect(foldJobsLedgerRewards(text, NOW_MS)).toEqual([]);
   });
 
   it('reads merged/closed event names as verdicts when no phase field resolves', () => {
