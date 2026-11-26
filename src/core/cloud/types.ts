@@ -32,6 +32,7 @@
  */
 
 import type { MetricSpec } from '../improve/outcomes.js';
+import type { MapFreshness } from '../knowledge/wiki/system-map-git.js';
 import type { PlaybookRef } from '../playbooks/types.js';
 
 export const CLOUD_TASK_SCHEMA_VERSION = 1 as const;
@@ -210,7 +211,7 @@ export interface CloudTaskV1 {
   /** Lessons trial arm and the approved notes that applied at launch (improve/lesson-trial.ts); absent = none applied. */
   lessons?: CloudTaskLessons;
   /** Measured Wiki context at launch; absent means this task predates measurement. */
-  wikiSlice?: { bytes: number; nodeIds: string[] };
+  wikiSlice?: { bytes: number; nodeIds: string[]; freshness?: MapFreshness };
   /** CI and review evidence at merge/close (cloud/tracker.ts); absent = not captured. */
   outcome?: CloudTaskOutcome;
   /** Budget accounting — an ESTIMATE fixed at launch. */

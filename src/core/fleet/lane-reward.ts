@@ -12,6 +12,7 @@ import { loadProposal } from '../inbox/store.js';
 import { readLedgerTail } from '../router/outcomes.js';
 import type { Proposal } from '../types.js';
 import { inspectOneAskReward, type OneAskReward } from './one-ask-reward.js';
+import { ledgerEventTs } from './jobs-ledger-dialect.js';
 
 export const LANE_REWARD_SCHEMA = 'fleet.lane-reward.v1' as const;
 /** Uniform caller weight: every recorded attempt counts the same. */
@@ -85,18 +86,6 @@ const pickString = (row: Row, ...names: string[]): string | null => {
 };
 const boundedId = (value: string | null, re: RegExp): string | null =>
   value !== null && re.test(value) ? value : null;
-/**
- * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
- * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
- * the same field set dispatchd `_vc_pick` and metrics/loop accept.
- */
-const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-/** Terminal outcome stamp; MERGED prefers mergedAt, CLOSED closedAt. */
-const terminalTsMs = (row: Row, phase: string): number => {
-  const preferred = phase === 'MERGED' ? 'mergedAt' : 'closedAt';
-  const keys = [preferred, ...LEDGER_TS_KEYS.filter(k => k !== preferred)];
-  return Date.parse(pickString(row, ...keys) ?? '') || 0;
-};
 const jobOf = (row: Row): string | null => boundedId(pickString(row, 'job', 'job_id', 'jobId', 'id'), JOB_ID);
 const laneOf = (row: Row): string | null => boundedId(pickString(row, 'lane', 'pool', 'arm'), LANE_ID);
 const urlOf = (row: Row): string | null => pickString(row, 'url', 'pr_url', 'prUrl', 'pr', 'html_url');
@@ -127,7 +116,8 @@ export function foldLaneRewardAttempts(text: string): { attempts: Map<string, La
   }
   const attempts = new Map<string, LaneRewardAttempt>();
   for (const row of rows) {
-    const event = eventOf(row), phase = phaseOf(row);
+    const event = eventOf(row);
+    const phase = phaseOf(row) || (TERMINAL_PHASES.has(event.toUpperCase()) ? event.toUpperCase() : '');
     const launch = LAUNCH_EVENTS.has(event), finish = FINISH_EVENTS.has(event);
     if (!launch && !finish && !PUBLISH_EVENTS.has(event) && phase !== 'PUBLISHED' &&
         !OUTCOME_EVENTS.has(event) && !TERMINAL_PHASES.has(phase)) continue;
@@ -140,7 +130,7 @@ export function foldLaneRewardAttempts(text: string): { attempts: Map<string, La
     if (finish) attempt.tokens = tokensOf(row) ?? attempt.tokens;
     attempt.published ||= PUBLISH_EVENTS.has(event) || phase === 'PUBLISHED' || url !== null;
     if (TERMINAL_PHASES.has(phase)) {
-      const tsMs = terminalTsMs(row, phase);
+      const tsMs = ledgerEventTs(row, phase) ?? 0;
       if (tsMs >= attempt.outcomeTsMs) {
         attempt.outcome = phase === 'MERGED' ? 'merged' : 'closed';
         attempt.outcomeTsMs = tsMs;

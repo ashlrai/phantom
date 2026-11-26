@@ -27,8 +27,9 @@ for validated lane-open dispatcher jobs. `readyRowsForDepth`
 ## Wiki context and ecosystem
 
 `cloudBrainContext(githubRepo, checkout, taskText)` and
-`fleetBrainContext(repoName, taskText)` return `{ text, nodeIds }`; text is
-bounded to 3,072 UTF-8 bytes. Fleet drop jobs only append context that fits the
+`fleetBrainContext(repoName, taskText)` return `{ text, nodeIds, freshness? }`;
+text is bounded to 3,072 UTF-8 bytes. Freshness compares the pinned commit
+with the local `origin/HEAD`, if known; neither reader fetches. Fleet drop jobs only append context that fits the
 drop contract. `phm wiki brain stats --json` reports separate Fleet and Cloud
 merge rates for explicitly measured jobs with resolved PRs.
 
