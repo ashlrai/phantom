@@ -125,6 +125,24 @@ it('attributes timed merges only from duplicate receipts with usable timestamps'
   expect(report.totals.merges).toBe(1);
 });
 
+it('counts unique unattributed merges in the fleet total', async () => {
+  const prUrl = 'https://github.com/example/phantom/pull/11';
+  const receipts = [
+    { job: 'unplaced', state: 'MERGED', prUrl, mergedAt: minutesAgo(10) },
+    { job: 'unplaced', state: 'MERGED', prUrl, mergedAt: minutesAgo(10) },
+    { job: 'unplaced', state: 'MERGED', ts: minutesAgo(9) },
+    { job: 'legacy', state: 'MERGED', ts: minutesAgo(8) },
+    { job: 'legacy', state: 'MERGED', ts: minutesAgo(7) },
+    { job: 'old', state: 'MERGED', mergedAt: minutesAgo(61) },
+    { job: 'labeled', state: 'MERGED', ts: minutesAgo(5) },
+    { job: 'labeled', lane: 'devin', state: 'MERGED', ts: minutesAgo(5) },
+  ];
+  await writeFile(join(queueDir, 'jobs.jsonl'), receipts.map(receipt => JSON.stringify(receipt)).join('\n'));
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.lanes.map(({ lane, merges }) => ({ lane, merges }))).toEqual([{ lane: 'devin', merges: 1 }]);
+  expect(report.totals.merges).toBe(3);
+});
+
 it('reports unknown (null), not zero, when sources are absent', async () => {
   const report = await getLaneQueueCounts({ runsDir: root, now });
   expect(report.lanes).toEqual([]);

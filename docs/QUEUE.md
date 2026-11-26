@@ -1179,7 +1179,9 @@ When a timed merge borrows a lane from another merge receipt, that receipt
 must have a readable merge or event timestamp at or before report time.
 When the merge ledger is missing or degraded, a lane with no observed merges
 reports `null`. Observed counts remain visible and may be incomplete. The
-fleet-wide total, including the Leader board total, requires a healthy ledger.
+fleet-wide total, including the Leader board total, requires a healthy ledger
+and includes unique PR or job receipts whose lane cannot be resolved. These
+merges do not appear in any lane's count, so the total can exceed their sum.
 
 Blocked jobs are the parked ones. Each lane has `blockedReasons`
 (`[{ reason, count }]`, biggest first, e.g. `DEP` or `HOLD`) and `stale`, the
