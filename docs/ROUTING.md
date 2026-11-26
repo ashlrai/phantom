@@ -768,7 +768,10 @@ and node-pool attempt telemetry from the reward fold. Batch members still
 use their own `batch_claim` rows and PR verdicts. The daemon records
 `ciWallMs` when the rewarded dispatch
 and resolution window contains exactly one distinct CI start and one distinct
-completion in order. CI receipts outside that window are ignored when
+completion in order. Any PR URLs on the selected boundaries or resolution
+receipt must identify the same PR, including claims on replays at the same
+boundary timestamp. Legacy receipts without PR URLs still contribute timing.
+CI receipts outside that window are ignored when
 checking for ambiguity, so earlier attempts can coexist with a measured
 retry. A merge uses its recorded merge time even if its ledger receipt
 arrived later. The latest effective merge time selects the rewarded attempt.
