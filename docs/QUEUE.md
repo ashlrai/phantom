@@ -355,6 +355,10 @@ Autopilot reports empty ready queues against lane-local headroom. A restock
 proposal is limited to the smaller of that headroom and the remaining shared
 fleet slots. A full fleet cap or closed admission gate yields a no-op while
 the empty-queue gap stays visible.
+When the fleet is at or above its global cap, autopilot suggests holding an
+over-deep sibling only if letting that sibling's running jobs finish could
+bring the fleet below the cap. When no sibling qualifies, it reports a
+capacity-bound no-op.
 The shared fleet queue projection counts a job once in ready supply, using
 the first valid READY row for its lane hint or lane-open status. Later copies
 add no ready supply. Parked rows are still reported separately.
