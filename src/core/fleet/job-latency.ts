@@ -1,4 +1,5 @@
 import { ledgerEventName } from './empty-cause.js';
+import { prKeyOf } from './eval-report.js';
 import { isNodePoolLedgerRow, ledgerEventTs, ledgerJobId } from './jobs-ledger-dialect.js';
 
 const jobPhases = [
@@ -11,7 +12,8 @@ const jobPhases = [
   ['merge', 'ci_complete', 'merged', 'Profile post-CI merge delays and unblock the merge queue.'],
 ] as const;
 
-type Events = Map<string, number[]>;
+type Events = Map<string, { times: Set<number>; prs: Set<string> }>;
+const prBoundaries = new Set(['publish', 'ci_start', 'ci_complete', 'merged']);
 
 /**
  * Canonical boundary name for one ledger row, or undefined when the row is
@@ -132,11 +134,17 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
     if (id?.startsWith('RQ-BATCH-')) continue;
     if (id === null || event === undefined) { ignored++; continue; }
     const at = ledgerEventTs(row, event.toUpperCase()) ?? NaN;
-    const events = jobs.get(id) ?? new Map<string, number[]>();
-    const times = events.get(event) ?? [];
+    const events: Events = jobs.get(id) ?? new Map();
+    const boundary = events.get(event) ?? { times: new Set<number>(), prs: new Set<string>() };
     if (!Number.isFinite(at)) ignored++;
-    if (!times.includes(at)) times.push(at);
-    events.set(event, times); jobs.set(id, events);
+    boundary.times.add(at);
+    if (prBoundaries.has(event)) {
+      for (const url of [row.url, row.prUrl, row.pr_url, row.pr, row.html_url]) {
+        const pr = prKeyOf(url);
+        if (pr) boundary.prs.add(pr.key);
+      }
+    }
+    events.set(event, boundary); jobs.set(id, events);
     if (phases === jobPhases && event === 'checkout_complete' && typeof row.manual_checkout_recovery === 'boolean') {
       const values = recovery.get(id) ?? new Set<number>();
       values.add(Number(row.manual_checkout_recovery));
@@ -147,10 +155,12 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
     const samples: number[] = [];
     for (const [id, events] of jobs) {
       const a = events.get(start), b = events.get(end);
-      if (a?.length !== 1 || b?.length !== 1 || !Number.isFinite(a[0]) || !Number.isFinite(b[0]) || b[0]! < a[0]!) continue;
-      const from = a[0]!, to = b[0]!;
+      if (a?.times.size !== 1 || b?.times.size !== 1) continue;
+      const [from] = a.times, [to] = b.times;
+      if (from === undefined || to === undefined || !Number.isFinite(from) || !Number.isFinite(to) || to < from) continue;
+      if (new Set([...a.prs, ...b.prs]).size > 1) continue;
       // An undated launch could fall anywhere in the interval.
-      if (end !== 'launch' && events.get('launch')?.some(at => !Number.isFinite(at) || (from < at && at <= to))) continue;
+      if (end !== 'launch' && [...(events.get('launch')?.times ?? [])].some(at => !Number.isFinite(at) || (from < at && at <= to))) continue;
       samples.push((to - from) / 1000);
       if (phases === jobPhases && phase === 'checkout') {
         checkout.push(to - from);
