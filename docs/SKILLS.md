@@ -163,7 +163,8 @@ absent — unknown stays unknown, never a zero.
 
 Recurring adverse tallies do not stay report-only:
 `phm improve discover` reads the same projection and queues a priority-3
-backlog item for the fleet repository when one live card revision records
+backlog item for `ashlrai/phantom` (case-insensitive, with bare `phantom`
+also accepted as shorthand) when one live card revision records
 at least three reverted + regressed + followed-up realized outcomes inside
 the 7-day window. The trajectory join and skill-use diagnostics allow up to
 eight daily ledger partitions for that window, including both UTC date
