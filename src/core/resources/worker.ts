@@ -359,6 +359,7 @@ export async function executeResourceWorker(worker: ResourceWorker, binding: Res
     validatedWorker = pool.workers[0]!; validatedBinding = validateResourceBindings([binding], pool)[0]!;
     validatedTask = validateTask(task);
   } catch { return empty('worker-invalid-configuration'); }
+  if (validatedBinding.kind === 'mac-bridge') return empty('bridge-not-commissioned');
   if (signal?.aborted) return empty('worker-cancelled', 'cancelled');
   const controller = new AbortController();
   let killReason: ReturnType<typeof resourceKillReason> = null;

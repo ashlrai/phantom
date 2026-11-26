@@ -1288,6 +1288,7 @@
     "src/core/resources/pacing/index.ts",
     "src/core/resources/pacing/readings.ts",
     "src/core/resources/performance.ts",
+    "src/core/resources/pool-bridge-evidence.ts",
     "src/core/resources/pool-cli-versions.ts",
     "src/core/resources/pool-commissioning-check.ts",
     "src/core/resources/pool-commissioning-custody.ts",
