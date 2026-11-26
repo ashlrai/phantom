@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Seventy-five sources, all of which Phantom
+ * evidence instead of a hand-kept list. Seventy-six sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -134,6 +134,14 @@
  *     selections keep company with merges that did not hold becomes
  *     work instead of sitting in `phm skills list --outcomes` and
  *     `phm fleet status`, reports someone had to run;
+ *   - the trajectory projection's evidence-capture degradation: the
+ *     excluded degraded-source population, majority-missing evidence
+ *     joins on learning-eligible trajectories and skill-use events
+ *     that cannot resolve to a trajectory record that
+ *     `trajectoryLearning.population`, `.gaps` and `.skillObservation`
+ *     publish (trajectoryGapBacklogItems below), so a join that stops
+ *     recording or resolving becomes work instead of sitting in
+ *     `phm fleet status`, a report someone had to run;
  *   - the precheck-skip ledger's recurring skip evidence: the
  *     `queue/precheck-skips.tsv` rows dispatchd appends for every job
  *     its empty-run precheck or dupcheck gate finishes as DONE-NOOP —
@@ -1135,6 +1143,7 @@ import { memoryBacklogItems } from './memory-backlog.js';
 import { diskBacklogItems } from './disk-backlog.js';
 import { controllerBacklogItems } from './controller-backlog.js';
 import { skillOutcomeBacklogItems } from './skill-outcome-backlog.js';
+import { trajectoryGapBacklogItems } from './trajectory-gap-backlog.js';
 import { precheckSkipBacklogItems } from './precheck-skip-backlog.js';
 import { recheckBacklogItems } from './recheck-backlog.js';
 import { sourceYieldBacklogItems } from './source-yield-backlog.js';
@@ -1430,6 +1439,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bar inside the window, only while its exact revision is still the
   // live card, and only for the fleet's own repository.
   items.push(...await skillOutcomeBacklogItems({ repo }));
+
+  // Trajectory evidence capture: the same bounded trajectory projection
+  // the skill-outcome feed reads also publishes which evidence
+  // dimensions joined and which did not — degraded-source trajectories
+  // excluded from learning eligibility, eligible trajectories
+  // systematically missing an evidence join, and skill-use events that
+  // cannot resolve to a trajectory record. Until now those tallies only
+  // ever reached `phm fleet status`, a report someone had to run and
+  // read, even though the join is the spine every downstream learning
+  // signal stands on. Same bounded read; a cell emits only at the
+  // recurring bars inside the window and only for the fleet's own
+  // repository.
+  items.push(...await trajectoryGapBacklogItems({ repo }));
 
   // Precheck-skip ledger: the dispatcher's own DONE-NOOP record —
   // recurring (code, reason) skip groups across distinct jobs and job

@@ -680,6 +680,7 @@
 /test/improve-stray-stop-backlog.test.ts @masonwyatt23
 /test/improve-stuck-job-backlog.test.ts @masonwyatt23
 /test/improve-tick-health-backlog.test.ts @masonwyatt23
+/test/improve-trajectory-gap-backlog.test.ts @masonwyatt23
 /test/improve-typed-route-backlog.test.ts @masonwyatt23
 /test/improve-unfed-backlog.test.ts @masonwyatt23
 /test/improve-usage-gap-backlog.test.ts @masonwyatt23
