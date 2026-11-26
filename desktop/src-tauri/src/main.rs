@@ -294,6 +294,35 @@ impl SidecarStartup {
     }
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopSessionTokens {
+    read_token: String,
+    token: Option<String>,
+}
+
+#[tauri::command]
+fn desktop_session_tokens(
+    window: WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<DesktopSessionTokens>, &'static str> {
+    let url = window.url().map_err(|_| "Could not determine console origin")?;
+    if !trusted_desktop_session_window(window.label(), &url) {
+        return Err("Desktop session is unavailable to this window");
+    }
+    let read = lock(&state.read_token);
+    let mutation = lock(&state.mutation_token);
+    Ok(read.as_ref().map(|read| DesktopSessionTokens {
+        read_token: read.0.clone(),
+        token: mutation.as_ref().map(|token| token.0.clone()),
+    }))
+}
+
+fn trusted_desktop_session_window(label: &str, url: &tauri::Url) -> bool {
+    matches!(label, MAIN_WINDOW_LABEL | owner_assist::LABEL)
+        && url.origin().ascii_serialization() == SERVE_ORIGIN
+}
+
 // ── sidecar stdout routing ───────────────────────────────────────────────────
 
 /// Where one sidecar stdout line goes: a startup record is consumed here
@@ -891,9 +920,7 @@ fn reap_sidecar(handle: &AppHandle) {
     let Some(state) = handle.try_state::<AppState>() else {
         return;
     };
-    state.live_generation.store(0, Ordering::SeqCst);
-    *lock(&state.read_token) = None;
-    *lock(&state.mutation_token) = None;
+    clear_sidecar_tokens(&state, 0);
     let mut guard = match state.sidecar.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -1135,7 +1162,7 @@ fn spawn_server_sidecar(handle: AppHandle, mode: SidecarMode, attempt: u64, kind
             let generation = state.next_generation.fetch_add(1, Ordering::SeqCst) + 1;
             // Live BEFORE the previous child is signalled below, so its
             // Terminated event reads as a replacement, not a crash.
-            state.live_generation.store(generation, Ordering::SeqCst);
+            clear_sidecar_tokens(&state, generation);
             let mut guard = lock(&state.sidecar);
             if let Some(previous) = guard.take() {
                 // Same ordering rule as `reap_sidecar`: the tree has to be
@@ -1208,13 +1235,17 @@ fn spawn_server_sidecar(handle: AppHandle, mode: SidecarMode, attempt: u64, kind
                         StdoutRoute::Startup { startup, first } => {
                             served.store(true, Ordering::SeqCst);
                             if let Some(state) = handle.try_state::<AppState>() {
-                                // Only the live sidecar's token may be polled with.
+                                let mut read = lock(&state.read_token);
+                                let mut mutation = lock(&state.mutation_token);
+                                // Only the live sidecar may publish credentials.
                                 if state.live_generation.load(Ordering::SeqCst) == generation {
-                                    *lock(&state.read_token) = Some(ReadToken(startup.read_token.clone()));
-                                    *lock(&state.mutation_token) = startup.token.clone().map(MutationToken);
+                                    *read = Some(ReadToken(startup.read_token.clone()));
+                                    *mutation = startup.token.clone().map(MutationToken);
                                     // Fresh server: refresh the tray and badge now
                                     // rather than up to 30 s from now.
                                     state.poll_now.store(true, Ordering::SeqCst);
+                                } else {
+                                    continue;
                                 }
                             }
                             if kind == SpawnKind::Restart {
@@ -1286,8 +1317,11 @@ fn spawn_server_sidecar(handle: AppHandle, mode: SidecarMode, attempt: u64, kind
                                     guard.take();
                                 }
                                 drop(guard);
-                                *lock(&state.read_token) = None;
-                                *lock(&state.mutation_token) = None;
+                                let mut read = lock(&state.read_token);
+                                if state.live_generation.load(Ordering::SeqCst) == generation {
+                                    *lock(&state.mutation_token) = None;
+                                    *read = None;
+                                }
                             }
                             live
                         }
@@ -1444,10 +1478,8 @@ fn token_handoff_script(startup: &SidecarStartup) -> String {
 /// fresh `window.__ASHLR_TOKENS__` set here, and the DOM event lets it do that
 /// immediately instead.
 ///
-/// Known limit: the window's INITIALIZATION script still carries the first
-/// sidecar's tokens, so a manual reload after a restart falls back to the
-/// SessionGate prompt. Rebuilding the window would fix that at the cost of the
-/// page's in-memory state, which is the worse trade for a background restart.
+/// After navigation, the page fetches the live tokens over IPC instead of
+/// relying on the snapshot in the initialization script.
 fn hand_tokens_to_open_window(handle: &AppHandle, startup: &SidecarStartup) {
     let script = token_handoff_script(startup);
     let handle2 = handle.clone();
@@ -1463,6 +1495,14 @@ fn hand_tokens_to_open_window(handle: &AppHandle, startup: &SidecarStartup) {
     if let Err(e) = result {
         eprintln!("[ashlr-desktop] could not schedule the token handoff: {e}");
     }
+}
+
+fn clear_sidecar_tokens(state: &AppState, generation: u64) {
+    let mut read = lock(&state.read_token);
+    let mut mutation = lock(&state.mutation_token);
+    state.live_generation.store(generation, Ordering::SeqCst);
+    *read = None;
+    *mutation = None;
 }
 
 // ── seat health ──────────────────────────────────────────────────────────────
@@ -2372,6 +2412,7 @@ fn main() {
         std::process::exit(status);
     }
     let app = tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![desktop_session_tokens])
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Registering the plugin is only half of it: the Verse page is a
@@ -2444,6 +2485,17 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_session_requires_an_authorized_window_and_the_exact_sidecar_origin() {
+        let local = tauri::Url::parse(VERSE_URL).unwrap();
+        assert!(trusted_desktop_session_window(MAIN_WINDOW_LABEL, &local));
+        assert!(trusted_desktop_session_window(owner_assist::LABEL, &local));
+        assert!(!trusted_desktop_session_window(LAUNCH_WINDOW_LABEL, &local));
+        for url in ["http://localhost:7777", "http://127.0.0.1:7778", "https://127.0.0.1:7777"] {
+            assert!(!trusted_desktop_session_window(MAIN_WINDOW_LABEL, &tauri::Url::parse(url).unwrap()));
+        }
+    }
 
     #[test]
     fn parses_the_startup_record_and_ignores_other_lines() {

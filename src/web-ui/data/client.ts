@@ -3,7 +3,7 @@
  * No redefinition of response shapes here — callers type each call with the
  * interfaces re-exported from ./api-types.ts.
  */
-import { getReadClientProof, reportSessionExpired } from './auth-store.js';
+import { getReadClientProof, isDesktopSession, reportSessionExpired } from './auth-store.js';
 import { isRemoteMobileMode } from './remote-mode.js';
 
 /** Covers the console's two coherent 60s worker reads plus transport/body slack. */
@@ -169,7 +169,10 @@ async function mutateJson<T>(method: 'POST' | 'PUT' | 'DELETE', path: string, bo
     headers: post ? { 'Content-Type': 'application/json', 'x-ashlr-token': token } : { 'x-ashlr-token': token },
     ...(post ? { body: JSON.stringify(body ?? {}) } : {}), signal,
   });
-  if (res.status === 401) throw new ApiError('Mutation token was rejected.', 401, path);
+  if (res.status === 401) {
+    if (isDesktopSession()) reportSessionExpired();
+    throw new ApiError('Mutation token was rejected.', 401, path);
+  }
   if (!res.ok) {
     const { detail, code, body: refusal } = await readRefusal(res);
     // A codeless 404 is the dispatch gate; coded route refusals stay ApiError.

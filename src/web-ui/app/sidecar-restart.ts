@@ -5,7 +5,7 @@
  * is installed a moment after the shell mounts instead of costing the chat's
  * first-paint critical JS.
  */
-import { adoptInjectedTokens } from '../data/auth-store.js';
+import { refreshDesktopSession } from '../data/auth-store.js';
 import { invalidateVerseLists } from '../routes/verse/verse-queries.js';
 
 /** DOM event the desktop shell fires after handing a restarted sidecar's tokens to this page. */
@@ -16,14 +16,13 @@ export const SIDECAR_RESTARTED_EVENT = 'ashlr:sidecar-restarted';
  * Returns the disposer.
  *
  * Installed for the page's whole life, whatever the auth phase: the event may
- * land while the SessionGate is showing (adoption then replaces the prompt,
+ * land while the recovery screen is showing (adoption then replaces it,
  * because establishReadSession flips the phase) or while the app looks
  * authenticated on a dead cookie. After a successful adoption the lists are
  * refetched — the restarted server may have marked turns interrupted — and
  * the live streams reconnect on their own: their next attempt now carries a
  * valid cookie. A failed adoption changes nothing; the ordinary 401 path
- * still ends at the SessionGate. The event carries no data, so a page script
- * firing it can at most make the page re-read tokens that are already there.
+ * still attempts to refresh the session. The event itself carries no data.
  */
 export function listenForSidecarRestart(target: Pick<Window, 'addEventListener' | 'removeEventListener'> = window): () => void {
   let inFlight = false;
@@ -31,16 +30,14 @@ export function listenForSidecarRestart(target: Pick<Window, 'addEventListener' 
   let disposed = false;
   const onRestart = (): void => {
     if (disposed) return;
-    // Restarts in quick succession: adoption reads `window.__ASHLR_TOKENS__`
-    // when it STARTS, so a second restart during an exchange left newer
-    // tokens behind it. Run exactly once more after the current exchange
-    // instead of racing a second one for the cookie.
+    // A second restart may leave newer tokens behind an in-flight exchange.
+    // Run once more after that exchange instead of racing it for the cookie.
     if (inFlight) {
       again = true;
       return;
     }
     inFlight = true;
-    void adoptInjectedTokens()
+    void refreshDesktopSession()
       .then((adopted) => { if (adopted) invalidateVerseLists(); })
       .catch(() => undefined)
       .finally(() => {

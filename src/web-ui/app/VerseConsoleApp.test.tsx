@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearMutationToken, clearReadSession, getAuthSnapshot, getMutationToken, hasMutationHold, markCheckComplete } from '../data/auth-store.js';
+import { clearMutationToken, clearReadSession, forgetRememberedTokens, getAuthSnapshot, getMutationToken, hasMutationHold, markCheckComplete, renewReadSession } from '../data/auth-store.js';
+import { ApiError, apiGet, apiPost } from '../data/client.js';
+import { MutationTokenDialog } from '../components/auth/MutationTokenDialog.js';
 import { evictAll } from '../data/cache.js';
 import { MockEventSource, verseFetch } from '../routes/verse/fixtures.test-support.js';
 import * as verseQueries from '../routes/verse/verse-queries.js';
@@ -170,6 +172,87 @@ describe('PhantomConsoleApp', () => {
     expect(state.calls.find((c) => c.path === '/api/session')).toMatchObject({
       method: 'POST', headers: { 'x-ashlr-token': READ },
     });
+  });
+});
+
+describe('desktop session IPC', () => {
+  let previousUrl: string;
+  const dom = (globalThis as unknown as { jsdom: { reconfigure(options: { url: string }): void } }).jsdom;
+
+  beforeEach(() => {
+    previousUrl = window.location.href;
+    dom.reconfigure({ url: 'http://127.0.0.1:7777/verse/' });
+    forgetRememberedTokens();
+  });
+  afterEach(() => {
+    dom.reconfigure({ url: previousUrl });
+    forgetRememberedTokens();
+  });
+
+  it('uses live IPC on a new document, not the old initialization script, and re-fetches on read and mutation 401s', async () => {
+    const rotatedRead = 'a'.repeat(64);
+    const rotatedMutation = 'b'.repeat(64);
+    window.__ASHLR_TOKENS__ = { readToken: rotatedRead };
+    const invoke = vi.fn().mockResolvedValue({ readToken: READ, token: MUT });
+    vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+    const net = verseFetch();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === '/api/rejected' ? new Response(null, { status: 401 }) : (net.fetch as typeof fetch)(input, init)));
+
+    render(<PhantomConsoleApp />);
+    await expectShellOnHome();
+    expect(window.__ASHLR_TOKENS__).toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith('desktop_session_tokens');
+    expect(getMutationToken()).toBe(MUT);
+
+    for (const reject of [
+      () => apiGet('/api/rejected'),
+      () => apiPost('/api/rejected', {}, rotatedMutation),
+    ]) {
+      invoke.mockResolvedValue({ readToken: rotatedRead, token: rotatedMutation });
+      await act(async () => {
+        await expect(reject()).rejects.toBeInstanceOf(ApiError);
+        await expect(renewReadSession()).resolves.toBe(true);
+      });
+      expect(getMutationToken()).toBe(rotatedMutation);
+      expect(getAuthSnapshot().phase).toBe('authenticated');
+    }
+    expect(invoke).toHaveBeenCalledTimes(3);
+    expect(net.state.calls.filter((call) => call.path === '/api/session').map((call) => call.headers['x-ashlr-token']))
+      .toEqual([READ, rotatedRead, rotatedRead]);
+    expect(Object.values(localStorage)).not.toContain(rotatedMutation);
+    expect(Object.values(sessionStorage)).not.toContain(rotatedRead);
+  });
+
+  it('shows no paste field while waiting for a late host handoff, then reconnects on the restart event', async () => {
+    const invoke = vi.fn().mockResolvedValue(null);
+    vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+    vi.stubGlobal('fetch', verseFetch().fetch);
+    render(<PhantomConsoleApp />);
+    expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Read token')).not.toBeInTheDocument();
+    invoke.mockResolvedValue({ readToken: READ, token: MUT });
+    act(() => window.dispatchEvent(new Event(SIDECAR_RESTARTED_EVENT)));
+    await expectShellOnHome();
+    expect(getMutationToken()).toBe(MUT);
+  });
+
+  it('does not ask for a mutation token after a lock and cannot unlock a read-only sidecar', async () => {
+    const invoke = vi.fn().mockResolvedValue({ readToken: READ, token: null });
+    vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+    vi.stubGlobal('fetch', verseFetch().fetch);
+    const onClose = vi.fn();
+    const onUnlocked = vi.fn();
+    render(<MutationTokenDialog open onClose={onClose} onUnlocked={onUnlocked} />);
+    expect(screen.queryByLabelText('Mutation token')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect and unlock' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('read-only');
+    expect(onUnlocked).not.toHaveBeenCalled();
+    invoke.mockResolvedValue({ readToken: READ, token: MUT });
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect and unlock' }));
+    await waitFor(() => expect(onUnlocked).toHaveBeenCalledOnce());
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(getMutationToken()).toBe(MUT);
   });
 });
 
