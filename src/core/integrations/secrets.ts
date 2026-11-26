@@ -6,8 +6,8 @@
  */
 import type { AshlrConfig } from '../types.js';
 import * as childProcess from 'node:child_process';
-import { accessSync, constants, statSync } from 'node:fs';
-import { basename, delimiter, resolve } from 'node:path';
+import { accessSync, constants, existsSync, statSync } from 'node:fs';
+import { basename, delimiter, join, resolve } from 'node:path';
 import { fileURLToPath, URL as NodeURL } from 'node:url';
 import { promisify } from 'node:util';
 import { hasInheritedLocusSession, hasLocusJobEnv } from './locus-job-env.js';
@@ -91,6 +91,25 @@ function credentialCommand(command: string, args: readonly string[]): boolean {
 
 type CredentialOptions = Pick<childProcess.SpawnOptions, 'cwd' | 'env' | 'shell'>;
 let warnedMissingSecrets = false;
+let warnedUninitializedProject = false;
+
+/**
+ * `phantom exec` resolves its project from the child's working directory only —
+ * it does not walk parent directories — and exits before running anything when
+ * `<cwd>/.phantom.toml` is absent. Wrapping there is fatal rather than
+ * protective, so the wrap is skipped exactly as the engine spawn path already
+ * does (phantomInitializedAt in src/core/run/engines.ts): the command runs
+ * with its ambient credentials, the same outcome as Phantom Secrets not being
+ * installed at all. Never throws.
+ */
+function phantomProjectAt(options: CredentialOptions): boolean {
+  const cwd = options.cwd instanceof NodeURL ? fileURLToPath(options.cwd) : options.cwd ?? process.cwd();
+  try {
+    return existsSync(join(cwd, '.phantom.toml'));
+  } catch {
+    return false;
+  }
+}
 
 function installedSecrets(options: CredentialOptions): string | undefined {
   const env = options.env ?? process.env;
@@ -142,7 +161,17 @@ function credentialInvocation(invocation: unknown[], required = false): unknown[
   }
   if (options.shell) throw new Error('Credential CLI execution requires argv without a shell');
   const phantom = installedSecrets(options);
-  if (phantom) return [phantom, ['exec', '--', command, ...args], ...rest];
+  if (phantom) {
+    if (!phantomProjectAt(options)) {
+      if (!warnedUninitializedProject) {
+        warnedUninitializedProject = true;
+        // Fixed, value-free diagnostic: no argv, cwd, environment, or CLI stderr.
+        process.stderr.write('Warning: Phantom Secrets found no initialized project in the child working directory; credential CLIs are running without phantom exec.\n');
+      }
+      return invocation;
+    }
+    return [phantom, ['exec', '--', command, ...args], ...rest];
+  }
   if (!warnedMissingSecrets) {
     warnedMissingSecrets = true;
     // Fixed, value-free diagnostic: no argv, paths, environment, or CLI stderr.

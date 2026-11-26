@@ -1,18 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promisify } from 'node:util';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const fakes = vi.hoisted(() => ({
   installed: false,
+  project: true,
   spawnSync: vi.fn(), execFileSync: vi.fn(), spawn: vi.fn(), execFile: vi.fn(),
-  access: vi.fn(), stat: vi.fn(),
+  access: vi.fn(), stat: vi.fn(), exists: vi.fn(),
 }));
 vi.mock('node:child_process', () => ({
   spawnSync: fakes.spawnSync, execFileSync: fakes.execFileSync,
   spawn: fakes.spawn, execFile: fakes.execFile,
 }));
 vi.mock('node:fs', () => ({
-  accessSync: fakes.access, statSync: fakes.stat, constants: { X_OK: 1 },
+  accessSync: fakes.access, statSync: fakes.stat, existsSync: fakes.exists, constants: { X_OK: 1 },
 }));
 import {
   credentialSpawnSync, credentialExecFileSync, credentialSpawn, credentialExecFile, providerSpawnSync,
@@ -25,6 +26,7 @@ let warning: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.clearAllMocks();
   fakes.installed = true;
+  fakes.project = true;
   vi.stubEnv('LOCUS_SESSION_ID', undefined);
   vi.stubEnv('LOCUS_EXECUTOR_CAPABILITY', undefined);
   fakes.access.mockImplementation((candidate: string) => {
@@ -34,6 +36,7 @@ beforeEach(() => {
     if (!fakes.installed || candidate !== phantom) throw new Error('ENOENT');
     return { isFile: () => true };
   });
+  fakes.exists.mockImplementation((path: unknown) => fakes.project && String(path) === join('/synthetic/repo', '.phantom.toml'));
   fakes.spawnSync.mockReturnValue({ status: 0, stdout: 'result', stderr: '' });
   fakes.execFileSync.mockReturnValue('result');
   fakes.spawn.mockReturnValue({ pid: 123 });
@@ -82,6 +85,28 @@ describe('credential subprocess boundary', () => {
     const message = String(warning.mock.calls[0]?.[0]);
     expect(message).toContain('without phantom exec');
     expect(message).not.toMatch(/private|phm_fixture|synthetic/);
+  });
+  it('runs unwrapped with a value-free warning when the child directory has no .phantom.toml', () => {
+    // phantom exec resolves its project from the child's cwd only and exits
+    // before running anything without .phantom.toml, so wrapping there is
+    // fatal rather than protective — the call runs like an absent install.
+    fakes.project = false;
+    credentialSpawnSync('gh', ['api', 'repos/acme/tool'], options);
+    credentialSpawnSync('gh', ['api', 'repos/acme/tool'], options);
+    expect(fakes.spawnSync).toHaveBeenNthCalledWith(1, 'gh', ['api', 'repos/acme/tool'], options);
+    expect(fakes.spawnSync).toHaveBeenNthCalledWith(2, 'gh', ['api', 'repos/acme/tool'], options);
+    expect(warning).toHaveBeenCalledTimes(1);
+    const message = String(warning.mock.calls[0]?.[0]);
+    expect(message).toContain('without phantom exec');
+    expect(message).not.toMatch(/synthetic|phm_fixture|acme|repos/);
+  });
+  it('still wraps in an initialized project and refuses provider spawns the same way', () => {
+    fakes.project = false;
+    providerSpawnSync('/custom/provider', ['deploy'], options);
+    expect(fakes.spawnSync).toHaveBeenCalledExactlyOnceWith('/custom/provider', ['deploy'], options);
+    fakes.project = true;
+    providerSpawnSync('/custom/provider', ['deploy'], options);
+    expect(fakes.spawnSync).toHaveBeenLastCalledWith(phantom, ['exec', '--', '/custom/provider', 'deploy'], options);
   });
   it('does not fall back after a Secrets nonzero exit or launch error', () => {
     fakes.spawnSync.mockReturnValue({ status: 1, stderr: 'refused' });

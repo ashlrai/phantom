@@ -613,7 +613,9 @@ results except for `invalidate.repos` (all scanners) and `invalidate.scanners`
 filters, proposal deduplication and persistence always run again. Without a
 snapshot all reads are fresh. `runGhAsync`, `listIssuesAsync` and
 `githubCiStatusAsync` are abortable, never-throw read APIs; synchronous GitHub
-APIs retain their existing behavior. CI-only reads do not fetch PR/issue counts.
+APIs retain their existing behavior. `runGhAsync` takes an optional per-call
+timeout (default unchanged) for reads that legitimately outlast it. CI-only
+reads do not fetch PR/issue counts.
 
 `SelfHealCycleResult.checkedRepos` lists repos whose detector ran or whose
 self-heal queue projections were pruned during the cycle. Both cycle entry
