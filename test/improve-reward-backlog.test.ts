@@ -171,6 +171,15 @@ describe('rewardCells', () => {
     expect(oneDay.pools.get('claude')!.days.size).toBe(1);
     expect(rewardCells(oneDay)).toEqual([]);
 
+    const burstWithHeldMerges = [
+      ...poolSeries('claude', 1, 4, (_d, i) => notHeld(`burst-${i}`, NOW_MS - i * HOUR)),
+      held('held-1', NOW_MS - DAY),
+      held('held-2', NOW_MS - 2 * DAY),
+    ];
+    const burst = foldRewardJournal(burstWithHeldMerges.join('\n'), NOW_MS, REWARD_BACKLOG_WINDOW_MS);
+    expect(burst.pools.get('claude')).toMatchObject({ rows: 6, notHeld: 4 });
+    expect(rewardCells(burst)).toEqual([]);
+
     // Enough rows and days but not-held below the floor: 3 not-held of 6.
     const thin = foldRewardJournal(
       [
@@ -272,6 +281,7 @@ describe('rewardBacklogItems', () => {
     expect(item.prompt).toContain('router-calibration');
     expect(item.prompt).toContain('merged:false');
     expect(item.prompt).toContain('9 of 11');
+    expect(item.prompt).toContain('not held across 3 UTC day(s)');
     expect(item.prompt).toContain('no-change');
     expect(item.prompt).not.toContain('lower bound');
   });

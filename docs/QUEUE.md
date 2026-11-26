@@ -1357,6 +1357,12 @@ The report uses receipts through its generation time, inclusive. Future-dated
 receipts and terminal merge or close timestamps are excluded before PR URL
 ownership is resolved. Receipts without a parseable timestamp remain eligible.
 
+Reward backlog discovery requires six or more resolved jobs in a pool
+within the evidence window. At least four must have not-held outcomes,
+those outcomes must form a strict majority, and they must have been
+recorded on at least two distinct UTC dates. The brief lists dates with
+not-held outcomes. Held merges count toward the denominator.
+
 ## Fleet resource capacity advice
 
 `phm resources plan --json` joins verified allowance deadlines and remaining
