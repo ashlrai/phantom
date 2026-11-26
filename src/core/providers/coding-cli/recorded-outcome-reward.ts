@@ -32,8 +32,10 @@
  *     `reviewRounds` clamps to 0 (a recorded negative is treated as zero, not rejected).
  */
 
+import { assertFiniteNumber } from './validation.js';
+
 /** Weight of the latency penalty in the reward. */
-export const RECORDED_LATENCY_WEIGHT = 0.25;
+const RECORDED_LATENCY_WEIGHT = 0.25;
 
 export interface RecordedOutcomeRewardInput {
   /** The change was merged. */
@@ -61,11 +63,6 @@ export interface RecordedOutcomeRewardResult {
   provenance: 'historical-offline';
 }
 
-function finite(value: unknown, name: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) throw new RangeError(`${name} must be a finite number`);
-  return value;
-}
-
 function flag(value: unknown, name: string): boolean {
   if (typeof value !== 'boolean') throw new TypeError(`${name} must be a boolean`);
   return value;
@@ -80,9 +77,9 @@ export function calculateRecordedOutcomeReward(input: RecordedOutcomeRewardInput
   const merged = flag(input.merged, 'input.merged');
   const green = flag(input.green, 'input.green');
   const reverted = flag(input.reverted, 'input.reverted');
-  const reviewRounds = finite(input.reviewRounds, 'input.reviewRounds');
-  const wallMs = finite(input.wallMs, 'input.wallMs');
-  const latencyReferenceMs = finite(input.latencyReferenceMs, 'input.latencyReferenceMs');
+  const reviewRounds = assertFiniteNumber(input.reviewRounds, 'input.reviewRounds');
+  const wallMs = assertFiniteNumber(input.wallMs, 'input.wallMs');
+  const latencyReferenceMs = assertFiniteNumber(input.latencyReferenceMs, 'input.latencyReferenceMs');
   if (latencyReferenceMs <= 0) throw new RangeError('input.latencyReferenceMs must be > 0');
 
   const success = merged && green && !reverted;

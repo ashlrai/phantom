@@ -18,8 +18,10 @@
  * feasibility is asserted for fractional primals.
  */
 
+import { isFiniteNumber, isNonEmptyString as isNonEmpty, isRecord } from './validation.js';
+
 /** The source's selection threshold on a primal value. */
-export const SOLUTION_SELECTION_THRESHOLD = 0.5;
+const SOLUTION_SELECTION_THRESHOLD = 0.5;
 
 /** Provenance attached to every projection. Recorded, never current. */
 export const SOLUTION_PROJECTION_PROVENANCE = Object.freeze({
@@ -72,21 +74,19 @@ export class SolutionProjectionError extends Error {
   override name = 'SolutionProjectionError';
 }
 
-const isNonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
-
 function checkRow(row: unknown, index: number): SolutionVariableRow {
   const where = `rows[${index}]`;
-  if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+  if (!isRecord(row)) {
     throw new SolutionProjectionError(`${where} must be an object`);
   }
-  const r = row as Record<string, unknown>;
+  const r = row;
   for (const key of ['name', 'jobId', 'poolId'] as const) {
     if (!isNonEmpty(r[key])) throw new SolutionProjectionError(`${where}.${key} must be a non-empty string`);
   }
   if (r.consumer !== null && !isNonEmpty(r.consumer)) {
     throw new SolutionProjectionError(`${where}.consumer must be a non-empty string or null`);
   }
-  if (typeof r.coefficient !== 'number' || !Number.isFinite(r.coefficient)) {
+  if (!isFiniteNumber(r.coefficient)) {
     throw new SolutionProjectionError(`${where}.coefficient must be a finite number`);
   }
   // Copy each field once: reads happen exactly once, and no caller object is retained.
@@ -109,12 +109,12 @@ export function projectRecordedSolution(
   primalValues: RecordedPrimalValues,
 ): SolutionProjection {
   if (!Array.isArray(rows)) throw new SolutionProjectionError('rows must be an array');
-  if (typeof primalValues !== 'object' || primalValues === null || Array.isArray(primalValues)) {
+  if (!isRecord(primalValues)) {
     throw new SolutionProjectionError('primalValues must be an object keyed by variable name');
   }
   for (const key of Object.keys(primalValues)) {
     const value: unknown = primalValues[key];
-    if (typeof value !== 'number' || !Number.isFinite(value)) {
+    if (!isFiniteNumber(value)) {
       throw new SolutionProjectionError(`primalValues[${JSON.stringify(key)}] must be a finite number`);
     }
   }

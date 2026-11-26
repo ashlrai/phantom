@@ -14,7 +14,7 @@
  * Pool enums are copied, not imported, so the absent scheduler tree is not a dependency.
  */
 
-export const RECORDED_CONFIG_PROVENANCE = Object.freeze({
+const RECORDED_CONFIG_PROVENANCE = Object.freeze({
   source: 'historical-offline',
   sourcePr: 5952,
   sourceSha: '3d6c8fb7c7f7d52655fb3e0f13ef239686f7b886',
@@ -28,7 +28,7 @@ export class RecordedConfigError extends Error {
   }
 }
 
-export const RECORDED_POOL_IDS = [
+const RECORDED_POOL_IDS = [
   'codex-primary', 'codex-secondary', 'claude', 'devin', 'grok-build', 'local', 'grok-ultra-weekly', 'metered',
 ] as const;
 export type RecordedPoolId = (typeof RECORDED_POOL_IDS)[number];
@@ -116,7 +116,14 @@ export interface RecordedConfigInspection {
   state: 'recorded-input-only';
   currentAvailability: 'not-current-availability';
   policy: 'no-policy-applied';
-  provenance: typeof RECORDED_CONFIG_PROVENANCE & { suppliedSource: string | null; suppliedSourceDate: string | null };
+  provenance: {
+    readonly source: 'historical-offline';
+    readonly sourcePr: 5952;
+    readonly sourceSha: '3d6c8fb7c7f7d52655fb3e0f13ef239686f7b886';
+    readonly basis: 'recorded-config-file';
+    suppliedSource: string | null;
+    suppliedSourceDate: string | null;
+  };
   /** Always false. The config cannot enable GitHub posting. */
   postIssues: false;
   scalars: Partial<Record<RecordedScalarKey, number>>;

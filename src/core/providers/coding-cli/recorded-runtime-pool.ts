@@ -39,7 +39,14 @@
  * eligibility or dispatch authority.
  */
 
-export const RECORDED_RUNTIME_POOL_PROVENANCE = {
+import {
+  CODING_CLI_BILLING_CLASSES,
+  isFiniteNumber,
+  isNonEmptyString,
+  type CodingCliBillingClass,
+} from './validation.js';
+
+const RECORDED_RUNTIME_POOL_PROVENANCE = {
   sourcePr: 5952,
   sourceSha: '3d6c8fb7c7f7d52655fb3e0f13ef239686f7b886',
   sourceFunction: 'runtimePool',
@@ -47,14 +54,13 @@ export const RECORDED_RUNTIME_POOL_PROVENANCE = {
   basis: 'historical-offline',
 } as const;
 
-const BILLING = ['subscription', 'metered', 'local', 'loopback'] as const;
 const TIERS = ['local', 'cheap', 'workhorse', 'frontier'] as const;
 const HOSTS = ['mac', 'remote'] as const;
 const DAY_MS = 86_400_000;
 
 export interface RecordedRuntimePoolRow {
   readonly id: string;
-  readonly billing: (typeof BILLING)[number];
+  readonly billing: CodingCliBillingClass;
   readonly tier: (typeof TIERS)[number];
   readonly host: (typeof HOSTS)[number];
   readonly concurrency: number;
@@ -106,7 +112,13 @@ export interface RecordedRuntimePool {
   readonly enabled: boolean;
   readonly estimate: boolean;
   readonly estimateSource: string | null;
-  readonly provenance: typeof RECORDED_RUNTIME_POOL_PROVENANCE;
+  readonly provenance: {
+    readonly sourcePr: 5952;
+    readonly sourceSha: '3d6c8fb7c7f7d52655fb3e0f13ef239686f7b886';
+    readonly sourceFunction: 'runtimePool';
+    readonly listFunction: 'buildRuntimePools';
+    readonly basis: 'historical-offline';
+  };
   readonly historicalOnly: true;
   readonly currentAllowanceEvidence: false;
   readonly dispatchAuthority: false;
@@ -117,7 +129,7 @@ function bad(path: string): never {
 }
 
 function num(v: unknown, path: string, min: number | null = 0): number {
-  if (typeof v !== 'number' || !Number.isFinite(v) || (min !== null && v < min)) bad(path);
+  if (!isFiniteNumber(v) || (min !== null && v < min)) bad(path);
   return v;
 }
 
@@ -150,7 +162,7 @@ function project(input: RecordedRuntimePoolInput, at: string): RecordedRuntimePo
   if (typeof row.id !== 'string' || row.id === '') bad(p('id'));
   const base = {
     id: row.id,
-    billing: oneOf(row.billing, BILLING, p('billing')),
+    billing: oneOf(row.billing, CODING_CLI_BILLING_CLASSES, p('billing')),
     tier: oneOf(row.tier, TIERS, p('tier')),
     host: oneOf(row.host, HOSTS, p('host')),
     concurrency: num(row.concurrency, p('concurrency')),
@@ -178,7 +190,7 @@ function project(input: RecordedRuntimePoolInput, at: string): RecordedRuntimePo
     const days = num(w.resetEveryDays, wp('resetEveryDays'));
     if (days <= 0) bad(wp('resetEveryDays'));
     const carryover = bool(w.extraUsageCredits, wp('extraUsageCredits'));
-    if (typeof w.label !== 'string' || w.label.trim() === '') bad(wp('label'));
+    if (!isNonEmptyString(w.label)) bad(wp('label'));
     return {
       ...base, unlimited: false, remaining, usedToday: 0, expiresAtMs: null, resetAtMs,
       resetEveryMs: days * DAY_MS, carryover,

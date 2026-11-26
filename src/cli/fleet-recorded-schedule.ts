@@ -22,6 +22,7 @@ import {
 } from '../core/providers/coding-cli/recorded-solver-result.js';
 import { RecordedDecisionProjectionError } from '../core/providers/coding-cli/recorded-decision-projection.js';
 import { SolutionProjectionError } from '../core/providers/coding-cli/solution-projection.js';
+import { isFiniteNumber, isNonEmptyString, isRecord } from '../core/providers/coding-cli/validation.js';
 
 const usage = 'Usage: ashlr fleet recorded-schedule --file <path> [--json]';
 /** Archived schedule inputs are a few KB. Larger files are refused before reading. */
@@ -38,8 +39,6 @@ class RecordedScheduleShapeError extends Error {
 }
 
 type Fields = Record<string, unknown>;
-const isRecord = (value: unknown): value is Fields =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 const shapeError = (path: string): RecordedScheduleShapeError => new RecordedScheduleShapeError(path);
 
 /** Rejects non-objects and unknown keys. Unknown key names are not echoed. */
@@ -53,14 +52,14 @@ function array(value: unknown, path: string): unknown[] {
   return value;
 }
 function nonEmpty(value: unknown, path: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0) throw shapeError(path);
+  if (!isNonEmptyString(value)) throw shapeError(path);
   return value;
 }
 function nullableName(value: unknown, path: string): string | null {
   return value === null ? null : nonEmpty(value, path);
 }
 function finite(value: unknown, path: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) throw shapeError(path);
+  if (!isFiniteNumber(value)) throw shapeError(path);
   return value;
 }
 
@@ -128,7 +127,7 @@ function parseFallback(raw: unknown, path: string): RecordedGreedyAssignment {
  * Validate the whole RecordedScheduleInput shape and build a fresh typed value. Semantic
  * checks (duplicates, offered alternatives, status consistency) stay in the assembler.
  */
-export function parseRecordedScheduleInput(raw: unknown): RecordedScheduleInput {
+function parseRecordedScheduleInput(raw: unknown): RecordedScheduleInput {
   const rec = record(raw, 'input', ['jobs', 'variables', 'outcome', 'fallbackSelections', 'defaultPolicyId', 'nowMs']);
   const nowMs = rec['nowMs'];
   if (typeof nowMs !== 'number' || !Number.isSafeInteger(nowMs)) throw shapeError('nowMs');
