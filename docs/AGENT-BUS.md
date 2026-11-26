@@ -2457,9 +2457,16 @@ The Fleet world shows live local bus messages as directional links. Run
 contains routing labels, a message count and the latest receipt time; it never
 includes message bodies. `--window-minutes <1..1440>` keeps only edges whose
 receipts fall inside the trailing window — the same bound the org map's
-`minutes` parameter applies — and `--root <absolute>` reads a non-default
+`minutes` parameter applies — `--from <agent>` keeps only links the named
+agent's identity sent and `--to <agent>` keeps only links addressed to it, so
+"who does X reach" and "who reaches X" are one filtered read each. Both refs
+take the same identity-label rule every bus read's sender filter applies —
+the literal ref plus every label of the identity it resolves to, exact-label
+matching kept on an unresolvable ref or unreadable registry — and they compose
+with each other and with the window. `--root <absolute>` reads a non-default
 fleet store like the other fleet bus reads. Provider labels come from sender metadata observed on
-live receipts. A missing or conflicting provider is `null` (unknown). Labels
+the filtered receipts — a provider proven only by traffic the filters exclude
+stays `null` (unknown), the same bound the window applies. A missing or conflicting provider is `null` (unknown). Labels
 are not authenticated identities. Broadcasts to `leaders`, human/external
 messages, self-messages, dead-letter notices filed to `bus.dead-letter` and
 `group.presence` heartbeats — system traffic with its own read, never
