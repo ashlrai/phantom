@@ -46,8 +46,8 @@ afterEach(() => {
 });
 
 describe('verseListEventsUrl', () => {
-  it('asks for the two metadata groups, with the client proof last', () => {
-    expect(verseListEventsUrl()).toMatch(/^\/api\/events\?topics=verse-sessions,verse-account-readings&client=[a-f0-9]{64}$/);
+  it('asks for the Verse metadata and fleet compute topics, with the client proof last', () => {
+    expect(verseListEventsUrl()).toMatch(/^\/api\/events\?topics=verse-sessions,verse-account-readings,fleet-compute&client=[a-f0-9]{64}$/);
   });
   it('without topics is the historical request', () => {
     expect(verseListEventsUrl(false)).toMatch(/^\/api\/events\?client=[a-f0-9]{64}$/);
@@ -64,7 +64,7 @@ describe('openVerseListChannel', () => {
     const invalidate = vi.spyOn(queries, 'invalidateVerseLists').mockImplementation(() => undefined);
     const dispose = openVerseListChannel();
     const es = lastList();
-    expect(es.url).toContain('topics=verse-sessions,verse-account-readings&');
+    expect(es.url).toContain('topics=verse-sessions,verse-account-readings,fleet-compute&');
     expect(es.withCredentials).toBe(true);
     es.emitOpen();
     es.emitNamed('verse-sessions', { sessions: [] });
@@ -102,7 +102,7 @@ describe('openVerseListChannel', () => {
     expect(listSources()).toHaveLength(2);
     vi.advanceTimersByTime(1000);
     expect(listSources()).toHaveLength(3);
-    expect(lastList().url).toContain('topics=verse-sessions,verse-account-readings&');
+    expect(lastList().url).toContain('topics=verse-sessions,verse-account-readings,fleet-compute&');
     dispose();
   });
 
@@ -115,7 +115,7 @@ describe('openVerseListChannel', () => {
     expect(listSources()).toHaveLength(1);
     vi.advanceTimersByTime(1000);
     expect(listSources()).toHaveLength(2);
-    expect(lastList().url).toContain('topics=verse-sessions,verse-account-readings&');
+    expect(lastList().url).toContain('topics=verse-sessions,verse-account-readings,fleet-compute&');
     dispose();
   });
 

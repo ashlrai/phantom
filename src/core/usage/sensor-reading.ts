@@ -51,6 +51,8 @@ export const USAGE_SENSOR_SOURCES = [
   'devin-api-v3-org-cycle',
   'devin-included-allowance',
   'codex-app-server',
+  'codex-session-log',
+  'dispatcher-budget',
   'dot-status',
   'claude-usage',
   'claude-rate-limit-event',
