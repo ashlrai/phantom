@@ -1,11 +1,11 @@
 import { readFile, stat } from 'node:fs/promises';
 import { CiResumeInputsError, planCiResumeInputs, type CiResumePlan } from '../core/fleet/ci-resume-inputs.js';
+import { artifactNameField, asRecord, failCiResume } from '../core/fleet/ci-receipt-shared.js';
 import type { GitRunner } from '../core/verse/git-ops.js';
 
 const USAGE = 'usage: ashlr fleet ci-resume-inputs --manifest <file> --prior <file> --base <sha> --head <sha> [--json]\n       ashlr fleet ci-resume-inputs --stdin [--json]';
 const MAX_INPUT_BYTES = 1024 * 1024;
 const ENVELOPE_FIELDS = new Set(['manifest', 'prior', 'base', 'head']);
-const fail = (message: string): never => { throw new CiResumeInputsError(message); };
 
 /** Read-only resume-from-failure planner; never posts statuses or mutates CI. */
 export async function cmdFleetCiResumeInputs(args: string[], deps: { git?: GitRunner; cwd?: string; getInput?: () => AsyncIterable<Uint8Array> } = {}): Promise<number> {
@@ -39,11 +39,11 @@ export async function cmdFleetCiResumeInputs(args: string[], deps: { git?: GitRu
   const readJson = async (file: string, label: string): Promise<unknown> => {
     try {
       const info = await stat(file);
-      if (!info.isFile() || info.size > MAX_INPUT_BYTES) fail(`${label} must be a regular file of at most 1 MiB`);
+      if (!info.isFile() || info.size > MAX_INPUT_BYTES) failCiResume(`${label} must be a regular file of at most 1 MiB`);
       return JSON.parse(await readFile(file, 'utf8')) as unknown;
     } catch (error) {
       if (error instanceof CiResumeInputsError) throw error;
-      fail(`${label} cannot be read as JSON`);
+      failCiResume(`${label} cannot be read as JSON`);
     }
   };
   try {
@@ -85,7 +85,7 @@ async function runStdin(json: boolean, deps: { git?: GitRunner; cwd?: string; ge
     process.stderr.write('ci-resume-inputs: stdin is not valid JSON\n');
     return 2;
   }
-  const e = record(envelope);
+  const e = asRecord(envelope);
   if (e === null) { process.stderr.write('ci-resume-inputs: stdin must be a JSON object\n'); return 2; }
   // Reject unknown fields to avoid silently selecting a wrong revision
   for (const key of Object.keys(e)) {
@@ -94,22 +94,10 @@ async function runStdin(json: boolean, deps: { git?: GitRunner; cwd?: string; ge
       return 2;
     }
   }
-  const m = e['manifest']; const p = e['prior']; const b = field(e['base']); const h = field(e['head']);
+  const m = e['manifest']; const p = e['prior']; const b = artifactNameField(e['base']); const h = artifactNameField(e['head']);
   if (m === undefined || p === undefined || b === null || h === null) {
     process.stderr.write('ci-resume-inputs: envelope requires manifest, prior, base and head\n');
     return 2;
-  }
-  // Reject duplicates inside the envelope (manifest/prior appear twice, base/head appear twice)
-  const envKeys = Object.keys(e);
-  const seen = new Map<string, number>();
-  for (let i = 0; i < envKeys.length; i++) {
-    const k = envKeys[i]!;
-    const prev = seen.get(k);
-    if (prev !== undefined && (k === 'base' || k === 'head')) {
-      process.stderr.write(`ci-resume-inputs: duplicate field: ${k}\n`);
-      return 2;
-    }
-    seen.set(k, i);
   }
   try {
     const plan = await planCiResumeInputs({
@@ -136,9 +124,3 @@ function printText(plan: CiResumePlan): void {
   }
   for (const p of plan.unmappedChangedPaths) console.log(`  unmapped change: ${p}`);
 }
-
-const record = (v: unknown): Record<string, unknown> | null =>
-  v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
-const field = (v: unknown): string | null =>
-  // eslint-disable-next-line no-control-regex
-  typeof v === 'string' && v.length > 0 && v.length <= 200 && !/[\x00-\x1f\x7f]/.test(v) ? v : null;

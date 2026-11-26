@@ -3,21 +3,21 @@ import {
   awaitCiReceipt, CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, CI_RECEIPT_AWAIT_MAX_POLL_MS,
   CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS, CI_RECEIPT_AWAIT_MIN_POLL_MS,
 } from '../core/fleet/ci-receipt-await.js';
-import { artifactNameField, discoverCiReceiptPrior } from '../core/fleet/ci-receipt-discovery.js';
+import { discoverCiReceiptPrior } from '../core/fleet/ci-receipt-discovery.js';
 import { CiResumeInputsError, parseCiResumeManifest, planCiResumeInputs } from '../core/fleet/ci-resume-inputs.js';
 import { fetchCiResumeReceipts } from '../core/fleet/ci-resume-receipts.js';
-import { isAwaitMs } from '../core/fleet/needs-mason-answer-await.js';
+import {
+  artifactNameField,
+  CI_HEX_REV_RE,
+  isValidCiRepo,
+  parseBoundedMsFlag,
+  parsePositiveIdFlag,
+} from '../core/fleet/ci-receipt-shared.js';
 import type { GitRunner } from '../core/verse/git-ops.js';
 
 const USAGE = 'usage: ashlr fleet ci-resume-plan --repo owner/name --run ID --attempt N (--artifact-id ID [--archive file.zip] | --artifact-name NAME [--await-ms N [--poll-ms N]]) --manifest file.json --base HEX --head HEX [--json]';
 const VALUE_FLAGS = ['--repo', '--run', '--attempt', '--artifact-id', '--artifact-name', '--await-ms', '--poll-ms', '--manifest', '--base', '--head', '--archive'];
-const REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
-const REV = /^[0-9a-f]{4,64}$/i;
 const MAX_BYTES = 1024 * 1024;
-const id = (v: string | undefined): number | null =>
-  v && /^\d+$/.test(v) && Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : null;
-const boundedMs = (v: string | undefined, max: number): number | null =>
-  v !== undefined && /^\d+$/.test(v) && isAwaitMs(Number(v), max) ? Number(v) : null;
 
 /** Exactly one way to obtain the receipts: an explicit artifact id, or a named artifact discovered immediately or awaited for a bounded time. */
 type Acquisition =
@@ -29,15 +29,15 @@ function acquisition(values: Map<string, string>): Acquisition | null {
   const byId = values.has('--artifact-id');
   if (byId === values.has('--artifact-name')) return null;
   if (byId) {
-    const artifactId = id(values.get('--artifact-id'));
+    const artifactId = parsePositiveIdFlag(values.get('--artifact-id'));
     if (artifactId === null || values.has('--await-ms') || values.has('--poll-ms')) return null;
     return { mode: 'id', artifactId, archive: values.get('--archive') };
   }
   // --archive names a local file, which has no meaning while waiting on a remote artifact.
   const artifactName = artifactNameField(values.get('--artifact-name'));
-  const timeoutMs = values.has('--await-ms') ? boundedMs(values.get('--await-ms'), CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS) : null;
+  const timeoutMs = values.has('--await-ms') ? parseBoundedMsFlag(values.get('--await-ms'), CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS) : null;
   const pollMs = values.has('--poll-ms')
-    ? boundedMs(values.get('--poll-ms'), CI_RECEIPT_AWAIT_MAX_POLL_MS) : CI_RECEIPT_AWAIT_DEFAULT_POLL_MS;
+    ? parseBoundedMsFlag(values.get('--poll-ms'), CI_RECEIPT_AWAIT_MAX_POLL_MS) : CI_RECEIPT_AWAIT_DEFAULT_POLL_MS;
   if (artifactName === null || (values.has('--await-ms') && timeoutMs === null)
     || (values.has('--poll-ms') && timeoutMs === null) || pollMs === null || pollMs < CI_RECEIPT_AWAIT_MIN_POLL_MS
     || values.has('--archive')) return null;
@@ -69,15 +69,14 @@ export async function cmdFleetCiResumePlan(args: string[], deps: FleetCiResumePl
     }
     values.set(arg, args[++i]!);
   }
-  const repo = values.get('--repo') ?? ''; const run = id(values.get('--run')); const attempt = id(values.get('--attempt'));
+  const repo = values.get('--repo'); const run = parsePositiveIdFlag(values.get('--run')); const attempt = parsePositiveIdFlag(values.get('--attempt'));
   if (values.has('--artifact-name') && values.has('--archive') && !values.has('--artifact-id')) {
     process.stderr.write(`ci-resume-plan: --archive requires --artifact-id; it cannot be used with --artifact-name\n${USAGE}\n`); return 2;
   }
   const acquire = acquisition(values); const manifestFile = values.get('--manifest');
   const base = values.get('--base') ?? ''; const head = values.get('--head') ?? '';
-  if (!REPO.test(repo) || repo.split('/')[0]!.endsWith('-') || repo.split('/')[0]!.includes('--')
-    || repo.endsWith('/.') || repo.endsWith('/..') || run === null || attempt === null || acquire === null
-    || !manifestFile || !REV.test(base) || !REV.test(head)) {
+  if (!isValidCiRepo(repo) || run === null || attempt === null || acquire === null
+    || !manifestFile || !CI_HEX_REV_RE.test(base) || !CI_HEX_REV_RE.test(head)) {
     process.stderr.write(`Invalid arguments. ${USAGE}\n`); return 2;
   }
   try {

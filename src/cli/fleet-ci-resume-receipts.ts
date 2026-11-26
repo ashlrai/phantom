@@ -1,5 +1,6 @@
 import { CiResumeInputsError } from '../core/fleet/ci-resume-inputs.js';
 import { fetchCiResumeReceipts } from '../core/fleet/ci-resume-receipts.js';
+import { isValidCiRepo, parsePositiveIdFlag } from '../core/fleet/ci-receipt-shared.js';
 import type { GitRunner } from '../core/verse/git-ops.js';
 
 const USAGE = 'usage: ashlr fleet ci-resume-receipts --repo owner/name --run ID --attempt N --artifact-id ID [--archive file.zip] [--json]';
@@ -32,10 +33,6 @@ so --archive members are parsed in memory instead: only the exact
 receipts.json member is inflated, bounded, and any absolute or
 parent-traversing member name rejects the archive.`;
 
-const REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
-const idNum = (v: string | undefined): number | null =>
-  v !== undefined && /^\d+$/.test(v) && Number.isSafeInteger(Number(v)) && Number(v) >= 1 ? Number(v) : null;
-
 /** Evidence ingestion for resume-from-failure; stdout is the prior document only. */
 export async function cmdFleetCiResumeReceipts(args: string[], deps: { gh?: GitRunner } = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return 0; }
@@ -50,13 +47,12 @@ export async function cmdFleetCiResumeReceipts(args: string[], deps: { gh?: GitR
     }
     values.set(arg, args[++i]!);
   }
-  const repo = values.get('--repo') ?? '';
-  const run = idNum(values.get('--run'));
-  const attempt = idNum(values.get('--attempt'));
-  const artifactId = idNum(values.get('--artifact-id'));
+  const repo = values.get('--repo');
+  const run = parsePositiveIdFlag(values.get('--run'));
+  const attempt = parsePositiveIdFlag(values.get('--attempt'));
+  const artifactId = parsePositiveIdFlag(values.get('--artifact-id'));
   const archive = values.get('--archive');
-  if (!REPO.test(repo) || repo.split('/')[0]!.endsWith('-') || repo.split('/')[0]!.includes('--')
-    || repo.endsWith('/.') || repo.endsWith('/..') || run === null || attempt === null || artifactId === null) {
+  if (!isValidCiRepo(repo) || run === null || attempt === null || artifactId === null) {
     process.stderr.write(`Invalid arguments. ${USAGE}\n`); return 2;
   }
   try {

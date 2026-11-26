@@ -3,6 +3,7 @@ import {
   CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS,
 } from '../core/fleet/ci-receipt-await-batch.js';
 import { parseCiReceiptBatchReplanInput } from '../core/fleet/ci-receipt-batch-replan.js';
+import { readBoundedUtf8Input } from '../core/fleet/ci-receipt-shared.js';
 
 const USAGE = 'usage: ashlr fleet ci-receipt-batch-replan --stdin [--json]';
 const HELP = `${USAGE}
@@ -38,18 +39,6 @@ export interface FleetCiReceiptBatchReplanDeps {
   input?: AsyncIterable<string | Uint8Array>;
 }
 
-async function readStdin(input: AsyncIterable<string | Uint8Array>): Promise<string> {
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-  for await (const chunk of input) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    bytes += buffer.length;
-    if (bytes > CI_RECEIPT_AWAIT_BATCH_MAX_INPUT_BYTES) throw new Error('input too large');
-    chunks.push(buffer);
-  }
-  return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
-}
-
 /** Report → retry manifest; stdout is the single JSON document, diagnostics stderr. */
 export async function cmdFleetCiReceiptBatchReplan(
   args: string[], deps: FleetCiReceiptBatchReplanDeps = {},
@@ -65,17 +54,10 @@ export async function cmdFleetCiReceiptBatchReplan(
     return invalid('unexpected_argument');
   }
   if (!stdin) return invalid('missing_stdin_flag');
-  const input = deps.input ?? process.stdin;
-  if (deps.input === undefined && (input as { isTTY?: boolean }).isTTY === true) {
-    return invalid('stdin_must_be_a_pipe');
-  }
-  let text: string;
-  try { text = await readStdin(input); }
-  catch (error) {
-    return invalid(error instanceof Error && error.message === 'input too large'
-      ? 'input_too_large' : 'input_unreadable');
-  }
-  const parsed = parseCiReceiptBatchReplanInput(text);
+  const read = await readBoundedUtf8Input(
+    deps.input ?? process.stdin, CI_RECEIPT_AWAIT_BATCH_MAX_INPUT_BYTES, deps.input === undefined);
+  if (!read.ok) return invalid(read.reason);
+  const parsed = parseCiReceiptBatchReplanInput(read.text);
   if (!parsed.ok) return invalid(parsed.reason);
   console.log(json
     ? JSON.stringify({ version: 1, targets: parsed.targets })

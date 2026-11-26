@@ -3,7 +3,12 @@ import {
   parseCiReceiptAwaitBatchReport,
   selectCiReceiptPrior,
 } from '../core/fleet/ci-receipt-select.js';
-import { artifactNameField } from '../core/fleet/ci-receipt-discovery.js';
+import {
+  isValidArtifactNameFlag,
+  isValidCiRepo,
+  parsePositiveIdFlag,
+  readBoundedUtf8Input,
+} from '../core/fleet/ci-receipt-shared.js';
 
 const USAGE = 'usage: ashlr fleet ci-receipt-select --stdin --repo owner/name --run N --attempt N --artifact-name NAME [--json]';
 const HELP = `${USAGE}
@@ -36,24 +41,8 @@ started in a valid report; 2 invalid arguments, unreadable or oversized
 stdin, or a malformed/inconsistent report. No artifact fetch, network,
 files or CI actions.`;
 
-const REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
-const idFlag = (v: string | undefined): number | null =>
-  v !== undefined && /^\d+$/.test(v) && Number.isSafeInteger(Number(v)) && Number(v) >= 1 ? Number(v) : null;
-
 export interface FleetCiReceiptSelectDeps {
   input?: AsyncIterable<string | Uint8Array>;
-}
-
-async function readStdin(input: AsyncIterable<string | Uint8Array>): Promise<string> {
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-  for await (const chunk of input) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    bytes += buffer.length;
-    if (bytes > CI_RECEIPT_SELECT_MAX_INPUT_BYTES) throw new Error('input too large');
-    chunks.push(buffer);
-  }
-  return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
 }
 
 /** Report-to-prior selector; stdout is the single validated prior document, reasons stderr. */
@@ -77,27 +66,17 @@ export async function cmdFleetCiReceiptSelect(
     values.set(arg, args[++i]!);
   }
   const repo = values.get('--repo');
-  const run = idFlag(values.get('--run'));
-  const attempt = idFlag(values.get('--attempt'));
+  const run = parsePositiveIdFlag(values.get('--run'));
+  const attempt = parsePositiveIdFlag(values.get('--attempt'));
   const artifactName = values.get('--artifact-name');
   if (!stdin) return invalid('missing_stdin_flag');
-  if (repo === undefined || !REPO.test(repo) || repo.split('/')[0]!.endsWith('-')
-    || repo.split('/')[0]!.includes('--') || repo.endsWith('/.') || repo.endsWith('/..')
-    || run === null || attempt === null || artifactName === undefined
-    || artifactNameField(artifactName) !== artifactName || artifactName.startsWith('-')) {
+  if (!isValidCiRepo(repo) || run === null || attempt === null || !isValidArtifactNameFlag(artifactName)) {
     return invalid('invalid_flags');
   }
-  const input = deps.input ?? process.stdin;
-  if (deps.input === undefined && (input as { isTTY?: boolean }).isTTY === true) {
-    return invalid('stdin_must_be_a_pipe');
-  }
-  let text: string;
-  try { text = await readStdin(input); }
-  catch (error) {
-    return invalid(error instanceof Error && error.message === 'input too large'
-      ? 'input_too_large' : 'input_unreadable');
-  }
-  const parsed = parseCiReceiptAwaitBatchReport(text);
+  const read = await readBoundedUtf8Input(
+    deps.input ?? process.stdin, CI_RECEIPT_SELECT_MAX_INPUT_BYTES, deps.input === undefined);
+  if (!read.ok) return invalid(read.reason);
+  const parsed = parseCiReceiptAwaitBatchReport(read.text);
   if (!parsed.ok) return invalid(`report_${parsed.reason}`);
   const selected = selectCiReceiptPrior(parsed.entries, { repo, run, attempt, artifactName });
   if (!selected.ok) {

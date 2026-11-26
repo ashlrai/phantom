@@ -14,43 +14,29 @@ import { lstat, mkdtemp, open, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { crc32, inflateRawSync } from 'node:zlib';
-import { defaultGitRunner, type GitRunner, type GitRunResult } from '../verse/git-ops.js';
-import { scrubSecrets } from '../util/scrub.js';
-import { CiResumeInputsError, parseCiResumePrior, type CiResumePrior } from './ci-resume-inputs.js';
+import { defaultGitRunner, type GitRunner } from '../verse/git-ops.js';
+import { parseCiResumePrior, type CiResumePrior } from './ci-resume-inputs.js';
+import {
+  artifactNameField,
+  asRecord as record,
+  CI_LIST_MAX_BYTES as LIST_MAX_BYTES,
+  CI_META_MAX_BYTES as META_MAX_BYTES,
+  CI_SHA40_RE as SHA40,
+  CiResumeInputsError,
+  failCiResume as fail,
+  parseGhJsonOutput as jsonOut,
+  parseSlurpedPages as slurpRows,
+  runGhApi as api,
+} from './ci-receipt-shared.js';
 
-const TIMEOUT_MS = 30_000;
-const META_MAX_BYTES = 1024 * 1024;
-const LIST_MAX_BYTES = 4 * 1024 * 1024;
 const DOWNLOAD_MAX_BYTES = 256 * 1024;
 const ARCHIVE_MAX_BYTES = 16 * 1024 * 1024;
 const RECEIPTS_MAX_BYTES = 1024 * 1024;
-const MAX_LIST_ROWS = 2048;
 const MAX_ZIP_ENTRIES = 64;
 const RECEIPTS_MEMBER = 'receipts.json';
-const SHA40 = /^[0-9a-f]{40}$/i;
 const EOCD_SIG = 0x06054b50;
 const CD_SIG = 0x02014b50;
 const LH_SIG = 0x04034b50;
-
-// Function declaration, not a const arrow: the compiler only propagates
-// never-returning CFA narrowing through declared functions.
-function fail(message: string): never { throw new CiResumeInputsError(message); }
-const record = (v: unknown): Record<string, unknown> | null =>
-  v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
-const jsonOut = (r: GitRunResult, label: string): unknown => {
-  try { return JSON.parse(r.stdout); } catch { fail(`${label} returned malformed JSON`); }
-};
-
-async function api(gh: GitRunner, args: string[], maxStdoutBytes: number, label: string): Promise<GitRunResult> {
-  let r: GitRunResult;
-  try { r = await gh('gh', args, { cwd: tmpdir(), timeoutMs: TIMEOUT_MS, maxStdoutBytes }); }
-  catch { throw new CiResumeInputsError(`${label} could not run`); }
-  if (r.missing) fail('gh is not installed');
-  if (r.timedOut) fail(`${label} timed out`);
-  if (r.truncated) fail(`${label} output exceeded its bound`);
-  if (r.code !== 0) fail(`${label} failed: ${scrubSecrets((r.stderr.split('\n')[0] ?? '').trim()).slice(0, 160)}`);
-  return r;
-}
 
 interface RunMeta { headSha: string; latestAttempt: number }
 function runMeta(value: unknown, repo: string, run: number, attempt: number): RunMeta {
@@ -77,29 +63,9 @@ function artifactMeta(value: unknown, run: number, artifactId: number): { name: 
   if (a['expired'] !== false) fail('artifact is expired or has unknown expiry');
   if (!Number.isSafeInteger(a['size_in_bytes']) || (a['size_in_bytes'] as number) < 0
     || (a['size_in_bytes'] as number) > ARCHIVE_MAX_BYTES) fail('artifact size is out of bounds');
-  // eslint-disable-next-line no-control-regex
-  if (typeof a['name'] !== 'string' || a['name'].length === 0 || a['name'].length > 200 || /[\x00-\x1f\x7f]/.test(a['name'])) {
-    fail('artifact metadata is malformed');
-  }
-  return { name: a['name'], size: a['size_in_bytes'] as number };
-}
-
-/** Slurped `gh api --paginate --slurp` pages; refuses inconsistent or partial counts. */
-function slurpRows(value: unknown, key: string, label: string): Record<string, unknown>[] {
-  if (!Array.isArray(value) || value.length === 0) fail(`${label} evidence is malformed`);
-  const rows: unknown[] = [];
-  let total: number | undefined;
-  for (const page of value) {
-    const p = record(page);
-    if (!p || !Number.isSafeInteger(p['total_count']) || (p['total_count'] as number) < 0
-      || !Array.isArray(p[key]) || (total !== undefined && total !== p['total_count'])) {
-      fail(`${label} evidence is malformed`);
-    }
-    total = p['total_count'] as number;
-    rows.push(...(p[key] as unknown[]));
-  }
-  if (total === undefined || rows.length !== total || total > MAX_LIST_ROWS) fail(`${label} pagination is ambiguous`);
-  return rows.map((r) => record(r) ?? fail(`${label} evidence is malformed`));
+  const name = artifactNameField(a['name']);
+  if (name === null) fail('artifact metadata is malformed');
+  return { name, size: a['size_in_bytes'] as number };
 }
 
 function attemptJobs(rows: Record<string, unknown>[], run: number, attempt: number, headSha: string): Map<number, string | null> {
@@ -152,7 +118,7 @@ async function readBoundedFile(path: string, maxBytes: number, label: string): P
  * a bounded node:zlib inflate; no member is ever written to a path, so an
  * absolute or parent-traversing entry name rejects the archive outright.
  */
-export function readZipMember(buf: Buffer, member: string, maxBytes: number): Buffer {
+function readZipMember(buf: Buffer, member: string, maxBytes: number): Buffer {
   const scanFrom = Math.max(0, buf.length - (22 + 0xffff));
   let eocd = -1;
   for (let i = buf.length - 22; i >= scanFrom; i--) {
