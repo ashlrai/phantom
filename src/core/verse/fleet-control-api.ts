@@ -23,12 +23,10 @@
  * route that any holder of the mutation token could call must never be able
  * to (re)start the resident daemon.
  */
-import type { IncomingMessage, ServerResponse } from 'node:http';
-
 import type { RemoteDeviceStore } from '../web/remote-device-store.js';
 import type { ApiModule } from './api-modules.js';
-import type { VerseApiContext } from './verse-api.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { hasNoQuery, readMutationBody, sendInvalid } from './api-http.js';
+import { sendJson } from '../web/api-http-helpers.js';
 import {
   FleetControlError,
   applyFleetControlAction,
@@ -41,7 +39,6 @@ import {
   type FleetControlDeps,
 } from '../fleet/fleet-control.js';
 import { readDropJobFates } from '../fleet/drop-job-fate.js';
-export type { DropJobFatesV1 } from '../fleet/drop-job-fate.js';
 import type {
   appendSessionGuidance,
   listSessionGuidance,
@@ -102,52 +99,6 @@ async function guidanceIo(): Promise<{
   };
 }
 
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-function noQuery(req: IncomingMessage, res: ServerResponse): boolean {
-  let params: URLSearchParams;
-  try {
-    params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  } catch {
-    sendInvalid(res, 'invalid query string');
-    return false;
-  }
-  for (const key of params.keys()) {
-    sendInvalid(res, `unknown query parameter: ${key}`);
-    return false;
-  }
-  return true;
-}
-
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  return parsed as Record<string, unknown>;
-}
-
 /** Bound reads separately from the visible Mac confirmation wait. */
 async function remoteCommand(input: unknown, timeout: number): Promise<Record<string, unknown>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -176,7 +127,7 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
     || path === '/api/verse/fleet/control/remote-pairing') {
     const pairing = path.endsWith('/remote-pairing');
     if (method !== (pairing ? 'POST' : 'GET')) { sendJson(res, 405, { error: 'method not allowed' }); return true; }
-    if (!noQuery(req, res)) return true;
+    if (!hasNoQuery(req, res)) return true;
     try {
       if (pairing) {
         const body = await readMutationBody(ctx, req, res);
@@ -239,7 +190,7 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   }
   if (path === '/api/verse/fleet/control/remote-devices') {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
-    if (!noQuery(req, res)) return true;
+    if (!hasNoQuery(req, res)) return true;
     try {
       const { createRemoteDeviceStore } = await import('../web/remote-device-store.js');
       let sourceState: 'healthy' | 'missing' = 'healthy';
@@ -275,7 +226,7 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
     try {
       const { readLaneTargets, setLaneTarget, parseLaneTargetAction, LaneTargetError } = await import('../fleet/runs-lane-targets.js');
       if (method === 'GET') {
-        if (noQuery(req, res)) sendJson(res, 200, await readLaneTargets());
+        if (hasNoQuery(req, res)) sendJson(res, 200, await readLaneTargets());
       } else if (method === 'POST') {
         const body = await readMutationBody(ctx, req, res);
         if (!body) return true;
@@ -302,7 +253,7 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
     try {
       const { readRunsSwitches, setRunsSwitch, parseSwitchAction } = await import('../fleet/runs-switches.js');
       if (method === 'GET') {
-        if (noQuery(req, res)) sendJson(res, 200, await readRunsSwitches());
+        if (hasNoQuery(req, res)) sendJson(res, 200, await readRunsSwitches());
       } else if (method === 'POST') {
         const body = await readMutationBody(ctx, req, res);
         if (!body) return true;
@@ -337,7 +288,7 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   }
   if (path === VERSE_FLEET_CONTROL_STRAY_SLOTS_PATH) {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
-    if (!noQuery(req, res)) return true;
+    if (!hasNoQuery(req, res)) return true;
     try {
       const { readStraySlots, defaultStrayReaders } = await import('../fleet/stray-slots.js');
       const report = await readStraySlots(deps?.strayReaders ?? defaultStrayReaders);
@@ -436,7 +387,7 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
         sendJson(res, 405, { error: 'method not allowed' });
         return true;
       }
-      if (!noQuery(req, res)) return true;
+      if (!hasNoQuery(req, res)) return true;
       sendJson(res, 200, await io.list());
       return true;
     }
@@ -491,7 +442,7 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (!isRoot && !isQueue && !isRunLog) return false;
   try {
     if (method === 'GET') {
-      if (!noQuery(req, res)) return true;
+      if (!hasNoQuery(req, res)) return true;
       const d = await currentDeps();
       if (isRoot) {
         sendJson(res, 200, await readFleetControlState(d));
