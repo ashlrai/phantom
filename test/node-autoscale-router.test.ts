@@ -123,6 +123,36 @@ describe('autoscale router scoring', () => {
     expect(plan[0]!.nodeId).toBe('masons-macbook-pro');
   });
 
+  it.each([null, 0])('honors zero CPU headroom with a learned CPU cost of %s', (cpuCores) => {
+    const snapshot = mbp();
+    const previous = computeNodeCapacity(snapshot);
+    previous.per_harness_footprint.codex!.cpu_cores_per_session = cpuCores;
+    const saturated = computeNodeCapacity(mbp({
+      measuredAtMs: T0 + 1_000,
+      cpu: { ...snapshot.cpu, busyPercent: 90 },
+      sessions: [],
+    }), previous);
+    expect(saturated.cpu.headroom_cores).toBe(0);
+    expect(saturated.agents_runnable_now.codex).toBe(0);
+    expect(saturated.basis.limiting.codex).toBe('cpu');
+    expect(saturated.agents_runnable_now.devin).toBeNull();
+
+    // Older measurements could still advertise memory-only slots.
+    const legacy = structuredClone(saturated);
+    legacy.agents_runnable_now.codex = 2;
+    const nowMs = T0 + 1_000;
+    expect(fleetRunnable([legacy], nowMs).codex).toBe(0);
+    expect(fleetRunnable([legacy], nowMs).devin).toBeNull();
+    const input = { costs: [COSTS[0]!], outcomes: {}, nowMs, jobs: [{ id: 'j' }] };
+    expect(planAutoscaleRoutes({ ...input, nodes: [{ doc: legacy }] })[0]).toMatchObject({
+      nodeId: null, rejected: { cpu: 1 },
+    });
+    const idle = node(mbp8({ measuredAtMs: nowMs }));
+    expect(planAutoscaleRoutes({ ...input, nodes: [{ doc: legacy }, idle] })[0]).toMatchObject({
+      nodeId: idle.doc.node, footprint: 'fleet',
+    });
+  });
+
   it('is deterministic regardless of input order', () => {
     const a = planAutoscaleRoutes({ nodes: [node(mbp()), node(mbp8())], costs: COSTS, outcomes: {}, nowMs: T0, jobs: [{ id: '1' }, { id: '2' }, { id: '3' }] });
     const b = planAutoscaleRoutes({ nodes: [node(mbp8()), node(mbp())], costs: [...COSTS].reverse(), outcomes: {}, nowMs: T0, jobs: [{ id: '1' }, { id: '2' }, { id: '3' }] });
@@ -162,5 +192,44 @@ describe('autoscale router scoring', () => {
     expect(fleet.devin).toBeNull();
     expect(fleetRunnable(docs, T0 + 10 * 60_000).codex).toBeNull();
     expect(fleetFootprints(docs).claude!.mem_bytes_max).toBe(900 * MIB);
+  });
+
+  it('budgets duplicate snapshots once and honors a newer pressure hold in either input order', () => {
+    const ready = node(mbp());
+    const held = node(mbp({
+      measuredAtMs: T0 + 1_000,
+      mem: { totalBytes: 128 * GIB, freeBytes: null, freePercent: 43, pressureLevel: 2 },
+    }));
+    const input = {
+      costs: [COSTS[0]!], outcomes: {}, nowMs: T0 + 1_000,
+      jobs: Array.from({ length: 50 }, (_, i) => ({ id: `j${i}` })),
+    };
+    const single = planAutoscaleRoutes({ ...input, nodes: [ready] });
+    expect(single.some(p => p.nodeId !== null)).toBe(true);
+    expect(single.some(p => p.nodeId === null)).toBe(true);
+    expect(planAutoscaleRoutes({ ...input, nodes: [ready, structuredClone(ready)] })).toEqual(single);
+    expect(fleetRunnable([ready.doc, ready.doc], input.nowMs)).toEqual(fleetRunnable([ready.doc], input.nowMs));
+
+    for (const nodes of [[ready, held], [held, ready]]) {
+      const plan = planAutoscaleRoutes({ ...input, nodes });
+      expect(plan.every(p => p.nodeId === null && p.rejected?.['node-pressure'] === 1)).toBe(true);
+      expect(fleetRunnable(nodes.map(n => n.doc), input.nowMs)).toEqual(fleetRunnable([held.doc], input.nowMs));
+    }
+  });
+
+  it('reports conflicting same-time capacity as unknown and keeps other nodes eligible', () => {
+    const ready = node(mbp());
+    const held = node(mbp({
+      mem: { totalBytes: 128 * GIB, freeBytes: null, freePercent: 43, pressureLevel: 2 },
+    }));
+    const input = { costs: [COSTS[0]!], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }] };
+    for (const nodes of [[ready, held], [held, ready]]) {
+      expect(planAutoscaleRoutes({ ...input, nodes })[0]).toMatchObject({
+        nodeId: null, rejected: { 'node-capacity-conflict': 1 },
+      });
+      expect(fleetRunnable(nodes.map(n => n.doc), T0).codex).toBeNull();
+      const other = node(mbp8({ node: 'other', sessions: mbp().sessions }));
+      expect(planAutoscaleRoutes({ ...input, nodes: [...nodes, other] })[0]?.nodeId).toBe('other');
+    }
   });
 });

@@ -4,6 +4,7 @@ import { defaultNodesViewDeps, readNodesView, type NodeRow } from '../../fleet/n
 import { readJobsTail, type JobsTailRead } from '../../fleet/report-ledger.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
 import { planBurnDown } from './burn-down.js';
+import { planBankedReset, readBankedResets } from './banked-resets.js';
 import { readCustomResources } from './custom.js';
 import { parseResourceLiveSidecar, readPrivateJson, readResourceLiveFile, unverified } from './store.js';
 import { RESOURCE_LIVE_ALLOWANCES, type ResourceLiveAllowance } from './types.js';
@@ -44,7 +45,7 @@ function machine(node: NodeRow) {
 }
 
 export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: unknown, ledger: JobsTailRead, now: number,
-  custom: readonly ResourceLiveAllowance[] = []) {
+  custom: readonly ResourceLiveAllowance[] = [], resets?: Awaited<ReturnType<typeof readBankedResets>>) {
   const sidecar = parseResourceLiveSidecar(raw, custom);
   const measured = new Map<string, typeof sidecar.readings[number]>(sidecar.readings.map(row => [row.id, row]));
   const readings = new Map([...RESOURCE_LIVE_ALLOWANCES, ...custom]
@@ -91,7 +92,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const perJob = measured.length && spent !== null && spent > 0 && reading.unit !== 'models'
       ? tokenFit ? spent / tokens * lane!.tokens_per_job! : spent / measured.length : null;
     const jobsPerSlot = minutes === null || lane?.minutes_per_job == null ? null : Math.floor(minutes / lane.minutes_per_job);
-    return { id: row.id, lane: row.lane, unit: row.unit, remaining: row.remaining, deadline_at: row.deadline_at,
+    return { id: row.id, label: reading.label, lane: row.lane, unit: row.unit, remaining: row.remaining, deadline_at: row.deadline_at,
       jobs_per_slot: jobsPerSlot, measured_jobs_for_quota: ledger.text === null ? null : measured.length,
       estimated_quota_per_job: perJob, estimate_basis: perJob === null ? null : tokenFit ? 'observed-quota-per-token' : 'observed-quota-per-finish',
       projected_jobs: null as number | null, projected_waste_at_deadline: null as number | null,
@@ -138,6 +139,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     row.projected_waste_at_deadline = round(Math.max(0, row.remaining - row.projected_jobs * row.estimated_quota_per_job));
   }
   return { schema: FLEET_RESOURCE_PLAN_SCHEMA, generated_at: new Date(now).toISOString(),
+    reset_proposal: resets ? planBankedReset(resets, plan.allowances, new Map([...readings].map(([id, row]) => [id, row.source])), now).proposal : null,
     ledger_truncated: ledger.text === null ? null : ledger.truncated, machines,
     lanes: lanes.map(row => ({ ...row, minutes_per_job: row.minutes_per_job === null ? null : round(row.minutes_per_job),
       tokens_per_job: row.tokens_per_job === null ? null : round(row.tokens_per_job) })),
@@ -146,9 +148,10 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
 }
 
 export async function readFleetResourcePlan(runsDir: string, now = Date.now()) {
-  const [live, status, ledger, custom] = await Promise.all([readResourceLiveFile(runsDir),
-    readPrivateJson(join(runsDir, 'queue', 'status.json'), 1024 * 1024), readJobsTail(join(runsDir, 'metrics', 'jobs.jsonl')), readCustomResources()]);
-  return buildFleetResourcePlan(live, readNodesView(defaultNodesViewDeps()).nodes, status, ledger, now, custom);
+  const [live, status, ledger, custom, resets] = await Promise.all([readResourceLiveFile(runsDir),
+    readPrivateJson(join(runsDir, 'queue', 'status.json'), 1024 * 1024), readJobsTail(join(runsDir, 'metrics', 'jobs.jsonl')),
+    readCustomResources(), readBankedResets(runsDir, now)]);
+  return buildFleetResourcePlan(live, readNodesView(defaultNodesViewDeps()).nodes, status, ledger, now, custom, resets);
 }
 
 export function writeFleetResourceAdvice(runsDir: string, plan: Awaited<ReturnType<typeof readFleetResourcePlan>>): void {

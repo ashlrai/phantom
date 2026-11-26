@@ -384,7 +384,7 @@ function extractWindows(document: unknown): Record<string, unknown>[] {
   });
 }
 
-function extraIdentity(lane: string): { label: string; engine: LaneEngine } {
+export function extraIdentity(lane: string): { label: string; engine: LaneEngine } {
   const known = EXTRA[lane] ?? CANONICAL.find((spec) => spec.lane === lane);
   if (known) return { label: known.label, engine: known.engine };
   if (lane.startsWith('claude')) return { label: lane, engine: 'claude' };

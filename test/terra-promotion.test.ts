@@ -5,7 +5,7 @@ import {
   type EngineScoreMap,
 } from '../src/core/run/learned-router.js';
 import {
-  CODEX_TERRA_MODEL_ID, CODEX_ASTRA_MODEL_ID, DEFAULT_CODEX_MODEL_ID,
+  CODEX_TERRA_MODEL_ID, CODEX_ASTRA_MODEL_ID, CODEX_LUNA_MODEL_ID, DEFAULT_CODEX_MODEL_ID,
   KNOWN_MODELS, type ModelRoutingTier,
 } from '../src/core/run/model-catalog.js';
 import { requestTokenEvidence } from '../src/core/run/token-evidence.js';
@@ -93,7 +93,7 @@ describe('Terra experiment promotion', () => {
 
 describe('Codex allowance priors', () => {
   it.each([
-    ['fast', DEFAULT_CODEX_MODEL_ID], ['mid', DEFAULT_CODEX_MODEL_ID],
+    ['fast', CODEX_LUNA_MODEL_ID], ['mid', DEFAULT_CODEX_MODEL_ID],
     ['computer', DEFAULT_CODEX_MODEL_ID], ['work', DEFAULT_CODEX_MODEL_ID],
     ['frontier', CODEX_ASTRA_MODEL_ID],
   ] satisfies [ModelRoutingTier, string][])('defaults %s to %s', (tier, model) => {
