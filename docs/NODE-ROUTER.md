@@ -392,6 +392,10 @@ rate per token and per minute, using one or more capacity documents, a
 cost/latency file (`[{provider, model, harness, tokensPerJob, minutesPerJob}]`)
 and lane outcomes (`{provider: {attempts, merged}}`). It prints a plan only; it
 never launches work. Providers passed with `--exhausted` are never routed.
+Capacity files must record CPU and memory headroom, kernel pressure, and
+swap growth using the snapshot schema's types. Use `null` for an unknown
+reading. Missing or malformed values in these fields make the file invalid;
+the command returns an input error before planning.
 Input can contain several snapshots for one node ID. Routing and fleet-wide
 runnable totals use the newest timestamp per node, so copying a snapshot
 cannot increase capacity and a newer hold takes precedence. Conflicting

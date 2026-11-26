@@ -80,6 +80,7 @@ export interface NodeCapacityDoc {
 }
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+const nullableNonnegative = (n: unknown): boolean => n === null || (finite(n) && n >= 0);
 const round = (n: number, places = 2) => Math.round(n * 10 ** places) / 10 ** places;
 
 function median(values: number[]): number {
@@ -198,6 +199,9 @@ export function parseNodeCapacityDoc(value: unknown): NodeCapacityDoc | null {
       !d.mem_free || typeof d.mem_free !== 'object' || !d.swap || typeof d.swap !== 'object' || !d.cpu || typeof d.cpu !== 'object' ||
       !d.per_harness_footprint || typeof d.per_harness_footprint !== 'object' || Array.isArray(d.per_harness_footprint) ||
       !d.agents_runnable_now || typeof d.agents_runnable_now !== 'object' || Array.isArray(d.agents_runnable_now)) return null;
+  if (!nullableNonnegative(d.cpu.headroom_cores) || !nullableNonnegative(d.mem_free.headroom_bytes) ||
+      ![null, 1, 2, 4].includes(d.mem_free.pressure_level) ||
+      !(d.swap.growing === null || typeof d.swap.growing === 'boolean')) return null;
   for (const fp of Object.values(d.per_harness_footprint)) {
     if (!fp || typeof fp !== 'object' || !finite(fp.mem_bytes_max) || fp.mem_bytes_max <= 0 ||
         !(fp.cpu_cores_per_session === null || (finite(fp.cpu_cores_per_session) && fp.cpu_cores_per_session >= 0))) return null;
