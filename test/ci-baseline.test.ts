@@ -149,6 +149,25 @@ describe('CI baseline evidence', () => {
       expect(report.freshness.every(p => p.state === (options.stale ? 'stale' : 'unknown'))).toBe(true);
     }
   });
+  it('requires complete module coverage to infer a named master pass', async () => {
+    async function analyze(summary: string, suite = false, explicitPass = false) {
+      const { gh } = github({ count: 1, pass: true, filePass: true, suite });
+      return analyzeCiBaseline('owner/repo', async args => {
+        const result = await gh(args);
+        if (!args[1]?.endsWith('/jobs/10/logs')) return result;
+        const stdout = result.stdout.replace(fixture('pass-file'),
+          ` ✓ |unit| test/example.test.ts (${summary}) 4ms\n${explicitPass ? fixture('pass') : ''}`);
+        return { ...result, stdout };
+      });
+    }
+
+    for (const summary of ['4 tests | 1 skipped', '4 tests | 1 todo', '0 tests']) {
+      expect((await analyze(summary)).groups[0]).toMatchObject({ action: 'unknown', master: 'unknown' });
+    }
+    expect((await analyze('4 tests | 1 skipped', false, true)).groups[0]).toMatchObject({ action: 'rerun-failed', master: 'pass' });
+    expect((await analyze('4 tests | 1 skipped | 1 todo', true)).groups[0]).toMatchObject({ action: 'rerun-failed', master: 'pass' });
+    expect((await analyze('2 tests | 1 skipped | 1 todo', true)).groups[0]).toMatchObject({ action: 'unknown', master: 'unknown' });
+  });
   it('reads jobs that never reached a verdict as unknown, never fresh', async () => {
     // A cancelled, timed-out, action-required, startup-failed or stale job
     // produced no verdict even when its log verifies: the run cannot prove
