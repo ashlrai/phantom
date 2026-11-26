@@ -730,7 +730,10 @@ independently like the other side ledgers: the report's
 joined evidence covers only the newest bytes. A cut tail can establish
 a recorded failure, but a green boundary alone leaves first-pass CI
 unknown because earlier failures may be outside the window. An explicit
-jobs-ledger verdict still takes precedence. Anything but `read`
+jobs-ledger verdict still takes precedence. If any nonblank journal
+line fails to decode as a JSON object, the reader also withholds inferred
+first-pass success. Valid failure receipts and queue tallies still join.
+Anything but `read`
 leaves every `merge_queue` `null` — unknown, never a guessed queue
 history. `cost_usd`
 is an explicit `cost_usd`/`usd`/`cost` field on a jobs row when one is

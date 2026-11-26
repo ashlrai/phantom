@@ -1714,6 +1714,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
 
 function foldRouterOutcomesWithCiCoverage(
   text: string, opts: RouterOutcomeFoldOptions, undatedCiJobs: Set<string>,
+  mergeEventsMalformed = false,
 ): RouterOutcomeFold {
   const rows: Row[] = [];
   let malformed = 0;
@@ -2217,7 +2218,7 @@ function foldRouterOutcomesWithCiCoverage(
           // merge-queue check record resolves what the jobs rows left
           // unknown.
           if (o.ci_first_pass === null) {
-            o.ci_first_pass = mergeQueueCiFirstPass(evidence, opts.mergeEventsTruncated === true);
+            o.ci_first_pass = mergeQueueCiFirstPass(evidence, opts.mergeEventsTruncated === true || mergeEventsMalformed);
           }
         }
       }
@@ -2707,6 +2708,10 @@ const MERGE_UNTIMED_TYPES: ReadonlySet<string> = new Set([
  * creates outcomes.
  */
 export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
+  return parseMergeEvents(text).evidence;
+}
+
+function parseMergeEvents(text: string): { evidence: Map<string, MergeQueueEvidence>; malformed: boolean } {
   interface Acc {
     events: number;
     blocked: string[];
@@ -2722,15 +2727,20 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
     autoMerge: 'enabled' | 'disabled' | null;
   }
   const prs = new Map<string, Acc>();
+  let malformed = false;
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     let value: unknown;
     try {
       value = JSON.parse(line);
     } catch {
+      malformed = true;
       continue;
     }
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      malformed = true;
+      continue;
+    }
     const row = value as Row;
     const repo = row['repo'];
     const pr = row['pr'];
@@ -2788,7 +2798,7 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
     }
     prs.set(key, acc);
   }
-  return new Map([...prs].map(([key, a]) => [key, {
+  const evidence = new Map([...prs].map(([key, a]) => [key, {
     events: a.events,
     blocked_reasons: a.blocked,
     conflicts: a.conflicts,
@@ -2801,6 +2811,7 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
     recuts: a.recuts,
     auto_merge: a.autoMerge,
   }]));
+  return { evidence, malformed };
 }
 
 /**
@@ -2813,10 +2824,10 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
  * Retry and recut receipts leave the original check attempt unproven.
  * A merge and individual check observations leave the fallback unknown.
  */
-function mergeQueueCiFirstPass(evidence: MergeQueueEvidence, truncated: boolean): boolean | null {
+function mergeQueueCiFirstPass(evidence: MergeQueueEvidence, incomplete: boolean): boolean | null {
   if (evidence.check_failures > 0) return false;
   const hasRecoveryEvidence = evidence.retries > 0 || evidence.retry_failures > 0 || evidence.recuts > 0;
-  return !truncated && evidence.checks_passed > 0 && !hasRecoveryEvidence ? true : null;
+  return !incomplete && evidence.checks_passed > 0 && !hasRecoveryEvidence ? true : null;
 }
 
 /**
@@ -3397,16 +3408,17 @@ export async function readRouterOutcomes(opts: {
     ? await liveAuthorityEvidence()
     : opts.authorityEvidence;
   const undatedCiJobs = new Set<string>();
+  const mergeEvents = mergeEventsRead.state === 'read' ? parseMergeEvents(mergeEventsRead.text) : undefined;
   const folded = foldRouterOutcomesWithCiCoverage(read.text, {
     passkFor: laneScoreLookup(laneScores),
     workClassFor: (jobId) => workClasses.get(jobId) ?? null,
     revertedPrKeys: unionRevertKeys(
       authorityEvidence === null ? undefined : authorityRevertedPrKeys(authorityEvidence),
       revertLedger.keys),
-    mergeEvents: mergeEventsRead.state === 'read' ? foldMergeEvents(mergeEventsRead.text) : undefined,
+    mergeEvents: mergeEvents?.evidence,
     mergeEventsTruncated,
     crossReviews: crossReviewRead.state === 'read' ? foldCrossReviews(crossReviewRead.text) : undefined,
-  }, undatedCiJobs);
+  }, undatedCiJobs, mergeEvents?.malformed);
   if (spendRead.state === 'read' && !spendTruncated) {
     const costs = foldSpendCosts(spendRead.text);
     for (const o of folded.outcomes) {
