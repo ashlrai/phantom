@@ -123,6 +123,124 @@ pathlib.Path({changed!r}).write_text({text!r} + "\\n")
         self.assertEqual(row["reason"], "guard-source-missing")
         self.assertFalse(row["contacted"])
 
+    def setup_flash(self, output="fixture output"):
+        self.r.update(lane="devin-flash", model="swe-2-flash-max")
+        root = self.runs / "bin"
+        root.mkdir(parents=True)
+        for name in ("launch.sh", "agent.sb", "devin_flash_lane.py", "devin-overage-stop.py"):
+            shutil.copyfile(bridge.REVIEW / name, root / name)
+        for name in bridge.FLASH_PRESSURE:
+            shutil.copyfile(bridge.REVIEW.parent / name, root / name)
+        binary = self.put("fake-devin", f"""#!/usr/bin/python3
+import sys
+from pathlib import Path
+args = sys.argv[1:]
+if args == ["auth", "status"]:
+    print("Logged in\\nUser ID: flash-fixture\\nAPI server: https://api.devin.ai\\nDevin API: https://devin.ai")
+elif args == ["models", "list"]:
+    print("Available models (1 family)\\nSWE (swe)\\n  swe-2-flash-max  Flash [262K context, Free]")
+else:
+    assert args[args.index("--model") + 1] == "swe-2-flash-max"
+    assert Path(args[args.index("--prompt-file") + 1]).read_text() == "fixture prompt"
+    Path("a.txt").write_text("Flash edit\\n")
+    print({output!r}, file=sys.stderr)
+""".encode(), 0o700)
+        data_home = self.home / ".local" / "share"
+        self.put(".local/share/devin/credentials.toml", b"fixture")
+        proof = evidence.devin_evidence(binary, self.home, data_home, self.r["model"], (1, 2))
+        path = self.home / "evidence"
+        evidence.publish(path, proof)
+        self.r.update(accountDigest=proof["accountDigest"], evidenceSha256=evidence.sha(path.read_bytes()))
+        sandbox = self.put("sandbox-exec", b"""#!/usr/bin/python3
+import os, sys
+from pathlib import Path
+args = sys.argv[1:]
+at = args.index("-f")
+profile = Path(args[at + 1]).read_text()
+assert '(deny file-write*)' in profile
+assert '(subpath (param "POOL_WORKSPACE"))' in profile
+assert 'Projects/ashlrai")' not in profile
+os.execv(args[at + 2], args[at + 2:])
+""", 0o700)
+        self.addCleanup(patch.stopall)
+        patch.object(bridge, "DEVIN", binary).start()
+        helper = bridge.helper
+        self.guard_calls = []
+
+        def guarded(args, env):
+            self.guard_calls.append((Path(args[2]).name, args[3:]))
+            self.assertEqual(env["ASHLR_RUNS"], str(self.runs))
+            if Path(args[2]).name in ("devin_flash_lane.py", "host_pressure_admission.py"):
+                return 0
+            return helper(args, env)
+
+        patch.object(bridge, "helper", side_effect=guarded).start()
+        return path, None, sandbox
+
+    def test_flash_scans_stderr_and_sets_live_style_hold_in_fixture(self):
+        row = self.invoke(*self.setup_flash("ERROR: billing required"))
+        self.assertEqual(row["reason"], "devin-overage-held", row)
+        self.assertEqual(row["groupState"], "exited")
+        self.assertEqual(row["exitStatus"], 0)
+        self.assertTrue((self.runs / "queue" / "DEVIN_STOP").is_file())
+        self.assertNotIn("billing required", json.dumps(row))
+        self.assertIn(("devin_flash_lane.py", ["check-launch", self.r["model"]]), self.guard_calls)
+        (self.ws / "a.txt").write_text("old\n")
+        self.r["id"] = "test-2"
+        row = self.invoke(self.home / "evidence")
+        self.assertEqual(row["reason"], "devin-flash-refused")
+        self.assertFalse(row["contacted"])
+
+    def test_flash_unconfirmed_exit_does_not_scan_or_release_cap(self):
+        args = self.setup_flash()
+        with patch.object(bridge, "supervise", return_value=(None, "cancel-unconfirmed", False)):
+            row = self.invoke(*args)
+        self.assertEqual(row["reason"], "cancel-unconfirmed", row)
+        self.assertFalse(any(args and args[0] == "scan" for _, args in self.guard_calls))
+        self.r["id"] = "test-2"
+        row = self.invoke(*args)
+        self.assertEqual(row["reason"], "devin-reservation-cap-held")
+
+    def test_flash_guard_digest_drift_does_not_launch(self):
+        args = self.setup_flash()
+        (self.runs / "bin" / "agent.sb").write_text("unreviewed")
+        row = self.invoke(*args)
+        self.assertEqual(row["reason"], "guard-source-drift")
+        self.assertFalse(row["contacted"])
+        self.assertEqual(self.guard_calls, [])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "synthetic sandbox only")
+    def test_offline_verifier_passes_and_rejects_unconfined_dummy(self):
+        sandbox = self.put("offline-sandbox", b"""#!/usr/bin/python3
+import os, sys
+from pathlib import Path
+args = sys.argv[1:]
+at = args.index("-f")
+profile = Path(args[at + 1]).read_text()
+assert '(deny file-write*)' in profile
+assert '(subpath (param "POOL_WORKSPACE"))' in profile
+command = args[at + 2:]
+if not Path(os.environ["TMPDIR"]).parent.joinpath("allow-outside").exists():
+    Path(os.environ["TMPDIR"], "outside").mkdir()
+    command[2] += '; /bin/rmdir "$TMPDIR/outside"'
+os.execv(command[0], command)
+""", 0o700)
+        command = ["/bin/bash", str(bridge.REVIEW / "verify-pool-bridge.sh")]
+        env = {"TMPDIR": str(self.home), "POOL_BRIDGE_FIXTURE_SANDBOX": str(sandbox)}
+        result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+        verdict = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0, verdict)
+        self.assertEqual(verdict["mode"], "synthetic")
+        self.assertTrue(all(verdict["checks"].values()))
+        self.assertEqual(set(verdict["profileSha256s"]), {"agent", "zai"})
+        self.put("allow-outside", b"")
+        result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+        verdict = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(verdict["checks"]["agentOutsideBlocked"])
+        self.assertFalse(verdict["checks"]["zaiOutsideBlocked"])
+        self.assertTrue(verdict["checks"]["groupCancelled"])
+
     def test_agy_attestation_and_quota_do_not_substitute_for_identity(self):
         self.r.update(lane="agy", model="gemini-3.8-flash-medium")
         now = evidence.clock()
@@ -170,9 +288,9 @@ child.wait()
         self.assertFalse(confirmed)
         self.assertEqual(reason, "cancel-unconfirmed")
 
-    def test_review_manifest_matches_all_seven_sources(self):
+    def test_review_manifest_matches_all_nine_sources(self):
         files = json.loads((bridge.REVIEW / "launcher-snapshot.json").read_text())["files"]
-        self.assertEqual(len(files), 7)
+        self.assertEqual(len(files), 9)
         for entry in files:
             self.assertEqual(evidence.sha((bridge.REVIEW / entry["name"]).read_bytes()), entry["sha256"])
             self.assertEqual(entry["livePath"], "~/.ashlr-runs/bin/" + entry["name"])
