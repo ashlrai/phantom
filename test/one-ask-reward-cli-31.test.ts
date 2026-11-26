@@ -221,6 +221,25 @@ describe('fleet lane-reward', () => {
     ]);
   });
 
+  it('uses batch member claim lanes when execution and outcome receipts lack a lane', async () => {
+    const text = rows(
+      { event: 'batch_claim', job: 'RQ-FAKE-PENDING', lane: 'lane-a' },
+      { event: 'batch_claim', job: 'RQ-FAKE-RESOLVED', lane: 'lane-a' },
+      { event: 'finish', job: 'RQ-FAKE-RESOLVED', tokens_total: 100 },
+      { event: 'merged', job: 'RQ-FAKE-RESOLVED' },
+      { event: 'batch_claim', job: 'RQ-FAKE-OVERRIDE', lane: 'lane-a' },
+      { event: 'finish', job: 'RQ-FAKE-OVERRIDE', lane: 'lane-b', tokens_total: 200 },
+      { event: 'batch_claim', job: 'RQ-BATCH-FAKE', lane: 'lane-a' },
+    );
+    const report = await readLaneReward({ deps: deps({ jobsText: read(text) }) });
+    expect(report).toMatchObject({ attempts: 3, tokensMeasured: 300 });
+    expect(report.lanes).toMatchObject([
+      { lane: 'lane-a', attempts: 2, measured: 1, tokensMeasured: 100,
+        reasons: { unresolved: 1, 'proposal-unavailable': 1 } },
+      { lane: 'lane-b', attempts: 1, measured: 1, tokensMeasured: 200 },
+    ]);
+  });
+
   it('reads alias timestamp fields and prefers mergedAt/closedAt on terminal rows', () => {
     const fold = foldLaneRewardAttempts(rows(
       { event: 'finish', job: 'RQ-FAKE-W1', lane: 'lane-a', tokens_total: 100 },
