@@ -594,7 +594,26 @@ expiry that ends the disagreement; `UNKNOWN` — a claim store that could
 not be read — reports `unavailable` with a null pending, never an empty
 verdict passed off as fact, and VERIFIED with both stores absent is
 `missing`; deep links `phm fleet claim-drift`, `phm agents bus show`,
-`phm agents bus claim list --key`) — and each item carries `act` deep-link commands (`phm fleet
+`phm agents bus claim list --key`) — and the outbound send gate's held
+verdicts (the kill-switch sentinel and comms soft-pause flag
+`localWriteGate`/`localBusHold` consult, read through the same
+`readKillSwitch` and `probePauseState` inspections `agents bus status`'s
+`sendGate` section serves, so the two surfaces can never disagree:
+pending items kept listing while every write verb refused, and an agent
+had to already know `agents bus status` to learn why nothing could
+drain; an engaged kill switch lists as high `send-gate-kill`, a set
+pause flag as high `send-gate-pause` — claims, sends and every local
+bus write refuse until it clears — while an uninspectable or unsafe
+gate file lists the same kind at warn, since the send path fails closed
+and refuses as if engaged but the probe honestly reports unknown rather
+than calling it a decision someone made; `since` is the pause flag's
+recorded start — the sentinel keeps no provable time, so kill items and
+unparseable flags stay null — `expiresAt` stays null since a gate waits
+for its release, never a guessed deadline; both gates clear is a
+verified-open source with a real zero, and either probe's own unknown
+verdict degrades the source — unknown stays unknown, never an open gate
+passed off as fact; deep links `phm agents bus status --json`, `phm
+fleet status`, `phm fleet resume`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -610,7 +629,8 @@ ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 run`, `phm channels`, `phm comms cycle`, `phm leader inbox`, `phm imessage
 replies`, `phm leader replies`, `phm comms send-owner`, `phm fleet
 coordination board`, `phm fleet coordination inbox --agent`, `phm fleet
-claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`). It never claims, replies, or mutates; a source
+claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`,
+`phm agents bus status`, `phm fleet status`, `phm fleet resume`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:

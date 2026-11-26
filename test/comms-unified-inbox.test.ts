@@ -4595,3 +4595,105 @@ describe('readUnifiedInbox leader replies', () => {
     expect(byJob.items.filter(i => i.source === 'leader-replies')).toHaveLength(0);
   });
 });
+
+describe('readUnifiedInbox send gate', () => {
+  // Verdict shapes arrive through the option seams so this suite stays out of
+  // the sandbox-policy owner lane.
+  type KillRead = ReturnType<NonNullable<UnifiedInboxOptions['readKillSwitch']>>;
+  type PauseRead = ReturnType<NonNullable<UnifiedInboxOptions['probePause']>>;
+  const killInactive = { state: 'inactive', sourceState: 'healthy', reason: 'missing', path: '/k' } as const;
+  const killActive = { state: 'active', sourceState: 'healthy', reason: 'present', path: '/k' } as const;
+  const killUnknown = { state: 'unknown', sourceState: 'degraded', reason: 'uninspectable', path: '/k', errorCode: null } as const;
+  const pauseClear = { state: 'clear', since: null, reason: null } as const;
+  const pauseSet = (since: number | null) => ({ state: 'paused', since, reason: null }) as const;
+  const pauseUnknown = { state: 'unknown', since: null, reason: 'is not valid JSON' } as const;
+  const readGate = (kill: KillRead, pause: PauseRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readKillSwitch: () => kill, probePause: () => pause, ...extra });
+
+  it('reports a verified-open gate healthy with a real zero under the default reads', async () => {
+    const inbox = await read();
+    expect(inbox.sources['send-gate']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'send-gate')).toHaveLength(0);
+  });
+
+  it('lists an engaged kill switch as a high item with its release act', async () => {
+    const inbox = await readGate(killActive, pauseClear);
+    expect(inbox.sources['send-gate']).toEqual({ state: 'healthy', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'send-gate:kill')!;
+    expect(item).toMatchObject({
+      source: 'send-gate', kind: 'send-gate-kill', severity: 'high', blocking: false,
+      title: 'Kill switch engaged — bus writes held',
+      since: null, expiresAt: null,
+    });
+    expect(item.detail).toContain('claims, sends and every local bus write refuse');
+    expect(item.act).toEqual(['phm fleet resume', 'phm agents bus status --json', 'phm fleet status']);
+    expect(item.jobIds).toBeUndefined();
+  });
+
+  it('lists a set pause flag as a high item carrying its recorded start', async () => {
+    const pauseSince = now - 3_600_000;
+    const inbox = await readGate(killInactive, pauseSet(pauseSince));
+    expect(inbox.sources['send-gate']).toEqual({ state: 'healthy', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'send-gate:pause')!;
+    expect(item).toMatchObject({
+      source: 'send-gate', kind: 'send-gate-pause', severity: 'high', blocking: false,
+      title: 'Comms pause set — bus writes held',
+      since: new Date(pauseSince).toISOString(), expiresAt: null,
+    });
+    expect(item.detail).toContain(`since ${new Date(pauseSince).toISOString()}`);
+    expect(item.act).toEqual(['phm agents bus status --json', 'phm fleet status']);
+  });
+
+  it('keeps a paused flag without a recorded start honestly undated', async () => {
+    const inbox = await readGate(killInactive, pauseSet(null));
+    const item = inbox.items.find(i => i.id === 'send-gate:pause')!;
+    expect(item.since).toBeNull();
+    expect(item.detail).not.toContain('since ');
+  });
+
+  it('lists both engaged gates as two items', async () => {
+    const inbox = await readGate(killActive, pauseSet(now - 60_000));
+    expect(inbox.sources['send-gate']).toEqual({ state: 'healthy', pending: 2 });
+    expect(inbox.items.filter(i => i.source === 'send-gate').map(i => i.id).sort())
+      .toEqual(['send-gate:kill', 'send-gate:pause']);
+  });
+
+  it('reports an uninspectable gate warn at degraded — fail-closed, never called a decision', async () => {
+    const inbox = await readGate(killUnknown, pauseUnknown);
+    expect(inbox.sources['send-gate']).toEqual({ state: 'degraded', pending: 2 });
+    const kill = inbox.items.find(i => i.id === 'send-gate:kill')!;
+    expect(kill).toMatchObject({ kind: 'send-gate-kill', severity: 'warn' });
+    expect(kill.title).toBe('Kill switch state unknown — writes refused');
+    expect(kill.detail).toContain('uninspectable');
+    expect(kill.act).toEqual(['phm agents bus status --json', 'phm fleet status']);
+    const pause = inbox.items.find(i => i.id === 'send-gate:pause')!;
+    expect(pause).toMatchObject({ kind: 'send-gate-pause', severity: 'warn', since: null });
+    expect(pause.title).toBe('Comms pause state unknown — writes refused');
+    expect(pause.detail).toContain('is not valid JSON');
+  });
+
+  it('keeps the surviving verdict when one probe throws', async () => {
+    const inbox = await read({
+      readKillSwitch: () => { throw new Error('kill boom'); },
+      probePause: () => pauseSet(now - 60_000),
+    });
+    // The throw synthesizes the same unknown verdict the fail-closed send
+    // path applies; the pause verdict still lists on its own.
+    expect(inbox.sources['send-gate']).toEqual({ state: 'degraded', pending: 2 });
+    expect(inbox.items.find(i => i.id === 'send-gate:kill')).toMatchObject({ severity: 'warn' });
+    expect(inbox.items.find(i => i.id === 'send-gate:pause')).toMatchObject({ severity: 'high' });
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = { kill: killActive, pause: pauseSet(now - 60_000) };
+    const bySource = await readGate(pending.kill, pending.pause, { filter: { source: 'send-gate' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'send-gate')).toBe(true);
+    const byKind = await readGate(pending.kill, pending.pause, { filter: { kind: 'send-gate-kill' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['send-gate:kill']);
+    expect(byKind.sources['send-gate']).toEqual({ state: 'healthy', pending: 2 });
+    // A gate verdict names no job — --job never matches it.
+    const byJob = await readGate(pending.kill, pending.pause, { filter: { job: 'job-1' } });
+    expect(byJob.items.filter(i => i.source === 'send-gate')).toHaveLength(0);
+  });
+});
