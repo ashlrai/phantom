@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { cmdAutopilot, parsePrRef, repoFromRemote, splitCommand } from '../src/cli/autopilot.js';
 import { tick, untrustedEnv, verifyPlan } from '../src/core/autopilot/act.js';
 import { emptyState, fixBrief, plan, weakeningRefusals, type CheckRun, type Guards, type Observation } from '../src/core/autopilot/diagnose.js';
-import { readReviews, type Gh } from '../src/core/autopilot/github.js';
+import { ghCallLabel, readReviews, type Gh } from '../src/core/autopilot/github.js';
 
 const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -228,6 +228,33 @@ describe('autopilot verify plan', () => {
     expect(plan.steps.map((s) => s.cmd.join(' '))).toEqual(['npm run typecheck']);
     expect(plan.affectedTests).toBe(true);
     expect(verifyPlan({ verify: [['make', 'check']] }, join(__dirname, '..'))).toEqual({ steps: [{ cmd: ['make', 'check'] }], affectedTests: false });
+  });
+});
+
+describe('ghCallLabel', () => {
+  it('names the endpoint for gh api reads, not the transport flags', () => {
+    expect(ghCallLabel(['api', '-H', 'Accept: application/vnd.github+json', 'user'])).toBe('gh api user');
+    expect(ghCallLabel(['api', 'repos/o/r/actions/jobs/1/logs'])).toBe('gh api repos/o/r/actions/jobs/1/logs');
+    expect(ghCallLabel(['api', '--paginate', 'repos/o/r/pulls'])).toBe('gh api repos/o/r/pulls');
+    expect(ghCallLabel(['api'])).toBe('gh api');
+  });
+
+  it('names the method and endpoint for gh api writes without echoing flag values', () => {
+    const label = ghCallLabel(['api', '-X', 'POST', 'repos/o/r/pulls', '-f', 'title=t', '-f', 'body=do-not-echo-this']);
+    expect(label).toBe('gh api POST repos/o/r/pulls');
+    expect(label).not.toContain('do-not-echo-this');
+    expect(ghCallLabel(['api', '-X', 'PATCH', 'repos/o/r/pulls/9', '-f', 'state=closed'])).toBe('gh api PATCH repos/o/r/pulls/9');
+    expect(ghCallLabel(['api', '--method=DELETE', 'repos/o/r/issues/5/comments'])).toBe('gh api DELETE repos/o/r/issues/5/comments');
+  });
+
+  it('keeps two-word gh commands and bounds a long endpoint', () => {
+    expect(ghCallLabel(['pr', 'merge', '42', '--repo', 'o/r', '--squash', '--auto'])).toBe('gh pr merge');
+    expect(ghCallLabel(['pr', 'list', '--repo', 'o/r', '--state', 'open'])).toBe('gh pr list');
+    const long = `repos/o/r/compare/master...o:${'b'.repeat(200)}`;
+    const label = ghCallLabel(['api', '-H', 'Accept: application/vnd.github+json', long]);
+    expect(label.startsWith('gh api repos/o/r/compare/')).toBe(true);
+    expect(label.endsWith('...')).toBe(true);
+    expect(label.length).toBeLessThanOrEqual('gh api '.length + 160);
   });
 });
 
