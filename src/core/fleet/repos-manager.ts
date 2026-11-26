@@ -1,14 +1,17 @@
+import { lstatSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { displaySurfaceTarget, evaluateStandingAuthority } from '../authority/effective-config.js';
 import type { EffectiveRepoPolicy } from '../authority/types.js';
 import { ecosystemBrand } from '../brand/ecosystem.js';
-import { canWriteStandingGrantHere } from '../drive/nodes/pool-host.js';
+import { ashlrHome } from '../cloud/store.js';
+import { canWriteStandingGrantHere, readPoolConfig } from '../drive/nodes/pool-host.js';
 import { readEnrollmentRegistry } from '../sandbox/policy.js';
 import { defaultGitRunner, type GitRunner } from '../verse/git-ops.js';
+import { configuredFleetLeader, readFleetReplica, refreshFleetReplicaOnRead } from './fleet-replica.js';
 import { parseReadyTsv } from './lane-console.js';
 import { repoIdentityOfPath } from './repo-identity.js';
-import { allocateRepos, canonicalMarketRepo, ECOSYSTEM_REPOS, readRepoPriority } from './repo-market.js';
+import { allocateRepos, canonicalMarketRepo, ECOSYSTEM_REPOS, readAppliedRepoPriorities, writeRepoPriorityRequest, type RepoPriority } from './repo-market.js';
 import { readSource } from './runs-parked-queue.js';
 
 type RepoFacts = {
@@ -107,6 +110,39 @@ export function managedRepoCatalog(enrolled: ReadonlySet<string>, effectiveRepos
   }));
 }
 
+function canRequestRepoPriority(): boolean {
+  try {
+    lstatSync(join(ashlrHome(), 'fleet-leader.json'));
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false;
+  }
+  try {
+    const config = readPoolConfig();
+    return !config || config.role === 'primary';
+  } catch { return false; }
+}
+
+export function requestRepoPriority(repo: string, priority: RepoPriority): boolean {
+  if (!canRequestRepoPriority()) return false;
+  writeRepoPriorityRequest(repo, priority);
+  return true;
+}
+
+async function repoPriorityView(now?: number) {
+  if (canRequestRepoPriority()) {
+    return { prioritySync: 'leader' as const, prioritySource: null, values: readAppliedRepoPriorities() };
+  }
+  if (configuredFleetLeader()) await refreshFleetReplicaOnRead();
+  const observation = readFleetReplica(now);
+  const values = observation?.replica?.repoPriorities ?? null;
+  return {
+    prioritySync: values ? 'synced' as const : 'unavailable' as const,
+    prioritySource: observation?.source ?? null,
+    values,
+  };
+}
+
 export async function listManagedRepos(opts: { runsDir?: string; now?: number; run?: GitRunner } = {}) {
   const now = opts.now ?? Date.now();
   const { enrollment, enrolled, effectiveRepos } = scope();
@@ -118,13 +154,14 @@ export async function listManagedRepos(opts: { runsDir?: string; now?: number; r
     factsCache = { key, at: now, facts: read() };
   }
   const runsDir = opts.runsDir ?? root();
-  const [depth, facts, published, freshnessSource] = await Promise.all([
+  const [depth, facts, published, freshnessSource, priorities] = await Promise.all([
     readyDepth(runsDir), opts.run ? read() : factsCache!.facts,
     readSource(join(runsDir, 'queue', 'repo-shares.json'), 256 * 1024, false),
     readSource(join(runsDir, 'queue', 'repo-freshness.json'), 256 * 1024, false),
+    repoPriorityView(opts.now),
   ]);
   let receipt: Record<string, unknown> = {};
-  if (published.state === 'healthy') {
+  if (priorities.prioritySync === 'leader' && published.state === 'healthy') {
     try {
       const snapshot = object(JSON.parse(published.text));
       const age = typeof snapshot.at === 'number' ? now - snapshot.at * 1000 : Infinity;
@@ -132,7 +169,7 @@ export async function listManagedRepos(opts: { runsDir?: string; now?: number; r
     } catch { /* An unreadable queue receipt is not an allocation decision. */ }
   }
   const evidence = names.map(repo => ({
-    repo, priority: readRepoPriority(repo), eligible: enrolled.has(repo) || catalog.get(repo)?.grantStage != null,
+    repo, priority: priorities.values?.[repo] ?? 'normal' as const, eligible: enrolled.has(repo) || catalog.get(repo)?.grantStage != null,
     queueDepth: depth ? depth.get(repo) ?? 0 : null, ...(facts.get(repo) ?? UNKNOWN),
   }));
   let freshness: unknown = null;
@@ -145,7 +182,8 @@ export async function listManagedRepos(opts: { runsDir?: string; now?: number; r
     schema: 'phantom.repos.v1' as const,
     asOf: new Date(now).toISOString(),
     enrollmentStatus: enrollment.state,
-    prioritySync: 'local-only' as const,
+    prioritySync: priorities.prioritySync,
+    prioritySource: priorities.prioritySource,
     canManageGrant: canWriteStandingGrantHere(),
     repos: evidence.map(({ eligible: _eligible, ...row }) => {
       const observed = object(receipt[row.repo]);
@@ -157,13 +195,13 @@ export async function listManagedRepos(opts: { runsDir?: string; now?: number; r
         ? { repo: row.repo, score: observed.score, share: observed.share, reasonCodes: observed.reason_codes as string[] }
         : null;
       return {
-        ...row, ...catalog.get(row.repo)!,
+        ...row, priority: priorities.values ? row.priority : null, ...catalog.get(row.repo)!,
         enrolled: enrollment.state === 'degraded' ? null : enrolled.has(row.repo),
-        allocation: {
+        allocation: priorities.values ? {
           schema: 'work-market.v1' as const, event: 'repo_share' as const,
           source: recorded ? 'queue' as const : 'estimate' as const,
           ...(recorded ?? byName.get(row.repo)!),
-        },
+        } : null,
       };
     }),
   };

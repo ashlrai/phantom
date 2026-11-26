@@ -270,8 +270,10 @@ add 0.35 for docs drift, 0.45 for a stale site, or 0.65 for an unhealthy site,
 with reason codes `docs_freshness_drift`, `site_freshness_stale`, and
 `site_freshness_unhealthy`. `boost` multiplies the
 score by 1.25, `normal` leaves it alone, and `pause` keeps work pending without
-admitting new claims on this queue. These are local scheduling settings, not
-authority, cancellation or changes to execution constraints.
+admitting new claims on this queue. The leader scheduler applies owner requests
+before ranking work; workers read the applied values from the leader replica.
+These settings do not change authority, cancel running work or bypass execution
+constraints.
 
 When shares change, dispatch records `work-market.v1` events named `repo_share`
 in `metrics/work-market.jsonl`, with `repo`, `score`, `share` and

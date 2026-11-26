@@ -129,9 +129,12 @@ the new or narrowed draft, then approve it with Touch ID. Propose-only can narro
 a draft; merge can only use the existing eligible rollout ladder and does not skip
 its evidence gates. To stop local work immediately, use the existing unenrollment
 or Stop control. Workers cannot sign, replace, or revoke a standing grant.
-Priority nudges are scheduler settings, not grant changes. Until the leader's
-node-RPC replica path is available, each Mac uses only its own priority settings
-and the Repos manager displays **Not synced**.
+Priority nudges are scheduler settings, not grant changes. Request a change on
+the leader; it takes effect on the leader scheduler's next tick. Workers cannot
+request or apply changes and display the applied values read-only through the
+node-RPC replica, with the source Mac and snapshot age. When the replica is
+missing or more than two minutes old, the Repos manager shows **Not synced**
+and leaves priority unknown instead of reading a local override.
 
 Ready work, open PRs, merges in the trailing 24 hours, default branch CI and the
 last release are shown when the respective queue or GitHub source answers. Missing

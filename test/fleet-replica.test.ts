@@ -4,8 +4,10 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetLaneSlots } from '../src/cli/fleet-lane-slots.js';
 import { cmdOrg } from '../src/cli/org.js';
+import { cmdReposRank } from '../src/cli/repos-rank.js';
 import { fleetReplicaStatus, machineReport, serveFleetReplica, syncFleetReplica } from '../src/core/fleet/fleet-replica.js';
 import { renderOrgTreeText } from '../src/core/fleet/org-tree.js';
+import { listManagedRepos, requestRepoPriority } from '../src/core/fleet/repos-manager.js';
 import { readFleetOrgMap } from '../src/core/verse/fleet-org-map-api.js';
 
 const { location, readOnlySsh } = vi.hoisted(() => ({
@@ -74,6 +76,31 @@ describe('authenticated fleet projection across two homes', () => {
     useHost('leader-mac');
     try { return await serveFleetReplica({ report }); } finally { useHost('muse'); }
   }
+  it('shows only applied leader priorities on workers, with source, age and expiry', async () => {
+    put('.ashlr/repo-priority/ashlrai@phantom', 'boost\n');
+    expect(requestRepoPriority('ashlrai/phantom', 'pause')).toBe(true);
+    useHost('muse');
+    put('.ashlr/repo-priority/ashlrai@phantom', 'pause\n');
+    await syncFleetReplica({ leader: 'leader-mac', ssh: leaderRpc });
+    const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdReposRank(['priority', 'phantom', 'pause', '--json'])).toBe(1);
+    expect(JSON.parse(output.mock.lastCall![0])).toMatchObject({ code: 'priority-leader-only' });
+    expect(existsSync(join(process.env.HOME!, '.ashlr', 'repo-priority-requests'))).toBe(false);
+    const options = { run: async () => ({ stdout: '{}', stderr: '', code: 0, timedOut: false, truncated: false, missing: false }) };
+    vi.setSystemTime(NOW + 12_000);
+    expect(await listManagedRepos(options)).toMatchObject({
+      prioritySync: 'synced', prioritySource: { machine: 'leader-mac', ageSeconds: 12, stale: false },
+      repos: expect.arrayContaining([
+        expect.objectContaining({ repo: 'ashlrai/phantom', priority: 'boost' }),
+        expect.objectContaining({ repo: 'ashlrai/locus', priority: 'normal' }),
+      ]),
+    });
+    vi.setSystemTime(NOW + 120_001);
+    expect(await listManagedRepos(options)).toMatchObject({
+      prioritySync: 'unavailable', prioritySource: { stale: true },
+      repos: expect.arrayContaining([expect.objectContaining({ repo: 'ashlrai/phantom', priority: null, allocation: null })]),
+    });
+  });
   it('uses the leader view from org and lane-slots with no worker coordination or grant', async () => {
     useHost('muse');
     expect(existsSync(join(process.env.HOME!, '.ashlr-runs'))).toBe(false);

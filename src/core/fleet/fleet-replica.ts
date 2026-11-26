@@ -17,6 +17,7 @@ import type { FleetOrgTree } from './org-tree.js';
 import type { ResourceLedgerV1 } from './runs-resource-ledger.js';
 import type { LeaderBoardRead } from './leader-board.js';
 import type { FleetQueueV1 } from './runs-parked-queue.js';
+import { parseRepoPriorities, readAppliedRepoPriorities, type RepoPriority } from './repo-market.js';
 
 const MAX_BYTES = 1024 * 1024;
 const PEER_BYTES = 16 * 1024;
@@ -57,6 +58,7 @@ interface FleetReplica {
   queue: FleetQueueV1;
   grant: { id: string; seq: number; host: string } | null;
   peers: PeerReport[];
+  repoPriorities?: Record<string, RepoPriority> | null;
 }
 interface Cache {
   leader: string;
@@ -178,7 +180,7 @@ function parseReplica(value: unknown): FleetReplica {
         (!replica.grant || typeof replica.grant.id !== 'string' || !Number.isSafeInteger(replica.grant.seq) || replica.grant.host !== replica.machine))) {
     throw new Error('Invalid fleet replica');
   }
-  return replica;
+  return { ...replica, repoPriorities: parseRepoPriorities(replica.repoPriorities) };
 }
 
 /** The existing SSH account authenticates the exchange; the sender's report is observational, not admission evidence. */
@@ -210,7 +212,8 @@ export async function serveFleetReplica(envelope: { report?: unknown }): Promise
   const policy = displayStandingPolicy();
   const replica = parseReplica(sanitizePublicJson({ schema: 'fleet.replica.v1', role: 'leader', machine, generatedAt,
     map, usage, live, board, queue: { ...queue, stuck },
-    grant: policy ? { id: policy.grantId, seq: policy.grantSeq, host: machine } : null, peers: fleetPeerReports() }));
+    grant: policy ? { id: policy.grantId, seq: policy.grantSeq, host: machine } : null, peers: fleetPeerReports(),
+    repoPriorities: readAppliedRepoPriorities() }));
   if (Buffer.byteLength(JSON.stringify(replica)) + 1 > MAX_BYTES) throw new Error('Fleet replica exceeds its size limit');
   return replica;
 }
