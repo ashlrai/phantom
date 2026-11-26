@@ -147,6 +147,57 @@ describe('ready.tsv -> node router bridge', () => {
     expect(report.rows.find(r => r.job === 'RQ-REVIEW-GOOD')!.offload).toBe(true);
   });
 
+  it('resolves spec-less rows through router-queue envelopes like the work market', async () => {
+    const f = fixture([
+      // Lane cell says codex but the envelope prefers claude: the market routes
+      // by the envelope, so the bridge must too — no codex cap is required.
+      row('RQ-REVIEW-ENV-LANE', 'codex-cmp'),
+      // Envelope-declared constraints a spec-less row used to bypass entirely.
+      row('RQ-REVIEW-ENV-DC', 'codex-cmp'),
+      row('RQ-REVIEW-ENV-EX', 'codex-cmp'),
+      row('RQ-REVIEW-ENV-GH', 'codex-cmp'),
+      // No matching envelope: the lane cell still stands.
+      row('RQ-REVIEW-ENV-NONE', 'codex-cmp'),
+      // Envelope naming no lane leaves the row open; the lane cell is the fallback.
+      row('RQ-REVIEW-ENV-OPEN', 'codex-cmp'),
+    ]);
+    writeFileSync(join(f.host.runsRoot, 'queue', 'router-queue.md'), [
+      '- READY RQ-REVIEW-ENV-LANE (priority=P2, pool=claude, tier=work, repo=phantom): env lane',
+      '- READY RQ-REVIEW-ENV-DC (priority=P2, pool=codex-cmp, tier=work, repo=phantom, data_class=confidential): env dc',
+      '- READY RQ-REVIEW-ENV-EX (priority=P2, pool=codex-cmp, tier=work, repo=phantom, exclusive=true): env ex',
+      '- READY RQ-REVIEW-ENV-GH (priority=P2, pool=codex-cmp, tier=work, repo=phantom, needs=gh): env gh',
+      '- READY RQ-REVIEW-ENV-OPEN (priority=P2, tier=work, repo=phantom): env open',
+    ].join('\n') + '\n');
+    const report = await f.pass(false);
+    const byJob = Object.fromEntries(report.rows.map(r => [r.job, r]));
+    // preferred_lane=claude maps to the claude cap no node advertises.
+    expect(byJob['RQ-REVIEW-ENV-LANE']).toMatchObject({ lane: 'claude', offload: false, reasons: ['lane_mismatch'] });
+    expect(byJob['RQ-REVIEW-ENV-DC']).toMatchObject({ offload: false, reasons: ['data_class_exceeded'] });
+    expect(byJob['RQ-REVIEW-ENV-EX']).toMatchObject({ offload: false, reasons: ['exclusive'] });
+    // needs=gh joins the requires, so a node must advertise gh and report auth.
+    expect(byJob['RQ-REVIEW-ENV-GH']).toMatchObject({ offload: false, reasons: ['caps_missing'] });
+    expect(byJob['RQ-REVIEW-ENV-NONE']).toMatchObject({ offload: true, lane: 'codex-cmp' });
+    expect(byJob['RQ-REVIEW-ENV-OPEN']).toMatchObject({ offload: true, lane: 'codex-cmp' });
+  });
+
+  it('rejects spec-less rows the market would call invalid_requirements', async () => {
+    const f = fixture([
+      // Lane cell is not a lane id: requirements() rejects before the envelope is read.
+      ['RQ-REVIEW-ENV-BADLANE', 'phantom', 'Not A Lane', 'work', '/prompts/RQ-REVIEW-ENV-BADLANE.md'].join('\t'),
+      // Malformed envelope exclusive: from_envelope raises before the market sees the row.
+      row('RQ-REVIEW-ENV-BADENV', 'codex-cmp'),
+      row('RQ-REVIEW-ENV-FINE', 'codex-cmp'),
+    ]);
+    writeFileSync(join(f.host.runsRoot, 'queue', 'router-queue.md'),
+      '- READY RQ-REVIEW-ENV-BADLANE (priority=P2, pool=codex-cmp, tier=work, repo=phantom): bad lane\n' +
+      '- READY RQ-REVIEW-ENV-BADENV (priority=P2, pool=codex-cmp, tier=work, repo=phantom, exclusive=maybe): bad env\n');
+    const report = await f.pass(false);
+    const reasons = Object.fromEntries(report.rows.map(r => [r.job, r.reasons]));
+    expect(reasons['RQ-REVIEW-ENV-BADLANE']).toEqual(['invalid_requirements']);
+    expect(reasons['RQ-REVIEW-ENV-BADENV']).toEqual(['invalid_requirements']);
+    expect(report.rows.find(r => r.job === 'RQ-REVIEW-ENV-FINE')!.offload).toBe(true);
+  });
+
   it('refuses rows past free slots and treats unknown slots as unknown, not zero', async () => {
     const f = fixture(['A', 'B', 'C', 'D'].map(j => row(`RQ-REVIEW-${j}`)));
     const report = await f.pass(false);
