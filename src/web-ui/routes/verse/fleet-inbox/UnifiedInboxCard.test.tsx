@@ -11,7 +11,7 @@ const item = (over: Record<string, unknown> = {}) => ({
 const healthy = { state: 'healthy', pending: 0 };
 const inbox = (over: Record<string, unknown> = {}) => Response.json({
   schema: 'comms.unified-inbox.v1', generatedAt: new Date().toISOString(), total: 1, omitted: 0,
-  sources: { 'needs-you': healthy, 'needs-you-delivery': healthy, imessage: healthy, 'teammate-tasks': healthy, 'owner-thread': healthy, 'owner-delivery': healthy, drafts: { state: 'healthy', pending: 1 }, bus: healthy, mailbox: healthy, board: healthy, conversations: healthy, wakes: healthy, seats: healthy, 'peer-dispatch': healthy, gmail: healthy, linkedin: healthy, requests: healthy, 'email-inbox': healthy, 'email-outbox': healthy, 'team-approvals': healthy, proposals: healthy, slack: healthy },
+  sources: { 'needs-you': healthy, 'needs-you-delivery': healthy, imessage: healthy, 'teammate-tasks': healthy, 'owner-thread': healthy, 'owner-delivery': healthy, drafts: { state: 'healthy', pending: 1 }, bus: healthy, mailbox: healthy, board: healthy, conversations: healthy, wakes: healthy, seats: healthy, 'peer-dispatch': healthy, gmail: healthy, linkedin: healthy, requests: healthy, 'email-inbox': healthy, 'email-outbox': healthy, 'team-approvals': healthy, proposals: healthy, slack: healthy, 'slack-sends': healthy },
   items: [item()], ...over,
 });
 

@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates twenty-one local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates twenty-two local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -250,7 +250,7 @@
  *               `approve`. A truncated or incomplete read reports 'degraded'
  *               with the items it did find — never an empty list passed off
  *               as fact.
- *   slack      Slack requests whose local bus append failed — the one
+ *   slack      Slack requests whose local bus append failed — a
  *               pending-comms class no other source can see. The same
  *               `readSlackJournal` the `phm fleet slack-trace` and
  *               `phm channels slack status` projections read: a journaled
@@ -273,6 +273,26 @@
  *               state is the journal read's own: `ok`, `missing` or
  *               `degraded`, never fabricated. Act: `phm fleet slack-trace`,
  *               `phm channels slack status`.
+ *   slack-sends  outbound Slack sends still unconfirmed — send-store
+ *               receipts the transport journaled as `attempted` and never
+ *               proved. The same `readSlackSendReceipts` the
+ *               `phm channels slack status` `uncertainSends` count and the
+ *               `phm fleet slack-trace` reply binding read: an `attempted`
+ *               receipt is a post whose outcome the transport could not
+ *               prove, kept precisely so a later pass reconciles by
+ *               history scan instead of risking a duplicate post — until
+ *               that lands the recipient may never have seen the message,
+ *               and every other surface reports only the count. Each
+ *               unconfirmed send lists as a warn naming channel and thread
+ *               ids only, never text; receipts keep no attempt timestamp,
+ *               so `since`/`expiresAt` stay null — the send waits until
+ *               reconciled, never a guessed deadline. Reconciliation is a
+ *               bounded `phm channels slack run` pass, which re-drives the
+ *               delivery and marks the receipt `sent` without reposting.
+ *               `sent` receipts are proved deliveries and never list; a
+ *               missing store is verified empty, a degraded one still lists
+ *               the receipts it could read. Act: `phm channels slack
+ *               status`, `phm fleet slack-trace`, `phm channels slack run`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -317,6 +337,8 @@ import { readOwnerAwaitingReplies, readOwnerUndeliveredReplies, type OwnerAwaiti
 import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, readCommsRequests, type CommsRequestsRead } from './requests.js';
 import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
 import { readSlackJournal, type SlackJournalRead, type SlackObservation } from '../agents/slack-journal.js';
+import { readSlackSendReceipts, type SlackSendReceiptRead } from '../agents/slack-send-receipts.js';
+import type { SentReceipt } from '../agents/slack-reply-binding.js';
 import { isSlackChannelId, isSlackTs } from '../agents/slack-network.js';
 import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
 import { classifyNeedsYou } from '../needs-you/classify.js';
@@ -344,6 +366,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
+  'slack-sends',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -363,7 +386,7 @@ export const UNIFIED_INBOX_KINDS = [
   'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
   'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
-  'inbox-proposal', 'slack-request',
+  'inbox-proposal', 'slack-request', 'slack-send-unconfirmed',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -557,6 +580,8 @@ export interface UnifiedInboxOptions {
   readInboxProposals?: typeof readPendingProposals;
   /** Slack journal seam; default reads the same bounded journal `phm fleet slack-trace` and `phm channels slack status` project. */
   readSlackJournal?: typeof readSlackJournal;
+  /** Slack send-store seam; default reads the same receipts `phm channels slack status` counts as `uncertainSends` and `phm fleet slack-trace` binds replies from. */
+  readSlackSends?: typeof readSlackSendReceipts;
   /** Optional narrowing of the returned item list by stored source, severity,
    * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
@@ -2063,7 +2088,7 @@ function proposalItems(read: NonNullable<UnifiedInboxOptions['readInboxProposals
 }
 
 /**
- * Slack requests whose local bus append failed — the one pending-comms class
+ * Slack requests whose local bus append failed — a pending-comms class
  * no other source can see. `readSlackJournal` is the same bounded journal
  * read `phm fleet slack-trace` and `phm channels slack status` project, so
  * this source can never disagree with them: the trace's `bus-failed` outcome
@@ -2132,6 +2157,73 @@ function slackItems(read: NonNullable<UnifiedInboxOptions['readSlackJournal']>,
           'phm channels slack status --json',
         ]
         : ['phm fleet slack-trace --json', 'phm channels slack status --json'],
+    };
+  });
+  return { report: { state, pending: items.length }, items };
+}
+
+/**
+ * Outbound Slack sends still unconfirmed — send-store receipts the transport
+ * journaled as `attempted` and never proved. `readSlackSendReceipts` is the
+ * same bounded send-store read `phm channels slack status` counts as
+ * `uncertainSends` and `phm fleet slack-trace` binds reply evidence from, so
+ * this source can never disagree with them: an `attempted` receipt is a post
+ * whose outcome the transport could not prove — the intent row is kept
+ * precisely so a later pass reconciles by history scan instead of risking a
+ * duplicate post, and until that reconciliation lands the recipient may
+ * never have seen the message. Every other surface reports only the count;
+ * each unconfirmed send lists here as a warn with its channel/thread
+ * coordinates — ids only, never text. Receipts keep no attempt timestamp
+ * (the store records delivery intent and an expiry bound, not when the send
+ * was first tried), so `since`/`expiresAt` stay null: the send waits until
+ * reconciled, never a guessed deadline. Reconciliation is agent work — a
+ * bounded `phm channels slack run` pass re-drives the delivery, which scans
+ * channel history for the recorded client id and marks the receipt `sent`
+ * without reposting — so items stay non-blocking. `sent` receipts are proved
+ * deliveries and never list; identical unkeyed seam rows collapse to one
+ * item. Source state is the read's own (`ok`, `missing`, `degraded`), never
+ * fabricated; a throwing read reports 'unavailable', never an empty list
+ * passed off as fact.
+ */
+function slackSendItems(read: NonNullable<UnifiedInboxOptions['readSlackSends']>): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let sends: SlackSendReceiptRead;
+  try { sends = read({}); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  const state: UnifiedInboxSourceState = sends.state === 'ok' ? 'healthy'
+    : sends.state === 'missing' ? 'missing' : 'degraded';
+  // The reader always sets the store key; a seam row without one still lists
+  // under a content hash so indistinguishable unkeyed evidence collapses.
+  const attempted = new Map<string, { itemId: string; receipt: SentReceipt }>();
+  for (const receipt of sends.receipts) {
+    if (receipt.state !== 'attempted') continue;
+    const itemId = receipt.key ?? createHash('sha256')
+      .update(JSON.stringify([receipt.channel, receipt.thread ?? null, receipt.state])).digest('hex');
+    if (!attempted.has(itemId)) attempted.set(itemId, { itemId, receipt });
+  }
+  const items = [...attempted.values()].map(({ itemId, receipt }): Omit<UnifiedInboxItem, 'priority'> => {
+    // The reader shape-checks channel and thread on the way in; re-check
+    // before embedding them in a command so a seam or future row shape can
+    // never widen the act into something unsafe — fall back to the bare reads.
+    const channelOk = isSlackChannelId(receipt.channel);
+    const threadOk = receipt.thread !== undefined && isSlackTs(receipt.thread);
+    return {
+      id: `slack-sends:${itemId}`,
+      source: 'slack-sends',
+      kind: 'slack-send-unconfirmed',
+      // An outbound send whose delivery is unproven may be a reply the
+      // recipient never saw — agent work to reconcile, never Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: 'Slack send unconfirmed',
+      detail: oneLine(`channel ${receipt.channel}` + (threadOk ? ` · thread ${receipt.thread}` : ''), DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      act: [
+        'phm channels slack status --json',
+        channelOk
+          ? `phm fleet slack-trace --channel ${receipt.channel}${threadOk ? ` --thread ${receipt.thread}` : ''} --json`
+          : 'phm fleet slack-trace --json',
+        'phm channels slack run --seconds 60 --json',
+      ],
     };
   });
   return { report: { state, pending: items.length }, items };
@@ -2298,6 +2390,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const teamApprovals = teamApprovalItems(options.readTeamApprovals ?? readTeamApprovals);
   const proposals = proposalItems(options.readInboxProposals ?? readPendingProposals);
   const slack = slackItems(options.readSlackJournal ?? readSlackJournal, options, now);
+  const slackSends = slackSendItems(options.readSlackSends ?? readSlackSendReceipts);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -2322,8 +2415,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'team-approvals': teamApprovals.report,
     proposals: proposals.report,
     slack: slack.report,
+    'slack-sends': slackSends.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
