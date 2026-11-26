@@ -6,7 +6,7 @@ const USAGE = 'Usage: phm node bridge [--owner <scope>] [--apply] [--json]';
 function text(r: NodeBridgeReport): string {
   const head = `node bridge ${r.mode} owner=${r.owner ?? 'unset'} ${r.inert ? `inert: ${r.inert}` : 'active'}${r.held ? ` held: ${r.held}` : ''}`;
   return [head,
-    ...r.nodes.map(n => `node ${n.nodeId} lanes=${n.lanes.join(',') || '-'} free=${n.freeSlots ?? 'unknown'}/${n.slots ?? 'unknown'}`),
+    ...r.nodes.map(n => `node ${n.nodeId} caps=${n.caps.join(',') || '-'} free=${n.freeSlots ?? 'unknown'}/${n.slots ?? 'unknown'}`),
     ...r.rows.map(row => `${row.job} ${row.offload ? `-> ${row.nodeId}` : `stays local: ${row.reasons.join(',')}`}`),
     ...r.leases.map(l => `lease ${l.job} ${l.state} router=${l.routerState ?? 'absent'} next=${l.action}`)].join('\n');
 }

@@ -275,6 +275,13 @@ describe('ready.tsv -> node router bridge', () => {
     expect(assigned.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
   });
 
+  it('reports each live node\'s full advertised caps beside the model-lane subset', async () => {
+    const f = fixture([row('RQ-REVIEW-A')], [{ id: 'worker', caps: [...READ, 'gh', 'build'], slots: 1 }]);
+    const report = await f.pass(false);
+    expect(report.nodes).toEqual([expect.objectContaining({
+      nodeId: 'worker', lanes: ['codex'], caps: ['build', 'codex', 'gh', 'pack:codex-file'] })]);
+  });
+
   it('keeps work ready during a shared host hold and resumes within measured headroom', async () => {
     const jobs = ['RQ-REVIEW-A', 'RQ-REVIEW-B'];
     const f = fixture(jobs.map(job => row(job)), [

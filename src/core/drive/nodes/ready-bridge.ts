@@ -62,7 +62,14 @@ export interface BridgeRowDecision {
   job: string; lane: string; cap: string | null; pack: string | null; offload: boolean; reasons: string[];
   nodeId: string | null; routerJobId: string | null; requires: string[];
 }
-export interface BridgeNodeView { nodeId: string; lanes: string[]; slots: number | null; running: number; freeSlots: number | null }
+export interface BridgeNodeView {
+  nodeId: string;
+  /** Model lanes the node serves (the codex/claude/omlx subset of its advertisement). */
+  lanes: string[];
+  /** Every advertised cap — the set offload `requires` (lane cap, pack:*, needs) actually tests. */
+  caps: string[];
+  slots: number | null; running: number; freeSlots: number | null;
+}
 export interface BridgeLeaseView { job: string; leaseOwner: string; routerJobId: string; state: string; routerState: string | null; action: string }
 export interface NodeBridgeReport {
   schema: typeof NODE_BRIDGE_SCHEMA; mode: 'dry-run' | 'apply'; owner: string | null;
@@ -213,7 +220,7 @@ export function planNodeBridge(input: BridgeRouterView & {
     // Older router views lack assignments. Keep their capability-based estimate.
     for (const job of input.jobs) if (job.state === 'pending' || (job.state === 'running' && !job.claimedBy)) take(job.requires);
   }
-  const nodes = live.map(n => ({ nodeId: n.nodeId, lanes: n.lanes, slots: n.slots ?? null, running: running(n.nodeId), freeSlots: available(n) }));
+  const nodes = live.map(n => ({ nodeId: n.nodeId, lanes: n.lanes, caps: n.caps, slots: n.slots ?? null, running: running(n.nodeId), freeSlots: available(n) }));
   const limit = input.maxPerPass ?? NODE_BRIDGE_MAX_PER_PASS;
   const seen = new Set<string>();
   let planned = 0;
