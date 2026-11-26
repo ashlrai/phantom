@@ -35,7 +35,18 @@ import type {
   OutcomeRecordsDetailedResult,
   OutcomeRecordSourceQuality,
 } from './outcome-records.js';
-import { listOutcomeRecordsDetailed } from './outcome-records.js';
+import {
+  attachSourceQuality as attachReadQuality,
+  combineAutonomySourceState,
+  coverageMetric as metric,
+  failedOutcomeRecordsRead,
+  isDerivedWorkTrajectory,
+  latestActivityTime,
+  listOutcomeRecordsDetailed,
+  parseEventMs,
+  safeArray,
+  safeValue,
+} from './outcome-records.js';
 import { loadProposal } from '../inbox/store.js';
 import { hasRealizedMergeEvidence } from '../inbox/realized-merge.js';
 import type {
@@ -471,44 +482,13 @@ function bounded(value: unknown, max: number, fallback = ''): string {
   return scrubbed.length > max ? `${scrubbed.slice(0, max - 3)}...` : scrubbed;
 }
 
-function safeArray<T>(read: () => T[] | undefined): T[] {
-  try {
-    const value = read();
-    return Array.isArray(value) ? value : [];
-  } catch {
-    return [];
-  }
-}
-
-function safeValue<T>(read: () => T): T | undefined {
-  try {
-    return read();
-  } catch {
-    return undefined;
-  }
-}
-
 function eventMs(ts: string | undefined): number {
-  const parsed = Date.parse(ts ?? '');
-  return Number.isFinite(parsed) ? parsed : 0;
+  return parseEventMs(ts) ?? 0;
 }
 
 function postMergeObservedInWindow(observedAt: string, sinceMs: number, asOfMs: number): boolean {
   const observedMs = Date.parse(observedAt);
   return observedMs >= sinceMs && observedMs <= asOfMs;
-}
-
-function activityTime(...values: Array<string | undefined>): string {
-  let newestMs = Number.NEGATIVE_INFINITY;
-  let newest = '';
-  for (const value of values) {
-    const ms = eventMs(value);
-    if (ms > newestMs) {
-      newestMs = ms;
-      newest = value ?? '';
-    }
-  }
-  return newest || new Date(0).toISOString();
 }
 
 function firstTime(...values: Array<string | undefined>): string {
@@ -522,10 +502,6 @@ function firstTime(...values: Array<string | undefined>): string {
     }
   }
   return oldest || new Date(0).toISOString();
-}
-
-function isDerivedWorkTrajectory(value: string | undefined): boolean {
-  return typeof value === 'string' && value.startsWith('work:');
 }
 
 function cleanId(value: unknown, max = 240): string | undefined {
@@ -634,13 +610,6 @@ function betterRealizedOutcome(
     reverted: 3,
   };
   return current === undefined || rank[next] >= rank[current] ? next : current;
-}
-
-function metric(count: number, denominator: number): TrajectoryCoverageMetric {
-  return {
-    count,
-    rate: denominator > 0 ? count / denominator : 0,
-  };
 }
 
 function trajectoryRef(record: TrajectoryRecord): string {
@@ -1167,7 +1136,7 @@ function noteTimeline(record: MutableTrajectoryRecord, event: TrajectoryTimeline
   } as TrajectoryTimelineEvent;
   record.timeline.push(sanitized);
   record.startedAt = firstTime(record.startedAt, sanitized.ts);
-  record.latestAt = activityTime(record.latestAt, sanitized.ts);
+  record.latestAt = latestActivityTime([record.latestAt, sanitized.ts], new Date(0).toISOString());
 }
 
 function decisionSourceQualityRank(
@@ -1822,62 +1791,6 @@ function failedAgentActionJoinRead(): AgentActionsReadResult {
   };
 }
 
-function failedOutcomeJoinRead(): OutcomeRecordsDetailedResult {
-  const missing = { sourceState: 'degraded' as const, sourcePresent: false, complete: false };
-  return {
-    records: [],
-    sourceQuality: {
-      ...missing,
-      sources: {
-        proposals: {
-          ...missing,
-          stopReasons: ['io-error'],
-          filesDiscovered: 0,
-          filesRead: 0,
-          bytesRead: 0,
-          invalidFiles: 0,
-          unreadableFiles: 1,
-        },
-        decisions: {
-          ...missing,
-          stopReasons: ['io-error'],
-          filesRead: 0,
-          bytesRead: 0,
-          rowsScanned: 0,
-          invalidRows: 0,
-          unreadableFiles: 1,
-        },
-        evidence: {
-          ...missing,
-          filesRead: 0,
-          bytesRead: 0,
-          invalidFiles: 0,
-          unreadableFiles: 1,
-          limitExceeded: false,
-        },
-        postMerge: {
-          ...missing,
-          stopReasons: ['io-error'],
-          filesRead: 0,
-          bytesRead: 0,
-          physicalRows: 0,
-          invalidRows: 0,
-          conflictingEvents: 0,
-          duplicateRows: 0,
-          supersededRows: 0,
-          limitExceeded: false,
-        },
-      },
-    },
-  };
-}
-
-function attachReadQuality<T, Q>(values: T[], quality: Q): T[] {
-  const copy = [...values];
-  Object.defineProperty(copy, 'sourceQuality', { value: quality, enumerable: false });
-  return copy;
-}
-
 function joinSourceHealthy(source: {
   sourceState: 'missing' | 'healthy' | 'degraded';
   complete: boolean;
@@ -1892,11 +1805,7 @@ function combinedJoinSourceQuality(
 ): TrajectoryJoinSourceQuality {
   const sources = { dispatch, outcomes, agentActions };
   const values = Object.values(sources);
-  const sourceState = values.some((source) => source.sourceState === 'degraded' || !source.complete)
-    ? 'degraded'
-    : values.some((source) => source.sourceState === 'missing')
-      ? 'missing'
-      : 'healthy';
+  const sourceState = combineAutonomySourceState(values);
   return {
     sourceState,
     sourcePresent: values.every((source) => source.sourcePresent),
@@ -2042,7 +1951,7 @@ export function listTrajectoryJoinQuality(
       limit: Math.max(limit * 3, 100),
     });
   } catch {
-    outcomeRead = failedOutcomeJoinRead();
+    outcomeRead = failedOutcomeRecordsRead();
   }
 
   let actionRead: AgentActionsReadResult;
@@ -2340,9 +2249,6 @@ export function summarizeTrajectoryLearning(
       ? 'insufficient-sample'
       : 'observed';
   const publishSkillMetrics = sampleState === 'observed';
-  const observedTrajectoryCoverage = publishSkillMetrics
-    ? rawObservedTrajectoryCoverage
-    : metric(0, observedProductionRecords.length);
   const { skillUse: _privateSkillCoverage, ...publishedCoverage } = coverage;
   const diagnosticRecords = records.filter(isActionOnlyPreclaimRoute);
   const routeReasonCounts = emptyRouteReasonCounts();
@@ -2411,7 +2317,7 @@ export function summarizeTrajectoryLearning(
           joined: skillObservation.joined,
           unjoined: skillObservation.unjoined,
           conflicting: skillObservation.conflicting,
-          observedTrajectoryCoverage,
+          observedTrajectoryCoverage: rawObservedTrajectoryCoverage,
           modeCounts: { ...skillObservation.modeCounts },
           stageCounts: { ...skillObservation.stageCounts },
           eventState,
