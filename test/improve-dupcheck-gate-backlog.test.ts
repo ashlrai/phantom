@@ -178,6 +178,7 @@ describe('dupcheckGateBacklogItems', () => {
       ev('seq-1', 'skip', hoursAgo(90)), ev('seq-1', 'launch', hoursAgo(80)), ev('seq-1', 'outcome', hoursAgo(70), { tag: 'already_done' }),
       // launch → skip → outcome: first decision launch, no relaunch — a missed duplicate.
       ev('seq-2', 'launch', hoursAgo(88)), ev('seq-2', 'skip', hoursAgo(78)), ev('seq-2', 'outcome', hoursAgo(68), { tag: 'already_done' }),
+      ev('seq-2', 'launch', hoursAgo(66)), // remains in the first-launch cohort
       // warn after skip counts as a relaunch too.
       ev('seq-3', 'skip', hoursAgo(86)), ev('seq-3', 'warn', hoursAgo(76)),
       // skip → skip → launch: still one false skip.
