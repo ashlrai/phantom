@@ -243,10 +243,14 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
       lane.observation = { source: 'codex-personal-sessions', asOf: personal.observedAt! };
     }
   }
-  // Native Claude weekly usage. The status value is hand-typed and ticks never refresh it,
-  // so a fresh bounded reading wins without a last_tick comparison. Invalid input changes nothing.
+  // Prefer native Claude usage over an unmeasured status value. A newer
+  // timestamped status quota wins, independent of the controller tick.
   const claude = usableClaudeWeekly(await readClaudeQuotaReading(root), now);
-  if (claude) {
+  const claudeStatus = statusMeasurements.get('claude');
+  const claudeStatusAt = Date.parse(claudeStatus?.observedAt ?? '');
+  const newerClaudeStatus = claude && claudeStatus?.usedPct != null && claudeStatus.usedPct >= 0 &&
+    claudeStatusAt <= now && claudeStatusAt > Date.parse(claude.observedAt);
+  if (claude && !newerClaudeStatus) {
     let lane = result.lanes.find(row => row.lane === 'claude');
     if (!lane) {
       lane = { lane: 'claude', running: null, target: null, held: null,
@@ -257,7 +261,7 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
     }
     const measured: QuotaMeasurement = { lane: 'claude', window: 'weekly', usedPct: claude.weekly.usedPct,
       resetAt: claude.weekly.resetAt, source: 'claude-native-usage', observedAt: claude.observedAt };
-    lane.quotaEvidence = quotaEvidence(statusMeasurements.get('claude') ?? null, measured, lane.held, now);
+    lane.quotaEvidence = quotaEvidence(claudeStatus ?? null, measured, lane.held, now);
     lane.usedPct = claude.weekly.usedPct;
     lane.resetAt = claude.weekly.resetAt;
     lane.source = 'claude-native-usage';
