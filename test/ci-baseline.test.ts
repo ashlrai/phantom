@@ -129,8 +129,28 @@ describe('CI baseline evidence', () => {
     const pass = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true }).gh);
     expect(pass.groups[0]?.action).toBe('rerun-failed');
     expect(pass.groups[0]?.runs).toEqual([{ pr: 1, head, runId: 2 }]);
-    const fail = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
-    expect(fail.groups[0]?.action).toBe('unknown');
+    const { gh } = github({ count: 1 });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      if (args[1]?.endsWith('/jobs/10/logs')) {
+        return success(`/usr/bin/git log -1 --format=%H\n${master}\n${fixture('tsc-shared')}`);
+      }
+      return gh(args);
+    });
+    expect(report.groups[0]).toMatchObject({ action: 'unknown', master: 'unknown' });
+  });
+  it('uses a matching master failure to corroborate one unaffected PR', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1, flaky: true }).gh);
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]).toMatchObject({
+      classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', unaffectedPrs: [1],
+    });
+    expect(report.updates).toMatchObject([{ pr: 1, ready: false }]);
+
+    const touched = await analyzeCiBaseline('owner/repo', github({ count: 1, flaky: true, touched: 'test/example.test.ts' }).gh);
+    expect(touched.groups[0]).toMatchObject({ action: 'pr-caused', master: 'fail', unaffectedPrs: [] });
+
+    const cancelled = await analyzeCiBaseline('owner/repo', github({ count: 1, flaky: true, masterJobConclusion: 'cancelled' }).gh);
+    expect(cancelled.groups[0]).toMatchObject({ action: 'unknown', master: 'fail' });
   });
   it('reads default-reporter file-pass lines as master pass evidence', async () => {
     // The default reporter prints `✓ file (N tests)` for a green module and
