@@ -32,6 +32,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { AshlrConfig, Proposal, TaskSpec } from '../src/core/types.js';
+import { assurePrivateStoragePath } from '../src/core/util/private-storage.js';
 
 vi.mock('../src/core/daemon/activation-permit.js', () => ({
   liveConductorActivationAuthorized: () => true,
@@ -196,8 +197,12 @@ function readTasks(): TaskSpec[] {
 
 function writeTasks(tasks: TaskSpec[]): void {
   const dir = join(tmpHome, '.ashlr');
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'tasks.json'), JSON.stringify(tasks, null, 2) + '\n', 'utf8');
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { mode: 0o700 });
+    const assurance = assurePrivateStoragePath(dir, 'directory', 'secure-created', { anchorPath: tmpHome });
+    expect(assurance.ok, assurance.reason).toBe(true);
+  }
+  writeFileSync(join(dir, 'tasks.json'), JSON.stringify(tasks, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
 }
 
 function baseTask(overrides: Partial<TaskSpec> = {}): TaskSpec {
