@@ -50,7 +50,7 @@ const FAKE_NIM_API_KEY = 'm250-fake-nim-credential';
 
 beforeEach(() => {
   tmpHome = realpathSync.native(mkdtempSync(join(tmpdir(), 'ashlr-m250-')));
-  mkdirSync(join(tmpHome, '.ashlr', 'fleet'), { recursive: true });
+  mkdirSync(join(tmpHome, '.ashlr'));
   mkdirSync(join(tmpHome, '.claude'), { recursive: true });
   origHome = process.env['HOME'];
   origAshlrHome = process.env['ASHLR_HOME'];
@@ -1071,7 +1071,7 @@ describe('M252 Gateway — resource-aware demote', () => {
 
     const decision = await decide(item, cfg);
 
-    expect(base.tier).toBe('frontier');
+    expect(base.tier, base.reason).toBe('frontier');
     expect(base.reason).toContain('frontier: generated capture proposal repair');
     expect(decision.backend).toBe(alternate);
     expect(decision.demotedFrom).toBe(base.backend);
