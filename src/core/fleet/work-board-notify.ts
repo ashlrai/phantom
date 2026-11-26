@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, chmodSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
+import { isSlackChannelId, isSlackTeamId, isSlackTs, parseSlackThreadRef } from '../agents/slack-network.js';
 import type { WorkBoardResult } from '../comms/work-board.js';
 import type { WorkItemEvidence, WorkItemState } from '../comms/work-item-state.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -179,6 +180,17 @@ const provenanceKey = (itemId: string, state: string, kind: 'legacy' | 'modern')
 
 const normDeltaField = (v: string | null | undefined): string => (v ?? '').replace(/\s+/g, ' ').trim();
 
+function slackIdentity(ref: string | null): string | null {
+  if (ref === null) return null;
+  const parsed = parseSlackThreadRef(ref);
+  const parts = parsed ? [parsed.teamId, parsed.channelId, parsed.rootTs] : ref.split('/');
+  if (parts.length !== 3 || !isSlackTeamId(parts[0]) || !isSlackChannelId(parts[1]) || !isSlackTs(parts[2])) return null;
+  const [seconds, fraction] = parts[2]!.split('.') as [string, string];
+  return JSON.stringify([parts[0], parts[1], seconds.replace(/^0+/, '') || '0', fraction.replace(/0+$/, '')]);
+}
+
+const slackReceipts = new WeakMap<ReadonlySet<string>, Array<{ item: string; state: string; thread: string; delta: string }>>();
+
 /** The evidence fields a meaningful delta is computed from. */
 export interface BoardNotifyDeltaFields {
   state: WorkItemState;
@@ -222,7 +234,8 @@ export function boardNotifyDeltaMaterial(f: BoardNotifyDeltaFields): string | nu
     // Claims identify coordination changes; they grant no execution authority.
     if (owner !== '' && claim !== '') core = { ...core, owner, claim };
   }
-  return JSON.stringify({ channel: f.channel, thread: f.thread, ...core });
+  const identity = f.channel === 'slack' ? slackIdentity(f.thread) : null;
+  return JSON.stringify({ channel: f.channel, thread: identity === null ? f.thread : { slackIdentity: identity }, ...core });
 }
 
 /** Fixed-width digest of the delta material; carried on notices, ledger
@@ -326,13 +339,22 @@ export function planNotifications(
     if (material === null) continue; // unreachable: missingNoticeEvidence already proved the fields
     const delta = boardNotifyDeltaDigest(material);
     const deltaKey = boardNotifyLedgerKey(t.itemId, state, delta);
+    // Old rows retain the raw thread and digest. Rebuild only that exact
+    // material, after verifying its physical identity, to preserve receipts.
+    const identity = t.sourceChannel === 'slack' ? slackIdentity(t.sourceThread) : null;
+    const oldReceipt = identity !== null && (slackReceipts.get(sentLedger) ?? []).some(row => {
+        if (row.item !== t.itemId || row.state !== state || slackIdentity(row.thread) !== identity) return false;
+        const raw = JSON.parse(material) as Record<string, unknown>;
+        raw.thread = row.thread;
+        return boardNotifyDeltaDigest(JSON.stringify(raw)) === row.delta;
+    });
     const entryKey = boardNotifyLedgerKey(t.itemId, state);
     // A bare state key supplied by an older Set caller is legacy proof.
     // Mixed ledgers retain the legacy fence even after modern deliveries.
     const legacy = sentLedger.has(provenanceKey(t.itemId, state, 'legacy'))
       || (sentLedger.has(entryKey) && !sentLedger.has(provenanceKey(t.itemId, state, 'modern')));
     const entered = t.from !== t.to;
-    if (sentLedger.has(deltaKey) || planned.has(deltaKey) || (entered && legacy)) {
+    if (sentLedger.has(deltaKey) || oldReceipt || planned.has(deltaKey) || (entered && legacy)) {
       dropped.push({ itemId: t.itemId, state, reason: `${state} dropped: already notified` });
       continue;
     }
@@ -416,6 +438,7 @@ export function readBoardNotifySent(ledgerPath: string): Set<string> | null {
   }
   if (read.truncated) return null;
   const sent = new Set<string>();
+  const receipts: Array<{ item: string; state: string; thread: string; delta: string }> = [];
   for (const line of read.text.split('\n')) {
     if (!line.trim()) continue;
     try {
@@ -432,6 +455,9 @@ export function readBoardNotifySent(ledgerPath: string): Set<string> | null {
         sent.add(boardNotifyLedgerKey(itemId, state));
         if (typeof row.delta === 'string') {
           sent.add(boardNotifyLedgerKey(itemId, state, row.delta));
+          if (row.channel === 'slack' && typeof row.thread === 'string' && slackIdentity(row.thread) !== null) {
+            receipts.push({ item: itemId, state, thread: row.thread, delta: row.delta });
+          }
           sent.add(provenanceKey(itemId, state, 'modern'));
         } else {
           sent.add(provenanceKey(itemId, state, 'legacy'));
@@ -439,6 +465,7 @@ export function readBoardNotifySent(ledgerPath: string): Set<string> | null {
       } else return null;
     } catch { return null; }
   }
+  slackReceipts.set(sent, receipts);
   return sent;
 }
 
