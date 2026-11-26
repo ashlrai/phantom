@@ -3,7 +3,7 @@ import {afterEach,describe,expect,it,vi} from 'vitest';
 import * as fs from 'node:fs';
 import {createHash,generateKeyPairSync,sign} from 'node:crypto';
 import {tmpdir} from 'node:os';
-import {basename,dirname,join,resolve} from 'node:path';
+import {basename as hostBasename,join as hostJoin,posix,resolve,sep} from 'node:path';
 import {gzipSync} from 'node:zlib';
 import {Header} from 'tar';
 import {canonicalJson} from '../src/core/authority/canonical-json.js';
@@ -20,6 +20,7 @@ import {consumerInstallerOsCommand,type ConsumerInstallDependencies,type Consume
 import {cmdDesktop,parseDesktopInstallArgs} from '../src/cli/desktop.js';
 import type {CompatibleUpdateManifest,UpdateTrust} from '../src/core/desktop/update-manifest.js';
 const transaction=await import('../scripts/local-app-transaction.mjs' as string);
+const {basename,dirname,join}=posix;
 const roots:string[]=[];
 afterEach(()=>{vi.restoreAllMocks();for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
 const sha=(data:Uint8Array)=>createHash('sha256').update(data).digest('hex');
@@ -39,7 +40,7 @@ function archive(rows:{path:string;data:string|Buffer;mode?:number;directory?:bo
 }
 function write(path:string,data:string|Buffer,mode=0o600) {fs.mkdirSync(dirname(path),{recursive:true,mode:0o700});fs.writeFileSync(path,data,{mode});fs.chmodSync(path,mode);}
 function installFixture(version='3.30.35') {
-  const root=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'consumer-install-')));fs.chmodSync(root,0o700);roots.push(root);
+  const root=fs.realpathSync(fs.mkdtempSync(hostJoin(tmpdir(),'consumer-install-'))).split(sep).join('/');fs.chmodSync(root,0o700);roots.push(root);
   const home=join(root,'home'),applications=join(root,'Applications');for(const dir of [home,applications])fs.mkdirSync(dir,{mode:0o700});
   const revision='b'.repeat(40),tree='c'.repeat(40),code=Buffer.from('throw new Error("fixture never executes candidate code");');
   const core={v:1 as const,roots:['dist/core/authority/fixture.js'],missingRoots:[],files:[{path:'dist/core/authority/fixture.js',sha256:sha(code),bytes:code.length}],packages:[],unresolved:[]};
@@ -73,7 +74,7 @@ function installFixture(version='3.30.35') {
   const census={leases:[] as unknown[],unknown:0,reaped:0},mapped=(path:string)=>path.startsWith('/Applications/')?join(applications,path.slice('/Applications/'.length)):path;
   const io={...base,platform:'darwin',clock:()=>now,sleep:async(ms:number)=>{now+=ms;},fetchStatus:vi.fn(async()=>health?200:503),log:vi.fn(),executionLeaseCensus:vi.fn(async()=>census),exclusiveRenamePreflight:vi.fn()};
   for(const name of ['lstat','exists','appInventory','readBoundedFile']) {const fn=base[name].bind(base);io[name]=(path:string,...args:unknown[])=>fn(mapped(path),...args);}
-  io.makeInstallStage=()=>'/Applications/'+basename(fs.mkdtempSync(join(applications,'.phantom-install-')));
+  io.makeInstallStage=()=>join('/Applications',hostBasename(fs.mkdtempSync(join(applications,'.phantom-install-'))));
   io.writeInstallJournal=vi.fn((owner:string,value:unknown)=>write(join(mapped(owner),'transaction.json'),JSON.stringify(value)));
   io.renameExclusive=vi.fn((from:string,to:string,expected:{dev:number;ino:number})=> {const s=fs.lstatSync(mapped(from));expect([s.dev,s.ino]).toEqual([expected.dev,expected.ino]);expect(fs.existsSync(mapped(to))).toBe(false);fs.renameSync(mapped(from),mapped(to));});
   io.removeInstallTree=(path:string,owner:string)=> {expect(dirname(path)).toBe(owner);fs.rmSync(mapped(path),{recursive:true,force:true});};
