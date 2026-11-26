@@ -18,6 +18,15 @@ code and recent log error counts together. `phm fleet status --json` and
 evidence includes one next step; missing evidence stays unknown. This only
 reads status, launchd and a bounded log tail; it never starts guardian jobs.
 
+Run `phm fleet health-age --diagnose --json` for one health report. Its
+`diagnosis.state` (also `guardian.state` in fleet status and status-api) is
+`healthy`, `stale`, `unloaded`, `error`, or `unknown`. An unloaded service takes
+priority, then a failed exit or recent log error, then stale status. All
+underlying evidence and problems remain available when failures overlap.
+Missing or unchecked evidence stays `unknown` unless another check proves a
+failure. Healthy requires fresh status, a loaded service with exit code 0,
+and a readable log without recent or undated errors.
+
 | Command | Role |
 |---------|------|
 | `ashlr fleet guardian-verify` | Runs verification passes until all manifest entries are pass or fail |
