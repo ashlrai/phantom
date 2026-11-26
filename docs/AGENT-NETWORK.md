@@ -382,7 +382,11 @@ are refused. Spending stays with each member; nothing here changes billing.
   record lands in `~/.ashlr/org/joins/`; copy another machine's record there to count it.
   Re-running join replaces the machine's whole record, so a lane you stop naming drops
   to zero — the output lists each dropped lane (`droppedLanes` under `--json`) and how
-  to restore it, so a share tweak never silently starves a lane.
+  to restore it, so a share tweak never silently starves a lane. The reply also lists
+  the member's declared lanes this record has not opted into (`availableLanes` under
+  `--json`): a join with no `--lane` contributes nothing until a re-join names one,
+  and the text output gives the re-join that keeps every current opt-in while adding
+  the open lanes.
 - `phm org plan [--queue jobs.json] --json` proposes assignments of queue work
   (`[{"id": "RQ-1", "priority": 3, "costPct": 2, "lane": "claude"}]`) and agent roles to
   maximize merged output per unit of pooled usage. Jobs are ordered by priority per

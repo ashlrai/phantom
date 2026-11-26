@@ -197,6 +197,19 @@ export function droppedJoinLanes(previous: JoinRecord | undefined, next: JoinRec
   return previous.lanes.filter((l) => !kept.has(l.lane));
 }
 
+/**
+ * Declared contributions this machine's join record has not opted into, each with the
+ * declared share a bare `--lane <name>` re-join would grant. Read-only projection for the
+ * join reply: it names what a re-join could still add — including the zero-lane first run,
+ * which contributes nothing until one is named — never what it must contribute.
+ */
+export function openJoinLanes(org: Org, record: JoinRecord): { lane: string; share: number }[] {
+  const member = org.members.find((x) => x.id === record.member);
+  if (!member) return [];
+  const opted = new Set(record.lanes.map((l) => l.lane));
+  return member.contributions.filter((c) => !opted.has(c.lane)).map((c) => ({ lane: c.lane, share: c.share }));
+}
+
 export interface QueueJob { id: string; title?: string; priority?: number; lane?: string; costPct?: number }
 export function parseQueue(text: string): QueueJob[] {
   assertMetadata(text);

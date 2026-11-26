@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FleetOrgTree } from '../core/fleet/org-tree.js';
-import { droppedJoinLanes, initOrg, joinOrg, joinsDir, loadOrg, orgFile, parseQueue, planOrg, readJoins, OrgError } from '../core/org/org.js';
+import { droppedJoinLanes, initOrg, joinOrg, joinsDir, loadOrg, openJoinLanes, orgFile, parseQueue, planOrg, readJoins, OrgError } from '../core/org/org.js';
 
 export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
        phm org <show|join|plan|init> [--file <org.toml>] [--json]
@@ -202,7 +202,21 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       const droppedNote = dropped.length
         ? `This machine no longer opts in: ${dropped.map((l) => `${l.lane} (was ${l.share}%)`).join(', ')}. Name the lane again with --lane to restore it.\n`
         : '';
-      return print({ schema: 'org.join.v1', record: r, dir: joinsDir(), recordFile, droppedLanes: dropped }, `${r.member} joined on ${r.machine} with ${r.lanes.length ? r.lanes.map((l) => `${l.lane} ${l.share}%`).join(', ') : 'no lanes (nothing contributed)'}.\n${droppedNote}Record: ${recordFile}\nSign in to your own provider CLIs on this machine; nothing was sent and no auth was read. Copy the record file into the leader's joins directory to count this machine.`);
+      // Declared lanes this record has not opted into — a join with no --lane
+      // contributes nothing, and a partial one leaves the rest unnamed. The
+      // re-join hint keeps every current opt-in at its recorded share and adds
+      // each open lane at the declared share a bare --lane grants, because a
+      // re-join replaces the whole record: a bare "--lane <new>" would silently
+      // drop the rest. Ids, lane names and shares are schema-validated tokens,
+      // safe to inline like joinHintCommand's profile values.
+      const open = openJoinLanes(org, r);
+      const openNote = open.length
+        ? `Not opted in on this machine: ${open.map((l) => `${l.lane} (declared ${l.share}%)`).join(', ')}. ` +
+          `Opt in by re-joining — it replaces this record, so name every lane to keep: ` +
+          `phm org join --member ${r.member} --machine ${r.machine}` +
+          [...r.lanes.map((l) => ` --lane ${l.lane}=${l.share}`), ...open.map((l) => ` --lane ${l.lane}`)].join('') + '.\n'
+        : '';
+      return print({ schema: 'org.join.v1', record: r, dir: joinsDir(), recordFile, droppedLanes: dropped, availableLanes: open }, `${r.member} joined on ${r.machine} with ${r.lanes.length ? r.lanes.map((l) => `${l.lane} ${l.share}%`).join(', ') : 'no lanes (nothing contributed)'}.\n${droppedNote}${openNote}Record: ${recordFile}\nSign in to your own provider CLIs on this machine; nothing was sent and no auth was read. Copy the record file into the leader's joins directory to count this machine.`);
     }
     const queueFile = one(rest, '--queue');
     noLeftovers(rest);
