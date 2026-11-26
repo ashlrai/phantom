@@ -169,6 +169,23 @@ describe('currentUnfed', () => {
     expect(empty.resources[0]).toMatchObject({ waitingElsewhere: 0, unfed: false });
   });
 
+  it('omits impossible blocker counts without losing valid overlapping reasons or unfed capacity', () => {
+    const status = JSON.stringify({
+      lanes: { a: { running: 0, target: 2 }, b: { running: 0, target: 2 } },
+      unfed_capacity: {
+        waiting: 3,
+        lanes: {
+          a: { waiting_elsewhere: 1, blocked: { admission_stopped: 2, missing_capability: 1, tier_unavailable: 1 } },
+          b: { waiting_elsewhere: 0, blocked: { global_admission: 1 } },
+        },
+      },
+    });
+
+    const report = currentUnfed(status, null);
+    expect(report).toMatchObject({ fleetStop: null, unfedLanes: ['a'], unfedSlots: 1 });
+    expect(report.resources.map(lane => lane.blocked)).toEqual([{ missing_capability: 1, tier_unavailable: 1 }, {}]);
+  });
+
   it.each([0, 1])('rejects a published lane count above the tick total of %i', waiting => {
     const lanes = { a: { running: 0, target: 2 } };
     const unfed_capacity = {

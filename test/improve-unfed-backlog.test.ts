@@ -26,13 +26,14 @@ const sec = (msAgo: number): number => Math.floor((NOW_MS - msAgo) / 1000);
 
 /** One unfed_capacity row in the writer's shape; lanes default to a single unfed lane. */
 function unfedRow(tsSec: number, unfedLane: string, blocked: Record<string, number> = {}): string {
+  const waitingElsewhere = Math.max(2, ...Object.values(blocked));
   return J({
-    schema: 'work-market.v1', event: 'unfed_capacity', ts: tsSec, waiting: 3,
-    unfed_lanes: [unfedLane], unfed_slots: 2,
+    schema: 'work-market.v1', event: 'unfed_capacity', ts: tsSec, waiting: waitingElsewhere + 1,
+    unfed_lanes: [unfedLane], unfed_slots: Math.min(3, waitingElsewhere),
     lanes: {
       [unfedLane]: {
         running: 1, target: 4, held: false, headroom: 3, utilization: 0.25,
-        waiting_elsewhere: 2, blocked, unfed: true,
+        waiting_elsewhere: waitingElsewhere, blocked, unfed: true,
       },
       claude: {
         running: 4, target: 4, held: false, headroom: 0, utilization: 1.0,
@@ -149,6 +150,16 @@ describe('foldWorkMarket', () => {
 
     const fold = foldWorkMarket(rows.join('\n'), NOW_MS, 168);
 
+    expect(fold.unfed.get('devin')).toMatchObject({
+      ticks: 1, slotTicks: 2, blocked: new Map([['missing_capability', 2]]),
+    });
+  });
+
+  it('drops an impossible blocker from improvement evidence while counting the tick', () => {
+    const tick = JSON.parse(unfedRow(NOW_S, 'devin', { missing_capability: 2 }));
+    tick.lanes.devin.blocked.quota_exhausted = 3;
+
+    const fold = foldWorkMarket(J(tick), NOW_MS, 168);
     expect(fold.unfed.get('devin')).toMatchObject({
       ticks: 1, slotTicks: 2, blocked: new Map([['missing_capability', 2]]),
     });
