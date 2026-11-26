@@ -184,6 +184,51 @@ it('scrubs control characters and caps the reason in the audit row', async () =>
   expect(cells[5]).toContain('fake reason');
 });
 
+it('moves the requirements cell preferred_lane with the lane column', async () => {
+  await writeFile(readyPath, `${row('RQ-PHX-SPEC001', 'codex-personal', 'work', 'phantom', '\t{"preferred_lane":"codex-personal","needs":["git"]}')}\n`);
+  const report = await reassignQueuedJobs({ job: 'RQ-PHX-SPEC001', lane: 'devin', apply: true }, { runsDir, ...opts });
+  expect(report.moved).toEqual([{ id: 'RQ-PHX-SPEC001', fromLane: 'codex-personal', toLane: 'devin', fromTier: 'work', toTier: 'work' }]);
+  expect((await ready())[0]).toBe(`${row('RQ-PHX-SPEC001', 'devin')}\t{"preferred_lane":"devin","needs":["git"]}`);
+});
+
+it('a lane column that already says the target does not mask a disagreeing spec', async () => {
+  await writeFile(readyPath, `${row('RQ-PHX-SPEC002', 'devin', 'work', 'phantom', '\t{"preferred_lane":"claude"}')}\n`);
+  const report = await reassignQueuedJobs({ job: 'RQ-PHX-SPEC002', lane: 'devin', apply: true }, { runsDir, ...opts });
+  expect(report.moved).toEqual([{ id: 'RQ-PHX-SPEC002', fromLane: 'claude', toLane: 'devin', fromTier: 'work', toTier: 'work' }]);
+  expect((await ready())[0]).toBe(`${row('RQ-PHX-SPEC002', 'devin')}\t{"preferred_lane":"devin"}`);
+});
+
+it('from-lane mode matches the market-resolved lane, not the raw column', async () => {
+  await writeFile(readyPath, [
+    row('RQ-PHX-HINTED1', 'devin', 'work', 'phantom', '\t{"preferred_lane":"codex-personal"}'),
+    row('RQ-PHX-HINTED2', 'codex-personal', 'work', 'phantom', '\t{"preferred_lane":"devin"}'),
+  ].join('\n') + '\n');
+  const report = await reassignQueuedJobs({ fromLane: 'codex-personal', lane: 'claude', apply: true }, { runsDir, ...opts });
+  expect(report.moved).toEqual([{ id: 'RQ-PHX-HINTED1', fromLane: 'codex-personal', toLane: 'claude', fromTier: 'work', toTier: 'work' }]);
+  const after = await ready();
+  expect(after[0]).toBe(`${row('RQ-PHX-HINTED1', 'claude')}\t{"preferred_lane":"claude"}`);
+  expect(after[1]).toBe(row('RQ-PHX-HINTED2', 'codex-personal', 'work', 'phantom', '\t{"preferred_lane":"devin"}'));
+});
+
+it('pins an open preferred_lane and adds the key to a spec that lacks it', async () => {
+  await writeFile(readyPath, [
+    row('RQ-PHX-OPEN001', 'codex-personal', 'work', 'phantom', '\t{"preferred_lane":null,"needs":["git"]}'),
+    row('RQ-PHX-NOKEY01', 'codex-personal', 'work', 'phantom', '\t{"needs":["git"]}'),
+  ].join('\n') + '\n');
+  const report = await reassignQueuedJobs({ fromLane: 'codex-personal', lane: 'devin', apply: true }, { runsDir, ...opts });
+  expect(report.moved.map((move) => move.id)).toEqual(['RQ-PHX-OPEN001', 'RQ-PHX-NOKEY01']);
+  const after = await ready();
+  expect(after[0]).toBe(`${row('RQ-PHX-OPEN001', 'devin')}\t{"preferred_lane":"devin","needs":["git"]}`);
+  expect(after[1]).toBe(`${row('RQ-PHX-NOKEY01', 'devin')}\t{"needs":["git"],"preferred_lane":"devin"}`);
+});
+
+it('leaves an unparseable requirements cell byte-identical', async () => {
+  await writeFile(readyPath, `${row('RQ-PHX-BADSPE1', 'codex-personal', 'work', 'phantom', '\tnot-json')}\n`);
+  const report = await reassignQueuedJobs({ job: 'RQ-PHX-BADSPE1', lane: 'devin', apply: true }, { runsDir, ...opts });
+  expect(report.moved.map((move) => move.id)).toEqual(['RQ-PHX-BADSPE1']);
+  expect((await ready())[0]).toBe(row('RQ-PHX-BADSPE1', 'devin', 'work', 'phantom', '\tnot-json'));
+});
+
 it('throws ReassignError with name and status', async () => {
   const error = await reassignQueuedJobs({ job: 'RQ-PHX-NOPE9999', lane: 'devin', apply: false }, { runsDir, ...opts }).catch((e) => e);
   expect(error).toBeInstanceOf(ReassignError);
