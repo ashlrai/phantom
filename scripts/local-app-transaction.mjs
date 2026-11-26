@@ -1,11 +1,13 @@
 /** Identity-bound local app migration. All effects are injected; never selects an app by display name. */
-import { basename, dirname, join, relative } from 'node:path';
+import { posix } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { spawnSync } from 'node:child_process';
+
+const { basename, dirname, join, relative } = posix;
 
 export const PHANTOM_APP_PATH = '/Applications/Phantom.app';
 export const LEGACY_APP_PATH = '/Applications/Ashlr.app';

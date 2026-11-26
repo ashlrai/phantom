@@ -11,11 +11,12 @@
  */
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PHANTOM_APP_PATH, inspectLocalApp, selectLocalApp, requireLocalQuiescence, installLocalApp, launchedAppIsOwned, inspectLocalAliases, createLocalAliases, removeCreatedAliases, createLocalAppTransactionIo } from './local-app-transaction.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const { join } = posix;
 
 export const APP_PATH = PHANTOM_APP_PATH;
 export const APP_BUNDLE_BUILD = 'desktop/src-tauri/target/release/bundle/macos/Phantom.app';
