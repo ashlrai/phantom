@@ -1,0 +1,9 @@
+PARKED-MERGERATE.5h	RQ-PARK-A	claude	work	ashlrai/phantom	queue/prompts/a.md
+PARKED-DEP.claude	RQ-PARK-B	claude	fast	ashlrai/phantom	queue/prompts/b.md
+RQ-PARK-C	ashlrai/phantom	PARKED-HOLD	work	queue/prompts/c.md
+RQ-HEAD-1	ashlrai/phantom	claude	work	queue/prompts/h1.md
+RQ-HEAD-2	ashlrai/phantom	claude	work	queue/prompts/h2.md
+RQ-HEAD-3	ashlrai/phantom	claude	work	queue/prompts/h3.md
+RQ-HEAD-4	ashlrai/phantom	claude	work	queue/prompts/h4.md
+PARKED-WAIT.codex-work	RQ-PARK-D	codex-work	mid	ashlrai/phantom	queue/prompts/d.md
+RQ-HEAD-5	ashlrai/phantom	codex-work	mid	queue/prompts/h5.md
