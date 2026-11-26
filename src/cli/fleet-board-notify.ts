@@ -25,6 +25,7 @@ import { boardNotifyDir, boardNotifyLedgerPath, diffBoard, planNotifications,
   snapshotBoard, writeBoardNotifySnapshot,
   type BoardNotice, type BoardNotifySender, type BoardNotifySenders } from '../core/fleet/work-board-notify.js';
 import { killSwitchOn } from '../core/sandbox/policy.js';
+import { scrubSecrets } from '../core/util/scrub.js';
 
 const usage = 'Usage: ashlr fleet board-notify [--root <absolute>] [--state-dir <absolute>] [--limit <1..100>] [--dry-run] [--json]\n'
   + 'Diffs the work board against the last snapshot and replies in each item\'s source thread: ASSIGNED <id> — owner,\n'
@@ -180,6 +181,11 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
     return emit({
       status: 'dry-run', baselined: prev === null, killed, inbox: board.inbox,
       transitions: transitions.length, planned: plan.notices.length, dropped: plan.dropped,
+      notices: plan.notices.map(n => ({
+        itemId: scrubSecrets(n.itemId), state: n.state, sourceChannel: scrubSecrets(n.sourceChannel),
+        sourceThread: n.sourceThread === null ? null : scrubSecrets(n.sourceThread),
+        asOf: scrubSecrets(n.asOf), source: scrubSecrets(n.source), detail: scrubSecrets(n.detail), text: n.text,
+      })),
       lines: [
         `board-notify dry-run: transitions=${transitions.length} planned=${plan.notices.length} dropped=${plan.dropped.length}${prev === null ? ' (first pass would baseline)' : ''}${killed ? ' (KILL armed)' : ''}`,
         ...plan.notices.map(n => `would-post [${n.sourceChannel}${n.sourceThread ? ` ${n.sourceThread}` : ''}] ${n.text}`),
