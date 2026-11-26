@@ -27,8 +27,8 @@ const {
   viewPrWithReconciliationMock: vi.fn(),
 }));
 
-vi.mock('node:child_process', async (importOriginal) => ({
-  ...await importOriginal<typeof import('node:child_process')>(),
+vi.mock('node:child_process', () => ({
+  execFile: vi.fn(),
   execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
 }));
 

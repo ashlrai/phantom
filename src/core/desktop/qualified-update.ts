@@ -11,9 +11,11 @@ import { Header } from 'tar';
 import { evaluateStandingAuthority } from '../authority/effective-config.js';
 import { runningPackageRoot, verifyAuthoritySurfaceAt } from '../authority/surface.js';
 import { censusExecutionLeases } from '../sandbox/execution-leases.js';
+import { readKillSwitch } from '../sandbox/policy.js';
 import { readPinnedRuntimeArchive, extractPinnedRuntimeArchive, type PinnedRuntimeArchiveOptions } from '../local-runtime/archive.js';
 import { parseBuildIdentity } from '../build-identity.js';
 import { fsyncDirectory } from '../util/durability.js';
+import { readDesktopHostInterlockCensus, type DesktopHostInterlockCensus } from './host-update-interlock.js';
 import { verifyCompatibleUpdateManifest, desktopUpdateProfileForPackage, verifyMinisign, verifyUpdateBundleRecord, type UpdateTrust, type CompatibleUpdateManifest, type UpdateArtifact } from './update-manifest.js';
 
 export type DesktopUpdateState = 'waiting-native-exit' | 'ready' | 'blocked' | 'applied' | 'rollback-held' | 'rolled-back';
@@ -29,13 +31,14 @@ export interface NativeUpdateParent { pid: number; ppid: number; started: string
 export interface DesktopUpdateDependencies {
   home: string; platform: NodeJS.Platform; architecture: string; packageRoot: string | null; trust: UpdateTrust | null;
   admission(): UpdateAdmission;
+  hostCensus?(): DesktopHostInterlockCensus;
   currentPackageRoot(): string | null;
   captureParent(): NativeUpdateParent | null;
   verifyParent(parent: NativeUpdateParent, manifest: CompatibleUpdateManifest): Promise<boolean>;
   parentState(parent: NativeUpdateParent): 'same' | 'gone' | 'changed' | 'unknown';
   now(): number; sleep(ms: number): Promise<void>;
   download(url: string, maximum: number): Promise<Buffer>;
-  residentStop?(): Promise<boolean>;
+  residentQuiescent?(): Promise<boolean>;
   /** Internal test seam; the CLI never accepts an alternate implementation. */
   transaction?(): Promise<TransactionModule>;
 }
@@ -132,8 +135,14 @@ function admissionReason(a: UpdateAdmission): string | null {
   if (a.unknownLeases !== 0 || a.leaseCount !== 0) return 'work-active-or-unknown';
   return null;
 }
+function workAdmissionReason(deps: DesktopUpdateDependencies, admission: UpdateAdmission): string | null {
+  const reason = admissionReason(admission);
+  if (reason) return reason;
+  const host = deps.hostCensus?.();
+  return host?.state === 'supported' && (host.activeJobs !== 0 || host.unknown !== 0) ? 'work-active-or-unknown' : null;
+}
 function freshAdmission(deps: DesktopUpdateDependencies): void {
-  const reason = admissionReason(deps.admission());
+  const reason = workAdmissionReason(deps, deps.admission());
   if (reason) hold(reason);
 }
 
@@ -144,7 +153,8 @@ export function inspectQualifiedDesktopUpdate(stageId: string, deps: DesktopUpda
     try {bytes(join(staged.stage, 'consumer-attempt.json'), 8192); return result('blocked', version, 'update-attempt-already-recorded');}
     catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
     updateMode(deps, staged.manifest);
-    const reason = admissionReason(deps.admission());
+    const admission = deps.admission();
+    const reason = !admission.stop ? 'drain-interlock-unsupported' : workAdmissionReason(deps, admission);
     return result(reason ? 'blocked' : 'ready', version, reason);
   } catch (error) { return result('blocked', version, error instanceof Held ? error.reason : 'verification-failed'); }
 }
@@ -529,11 +539,12 @@ export async function applyQualifiedDesktopUpdate(stageId: string, deps: Desktop
     if (!await deps.verifyParent(parent, staged.manifest)) hold('native-parent-unverified');
     if (deps.now() >= ackDeadline) hold('native-parent-proof-timeout');
     freshAdmission(deps);
-    if (deps.residentStop && !await deps.residentStop()) hold('resident-stop-failed');
+    if (deps.residentQuiescent && !await deps.residentQuiescent()) hold('resident-stop-failed');
     if (deps.now() >= ackDeadline) hold('native-parent-proof-timeout');
     freshAdmission(deps);
     await progress(result('waiting-native-exit', version, null));
     await waitForNativeUpdateParent(parent, deps);
+    if (deps.residentQuiescent && !await deps.residentQuiescent()) hold('resident-stop-failed');
     freshAdmission(deps);
     // Exclusive claim; uncertain/crashed attempt files remain a durable no-replay fence.
     const claim = join(staged.stage, 'consumer-lock'); fs.mkdirSync(claim, {mode: 0o700}); lock = claim; fsyncDirectory(staged.stage);
@@ -562,13 +573,26 @@ export function createDesktopUpdateDependencies(trust: UpdateTrust | null): Desk
       const evaluated = evaluateStandingAuthority({mode: 'fresh', surface: 'running'}); const leases = censusExecutionLeases();
       return {grantId: evaluated.grant?.grantId ?? null, envelopeDigest: evaluated.envelopeDigest,
         surfaceDigest: evaluated.surface.ok ? evaluated.surface.digest : null,
-        active: evaluated.grantState === 'active' && evaluated.ledger.chain === 'ok', stop: evaluated.kill,
+        active: evaluated.grantState === 'active' && evaluated.ledger.chain === 'ok', stop: readKillSwitch().state === 'active',
         leaseCount: leases.leases.length, unknownLeases: leases.unknown};
     },
     currentPackageRoot: () => {try {return fs.realpathSync(join(userInfo().homedir, '.local', 'share', 'ashlr', 'current'));} catch {return null;}},
-    residentStop: async () => {
-      try {const service=await import('../daemon/service.js');await service.uninstall({});return true;}
-      catch {return false;}
+    ...(process.platform === 'darwin' && {hostCensus: () => readDesktopHostInterlockCensus(userInfo().homedir)}),
+    residentQuiescent: async () => {
+      try {
+        const { serviceStatus } = await import('../daemon/service.js');
+        const { daemonServiceInstallOptions } = await import('../daemon/service-config.js');
+        const { loadConfigReadOnlyStrict } = await import('../config.js');
+        const { inspectManagedResidentRuntime } = await import('./managed-resident-runtime.js');
+        const home = userInfo().homedir;
+        const managed = inspectManagedResidentRuntime(home);
+        if (managed.state !== 'verified' || managed.root !== root) return false;
+        const status = serviceStatus(daemonServiceInstallOptions(loadConfigReadOnlyStrict(), {
+          platform: 'darwin', homeDir: home, binPath: managed.launcher,
+        }));
+        return status.registrationState !== 'unknown' &&
+          (status.runtimeState === 'stopped' || status.runtimeState === 'ready');
+      } catch { return false; }
     },
     captureParent: () => parentObservation(process.ppid),
     verifyParent: async (parent, manifest) => {

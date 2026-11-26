@@ -6,6 +6,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cmdDesktop } from '../src/cli/desktop.js';
 import * as status from '../src/core/desktop/native-update-status.js';
+import * as releaseTrain from '../src/core/release/train.js';
 import { createFleetServer } from '../src/mcp/fleet-server.js';
 
 let home: string;
@@ -45,9 +46,13 @@ it('offers the same native phase, fixed reason and remedy in CLI and MCP', async
     reason: 'stop-required', version: '3.30.76', remedy: expect.stringContaining('phm authority stop') });
   expect(JSON.stringify(observed)).not.toContain('/not-for-agents');
   vi.spyOn(status, 'readNativeUpdateStatus').mockReturnValue(observed);
+  vi.spyOn(releaseTrain, 'readHostedReleaseTrainPause').mockReturnValue('paused');
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdDesktop(['update', 'status', '--json'])).toBe(0);
-  expect(JSON.parse(String(log.mock.calls[0]![0]))).toEqual(observed);
+  const { drain, hostedReleaseTrain, ...nativeStatus } = JSON.parse(String(log.mock.calls[0]![0]));
+  expect(nativeStatus).toEqual(observed);
+  expect(drain).toMatchObject({ automaticDrain: false, reason: 'drain-interlock-unsupported' });
+  expect(hostedReleaseTrain).toBe('paused');
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const server = createFleetServer({ status: async () => ({}), loop: async () => ({}) });
   const client = new Client({ name: 'desktop-update-test', version: '1.0.0' });

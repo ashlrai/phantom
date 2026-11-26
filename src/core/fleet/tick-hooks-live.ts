@@ -123,6 +123,7 @@ import type { DevinFleetTickResult } from '../devin/fleet-launcher.js';
 import { overnightRunInProgress } from '../daemon/overnight-status.js';
 import { readLeaderDirectives } from '../vision/leader-apply.js';
 import { killSwitchOn, listEnrolled } from '../sandbox/policy.js';
+import { desktopUpdateInterlockPresent } from '../desktop/update-interlock.js';
 import { audit } from '../sandbox/audit.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { LOCAL_FLEET_CAPACITY_TTL_MS, LOCAL_FLEET_ENGINE, localFleetEnabled } from '../daemon/local-fleet.js';
@@ -710,11 +711,13 @@ async function insightsDefault(): Promise<ReasoningInsight[]> {
 
 /** Included-usage pace for this tick. A missing snapshot or a missing burn stays unknown. */
 async function loadSchedulerPace(nowMs: number): Promise<{ nowMs: number; killed: boolean; sensorPace: ReturnType<typeof fleetPaceAdvice> }> {
-  let killed = false;
-  try {
-    const mark = await lstat(join(homedir(), '.ashlr', 'KILL'));
-    killed = mark.isFile() && !mark.isSymbolicLink();
-  } catch { killed = false; }
+  let killed = desktopUpdateInterlockPresent();
+  if (!killed) {
+    try {
+      const mark = await lstat(join(homedir(), '.ashlr', 'KILL'));
+      killed = mark.isFile() && !mark.isSymbolicLink();
+    } catch { killed = false; }
+  }
   const root = process.env['ASHLR_HOME'] && isAbsolute(process.env['ASHLR_HOME']) ? process.env['ASHLR_HOME'] : join(homedir(), '.ashlr');
   let readings: unknown[] = [];
   try {

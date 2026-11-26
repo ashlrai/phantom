@@ -325,6 +325,10 @@ export type ReleaseWrite =
 export interface TrainPlan { state: TrainState; writes: ReleaseWrite[]; exitCode: 0 | 1 }
 
 export function fleetKillPath(home = homedir()): string { return join(home, '.ashlr', 'KILL'); }
+function readLocalTrainStop(home = homedir()): KillObservation {
+  const operator = readSentinel(fleetKillPath(home));
+  return operator === 'inactive' ? readSentinel(join(home, '.ashlr', 'DESKTOP_UPDATE_STOP')) : operator;
+}
 export function autorunOffPath(home = homedir()): string { return join(home, '.ashlr-runs', 'RELEASE_AUTORUN_OFF'); }
 export const RELEASE_TRAIN_STOP_SCHEMA = 'phantom.release-train-stop.v1';
 const RELEASE_TRAIN_STOP_MARKER = 'release train off (fleet-stop)\n';
@@ -359,9 +363,9 @@ function releaseTrainStopRecord(value: unknown): value is {
     && (row['variableWasOn'] === true || row['variableWasOn'] === false || row['variableWasOn'] === null);
 }
 
-function readReleaseTrainVariableState(gh: ReleaseTrainStopGhRunner, log: (line: string) => void): boolean | null {
+function readReleaseTrainVariableState(gh: ReleaseTrainStopGhRunner, log: (line: string) => void, timeout = RELEASE_TRAIN_GH_TIMEOUT_MS): boolean | null {
   try {
-    const result = gh(['variable', 'get', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom'], RELEASE_TRAIN_GH_TIMEOUT_MS);
+    const result = gh(['variable', 'get', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom'], timeout);
     if (result.status === 0) {
       const value = result.stdout.trim();
       if (value === 'on') return true;
@@ -370,6 +374,11 @@ function readReleaseTrainVariableState(gh: ReleaseTrainStopGhRunner, log: (line:
   } catch { /* a failed read is unknown */ }
   log('PHANTOM_RELEASE_TRAIN state could not be read before fleet stop; recording unknown');
   return null;
+}
+
+export function readHostedReleaseTrainPause(gh: ReleaseTrainStopGhRunner = runReleaseTrainStopGh): 'paused' | 'enabled' | 'unknown' {
+  const value = readReleaseTrainVariableState(gh, () => {}, 3_000);
+  return value === false ? 'paused' : value === true ? 'enabled' : 'unknown';
 }
 
 function setReleaseTrainVariable(value: 'on' | 'off', gh: ReleaseTrainStopGhRunner, log: (line: string) => void): void {
@@ -1176,7 +1185,7 @@ export async function observeTrain(
   now = new Date().toISOString(),
   cadenceMinutes = cadenceMinutesFromEnv(),
   kill: { fleet: KillObservation; autorun: KillObservation } = {
-    fleet: readSentinel(fleetKillPath()),
+    fleet: readLocalTrainStop(),
     autorun: readSentinel(autorunOffPath()),
   },
   mergeQueueLookup: (nodeId: string) => Promise<ReleasePrQueueState> = releasePrMergeQueueState,
@@ -1675,7 +1684,7 @@ async function main(): Promise<number> {
   const args = process.argv.slice(2);
   if (args[0] === 'guard') {
     const hosted = hostedTrainGate(process.env);
-    const decision = hosted ?? releaseKillDecision(readSentinel(fleetKillPath()), readSentinel(autorunOffPath()));
+    const decision = hosted ?? releaseKillDecision(readLocalTrainStop(), readSentinel(autorunOffPath()));
     process.stdout.write(`${JSON.stringify({ schema: TRAIN_SCHEMA, ...decision })}\n`);
     return decision.proceed ? 0 : 1;
   }

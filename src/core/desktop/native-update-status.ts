@@ -8,6 +8,7 @@ const phases = new Set(['uncommissioned', 'disabled', 'checking', 'idle', 'avail
   'staged', 'waiting-for-idle', 'waiting-for-app-quit', 'adoption-held', 'installing', 'installed', 'current', 'failed']);
 const remedies: Readonly<Record<string, string>> = {
   'stop-required': 'Engage Stop with phm authority stop, then let local work drain.',
+  'drain-interlock-unsupported': 'Engage Stop with phm authority stop, then let local work drain.',
   'work-active-or-unknown': 'Wait for local work and execution leases to finish.',
   'authority-reapproval-required': 'Review and approve the changed authority before resuming the fleet.',
   'grant-unavailable': 'Review the standing grant in Fleet.',

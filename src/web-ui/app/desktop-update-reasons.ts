@@ -5,6 +5,7 @@ export const DESKTOP_UPDATE_REASONS: Record<string, string> = {
   'app-version-unverified': 'The signed installed app version could not be verified.',
   'resident-stop-failed': 'The resident service could not be stopped. Installation waits.',
   'stop-required': 'Stop the fleet and finish local work before installing.',
+  'drain-interlock-unsupported': 'Local interlock support could not be verified. Stop the fleet and finish local work before installing.',
   'work-active-or-unknown': 'Local work is active or its state could not be confirmed. Installation waits.',
   'native-parent-changed-or-unknown': 'The desktop process could not be confirmed. Installation stays on hold.',
   'artifact-mismatch': 'The downloaded bytes did not match the signed release. Installation stays on hold.',

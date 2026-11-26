@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { Header, type HeaderData } from 'tar';
 import { canonicalJson } from '../src/core/authority/canonical-json.js';
+import { beginDesktopUpdateInterlock, desktopUpdateInterlockPath, releaseDesktopUpdateInterlock } from '../src/core/desktop/update-interlock.js';
+import { killSwitchOn, killSwitchPath, readKillSwitch, setKill } from '../src/core/sandbox/policy.js';
 import { applyQualifiedDesktopUpdate, desktopUpdateStagePath, downloadQualifiedUpdateArtifact,
   inspectQualifiedDesktopUpdate, inspectSignedAppArchive, prepareQualifiedDesktopUpdate, readQualifiedDesktopUpdateResult,
   loadInstalledDesktopTransaction,
@@ -17,6 +19,57 @@ import {extractPinnedRuntimeArchive,readPinnedRuntimeArchive} from '../src/core/
 import {getDesktopUpdateProfile, type DesktopUpdateProfileName, type CompatibleUpdateManifest, type UpdateTrust } from '../src/core/desktop/update-manifest.js';
 
 const roots: string[] = [];
+describe('local desktop update interlock', () => {
+  it.each([true, false])('preserves independent operator Stop (already active: %s)', operatorFirst => {
+    if (process.getuid === undefined) {
+      const home = fs.mkdtempSync(join(tmpdir(), 'update-interlock-'));
+      roots.push(home);
+      const operator = join(home, '.ashlr', 'KILL');
+      fs.mkdirSync(join(home, '.ashlr'), {mode: 0o700});
+      if (operatorFirst) fs.writeFileSync(operator, 'operator stop\n', {mode: 0o600});
+      expect(beginDesktopUpdateInterlock(home, 'a'.repeat(32), 'b'.repeat(64), 42)).toBeNull();
+      expect(fs.existsSync(desktopUpdateInterlockPath(home))).toBe(false);
+      if (operatorFirst) expect(fs.readFileSync(operator, 'utf8')).toBe('operator stop\n');
+      else expect(fs.existsSync(operator)).toBe(false);
+      return;
+    }
+    const home = process.env.HOME!;
+    fs.mkdirSync(join(home, '.ashlr'), {mode: 0o700, recursive: true});
+    if (operatorFirst) expect(setKill(true).ok).toBe(true);
+    const marker = beginDesktopUpdateInterlock(home, 'a'.repeat(32), 'b'.repeat(64), 42);
+    expect(marker).not.toBeNull();
+    try {
+      expect(fs.lstatSync(desktopUpdateInterlockPath(home)).mode & 0o777).toBe(0o600);
+      expect(readKillSwitch().state).toBe(operatorFirst ? 'active' : 'inactive');
+      expect(killSwitchOn()).toBe(true);
+      expect(beginDesktopUpdateInterlock(home, 'a'.repeat(32), 'b'.repeat(64), 42)).toBeNull();
+      expect(releaseDesktopUpdateInterlock(home, {...marker!, nonce: 'c'.repeat(32)})).toBe(false);
+      if (!operatorFirst) expect(setKill(true).ok).toBe(true);
+      const operator = fs.readFileSync(killSwitchPath());
+      expect(releaseDesktopUpdateInterlock(home, marker!)).toBe(true);
+      expect(fs.readFileSync(killSwitchPath())).toEqual(operator);
+      expect(readKillSwitch().state).toBe('active');
+    } finally {
+      if (marker) releaseDesktopUpdateInterlock(home, marker);
+      setKill(false);
+    }
+  });
+  it('falls back to manual Stop when drain compatibility is unproven', async () => {
+    const f = pairedFixture();
+    const unpaused = { ...f.deps, admission: () => ({...f.deps.admission(), stop: false}) };
+    expect(inspectQualifiedDesktopUpdate(f.id, unpaused))
+      .toMatchObject({state: 'blocked', reason: 'drain-interlock-unsupported'});
+    expect(await applyQualifiedDesktopUpdate(f.id, unpaused)).toMatchObject({state: 'blocked', reason: 'stop-required'});
+    expect(f.installations()).toBe(0);
+  });
+  it.each([{activeJobs: 1, unknown: 0}, {activeJobs: 0, unknown: 1}])('holds with active or unknown dispatcher work (%j)', async census => {
+    const f = pairedFixture();
+    const deps = { ...f.deps, hostCensus: () => ({state: 'supported' as const, ...census}) };
+    expect(inspectQualifiedDesktopUpdate(f.id, deps)).toMatchObject({state: 'blocked', reason: 'work-active-or-unknown'});
+    expect(await applyQualifiedDesktopUpdate(f.id, deps)).toMatchObject({state: 'blocked', reason: 'work-active-or-unknown'});
+    expect(f.installations()).toBe(0);
+  });
+});
 afterEach(() => {vi.unstubAllGlobals(); for (const root of roots.splice(0)) fs.rmSync(root, {recursive:true,force:true});});
 const {publicKey,privateKey} = generateKeyPairSync('ed25519'); const keyId = Buffer.from('1122334455667788','hex');
 const key = Buffer.from(`untrusted comment: ephemeral test key\n${Buffer.concat([Buffer.from('Ed'),keyId,publicKey.export({format:'der',type:'spki'}).subarray(-32)]).toString('base64')}\n`).toString('base64');
@@ -100,11 +153,17 @@ describe.skipIf(process.platform === 'win32')('signed paired installed update ad
     const install=vi.fn(async()=> 'applied' as const);
     expect(await applyQualifiedDesktopUpdate(f.id,f.deps,install)).toMatchObject({state:'applied',requiresReapproval:false});
   });
-  it('holds with a fixed reason before acknowledging exit when resident stop fails',async()=>{
+  it('holds with a fixed reason before acknowledging exit when resident quiescence is unproven',async()=>{
     const f=fixture(),progress=vi.fn(),install=vi.fn(async()=> 'applied' as const);
-    f.deps.residentStop=async()=>false;
+    f.deps.residentQuiescent=async()=>false;
     expect(await applyQualifiedDesktopUpdate(f.id,f.deps,install,progress)).toMatchObject({state:'blocked',reason:'resident-stop-failed'});
     expect(progress).not.toHaveBeenCalled();expect(install).not.toHaveBeenCalled();
+  });
+  it('rechecks resident quiescence after the native parent exits',async()=>{
+    const f=fixture(),progress=vi.fn(),install=vi.fn(async()=> 'applied' as const);
+    f.deps.residentQuiescent=vi.fn(async()=>false).mockResolvedValueOnce(true);
+    expect(await applyQualifiedDesktopUpdate(f.id,f.deps,install,progress)).toMatchObject({state:'blocked',reason:'resident-stop-failed'});
+    expect(progress).toHaveBeenCalledOnce();expect(install).not.toHaveBeenCalled();
   });
   it('admits the supported installed identity0644 while refusing writable replacement files',async()=>{
     const f=fixture(),identity=join(f.deps.packageRoot!,'dist/build-identity.json');fs.chmodSync(identity,0o644);
@@ -226,12 +285,12 @@ function pairedFixture(profile: DesktopUpdateProfileName = 'legacy-v1', currentR
 describe.skipIf(process.platform === 'win32')('original package extraction and installed-byte readback',()=>{
   it('prepares both signed artifacts before Stop and reuses the verified download on apply',async()=>{
     const f=pairedFixture();
-    const admission=vi.fn(f.deps.admission), download=vi.fn(f.deps.download), residentStop=vi.fn(async()=>true);
-    Object.assign(f.deps,{admission,download,residentStop});
+    const admission=vi.fn(f.deps.admission), download=vi.fn(f.deps.download), residentQuiescent=vi.fn(async()=>true);
+    Object.assign(f.deps,{admission,download,residentQuiescent});
     f.admission.stop=false;
     expect(await prepareQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'ready'});
     expect(admission).not.toHaveBeenCalled();
-    expect(residentStop).not.toHaveBeenCalled();
+    expect(residentQuiescent).not.toHaveBeenCalled();
     expect(f.installations()).toBe(0);
     expect(fs.readFileSync(join(f.stage,'package.tgz'))).toEqual(f.cli);
     expect(fs.readdirSync(f.stage).sort()).toEqual(['app.tar.gz','manifest.json','manifest.sig','package.tgz']);
@@ -297,10 +356,10 @@ describe.skipIf(process.platform === 'win32')('original package extraction and i
   });
   it('replaces only the app when the current CLI matches the signed revision and package',async()=>{
     const f=pairedFixture('canonical-v2');await f.seedCurrent();const previous=f.getPointer();
-    const residentStop=vi.fn(async()=>true);f.deps.residentStop=residentStop;
+    const residentQuiescent=vi.fn(async()=>true);f.deps.residentQuiescent=residentQuiescent;
     expect(inspectQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'ready'});
     expect(await applyQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'applied',requiresReapproval:false});
-    expect(f.getPointer()).toBe(previous);expect(residentStop).toHaveBeenCalledOnce();
+    expect(f.getPointer()).toBe(previous);expect(residentQuiescent).toHaveBeenCalledTimes(2);
   });
   it.each(['beforeSwitch','beforePointer'])('holds actual late candidate mutation at %s without publishing current',async phase=>{
     const f=pairedFixture();f.mutateCandidateAt(phase);
