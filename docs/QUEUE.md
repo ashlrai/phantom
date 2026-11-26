@@ -378,6 +378,12 @@ The history includes both endpoints of the trailing window and excludes ticks
 timestamped after the report time.
 Each historical lane needs an unfed flag, positive headroom and waiting work
 elsewhere. A tick counts when at least one lane meets all three conditions.
+
+When the dispatcher omits its unfed summary, the derived report also honors
+holds in `queue/slots.json` and the operator's `HOLD` file. Held lanes can
+show physical headroom but contribute zero unfed slots. Published unfed
+summaries use the lane holds from the same dispatcher tick.
+
 The separate `resourcePlan` comparison uses the same advisory lane targets as
 `phm resources plan` and shows how many additional slots lack waiting rows
 hinted to that lane. The advisory `unfedSlots` count stays null when plan
