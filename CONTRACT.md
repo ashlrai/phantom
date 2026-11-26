@@ -2375,7 +2375,14 @@ fence. The owner match is `withdraw`'s, so another scope's job answers
 ## Fleet job latency Git observations (`fleet.job-latency.v1`)
 
 `phm fleet job-latency --json` reads only the local jobs ledger. The
-`git_contention` section reports nearest-rank p90 for paired checkout
+`merge` phase and `phm pulse merge-latency`'s `open_to_merge` phase
+use merge boundaries recorded as `mergedAt`, `pr_merged_at`, or
+`merged_at`. An explicit `merged` event can also supply its event timestamp.
+A status-only merge receipt without a parseable merge time remains in job
+coverage and increments `ignored_events`. A separate row that supplies
+the merge time can still measure that job.
+
+The `git_contention` section reports nearest-rank p90 for paired checkout
 boundaries and the manual recovery rate per 100 measured checkouts that
 explicitly record `manual_checkout_recovery: true|false` on
 `checkout_complete`. The denominator and measured checkout count are separate.

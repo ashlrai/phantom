@@ -45,7 +45,7 @@ it('reads observations from real local Git calls and reports a held index lock',
 });
 
 it('ranks measured phases and excludes ambiguous and missing boundaries', async () => {
-  const report = jobLatency(await readFile(fixture, 'utf8'));
+  const report = jobLatency(`${await readFile(fixture, 'utf8')}\ninvalid\n`);
   expect(report).toMatchObject({ jobs: 3, ignored_events: 1 });
   expect(report.top_wastes.map(x => [x.phase, x.total_seconds, x.measured_jobs, x.missing_jobs])).toEqual([
     ['worker', 150, 2, 1], ['merge', 50, 1, 2], ['ci', 40, 1, 2],
@@ -179,6 +179,30 @@ it('reads the remaining timestamp aliases and the kind event key', () => {
   expect(phase('queue_wait')).toMatchObject({ total_seconds: 10, measured_jobs: 1 });
   expect(phase('worker')).toMatchObject({ total_seconds: 50, measured_jobs: 1 });
   expect(phase('publish_wait')).toMatchObject({ total_seconds: 30, measured_jobs: 1 });
+});
+
+it('measures merges only from merge timestamps or explicit merged events', () => {
+  const text = [
+    { job: 'status-only', event: 'publish', ts: start },
+    { job: 'status-only', event: 'ci_complete', ts: end },
+    { job: 'status-only', event: 'outcome', state: 'MERGED', ts: '2026-01-02T00:00:00Z' },
+    { job: 'reconciled', event: 'publish', ts: start },
+    { job: 'reconciled', event: 'ci_complete', ts: end },
+    { job: 'reconciled', event: 'publish', outcome: 'MERGED', ts: start },
+    { job: 'reconciled', outcome: 'MERGED', pr_merged_at: '2026-01-01T00:02:00Z' },
+    { job: 'explicit', event: 'publish', ts: start },
+    { job: 'explicit', event: 'ci_complete', ts: start },
+    { job: 'explicit', kind: 'merged', ts: end },
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const fleet = jobLatency(text);
+  expect(fleet).toMatchObject({ jobs: 3, ignored_events: 2 });
+  const mergePhase = { phase: 'merge', total_seconds: 120, measured_jobs: 2, missing_jobs: 1 };
+  expect(fleet.phases).toContainEqual(expect.objectContaining(mergePhase));
+  expect(mergeQueueLatency(text).phases).toEqual(expect.arrayContaining([
+    expect.objectContaining(mergePhase),
+    expect.objectContaining({ phase: 'open_to_merge', total_seconds: 180, measured_jobs: 2, missing_jobs: 1 }),
+  ]));
 });
 
 it('exposes versioned pulse JSON and plain text, including unreadable ledgers and usage errors', async () => {
