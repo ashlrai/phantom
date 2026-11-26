@@ -1105,8 +1105,8 @@ filling the value from an older reward row), mean
 recorded `publish_wait_s` (the job's publish-station wait from its
 single recorded `finish`/`publish` boundary pair — the same pair
 job-latency's publish_wait phase and visit-sync's publish station
-read; a missing, repeated or reversed pair stays unrecorded, never
-estimated), mean
+read. A missing, repeated or reversed pair, or any boundary with a
+missing or invalid timestamp, leaves the duration unknown), mean
 recorded
 `tokens_total` (token
 usage), mean recorded `diff_files`/`diff_lines` (change size), the count

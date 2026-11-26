@@ -574,11 +574,15 @@ describe('outcome-quality evidence', () => {
       // A job that never published likewise never fabricates a duration.
       { job: 'synthetic-pw-open', event: 'finish', ts: new Date(t0).toISOString() },
       event('synthetic-pw-open', 'alpha', 'code', 'MERGED'),
+      { job: 'synthetic-pw-undated', event: 'finish', ts: new Date(t0).toISOString() },
+      { job: 'synthetic-pw-undated', event: 'publish', ts: new Date(t0 + 900_000).toISOString() },
+      { job: 'synthetic-pw-undated', event: 'publish' },
+      event('synthetic-pw-undated', 'alpha', 'code', 'MERGED'),
     ]);
     const { code, report } = await runJson();
     expect(code).toBe(0);
     const p = report.proposals[0];
-    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 22 });
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 23 });
     // waits are 30s..600s over the 20 paired jobs -> mean 315s.
     expect(p.evidence.publish_wait_known).toBe(20);
     expect(p.evidence.publish_wait_s_mean).toBe(315);

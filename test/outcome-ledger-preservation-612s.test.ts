@@ -455,6 +455,7 @@ describe('router outcome ledger (612S preservation)', () => {
       '{"job":"P8","event":"finish","ts":"2026-11-01T10:00:00Z"}',
       '{"job":"P8","event":"publish","outcome":"PUBLISHED","ts":"2026-11-01T10:20:00Z"}',
       '{"job":"P8","event":"publish","outcome":"MERGED","ts":"2026-11-01T12:00:00Z","mergedAt":"2026-11-01T12:00:00Z"}',
+      '{"job":"P8","event":"publish","outcome":"MERGED"}',
       // P9: batch-session infrastructure rows never mint publish evidence.
       '{"job":"RQ-BATCH-p9","event":"finish","ts":"2026-11-01T10:00:00Z"}',
       '{"job":"RQ-BATCH-p9","event":"publish","ts":"2026-11-01T10:10:00Z"}',
@@ -464,6 +465,13 @@ describe('router outcome ledger (612S preservation)', () => {
       // P11: boundary rows without a readable stamp cannot pair.
       '{"job":"P11","event":"finish"}',
       '{"job":"P11","event":"publish","ts":"not a date"}',
+      // Even with a dated pair, an undated retry or republish is ambiguous.
+      '{"job":"P12","event":"finish","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"P12","event":"publish","ts":"2026-11-01T10:20:00Z"}',
+      '{"job":"P12","event":"finish"}',
+      '{"job":"P13","event":"finish","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"P13","event":"publish","ts":"2026-11-01T10:20:00Z"}',
+      '{"job":"P13","outcome":"PUBLISHED","ts":"not a date"}',
     ].join('\n'));
     const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
     expect(byId.get('P1')).toMatchObject({ merged: true, publish_wait_s: 1200 });
@@ -471,7 +479,7 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('P7')).toMatchObject({ publish_wait_s: 1800 });
     expect(byId.get('P8')).toMatchObject({ merged: true, publish_wait_s: 1200 });
     expect(byId.get('P10')).toMatchObject({ publish_wait_s: 900 });
-    for (const id of ['P3', 'P4', 'P5', 'P6', 'P11']) expect(byId.get(id)?.publish_wait_s).toBeNull();
+    for (const id of ['P3', 'P4', 'P5', 'P6', 'P11', 'P12', 'P13']) expect(byId.get(id)?.publish_wait_s).toBeNull();
     expect(byId.has('RQ-BATCH-p9')).toBe(false);
   });
 

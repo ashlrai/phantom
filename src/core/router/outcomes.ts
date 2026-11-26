@@ -1832,14 +1832,15 @@ function foldRouterOutcomesWithCiCoverage(
   // and one publish stamp across the retained rows yields the recorded
   // publish wait — identical repeated stamps dedupe so a replayed
   // append cannot fake ambiguity, and a retried attempt's second
-  // finish or a republish's second publish leaves the job absent so
-  // its outcome keeps null. Terminal lifecycle phases stay
-  // authoritative over the event name: the outcomes reconciler copies
+  // finish, a republish's second publish or an undated boundary
+  // leaves the job absent so its outcome keeps null. Terminal lifecycle
+  // phases stay authoritative over the event name: the outcomes reconciler copies
   // the publish row and only swaps the outcome, so its
   // {event:'publish', outcome:'MERGED'} row is merge evidence stamped
   // at verdict time, never a second publish — while a PUBLISHED phase
   // on any row is the publish claim itself, event name or not.
   const publishMarks = new Map<string, { finishes: Set<number>; publishes: Set<number> }>();
+  const undatedPublishJobs = new Set<string>();
   for (const r of rows) {
     const j = attributedJobId(r);
     if (!j || j.startsWith(BATCH_SESSION_PREFIX)) continue;
@@ -1850,14 +1851,17 @@ function foldRouterOutcomesWithCiCoverage(
     const publish = phase === 'PUBLISHED' || ((event === 'publish' || event === 'published') && !terminal);
     if (!finish && !publish) continue;
     const at = Date.parse(str(r, ...LEDGER_TS_KEYS) ?? '');
-    if (!Number.isFinite(at)) continue;
+    if (!Number.isFinite(at)) {
+      undatedPublishJobs.add(j);
+      continue;
+    }
     const marks = publishMarks.get(j) ?? { finishes: new Set<number>(), publishes: new Set<number>() };
     (finish ? marks.finishes : marks.publishes).add(at);
     publishMarks.set(j, marks);
   }
   const publishWaitS = new Map<string, number>();
   for (const [j, marks] of publishMarks) {
-    if (marks.finishes.size !== 1 || marks.publishes.size !== 1) continue;
+    if (undatedPublishJobs.has(j) || marks.finishes.size !== 1 || marks.publishes.size !== 1) continue;
     const waitMs = [...marks.publishes][0]! - [...marks.finishes][0]!;
     if (waitMs >= 0) publishWaitS.set(j, waitMs / 1000);
   }
