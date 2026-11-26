@@ -55,7 +55,7 @@ export async function cmdFleetLaneStarve(args: string[], io: LaneStarveIo = defa
   try {
     const status = await io.read(join(queue, 'status.json'));
     if (status === null) throw new Error('no status');
-    const ready = (await io.read(join(queue, 'ready.tsv'))) ?? '';
+    const ready = await io.read(join(queue, 'ready.tsv'));
     const hold = (await io.read(join(queue, 'FILLER_HOLD'))) !== null;
     report = {
       schema: FLEET_LANE_STARVE_SCHEMA,
@@ -71,7 +71,8 @@ export async function cmdFleetLaneStarve(args: string[], io: LaneStarveIo = defa
   if (json) console.log(JSON.stringify(report));
   else {
     for (const l of report.lanes) {
-      console.log(`${l.lane}: ${l.running}/${l.target} running, ${l.queued} queued; ready ${l.ready} = ${l.filler} filler + ${l.real} real`);
+      const ready = l.ready === null ? 'unknown' : `${l.ready} = ${l.filler} filler + ${l.real} real`;
+      console.log(`${l.lane}: ${l.running}/${l.target} running, ${l.queued} queued; ready ${ready}`);
     }
     if (report.lanes.length === 0) console.log('No starved lanes.');
     if (report.filler_hold) console.log('FILLER_HOLD is set: filler is held.');

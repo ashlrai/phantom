@@ -24,6 +24,11 @@ for validated lane-open dispatcher jobs. `readyRowsForDepth`
 (`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
 `tier` for the tier tally, including lane-open jobs as `READY`.
 
+`findStarvedLanes(statusJson, readyTsv)` (`src/core/fleet/lane-starve.ts`)
+accepts `null` for a missing ready snapshot. Its rows and the
+`fleet.lane-starve.v1` CLI report expose `ready`, `filler`, and `real` as
+nullable counts. An empty snapshot yields numeric zeroes.
+
 ## Wiki context and ecosystem
 
 `cloudBrainContext(githubRepo, checkout, taskText)` and

@@ -26,10 +26,10 @@ export interface StarvedLane {
   /** The launch target: configured target tightened by the controller's effective_target shed. */
   target: number;
   queued: number;
-  /** Runnable (non-parked) rows in queue/ready.tsv for this lane. */
-  ready: number;
-  filler: number;
-  real: number;
+  /** Runnable (non-parked) rows in queue/ready.tsv for this lane, or null when absent. */
+  ready: number | null;
+  filler: number | null;
+  real: number | null;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -71,12 +71,12 @@ function queueRow(line: string): QueueRow | null {
   return id ? { id, lane } : null;
 }
 
-/** Pure: starved lanes from status.json text and ready.tsv text ('' when absent). */
-export function findStarvedLanes(statusJson: string, readyTsv: string): StarvedLane[] {
+/** Pure: starved lanes from status.json text and ready.tsv text (null when absent). */
+export function findStarvedLanes(statusJson: string, readyTsv: string | null): StarvedLane[] {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const split = new Map<string, { filler: number; real: number }>();
-  for (const line of readyTsv.split('\n')) {
+  for (const line of readyTsv?.split('\n') ?? []) {
     const row = queueRow(line);
     if (!row) continue;
     const entry = split.get(row.lane) ?? { filler: 0, real: 0 };
@@ -92,7 +92,12 @@ export function findStarvedLanes(statusJson: string, readyTsv: string): StarvedL
     const target = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
     if (value.held === true || value.running >= target || value.queued === 0) continue;
     const { filler, real } = split.get(lane) ?? { filler: 0, real: 0 };
-    out.push({ lane, running: value.running, target, queued: value.queued, ready: filler + real, filler, real });
+    out.push({
+      lane, running: value.running, target, queued: value.queued,
+      ready: readyTsv === null ? null : filler + real,
+      filler: readyTsv === null ? null : filler,
+      real: readyTsv === null ? null : real,
+    });
   }
   return out.sort((a, b) => a.lane.localeCompare(b.lane));
 }
