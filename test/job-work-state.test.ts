@@ -32,6 +32,12 @@ describe('readJobWorkState', () => {
     expect(r).toMatchObject({ state: 'RECEIVED', owner: null, source: 'queue/ready.tsv' });
     expect(formatWorkState(r)).toBe(`${JOB}: RECEIVED - queued for lane claude; lane is a queue destination, not an assigned owner (as of ${AT.toISOString()}, source queue/ready.tsv)`);
   });
+  it('a lane-open ready.tsv row is RECEIVED without inventing a lane', async () => {
+    const tsv = `${JOB}\tphantom\t\twork\tprompts/a.md\n`;
+    const r = await readJobWorkState(JOB, { runsDir: await host({ 'queue/ready.tsv': tsv }) });
+    expect(r).toMatchObject({ state: 'RECEIVED', owner: null, source: 'queue/ready.tsv' });
+    expect(r.detail).toBe('queued lane-open; the market may place it on any lane');
+  });
   it('launched with no exit code is RUNNING', async () => {
     const r = await readJobWorkState(JOB, { runsDir: await host({ [`queue/run/${JOB}.launches`]: 'launch 1\n' }) });
     expect(r).toMatchObject({ state: 'RUNNING', source: `queue/run/${JOB}.launches` });

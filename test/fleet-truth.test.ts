@@ -188,6 +188,24 @@ describe('getFleetTruth', () => {
     expect(truth.queued).toBe(2);
   });
 
+  it('counts lane-open ready.tsv rows as queued, never as blocked', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'), [
+      'RQ-HINTED-1\tphantom\tclaude\twork\tprompts/a.md',
+      'RQ-OPEN-1\tphantom\t\twork\tprompts/b.md',
+      'RQ-OPEN-2\tashlrai/phantom\tdevin\tmid\tprompts/c.md\t{"preferred_lane":null}',
+      'RQ-PARK-1\tphantom\tPARKED-DEP.claude\twork\tprompts/d.md',
+      'RQ-DEAD-1\tphantom\tnot a lane!\twork\tprompts/e.md',
+    ].join('\n'));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root, liveWorkers: async () => 0 });
+    // One hinted READY row plus two lane-open rows the market may place on any
+    // lane; the parked row is blocked work and the market-invalid row is dead —
+    // neither inflates the queued count.
+    expect(truth.queued).toBe(3);
+    expect(truth.blocked).toBe(1);
+  });
+
   it('falls back to live job pids when admission.json is stale', async () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
     mkdirSync(join(root, 'queue'));

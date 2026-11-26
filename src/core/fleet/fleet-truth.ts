@@ -223,10 +223,13 @@ async function readQueue(root: string): Promise<{ ready: number; blocked: number
   try {
     const { parseReadyTsv } = await import('./lane-console.js');
     const text = await readFile(join(root, 'queue', 'ready.tsv'), 'utf8');
-    const rows = parseReadyTsv(text).rows;
+    const parsed = parseReadyTsv(text);
+    const rows = parsed.rows;
     const parked = (pool: string): boolean => /^PARKED[^.]*\./i.test(pool);
     return {
-      ready: rows.filter((r) => r.status === 'READY' && !parked(r.pool)).length,
+      // Lane-open rows are READY supply the market may place on any lane; they
+      // carry no pool, so they join the ready count and never the blocked one.
+      ready: rows.filter((r) => r.status === 'READY' && !parked(r.pool)).length + parsed.unhinted,
       // PARKED-<reason>[.<lane>] statuses are held work too — parked rows no
       // longer hide inside READY once the dispatcher dialect parses natively.
       blocked: rows.filter((r) => ['BLOCKED', 'HOLD'].includes(r.status) || parked(r.pool) || r.status.startsWith('PARKED')).length,
