@@ -9,6 +9,7 @@ import {
   EMPTY_TAG_RECURRING,
 } from '../src/core/improve/empty-tag-backlog.js';
 import type { EmptiesFinish } from '../src/core/fleet/empty-finishes.js';
+import { ROUTER_OUTCOME_LEDGER_LIMIT } from '../src/core/router/outcomes.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
 
 let home: string;
@@ -141,6 +142,28 @@ describe('emptyTagBacklogItems', () => {
       repo: 'ashlrai/phantom', runsDir: writeRuns('runs-c2', minorityJobs, minorityTags), now: NOW,
     });
     expect(minority).toEqual([]);
+  });
+
+  it('withholds an untagged majority from a clipped jobs read while reporting recorded tags', async () => {
+    const clippedIds = ['RQ-T1', 'RQ-T2', 'RQ-T3', 'RQ-T4'];
+    const blockedIds = ['RQ-B1', 'RQ-B2', 'RQ-B3'];
+    const untaggedIds = ['RQ-U1', 'RQ-U2', 'RQ-U3', 'RQ-U4'];
+    const jobs = [
+      ...clippedIds.map(id => finishRow(id, 8)),
+      ' '.repeat(ROUTER_OUTCOME_LEDGER_LIMIT),
+      ...blockedIds.map(id => finishRow(id, 5)),
+      ...untaggedIds.map(id => finishRow(id, 4)),
+    ].join('\n');
+    const tags = [
+      ...clippedIds.map(id => tagRow(id, 'already_done')),
+      ...blockedIds.map(id => tagRow(id, 'blocked')),
+    ].join('\n');
+    const items = await emptyTagBacklogItems({
+      repo: 'ashlrai/phantom', runsDir: writeRuns('runs-clipped', jobs, tags), now: NOW,
+    });
+    expect(items.map(item => item.id)).toEqual(['fleet-empty-tag-blocked']);
+    expect(items[0]?.prompt).toContain('blocked=3');
+    expect(items[0]?.prompt).toContain('counts cover only the retained receipts');
   });
 
   it('emits nothing below the recurring bar or when only explained tags recur', async () => {

@@ -44,6 +44,7 @@
  *    finish with no tag row at all — emits only when untagged finishes
  *    are the majority of the window's empties, the signature of a dead or
  *    starved empty-tag-sync rather than its normal per-pass deferral.
+ *    A clipped jobs ledger cannot establish that majority.
  *    already_done, no_change_needed and pool_cap are explained healthy or
  *    owner-domain outcomes and never become work here.
  *  - The ledgers carry no repository dimension — they describe this
@@ -178,11 +179,12 @@ function examplesLine(bucket: ActionableBucket, fold: EmptyTagWindowFold): strin
 
 const NO_CHANGE = 'If the pattern no longer reproduces on the default branch — or the cause is owner-only (credentials, billing, a protected gate or sandbox profile) — report no-change and name the evidence.';
 
-function emptyTagPrompt(bucket: ActionableBucket, fold: EmptyTagWindowFold): string {
+function emptyTagPrompt(bucket: ActionableBucket, fold: EmptyTagWindowFold, truncated: boolean): string {
   const lead = [
     `Phantom's empty-job tag ledger shows '${bucket}' recurring across the fleet's own finished-empty jobs — the self-improvement work this backlog exists for.`,
     '',
     tallyLine(fold) + examplesLine(bucket, fold) + '.',
+    ...(truncated ? ['The jobs ledger was clipped. These counts cover only the retained receipts.'] : []),
     '',
   ];
   const tagClause = bucket === 'untagged' ? '' : ` The recorded tag label is '${EMPTY_TAG_LABELS[bucket as keyof typeof EMPTY_TAG_LABELS]}'.`;
@@ -206,7 +208,7 @@ function emptyTagPrompt(bucket: ActionableBucket, fold: EmptyTagWindowFold): str
   return [...lead, ...body[bucket]].join('\n');
 }
 
-function emptyTagItem(bucket: ActionableBucket, fold: EmptyTagWindowFold, repo: string): CloudBacklogItem {
+function emptyTagItem(bucket: ActionableBucket, fold: EmptyTagWindowFold, repo: string, truncated: boolean): CloudBacklogItem {
   const titles: Record<ActionableBucket, string> = {
     blocked: `Fleet empty jobs keep ending 'blocked'`,
     unknown: `Fleet empty finishes stay tagged 'unknown'`,
@@ -215,7 +217,7 @@ function emptyTagItem(bucket: ActionableBucket, fold: EmptyTagWindowFold, repo: 
   return {
     id: `fleet-empty-tag-${bucket}`,
     title: titles[bucket].slice(0, MAX_TITLE_CHARS),
-    prompt: emptyTagPrompt(bucket, fold),
+    prompt: emptyTagPrompt(bucket, fold, truncated),
     area: 'fleet-empty-tags',
     priority: 3,
     ...(CLOUD_REPO_PATTERN.test(repo) ? { repo } : {}),
@@ -258,8 +260,8 @@ export async function emptyTagBacklogItems(opts: EmptyTagItemsOptions): Promise<
       // Untagged only evidences a coverage gap when it is the majority of
       // the window's empties — a small untagged share is the sync's normal
       // per-pass deferral, not a broken ledger.
-      if (bucket === 'untagged' && count * 2 <= fold.empties) continue;
-      items.push(emptyTagItem(bucket, fold, repo));
+      if (bucket === 'untagged' && (jobs.truncated || count * 2 <= fold.empties)) continue;
+      items.push(emptyTagItem(bucket, fold, repo, jobs.truncated));
     }
     return items;
   } catch {
