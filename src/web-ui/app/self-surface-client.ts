@@ -102,6 +102,64 @@ function findTarget(id: string, doc: Document = document): Element | null {
   return doc.querySelector(`button[aria-label="${escaped}"],a[aria-label="${escaped}"]`);
 }
 
+const IMAGE_INLINE_TIMEOUT_MS = 2_000;
+const IMAGE_INLINE_MAX_BYTES = 2 * 1024 * 1024;
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** An image the SVG snapshot can draw: same bytes, as a data: URL, or null when unreachable. */
+async function imageDataUrl(img: HTMLImageElement, fetcher: typeof fetch): Promise<string | null> {
+  const src = img.currentSrc || img.src;
+  if (!src || src.startsWith('data:')) return src || null;
+  try { await img.decode(); } catch { /* still try the bytes below */ }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), IMAGE_INLINE_TIMEOUT_MS);
+  try {
+    const response = await fetcher(src, { signal: controller.signal, credentials: 'same-origin' });
+    if (response.ok) {
+      const blob = await response.blob();
+      if (blob.size <= IMAGE_INLINE_MAX_BYTES && blob.type.startsWith('image/')) return await blobToDataUrl(blob);
+    }
+  } catch { /* fall through to the decoded pixels */ } finally { clearTimeout(timer); }
+  if (!img.complete || img.naturalWidth === 0) return null;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    context.drawImage(img, 0, 0);
+    return canvas.toDataURL('image/png');
+  } catch { return null; }
+}
+
+/**
+ * An SVG foreignObject is rendered as an isolated image, so it never loads
+ * the page's <img> URLs (asset logos, uploads, external icons). Copy each one
+ * into the clone as a data: URL so captures show what the page shows.
+ */
+export async function inlineImages(live: ParentNode, clone: ParentNode, fetcher: typeof fetch = fetch): Promise<number> {
+  const sources = [...live.querySelectorAll('img')];
+  const targets = [...clone.querySelectorAll('img')];
+  if (sources.length !== targets.length) return 0;
+  const urls = await Promise.all(sources.map((img) => imageDataUrl(img, fetcher)));
+  let inlined = 0;
+  urls.forEach((url, i) => {
+    const target = targets[i]!;
+    target.removeAttribute('srcset');
+    target.removeAttribute('loading');
+    if (url) { target.setAttribute('src', url); inlined++; } else target.removeAttribute('src');
+  });
+  return inlined;
+}
+
 async function renderPng(): Promise<{ base64: string; width: number; height: number }> {
   const width = innerWidth, height = innerHeight;
   const css = [...document.styleSheets].map((sheet) => {
@@ -109,6 +167,7 @@ async function renderPng(): Promise<{ base64: string; width: number; height: num
   }).join('\n').replace(/:root\b/g, 'html');
   const clone = document.documentElement.cloneNode(true) as HTMLElement;
   clone.querySelectorAll('script,style,link[rel="stylesheet"]').forEach((n) => n.remove());
+  await inlineImages(document.documentElement, clone);
   clone.querySelectorAll('input,textarea').forEach((n) => { n.removeAttribute('value'); if (n.tagName === 'TEXTAREA') n.textContent = ''; });
   const head = clone.querySelector('head');
   const style = document.createElement('style');
