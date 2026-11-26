@@ -19,6 +19,11 @@ Creation requires `--dry-run` and never calls the writer.
 with a timezone. The lane snapshot uses it for the merge window and falls
 back to `at` when absent. `at` continues to carry the event timestamp.
 
+`parseReadyTsv` returns `unhintedRows` entries with `id`, `repo` and `tier`
+for validated lane-open dispatcher jobs. `readyRowsForDepth`
+(`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
+`tier` for the tier tally, including lane-open jobs as `READY`.
+
 ## Desktop appearance
 
 `UiAppearance` (`src/core/verse/ui-appearance-file.ts`) includes
