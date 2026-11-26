@@ -287,8 +287,12 @@ Upgrade the witness and workers together; older workers stay unknown in a pool.
 Standalone legacy queues retain their existing compatibility policy.
 
 Workers reporting the same host share the minimum fresh slot budget. Active
-claims and planned assignments consume it once; a fresh pressure hold blocks
-that host. Placement ranks remaining slots divided by the median accepted
+claims and planned assignments consume it once. A fresh pressure hold blocks
+that host. Pool plans consider jobs with fewer eligible hosts first, in queue
+order when the counts tie. Each physical host with an available slot and an
+eligible worker counts once. This leaves flexible jobs a chance to use other
+hosts when specialized work needs the same slot. For each job, placement
+ranks remaining slots divided by the median accepted
 claim-to-completion duration over 24 hours; a producer withdrawal is a fence,
 not an execution, and adds no sample. Missing latency uses the mean of
 measured host medians (equal weights when none exist). Unknown duration is never

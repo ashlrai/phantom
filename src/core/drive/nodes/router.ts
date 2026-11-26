@@ -115,17 +115,35 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
   const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
+  const hasNodeSlot = (node: NodeRecord) => node.slots === undefined || claims.get(node.nodeId)! < node.slots;
+  const eligibleHosts = new Map(hosts);
+  for (const node of nodes) {
+    const host = hosts.get(node.nodeId);
+    if (!host?.eligibleNodeIds.includes(node.nodeId) || !host.freeSlots) eligibleHosts.delete(node.nodeId);
+  }
+  let jobs = state.jobs.filter(job => job.owner && (owner === undefined || job.owner === owner) && routable(job, now));
+  if (state.pool) {
+    const available = nodes.filter(node => hasNodeSlot(node) && eligibleHosts.has(node.nodeId));
+    const ranked = jobs.map(job => {
+      const choices = new Set<string>();
+      for (const node of available) {
+        if (!shortfall(node, job)) choices.add(eligibleHosts.get(node.nodeId)!.hostId);
+      }
+      return { job, rank: choices.size || nodes.length + 1 };
+    }).sort((a, b) => a.rank - b.rank);
+    jobs = ranked.map(({ job }) => job);
+  }
   const plan: RouteAssignment[] = [];
-  for (const job of state.jobs) {
-    if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
+  for (const job of jobs) {
+    if (!job.owner) continue;
     const reasons = new Map<string, number>();
     let best: NodeRecord | null = null;
     for (const node of nodes) {
       const why = shortfall(node, job);
       if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
-      if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) { reasons.set('capacity', 1); continue; }
-      const host = hosts.get(node.nodeId);
-      if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
+      if (!hasNodeSlot(node)) { reasons.set('capacity', 1); continue; }
+      const host = eligibleHosts.get(node.nodeId);
+      if (state.pool && (!host ||
           (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) { reasons.set('capacity', 1); continue; }
       const score = (n: NodeRecord) => {
         const h = hosts.get(n.nodeId)!;
