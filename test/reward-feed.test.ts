@@ -245,6 +245,33 @@ describe('foldJobsLedgerRewards', () => {
     expect(foldJobsLedgerRewards(text, NOW_MS)).toEqual([]);
   });
 
+  it('requires dispatch and verdict evidence from receipts that do not disclaim execution', () => {
+    const rows = [
+      line({ event: 'batch_claim', job: 'RQ-DECLINED', ts: DISPATCH_ISO, launched: false }),
+      merged('RQ-DECLINED'),
+      launch('RQ-UNRESOLVED'),
+      line({ job: 'RQ-UNRESOLVED', state: 'CLOSED', ts: MERGED_ISO, launched: false }),
+    ];
+
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toEqual([]);
+  });
+
+  it('excludes declined receipts from PR ownership and dispatch attribution', () => {
+    const job = 'RQ-A';
+    const rows = [
+      launch(job),
+      line({ event: 'claim', job, lane: 'claude', ts: '2026-10-28T15:15:00.000Z', launched: false }),
+      line({
+        event: 'publish', job: 'RQ-DECLINED', url: 'https://github.com/ashlrai/phantom/pull/4',
+        ts: DISPATCH_ISO, launched: false,
+      }),
+      merged(job),
+    ];
+
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS, undefined, new Set(['ashlrai/phantom#4'])))
+      .toMatchObject([{ jobId: job, pool: 'codex-cmp', dispatchedAt: DISPATCH_ISO, merged: false }]);
+  });
+
   it('resolves merged-then-reverted as merged:false and a later merge as held', () => {
     const reverted = line({ event: 'outcome', job: 'RQ-E', state: 'REVERTED', reverted_at: '2026-10-28T17:00:00.000Z', ts: '2026-10-28T17:01:00.000Z' });
     const text = [launch('RQ-E'), merged('RQ-E'), reverted, launch('RQ-F'), merged('RQ-F'),

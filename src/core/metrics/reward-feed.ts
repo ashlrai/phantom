@@ -292,6 +292,7 @@ export function foldJobsLedgerRewards(
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
       row = parsed as Record<string, unknown>;
     } catch { continue; }
+    if (row['launched'] === false) continue;
     const id = firstString(row, JOB_ID_KEYS);
     if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
     const state = outcomeStateOf(row);
