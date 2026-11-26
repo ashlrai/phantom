@@ -713,9 +713,12 @@ producing `router.outcome.v1` records folded from `metrics/jobs.jsonl`. The jobs
 ledger is append-only and unbounded, so the read retains the newest
 `ROUTER_OUTCOME_LEDGER_LIMIT` (16 MiB) bytes via `readLedgerTail`: an
 oversized ledger reports `truncated: true` and folds only the retained
-window — a lower bound on history, never a refused read or a claimed
-total. `cost_usd` is an explicit `cost_usd`/`usd`/`cost` field on a jobs
-row when present; otherwise it is the sum of `metrics/api-spend.jsonl`
+window, a lower bound on history. One byte before the window establishes
+whether the first line starts at a newline boundary. The read preserves
+that line at the boundary and discards any partial prefix. An incomplete
+read of the sized window reports `unreadable`. `cost_usd` is an explicit
+`cost_usd`/`usd`/`cost` field on a jobs row when present; otherwise it is
+the sum of `metrics/api-spend.jsonl`
 call costs naming the job (`job`/`job_id`/`id`, same
 `cost_usd`/`usd`/`cost` precedence the fleet spend readers use), read
 under the same bound — spend rows without a job id are unattributable

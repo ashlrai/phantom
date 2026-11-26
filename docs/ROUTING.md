@@ -902,8 +902,10 @@ contradicted by a later `reverted:false`; it stays `null` when neither
 source records anything either way. It is read-only; a missing
 ledger reports `state: "missing"` rather than failing, while an unreadable or
 non-file ledger exits 1. The ledger is append-only and unbounded, so when it
-exceeds the bound the read keeps the newest bytes, drops the cut first line,
-and reports `truncated: true` — every count covers the retained window only,
+exceeds the bound the read keeps the newest bytes and discards any cut
+line prefix. A first line that starts exactly at the byte boundary survives.
+The report flags the bounded read with
+`truncated: true` — every count covers the retained window only,
 a lower bound on the full history. Merge state reads the jobs-ledger
 outcome dialect the sibling fleet readers share: a terminal phase across
 `phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /

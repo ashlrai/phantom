@@ -1317,14 +1317,23 @@ describe('router outcome ledger (612S preservation)', () => {
 
   it('tail-reads whole lines only and flags coverage honestly', async () => {
     const root = runsDir('aaaa\nbbbb\ncccc\n');
-    // 15-byte file; a truncated window always drops its first line because it
-    // may be a cut suffix — here 'bbbb' is dropped even though it looks whole.
-    expect(await readLedgerTail(ledgerPath(root), 10)).toEqual({ state: 'read', text: 'cccc\n', truncated: true });
+    // The byte before the window proves that 'bbbb' begins a whole line.
+    expect(await readLedgerTail(ledgerPath(root), 10)).toEqual({ state: 'read', text: 'bbbb\ncccc\n', truncated: true });
     // A window starting mid-line drops the partial 'bbbb' suffix the same way.
     expect(await readLedgerTail(ledgerPath(root), 9)).toEqual({ state: 'read', text: 'cccc\n', truncated: true });
     // File fits the bound: whole text, no truncation.
     expect(await readLedgerTail(ledgerPath(root), 15)).toEqual({ state: 'read', text: 'aaaa\nbbbb\ncccc\n', truncated: false });
     expect(await readLedgerTail(ledgerPath(root))).toMatchObject({ state: 'read', truncated: false });
+  });
+
+  it('uses byte boundaries and drops even a parseable suffix of a cut line', async () => {
+    const receipt = '{"job":"T1"}\n';
+    const root = runsDir(`é\n${receipt}`);
+    expect(await readLedgerTail(ledgerPath(root), Buffer.byteLength(receipt)))
+      .toEqual({ state: 'read', text: receipt, truncated: true });
+    writeFileSync(ledgerPath(root), `é${receipt}`);
+    expect(await readLedgerTail(ledgerPath(root), Buffer.byteLength(receipt)))
+      .toEqual({ state: 'read', text: '', truncated: true });
   });
 
   it('tail reader yields empty text when the window holds no newline', async () => {
