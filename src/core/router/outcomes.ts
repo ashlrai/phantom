@@ -1677,10 +1677,9 @@ export interface RouterOutcomeFoldOptions {
   /**
    * `owner/repo#n` (lowercase repo) identities of merged PRs recorded as
    * reverted — e.g. `authorityRevertedPrKeys` over the authority ledger's
-   * verified evidence index. A jobs row whose PR URL claim resolves
-   * unambiguously to its own job and canonicalizes to one of these keys
-   * marks the outcome `reverted: true` (sticky-true); ambiguous or
-   * foreign claims never mark. Absent means no authority join.
+   * verified evidence index. A standing merge whose unambiguous PR
+   * identity matches one of these keys is marked `reverted: true`.
+   * Absent means no side-ledger revert join.
    */
   revertedPrKeys?: ReadonlySet<string>;
   /**
@@ -1958,13 +1957,6 @@ function foldRouterOutcomesWithCiCoverage(
       } else if (r['reverted'] === false) {
         o.reverted = false;
       }
-      // The authority-ledger join marks only through the row's own unambiguous
-      // PR claim: claimant === j means this job is the identity's single
-      // claimant, so a reverted pull can never mark a foreign or contested job.
-      if (o.reverted !== true && u !== null && claimant === j && opts.revertedPrKeys !== undefined) {
-        const key = pullRequestKey(u);
-        if (key !== null && opts.revertedPrKeys.has(key)) o.reverted = true;
-      }
     }
     if (typeof r['ci_first_pass'] === 'boolean') o.ci_first_pass = r['ci_first_pass'];
     o.cost_usd = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']) ?? o.cost_usd;
@@ -2200,7 +2192,7 @@ function foldRouterOutcomesWithCiCoverage(
       }
     }
   }
-  if (opts.mergeEvents !== undefined || opts.crossReviews !== undefined) {
+  if (opts.mergeEvents !== undefined || opts.crossReviews !== undefined || opts.revertedPrKeys?.size) {
     for (const o of outcomes.values()) {
       const latestClaim = jobPrKeys.get(o.job_id);
       const verdictClaim = verdictPrKeys.get(o.job_id);
@@ -2209,6 +2201,7 @@ function foldRouterOutcomesWithCiCoverage(
       const prKey = verdictClaim ?? latestClaim;
       if (prKey === undefined) continue;
       if (verdictClaim === undefined && o.merged !== null && soleClaimByJob.get(o.job_id) !== `pr:${prKey}`) continue;
+      if (o.merged === true && opts.revertedPrKeys?.has(prKey)) o.reverted = true;
       if (opts.mergeEvents !== undefined) {
         const evidence = opts.mergeEvents.get(prKey);
         if (evidence !== undefined) {

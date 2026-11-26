@@ -2703,6 +2703,25 @@ describe('router outcome authority revert join', () => {
     expect(byId.get('J2')?.reverted).toBe(true);
   });
 
+  it('joins side-ledger reverts only to the standing merge PR', () => {
+    const fold = foldRouterOutcomes([
+      { job: 'replacement', phase: 'MERGED', pr_url: 'https://github.com/o/r/pull/2', ts: '2026-11-03T00:00:00Z' },
+      { job: 'replacement', phase: 'MERGED', pr_url: 'https://github.com/o/r/pull/1', ts: '2026-11-02T00:00:00Z' },
+      { job: 'legacy', pr_url: 'https://github.com/o/r/pull/3' },
+      { job: 'legacy', phase: 'MERGED' },
+      { job: 'ambiguous-legacy', pr_url: 'https://github.com/o/r/pull/4' },
+      { job: 'ambiguous-legacy', pr_url: 'https://github.com/o/r/pull/5' },
+      { job: 'ambiguous-legacy', phase: 'MERGED' },
+      { job: 'closed', phase: 'CLOSED', pr_url: 'https://github.com/o/r/pull/6' },
+      { job: 'open', phase: 'PUBLISHED', pr_url: 'https://github.com/o/r/pull/7' },
+    ].map(row => JSON.stringify(row)).join('\n'), {
+      revertedPrKeys: new Set(['o/r#1', 'o/r#3', 'o/r#4', 'o/r#6', 'o/r#7']),
+    });
+    expect(fold.outcomes.map(({ job_id, reverted }) => [job_id, reverted])).toEqual([
+      ['replacement', null], ['legacy', true], ['ambiguous-legacy', null], ['closed', null], ['open', null],
+    ]);
+  });
+
   it('leaves reverted untouched when no join is supplied or the PR was never reverted', () => {
     const text = '{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}\n';
     // No option: pure jobs-ledger fold, reverted stays unknown.
