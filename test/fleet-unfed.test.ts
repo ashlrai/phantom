@@ -757,6 +757,18 @@ describe('ready row validation', () => {
     expect(report.resources.find(r => r.lane === 'a')).toMatchObject({ readyHinted: 1, waitingElsewhere: 0, unfed: false });
   });
 
+  it('rejects inherited names in closed tier, cost and data-class fields', () => {
+    const ready = [
+      vrow('RQ-TIER', 'a', 'constructor'),
+      vrow('RQ-MIN', 'a', 'work', '{"min_tier":"toString"}'),
+      vrow('RQ-MAX', 'a', 'work', '{"max_tier":"valueOf"}'),
+      vrow('RQ-COST', 'a', 'work', '{"max_cost_class":"__proto__"}'),
+      vrow('RQ-DATA', 'a', 'work', '{"data_class":"hasOwnProperty"}'),
+    ].join('\n');
+    const report = currentUnfed(JSON.stringify({ lanes: VLANES }), ready);
+    expect(report).toMatchObject({ waiting: 0, invalidRows: 5, unfedLanes: [] });
+  });
+
   it('resolves spec-less rows from the router-queue.md envelope like the dispatcher', () => {
     const routerQueue = [
       '- READY RQ-ENV (P1, pool=codex-personal, needs=git|secrets:DEPLOY_KEY, tier=mid): do the thing',

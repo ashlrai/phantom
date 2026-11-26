@@ -164,8 +164,8 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // unknown, never a guessed queue history. The same check record also
 // resolves `ci_first_pass` fill-only when no jobs row recorded a
 // verdict: any recorded check failure reads false, a `checks_passed`
-// boundary or a recorded merge beside observed check activity reads
-// true, and anything else stays null.
+// boundary reads true in the absence of a recorded failure, and
+// anything else stays null.
 // `merged`, `ttm_s`, `ci_wall_s`, `cost_usd`, `repo` and the new
 // `pool_pct_used` additionally join a sixth ledger,
 // <ashlr>/metrics/reward-signals.jsonl — the reward-signal substrate
@@ -334,7 +334,7 @@ export interface RouterOutcome {
    * The job's recorded CI first-pass verdict — a jobs-row boolean wins;
    * otherwise the joined merge-queue check record resolves it fill-only
    * (any recorded check failure reads false, a `checks_passed` boundary
-   * or a recorded merge beside observed check activity reads true, and
+   * reads true in the absence of a recorded failure, and
    * everything else stays null — unknown, never guessed).
    */
   ci_first_pass: boolean | null;
@@ -1668,9 +1668,8 @@ export interface RouterOutcomeFoldOptions {
    * `revertedPrKeys` applies) to its summary as `merge_queue`; a job with
    * no unambiguous claim or no recorded events keeps null. The joined
    * check record also resolves `ci_first_pass` fill-only — any recorded
-   * check failure reads false, a `checks_passed` boundary or a recorded
-   * merge beside observed check activity reads true, anything else
-   * stays null. Absent means no merge-events join — every merge_queue
+   * check failure reads false, a `checks_passed` boundary reads true in
+   * the absence of a recorded failure, and anything else stays null. Absent means no merge-events join — every merge_queue
    * stays null and ci_first_pass keeps its jobs-row value.
    */
   mergeEvents?: ReadonlyMap<string, MergeQueueEvidence>;
@@ -2163,10 +2162,9 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
           o.merge_queue = { ...evidence, blocked_reasons: [...evidence.blocked_reasons] };
           // Fill-only: a jobs-row ci_first_pass verdict always wins; the
           // merge-queue check record resolves what the jobs rows left
-          // unknown. merged is the fold-time jobs verdict — reward-signal
-          // fills landing later get the same pass in readRouterOutcomes.
+          // unknown.
           if (o.ci_first_pass === null) {
-            o.ci_first_pass = mergeQueueCiFirstPass(o.merge_queue, o.merged === true);
+            o.ci_first_pass = mergeQueueCiFirstPass(evidence);
           }
         }
       }
@@ -2750,24 +2748,14 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
  * The recorded CI first-pass verdict merge-queue evidence supports —
  * fill-only for outcomes whose jobs rows recorded none. Any recorded
  * `check_observed` failure means CI was observed red at least once, so
- * the verdict is false even when a later `checks_passed` boundary or a
- * merge stands — a rerun or a new head got it green, which is not a
- * first pass. With zero recorded failures, a `checks_passed` boundary
- * is the observer's own all-required-checks-green verdict, and a
- * recorded merge beside observed check activity is the ledger's proof
- * the checks reached green — either reads true. Pending-only
- * observations, no check rows at all, and unmerged PRs without the
- * boundary carry no verdict: unknown stays null, never guessed from
- * absent evidence. `merged` is the outcome's standing merge verdict at
- * call time — the fold passes its jobs-ledger verdict and
- * readRouterOutcomes reruns the same fill-only pass after the
- * reward-signal join so a reward-only merge verdict reaches the
- * fallback too.
+ * the verdict is false even when a later `checks_passed` boundary
+ * exists. With no recorded failures, only a `checks_passed` boundary
+ * establishes that all required checks passed. A merge and individual
+ * check observations leave the fallback verdict unknown.
  */
-function mergeQueueCiFirstPass(evidence: MergeQueueEvidence, merged: boolean): boolean | null {
+function mergeQueueCiFirstPass(evidence: MergeQueueEvidence): boolean | null {
   if (evidence.check_failures > 0) return false;
-  if (evidence.checks_passed > 0 || (merged && evidence.check_observations > 0)) return true;
-  return null;
+  return evidence.checks_passed > 0 ? true : null;
 }
 
 /**
@@ -3382,14 +3370,6 @@ export async function readRouterOutcomes(opts: {
       if (o.cost_usd === null) o.cost_usd = reward.cost_usd;
       if (o.repo === null) o.repo = reward.repo;
       o.pool_pct_used = reward.pool_pct_used;
-    }
-    // The reward fill can resolve merged after the fold's merge-queue
-    // pass already ran — rerun the same fill-only ci_first_pass
-    // derivation so a reward-only merge verdict reaches the fallback.
-    for (const o of folded.outcomes) {
-      if (o.ci_first_pass === null && o.merge_queue !== null) {
-        o.ci_first_pass = mergeQueueCiFirstPass(o.merge_queue, o.merged === true);
-      }
     }
   }
   if (emptyTagRead.state === 'read') {

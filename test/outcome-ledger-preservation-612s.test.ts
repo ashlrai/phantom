@@ -2050,8 +2050,7 @@ describe('router outcome merge-events join', () => {
       // J2: a recorded failure beside a later checks_passed -> false; a
       // rerun or new head got it green, which is not a first pass.
       '{"job":"J2","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/52","ts":"2026-11-01T00:00:00Z"}',
-      // J3: merged with observed check activity but no boundary row ->
-      // the merge fallback reads true.
+      // J3: a merge with pending-only check observations stays unknown.
       '{"job":"J3","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/53","ts":"2026-11-01T00:00:00Z"}',
       // J4: pending-only observations on an unmerged PR -> null.
       '{"job":"J4","lane":"alpha","phase":"CLOSED","pr_url":"https://github.com/ashlrai/phantom/pull/54","ts":"2026-11-01T00:00:00Z"}',
@@ -2083,17 +2082,14 @@ describe('router outcome merge-events join', () => {
     const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
     expect(byId.get('J1')?.ci_first_pass).toBe(true);
     expect(byId.get('J2')?.ci_first_pass).toBe(false);
-    expect(byId.get('J3')?.ci_first_pass).toBe(true);
+    expect(byId.get('J3')?.ci_first_pass).toBeNull();
     expect(byId.get('J4')?.ci_first_pass).toBeNull();
     expect(byId.get('J5')?.ci_first_pass).toBe(true);
     expect(byId.get('J6')?.ci_first_pass).toBeNull();
     expect(byId.get('J7')?.ci_first_pass).toBe(true);
   });
 
-  it('lets a reward-resolved merge verdict reach the ci_first_pass fallback', async () => {
-    // The jobs tail dropped J1's merge verdict; the reward substrate
-    // resolves merged:true, and the post-reward pass applies the same
-    // fill-only derivation so observed check activity reads true.
+  it('keeps CI unknown when a reward-resolved merge has only an individual passing check', async () => {
     const root = runsDir('{"job":"J1","lane":"alpha","phase":"VERIFIED","pr_url":"https://github.com/ashlrai/phantom/pull/61","ts":"2026-11-01T00:00:00Z"}\n');
     writeMergeEvents(root, [
       mergeEvent(61, 'check_observed', { conclusion: 'success', required: true }),
@@ -2103,7 +2099,7 @@ describe('router outcome merge-events join', () => {
     const result = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlar });
     const [o] = result.outcomes;
     expect(o?.merged).toBe(true);
-    expect(o?.ci_first_pass).toBe(true);
+    expect(o?.ci_first_pass).toBeNull();
   });
 
   it('keeps merge_queue null and reports merge_events_state when the ledger is absent or refused', async () => {
