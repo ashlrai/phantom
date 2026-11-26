@@ -87,7 +87,13 @@ const pickString = (row: Row, ...names: string[]): string | null => {
 const boundedId = (value: string | null, re: RegExp): string | null =>
   value !== null && re.test(value) ? value : null;
 const jobOf = (row: Row): string | null => boundedId(pickString(row, 'job', 'job_id', 'jobId', 'id'), JOB_ID);
-const laneOf = (row: Row): string | null => boundedId(pickString(row, 'lane', 'pool', 'arm'), LANE_ID);
+const laneOf = (row: Row): string | null => {
+  for (const key of ['lane', 'pool', 'arm']) {
+    const lane = boundedId(pickString(row, key), LANE_ID);
+    if (lane !== null && lane.toLowerCase() !== 'unknown') return lane;
+  }
+  return null;
+};
 const urlOf = (row: Row): string | null => pickString(row, 'url', 'pr_url', 'prUrl', 'pr', 'html_url');
 const eventOf = (row: Row): string => (pickString(row, 'event', 'type', 'kind') ?? '').toLowerCase();
 const phaseOf = (row: Row): string => (pickString(row, 'state', 'outcome', 'status', 'phase', 'result', 'conclusion') ?? '').toUpperCase();

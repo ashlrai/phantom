@@ -54,6 +54,21 @@ describe('fleet lane-reward', () => {
       reasons: { 'invalid-usage': 1 } });
   });
 
+  it('preserves lane evidence through unknown receipts and groups missing lanes as unattributed', async () => {
+    const report = await readLaneReward({ deps: deps({ jobsText: read(rows(
+      { event: 'launch', job: 'RQ-FAKE-L1', lane: 'lane-a' },
+      { event: 'finish', job: 'RQ-FAKE-L1', lane: 'unknown', tokens_total: 120 },
+      { event: 'publish', job: 'RQ-FAKE-L1', lane: 'UNKNOWN', url: URL(11) },
+      { event: 'finish', job: 'RQ-FAKE-L2', lane: 'unknown', pool: 'lane-b', tokens_total: 80 },
+      { event: 'finish', job: 'RQ-FAKE-L3', pool: 'unknown', tokens_total: 50 },
+    )) }) });
+    expect(report.lanes).toMatchObject([
+      { lane: 'lane-a', tokensMeasured: 120, outcomes: { published: 1 } },
+      { lane: 'lane-b', tokensMeasured: 80 },
+      { lane: 'unattributed', tokensMeasured: 50 },
+    ]);
+  });
+
   it('scores merged attempts through the inspector using the trusted proposal', async () => {
     const proposal = { id: 'RQ-FAKE-M1', repo: '/fake/repo', status: 'applied' } as Proposal;
     const seen: unknown[] = [];
