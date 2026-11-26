@@ -49,6 +49,21 @@ const CARGO_LOCK_FILE = /(?:^|\/)Cargo\.lock$/;
 const TSBUILDINFO_FILE = /\.tsbuildinfo$/;
 
 /**
+ * .json files whose own consumers parse JSON-with-comments (JSONC) — the
+ * grammar tsc applies to tsconfig and jsconfig files, VS Code applies to
+ * .vscode settings and *.code-snippets, and Deno applies to deno.json:
+ * line and block comments plus trailing commas are legal there even
+ * though strict JSON.parse rejects them. For exactly these paths the
+ * JSON check reads the normalized text normalizeJsonc produces; every
+ * other .json — package.json, manifests, schemas, registries, the PWA
+ * webmanifest and build-info records — keeps the strict grammar its
+ * consumer enforces.
+ * A name that only resembles a member (my-tsconfig.json, tsconfigfoo.json)
+ * stays strict: the segment must start with the tool's own filename.
+ */
+const JSONC_TOLERANT_FILE = /(?:^|\/)(?:tsconfig(?:\.[^/]*)?|jsconfig|deno)\.json$|(?:^|\/)\.vscode\/.*\.json$|\.code-snippets$/;
+
+/**
  * src/raycast and examples/universe-site own their toolchains: eslint.config.js
  * ignores both trees and no root tsconfig includes them, so a changed script
  * there escapes lint, typecheck and the shebang buckets — shipped authored
@@ -808,6 +823,87 @@ export function runNodeSyntaxCheck(root, files, spawn = spawnSync) {
 }
 
 /**
+ * Reduce JSONC text to the strict JSON JSON.parse reads: drop a leading
+ * BOM, line and block comments, and commas that only precede a closing
+ * brace or bracket. String literals — escapes included — pass through
+ * verbatim, so "http://x" and ",}" inside quotes survive. A comma is
+ * dropped only when the last significant character emitted is not one of
+ * `{`, `[`, `:` or `,` itself, so `[,]`, `{,}` and `[1,,]` still fail
+ * instead of being silently repaired into valid JSON. Parse-error
+ * positions in the result refer to the normalized text, which stays
+ * line-aligned because comments are removed without touching newlines.
+ */
+export function normalizeJsonc(text) {
+  const source = typeof text === 'string' ? text : String(text);
+  // Pass 1: strip a leading BOM and every comment, copying string
+  // literals whole so comment markers inside them are never seen.
+  let stripped = '';
+  let i = source.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const n = source.length;
+  while (i < n) {
+    const c = source[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < n) {
+        const d = source[j];
+        if (d === '\\') { j += 2; continue; }
+        if (d === '"') { j += 1; break; }
+        j += 1;
+      }
+      stripped += source.slice(i, j);
+      i = j;
+      continue;
+    }
+    if (c === '/' && source[i + 1] === '/') {
+      const newline = source.indexOf('\n', i + 2);
+      i = newline === -1 ? n : newline;
+      continue;
+    }
+    if (c === '/' && source[i + 1] === '*') {
+      const end = source.indexOf('*/', i + 2);
+      i = end === -1 ? n : end + 2;
+      continue;
+    }
+    stripped += c;
+    i += 1;
+  }
+  // Pass 2: drop trailing commas — a comma whose next non-space character
+  // closes the container AND which follows a completed value.
+  let out = '';
+  let lastSignificant = '';
+  i = 0;
+  const m = stripped.length;
+  while (i < m) {
+    const c = stripped[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < m) {
+        const d = stripped[j];
+        if (d === '\\') { j += 2; continue; }
+        if (d === '"') { j += 1; break; }
+        j += 1;
+      }
+      out += stripped.slice(i, j);
+      lastSignificant = '"';
+      i = j;
+      continue;
+    }
+    if (c === ',') {
+      let j = i + 1;
+      while (j < m && /\s/.test(stripped[j])) j += 1;
+      if ((stripped[j] === '}' || stripped[j] === ']') && !'{[,:'.includes(lastSignificant)) {
+        i += 1;
+        continue;
+      }
+    }
+    out += c;
+    if (!/\s/.test(c)) lastSignificant = c;
+    i += 1;
+  }
+  return out;
+}
+
+/**
  * Strict-parse changed .json, .webmanifest and .tsbuildinfo files with
  * JSON.parse — the same grammar tscCachePaths already applies to
  * tsconfig.json and sync-plan's checkSyntax applies to fleet machinery,
@@ -816,15 +912,21 @@ export function runNodeSyntaxCheck(root, files, spawn = spawnSync) {
  * incremental-build record is written in — so a failure is a real break
  * for package.json, manifests, schemas, registries, the PWA manifest the
  * web UI ships and tracked build-info files like
- * src/web-ui/tsconfig.minimal.tsbuildinfo. No external interpreter is
- * needed, so unlike the Python and shell checks there is no preflight or
- * SKIP path; every failing path is named with its parse error.
+ * src/web-ui/tsconfig.minimal.tsbuildinfo. Files whose own tool parses
+ * JSON-with-comments instead — tsconfig and jsconfig files, deno.json,
+ * .vscode *.json and *.code-snippets (JSONC_TOLERANT_FILE) — are normalized by
+ * normalizeJsonc first, so a legal comment or trailing comma in one of
+ * those configs no longer fails a file tsc or the editor accepts. No
+ * external interpreter is needed, so unlike the Python and shell checks
+ * there is no preflight or SKIP path; every failing path is named with
+ * its parse error.
  */
 export function runJsonSyntaxCheck(root, files, read = readFileSync) {
   const failures = [];
   for (const path of files) {
     try {
-      JSON.parse(read(resolve(root, path), 'utf8'));
+      const text = read(resolve(root, path), 'utf8');
+      JSON.parse(JSONC_TOLERANT_FILE.test(path) ? normalizeJsonc(text) : text);
     } catch (error) {
       failures.push(`${path}: ${error.message}`);
     }
