@@ -61,6 +61,47 @@ export function listPeers(path?: string) {
   return { status: 'ok', peers: readPeerBindings(bindings).map(p => ({ callsign: p.callsign, lane: p.lane, displayName: p.callsign,
     userId: p.userId, botId: p.botId, active: p.expiresAt > Date.now() })) };
 }
+/** What `inspectPeerBindings` reports about the bindings file every peer
+ * verb authenticates against — retained counts only, never binding fields. */
+export interface PeerBindingsInspection {
+  /** 'missing' when the file is verifiably absent — no peer is enrolled;
+   * 'unavailable' when it exists but fails the same custody, shape or
+   * conflict checks `readPeerBindings` applies — the failure that makes
+   * every `peers` verb refuse; 'available' when it read cleanly. */
+  source: 'missing' | 'available' | 'unavailable';
+  /** Binding rows retained; 0 on a verified-missing file, null when it
+   * cannot be read or validated. */
+  peers: number | null;
+  /** Rows whose `expiresAt` is still ahead of the read's clock — sessions
+   * that can authenticate now, the same split `listPeers` reports per
+   * row; same null rule. */
+  active: number | null;
+}
+/**
+ * Read-only probe of the peer bindings store `readPeerBindings` validates
+ * for `peers send|post|read|list|dispatch` authentication and
+ * `consumePeerWork`'s consumer check — the count-only counterpart of
+ * `listPeers`' enrollment read. Never throws and never writes: an absent
+ * file is a verified-empty store (real zeros); a file failing custody,
+ * schema or uniqueness reports `unavailable` with null counts. Binding
+ * contents — callsigns, lanes, session ids, hashes, team/user/bot ids —
+ * are never read out, only counted.
+ */
+export function inspectPeerBindings(path: string, now: number = Date.now()): PeerBindingsInspection {
+  try { lstatSync(path); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { source: 'missing', peers: 0, active: 0 };
+    }
+    return { source: 'unavailable', peers: null, active: null };
+  }
+  try {
+    const rows = readPeerBindings(path);
+    return { source: 'available', peers: rows.length,
+      active: rows.filter(row => row.expiresAt > now).length };
+  } catch {
+    return { source: 'unavailable', peers: null, active: null };
+  }
+}
 /** Draft metadata is never eligible for the Slack drain. Approval does not provision an app. */
 export function proposeSlackAction(action: 'identity.register' | 'channel.create', name: string, apply = false,
   paths = agentnetPaths()) {
