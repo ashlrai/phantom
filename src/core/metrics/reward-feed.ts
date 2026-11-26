@@ -121,24 +121,20 @@ function dispatchLane(row: Record<string, unknown>): string | null {
 
 const MAX_EPOCH_MS = 8_640_000_000_000_000;
 
-function stateOf(row: Record<string, unknown>): string {
-  return (firstString(row, STATE_KEYS) ?? '').toUpperCase();
-}
-
 /**
- * Event names that carry a terminal merge verdict when no phase field
- * resolves — the 'merged'/'closed' convention job-outcomes, the router
- * outcome fold and the fleet yield readers share. A resolved phase stays
- * authoritative over the event name; every other spelling stays unknown.
+ * Prefer a terminal verdict across the phase aliases. With no terminal
+ * phase, an observed nonterminal phase still blocks the event fallback.
  */
-const OUTCOME_EVENT_STATES: Readonly<Record<string, string>> = { merged: 'MERGED', closed: 'CLOSED' };
-
-/** Terminal phase across the state dialect, or the event-name verdict when no phase field resolves. */
 function outcomeStateOf(row: Record<string, unknown>): string {
-  const state = stateOf(row);
-  if (state !== '') return state;
-  const event = firstString(row, EVENT_KEYS);
-  return event === null ? '' : OUTCOME_EVENT_STATES[event.toLowerCase()] ?? '';
+  let observedPhase = false;
+  for (const key of STATE_KEYS) {
+    const value = row[key];
+    if (typeof value !== 'string') continue;
+    const state = value.trim().toUpperCase();
+    if (MERGE_STATES.has(state) || CLOSED_STATES.has(state)) return state;
+    if (state !== '' && state !== 'UNKNOWN') observedPhase = true;
+  }
+  return observedPhase ? '' : firstString(row, EVENT_KEYS)?.toUpperCase() ?? '';
 }
 
 /** The first parseable ISO or epoch-millisecond stamp among the given aliases. */

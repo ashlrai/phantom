@@ -54,7 +54,11 @@ writes only learning reports and append-only genome entries and does not take
 the outward mutation fence. On the same self-improvement cadence a
 `reward-sync` off-tick job folds the jobs-ledger tail into the append-only
 reward-signal ledger (`src/core/metrics/reward-feed.ts`), discounting merges
-the standing revert set proves did not hold. A standing revert requires
+the standing revert set proves did not hold. The fold reads the first
+`MERGED` or `CLOSED` verdict across `phase`, `state`, `outcome`, `status`,
+`result` and `conclusion`. A `merged` or `closed` event supplies the verdict
+when those fields contain only blanks, missing values or `unknown`.
+A standing revert requires
 an exclusive job claim on the merge's PR. The claim check uses the lowercase
 `owner/repo#n` key, so repository case and a trailing slash do not distinguish
 claims. Future-dated claims can contest attribution once their receipt time

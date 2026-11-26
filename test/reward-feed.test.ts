@@ -540,6 +540,18 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs.find((i) => i.jobId === 'RQ-CL')).toMatchObject({ merged: false, mergedAt: null });
   });
 
+  it.each([
+    [{ phase: 'publish', state: ' merged ' }, true],
+    [{ phase: 'unknown', state: 'OPEN', conclusion: 'closed' }, false],
+    [{ phase: 'CLOSED', state: 'MERGED' }, false],
+    [{ event: 'merged', phase: 'UNKNOWN' }, true],
+  ] as const)('reads terminal verdicts from receipt fields %o', (fields, held) => {
+    const job = 'RQ-VERDICT';
+    const receipt = line({ event: 'outcome', job, ts: MERGED_ISO, ...fields });
+    expect(foldJobsLedgerRewards([launch(job), receipt].join('\n'), NOW_MS))
+      .toMatchObject([{ jobId: job, merged: held, mergedAt: held ? MERGED_ISO : null }]);
+  });
+
   it('keeps a resolved phase authoritative over the event name', () => {
     const text = [
       launch('RQ-PH'),
