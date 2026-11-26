@@ -32,6 +32,7 @@ import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import {
   AUTOMATION_FIRING_ID_PATTERN,
   AUTOMATION_ID_PATTERN,
+  AUTOMATION_INPUT_KEYS,
   AutomationInputError,
   automationsOverview,
   createAutomation,
@@ -39,6 +40,7 @@ import {
   disableAutomation,
   enableAutomation,
   fireAutomation,
+  isPlainObject,
   readAutomationJournal,
   receiveWebhook,
   reviewFiring,
@@ -53,10 +55,6 @@ const DEFINITION_BODY_MAX = 32 * 1024;
 const SMALL_BODY_MAX = 4 * 1024;
 const WEBHOOK_BODY_MAX = 32 * 1024;
 
-const DEFINITION_KEYS = [
-  'id', 'name', 'enabled', 'trigger', 'lane', 'playbookId', 'repos', 'instructions',
-  'maxConcurrent', 'maxPerDay', 'queueDepth', 'spendCapUsd', 'dedupeKey', 'triage',
-] as const;
 const FIRE_KEYS = ['dryRun', 'repo', 'title', 'text'] as const;
 const WEBHOOK_KEYS = ['repo', 'title', 'text', 'key', 'url'] as const;
 
@@ -119,7 +117,7 @@ async function readMutationBody(
     sendInvalid(res, 'invalid JSON body');
     return null;
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+  if (!isPlainObject(parsed)) {
     sendInvalid(res, 'body must be a JSON object');
     return null;
   }
@@ -129,7 +127,7 @@ async function readMutationBody(
       return null;
     }
   }
-  return parsed as Record<string, unknown>;
+  return parsed;
 }
 
 const defaultIsLoopback = (req: IncomingMessage): boolean => LOOPBACK.has(req.socket?.remoteAddress ?? '');
@@ -163,7 +161,7 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
 
       // ── POST /api/verse/automations (create) ─────────────────────────────
       if (p === VERSE_AUTOMATIONS_PATH) {
-        const body = await readMutationBody(ctx, req, res, DEFINITION_KEYS, DEFINITION_BODY_MAX);
+        const body = await readMutationBody(ctx, req, res, AUTOMATION_INPUT_KEYS, DEFINITION_BODY_MAX);
         if (!body) return true;
         const automation = await createAutomation(body);
         sendJson(res, 201, { automation });
@@ -195,7 +193,7 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
 
       // ── POST /api/verse/automations/<id> (update) ────────────────────────
       if (verb === undefined) {
-        const body = await readMutationBody(ctx, req, res, DEFINITION_KEYS, DEFINITION_BODY_MAX);
+        const body = await readMutationBody(ctx, req, res, AUTOMATION_INPUT_KEYS, DEFINITION_BODY_MAX);
         if (!body) return true;
         const automation = await updateAutomation(id, body);
         if (!automation) return (sendNotFound(res, `automation ${id}`), true);

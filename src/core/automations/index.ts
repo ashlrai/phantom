@@ -19,30 +19,24 @@ import {
   setAutomationEnabled,
 } from './store.js';
 import type { AutomationInput, AutomationV1 } from './types.js';
-import { AutomationInputError, canonicalPlaybookRef } from './validate.js';
+import { AutomationInputError, automationToInput, canonicalPlaybookRef } from './validate.js';
 
 export * from './types.js';
-export { AutomationInputError, canonicalPlaybookRef } from './validate.js';
+export { AutomationInputError, formatLocalTimestamp, isPlainObject } from './validate.js';
 export { AUTOMATION_TEMPLATES, automationTemplate } from './templates.js';
 export { parseRrule, nextOccurrence, describeRrule } from './rrule.js';
 export {
   automationsOverview,
-  automationStats,
   fireAutomation,
-  lastBlockedReason,
   receiveTelegramTask,
   receiveWebhook,
   reviewFiring,
   runAutomationsTick,
-  triggerSummary,
   type AutomationEngineDeps,
-  type AutomationsTickSummary,
-  type ReviewResult,
-  type WebhookResult,
 } from './engine.js';
-export type { AutomationDecider, AutomationTriageAnswer, AutomationTriageInput } from './triage.js';
+export type { AutomationDecider } from './triage.js';
 export type { AutomationGh } from './github.js';
-export type { AutomationLaneDeps, LaneOutcome, LaneStatus } from './lanes.js';
+export type { AutomationLaneDeps, LaneStatus } from './lanes.js';
 export { readAutomationJournal, readAutomationState, saveAutomation, type AutomationJournalRecord } from './store.js';
 
 export async function listAutomations(): Promise<AutomationV1[]> {
@@ -89,9 +83,8 @@ export async function createAutomation(input: AutomationInput | Record<string, u
 export async function updateAutomation(id: string, patch: Partial<AutomationInput> | Record<string, unknown>): Promise<AutomationV1 | null> {
   const existing = await getAutomation(id);
   if (!existing) return null;
-  const { v: _v, createdAt: _c, updatedAt: _u, ...current } = existing;
   const { id: _ignored, ...rest } = patch as Record<string, unknown>;
-  const merged: Record<string, unknown> = { ...current, ...rest, id };
+  const merged: Record<string, unknown> = { ...automationToInput(existing), ...rest, id };
   await assertPlaybooksExist(merged);
   return (await saveAutomation(merged, { mode: 'update' })).automation;
 }
