@@ -44,6 +44,24 @@ const COSTS: HarnessModelCost[] = [
 ];
 
 describe('autoscale router scoring', () => {
+  it.each([
+    [84.95, 0.3, 1],
+    [84.92, 0.8, 0],
+    [84.875, 0.04, 25],
+  ])('uses sampled CPU precision at %s%% host utilization and %s%% session utilization', (busyPercent, cpuPercent, expected) => {
+    const routeNode = node(mbp({
+      cpu: { cores: 8, load: null, busyPercent },
+      sessions: [{ harness: 'codex', rootPid: 1, processes: 1, memBytes: 100 * MIB, cpuPercent }],
+    }));
+    expect(fleetRunnable([routeNode.doc], T0).codex).toBe(expected);
+    const plan = planAutoscaleRoutes({
+      nodes: [routeNode], costs: [COSTS[0]!], outcomes: {}, nowMs: T0,
+      jobs: Array.from({ length: expected + 1 }, (_, index) => ({ id: `j${index}` })),
+    });
+    expect(plan.slice(0, expected).map(row => row.nodeId)).toEqual(Array(expected).fill(routeNode.doc.node));
+    expect(plan.at(-1)).toMatchObject({ nodeId: null, rejected: { cpu: 1 } });
+  });
+
   it.each([[0.30, 3], [0.29, 2]])('places exactly the jobs that fit in %s CPU cores', (headroom, expected) => {
     const routeNode = node(mbp());
     routeNode.doc.cpu.headroom_cores = headroom;
