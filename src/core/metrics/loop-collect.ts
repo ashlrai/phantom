@@ -12,7 +12,7 @@ import { execFile } from 'node:child_process';
 import { constants, existsSync } from 'node:fs';
 import { lstat, open, readFile, stat } from 'node:fs/promises';
 import { availableParallelism, homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
 import { readConfiguredNodeProfiles } from '../drive/nodes/profiles.js';
@@ -34,7 +34,8 @@ const SMALL_BYTES = 2 * 1024 * 1024;
 const INFO_PLIST = '/Applications/Phantom.app/Contents/Info.plist';
 
 export function runsRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return env.ASHLR_RUNS_DIR && env.ASHLR_RUNS_DIR.startsWith('/') ? env.ASHLR_RUNS_DIR : join(homedir(), '.ashlr-runs');
+  const override = env.ASHLR_RUNS_DIR;
+  return override && isAbsolute(override) ? override : join(homedir(), '.ashlr-runs');
 }
 
 /** A bounded tail read: the retained text and whether older bytes were cut at the cap. */

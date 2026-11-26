@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { describeContextError } from '../context/use-token-gate.js';
 import { githubCitationUrl, shortSha } from './wiki-model.js';
-import { wikiSystemMapQuery, type SystemMapResult } from './wiki-queries.js';
+import { wikiEcosystemQuery, wikiSystemMapQuery, type SystemMapResult } from './wiki-queries.js';
 import styles from './WikiSystemMap.module.css';
 
 type Graph = Extract<SystemMapResult, { nodes: unknown }>;
@@ -129,7 +129,90 @@ function Diagram({ graph, githubUrl, navigate }: { graph: Graph; githubUrl: stri
   </div>;
 }
 
-export function WikiSystemMap({ repoKey, githubUrl }: { repoKey: string; githubUrl: string | null }) {
+const EDGE_LABEL = {
+  'npm-dependency': 'npm dependency', 'mcp-companion': 'MCP companion', 'package-import': 'Package import',
+} as const;
+
+function ecosystemPath(from: number, to: number): string {
+  const a = position(from), b = position(to);
+  if (Math.abs(a.y - b.y) <= DY) return linkPath(from, to);
+  const aX = a.x + WIDTH / 2, bX = b.x + WIDTH / 2;
+  const direction = a.y < b.y ? 1 : -1;
+  const start = a.y + (direction === 1 ? HEIGHT : 0);
+  const end = b.y + (direction === 1 ? 0 : HEIGHT);
+  const gutter = a.x + WIDTH + (DX - WIDTH) / 2;
+  return `M${aX},${start} v${direction * 10} H${gutter} V${end - direction * 10} H${bX} V${end}`;
+}
+
+function Ecosystem({ back }: { back: () => void }) {
+  const { data, error, status } = useQuery(wikiEcosystemQuery, { freshMs: 0 });
+  const refetch = useRefetch(wikiEcosystemQuery);
+  const [choice, setChoice] = useState<string>();
+  const heading = useRef<HTMLHeadingElement>(null);
+  const marker = useId();
+  useEffect(() => heading.current?.focus(), []);
+  const repos = data?.repos ?? [];
+  const selected = repos.find(repo => repo.repo === choice) ?? repos.find(repo => repo.commit) ?? repos[0];
+  const index = new Map(repos.map(({ repo }, i) => [repo, i]));
+  const edges = data?.edges.filter(edge => edge.from === selected?.repo || edge.to === selected?.repo) ?? [];
+  const indexed = repos.filter(repo => repo.commit).length;
+  return <section className={styles.root} aria-label="Signed-grant ecosystem map" onKeyDown={event => {
+    if (event.key === 'Escape') { event.preventDefault(); back(); }
+  }}>
+    <nav className={styles.breadcrumb} aria-label="System map breadcrumb">
+      <button type="button" onClick={back}>Overview</button><span aria-current="page">/ Ecosystem</span>
+    </nav>
+    <div className={styles.header}><div><p className={styles.eyebrow}>Repo Wiki · System map</p>
+      <h2 ref={heading} tabIndex={-1}>Ecosystem</h2></div></div>
+    {error ? <div role="alert"><p>{describeContextError(error)}</p><button type="button" onClick={refetch}>Retry map</button></div> :
+      !data ? <p role="status">Reading the signed repository scope…</p> :
+        data.status !== 'current' ? <p role="status">No verified standing grant scope is available.</p> : <>
+          <div className={styles.coverage}><span><strong>{indexed} of {repos.length}</strong> signed repos indexed</span>
+            <span>{data.edges.length} source-linked relationships</span>{data.truncated && <strong>View truncated</strong>}
+            <button type="button" onClick={refetch} disabled={status === 'refreshing'}>Refresh map</button></div>
+          <div className={styles.layout}>
+            <div className={styles.viewport}><svg className={styles.diagram} viewBox={`0 0 710 ${Math.ceil(repos.length / COLS) * DY + 8}`} aria-label="Repositories in the signed grant">
+              <defs><marker id={marker} viewBox="0 0 8 8" refX="8" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 L8 4 L0 8 Z" /></marker></defs>
+              <g className={styles.edges} aria-hidden="true">{edges.map(edge => <path key={`${edge.from}:${edge.to}:${edge.kind}`}
+                d={ecosystemPath(index.get(edge.from)!, index.get(edge.to)!)} markerEnd={`url(#${marker})`} />)}</g>
+              {repos.map(({ repo, commit }, i) => {
+                const { x, y } = position(i);
+                const name = repo.split('/')[1] ?? repo;
+                return <g key={repo} className={styles.card} transform={`translate(${x} ${y})`} role="button" tabIndex={0}
+                  aria-label={repo} aria-pressed={selected?.repo === repo} onClick={() => setChoice(repo)} onKeyDown={event => {
+                    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setChoice(repo); }
+                  }}>
+                  <title>{repo}</title><rect width={WIDTH} height={HEIGHT} rx={8} />
+                  <text className={styles.nodeKind} x={12} y={22}>{commit ? shortSha(commit) : 'Not indexed'}</text>
+                  <text className={styles.nodeLabel} x={12} y={45}>{name.length > 23 ? `${name.slice(0, 22)}…` : name}</text>
+                </g>;
+              })}
+            </svg></div>
+            <aside className={styles.detail} aria-label="Repository relationships">
+              <p className={styles.eyebrow}>Selected repository</p>
+              <h3>{selected?.repo}</h3>
+              {selected?.commit ? <p>Pinned at <code>{shortSha(selected.commit)}</code></p> : <p>No matching local checkout was indexed.</p>}
+              <h4>Connections <span>{edges.length}</span></h4>
+              {edges.length ? <ul>{edges.map(edge => <li key={`${edge.from}:${edge.to}:${edge.kind}`}>
+                <span>{EDGE_LABEL[edge.kind]} · {edge.from === selected?.repo ? 'outgoing' : 'incoming'}</span>
+                <button type="button" onClick={() => setChoice(edge.from === selected?.repo ? edge.to : edge.from)}>
+                  {edge.from === selected?.repo ? edge.to : edge.from}
+                </button>
+                <Source anchor={edge.anchor} githubUrl={`https://github.com/${edge.from}`} />
+              </li>)}</ul> : <p>No indexed connections.</p>}
+            </aside>
+          </div>
+        </>}
+  </section>;
+}
+
+export function WikiSystemMap(props: { repoKey: string; githubUrl: string | null }) {
+  const [ecosystem, setEcosystem] = useState(false);
+  return ecosystem ? <Ecosystem back={() => setEcosystem(false)} /> :
+    <RepoSystemMap {...props} openEcosystem={() => setEcosystem(true)} />;
+}
+
+function RepoSystemMap({ repoKey, githubUrl, openEcosystem }: { repoKey: string; githubUrl: string | null; openEcosystem: () => void }) {
   const [location, setLocation] = useState<Location>(ROOT);
   const [moved, setMoved] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -172,6 +255,7 @@ export function WikiSystemMap({ repoKey, githubUrl }: { repoKey: string; githubU
     if (event.key === 'Escape' && location.trail.length > 0) { event.preventDefault(); go(location.trail.slice(0, -1)); }
   }}>
     <nav className={styles.breadcrumb} aria-label="System map breadcrumb">
+      <button type="button" onClick={openEcosystem}>Ecosystem</button><span aria-hidden="true">/</span>
       <button type="button" onClick={() => go([])} aria-current={current ? undefined : 'page'}>Overview</button>
       {location.trail.map((node, i) => <span key={node.id}><span aria-hidden="true">/</span>
         <button type="button" onClick={() => go(location.trail.slice(0, i + 1))} aria-current={node.id === current?.id ? 'page' : undefined}>{node.label}</button>

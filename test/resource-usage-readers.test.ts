@@ -32,17 +32,18 @@ const snapshot = (...seats: SeatCapacity[]): CapacitySnapshot => ({ v: 1, publis
 describe('capacity snapshot rail source', () => {
   it('bridges fresh native seats into verified rail readings, retaining their original expiration', async () => {
     const claude = { ...seat('max-seat', 'claude'), staleAfter: new Date(NOW + 1000).toISOString() };
-    const sources = defaultResourceLiveSources({ runsDir: scratch(), codexSeatMap: { personal: 'codex-personal', company: 'codex-cmp' },
+    const sources = defaultResourceLiveSources({ runsDir: scratch(), codexSeatMap: { personal: 'codex-personal' },
       readCapacity: () => snapshot(claude, seat('personal', 'codex'), seat('company', 'codex')),
       readClaudeQuota: async () => null, readClaudeEvent: () => null });
     const selected = Object.fromEntries(Object.entries(sources).map(([id, list]) => [id,
-      ['claude-weekly', 'codex-personal', 'codex-cmp'].includes(id) ? list : []])) as typeof sources;
+      ['claude-weekly', 'codex-personal'].includes(id) ? list : []])) as typeof sources;
     const { sidecar } = await runResourceLiveTick({ runsDir: scratch(), sources: selected, nowMs: NOW, activeLanes: () => new Set() });
-    for (const id of ['claude-weekly', 'codex-personal', 'codex-cmp']) {
+    for (const id of ['claude-weekly', 'codex-personal']) {
       expect(sidecar.readings.find(r => r.id === id)).toMatchObject({ verified: true, used: 25, remaining: 75, confidence: 'high', observed_at: observedAt });
     }
     const rows = projectResourceLiveFeed(sidecar, NOW).readings;
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(2);
+    expect(sidecar.readings.some(r => r.id === 'codex-cmp')).toBe(false);
     expect(rows.find(r => r.lane === 'claude-max')?.staleAfter).toBe(claude.staleAfter);
     expect(presentUsageSensors(rows, NOW + 1000).lanes.find(r => r.lane === 'claude-max')?.headroom).toBeNull();
   });
@@ -128,9 +129,11 @@ describe('source config and operator fallback', () => {
   });
   it('validates persisted names-only settings and preserves env overrides', () => {
     const root = scratch();
-    const liveSources = { anthropicCost: credit, codexSeatMap: { company: 'codex-cmp' }, operatorPageFallback: true, accountsRoot: '/fixture/accounts' };
+    const liveSources = { anthropicCost: credit, codexSeatMap: { company: 'codex-cmp', personal: 'codex-personal' },
+      codexCmpHome: '/fixture/company', codexPersonalHome: '/fixture/company', operatorPageFallback: true, accountsRoot: '/fixture/accounts' };
     writeFileSync(join(root, 'config.json'), JSON.stringify({ usage: { liveSources } }));
-    expect(loadConfigAt(root).usage?.liveSources).toEqual(liveSources);
+    expect(loadConfigAt(root).usage?.liveSources).toEqual({ anthropicCost: credit, codexSeatMap: { personal: 'codex-personal' },
+      operatorPageFallback: true, accountsRoot: '/fixture/accounts' });
     expect(liveSourceOptions(loadConfigAt(root), { PHANTOM_RESOURCE_LIVE_ACCOUNTS_ROOT: '/override' }).accountsRoot).toBe('/override');
     writeFileSync(join(root, 'config.json'), JSON.stringify({ usage: { liveSources: { anthropicCost: { ...credit, adminKeyHandle: 'not a handle' } } } }));
     expect(loadConfigAt(root).usage).toEqual({});

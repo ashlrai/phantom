@@ -10,13 +10,10 @@
  * landing, whether conflicting PRs are piling up, and what is blocked on
  * Mason.
  *
- * RECOVERY STATUS. This restores the #4070 writer path only — the protected
- * leader.ts tick hook and CLI dialect were not recovered, so nothing calls
- * this at runtime yet; wiring the tick is an explicit owner follow-up.
+ * The leader tick records this board; reading it never changes the queue.
  *
- * LOOPBACK-SAFE AND BOUNDED. Every input is a local file under the runs dir
- * (queue/ready.tsv, queue/jobs.jsonl, NEEDS-MASON.md) through the same
- * capped readers the fleet verbs use — no gh, no network, no model. Nothing
+ * LOOPBACK-SAFE AND BOUNDED. Reads fleet files and the same capacity evidence
+ * as the resource planner — no gh or model calls. Nothing
  * here grants or revokes authority: the board describes, it never acts.
  * `recordLeaderBoard` never throws so a broken source can never break the
  * tick that produced it.
@@ -38,6 +35,8 @@ import { readSource } from './runs-parked-queue.js';
 import { getLaneQueueCounts } from './queue-counts.js';
 import { readNeedsMason, type NeedsMasonItem } from './needs-mason-resolve.js';
 import { sanitizePublicJson } from '../util/public-json.js';
+import { readFleetResourcePlan } from '../usage/resource-live/fleet-plan.js';
+import type { FleetBoardV1 } from './leader-journal.js';
 
 export const LEADER_BOARD_SCHEMA = 'fleet.leader-board.v1' as const;
 export const LEADER_BOARD_FILE = 'leader-board.json';
@@ -74,6 +73,7 @@ export interface LeaderBoardV1 {
   schema: typeof LEADER_BOARD_SCHEMA;
   generatedAt: string;
   lanes: LeaderBoardLane[];
+  resourcePlan?: FleetBoardV1['resourcePlan'];
   /** READY rows by queue tier; 'unknown' covers rows naming no/invalid tier. null when ready.tsv was unreadable. */
   queueDepthByTier: Record<string, number> | null;
   /** Unique merged jobs/PRs in the trailing hour across lanes; null without a healthy merge ledger. */
@@ -244,9 +244,10 @@ function previousHistory(board: LeaderBoardV1 | null): LeaderBoardConflictSample
 // Build + write
 // ---------------------------------------------------------------------------
 
-async function buildLeaderBoard(runsDir: string, nowMs: number, previous: LeaderBoardConflictSample[]): Promise<LeaderBoardV1> {
+async function buildLeaderBoard(runsDir: string, nowMs: number, previous: LeaderBoardConflictSample[],
+  capacity: ReturnType<typeof readFleetResourcePlan>): Promise<LeaderBoardV1> {
   const at = new Date(nowMs);
-  const [readySource, counts, needs] = await Promise.all([
+  const [readySource, counts, needs, plan] = await Promise.all([
     readSource(join(runsDir, 'queue', 'ready.tsv'), MAX_READY_BYTES, false),
     getLaneQueueCounts({ runsDir, now: () => at }).then(
       (report) => ({ state: 'ok' as const, report }),
@@ -255,6 +256,7 @@ async function buildLeaderBoard(runsDir: string, nowMs: number, previous: Leader
     Promise.resolve().then(() => {
       try { return readNeedsMason({ runsDir }); } catch { return { status: 'unavailable' as const, items: [] }; }
     }),
+    capacity.catch(() => null),
   ]);
 
   const depthRows = readySource.state === 'healthy' ? readyRowsForDepth(readySource.text) : null;
@@ -266,6 +268,11 @@ async function buildLeaderBoard(runsDir: string, nowMs: number, previous: Leader
     mergesLastHour: row.merges,
     oldestWaitSeconds: row.oldestWaitSeconds,
   }));
+  for (const row of plan?.lanes ?? []) {
+    const lane = lanes.find(lane => lane.lane === row.lane);
+    if (lane) lane.running = row.running ?? lane.running;
+    else if (row.running !== null) lanes.push({ lane: row.lane, ready: null, parked: null, running: row.running, mergesLastHour: null, oldestWaitSeconds: null });
+  }
 
   const conflictCount = readySource.state === 'healthy' ? conflictingPrIds(readySource.text).size : null;
   const history = [...previous, ...(conflictCount === null ? [] : [{ at: at.toISOString(), count: conflictCount }])].slice(-MAX_HISTORY);
@@ -276,6 +283,17 @@ async function buildLeaderBoard(runsDir: string, nowMs: number, previous: Leader
     schema: LEADER_BOARD_SCHEMA,
     generatedAt: at.toISOString(),
     lanes,
+    resourcePlan: plan && {
+      lanes: plan.lanes.map(({ lane, running, target_concurrency }) => ({ lane, running, target_concurrency })),
+      deadlines: [
+        ...plan.allowances.flatMap(({ id, label, lane, unit, deadline_at, projected_waste_at_deadline }) =>
+          deadline_at === null ? [] : [{ id, label, lane, unit, deadline_at, projected_waste_at_deadline }]),
+        ...(plan.reset_bank_deadlines ?? []).map(({ count, kind, expires_at }, index) => ({
+          id: `codex-reset-bank-${index}`, label: `Codex reset bank · ${count} × ${kind}`, lane: 'codex-personal',
+          unit: 'resets', deadline_at: expires_at, projected_waste_at_deadline: null,
+        })),
+      ].sort((a, b) => Date.parse(a.deadline_at) - Date.parse(b.deadline_at)),
+    },
     queueDepthByTier: depthRows === null ? null : queueDepthByTier(depthRows),
     mergesLastHour: counts.report?.totals.merges ?? null,
     conflictingPrs: { count: conflictCount, delta, trend, history },
@@ -293,14 +311,14 @@ async function buildLeaderBoard(runsDir: string, nowMs: number, previous: Leader
  * trend), builds, then writes atomically (0600 temp + rename into a 0700
  * coordination dir). Never throws: a failure degrades this sample only.
  */
-export async function recordLeaderBoard(opts: { runsDir?: string; nowMs?: number } = {}): Promise<LeaderBoardRecordResult> {
+export async function recordLeaderBoard(opts: { runsDir?: string; nowMs?: number; readCapacity?: typeof readFleetResourcePlan } = {}): Promise<LeaderBoardRecordResult> {
   const runsDir = opts.runsDir ?? defaultRunsDir();
   const path = leaderBoardPath(runsDir);
   try {
     if (!isAbsolute(runsDir)) return { wrote: false, path, reason: 'runs dir is not absolute' };
     const nowMs = opts.nowMs ?? Date.now();
     const previous = previousHistory((await readLeaderBoard({ runsDir })).board);
-    const board = await buildLeaderBoard(runsDir, nowMs, previous);
+    const board = await buildLeaderBoard(runsDir, nowMs, previous, (opts.readCapacity ?? readFleetResourcePlan)(runsDir, nowMs));
     const dir = join(runsDir, 'coordination');
     await mkdir(dir, { recursive: true, mode: 0o700 });
     const temp = `${path}.${randomUUID()}.tmp`;

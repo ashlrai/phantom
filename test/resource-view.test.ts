@@ -3,52 +3,52 @@ import { buildResourceView, paceResourceSlots, projectMachineResource, projectPo
 
 const NOW = Date.parse('2026-10-26T16:00:00.000Z');
 const iso = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
-const reading = (extra = {}) => ({ pool: 'codex-cmp', pctUsed: 40, resetAt: iso(3),
-  fetchedAt: iso(0), source: 'codex-cmp-reader', burnRatePctPerHour: 30, ...extra });
+const reading = (extra = {}) => ({ pool: 'codex-personal', pctUsed: 40, resetAt: iso(3),
+  fetchedAt: iso(0), source: 'codex-personal-reader', burnRatePctPerHour: 30, ...extra });
 const machine = (extra = {}) => ({ schemaVersion: 1, sampledAtMs: NOW, ram: { freeBytes: 25, totalBytes: 100 },
   swap: { usedBytes: 2, growthBytesPerSecond: 0 }, disks: [{ volume: '/', freeBytes: 50 }],
   queueState: 'known', memguardPaused: false, headroom: 4, jobs: [], ...extra });
 
 describe('resource.v1 projection', () => {
   it('projects linear burn from the original reading time', () => {
-    expect(projectPoolResource('codex-cmp', reading(), null, NOW + 60_000)).toEqual({
-      pool: 'codex-cmp', pctUsed: 40, resetAt: iso(3), fetchedAt: iso(0), source: 'codex-cmp-reader',
+    expect(projectPoolResource('codex-personal', reading(), null, NOW + 60_000)).toEqual({
+      pool: 'codex-personal', pctUsed: 40, resetAt: iso(3), fetchedAt: iso(0), source: 'codex-personal-reader',
       burnRatePerHour: 30, projectedExhaustionAt: iso(2), paceRatio: 1.5, status: 'amber',
     });
   });
   it('treats observed zero burn as green with no finite exhaustion', () => {
-    expect(projectPoolResource('codex-cmp', reading({ burnRatePctPerHour: 0 }), null, NOW)).toMatchObject({
+    expect(projectPoolResource('codex-personal', reading({ burnRatePctPerHour: 0 }), null, NOW)).toMatchObject({
       burnRatePerHour: 0, paceRatio: 0, projectedExhaustionAt: null, status: 'green',
     });
   });
   it('reports an already exhausted pool even without burn evidence', () => {
-    expect(projectPoolResource('codex-cmp', reading({ pctUsed: 100, burnRatePctPerHour: null }), null, NOW)).toMatchObject({
+    expect(projectPoolResource('codex-personal', reading({ pctUsed: 100, burnRatePctPerHour: null }), null, NOW)).toMatchObject({
       projectedExhaustionAt: iso(0), paceRatio: null, status: 'red',
     });
   });
   it('uses two comparable readings, including genuine unchanged usage', () => {
     const before = reading({ pctUsed: 25, fetchedAt: iso(-0.5) });
-    expect(projectPoolResource('codex-cmp', reading({ burnRatePctPerHour: null }), before, NOW).burnRatePerHour).toBe(30);
-    expect(projectPoolResource('codex-cmp', reading({ burnRatePctPerHour: null }), { ...before, pctUsed: 40 }, NOW).burnRatePerHour).toBe(0);
+    expect(projectPoolResource('codex-personal', reading({ burnRatePctPerHour: null }), before, NOW).burnRatePerHour).toBe(30);
+    expect(projectPoolResource('codex-personal', reading({ burnRatePctPerHour: null }), { ...before, pctUsed: 40 }, NOW).burnRatePerHour).toBe(0);
   });
   it.each([
     { pctUsed: null }, { pctUsed: -1 }, { pctUsed: NaN }, { fetchedAt: iso(1) },
     { fetchedAt: new Date(NOW - RESOURCE_MAX_AGE_MS).toISOString() }, { resetAt: iso(0) },
-    { source: 'TEST-untrusted-text' }, { pool: 'codex-personal' },
+    { source: 'TEST-untrusted-text' }, { pool: 'terra' },
   ])('keeps invalid, expired or unknown usage unknown: %j', extra => {
-    expect(projectPoolResource('codex-cmp', reading(extra), null, NOW)).toMatchObject({ pctUsed: null, status: 'unknown', burnRatePerHour: null });
+    expect(projectPoolResource('codex-personal', reading(extra), null, NOW)).toMatchObject({ pctUsed: null, status: 'unknown', burnRatePerHour: null });
   });
   it.each([{ resetAt: iso(4) }, { pctUsed: 50 }, { fetchedAt: iso(0) }, { source: 'TEST-untrusted-text' }])(
     'does not invent burn across a changed window/counter/source or repeated reading: %j', extra => {
       const before = reading({ pctUsed: 25, fetchedAt: iso(-0.5), ...extra });
-      expect(projectPoolResource('codex-cmp', reading({ burnRatePctPerHour: null }), before, NOW).burnRatePerHour).toBeNull();
+      expect(projectPoolResource('codex-personal', reading({ burnRatePctPerHour: null }), before, NOW).burnRatePerHour).toBeNull();
     });
   it('keeps a known percentage but unknown pace when reset or burn is missing', () => {
-    expect(projectPoolResource('codex-cmp', reading({ resetAt: null }), null, NOW)).toMatchObject({ pctUsed: 40, paceRatio: null, status: 'unknown' });
-    expect(projectPoolResource('codex-cmp', reading({ burnRatePctPerHour: null }), null, NOW)).toMatchObject({ pctUsed: 40, paceRatio: null, status: 'unknown' });
+    expect(projectPoolResource('codex-personal', reading({ resetAt: null }), null, NOW)).toMatchObject({ pctUsed: 40, paceRatio: null, status: 'unknown' });
+    expect(projectPoolResource('codex-personal', reading({ burnRatePctPerHour: null }), null, NOW)).toMatchObject({ pctUsed: 40, paceRatio: null, status: 'unknown' });
   });
   it('survives tiny burn without nonfinite JSON values', () => {
-    const view = projectPoolResource('codex-cmp', reading({ burnRatePctPerHour: Number.MIN_VALUE }), null, NOW);
+    const view = projectPoolResource('codex-personal', reading({ burnRatePctPerHour: Number.MIN_VALUE }), null, NOW);
     expect(view.projectedExhaustionAt).toBeNull();
     expect(JSON.parse(JSON.stringify(view))).toEqual(view);
   });
@@ -105,28 +105,28 @@ describe('Performance telemetry and inventory', () => {
 });
 
 describe('per-pool pacing consumes upstream plans and admitted ceilings', () => {
-  const plans = { 'codex-cmp': { allowance: 0.5, periods: [{ startMs: NOW, endMs: NOW + 3_600_000 }] },
+  const plans = { 'codex-personal': { allowance: 0.5, periods: [{ startMs: NOW, endMs: NOW + 3_600_000 }] },
     'claude-max': { allowance: 0.5, periods: [{ startMs: NOW, endMs: NOW + 3_600_000 }] } };
-  const snapshot = () => buildResourceView({ readings: { 'codex-cmp': reading(),
+  const snapshot = () => buildResourceView({ readings: { 'codex-personal': reading(),
     'claude-max': reading({ pool: 'claude-max', source: 'claude-max-reader', resetAt: iso(1) }) }, resources: { machine: machine() } }, NOW);
   it('throttles a pool exhausting before its reset while opening another under its own pace', () => {
-    expect(paceResourceSlots(snapshot(), { 'codex-cmp': 6, 'claude-max': 6 }, plans, NOW).slice(1, 4)).toEqual([
-      { pool: 'codex-cmp', action: 'throttle', slots: 4 }, { pool: 'codex-personal', action: 'unknown', slots: null },
+    expect(paceResourceSlots(snapshot(), { 'codex-personal': 6, 'claude-max': 6 }, plans, NOW).slice(1, 3)).toEqual([
+      { pool: 'codex-personal', action: 'throttle', slots: 4 },
       { pool: 'claude-max', action: 'open', slots: 6 },
     ]);
   });
   it('holds at the pacer allowance and cannot exceed admitted slots', () => {
-    const result = paceResourceSlots(snapshot(), { 'codex-cmp': 6 }, { 'codex-cmp': { ...plans['codex-cmp'], allowance: 0 } }, NOW);
-    expect(result[1]).toEqual({ pool: 'codex-cmp', action: 'hold', slots: 0 });
+    const result = paceResourceSlots(snapshot(), { 'codex-personal': 6 }, { 'codex-personal': { ...plans['codex-personal'], allowance: 0 } }, NOW);
+    expect(result[1]).toEqual({ pool: 'codex-personal', action: 'hold', slots: 0 });
   });
   it('withholds decisions when the pacer or signal-slots is missing', () => {
-    expect(paceResourceSlots(snapshot(), { 'codex-cmp': 6 }, {}, NOW)[1]?.action).toBe('unknown');
+    expect(paceResourceSlots(snapshot(), { 'codex-personal': 6 }, {}, NOW)[1]?.action).toBe('unknown');
     expect(paceResourceSlots(snapshot(), {}, plans, NOW)[1]?.slots).toBeNull();
   });
   it('rechecks exhaustion and machine freshness at consumption time', () => {
     const view = snapshot();
     view.pools[1]!.projectedExhaustionAt = new Date(NOW + 1000).toISOString();
-    expect(paceResourceSlots(view, { 'codex-cmp': 6 }, plans, NOW + 2000)[1]?.action).toBe('hold');
-    expect(paceResourceSlots(snapshot(), { 'codex-cmp': 6 }, plans, NOW + 60_000)[1]?.action).toBe('unknown');
+    expect(paceResourceSlots(view, { 'codex-personal': 6 }, plans, NOW + 2000)[1]?.action).toBe('hold');
+    expect(paceResourceSlots(snapshot(), { 'codex-personal': 6 }, plans, NOW + 60_000)[1]?.action).toBe('unknown');
   });
 });

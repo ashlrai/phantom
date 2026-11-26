@@ -370,8 +370,9 @@ CPU headroom is 85% of cores minus busy cores. Measured zero CPU headroom
 blocks placements even when CPU cost per session is unknown or recorded as zero.
 It also reduces measured runnable counts to zero, including in fleet totals
 that read older capacity documents. Unmeasured harness counts remain null.
-Kernel pressure above normal,
-or swapouts at memguard's growth rate, stop every harness on that node. A cloud
+Kernel pressure above normal or swap growth stop placements and reduce
+measured runnable counts to zero in fleet totals. Both reads honor direct
+measurements and recorded limiter labels. A cloud
 CLI therefore costs a node only its own measured footprint. A whole-host
 backoff only happens when one of those gates is hit. A harness never seen on
 the node reports `null` (unknown), never a guess. The previous document supplies swap growth and footprints
@@ -388,6 +389,8 @@ cannot increase capacity and a newer hold takes precedence. Conflicting
 inputs at the same newest timestamp leave that node's capacity unknown.
 For a node without its own harness footprint, routing can borrow measurements
 from other nodes whose latest snapshots pass the same freshness check.
+A borrowed footprint uses the largest observed memory and CPU costs for the
+harness independently. CPU cost stays `null` when no donor measured it.
 A fresh snapshot from a node under pressure or swap growth can still supply
 a footprint. If no eligible measurement exists, the router reports
 `footprint-unmeasured` for that candidate.

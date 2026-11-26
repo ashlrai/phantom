@@ -28,6 +28,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { constants } from 'node:fs';
 import { link, lstat, mkdir, open, readdir, realpath, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -346,7 +347,12 @@ export async function writeDropJob(
   // mkdir could not make an existing symlink safe: re-prove containment on the
   // now-materialized directory before publishing into it.
   const materialized = await realInside(root, 'leader', 'drop', 'claude');
-  const content = composeDropJobFile(input);
+  const { emptyWikiSlice, fleetBrainContext } = await import('../knowledge/wiki/brain-cloud.js');
+  const repo = input.repo ?? DROP_JOB_DEFAULT_REPO;
+  const ranked = await fleetBrainContext(repo, input.body).catch(emptyWikiSlice);
+  const enriched = { ...input, body: `${input.body}\n\n${ranked.text}` };
+  const slice = ranked.text && validateDropJob(enriched).ok ? ranked : emptyWikiSlice();
+  const content = composeDropJobFile(slice.text ? enriched : input);
   const temp = join(materialized, `.${name}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`);
   const handle = await open(temp, 'wx', 0o600);
   try {
@@ -365,7 +371,23 @@ export async function writeDropJob(
     await unlink(temp).catch(() => undefined);
   }
   const file = join(materialized, name);
-  return { file, bytes: Buffer.byteLength(content, 'utf8'), at: now().toISOString() };
+  const at = now().toISOString();
+  await recordWikiSlice(root, {
+    event: 'wiki_slice', job: DROP_JOB_FILE_PREFIX + input.id, repo, ts: at,
+    wikiSlice: { bytes: Buffer.byteLength(slice.text), nodeIds: slice.nodeIds },
+  }).catch(() => undefined);
+  return { file, bytes: Buffer.byteLength(content, 'utf8'), at };
+}
+
+async function recordWikiSlice(root: string, row: object): Promise<void> {
+  await mkdir(await realInside(root, 'metrics'), { recursive: true, mode: 0o700 });
+  const metrics = await realInside(root, 'metrics', 'jobs.jsonl');
+  const handle = await open(metrics, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+  try {
+    if ((await handle.stat()).isFile()) await handle.appendFile(JSON.stringify(row) + '\n');
+  } finally {
+    await handle.close();
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -8,23 +8,15 @@ import {
   checkLaneWorktree,
   evaluateDesktopLaneAdmission,
   measureDesktopHost,
-  parseCodexWindowUsage,
   parseMemoryFreePercent,
-  readCodexCmpUsage,
   runCodexDesktopLaneTask,
   type CodexLaneDeps,
   type DesktopHostSample,
   type GitProbes,
 } from '../src/core/verse/codex-desktop-lane.js';
-import type { DesktopAdapter, DesktopStatus, ToolCall } from '../src/core/verse/desktop-adapters.js';
-import { formatAxNode } from '../src/core/verse/verse-mcp-computer.js';
+import type { DesktopAdapter, DesktopStatus } from '../src/core/verse/desktop-adapters.js';
 
-const NOW = new Date('2026-11-16T12:00:00.000Z');
 const BUNDLE = 'com.openai.codex';
-const ok = (text: string) => ({ content: [{ type: 'text' as const, text }] });
-const err = (text: string) => ({ content: [{ type: 'text' as const, text }], isError: true });
-const treeText = (nodes: Array<Record<string, unknown>>): string =>
-  ['Accessibility tree of Codex', '<untrusted id="a" source="s">', ...nodes.map((n) => formatAxNode(n)), '</untrusted id="a">'].join('\n');
 
 const healthy: DesktopHostSample = {
   load: { load1: 2, load5: 2, load15: 2, cores: 18, ratio: 0.1 },
@@ -201,36 +193,5 @@ describe('runCodexDesktopLaneTask', () => {
     const failed = fakeAdapter([{ state: 'idle', signals: [] }], { start: async () => ({ ok: false, error: 'no composer' }) });
     expect(await runCodexDesktopLaneTask({ id: 'job-11', task: 'x', worktree }, laneDeps({ home, adapter: failed }))).toMatchObject({ ok: false, stage: 'start' });
     expect(await runCodexDesktopLaneTask({ id: 'job-12', task: 'x', worktree }, laneDeps({ home, adapter: fakeAdapter([{ state: 'idle', signals: [] }]) }))).toMatchObject({ ok: true });
-  });
-});
-
-describe('CMP usage from the visible window', () => {
-  it('reads used percentage and an absolute reset date', () => {
-    expect(parseCodexWindowUsage(['Weekly usage', '62% used', 'Resets Nov 25'], NOW)).toEqual({ pctUsed: 62, resetAt: '2026-11-25T00:00:00.000Z' });
-  });
-  it('converts remaining to used', () => {
-    expect(parseCodexWindowUsage(['38% remaining', 'resets Nov 25, 2026'], NOW)?.pctUsed).toBe(62);
-  });
-  it('reads a relative reset', () => {
-    expect(parseCodexWindowUsage(['40% used', 'Resets in 2d 3h'], NOW)).toEqual({ pctUsed: 40, resetAt: '2026-11-18T15:00:00.000Z' });
-  });
-  it('is unknown without a percentage, a parseable reset, or with an impossible value', () => {
-    expect(parseCodexWindowUsage(['Resets Nov 25'], NOW)).toBeNull();
-    expect(parseCodexWindowUsage(['62% used'], NOW)).toBeNull();
-    expect(parseCodexWindowUsage(['140% used', 'Resets Nov 25'], NOW)).toBeNull();
-    expect(parseCodexWindowUsage(['62% used', 'Resets Smarch 32'], NOW)).toBeNull();
-  });
-  it('returns a usage-signal reading from the window tree and never a guess', async () => {
-    const tree: ToolCall = async (name) => name === 'computer_ax_tree'
-      ? ok(treeText([{ ref: 'e1', role: 'AXStaticText', title: 'Usage', value: '62% used · Resets Nov 25', depth: 1 }]))
-      : err('unexpected');
-    expect(await readCodexCmpUsage(tree, { now: NOW })).toEqual({
-      pool: 'codex-cmp', pctUsed: 62, resetAt: '2026-11-25T00:00:00.000Z', source: 'codex-desktop-window', fetchedAt: NOW.toISOString(),
-    });
-  });
-  it('returns null when the tree is unreadable or shows no usage', async () => {
-    expect(await readCodexCmpUsage(async () => err('no desktop access'), { now: NOW })).toBeNull();
-    const empty: ToolCall = async () => ok(treeText([{ ref: 'e1', role: 'AXStaticText', title: 'Hello', depth: 1 }]));
-    expect(await readCodexCmpUsage(empty, { now: NOW })).toBeNull();
   });
 });

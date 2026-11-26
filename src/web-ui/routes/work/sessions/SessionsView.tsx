@@ -26,6 +26,7 @@ import { SkeletonRow } from '../../../components/primitives/Skeleton.js';
 import { readFailureReason } from '../../../data/client.js';
 import type { FleetSessionV1, FleetSessionsV1 } from '../../../data/api-types.js';
 import { formatDateTime } from '../../../components/format/locale-format.js';
+import { laneLabel } from '../../verse/fleet/lane-label.js';
 import styles from './SessionsView.module.css';
 
 /** Live clock for elapsed columns; re-renders once per second while mounted. */
@@ -101,7 +102,7 @@ function SessionRow({ session, snap, now }: { session: FleetSessionV1; snap: Fle
     <tr>
       <th scope="row" className={styles.job} title={session.job}>{session.job}</th>
       <td className={styles.mono}>{dash(session.repo)}</td>
-      <td className={styles.mono}>{dash(session.lane)}</td>
+      <td className={styles.mono}>{session.lane === 'codex-cmp' ? laneLabel(session.lane) : dash(session.lane)}</td>
       <td className={styles.mono}>{dash(session.tier)}</td>
       <td>
         <StatusBadge status={session.status} />
@@ -126,7 +127,7 @@ function RecentRow({ session, now }: { session: FleetSessionV1; now: number }) {
     <tr>
       <th scope="row" className={styles.job} title={session.job}>{session.job}</th>
       <td className={styles.mono}>{dash(session.repo)}</td>
-      <td className={styles.mono}>{dash(session.lane)}</td>
+      <td className={styles.mono}>{session.lane === 'codex-cmp' ? laneLabel(session.lane) : dash(session.lane)}</td>
       <td>
         <StatusBadge status={session.outcome ?? session.status} />
       </td>

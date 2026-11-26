@@ -1267,7 +1267,7 @@ export async function handleApi(
         return true;
       }
       setRepoPriority(repo, body.priority);
-      sendJson(res, 200, { repo, priority: body.priority });
+      sendJson(res, 200, { repo, priority: body.priority, prioritySync: 'local-only' });
       return true;
     }
 
