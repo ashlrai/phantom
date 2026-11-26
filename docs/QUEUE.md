@@ -397,9 +397,10 @@ reasons stay unknown. Ready rows are validated exactly like the dispatcher's
 including a spec-less row whose `queue/router-queue.md` `(attrs)` envelope
 fails validation — never reaches the market, so the report counts it in
 `invalidRows` and excludes it from `waiting` and the unfed math, matching the
-dispatcher's `_waiting` set (on an admission-stopped tick the dispatcher
+dispatcher's `_waiting` set. Tiers, cost classes and data classes must use
+their declared values. On an admission-stopped tick the dispatcher
 counts every JID+tier-valid row by its raw lane column instead, and the
-derived report follows that). Independently of `source`, `fleetStop` names the
+derived report follows that. Independently of `source`, `fleetStop` names the
 tick's fleet-wide stop in the dispatcher's own codes — `admission_stopped`
 when the PAUSE file, disk guard or load gate kept the market from running,
 `global_admission` when the launch budget or fleet cap was spent — or `null`
