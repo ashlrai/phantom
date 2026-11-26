@@ -565,7 +565,10 @@ resolves any failure identity in that file because every test the module
 contains passed on that run. Other pass output does not establish a test
 pass. The scan caps open PRs, runs, and jobs
 at 100 each and reports unknown rather than drawing conclusions from truncated
-run/job listings. Master reproduction remains an explicit step in the fix brief.
+run/job listings. Job lists are bound to the attempt reported by GitHub for
+each workflow run, so a concurrent rerun cannot mix its logs with an earlier
+attempt's status. A missing or unreadable attempt leaves the check unknown.
+Master reproduction remains an explicit step in the fix brief.
 
 `phm ci baseline --queue --json` appends only master-fix briefs to
 `~/.ashlr-runs/queue/router-queue.md`, at tier `work`, deduplicated by queue
