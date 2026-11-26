@@ -114,3 +114,33 @@ it('includes target-only lanes at ready 0 and drops malformed rows', () => {
   expect(report.totalReady).toBe(1);
   expect(queueShape([], []).lanes).toEqual([]);
 });
+
+it('counts lane-open rows as open supply in the totals and repo mix, never a lane depth', () => {
+  const report = queueShape(
+    // devin sits exactly at the 3x bound; open rows must not push it over-deep.
+    rows('devin', 6, 'ashlrai/phantom'),
+    [target('devin', 2)],
+    {},
+    [{ repo: 'ashlrai/stack' }, { repo: 'ashlrai/stack' }, { repo: 'ashlrai/phantom' }],
+  );
+  expect(report.openReady).toBe(3);
+  expect(report.openRepos).toEqual([
+    { repo: 'ashlrai/stack', ready: 2, share: 2 / 3 },
+    { repo: 'ashlrai/phantom', ready: 1, share: 1 / 3 },
+  ]);
+  expect(report.totalReady).toBe(9);
+  expect(report.lanes).toEqual([
+    expect.objectContaining({ lane: 'devin', ready: 6, ratio: 3, overDeep: false }),
+  ]);
+  expect(report.overDeep).toEqual([]);
+});
+
+it('honours topRepos for the open repo mix and reports zero open supply by default', () => {
+  const capped = queueShape([], [], { topRepos: 1 }, [
+    { repo: 'b/two' }, { repo: 'a/one' }, { repo: 'b/two' },
+  ]);
+  expect(capped.openRepos).toEqual([{ repo: 'b/two', ready: 2, share: 2 / 3 }]);
+  expect(capped.totalReady).toBe(3);
+  const plain = queueShape(rows('devin', 2), [target('devin', 2)]);
+  expect(plain).toMatchObject({ openReady: 0, openRepos: [], totalReady: 2 });
+});
