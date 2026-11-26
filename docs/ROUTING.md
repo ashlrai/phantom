@@ -799,6 +799,9 @@ completion in order. Any PR URLs on the selected boundaries or resolution
 receipt must identify the same PR, including claims on replays at the same
 boundary timestamp. Recorded repository identities on those boundaries must
 also agree with each other and with the reward's repository when available.
+When a standalone revert resolves the reward, CI timing uses the PR identity
+at the latest effective revert time. Different PRs tied at that time leave
+CI timing unknown.
 Comparison ignores repository casing, and a boundary's PR URL takes
 precedence over its repository label. Receipts without identity metadata
 still contribute timing.

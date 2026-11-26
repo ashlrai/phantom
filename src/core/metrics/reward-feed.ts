@@ -431,8 +431,12 @@ function rewardInput(
   // A revert can resolve a job on its own, but it cannot extend the
   // execution window of an explicitly closed PR.
   let resolutionMs = acc.close?.resolvedMs ?? 0;
+  const resolutionPrKeys = acc.close?.prKeys.slice() ?? [];
   if (acc.close === null) {
     for (const revertedAt of acc.reverts.values()) resolutionMs = Math.max(resolutionMs, revertedAt);
+    for (const [key, revertedAt] of acc.reverts) {
+      if (key !== null && revertedAt === resolutionMs) resolutionPrKeys.push(key);
+    }
   }
   if (resolutionMs > 0) {
     const dispatch = dispatchBefore(acc, resolutionMs);
@@ -442,7 +446,7 @@ function rewardInput(
       jobId: id, pool: dispatch.lane, repo,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
-      ...ciWallEvidence(acc, dispatch.ms, resolutionMs, acc.close?.prKeys ?? [], repo),
+      ...ciWallEvidence(acc, dispatch.ms, resolutionMs, resolutionPrKeys, repo),
     };
   }
   return null;
