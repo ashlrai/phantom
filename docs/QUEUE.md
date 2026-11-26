@@ -1507,6 +1507,11 @@ claim for that URL. If the outcome URL has no matching claim, credit falls
 back to the latest launch with a PR claim, then the latest launch. A later
 revert replaces the merge credit in subsequent reports.
 
+Launch-based yield uses evidence through the report time, inclusive. A
+future receipt or future merge or close timestamp cannot change the tally.
+A recorded merge with a future revert timestamp keeps its merge credit
+until that timestamp. Undated evidence retains its ledger-order behavior.
+
 Run `phm jobs yield --by source` for a scoreboard per producer over the last 24 hours (`--since 7d` for a week). Each row
 has launches, PRs opened, merged, empty, aborted, merged per launch and median minutes to merge; the lowest merged per
 launch comes first, under one plain verdict line such as "filler: 2 merged of 40 launches, consider stopping it". A job's
