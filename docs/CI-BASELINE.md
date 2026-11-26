@@ -267,7 +267,7 @@ these groups can never resolve through a vitest pass line and classify
 `shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
 Invalid reports (non-v2 schema, malformed severity counts), reports with
 no preceding step echo, clean reports (`total: 0`) and unrelated JSON
-stay unparsed, as does cargo-audit output.
+stay unparsed.
 
 When npm's transport fails all three bounded attempts the gate script
 falls back to the pinned OSV-Scanner (`scan source --lockfile
@@ -291,6 +291,33 @@ Near-miss headers, other table shapes (license, deprecated, OS-package
 summaries), wrong-arity rows, invalid package names and sources naming
 another file stay unparsed, as do clean scans (the table only renders
 when vulnerabilities exist).
+
+The workflow's last audit step runs the pinned cargo-audit binary on the
+desktop lockfile (`cargo-audit audit --file desktop/src-tauri/Cargo.lock
+--ignore RUSTSEC-2024-0429`). Its report is a sequence of fixed-label
+attribute blocks -- `Crate:`, `Version:`, `Title:`, `Date:`, `ID:`,
+`URL:`, `Severity:`, `Solution:` -- one per vulnerability or warning,
+each closed by `Dependency tree:` and the rendered graph, while the
+verdict (`error: N vulnerabilities found`) goes to stderr. With the
+workflow's flags only vulnerabilities fail the step, so warning blocks
+are recognized but never emitted, and `--ignore` suppresses the one
+documented exception before printing, so these groups need no exception
+list either. Each vulnerable crate groups under
+`desktop/src-tauri/Cargo.lock > (dependency-audit) <crate>` -- bumping
+the crate in `desktop/src-tauri/Cargo.toml` and regenerating the lock is
+the unit a master fix restores. Blocks are accepted only inside a
+recognized `cargo-audit audit --file` step echo naming a clean
+repo-relative lockfile; multiple advisories on one crate merge into a
+single group carrying the printed versions, advisory ids, severities and
+URLs (bounded). The lockfile's dependency set is the lockfile itself,
+`desktop/src-tauri/Cargo.toml` and `.github/workflows/dependency-audit.yml`
+(the step definition carrying the `--file` target, the pinned toolchain
+version and the inline `--ignore` exceptions), seeded as static inputs
+with no vitest harness ambient set. Blocks missing a crate or advisory
+id, malformed crate names or ids, warning blocks, dependency-tree
+rendering, status lines and the pinned-binary download check
+(`cargo-audit.tgz: FAILED`) stay unparsed; advisory URLs that are not
+plain https are dropped from the group's excerpt.
 
 The `ci` job's "Memory benchmark regression gate" step on the ubuntu
 authority 3/3 shard runs `npm run --silent bench:memory -- --check >

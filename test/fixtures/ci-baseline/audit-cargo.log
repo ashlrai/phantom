@@ -1,0 +1,45 @@
+##[group]Run cargo-audit audit --file desktop/src-tauri/Cargo.lock --ignore RUSTSEC-2024-0429
+cargo-audit audit --file desktop/src-tauri/Cargo.lock --ignore RUSTSEC-2024-0429
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+    Scanning Cargo.lock for vulnerabilities (412 crate dependencies)
+Crate:    base64
+Version:  0.5.1
+Title:    Buffer overflow in base64 crate
+Date:     2017-04-14
+ID:       RUSTSEC-2017-0004
+URL:      https://rustsec.org/advisories/RUSTSEC-2017-0004
+Solution: Upgrade to >=0.6.0 (patched)
+
+Dependency tree:
+base64 v0.5.1
+└── phantom-desktop v0.4.2 (/home/runner/work/phantom/phantom/desktop/src-tauri)
+
+Crate:    rustls
+Version:  0.23.18
+Title:    rustls network-reachable panic in `Acceptor::accept`
+Date:     2024-06-18
+ID:       GHSA-6g7w-8wpp-frhj
+URL:      https://github.com/advisories/GHSA-6g7w-8wpp-frhj
+Severity: 7.5 (high)
+Solution: Upgrade to >=0.23.19 (patched)
+
+Dependency tree:
+rustls v0.23.18
+└── tokio-rustls v0.26.0
+    └── reqwest v0.12.15
+        └── phantom-desktop v0.4.2 (/home/runner/work/phantom/phantom/desktop/src-tauri)
+
+Crate:    old-macros
+Version:  0.1.0
+Warning:  unmaintained
+Title:    This crate is unmaintained
+Solution: No safe upgrade is available!
+
+Dependency tree:
+old-macros v0.1.0
+└── phantom-desktop v0.4.2 (/home/runner/work/phantom/phantom/desktop/src-tauri)
+
+error: 2 vulnerabilities found in Cargo.lock
+warning: 1 allowed warning found
+##[error]Process completed with exit code 1.
