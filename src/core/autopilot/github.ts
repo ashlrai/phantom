@@ -14,11 +14,43 @@ export type Gh = (args: string[]) => Promise<string>;
 const GH_TIMEOUT_MS = 60_000;
 const LOG_TAIL_CHARS = 8_000;
 
+/** `gh api` flags that consume the next token as their value; the endpoint is
+ * the first positional after them. `--flag=value` forms arrive as one token
+ * starting with '-' and are skipped whole, so they need no entry here. */
+const GH_API_VALUE_FLAGS: ReadonlySet<string> = new Set([
+  '-X', '--method', '-H', '--header', '-f', '--field', '-F', '--raw-field',
+  '--input', '--jq', '--template', '--hostname', '--preview',
+]);
+
+/**
+ * The gh invocation an error names. Two-word commands (`gh pr merge`) keep
+ * their command words; `gh api` names the method and endpoint path instead of
+ * transport flags, so a failure reads `gh api user:` or
+ * `gh api POST repos/o/r/pulls:` — never the meaningless `gh api -H:` a
+ * flag-first slice produced. Flag values (headers, `-f` bodies) are skipped,
+ * never echoed.
+ */
+export function ghCallLabel(args: string[]): string {
+  if (args[0] !== 'api') return `gh ${args.slice(0, 2).join(' ')}`;
+  let method = '';
+  let endpoint = '';
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '-X' || arg === '--method') { method = args[++i] ?? ''; continue; }
+    if (arg.startsWith('--method=')) { method = arg.slice('--method='.length); continue; }
+    if (GH_API_VALUE_FLAGS.has(arg)) { i++; continue; }
+    if (arg.startsWith('-')) continue;
+    endpoint = arg.length > 160 ? `${arg.slice(0, 157)}...` : arg;
+    break;
+  }
+  return `gh api${method ? ` ${method}` : ''}${endpoint ? ` ${endpoint}` : ''}`;
+}
+
 export const defaultGh: Gh = (args) => new Promise((resolve, reject) => {
   execFile('gh', args, { timeout: GH_TIMEOUT_MS, killSignal: 'SIGKILL', maxBuffer: 32 * 1024 * 1024, env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' } }, (err, stdout, stderr) => {
     if (err) {
       const line = err.killed ? `timed out after ${GH_TIMEOUT_MS / 1000}s` : String(stderr || err.message).split('\n').find((l) => l.trim()) ?? 'gh failed';
-      reject(new Error(scrubSecrets(`gh ${args.slice(0, 2).join(' ')}: ${line}`).slice(0, 300)));
+      reject(new Error(scrubSecrets(`${ghCallLabel(args)}: ${line}`).slice(0, 300)));
     } else resolve(stdout);
   });
 });
