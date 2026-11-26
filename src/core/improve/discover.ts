@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Seventy-six sources, all of which Phantom
+ * evidence instead of a hand-kept list. Seventy-seven sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -1095,6 +1095,27 @@
  *     stated as lower bounds, and — like the outside-PR feed — items
  *     self-target the repository the verdict belongs to since the
  *     fix lands where the drift lives;
+ *   - the reasoning store's insight digest: the per-(kind, repo,
+ *     engine, signature) clusters DigestBuilder
+ *     (src/core/reasoning/insights.ts) folds the TurnFeaturesV1 rows
+ *     the verse/fleet/codex/grok ingests write into — the same
+ *     projection computeReasoningDigest serves the Leader, the Verse
+ *     UI and `phm`'s reasoning surfaces (reasoningInsightBacklogItems
+ *     below). Until now the only insight that became work was
+ *     'verification-gap', which enqueueInsightTasks turns into fleet
+ *     add-tests tasks; 'struggle', 'loop', 'uncertainty' and
+ *     'backtrack' reached the Leader's prompt context but never the
+ *     deterministic backlog, so a failure signature, stuck-loop
+ *     pattern or give-up streak recurring across days looked like
+ *     per-run noise. An insight emits only at three folded
+ *     occurrences/turns across two distinct UTC days proven per
+ *     insight id by the same bounded feature scan that feeds the
+ *     builder — one turn contributes its endedAt day, so a single
+ *     long turn cannot fake a second day; 'verification-gap' and
+ *     'win' never emit, the digest's own caps bound the feed, and
+ *     only the fleet's own repository inherits the items since the
+ *     insights describe this install's agent behavior and the fix
+ *     surface lives in this repository;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1209,6 +1230,7 @@ import { shadowRouteBacklogItems } from './shadow-route-backlog.js';
 import { feedbackSubmissionsBacklogItems } from './feedback-submissions-backlog.js';
 import { outsidePrBacklogItems } from './outside-pr-backlog.js';
 import { repoShareBacklogItems } from './repo-share-backlog.js';
+import { reasoningInsightBacklogItems } from './reasoning-insight-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2607,6 +2629,27 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bounds, and items self-target the repository the verdict belongs
   // to — the fix lands where the drift lives.
   items.push(...await repoShareBacklogItems());
+
+  // Reasoning-insight digest: the per-(kind, repo, engine, signature)
+  // insight clusters DigestBuilder folds the reasoning store's
+  // TurnFeatures rows into — the same projection computeReasoningDigest
+  // serves the Leader, the Verse UI and `phm`'s reasoning surfaces.
+  // Until now the only consumer that turned an insight into work was
+  // enqueueInsightTasks filing fleet add-tests tasks for
+  // 'verification-gap' insights; 'struggle', 'loop', 'uncertainty' and
+  // 'backtrack' reached the Leader's prompt context but never the
+  // deterministic backlog, so a failure signature, stuck-loop pattern
+  // or give-up streak recurring across days looked like per-run noise.
+  // An insight emits only at the recurring bars of three folded
+  // occurrences/turns across two distinct UTC days proven per insight
+  // id by the same feature scan that feeds the builder — one turn
+  // contributes its endedAt day so a single long turn cannot fake a
+  // second day — 'verification-gap' and 'win' never emit, the digest's
+  // own 50-insight cap and severity-first order bound the feed, and
+  // only the fleet's own repository inherits the items since the
+  // insights describe this install's agent behavior and the fix
+  // surface (extractors, adapters, prompts, harness) lives here.
+  items.push(...await reasoningInsightBacklogItems({ repo }));
   return { items, errors };
 }
 
