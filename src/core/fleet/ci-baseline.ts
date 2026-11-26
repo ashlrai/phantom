@@ -2091,9 +2091,15 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const result: { conclusion: string; text: string }[] = [];
     for (const job of data.jobs) {
       if (job.conclusion === 'skipped') continue;
-      let r;
-      try { r = await gh(['api', `repos/${repo}/actions/jobs/${job.id}/logs`]); } catch { return null; }
-      if (!r.ok || job.head_sha !== head) return null;
+      if (job.head_sha !== head) return null;
+      let r = null;
+      try { r = await gh(['api', `repos/${repo}/actions/jobs/${job.id}/logs`]); } catch { /* Log unavailable. */ }
+      if (!r?.ok) {
+        // The job list already marks this run incomplete. A job that
+        // never started may have no log, while its siblings still do.
+        if (INCOMPLETE_JOB_CONCLUSIONS.has(job.conclusion)) continue;
+        return null;
+      }
       const output = lines(r.stdout);
       const checkout = output.findIndex(line => /(?:^|\/)git log -1 --format=%H$/.test(line));
       if (checkout >= 0) {

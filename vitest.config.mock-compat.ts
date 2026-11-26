@@ -1,6 +1,4 @@
-/** Worker mock compatibility only; keep this before the HOME and write guards.
- * Stay beside the original config: Vitest infers relative doUnmock paths from
- * this wrapper's stack frame, so moving directories would change resolution. */
+/** Worker mock compatibility only; keep this before the HOME and write guards. */
 import { vi } from 'vitest';
 
 const spyOnCompatKey = '__ASHLR_VITEST_3_SPY_ON_COMPAT__';

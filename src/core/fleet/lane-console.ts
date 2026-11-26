@@ -564,6 +564,8 @@ export interface LaneLedgerEvent {
   at: string | null;
   pr: string | null;
   merge: boolean;
+  /** Explicit merge time, when the ledger records a readable zoned timestamp. */
+  mergedAt?: string;
   /** A `launch` event: the job was started. */
   launch?: boolean;
 }
@@ -608,7 +610,11 @@ export function parseJobsJsonl(text: string): { events: LaneLedgerEvent[]; dropp
       (transition !== null && MERGE_WORDS.has(transition.toLowerCase())) ||
       (eventName !== null && MERGE_WORDS.has(eventName.toLowerCase())) ||
       row['landed'] === true || row['merged'] === true;
-    events.push({ job, pool, at, pr: prIdentity(pick('prUrl', 'pr')), merge, launch: eventName?.toLowerCase() === 'launch' });
+    const mergedAt = merge ? pick('mergedAt') : null;
+    events.push({
+      job, pool, at, pr: prIdentity(pick('prUrl', 'pr')), merge, launch: eventName?.toLowerCase() === 'launch',
+      ...(mergedAt !== null && eventTimestamp(mergedAt) !== null ? { mergedAt } : {}),
+    });
   }
   return { events, dropped };
 }
@@ -903,7 +909,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   const candidates: Array<{ pool: string; job: string | null; pr: string | null }> = [];
   let sawMergeEvidence = sources.ledger.state === 'healthy';
   for (const event of ledgerEvents) {
-    const at = eventTimestamp(event.at);
+    const at = eventTimestamp(event.mergedAt ?? event.at);
     if (!event.merge || at === null || at > now.getTime() || at < cutoff) continue;
     const pool = event.pool ?? (event.job ? queueState?.jobPool.get(event.job) ?? readyPoolOf(queueRows, event.job) : undefined);
     if (!pool) continue;

@@ -364,7 +364,11 @@ The document (`phantom.node-capacity.v1`) carries `node`, `measured_at`, `cpu`,
 A harness session is the vendor CLI plus every child it spawns (MCP servers,
 tool runners), measured with `ps`, or with `pgrep` and `footprint` where `ps` is
 denied. Memory headroom is the memory above memguard's raise line (30% free).
-CPU headroom is 85% of cores minus busy cores. Kernel pressure above normal,
+CPU headroom is 85% of cores minus busy cores. Measured zero CPU headroom
+blocks placements even when CPU cost per session is unknown or recorded as zero.
+It also reduces measured runnable counts to zero, including in fleet totals
+that read older capacity documents. Unmeasured harness counts remain null.
+Kernel pressure above normal,
 or swapouts at memguard's growth rate, stop every harness on that node. A cloud
 CLI therefore costs a node only its own measured footprint. A whole-host
 backoff only happens when one of those gates is hit. A harness never seen on

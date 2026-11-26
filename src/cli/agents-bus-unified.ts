@@ -501,8 +501,12 @@ and worker-handoff bodies never match, so those sections are provably
 empty), claims keep only message claims whose resolved leased envelope's
 body reports it (a claim naming no resolved message never lists), inbox
 and wakes pass the value to their own reads' result filters, and the
-thread sections, board, channels and seats carry no per-item result
-evidence the digest can prove and stay unfiltered; an outcome nothing on
+thread sections pass it to the shared conversations read's member-message
+result filter — a thread survives when a member message is a work.result
+reporting that outcome, the same whole-thread member match agents
+conversations --result applies — while board, channels and seats carry no
+per-item result evidence the digest can prove and stay unfiltered; an
+outcome nothing on
 the bus reports is an honest empty match and every count stays the
 filtered total. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task

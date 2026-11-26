@@ -544,6 +544,7 @@ function rootPackageIsPortable(
     'docs/UNIVERSE-AUTONOMY-RESEARCH.md',
     'docs/NORTH-STAR.md',
     'docs/model-registry.json',
+    'docs/model-docs.json',
     'docs/RESOURCE-POOLS.md',
     'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
     'docs/RUNTIME_ACTIVATION_AUTHORITY.md',

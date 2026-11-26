@@ -56,7 +56,6 @@ at that commit, not at whatever happens to be in your working tree.
 
 The map complements the generated [Repo Wiki and DeepWiki grounding](DEEPWIKI.md),
 the [source guide](CODEMAP.md), and [fleet/task graph context](GRAPH-CONTEXT-CHOICES.md).
-The interactive desktop view is a separate slice.
 
 ## Wiki Brain: evidence links
 
@@ -110,3 +109,19 @@ named in the task. It sends no curated text or private source IDs, does not
 change the approved-lessons trial arm, and launches without the block if the
 checkout or evidence cannot be verified. Other consumers and automated
 projection of the curated source kinds are follow-ups.
+
+## Browse in the desktop app
+
+In **Repo Wiki**, select an enrolled repository and open **System map**. No
+generated wiki is required. Select a subsystem, then use **Explore subsystem**
+to see its files. Explore a file to see its declarations, then inspect a
+declaration for its source line. Arrow keys select nodes, Enter opens the
+selection, and Escape or the breadcrumb takes you back. Only the selected
+node's connections are drawn. File and declaration views focus on containment;
+import evidence and related files remain available in the details panel.
+
+The map shows its pinned commit, coverage counts, and any view truncation.
+If HEAD changes during navigation, the map returns to the overview rather
+than combining snapshots. Source links open the exact commit and line on
+the repo's GitHub origin. Without a GitHub origin, the map still shows the
+anchor and does not open a potentially different working-tree file.
