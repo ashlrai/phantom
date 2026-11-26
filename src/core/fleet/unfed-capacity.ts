@@ -527,8 +527,11 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     if (prev !== undefined && prev.ts >= ts) continue;
     const preferred = laneField(row.preferred_lane);
     const chosen = laneField(row.chosen_lane);
-    if (preferred === null && row.preferred_lane !== null) continue;
     if (chosen === null && row.chosen_lane !== null) continue;
+    // Requirements validation fails before the dispatcher can decode a lane hint.
+    const invalidRequirements = row.chosen_lane === null && row.preferred_lane === undefined
+      && Array.isArray(row.reason_codes) && row.reason_codes.includes('invalid_requirements');
+    if (preferred === null && row.preferred_lane !== null && !invalidRequirements) continue;
     let override: LatestRouteDecision['override'] = null;
     if (preferred !== null && chosen !== null && preferred !== chosen && isRecord(row.override)) {
       const { from, to, reason } = row.override;

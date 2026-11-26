@@ -376,8 +376,11 @@ hinted-to-chosen lane. An override counts when its endpoints match the
 decision's declared preference and chosen lane, and those lanes differ.
 Both lane fields must contain a valid lane or an explicit null. Null
 `preferred_lane` records open work and null `chosen_lane` records an unrouted
-decision. Rows with missing or malformed lane fields are skipped before
-selecting the latest decision.
+decision. The dispatcher's `invalid_requirements` receipt records an unrouted
+decision with no `preferred_lane`, because validation failed before the hint
+could be read. It can supersede an earlier decision for the same job. Other
+rows with missing or malformed lane fields are skipped before selecting the
+latest decision.
 Decision and claim windows include both endpoints and exclude events
 timestamped after the report time.
 The same collapsed decisions also fold their
