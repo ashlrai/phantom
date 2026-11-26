@@ -29,11 +29,17 @@ export async function cmdNodeBridge(args: string[]): Promise<number> {
   } catch (error) {
     // Store and privacy messages in this stack are fixed operator-facing
     // strings; anything else stays masked, as in the node fleet verbs.
-    const operatorMessage = /^(?:Invalid |Drive |Universe storage|Unsafe drive|Cannot create filesystem root)/;
+    const operatorMessage = /^(?:Invalid |Drive |Universe storage|Unsafe drive|Cannot create filesystem root|Corrupt drive)/;
     const message = error instanceof Error && operatorMessage.test(error.message)
       ? error.message : 'Node bridge unavailable or misconfigured.';
+    // The local bridge reads the same ~/.ashlr/nodes store as the fleet verbs;
+    // its state-file failures get the same file fix, not the config fix.
+    const storeState = /^(?:Unsafe drive nodes state|Corrupt drive nodes state|Invalid drive nodes state|Drive nodes state capacity exceeded)$/.test(message);
     if (json) console.log(JSON.stringify({ schemaVersion: 1, command: 'bridge',
-      error: { code: 'error', message, fix: 'Check ~/.ashlr/node-bridge.json and the node pool config.' } }));
+      error: { code: 'error', message,
+        fix: storeState
+          ? 'The node store file ~/.ashlr/nodes/nodes.json failed its integrity checks — unsafe file, damaged JSON, invalid state, or over the 16 MiB bound. Inspect it; if it cannot be repaired, move it aside and rejoin — the store never resets its records on its own.'
+          : 'Check ~/.ashlr/node-bridge.json and the node pool config.' } }));
     else console.error(message);
     return 1;
   }

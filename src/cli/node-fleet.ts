@@ -455,9 +455,14 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     const known = error instanceof UsageError;
     // Validation, privacy and lock messages in this stack are fixed operator-facing
     // strings (no values echoed), so they are shown; anything else stays masked.
-    const operatorMessage = /^(?:Invalid |Drive |Universe storage|Unsafe drive|Cannot create filesystem root)/;
+    const operatorMessage = /^(?:Invalid |Drive |Universe storage|Unsafe drive|Cannot create filesystem root|Corrupt drive)/;
     const message = error instanceof Error && (known || operatorMessage.test(error.message)) ? error.message : 'Node store unavailable or invalid.';
-    const fix = known ? error.fix : /^Invalid drive/.test(message) ? 'Check ids (letters, digits, . _ : / -), caps (lowercase) and secret NAMES (UPPER_SNAKE). Run: phm node --help'
+    // The state file's own failures are neither flag errors nor lock
+    // contention: name the file and its recovery instead of either generic fix.
+    const storeState = /^(?:Unsafe drive nodes state|Corrupt drive nodes state|Invalid drive nodes state|Drive nodes state capacity exceeded)$/.test(message);
+    const fix = known ? error.fix
+      : storeState ? 'The node store file ~/.ashlr/nodes/nodes.json failed its integrity checks — unsafe file, damaged JSON, invalid state, or over the 16 MiB bound. Inspect it; if it cannot be repaired, move it aside and rejoin — the store never resets its records on its own.'
+      : /^Invalid drive/.test(message) ? 'Check ids (letters, digits, . _ : / -), caps (lowercase) and secret NAMES (UPPER_SNAKE). Run: phm node --help'
       : 'Check that ~/.ashlr/nodes is a private (0700) directory you own, and that no other process holds its lock.';
     const code = known ? error.code : 'rejected';
     if (json) console.log(JSON.stringify({ schemaVersion: 1, command: verb, error: { code, message, fix } }));

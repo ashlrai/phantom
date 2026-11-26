@@ -170,4 +170,14 @@ describe('phm node dispatcher and bridge', () => {
     expect(await cmdNodeBridge(['--json'])).toBe(1);
     expect(lastJson(lines).error.message).toBe('Invalid drive nodes state');
   });
+
+  it('bridge names the node store file on state failures, not the bridge config', async () => {
+    deps.bridge.mockImplementation(() => { throw new Error('Corrupt drive nodes state'); });
+    const lines = capture();
+    expect(await cmdNodeBridge(['--json'])).toBe(1);
+    const out = lastJson(lines);
+    expect(out.error.message).toBe('Corrupt drive nodes state');
+    expect(out.error.fix).toContain('nodes.json failed its integrity checks');
+    expect(out.error.fix).not.toContain('node-bridge.json');
+  });
 });
