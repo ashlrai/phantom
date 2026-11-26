@@ -129,6 +129,31 @@ test('accepted witness boundaries weight observed latency and discard expired or
   f.advance(86_400_001); expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.latency.samples === 0)).toBe(true);
 });
 
+test('legacy pool completions do not steer routing toward a worker’s current host', () => {
+  const f = fixture();
+  const worker = f.add('z-worker', { hostId: 'old-mac', slots: 1 });
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  f.enqueue('legacy');
+  const legacy = nodes.pull(worker)!;
+  f.advance(100);
+  expect(nodes.complete(legacy.claim, 'done')).toBe(true);
+  delete f.state.jobs[0]!.executionHostId;
+  f.beat('z-worker', { hostId: 'new-mac', slots: 0, held: 'disk-pressure' });
+
+  const other = f.add('a-worker', { hostId: 'other-mac', slots: 1 });
+  f.enqueue('measured');
+  const measured = nodes.pull(other)!;
+  f.advance(1000);
+  expect(nodes.complete(measured.claim, 'done')).toBe(true);
+  f.beat('z-worker', { hostId: 'new-mac', slots: 1 });
+  f.enqueue('next');
+
+  const hosts = projectFleetAwareness(f.state, f.now()).hosts;
+  expect(hosts.find(h => h.hostId === 'new-mac')?.latency).toMatchObject({ samples: 0, medianMs: null });
+  expect(hosts.find(h => h.hostId === 'other-mac')?.latency).toMatchObject({ samples: 1, medianMs: 1000 });
+  expect(f.plan()[0]?.nodeId).toBe('a-worker');
+});
+
 test('a producer withdrawal is a fence, not latency evidence; accepted completions still count', () => {
   const f = fixture();
   const worker = f.add('worker', { hostId: 'mac', slots: 4 });
