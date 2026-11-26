@@ -104,6 +104,29 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs[0]).toMatchObject({ pool: 'omlx', dispatchedAt: '2026-10-28T15:00:00.000Z' });
   });
 
+  it.each([
+    [{ lane: ' UNKNOWN ', pool: 'devin', arm: 'claude' }, 'devin'],
+    [{ lane: 'invalid lane', pool: 'unknown', arm: 'claude' }, 'claude'],
+    [{ lane: 'codex-cmp', pool: 'devin' }, 'codex-cmp'],
+    [{ lane: 'unknown', pool: 'UNKNOWN', arm: 'invalid lane' }, null],
+  ])('uses the first observed lane on the latest dispatch (%j)', (fields, pool) => {
+    const job = 'RQ-DISPATCH-ALIAS';
+    const dispatch = line({ job, event: 'launch', ts: DISPATCH_ISO, ...fields });
+    const text = [claim(job, 'older-pool'), dispatch, merged(job)].join('\n');
+    expect(foldJobsLedgerRewards(text, NOW_MS)).toMatchObject([
+      { jobId: job, pool, dispatchedAt: DISPATCH_ISO },
+    ]);
+  });
+
+  it('withholds pool attribution when same-time dispatch aliases disagree', () => {
+    const job = 'RQ-DISPATCH-CONFLICT';
+    const dispatch = line({ job, event: 'claim', ts: DISPATCH_ISO, lane: 'unknown', pool: 'devin' });
+    const text = [dispatch, launch(job, 'claude'), merged(job)].join('\n');
+    expect(foldJobsLedgerRewards(text, NOW_MS)).toMatchObject([
+      { jobId: job, pool: null, dispatchedAt: DISPATCH_ISO },
+    ]);
+  });
+
   it.each(['MERGED', 'CLOSED'])('uses the PR repository on the %s verdict', (state) => {
     const job = 'RQ-VERDICT-REPO';
     const verdict = line({
