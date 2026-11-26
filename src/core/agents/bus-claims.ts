@@ -7,6 +7,8 @@
  * to its acquirer and never appears in a conflict holder.
  */
 import { createHash, randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { z } from 'zod';
 import { acquireCoordination, COORDINATION_ORIGINS, coordinationRowBlocks, listCoordination, renewCoordination, settleCoordination, type CoordinationOrigin, type CoordinationView } from './claim-store.js';
 import { CLAIM_MAX_LEASE_MS, parseClaimKey, providerSchema, WORK_RESULT_OUTCOMES, WORK_TIERS,
@@ -727,4 +729,67 @@ export function claimNextBusWorkJob(options: BusWorkJobNextOptions): BusWorkJobN
     if (conflicted && !stale) held += 1;
   }
   return { status: 'empty', candidates: candidates.length, held, attempted };
+}
+
+// ─── Wait-for-work claims ───────────────────────────────────────────
+
+/** The `--wait-ms` bound every bus claim wait shares — the same 1..300000
+ * window `fleet bus-wait-claim` polls under, so a unified-surface wait can
+ * never outlive the fleet primitive's own cap. */
+export const BUS_WORK_JOB_WAIT_MAX_MS = 300_000;
+
+export interface BusWorkJobNextWaitOptions extends BusWorkJobNextOptions {
+  /** Milliseconds to keep polling for a claimable job before answering
+   * `timeout`; the same 1..BUS_WORK_JOB_WAIT_MAX_MS bound
+   * `validBusWaitClaimRequest` applies to the envelope-side wait. */
+  waitMs: number;
+}
+
+/** `claimNextBusWorkJob`'s union plus the two terminal states only a wait
+ * can produce: `timeout` when the deadline expires with nothing claimable
+ * and `cancelled` when the caller's signal aborts. Neither carries scan
+ * totals — the last poll's `empty` counts describe a moment that has
+ * already passed, so the wait reports its own honest end state instead of
+ * re-serving stale numbers. */
+export type BusWorkJobNextWaitResult = BusWorkJobNextResult | { status: 'timeout' | 'cancelled' };
+
+export function validBusWorkJobNextWaitOptions(options: BusWorkJobNextWaitOptions): boolean {
+  return Number.isSafeInteger(options.waitMs) && options.waitMs >= 1 && options.waitMs <= BUS_WORK_JOB_WAIT_MAX_MS;
+}
+
+/**
+ * The blocking companion to `claimNextBusWorkJob` — the job-level
+ * counterpart of `waitClaimBusWork`, which already wraps the v1 envelope
+ * claim for `fleet bus-wait-claim`. Each poll runs the full
+ * `claimNextBusWorkJob` scan, so every filter dim applies identically on
+ * every pass and a job announced mid-wait becomes claimable the moment it
+ * lands. `empty` and `retryable` are the only retryable outcomes: a dry
+ * well or a momentary store hiccup keeps polling until the deadline, while
+ * `acquired`, `invalid`, `refused`, `unavailable` and `full` return on the
+ * spot — an unreadable feed or hold table never becomes a guessed claim no
+ * matter how long the wait runs. Claims coordinate scope only; they grant
+ * no execution authority.
+ */
+export async function waitClaimNextBusWorkJob(
+  request: BusWorkJobNextWaitOptions, signal?: AbortSignal): Promise<BusWorkJobNextWaitResult> {
+  if (!validBusWorkJobNextWaitOptions(request)) {
+    return { status: 'invalid', reason: 'invalid-wait', attempted: 0 };
+  }
+  const deadline = performance.now() + request.waitMs;
+  for (;;) {
+    if (signal?.aborted) return { status: 'cancelled' };
+    const result = claimNextBusWorkJob(request);
+    // A successful claim always wins, even if cancellation arrived during the call.
+    if (result.status !== 'empty' && result.status !== 'retryable') return result;
+    if (signal?.aborted) return { status: 'cancelled' };
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) return { status: 'timeout' };
+    try { await delay(Math.min(250, remaining), undefined, { signal }); }
+    catch (error) {
+      if (signal?.aborted) return { status: 'cancelled' };
+      throw error;
+    }
+    if (signal?.aborted) return { status: 'cancelled' };
+    if (performance.now() >= deadline) return { status: 'timeout' };
+  }
 }

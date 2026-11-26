@@ -3353,7 +3353,8 @@ failures and a feed that cannot be read never produces a guessed claim.
 `phm agents bus work claim-next [<agent>] --lease-ms <ms> [--owner]
 [--job] [--repo] [--provider] [--tier] [--announcer] [--exclude-announcer]
 [--channel] [--topic]
-[--result] [--id <envelope-id>] [--since] [--before] [--contains]` prints
+[--result] [--id <envelope-id>] [--since] [--before] [--contains]
+[--wait-ms <1..300000>]` prints
 it — the positional agent (default `PHM_AGENT_ID`) is the pending-work
 address filter, `--owner` the lease label (default `PHM_AGENT_ID` then the
 agent), `--announcer` the feed `--owner` job-announcer filter under a name
@@ -3362,6 +3363,22 @@ negative counterpart dropping every job the named ref announced under the
 same identity-label rule, and `--id` the retained-envelope
 citation filter, never an operation id (each call mints its own) — exit 0
 on `acquired`/`empty`, 2 on invalid, 1 otherwise.
+`waitClaimNextBusWorkJob(BusWorkJobNextWaitOptions)` (`BusWorkJobNextOptions`
+plus `waitMs`) is the blocking companion behind `agents bus work
+claim-next --wait-ms`; `agents bus work next --wait-ms` runs the same
+bounded wait over v1 envelopes through the fleet `waitClaimBusWork`. Both
+share the 1..300000 bound (`BUS_WORK_JOB_WAIT_MAX_MS`, the
+`validBusWaitClaimRequest` window): each
+poll reruns the full one-shot claim scan (`claimNextBusWorkJob` or
+`claimNextBusWork`) so every filter applies
+identically on every pass, `empty`/`retryable` keep polling until the
+deadline answers `timeout` or the caller's signal answers `cancelled`, and
+`acquired`/`invalid`/`refused`/`unavailable`/`full` return on the spot —
+an unreadable feed or hold table never becomes a guessed claim. Its
+`BusWorkJobNextWaitResult` is the `claimNextBusWorkJob` union plus bare
+`{status:'timeout'|'cancelled'}`: the last poll's `empty` totals describe
+a moment that has passed, so the wait reports its own end state rather
+than re-serving stale numbers.
 `phm agents bus claim message acquire|renew|release|complete --id <envelope-id>`
 is the same message-id claim journal `fleet bus-claim`/`comms bus claim` drive:
 `acquire` takes `--lease-ms` and `--owner` (default `PHM_AGENT_ID`), the other

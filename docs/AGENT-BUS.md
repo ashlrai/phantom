@@ -1088,7 +1088,7 @@ never permits a merge, a push, or spending.
 [--exclude-announcer <agent>]
 [--channel <name>] [--topic <topic>] [--result <reserved|admitted|complete|failed>]
 [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>]
-[--contains <text>]` is the job-level companion to `work next`: where `work
+[--contains <text>] [--wait-ms <1..300000>]` is the job-level companion to `work next`: where `work
 next` atomically claims the next claimable v1 envelope addressed to an
 agent, `claim-next` atomically claims the next claimable v2 work-feed job,
 so "give me work" never degrades into a `work feed --claimable` read
@@ -1124,7 +1124,17 @@ key-level acquire calls made; `empty` reports the observed
 keyed jobs, held the ones whose declared keys are all provably or
 observably held — and every other status passes the feed or coordination
 store's own state through, so an unreadable feed or hold table never
-produces a guessed claim. Exit 0 on `acquired`/`empty`, 2 on invalid, 1
+produces a guessed claim. `--wait-ms <1..300000>` turns the one-shot claim
+into a bounded wait — the job-level counterpart of `fleet bus-wait-claim`'s
+poll loop and of `work next --wait-ms` on the envelope side: the whole
+`claim-next` scan repeats every interval until a job becomes claimable,
+the deadline answers `timeout`, and SIGINT/SIGTERM answer `cancelled`, so
+work announced mid-wait claims the moment it lands with every filter above
+applied to each poll; `empty` and `retryable` are the only outcomes that
+keep polling — `acquired`, `invalid`, `refused`, `unavailable` and `full`
+return on the spot, so an unreadable feed or hold table never becomes a
+guessed claim no matter how long the wait runs. Exit 0 on
+`acquired`/`empty`, 2 on invalid, 1
 otherwise. Claims still coordinate scope only — holding one never permits
 a merge, a push, or spending.
 
@@ -1857,7 +1867,8 @@ passes a refused or degraded section through untouched.
 **Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
 <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since
 <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel
-<name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]` is the claim half of the loop `work
+<name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]
+[--wait-ms <1..300000>]` is the claim half of the loop `work
 mine`
 opens: it takes the next claimable work envelope addressed to the agent —
 the same live `kind:'work'`/protocol-`task` receipts the digest's `next`
@@ -1898,7 +1909,15 @@ same token `phm agents bus claim message renew|release|complete --id
 <envelope-id>` spends on this surface (`phm comms bus claim` is the
 legacy spelling) — while `empty` reports the observed
 `{candidates, held}` scan totals so a dry well reads differently from
-held work, and every other store state keeps its own status. Exit 0 on
+held work, and every other store state keeps its own status. `--wait-ms
+<1..300000>` turns the one-shot claim into the same bounded wait `fleet
+bus-wait-claim` runs — the unified-surface spelling of that primitive, so
+an agent never leaves `agents bus` to block for work: the claim scan
+repeats every interval until a receipt becomes claimable, the deadline
+answers `timeout`, SIGINT/SIGTERM answer `cancelled`, and work posted
+mid-wait claims the moment it lands under every filter above applied to
+each poll. `work claim-next --wait-ms` is the job-level counterpart over
+the claimable work-feed jobs. Exit 0 on
 `acquired`/`empty`, 2 on invalid arguments, 1 otherwise. The claim
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
@@ -2407,7 +2426,9 @@ own channel posts: the same membership rule the inbox, wake and `work mine`
 reads apply, through the same identity registry the message filters use; a
 `--to` naming no identity, membership in no channel, or an unreadable registry
 keeps exact-label matching and never widens. All four claim surfaces —
-`agents bus work next`, `fleet bus-next`, `fleet bus-wait-claim` and
+`agents bus work next` (whose `--wait-ms` flag runs the same bounded wait
+`fleet bus-wait-claim` provides, so the unified surface needs no fleet
+verb to block for work), `fleet bus-next`, `fleet bus-wait-claim` and
 `comms bus next` — take the same `--id <envelope-id>`, `--contains <text>`, `--since
 <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--priority <P0|P1|P2|P3>`,
 `--channel <name>`, `--topic <topic>`, `--from <agent>` and `--exclude-from <agent>`
