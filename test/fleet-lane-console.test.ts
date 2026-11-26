@@ -694,6 +694,27 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(JSON.stringify(snapshot)).not.toContain('/Users/x/prompts');
   });
 
+  it('counts each READY job once across lane hints and open supply', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'ready.tsv'), [
+      'RQ-A\tphantom\tclaude\twork\tprompts/a.md',
+      'RQ-A\tphantom\tdevin\twork\tprompts/a.md',
+      'RQ-A\tphantom\t\twork\tprompts/a.md',
+      'RQ-B\tphantom\t\twork\tprompts/b.md',
+      'RQ-B\tphantom\tclaude\twork\tprompts/b.md',
+      'RQ-C\tphantom\tdevin\twork\tprompts/c.md',
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    const byLane = new Map(snapshot.lanes.map(l => [l.lane, l]));
+    expect(byLane.get('claude')!.queueDepth).toBe(1);
+    expect(byLane.get('devin')!.queueDepth).toBe(1);
+    expect(snapshot.sources.queue).toMatchObject({ state: 'healthy', rows: 2, dropped: 0, unhinted: 1 });
+    expect(snapshot.starved.open_rows).toBe(1);
+  });
+
   it('resolves spec-less rows through a router-queue.md past the ready.tsv bound', async () => {
     // router-queue.md is append-mostly history and outgrows the 4 MiB
     // ready.tsv bound in normal operation. The lane view reads it with the
