@@ -215,8 +215,8 @@ export interface TrajectorySkillOutcomeRow {
 
 /**
  * Per-skill outcome attribution for shadow skill observations. Present only
- * when the skill-observation sample gate passes (`sampleState: 'observed'`);
- * withheld otherwise so small samples never publish exact per-skill counts.
+ * when at least MIN_SKILL_OBSERVED_TRAJECTORIES learning-eligible trajectories
+ * contribute joined skill selections.
  */
 export interface TrajectorySkillOutcomeSummary {
   /** Distinct skill ids with at least one joined selection observation. */
@@ -2338,6 +2338,8 @@ export function summarizeTrajectoryLearning(
     routeReasonCounts[generatedRepairRouteReason(record.routeSnapshot?.reason)]++;
   }
 
+  const skillOutcomeRecords = productionRecords.filter((record) => skillSelectionOutcomesByRecord.has(record));
+  const publishSkillOutcomes = skillOutcomeRecords.length >= MIN_SKILL_OBSERVED_TRAJECTORIES;
   const skillOutcomeRows = new Map<string, {
     skillId: string;
     skillRevision: number;
@@ -2347,8 +2349,8 @@ export function summarizeTrajectoryLearning(
   }>();
   const skillOutcomeSkillIds = new Set<string>();
   let skillOutcomeSelections = 0;
-  if (publishSkillMetrics) {
-    for (const record of productionRecords) {
+  if (publishSkillOutcomes) {
+    for (const record of skillOutcomeRecords) {
       for (const selection of skillSelectionOutcomesByRecord.get(record) ?? []) {
         const key = JSON.stringify([selection.skillId, selection.skillRevision]);
         let row = skillOutcomeRows.get(key);
@@ -2406,7 +2408,7 @@ export function summarizeTrajectoryLearning(
           sampleState,
         }
       : { eventState, sampleState },
-    ...(publishSkillMetrics ? {
+    ...(publishSkillOutcomes ? {
       skillOutcomes: {
         skills: skillOutcomeSkillIds.size,
         selections: skillOutcomeSelections,

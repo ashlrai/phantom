@@ -2454,16 +2454,25 @@ describe('Trajectory records', () => {
     expect(JSON.stringify(summary.routeDiagnostics)).not.toContain('private-arbitrary-reason');
   });
 
-  it('suppresses every exact skill metric when the observation source is degraded', () => {
+  it.each([0, 2, 3])('gates skill outcomes with %i eligible observations and suppresses degraded skill metrics', (eligible) => {
     const records = listTrajectoryRecords({
       windowHours: 1000,
       deps: deps({
         readDispatchProductionEvents: () => [
-          dispatch({ proposalId: undefined, runId: 'run-a', trajectoryId: 'traj-a' }),
-          dispatch({ ts: TS1, itemId: 'item-b', proposalId: undefined, runId: 'run-b', trajectoryId: 'traj-b' }),
-          dispatch({ ts: TS2, itemId: 'item-c', proposalId: undefined, runId: 'run-c', trajectoryId: 'traj-c' }),
+          dispatch({ proposalId: 'prop-a', runId: 'run-a', trajectoryId: 'traj-a' }),
+          dispatch({ ts: TS1, itemId: 'item-b', proposalId: 'prop-b', runId: 'run-b', trajectoryId: 'traj-b' }),
+          dispatch({ ts: TS2, itemId: 'item-c', proposalId: 'prop-c', runId: 'run-c', trajectoryId: 'traj-c' }),
         ],
-        listOutcomeRecords: () => [],
+        listOutcomeRecords: () => ['a', 'b', 'c'].slice(0, eligible).map((id) => ({
+          ...outcomeRecord(),
+          proposal: {
+            ...outcomeRecord().proposal,
+            id: `prop-${id}`,
+            workItemId: id === 'a' ? 'item-1' : `item-${id}`,
+            runId: `run-${id}`,
+            trajectoryId: `traj-${id}`,
+          },
+        })),
         readAgentActions: () => [],
         readSkillUseEvents: () => [
           skillUse({ eventId: 'use-a', runId: 'run-a', trajectoryId: 'traj-a' }),
@@ -2474,7 +2483,12 @@ describe('Trajectory records', () => {
     });
     const published = summarizeTrajectoryLearning(records);
     expect(published.skillObservation.sampleState).toBe('observed');
-    expect(published.skillOutcomes).toBeDefined();
+    expect(published.population.learningEligible).toBe(eligible);
+    if (eligible === 3) {
+      expect(published.skillOutcomes).toMatchObject({ selections: 3 });
+    } else {
+      expect(published.skillOutcomes).toBeUndefined();
+    }
 
     const suppressed = suppressDegradedSkillObservation(published, 'present');
     expect(suppressed.skillObservation).toEqual({ eventState: 'present', sampleState: 'unavailable' });
