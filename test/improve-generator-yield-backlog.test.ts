@@ -129,6 +129,24 @@ describe('generatorYieldBacklogItems', () => {
     expect(await generatorYieldBacklogItems({ repo: REPO, now: NOW, ledgerText: draftsOnly })).toEqual([]);
   });
 
+  it('waits for future decisions before counting them toward recurrence or refusal share', async () => {
+    const src = 'autofill:bet';
+    const midnight = Date.parse('2026-11-24T00:00:00.000Z');
+    const ledgerText = [
+      ...recurringRows(src, 'duplicate', 3, [0], 'previous-day'),
+      rej('second-day', src, 'duplicate', new Date(midnight).toISOString()),
+      draft('later-draft', src, new Date(midnight + 1).toISOString()),
+    ].join('\n');
+    const opts = { repo: REPO, ledgerText };
+
+    expect(await generatorYieldBacklogItems({ ...opts, now: midnight - 1 })).toEqual([]);
+    const atMidnight = await generatorYieldBacklogItems({ ...opts, now: midnight });
+    expect(atMidnight).toHaveLength(1);
+    expect(atMidnight[0]?.prompt).toContain('4 of 4 recorded autofill:bet decisions');
+    const afterMidnight = await generatorYieldBacklogItems({ ...opts, now: midnight + 1 });
+    expect(afterMidnight[0]?.prompt).toContain('4 of 5 recorded autofill:bet decisions');
+  });
+
   it('counts replayed decisions once and preserves later observations of the same job', async () => {
     const src = 'autofill:bet';
     const first = rej('job-1', src, 'duplicate', at(4));

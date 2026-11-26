@@ -99,8 +99,6 @@ export const GENERATION_CELL_MIN_EVENTS = 4;
 export const GENERATION_CELL_MIN_DAYS = 2;
 /** Evidence window: seven days, the same convention the sibling feeds anchor on. */
 export const GENERATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-/** Future-skew allowance on event timestamps, same convention the sibling folds apply. */
-const GENERATION_FUTURE_SKEW_MS = 60_000;
 /**
  * Bounded no-follow tail of the generation journal. Rows are a few
  * hundred bytes and writers append one batch per applied pass, so ~4 MiB
@@ -230,7 +228,6 @@ export function foldGenerationRejections(
     ? opts.windowMs
     : GENERATION_WINDOW_MS;
   const windowStart = opts.nowMs - windowMs;
-  const windowEnd = opts.nowMs + GENERATION_FUTURE_SKEW_MS;
 
   const cells = new Map<string, GenerationCell>();
   const srcDecisions = new Map<string, number>();
@@ -247,7 +244,7 @@ export function foldGenerationRejections(
     const event = firstString(row, EVENT_KEYS)?.toLowerCase();
     if (event !== 'drafted' && event !== 'rejected') continue;
     const atMs = parseAt(row);
-    if (atMs === null || atMs < windowStart || atMs > windowEnd) continue;
+    if (atMs === null || atMs < windowStart || atMs > opts.nowMs) continue;
     const job = firstString(row, JOB_KEYS);
     if (job === null) continue;
     const src = firstString(row, SRC_KEYS) ?? UNKNOWN_SRC;
