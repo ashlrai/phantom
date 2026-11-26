@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DriveNodes, JobClaim } from './index.js';
+import { isVersionCap } from './phm-version.js';
 import type { NodeAuth, NodeCapacitySample } from './state.js';
 import { isNodeCapacity, isHostStats, validCap, validId, validSecretName } from './state.js';
 import { jobBlockers, routable } from './router.js';
@@ -136,7 +137,11 @@ function claimOf(flags: Map<string, string>): JobClaim {
  * validCap caps, bounded-integer slots), so the hint can never carry shell
  * metacharacters into a paste. `phm nodes` prints the same hint for an expired
  * local session and `phm node status`/`list` names it per expired node, so
- * every surface restores the full advertised profile. */
+ * every surface restores the full advertised profile. The `phm-<version>`
+ * build marker is the exception: join manages it — a standalone join
+ * re-derives it from the running build and discards any version cap passed in
+ * `--caps` — so the hint leaves it out rather than teach the operator to
+ * carry a cap they never chose. */
 export function joinHintCommand(nodeId: string, profile: { owners?: string[]; caps?: string[]; slots?: number } | null,
   opts: { watch?: boolean } = {}): string {
   // watch names `join --watch`, the standalone keep-alive: a bare join's
@@ -145,9 +150,10 @@ export function joinHintCommand(nodeId: string, profile: { owners?: string[]; ca
   // a pool join releases its probe session and workers hold their own.
   const watch = opts.watch === true ? ['--watch'] : [];
   if (!validId(nodeId)) return ['phm node join', '--node <id>', '--owner <scope>', ...watch].join(' ');
+  const caps = (profile?.caps ?? []).filter(cap => !isVersionCap(cap));
   return ['phm node join', `--node ${nodeId}`,
     profile?.owners?.length ? `--owner ${profile.owners.join(',')}` : '--owner <scope>',
-    ...(profile?.caps?.length ? [`--caps ${profile.caps.join(',')}`] : []),
+    ...(caps.length ? [`--caps ${caps.join(',')}`] : []),
     ...(profile?.slots === undefined ? [] : [`--slots ${profile.slots}`]),
     ...watch].join(' ');
 }
