@@ -2325,7 +2325,17 @@ finished matching claim produces complete/failed, including when the feed
 cursor has advanced; peer work.status
 does not prove completion — it is the announcing peer's own feed report, sent
 through `peers post` under the same owner rule as `updateWorkStatus`, and it
-carries no claim token or queue evidence. Uncertain reservations remain visible
+carries no claim token or queue evidence. The read also takes the shared bus
+filter flags — `--from`/`--exclude-from`/`--to` on the envelope's own
+callsign/topic labels (never registry-resolved), `--since`/`--before` on the
+receipt stamp, `--contains` on the scrubbed body summary, `--id`, `--kind`
+(the `busBodyKind` discriminator), `--peer-kind` (the inner kind of a
+`peer.message` body), `--thread` (a `peer.message` payload's `threadId` or a
+note/context body's `thread`), `--job` (the shared job-citation rule) and
+`--result` (the `work.result` outcome) — applied to the admitted page only:
+they narrow what the caller sees and never admit an envelope the ledger or
+journal refused, and `nextCursor` still advances over every scanned row, so a
+filtered read is a view of the page rather than a subscription. Uncertain reservations remain visible
 and retryable. The unified comms inbox's `peer-dispatch` source lists the same
 journal's receipts whose `sent` trails `outcome` — results a peer still awaits
 that no other surface enumerates (the dispatch feed page reports only the
