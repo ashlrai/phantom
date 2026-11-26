@@ -360,6 +360,24 @@ describe('foldJobsLedgerRewards', () => {
     expect(rewards('RQ-R2')).toEqual([expect.objectContaining({ jobId: 'RQ-R1', merged: true })]);
   });
 
+  it('checks competing revert claims as of the observation time', () => {
+    const url = 'https://github.com/ashlrai/phantom/pull/4';
+    const claimAt = '2026-10-28T20:01:00.000Z';
+    const keys = new Set(['ashlrai/phantom#4']);
+    const observed = [launch('RQ-A'), merged('RQ-A')];
+    const competitor = line({ event: 'publish', job: 'RQ-B', url, ts: claimAt });
+    const text = [competitor, ...observed].join('\n');
+
+    expect(foldJobsLedgerRewards(text, NOW_MS, undefined, keys))
+      .toMatchObject([{ jobId: 'RQ-A', merged: false }]);
+    expect(foldJobsLedgerRewards(text, Date.parse(claimAt), undefined, keys))
+      .toMatchObject([{ jobId: 'RQ-A', merged: true }]);
+
+    const undated = line({ event: 'publish', job: 'RQ-B', url });
+    expect(foldJobsLedgerRewards([...observed, undated].join('\n'), NOW_MS, undefined, keys))
+      .toMatchObject([{ jobId: 'RQ-A', merged: true }]);
+  });
+
   it('lets a later fresh merge supersede a standing-reverted one', () => {
     const pr = (n: number) => `https://github.com/ashlrai/phantom/pull/${n}`;
     const text = [
