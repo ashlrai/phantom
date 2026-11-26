@@ -2,6 +2,10 @@ import { spawn } from 'node:child_process';
 import { appendFile, realpath, stat } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import {
+  CODEX_RESET_BANK_MIN_VERSION, CODEX_RESET_BANK_TOO_OLD, type BankedResetGrant, type CodexResetBankUnknownReason,
+} from '../../usage/resource-live/types.js';
+import { compareCliVersions } from '../../verse/model-windows.js';
 
 export interface CodexUsageReading {
   pool: 'codex-cmp';
@@ -11,6 +15,8 @@ export interface CodexUsageReading {
   source: 'codex-reader';
   fetchedAt: string;
   windows?: { '5h': CodexWindow | null; weekly: CodexWindow | null };
+  resetBank?: BankedResetGrant[] | null;
+  resetBankUnknownReason?: CodexResetBankUnknownReason;
 }
 
 interface CodexWindow { pctUsed: number; resetAt: string }
@@ -20,6 +26,7 @@ export interface CodexUsageOptions {
   home?: string;
   /** Append both account aliases to this usage-readings.log. Errors propagate. */
   logPath?: string;
+  includeResetBank?: boolean;
 }
 
 const MAX_OUTPUT_BYTES = 256 * 1024;
@@ -29,6 +36,25 @@ const NATIVE_ARGS = ['app-server', '--stdio', '-c', 'analytics.enabled=false',
 type ObjectValue = Record<string, unknown>;
 function object(value: unknown): value is ObjectValue {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseResetBank(payload: unknown, now: number): BankedResetGrant[] | null {
+  if (!object(payload) || !object(payload.rateLimitResetCredits)) return null;
+  const { availableCount, credits } = payload.rateLimitResetCredits;
+  if (typeof availableCount !== 'number' || !Number.isInteger(availableCount) ||
+      availableCount < 0 || availableCount > 100 || !Array.isArray(credits) || credits.length !== availableCount) return null;
+  const ids = new Set<string>();
+  const grants: BankedResetGrant[] = [];
+  for (const credit of credits) {
+    if (!object(credit) || credit.status !== 'available' || credit.resetType !== 'codexRateLimits' ||
+        typeof credit.id !== 'string' || !credit.id.trim() || ids.has(credit.id) ||
+        typeof credit.expiresAt !== 'number' || !Number.isSafeInteger(credit.expiresAt) ||
+        credit.expiresAt <= now / 1000 || credit.expiresAt > 253_402_300_799) return null;
+    ids.add(credit.id);
+    grants.push({ count: 1, kind: 'full', expires_at: new Date(credit.expiresAt * 1000).toISOString(),
+      source: 'codex-app-server' });
+  }
+  return grants;
 }
 
 /**
@@ -87,7 +113,7 @@ async function cmpHome(home: string | undefined): Promise<string | null> {
 }
 
 /** Bounded metadata-only App Server exchange. No threads, auth calls or keys. */
-async function readNativeStatus(home: string): Promise<unknown> {
+async function readNativeStatus(home: string): Promise<{ payload: unknown; version: string | null } | null> {
   return new Promise(resolveResult => {
     const child = spawn('codex', NATIVE_ARGS, {
       cwd: home, shell: false,
@@ -97,6 +123,7 @@ async function readNativeStatus(home: string): Promise<unknown> {
     });
     let bytes = 0; let line = ''; let pending = 1; let ending = false; let closed = false; let failed = false;
     let result: unknown = null;
+    let version: string | null = null;
     const decoder = new TextDecoder('utf-8', { fatal: true });
     const finish = (value: unknown = null): void => {
       if (ending) return;
@@ -127,6 +154,10 @@ async function readNativeStatus(home: string): Promise<unknown> {
       }
       if (pending === 1) {
         if (!object(value.result) || value.result.codexHome !== join(home, '.codex')) { fail(); return; }
+        const agent = value.result.userAgent;
+        if (typeof agent === 'string' && agent.length <= 512) {
+          version = /^[^/\s]+\/(\d+\.\d+\.\d+(?:-[\w.]+)?)(?=\s|$)/.exec(agent)?.[1] ?? null;
+        }
         send({ method: 'initialized' });
         pending = 2;
         send({ id: 2, method: 'account/rateLimits/read' });
@@ -156,7 +187,7 @@ async function readNativeStatus(home: string): Promise<unknown> {
     child.on('close', (code, signal) => {
       closed = true; clearTimeout(timer);
       try { line += decoder.decode(); } catch { result = null; }
-      resolveResult(code === 0 && !signal && !line.trim() ? result : null);
+      resolveResult(code === 0 && !signal && !line.trim() ? { payload: result, version } : null);
     });
     send({ id: 1, method: 'initialize', params: { clientInfo: { name: 'phantom-cmp-usage', version: '1' } } });
   });
@@ -164,12 +195,13 @@ async function readNativeStatus(home: string): Promise<unknown> {
 
 /** Missing HOME, status, auth or readable quota means unknown, never a guess. */
 export async function readCodexUsage(options: CodexUsageOptions = {}): Promise<CodexUsageReading> {
-  let payload: unknown = null;
+  let native: Awaited<ReturnType<typeof readNativeStatus>> = null;
   try {
     const home = await cmpHome(options.home);
-    if (home) payload = await readNativeStatus(home);
+    if (home) native = await readNativeStatus(home);
   } catch { /* Suppress native errors and private diagnostics. */ }
   const fetchedAt = new Date().toISOString();
+  const payload = native?.payload;
   const window = (minutes: number): CodexWindow | null => {
     const row = parseNativeUsage(payload, Date.parse(fetchedAt), minutes);
     return row.pctUsed === null || row.resetAt === null ? null : { pctUsed: row.pctUsed, resetAt: row.resetAt };
@@ -182,6 +214,16 @@ export async function readCodexUsage(options: CodexUsageOptions = {}): Promise<C
     const rows = [reading, { ...reading, pool: 'terra@cmp', resetAt: reading.terraResetAt }];
     await appendFile(options.logPath, rows.map(row => JSON.stringify({ ...row, used: row.pctUsed ?? 'unknown' }) + '\n').join(''),
       { mode: 0o600 });
+  }
+  if (options.includeResetBank) {
+    reading.resetBank = parseResetBank(payload, Date.parse(fetchedAt));
+    if (reading.resetBank === null) {
+      const missing = object(payload) && !Object.hasOwn(payload, 'rateLimitResetCredits');
+      if (missing && !native?.version) reading.resetBankUnknownReason = 'codex-cli-version-unknown';
+      else if (missing && native?.version && compareCliVersions(native.version, CODEX_RESET_BANK_MIN_VERSION) < 0) {
+        reading.resetBankUnknownReason = CODEX_RESET_BANK_TOO_OLD;
+      } else reading.resetBankUnknownReason = 'codex-reset-bank-unavailable';
+    }
   }
   return reading;
 }

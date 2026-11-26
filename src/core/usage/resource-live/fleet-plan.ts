@@ -4,7 +4,7 @@ import { defaultNodesViewDeps, readNodesView, type NodeRow } from '../../fleet/n
 import { readJobsTail, type JobsTailRead } from '../../fleet/report-ledger.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
 import { planBurnDown } from './burn-down.js';
-import { planBankedReset, readBankedResets } from './banked-resets.js';
+import { codexResetBankUpgradeHint, planBankedReset, readBankedResets } from './banked-resets.js';
 import { readCustomResources } from './custom.js';
 import { parseResourceLiveSidecar, readPrivateJson, readResourceLiveFile, unverified } from './store.js';
 import { RESOURCE_LIVE_ALLOWANCES, type ResourceLiveAllowance } from './types.js';
@@ -138,7 +138,10 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     row.projected_jobs = Math.min(lane.queued_jobs, lane.additional_slots * row.jobs_per_slot);
     row.projected_waste_at_deadline = round(Math.max(0, row.remaining - row.projected_jobs * row.estimated_quota_per_job));
   }
+  const resetReason = resets?.unknown_reason;
+  const resetHint = codexResetBankUpgradeHint(resetReason);
   return { schema: FLEET_RESOURCE_PLAN_SCHEMA, generated_at: new Date(now).toISOString(),
+    ...(resetReason ? { codex_reset_bank: { count: null, unknown_reason: resetReason, ...(resetHint ? { hint: resetHint } : {}) } } : {}),
     reset_proposal: resets ? planBankedReset(resets, plan.allowances, new Map([...readings].map(([id, row]) => [id, row.source])), now).proposal : null,
     ledger_truncated: ledger.text === null ? null : ledger.truncated, machines,
     lanes: lanes.map(row => ({ ...row, minutes_per_job: row.minutes_per_job === null ? null : round(row.minutes_per_job),

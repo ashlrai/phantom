@@ -1,7 +1,11 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { defaultConfig } from '../src/core/config.js';
 import { evalBudget } from '../src/core/observability/budget-alert.js';
 import type { AshlrConfig } from '../src/core/types.js';
+import { publishCodexResetBank } from '../src/core/usage/resource-live/banked-resets.js';
 
 const probes = vi.hoisted(() => ({
   phantom: vi.fn(() => ({ installed: false, initialized: false })),
@@ -60,6 +64,24 @@ beforeEach(() => {
 });
 
 describe('doctor invocation snapshots', () => {
+  it('suggests upgrading the Codex CLI when collection reports an old App Server', async () => {
+    const runsDir = await mkdtemp(join(tmpdir(), 'phantom-doctor-reset-bank-'));
+    const prior = process.env.ASHLR_RUNS_DIR;
+    process.env.ASHLR_RUNS_DIR = runsDir;
+    try {
+      await publishCodexResetBank(runsDir, new Date().toISOString(), null, 'codex-cli-too-old (<0.172.0)');
+      const report = await runDoctor(defaultConfig());
+      expect(report.checks.find(check => check.id === 'codex-reset-bank')).toMatchObject({
+        status: 'warn', detail: 'codex-cli-too-old (<0.172.0)',
+        fix: 'Upgrade codex-cli to 0.172.0 or newer to read the reset bank.',
+      });
+    } finally {
+      if (prior === undefined) delete process.env.ASHLR_RUNS_DIR;
+      else process.env.ASHLR_RUNS_DIR = prior;
+      await rm(runsDir, { recursive: true, force: true });
+    }
+  });
+
   it('shares Phantom status, PATH lookup and Ollama models without caching across runs', async () => {
     const cfg = defaultConfig();
     for (let run = 1; run <= 2; run++) {

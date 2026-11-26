@@ -37,6 +37,7 @@ import type { LiveSourcesConfig } from './config.js';
 import { capacitySource } from './capacity-source.js';
 import { anthropicCostSource } from '../../fabric/readers/anthropic-cost.js';
 import { operatorPageSources, type OperatorUsagePageReader } from './operator-page.js';
+import { publishCodexResetBank } from './banked-resets.js';
 
 export interface ResourceLiveSourceOptions extends LiveSourcesConfig {
   readCapacity?: () => CapacitySnapshot | null;
@@ -58,7 +59,7 @@ export interface ResourceLiveSourceOptions extends LiveSourcesConfig {
   readClaudeQuota?: (runsDir: string) => Promise<ClaudeQuotaReadingV1 | null>;
   readClaudeEvent?: (nowMs: number) => unknown;
   readFable?: (nowMs: number) => FablePlan;
-  readCodex?: (home: string) => Promise<Pick<CodexUsageReading, 'pctUsed' | 'resetAt' | 'fetchedAt' | 'windows'>>;
+  readCodex?: (home: string) => Promise<Pick<CodexUsageReading, 'pctUsed' | 'resetAt' | 'fetchedAt' | 'windows' | 'resetBank' | 'resetBankUnknownReason'>>;
   readGrok?: (nowMs: number) => Promise<GrokUltraRunway>;
   resourceReaders?: UsageResourceReaderDeps;
   /** Devin weekly session-list measurement and the last published one. */
@@ -111,7 +112,16 @@ function codexPersonal(o: ResourceLiveSourceOptions): Record<'5h' | 'weekly', Re
   const source = (kind: '5h' | 'weekly'): ResourceLiveSource => ({ tier: 'official', read: async now => {
     const home = o.codexPersonalHome;
     if (!home || !codexPoolHomeAllowed(home, o.operatorHome ?? homedir())) return null;
-    if (last?.at !== now) last = { at: now, reading: (o.readCodex ?? (dir => readCodexUsage({ home: dir })))(home) };
+    if (last?.at !== now) {
+      const reading = (o.readCodex ?? (dir => readCodexUsage({ home: dir, includeResetBank: true })))(home).then(async row => {
+        const fetched = Date.parse(row.fetchedAt);
+        if ((row.resetBank || row.resetBankUnknownReason) && Number.isFinite(fetched) && now - fetched < RESOURCE_LIVE_STALE_MS) {
+          await publishCodexResetBank(o.runsDir, iso(Math.min(now, fetched)), row.resetBank ?? null, row.resetBankUnknownReason).catch(() => {});
+        }
+        return row;
+      });
+      last = { at: now, reading };
+    }
     const reading = await last.reading;
     const window = reading.windows?.[kind];
     const fetched = Date.parse(reading.fetchedAt);
