@@ -1,0 +1,7 @@
+##[group]Run node .github/scripts/ci-fast-run.mjs
+node .github/scripts/ci-fast-run.mjs
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+::error::affected test failed
+fast-gate tests failed (no file name parsed)
+##[error]Process completed with exit code 1.

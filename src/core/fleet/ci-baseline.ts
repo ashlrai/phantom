@@ -560,6 +560,12 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   '.github/scripts/ci-fast-inputs.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-green-reuse.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mcp-selection.mjs': ['.github/workflows/ci.yml'],
+  // The fast-gate runner's pure steps live on the per-OS lanes
+  // (fast-windows/fast-macos), whose checkouts do pin ref: to the
+  // analyzed head; its closed inputs are the workflow step/env wiring
+  // and the ci-fast-select plan producer -- the spawned test commands'
+  // own failures group under the test files instead.
+  '.github/scripts/ci-fast-run.mjs': ['.github/workflows/ci.yml', '.github/scripts/ci-fast-select.mjs'],
   // The memory benchmark gate runs `tsx scripts/benchmark-memory.ts`
   // (npm run bench:memory -- --check): its import closure covers the
   // benchmark, its floors file and the whole src/core/memory
@@ -1946,6 +1952,123 @@ const TEST_RUNNER_INPUTS: Record<string, readonly string[]> = {
   [TEST_CI_SHARDED_NAMES]: [TEST_CI_SHARDED_FILE, 'scripts/test-shard-plan.mjs', 'scripts/test-ci.mjs', 'test/helpers/test-durations.json', ...TEST_RUNNER_COMMON_INPUTS],
 };
 
+// The per-OS fast gates -- fast-windows and fast-macos in ci.yml -- run
+// .github/scripts/ci-fast-run.mjs with CI_FAST_BAIL=1: the runner
+// captures each test command's output instead of echoing it, so a
+// failing shard reaches the job log as at most three lines -- an
+// optional `::error file=<file>,line=<n>::<message>` annotation for
+// the first located failure, `fast-gate tests failed: <file>, ...`
+// naming every failed test file (or `fast-gate tests failed (no file
+// name parsed)` when the failing command's output named none, e.g. a
+// node --test TAP run), and the runner's exit marker. No vitest FAIL,
+// TAP `not ok` or tsc line survives into those logs, so without this
+// shape every test failure on an OS-sensitive diff reads unknown and
+// queues no fix. Each file the summary names groups under
+// `<file> > (fast-run)`: the path is a real test module, so its import
+// closure and the vitest harness ambient set decide touched and a
+// green master module can still resolve a one-off flake. The unnamed
+// variant stays unparsed -- the failing test is genuinely unknown --
+// while a step that fails before the summary prints (plan-file read,
+// module load) groups under the runner script itself, whose inputs are
+// the workflow step, the ci-fast-select plan producer and the script's
+// import closure with no harness ambient set. A step whose own output
+// carries vitest, TAP or tsc failure lines is the non-bail echo (the
+// ubuntu fast gate, or a hand-run invocation) and stays with those
+// parsers.
+const FAST_GATE_RUNNER_FILE = '.github/scripts/ci-fast-run.mjs';
+const FAST_GATE_NAMES = '(fast-run)';
+const FAST_GATE_MAX = 16;
+const FAST_GATE_STEP = /^node\s+\.github\/scripts\/ci-fast-run\.mjs(?=\s|$)/;
+const FAST_GATE_FILE = /^(?:test|\.github\/tests|src\/web-ui)\/[^\s>]+\.test\.(?:tsx|ts|mjs)$/;
+const FAST_GATE_SUMMARY = /^fast-gate tests failed: (.+)$/;
+const FAST_GATE_UNNAMED = 'fast-gate tests failed (no file name parsed)';
+const FAST_GATE_ANNOTATION = /^::error file=([^,\s]+),line=\d+::/;
+
+function parseFastGateFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // idle: no step context. script: collecting a Run block's script lines.
+  // meta: past the shell:/env: marker inside the block. output: scanning a
+  // step's output for the bail summary and companion failure shapes.
+  let phase: 'idle' | 'script' | 'meta' | 'output' = 'idle';
+  let disqualified = false;
+  let candidate = false;
+  let runner = false;
+  let suppressed = false;
+  let summary: string | null = null;
+  let unnamed = false;
+  const files: string[] = [];
+  const annotations = new Map<string, string>();
+  let recent: string[] = [];
+  const reset = () => {
+    phase = 'idle'; disqualified = false; candidate = false; runner = false;
+    suppressed = false; summary = null; unnamed = false;
+    files.length = 0; annotations.clear(); recent = [];
+  };
+  const noteScript = (line: string) => {
+    if (line === '') return;
+    if (FAST_GATE_STEP.test(line)) candidate = true; else disqualified = true;
+  };
+  for (const line of lines(log)) {
+    if (line.startsWith('##[group]')) {
+      // Any group boundary ends the current step: a new Run block starts
+      // script collection, anything else leaves the step unattributed.
+      reset();
+      const run = CI_STEP_GROUP.exec(line);
+      if (run !== null) {
+        phase = 'script';
+        const first = run[1];
+        if (first !== undefined) noteScript(first);
+      }
+      continue;
+    }
+    if (phase === 'script') {
+      if (CI_STEP_END.test(line)) { runner = candidate && !disqualified; phase = 'output'; continue; }
+      if (CI_STEP_META.test(line)) { phase = 'meta'; continue; }
+      noteScript(line);
+      continue;
+    }
+    if (phase === 'meta') {
+      if (CI_STEP_END.test(line)) { runner = candidate && !disqualified; phase = 'output'; }
+      continue;
+    }
+    if (phase === 'output') {
+      if (CI_STEP_FAILED.test(line)) {
+        if (runner && !suppressed) {
+          if (files.length > 0) {
+            for (const file of files) {
+              if (out.length >= FAST_GATE_MAX) break;
+              out.push({ file, names: FAST_GATE_NAMES, testId: `${file} > ${FAST_GATE_NAMES}`, excerpt: clean(annotations.get(file) ?? summary ?? line) });
+            }
+          } else if (summary === null && !unnamed) {
+            const excerpt = recent.length > 0 ? recent.join('\n') : line;
+            out.push({ file: FAST_GATE_RUNNER_FILE, names: FAST_GATE_NAMES, testId: `${FAST_GATE_RUNNER_FILE} > ${FAST_GATE_NAMES}`, excerpt: clean(excerpt) });
+          }
+        }
+        reset();
+        continue;
+      }
+      // A vitest, TAP or tsc line in the step's own output means the
+      // non-bail echo is running: those parsers own the failure.
+      if (FAIL_LINE.test(line) || SUITE_FAIL_LINE.test(line) || TSC_ERROR_LINE.test(line) || /^not ok\b/.test(line)) suppressed = true;
+      const summaryMatch = FAST_GATE_SUMMARY.exec(line);
+      if (summaryMatch !== null) {
+        summary = line;
+        for (const part of summaryMatch[1]!.split(',')) {
+          const file = part.trim();
+          if (files.length >= FAST_GATE_MAX || files.includes(file)) continue;
+          if (FAST_GATE_FILE.test(file) && posix.normalize(file) === file && !file.includes('..') && !posix.isAbsolute(file)) files.push(file);
+        }
+      } else if (line === FAST_GATE_UNNAMED) unnamed = true;
+      const annotation = FAST_GATE_ANNOTATION.exec(line);
+      if (annotation !== null) annotations.set(annotation[1]!, line);
+      // A node crash prints its `Error:` line ahead of a stack trace, so the
+      // crash excerpt keeps a wider tail than the gate parsers' four lines.
+      if (line !== '') { recent.push(line); if (recent.length > 8) recent.shift(); }
+    }
+  }
+  return out;
+}
+
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -2059,6 +2182,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     if (result.length >= 100) break;
     result.push(failure);
   }
+  for (const failure of parseFastGateFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
   return result;
 }
 
@@ -2164,19 +2291,22 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     else if (fetched.ok && fetched.source !== null) auditExceptions = parseAuditExceptions(fetched.source);
   }
   const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
-  // Parenthesized identities are gate checks, not vitest tests: only
-  // '(suite)' resolves through pass evidence, because the file loading is
-  // what failed. '(lint)', '(typecheck)' and the other gate names can never
-  // be flakes even when their file happens to be a test path a green-module
-  // line could otherwise match.
-  const filePassable = (names: string) => names === SUITE_NAMES || !names.startsWith('(');
+  // Parenthesized identities are gate checks, not vitest tests: only the
+  // file-level names resolve through pass evidence. '(suite)' names a file
+  // whose loading failed, and '(fast-run)' names a file the bail-mode fast
+  // gate could not get a per-test verdict for -- in both the file loading
+  // or running at all is what failed. '(lint)', '(typecheck)' and the
+  // other gate names can never be flakes even when their file happens to
+  // be a test path a green-module line could otherwise match.
+  const FILE_LEVEL_NAMES: ReadonlySet<string> = new Set([SUITE_NAMES, FAST_GATE_NAMES]);
+  const filePassable = (names: string) => FILE_LEVEL_NAMES.has(names) || !names.startsWith('(');
   // A suite failure has no per-test pass line to match: the file loading and
   // running at all is what resolves it. The default reporter's green-module
   // line (`✓ file (N tests)`) is the same evidence at file granularity -- a
   // green module means every test it contains passed on master.
   const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
-    if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
+    if (m) return m[1] === f.file && (FILE_LEVEL_NAMES.has(f.names) || m[2] === f.names);
     return FILE_PASS_LINE.exec(line)?.[1] === f.file;
   }));
   // Bundler-resolution candidates for one normalized repo-relative spec base.
@@ -2503,7 +2633,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the harness, and the secret-shape/
       // secret-scan/version-provenance trust gates have no vitest harness
       // at all, so the ambient set cannot reach any of them.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === BUILD_STEP_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === BUILD_STEP_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) || failure.file === FAST_GATE_RUNNER_FILE ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }

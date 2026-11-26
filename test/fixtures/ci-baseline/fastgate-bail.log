@@ -1,0 +1,16 @@
+##[group]Run node .github/scripts/ci-fetch-range.mjs
+node .github/scripts/ci-fetch-range.mjs
+shell: /usr/bin/bash -e {0}
+env:
+  BASE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  HEAD_SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  BASE_REF: master
+##[endgroup]
+fetched 3 commits in range
+##[group]Run node .github/scripts/ci-fast-run.mjs
+node .github/scripts/ci-fast-run.mjs
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+::error file=test/example.test.ts,line=42::AssertionError: expected 1 to be 2
+fast-gate tests failed: test/example.test.ts, test/other.test.ts
+##[error]Process completed with exit code 1.
