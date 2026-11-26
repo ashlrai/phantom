@@ -136,6 +136,9 @@ outcome tallies — for example how many selections ended `merged`, `rejected`
 or `failed`, and how many merged selections were later `reverted` or
 `regressed`. Lifecycle stages of one use collapse into a single selection,
 and unjoined or conflicting skill rows never enter the tally.
+Post-merge observations contribute to the trajectory timeline and realized
+outcomes only when their timestamps are valid and at or before the projection's
+as-of time.
 
 `phm skills list --outcomes` joins the same projection onto the learned-skill
 list: each entry gains an `outcomes` object when its exact revision was

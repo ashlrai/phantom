@@ -1548,6 +1548,8 @@ function listTrajectoryRecordsAt(
     }
 
     for (const observation of outcome.postMergeObservations ?? []) {
+      const observedAtMs = Date.parse(observation.observedAt);
+      if (!Number.isFinite(observedAtMs) || observedAtMs > asOfMs) continue;
       if (observation.confidence === 'deterministic') {
         record.realizedOutcome = betterRealizedOutcome(record.realizedOutcome, observation.outcome);
       }
