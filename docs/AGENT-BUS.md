@@ -1878,7 +1878,14 @@ desktop source does not prevent CLI or teammate observations.
 
 `phm agentnet peers mesh --json` and `phm agentnet peers work-feed --json` expose
 these shared projections to every enrolled, authenticated peer, independent of
-lane or role. Private inboxes keep their recipient checks. Routine local DMs use
+lane or role. `peers work-feed` accepts the same filter set every other
+work-feed surface serves — `--claims`, `--open`, `--claimable`, `--status`,
+`--job`, `--repo`, `--provider`, `--tier`, `--to`, `--owner`, `--channel`,
+`--result`, `--id`, `--since`, `--before`, `--contains` and `--limit` —
+validated through the shared `parseBusWorkFeedQuery` contract, so a remote
+peer's filtered feed reads exactly what `phm fleet work-feed` would; `peers
+mesh` stays unfiltered and every other verb refuses the feed flags. Private
+inboxes keep their recipient checks. Routine local DMs use
 `phm agents bus dm --to <handle> --text <text>`; transport and send gates still apply.
 Repeatable `--ref <ref>` on `dm`, `post` and `channel post` records v2 `refs` on the
 `note` body; `--thread <label>` records the v2 `thread` conversation label —

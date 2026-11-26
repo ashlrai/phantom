@@ -57,6 +57,26 @@ ledger or journal refused, and `nextCursor` still advances over every scanned
 row, so a filtered read is a view of the page, not a subscription. Every
 other `agentnet` verb refuses the read-only flags.
 
+`agentnet/mesh-read.ts` owns `PeerWorkFeedQuery` and
+`readPeerFleet(view: 'mesh' | 'work-feed', session: PeerSession, options?: PeerBusOptions, feed?: PeerWorkFeedQuery)`.
+Both views still require a live peer session and write nothing.
+`phm agentnet peers work-feed` accepts the same query every other work-feed
+surface validates — the `parseBusWorkFeedQuery` contract `phm fleet
+work-feed`, `phm agents bus work feed`, `GET /api/verse/agent-bus/work-feed`
+and `fleet_work_feed` share: `--claims`, `--open`, `--claimable`, `--status`,
+`--job`, `--repo`, `--provider`, `--tier`, `--to`, `--owner`, `--channel`,
+`--result`, `--id`, `--since`, `--before`, `--contains` and `--limit`,
+alongside the read-filter names it shares (`--to`, `--since`, `--before`,
+`--contains`, `--id`, `--job`, `--result`). The parsed query applies the
+`projectBusWorkFeedView` filters and the `sliceBusWorkFeedView` page bound to
+the same `readBusWorkFeed` projection, so a peer's filtered feed can never
+disagree with the local surfaces about what a value means; the claims join
+rides `--claims`/`--open`/`--claimable` exactly like the other readers.
+`peers mesh` takes no query — passing one throws — `peers read` and every
+other verb refuse the feed-only flags, and the read-only peer-inbox filters
+(`--from`, `--exclude-from`, `--kind`, `--peer-kind`) stay refused on
+`work-feed`: the feed query has no sender, kind or thread dimension.
+
 Host-owned `~/.ashlr/agentnet/bindings.json` is a private 0600 strict JSON object
 `{version:1, peers:[]}` (max 128). Each binding has `callsign`, `lane`, `sessionId`,
 `sessionHash`, `expiresAt` (epoch ms), `teamId`, `userId`, `botId`, `topic`.

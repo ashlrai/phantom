@@ -480,7 +480,13 @@ phm agentnet identity register reviewer --json
 `--to`, `--since`, `--before`, `--contains`, `--id`, `--kind`, `--peer-kind`,
 `--thread`, `--job`, `--result`) applied to the admitted page only — they
 narrow the view, never the admission, and the cursor still advances over every
-scanned row.
+scanned row. `peers work-feed` accepts the shared work-feed query instead —
+`--claims`, `--open`, `--claimable`, `--status`, `--job`, `--repo`,
+`--provider`, `--tier`, `--to`, `--owner`, `--channel`, `--result`, `--id`,
+`--since`, `--before`, `--contains` and `--limit` — the same
+`parseBusWorkFeedQuery` validation `phm fleet work-feed` and the feed
+HTTP/MCP surfaces apply, projected through `readPeerFleet`'s authenticated
+read. `peers mesh` takes no filters.
 
 Channel proposals preview by default; `--apply` and identity registration record
 local drafts. Actual bot/channel provisioning needs a reviewed provisioner and
