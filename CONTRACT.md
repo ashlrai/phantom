@@ -891,8 +891,9 @@ inside their recorded shapes (`unknown` rows carry none,
 `measured`/`partial` rows carry all three plus a `startedAt` and at
 least one sample and peak process, `measured` rows require
 `sampledSeconds` >= 59 with >= 12 samples, and mean CPU never exceeds
-peak) — last appended row winning a repeat, malformed rows skipped,
-never recorded raw. The producer keys measured rows
+peak). Entries iterate in the append order of their last valid receipt,
+including when a launch ID repeats. Malformed rows are skipped.
+The producer keys measured rows
 `<job>-<12 lowercase hex claim hash>` — one row per attempt — and
 unknown probes by the bare job id, so the read resolves each
 `launchId` against the folded job window: a launchId that is itself a
