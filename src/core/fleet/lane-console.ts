@@ -525,7 +525,7 @@ export function parseReadyTsv(text: string, routerQueue?: string | null, uniqueR
       dropped++;
       continue;
     }
-    if (row.status !== 'READY' || keepReady(row.id)) rows.push(row);
+    if (row.status !== 'READY' || PARKED_MARKER.test(row.pool) || keepReady(row.id)) rows.push(row);
   }
   return { rows, dropped, invalid, unhinted, unhintedRows };
 }
