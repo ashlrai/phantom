@@ -5,6 +5,7 @@ import {applyConsumerDesktopUpgrade, createConsumerUpgradeDependencies, inspectC
   type ConsumerUpgradeDependencies, type ConsumerUpgradeOptions, type ConsumerUpgradeResult} from '../core/desktop/consumer-upgrade.js';
 
 const USAGE = `usage: phm desktop install [--apply]
+       phm desktop update status --json
        phm desktop install --upgrade [--apply] [--require-app] [--to x.y.z]
        phm desktop install --rollback [--apply]
        phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]
@@ -37,6 +38,11 @@ export async function cmdDesktop(args: string[], dependencies?: ConsumerInstallD
   emit: (result: ConsumerInstallResult|ConsumerUpgradeResult)=>void|Promise<void> = value=>{console.log(JSON.stringify(value));},
   operatorDeps?: DesktopOperatorCliDeps, upgradeDeps?:ConsumerUpgradeDependencies): Promise<number> {
   const head = args[0];
+  if (head === 'update') {
+    if (args.length !== 3 || args[1] !== 'status' || args[2] !== '--json') {console.error(USAGE);return 2;}
+    const {readNativeUpdateStatus}=await import('../core/desktop/native-update-status.js');
+    console.log(JSON.stringify(readNativeUpdateStatus()));return 0;
+  }
   if (head && !['install', 'help', '--help', '-h'].includes(head)) return cmdDesktopOperator(args, operatorDeps);
   let options: ReturnType<typeof parseDesktopInstallArgs>;
   try {options=parseDesktopInstallArgs(args);} catch {console.error(USAGE);return 2;}

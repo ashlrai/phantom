@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ state: null as unknown, get: vi.fn() }));
 vi.mock('../../../app/desktop-updates.js', () => ({ useDesktopUpdates: () => mocks.state, refreshDesktopUpdates: () => true }));
@@ -38,6 +38,26 @@ describe('ReleaseStages', () => {
     mocks.get.mockRejectedValue(new Error('offline'));
     render(<ReleaseStages installedVersion="3.29.15" />);
     expect(await screen.findByText('The newest release could not be read.')).toBeTruthy();
+  });
+  it('refreshes the open panel without a click and stops on unmount', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.get.mockResolvedValueOnce(response).mockResolvedValueOnce({ ...response, stages: [
+        { stage: 'published', status: 'observed', version: 'v3.30.8', reason: null },
+        { stage: 'feed-ready', status: 'observed', version: '3.30.8', reason: null },
+      ] });
+      const { unmount } = render(<ReleaseStages installedVersion="3.29.15" />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByText(/feed unavailable or unsupported/u)).toBeTruthy();
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(screen.queryByText(/feed unavailable or unsupported/u)).toBeNull();
+      expect(mocks.get).toHaveBeenCalledTimes(2);
+      unmount();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(mocks.get).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

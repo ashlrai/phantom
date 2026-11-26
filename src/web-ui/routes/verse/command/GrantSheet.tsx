@@ -22,7 +22,7 @@ import { Button } from '../../../components/primitives/Button.js';
 import { Sheet } from '../../../components/primitives/Sheet.js';
 import { IconLock } from '../../../components/primitives/icons.js';
 import { useQuery } from '../../../data/hooks.js';
-import { authorityDraftQuery, authorityEliteDraftQuery, type OptionalRead } from './surface-data.js';
+import { authorityDraftQuery, authorityEliteDraftQuery, authorityNewRepoDraftQuery, type OptionalRead } from './surface-data.js';
 import { SWITCH_LABEL } from './authority-model.js';
 import { CardNote, MicroLabel } from './Surface.js';
 import type { AutonomySwitch } from '../../../../core/authority/types.js';
@@ -35,6 +35,7 @@ import styles from './command.module.css';
 import { formatDateTime } from '../../../components/format/locale-format.js';
 
 export type GrantIntent = 'grant' | 're-approve';
+export type RepoGrantChange = { repo: string; intent: 'add' | 'remove' | 'propose' | 'merge' };
 
 export interface GrantSheetProps {
   open: boolean;
@@ -56,6 +57,7 @@ export interface GrantSheetProps {
   act?: SurfaceActions['act'];
   /** 3.15: open straight into the scope editor (Fleet's "Edit scope"). */
   startEditing?: boolean;
+  repoChange?: RepoGrantChange | undefined;
 }
 
 const DAY = 86_400_000;
@@ -208,18 +210,19 @@ export function DraftScope({ draft }: { draft: AuthorityGrantDraft }) {
   );
 }
 
-export function GrantSheet({ open, intent, then, busy, actionStatus, why, onApprove, onClose, act, startEditing }: GrantSheetProps) {
+export function GrantSheet({ open, intent, then, busy, actionStatus, why, onApprove, onClose, act, startEditing, repoChange }: GrantSheetProps) {
   const titleId = useId();
   // Only read the draft while the sheet is open: drafting is cheap on the
   // server, but a draft read while the sheet is closed would be stale by the
   // time anyone approved it.
-  return open ? <GrantSheetBody titleId={titleId} intent={intent} then={then} busy={busy} actionStatus={actionStatus} why={why} onApprove={onApprove} onClose={onClose} {...(act ? { act } : {})} startEditing={startEditing === true} /> : null;
+  return open ? <GrantSheetBody titleId={titleId} intent={intent} then={then} busy={busy} actionStatus={actionStatus} why={why} onApprove={onApprove} onClose={onClose} {...(act ? { act } : {})} startEditing={startEditing === true} repoChange={repoChange} /> : null;
 }
 
-function GrantSheetBody({ titleId, intent, then, busy, actionStatus, why, onApprove, onClose, act, startEditing }: Omit<GrantSheetProps, 'open'> & { titleId: string }) {
+function GrantSheetBody({ titleId, intent, then, busy, actionStatus, why, onApprove, onClose, act, startEditing, repoChange }: Omit<GrantSheetProps, 'open'> & { titleId: string }) {
   const [elite, setElite] = useState(false);
   const eliteHintId = useId();
-  const read = useQuery(elite ? authorityEliteDraftQuery : authorityDraftQuery, { freshMs: 0 });
+  const newForRepo = repoChange?.intent === 'add' || repoChange?.intent === 'merge';
+  const read = useQuery(newForRepo ? authorityNewRepoDraftQuery : elite ? authorityEliteDraftQuery : authorityDraftQuery, { freshMs: 0 });
   const served = (read.data as OptionalRead<EditableGrantDraft> | undefined)?.value ?? null;
   // 3.15: Mason's edited draft (the server's answer to the editor) replaces
   // the served one; approving signs exactly the draft on screen (its digest).
@@ -243,6 +246,9 @@ function GrantSheetBody({ titleId, intent, then, busy, actionStatus, why, onAppr
   const scopeDirty = editorRevision > 0 && (acknowledged?.revision !== editorRevision || acknowledged.sourceDigest !== served?.digest);
   const sourceChanged = editedSourceDigest !== null && editedSourceDigest !== served?.digest;
   const draftMatchesChoice = draft !== null && (draft.eliteDirect === true) === (elite || fixedElite);
+  const target = draft?.payload.repos.find(row => row.nameWithOwner.toLowerCase() === repoChange?.repo);
+  const repoChangeSatisfied = !repoChange || (repoChange.intent === 'remove' ? !target
+    : repoChange.intent === 'add' ? !!target : target?.stage === repoChange.intent);
 
   function markDirty(): void {
     revision.current++;
@@ -319,7 +325,7 @@ function GrantSheetBody({ titleId, intent, then, busy, actionStatus, why, onAppr
             <Button variant="ghost" onClick={onClose}>
               {busy ? 'Close dialog' : 'Cancel'}
             </Button>
-            <Button variant="primary" icon={<IconLock />} disabled={!draft || !draftMatchesChoice || scopeDirty || previewing} busy={busy} onClick={() => draft && onApprove(draft)}>
+            <Button variant="primary" icon={<IconLock />} disabled={!draft || !draftMatchesChoice || !repoChangeSatisfied || scopeDirty || previewing} busy={busy} onClick={() => draft && onApprove(draft)}>
               Approve with Touch ID
             </Button>
           </span>
@@ -327,17 +333,31 @@ function GrantSheetBody({ titleId, intent, then, busy, actionStatus, why, onAppr
       }
     >
       {actionStatus ? <ActionStatus actions={actionStatus} /> : null}
-      <label className={styles.eliteToggle}>
+      {!repoChange ? <><label className={styles.eliteToggle}>
         <input type="checkbox" checked={elite || fixedElite} disabled={previewing || busy || fixedElite} onChange={(e) => { setElite(e.target.checked); resetEditor(); }} aria-describedby={eliteHintId} />
         Elite direct
       </label>
       <p id={eliteHintId} className={styles.scopeMeta}>
         {ELITE_DIRECT_SHEET_LINE}
-      </p>
+      </p></> : null}
       {read.status === 'loading' && !read.data ? (
         <p className={styles.muted} aria-busy="true">Preparing the grant draft…</p>
       ) : draft ? (
         <>
+          {repoChange && !repoChangeSatisfied ? (
+            <div className={styles.scopeEditToggle}>
+              {repoChange.intent === 'remove' || repoChange.intent === 'propose' ? (
+                <Button size="sm" disabled={!canEdit || busy || previewing} onClick={() => {
+                  if (!served) return;
+                  preview(repoChange.intent === 'remove'
+                    ? { repos: served.payload.repos.map(row => row.nameWithOwner).filter(repo => repo.toLowerCase() !== repoChange.repo) }
+                    : { proposeOnlyRepos: [repoChange.repo] });
+                }}>Preview repository change</Button>
+              ) : <p className={styles.scopeMeta}>{repoChange.intent === 'add'
+                ? 'This repo is not in the draft. Prepare and enroll its local checkout, then reopen this sheet.'
+                : 'The new grant does not permit merging for this repo. It cannot be promoted past the default verification and rollout policy.'}</p>}
+            </div>
+          ) : null}
           {canEdit ? (
             <div className={styles.scopeEditToggle}>
               <Button variant="ghost" size="sm" aria-expanded={editing} onClick={() => setEditing((e) => !e)}>

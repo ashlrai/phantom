@@ -186,6 +186,8 @@ export function verifyCanonicalProvenance(record, audit, revision, currentRun, c
 }
 
 class RegistryReadPending extends Error {}
+const registryPackageUrl = 'https://registry.npmjs.org/@ashlr%2Fphantom';
+const uncached = {'Cache-Control': 'no-cache'};
 async function registryFetch(url, timeoutMs = 30_000, {headers, onStatus} = {}) {
   let response;
   try {response = await fetch(url, {redirect: 'error', signal: AbortSignal.timeout(timeoutMs), ...(headers ? {headers} : {})});}
@@ -198,31 +200,62 @@ async function registryFetch(url, timeoutMs = 30_000, {headers, onStatus} = {}) 
   return response;
 }
 
+async function readRegistryBody(read) {
+  try {return await read();}
+  catch {throw new RegistryReadPending('Public registry response unavailable');}
+}
+
+async function registryJson(response) {
+  return JSON.parse(await readRegistryBody(() => response.text()));
+}
+
+/** A stale exact-version miss alone is not evidence that publishing is safe. */
+export async function publicationStatus(record) {
+  let status;
+  try {
+    await registryFetch(`${registryPackageUrl}/${record.version}`, 30_000, {headers: uncached, onStatus: value => {status = value;}});
+    return 'present';
+  } catch (error) {
+    if (!(error instanceof RegistryReadPending) || status !== 404) throw error;
+  }
+  const packument = await registryJson(await registryFetch(registryPackageUrl, 30_000, {headers: {...uncached, Accept: 'application/json'}}));
+  assert.equal(packument.name, record.name, 'Public registry package differs');
+  const tags = packument['dist-tags'];
+  const versions = packument.versions;
+  assert.ok(tags && typeof tags === 'object' && !Array.isArray(tags), 'Malformed public registry tags');
+  assert.ok(versions && typeof versions === 'object' && !Array.isArray(versions), 'Malformed public registry versions');
+  return Object.hasOwn(versions, record.version) || Object.values(tags).includes(record.version) ? 'present' : 'absent';
+}
+
 async function registry(record, directory, onStatus, deadline) {
-  const response = await registryFetch(`https://registry.npmjs.org/@ashlr%2Fphantom/${record.version}`, 30_000, {headers: {'Cache-Control': 'no-cache'}, onStatus});
-  const metadata = await response.json();
+  const withinBudget = (message = 'Public registry is still processing or unavailable') => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new RegistryReadPending(message);
+    return Math.min(30_000, remaining);
+  };
+  const response = await registryFetch(`${registryPackageUrl}/${record.version}`, withinBudget(), {headers: uncached, onStatus});
+  const metadata = await registryJson(response);
   assertRegistryMetadata(record, metadata);
   const url = new URL(metadata.dist?.tarball);
   assert.equal(url.origin, 'https://registry.npmjs.org');
   assert.equal(url.pathname, `/@ashlr/phantom/-/phantom-${record.version}.tgz`);
   // npm install consumes this abbreviated catalog, which may lag the version
   // endpoint. Check it before downloading the archive on every pending read.
-  const remaining = deadline - Date.now();
-  if (remaining <= 0) throw new RegistryReadPending('Public install catalog is still processing or unavailable');
-  const catalogResponse = await registryFetch('https://registry.npmjs.org/@ashlr%2Fphantom', Math.min(30_000, remaining),
-    {headers: {Accept: 'application/vnd.npm.install-v1+json'}, onStatus});
-  const catalog = await catalogResponse.json();
+  const catalogPending = 'Public install catalog is still processing or unavailable';
+  const catalogResponse = await registryFetch(registryPackageUrl, withinBudget(catalogPending),
+    {headers: {...uncached, Accept: 'application/vnd.npm.install-v1+json'}, onStatus});
+  const catalog = await registryJson(catalogResponse);
   assert.equal(catalog.name, record.name, 'Public install catalog package differs');
   assert.ok(catalog.versions && typeof catalog.versions === 'object' && !Array.isArray(catalog.versions), 'Malformed public install catalog');
-  if (!Object.hasOwn(catalog.versions, record.version)) throw new RegistryReadPending('Public install catalog is still processing or unavailable');
+  if (!Object.hasOwn(catalog.versions, record.version)) throw new RegistryReadPending(catalogPending);
   const version = catalog.versions[record.version];
   assert.equal(version?.name, record.name, 'Public install catalog package differs');
   assert.equal(version?.version, record.version, 'Public install catalog version differs');
   assert.equal(version?.dist?.integrity, record.integrity, 'Public install catalog integrity differs');
   assert.equal(version?.dist?.tarball, url.href, 'Public install catalog archive differs');
-  if (Date.now() >= deadline) throw new RegistryReadPending('Public install catalog is still processing or unavailable');
-  const archive = await registryFetch(url);
-  const bytes = Buffer.from(await archive.arrayBuffer());
+  const archive = await registryFetch(url, withinBudget(catalogPending), {onStatus});
+  const bytes = Buffer.from(await readRegistryBody(() => archive.arrayBuffer()));
+  withinBudget();
   assertRegistryPackage(record, metadata, bytes);
   fs.writeFileSync(join(directory, 'registry-metadata.json'), JSON.stringify(metadata), {mode: 0o600});
 }
@@ -246,6 +279,7 @@ export async function reconcileRegistry(record, directory) {
       const remaining = deadline - Date.now();
       if (!(error instanceof RegistryReadPending) || remaining <= 0) throw error;
       await new Promise(done => setTimeout(done, Math.min(delay, remaining)));
+      if (Date.now() >= deadline) throw error;
       delay = Math.min(delay * 2, 5000);
     }
   }
@@ -364,6 +398,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   else if (command === 'handoff') {
     const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${record.version}\nfilename=${record.filename}\nintegrity=${record.integrity}\n`);
+  } else if (command === 'publication-status') {
+    const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
+    console.log(await publicationStatus(record));
   } else if (command === 'registry') {
     const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
     await reconcileRegistry(record, process.env.RUNNER_TEMP);

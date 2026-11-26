@@ -1,0 +1,32 @@
+.card {
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.heading, .repo, .buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.heading { justify-content: space-between; }
+.heading h2 { margin: 4px 0 0; font-size: var(--text-xl-size); }
+.eyebrow { color: var(--text-secondary); font-size: var(--text-2xs-size); letter-spacing: .15em; }
+.description { color: var(--text-secondary); line-height: 1.6; }
+.scroll { overflow-x: auto; }
+.table { border-collapse: collapse; width: 100%; font-size: var(--text-sm-size); text-align: left; }
+.table th, .table td { padding: 10px 8px; border-bottom: 1px solid var(--border-default); vertical-align: middle; }
+.table thead th { font-size: var(--text-2xs-size); white-space: nowrap; color: var(--text-secondary); }
+.table small { display: block; color: var(--text-secondary); white-space: nowrap; margin-top: 3px; font-weight: 400; }
+.repo { min-width: 145px; }
+.logo { width: 28px; height: 28px; flex-shrink: 0; object-fit: contain; border-radius: 6px; display: grid; place-items: center; background: var(--bg-active); color: var(--text-primary); }
+.buttons { margin-top: 5px; white-space: nowrap; }
+.table select { color: inherit; background: var(--bg-input); border: 1px solid var(--border-default); border-radius: 6px; padding: 4px 9px; }
+.allocation details { margin-top: 3px; }
+.allocation summary { cursor: pointer; }
+.allocation ul { padding-left: 14px; }
+.ci { text-transform: capitalize; }
+.ci[data-ci='green'] { color: var(--status-success-fg); }
+.ci[data-ci='red'] { color: var(--status-danger-fg); }

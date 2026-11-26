@@ -237,6 +237,8 @@ export interface UnfedReport {
   /** Slots that could be filled now: sum of min(headroom, waiting rows) over unfed lanes. */
   unfedSlots: number;
   resources: UnfedResource[];
+  /** Whether older work-market journal bytes were omitted from the window folds. */
+  marketTruncated: boolean;
   history: UnfedHistory;
   /** lane_override accounting over the same window's route_decision rows. */
   overrides: UnfedOverrides;
@@ -333,7 +335,7 @@ function publishedFleetStop(resources: readonly UnfedResource[]): FleetStopCode 
  * dispatcher's own input files; when present and slots.json parses, a derived
  * report recomputes per-lane reason codes instead of leaving them unknown.
  */
-export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'history' | 'overrides' | 'claims' | 'decisionOutcomes' | 'rejections'> {
+export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'marketTruncated' | 'history' | 'overrides' | 'claims' | 'decisionOutcomes' | 'rejections'> {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const tickMs = typeof data.last_tick === 'string' ? Date.parse(data.last_tick) : NaN;
@@ -809,6 +811,9 @@ export function renderUnfed(report: UnfedReport): string[] {
         : 'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.');
   }
   const h = report.history;
+  if (report.marketTruncated) {
+    lines.push(`Last ${h.windowHours}h: work-market journal tail only. History, route decisions, rejections and linked outcomes may be incomplete.`);
+  }
   if (!h.available) lines.push(`Last ${h.windowHours}h: no metrics/work-market.jsonl history.`);
   else if (h.lanes.length === 0) lines.push(`Last ${h.windowHours}h: no unfed ticks recorded.`);
   else {

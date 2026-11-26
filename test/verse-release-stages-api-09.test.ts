@@ -40,6 +40,26 @@ describe('GET /api/verse/release/stages', () => {
     expect(body.stages).toMatchObject([{ stage: 'published', status: 'observed', reason: null }, { stage: 'feed-ready', status: 'observed', version: '3.30.8' }]);
   });
 
+  it('refreshes a stale feed after publication and accepts a timestamp from the completed read', async () => {
+    const published = Date.parse('2026-11-09T10:00:00Z');
+    let t = published + 1000;
+    let evidence: number | null = published - 1000;
+    const api = createReleaseStagesApi({
+      run: runner(names('3.30.8')), now: () => new Date(t),
+      feed: async () => {
+        t += 3000;
+        return { repo: 'ashlrai/phantom', version: '3.30.8', observedAt: new Date(evidence ?? t).toISOString() };
+      },
+    });
+    const first = await call({}, 'GET', true, api);
+    expect(first.body.stages[1]).toMatchObject({ status: 'unknown', reason: 'stale or invalid observation timestamp' });
+    evidence = null;
+    t = published + 30_000;
+    const next = await call({}, 'GET', true, api);
+    expect(next.body.stages[1]).toMatchObject({ status: 'observed', reason: null });
+    expect(Date.parse(next.body.checkedAt)).toBeLessThan(published + 60_000);
+  });
+
   it('answers 200 with no tag when the runner fails', async () => {
     const { status, body } = await call({ run: async () => ({ code: 1, stdout: '' }), feed: async () => null });
     expect(status).toBe(200);
