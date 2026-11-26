@@ -283,7 +283,10 @@ is published; credentials stay local. Exit 0 means published or already fresh,
 1 means unavailable (follow the returned recovery instruction), and 2 means bad
 arguments or configuration. Unknown usage remains ineligible; publishing does
 not guarantee a seat qualifies. Resident daemons start the publisher at startup
-and check every minute outside tick dispatch, sampling at most every five minutes.
+and check every minute outside tick dispatch. The daemon normally waits five
+minutes between its own samples. A snapshot dated after the local clock triggers
+a fresh collection attempt through the existing lease checks. That future-dated
+snapshot is ineligible for the daemon's capacity history.
 `ASHLR_DAEMON_CAPACITY_PUBLISHER=0` disables automatic daemon publication.
 
 The Resources rail reads `<runs>/state/resource-live.json`, not `capacity.json`.
