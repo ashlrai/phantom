@@ -16,6 +16,7 @@ import time
 QUIET_SECONDS = 20 * 60
 INTERVAL_SECONDS = 30 * 60
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+DISCOVERY_EXCLUDED = {'queue', 'locks', '.git', 'node_modules', 'target', 'dist', '.turbo'}
 
 
 class Hold(Exception):
@@ -35,12 +36,15 @@ def opened(root, relative=Path('.')):
     """Open each component without following a symlink, including the root."""
     fd = os.open(root, DIR_FLAGS)
     try:
+        device = os.fstat(fd).st_dev
         for index, part in enumerate(relative.parts):
             if part in ('.', '..') or protected(part) or (index == 0 and part == 'queue'):
                 raise Hold('protected-path')
             next_fd = os.open(part, DIR_FLAGS, dir_fd=fd)
             os.close(fd)
             fd = next_fd
+            if os.fstat(fd).st_dev != device:
+                raise Hold('mount-boundary')
         yield fd
     finally:
         os.close(fd)
@@ -197,25 +201,66 @@ def lease(root, wt):
                 os.close(fd)
 
 
-def worktrees(root):
-    """Discover physical Git roots only; sidecar paths cannot widen scope."""
-    pending = [Path('.')]
-    while pending:
-        relative = pending.pop()
-        with opened(root, relative) as fd:
-            entries = sorted(os.listdir(fd))
-            if '.git' in entries and relative != Path('.'):
-                info = os.stat('.git', dir_fd=fd, follow_symlinks=False)
-                if stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode):
-                    yield relative
+def has_git_marker(fd):
+    try:
+        info = os.stat('.git', dir_fd=fd, follow_symlinks=False)
+        return stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)
+    except FileNotFoundError:
+        return False
+
+
+def worktrees(root, registered_terminal=lambda: ()):
+    """Probe only the direct bridge layout and the fleet's wt/<job> layout."""
+    def children(fd, relative, terminal=()):
+        device = os.fstat(fd).st_dev
+        for name in sorted(os.listdir(fd)):
+            if protected(name) or name in DISCOVERY_EXCLUDED or name in terminal:
                 continue
-            for name in entries:
-                if ((relative == Path('.') and name == 'queue') or protected(name) or
-                        name in ('locks', '.git', 'node_modules', 'target', 'dist', '.turbo')):
-                    continue
-                info = os.stat(name, dir_fd=fd, follow_symlinks=False)
-                if stat.S_ISDIR(info.st_mode) and info.st_dev == os.fstat(fd).st_dev:
-                    pending.append(relative / name)
+            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if not stat.S_ISDIR(info.st_mode) or info.st_dev != device:
+                continue
+            child = os.open(name, DIR_FLAGS, dir_fd=fd)
+            try:
+                if os.fstat(child).st_dev == device and has_git_marker(child):
+                    yield relative / name
+            finally:
+                os.close(child)
+
+    with opened(root) as root_fd:
+        yield from children(root_fd, Path('.'))
+        try:
+            info = os.stat('wt', dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if not stat.S_ISDIR(info.st_mode) or info.st_dev != os.fstat(root_fd).st_dev:
+            return
+        with opened(root, Path('wt')) as registered:
+            if os.fstat(registered).st_dev == os.fstat(root_fd).st_dev and not has_git_marker(registered):
+                yield from children(registered, Path('wt'), registered_terminal())
+
+
+def terminal_jobs(home, root, job=None):
+    args = ['phm', 'disk-maint', '--json', '--only', 'worktrees-runs',
+            '--home', str(home), '--runs-dir', str(root)]
+    if job is not None:
+        args += ['--worktree', job]
+    try:
+        plan = json.loads(run(args))
+        [cls] = plan['classes']
+        if (plan['schema'] != 'disk-maint.v1' or plan['apply'] is not False or
+                cls['id'] != 'worktrees-runs' or cls['complete'] is not True or
+                not isinstance(cls['reapReasons'], dict) or not isinstance(cls['protectReasons'], dict) or
+                not isinstance(cls['candidates'], list) or len(cls['candidates']) != cls['reapable']):
+            raise ValueError()
+        jobs = set()
+        for item in cls['candidates']:
+            path = Path(item['path'].replace('~/', str(home) + '/', 1) if item['path'].startswith('~/') else item['path'])
+            if item['action'] != 'worktree-remove' or path.parent != root / 'wt':
+                raise ValueError()
+            jobs.add(path.name)
+        return jobs
+    except (Hold, ValueError, TypeError, KeyError, AttributeError):
+        raise Hold('disk-maint-classifier-unavailable') from None
 
 
 def scan(wt, cutoff):
@@ -309,13 +354,29 @@ def remove_contents(fd, device, cutoff):
 
 
 def sweep(home, dry_run=False, event_path=None):
-    root = home.resolve(strict=True) / '.ashlr-runs'
+    home = home.resolve(strict=True)
+    root = home / '.ashlr-runs'
     freed = planned = removed = held = 0
     if not os.path.lexists(root):
         print('WT_PRUNE freed_bytes=0 would_free_bytes=0 removed=0 held=0')
         return 0
     try:
-        selected = [p for p in worktrees(root) if event_path is None or root / p == event_path]
+        if event_path is not None:
+            selected = []
+            if event_path.is_relative_to(root):
+                relative = event_path.relative_to(root)
+                if relative.parent in (Path('.'), Path('wt')) and relative.name not in DISCOVERY_EXCLUDED:
+                    try:
+                        with opened(root, relative) as fd:
+                            if has_git_marker(fd):
+                                selected = [relative]
+                    except FileNotFoundError:
+                        pass
+                if (selected and relative.parent == Path('wt') and
+                        relative.name in terminal_jobs(home, root, relative.name)):
+                    selected = []
+        else:
+            selected = list(worktrees(root, lambda: terminal_jobs(home, root)))
         # One initial inventory, then a fresh snapshot immediately before each
         # eligible tree's removals. Missing/removed event paths need no inspector.
         inventory = process_cwds() if selected else []
@@ -361,8 +422,9 @@ def sweep(home, dry_run=False, event_path=None):
                             removed += 1
             except (Hold, OSError):
                 held += 1
-    except (Hold, OSError):
-        print('WT_PRUNE inspection_failed=1', file=sys.stderr)
+    except (Hold, OSError) as error:
+        classifier = ' disk_maint_classifier_unavailable=1' if str(error) == 'disk-maint-classifier-unavailable' else ''
+        print('WT_PRUNE inspection_failed=1' + classifier, file=sys.stderr)
         print(f'WT_PRUNE freed_bytes={freed} would_free_bytes={planned} removed={removed} held={held}')
         return 1
     print(f'WT_PRUNE freed_bytes={freed} would_free_bytes={planned} removed={removed} held={held}')

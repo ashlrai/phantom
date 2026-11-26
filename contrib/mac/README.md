@@ -523,8 +523,14 @@ handler, after releasing the worktree lease and leaving its cwd, invoke:
 "$BRIDGE_DIR/wt-prune.sh" --event WT_REMOVED
 ```
 
-This sweeps remaining finished and kept worktrees. An optional absolute path
-restricts the sweep to one worktree:
+This sweeps remaining idle worktrees. Discovery only probes for `.git` at
+direct bridge worktrees and under `~/.ashlr-runs/wt/<job>`; it never descends
+through other run-state directories looking for repositories. For the fleet
+`wt/` layout, the sweep also needs the current `phm disk-maint` classifier
+(with split reap/protect reasons) on its PATH. It reads one dry-run plan per
+sweep, leaves reapable worktrees to disk-maint, and preserves all worktrees if
+the plan is unavailable or incomplete. Artifact safety checks still apply.
+An optional absolute path restricts the sweep to one worktree:
 
 ```sh
 "$BRIDGE_DIR/wt-prune.sh" --event WT_REMOVED "$REMOVED_WORKTREE"
