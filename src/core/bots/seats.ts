@@ -459,6 +459,36 @@ export interface SeatHandoffsPlan {
 }
 
 /**
+ * The optional narrowing `phm bots handoffs` applies to the fleet plan read:
+ * `seat` keeps the one entry whose roster `seatId` matches exactly, `state`
+ * keeps entries projected into that lifecycle state, and `pending` keeps only
+ * entries still carrying handoff records not yet journaled — the same
+ * `handoffs.length > 0` rule the unified inbox seats source and `work mine`'s
+ * seats section already apply, so "which seats still have work to move" is
+ * one filtered read instead of paging the whole roster. An unmatched filter
+ * is an honest empty `seats` list, never an error or an invented seat.
+ */
+export interface SeatHandoffsPlanFilter {
+  seat?: string;
+  state?: SeatState['state'];
+  pending?: boolean;
+}
+
+/**
+ * Narrow a fleet handoff plan without touching it: the result keeps the
+ * `phantom-bot-handoffs-plan.v1` shape and `apply:false`, so a filtered read
+ * stays a plan — nothing is released, journaled or notified, and filtering
+ * can never widen eligibility or invent records.
+ */
+export function filterSeatHandoffsPlan(plan: SeatHandoffsPlan, filter: SeatHandoffsPlanFilter): SeatHandoffsPlan {
+  const seats = plan.seats.filter(entry =>
+    (filter.seat === undefined || entry.seatId === filter.seat) &&
+    (filter.state === undefined || entry.state === filter.state) &&
+    (filter.pending !== true || entry.handoffs.length > 0));
+  return { ...plan, seats };
+}
+
+/**
  * Fleet-wide dry-run of every seat handoff: one snapshot answers "which seats
  * need draining and what work would move" instead of one planSeatHandoff call
  * per seat. Every roster seat is listed — ineligible ones report
