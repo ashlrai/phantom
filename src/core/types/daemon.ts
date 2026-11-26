@@ -60,6 +60,12 @@ export interface DaemonConfig {
    */
   idleBackoffMs?: number;
   /**
+   * Ceiling (ms) for the idle park: each consecutive idle tick doubles
+   * idleBackoffMs up to this value, and any dispatch resets it. Default 60 000.
+   * Set it equal to idleBackoffMs to keep a fixed park.
+   */
+  idleBackoffMaxMs?: number;
+  /**
    * Lane-specific one-shot drain caps. These bound repair drains separately
    * from normal production velocity so targeted maintenance cannot consume every
    * available worker slot just because the machine has capacity.

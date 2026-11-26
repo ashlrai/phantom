@@ -306,6 +306,7 @@ import {
 } from '../run/best-of-n-policy.js';
 import { runSelfHealCycle, runSelfHealCycleForRepos, type SelfHealCycleResult } from '../fleet/self-heal.js';
 import { startTickLoopWatchdog, writeTickLoopBeacon, type TickLoopBeaconV1, type TickLoopStage, type TickLoopWatchdog } from './tick-loop.js';
+import { IDLE_BACKOFF_BASE_MS, IDLE_BACKOFF_MAX_MS, OWNERSHIP_POLL_MS, idleParkMs } from './idle-park.js';
 import { runInventCycle } from '../generative/invent-cycle.js'; // M186
 import { resolvePlanningClient } from '../generative/invent.js';
 import { runCounterfactualReplay } from '../fleet/counterfactual.js'; // M187
@@ -3757,7 +3758,9 @@ function resolveCfg(cfg: AshlrConfig): DaemonConfig & ReturnType<typeof resolveD
     maxConcurrent: counts.maxConcurrent,
     concurrency: counts.concurrency,
     idleBackoffMs: typeof o.idleBackoffMs === 'number' && o.idleBackoffMs > 0
-      ? o.idleBackoffMs : 5_000,
+      ? o.idleBackoffMs : IDLE_BACKOFF_BASE_MS,
+    idleBackoffMaxMs: typeof o.idleBackoffMaxMs === 'number' && o.idleBackoffMaxMs > 0
+      ? o.idleBackoffMaxMs : IDLE_BACKOFF_MAX_MS,
   };
 }
 
@@ -10588,9 +10591,12 @@ async function runDaemonInEnrollmentScope(
   );
   process.once('SIGINT', requestSigint);
   process.once('SIGTERM', requestSigterm);
+  // KILL is one lstat every 50 ms; the lock read + parse runs once a second.
+  const ownershipEvery = Math.max(1, Math.round(OWNERSHIP_POLL_MS / KILL_SWITCH_POLL_MS));
+  let killPolls = 0;
   const killSwitchPoll = setInterval(() => {
     if (killSwitchOn()) requestShutdown();
-    else if (!daemonLockOwned(daemonLock)) requestOwnershipLoss();
+    else if (++killPolls % ownershipEvery === 0 && !daemonLockOwned(daemonLock)) requestOwnershipLoss();
   }, KILL_SWITCH_POLL_MS);
   killSwitchPoll.unref?.();
 
@@ -10854,6 +10860,7 @@ async function runDaemonInEnrollmentScope(
       let loopRecoveries = 0;
       let loopBeacon: TickLoopBeaconV1 | null = null;
       let loopWake = new AbortController();
+      let consecutiveIdleTicks = 0;
       const noteLoop = (stage: TickLoopStage, reason: string | null, expectedInMs: number): void => {
         const nowMs = Date.now();
         loopBeacon = {
@@ -11452,7 +11459,11 @@ async function runDaemonInEnrollmentScope(
         };
         if (afterLoopCfg.mode === 'continuous') {
           if (noWorkDispatched) {
-            if (!(await parkWithinWindow(resetParkDelay(afterLoopCfg.idleBackoffMs ?? 5_000)))) break;
+            consecutiveIdleTicks++;
+            const idleMs = idleParkMs(afterLoopCfg.idleBackoffMs, consecutiveIdleTicks, afterLoopCfg.idleBackoffMaxMs);
+            if (!(await parkWithinWindow(resetParkDelay(idleMs)))) break;
+          } else {
+            consecutiveIdleTicks = 0;
           }
         } else {
           if (!(await parkWithinWindow(resetParkDelay(afterLoopCfg.intervalMs)))) break;

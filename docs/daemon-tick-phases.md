@@ -211,6 +211,16 @@ owner's Mac). Now:
   cycle starts after it. A large enrollment is covered over several ticks.
   The result reports `deferred` (repos not reached) and `budgetExhausted`.
 
+## Idle parking backs off
+
+A continuous loop with nothing to dispatch parks `daemon.idleBackoffMs`
+(default 5 s) after the first idle tick, then doubles the park on each
+consecutive idle tick up to `daemon.idleBackoffMaxMs` (default 60 s). Any
+dispatch resets it to the base. An idle hour runs about 64 full ticks instead
+of 720. New work waits at most one ceiling. Set `idleBackoffMaxMs` equal to
+`idleBackoffMs` to keep a fixed park. The KILL sentinel is still polled every
+50 ms; the daemon lock's ownership is re-read once a second.
+
 ## A stopped tick loop is a liveness state
 
 The lock heartbeat runs on its own timer, so a resident whose loop stopped

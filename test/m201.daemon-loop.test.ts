@@ -10046,6 +10046,7 @@ describe('M201 — Group E: runDaemon config reload + loop mechanics', () => {
       ...cfg.daemon,
       mode: 'continuous',
       idleBackoffMs: 13,
+      idleBackoffMaxMs: 13,
       intervalMs: 1_000,
     };
     mockLoadConfig.mockReturnValue(cfg);
