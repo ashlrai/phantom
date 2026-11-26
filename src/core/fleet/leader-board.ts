@@ -149,13 +149,14 @@ export function queueDepthByTier(rows: readonly { status: string; tier?: string 
  * depth — left in, a PARKED cell lands in the positional id or pool slot and
  * would inflate the READY count.
  */
-export function readyRowsForDepth(text: string): ReturnType<typeof parseReadyTsv>['rows'] {
+export function readyRowsForDepth(text: string): { status: string; tier?: string }[] {
   const kept = text.split('\n').filter((line) => {
     if (!line.trim() || line.trimStart().startsWith('#')) return true;
     const cells = line.split('\t');
     return !parkedCell(cells[0]) && !parkedCell(cells[2]);
   });
-  return parseReadyTsv(kept.join('\n')).rows;
+  const { rows, unhintedRows } = parseReadyTsv(kept.join('\n'));
+  return [...rows, ...unhintedRows.map(({ tier }) => ({ status: 'READY', tier }))];
 }
 
 /**
