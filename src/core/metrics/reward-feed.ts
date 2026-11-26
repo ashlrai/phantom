@@ -196,7 +196,20 @@ function standingReverted(
 
 interface DispatchMark { ms: number; lane: string | null; repo: string | null }
 
-interface ResolutionMark { atMs: number; resolvedMs: number; repo: string | null }
+interface ResolutionMark {
+  atMs: number;
+  resolvedMs: number;
+  repo: string | null;
+  prKeys: string[];
+}
+
+function receiptPrKeys(row: Record<string, unknown>): string[] {
+  return URL_KEYS.flatMap((field) => {
+    const value = row[field];
+    const key = typeof value === 'string' ? pullRequestKey(value.trim()) : null;
+    return key === null ? [] : [key];
+  });
+}
 
 interface RewardJobAccum {
   dispatches: DispatchMark[];
@@ -211,8 +224,8 @@ interface RewardJobAccum {
   standingReverted: boolean;
   /** ci_start/ci_complete boundary stamps, deduped like job-latency's boundary lists. */
   ciBoundaryUndated: boolean;
-  ciStartAts: number[];
-  ciCompleteAts: number[];
+  ciStarts: Map<number, Set<string>>;
+  ciCompletions: Map<number, Set<string>>;
 }
 
 function newAccum(): RewardJobAccum {
@@ -220,29 +233,39 @@ function newAccum(): RewardJobAccum {
     dispatches: [],
     dispatchUndated: false,
     merge: null, close: null, reverts: new Map(), standingReverted: false,
-    ciBoundaryUndated: false, ciStartAts: [], ciCompleteAts: [],
+    ciBoundaryUndated: false, ciStarts: new Map(), ciCompletions: new Map(),
   };
 }
 
-/** One CI boundary stamp per distinct row time — a repeated append cannot fake ambiguity. */
-function noteCiBoundary(acc: RewardJobAccum, kind: 'start' | 'complete', at: number): void {
-  const list = kind === 'start' ? acc.ciStartAts : acc.ciCompleteAts;
-  if (!list.includes(at)) list.push(at);
+/** Replayed boundaries share a timestamp but can carry conflicting PR claims. */
+function noteCiBoundary(
+  acc: RewardJobAccum, kind: 'start' | 'complete', at: number, row: Record<string, unknown>,
+): void {
+  const boundaries = kind === 'start' ? acc.ciStarts : acc.ciCompletions;
+  const keys = boundaries.get(at) ?? new Set<string>();
+  for (const key of receiptPrKeys(row)) keys.add(key);
+  boundaries.set(at, keys);
 }
 
 /**
  * CI wall time requires one unambiguous pair inside the rewarded execution's
  * dispatch-to-outcome window. Reused job ids can carry CI from earlier runs.
  */
-function ciWallEvidence(acc: RewardJobAccum, dispatchMs: number, outcomeMs: number): { ciWallMs?: number } {
+function ciWallEvidence(
+  acc: RewardJobAccum, dispatchMs: number, outcomeMs: number, outcomePrKeys: readonly string[],
+): { ciWallMs?: number } {
   if (acc.ciBoundaryUndated) return {};
   const inWindow = (at: number): boolean => at >= dispatchMs && at <= outcomeMs;
-  const starts = acc.ciStartAts.filter(inWindow);
-  const completions = acc.ciCompleteAts.filter(inWindow);
+  const starts = [...acc.ciStarts.keys()].filter(inWindow);
+  const completions = [...acc.ciCompletions.keys()].filter(inWindow);
   if (starts.length !== 1 || completions.length !== 1) return {};
   const start = starts[0]!;
   const complete = completions[0]!;
   if (complete < start) return {};
+  const keys = new Set([
+    ...outcomePrKeys, ...acc.ciStarts.get(start)!, ...acc.ciCompletions.get(complete)!,
+  ]);
+  if (keys.size > 1) return {};
   return { ciWallMs: complete - start };
 }
 
@@ -309,7 +332,7 @@ export function foldJobsLedgerRewards(
     if (dispatch) {
       acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row) });
     } else if (ciBoundary) {
-      noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at);
+      noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at, row);
     }
     if (hasRevertEvidence(row)) {
       const revertedAtMs = resolutionAt(row, REVERTED_AT_KEYS) ?? at;
@@ -328,13 +351,18 @@ export function foldJobsLedgerRewards(
       if (mergedAtMs > nowMs) continue;
       if (acc.merge === null || mergedAtMs > acc.merge.resolvedMs ||
           (mergedAtMs === acc.merge.resolvedMs && at >= acc.merge.atMs)) {
-        acc.merge = { atMs: at, resolvedMs: mergedAtMs, repo: repoOf(row), url: firstString(row, URL_KEYS) };
+        acc.merge = {
+          atMs: at, resolvedMs: mergedAtMs, repo: repoOf(row),
+          prKeys: receiptPrKeys(row), url: firstString(row, URL_KEYS),
+        };
       }
     } else if (row['merged'] === false || CLOSED_STATES.has(state)) {
       const closedAtMs = resolutionAt(row, CLOSED_AT_KEYS) ?? at;
       if (closedAtMs <= nowMs && (acc.close === null || closedAtMs > acc.close.resolvedMs ||
           (closedAtMs === acc.close.resolvedMs && at >= acc.close.atMs))) {
-        acc.close = { atMs: at, resolvedMs: closedAtMs, repo: repoOf(row) };
+        acc.close = {
+          atMs: at, resolvedMs: closedAtMs, repo: repoOf(row), prKeys: receiptPrKeys(row),
+        };
       }
     }
   }
@@ -397,7 +425,7 @@ function rewardInput(
       repo: merge.repo ?? dispatch.repo,
       merged: heldMerge, dispatchedAt: iso(dispatch.ms), mergedAt: heldMerge ? iso(merge.resolvedMs) : null,
       costUsd: cost,
-      ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs),
+      ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs, merge.prKeys),
     };
   }
   let closedMs = acc.close?.resolvedMs ?? 0;
@@ -410,7 +438,7 @@ function rewardInput(
       repo: acc.close?.repo ?? dispatch.repo,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
-      ...ciWallEvidence(acc, dispatch.ms, closedMs),
+      ...ciWallEvidence(acc, dispatch.ms, closedMs, acc.close?.prKeys ?? []),
     };
   }
   return null;

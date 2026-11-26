@@ -552,6 +552,52 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs[0]).toMatchObject({ ciWallMs: 900_000 });
   });
 
+  it.each([
+    ['MERGED', 'outcome'],
+    ['CLOSED', 'outcome'],
+    ['MERGED', 'replay'],
+    ['MERGED', 'alias'],
+    ['MERGED', 'pair'],
+  ])('withholds CI timing for a %s reward with a conflicting %s PR claim', (state, conflict) => {
+    const job = 'RQ-CI-PR';
+    const url = 'https://github.com/ashlrai/phantom/pull/10';
+    const other = 'https://github.com/ashlrai/phantom/pull/11';
+    const start = { event: 'ci_start', job, ts: '2026-10-28T15:10:00.000Z', pr_url: url };
+    const rows = [
+      launch(job),
+      line(start),
+      line({
+        event: 'ci_complete', job, ts: '2026-10-28T15:25:00.000Z',
+        html_url: conflict === 'pair' ? other : url,
+      }),
+      line({
+        job, state, ts: MERGED_ISO,
+        ...(conflict === 'pair' ? {} : { url: conflict === 'outcome' ? other : url }),
+      }),
+    ];
+    if (conflict === 'replay') rows.push(line({ ...start, pr_url: other }));
+    if (conflict === 'alias') rows.push(line({ ...start, html_url: other }));
+
+    const inputs = foldJobsLedgerRewards(rows.join('\n'), NOW_MS);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({ merged: state === 'MERGED' });
+    expect(inputs[0]).not.toHaveProperty('ciWallMs');
+  });
+
+  it('measures CI across equivalent PR URLs and ignores out-of-window claims', () => {
+    const job = 'RQ-CI-PR';
+    const rows = [
+      launch(job),
+      line({ event: 'ci_start', job, ts: '2026-10-28T13:10:00.000Z', pr: 'https://github.com/ashlrai/phantom/pull/99' }),
+      line({ event: 'ci_start', job, ts: '2026-10-28T15:10:00.000Z', pr_url: 'https://github.com/AshlrAI/Phantom/pull/10/' }),
+      line({ event: 'ci_complete', job, ts: '2026-10-28T15:25:00.000Z', html_url: 'https://github.com/ashlrai/phantom/pull/10' }),
+      line({ job, state: 'MERGED', ts: MERGED_ISO, url: 'https://github.com/ashlrai/phantom/pull/10' }),
+    ];
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, merged: true, ciWallMs: 900_000 },
+    ]);
+  });
+
   it.each([merged, closed])('omits CI timing outside the rewarded dispatch and resolution (%o)', (resolve) => {
     const job = 'RQ-LIFECYCLE-CI';
     const rows = [
