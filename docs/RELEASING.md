@@ -241,8 +241,11 @@ What runs without a per-release approval:
   no write to that pull request — neither enqueue nor a blind sync — while
   still completing the rest of the observation, and retries the compare on
   the next tick.
-- Auto-tag can land `vX.Y.Z` on a later master commit once that commit's
-  release gate is green. The train treats that tagged SHA as the candidate
+- For an unchanged version with no `vX.Y.Z` tag, Auto-tag can qualify a later
+  canonical master commit that still carries `X.Y.Z` and has the matching
+  release-please commit in its history. It creates the tag only after the
+  required checks and release gate pass on that exact SHA.
+  The train treats that tagged SHA as the candidate
   when `package.json` there is `@ashlr/phantom` at `X.Y.Z` and the same
   release-gate receipt is green. The commit subject is not required. Receipt,
   digest, and attestation checks stay bound to that SHA. `v3.30.34` is never

@@ -139,20 +139,34 @@ jobs:
           # here, and this read-only token could not list them anyway. A lone
           # draft falls through to the tag step, whose script finds it through
           # the write-scoped list endpoint and reuses it.
-          if git ls-remote --exit-code --tags "https://github.com/$REPO.git" "refs/tags/v$new" >/dev/null && \
+          tag_status=0
+          git ls-remote --exit-code --tags "https://github.com/$REPO.git" "refs/tags/v$new" >/dev/null || tag_status=$?
+          if [ "$tag_status" = 0 ] && \
              gh api "repos/$REPO/releases/tags/v$new" >/dev/null 2>&1; then
             echo "Tag v$new and its release already exist; nothing to do."
             echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           if [ "$new" = "$old" ]; then
             subject=$(gh api "repos/$REPO/commits/$SHA" -q '.commit.message' | head -1)
-            release_subject_pattern="^chore\\([^)]+\\): release ${new}( |$)"
-            if [[ ! "$subject" =~ $release_subject_pattern ]]; then
-              echo "::notice::v$new is owed by its release-please commit; not tagging non-release commit $SHA (the release train would refuse it as release_message_mismatch and leave an orphan draft)"
+            release_subject_pattern="^chore\\([^)]+\\): release ${new//./[.]}( |$)"
+            is_owed_version_successor() {
+              local status subjects
+              [[ "$REPO" = ashlrai/phantom && "$tag_status" = 2 && "$SHA" =~ ^[0-9a-f]{40}$ ]] || return 1
+              status=$(gh api "repos/$REPO/compare/$SHA...master" -q .status) || return 1
+              [[ "$status" = ahead || "$status" = identical ]] || return 1
+              subjects=$(gh api --paginate "repos/$REPO/commits?sha=$SHA&path=.release-please-manifest.json&per_page=100" \
+                -q '.[].commit.message | split("\n")[0]') || return 1
+              grep -Eq "$release_subject_pattern" <<<"$subjects"
+            }
+            if [[ "$subject" =~ $release_subject_pattern ]]; then
+              echo "Version unchanged ($new) but tag v$new is missing; tagging this commit."
+            elif is_owed_version_successor; then
+              echo "Version unchanged ($new) and owed by a release-please ancestor; evaluating successor $SHA."
+            else
+              echo "::notice::v$new is owed by its release-please commit; not tagging non-release commit $SHA without proof of an untagged release on canonical master"
               echo "changed=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            echo "Version unchanged ($new) but tag v$new is missing; tagging this commit."
           else
             echo "Version bumped $old -> $new; tagging this commit."
           fi
