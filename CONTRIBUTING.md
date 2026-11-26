@@ -33,8 +33,10 @@ full walkthrough and recovery steps.
    git switch -c <topic-branch>
    ```
 
-2. **Install.** Node 22.15+. Use `npm ci` for one checkout. For several trusted
-   local worktrees, use `npm run install:worktree` instead; it requires pnpm
+2. **Install.** Node 22.15+, git, and the GitHub CLI signed in to your account
+   (`gh auth login`; the pull-request step runs `gh pr create`). Use `npm ci`
+   for one checkout. For several trusted local worktrees, use
+   `npm run install:worktree` instead; it requires pnpm
    10.28.2 (see [Shared installs](#shared-installs-for-trusted-local-worktrees)).
 
 3. **Brief the agent.** Point it at [AGENTS.md](AGENTS.md) (the constitution and
