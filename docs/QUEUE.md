@@ -888,6 +888,9 @@ and rows explicitly marked `READY` in the first column. Other recognized
 statuses such as `CLAIMED`, `RUNNING`, and `DONE` are excluded, as are rows
 with a `PARKED` marker in either the first column or the lane column.
 `queued` comes from the status snapshot, so it can differ from `ready`.
+When `ready.tsv` is missing, the split reads `unknown` in text and all three
+counts (`ready`, `filler`, `real`) are `null` in JSON. An empty file yields
+zero counts. Lane selection and the exit code still use the status snapshot.
 Lanes with `held: true` in the dispatcher snapshot are excluded.
 
 `launchable` compares each lane's `free` slots with ready rows whose prompt

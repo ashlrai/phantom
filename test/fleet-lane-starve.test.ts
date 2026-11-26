@@ -133,11 +133,23 @@ describe('cmdFleetLaneStarve', () => {
     expect(report.filler_hold).toBe(true);
     expect(report.lanes[0]).toMatchObject({ lane: 'claude-api', filler: 2, real: 1 });
   });
-  it('prints plain text, tolerating missing ready.tsv and hold', async () => {
+  it('prints unknown in plain text when ready.tsv is missing', async () => {
     writeFileSync(join(dir, 'queue', 'status.json'), STATUS);
     const { code, lines } = await run([]);
     expect(code).toBe(1);
-    expect(lines).toEqual(['claude-api: 1/3 running, 4 queued; ready 0 = 0 filler + 0 real']);
+    expect(lines).toEqual(['claude-api: 1/3 running, 4 queued; ready unknown']);
+  });
+  it.each([
+    { readyFile: null, count: null },
+    { readyFile: '', count: 0 },
+  ])('reports $count in JSON with ready.tsv contents $readyFile', async ({ readyFile, count }) => {
+    writeFileSync(join(dir, 'queue', 'status.json'), STATUS);
+    if (readyFile !== null) writeFileSync(join(dir, 'queue', 'ready.tsv'), readyFile);
+    const { code, lines } = await run();
+    expect(code).toBe(1);
+    expect(JSON.parse(lines[0]!).lanes).toEqual([
+      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: count, filler: count, real: count },
+    ]);
   });
   it('exits 0 when nothing is starved', async () => {
     writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ lanes: {} }));
