@@ -1095,9 +1095,11 @@ the lane column. A missing or degraded `ready.tsv` read or an unreadable
 separate queue depth can include parked work from dispatcher totals. A lane
 must be unheld and below its slot target to be starved. A hold from either the
 configured slots or a fresh dispatcher tick suppresses starvation and its
-Leader notice. A configured hold retains its recorded reason. When both the configured
-target and the dispatcher's `effective_target` are known, the lane view uses the
-lower value. The desktop lane
+Leader notice. A configured hold retains its recorded reason. The lane view
+uses the lowest known ceiling from the configured target and the fresh
+dispatcher's `target` and `effective_target`. A configured decrease takes
+effect immediately, while an increase waits for the dispatcher to catch up.
+The desktop lane
 card (Ops, Lanes on this Mac) shows the same line. The Leader posts one chat notice
 when a lane has been starved for 30 minutes, at most once per lane every 6 hours,
 and remembers first sightings in `~/.ashlr/vision/leader/starved-lanes.json`. The
