@@ -590,6 +590,38 @@ describe('outcome-quality evidence', () => {
     expect(out).toContain('publish_wait_s=315(20)');
   });
 
+  it('withholds CI and publish timings across batch claims, including reward fallback', async () => {
+    const cases = [
+      { job: 'claim-before', ts: '2026-11-19T23:59:00Z' },
+      { job: 'claim-at-start', ts: '2026-11-20T00:00:00Z' },
+      { job: 'claim-inside', ts: '2026-11-20T00:01:00Z' },
+      { job: 'claim-at-end', ts: '2026-11-20T00:02:00Z' },
+      { job: 'claim-undated' },
+      { job: 'claim-after', ts: '2026-11-20T00:03:00Z' },
+    ];
+    writeLedger(cases.flatMap(({ job, ts }) => [
+      { job, event: 'ci_start', ts: '2026-11-20T00:00:00Z' },
+      { job, event: 'finish', ts: '2026-11-20T00:00:00Z' },
+      { job, event: 'batch_claim', ts },
+      { job, event: 'ci_complete', ts: '2026-11-20T00:02:00Z' },
+      { job, event: 'publish', ts: '2026-11-20T00:02:00Z' },
+      event(job, 'alpha', 'code', 'MERGED'),
+    ]));
+    writeRewardSignals(cases.map(({ job }) => rewardRow(job, true, null)));
+
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report.proposals[0]).toMatchObject({
+      known_n: cases.length,
+      evidence: {
+        ci_wall_known: 2,
+        ci_wall_s_mean: 120,
+        publish_wait_known: 2,
+        publish_wait_s_mean: 120,
+      },
+    });
+  });
+
   it('folds dispatch lane overrides into group evidence with reason tallies', async () => {
     // Each overridden job claims off its hint before its merge verdict; the
     // tally counts known-cohort outcomes only, like every other signal.
