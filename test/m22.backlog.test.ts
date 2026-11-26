@@ -177,8 +177,8 @@ afterEach(() => {
   // Unenroll the tmp repo if it's still enrolled
   try { unenroll(tmpRepo); } catch { /* ignore */ }
 
-  fs.rmSync(tmpHome, { recursive: true, force: true });
-  fs.rmSync(tmpRepo, { recursive: true, force: true });
+  fs.rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  fs.rmSync(tmpRepo, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   restoreFixtureHome();
   vi.clearAllMocks();
 });
