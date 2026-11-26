@@ -188,6 +188,20 @@ describe('foldMarketOverrides', () => {
     ]);
   });
 
+  it('does not tally a proposed override when global admission clears the chosen lane', () => {
+    const journal = [
+      decision('RQ-A', t - 120),
+      decision('RQ-A', t - 60, { chosen_lane: null, reason_codes: ['healthy_capacity', 'global_admission'] }),
+    ].join('\n');
+    expect(foldMarketOverrides(journal, now, 24)).toEqual({
+      available: true, decided: 1, overridden: 0, byReason: {}, lanes: [],
+    });
+    expect(foldDecisionOutcomes(journal, '', now, 24)).toMatchObject({
+      decided: 1, unrouted: { decided: 1 }, overridden: { decided: 0 },
+    });
+    expect(foldRouteRejections(journal, now, 24)).toMatchObject({ decided: 1, unrouted: 1 });
+  });
+
   it('says when there is no history file', () => {
     expect(foldMarketOverrides(null, now, 24)).toEqual({ available: false, decided: 0, overridden: 0, byReason: {}, lanes: [] });
     expect(foldMarketOverrides('', now, 24)).toEqual({ available: true, decided: 0, overridden: 0, byReason: {}, lanes: [] });
