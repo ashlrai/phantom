@@ -1642,6 +1642,9 @@ jobsTruncated?)`,
 unavailable ready queue, distinct from an empty string. In that case
 `readyHinted` and `invalidRows` are null. `waiting` and a free, unheld lane's
 `waitingElsewhere` and `unfed` are null where dispatcher counts are missing.
+An object-valued dispatcher summary remains authoritative for tick counts
+when its lane map is unavailable. A recorded zero waiting total establishes
+zero waiting work for every lane.
 `unfedLanes` lists confirmed lanes and `unfedSlots` is null when the fleet-wide
 bound cannot be established. `unfedExitCode(report)` returns 2 when freshness
 is unconfirmed. For fresh reports it returns 1 when any lane is confirmed
