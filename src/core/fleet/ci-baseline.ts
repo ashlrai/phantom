@@ -2614,6 +2614,12 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       observations.push({ pr, failure, touched, runId: failure.runId });
     }
   }
+  // A positive master verdict corroborates a singleton without needing a
+  // second PR. Failure-shaped text in a successful or incomplete job cannot
+  // supply that verdict.
+  const corroboratedOnMaster = new Set(masterLogs
+    .filter(log => log.conclusion === 'failure')
+    .flatMap(log => parseBaselineFailures(log.text, repo, auditExceptions).map(failure => failure.testId)));
   const ids = [...new Set(observations.map(o => o.failure.testId))].sort();
   const groups = ids.map(testId => {
     const rows = observations.filter(o => o.failure.testId === testId);
@@ -2622,7 +2628,8 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const runs = [...new Map(rows.map(o => [`${o.pr.headRefOid}:${o.runId}`, { pr: o.pr.number, head: o.pr.headRefOid, runId: o.runId }])).values()];
     const unaffected = [...new Set(rows.filter(o => o.touched === false).map(o => o.pr.number))];
     const prNumbers = [...new Set(rows.map(o => o.pr.number))];
-    const classification = unaffected.length >= 2 ? 'shared-baseline' : rows.every(o => o.touched === true) ? 'pr-caused' : prNumbers.length === 1 && rows[0]!.touched === false && passes(failure) ? 'probable-flake' : 'unknown';
+    const shared = unaffected.length >= 2 || (unaffected.length === 1 && corroboratedOnMaster.has(testId));
+    const classification = shared ? 'shared-baseline' : rows.every(o => o.touched === true) ? 'pr-caused' : prNumbers.length === 1 && rows[0]!.touched === false && passes(failure) ? 'probable-flake' : 'unknown';
     const action = classification === 'shared-baseline' ? 'queue-master-fix' : classification === 'probable-flake' ? 'rerun-failed' : classification === 'pr-caused' ? 'pr-caused' : 'unknown';
     const evidence = { ...failure, runs };
     const jobId = `RQ-CIBASE-${createHash('sha256').update(repo + ':' + testId).digest('hex').slice(0, 16).toUpperCase()}`;

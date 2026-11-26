@@ -129,8 +129,21 @@ describe('CI baseline evidence', () => {
     const pass = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true }).gh);
     expect(pass.groups[0]?.action).toBe('rerun-failed');
     expect(pass.groups[0]?.runs).toEqual([{ pr: 1, head, runId: 2 }]);
-    const fail = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
-    expect(fail.groups[0]?.action).toBe('unknown');
+  });
+  it('queues a master fix when a failing master job corroborates one unaffected PR', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
+    expect(report.groups[0]).toMatchObject({
+      classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', unaffectedPrs: [1],
+    });
+    expect(report.updates).toEqual([expect.objectContaining({ pr: 1, ready: false })]);
+
+    const touched = await analyzeCiBaseline('owner/repo', github({ count: 1, touched: 'test/example.test.ts' }).gh);
+    expect(touched.groups[0]).toMatchObject({ classification: 'pr-caused', action: 'pr-caused' });
+
+    for (const masterJobConclusion of ['success', 'cancelled', 'neutral']) {
+      const unconfirmed = await analyzeCiBaseline('owner/repo', github({ count: 1, masterJobConclusion }).gh);
+      expect(unconfirmed.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+    }
   });
   it('reads default-reporter file-pass lines as master pass evidence', async () => {
     // The default reporter prints `✓ file (N tests)` for a green module and
