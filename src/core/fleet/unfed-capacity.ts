@@ -520,13 +520,13 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const prev = latest.get(job);
     if (prev !== undefined && prev.ts >= ts) continue;
+    const preferred = laneField(row.preferred_lane);
+    const chosen = laneField(row.chosen_lane);
     let override: LatestRouteDecision['override'] = null;
-    if (isRecord(row.override)) {
-      const from = row.override.from, to = row.override.to, reason = row.override.reason;
-      if ((from === null || (typeof from === 'string' && LANE.test(from)))
-          && typeof to === 'string' && LANE.test(to)
-          && typeof reason === 'string' && CODE.test(reason)) {
-        override = { from: from as string | null, to, reason };
+    if (preferred !== null && chosen !== null && preferred !== chosen && isRecord(row.override)) {
+      const { from, to, reason } = row.override;
+      if (from === preferred && to === chosen && typeof reason === 'string' && CODE.test(reason)) {
+        override = { from: preferred, to: chosen, reason };
       }
     }
     const workClass = typeof row.work_class === 'string' && MARKET_WORK_CLASSES.has(row.work_class)
@@ -534,8 +534,8 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     latest.set(job, {
       ts,
       override,
-      preferred: laneField(row.preferred_lane),
-      chosen: laneField(row.chosen_lane),
+      preferred,
+      chosen,
       workClass,
       rejected: rejectedLanes(row.rejected_lanes),
     });
@@ -616,6 +616,7 @@ export function foldClaimOverrides(
     // malformed lane_hint means the pair cannot be named honestly.
     const hint = row.lane_hint;
     if (hint !== null && (typeof hint !== 'string' || !LANE.test(hint))) continue;
+    if (hint === lane) continue;
     tally.overridden++;
     if (tally.byReason[reason] !== undefined || Object.keys(tally.byReason).length < MAX_CODES) {
       tally.byReason[reason] = (tally.byReason[reason] ?? 0) + 1;
