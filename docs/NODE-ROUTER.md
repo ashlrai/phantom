@@ -199,8 +199,19 @@ reported slots; a caller-supplied `--slots` wins, and a measurement that fails
 stays unknown rather than held. The interval
 defaults to 10 seconds and must be between 1 and 25 seconds, inside the expiry
 window. Ctrl-C or SIGTERM stops the loop and prints a confirmation; a beat that
-exits non-zero — a lapsed session, a refused flag — stops it at once with that
-beat's error. The watch flags are consumed by the dispatcher and never reach the
+exits non-zero for any reason other than a lapsed session stops it at once
+with that beat's error. On the standalone registry a `session-expired` pass is
+the one failure the watch repairs itself: it asks the registry to rejoin the
+node — adopting the session a newer join already holds, or replacing the
+expired record under the node's last advertised profile refreshed exactly like
+`join` (version cap and local lanes re-probed) — then sleeps one interval and
+beats on the new session, announcing the recovery once. A node whose record is
+gone (`leave`d, or never joined) answers no session and the watch stops with
+the beat's `session-expired` error; the same goes for a rejoin that hands back
+the session the beat already used, which means the failure was not the
+session. Pool watches are unchanged: their sessions live on the primary's
+witness, so a lapsed pool session still ends the watch with the beat's error.
+The watch flags are consumed by the dispatcher and never reach the
 beat parser, so older stores and pool primaries see only the usual beat
 arguments.
 
@@ -208,7 +219,8 @@ arguments.
 the standalone registry: it performs the ordinary join — same flags, same
 session answer, `--probe-auth` on the beats when `gh` was advertised — then
 holds the new session with exactly the beat watch above, re-measuring capacity
-and host stats each pass. The watch flags are stripped before the join parser,
+and host stats each pass, including its session-expired self-recovery. The
+watch flags are stripped before the join parser,
 so the fleet flag table is unchanged; `--json` prints the join envelope once,
 then one beat envelope per pass. On a pool-configured Mac it is refused with a
 usage error: a pool join releases its probe session on purpose and

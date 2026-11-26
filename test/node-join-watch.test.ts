@@ -208,4 +208,60 @@ describe('phm node join --watch', () => {
     expect(lines[0]).toMatch(/^Joined laptop as session \d+ for owner acme \(caps: build\)\./);
     expect(lines.at(-1)).toBe('Heartbeat stopped; the node session expires on its own within 30 seconds.');
   });
+
+  it('rejoins its own lapsed session and keeps beating — a slept laptop no longer kills the watch', async () => {
+    const store = new MemoryStore();
+    const ac = new AbortController();
+    // The store clock jumps 40 s per sleep — longer than the 30 s session
+    // TTL — exactly like a suspended laptop: no beat lands, the session dies.
+    let now = 1_000;
+    let sleeps = 0;
+    const lines = capture();
+    const code = await cmdNodeFleet('join', [...joinArgs('build', ['--watch', '--json'])],
+      { store, now: () => now, phmVersion: () => '9.9.9',
+        watch: watchDeps(ac, {
+          sleep: async () => { now += 40_000; sleeps += 1; if (sleeps >= 3) ac.abort(); },
+        }) });
+    expect(code).toBe(0);
+    const envelopes = lines.map(l => JSON.parse(l) as {
+      command?: string; error?: { code?: string };
+      watch?: { rejoined?: string; session?: number; stopped?: string };
+    });
+    const expired = envelopes.filter(e => e.error?.code === 'session-expired');
+    const rejoins = envelopes.filter(e => e.watch?.rejoined === 'laptop');
+    // Every dead session was recovered once; the store holds the newest one.
+    expect(expired.length).toBeGreaterThanOrEqual(1);
+    expect(rejoins).toHaveLength(expired.length);
+    const node = store.state.nodes.find(n => n.nodeId === 'laptop')!;
+    expect(node.session).toBe(rejoins.at(-1)!.watch!.session);
+    // The rejoin refreshed the advertised profile like a manual join would.
+    expect(node.caps).toEqual(expect.arrayContaining(['build', 'phm-9.9.9']));
+    expect(envelopes.at(-1)).toMatchObject({ command: 'beat', watch: { stopped: 'signal' } });
+  });
+
+  it('stops for good when the node left mid-watch — recovery never resurrects it', async () => {
+    const store = new MemoryStore();
+    const ac = new AbortController();
+    let now = 1_000;
+    let sleeps = 0;
+    const lines = capture();
+    const code = await cmdNodeFleet('join', [...joinArgs('build', ['--watch', '--json'])],
+      { store, now: () => now, phmVersion: () => null,
+        watch: watchDeps(ac, {
+          // Mid-watch the operator leaves: drop the record, then let the
+          // session lapse so the next beat fails and recovery is consulted.
+          sleep: async () => {
+            now += 40_000; sleeps += 1;
+            if (sleeps === 1) store.state.nodes = [];
+            else ac.abort();
+          },
+        }) });
+    expect(code).toBe(1);
+    const envelopes = lines.map(l => JSON.parse(l) as {
+      command?: string; error?: { code?: string }; watch?: { rejoined?: string };
+    });
+    expect(envelopes.some(e => e.watch?.rejoined)).toBe(false);
+    expect(envelopes.at(-1)).toMatchObject({ command: 'beat', error: { code: 'session-expired' } });
+    expect(store.state.nodes).toEqual([]);
+  });
 });

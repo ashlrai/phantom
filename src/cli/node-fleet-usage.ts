@@ -42,12 +42,15 @@ task requires \`--pack codex-file\`, and the two flags together or neither.
 
 \`beat --watch\` repeats the beat every --every seconds (default 10, at most 25 — sessions
 expire 30 s after the last beat) until Ctrl-C, re-measuring capacity and host stats on this
-machine each pass unless those flags were given explicitly. \`renew --watch\` repeats the
-renew on the same interval so a pulled job's 30-second claim lease survives real work;
-the watch flags never reach either verb's parser. \`join --watch\` is the one-command
-first run on the standalone registry: it joins, prints the session, then holds it live
-with the same beat watch — refused on a pool-configured Mac, where join releases its
-probe session and \`phm node worker\` holds the live sessions instead.`;
+machine each pass unless those flags were given explicitly. On the standalone registry a
+lapsed session is rejoined automatically — the watch adopts the live session or re-joins
+under the node's last advertised profile, refreshed like \`join\`, and keeps beating; a
+node that left stays left and any other failure still stops the watch. \`renew --watch\`
+repeats the renew on the same interval so a pulled job's 30-second claim lease survives
+real work; the watch flags never reach either verb's parser. \`join --watch\` is the
+one-command first run on the standalone registry: it joins, prints the session, then
+holds it live with the same beat watch — refused on a pool-configured Mac, where join
+releases its probe session and \`phm node worker\` holds the live sessions instead.`;
 
 /**
  * Help scoped to one fleet verb: its own usage line plus the shared prose every

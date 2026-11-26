@@ -54,6 +54,11 @@ export interface NodeWatchLoopDeps {
   run: (args: string[]) => Promise<number>;
   /** Per-pass arguments, called each pass; defaults to the caller's base flags verbatim. */
   argsFor?: (base: string[]) => string[];
+  /** Last chance before a non-zero pass ends the watch: return true when the
+   * failure was recovered (for example a session-expired beat that rejoined),
+   * and the loop sleeps one interval and passes again; false or absent keeps
+   * the verb's exit code. Only consulted on non-zero exits. */
+  recover?: (code: number) => Promise<boolean>;
   /** Injectable for tests; production waits on a timer the stop signal can cut short. */
   sleep?: (ms: number) => Promise<void>;
   log?: (line: string) => void;
@@ -85,7 +90,7 @@ export async function runNodeWatchLoop(opts: NodeWatchLoopOptions): Promise<numb
     for (;;) {
       if (signal.aborted) break;
       const code = await opts.run(opts.argsFor ? opts.argsFor(opts.flags.base) : opts.flags.base);
-      if (code !== 0) return code;
+      if (code !== 0 && !(opts.recover && await opts.recover(code))) return code;
       await pause(opts.flags.everyMs);
     }
   } finally {

@@ -297,6 +297,53 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
   return Object.entries(out).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(',') : String(v)}`).join('\n');
 }
 
+/** The standalone registry store: the injected test seam or this machine's
+ * private ~/.ashlr/nodes. Shared by the fleet dispatch and the watch's
+ * session-expired rejoin so both read the same authority. */
+async function standaloneNodesStore(deps: NodeFleetDeps): Promise<NodesStore> {
+  if (deps.store) return deps.store;
+  const [{ LocalNodesStore }, { ashlrHome }, { canonicalPath, privateDirectory }, { join }] = await Promise.all([
+    import('../core/drive/nodes/index.js'), import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path')]);
+  return { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
+}
+
+/** The caps a standalone join advertises: the requested caps minus any stale
+ * version-report marker, plus this build's `phm-<version>` cap (when the build
+ * is known — a null version leaves requested caps untouched, version markers
+ * included, exactly like join) and this machine's planned local-model lane
+ * caps, deduped. Shared by `join` and the watch's session-expired rejoin so a
+ * rejoined node advertises exactly what a manual rejoin would. The lane
+ * probe's config diagnostic rides along for join's reply; rejoin ignores it. */
+async function standaloneJoinCaps(requested: readonly string[], deps: NodeFleetDeps): Promise<{ caps: string[]; laneError: string | null }> {
+  const [{ localPhmVersion, versionCap, versionFromCaps }, { probeLocalLanePlan }] = await Promise.all([
+    import('../core/drive/nodes/phm-version.js'), import('../core/drive/nodes/local-model-caps.js')]);
+  const reported = versionCap((deps.phmVersion ?? localPhmVersion)());
+  const caps = reported === null ? [...requested]
+    : [...requested.filter(c => versionFromCaps([c]) === null), reported];
+  const laneProbe = probeLocalLanePlan(deps.localLanes);
+  const localCaps = laneProbe?.plan.caps ?? [];
+  return { caps: localCaps.length ? [...new Set([...caps, ...localCaps])] : caps,
+    laneError: laneProbe?.configError ?? null };
+}
+
+/** The watch keep-alive's session-expired recovery on the standalone registry:
+ * adopt the session a newer join already holds, or rejoin this node under its
+ * last advertised profile refreshed exactly like `join`. Returns the session
+ * to beat with, or null when the node is gone (left — never resurrected), the
+ * profile cannot be read, or the store fails. Pool watches never call this:
+ * their sessions live on the primary's witness. */
+export async function rejoinStandaloneSession(nodeId: string, deps: NodeFleetDeps = {}): Promise<number | null> {
+  try {
+    const { DriveNodes } = await import('../core/drive/nodes/index.js');
+    const nodes = new DriveNodes(await standaloneNodesStore(deps), deps.now ? { now: deps.now } : {});
+    const prior = nodes.nodeProfile(nodeId);
+    if (prior === null) return null;
+    const { caps } = await standaloneJoinCaps(prior.caps ?? [], deps);
+    return nodes.rejoin(nodeId, { owners: prior.owners, caps,
+      ...(prior.slots === undefined ? {} : { slots: prior.slots }) });
+  } catch { return null; }
+}
+
 export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleetDeps = {}): Promise<number> {
   // `--json` is a boolean flag and a standalone `--json` token can never be a
   // flag value (values starting with `--` are refused), so argv alone proves
@@ -327,13 +374,10 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       }
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
-    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join },
-      { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalLanePlan }] = await Promise.all([
+    const [{ DriveNodes }, { probeLocalAuth }, { localPhmVersion, planNodeSelfUpdate }] = await Promise.all([
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
-      import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
-      import('../core/drive/nodes/phm-version.js'), import('../core/drive/nodes/local-model-caps.js')]);
-    const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
-    const drive = new DriveNodes(store, deps.now ? { now: deps.now } : {});
+      import('../core/drive/nodes/phm-version.js')]);
+    const drive = new DriveNodes(await standaloneNodesStore(deps), deps.now ? { now: deps.now } : {});
     // Join's lane probe runs once; a malformed local-lanes.json rides the reply
     // as a diagnostic below instead of silently costing the node its lane caps.
     let localLaneError: string | null = null;
@@ -348,38 +392,20 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
         const id = (deps.hostname ?? hostname)().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100);
         if (validId(id)) flags.set('--node', id);
       }
-      // A standalone join advertises this build as a `phm-<version>` cap, the same
-      // report a pool worker sends, so `phm node self-update` reads a real version
-      // instead of `unreported`. The node's own build is authoritative: any
-      // version-report cap already in --caps (say, copied from an older join hint)
-      // is dropped and replaced, never left to report a stale build. This stays in
-      // the CLI layer: runNodeFleet is shared with the SSH endpoint, where the
-      // joining worker — not this host — owns the version it reports.
-      const reported = versionCap((deps.phmVersion ?? localPhmVersion)());
-      if (reported !== null) {
-        const caps = (flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean)
-          .filter(c => versionFromCaps([c]) === null);
-        caps.push(reported);
-        flags.set('--caps', caps.join(','));
-      }
-      // A standalone join also advertises this machine's planned local-model
-      // lanes — the same caps a pool join or worker sends through
-      // probeNodeLanes — so a node with local-lanes.json enabled is not
-      // invisible to --requires omlx jobs. Like the version cap this stays in
-      // the CLI layer: runNodeFleet is shared with the SSH endpoint, where the
-      // joining worker's own machine — not this host — owns the lanes it
-      // reports. An absent, disabled or backed-off lane contributes nothing;
-      // explicit --caps entries are kept and deduped against the probe. A
-      // malformed local-lanes.json contributes nothing either, but its parse
-      // error is kept for the reply: silently dropping a lane the operator
-      // asked for is exactly the failure `phm node lanes` exists to explain.
-      const laneProbe = probeLocalLanePlan(deps.localLanes);
-      localLaneError = laneProbe?.configError ?? null;
-      const localCaps = laneProbe?.plan.caps ?? [];
-      if (localCaps.length > 0) {
-        const caps = [...new Set([...(flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean), ...localCaps])];
-        flags.set('--caps', caps.join(','));
-      }
+      // A standalone join advertises this build as a `phm-<version>` cap, the
+      // same report a pool worker sends, and this machine's planned local-model
+      // lane caps — the merge standaloneJoinCaps shares with the watch's
+      // session-expired rejoin, so a rejoined node advertises exactly what a
+      // manual rejoin would. Both stay in the CLI layer: runNodeFleet is shared
+      // with the SSH endpoint, where the joining worker's own machine — not
+      // this host — owns the version and lanes it reports. A malformed
+      // local-lanes.json contributes nothing either, but its parse error is
+      // kept for the reply: silently dropping a lane the operator asked for is
+      // exactly the failure `phm node lanes` exists to explain.
+      const requested = (flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean);
+      const advertised = await standaloneJoinCaps(requested, deps);
+      localLaneError = advertised.laneError;
+      flags.set('--caps', advertised.caps.join(','));
     }
     // rejoinWatch: this path only runs with no pool config (or an injected
     // store), so a session-expired fix may name `join --watch` — the command
@@ -445,10 +471,16 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       const probe = Array.isArray(caps) && caps.includes('gh') ? ['--probe-auth'] : [];
       const { watch: watchDeps, ...fleetDeps } = deps;
       const run = watchDeps?.run ?? (async (beatArgs: string[]) => cmdNodeFleet('beat', beatArgs, fleetDeps));
+      // Session-expired recovery rides the same store/profile path a manual
+      // rejoin would: adopt the live session or rejoin the last profile, then
+      // keep beating. An injected `rejoin` wins for tests; one answering null
+      // (a left or unknown node) ends the watch with the beat's own exit code.
+      const rejoin = watchDeps?.rejoin !== undefined ? watchDeps.rejoin
+        : (nodeId: string) => rejoinStandaloneSession(nodeId, fleetDeps);
       return cmdNodeBeatWatch([
         '--node', String(out['nodeId']), '--session', String(out['session']),
         ...(json ? ['--json'] : []), ...probe, '--every', String(joinWatch.everySeconds),
-      ], { ...watchDeps, run });
+      ], { ...watchDeps, run, rejoin });
     }
     return 0;
   } catch (error) {

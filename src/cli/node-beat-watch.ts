@@ -25,6 +25,11 @@ const HOST_STATS_MAX_BYTES = 64 * 1024;
 export interface NodeBeatWatchDeps {
   /** One beat pass; defaults to the `phm node beat` dispatch (pool-aware). */
   run?: (args: string[]) => Promise<number>;
+  /** Session-expired recovery: return the session to beat with next (a fresh
+   * rejoin or an adopted live one), or null to stop the watch. Production
+   * wires the standalone registry's last-profile rejoin; a pool Mac passes
+   * nothing because its sessions live on the primary's witness. */
+  rejoin?: (nodeId: string) => Promise<number | null>;
   measure?: () => NodeCapacity;
   hostStats?: () => HostStats;
   /** Injectable for tests; production waits on a timer the stop signal can cut short. */
@@ -69,6 +74,19 @@ function beatArgs(base: string[], deps: NodeBeatWatchDeps): string[] {
   return args;
 }
 
+/** The production session-expired recovery for a standalone watch: undefined
+ * on a pool Mac — its sessions live on the primary's witness, not this store —
+ * or when the hook cannot be built. Everything else delegates to the fleet
+ * layer's last-profile rejoin against this machine's own registry. */
+async function defaultSessionRejoin(): Promise<NodeBeatWatchDeps['rejoin']> {
+  try {
+    const { hasNodePool } = await import('./node-pool.js');
+    if (hasNodePool()) return undefined;
+    const { rejoinStandaloneSession } = await import('./node-fleet.js');
+    return nodeId => rejoinStandaloneSession(nodeId);
+  } catch { return undefined; }
+}
+
 export async function cmdNodeBeatWatch(args: string[], deps: NodeBeatWatchDeps = {}): Promise<number> {
   const json = args.includes('--json');
   const log = deps.log ?? ((line: string) => console.log(line));
@@ -81,12 +99,54 @@ export async function cmdNodeBeatWatch(args: string[], deps: NodeBeatWatchDeps =
     } else errorOut(`${parsed.error} Fix: ${fix}`);
     return 2;
   }
+  // --session is rewritten per pass so a session-expired rejoin flows into the
+  // next beat without restarting the watch; --node never changes on rejoin.
+  const base: string[] = [];
+  let nodeId: string | undefined;
+  let session: number | undefined;
+  let sessionSeen = false;
+  for (let i = 0; i < parsed.base.length; i++) {
+    const arg = parsed.base[i]!;
+    // Only a well-formed session is lifted out for rewriting; anything else —
+    // a bad value, or a second --session the beat parser must refuse as a
+    // duplicate — stays in the args so the parser names it.
+    if (!sessionSeen && arg === '--session') {
+      const value = parsed.base[i + 1];
+      if (value !== undefined && /^\d+$/.test(value)) { session = Number(value); sessionSeen = true; i++; continue; }
+      base.push(arg);
+      continue;
+    }
+    if (!sessionSeen && arg.startsWith('--session=')) {
+      const value = arg.slice('--session='.length);
+      if (/^\d+$/.test(value)) { session = Number(value); sessionSeen = true; continue; }
+      base.push(arg);
+      continue;
+    }
+    if (arg === '--node') nodeId = parsed.base[i + 1];
+    else if (arg.startsWith('--node=')) nodeId = arg.slice('--node='.length);
+    base.push(arg);
+  }
+  const beatBase = () => [...base, ...(session === undefined ? [] : ['--session', String(session)])];
+  const rejoin = deps.rejoin ?? await defaultSessionRejoin();
   return runNodeWatchLoop({
     command: 'beat',
     flags: parsed,
     stoppedText: 'Heartbeat stopped; the node session expires on its own within 30 seconds.',
     run: deps.run ?? (async (beat: string[]) => (await import('./node-fleet.js')).cmdNodeFleet('beat', beat)),
-    argsFor: base => beatArgs(base, deps),
+    argsFor: () => beatArgs(beatBase(), deps),
+    recover: rejoin !== undefined && nodeId !== undefined ? async (code: number) => {
+      // Only an operational failure can be a dead session; usage errors (2)
+      // and a still-live session's other exit-1 failures keep their exit.
+      if (code !== 1 || session === undefined) return false;
+      const next = await rejoin(nodeId);
+      // The same session back means the beat failed for another reason; a
+      // new or adopted session means the keep-alive can carry on.
+      if (next === null || next === session) return false;
+      session = next;
+      if (json) log(JSON.stringify({ schemaVersion: 1, command: 'beat', watch: { rejoined: nodeId, session: next } }));
+      else log(`Session expired; rejoined ${nodeId} as session ${next}.`);
+      return true;
+    } : undefined,
     sleep: deps.sleep,
     signal: deps.signal,
     log,
