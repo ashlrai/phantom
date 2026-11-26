@@ -64,8 +64,10 @@ Linux; on a platform with no reader the sample reports `memory-unmeasured`, so
 the router keeps work away from that node until one exists.
 
 Check that `<nodeId>` appears live with the intended caps and, for GitHub jobs,
-that its auth is `ok`. A join does not start a worker or recurring heartbeat,
-so keep one running in the foreground:
+that its auth is `ok`. `phm nodes doctor --json` reports what each joined
+computer is missing before it can take jobs — reachability, lane CLI sign-ins,
+repo clones and free disk — with one fix line per gap. A join does not start a
+worker or recurring heartbeat, so keep one running in the foreground:
 
 ```sh
 phm node beat --node <nodeId> --session 1 --probe-auth --watch

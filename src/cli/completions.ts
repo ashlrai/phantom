@@ -98,7 +98,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   check: ['--base', '--json', '--help'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
-  nodes: ['plan', 'doctor', 'pool', '--json', '--can-take', '--node', '--help'],
+  nodes: ['plan', 'doctor', 'pool', 'offload', '--json', '--discover', '--dry-run', '--can-take', '--node', '--help'],
   map: ['--json', '--help'],
   'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
   autofix: ['--apply', '--dry-run', '--json', '--only', '--older-than', '--stuck-minutes', 'release-stuck-draft', 'launchd-crashloop', 'stuck-lane', 'outside-load', '--help'],
@@ -150,6 +150,17 @@ const SUBCOMMANDS: Record<string, string[]> = {
   notify: ['test', 'session', 'route', 'rules'],
   telemetry: ['status', 'test'],
   node: ['bootstrap', 'join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'release', 'withdraw', 'result', 'bridge', 'list', 'status', 'leave', 'pool', 'watch', 'worker', 'run-once', 'rpc', 'lanes', 'capacity', 'route', 'measure', 'self-update', 'light'],
+  // Mirror the verb switch in src/cli/org.ts (cmdOrg); bare `phm org` is the live tree.
+  org: ['show', 'join', 'plan', 'init', '--file', '--json', '--text', '--minutes', '--member', '--machine', '--name', '--lane', '--queue', '--help'],
+  // Mirror the verb switch in src/cli/team.ts (cmdTeam); bare `phm team` lists.
+  team: ['list', 'show', 'add', 'view', 'invite', 'role', 'link', 'remove', 'join', 'approve', 'deny', 'claim', 'release', 'say',
+    '--team', '--as', '--json', '--dry-run', '--apply', '--pools', '--seats', '--share', '--repos', '--lanes', '--role',
+    '--email', '--phone', '--slack', '--verified', '--branch', '--path', '--reason', '--ttl-min', '--help'],
+  // Mirror the verb switch in src/cli/improve.ts (cmdImprove).
+  improve: ['propose', 'register', 'measure', 'outcomes', 'sync-backlog', 'observe', 'discover', 'promote', 'lessons', 'nightly',
+    '--json', '--repo', '--repeat', '--dry-run', '--queue-merge', '--open-pr', '--team', '--limit', '--auto-merge', '--help'],
+  // src/cli/onboard.ts is flag-driven: guided activation, ecosystem grant, rollback.
+  onboard: ['--ecosystem', '--grant', '--plan', '--select', '--locus-firm', '--yes', '--json', '--rollback', '--kill', '--help'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
   enroll: ['add', 'remove', 'list', 'kill'],
   backlog: ['refresh', 'plan', 'lint'],
