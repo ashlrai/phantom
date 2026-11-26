@@ -183,9 +183,11 @@ export function ledgerUsageReadings(ledger: ResourceLedgerV1): UsageReading[] {
 function startsWindow(prev: UsageReading, cur: UsageReading): boolean {
   const prevReset = ms(prev.reset_at), curReset = ms(cur.reset_at);
   if (!Number.isFinite(prevReset) || !Number.isFinite(curReset)) return false;
+  const observedAt = ms(cur.observed_at);
+  if (observedAt >= curReset) return false;
   // A drop with the same or a later reset time, or the old reset passed and a later one is reported.
   return (cur.used_pct < prev.used_pct && curReset >= prevReset)
-    || (prevReset <= ms(cur.observed_at) && curReset > prevReset);
+    || (prevReset <= observedAt && curReset > prevReset);
 }
 
 const pts = (n: number): string => `${Math.round(n * 100) / 100}`;
@@ -258,24 +260,30 @@ export function poolUsageSeries(pool: string, rows: readonly UsageReading[], now
       resets.push({ at: mine[i]!.observed_at, from_pct: mine[i - 1]!.used_pct, to_pct: mine[i]!.used_pct });
     }
   }
-  const window = mine.slice(start);
-  const latest = window.at(-1) ?? null;
-  const resetMs = ms(latest?.reset_at ?? null);
+  const resetAt = mine.at(-1)?.reset_at ?? null;
+  const resetMs = ms(resetAt);
   const startMs = resetMs - windowMs;
   const known = Number.isFinite(resetMs);
+  const window = mine.slice(start).filter(r => {
+    const observedAt = ms(r.observed_at);
+    return !known || (observedAt >= startMs && observedAt < resetMs);
+  });
+  const latest = window.at(-1) ?? null;
+  const points = window.map(r => ({ at: r.observed_at, used_pct: r.used_pct }));
   const idealAt = (t: number): number => round1(Math.min(100, Math.max(0, (t - startMs) / windowMs * 100)));
   const series: PoolUsageSeries = {
     pool, pace: 'unknown', reason: null, used_pct: latest?.used_pct ?? null, observed_at: latest?.observed_at ?? null,
-    reset_at: known ? latest!.reset_at : null, window_start: known ? new Date(startMs).toISOString() : null,
-    points: window.map(r => ({ at: r.observed_at, used_pct: r.used_pct })),
-    ideal: known ? { from: { at: new Date(startMs).toISOString(), used_pct: 0 }, to: { at: latest!.reset_at!, used_pct: 100 } } : null,
+    reset_at: known ? resetAt : null, window_start: known ? new Date(startMs).toISOString() : null,
+    points,
+    ideal: known ? { from: { at: new Date(startMs).toISOString(), used_pct: 0 }, to: { at: resetAt!, used_pct: 100 } } : null,
     ideal_pct: known && latest ? idealAt(ms(latest.observed_at)) : null,
     resets,
-    runway: usageRunway(pool, window.map(r => ({ at: r.observed_at, used_pct: r.used_pct })), known ? latest!.reset_at : null, nowMs, windowMs),
+    runway: usageRunway(pool, points, known ? resetAt : null, nowMs, windowMs),
   };
-  if (!latest) return { ...series, reason: 'No readings yet.' };
+  if (mine.length === 0) return { ...series, reason: 'No readings yet.' };
   if (!known) return { ...series, reason: 'Reset time unknown.' };
   if (resetMs <= nowMs) return { ...series, reason: 'The window reset. Waiting for a new reading.' };
+  if (!latest) return { ...series, reason: 'No readings in this window.' };
   if (window.length < 2) return { ...series, reason: 'Only one reading in this window.' };
   if (nowMs - ms(latest.observed_at) > USAGE_RUNWAY_STALE_MS) return { ...series, reason: 'Latest reading is stale.' };
   const gap = latest.used_pct - series.ideal_pct!;
