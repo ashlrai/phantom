@@ -184,6 +184,30 @@ describe('findStarvedLanes', () => {
       { lane: 'codex', running: 0, target: 2, queued: 3, ready: 0, filler: 0, real: 0 },
     ]);
   });
+  it('attributes each job to its first valid ready row across queue formats and lane hints', () => {
+    const status = JSON.stringify({ lanes: {
+      'claude-api': { running: 1, target: 3, queued: 4 },
+      codex: { running: 0, target: 2, queued: 3 },
+    } });
+    const ready = [
+      'RQ-OPEN\tphantom\tclaude-api\twork\t/prompt\tnot-json',
+      'RQ-OPEN\tphantom\t\twork\t/prompt',
+      'READY\tRQ-OPEN\tcodex\twork\tphantom\t/prompt',
+      'PARKED-DEP.codex\tRQ-FIRST-A123456Q8\tcodex\twork\tphantom\t/prompt',
+      'READY\tRQ-FIRST-A123456Q8\tclaude-api\twork\tphantom\t/prompt',
+      'RQ-FIRST-A123456Q8\tphantom\t\twork\t/prompt',
+      'RQ-FIRST-A123456Q8\tphantom\tcodex\twork\t/prompt',
+      'RQ-SECOND\tphantom\tcodex\twork\t/prompt',
+      'RQ-SECOND\tphantom\tcodex\twork\t/prompt',
+    ].join('\n');
+    expect(findStarvedLanes(status, ready)).toEqual({
+      lanes: [
+        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 1, real: 0 },
+        { lane: 'codex', running: 0, target: 2, queued: 3, ready: 1, filler: 0, real: 1 },
+      ],
+      openRows: 1,
+    });
+  });
   it('rejects malformed status', () => {
     expect(() => findStarvedLanes('{"lanes":{"a":{"running":"1"}}}', '')).toThrow();
   });

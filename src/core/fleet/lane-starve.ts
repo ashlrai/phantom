@@ -20,6 +20,7 @@
  * supply reported once as `openRows`, and a row the market would reject is
  * dead work, never counted. Rows in any other dialect keep the tolerant
  * lane-column read: they are not dispatcher jobs the market governs.
+ * Each job contributes supply once, using its first valid row.
  */
 import { KNOWN_STATUSES } from './lane-console.js';
 import { laneLaunchTarget } from './lane-launch-target.js';
@@ -97,8 +98,12 @@ export function findStarvedLanes(
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const split = new Map<string, { filler: number; real: number }>();
+  const countedJobs = new Set<string>();
   let open = 0;
-  const attribute = (id: string, lane: string): void => {
+  const attribute = (id: string, lane: string | null): void => {
+    if (countedJobs.has(id)) return;
+    countedJobs.add(id);
+    if (lane === null) { open++; return; }
     const entry = split.get(lane) ?? { filler: 0, real: 0 };
     entry[FILLER_ID.test(id) ? 'filler' : 'real']++;
     split.set(lane, entry);
@@ -115,8 +120,7 @@ export function findStarvedLanes(
       const market = readyMarketLine(line, routerQueue);
       if (market === 'invalid') continue;
       if (market !== null) {
-        if (market.hint === null) open++;
-        else attribute(market.id, market.hint);
+        attribute(market.id, market.hint);
         continue;
       }
     }
