@@ -47,7 +47,12 @@ A suite that fails to load (transform, parse, or collection error) prints
 `FAIL <file> [ <file> ]` with no test name; these group under the
 `<file> > (suite)` identity, capture the suite's error line, and count as
 passing on master when the file shows any pass evidence -- the file loading
-and running is what resolves a suite failure.
+and running is what resolves a suite failure. A green module summary with
+skipped or todo tests can still establish that the suite loaded. A named
+test requires an explicit matching case pass or a green module summary with
+no skipped or todo tests. A partial summary alone leaves the named test
+unknown on master, so it cannot justify a singleton rerun or mark a shared
+failure ready for a branch update.
 The `ci` job's qualification lanes wrap the suite runs in
 `.github/scripts/ci-qualification-lane.mjs`, which re-reads each Vitest
 JSON report and refuses a case that passed only after a retry -- the
@@ -58,7 +63,7 @@ on stderr. `<file>` is the report's repo-relative module path under
 ancestor titles plus the case title, not the default reporter's ` > `
 chain, so the group keys on the identity the evidence itself printed.
 Because it names a real test, the usual dependency closure and pass
-evidence apply: a green master module resolves a one-off flake on an
+evidence apply: a qualifying master pass resolves a one-off flake on an
 unaffected singleton to `probable-flake`/`rerun-failed`, while a flake
 repeated across unaffected PRs -- or printed by master itself -- groups
 `shared-baseline` for a stabilization fix. Verdicts naming paths outside

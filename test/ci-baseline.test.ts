@@ -142,6 +142,28 @@ describe('CI baseline evidence', () => {
     const suite = await analyzeCiBaseline('owner/repo', github({ suite: true, pass: true, filePass: true, count: 1 }).gh);
     expect(suite.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
   });
+  it.each(['1 skipped', '1 todo', '1 skipped | 1 todo'])('withholds named-test pass evidence from a module with %s', async (qualifier) => {
+    const analyze = (count: number, suite = false) => {
+      const { gh } = github({ count, suite, pass: true, filePass: true });
+      return analyzeCiBaseline('owner/repo', async args => {
+        const result = await gh(args);
+        if (args[1]?.endsWith('/jobs/10/logs')) {
+          return { ...result, stdout: result.stdout.replace('(4 tests)', `(4 tests | ${qualifier})`) };
+        }
+        return result;
+      });
+    };
+    const singleton = await analyze(1);
+    expect(singleton.master.known).toBe(true);
+    expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+    const shared = await analyze(2);
+    expect(shared.groups[0]).toMatchObject({ classification: 'shared-baseline', master: 'unknown' });
+    expect(shared.updates).toHaveLength(2);
+    expect(shared.updates.every(update => !update.ready)).toBe(true);
+    const suite = await analyze(1, true);
+    expect(suite.groups[0]).toMatchObject({ classification: 'probable-flake', master: 'pass' });
+  });
+
   it('excludes stale and unreadable or unrecognized logs', async () => {
     for (const options of [{ stale: true }, { unknown: true }, { unreadable: true }]) {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);
