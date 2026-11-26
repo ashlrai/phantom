@@ -413,6 +413,10 @@ The separate `resourcePlan` comparison uses the same advisory lane targets as
 `phm resources plan` and shows how many additional slots lack waiting rows
 hinted to that lane. The advisory `unfedSlots` count stays null when plan
 capacity is unknown, dispatcher status is stale, or `ready.tsv` is missing.
+When the resource planner has an eligibility view of the ready queue, only
+lanes covered by that view can reserve shared slots. A lane outside the view
+can display its dispatcher queue count, but that count cannot establish
+eligible demand or a positive slot recommendation.
 Both the lane hint counts and the total waiting work for this comparison count
 each job once, using its first valid row in the same `ready.tsv` read.
 An observed empty ready file yields zero
