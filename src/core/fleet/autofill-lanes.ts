@@ -5,6 +5,7 @@
  *   - it is not held,
  *   - its pool has a budget reading and still has usage left (no reading is not assumed to mean usage left),
  *   - no READY row is routed to it (rows for other lanes do not count),
+ *   - no lane-open READY row waits for the market to place on any lane,
  *   - it is running fewer jobs than its target.
  * Pure: no files, no clock. The caller reads the lane facts (queue status, slot target, pool budget).
  */
@@ -33,7 +34,7 @@ export interface LaneVerdict {
   why: string;
 }
 
-export function judgeLane(f: LaneFacts): LaneVerdict {
+export function judgeLane(f: LaneFacts, openRows?: number | null): LaneVerdict {
   const no = (why: string): LaneVerdict => ({ lane: f.lane, starved: false, free: 0, why });
   if (f.held) return no('held, so it is skipped');
   if (f.remainingPct === null) return no('no budget reading, so usage left is unknown');
@@ -42,12 +43,18 @@ export function judgeLane(f: LaneFacts): LaneVerdict {
   if (f.queued === null) return no('queue depth is unknown');
   if (f.queued > 0) return no(`${f.queued} ready ${f.queued === 1 ? 'row is' : 'rows are'} already queued for it`);
   if (f.running >= f.target) return no(`full: ${f.running} of ${f.target} running`);
+  // Lane-open READY rows are open supply the market may place on any lane, so
+  // a positive count means this lane is not out of work (the same rule the
+  // lane-console starved read, pulse alerts and lane-supply apply).
+  if (typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows > 0) {
+    return no(`${openRows} lane-open ${openRows === 1 ? 'row is' : 'rows are'} waiting for any lane`);
+  }
   const used = `, pool ${Math.round(100 - f.remainingPct)}% used`;
   const free = f.target - f.running;
   return { lane: f.lane, starved: true, free, why: `running ${f.running} of ${f.target}, 0 queued${used}` };
 }
 
-/** Verdicts for every lane, sorted by name. */
-export function judgeLanes(facts: readonly LaneFacts[]): LaneVerdict[] {
-  return [...facts].map(judgeLane).sort((a, b) => a.lane.localeCompare(b.lane));
+/** Verdicts for every lane, sorted by name. `openRows` is the snapshot's lane-open READY count: supply the market may place on any lane. */
+export function judgeLanes(facts: readonly LaneFacts[], openRows?: number | null): LaneVerdict[] {
+  return [...facts].map(f => judgeLane(f, openRows)).sort((a, b) => a.lane.localeCompare(b.lane));
 }
