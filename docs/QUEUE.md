@@ -259,6 +259,26 @@ a price. Cost classes come from host executor metadata.
 
 ## Routing receipts and JSON audit
 
+### Repository shares
+
+The Mac shared queue starts flat: no repository has a fixed rank or guaranteed
+top share. Within existing job urgency and safety bands, restock and dispatch
+interleave candidates by repository score. Ready depth, CI repair work, bug and
+research jobs, and declared mission impact increase the bounded score; dispatch
+also considers observed merge rates for comparable work. `boost` multiplies the
+score by 1.25, `normal` leaves it alone, and `pause` keeps work pending without
+admitting new claims on this queue. These are local scheduling settings, not
+authority, cancellation or changes to execution constraints.
+
+When shares change, dispatch records `work-market.v1` events named `repo_share`
+in `metrics/work-market.jsonl`, with `repo`, `score`, `share` and
+`reason_codes` (for example `default_branch_ci_fix_ready` or
+`historical_solution_yield`). The allocation displayed in [Repos manager](./ECOSYSTEM-ONBOARDING.md#manage-ecosystem-repositories)
+is the target, not guaranteed throughput: runnable capacity, safety gates and
+work availability still govern claims. The historical `phm repos rank` report
+does not control this queue.
+
+
 Every evaluated decision appends a private JSON record to
 `metrics/work-market.jsonl`. Lifecycle events remain in `metrics/jobs.jsonl`.
 The decision shape is:

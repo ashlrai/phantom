@@ -2,8 +2,9 @@ import { execFileSync } from 'node:child_process';
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { ECOSYSTEM_REPOS } from './repo-market.js';
 
-export const SEEDS = ['phantom', 'phantom-secrets', 'locus', 'lexicon', 'ashlr-plugin', 'ashlr-stack', 'ashlr-md'];
+export const SEEDS = ECOSYSTEM_REPOS.map(({ name }) => name).sort();
 export interface MergeInput { repo: string; mergedAt: string; title: string; body?: string }
 export interface RankRow { repo: string; score: number; weight: number; recency: number; leverage: number }
 export interface RankState {
@@ -54,19 +55,12 @@ export function computeRank(inputs: MergeInput[], now = new Date(), previous?: R
   const maxLeverage = Math.max(1, ...enrolled.map(r => stats.get(r)?.leverage ?? 0));
   const row = (repo: string): RankRow => {
     const s = stats.get(repo) ?? { recency: 0, leverage: 0 };
-    const i = SEEDS.indexOf(repo);
-    const prior = i < 0 ? 0 : (SEEDS.length - i) / SEEDS.length;
-    return { repo, ...s, score: weights.prior * prior + weights.recency * s.recency / maxRecency + weights.leverage * s.leverage / maxLeverage, weight: 0 };
+    return { repo, ...s, score: weights.prior + weights.recency * s.recency / maxRecency + weights.leverage * s.leverage / maxLeverage, weight: 0 };
   };
   const compare = (a: RankRow, b: RankRow): number => b.score - a.score || enrolled.indexOf(a.repo) - enrolled.indexOf(b.repo) || a.repo.localeCompare(b.repo);
   const rankings = enrolled.map(row).sort(compare);
   const total = rankings.reduce((n, r) => n + r.score, 0);
   rankings.forEach(r => { r.weight = total ? r.score / total : 1 / rankings.length; });
-  if (rankings.length > 1 && rankings[0].weight < 0.4) {
-    const rest = 1 - rankings[0].weight;
-    rankings.slice(1).forEach(r => { r.weight = r.weight / rest * 0.6; });
-    rankings[0].weight = 0.4;
-  }
   // Zero evidence must still leave every manually enrolled repository schedulable.
   rankings.forEach(r => { r.weight = Math.max(r.weight, Number.EPSILON); });
   const proposals = [...stats.keys()].filter(r => !enrolled.includes(r) && stats.get(r)!.leverage >= 2).map(row).sort(compare);

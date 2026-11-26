@@ -2880,7 +2880,12 @@ async function main(): Promise<void> {
 
       case 'repos': {
         if (wantsHelp(rest)) {
-          printCoreUsage('repos', 'Repository ranking.', [
+          printCoreUsage('repos', 'Ecosystem repository management and allocation.', [
+            ['phm repos list [--json]', 'Show enrollment, grant, health and allocation'],
+            ['phm repos add <repo> [--json]', 'Plan enrollment and standing grant review'],
+            ['phm repos remove <repo> [--json]', 'Plan removal from standing authority'],
+            ['phm repos stage <repo> <propose|merge> [--json]', 'Plan standing grant stage review'],
+            ['phm repos priority <repo> <boost|normal|pause> [--json]', 'Set a scheduling nudge'],
             ['phm repos rank [--json]', 'Rank enrolled repositories'],
             ['phm repos proposals [--json]', 'Read ranking proposals'],
           ]);
@@ -2888,7 +2893,7 @@ async function main(): Promise<void> {
           break;
         }
         const { cmdReposRank } = await import('./repos-rank.js');
-        process.exitCode = cmdReposRank(rest);
+        process.exitCode = await cmdReposRank(rest);
         break;
       }
 

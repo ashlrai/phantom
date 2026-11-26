@@ -117,7 +117,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   browser: ['doctor', 'open', 'tabs', 'shot', 'close', '--browser', '--json', '--help'],
   apps: ['list', 'log', 'open', 'quit', 'restart', 'focus', 'status', 'suggest', 'request', '--pressure', '--need-mb', '--limit', '--json', '--help'],
   // Mirrors the verb check in src/cli/repos-rank.ts (cmdReposRank).
-  repos: ['rank', 'proposals', '--json', '--recompute', '--help'],
+  repos: ['list', 'add', 'remove', 'stage', 'priority', 'rank', 'proposals', '--json', '--recompute', '--help'],
   'release-articles': ['status', 'metadata', 'enable', 'disable', 'import', 'sync', '--help'],
   release: ['status', 'notes', 'autonomy', '--since', '--write', '--json', '--file', '--help'],
   releases: ['--json', '--help'],
