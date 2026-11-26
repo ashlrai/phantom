@@ -288,6 +288,35 @@ describe('cmdOrg', () => {
     vi.unstubAllEnvs();
   });
 
+  it('join names the declared lanes the record has not opted into', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = 'docs/examples/org.toml';
+    // mason-wyatt declares claude and codex-personal; a join naming only claude
+    // leaves codex-personal open, and the reply must say so in both modes.
+    const base = ['join', '--file', file, '--member', 'mason-wyatt', '--machine', 'mason-mac'];
+    expect(await cmdOrg([...base, '--lane', 'claude=50', '--json'])).toBe(0);
+    expect(JSON.parse(logs.pop()!).availableLanes).toEqual([{ lane: 'codex-personal', share: 100 }]);
+    expect(await cmdOrg([...base, '--lane', 'claude=50'])).toBe(0);
+    const partial = logs.pop()!;
+    expect(partial).toContain('Not opted in on this machine: codex-personal (declared 100%)');
+    // The hinted re-join keeps the recorded claude share and adds the open lane
+    // at its declared share — a bare "--lane codex-personal" alone would drop claude.
+    expect(partial).toContain('phm org join --member mason-wyatt --machine mason-mac --lane claude=50 --lane codex-personal');
+    // Opting into every declared lane leaves nothing open.
+    expect(await cmdOrg([...base, '--lane', 'claude', '--lane', 'codex-personal=40', '--json'])).toBe(0);
+    expect(JSON.parse(logs.pop()!).availableLanes).toEqual([]);
+    // The zero-lane first run contributes nothing; the note names every lane it
+    // could still opt into instead of ending at "no lanes".
+    expect(await cmdOrg(['join', '--file', file, '--member', 'evan-deloria', '--machine', 'evan-mac'])).toBe(0);
+    const empty = logs.pop()!;
+    expect(empty).toContain('no lanes (nothing contributed)');
+    expect(empty).toContain('Not opted in on this machine: claude (declared 30%)');
+    expect(empty).toContain('phm org join --member evan-deloria --machine evan-mac --lane claude');
+    vi.unstubAllEnvs();
+  });
+
   it('refuses malformed arguments instead of silently ignoring them', async () => {
     const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
     const logs: string[] = [], errs: string[] = [];
