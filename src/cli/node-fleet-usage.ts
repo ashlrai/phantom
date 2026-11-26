@@ -45,3 +45,20 @@ the watch flags never reach either verb's parser. \`join --watch\` is the one-co
 first run on the standalone registry: it joins, prints the session, then holds it live
 with the same beat watch — refused on a pool-configured Mac, where join releases its
 probe session and \`phm node worker\` holds the live sessions instead.`;
+
+/**
+ * Help scoped to one fleet verb: its own usage line plus the shared prose every
+ * verb relies on (owner scopes, lease/fencing model, --task-part, --watch).
+ * Returns null for a verb with no usage line so the caller can fall back to the
+ * full command list. `list` and `status` share one usage line.
+ */
+export function nodeFleetVerbUsage(verb: string): string | null {
+  const [usageBlock, ...prose] = NODE_FLEET_USAGE.split('\n\n');
+  const needle = verb === 'list' || verb === 'status' ? 'phm node list|status' : `phm node ${verb} `;
+  const line = usageBlock!.split('\n').find(candidate => candidate.includes(needle));
+  if (!line) return null;
+  // Only the first command carries the `Usage:` label in the full list; a
+  // scoped help for any other verb needs it added back.
+  const text = line.trimStart();
+  return `${text.startsWith('Usage:') ? text : `Usage: ${text}`}\n\n${prose.join('\n\n')}`;
+}

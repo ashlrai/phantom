@@ -12,7 +12,7 @@ function text(r: NodeBridgeReport): string {
 }
 
 export async function cmdNodeBridge(args: string[]): Promise<number> {
-  if (args.includes('--help') || args.includes('-h')) { console.log(`${USAGE}\nDry run by default: lists ready.tsv rows that would offload to a node and why each stays local. --apply runs one claim/reconcile pass (needs ~/.ashlr/node-bridge.json enabled).`); return 0; }
+  if (args.includes('--help') || args.includes('-h')) { console.log(`${USAGE}\nDry run by default: lists ready.tsv rows that would offload to a node and why each stays local. --apply runs one claim/reconcile pass (needs ~/.ashlr/node-bridge.json enabled).\nAll node commands: phm node --help`); return 0; }
   const json = args.includes('--json');
   const ownerAt = args.indexOf('--owner');
   const owner = ownerAt >= 0 ? args[ownerAt + 1] : undefined;
