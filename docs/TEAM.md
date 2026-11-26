@@ -122,7 +122,9 @@ phm team view --team acme                      # confirm you are a member
 phm team remove octocat --team acme
 ```
 
-Add `--json` to any of these for machine-readable output. `remove` takes effect
+Add `--json` to any of these for machine-readable output; a failure then prints
+`{"schema":"phantom.team.v1","version":1,"error","refused"}` on stderr with a
+nonzero exit (`phm team --help` prints usage and exits 0). `remove` takes effect
 at once: the member's claims are released, their accepted handoffs go back to
 `open` for someone else, and anything they post afterwards is ignored. Re-run
 `invite` to bring them back. Owners cannot be removed, and you cannot remove

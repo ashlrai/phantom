@@ -31,6 +31,9 @@ const USAGE = `Usage: phm team <list|add|show|view|join|invite|remove|role|link|
   release <claimId>
   say <text...>                Post a message to the team channel
 
+With --json every verb answers success on stdout; a failure prints
+{"schema":"phantom.team.v1","version":1,"error","refused"} on stderr.
+
 Start: view --team <id>; confirm the authoritative local log and your task with the owner.
 Team names do not sync machines. Roles do not grant repository or connector access.
 Missing access/context: ask the owner/admin with a task reference and redacted error.
@@ -47,6 +50,7 @@ function flag(args: string[], name: string): string | undefined {
 
 export async function cmdTeam(argv: string[]): Promise<number> {
   const args = [...argv];
+  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { console.log(USAGE); return 0; }
   const json = args.includes('--json'); if (json) args.splice(args.indexOf('--json'), 1);
   const team = flag(args, '--team') ?? DEFAULT_TEAM;
   const name = (flag(args, '--as') ?? process.env['PHM_TEAM_USER'] ?? userInfo().username).toLowerCase().replace(/[^a-z0-9._-]/g, '');
@@ -130,8 +134,8 @@ export async function cmdTeam(argv: string[]): Promise<number> {
       }
       case 'join': if (rest[0] && !rest[0].startsWith('-')) {
         const r = joinWithInvite(rest[0]);
-        return out(r, `${r.alreadyJoined ? 'Already joined' : 'Joined'} ${r.team} as ${r.member}. Your own local auth is used; nothing was shared.`);
-      } else { const actor = localHumanActor(); const role = flag(rest, '--role'); const ev = appendEvent(team, actor, 'member.joined', role ? { role } : {}); return out(ev, `Joined ${team} as ${actor.id}.`); }
+        return out(r, `${r.alreadyJoined ? 'Already joined' : 'Joined'} ${r.team} as ${r.member}. Your own local auth is used; nothing was shared.\nNext: phm team view --team ${r.team}`);
+      } else { const actor = localHumanActor(); const role = flag(rest, '--role'); const ev = appendEvent(team, actor, 'member.joined', role ? { role } : {}); return out(ev, `Joined ${team} as ${actor.id}.\nNext: phm team view --team ${team}`); }
       case 'approve': case 'deny': { const r = decideApproval(team, localHumanActor(), rest[0] ?? '', sub === 'approve' ? 'approve' : 'deny'); return out(r, `${r.approvalId}: ${r.state}${'applied' in r && r.applied ? ` — applied ${r.applied.type} [${r.applied.eventId}]` : ''}`); }
       case 'claim': {
         const branch = flag(rest, '--branch'); const path = flag(rest, '--path'); const reason = flag(rest, '--reason') ?? ''; const ttl = flag(rest, '--ttl-min');
@@ -141,14 +145,21 @@ export async function cmdTeam(argv: string[]): Promise<number> {
       }
       case 'release': return out(releaseClaim(team, me, rest[0] ?? ''), 'Released.');
       case 'say': { if (!rest.length) throw new Error('say needs text'); const ev = appendEvent(team, me, 'message.posted', { channel: 'general', text: rest.join(' ') }); return out(ev, 'Posted.'); }
-      default: console.error(USAGE); return 2;
+      default:
+        if (json) console.error(JSON.stringify({ schema: TEAM_SCHEMA, version: 1, error: `Unknown team command '${sub}'. Run: phm team --help`, refused: false }));
+        else console.error(USAGE);
+        return 2;
     }
   } catch (err) {
-    if (['list', 'show', 'add'].includes(sub) || (sub === 'remove' && /^(person|human):/.test(rest[0] ?? ''))) {
-      const error = err instanceof DirectoryInputError ? err.message : sub === 'remove' && err instanceof Error ? err.message : 'Team directory unavailable.';
-      console.error(json ? JSON.stringify({ schema: TEAM_SCHEMA, version: 1, error, refused: err instanceof DirectoryRefusedError }) : `phm team: ${error}`); return 1;
-    }
-    console.error(`phm team: ${err instanceof Error ? err.message : String(err)}`);
-    return 1;
+    const raw = err instanceof Error ? err.message : String(err);
+    const directoryVerb = ['list', 'show', 'add'].includes(sub) || (sub === 'remove' && /^(person|human):/.test(rest[0] ?? ''));
+    // Arg-count checks throw the usage text itself; those are usage errors (exit 2).
+    const usage = raw === USAGE;
+    const error = usage ? 'Invalid arguments. Run: phm team --help'
+      : directoryVerb ? (err instanceof DirectoryInputError || (sub === 'remove' && err instanceof Error) ? raw : 'Team directory unavailable.')
+      : raw;
+    if (json) console.error(JSON.stringify({ schema: TEAM_SCHEMA, version: 1, error, refused: err instanceof DirectoryRefusedError }));
+    else console.error(usage || !directoryVerb ? `phm team: ${raw}` : `phm team: ${error}`);
+    return usage ? 2 : 1;
   }
 }
