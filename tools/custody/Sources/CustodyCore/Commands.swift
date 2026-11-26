@@ -68,8 +68,8 @@ public struct CustodyFailure: Error, Equatable, CustomStringConvertible {
 }
 
 public enum CustodyCLI {
-  // 1.2.0: operator-only existing-item Keychain ACL reauthorization.
-  public static let version = "1.2.0"
+  // 1.3.0: renews decrypt and partition ACL trust for an existing item.
+  public static let version = "1.3.0"
 
   public static let usageText = """
   usage: ashlr-custody <command>

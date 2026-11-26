@@ -1,5 +1,5 @@
 // Operator-only ACL repair for a single existing legacy Keychain item.
-// No credential data is requested, exported, replaced, or recreated.
+// No stored credential data is read, exported, replaced, or recreated.
 import CustodyCore
 import CustodySecurity
 import Darwin
@@ -89,6 +89,23 @@ enum ExistingSecretReauthorization {
     return ImageIdentity(device: before.st_dev, inode: before.st_ino, codeDirectory: diskHash)
   }
 
+  static func currentHelperCDHash() throws -> String {
+    var running: SecCode?
+    guard SecCodeCopySelf([], &running) == errSecSuccess, let running else {
+      throw refuse("invalid-helper-signature")
+    }
+    var information: CFDictionary?
+    guard SecCodeCopySigningInformation(
+      running, SecCSFlags(rawValue: kSecCSSigningInformation), &information
+    ) == errSecSuccess,
+          let information,
+          let hash = (information as NSDictionary)[kSecCodeInfoUnique] as? Data,
+          hash.count == 20 else {
+      throw refuse("invalid-helper-signature")
+    }
+    return hash.map { String(format: "%02x", $0) }.joined()
+  }
+
   /// Explicitly select file-based, non-synchronizable generic passwords.
   /// match-all covers the default legacy search list: no first-match repair.
   static func items(_ account: ReauthorizationAccount) throws -> [SecKeychainItem] {
@@ -107,7 +124,39 @@ enum ExistingSecretReauthorization {
     var trusted: SecTrustedApplication?
     guard SecKeychainItemCopyAccess(item, &access) == errSecSuccess, let access,
           SecTrustedApplicationCreateFromPath(nil, &trusted) == errSecSuccess, let trusted else { throw refuse() }
-    return try CustodyLegacyAccess.prepare(access, trusted: trusted)
+    return try CustodyLegacyAccess.prepare(access, trusted: trusted, helperCDHash: currentHelperCDHash())
+  }
+
+  static func applyAccess(_ item: SecKeychainItem, prepared: CustodyLegacyAccess.PreparedAccess) throws {
+    guard SecKeychainSetUserInteractionAllowed(false) == errSecSuccess else { throw refuse() }
+
+    var password = [CChar](repeating: 0, count: 1024)
+    defer {
+      password.withUnsafeMutableBufferPointer { buffer in
+        if let base = buffer.baseAddress {
+          explicit_bzero(UnsafeMutableRawPointer(base), buffer.count)
+        }
+      }
+    }
+    let entered = "Login keychain password: ".withCString { prompt in
+      password.withUnsafeMutableBufferPointer { buffer in
+        guard let base = buffer.baseAddress else { return nil }
+        return readpassphrase(prompt, base, buffer.count, RPP_REQUIRE_TTY)
+      }
+    }
+    guard entered != nil else {
+      throw CustodyFailure("keychain-password-unavailable", "the login keychain password could not be read; no Keychain item was changed", exit: .auth)
+    }
+    let status = password.withUnsafeBufferPointer { buffer -> OSStatus in
+      guard let base = buffer.baseAddress else { return errSecParam }
+      let length = strnlen(base, buffer.count)
+      return SecKeychainItemSetAccessWithPassword(
+        item, prepared.updated, UnsafeRawPointer(base), UInt32(length)
+      )
+    }
+    guard status == errSecSuccess else {
+      throw CustodyFailure("keychain-authorization-failed", "the OS did not authorize this item's access change", exit: .keystore)
+    }
   }
 
   static func run(_ account: ReauthorizationAccount) throws {
@@ -126,14 +175,7 @@ enum ExistingSecretReauthorization {
               try CustodyLegacyAccess.snapshot(current) == prepared.original else { throw refuse("access-changed") }
       },
       applyAccess: { item, access in
-        guard SecKeychainSetUserInteractionAllowed(true) == errSecSuccess else { throw refuse() }
-        defer { SecKeychainSetUserInteractionAllowed(false) }
-        // Presence is NOT a substitute for authorization to edit this item.
-        // securityd must authorize the existing ACL change through its own UI.
-        let status = SecKeychainItemSetAccess(item, access.updated)
-        guard status == errSecSuccess else {
-          throw CustodyFailure("keychain-authorization-failed", "the OS did not authorize this item's access change", exit: .keystore)
-        }
+        try applyAccess(item, prepared: access)
       },
       verifyAppliedAccess: { item, prepared in
         var actual: SecAccess?
