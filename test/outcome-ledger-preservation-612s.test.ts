@@ -2270,7 +2270,7 @@ describe('router outcome merge-events join', () => {
     expect(result.outcomes[0]?.merge_queue).toBeNull();
   });
 
-  it.each(['{"type":', 'null'])('withholds first-pass success when the merge-events journal contains %s', async (malformed) => {
+  it.each(['{"type":', 'null', JSON.stringify(mergeEvent(0, 'retry_requested'))])('withholds first-pass success when the merge-events journal contains %s', async (malformed) => {
     const root = runsDir([
       { job: 'J1', pr_url: 'https://github.com/ashlrai/phantom/pull/42' },
       { job: 'J2', pr_url: 'https://github.com/ashlrai/phantom/pull/43' },
@@ -2290,6 +2290,34 @@ describe('router outcome merge-events join', () => {
       { job_id: 'J1', ci_first_pass: null, merge_queue: { checks_passed: 1 } },
       { job_id: 'J2', ci_first_pass: false, merge_queue: { check_failures: 1 } },
       { job_id: 'J3', ci_first_pass: true, merge_queue: { checks_passed: 1 } },
+    ]);
+  });
+
+  it.each([
+    mergeEvent(42, 'check_observed', { conclusion: 'unrecognized' }),
+    mergeEvent(42, 'check_observed', { conclusion: 'failure', required: 'true' }),
+    mergeEvent(42, 'retry_failed', { at: 'invalid' }),
+    mergeEvent(42, 'recut_requested', { at: null }),
+  ])('withholds first-pass success only for the PR with a malformed CI receipt (%j)', async (malformed) => {
+    const root = runsDir([42, 43, 44, 45].map(pr => JSON.stringify({
+      job: `J${pr}`, pr_url: `https://github.com/ashlrai/phantom/pull/${pr}`,
+      ...(pr === 45 ? { ci_first_pass: true } : {}),
+    })).join('\n'));
+    writeMergeEvents(root, [
+      ...[42, 43, 44, 45].map(pr => mergeEvent(pr, 'checks_passed')),
+      malformed,
+      mergeEvent(43, 'blocked', { reason: 'invalid' }),
+      mergeEvent(44, 'retry_requested', { at: null }),
+      mergeEvent(44, 'check_observed', { conclusion: 'failure' }),
+      mergeEvent(45, 'retry_requested', { at: null }),
+    ]);
+
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result.outcomes).toMatchObject([
+      { job_id: 'J42', ci_first_pass: null, merge_queue: { events: 1, checks_passed: 1 } },
+      { job_id: 'J43', ci_first_pass: true, merge_queue: { events: 1, checks_passed: 1 } },
+      { job_id: 'J44', ci_first_pass: false, merge_queue: { events: 2, check_failures: 1 } },
+      { job_id: 'J45', ci_first_pass: true, merge_queue: { events: 1, checks_passed: 1 } },
     ]);
   });
 
