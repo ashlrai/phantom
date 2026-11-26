@@ -1049,6 +1049,7 @@ describe('M252 Gateway — resource-aware demote', () => {
     });
     const item = makeItem('self', {
       id: 'repo:proposal-repair-capture:abcdef123456',
+      repo: join(tmpHome, 'repo'),
       effort: 1,
       score: 1,
       title: 'Repair dispatch capture failure for repo item repo:self-heal:stalled',
@@ -1071,7 +1072,7 @@ describe('M252 Gateway — resource-aware demote', () => {
 
     const decision = await decide(item, cfg);
 
-    expect(base.tier).toBe('frontier');
+    expect(base.tier, base.reason).toBe('frontier');
     expect(base.reason).toContain('frontier: generated capture proposal repair');
     expect(decision.backend).toBe(alternate);
     expect(decision.demotedFrom).toBe(base.backend);
