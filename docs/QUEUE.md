@@ -347,6 +347,11 @@ configured lane target and the last fresh tick's launch target (which includes
 any controller shed). A target decrease can suppress a recommendation before
 the next tick. A higher target needs dispatcher confirmation.
 
+Autopilot reports empty ready queues against lane-local headroom. A restock
+proposal is limited to the smaller of that headroom and the remaining shared
+fleet slots. A full fleet cap or closed admission gate yields a no-op while
+the empty-queue gap stays visible.
+
 An executor is unfed when it has free slots while runnable rows wait under
 another lane's hint. Each tick the dispatcher computes this after its launches
 and publishes it as `unfed_capacity` in `queue/status.json`: per lane `running`,
