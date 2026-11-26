@@ -465,7 +465,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   let note: string | null = null;
   if (!empty && threadMissing) note = read!.reason ?? 'The Leader conversation is not available on this server.';
   else if (!empty && !inbox.length && runs.error !== undefined) note = 'The fleet inbox could not be reached.';
-  else if (!empty && !inbox.length && runs.data !== undefined) note = 'Nothing in Mason’s inbox yet — posts from any channel join this conversation.';
+  else if (!empty && !inbox.length && runs.data !== undefined) note = 'Nothing in the owner’s inbox yet — posts from any channel join this conversation.';
 
   let body: ReactNode;
   if (loading) {
@@ -578,7 +578,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       {/* The unsent draft is kept on this computer and put back after a reload. */}
       <ReplyDraft draft={draft} onDraft={setDraft} />
       {held ? <div className={styles.note} role="status">
-        <p>{INBOX_HELD_SENTENCE} Only Mason edits this file.</p>
+        <p>{INBOX_HELD_SENTENCE} Only the owner edits this file.</p>
         <CopyPill text={COMMS_TOML_PATH} what="the comms.toml path" />
         <CopyPill text={COMMS_CONFIRM_LINE} what="the comms.toml confirmation line" />
         <button type="button" className={styles.tool} disabled={!canSend(draft, sending) || actions.readOnly} onClick={() => void sendToThread()}>Send to the Leader thread instead</button>

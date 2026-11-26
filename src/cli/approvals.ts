@@ -1,6 +1,6 @@
 /**
  * `phm approvals` — the same projection the desktop Approvals panel renders:
- * decisions only Mason can make (asks, answered with one tap or word), pending
+ * decisions only the owner can make (asks, answered with one tap or word), pending
  * team approvals, inbox proposals, outbound drafts, the Security pin queue and
  * Mason's explicit holds. `ask` lets an agent raise a decision; `answer`
  * records Mason's answer, from the local human only.
@@ -18,14 +18,14 @@ import { rejectUnknownOptions } from './args.js';
 const USAGE = `Usage: phm approvals [--team <id>] [--json]
        phm approvals ask --question <text> --options yes,no [--expires <iso>] [--by <name>] [--json]
        phm approvals answer <ref> <option> [--json]
-  Decisions only Mason can make come first: number, question, options, who
+  Decisions only the owner can make come first: number, question, options, who
   asked, age and expiry. Everything else follows: pending team approvals, inbox
   proposals, outbound email drafts, the Security pin queue (read-only) and
   explicit holds from $ASHLR_HOME/holds.json
   ({"holds":[{"id","title","detail?","since?","resolvedAt?"}]}).
   ask      for agents: raise one decision (2-6 options; an identical open one is reused).
            Read the answer with: phm fleet needs-answer <id> [--timeout-ms N]
-  answer   for Mason only (agent processes are refused): records the option once,
+  answer   for the owner only (agent processes are refused): records the option once,
            with who answered, the channel (cli) and the time; a repeat changes nothing.
            From Telegram, reply "yes 3", or just "use it" when only one approval fits.
   Decide a team approval with: phm team approve|deny <approvalId>
@@ -97,14 +97,14 @@ async function cmdAnswer(rest: string[], json: boolean, deps: ApprovalsCliDeps):
 
 const DECISIONS_USAGE = `Usage: phm decisions [--json]
        phm decisions answer <code> yes|no|later [--json]
-  What only Mason can do: a password, a 2FA code, a device approval, a payment,
+  What only the owner can do: a password, a 2FA code, a device approval, a payment,
   or a message to someone outside the team. Each takes one word.
   decisions   waiting questions, oldest first (--json: decisions.v1 with schema and version)
-  answer      for Mason only (agent processes are refused): records yes, no or later
+  answer      for the owner only (agent processes are refused): records yes, no or later
               once (y and n work too); a repeat changes nothing. Nothing is paid or sent.
   From a phone, reply "yes 3f2a", or just "yes" when only one decision is waiting.`;
 
-/** \`phm decisions\`: the asks only Mason can answer, one word each; the same ledger and answer path as \`phm approvals\`. */
+/** \`phm decisions\`: the asks only the owner can answer, one word each; the same ledger and answer path as \`phm approvals\`. */
 export async function cmdDecisions(argv: string[], deps: ApprovalsCliDeps = {}): Promise<number> {
   if (argv.includes('--help') || argv.includes('-h')) { console.log(DECISIONS_USAGE); return 0; }
   const json = argv.includes('--json');

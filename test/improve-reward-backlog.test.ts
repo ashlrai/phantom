@@ -107,6 +107,33 @@ describe('foldRewardJournal', () => {
     expect(claude.repos.get('ashlrai/phantom')).toBe(2);
   });
 
+  it('counts a replayed job once even when later rows span days or change pool', () => {
+    const original = notHeld('replayed', NOW_MS - DAY);
+    const rows = [
+      original, original, original, original, original, original,
+      notHeld('replayed', NOW_MS),
+      held('replayed', NOW_MS, 'codex'),
+    ];
+    const fold = foldRewardJournal(rows.join('\n'), NOW_MS, REWARD_BACKLOG_WINDOW_MS);
+    expect(fold.records).toBe(1);
+    expect(fold.pools.size).toBe(1);
+    expect(fold.pools.get('claude')).toMatchObject({ rows: 1, notHeld: 1, days: new Set(['2026-11-22']) });
+    expect(rewardCells(fold)).toEqual([]);
+  });
+
+  it('uses the first valid retained row before applying the time window', () => {
+    const rows = [
+      held('old', NOW_MS - REWARD_BACKLOG_WINDOW_MS - DAY),
+      notHeld('old', NOW_MS),
+      J({ jobId: 'new' }),
+      held('new', NOW_MS),
+    ];
+    const fold = foldRewardJournal(rows.join('\n'), NOW_MS, REWARD_BACKLOG_WINDOW_MS);
+    expect(fold.records).toBe(1);
+    expect(fold.invalidRows).toBe(1);
+    expect(fold.pools.get('claude')).toMatchObject({ rows: 1, held: 1, notHeld: 0 });
+  });
+
   it('groups rows per pool and tallies unattributed rows separately', () => {
     const rows = [
       held('job-1', NOW_MS, 'claude'),
@@ -158,8 +185,8 @@ describe('rewardCells', () => {
     // Strict majority required: exactly half not-held never emits.
     const half = foldRewardJournal(
       [
-        ...poolSeries('claude', 3, 2, (d) => notHeld(`n${d}`, NOW_MS - d * DAY)),
-        ...poolSeries('claude', 3, 2, (d) => held(`h${d}`, NOW_MS - d * DAY)),
+        ...poolSeries('claude', 3, 2, (d, i) => notHeld(`n${d}-${i}`, NOW_MS - d * DAY)),
+        ...poolSeries('claude', 3, 2, (d, i) => held(`h${d}-${i}`, NOW_MS - d * DAY)),
       ].join('\n'), NOW_MS, REWARD_BACKLOG_WINDOW_MS);
     const halfTally = half.pools.get('claude')!;
     expect(halfTally.rows).toBe(12);
@@ -190,7 +217,7 @@ describe('rewardCells', () => {
       // unattributed: 8 of 8 not held across 4 days — the worst cell.
       ...poolSeries('u', 4, 2, (d, i) => rewardRow({ jobId: `u${d}-${i}`, pool: null, merged: false, recordedAtMs: NOW_MS - d * DAY - i * HOUR })),
       // claude: 6 of 9 not held across 3 days.
-      ...poolSeries('claude', 3, 2, (d) => notHeld(`cn${d}`, NOW_MS - d * DAY)),
+      ...poolSeries('claude', 3, 2, (d, i) => notHeld(`cn${d}-${i}`, NOW_MS - d * DAY)),
       ...poolSeries('claude', 3, 1, (d) => held(`ch${d}`, NOW_MS - d * DAY - HOUR)),
     ].join('\n');
     const cells = rewardCells(foldRewardJournal(rows, NOW_MS, REWARD_BACKLOG_WINDOW_MS));
@@ -227,8 +254,8 @@ describe('rewardBacklogItems', () => {
 
   it('emits pool-collapse items for recurring ledger evidence', async () => {
     const rows = [
-      ...poolSeries('claude', 3, 2, (d) => notHeld(`n${d}`, NOW_MS - d * DAY)),
-      ...poolSeries('claude', 3, 1, (d) => notHeld(`n2-${d}`, NOW_MS - d * DAY - HOUR)),
+      ...poolSeries('claude', 3, 2, (d, i) => notHeld(`n${d}-${i}`, NOW_MS - d * DAY)),
+      ...poolSeries('claude', 3, 1, (d) => notHeld(`n-extra-${d}`, NOW_MS - d * DAY - HOUR)),
       held('h1', NOW_MS),
       held('h2', NOW_MS - DAY),
     ];
@@ -275,7 +302,7 @@ describe('rewardBacklogItems', () => {
   });
 
   it('states truncation as a lower bound in every prompt', async () => {
-    const rows = poolSeries('claude', 3, 2, (d) => notHeld(`n${d}`, NOW_MS - d * DAY));
+    const rows = poolSeries('claude', 3, 2, (d, i) => notHeld(`n${d}-${i}`, NOW_MS - d * DAY));
     // Pad the ledger past the 16 MiB tail bound so the read reports truncated.
     const pad = 'x'.repeat(17 * 1024 * 1024);
     const path = await ledger('led-trunc', [pad, ...rows]);
@@ -287,12 +314,12 @@ describe('rewardBacklogItems', () => {
   it('derives stable ids so a refresh re-adds nothing and honours the limit', async () => {
     const rows = [
       // claude collapse
-      ...poolSeries('claude', 3, 2, (d) => notHeld(`cn${d}`, NOW_MS - d * DAY)),
-      ...poolSeries('claude', 3, 1, (d) => notHeld(`cn2-${d}`, NOW_MS - d * DAY - HOUR)),
+      ...poolSeries('claude', 3, 2, (d, i) => notHeld(`cn${d}-${i}`, NOW_MS - d * DAY)),
+      ...poolSeries('claude', 3, 1, (d) => notHeld(`cn-extra-${d}`, NOW_MS - d * DAY - HOUR)),
       held('ch1', NOW_MS),
       // codex collapse
-      ...poolSeries('codex', 3, 2, (d) => notHeld(`xn${d}`, NOW_MS - d * DAY, 'codex')),
-      ...poolSeries('codex', 3, 1, (d) => notHeld(`xn2-${d}`, NOW_MS - d * DAY - HOUR, 'codex')),
+      ...poolSeries('codex', 3, 2, (d, i) => notHeld(`xn${d}-${i}`, NOW_MS - d * DAY, 'codex')),
+      ...poolSeries('codex', 3, 1, (d) => notHeld(`xn-extra-${d}`, NOW_MS - d * DAY - HOUR, 'codex')),
       held('xh1', NOW_MS - DAY, 'codex'),
     ];
     const path = await ledger('led-stable', rows);

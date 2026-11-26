@@ -64,6 +64,24 @@ describe('generator yield', () => {
       { generator: 'ideas', drafted: 1, rejected: 0, launched: 1, jobs: 1, prs: 1 },
     ]);
   });
+  it.each([
+    { unreadable: 'jobs.jsonl', readable: 'generation.jsonl', event: 'drafted', jobsKnown: false, generationKnown: true },
+    { unreadable: 'generation.jsonl', readable: 'jobs.jsonl', event: 'launch', jobsKnown: true, generationKnown: false },
+  ])('retains readable evidence when $unreadable cannot be read', async ({ unreadable, readable, event, jobsKnown, generationKnown }) => {
+    const dir = await mkdtemp(join(tmpdir(), 'generator-yield-'));
+    try {
+      const metrics = join(dir, 'metrics');
+      await mkdir(metrics);
+      await mkdir(join(metrics, unreadable));
+      await writeFile(join(metrics, readable), row({ job: 'RQ-X', src: 'ideas', event }));
+      expect(await readGeneratorYield(dir, 24, now)).toMatchObject({
+        known: true,
+        jobsKnown,
+        generationKnown,
+        generators: [{ generator: 'ideas', drafted: generationKnown ? 1 : 0, launched: jobsKnown ? 1 : 0 }],
+      });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
   it('reads generation-only ledgers and distinguishes missing evidence', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'generation-'));
     try {

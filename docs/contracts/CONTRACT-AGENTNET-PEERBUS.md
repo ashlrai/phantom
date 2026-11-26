@@ -37,6 +37,26 @@ read reports `workResults: missing|available|unavailable` for that journal —
 missing means dispatch never ran, unavailable means results are unknown, not
 absent.
 
+`agentnet/peer-inbox.ts` owns `PeerInboxMessage`, `PEER_MESSAGE_KINDS`,
+`PeerInboxFilterInput`, `PeerInboxFilters`, `parsePeerInboxFilters(input, now?)`
+and `peerInboxMessageMatches(message, filters)`. `phm agentnet peers read`
+accepts the optional filters `--from`, `--exclude-from`, `--to`, `--since`,
+`--before`, `--contains`, `--id`, `--kind`, `--peer-kind`, `--thread` (the
+same flag `send` uses to stamp a thread), `--job` and `--result`; they parse
+through `parsePeerInboxFilters` — the same printable-label bound, `parseSince`
+time grammar, `busReadContains` needle and `WORK_RESULT_OUTCOMES` enum every
+other bus read applies — and narrow only the admitted page
+`peerInboxMessageMatches` returns. `from`/`excludeFrom`/`to` compare the
+envelope's own callsign/topic labels verbatim and never resolve through the
+agent registry; `kind` is the exact `busBodyKind` discriminator, `peerKind`
+the inner kind of a `peer.message` body only, `thread` the `peer.message`
+payload's `threadId` or a note/context body's `thread`, `job` the shared
+`busBodyJobMatch` citation and `result` the `work.result` outcome. Filters are
+a read convenience applied after admission: they never admit an envelope the
+ledger or journal refused, and `nextCursor` still advances over every scanned
+row, so a filtered read is a view of the page, not a subscription. Every
+other `agentnet` verb refuses the read-only flags.
+
 Host-owned `~/.ashlr/agentnet/bindings.json` is a private 0600 strict JSON object
 `{version:1, peers:[]}` (max 128). Each binding has `callsign`, `lane`, `sessionId`,
 `sessionHash`, `expiresAt` (epoch ms), `teamId`, `userId`, `botId`, `topic`.

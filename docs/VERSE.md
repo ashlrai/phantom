@@ -1603,7 +1603,7 @@ Use **Queue** (`queue/DISABLE`) to pause all new dispatches while running worker
 finish. `PAUSE`, `ORCH_OFF`, `OPUS_LEADER_OFF`, and `PUBLISH_HOLD` control their
 named activities under `~/.ashlr-runs`.
 
-In **Settings ▸ Desktop ▸ Updates**, you can see the running version and short
+In **Settings ▸ Updates**, you can see the running version and short
 commit, how far it is behind or ahead of `origin/master`, whether a fast-forward
 is possible, and the native updater phase. Use **Check now** to refresh. The
 view also lists up to three local change paths when available, with a count of
