@@ -1,5 +1,5 @@
 .scope {
-  border: 1px solid var(--border, #9a9a9a55);
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
   padding: 0.75rem;
 }
@@ -13,11 +13,11 @@
   padding: 0.25rem 0.5rem;
   margin-inline-end: 0.75rem;
 }
-.badge { display: inline-flex; align-items: baseline; gap: 0.35em; font-size: 0.75rem; overflow-wrap: anywhere; }
-.badge[data-stale] { color: var(--warning, #bd7526); }
-.initials { background: #8883; border-radius: 50%; min-width: 1.7em; text-align: center; font-weight: 700; }
+.badge { display: inline-flex; align-items: baseline; gap: 0.35em; font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.badge[data-stale] { color: var(--status-warning-fg); }
+.initials { background: var(--bg-active); border-radius: 50%; min-width: 1.7em; text-align: center; font-weight: 700; }
 .sourced { min-width: 0; }
 .sourced > .badge { margin-block: 0.25rem; }
 .lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr)); gap: 0.5rem; list-style: none; padding: 0; margin-block-end: 0; }
-.lanes > li { padding: 0.5rem; border: 1px solid var(--border, #9a9a9a55); border-radius: 6px; }
+.lanes > li { padding: 0.5rem; border: 1px solid var(--border-subtle); border-radius: 6px; }
 .lanes p { margin: 0.25rem 0; }
