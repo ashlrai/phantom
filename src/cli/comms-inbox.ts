@@ -21,7 +21,7 @@ teammate texts, unsettled Dot/Instinct teammate tasks, owner-thread messages awa
 replies whose channel fanout is not fully delivered, drafts awaiting approval,
 pending bus work (unclaimed envelopes, open, unclaimable or stalled feed jobs and worker handoffs), pending legacy phm bus mailbox mail across every recipient label, pending shared task board deliveries and unheld tasks across every peer, agent
 conversation threads waiting on a reply or blocked, pending wake hints grouped by addressee, bot seats with pending handoffs, unpublished peer work-dispatch
-results, comms
+results, session handoffs yielded for failover, comms
 questions/approvals awaiting an answer, inbound .eml files awaiting the email
 drop pass, .reply.eml artifacts stuck in the
 email outbox, pending team approvals, inbox proposals awaiting review and
