@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline/promises';
+import { ecosystemCapabilityBrand } from '../core/brand/ecosystem.js';
 import { detectEcosystem } from '../core/onboard/ecosystem.js';
 import { EcosystemGrantError, grantEcosystem } from '../core/onboard/ecosystem-grant.js';
 
@@ -34,7 +35,11 @@ export async function cmdOnboardEcosystem(args: string[]): Promise<number> {
     const plan = await detectEcosystem();
     if (json) { emit(plan); return 0; }
     console.log('Ecosystem onboarding');
-    for (const row of plan.capabilities) console.log(`[${row.selected ? 'x' : ' '}] ${row.id}: ${row.label} (${row.state})${row.names.length ? `: ${row.names.join(', ')}` : ''}${row.next ? `\n    ${row.next}` : ''}`);
+    for (const row of plan.capabilities) {
+      const brand = process.stdout.isTTY ? ecosystemCapabilityBrand(row.id) : undefined;
+      const label = brand && !row.label.toLowerCase().startsWith(brand.label.toLowerCase()) ? `${brand.label} · ${row.label}` : row.label;
+      console.log(`[${row.selected ? 'x' : ' '}] ${row.id}: ${label} (${row.state})${row.names.length ? `: ${row.names.join(', ')}` : ''}${row.next ? `\n    ${row.next}` : ''}`);
+    }
     console.log(`Plan: ${plan.planId}`);
     if (!process.stdin.isTTY || args.includes('--yes')) {
       console.log('Approve a reviewed selection: phm onboard --ecosystem --grant --plan <planId> --select <id,id> --json');

@@ -33,7 +33,7 @@ import {
   type UiScale,
 } from '../../../data/appearance-store.js';
 import { ACCENT_PRESETS, isDefaultAppearance, matchingAccentPreset } from '../../../data/appearance-presets.js';
-import { VerseMark } from '../rail-icons.js';
+import { AgentGhost } from '../rail-icons.js';
 import { Panel, SettingRow } from './SettingRow.js';
 import styles from './SettingsSection.module.css';
 
@@ -172,7 +172,7 @@ export function AppearancePanel({ appearance, onChange, onReset }: AppearancePan
         }
       >
         <div className={styles.ghostAccent}>
-          <span className={styles.ghostPreview} role="img" aria-label="Phantom ghost preview"><VerseMark size={40} /></span>
+          <span className={styles.ghostPreview} role="img" aria-label="Phantom ghost preview"><AgentGhost size={40} /></span>
           <div className={styles.swatches} role="radiogroup" aria-labelledby={accentLabelId}>
             {ACCENT_PRESETS.map((p, index) => {
               const selected = preset?.id === p.id;

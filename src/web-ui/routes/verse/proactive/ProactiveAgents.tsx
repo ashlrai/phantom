@@ -11,7 +11,7 @@ import { Switch } from '../../../components/primitives/Switch.js';
 import { ApiError, readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { describeContextError, useTokenGate } from '../context/use-token-gate.js';
-import { VerseMark } from '../rail-icons.js';
+import { AgentGhost } from '../rail-icons.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { createProactiveProfile, deleteProactiveProfile, editProactiveProfile, proactiveProfilesQuery, coordinationQuery, recordCoordination, prepareCoordinationPacket } from './proactive-queries.js';
 import styles from './ProactiveAgents.module.css';
@@ -65,7 +65,7 @@ function validDraft(draft: Draft): boolean {
 }
 function Avatar({ avatar }: { avatar: ProactiveAvatar }) {
   return <span className={styles.avatar} style={{ color: avatar.color }} data-variant={avatar.variant} aria-hidden="true">
-    {avatar.variant === 'classic' ? <VerseMark size={36} /> : <svg viewBox="0 0 32 32" width="36" height="36" focusable="false">
+    {avatar.variant === 'classic' ? <AgentGhost size={36} /> : <svg viewBox="0 0 32 32" width="36" height="36" focusable="false">
       <path fill="currentColor" d={avatar.variant === 'round' ? 'M16 3a12 12 0 0 0-12 12v13l6-3 6 3 6-3 6 3V15A12 12 0 0 0 16 3Z' : 'M8 4h16v4h4v20h-4v-4h-4v4h-8v-4H8v4H4V8h4Z'} />
       <ellipse fill="#f7faff" cx="11" cy="15" rx="3" ry="4" /><ellipse fill="#f7faff" cx="21" cy="15" rx="3" ry="4" />
       <circle fill="#172442" cx="12" cy="16" r="1.5" /><circle fill="#172442" cx="22" cy="16" r="1.5" />

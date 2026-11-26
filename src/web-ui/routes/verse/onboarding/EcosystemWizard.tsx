@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { ECOSYSTEM_BRANDS, ecosystemCapabilityBrand } from '../../../../core/brand/ecosystem.js';
+import { EcosystemMark } from '../../../components/brand/EcosystemMark.js';
 import { apiGet, apiPost } from '../../../data/client.js';
 import { getMutationToken } from '../../../data/auth-store.js';
 import { Button } from '../../../components/primitives/index.js';
@@ -51,7 +53,7 @@ export function EcosystemWizard() {
             const next = new Set(previous);
             if (next.has(row.id)) next.delete(row.id); else next.add(row.id);
             return next;
-          })} /> {row.label}: {row.state}</label>
+          })} /> <EcosystemMark brand={ecosystemCapabilityBrand(row.id)} />{row.label}: {row.state}</label>
           {row.names.length > 0 && <p>{row.names.join(', ')}</p>}
           {row.next && <p>{row.next}</p>}
         </div>)}
@@ -62,9 +64,17 @@ export function EcosystemWizard() {
     </>}
     {phase === 'result' && receipt && <div role="status">
       <p>{receipt.phase === 'complete' ? 'Your selected integrations are configured.' : 'Some capabilities need a next step.'}</p>
-      <ul>{receipt.results.map(row => <li key={row.id}><strong>{row.id}: {row.status}</strong>. {row.detail}{row.next && <p>{row.next}</p>}</li>)}</ul>
+      <ul>{receipt.results.map(row => <li key={row.id}><EcosystemMark brand={ecosystemCapabilityBrand(row.id)} /><strong>{row.id}: {row.status}</strong>. {row.detail}{row.next && <p>{row.next}</p>}</li>)}</ul>
     </div>}
     {phase === 'error' && <p role="alert">Onboarding could not complete. Detect again to review current capabilities, or run phm onboard --ecosystem in a terminal.</p>}
     {(phase === 'result' || phase === 'error') && <Button variant="subtle" onClick={() => { setPhase('detecting'); setReceipt(null); setRevision(value => value + 1); }}>Detect again</Button>}
+    <details className={styles.guide}>
+      <summary>Explore Ashlr projects</summary>
+      <ul className={styles.ecosystemProjects}>
+        {Object.values(ECOSYSTEM_BRANDS).map(brand => <li key={brand.url}>
+          <a href={brand.url} target="_blank" rel="noreferrer"><EcosystemMark brand={brand} />{brand.label}</a>
+        </li>)}
+      </ul>
+    </details>
   </Panel>;
 }

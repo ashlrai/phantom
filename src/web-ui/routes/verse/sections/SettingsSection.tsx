@@ -14,6 +14,7 @@
  * 3.10: reached from the gear tray (⌘,), not the rail.
  */
 import { useAppearance } from '../../../data/appearance-hooks.js';
+import { PhantomMark } from '../../../app/product-brand-mark.js';
 import { OnboardingPanel } from '../onboarding/OnboardingPanel.js';
 import { Tag } from '../../../components/primitives/index.js';
 import { APP_NAME, APP_VERSION, installedDesktopVersion } from './app-version.js';
@@ -43,7 +44,7 @@ export function SettingsSection() {
     <div className={styles.section}>
       <header className={styles.strip} data-app-region="drag">
         <h2 className={styles.stripTitle}>Settings</h2>
-        <Tag size="sm" title={desktopVersion ? 'Installed desktop version' : 'Interface build version'}>{APP_NAME} {desktopVersion ?? APP_VERSION}</Tag>
+        <Tag size="sm" title={desktopVersion ? 'Installed desktop version' : 'Interface build version'}><PhantomMark size={16} /> {APP_NAME} {desktopVersion ?? APP_VERSION}</Tag>
       </header>
       <div className={styles.scroll}>
         <div className={styles.column}>
