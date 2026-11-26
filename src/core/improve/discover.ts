@@ -694,6 +694,22 @@
  *     for injection — a withheld projection (degraded or truncated
  *     runs log, degraded trajectory sources), a failed knowledge read
  *     or another repository emits nothing;
+ *   - the approved-knowledge consumption gap: the learn store's
+ *     approved-note corpus (readKnowledge over knowledge.json) joined
+ *     to the injection hits log (readKnowledgeHits over
+ *     knowledge-hits.jsonl) — the counters every rendered
+ *     knowledgeBlockFor/withApprovedKnowledge injection records —
+ *     until now reaching only the Verse Lessons panel's per-note
+ *     numbers, so approved notes that never reached a task prompt, or
+ *     whose recorded injections went quiet, never became work
+ *     (knowledgeServeBacklogItems below). A never-served cell emits at
+ *     the population bar of qualifying notes (or one note approved
+ *     past the long bar) and a stale-served cell at its own higher
+ *     bar; only 'approved' notes count, the approval clock is
+ *     decidedAt/createdAt with unparseable dates skipped, failed reads
+ *     withhold rather than guess, and items emit only for the fleet's
+ *     own repository since the store describes this install's lesson
+ *     machinery;
  *   - the landed-close attempt journal's recurring adverse cells: the
  *     {at, pr, head, outcome, reason?} rows `ashlr fleet landed-close
  *     --apply` appends to <runs>/queue/landed-closes.jsonl — fed every
@@ -1425,6 +1441,7 @@ import { devinReviewBacklogItems } from './devin-review-backlog.js';
 import { custodyBacklogItems } from './custody-backlog.js';
 import { launchCostBacklogItems } from './launch-cost-backlog.js';
 import { knowledgeOutcomeBacklogItems } from './knowledge-outcome-backlog.js';
+import { knowledgeServeBacklogItems } from './knowledge-serve-backlog.js';
 import { playbookOutcomeBacklogItems } from './playbook-outcome-backlog.js';
 import { landedCloseBacklogItems } from './landed-close-backlog.js';
 import { supersededCloseBacklogItems } from './superseded-close-backlog.js';
@@ -2546,6 +2563,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // nothing, and only the fleet's own repository inherits the items
   // since the ledger describes this install's injection machinery.
   items.push(...await knowledgeOutcomeBacklogItems({ repo }));
+
+  // Approved-knowledge consumption gap: the same learn store's approved
+  // corpus (readKnowledge) joined to the injection hits log
+  // (readKnowledgeHits over ~/.ashlr/learn/knowledge-hits.jsonl) — the
+  // counters every rendered knowledgeBlockFor/withApprovedKnowledge
+  // injection records. Until now those counters only reached the Verse
+  // Lessons panel's per-note numbers, so approved notes that never
+  // reached a single task prompt — or whose recorded injections went
+  // quiet — never became work even though every approved note is
+  // machinery the fleet pays to store, rank and carry. The
+  // never-served cell emits at the population bar (or one note approved
+  // past the long bar) and the stale-served cell at its own higher
+  // bar, only 'approved' notes count, the approval clock is
+  // decidedAt/createdAt with unparseable dates skipped, failed reads
+  // withhold rather than guess, and only the fleet's own repository
+  // inherits the items since the store describes this install's lesson
+  // machinery.
+  items.push(...await knowledgeServeBacklogItems({ repo }));
 
   // Playbook-version trajectory outcome tallies: the per-version
   // {merged, refused, reverted, failed, total} buckets
