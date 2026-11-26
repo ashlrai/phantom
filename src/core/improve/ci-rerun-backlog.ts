@@ -123,7 +123,7 @@ function fieldText(value: string, max: number): string {
 
 const inWindow = (entry: RerunEntry, nowMs: number, windowMs: number): boolean => {
   const at = Date.parse(entry.at);
-  return Number.isFinite(at) && at >= nowMs - windowMs;
+  return Number.isFinite(at) && at >= nowMs - windowMs && at <= nowMs;
 };
 
 interface VerdictGroup {
