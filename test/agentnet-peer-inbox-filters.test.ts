@@ -9,7 +9,7 @@ import { peerInboxMessageMatches, parsePeerInboxFilters,
   type PeerInboxMessage } from '../src/core/agentnet/peer-inbox.js';
 import type { PeerBinding } from '../src/core/agentnet/slack-identities.js';
 import type { SlackCall, SlackDeliveryPolicy } from '../src/core/agents/slack-transport.js';
-import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
+import type { BusEnvelope, BusPriority } from '../src/core/fleet/bus-envelope.js';
 
 vi.mock('../src/core/agents/send-gate.js', () => ({ localWriteGate: vi.fn(() => null) }));
 
@@ -18,12 +18,12 @@ const peerBody = (kind: string, text: string, threadId?: string) => ({
   peer: { fromAgent: 'agent0', toAgent: 'agent1', kind, text, refs: [],
     ...(threadId === undefined ? {} : { threadId }), origin: 'peer-origin', hopCount: 1 },
 });
-const envelope = (body: unknown, id: string): BusEnvelope => ({
-  id, from: 'agent0', to: 'agent1', priority: 'P2', ttl: 86_400_000, body: body as BusEnvelope['body'],
+const envelope = (body: unknown, id: string, priority: BusPriority = 'P2'): BusEnvelope => ({
+  id, from: 'agent0', to: 'agent1', priority, ttl: 86_400_000, body: body as BusEnvelope['body'],
 });
-const message = (body: unknown, options: { receivedAt?: number; id?: string } = {}): PeerInboxMessage => ({
+const message = (body: unknown, options: { receivedAt?: number; id?: string; priority?: BusPriority } = {}): PeerInboxMessage => ({
   cursor: 7, receivedAt: options.receivedAt ?? 1_000,
-  envelope: envelope(body, options.id ?? 'peer-00000000-0000-0000-0000-000000000001'),
+  envelope: envelope(body, options.id ?? 'peer-00000000-0000-0000-0000-000000000001', options.priority),
 });
 const filters = (input: Parameters<typeof parsePeerInboxFilters>[0]) => {
   const query = parsePeerInboxFilters(input, 10_000);
@@ -42,8 +42,19 @@ describe('parsePeerInboxFilters', () => {
       thread: 'sprint-7', job: 'RQ-1', result: 'complete' } });
     expect(parsePeerInboxFilters({}, 0)).toEqual({ ok: true, filters: {} });
   });
+  it('resolves --priority and --body-kind, and refuses a kind conflict', () => {
+    expect(parsePeerInboxFilters({ priority: 'P1' }, 0))
+      .toEqual({ ok: true, filters: { priority: 'P1' } });
+    expect(parsePeerInboxFilters({ bodyKind: 'work.post' }, 0))
+      .toEqual({ ok: true, filters: { kind: 'work.post' } });
+    expect(parsePeerInboxFilters({ kind: 'peer.message', bodyKind: 'peer.message' }, 0))
+      .toEqual({ ok: true, filters: { kind: 'peer.message' } });
+    expect(parsePeerInboxFilters({ kind: 'peer.message', bodyKind: 'work.post' }, 0))
+      .toEqual({ ok: false });
+  });
   it.each([
     [{ from: 'has space' }], [{ to: 'tab\there' }], [{ id: '' }], [{ kind: 'a'.repeat(129) }],
+    [{ bodyKind: 'two words' }], [{ priority: 'P4' }], [{ priority: 'p2' }], [{ priority: '' }],
     [{ thread: 'two words' }], [{ job: 'x'.repeat(129) }], [{ peerKind: 'dm' }], [{ result: 'merged' }],
     [{ since: 'soon' }], [{ before: '1x' }], [{ contains: '' }], [{ contains: 'x'.repeat(513) }],
   ])('refuses malformed input %j', input => {
@@ -59,6 +70,7 @@ describe('peerInboxMessageMatches', () => {
     queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     outcome: 'complete' });
   const note = message({ kind: 'note', text: 'hello', thread: 'job:RQ-9' });
+  const urgent = message(peerBody('task', 'Page the owner'), { priority: 'P0' });
   it('matches every filter against the admitted row fields', () => {
     expect(peerInboxMessageMatches(task, {})).toBe(true);
     expect(peerInboxMessageMatches(task, filters({ from: 'agent0' }))).toBe(true);
@@ -89,6 +101,12 @@ describe('peerInboxMessageMatches', () => {
     expect(peerInboxMessageMatches(task, filters({ result: 'complete' }))).toBe(false);
     expect(peerInboxMessageMatches(note, filters({ thread: 'job:RQ-9' }))).toBe(true);
     expect(peerInboxMessageMatches(note, filters({ kind: 'note' }))).toBe(true);
+    expect(peerInboxMessageMatches(task, filters({ bodyKind: 'peer.message' }))).toBe(true);
+    expect(peerInboxMessageMatches(task, filters({ bodyKind: 'work.post' }))).toBe(false);
+    expect(peerInboxMessageMatches(task, filters({ priority: 'P2' }))).toBe(true);
+    expect(peerInboxMessageMatches(task, filters({ priority: 'P0' }))).toBe(false);
+    expect(peerInboxMessageMatches(urgent, filters({ priority: 'P0' }))).toBe(true);
+    expect(peerInboxMessageMatches(urgent, filters({ priority: 'P2' }))).toBe(false);
   });
   it('lets --peer-kind and --result never match foreign body kinds', () => {
     expect(peerInboxMessageMatches(workPost, filters({ peerKind: 'task' }))).toBe(false);
@@ -165,6 +183,14 @@ describe('phm agentnet peers read filters', () => {
     expect((await read(1, ['--peer-kind', 'review'])).messages).toEqual([]);
     expect((await read(1, ['--kind', 'work.post'])).messages.map(m => m.envelope.id)).toEqual([work.id]);
     expect((await read(1, ['--kind', 'peer.message'])).messages).toHaveLength(3);
+    expect((await read(1, ['--body-kind', 'work.post'])).messages.map(m => m.envelope.id)).toEqual([work.id]);
+    expect((await read(1, ['--body-kind', 'peer.message'])).messages).toHaveLength(3);
+    expect((await read(1, ['--kind', 'peer.message', '--body-kind', 'peer.message'])).messages).toHaveLength(3);
+    // Every admitted send stamps P2, so the band filter is exact: P2 keeps
+    // the page, any other band empties it — never a widened read.
+    expect((await read(1, ['--priority', 'P2'])).messages).toHaveLength(4);
+    expect((await read(1, ['--priority', 'P0'])).messages).toEqual([]);
+    expect((await read(1, ['--priority', 'P2', '--peer-kind', 'task'])).messages.map(m => m.envelope.id)).toEqual([task.id]);
     expect((await read(1, ['--thread', 'sprint-7'])).messages.map(m => m.envelope.id)).toEqual([task.id]);
     expect((await read(0, ['--thread', 'sprint-7'])).messages.map(m => m.envelope.id)).toEqual([review.id]);
     expect((await read(1, ['--from', 'agent0'])).messages).toHaveLength(3);
@@ -192,7 +218,14 @@ describe('phm agentnet peers read filters', () => {
     expect(await cmdAgentnet(['peers', 'read', '--peer-kind', 'dm'], options(1), session(1))).toBe(2);
     expect(await cmdAgentnet(['peers', 'read', '--result', 'merged'], options(1), session(1))).toBe(2);
     expect(await cmdAgentnet(['peers', 'read', '--since', 'soon'], options(1), session(1))).toBe(2);
+    expect(await cmdAgentnet(['peers', 'read', '--priority', 'P4'], options(1), session(1))).toBe(2);
+    expect(await cmdAgentnet(['peers', 'read', '--kind', 'peer.message', '--body-kind', 'work.post'], options(1), session(1))).toBe(2);
     expect(await cmdAgentnet(['peers', 'read', '--from'], options(1), session(1))).toBe(2);
+    // The new read-only filters stay refused on every other verb, work-feed included.
+    expect(await cmdAgentnet(['peers', 'list', '--priority', 'P2'], options(0), session(0))).toBe(2);
+    expect(await cmdAgentnet(['peers', 'send', 'agent1', 'query', 'Status?', '--body-kind', 'peer.message'], options(0), session(0))).toBe(2);
+    expect(await cmdAgentnet(['peers', 'work-feed', '--priority', 'P2'], options(0), session(0))).toBe(2);
+    expect(await cmdAgentnet(['peers', 'work-feed', '--body-kind', 'peer.message'], options(0), session(0))).toBe(2);
     expect(log).not.toHaveBeenCalled();
   });
 });

@@ -13,7 +13,7 @@
 import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
 import { busBodyKind, busBodyResultOutcome, busBodyThread,
   WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../agents/bus-v2-schema.js';
-import type { BusEnvelope } from '../fleet/bus-envelope.js';
+import { BUS_PRIORITIES, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
 import { parseSince } from '../fleet/agent-messages.js';
 
 /** One admitted peer-inbox row: the durable cursor, receipt stamp and envelope. */
@@ -41,6 +41,10 @@ export interface PeerInboxFilterInput {
   contains?: string;
   id?: string;
   kind?: string;
+  /** The shared bus reads' spelling of the same body-kind discriminator `kind` selects. */
+  bodyKind?: string;
+  /** One exact P0..P3 envelope band — the same match every other bus read's `--priority` applies. */
+  priority?: string;
   peerKind?: string;
   thread?: string;
   job?: string;
@@ -60,6 +64,8 @@ export interface PeerInboxFilters {
   id?: string;
   /** Exact `busBodyKind` discriminator: `peer.message`, `work.post`, `work.status`, `work.result`, … */
   kind?: string;
+  /** Exact envelope `priority` band; every admitted envelope carries the required field. */
+  priority?: BusPriority;
   /** Exact inner kind of a `peer.message` body only. */
   peerKind?: PeerMessageKind;
   /** The conversation label a `peer.message` payload or note/context body carries. */
@@ -85,6 +91,22 @@ export function parsePeerInboxFilters(input: PeerInboxFilterInput, now = Date.no
     const value = label(input[key]);
     if (value === null) return { ok: false };
     if (value !== undefined) filters[key] = value;
+  }
+  // `--body-kind` is the shared bus reads' spelling of the same
+  // body-kind discriminator `--kind` selects here; both may appear but
+  // must agree — a conflict is a usage error, never a widened read.
+  const bodyKind = label(input.bodyKind);
+  if (bodyKind === null) return { ok: false };
+  if (bodyKind !== undefined) {
+    if (filters.kind !== undefined && filters.kind !== bodyKind) return { ok: false };
+    filters.kind = bodyKind;
+  }
+  if (input.priority !== undefined) {
+    // The same P0..P3 vocabulary every other bus read's --priority
+    // validates, so the flag can never disagree about which bands an
+    // envelope can carry.
+    if (!(BUS_PRIORITIES as readonly string[]).includes(input.priority)) return { ok: false };
+    filters.priority = input.priority as BusPriority;
   }
   if (input.peerKind !== undefined) {
     // The same closed set `peerRequestSchema` enforces on send — an unknown
@@ -149,7 +171,9 @@ function peerMessageKind(body: unknown): string | null {
  * apply, so a filtered peer read can never disagree with them about what a
  * filter means. `from`/`excludeFrom`/`to` compare the envelope's own labels
  * verbatim (callsigns and mapped topics, never registry-resolved);
- * `since`/`before` compose one `[since, before)` window on `receivedAt`;
+ * `priority` is the same exact P0..P3 band match every other bus read
+ * applies; `since`/`before` compose one `[since, before)` window on
+ * `receivedAt`;
  * `contains` matches the shared scrubbed body summary; `kind`, `job`,
  * `result` and the reply/thread citations read the same body fields every
  * other bus read's filters do.
@@ -160,6 +184,7 @@ export function peerInboxMessageMatches(message: PeerInboxMessage, filters: Peer
   if (filters.excludeFrom !== undefined && envelope.from === filters.excludeFrom) return false;
   if (filters.to !== undefined && envelope.to !== filters.to) return false;
   if (filters.id !== undefined && envelope.id !== filters.id) return false;
+  if (filters.priority !== undefined && envelope.priority !== filters.priority) return false;
   if (filters.since !== undefined && message.receivedAt < filters.since) return false;
   if (filters.before !== undefined && message.receivedAt >= filters.before) return false;
   const body = envelope.body;

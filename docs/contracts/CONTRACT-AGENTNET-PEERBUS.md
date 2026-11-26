@@ -41,14 +41,19 @@ absent.
 `PeerInboxFilterInput`, `PeerInboxFilters`, `parsePeerInboxFilters(input, now?)`
 and `peerInboxMessageMatches(message, filters)`. `phm agentnet peers read`
 accepts the optional filters `--from`, `--exclude-from`, `--to`, `--since`,
-`--before`, `--contains`, `--id`, `--kind`, `--peer-kind`, `--thread` (the
+`--before`, `--contains`, `--id`, `--kind`, `--body-kind`, `--priority`,
+`--peer-kind`, `--thread` (the
 same flag `send` uses to stamp a thread), `--job` and `--result`; they parse
 through `parsePeerInboxFilters` — the same printable-label bound, `parseSince`
-time grammar, `busReadContains` needle and `WORK_RESULT_OUTCOMES` enum every
+time grammar, `busReadContains` needle, `BUS_PRIORITIES` band and
+`WORK_RESULT_OUTCOMES` enum every
 other bus read applies — and narrow only the admitted page
 `peerInboxMessageMatches` returns. `from`/`excludeFrom`/`to` compare the
 envelope's own callsign/topic labels verbatim and never resolve through the
-agent registry; `kind` is the exact `busBodyKind` discriminator, `peerKind`
+agent registry; `kind` is the exact `busBodyKind` discriminator — `--body-kind`
+is the shared bus reads' spelling of the same filter and the two flags must
+agree when both appear — `priority` the exact P0..P3 envelope band,
+`peerKind`
 the inner kind of a `peer.message` body only, `thread` the `peer.message`
 payload's `threadId` or a note/context body's `thread`, `job` the shared
 `busBodyJobMatch` citation and `result` the `work.result` outcome. Filters are
@@ -74,7 +79,8 @@ disagree with the local surfaces about what a value means; the claims join
 rides `--claims`/`--open`/`--claimable` exactly like the other readers.
 `peers mesh` takes no query — passing one throws — `peers read` and every
 other verb refuse the feed-only flags, and the read-only peer-inbox filters
-(`--from`, `--exclude-from`, `--kind`, `--peer-kind`) stay refused on
+(`--from`, `--exclude-from`, `--kind`, `--body-kind`, `--priority`,
+`--peer-kind`) stay refused on
 `work-feed`: the feed query has no sender, kind or thread dimension.
 
 Host-owned `~/.ashlr/agentnet/bindings.json` is a private 0600 strict JSON object
