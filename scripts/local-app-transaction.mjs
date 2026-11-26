@@ -14,6 +14,7 @@ export const NATIVE_EXECUTABLE = 'ashlr-desktop';
 
 const paths = [PHANTOM_APP_PATH, LEGACY_APP_PATH];
 const fail = (message) => { throw new Error(`Native installation held: ${message}`); };
+const hold = (code, message) => { throw Object.assign(new Error(`Native installation held: ${message}`), {code}); };
 const canonicalLauncherDigests = JSON.parse(readFileSync(new URL('./canonical-launcher-digests.json', import.meta.url), 'utf8'));
 if (!Array.isArray(canonicalLauncherDigests) || canonicalLauncherDigests.length === 0 ||
   canonicalLauncherDigests.some((digest) => typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) ||
@@ -113,38 +114,63 @@ function sameApp(expected, io) {
 
 /** Existing Stop intent, strict lease census and exact native/sidecar process evidence. No work is killed. */
 export async function requireLocalQuiescence(io) {
-  const kill = io.lstat(join(io.home, '.ashlr', 'KILL'));
-  if (!kill?.isFile || kill.isSymbolicLink) fail('Stop must already be engaged; drain work with `ashlr authority stop` first');
-  const census = await io.executionLeaseCensus();
-  if (!census || census.unknown !== 0 || !Array.isArray(census.leases) || census.leases.length) fail('execution leases are active or unknown; finish the supported drain before installation');
+  let kill;
+  try { kill = io.lstat(join(io.home, '.ashlr', 'KILL')); } catch { /* No readable Stop intent. */ }
+  if (!kill?.isFile || kill.isSymbolicLink) hold('stop-not-engaged', 'Stop must already be engaged; drain work with `ashlr authority stop` first');
+  let census;
+  try { census = await io.executionLeaseCensus(); } catch { /* No readable lease census. */ }
+  if (!census || census.unknown !== 0 || !Array.isArray(census.leases) || census.leases.length) hold('leases-active', 'execution leases are active or unknown; finish the supported drain before installation');
   if (census.reaped) io.log(`      reaped ${census.reaped} proven-dead execution leases`);
-  const processes = readProcesses(io);
-  for (const {args} of processes.values()) if (paths.some((path) => args.startsWith(`${path}/Contents/MacOS/`))) fail('close Phantom normally before installation; a native app or owned sidecar is still running');
-  const record = readSidecarRecord(io);
-  if (record && (processes.has(record.desktopPid) || processes.has(record.sidecarPid))) fail('recorded native/sidecar process identity is still live or uncertain; close the app and use normal recovery first');
+  let processes;
+  try { processes = readProcesses(io); } catch (error) {
+    if (error?.code === 'process-evidence-unavailable') throw error;
+    hold('process-evidence-unavailable', 'process liveness is unreadable');
+  }
+  for (const {args} of processes.values()) {
+    if (paths.some((path) => {
+      const executable = `${path}/Contents/MacOS/${NATIVE_EXECUTABLE}`;
+      return args === executable || args.startsWith(executable + ' ');
+    })) hold('app-running', 'close Phantom normally before installation; the native app is still running');
+  }
+  let record;
+  try { record = readSidecarRecord(io); } catch (error) {
+    if (error?.code === 'sidecar-evidence-unavailable') throw error;
+    hold('sidecar-evidence-unavailable', 'the desktop ownership record is unreadable or unsafe');
+  }
+  if (record && (processes.has(record.desktopPid) || processes.has(record.sidecarPid))) {
+    hold('sidecar-live', 'recorded native/sidecar process identity is still live or uncertain; close the app and use normal recovery first');
+  }
+  for (const {args} of processes.values()) {
+    if (paths.some((path) => args.startsWith(`${path}/Contents/MacOS/`))) {
+      hold('sidecar-live', 'close Phantom normally before installation; a native app or owned sidecar is still running');
+    }
+  }
   const ashlrRoot = join(io.home, '.ashlr');
   const accountsRoot = join(ashlrRoot, 'account-connections');
   const ledgerRoot = join(accountsRoot, 'ledger');
   for (const path of [ashlrRoot, accountsRoot, ledgerRoot]) {
-    const stat = io.lstat(path);
-    if (stat && (!stat.isDirectory || stat.isSymbolicLink)) fail('quota collector storage is unsafe or uncertain; resolve it before installation');
+    let stat;
+    try { stat = io.lstat(path); } catch { hold('collector-storage-unsafe', 'quota collector storage is unsafe or uncertain'); }
+    if (stat && (!stat.isDirectory || stat.isSymbolicLink)) hold('collector-storage-unsafe', 'quota collector storage is unsafe or uncertain');
   }
   // A closed app is not proof that its native quota child registered or exited.
   // Preserve the collector's own same-boot recovery fence across an app switch.
   for (const name of ['.resource-quota-refresh-pending.json', '.resource-quota-refresh.lock']) {
-    if (io.lstat(join(ledgerRoot, name))) fail('quota collector work or ownership is unresolved; use supported collector recovery before installation');
+    let stat;
+    try { stat = io.lstat(join(ledgerRoot, name)); } catch { hold('collector-storage-unsafe', 'quota collector storage is unsafe or uncertain'); }
+    if (stat) hold('collector-pending', 'quota collector work or ownership is unresolved; use supported collector recovery before installation');
   }
 }
 
 function readProcesses(io) {
   const result = io.exec('/bin/ps', ['-axww', '-o', 'pid=,ppid=,lstart=,args=']);
-  if (result.status !== 0) fail('process liveness is unreadable');
+  if (result.status !== 0) hold('process-evidence-unavailable', 'process liveness is unreadable');
   const processes = new Map();
   for (const line of result.stdout.split('\n').filter((line) => line.trim())) {
     const match = /^\s*(\d+)\s+(\d+)\s+(?:\S+\s+){5}(.+)$/.exec(line);
-    if (!match) fail('process liveness contains an unrecognized record');
+    if (!match) hold('process-evidence-unavailable', 'process liveness contains an unrecognized record');
     const pid = Number(match[1]);
-    if (!Number.isSafeInteger(pid) || pid < 1 || processes.has(pid)) fail('process identity is ambiguous');
+    if (!Number.isSafeInteger(pid) || pid < 1 || processes.has(pid)) hold('process-evidence-unavailable', 'process identity is ambiguous');
     processes.set(pid, {ppid: Number(match[2]), args: match[3]});
   }
   return processes;
@@ -154,13 +180,13 @@ function readSidecarRecord(io) {
   const recordPath = join(io.home, '.ashlr', '.desktop-sidecar.json');
   if (io.exists(recordPath)) {
     const stat = io.lstat(recordPath);
-    if (!stat?.isFile || stat.isSymbolicLink || stat.size > 16_384) fail('the desktop ownership record is unreadable or unsafe');
+    if (!stat?.isFile || stat.isSymbolicLink || stat.size > 16_384) hold('sidecar-evidence-unavailable', 'the desktop ownership record is unreadable or unsafe');
     let record;
-    try { record = JSON.parse(io.readBoundedFile(recordPath, 16_384)); } catch { fail('the desktop ownership record is invalid'); }
+    try { record = JSON.parse(io.readBoundedFile(recordPath, 16_384)); } catch { hold('sidecar-evidence-unavailable', 'the desktop ownership record is invalid'); }
     if (!record || Object.keys(record).sort().join(',') !== 'desktopPid,port,sidecarPath,sidecarPid' ||
         ![record.desktopPid, record.sidecarPid].every((pid) => Number.isSafeInteger(pid) && pid > 1) ||
         !Number.isInteger(record.port) || record.port < 1 || record.port > 65535 ||
-        typeof record.sidecarPath !== 'string' || !record.sidecarPath.startsWith('/')) fail('the desktop ownership record is invalid');
+        typeof record.sidecarPath !== 'string' || !record.sidecarPath.startsWith('/')) hold('sidecar-evidence-unavailable', 'the desktop ownership record is invalid');
     return record;
   }
   return null;

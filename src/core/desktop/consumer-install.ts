@@ -4,12 +4,13 @@ import {createHash,randomBytes} from 'node:crypto';
 import * as fs from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {userInfo} from 'node:os';
-import {dirname, join} from 'node:path';
+import {dirname, join, resolve} from 'node:path';
 import {parseBuildIdentity} from '../build-identity.js';
 import {runningPackageRoot, verifyAuthoritySurfaceAt} from '../authority/surface.js';
 import {canonicalJson} from '../authority/canonical-json.js';
 import {readPinnedRuntimeArchive, extractPinnedRuntimeArchive, type PinnedRuntimeArchiveOptions} from '../local-runtime/archive.js';
 import {fsyncDirectory} from '../util/durability.js';
+import {acquireResourceQuotaRefreshLease} from '../resources/quota-refresh-lease.js';
 import {getDesktopUpdateTrustForProfile} from './update-trust.js';
 import {verifyCompatibleUpdateManifest, verifyMinisign, verifyUpdateBundleRecord, type CompatibleUpdateManifest, type UpdateTrust} from './update-manifest.js';
 import {downloadQualifiedUpdateArtifact, extractSignedAppArchive, loadInstalledDesktopTransaction, verifyInstalledRuntimeArchive} from './qualified-update.js';
@@ -55,24 +56,46 @@ export interface ConsumerInstallResult {
   state: 'ready' | 'installed' | 'held' | 'rolled-back' | 'rollback-held';
   version: string | null; reason: string | null; installationAccepted: boolean;
   authorityResumed: false;
+  path?: string;
+  remedyCommand?: string;
+  tightenedPaths?: readonly string[];
   shell: readonly {name: 'phm' | 'ashlr'; state: 'managed' | 'setup-required'; version: string | null}[];
 }
 const sha = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
 const same = (a: fs.Stats, b: fs.Stats) => ['dev','ino','uid','mode','nlink','size','mtimeMs','ctimeMs'].every(key => a[key as keyof fs.Stats] === b[key as keyof fs.Stats]);
-class Held extends Error { constructor(readonly reason: string) {super(reason);} }
+class Held extends Error {
+  constructor(readonly reason: string, readonly path?: string, readonly remedyCommand?: string) {super(reason);}
+}
 export {Held as ConsumerInstallHeld};
 function require(condition: unknown, reason: string): asserts condition {if (!condition) throw new Held(reason);}
-function directory(path: string, privateMode = true): fs.Stats {
+const shellQuote = (path: string) => "'" + path.replaceAll("'", "'\\''") + "'";
+function directory(path: string, privateMode = true, tightenedPaths?: string[]): fs.Stats {
   const s=fs.lstatSync(path);
-  require(s.isDirectory() && !s.isSymbolicLink() && s.uid===process.getuid?.() && !(s.mode & (privateMode ? 0o077 : 0o022)), 'unsafe-local-path');
-  require(fs.realpathSync(path)===path,'unsafe-local-path'); return s;
+  if (!s.isDirectory() || s.isSymbolicLink() || s.uid!==process.getuid?.() || fs.realpathSync(path)!==path) {
+    throw new Held('unsafe-local-path',path);
+  }
+  if (!(s.mode & (privateMode ? 0o077 : 0o022))) return s;
+  const refusal=new Held('unsafe-local-path',path,`chmod go-rwx ${shellQuote(path)}`);
+  if (!privateMode || !tightenedPaths) throw refusal;
+  try {
+    const fd=fs.openSync(path,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);
+    try {
+      if (!same(s,fs.fstatSync(fd)) || !same(s,fs.lstatSync(path)) || fs.realpathSync(path)!==path) throw refusal;
+      fs.fchmodSync(fd,s.mode&0o7700);
+      tightenedPaths.push(path);
+    } finally {fs.closeSync(fd);}
+  } catch {throw refusal;}
+  return directory(path);
 }
-function parents(home: string, path: string, create: boolean): readonly fs.Stats[] {
-  require(path.startsWith(home+'/'),'unsafe-local-path'); const rows=[directory(home,false)]; let at=home;
+function parents(home: string, path: string, create: boolean, tightenedPaths?: string[], missingOk = false): readonly fs.Stats[] {
+  if (!path.startsWith(home+'/') || resolve(path)!==path) throw new Held('unsafe-local-path',path);
+  const rows=[directory(home,false)]; let at=home;
   for(const part of path.slice(home.length+1).split('/')) {
     at=join(at,part);
-    try {rows.push(directory(at));} catch(error) {
-      if (!create || (error as NodeJS.ErrnoException).code!=='ENOENT') throw error;
+    try {rows.push(directory(at,true,tightenedPaths));} catch(error) {
+      if ((error as NodeJS.ErrnoException).code!=='ENOENT') throw error;
+      if (missingOk) return rows;
+      if (!create) throw error;
       fs.mkdirSync(at,{mode:0o700});fsyncDirectory(dirname(at));rows.push(directory(at));
     }
   }
@@ -92,8 +115,46 @@ function write(path: string, data: Buffer): void {
   try {fs.writeFileSync(fd,data);fs.fchmodSync(fd,0o600);fs.fsyncSync(fd);} finally {fs.closeSync(fd);}
 }
 function result(state: ConsumerInstallResult['state'], version: string|null, reason: string|null = null,
-  shell: ConsumerInstallResult['shell'] = []): ConsumerInstallResult {
-  return Object.freeze({state,version,reason,installationAccepted:state==='installed',authorityResumed:false,shell});
+  shell: ConsumerInstallResult['shell'] = [], detail: Pick<ConsumerInstallResult,'path'|'remedyCommand'|'tightenedPaths'> = {}): ConsumerInstallResult {
+  return Object.freeze({state,version,reason,installationAccepted:state==='installed',authorityResumed:false,shell,...detail});
+}
+const quiescenceRemedies: Readonly<Record<string,string>> = Object.freeze({
+  'stop-not-engaged':'phm authority stop',
+  'leases-active':'phm authority stop',
+  'app-running':`osascript -e 'tell application id "ai.ashlr.desktop" to quit'`,
+  'sidecar-live':`osascript -e 'tell application id "ai.ashlr.desktop" to quit'`,
+  'process-evidence-unavailable':'/bin/ps -axww -o pid=,ppid=,lstart=,args=',
+  'sidecar-evidence-unavailable':`osascript -e 'tell application id "ai.ashlr.desktop" to quit'`,
+  'collector-storage-unsafe':'ls -ld ~/.ashlr ~/.ashlr/account-connections ~/.ashlr/account-connections/ledger',
+  'collector-pending':'',
+});
+export function quiescenceHold(error: unknown, retryCommand: string): Held | undefined {
+  const code=(error as {code?:unknown}|null)?.code;
+  if (typeof code==='string' && Object.hasOwn(quiescenceRemedies,code)) return new Held(code,undefined,quiescenceRemedies[code]||retryCommand);
+  return undefined;
+}
+export async function checkConsumerQuiescence(helper: ConsumerTransaction, io: ConsumerInstallIo, recover: boolean): Promise<void> {
+  if (recover) {
+    try {
+      const ledger=join(io.home,'.ashlr/account-connections/ledger');
+      const kill=fs.lstatSync(join(io.home,'.ashlr/KILL'));
+      if (kill.isFile()) {
+        parents(io.home,ledger,false);
+        if (['.resource-quota-refresh-pending.json','.resource-quota-refresh.lock'].some(name=>fs.lstatSync(join(ledger,name),{throwIfNoEntry:false}))) {
+          const lease=await acquireResourceQuotaRefreshLease(ledger,{waitMs:3000,scope:'native-connection-metadata'});
+          lease.close(false);
+        }
+      }
+    } catch { /* The collector's proof and the strict transaction recheck decide. */ }
+  }
+  await helper.requireLocalQuiescence(io);
+}
+function installFailure(error: unknown): Held | undefined {
+  return error instanceof Held ? error : quiescenceHold(error,'phm desktop install --apply');
+}
+function details(hold: Held|undefined, tightenedPaths: readonly string[]): Pick<ConsumerInstallResult,'path'|'remedyCommand'|'tightenedPaths'> {
+  return {...(hold?.path ? {path:hold.path} : {}),...(hold?.remedyCommand ? {remedyCommand:hold.remedyCommand} : {}),
+    ...(tightenedPaths.length ? {tightenedPaths:Object.freeze([...tightenedPaths])} : {})};
 }
 interface Admission {
   deps: ConsumerInstallDependencies; helper: ConsumerTransaction; io: ConsumerInstallIo;
@@ -103,13 +164,13 @@ interface Admission {
   aliases: Alias[]; attempted: boolean;
 }
 const admissions=new WeakMap<ConsumerInstallResult,Admission>();
-async function absence(a: Pick<Admission,'helper'|'io'|'deps'|'manifest'>): Promise<Alias[]> {
+async function absence(a: Pick<Admission,'helper'|'io'|'deps'|'manifest'>, recover = false): Promise<Alias[]> {
   const {helper,io,deps,manifest}=a;
   require(helper.selectLocalApp(manifest.app.signer,io)===null,'existing-app');
   require(io.readCurrentPointer(join(deps.home,'.local/share/ashlr/current'))===null,'existing-current');
   const aliases=helper.inspectLocalAliases(io);
   require(aliases.length===2 && aliases.every(alias=>alias.identity===null),'alias-collision');
-  await helper.requireLocalQuiescence(io);return aliases;
+  await checkConsumerQuiescence(helper,io,recover);return aliases;
 }
 function original(a: Admission): void {
   a.deps.assertRunning(); const observed=parents(a.deps.home,a.stage,false);
@@ -126,12 +187,12 @@ export async function packageReady(root: string, a: Pick<Admission,'pins'|'manif
   require(surface.ok && surface.digest===a.manifest.authoritySurfaceDigest,'package-surface');
 }
 export {directory, parents, owned, regular, write, sha, ioRead};
-/** Inspection persists only fresh private downloaded/staged data, never an installation. */
-export async function inspectConsumerDesktopInstall(input: ConsumerInstallDependencies): Promise<ConsumerInstallResult> {
+/** An apply preflight can recover the collector and tighten existing directories; plain inspection only stages artifacts. */
+export async function inspectConsumerDesktopInstall(input: ConsumerInstallDependencies, apply = false): Promise<ConsumerInstallResult> {
   // Capture invocation inputs before the first await; caller mutation cannot
   // replace the selected public trust or stage/current installation identity.
   const deps=Object.freeze({...input,trust:Object.freeze({...input.trust,repository:Object.freeze({...input.trust.repository})})});
-  let version:string|null=null;
+  let version:string|null=null;const tightenedPaths=apply?[] as string[]:undefined;
   try {
     require(deps.platform==='darwin' && deps.architecture==='arm64','unsupported-platform');
     require(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(deps.version) && /^[a-f0-9]{40}$/.test(deps.revision),'running-release');
@@ -141,13 +202,16 @@ export async function inspectConsumerDesktopInstall(input: ConsumerInstallDepend
     require(m.schemaVersion===2 && m.version===deps.version && m.source.revision===deps.revision && m.authoritySurfaceDigest===deps.authoritySurfaceDigest,'release-mismatch');
     require(canonicalJson(latest)===canonicalJson({version:m.version,platforms:{'darwin-aarch64':{url:m.app.url,signature:m.app.signature}},phantom:latest.phantom}),'discovery-mismatch');
     const helper=await deps.transaction(),io=helper.createLocalAppTransactionIo({home:deps.home,packageRoot:deps.packageRoot});io.log=()=>{};
-    const aliases=await absence({helper,io,deps,manifest:m});
+    const staging=join(deps.home,'.ashlr/updates/consumer-staging');
+    parents(deps.home,join(deps.home,'.local/share/ashlr/releases'),false,tightenedPaths,true);
+    parents(deps.home,staging,false,tightenedPaths,true);
+    const aliases=await absence({helper,io,deps,manifest:m},apply);
     const downloaded=await Promise.all([deps.download(m.app.url,m.app.bytes),deps.download(m.cli.url,m.cli.bytes)]);
     for(const [i,artifact] of [m.app,m.cli].entries()) {
       const data=downloaded[i]!;require(data.length===artifact.bytes && sha(data)===artifact.sha256,'artifact-mismatch');verifyMinisign(data,artifact.signature,deps.trust.publicKey);
     }
     await absence({helper,io,deps,manifest:m});deps.assertRunning();
-    const staging=join(deps.home,'.ashlr/updates/consumer-staging');parents(deps.home,staging,true);
+    parents(deps.home,staging,true,tightenedPaths);
     const stage=fs.mkdtempSync(join(staging,'first-'));fs.chmodSync(stage,0o700);
     write(join(stage,'envelope.json'),Buffer.from(JSON.stringify(latest.phantom)));
     write(join(stage,'app.tar.gz'),downloaded[0]!);write(join(stage,'package.tgz'),downloaded[1]!);fsyncDirectory(stage);
@@ -163,8 +227,8 @@ export async function inspectConsumerDesktopInstall(input: ConsumerInstallDepend
     const archive=await readPinnedRuntimeArchive(pins),inspectedPackage=join(stage,'package');fs.mkdirSync(inspectedPackage,{mode:0o700});extractPinnedRuntimeArchive(archive,inspectedPackage);
     const a:Admission={deps,helper,io,manifest:m,stage,appRoot,app,files,stageParents:parents(deps.home,stage,false),pins,inspectedPackage,aliases,attempted:false};
     original(a);await packageReady(inspectedPackage,a);await absence(a);
-    const observed=result('ready',version);admissions.set(observed,a);return observed;
-  } catch(error) {return result('held',version,error instanceof Held?error.reason:'inspection-unavailable');}
+    const observed=result('ready',version,null,[],details(undefined,tightenedPaths??[]));admissions.set(observed,a);return observed;
+  } catch(error) {const hold=installFailure(error);return result('held',version,hold?.reason??'inspection-unavailable',[],details(hold,tightenedPaths??[]));}
 }
 function regular(path: string, maximum: number): {data: Buffer; identity: fs.Stats} {
   const before=fs.lstatSync(path);
@@ -183,10 +247,11 @@ function ioRead(appRoot: string): string {
 export async function applyConsumerDesktopInstall(observed: ConsumerInstallResult): Promise<ConsumerInstallResult> {
   const a=admissions.get(observed);if(!a || a.attempted)return result('held',observed.version,'inspection-required');a.attempted=true;
   const {deps,helper,io,manifest:m}=a;let phase:string|null=null;let switched:Pointer|null=null;let created:Alias[]=[];
+  const tightenedPaths=[...(observed.tightenedPaths??[])];
   const journal=io.writeInstallJournal.bind(io);io.writeInstallJournal=(owner,value)=>{journal(owner,value);phase=value.phase;};
   try {
-    original(a);await packageReady(a.inspectedPackage,a);await absence(a);
-    const releases=join(deps.home,'.local/share/ashlr/releases');parents(deps.home,releases,true);
+    original(a);await packageReady(a.inspectedPackage,a);await absence(a,true);
+    const releases=join(deps.home,'.local/share/ashlr/releases');parents(deps.home,releases,true,tightenedPaths);
     const destination=join(releases,m.source.revision);fs.mkdirSync(destination,{mode:0o700});
     const archive=await readPinnedRuntimeArchive(a.pins);extractPinnedRuntimeArchive(archive,destination);
     const dest=directory(destination),parentPins=parents(deps.home,releases,false);
@@ -236,8 +301,8 @@ export async function applyConsumerDesktopInstall(observed: ConsumerInstallResul
       });
     } catch {shell=[{name:'phm',state:'setup-required',version:null},{name:'ashlr',state:'setup-required',version:null}];}
     original(a);await packageReady(destination,a);assert.deepEqual(io.readCurrentPointer(current),switched);
-    return result('installed',m.version,shell.every(row=>row.state==='managed')?null:'shell-setup-required',shell);
-  } catch(error) {return result(phase==='rolled-back'?'rolled-back':phase===null?'held':'rollback-held',m.version,error instanceof Held?error.reason:'installation-unavailable');}
+    return result('installed',m.version,shell.every(row=>row.state==='managed')?null:'shell-setup-required',shell,details(undefined,tightenedPaths));
+  } catch(error) {const hold=installFailure(error);return result(phase==='rolled-back'?'rolled-back':phase===null?'held':'rollback-held',m.version,hold?.reason??'installation-unavailable',[],details(hold,tightenedPaths));}
 }
 
 /** Closed verify/copy/open adapter; no signing, plist write, sudo or credential command. */
