@@ -2,7 +2,7 @@ import { realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export interface QueueLintFinding { line: number; id: string | null; reason: string }
-const lanes = new Set(['codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local']);
+const lanes = new Set(['codex-personal', 'claude', 'devin', 'claude-api', 'codex-local']);
 const tiers = new Set(['frontier', 'work', 'mid', 'fast']);
 
 /** First required READY-line field absent from the parenthesized metadata, in contract order. */
@@ -48,7 +48,8 @@ export async function lintQueue(router: string, ready: string, runsDir: string, 
     const reasons: string[] = [];
     if (f.length < 5) reasons.push('Fewer than 5 tab-separated fields');
     if (!/^[A-Za-z0-9._-]+$/.test(f[0] ?? '')) reasons.push('Invalid job id');
-    if (!lanes.has(f[2] ?? '')) reasons.push('Unknown lane');
+    if (f[2] === 'codex-cmp') reasons.push('Retired lane');
+    else if (!lanes.has(f[2] ?? '')) reasons.push('Unknown lane');
     if (!tiers.has(f[3] ?? '')) reasons.push('Unknown tier');
     if (!f[1] || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(f[1]) || !(await stat(join(home, 'Projects/ashlrai', f[1])).then(s => s.isDirectory()).catch(() => false))) reasons.push('Repository directory not found or invalid');
     const prompt = f[4] ?? '';

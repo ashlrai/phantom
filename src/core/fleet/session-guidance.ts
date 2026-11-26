@@ -122,7 +122,7 @@ export const LANE_GUIDANCE_STRATEGIES: readonly LaneStrategyRow[] = [
   },
   {
     family: 'codex',
-    lanes: ['codex-cmp', 'codex-personal', 'codex-local'],
+    lanes: ['codex-personal', 'codex-local'],
     prefixes: ['codex-'],
     kind: 'resume',
     label: 'resume',

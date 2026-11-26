@@ -64,7 +64,6 @@ export async function cmdUsageLive(args: string[], deps: UsageLiveDeps = {}): Pr
     do {
       last = await runLiveUsageTick({ nowMs: now(), queueDir, busDir, intervalMs, browser: session,
         official: {
-          codexCmpHome: abs(process.env['PHANTOM_SENSOR_CODEX_CMP_HOME']),
           codexPersonalHome: abs(process.env['PHANTOM_SENSOR_CODEX_PERSONAL_HOME']),
         } });
       if (!(await exists(firstPath))) await writeFile(firstPath, renderFirstReadings(last), { mode: 0o600 });

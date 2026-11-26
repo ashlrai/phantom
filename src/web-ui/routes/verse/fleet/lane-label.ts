@@ -9,7 +9,7 @@
 export function laneLabel(lane: string): string {
   const known: Record<string, string> = {
     'codex-personal': 'Codex personal',
-    'codex-cmp': 'Codex CMP',
+    'codex-cmp': 'Codex CMP (retired)',
     'codex-local': 'Local models',
     'claude': 'Claude',
     'claude-api': 'Claude API',
@@ -36,7 +36,7 @@ export function laneShort(lane: string): string {
     'api': 'API',
     'devin': 'DEVIN',
     'codex-personal': 'PERS',
-    'codex-cmp': 'CMP',
+    'codex-cmp': 'RET',
     'codex-local': 'LOCAL',
     'claude-api': 'API',
     'devin-flash': 'FLASH',

@@ -58,6 +58,23 @@ test('unknown, stale, future and expired reports never become pool capacity; exa
   expect(projectFleetAwareness(legacy.state, legacy.now()).hosts[0]?.freeSlots).toBeNull();
 });
 
+test.each([
+  { paused: 'disk guard' },
+  { admission: { admit: false } },
+  { admission: { decision: 'stop' } },
+])('fleet lane availability honors a fresh dispatcher stop (%j)', stop => {
+  const now = 100_000;
+  const status = {
+    schema: 'dispatchd.status.v1', last_tick: new Date(now).toISOString(), paused: null,
+    lanes: { codex: { running: 1, target: 4, effective_target: 3, queued: 5, held: false } },
+    ...stop,
+  };
+  expect(projectFleetAwareness(null, now, status).lanes[0]).toMatchObject({
+    running: 1, target: 4, effectiveTarget: 3, queued: 5, available: 0,
+  });
+  expect(projectFleetAwareness(null, now + 60_001, status).lanes[0]?.available).toBeNull();
+});
+
 test('a claim fenced by a rejoined session frees its host slots at once', () => {
   const f = fixture();
   const n = f.add('worker', { hostId: 'mac', slots: 2 });

@@ -42,11 +42,11 @@ class RecutAdmissionTests(unittest.TestCase):
         self.assertEqual(index.decide(job(2), 'phantom')['repeatOf'], job(1))
 
     def test_parked_candidate_does_not_reserve_a_head(self):
-        with build(slots={'codex-cmp': lane_slot()}) as tmp:
+        with build(slots={'codex-personal': lane_slot()}) as tmp:
             home = Path(tmp).resolve(); env = launch_stubs(home); q = home / '.ashlr-runs/queue'
             (q / 'recut-loop.jsonl').write_text('\n'.join(map(json.dumps, [entry(1), entry(2)])))
             for level in (1, 2):
-                queue_job(home, job(level), 'codex-cmp')
+                queue_job(home, job(level), 'codex-personal')
                 (q / f'prompts/{job(level)}.md').write_text(f'{job(level)} (P1): Recut the observed conflict.')
             (home / '.ashlr-runs/bin/precheck.sh').write_text(
                 f'case "$1" in {job(1)}*) echo "SKIP {job(1)} code=13 reason=symbols_defined"; exit 13;; esac\n')
@@ -57,10 +57,10 @@ class RecutAdmissionTests(unittest.TestCase):
             self.assertIn(job(1), '\n'.join(ready_lines(home)))
 
     def test_existing_live_batch_owns_its_recut_until_it_ends(self):
-        with build(slots={'codex-cmp': lane_slot()}) as tmp:
+        with build(slots={'codex-personal': lane_slot()}) as tmp:
             home = Path(tmp).resolve(); env = launch_stubs(home); q = home / '.ashlr-runs/queue'
             (q / 'recut-loop.jsonl').write_text('\n'.join(map(json.dumps, [entry(1), entry(2)])))
-            queue_job(home, job(2), 'codex-cmp')
+            queue_job(home, job(2), 'codex-personal')
             (q / 'batches').mkdir(exist_ok=True)
             (q / 'batches/RQ-BATCH-OWNER.json').write_text(json.dumps(dict(schema='dispatchd.batch.v1', members=[])))
             (q / 'run/RQ-BATCH-OWNER.dispatched').write_text('0')
@@ -74,7 +74,7 @@ class RecutAdmissionTests(unittest.TestCase):
             self.assertTrue(dispatched(home, job(2)))
 
     def test_dispatch_suppresses_copies_before_launch_and_releases_dead_owners(self):
-        with build(slots={'codex-cmp': lane_slot()}) as tmp:
+        with build(slots={'codex-personal': lane_slot()}) as tmp:
             home = Path(tmp).resolve(); env = launch_stubs(home); q = home / '.ashlr-runs/queue'
             # Enable batching: recuts must still cross their individual admission boundary.
             (q / 'BATCH_OFF').unlink()
@@ -84,7 +84,7 @@ class RecutAdmissionTests(unittest.TestCase):
             ledger.write_text(json.dumps(dict(event='outcome', state='MERGED', job=job(4, 43), repo='phantom')) + '\n')
             candidates = [job(1), job(2), job(3), job(5, 43)]
             for candidate in candidates:
-                queue_job(home, candidate, 'codex-cmp')
+                queue_job(home, candidate, 'codex-personal')
                 (q / f'prompts/{candidate}.md').write_text(f'{candidate} (P1): Recut with distinct wording for {candidate}.')
             result = tick(home, env)
             self.assertEqual(result.returncode, 0, result.stderr)

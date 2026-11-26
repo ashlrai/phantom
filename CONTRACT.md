@@ -19,6 +19,11 @@ Creation requires `--dry-run` and never calls the writer.
 with a timezone. The lane snapshot uses it for the merge window and falls
 back to `at` when absent. `at` continues to carry the event timestamp.
 
+`parseReadyTsv` returns `unhintedRows` entries with `id`, `repo` and `tier`
+for validated lane-open dispatcher jobs. `readyRowsForDepth`
+(`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
+`tier` for the tier tally, including lane-open jobs as `READY`.
+
 ## Desktop appearance
 
 `UiAppearance` (`src/core/verse/ui-appearance-file.ts`) includes
@@ -400,6 +405,9 @@ records gain `recurringFlakes`, `flakeFixesQueued`, `verdictsPending` and
 `verdictsResolved` counts.
 Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
 Resident off-tick ticks launch it only with repositories and an elapsed interval.
+Attempt entries use `test` for a singleton or `tests` for multiple eligible
+test IDs in the same workflow run. Each ID contributes to recurrence.
+A multi-test rerun verdict contributes only to the workflow totals.
 The CLI `ci reruns [--json]` reads recent journal entries, counts,
 recurringFlakes and verdicts without mutation.
 
@@ -655,7 +663,7 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
-`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?})`,
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?, mergeEventsTruncated?})`,
 `authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
 `foldRouteDecisionWorkClasses(text)`, `foldRouteDecisions(text)`,
 `foldMarketHandoffAdvisories(text)`,
@@ -1499,7 +1507,9 @@ jobsTruncated?)`,
 `phm fleet unfed` (`fleet.unfed.v1`). The report's `marketTruncated` boolean
 is true when the bounded work-market journal read omitted older bytes.
 History, overrides, rejections and decision outcomes may then be incomplete
-for the requested window. A missing or unreadable journal is indicated by
+for the requested window. The additive `resourcePlan` block compares the
+advisory resource-plan target with running jobs and waiting work; it does
+not reinterpret dispatcher decisions or change the exit status. A missing or unreadable journal is indicated by
 the market folds' `available: false`. `foldMarketOverrides` collapses the
 window's `route_decision` rows to each job's latest decision and tallies
 `lane_override`s by reason and hinted-to-chosen lane; the report's
@@ -4117,8 +4127,9 @@ carries the needle as a case-insensitive whitespace-collapsed substring;
 `UnifiedInboxFilter.kind` (`comms inbox --kind`, validated by
 `isUnifiedInboxKind` over `UNIFIED_INBOX_KINDS`) keeps only items of that
 stored kind — the item's own classification, finer than `source` where one
-source emits several kinds (the `bus` source's `bus-work`/`bus-handoff`
-split, the `board` source's `board-delivery`/`board-task` split) — and
+source emits several kinds (the `bus` source's
+`bus-work`/`bus-handoff`/`bus-dead-letter` split, the `board` source's
+`board-delivery`/`board-task` split) — and
 ANDs with every other view dimension while the per-source `pending`
 reports stay the unfiltered store truth;
 and
@@ -4540,3 +4551,17 @@ device human after that signature check and does not read agent env markers.
 `POST /api/approvals/team/:id/decision` accepts `decision`, optional `team` and
 optional `assertion`. An `actor` field is refused. A bare token on a
 human-required decision is HTTP 403 `human-presence-required`.
+
+## Managed repositories and freshness evidence
+
+`phantom.repos.v1` lists the union of the ecosystem catalog, local enrollment,
+and effective signed repository scope. Effective stage and local enrollment
+are separate fields. `canManageGrant` is false on configured workers.
+`prioritySync: "local-only"` applies to list and priority mutation results
+until leader replication is available.
+
+`allocateRepos(evidence, freshness?, now?)` takes an optional
+`repo-freshness.v1` snapshot and an epoch-millisecond evaluation time. The
+snapshot's `repos` map keys are canonical `owner/name` strings; each maps to
+optional `docs` and `site` records with integer UTC seven-day `period` and a
+`verdict` as specified in [Queue](docs/QUEUE.md#repository-shares).

@@ -210,68 +210,68 @@ class PhaseCTick(TickCase):
     ENF = {'FLEET_CTL_MODE': 'enforce', 'FLEET_CTL_PHASES': 'c'}
 
     def slots(self, **extra):
-        s = {'codex-cmp': {'held': True, 'held_by': 'autobackoff', 'held_until': FAR, 'held_reason': 'usage limit', 'target': 10, 'floor': 0,
+        s = {'claude': {'held': True, 'held_by': 'autobackoff', 'held_until': FAR, 'held_reason': 'usage limit', 'target': 10, 'floor': 0,
                            'ceiling': 32, 'hard_cap': 32, 'last_change': 0},
              'codex-personal': {'target': 4, 'floor': 0, 'ceiling': 32, 'hard_cap': 32, 'last_change': int(1e15)},
              'devin': {'held': True}}
         s.update(extra)
         return s
 
-    JOBS = [('RQ-FC-A', 'codex-cmp', 'work'), ('RQ-FC-B', 'codex-cmp', 'mid')]
+    JOBS = [('RQ-FC-A', 'claude', 'work'), ('RQ-FC-B', 'claude', 'mid')]
 
     def test_backed_off_pool_hands_its_queue_to_a_pool_with_headroom(self):
         home = self.run_tick(self.JOBS, self.ENF, slots=self.slots())
         self.assertEqual(sorted(launched(home)), ['RQ-FC-A', 'RQ-FC-B'])
-        self.assertIn('FLEET_REBALANCE RQ-FC-A codex-cmp->codex-personal', events(home))
+        self.assertIn('FLEET_REBALANCE RQ-FC-A claude->codex-personal', events(home))
         route = json.loads((home / '.ashlr-runs' / 'queue' / 'route-state.json').read_text())
         self.assertEqual(route['RQ-FC-A']['pool'], 'codex-personal')
         self.assertEqual(route['RQ-FC-A']['moves'], [])   # enqueue hints are not previous assignments
         self.assertTrue(route['RQ-FC-A']['launched'])
         rec, = ledger(home)
         self.assertEqual([(m['job'], m['from'], m['to']) for m in rec['reroutes']],
-                         [('RQ-FC-A', 'codex-cmp', 'codex-personal'), ('RQ-FC-B', 'codex-cmp', 'codex-personal')])
+                         [('RQ-FC-A', 'claude', 'codex-personal'), ('RQ-FC-B', 'claude', 'codex-personal')])
 
     def test_shared_market_operates_with_controller_in_shadow(self):
         home = self.run_tick(self.JOBS, slots=self.slots())
         self.assertEqual(sorted(launched(home)), ['RQ-FC-A', 'RQ-FC-B'])
         self.assertEqual(ready(home), [])
-        self.assertTrue(slots_of(home)['codex-cmp']['held'])
+        self.assertTrue(slots_of(home)['claude']['held'])
 
     def test_shared_market_operates_alongside_phase_b(self):
         home = self.run_tick(self.JOBS, {'FLEET_CTL_MODE': 'enforce', 'FLEET_CTL_PHASES': 'b'}, slots=self.slots())
         self.assertEqual(sorted(launched(home)), ['RQ-FC-A', 'RQ-FC-B'])
-        self.assertTrue(slots_of(home)['codex-cmp']['held'])
+        self.assertTrue(slots_of(home)['claude']['held'])
 
     def test_headroom_is_respected(self):
         slots = self.slots(**{'codex-personal': {'target': 1, 'floor': 0, 'ceiling': 32, 'hard_cap': 32, 'last_change': int(1e15)}})
         home = self.run_tick(self.JOBS, self.ENF, slots=slots)
         self.assertEqual(len(launched(home)), 1)
-        self.assertEqual([r[2] for r in ready(home)], ['codex-cmp'])   # the second line waits where it was
+        self.assertEqual([r[2] for r in ready(home)], ['claude'])   # the second line waits where it was
 
     def test_manual_hold_blocks_the_executor_while_unclaimed_work_uses_headroom(self):
-        slots = self.slots(**{'codex-cmp': {'held': True, 'held_by': 'Masbot', 'held_reason': 'operator', 'target': 10, 'floor': 0,
+        slots = self.slots(**{'claude': {'held': True, 'held_by': 'Masbot', 'held_reason': 'operator', 'target': 10, 'floor': 0,
                                             'ceiling': 32, 'hard_cap': 32, 'last_change': 0}})
         home = self.run_tick(self.JOBS, self.ENF, slots=slots)
         self.assertEqual(sorted(launched(home)), ['RQ-FC-A', 'RQ-FC-B'])
         self.assertEqual(ready(home), [])
-        self.assertTrue(slots_of(home)['codex-cmp']['held'])
-        self.assertEqual(slots_of(home)['codex-cmp']['held_by'], 'Masbot')
+        self.assertTrue(slots_of(home)['claude']['held'])
+        self.assertEqual(slots_of(home)['claude']['held_by'], 'Masbot')
 
     def test_route_hysteresis_move_cap_and_launch_lock_still_bind(self):
         now = time.time()
         def prep(home):
-            rs = {'RQ-FC-A': {'pool': 'codex-cmp', 'decided_at': now - 7000, 'moves': [now - 300, now - 200]},     # move cap
-                  'RQ-FC-B': {'pool': 'codex-cmp', 'decided_at': now - 7000, 'moves': [], 'launched': True}}      # launch lock
+            rs = {'RQ-FC-A': {'pool': 'claude', 'decided_at': now - 7000, 'moves': [now - 300, now - 200]},     # move cap
+                  'RQ-FC-B': {'pool': 'claude', 'decided_at': now - 7000, 'moves': [], 'launched': True}}      # launch lock
             (home / '.ashlr-runs' / 'queue' / 'route-state.json').write_text(json.dumps(rs))
         home = self.run_tick(self.JOBS, self.ENF, slots=self.slots(), prep=prep)
         self.assertEqual(launched(home), [])
-        self.assertEqual({r[2] for r in ready(home)}, {'codex-cmp'})
+        self.assertEqual({r[2] for r in ready(home)}, {'claude'})
 
     def test_backpressure_advice_is_written_and_marked_enforced(self):
         home = self.run_tick(self.JOBS, dict(self.ENF, FLEET_CTL_PHASES='bc', LOADGATE_LOADAVG='30'), slots=self.slots())
         bp = json.loads((home / '.ashlr-runs' / 'queue' / 'backpressure.json').read_text())
         self.assertEqual((bp['schema'], bp['enforced'], bp['shed_level']), ('fleet-controller.backpressure.v1', True, 2))
-        self.assertEqual(bp['lanes']['codex-cmp']['factor'], 0.0)     # held pool
+        self.assertEqual(bp['lanes']['claude']['factor'], 0.0)     # held pool
         self.assertGreater(bp['expires'], bp['ts'])
         shadow = self.run_tick(self.JOBS, slots=self.slots())
         self.assertFalse(json.loads((shadow / '.ashlr-runs' / 'queue' / 'backpressure.json').read_text())['enforced'])

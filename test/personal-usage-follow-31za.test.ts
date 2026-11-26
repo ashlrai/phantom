@@ -34,7 +34,7 @@ describe('personal usage follow', () => {
     expect(run.result).toBe(0);
     expect(run.read).toHaveBeenCalledTimes(2);
     expect(run.read).toHaveBeenCalledWith({
-      env: { CODEX_HOME: '/fake-home/.codex-2', CODEX_HOME_ALT: '/fake-home/.codex-2' }, homeDir: '/fake-home',
+      env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: '/fake-home/.codex-2' }, homeDir: '/fake-home',
     });
     expect(run.lines).toHaveLength(3);
     expect(run.lines[0]).toMatchObject({ type: 'sample', sampledAt: iso(start), resource: {

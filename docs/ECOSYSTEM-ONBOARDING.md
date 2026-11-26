@@ -109,8 +109,9 @@ membership, payment, transport credential or autonomous runtime authority.
 
 Open **Fleet → Repos manager** or run `phm repos list --json`. The catalog
 includes Phantom, Phantom Secrets, Lexicon, Locus, Stack, MD, Bin Shield,
-Plugin, and Morph Kit, plus other repositories already in the local enrollment
-registry or standing grant. Appearing in the catalog does not enroll a checkout
+Plugin, and Morph Kit, plus every repository in the effective signed scope
+and any other repository in the local enrollment registry. Repositories without
+a known logo use an initials mark. Appearing in the catalog does not enroll a checkout
 or grant authority. The list distinguishes local enrollment from the signed
 rollout rung; a rung that permits merging does not override Stop, the current
 switch, verification, or any other runtime gate.
@@ -127,7 +128,10 @@ Prepare and enroll a checkout first when adding it. In the desktop sheet, review
 the new or narrowed draft, then approve it with Touch ID. Propose-only can narrow
 a draft; merge can only use the existing eligible rollout ladder and does not skip
 its evidence gates. To stop local work immediately, use the existing unenrollment
-or Stop control. Priority nudges are scheduler settings, not grant changes.
+or Stop control. Workers cannot sign, replace, or revoke a standing grant.
+Priority nudges are scheduler settings, not grant changes. Until the leader's
+node-RPC replica path is available, each Mac uses only its own priority settings
+and the Repos manager displays **Not synced**.
 
 Ready work, open PRs, merges in the trailing 24 hours, default branch CI and the
 last release are shown when the respective queue or GitHub source answers. Missing

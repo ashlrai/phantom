@@ -44,6 +44,20 @@ const COSTS: HarnessModelCost[] = [
 ];
 
 describe('autoscale router scoring', () => {
+  it.each(['pressure', 'swap-growth'] as const)('honors measured %s when limiter labels are absent', hold => {
+    const { doc } = node(mbp());
+    doc.basis.limiting = {};
+    if (hold === 'pressure') doc.mem_free.pressure_level = 2;
+    else doc.swap.growing = true;
+    expect(doc.agents_runnable_now.codex).toBeGreaterThan(0);
+
+    const [placement] = planAutoscaleRoutes({
+      nodes: [{ doc }], costs: [COSTS[0]!], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }],
+    });
+    expect(placement).toMatchObject({ nodeId: null, rejected: { [`node-${hold}`]: 1 } });
+    expect(fleetRunnable([doc], T0)).toMatchObject({ codex: 0, devin: null });
+  });
+
   it('uses a Laplace-smoothed learned merge rate', () => {
     expect(mergeRate(undefined)).toBe(0.5);
     expect(mergeRate({ attempts: 8, merged: 6 })).toBe(0.7);
@@ -87,6 +101,24 @@ describe('autoscale router scoring', () => {
     const served = planAutoscaleRoutes({ nodes: [node(mbp(), { localModels: ['qwen3-32b'] })], costs, outcomes: {},
       nowMs: T0, jobs: [{ id: 'j', providers: ['local'] }] });
     expect(served[0]).toMatchObject({ provider: 'local', model: 'qwen3-32b', nodeId: 'main-mbp' });
+  });
+
+  it.each([-120_001, 60_001])('excludes footprint donors outside the freshness window (%s ms)', offset => {
+    const snapshot = mbp();
+    const stale = node(mbp({
+      measuredAtMs: T0 + offset,
+      sessions: [{ ...snapshot.sessions[0]!, memBytes: 3 * GIB }],
+    }));
+    const current = node(mbp({ node: 'current' }), { providers: [] });
+    const idle = node(mbp8());
+    const input = { costs: [COSTS[0]!], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }] };
+
+    expect(planAutoscaleRoutes({ ...input, nodes: [stale, idle] })[0]).toMatchObject({
+      nodeId: null, rejected: { 'node-stale': 1, 'footprint-unmeasured': 1 },
+    });
+    expect(planAutoscaleRoutes({ ...input, nodes: [stale, current, idle] })[0]).toMatchObject({
+      nodeId: idle.doc.node, footprint: 'fleet',
+    });
   });
 
   it('loads an unserved local model only where its weights fit, once per node', () => {
