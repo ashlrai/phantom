@@ -239,25 +239,27 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
     }
     const w = finite(job.tokenWeight) ? Math.max(0, Math.min(1, job.tokenWeight)) : ROUTER_DEFAULTS.tokenWeight;
     const bestTok = Math.max(...cands.map(c => c.perMTok)), bestHour = Math.max(...cands.map(c => c.perHour));
-    let best: Cand | null = null, bestScore = -1;
-    for (const c of cands) {
-      const score = (c.perMTok / bestTok) ** w * (c.perHour / bestHour) ** (1 - w);
-      // For equal scores, preserve headroom by avoiding redundant model loads.
-      // Equal loads keep the first candidate in (provider, model, node) order.
-      if (best === null || score > bestScore + 1e-12 || (score === bestScore && c.load < best.load)) {
-        best = c;
-        bestScore = score;
-      }
-    }
-    best!.state.bytes -= best!.fp.mem_bytes_max + best!.load;
-    if (best!.localModelKey !== null) best!.state.loaded.add(best!.localModelKey);
-    if (best!.state.cores !== null && best!.fp.cpu_cores_per_session !== null) {
-      const remaining = best!.state.cores - best!.fp.cpu_cores_per_session;
-      best!.state.cores = remaining <= best!.state.cpuRoundoff ? 0 : remaining;
+    const scored = cands.map(candidate => ({
+      candidate,
+      score: (candidate.perMTok / bestTok) ** w * (candidate.perHour / bestHour) ** (1 - w),
+    }));
+    const highestScore = scored.reduce((highest, { score }) => score > highest ? score : highest, -1);
+    // Compare against the true maximum so successive ties cannot move the cutoff.
+    // Equal loads keep the first candidate in (provider, model, node) order.
+    const selected = scored.reduce<typeof scored[number] | undefined>((best, entry) => {
+      if (!(entry.score >= highestScore - 1e-12)) return best;
+      return !best || entry.candidate.load < best.candidate.load ? entry : best;
+    }, undefined);
+    const { candidate: best, score: bestScore } = selected ?? scored[0]!;
+    best.state.bytes -= best.fp.mem_bytes_max + best.load;
+    if (best.localModelKey !== null) best.state.loaded.add(best.localModelKey);
+    if (best.state.cores !== null && best.fp.cpu_cores_per_session !== null) {
+      const remaining = best.state.cores - best.fp.cpu_cores_per_session;
+      best.state.cores = remaining <= best.state.cpuRoundoff ? 0 : remaining;
     }
     const r = (n: number) => Math.round(n * 1e4) / 1e4;
-    plan.push({ jobId: job.id, nodeId: best!.state.node.doc.node, provider: best!.cost.provider, model: best!.cost.model,
-      score: r(bestScore), mergeRate: r(best!.p), mergesPerMTok: r(best!.perMTok), mergesPerHour: r(best!.perHour), footprint: best!.fpSource });
+    plan.push({ jobId: job.id, nodeId: best.state.node.doc.node, provider: best.cost.provider, model: best.cost.model,
+      score: r(bestScore), mergeRate: r(best.p), mergesPerMTok: r(best.perMTok), mergesPerHour: r(best.perHour), footprint: best.fpSource });
   }
   return plan;
 }
