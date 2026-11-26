@@ -2442,6 +2442,10 @@ the constants `NODE_BRIDGE_SCHEMA`, `NODE_BRIDGE_LEASE_PREFIX`,
 `BridgeRouter.scope` is a stable, non-secret identity of the canonical router
 store location; `localBridgeRouter(nodes, storeDirectory)` and
 `poolBridgeRouter(call, storeDirectory)` derive it from the real store path.
+The `BridgeRouter.view(owner)` result and `planNodeBridge(input)` input may
+include `routes: RouteAssignment[]` alongside the scoped node and job lists.
+Assigned routes reserve slots on their destination node and host. Older views
+that omit routes use capability-based reservation estimates.
 Bridge manifests bind `owner` and
 optional `routerScope`; reconciliation holds owner mismatches as
 `hold-owner-mismatch` and missing or changed scopes as `hold-router-mismatch`,

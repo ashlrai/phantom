@@ -178,6 +178,20 @@ describe('ready.tsv -> node router bridge', () => {
     expect(new Set(second.rows.map(r => r.nodeId))).toEqual(new Set(['node-a', 'node-c']));
   });
 
+  it('reserves slots for router assignments only when the router provides a plan', async () => {
+    const f = fixture([row('RQ-REVIEW-A')], [{ id: 'worker', caps: [...READ, 'gh'], slots: 1 }]);
+    f.nodes.enqueue('needs-auth', { owner: 'ashlr', requires: ['gh'] });
+
+    const blocked = await f.pass(false);
+    expect(blocked.nodes[0]).toMatchObject({ freeSlots: 1 });
+    expect(blocked.rows[0]).toMatchObject({ offload: true, nodeId: 'worker' });
+
+    f.nodes.heartbeat(f.sessions.get('worker')!, { auth: 'ok' });
+    const assigned = await f.pass(false);
+    expect(assigned.nodes[0]).toMatchObject({ freeSlots: 0 });
+    expect(assigned.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
+  });
+
   it('never offers a job to a node whose local capability probe failed', async () => {
     // air-w4 has no codex binary: the local probe drops the cap, whatever its config says.
     const run = (() => ({ status: null, error: Object.assign(new Error('missing'), { code: 'ENOENT' }) })) as unknown as typeof spawnSync;

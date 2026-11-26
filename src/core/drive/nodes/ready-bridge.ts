@@ -17,6 +17,7 @@ import { join, sep } from 'node:path';
 import { NODE_TASK_LIMIT, validNodeTask, nodeTaskArgs, type EmbeddedNodeTask } from './task.js';
 import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
 import { validCap } from './state.js';
+import type { RouteAssignment } from './router.js';
 import { scrubSecrets } from '../../util/scrub.js';
 
 export const NODE_BRIDGE_SCHEMA = 'phantom.node-bridge.v1';
@@ -68,9 +69,14 @@ export interface NodeBridgeReport {
   nodes: BridgeNodeView[]; rows: BridgeRowDecision[]; leases: BridgeLeaseView[];
   claimed: string[]; requeued: string[]; completed: string[]; lostRace: string[];
 }
+interface BridgeRouterView {
+  nodes: NodeView[];
+  jobs: JobView[];
+  routes?: RouteAssignment[];
+}
 export interface BridgeRouter {
   scope: string;
-  view(owner: string): { nodes: NodeView[]; jobs: JobView[] };
+  view(owner: string): BridgeRouterView;
   enqueue(jobId: string, spec: { owner: string; requires: string[]; pack: string; task?: EmbeddedNodeTask }): boolean;
   withdraw(jobId: string, owner: string): WithdrawOutcome;
 }
@@ -130,8 +136,8 @@ function routerJobId(job: string, jobs: JobView[]): string {
 }
 
 /** Pure eligibility plan. Unknown slot telemetry is `null` and never admits a row. */
-export function planNodeBridge(input: {
-  rows: ReadyRow[]; claimed: (job: string) => boolean; nodes: NodeView[]; jobs: JobView[]; maxPerPass?: number;
+export function planNodeBridge(input: BridgeRouterView & {
+  rows: ReadyRow[]; claimed: (job: string) => boolean; maxPerPass?: number;
 }): { nodes: BridgeNodeView[]; rows: BridgeRowDecision[] } {
   const live = input.nodes.filter(n => n.live).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const running = (id: string) => input.jobs.filter(j => j.state === 'running' && j.claimedBy === id).length;
@@ -151,16 +157,30 @@ export function planNodeBridge(input: {
       ? Math.max(0, Math.min(...members.map(m => m.slots!)) - members.reduce((sum, m) => sum + running(m.nodeId), 0))
       : null);
   }
+  const reserve = (node: NodeView) => {
+    const host = hostOf(node);
+    const nodeSlots = free.get(node.nodeId);
+    const hostSlots = hostFree.get(host);
+    if (nodeSlots != null) free.set(node.nodeId, Math.max(0, nodeSlots - 1));
+    if (hostSlots != null) hostFree.set(host, Math.max(0, hostSlots - 1));
+  };
   const take = (requires: string[]): NodeView | null => {
     const fits = live.filter(n => requires.every(c => n.caps.includes(c)) && (free.get(n.nodeId) ?? 0) > 0 && (hostFree.get(hostOf(n)) ?? 0) > 0)
       .sort((a, b) => ((hostFree.get(hostOf(b)) ?? 0) - (hostFree.get(hostOf(a)) ?? 0)) || (a.nodeId < b.nodeId ? -1 : 1));
     if (!fits[0]) return null;
-    free.set(fits[0].nodeId, free.get(fits[0].nodeId)! - 1);
-    hostFree.set(hostOf(fits[0]), hostFree.get(hostOf(fits[0]))! - 1);
+    reserve(fits[0]);
     return fits[0];
   };
-  // Router jobs still waiting (or held by an unreported node) reserve a slot before any new row.
-  for (const job of input.jobs) if (job.state === 'pending' || (job.state === 'running' && !job.claimedBy)) take(job.requires);
+  if (input.routes) {
+    const byId = new Map(live.map(node => [node.nodeId, node]));
+    for (const route of input.routes) {
+      const node = route.nodeId === null ? undefined : byId.get(route.nodeId);
+      if (node) reserve(node);
+    }
+  } else {
+    // Older router views lack assignments. Keep their capability-based estimate.
+    for (const job of input.jobs) if (job.state === 'pending' || (job.state === 'running' && !job.claimedBy)) take(job.requires);
+  }
   const nodes = live.map(n => ({ nodeId: n.nodeId, lanes: n.lanes, slots: n.slots ?? null, running: running(n.nodeId), freeSlots: free.get(n.nodeId) ?? null }));
   const limit = input.maxPerPass ?? NODE_BRIDGE_MAX_PER_PASS;
   const seen = new Set<string>();
@@ -348,7 +368,7 @@ export function poolBridgeRouter(call: (verb: string, args: string[]) => { demot
   };
   return {
     scope: realpathSync(storeDirectory),
-    view: owner => ok('status', ['--owner', owner]) as unknown as { nodes: NodeView[]; jobs: JobView[] },
+    view: owner => ok('status', ['--owner', owner]) as unknown as BridgeRouterView,
     enqueue: (jobId, spec) => ok('enqueue', ['--job', jobId, '--owner', spec.owner, '--requires', spec.requires.join(','), '--pack', spec.pack, ...nodeTaskArgs(spec.task)])['enqueued'] === true,
     withdraw: (jobId, owner) => {
       const r = ok('withdraw', ['--job', jobId, '--owner', owner]);
@@ -398,11 +418,11 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
   const callsLeft = (): number => opts.signal?.aborted ? 0 : opts.deadlineAt === undefined ? Infinity
     : Math.max(0, Math.floor((opts.deadlineAt - clock()) / NODE_BRIDGE_CALL_MS));
   const emptyView = { nodes: [], jobs: [] };
-  const readView = (): { nodes: NodeView[]; jobs: JobView[] } => {
+  const readView = (): BridgeRouterView => {
     if (!owner || !opts.router) return emptyView;
     try { return opts.router.view(owner); } catch { report.inert ??= 'router-unavailable'; return emptyView; }
   };
-  const recordSnapshot = (view: { nodes: NodeView[]; jobs: JobView[] }, manifests: Manifest[], fresh: { text: string; rows: ReadyRow[] }) => {
+  const recordSnapshot = (view: BridgeRouterView, manifests: Manifest[], fresh: { text: string; rows: ReadyRow[] }) => {
     report.leases = manifests.map(m => {
       const job = view.jobs.find(j => j.id === m.routerJobId);
       return { job: m.job, leaseOwner: m.id, routerJobId: m.routerJobId, state: m.state, routerState: job?.state ?? null,
@@ -410,7 +430,7 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
     });
     const bridged = new Set(manifests.map(m => m.job));
     const plan = planNodeBridge({ rows: fresh.rows, claimed: j => bridged.has(j) || claimedLocally(host, j),
-      nodes: view.nodes, jobs: view.jobs, ...(opts.maxPerPass !== undefined ? { maxPerPass: opts.maxPerPass } : {}) });
+      ...view, ...(opts.maxPerPass !== undefined ? { maxPerPass: opts.maxPerPass } : {}) });
     report.nodes = plan.nodes;
     report.rows = plan.rows;
     return plan;
