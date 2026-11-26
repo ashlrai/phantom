@@ -186,6 +186,9 @@ it('dedupes enqueue evidence when the end windows overlap', async () => {
 
 it('prints text and JSON from the CLI and rejects bad arguments', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
+  await writeFile(join(queueDir, 'queue.v1.json'), JSON.stringify({
+    schema: 'queue.v1', jobs: [{ id: 'a-1', pool: 'devin', status: 'READY' }],
+  }));
   const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   expect(await cmdFleetQueueCounts(['--root', root])).toBe(0);
