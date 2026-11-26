@@ -18,11 +18,8 @@
  * this module: no cwd, no prompt text, no environment. Every emitted string
  * still passes through scrubSecrets.
  */
-import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { scrubSecrets } from '../util/scrub.js';
-
-const execFileAsync = promisify(execFile);
 
 const PS_BIN = '/bin/ps';
 const PS_ARGS = ['-axo', 'pid=,etime=,command='] as const;
@@ -190,7 +187,8 @@ export function parsePsTable(text: string): Omit<LiveWorkersSnapshot, 'v' | 'gen
 }
 
 async function defaultRunPs(): Promise<string> {
-  const { stdout } = await execFileAsync(PS_BIN, [...PS_ARGS], { timeout: PS_TIMEOUT_MS, maxBuffer: PS_MAX_BUFFER });
+  const { execFile } = await import('node:child_process');
+  const { stdout } = await promisify(execFile)(PS_BIN, [...PS_ARGS], { timeout: PS_TIMEOUT_MS, maxBuffer: PS_MAX_BUFFER });
   return stdout;
 }
 
