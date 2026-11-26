@@ -59,13 +59,16 @@ describe('fleet queue lane-open rows', () => {
       // The rows naming no lane are open market work: runnable, counted,
       // but never attributed. The requirements' preferred_lane is the honest
       // lane when it names one — ahead of the legacy lane cell.
+      // RQ-OPEN-B's repo cell carries a slash: dispatchd's ok-check
+      // (`"/" not in f[1]`) refuses it before the market sees the row, so it
+      // is malformed dead work, never open supply.
       expect(result).toMatchObject({
-        total: 6, ready: 6, parked: 0, malformed: 0, unhinted: 3,
-        sources: { ready: 'healthy' },
+        total: 5, ready: 5, parked: 0, malformed: 1, unhinted: 2,
+        sources: { ready: 'degraded' },
       });
       expect(result.byLane.map((row) => row.lane)).toEqual(['claude', 'devin']);
       expect(result.nextUp?.map((row) => row.lane)).toEqual(['claude', 'devin']);
-      expect(result.health?.counts.ready).toBe(6);
+      expect(result.health?.counts.ready).toBe(5);
       expect(JSON.stringify(result)).not.toContain('/Users/');
       expect(JSON.stringify(result)).not.toContain('prompts/');
     } finally { await rm(dir, { recursive: true, force: true }); }
@@ -126,6 +129,29 @@ describe('fleet queue lane-open rows', () => {
         { lane: 'devin', jobs: ['RQ-ENV-LANE', 'RQ-PLAIN'] },
       ]);
       expect(JSON.stringify(result)).not.toContain('prompts/');
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('counts spec-less slash-repo rows as malformed, even when an envelope matches', async () => {
+    const dir = await queueWithFiles([
+      'RQ-SLASH\towner/repo\tclaude\twork\tprompts/s.md',
+      'RQ-SLASH-ENV\towner/repo\tdevin\twork\tprompts/se.md',
+      'RQ-OK\tphantom\tcodex-local\tmid\tprompts/ok.md',
+    ].join('\n'), [
+      '- READY RQ-SLASH-ENV (P1, preferred_lane=claude): an envelope cannot rescue a dead repo',
+    ].join('\n'));
+    try {
+      const result = await readFleetQueue({ runsDir: dir, now: () => now });
+      // dispatchd's ok-check (`"/" not in f[1]`) runs before the market and
+      // before the router-queue envelope: a repo cell with a slash names no
+      // checkout, so both rows are dead work — malformed, never supply.
+      expect(result).toMatchObject({
+        total: 1, ready: 1, parked: 0, malformed: 2, unhinted: 0,
+        sources: { ready: 'degraded' },
+      });
+      expect(result.byLane).toEqual([
+        { lane: 'codex-local', ready: 1, parked: 0, phantom: 1, other: 0, otherRepos: [] },
+      ]);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 

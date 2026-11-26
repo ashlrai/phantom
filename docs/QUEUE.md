@@ -1619,7 +1619,9 @@ explicit `preferred_lane: null`, an envelope naming no lane attr, or no
 spec preference with an empty lane cell — are the market's open
 hint: they count in `ready`/`total`/`unhinted` and in the health ready count,
 but stay unattributed in `byLane` and `nextUp`. A row the market rejects
-(`invalid_requirements`: malformed spec, invalid `preferred_lane` or lane cell)
+(`invalid_requirements`: malformed spec, invalid `preferred_lane` or lane cell,
+or a repo cell the dispatcher's ok-check refuses — it must name a checkout
+under `~/Projects/ashlrai`, so a `/` is dead work)
 is dead work — counted in `malformed`, never open supply. A repeat means at
 least two matching records; it does not prove
 a job is still blocked. `phm fleet ready-supply` reports the same lane-open

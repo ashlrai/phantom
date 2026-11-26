@@ -147,12 +147,12 @@ describe('parseReadyTsv', () => {
   it('counts lane-open dispatcher rows as unhinted instead of guessing a lane', () => {
     // An empty lane cell is the market's open hint (work_market.requirements
     // maps fields[2] or None). The generic positional reader used to steal
-    // these rows and surface the repo name as a lane — or drop owner/name
-    // repos outright. The requirements' preferred_lane is the only honest
-    // lane left; a row naming none is lane-open work, counted as unhinted.
-    // Rows the market itself rejects — an invalid preferred_lane or an
-    // invalid spec-less lane cell — are invalid_requirements: dropped dead
-    // work, never open supply.
+    // these rows and surface the repo name as a lane. The requirements'
+    // preferred_lane is the only honest lane left; a row naming none is
+    // lane-open work, counted as unhinted. Rows the market itself rejects —
+    // an invalid preferred_lane, an invalid spec-less lane cell, or a repo
+    // cell dispatchd's ok-check refuses (`"/" not in f[1]`) — are
+    // invalid_requirements: dropped dead work, never open supply.
     const { rows, dropped, invalid, unhinted, unhintedRows } = parseReadyTsv([
       'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
       'RQ-OPEN-B\tashlrai/phantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
@@ -160,19 +160,39 @@ describe('parseReadyTsv', () => {
       'RQ-OPEN-D\tphantom\t\twork\tprompts/d.md\t{"preferred_lane":"CLAUDE!"}',
       'RQ-OPEN-E\tphantom\tnot a lane!\twork\tprompts/e.md',
     ].join('\n'));
-    expect(dropped).toBe(2);
-    expect(invalid).toBe(2);
-    expect(unhinted).toBe(2);
+    expect(dropped).toBe(3);
+    expect(invalid).toBe(3);
+    expect(unhinted).toBe(1);
     // Lane-open rows keep their validated id, repo and tier for supply counts; the
     // row that resolved a preferred_lane and the invalid rows are not among them.
     expect(unhintedRows).toEqual([
       { id: 'RQ-OPEN-A', repo: 'phantom', tier: 'work' },
-      { id: 'RQ-OPEN-B', repo: 'ashlrai/phantom', tier: 'mid' },
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: 'RQ-OPEN-C', status: 'READY', pool: 'claude', tier: 'frontier', repo: 'phantom' });
     expect(rows.map(r => r.pool)).not.toContain('phantom');
     expect(rows.map(r => r.pool)).not.toContain('ashlrai/phantom');
+  });
+
+  it('counts slash-repo dispatcher rows as invalid dead work, never supply', () => {
+    // dispatchd's ok-check requires `"/" not in f[1]`: the repo cell names a
+    // checkout under ~/Projects/ashlrai, so an owner/name spelling can never
+    // launch — the same invalid verdict readyMarketLine gives the market
+    // readers. The row is dead in every requirements shape: spec-less,
+    // spec'd, lane-open, and enveloped (the ok-check precedes the envelope).
+    const routerQueue = '- READY RQ-SLASH-ENV (P1, preferred_lane=claude): an envelope cannot rescue a dead repo';
+    const { rows, dropped, invalid, unhinted, unhintedRows } = parseReadyTsv([
+      'RQ-SLASH-A\towner/repo\tclaude\twork\tprompts/a.md',
+      'RQ-SLASH-B\towner/repo\tclaude\twork\tprompts/b.md\t{"preferred_lane":"claude"}',
+      'RQ-SLASH-C\towner/repo\t\twork\tprompts/c.md',
+      'RQ-SLASH-ENV\towner/repo\tdevin\twork\tprompts/d.md',
+      'RQ-SLASH-D\towner/repo/deep\tclaude\tmid\tprompts/e.md',
+    ].join('\n'), routerQueue);
+    expect(dropped).toBe(5);
+    expect(invalid).toBe(5);
+    expect(unhinted).toBe(0);
+    expect(unhintedRows).toEqual([]);
+    expect(rows).toHaveLength(0);
   });
 
   it('resolves the requirements preferred_lane ahead of the lane cell like the market', () => {
@@ -658,7 +678,7 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'ready.tsv'), [
       'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
-      'RQ-OPEN-B\tashlrai/phantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
+      'RQ-OPEN-B\tphantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
       'RQ-OPEN-C\tphantom\t\tfrontier\tprompts/c.md\t{"preferred_lane":"claude"}',
       'RQ-LANED\tphantom\tdevin\twork\t/Users/x/prompts/d.md',
     ].join('\n'));

@@ -349,7 +349,11 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
         routerQueueText = queue.state === 'healthy' ? queue.text : null;
       }
       const spec = readyEnvelopeSpec(routerQueueText, first);
-      const resolved = spec === 'invalid' ? null : resolveReadyMarketRow(cells, spec ?? {});
+      // dispatchd's ok-check requires `"/" not in f[1]` before the market or
+      // an envelope is consulted: a slash repo names no checkout, so the row
+      // is dead work — invalid like readyMarketLine, never supply.
+      const resolved = spec === 'invalid' || (cells[1] ?? '').includes('/')
+        ? null : resolveReadyMarketRow(cells, spec ?? {});
       if (resolved === null) {
         result = { rows: [], dropped: 1, invalid: 1, unhinted: 0, unhintedRows: [] };
       } else if (resolved.hint === null) {
