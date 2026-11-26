@@ -496,6 +496,37 @@
  *               absent is 'missing' (verified-empty). Act:
  *               `phm fleet claim-drift`, `phm agents bus show`,
  *               `phm agents bus claim list --key`.
+ *   send-gate   the outbound send gate every local bus write, claim and
+ *               send passes through — the kill-switch sentinel and the
+ *               comms soft-pause flag `localWriteGate`/`localBusHold`
+ *               consult, read through the same `readKillSwitch` and
+ *               `probePauseState` inspections `agents bus status`'s
+ *               `sendGate` section serves, so the two surfaces can never
+ *               disagree. Until now the gate was invisible here: pending
+ *               items kept listing while every write verb refused, and an
+ *               agent had to already know `agents bus status` to learn
+ *               why nothing could drain. An engaged kill switch lists as
+ *               `send-gate-kill`, a set pause flag as `send-gate-pause` —
+ *               each naming the gate and its verdict, since claims, sends
+ *               and bus writes refuse until it clears; an uninspectable
+ *               or unsafe gate file lists the same kind one band lower,
+ *               because the send path fails closed and refuses as if
+ *               engaged while the probe honestly reports unknown rather
+ *               than calling it a decision someone made. `since` is the
+ *               pause flag's recorded start — the sentinel keeps no
+ *               provable time, so kill items and unparseable flags stay
+ *               null — and `expiresAt` stays null: a gate waits for its
+ *               release, never a guessed deadline. Both gates clear is a
+ *               verified-open source with a real zero; either probe's own
+ *               unknown verdict degrades the source — unknown stays
+ *               unknown, never an open gate passed off as fact. The reads
+ *               are total by contract and each keeps its own try, matching
+ *               the bus-status probe, so one throwing read cannot hide the
+ *               other's verdict — a throw synthesizes the same 'unknown'
+ *               verdict the fail-closed send path applies. Act: `phm agents bus status --json`, `phm fleet
+ *               status`, `phm fleet resume` (the kill item's release —
+ *               the pause flag clears through the owner 'resume' comms
+ *               command or `setPause(false)`, which no CLI verb wraps).
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -539,6 +570,7 @@ import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-
 import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
 import { readOwnerAwaitingReplies, readOwnerUndeliveredReplies, type OwnerAwaitingReplies, type OwnerUndeliveredReplies } from './owner-thread.js';
 import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, readCommsRequests, type CommsRequestsRead } from './requests.js';
+import { probePauseState, type PauseProbe } from './pause.js';
 import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
 import { readSlackJournal, type SlackJournalRead, type SlackObservation } from '../agents/slack-journal.js';
 import { readSlackSendReceipts, type SlackSendReceiptRead } from '../agents/slack-send-receipts.js';
@@ -567,6 +599,7 @@ import { handoffPressure } from '../agents/session-handoff-schema.js';
 import { ashlrHome } from '../cloud/store.js';
 import { listWorkBoard, WORK_BOARD_MAX_LIMIT, type WorkBoardResult } from './work-board.js';
 import type { WorkItemState } from './work-item-state.js';
+import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -581,6 +614,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
+  'send-gate',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -608,6 +642,7 @@ export const UNIFIED_INBOX_KINDS = [
   'leader-reply-failed', 'leader-reply-orphaned',
   'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
   'claim-drift-bus', 'claim-drift-coordination', 'claim-drift-owner',
+  'send-gate-kill', 'send-gate-pause',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -843,6 +878,10 @@ export interface UnifiedInboxOptions {
   readFleetCoordination?: typeof readFleetCoordinationPending;
   /** Claim-drift seam; default reads the same `fleet.claim-drift.v1` verdict `phm fleet claim-drift` and the bus-status probe's `claimDrift` section serve. */
   readClaimDrift?: typeof readClaimStoreDrift;
+  /** Kill-switch seam; default reads the sentinel through `readKillSwitch` — the same inspection `agents bus status`'s sendGate section serves. */
+  readKillSwitch?: typeof readKillSwitch;
+  /** Comms-pause seam; default reads `probePauseState` — the same inspection the sendGate pause verdict serves. */
+  probePause?: typeof probePauseState;
   /** Optional narrowing of the returned item list by stored source, severity,
    * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
@@ -3227,6 +3266,84 @@ function claimDriftItems(read: NonNullable<UnifiedInboxOptions['readClaimDrift']
 }
 
 /**
+ * The outbound send gate every local bus write, claim and send passes
+ * through — `localWriteGate`/`localBusHold`'s two inspections: the
+ * kill-switch sentinel (`readKillSwitch`) and the comms soft-pause flag
+ * (`probePauseState`), the same reads `agents bus status`'s `sendGate`
+ * section serves, so the two surfaces can never disagree. Until now the
+ * gate was invisible here: pending items kept listing while every write
+ * verb refused, and an agent had to already know `agents bus status` to
+ * learn why nothing could drain. An engaged kill switch lists as
+ * `send-gate-kill`, a set pause flag as `send-gate-pause` — each naming
+ * the gate and its verdict; an uninspectable or unsafe gate file lists
+ * the same kind one severity band lower, because the send path fails
+ * closed and refuses as if engaged while the probe honestly reports
+ * unknown rather than calling it a decision someone made. `since` is the
+ * pause flag's recorded start — the sentinel keeps no provable time, so
+ * kill items and unparseable flags stay null — and `expiresAt` stays
+ * null: a gate waits for its release, never a guessed deadline. Both
+ * gates clear is a verified-open source with a real zero; either probe's
+ * own unknown verdict degrades the source — unknown stays unknown, never
+ * an open gate passed off as fact. The reads are total by contract and
+ * each keeps its own try, matching the bus-status probe, so one throwing
+ * read cannot hide the other's verdict — a throw synthesizes the same
+ * 'unknown' verdict the fail-closed send path applies.
+ */
+function sendGateItems(readKill: NonNullable<UnifiedInboxOptions['readKillSwitch']>,
+  probePause: NonNullable<UnifiedInboxOptions['probePause']>): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let kill: KillSwitchReadResult;
+  try { kill = readKill(); }
+  catch { kill = { state: 'unknown', sourceState: 'degraded', reason: 'uninspectable', path: '', errorCode: null }; }
+  let pause: PauseProbe;
+  try { pause = probePause(); }
+  catch { pause = { state: 'unknown', since: null, reason: 'could not be checked' }; }
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  if (kill.state !== 'inactive') {
+    const engaged = kill.state === 'active';
+    items.push({
+      id: 'send-gate:kill',
+      source: 'send-gate',
+      kind: 'send-gate-kill',
+      // A positively engaged sentinel halts every claim and send — the
+      // same fleet-wide blockage the refused work feed ranks high; an
+      // unproven one still refuses but cannot be called a decision.
+      severity: engaged ? 'high' : 'warn',
+      blocking: false,
+      title: engaged ? 'Kill switch engaged — bus writes held' : 'Kill switch state unknown — writes refused',
+      detail: oneLine(engaged
+        ? 'the kill-switch sentinel is present — claims, sends and every local bus write refuse until it is released'
+        : `the sentinel could not be inspected (${kill.reason}) — the send gate fails closed and refuses writes as if engaged`, DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      act: engaged
+        ? ['phm fleet resume', 'phm agents bus status --json', 'phm fleet status']
+        : ['phm agents bus status --json', 'phm fleet status'],
+    });
+  }
+  if (pause.state !== 'clear') {
+    const paused = pause.state === 'paused';
+    const sinceMs = paused && pause.since !== null && Number.isFinite(pause.since) ? pause.since : null;
+    items.push({
+      id: 'send-gate:pause',
+      source: 'send-gate',
+      kind: 'send-gate-pause',
+      severity: paused ? 'high' : 'warn',
+      blocking: false,
+      title: paused ? 'Comms pause set — bus writes held' : 'Comms pause state unknown — writes refused',
+      detail: oneLine(paused
+        ? `the comms pause flag is set${sinceMs === null ? '' : ` since ${iso(sinceMs)}`} — claims, sends and every local bus write refuse until it clears`
+        : `pause.json could not be inspected (${pause.reason ?? 'unknown'}) — the send gate fails closed and refuses writes as if paused`, DETAIL_MAX) || null,
+      since: sinceMs === null ? null : iso(sinceMs),
+      expiresAt: null,
+      act: ['phm agents bus status --json', 'phm fleet status'],
+    });
+  }
+  const state: UnifiedInboxSourceState =
+    kill.state === 'unknown' || pause.state === 'unknown' ? 'degraded' : 'healthy';
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
+}
+
+/**
  * The same drop inbox `runEmailDropOnce` scans, resolved at the shared runs
  * dir: saved email-drop config → `inboxDir` → `readEmailDropInbox`. A missing
  * config or inbox dir is 'missing' (the pass treats an absent inbox as an
@@ -3397,6 +3514,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const leaderReplies = await leaderReplyItems(options.readLeaderReplies ?? readLeaderRepliesLedger, options, now);
   const coordination = coordinationItems(options.readFleetCoordination ?? readFleetCoordinationPending);
   const claimDrift = claimDriftItems(options.readClaimDrift ?? readClaimStoreDrift, options);
+  const sendGate = sendGateItems(options.readKillSwitch ?? readKillSwitch, options.probePause ?? probePauseState);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -3430,8 +3548,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'leader-replies': leaderReplies.report,
     coordination: coordination.report,
     'claim-drift': claimDrift.report,
+    'send-gate': sendGate.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
