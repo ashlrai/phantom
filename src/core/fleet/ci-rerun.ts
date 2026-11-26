@@ -73,24 +73,30 @@ function summarizeFlakes(attempts: readonly Entry[], nowMs: number, verdicts: re
   return recurringFlakes([...testsByAttempt, ...verdicts], { nowMs });
 }
 
-/** Fired reruns (ok call rows) still awaiting a run verdict, oldest first. */
-function pendingVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
-  const verdicted = new Set<string>();
-  const fired = new Map<string, Entry>();
-  const testConflicts = new Set<string>();
+/** Reconcile call receipts without treating replays as new calls. */
+function observedCallResults(entries: readonly Entry[], nowMs: number): Entry[] {
+  const calls = new Map<string, { first: Entry; outcomeConflict: boolean; testConflict: boolean }>();
   for (const e of entries) {
-    if (Date.parse(e.at) > nowMs) continue;
+    if ((e.outcome !== 'ok' && e.outcome !== 'failed') || Date.parse(e.at) > nowMs) continue;
     const key = rerunKey(e);
-    if (e.outcome === 'verdict') verdicted.add(key);
-    else if (e.outcome === 'ok') {
-      const prev = fired.get(key);
-      if (prev && prev.test !== e.test) testConflicts.add(key);
-      if (!prev || Date.parse(e.at) < Date.parse(prev.at)) fired.set(key, e);
+    const call = calls.get(key);
+    if (!call) {
+      calls.set(key, { first: e, outcomeConflict: false, testConflict: false });
+      continue;
     }
+    call.outcomeConflict ||= call.first.outcome !== e.outcome;
+    call.testConflict ||= call.first.test !== e.test;
+    if (Date.parse(e.at) < Date.parse(call.first.at)) call.first = e;
   }
-  return [...fired]
-    .filter(([key, e]) => !verdicted.has(key) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
-    .map(([key, entry]) => testConflicts.has(key) ? { ...entry, test: undefined } : entry)
+  return [...calls.values()].filter(call => !call.outcomeConflict)
+    .map(({ first, testConflict }) => testConflict ? { ...first, test: undefined } : first);
+}
+
+/** Fired reruns still awaiting a run verdict, oldest first. */
+function pendingVerdicts(entries: readonly Entry[], calls: readonly Entry[], nowMs: number): Entry[] {
+  const verdicted = new Set(entries.filter(e => e.outcome === 'verdict' && Date.parse(e.at) <= nowMs).map(rerunKey));
+  return calls
+    .filter(e => e.outcome === 'ok' && !verdicted.has(rerunKey(e)) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
     .sort(compareVerdictPosition);
 }
 
@@ -155,6 +161,7 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
   } catch { /* absent journal */ }
   const observed = entries.filter(e => Date.parse(e.at) <= now);
   const attempts = observedAttempts(observed, now);
+  const calls = observedCallResults(observed, now);
   const verdicts = observedVerdicts(observed, now);
   const verdictTally = { pass: 0, fail: 0, inconclusive: 0 };
   for (const e of verdicts) if (e.verdict) verdictTally[e.verdict]++;
@@ -164,14 +171,14 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
     recent: observed.slice(-100),
     counts: {
       attempted: attempts.length,
-      ok: observed.filter(e => e.outcome === 'ok').length,
-      failed: observed.filter(e => e.outcome === 'failed').length,
+      ok: calls.filter(e => e.outcome === 'ok').length,
+      failed: calls.filter(e => e.outcome === 'failed').length,
     },
     lastHour: hourlyAttempts(attempts, now),
     recurringFlakes: summarizeFlakes(attempts, now, verdicts),
     verdicts: {
       ...verdictTally,
-      pending: pendingVerdicts(observed, now).length,
+      pending: pendingVerdicts(observed, calls, now).length,
       resolutionRate: resolved > 0 ? verdictTally.pass / resolved : null,
     },
   };
@@ -279,7 +286,8 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
             s.flakeFixesQueued = enqueueFlakeFixes(flakes, queuePath).length;
           }
         }
-        const pending = pendingVerdicts(journal.filter(e => e.repo === repo), now());
+        const pendingAt = now();
+        const pending = pendingVerdicts(repoEntries, observedCallResults(repoEntries, pendingAt), pendingAt);
         s.verdictsPending = pending.length;
         // A future-dated verdict is invisible to the tally but still deduplicates writes.
         const recordedVerdicts = new Set(journal.filter(e => e.outcome === 'verdict').map(rerunKey));

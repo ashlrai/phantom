@@ -128,6 +128,32 @@ describe('resident CI reruns', () => {
     expect(gh).not.toHaveBeenCalled();
   });
 
+  it('counts replayed call results once and withholds contradictory calls from polling', async () => {
+    const { opts, gh } = setup();
+    const first = {
+      repo: 'org/repo', head: 'a'.repeat(40), pr: 1, runId: 123,
+      at: '2026-01-01T11:40:00Z', outcome: 'ok',
+    };
+    const failed = { ...first, runId: 124, outcome: 'failed' };
+    const conflict = { ...first, runId: 125 };
+    const rows = [
+      first, { ...first, at: '2026-01-01T11:59:00Z' },
+      failed, failed, conflict, { ...conflict, outcome: 'failed' },
+      { ...first, outcome: 'failed', at: '2026-01-01T12:01:00Z' },
+    ];
+    appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.counts).toEqual({ attempted: 0, ok: 1, failed: 1 });
+    expect(read.recent).toEqual(rows.slice(0, -1));
+    expect(read.verdicts.pending).toBe(1);
+
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos['org/repo']?.verdictsPending).toBe(1);
+    expect(gh.mock.calls).toEqual([[['api', 'repos/org/repo/actions/runs/123']]]);
+    expect(readCiReruns(opts.journalPath!, Date.parse('2026-01-01T12:01:00Z')).verdicts.pending).toBe(0);
+  });
+
   it('keeps a future verdict out of the report until its timestamp without polling again', async () => {
     const { opts, gh, report } = setup();
     await runCiRerunMaintenance(opts);
