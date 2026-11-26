@@ -533,7 +533,11 @@ route-decision events.
 The Leader board's `queueDepthByTier` counts READY work across the fleet,
 including rows with an empty lane column or an explicit
 `"preferred_lane": null` in the requirements. These open jobs have no
-per-lane attribution.
+per-lane attribution. For five-column dispatcher rows the tier tally uses the
+matching `router-queue.md` envelope when present and excludes jobs whose
+requirements the market rejects. If the envelope file is absent, the tally
+uses the lane column. If it is unreadable or exceeds the read limit, tier
+depth is unknown (`null`).
 
 The Leader board estimates the number of conflicting PRs from rebase job IDs
 in `ready.tsv`. It includes parked rebase jobs, expands batches into their
