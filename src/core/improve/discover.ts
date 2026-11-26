@@ -51,6 +51,17 @@
  *     so the self-improvement loop's own machinery degrading becomes work
  *     instead of sitting in a state file `phm daemon status` only ever
  *     shows the last tick of;
+ *   - the post-merge credit release funnel's recurring machinery
+ *     failures: the per-reason skip tallies and source-completeness
+ *     verdicts sweepPostMergeCreditReleases records on each daemon tick's
+ *     producerMaintenance (creditReleaseBacklogItems below), so a release
+ *     funnel that keeps failing closed — degraded observation or
+ *     stability ledgers, unparseable merge-witness timestamps, throws in
+ *     the eligibility path, incomplete sweep sources or skips no reason
+ *     names — becomes work instead of sitting in a state file `phm daemon
+ *     status` only ever shows the last tick of, while the funnel's
+ *     designed holds (observation window, missing witnesses, the
+ *     operational-release ops gate) never do;
  *   - the cross-review journal's recurring findings: the reject reason
  *     codes and review failures `fleet/cross-review.jsonl` records for
  *     each repository's pull requests (crossReviewBacklogItems below), so
@@ -1276,6 +1287,7 @@ import { localGateBacklogItems } from './gate-backlog.js';
 import { passkAlertBacklogItems } from './passk-backlog.js';
 import { frictionBacklogItems } from './friction-backlog.js';
 import { tickHealthBacklogItems } from './tick-health-backlog.js';
+import { creditReleaseBacklogItems } from './credit-release-backlog.js';
 import { crossReviewBacklogItems } from './xreview-backlog.js';
 import { emptyTagBacklogItems } from './empty-tag-backlog.js';
 import { postMergeBacklogItems } from './postmerge-backlog.js';
@@ -1475,6 +1487,20 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // while its phase or reason recurs inside the 7-day window and only for
   // the fleet's own repository.
   items.push(...await tickHealthBacklogItems({ repo }));
+
+  // Post-merge credit release funnel: the per-reason skip tallies and
+  // source-completeness verdicts the producer-maintenance sweep records on
+  // each daemon tick become backlog items too. Until now they only ever
+  // reached `phm daemon status`, which prints the LAST tick's
+  // producerMaintenance summary; the retained history daemon.json keeps
+  // (100 ticks) was read by no fold, so a release funnel that keeps
+  // failing closed never became work — and released credit is what
+  // attestPostMergeCreditSkillCard signs onto learned-skill cards, so a
+  // stuck funnel starves the skills lane. Same bounded no-follow state
+  // read; an item emits only while its reason or cell recurs across
+  // in-window sweep passes, designed holds never emit, and only the
+  // fleet's own repository inherits the items.
+  items.push(...await creditReleaseBacklogItems({ repo }));
 
   // Cross-review journal: the recurring reject reasons and review failures
   // the cross-model review audit log records become backlog items too —
