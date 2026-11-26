@@ -4721,6 +4721,176 @@ describe('board section', () => {
   });
 });
 
+describe('workBoard section', () => {
+  type Setup = BusWorkMineOptions & { clock: { now: number }; root: string; runsRoot: string };
+
+  function board(options: Setup, agent = 'atlas') {
+    const result = readBusWorkMine(agent, options);
+    if (result.status !== 'ok') throw new Error(`work mine failed: ${result.status}`);
+    const section = result.workBoard;
+    if (section.status !== 'ok') throw new Error(`workBoard unavailable: ${section.reason}`);
+    return section;
+  }
+
+  it('reports a verified-empty board and an unreadable inbox scan honestly', () => {
+    const options = setup();
+    register(options, 'atlas');
+    const empty = readBusWorkMine('atlas', options);
+    expect(empty.status).toBe('ok');
+    if (empty.status !== 'ok') throw new Error('unreachable');
+    expect(empty.workBoard).toMatchObject({ status: 'ok', matched: 0, items: [], truncated: false });
+
+    // A poisoned inbox scan can never pass as an empty board.
+    postClaimable(options, 'w-one');
+    writeFileSync(join(options.root, 'bus-inbox', 'messages.json'), '{invalid', { mode: 0o600 });
+    const broken = readBusWorkMine('atlas', options);
+    expect(broken.status).toBe('ok');
+    if (broken.status !== 'ok') throw new Error('unreachable');
+    expect(broken.workBoard).toEqual({ status: 'unavailable', reason: 'work-board-unreadable' });
+  });
+
+  it('lists only pending requests involving the agent, with honest roles and board states', () => {
+    // Real clock: mutateBusWorkClaim stamps leaseUntil from Date.now(), so
+    // claim-bound items need wall-time receipts like every takeWork test.
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    // Claim-bound items post while the test clock still equals real time —
+    // mutateBusWorkClaim stamps leaseUntil from Date.now() and refuses a
+    // receipt stamped in its future.
+    // ASSIGNED to atlas: owner + claim receipt; the 3s lease is dead by the
+    // board read below but inside the freshness window, so no running
+    // evidence stands.
+    postClaimable(options, 'w-own', { to: 'agent:nova', from: 'agent:ghost' });
+    takeWork(options, 'w-own', 'atlas', 3_000);
+    // RUNNING under nova's live lease — never a pending board row.
+    postClaimable(options, 'w-run', { to: 'agent:atlas', from: 'agent:nova' });
+    takeWork(options, 'w-run', 'nova');
+    options.clock.now += 5_000;
+    const laterAt = options.clock.now;
+    // RECEIVED, addressed to atlas under its agent: label.
+    postClaimable(options, 'w-addr', { to: 'agent:atlas', from: 'agent:nova' });
+    // RECEIVED, sent by atlas — the 'sent' role, nobody addressed.
+    postClaimable(options, 'w-sent', { to: 'agent:nova', from: 'agent:atlas' });
+    // VERIFIED by nova's reply — done is not pending.
+    postClaimable(options, 'w-ver', { to: 'agent:nova', from: 'agent:atlas' });
+    expect(appendBusInbox({ id: 'r-ver', from: 'agent:nova', to: 'agent:atlas', priority: 'P2', ttl: 120_000,
+      body: { inReplyTo: 'w-ver', verified: { pr: 7, head: 'abc123' } } }, { root: options.root, now: options.now }).status).toBe('posted');
+    // BLOCKED: ghost's request to atlas answered with a named dependency.
+    postClaimable(options, 'w-blk', { to: 'agent:atlas', from: 'agent:ghost' });
+    expect(appendBusInbox({ id: 'r-blk', from: 'agent:atlas', to: 'agent:ghost', priority: 'P2', ttl: 120_000,
+      body: { inReplyTo: 'w-blk', blocked: { dependency: 'needs api key' } } }, { root: options.root, now: options.now }).status).toBe('posted');
+    // Involves nobody the digest asks about.
+    postClaimable(options, 'w-other', { to: 'agent:ghost', from: 'agent:someone' });
+
+    const section = board(options);
+    expect(section.matched).toBe(4);
+    expect(section.truncated).toBe(false);
+    const byId = new Map(section.items.map(item => [item.id, item]));
+    expect([...byId.keys()].sort()).toEqual(['w-addr', 'w-blk', 'w-own', 'w-sent']);
+
+    const addr = byId.get('w-addr')!;
+    expect(addr).toMatchObject({ state: 'RECEIVED', from: 'agent:nova', to: 'agent:atlas',
+      channel: 'bus', channelRef: null, owner: null, claimReceipt: null, blockedOn: null,
+      roles: ['addressed'] });
+    expect(addr.missing).toEqual(expect.arrayContaining(['named owner', 'durable claim receipt']));
+    expect(addr.receivedAt).toBe(new Date(laterAt).toISOString());
+
+    expect(byId.get('w-sent')!.roles).toEqual(['sent']);
+
+    const own = byId.get('w-own')!;
+    expect(own).toMatchObject({ state: 'ASSIGNED', owner: 'atlas', roles: ['owner'], blockedOn: null });
+    expect(own.claimReceipt).toMatch(/^bus-claim:w-own:\d+:\d+$/);
+
+    const blk = byId.get('w-blk')!;
+    expect(blk).toMatchObject({ state: 'BLOCKED', blockedOn: 'needs api key', roles: ['addressed'] });
+    expect(blk.missing).toEqual([]);
+
+    // The same pending requests surface under the other party's digest:
+    // nova sent w-addr, is addressed by w-sent and w-own — w-blk involves
+    // only atlas and ghost, and w-run/w-ver are RUNNING/VERIFIED for
+    // everyone, so none of them list.
+    const sent = board(options, 'nova');
+    expect(sent.matched).toBe(3);
+    const novaById = new Map(sent.items.map(item => [item.id, item]));
+    expect(novaById.get('w-addr')!.roles).toEqual(['sent']);
+    expect(novaById.get('w-sent')!.roles).toEqual(['addressed']);
+    expect(novaById.get('w-own')!.roles).toEqual(['addressed']);
+    expect(novaById.has('w-blk')).toBe(false);
+    expect(novaById.has('w-run')).toBe(false);
+    expect(novaById.has('w-ver')).toBe(false);
+  });
+
+  it('keeps an item out when no role matches and reports sub-read honesty', () => {
+    const options = setup();
+    register(options, 'atlas');
+    postClaimable(options, 'w-theirs', { to: 'agent:nova', from: 'agent:ghost' });
+    const section = board(options);
+    expect(section).toMatchObject({ matched: 0, items: [], truncated: false });
+    expect(section.claims).toBeDefined();
+  });
+
+  it('applies the shared filters: window, id, sender, channel, contains, job/inReplyTo', () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'ghost');
+    expect(createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['atlas', 'nova'] }, options).status)
+      .toBe('created');
+    postClaimable(options, 'w-one', { to: 'agent:atlas', from: 'agent:nova' });
+    options.clock.now += 30_000;
+    postClaimable(options, 'w-two', { to: 'agent:atlas', from: 'agent:nova' });
+    options.clock.now += 30_000;
+    postClaimable(options, 'w-three', { to: 'agent:atlas', from: 'agent:ghost' });
+    postClaimable(options, 'w-grp', { to: 'group:eng:general', from: 'agent:nova' });
+
+    expect(board(options).matched).toBe(4);
+
+    // [since, before) on the envelope's recorded receivedAt.
+    const windowed = board({ ...options, since: 31_000, before: 61_000 });
+    expect(windowed.items.map(item => item.id)).toEqual(['w-two']);
+
+    // Exact envelope id.
+    const byId = board({ ...options, id: 'w-one' });
+    expect(byId.items.map(item => item.id)).toEqual(['w-one']);
+
+    // Sender filters resolve through the registry: 'nova' keeps the two
+    // agent:nova rows; 'ghost' the third; excludeFrom inverts.
+    expect(board({ ...options, from: 'nova' }).items.map(item => item.id).sort())
+      .toEqual(['w-grp', 'w-one', 'w-two']);
+    expect(board({ ...options, from: 'ghost' }).items.map(item => item.id)).toEqual(['w-three']);
+    expect(board({ ...options, excludeFrom: 'nova' }).items.map(item => item.id)).toEqual(['w-three']);
+
+    // Channel keeps requests whose `to` carries group:<name>: — membership
+    // is what makes the room address involve atlas at all.
+    expect(board({ ...options, channel: 'eng' }).items.map(item => item.id)).toEqual(['w-grp']);
+    expect(board({ ...options, channel: 'ops' }).matched).toBe(0);
+
+    // contains matches the scrubbed state/missing/dependency text — never
+    // routing labels, so the ghost sender's row does not match 'ghost'.
+    expect(board({ ...options, contains: 'named owner' }).matched).toBe(4);
+    expect(board({ ...options, contains: 'ghost' }).matched).toBe(0);
+
+    // job/inReplyTo are honestly empty — a request envelope carries neither.
+    expect(board({ ...options, job: 'J-1' })).toMatchObject({ matched: 0, items: [] });
+    expect(board({ ...options, inReplyTo: 'w-one' })).toMatchObject({ matched: 0, items: [] });
+
+    // priority/bodyKind/result/thread leave the section whole.
+    expect(board({ ...options, priority: 'P0' }).matched).toBe(4);
+    expect(board({ ...options, bodyKind: 'note' }).matched).toBe(4);
+    expect(board({ ...options, result: 'complete' }).matched).toBe(4);
+    expect(board({ ...options, thread: 't-1' }).matched).toBe(4);
+  });
+
+  it('renders the work-board section in the human digest', () => {
+    const options = setup();
+    register(options, 'atlas');
+    postClaimable(options, 'w-one');
+    const result = readBusWorkMine('atlas', options);
+    if (result.status !== 'ok') throw new Error('unreachable');
+    const lines = formatBusWorkMine(result);
+    expect(lines.some(line => line.startsWith('work-board=1 shown=1'))).toBe(true);
+    expect(lines.some(line => line.includes('[RECEIVED id=w-one addressed'))).toBe(true);
+  });
+});
+
 describe('sessions section', () => {
   const AT = '2026-11-20T10:00:00.000Z';
   const AT_MS = Date.parse(AT);

@@ -13,7 +13,11 @@
  * conversation threads waiting on its answer, its own unanswered asks,
  * blocked threads it is party to, wake hints, the next inbox page,
  * legacy `phm bus` mailbox mail, the shared task board digest, the
- * fleet's open session-handoff checkpoints awaiting resume or failover,
+ * coordination work board's requests still needing a decision that
+ * involve the agent — addressed to it, sent by it or naming it claim
+ * owner, each carrying the board's own RECEIVED/ASSIGNED/BLOCKED
+ * classification, claim receipt and missing evidence —
+ * the fleet's open session-handoff checkpoints awaiting resume or failover,
  * the advisory fleet coordination ledger's pending surface addressed to
  * or owed by the agent — live messages, assignment proposals and
  * unpublished RESULT intents through the same

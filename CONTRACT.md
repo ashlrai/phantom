@@ -3369,7 +3369,7 @@ no execution authority; the token returns only to its acquirer.
 `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `coordination?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `bodyKind?`, `result?: WorkResultOutcome`, `thread?: string`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, id?, inReplyTo?, bodyKind?, result?, thread?, claims, jobs, announced, next, handoffs, deadLetters, threads, awaiting, blocked, wakes, inbox, mailbox, board, sessions, coordination, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, id?, inReplyTo?, bodyKind?, result?, thread?, claims, jobs, announced, next, handoffs, deadLetters, threads, awaiting, blocked, wakes, inbox, mailbox, board, workBoard, sessions, coordination, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, a `job` outside the same rule
 (`invalid-job`), a `contains` outside the shared bounded free-text
@@ -3726,6 +3726,53 @@ and a thread rollup lists only while that surviving delivery remains.
 forms, composing with the other filters. Board
 content stays `trust:'untrusted'` shared data: it coordinates attention,
 never grants execution authority.
+`workBoard` is the digest's window into the coordination work board —
+the same `listWorkBoard`/`classifyWorkItem` projection `phm fleet
+work-board`, `fleet_work_board` and the unified inbox's `work-board`
+source serve — narrowed to the requests still needing a decision
+(`RECEIVED`/`ASSIGNED`/`BLOCKED`; `RUNNING`/`VERIFIED` never list) that
+involve the agent: `addressed` — the request's `to` satisfies the shared
+`agentPendingAddressMatcher` rule `bus next` claims by (any label of the
+resolved identity or a member channel's `group:<name>:` address, minus
+the agent's own channel posts); `sent` — the request's `from` is the
+agent under the same `conversationScope` identity scope the thread
+sections use; `owner` — the claim owner bound to the receipt denotes the
+agent under that scope. An item matching no role never lists. The read
+is the board's own bounded newest-`WORK_BOARD_MAX_LIMIT` request scan:
+`matched` counts involving pending items inside that read before the
+display cap (`WORK_MINE_WORK_BOARD_MAX`, newest `receivedAt` first) and
+`truncated` marks the board's own cap or the display cap cutting more —
+never an invented total. Each `BusWorkMineWorkBoardItem` carries the
+envelope `id`, the board `state`, ISO `receivedAt`, `channel`/`channelRef`
+routing, the raw `from`/`to` envelope labels (untrusted data, never
+authenticated identity; null only on a hand-built item — `listWorkBoard`
+always sets them), the named `owner`, the `bus-claim:` receipt citation
+(never a fencing token), the classifier's `missing` evidence list, the
+`blockedOn` dependency a BLOCKED reply named (null otherwise) and the
+`roles` that matched. The section reports the board read's own
+`claims`/`coordination` sub-read states (`unavailable` means owner
+evidence is unknown — owners may be null — never an empty verified set);
+an unreadable inbox scan reports `{status:'unavailable'}` rather than an
+empty board passed off as fact. Under `job`/`inReplyTo` the section is
+honestly empty — a board item is a request envelope that carries no job
+citation the projection exposes and, by the board's own request rule, no
+in-reply-to citation. `contains` matches the item's scrubbed
+state/channel/missing-evidence/dependency text (ids, routing labels,
+owner and receipt stay out — they have their own fields and filters),
+`since`/`before` bound `receivedAt` on the shared `[since, before)`
+window, `channel` keeps requests whose `to` carries `group:<name>:` (no
+provable `to` never lists), `from`/`excludeFrom` match the request's
+`from` label under `agentRefAddressMatcher` (an item naming no provable
+`from` never lists under either), `id` keeps the request whose envelope
+id equals the value, and `priority`/`bodyKind`/`result`/`thread` leave
+the section whole — the board projection carries no per-item band, body
+kind, wire result outcome or thread label. An item may also appear under
+`next`, `handoffs`, `inbox` or the thread sections with its raw envelope
+view — this section adds the ownership/verification classification those
+projections do not compute, the same split the unified inbox keeps
+between its `bus` and `work-board` sources. Board content stays
+`trust:'untrusted'` shared data: it coordinates attention, never grants
+execution authority.
 `sessions` is the digest's window into the fleet's open session-handoff
 checkpoints — the same `listSessionHandoffs` bounded scan
 `phm checkpoint handoff list`, `fleet_session_handoffs` and the bus
@@ -3889,9 +3936,10 @@ The `seats` section keeps only `node-job` handoff records whose ref is
 the job id — a `bus-claim` ref is a coordination claim key, not a job
 citation — and seats left with no records drop out of `matched`.
 `sessions` keeps only the open checkpoint whose journal job id equals
-it, delegating to the shared list filter, and `coordination` reports
+it, delegating to the shared list filter, `coordination` reports
 honest empties — a ledger record carries no job citation the digest
-could prove.
+could prove — and `workBoard` reports the same honest empty: a board
+item's projected fields expose no job citation either.
 Every count stays the filtered total — `matched`/`open`/`truncated` all
 measure the filtered sets — and a row whose job relation cannot be
 proven (a scope-key claim, an unreadable feed, an unresolvable message)
@@ -3925,7 +3973,10 @@ still reporting board membership independent of the text filter), and
 `seats` keeps only handoff records whose held-work `ref`/`branch`/`pr`
 carries the needle — the only descriptive fields a seat record holds —
 and `sessions` matches the checkpoint's lane, model, repo, signal kind,
-tier and needs, and `coordination` matches the scrubbed ledger message
+tier and needs, `workBoard` matches the item's scrubbed state, channel,
+missing-evidence and blocked-dependency text — never the envelope id,
+routing labels, owner or receipt citation, which keep their own fields —
+and `coordination` matches the scrubbed ledger message
 bodies, proposal `repo`+`task` text and return receipt bodies — never
 record ids or agent labels.
 `channels` is registry context, not pending work, and stays unfiltered
@@ -3954,7 +4005,8 @@ conversations read (thread `lastAt`, the same query
 tasks never match for want of a recorded time, and a thread rollup lists
 only while a surviving delivery remains), `sessions` match the
 journal's latest revision `at`, `coordination` bounds each ledger
-record's own `at`, and `seats` stays unfiltered —
+record's own `at`, `workBoard` bounds each request's `receivedAt` on
+the same inclusive `>=` rule, and `seats` stays unfiltered —
 a pending handoff record's `createdAt` stamps the plan read instant, not
 the held work's age, so no per-record recency exists to filter on.
 `channels` is registry
@@ -3989,7 +4041,9 @@ and `wakes` delegate both bounds to their shared reads —
 upper bound every other bus read's `--before` applies, so the cutoff
 reaches them like every other section; `sessions` bound the journal's
 latest revision `at` on the same `[since, before)` window,
-`coordination` bounds each ledger record's own `at` the same way, while
+`coordination` bounds each ledger record's own `at` the same way,
+`workBoard` bounds each request's `receivedAt` on the same exclusive
+window, while
 `channels` and `seats` carry no
 per-item historical timestamp at all and stay unfiltered. Every count
 stays the filtered total, and an item whose store keeps no timestamp or
@@ -4014,7 +4068,8 @@ unresolvable/unreadable lease names no provable band and never lists,
 the same "unknown stays out" rule the `job` filter applies.
 `jobs`/`announced` (feed jobs carry no wire band in the projection),
 `threads`/`awaiting`/`blocked` (a thread mixes bands), `board` (board
-rows carry no per-item band), `channels`, `sessions`, `coordination`
+rows carry no per-item band), `workBoard` (board items carry no wire
+band), `channels`, `sessions`, `coordination`
 and `seats` stay
 unfiltered —
 registry context and band-less projections, like `channels` under every
@@ -4044,7 +4099,9 @@ blocked ones — is addressed to the room, `wakes` pass `channel` to
 `inbox` passes it to `readAgentInbox` (the member-channel rule — a
 room the agent does not belong to simply has no mail to show), and
 `mailbox` ANDs the `to` prefix into `BusMailbox.pendingFor`'s `match`
-predicate. `board`, `channels`, `sessions`, `coordination` and `seats`
+predicate, and `workBoard` keeps requests whose `to` carries the
+`group:<name>:` prefix — a request naming no provable `to` never
+listing. `board`, `channels`, `sessions`, `coordination` and `seats`
 carry no per-item
 room in
 their projections and stay unfiltered, like they do under `priority`.
@@ -4082,7 +4139,9 @@ remains. `coordination` keeps only ledger records whose recorded sender
 label equals the ref exactly — message `from` fields and return `agent`
 labels, proposals carrying no sender never matching — the same
 exact-label rule `phm fleet coordination inbox --from` applies, never
-resolved through the bus registry, while `sessions` checkpoints, `seats`
+resolved through the bus registry, `workBoard` keeps requests whose
+`from` label the matcher accepts — a request naming no provable `from`
+never listing — while `sessions` checkpoints, `seats`
 handoff records and `channels`
 carry no per-record
 sender in their projections and stay unfiltered, like they do under
@@ -4102,9 +4161,11 @@ lists), the thread sections pass `excludeFrom` into the shared
 conversations read, `wakes`/`inbox` pass it to their own reads, and
 `board` deliveries drop posts whose `sender` resolves to the excluded
 ref while board tasks stay listed — nothing proves a task came from
-the excluded sender — and `coordination` drops only ledger records
+the excluded sender — `coordination` drops only ledger records
 whose recorded sender label equals the excluded value, proposals
-carrying no sender staying listed. The two compose in the same
+carrying no sender staying listed, and `workBoard` drops requests
+whose `from` label resolves to the excluded ref — a request naming no
+provable `from` stays listed. The two compose in the same
 include-then-exclude
 order every bus read applies — a sender both included and excluded
 matches nothing; every count stays the filtered total, and the result
@@ -4136,7 +4197,8 @@ jobs citing at least one retained receipt of that kind — the feed fixes
 each citation slot's kind, so `work.post` keeps every job (each cites
 its announcement), `work.status` keeps jobs a status receipt has moved
 (`statusId` non-null), `work.result` keeps jobs a result receipt cites,
-and any other kind is an honest empty match. `board`, `channels`,
+and any other kind is an honest empty match. `board`, `workBoard`
+items — the board projection retains no envelope body — `channels`,
 `sessions`, `coordination` and `seats` carry no per-item retained body
 in their
 projections — board
@@ -4173,7 +4235,8 @@ out" rule `priority` applies) — `inbox` passes it to `readAgentInbox`'s
 member message that is a `work.result` receipt reporting that outcome,
 the same whole-thread member match `agents conversations --result`
 applies — `deadLetters` report honestly empty, a transport envelope's
-protocol-v1 bus body never being a `work.result` — while `board`, `channels`, `sessions`, `coordination` and
+protocol-v1 bus body never being a `work.result` — while `board`, `workBoard` items — the board
+projection exposes no wire result outcome — `channels`, `sessions`, `coordination` and
 `seats`
 carry no per-item result evidence the digest can prove — board post
 bodies are `{threadId, text}` records, session checkpoints keep no
@@ -4211,7 +4274,8 @@ thread evidence — the feed's citing
 receipts are strict `work.post`/`work.status`/`work.result` bodies that
 carry no `thread` field — `board` post bodies are `{threadId, text}`
 records whose `threadId` is the shared board's own thread namespace,
-never a bus thread label — and `channels`/`sessions`/`coordination`/`seats`
+never a bus thread label — `workBoard` items expose no thread label in
+the board projection — and `channels`/`sessions`/`coordination`/`seats`
 carry no per-item
 thread either, so those sections stay unfiltered, like they do under
 `priority`. Every count stays the filtered total, the result echoes
