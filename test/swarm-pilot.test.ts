@@ -10,6 +10,7 @@ import type { UniverseManifest } from '../src/core/universe/types.js';
 const port = vi.hoisted(() => ({
   generate: vi.fn(), run: vi.fn(), evaluate: vi.fn(), delivery: vi.fn(), deliverElite: vi.fn(),
   manifest: vi.fn(), init: vi.fn(), github: vi.fn(),
+  localWorkers: ['planner', 'worker'],
 }));
 vi.mock('node:child_process', async original => ({ ...await original<typeof import('node:child_process')>(), execFileSync: port.github }));
 vi.mock('../src/core/sandbox/policy.js', () => ({ killSwitchOn: () => false }));
@@ -22,7 +23,10 @@ vi.mock('../src/core/universe/delivery-git.js', () => ({ deliveryGit: () => ({
 }) }));
 vi.mock('../src/core/universe/resource-generation.js', () => ({
   checkResourceGenerationWorkspace: vi.fn(), generateResourceCompletion: port.generate,
-  validateResourceGenerationRuntime: () => ({ poolPath: 'pool', bindingsPath: 'bindings' }),
+  validateResourceGenerationRuntime: () => ({ poolPath: 'pool', bindingsPath: 'bindings', localModelConfigPath: 'local' }),
+}));
+vi.mock('../src/core/resources/local-model-refresh.js', () => ({
+  validateResourceLocalModelConfig: () => ({ workers: port.localWorkers.map(workerId => ({ workerId })) }),
 }));
 vi.mock('../src/core/resources/pool-runtime.js', async original => {
   const real = await original<typeof import('../src/core/resources/pool-runtime.js')>();
@@ -62,6 +66,7 @@ let manifests: Map<string, UniverseManifest>;
 const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 beforeEach(() => {
   vi.resetAllMocks();
+  port.localWorkers = ['planner', 'worker'];
   root = realpathSync(mkdtempSync(join(tmpdir(), 'swarm-pilot-')));
   oracle = join(root, 'oracle');
   writeFileSync(oracle, '#!/bin/sh\n', { mode: 0o700 });
@@ -111,6 +116,14 @@ describe('resource-pool swarm pilot', () => {
     });
     writeFileSync(oracle, 'drift');
     await expect(runSwarmPilot(spec(), '/runtime', { root })).rejects.toThrow('oracle-pin-mismatch');
+    expect(port.generate).not.toHaveBeenCalled();
+  });
+
+  it('holds a local worker without explicit inventory enrollment', async () => {
+    port.localWorkers = ['planner'];
+    await expect(runSwarmPilot(spec(), '/runtime', { root, apply: true })).resolves.toMatchObject({
+      status: 'held', excluded: [{ workerId: 'worker', reason: 'local-model-readiness-required' }],
+    });
     expect(port.generate).not.toHaveBeenCalled();
   });
 

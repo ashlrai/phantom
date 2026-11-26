@@ -168,6 +168,25 @@ async function readBoundedBody(response: Response): Promise<string | undefined> 
   return new TextDecoder().decode(joined);
 }
 
+export async function verifyLmStudioModelInventory(options: {
+  baseUrl: string; model: string; signal: AbortSignal; fetchImpl?: typeof fetch;
+}): Promise<boolean> {
+  const base = normalizeNumericLoopbackOllamaBaseUrl(options.baseUrl);
+  const model = boundedText(options.model);
+  if (!base || !model || options.signal.aborted) return false;
+  const signal = AbortSignal.any([options.signal, AbortSignal.timeout(MAX_TIMEOUT_MS)]);
+  try {
+    const response = await (options.fetchImpl ?? fetch)(`${base}/models`, { redirect: 'error', signal });
+    if (!response.ok) return false;
+    const body = await readBoundedBody(response);
+    const parsed = JSON.parse(body ?? '') as { data?: unknown } | null;
+    return !signal.aborted && Array.isArray(parsed?.data) &&
+      parsed.data.filter(row => row !== null && typeof row === 'object' && row.id === model).length === 1;
+  } catch {
+    return false;
+  }
+}
+
 export async function verifyOllamaModelIdentity(
   options: VerifyOllamaModelIdentityOptions,
 ): Promise<OllamaIdentityVerification> {
