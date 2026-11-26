@@ -58,6 +58,7 @@ export interface ResourceLiveAllowance {
 
 export interface ResourceLiveCustom {
   provider: string;
+  logo?: string;
   kind: 'subscription' | 'promo-credit' | 'metered' | 'local' | 'bot';
   source: 'official-endpoint' | 'cli-status' | 'agent-check';
   metered_opt_in: boolean;
@@ -167,14 +168,20 @@ export interface BurnDownPlan {
   /** Lanes in spend order, each once. Lanes whose every allowance is held are absent. */
   lane_order: string[];
   allowances: BurnDownRow[];
-  banked_resets?: { observed_at: string | null; count: number | null; grants: BankedResetGrant[] | null; proposal: BankedResetProposal | null };
+  banked_resets?: { observed_at: string | null; count: number | null; grants: BankedResetGrant[] | null; proposal: BankedResetProposal | null;
+    unknown_reason?: CodexResetBankUnknownReason };
 }
+
+export const CODEX_RESET_BANK_MIN_VERSION = '0.172.0';
+export const CODEX_RESET_BANK_TOO_OLD = `codex-cli-too-old (<${CODEX_RESET_BANK_MIN_VERSION})` as const;
+export const CODEX_RESET_BANK_UNKNOWN_REASONS = [CODEX_RESET_BANK_TOO_OLD, 'codex-cli-version-unknown', 'codex-reset-bank-unavailable'] as const;
+export type CodexResetBankUnknownReason = typeof CODEX_RESET_BANK_UNKNOWN_REASONS[number];
 
 export interface BankedResetGrant {
   count: number;
   kind: 'full' | '5h' | 'weekly';
   expires_at: string;
-  source: 'chatgpt-settings-usage' | 'owner-screenshot';
+  source: 'codex-app-server' | 'chatgpt-settings-usage' | 'owner-screenshot';
 }
 
 export interface BankedResetProposal {

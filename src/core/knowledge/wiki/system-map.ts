@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { checkedCitation } from './citations.js';
 import { groupModules, resolveSpecifier } from './facts.js';
-import { extractMapFacts, mapFactsKey, mapFactsSchema, safeMapPath, sourcePattern } from './system-map-facts.js';
+import { extractMapFacts, mapFactsKey, mapFactsSchema, mapMarks, safeMapPath, sourcePattern } from './system-map-facts.js';
 import { mapBlobs, mapDiff, mapGit, mapTree, objectId } from './system-map-git.js';
 import { isTestFile, isWikiReadable } from './scan.js';
 import { wikiIgnorePaths } from './steering.js';
@@ -211,13 +211,7 @@ function project(snapshot: Snapshot, update: Update, focus?: string) {
     const file = fileNode(selectedPath);
     add(file);
     if (!markedFile) currentFocus = file.id;
-    const seen = new Map<string, number>();
-    for (const [kind, label, line] of selectedFacts.marks) {
-      if (!checkedCitation({ file: selectedPath, line }, selectedFacts.lines)) continue;
-      const key = `${kind}:${selectedPath}:${encodeURIComponent(label)}`;
-      const occurrence = (seen.get(key) ?? 0) + 1;
-      seen.set(key, occurrence);
-      const id = `${key}:${occurrence}`;
+    for (const { id, kind, label, line } of mapMarks(selectedPath, selectedFacts)) {
       if (markedFile && focus !== id) continue;
       if (markedFile) currentFocus = id;
       contains(file, { id, kind, label, anchor: anchor(selectedPath, line) });

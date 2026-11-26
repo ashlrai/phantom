@@ -19,8 +19,11 @@ from urllib.parse import urlsplit
 MAX_AGE = 300_000
 MONTH = 30 * 86_400_000
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-# Only the checkout-known candidate's fd-3 ~/.zai-lane/api_key boundary.
-ZAI_BOUNDARY = "4167335dac896d6de7f8d04d960dc658978c3d37e604fea54109461c996d9919"
+# Checkout-known launchers with the same fd-3 key boundary.
+ZAI_BOUNDARIES = frozenset({
+    "4167335dac896d6de7f8d04d960dc658978c3d37e604fea54109461c996d9919",
+    "f863cb1c9b3938ad4e9ddf242fbf90142fb7e1dbab5b49d81addcb2186b73126",
+})
 
 
 class Held(ValueError):
@@ -209,7 +212,7 @@ def read_quota(path, lane, now):
 
 
 def zai_fingerprint(home, launcher):
-    if sha(snapshot(launcher, 1024 * 1024)[0]) != ZAI_BOUNDARY:
+    if sha(snapshot(launcher, 1024 * 1024)[0]) not in ZAI_BOUNDARIES:
         raise Held("zai-key-boundary-unverified")
     directory = home / ".zai-lane"
     if not directory.is_dir() or not private(directory, 0o700):

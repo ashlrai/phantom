@@ -1,21 +1,27 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { assessProfileCapacity, nodeProfile, NODE_PROFILES, profileCaps } from '../src/core/drive/nodes/profiles.js';
+import { assessProfileCapacity, nodeProfile, profileCaps, readConfiguredNodeProfiles } from '../src/core/drive/nodes/profiles.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { buildNodesSnapshot } from '../src/core/nodes/view.js';
 import type { HostHeadroom } from '../src/core/run/host-headroom.js';
 
 const GIB = 1024 ** 3;
-const mbp = nodeProfile('mbp8')!;
+const nodeProfiles = readConfiguredNodeProfiles(fileURLToPath(new URL('../examples/fleet-profile.json', import.meta.url)));
+const mbp = nodeProfile('mbp8', nodeProfiles)!;
 const ok: HostHeadroom = { freePercent: 30, swapGb: 0.5, pressureLevel: 1 };
 const DISK = 100e9;
 
 describe('mbp8 profile lane sizing', () => {
   it('declares the 8 GB host: 2 agents, no local models, tailnet address only', () => {
-    expect(mbp).toMatchObject({ hostname: 'masons-macbook-pro', tailnetIp: '100.89.122.8', ramBytes: 8 * GIB, maxCliAgents: 2, localModels: false });
-    expect(NODE_PROFILES.map(p => p.id)).toEqual(['mbp8']);
+    expect(mbp).toMatchObject({ hostname: 'worker.example', tailnetIp: '100.64.0.9', ramBytes: 8 * GIB, maxCliAgents: 2, localModels: false });
+    expect(nodeProfiles.map(p => p.id)).toEqual(['mbp8']);
+  });
+  it('does not invent a host when no profile is configured', () => {
+    const root = mkdtempSync(join(tmpdir(), 'missing-fleet-profile-'));
+    expect(readConfiguredNodeProfiles(join(root, 'fleet-profile.json'))).toEqual([]);
   });
   it('caps an 8 GiB host at 2 concurrent agents', () => {
     expect(assessProfileCapacity(mbp, 8 * GIB, ok, DISK)).toMatchObject({ slots: 2, held: null });
@@ -54,7 +60,7 @@ describe('roster state for the mbp8 profile', () => {
     return dir;
   }
   it('lists a never-joined profile host as offline, including when the inventory is missing', () => {
-    const snap = buildNodesSnapshot({ dir: mkdtempSync(join(tmpdir(), 'nodes-')), nowMs: NOW, profiles: NODE_PROFILES });
+    const snap = buildNodesSnapshot({ dir: mkdtempSync(join(tmpdir(), 'nodes-')), nowMs: NOW, profiles: nodeProfiles });
     expect(snap.error).toBe('inventory missing');
     expect(snap.nodes).toEqual([expect.objectContaining({ id: 'mbp8', status: 'offline', source: 'profile', liveJobs: [], profile: expect.objectContaining({ ramGb: 8, maxCliAgents: 2, localModels: false }) })]);
   });
@@ -62,11 +68,11 @@ describe('roster state for the mbp8 profile', () => {
     expect(buildNodesSnapshot({ dir: mkdtempSync(join(tmpdir(), 'nodes-')), nowMs: NOW }).nodes).toEqual([]);
   });
   it('shows a joined, heartbeating host as ready with its profile', () => {
-    const snap = buildNodesSnapshot({ dir: dirWith({ ...emptyState(), sequence: 1, observedAt: NOW, nodes: [node(NOW - 5_000)] }), nowMs: NOW, profiles: NODE_PROFILES });
+    const snap = buildNodesSnapshot({ dir: dirWith({ ...emptyState(), sequence: 1, observedAt: NOW, nodes: [node(NOW - 5_000)] }), nowMs: NOW, profiles: nodeProfiles });
     expect(snap.nodes.find(n => n.id === 'mbp8')).toMatchObject({ status: 'ready', source: 'registry', profile: { label: 'MacBook Pro (8 GB)' } });
   });
   it('flips to offline once heartbeats stop', () => {
-    const snap = buildNodesSnapshot({ dir: dirWith({ ...emptyState(), sequence: 1, observedAt: NOW, nodes: [node(NOW - 10 * 60_000)] }), nowMs: NOW, profiles: NODE_PROFILES });
+    const snap = buildNodesSnapshot({ dir: dirWith({ ...emptyState(), sequence: 1, observedAt: NOW, nodes: [node(NOW - 10 * 60_000)] }), nowMs: NOW, profiles: nodeProfiles });
     expect(snap.nodes.find(n => n.id === 'mbp8')).toMatchObject({ status: 'offline', source: 'registry' });
   });
 });

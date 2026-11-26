@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fleetOrgMap, mapWindowMinutes, ORG_LANES } from '../src/core/fleet/org-map.js';
+import { fleetOrgMap, mapWindowMinutes } from '../src/core/fleet/org-map.js';
 import type { FleetLiveSnapshotV1, FleetLiveRun } from '../src/core/fleet/fleet-types.js';
 import type { FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
 import { projectFleetEdges } from '../src/core/fleet/fleet-edges.js';
@@ -24,8 +24,16 @@ describe('fleet map', () => {
   });
   it('preserves unknown state and unmatched lanes', () => {
     expect(fleetOrgMap(null).sources).toEqual({ fleet: 'unknown', sessions: 'unknown', messages: 'unknown' });
+    expect(fleetOrgMap(null).nodes.some(node => node.kind === 'lane')).toBe(false);
     const snapshot = { generatedAt: 'now', state: 'dark', lanes: [], runs: [run('unknown', null)] } as unknown as FleetLiveSnapshotV1;
     expect(fleetOrgMap(snapshot).nodes.find(node => node.kind === 'job')).toMatchObject({ jobId: 'unknown', lane: 'unknown', provider: 'unknown', model: 'unknown', ageSeconds: null });
+  });
+  it('adds ready profile lanes and uses catalog identity without guessing unready lanes', () => {
+    const profile = { id: 'studio', label: 'Engineering studio', resource: 'custom:studio', provider: 'OpenAI', state: 'ready' as const };
+    const map = fleetOrgMap(null, { profileLanes: [profile, { ...profile, id: 'not-ready', state: 'executor-unavailable' }] });
+    expect(map.nodes.filter(node => node.kind === 'lane')).toEqual([
+      { id: 'lane:studio', kind: 'lane', lane: 'studio', label: 'Engineering studio', provider: 'OpenAI', status: 'ready' },
+    ]);
   });
   it('joins two session lanes, three jobs and a recent leader message without reviving a stale claim', () => {
     const now = Date.parse('2026-11-16T12:00:00Z');
@@ -45,7 +53,7 @@ describe('fleet map', () => {
     expect(map.nodes.filter(node => node.kind === 'job')).toHaveLength(3);
     expect(map.nodes.find(node => node.jobId === 'one')).toMatchObject({ model: 'fixture-model', provider: 'OpenAI', ageSeconds: 90 });
     expect(map.nodes.find(node => node.jobId === 'stale')).toMatchObject({ lane: 'claude', status: 'stale', repo: 'unknown', model: 'unknown' });
-    expect(map.nodes.filter(node => node.kind === 'lane').map(node => node.label)).toEqual([...ORG_LANES]);
+    expect(map.nodes.filter(node => node.kind === 'lane').map(node => node.label)).toEqual(['codex-cmp', 'claude']);
     expect(map.nodes.filter(node => node.kind === 'channel')).toHaveLength(5);
     expect(map.nodes.find(node => node.kind === 'guardian')?.status).toBe('unknown');
     expect(map.edges.filter(edge => edge.kind === 'message')).toEqual([{ id: 'message:leader:lane:claude', kind: 'message', from: 'leader', to: 'lane:claude', provider: 'unknown', count: 2, lastAt: new Date(now).toISOString() }]);
@@ -53,7 +61,7 @@ describe('fleet map', () => {
     const nodeProvider = new Map(map.nodes.map(node => [node.id, node.provider]));
     expect(map.edges.every(edge => edge.provider === nodeProvider.get(edge.from))).toBe(true);
     expect(map.edges.find(edge => edge.id === 'reports:job:one:lane:codex-cmp')?.provider).toBe('OpenAI');
-    expect(map.nodes.find(node => node.id === 'lane:codex-local')?.provider).toBe('Local');
+    expect(map.nodes.find(node => node.id === 'lane:codex-local')).toBeUndefined();
     const ids = new Set(map.nodes.map(node => node.id));
     expect(map.edges.every(edge => ids.has(edge.from) && ids.has(edge.to))).toBe(true);
   });

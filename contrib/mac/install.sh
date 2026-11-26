@@ -1,20 +1,22 @@
 #!/bin/bash
 # install.sh (RQ-MACDISPATCH-RECONCILE): contrib/mac is the single source for the live Mac dispatcher. Diffs the repo
 # files against ~/.ashlr-runs/bin and installs the ones that differ, each with a timestamped backup of the file it replaces.
-#   contrib/mac/install.sh [--dry-run] [--json] [--bin DIR]
+#   contrib/mac/install.sh [--dry-run] [--json] [--bin DIR] [--launcher-pin SHA256]
 #     --dry-run  diff only: report what would change, write nothing
 #     --json     one JSON object on stdout (human diff output is suppressed)
 #     --bin DIR  install target (default $ASHLR_RUNS_BIN, then ~/.ashlr-runs/bin); it must already exist
+#     --launcher-pin SHA256  explicitly adopt the candidate as launch.sh after Security re-pin
 # Exit 0 = ok (installed, or already identical), 1 = a step failed, 2 = usage. No network, no sudo, nothing else is touched.
 # Live files are sha-pinned by Security (G1-CODE-PIN / GS_SHA): re-pin the sha256 values printed here before the next tick.
 set -u
 src=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 FILES="process_snapshot.py desktop_update_interlock.py lane_placement.py work_market.py session_handoff.py dispatchd.py fleet_controller.py concurrency.py batcher.py rebase_order.py batch_sessions.py batch-launch.sh batch-sessions.json local_job.py restock.py launch_precheck.py install-gate.py launch-gate.sh judge_gate.py postrun_pr.py arm_gate.py"
-bin=${ASHLR_RUNS_BIN:-$HOME/.ashlr-runs/bin}; dry=0; json=0
+bin=${ASHLR_RUNS_BIN:-$HOME/.ashlr-runs/bin}; dry=0; json=0; launcher_pin=
 while [ $# -gt 0 ]; do
   case $1 in
     --dry-run) dry=1 ;;
     --json) json=1 ;;
+    --launcher-pin) [ $# -ge 2 ] && [[ "$2" =~ ^[a-f0-9]{64}$ ]] || { echo "install.sh: --launcher-pin needs a SHA-256" >&2; exit 2; }; launcher_pin=$2; shift ;;
     --bin) [ $# -ge 2 ] || { echo "install.sh: --bin needs a directory" >&2; exit 2; }; bin=$2; shift ;;
     -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "usage: install.sh [--dry-run] [--json] [--bin DIR]" >&2; exit 2 ;;
@@ -24,10 +26,17 @@ done
 [ -d "$bin" ] || { echo "install.sh: $bin is not a directory" >&2; exit 1; }
 sha() { shasum -a 256 "$1" | cut -c1-64; }
 say() { [ "$json" = 1 ] || echo "$@"; }
+launcher=$src/host-integration/launch.candidate.sh
+if [ -n "$launcher_pin" ] && [ "$(sha "$launcher")" != "$launcher_pin" ]; then
+  echo "install.sh: launcher pin mismatch" >&2
+  exit 1
+fi
 stamp=$(date +%Y%m%d-%H%M%S); rc=0; rows=""
 
-for f in $FILES; do
-  s=$src/$f; d=$bin/$f; status=; backup=; new=$(sha "$s"); old=
+for f in $FILES launch.sh; do
+  s=$src/$f
+  [ "$f" != launch.sh ] || s=$launcher
+  d=$bin/$f; status=; backup=; new=$(sha "$s"); old=
   if [ -L "$d" ]; then status=error; say "$f: refusing symlink destination $d"
   elif [ ! -e "$d" ]; then status=new
   elif [ -f "$d" ]; then
@@ -35,6 +44,8 @@ for f in $FILES; do
     if [ "$old" = "$new" ]; then status=unchanged; else status=changed; fi
   else status=error; say "$f: $d is not a regular file"; fi
 
+  if [ "$f" = launch.sh ] && [ "$dry" = 0 ] && [ -z "$launcher_pin" ] &&
+    { [ "$status" = changed ] || [ "$status" = new ]; }; then status=held; fi
   if [ "$status" = changed ]; then [ "$json" = 1 ] || diff -u "$d" "$s" | head -n 400; fi
   if [ "$dry" = 0 ] && { [ "$status" = changed ] || [ "$status" = new ]; }; then
     tmp=$d.tmp.$$

@@ -30,7 +30,11 @@ is strictly equal, `--in-reply-to` keeps only bodies whose own `inReplyTo`
 citation strictly equals the cited envelope id, and `--priority` keeps only
 envelopes stamped with that exact P0, P1, P2 or P3 band — the same match every
 other bus read's `--priority` applies, so urgent room traffic is one filtered
-read (`GET /api/agents/chat` takes the same `priority=` parameter).
+read (`GET /api/agents/chat` takes the same `priority=` parameter). `--topic`
+keeps only rows addressed to the one `group:<channel>:<topic>` room — the same
+exact room-topic match `agents bus channel read --topic` applies — so a channel
+running several rooms reads one room's threads and messages instead of every
+topic's (`GET /api/agents/chat` takes the same `topic=` parameter).
 
 Producers use the existing channel post API, with a v2 note/context `thread`
 explicitly set to `run:<id>` or `outcome:<id>`. No inference from prose or job titles.
