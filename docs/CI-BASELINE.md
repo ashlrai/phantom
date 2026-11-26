@@ -661,7 +661,11 @@ for retry while later reruns still get checked.
 `phm ci reruns --json` reports `verdicts` tallies over the retained journal
 window: `pass`/`fail`/`inconclusive` counts, `pending` fired reruns still
 awaiting an outcome inside 24 hours, and `resolutionRate` (pass over
-pass+fail, null when nothing has resolved). Recurring-flake entries carry the
+pass+fail, null when nothing has resolved). Each repository and workflow run
+ID contributes at most one verdict, using the earliest observed timestamp.
+Disagreement on the head SHA or verdict withholds that run from the tallies.
+Disagreement on the triggering test withholds only its per-test attribution.
+The recent entries still show the raw receipts. Recurring-flake entries carry the
 same per-test verdict tallies and the `RQ-CIFLAKE-*` brief names them. A
 workflow verdict enters the per-test tally only when the baseline report
 identifies a single triggering test and records no other failures for that
