@@ -45,6 +45,27 @@ describe('fleet idle-slots', () => {
     expect(r.skippedGaps).toBe(1);
     expect(r.lanes.find(l => l.lane === 'work')).toMatchObject({ averageRunning: 2, idleSlotHours: 0.2 });
   });
+  it('measures idle against the launch target, not a shed lane\'s configured target', async () => {
+    const runsDir = await fixture(
+      [tick('11:00:00', { work: 1, fast: 0, clamp: 1 }), tick('11:10:00', { work: 1, fast: 0, clamp: 1 })],
+      { work: { target: 4, effective_target: 2 }, fast: { target: 2, effective_target: 9 },
+        clamp: { target: 3, effective_target: 'x' }, last_change_by: 'x' });
+    const r = (await readFleetIdleSlots({ runsDir, now }))!;
+    // work: launch target min(4, 2) = 2, running 1 -> 1 idle slot over 600 s = 0.17 h
+    // (the configured target would have invented 3 idle slots).
+    expect(r.lanes.find(l => l.lane === 'work')).toEqual({ lane: 'work', target: 2, averageRunning: 1, idleSlotHours: 0.17 });
+    // An effective_target above the configured target never raises it.
+    expect(r.lanes.find(l => l.lane === 'fast')).toEqual({ lane: 'fast', target: 2, averageRunning: 0, idleSlotHours: 0.33 });
+    // A non-numeric effective_target is ignored; the configured target stands.
+    expect(r.lanes.find(l => l.lane === 'clamp')).toEqual({ lane: 'clamp', target: 3, averageRunning: 1, idleSlotHours: 0.33 });
+  });
+  it('reads the launch target through the lanes wrapper form too', async () => {
+    const runsDir = await fixture(
+      [tick('11:00:00', { work: 0 }), tick('11:10:00', { work: 0 })],
+      { lanes: { work: { target: 4, effective_target: 1 } }, hard_cap: 8 });
+    const r = (await readFleetIdleSlots({ runsDir, now }))!;
+    expect(r.lanes).toEqual([{ lane: 'work', target: 1, averageRunning: 0, idleSlotHours: 0.17 }]);
+  });
   it('keeps targets unknown without slots.json and fails when the log is unreadable', async () => {
     const runsDir = await fixture([tick('11:00:00', { work: 1 }), tick('11:05:00', { work: 1 })], null);
     expect((await readFleetIdleSlots({ runsDir, now }))!.lanes).toEqual([{ lane: 'work', target: null, averageRunning: 1, idleSlotHours: null }]);

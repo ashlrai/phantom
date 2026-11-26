@@ -2,11 +2,13 @@ import { constants } from 'node:fs';
 import { open, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
 import { localTimestamp } from '../core/fleet/runs-parked-queue.js';
 
 const usage = `Usage: phm fleet idle-slots [--hours N] [--json]
 Per lane, over the last N hours (default 2) of dispatchd.log ticks: average running,
-target from queue/slots.json, and idle slot-hours (target minus running, summed over tick gaps).
+launch target (queue/slots.json target tightened by the controller's effective_target shed),
+and idle slot-hours (launch target minus running, summed over tick gaps).
 Gaps over 15 minutes are skipped as dispatcher downtime. dispatchd.log is read as a bounded
 tail sized to the window; --json reports logTruncated/windowTruncated/coveredFrom when the
 tail cannot reach the window start. ASHLR_RUNS_DIR overrides the root.`;
@@ -26,6 +28,7 @@ export const IDLE_SLOTS_LOG_TAIL_BYTES_PER_HOUR = 512 * 1024;
 export interface FleetIdleSlotsLane {
   lane: string;
   averageRunning: number | null;
+  /** The launch target: queue/slots.json target tightened by the controller's effective_target shed. */
   target: number | null;
   idleSlotHours: number | null;
 }
@@ -69,14 +72,22 @@ async function readLogTail(path: string, maxBytes: number): Promise<{ text: stri
   } catch { return null; } finally { await file?.close(); }
 }
 
+const nonNeg = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+
 function parseTargets(raw: unknown): Map<string, number> {
   const out = new Map<string, number>();
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   const map = (raw as { lanes?: unknown }).lanes && typeof (raw as { lanes?: unknown }).lanes === 'object'
     ? (raw as { lanes: Record<string, unknown> }).lanes : raw as Record<string, unknown>;
   for (const [lane, row] of Object.entries(map)) {
-    const target = row && typeof row === 'object' ? (row as { target?: unknown }).target : undefined;
-    if (typeof target === 'number' && Number.isFinite(target) && target >= 0) out.set(lane, target);
+    const fields = row && typeof row === 'object' ? row as { target?: unknown; effective_target?: unknown } : {};
+    const target = nonNeg(fields.target);
+    if (target === null) continue;
+    // A lane the fleet controller shed below its configured target has no
+    // phantom room: idle counts against the launch target dispatchd publishes,
+    // the same reading fleet lane-idle, lane-starve and launchable use.
+    out.set(lane, laneLaunchTarget(target, nonNeg(fields.effective_target)));
   }
   return out;
 }
