@@ -104,6 +104,8 @@ async function readText(path: string): Promise<string | null> {
 
 const rec = (v: unknown): Record<string, unknown> | null =>
   typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : null;
+/** Parked rows wait on dependencies or holds; dispatchd skips them, so they never head the launch order. */
+const PARKED_STATUS = /^PARKED(?:[.-]|$)/;
 const num = (v: unknown): number | undefined => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
 const str = (v: unknown): string | undefined => typeof v === 'string' && v.trim() ? v.trim() : undefined;
 const iso = (v: unknown): string | undefined => {
@@ -145,7 +147,9 @@ export async function readLaunchStallFacts(runsDir = process.env.ASHLR_RUNS_DIR 
       lastLaunchAt: launches?.get(lane)?.at ?? undefined,
       lastMergeAt: merge === undefined ? undefined : new Date(merge).toISOString(),
       // A ready row whose status is not READY is a blocked head line; its status is the blocker.
-      headLines: rows.filter(r => r.pool === lane && r.id).slice(0, HEAD_LINES)
+      // Parked rows are not launch candidates (dispatchd skips them and does not count them
+      // in `queued`), so the head lines are the first non-parked rows in queue order.
+      headLines: rows.filter(r => r.pool === lane && r.id && !PARKED_STATUS.test(r.status)).slice(0, HEAD_LINES)
         .map(r => ({ id: r.id!, ...(r.status !== 'READY' ? { blockedBy: r.status.toLowerCase() } : {}) })),
     };
   }).sort((a, b) => a.lane.localeCompare(b.lane));

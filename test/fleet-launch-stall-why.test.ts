@@ -52,6 +52,17 @@ describe('readLaunchStallFacts', () => {
     expect(by['fake-open']!.headLines).toEqual([{ id: 'RQ-FAKE-0001', blockedBy: 'blocked' }, { id: 'RQ-FAKE-0002' }]);
     expect(by['fake-bare']).toMatchObject({ running: undefined, usageFrac: undefined, headLines: [] });
   });
+  it('reads head lines from launchable rows, skipping parked ones', async () => {
+    const facts = await readLaunchStallFacts(join(import.meta.dirname, 'fixtures', 'launch-stall-parked'));
+    const by = Object.fromEntries(facts.map(f => [f.lane, f]));
+    // Parked rows wait on dependencies or holds; dispatchd skips them, so the
+    // launch head is the first non-parked rows in queue order.
+    expect(by['claude']!.headLines).toEqual([{ id: 'RQ-HEAD-1' }, { id: 'RQ-HEAD-2' }, { id: 'RQ-HEAD-3' }]);
+    expect(by['codex-work']!.headLines).toEqual([{ id: 'RQ-HEAD-5' }]);
+    const verdict = explainLaunchStall(by['claude']!, NOW);
+    expect(verdict.stalled).toBe(true);
+    expect(verdict.reasons.join(' ')).not.toContain('head lines blocked');
+  });
   it('returns no lanes for an empty runs dir', async () => {
     expect(await readLaunchStallFacts(join(import.meta.dirname, 'fixtures', 'launch-stall', 'nope'))).toEqual([]);
   });
