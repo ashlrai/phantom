@@ -1709,17 +1709,26 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     ? str(r, 'jobId')
     : str(r, 'job', 'job_id', 'jobId', 'id');
   const prUrl = (r: Row) => str(r, 'url', 'pr_url', 'prUrl', 'pr');
+  const claimKey = (url: string) => {
+    const prKey = pullRequestKey(url);
+    return prKey === null ? `url:${url}` : `pr:${prKey}`;
+  };
 
-  // A PR URL resolves to a job only when exactly one job claims it. Batch
+  // A PR resolves to a job only when exactly one job claims its identity,
+  // including across URL spellings. Other URLs still match literally. Batch
   // session rows are infrastructure: they never claim URLs themselves.
   const claims = new Map<string, Set<string>>();
   for (const r of rows) {
     const j = jobId(r), u = prUrl(r);
-    if (j && u && !j.startsWith(BATCH_SESSION_PREFIX)) claims.set(u, (claims.get(u) ?? new Set()).add(j));
+    if (!j || !u || j.startsWith(BATCH_SESSION_PREFIX)) continue;
+    const key = claimKey(u);
+    const jobs = claims.get(key) ?? new Set<string>();
+    jobs.add(j);
+    claims.set(key, jobs);
   }
   const ambiguous = new Set([...claims].filter(([, jobs]) => jobs.size > 1).map(([u]) => u));
-  const urlToJob = new Map([...claims].filter(([u, jobs]) => !ambiguous.has(u) && jobs.size === 1)
-    .map(([u, jobs]) => [u, [...jobs][0]!] as const));
+  const claimToJob = new Map([...claims].filter(([key]) => !ambiguous.has(key))
+    .map(([key, jobs]) => [key, [...jobs][0]!] as const));
 
   // Queue-admission evidence, derived once per job from the same boundary
   // stamps job-latency's queue_wait phase pairs: arrival rows (enqueue/
@@ -1829,10 +1838,11 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
   let sessionRows = 0;
   for (const r of rows) {
     const u = prUrl(r);
-    const j = jobId(r) ?? (u ? urlToJob.get(u) : undefined);
+    const claimant = u === null ? undefined : claimToJob.get(claimKey(u));
+    const j = jobId(r) ?? claimant;
     if (!j) { unattached++; continue; }
     if (j.startsWith(BATCH_SESSION_PREFIX)) { sessionRows++; continue; }
-    if (u !== null && urlToJob.get(u) === j) {
+    if (u !== null && claimant === j) {
       const prKey = pullRequestKey(u);
       if (prKey !== null) jobPrKeys.set(j, prKey);
     }
@@ -1912,9 +1922,9 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
         o.reverted = false;
       }
       // The authority-ledger join marks only through the row's own unambiguous
-      // PR claim: urlToJob.get(u) === j means this job is the URL's single
+      // PR claim: claimant === j means this job is the identity's single
       // claimant, so a reverted pull can never mark a foreign or contested job.
-      if (o.reverted !== true && u !== null && urlToJob.get(u) === j && opts.revertedPrKeys !== undefined) {
+      if (o.reverted !== true && u !== null && claimant === j && opts.revertedPrKeys !== undefined) {
         const key = pullRequestKey(u);
         if (key !== null && opts.revertedPrKeys.has(key)) o.reverted = true;
       }

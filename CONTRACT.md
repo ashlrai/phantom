@@ -739,7 +739,11 @@ fold's `mergeEvents` option joins each outcome's `merge_queue` through
 the job's newest unambiguous canonical PR claim — the same claim rule
 the authority revert join applies, so a contested or foreign URL never
 resolves — and merge-events rows for PRs no outcome claims unambiguously
-join nothing and never create outcomes. The same joined check record
+join nothing and never create outcomes. GitHub pull URLs that differ only
+in case or a trailing slash share one claim identity for URL-only jobs
+rows and all PR evidence joins. Multiple jobs claiming that identity
+count once in `ambiguous_urls` and receive no evidence through it. Other
+URLs still match literally for URL-only jobs rows. The same joined check record
 resolves `ci_first_pass` fill-only when no jobs row recorded a verdict:
 any recorded `check_observed` failure — required or unrelated — reads
 `false` even beside a later `checks_passed` boundary or a merge (a
