@@ -485,8 +485,9 @@ fold `phm router outcomes` uses. The fold tries timestamp fields in
 precedence order until one parses. A parseable `mergedAt`, `closedAt`
 or explicit revert timestamp takes precedence over the general row timestamp
 for its verdict. This report considers dated merge, close and revert evidence
-at or before report time. A later verdict leaves earlier eligible evidence
-in place. `byReason` recounts
+from the job's latest decision through report time, inclusive. An earlier
+attempt's terminal evidence leaves the latest decision unresolved until a
+merge or close is observed in that range. `byReason` recounts
 overridden jobs by override reason and `byClass` tallies outcomes per
 recorded `work_class` (`unclassified` when absent or outside the market's
 closed values). A missing jobs ledger leaves every decided job

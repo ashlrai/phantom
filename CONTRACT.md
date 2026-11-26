@@ -737,7 +737,7 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
-`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?, mergeEventsTruncated?, verdictAsOfMs?})`,
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?, mergeEventsTruncated?, verdictAsOfMs?, verdictSinceMsFor?})`,
 `authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
 `foldRouteDecisionWorkClasses(text)`, `foldRouteDecisions(text)`,
 `foldMarketHandoffAdvisories(text)`,
@@ -746,7 +746,11 @@ decisions only) and `fallback_used` (job receipts). See [gates and inert status]
 `readLedgerFile(path, limit?)`,
 `readLedgerTail(path, maxBytes?)` and
 `readRouterOutcomes({runsDir?, lane?, ashlarDir?, authorityEvidence?})`,
-producing `router.outcome.v1` records folded from `metrics/jobs.jsonl`. The jobs
+producing `router.outcome.v1` records folded from `metrics/jobs.jsonl`.
+`verdictSinceMsFor(job)` sets an inclusive lower timestamp bound for that job's
+merge, close and revert ledger verdicts. An undefined return leaves the lower
+bound open. `verdictAsOfMs` supplies an inclusive upper bound. If either bound
+applies, the verdict must have a parseable timestamp. The jobs
 ledger is append-only and unbounded, so the read retains the newest
 `ROUTER_OUTCOME_LEDGER_LIMIT` (16 MiB) bytes via `readLedgerTail`: an
 oversized ledger reports `truncated: true` and folds only the retained
