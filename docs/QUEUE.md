@@ -424,7 +424,9 @@ launch — by `lane_override` reason and by hinted-to-launched lane. This is
 the launch record the decision fold cannot see: `batch_session` moves a
 combined session makes after each member's own decision appear here and
 nowhere in `overrides`, and a decision overridden on paper but deferred
-before launch never counts. A claim whose hint and launch lane match counts
+before launch never counts. Batch members count through their own
+`batch_claim` events, and the synthetic `RQ-BATCH-*` session claim is excluded
+from the total. A claim whose hint and launch lane match counts
 as a launch only, even if it carries an override code.
 `claims.truncated` is true when the ledger
 exceeded the retained tail, so those counts are a lower bound.
