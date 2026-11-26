@@ -212,10 +212,19 @@ export const DEFAULT_CLAUDE_MODEL_ID = 'claude-opus-5-5';
 export const DEFAULT_CODEX_MODEL_ID = 'gpt-6.2-sol';
 export const CODEX_TERRA_MODEL_ID = 'gpt-6.1-terra';
 export const CODEX_ASTRA_MODEL_ID = 'gpt-6.2-astra';
+export const CODEX_LUNA_MODEL_ID = 'gpt-6-luna';
+export const CLAUDE_SONNET_MODEL_ID = 'claude-sonnet-5-5';
+export const CLAUDE_HAIKU_MODEL_ID = 'claude-haiku-5-5';
 export const DEFAULT_FABLE_MODEL_ID = 'claude-fable-5-1';
 /** Registered for lookup only until its subscription admission safeguards are wired. */
 export const FABLE_52_MODEL_ID = 'claude-fable-5-2';
-export const GEMINI_API_DEFAULT_MODEL = 'gemini-4-neon';
+export const MODEL_DEFAULTS_BY_TIER = {
+  codex: { frontier: CODEX_ASTRA_MODEL_ID, work: DEFAULT_CODEX_MODEL_ID, mid: DEFAULT_CODEX_MODEL_ID, fast: CODEX_LUNA_MODEL_ID },
+  claude: { frontier: DEFAULT_CLAUDE_MODEL_ID, work: DEFAULT_CLAUDE_MODEL_ID, mid: CLAUDE_SONNET_MODEL_ID, fast: CLAUDE_HAIKU_MODEL_ID },
+  gemini: { frontier: 'gemini-4-carbon', work: 'gemini-4-neon', mid: 'gemini-4-hydrogen', fast: 'gemini-3.5-flash-lite' },
+  agy: { frontier: 'gemini-4-carbon-high', work: 'gemini-4-neon-xhigh', mid: 'gemini-4-hydrogen-high', fast: 'gemini-4-hydrogen-medium' },
+} as const satisfies Record<string, Record<Exclude<ModelRoutingTier, 'computer'>, string>>;
+export const GEMINI_API_DEFAULT_MODEL = MODEL_DEFAULTS_BY_TIER.gemini.work;
 
 const MODEL_ENTRIES: readonly Omit<ModelEntry, 'modeTier'>[] = [
   {
@@ -305,6 +314,11 @@ const MODEL_ENTRIES: readonly Omit<ModelEntry, 'modeTier'>[] = [
     minEffort: 2, apiModelId: 'gpt-6.2-sol', apiContextWindow: 1_050_000, toolApi: 'responses',
     reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     relativeSpeed: 1, planAllowanceWeight: 1,
+  },
+  {
+    id: `codex:${CODEX_LUNA_MODEL_ID}`, engine: 'codex', tier: 'small',
+    costPerMTokIn: 0, costPerMTokOut: 0, seatRouted: true, explicitOnly: true,
+    capabilities: ['fast', 'general', 'coder'], minEffort: 1,
   },
   // Current concrete Haiku entry; preserve legacy aliases for exact lookup.
   // Pricing is a routing estimate, not account admission or spending authority.

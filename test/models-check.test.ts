@@ -91,6 +91,19 @@ describe('checkModels', () => {
     });
     expect(formatModelCheck(report)).toEqual([`Models: unknown. ${report.error}`]);
   });
+  it('flags Antigravity retirement notices without treating them as Gemini API coverage', async () => {
+    await writeFile(join(runsDir, 'models.json'), JSON.stringify({
+      'agy.fast': 'gemini-3.8-flash-medium', 'agy.work': 'claude-sonnet-4-6-thinking', gemini: 'gemini-4-argon',
+    }));
+    for (const [date, verdict] of [['2026-11-29', 'deprecated'], ['2026-11-30', 'retired']]) {
+      const report = await checkModels({ runsDir, localRegistryPath: null, now: () => Date.parse(date!) });
+      const byId = new Map(report.models.map(row => [row.id, row]));
+      expect(byId.get('gemini-3.8-flash-medium')).toMatchObject({ docs: verdict, routable: false });
+      expect(byId.get('claude-sonnet-4-6-thinking')).toMatchObject({ docs: verdict, routable: false });
+      expect(byId.get('gemini-4-argon-high')).toMatchObject({ docs: verdict, routable: verdict !== 'retired' });
+      expect(byId.get('gemini-4-argon')).toMatchObject({ docs: 'unknown', routable: true });
+    }
+  });
 });
 
 describe('checkModelsAgainstDocs (registry against provider docs, both passed in)', () => {

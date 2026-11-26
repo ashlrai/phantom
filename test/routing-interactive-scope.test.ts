@@ -133,7 +133,7 @@ describe('interactive routing (default) keeps the pre-3.10 rule', () => {
   });
 
   it('budget reserves do NOT apply interactively (they protect interactive headroom)', () => {
-    // 80% of the five-hour window is above the balanced 70% autonomy ceiling.
+    updateBudgetPolicy({ seatId: 'claude', policy: { maxSessionWindowPercent: 70 } });
     writeCapacitySnapshot([claudeSeat(80, 10)]);
     const d = routeTask(hardItem(), cfg(), ctx(['claude', 'builtin']));
     expect(d.engine).toBe('claude');

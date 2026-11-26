@@ -129,7 +129,17 @@ export async function checkModels(opts: ModelCheckOptions = {}): Promise<ModelCh
   const entries = new Map(registry.map(entry => [entry.id, entry]));
   // Docs are judged against the models we route to; a model the registry already retired is neither checked nor "missing".
   const records = await readDocsRecords(opts);
-  const check = records && checkModelsAgainstDocs(registry.filter(entry => entry.status !== 'retired'), records.filter(record => entries.get(record.id)?.status !== 'retired'));
+  const docsInputs = registry.filter(entry => entry.status !== 'retired').map(({ id, provider }) => ({ id, provider }));
+  const checkRecords = records?.filter(record => entries.get(record.id)?.status !== 'retired') ?? [];
+  for (const [id, lanes] of used) {
+    if (entries.has(id) || !lanes.includes('agy')) continue;
+    const notice = checkRecords.find(record => record.partial && (record.id === id ||
+      record.id === 'gemini-3.8-flash' && /^gemini-3\.8-flash-(?:low|medium|high|xhigh)$/.test(id)));
+    if (!notice) continue;
+    docsInputs.push({ id, provider: notice.provider });
+    if (id !== notice.id) checkRecords.push({ ...notice, id });
+  }
+  const check = records && checkModelsAgainstDocs(docsInputs, checkRecords);
   const verdicts = new Map(check?.models.map(row => [row.id, row]));
   // A retired model is listed only while a lane still points at it.
   for (const id of sorted([...registry.filter(entry => entry.status !== 'retired').map(entry => entry.id), ...used.keys()])) {
@@ -141,7 +151,7 @@ export async function checkModels(opts: ModelCheckOptions = {}): Promise<ModelCh
       source_url: entry?.verified_source ?? null, confirmed_on: entry?.verified_at ?? null, state,
       routable: selectVerifiedModel([id], registry, records).model === id,
       docs: docs?.verdict ?? 'unknown', replacement: docs?.replacement ?? null,
-      reason: !entry ? 'Not in the registry. The router will not use it.'
+      reason: !entry ? docs && DOCS_REASON[docs.verdict] ? DOCS_REASON[docs.verdict]!(docs.replacement) : 'Not in the registry. The router will not use it.'
         : entry.status === 'retired' ? 'Retired. The router will not use it.'
         : !confirmed ? 'Not confirmed by official docs. The router will not use it.'
         : docs && DOCS_REASON[docs.verdict] ? DOCS_REASON[docs.verdict]!(docs.replacement)

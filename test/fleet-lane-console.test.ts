@@ -315,6 +315,9 @@ describe('getFleetLaneSnapshot (fixture)', () => {
       { jobId: 'closed', pool: 'codex-personal', outcome: 'CLOSED', prUrl: url(7), ts: '2026-10-29T04:59:00Z' },
       { job: 'legacy', pool: 'codex-personal', to: 'LAND', at: '2026-10-29T04:45:00Z' },
       { job: 'legacy', pool: 'codex-personal', event: 'pr-merge', at: '2026-10-29T04:45:00Z' },
+      { job: 'late-write', pool: 'devin', outcome: 'MERGED', ts: '2026-10-29T05:05:00Z', mergedAt: '2026-10-29T04:50:00Z' },
+      { job: 'backfill', pool: 'claude', outcome: 'MERGED', ts: '2026-10-29T04:55:00Z', mergedAt: '2026-10-29T03:50:00Z' },
+      { job: 'bad-merge-time', pool: 'devin', outcome: 'MERGED', ts: '2026-10-29T04:56:00Z', mergedAt: 'invalid' },
     ];
     await writeFile(join(dir, 'jobs.jsonl'), rows.map(row => JSON.stringify(row)).join('\n'));
     await writeFile(join(dir, 'ready.tsv'), [
@@ -327,6 +330,8 @@ describe('getFleetLaneSnapshot (fixture)', () => {
       now: () => new Date('2026-10-29T05:00:00Z'),
     });
     expect(snapshot.lanes.find(l => l.lane === 'codex-personal')!.mergesPerHour).toBe(5);
+    expect(snapshot.lanes.find(l => l.lane === 'devin')!.mergesPerHour).toBe(2);
+    expect(snapshot.lanes.find(l => l.lane === 'claude')!.mergesPerHour).toBe(0);
   });
 
   it('finds recent event timestamps before a large backfilled ledger tail', async () => {

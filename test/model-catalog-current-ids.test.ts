@@ -1,9 +1,27 @@
 import { describe, expect, it } from 'vitest';
+import { loadVerifiedRegistry, readDocsRecords, selectVerifiedModel } from '../src/core/fleet/model-verify.js';
 import {
-  CLAUDE5_CATALOG_IDS, KNOWN_MODELS, canonicalModelTag, catalogFor, pickModel,
+  CLAUDE5_CATALOG_IDS, KNOWN_MODELS, MODEL_DEFAULTS_BY_TIER, canonicalModelTag, catalogFor, pickModel,
 } from '../src/core/run/model-catalog.js';
 
 describe('model catalog current ids', () => {
+  it('admits only registry-verified defaults for each tier and provider', async () => {
+    const opts = { now: () => Date.parse('2026-11-30'), localRegistryPath: null };
+    const registry = await loadVerifiedRegistry(opts);
+    const docs = await readDocsRecords(opts);
+    expect(docs?.find(row => row.id === 'gemini-4-argon-high')?.status).toBe('retired');
+    expect(registry.find(row => row.id === 'swe-2-1')?.status).toBe('unverified');
+    for (const tiers of Object.values(MODEL_DEFAULTS_BY_TIER)) {
+      expect(Object.keys(tiers).sort()).toEqual(['fast', 'frontier', 'mid', 'work']);
+      for (const model of Object.values(tiers)) {
+        expect(selectVerifiedModel([model], registry, docs).model, model).toBe(model);
+      }
+    }
+    expect(MODEL_DEFAULTS_BY_TIER.claude.frontier).toBe('claude-opus-5-5');
+    expect(KNOWN_MODELS.find(entry => entry.id === 'claude:claude-fable-5-2'))
+      .toMatchObject({ explicitOnly: true, seatRouted: true });
+  });
+
   it('keeps every catalog id unique', () => {
     const ids = KNOWN_MODELS.map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
