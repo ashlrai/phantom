@@ -13,6 +13,7 @@ import { installFetch, json, TEST_TOKEN, type RecordedCall } from '../context/co
 import { resetVerseUi, getVerseUiState } from '../verse-ui-store.js';
 import { WikiGraphCanvas } from './WikiGraph.js';
 import { WikiView } from './WikiView.js';
+import type { SystemMapResult } from './wiki-queries.js';
 import { requestWikiFocus, resetWikiFocus } from './wiki-focus.js';
 import { freshness, githubCitationUrl, jobLine, modelLabel, pageTree, repoForProject } from './wiki-model.js';
 
@@ -70,13 +71,45 @@ const GRAPH: WikiGraphView = {
   coverage: { listedFiles: 7, readFiles: 5, unreadFiles: 2, omittedModuleFiles: 1, listingTruncated: false },
 };
 
-function server(over: { repo?: () => WikiRepoView; ask?: WikiAskResult; onPost?: (c: RecordedCall) => void } = {}) {
+type SystemGraph = Extract<SystemMapResult, { nodes: unknown }>;
+const fixtureNodes = [
+  ['module:API', 'API', 'module', 'src/api/server.ts', 1],
+  ['module:Storage', 'Storage', 'module', 'src/store/notes.ts', 1],
+  ['module:Workers', 'Workers', 'module', 'src/workers/tasks.ts', 1],
+  ['file:src/api/server.ts', 'src/api/server.ts', 'file', 'src/api/server.ts', 1],
+  ['symbol:src/api/server.ts:handle:1', 'handle', 'symbol', 'src/api/server.ts', 3],
+] as const;
+
+function systemGraph(focus: string | null, commit = SHA): SystemGraph {
+  const node = ([id, label, kind, file, line]: (typeof fixtureNodes)[number]): SystemGraph['nodes'][number] => ({ id, label, kind, anchor: { file, line, commit } });
+  const [api, storage, workers, file, symbol] = [node(fixtureNodes[0]), node(fixtureNodes[1]), node(fixtureNodes[2]), node(fixtureNodes[3]), node(fixtureNodes[4])] as const;
+  const imported = { ...storage, id: 'file:src/store/notes.ts', label: 'src/store/notes.ts', kind: 'file' } as const;
+  const nodes = !focus ? [api, storage, workers] : focus === api.id ? [api, file] : focus === file.id ? [file, api, symbol, imported] : [symbol, file];
+  const edge = (from: typeof api, to: typeof api, kind: 'imports' | 'contains') => ({
+    from: from.id, to: to.id, kind, anchor: kind === 'contains' ? to.anchor : from.anchor,
+  });
+  return {
+    schema: 'phantom.wiki.map.v1', status: 'current', commit, focus, nodes,
+    edges: !focus ? [edge(api, storage, 'imports'), edge(workers, storage, 'imports')] :
+      focus === api.id ? [edge(api, file, 'contains')] :
+        focus === file.id ? [edge(api, file, 'contains'), edge(file, symbol, 'contains'), edge(file, imported, 'imports')] : [edge(file, symbol, 'contains')],
+    update: { mode: 'unchanged', blobsRead: 0, filesParsed: 0 },
+    coverage: { files: 197, ignored: 1, skipped: 3, limited: 2, unresolvedImports: 9 },
+    truncated: !focus,
+  };
+}
+
+function server(over: { repo?: () => WikiRepoView; ask?: WikiAskResult; onPost?: (c: RecordedCall) => void; map?: (focus: string | null) => SystemGraph } = {}) {
   return installFetch((call) => {
     if (call.method === 'POST') over.onPost?.(call);
     if (call.path === '/api/verse/wiki') return json(reposView);
     if (call.path === `/api/verse/wiki/repo/${KEY}`) return json(over.repo ? over.repo() : repoView());
     if (call.path === `/api/verse/wiki/repo/${OTHER}`) return json(repoView({ status: status({ key: OTHER, exists: false, pages: [], stalePages: 0, generatedCommit: null }), githubUrl: null }));
     if (call.path === `/api/verse/wiki/repo/${KEY}/graph` || call.path === `/api/verse/wiki/repo/${OTHER}/graph`) return json(GRAPH);
+    const url = new URL(call.path, 'http://localhost');
+    if (over.map && (url.pathname === `/api/verse/wiki/repo/${KEY}/system-map` || url.pathname === `/api/verse/wiki/repo/${OTHER}/system-map`)) {
+      return json(over.map(url.searchParams.get('focus')));
+    }
     if (call.path === `/api/verse/wiki/repo/${KEY}/page/overview`) return json(pageView('overview', OVERVIEW_MD));
     if (call.path === `/api/verse/wiki/repo/${KEY}/page/modules`) return json(pageView('modules', '# Module map\n\n| Module |\n|---|\n| `src/store` |\n'));
     if (call.path === `/api/verse/wiki/repo/${KEY}/build`) return json({ job: { state: 'running', startedAt: '', finishedAt: null, progress: { index: 0, total: 0, page: null }, summary: null, error: null, trigger: 'operator' } }, 202);
@@ -119,6 +152,61 @@ describe('wiki-model', () => {
 });
 
 describe('WikiView', () => {
+  it('drills from subsystem to file to symbol with keyboard and breadcrumbs, and links to the pinned revision', async () => {
+    const { calls } = server({ map: systemGraph, repo: () => repoView({ status: status({ currentCommit: 'b'.repeat(40) }) }) });
+    render(<WikiView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'System map' }));
+    const map = screen.getByRole('region', { name: 'Commit-pinned system map' });
+    const scope = within(map);
+    expect(await scope.findByText('View truncated')).toBeInTheDocument();
+    expect(scope.getByTitle(SHA)).toHaveTextContent('aaaaaaa');
+    expect(scope.getByLabelText('Map coverage')).toHaveTextContent('197 indexed');
+    const graph = scope.getByRole('group', { name: 'Source graph' });
+    expect(graph.querySelectorAll('path[data-kind]')).toHaveLength(0);
+    const api = scope.getByRole('button', { name: 'Subsystem: API' });
+    fireEvent.keyDown(api, { key: 'ArrowRight' });
+    expect(scope.getByRole('button', { name: 'Subsystem: Storage' })).toHaveFocus();
+    expect(graph.querySelectorAll('path[data-kind]')).toHaveLength(2);
+    fireEvent.click(api);
+    expect(graph.querySelectorAll('path[data-kind]')).toHaveLength(1);
+    fireEvent.keyDown(api, { key: 'Enter' });
+    const file = await scope.findByRole('button', { name: 'File: src/api/server.ts' });
+    fireEvent.click(file);
+    fireEvent.click(scope.getByRole('button', { name: /Explore file/ }));
+    const symbol = await scope.findByRole('button', { name: 'Symbol: handle' });
+    expect(scope.getByRole('heading', { level: 2, name: 'src/api/server.ts' })).toHaveFocus();
+    const detail = scope.getByRole('complementary', { name: 'Source details' });
+    expect(scope.queryByRole('button', { name: 'File: src/store/notes.ts' })).not.toBeInTheDocument();
+    expect(within(detail).getByRole('button', { name: 'src/store/notes.ts' })).toBeInTheDocument();
+    fireEvent.keyDown(symbol, { key: 'Enter' });
+    await scope.findByRole('heading', { level: 3, name: 'handle' });
+    expect(within(scope.getByRole('complementary', { name: 'Source details' })).getByRole('link', { name: /Open pinned source/ })).toHaveAttribute('href', `https://github.com/acme/notes/blob/${SHA}/src/api/server.ts#L3`);
+    const crumb = scope.getByRole('navigation', { name: 'System map breadcrumb' });
+    expect(within(crumb).getByRole('button', { name: 'handle' })).toHaveAttribute('aria-current', 'page');
+    fireEvent.keyDown(within(crumb).getByRole('button', { name: 'handle' }), { key: 'Escape' });
+    await scope.findByRole('heading', { level: 3, name: 'src/api/server.ts' });
+    fireEvent.click(within(crumb).getByRole('button', { name: 'Overview' }));
+    expect(await scope.findByRole('button', { name: 'Subsystem: API' })).toBeInTheDocument();
+    expect(calls.filter(call => call.path.includes('/system-map')).every(call => call.method === 'GET')).toBe(true);
+  });
+
+  it('returns to the overview when HEAD changes and never opens an unpinned local file', async () => {
+    let commit = SHA;
+    server({ map: focus => systemGraph(focus, commit) });
+    render(<WikiView />);
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Repo' }), { target: { value: OTHER } });
+    fireEvent.click(screen.getByRole('button', { name: 'System map' }));
+    const api = await screen.findByRole('button', { name: 'Subsystem: API' });
+    fireEvent.click(api);
+    expect(screen.getByRole('complementary', { name: 'Source details' })).toHaveTextContent('src/api/server.ts:1');
+    expect(screen.queryByRole('link', { name: /Open pinned source/ })).not.toBeInTheDocument();
+    commit = 'c'.repeat(64);
+    fireEvent.keyDown(api, { key: 'Enter' });
+    expect(await screen.findByText('HEAD changed. Returned to the overview at the new commit.')).toBeInTheDocument();
+    expect(await screen.findByTitle(commit)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Subsystem: API' })).toBeInTheDocument();
+  });
+
   it('opens a local module map before a wiki is built and sends verified citations through the token gate', async () => {
     const { calls } = server();
     render(<WikiView />);

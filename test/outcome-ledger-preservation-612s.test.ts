@@ -2513,18 +2513,38 @@ describe('router outcome authority revert join', () => {
       '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-01T00:00:00Z"}',
       '{"job":"J2","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/7"}',
       '{"job":"J3","phase":"MERGED","pr_url":"https://github.com/other/repo/pull/42"}',
-      '{"job":"J4","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42/"}',
-      '{"job":"J5","phase":"MERGED","url":"https://github.com/AshlrAI/Phantom/pull/42"}',
+      '{"job":"J1","pr_url":"https://github.com/ashlrai/phantom/pull/42/"}',
+      '{"url":"https://github.com/AshlrAI/Phantom/pull/42","cost_usd":9}',
       '{"job":"J6","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42?x=1"}',
       '{"job":"J7","phase":"MERGED","pr":"https://github.com/ashlrai/phantom/issues/42"}',
     ].join('\n'), { revertedPrKeys: keys });
     const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
     // Canonical claim (any url alias) + case-insensitive repo: marked.
-    expect(byId.get('J1')?.reverted).toBe(true);
-    expect(byId.get('J4')?.reverted).toBe(true);
-    expect(byId.get('J5')?.reverted).toBe(true);
+    expect(byId.get('J1')).toMatchObject({ reverted: true, cost_usd: 9 });
+    expect(fold.ambiguous_urls).toBe(0);
+    expect(fold.unattached_rows).toBe(0);
     // Different PR, different repo, non-canonical or non-pull URL: untouched.
     for (const id of ['J2', 'J3', 'J6', 'J7']) expect(byId.get(id)?.reverted).toBeNull();
+  });
+
+  it('withholds PR evidence when different jobs claim aliases of the same PR', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"A","pr_url":"https://github.com/ashlrai/phantom/pull/42"}',
+      '{"job":"B","pr_url":"https://github.com/AshlrAI/Phantom/pull/42/"}',
+      '{"pr_url":"https://github.com/ashlrai/phantom/pull/42","phase":"MERGED"}',
+    ].join('\n'), {
+      revertedPrKeys: new Set(['ashlrai/phantom#42']),
+      crossReviews: foldCrossReviews(JSON.stringify(crossReview(42, 'approve'))),
+      mergeEvents: foldMergeEvents(JSON.stringify(mergeEvent(42, 'checks_passed'))),
+    });
+    expect(fold.ambiguous_urls).toBe(1);
+    expect(fold.unattached_rows).toBe(1);
+    expect(fold.outcomes).toHaveLength(2);
+    for (const outcome of fold.outcomes) {
+      expect(outcome).toMatchObject({
+        merged: null, reverted: null, cross_review: null, merge_queue: null, ci_first_pass: null,
+      });
+    }
   });
 
   it('never marks through an ambiguous PR claim or a foreign row', () => {

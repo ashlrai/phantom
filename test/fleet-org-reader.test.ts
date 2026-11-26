@@ -37,7 +37,8 @@ describe('phm org reader', () => {
     const result = await org(readers);
     expect(calls).toBe(1);
     expect(result.leaderSeat).toMatchObject({ schema: 'leader.seat.v1', version: 1,
-      current: { lane: 'claude', model: 'fixture-model', lastSuccessAt: AT }, pick: null, reason: 'No eligible confirmed leader seat.' });
+      current: { lane: 'claude', model: 'fixture-model', lastSuccessAt: AT }, pick: null,
+      reason: 'No seat available. claude: Model is not confirmed in the registry.' });
   });
   it('shows an empty fleet as idle lanes under an idle leader, with a versioned schema', async () => {
     const tree = await org(fleet({ sessions: [], lanes: [lane('claude', 0, 8), lane('gemini', 0, 1, { queued: 2 })] }));

@@ -1289,6 +1289,7 @@
 /test/resource-native-profile-identity.test.ts @masonwyatt23
 /test/resource-native-profile-review.test.ts @masonwyatt23
 /test/resource-native-profile.test.ts @masonwyatt23
+/test/resource-pool-bridge-evidence.test.ts @masonwyatt23
 /test/resource-pool-commissioning-apply.test.ts @masonwyatt23
 /test/resource-pool-commissioning-check.test.ts @masonwyatt23
 /test/resource-pool-commissioning-collector.test.ts @masonwyatt23

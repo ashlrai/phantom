@@ -37,8 +37,8 @@ export interface SubscriptionSeatCapacity {
   source: string;
 }
 
-const AGY_FREE = ['gemini-4-hydrogen', 'gemini-3.8-flash', 'claude-sonnet-4-6', 'claude-opus-4-6', 'gpt-oss-120b'] as const;
-const AGY_PAID = [...AGY_FREE, 'gemini-4-neon', 'gemini-4-carbon', 'gemini-4-argon', 'gemini-4-orchestrator', 'claude-sonnet-5-5', 'claude-opus-5-5'] as const;
+const AGY_FREE = ['gemini-4-hydrogen'] as const;
+const AGY_PAID = [...AGY_FREE, 'gemini-4-neon', 'gemini-4-carbon', 'gemini-pro-orchestrator-neon', 'gemini-pro-orchestrator', 'claude-sonnet-5-5', 'claude-opus-5-5'] as const;
 const AGY_PRICING = 'https://antigravity.google/pricing';
 const AGY_WORKSPACE = 'https://antigravity.google/docs/workspace';
 const CLI_QUOTA = 'https://geminicli.com/docs/';
@@ -71,7 +71,7 @@ export const SUBSCRIPTION_CAPACITY: readonly SubscriptionSeatCapacity[] = Object
   row({ provider: 'google', lane: null, product: 'gemini-api', account_kind: 'api-key', plan: 'free-tier', cost_class: 'free',
     models: null, refresh: [], neon: false, source: API_PRICING }),
   row({ provider: 'google', lane: null, product: 'gemini-api', account_kind: 'api-key', plan: 'paid-tier', cost_class: 'metered',
-    models: ['gemini-4-neon', 'gemini-4-carbon', 'gemini-4-hydrogen'], refresh: [], neon: true, source: API_PRICING }),
+    models: ['gemini-4-neon', 'gemini-4-carbon', 'gemini-4-argon', 'gemini-4-hydrogen', 'gemini-3.5-flash-lite'], refresh: [], neon: true, source: API_PRICING }),
   // Claude and Codex windows mirror the seat readers (usage/provider-windows.ts, fleet/subscription-usage.ts); caps are unpublished.
   ...(['pro', 'max', 'team', 'enterprise'] as const).map(plan => row({ provider: 'anthropic', lane: 'claude', product: 'claude-code',
     account_kind: plan === 'pro' || plan === 'max' ? 'personal' : 'workspace', plan, cost_class: 'included', models: null, refresh: ['weekly'],

@@ -164,6 +164,7 @@ export function computeNodeCapacity(s: NodeSnapshot, prev: NodeCapacityDoc | nul
       continue;
     }
     if (s.mem.pressureLevel === null || headroomBytes === null || !fp) { runnable[id] = null; limiting[id] = 'unmeasured'; continue; }
+    if (headroomCores === 0) { runnable[id] = 0; limiting[id] = 'cpu'; continue; }
     const byMem = Math.floor(headroomBytes / fp.mem_bytes_max);
     const byCpu = fp.cpu_cores_per_session !== null && headroomCores !== null
       ? fp.cpu_cores_per_session > 0 ? Math.floor(headroomCores / fp.cpu_cores_per_session) : byMem

@@ -16,7 +16,7 @@ const STATUSES = ['reserved', 'completed', 'failed', 'timed-out', 'cancelled', '
 const EXCLUSIONS = ['worker-not-allowed', 'worker-unavailable', 'provider-retry-after', 'observation-missing',
   'observation-future', 'observation-stale', 'quota-windows-missing', 'quota-window-unknown',
   'quota-window-reset-passed', 'quota-reserve-reached', 'concurrency-exhausted', 'operator-task-cap-reached',
-  'operator-quota-scope-excluded'];
+  'operator-quota-scope-excluded', 'bridge-not-commissioned'];
 type Status = ReturnType<typeof resourcePoolStatus>;
 type JsonObject = Record<string, unknown>;
 
@@ -57,7 +57,8 @@ function configuration(pool: ResourcePool, bindings: ResourceBinding[]): {
   const workers = definition.workers.map((worker) => {
     const capacityKey = mapped.get(worker.id);
     if (!capacityKey || !ID.test(capacityKey)) invalid();
-    return { ...worker, capacityKey };
+    const { bridge: _pin, ...publicWorker } = worker;
+    return { ...publicWorker, capacityKey };
   });
   const groups: ResourceConsoleGroup[] = [];
   for (const worker of workers) {
@@ -105,7 +106,8 @@ export function projectResourceConsoleEvidence(pool: ResourcePool, bindings: Res
     selectedWorkerId: status.plan.selectedWorkerId, nextEligibleAt: status.plan.nextEligibleAt,
     candidates: status.plan.candidates.map((row) => ({ workerId: row.workerId, provider: row.provider, model: row.model,
       priority: row.priority, reason: row.reason, usedPercent: row.usedPercent, activeCount: row.activeCount,
-      taskReservationCount: row.taskReservationCount, pressure: row.pressure })),
+      taskReservationCount: row.taskReservationCount, pressure: row.pressure,
+      ...(row.bridgeEvidenceKind === undefined ? {} : { bridgeEvidenceKind: row.bridgeEvidenceKind }) })),
     exclusions: status.plan.exclusions.map((row) => ({ workerId: row.workerId, reasons: [...row.reasons], nextEligibleAt: row.nextEligibleAt })) };
   result.observations = validateResourceObservations(status.observations, pool);
   const ordered = [...status.attempts].sort((a, b) => b.startedAt.localeCompare(a.startedAt) || a.id.localeCompare(b.id));
@@ -164,9 +166,13 @@ function validatePlan(value: unknown, pool: ResourceConsoleEvidence['pool'], sam
   array(value.candidates, pool.workers.length); array(value.exclusions, pool.workers.length);
   const seen = new Set<string>();
   for (const candidate of value.candidates) {
-    object(candidate, ['workerId', 'provider', 'model', 'priority', 'reason', 'usedPercent', 'activeCount', 'taskReservationCount', 'pressure']);
+    const bridgeKind = candidate !== null && typeof candidate === 'object' && Object.hasOwn(candidate, 'bridgeEvidenceKind');
+    object(candidate, ['workerId', 'provider', 'model', 'priority', 'reason', 'usedPercent', 'activeCount', 'taskReservationCount', 'pressure',
+      ...(bridgeKind ? ['bridgeEvidenceKind'] : [])]);
     const worker = pool.workers.find((row) => row.id === candidate.workerId);
     if (!worker || seen.has(worker.id) || candidate.provider !== worker.provider || candidate.model !== worker.model ||
+      candidate.bridgeEvidenceKind !== (worker.provider === 'devin-flash' ? 'verified' :
+        worker.provider === 'agy' || worker.provider === 'zai' ? 'owner-attested-plan' : undefined) ||
       candidate.priority !== worker.priority || !['eligible', 'operator-capped-unknown-quota'].includes(candidate.reason as string) ||
       !(candidate.usedPercent === null || typeof candidate.usedPercent === 'number' && Number.isFinite(candidate.usedPercent) &&
         candidate.usedPercent >= 0 && candidate.usedPercent <= 100) || !count(candidate.activeCount, MAX_ATTEMPTS) ||

@@ -124,9 +124,13 @@ Claude keeps 40% of its weekly window for you and is left alone while its
 
 **Re-approval continues the ladder.** After a deploy that changed authority
 code, an expiry, or for the next 30 days, `ashlr authority re-approve` (or
-the Command bar) drafts the same scope with fresh dates and bindings, and its
+the Command bar) drafts the existing scope with fresh dates and bindings, and its
 ladder starts at the stage you had reached — so a deploy never restarts the
 ramp from shadow. The starting stage is inside what you sign.
+
+New drafts take seats from Resources, not a published capacity snapshot.
+A re-approval keeps existing seat policy for connected seats and drops
+disconnected seats; it does not add newly connected paid seats.
 
 **The `elite-direct` rung (3.15).** `draft`, `grant` and `re-approve` accept
 `--elite-direct`, which replaces the ladder with one rung, `elite-direct`:

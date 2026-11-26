@@ -150,28 +150,30 @@ describe('slack status replies (336)', () => {
 // Same durable stores and classifier used by the fleet work board.
 it('labels receipt, assignment, running, dependency and verification from exact work evidence', () => {
   const p = setup(), busRoot = join(p.runsDir, 'bus');
-  const now = Date.now(), channelRef = `slack:T0TEST:${CH}:${THREAD}`;
+  const now = NOW.getTime(), channelRef = `slack:T0TEST:${CH}:${THREAD}`;
+  const at = NOW.toISOString();
   const opts = { ...p, busRoot, now: () => new Date(now), channelRef };
   const request: BusEnvelope = { id: 'fake-status-request', from: 'fake-owner', to: 'leader', priority: 'P1', ttl: 600_000,
     channel: 'slack', channel_ref: channelRef, external: false,
     sender: { agent_id: 'fake-owner', vendor: 'fake', human: true, team: true }, body: { kind: 'note', text: 'status' } };
   expect(appendBusInbox(request, { root: busRoot, now: () => now }).status).toBe('posted');
   const line = () => slackWorkStatusLine(readSlackWorkStatus(opts), { inReplyTo: request.id });
-  const asOf = new Date(now).toISOString();
-  const receipt = `bus-claim:fake-status-request:1:${now}`;
-  expect(line()).toBe(`RECEIVED · owner unknown · as of ${asOf} · source receivedAt · missing: named owner, durable claim receipt · owner unknown; claim unknown`);
+  expect(line()).toBe(`RECEIVED · owner unknown · as of ${at} · source receivedAt · missing: named owner, durable claim receipt · owner unknown; claim unknown`);
   vi.spyOn(Date, 'now').mockReturnValue(now);
   const claim = mutateBusWorkClaim({ action: 'acquire', root: busRoot, id: request.id, owner: 'fake-worker', leaseMs: 60_000 });
   expect(claim.status).toBe('acquired');
-  expect(line()).toBe(`RUNNING · fake-worker · as of ${asOf} · source bus-work-claims lease-until ${new Date(now + 60_000).toISOString()} · owner fake-worker; claim ${receipt}`);
+  const receipt = `bus-claim:fake-status-request:1:${now}`;
+  const ownerClaim = `owner fake-worker; claim ${receipt}`;
+  const until = new Date(now + 60_000).toISOString();
+  expect(line()).toBe(`RUNNING · fake-worker · as of ${at} · source bus-work-claims lease-until ${until} · ${ownerClaim}`);
   expect(mutateBusWorkClaim({ action: 'complete', root: busRoot, id: request.id, token: claim.token }).status).toBe('completed');
-  expect(line()).toBe(`ASSIGNED · fake-worker · as of ${asOf} · source claim:${receipt} · owner fake-worker; claim ${receipt}`);
+  expect(line()).toBe(`ASSIGNED · fake-worker · as of ${at} · source claim:${receipt} · ${ownerClaim}`);
   expect(postBusReply(request.id, 'fake-block', { blocked: { dependency: 'review <@FAKE>\nneeded' } }, { root: busRoot, now: () => now }).outcome).toBe('posted');
-  expect(line()).toBe(`BLOCKED · fake-worker · as of ${asOf} · source bus-reply:fake-block · dependency review ?@FAKE? needed`);
+  expect(line()).toBe(`BLOCKED · fake-worker · as of ${at} · source bus-reply:fake-block · dependency review ?@FAKE? needed`);
   expect(postBusReply(request.id, 'fake-verified', { verified: { pr: 42, head: 'abcdef123' } }, { root: busRoot, now: () => now }).outcome).toBe('posted');
-  expect(line()).toBe(`VERIFIED · fake-worker · as of ${asOf} · source bus-reply:fake-verified · PR 42; head abcdef123`);
+  expect(line()).toBe(`VERIFIED · fake-worker · as of ${at} · source bus-reply:fake-verified · PR 42; head abcdef123`);
   expect(JSON.stringify(readSlackWorkStatus(opts))).not.toContain(claim.token!);
-  expect(slackWorkStatusLine(readSlackWorkStatus(opts), { inReplyTo: 'different-request' })).toMatch(/^UNKNOWN;/);
+  expect(slackWorkStatusLine(readSlackWorkStatus(opts), { inReplyTo: 'different-request' })).toBe('UNKNOWN; owner unknown; claim unknown; fleet as of unknown');
   expect(readSlackWorkStatus({ ...opts, channelRef: `slack:T0OTHER:${CH}:${THREAD}` }).items).toEqual([]);
   expect(buildSlackBridgeStatus(opts).work).toEqual(readSlackWorkStatus(opts));
 });
