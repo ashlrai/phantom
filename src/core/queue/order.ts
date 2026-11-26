@@ -27,9 +27,7 @@
  * `verified: false` means the last check still found the old queue.
  */
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
-import { lstat, open, readFile, rename, unlink } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DROP_JOB_LANES } from '../fleet/drop-job-writer.js';
 import { defaultRunsDir } from '../fleet/landed-closes-read.js';
@@ -39,10 +37,12 @@ import { parseReadyRows, readReadyText, type ReadyRow } from '../fleet/ready-row
 import { readLaneTargets } from '../fleet/runs-lane-targets.js';
 import { replaceQueueText } from './dedupe.js';
 import { queueAgeText, type QueueActionRequest, type QueueActionV1, type QueueOrderV1, type QueueSteerCode } from './order-types.js';
+import { isMissingFileError } from './schema.js';
+import { writeQueueFileAtomic } from './store.js';
 import { ROUTER_LINE, appendGuarded, cycleOf, eventClock, parked, repoKey, supersedeQueue } from './supersede.js';
 
 export const READY_BACKUP = 'ready.tsv.bak';
-export const DROP_ARCHIVE = 'dropped.tsv';
+const DROP_ARCHIVE = 'dropped.tsv';
 // router-queue.md envelopes resolve spec-less ready rows' requirements; the
 // same 32 MiB bound the unfed report and queue supply read it under.
 const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
@@ -109,7 +109,7 @@ export const flockReady: TakeReadyLock = queueDir => new Promise((resolve, rejec
 });
 
 const missing = (error: unknown): never => {
-  throw (error as NodeJS.ErrnoException).code === 'ENOENT' ? new QueueSteerError('queue-missing') : error;
+  throw isMissingFileError(error) ? new QueueSteerError('queue-missing') : error;
 };
 
 /** Lanes a job may move to: the dispatcher's lanes and the drop lanes, minus held ones. */
@@ -176,7 +176,7 @@ function marketHint(row: ReadyRow, routerQueue?: string | null): string | null {
 }
 
 /** Pure: the rows after the action, or null when the queue already is the way the action wants it. */
-export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionRequest, routerQueue?: string | null): ReadyRow[] | null {
+function planQueueAction(rows: readonly ReadyRow[], req: QueueActionRequest, routerQueue?: string | null): ReadyRow[] | null {
   const mine = rows.filter(row => row.id === req.id && !parked(row));
   if (!mine.length) return null;
   const rest = rows.filter(row => !mine.includes(row));
@@ -226,12 +226,7 @@ export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionReque
 
 /** Replace a file in the queue directory by temp + rename: never partial, never through a link. */
 export async function replaceLockedQueueFile(path: string, text: string): Promise<void> {
-  const temp = `${path}.${randomUUID()}.tmp`;
-  const handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-  try {
-    try { await handle.writeFile(text); await handle.sync(); } finally { await handle.close(); }
-    await rename(temp, path);
-  } catch (error) { await unlink(temp).catch(() => {}); throw error; }
+  return writeQueueFileAtomic(path, text, 0o600);
 }
 
 /** Mark the job's router-queue.md line DROPPED so the restocker does not queue it again. Best effort. */

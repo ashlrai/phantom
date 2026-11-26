@@ -21,9 +21,10 @@ import { defaultRunsDir } from '../fleet/landed-closes-read.js';
 import { readLedgerLines } from '../fleet/ledger-lines.js';
 import { parseReadyRows, readReadyText } from '../fleet/ready-row-edit.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { isQueueRecord, pickQueueString } from './schema.js';
 
 export const DUPCHECK_SCHEMA = 'queue.dupcheck.v1';
-export const DUPCHECK_WINDOW_DAYS = 7;
+const DUPCHECK_WINDOW_DAYS = 7;
 const CLI_REFERENCE = 'docs/CLI-REFERENCE.md';
 const MAX_GOAL = 12_000;
 const MAX_MERGED = 5_000;
@@ -206,25 +207,19 @@ export async function readMergedJobs(runsDir: string, now: number, days = DUPCHE
   const ok = await readLedgerLines(join(runsDir, 'metrics', 'jobs.jsonl'), line => {
     if (rows.size >= MAX_MERGED || !MERGED_LINE.test(line)) return;
     try {
-      const r = JSON.parse(line) as Record<string, unknown>;
+      const r = JSON.parse(line) as unknown;
+      if (!isQueueRecord(r)) return;
       // jobs.jsonl field dialects: phases outcome|state|status plus producer
       // aliases, merge stamps merged_at|mergedAt, and the usual id/timestamp
       // spellings dispatchd `_vc_pick` and metrics-outcomes accept.
-      const pick = (keys: readonly string[]): string | null => {
-        for (const key of keys) {
-          const value = r[key];
-          if (typeof value === 'string' && value) return value;
-        }
-        return null;
-      };
-      const phase = pick(['outcome', 'state', 'phase', 'status', 'result', 'conclusion']);
-      const mergedStamp = pick(['merged_at', 'mergedAt']);
+      const phase = pickQueueString(r, ['outcome', 'state', 'phase', 'status', 'result', 'conclusion']);
+      const mergedStamp = pickQueueString(r, ['merged_at', 'mergedAt']);
       if ((phase === null || phase.toUpperCase() !== 'MERGED') && mergedStamp === null) return;
-      const at = mergedStamp ?? pick(['at', 'ts', 'time', 'timestamp', 'closedAt', 'recordedAt', 'updatedAt']);
+      const at = mergedStamp ?? pickQueueString(r, ['at', 'ts', 'time', 'timestamp', 'closedAt', 'recordedAt', 'updatedAt']);
       const ms = at ? Date.parse(at) : NaN;
       if (!Number.isFinite(ms) || ms < since || ms > now + 86_400_000) return;
-      const jobId = pick(['job_id', 'job', 'jobId', 'id']), pr = typeof r.pr === 'number' ? r.pr : null;
-      const title = scrubSecrets(pick(['pr_title', 'title', 'subject']) ?? '').slice(0, 300);
+      const jobId = pickQueueString(r, ['job_id', 'job', 'jobId', 'id']), pr = typeof r.pr === 'number' ? r.pr : null;
+      const title = scrubSecrets(pickQueueString(r, ['pr_title', 'title', 'subject']) ?? '').slice(0, 300);
       if (!title && !jobId) return;
       rows.set(`${jobId ?? ''}#${pr ?? title}`, { jobId, pr, title: title || (jobId ?? ''), mergedAt: new Date(ms).toISOString() });
     } catch { /* a bad line cannot show that anything merged */ }
@@ -240,7 +235,7 @@ export interface DupcheckLoadDeps {
   help?: readonly { cmd: string; desc: string }[];
 }
 
-export async function loadDupcheckSources(deps: DupcheckLoadDeps = {}): Promise<DupcheckSources> {
+async function loadDupcheckSources(deps: DupcheckLoadDeps = {}): Promise<DupcheckSources> {
   const root = deps.root ?? process.cwd(), gaps: string[] = [];
   let help = deps.help;
   if (!help) { try { help = (await import('../../cli/help.js')).HELP_ENTRIES; } catch { gaps.push('The CLI command list could not be loaded.'); } }
@@ -256,7 +251,7 @@ export async function loadDupcheckSources(deps: DupcheckLoadDeps = {}): Promise<
 export class DupcheckInputError extends Error {}
 
 /** `<job-id|prompt-file>` -> the prompt text. A file wins; otherwise the id is looked up in queue/ready.tsv. */
-export async function readDupcheckInput(input: string, deps: { cwd?: string; runsDir?: string } = {}): Promise<{ text: string; jobId: string | null; kind: 'job' | 'file' }> {
+async function readDupcheckInput(input: string, deps: { cwd?: string; runsDir?: string } = {}): Promise<{ text: string; jobId: string | null; kind: 'job' | 'file' }> {
   const path = resolve(deps.cwd ?? process.cwd(), input);
   const idLike = /^RQ-[A-Za-z0-9._-]+$/.test(input);
   if (!idLike || existsSync(path)) {

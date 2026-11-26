@@ -6,6 +6,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { z } from 'zod';
 import { scrubPrivateText } from '../util/scrub.js';
 import { fitRoute, type RouteSkipCode } from '../fleet/lane-capabilities.js';
+import { isQueueRecord } from './schema.js';
 import { supersedeQueue } from './supersede.js';
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/).refine(value => scrubPrivateText(value) === value);
@@ -84,8 +85,8 @@ async function readEmptyPrefixes(root: string, now: number): Promise<EmptyPrefix
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line);
-      if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error();
+      const row: unknown = JSON.parse(line);
+      if (!isQueueRecord(row)) throw new Error();
       // jobs.jsonl event names arrive as event|type|kind; stamps as
       // ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt.
       if ((row.event ?? row.type ?? row.kind) !== 'finish') continue;

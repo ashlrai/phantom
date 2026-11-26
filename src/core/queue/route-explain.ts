@@ -11,10 +11,10 @@ import { loadRouteSources } from '../routing/decision-candidates.js';
 import { withRunwayYield } from './route-yield.js';
 import { decideRoute } from '../routing/decision.js';
 import { modelModeTierSchema, routeRequestSchema, routeModelSchema } from '../routing/decision-schema.js';
+import { isQueueRecord, nonNegativeFinite } from './schema.js';
 
 export async function postureEvidence(root: string) {
-  const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
-  const projection = (v: unknown) => v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
+  const projection = (v: unknown) => v === null || nonNegativeFinite(v) !== null;
   try {
     const fd = await open(join(root, 'metrics/work-market.jsonl'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     let tail: string;
@@ -29,18 +29,18 @@ export async function postureEvidence(root: string) {
     } finally { await fd.close(); }
     const rows: Record<string, unknown>[] = [];
     for (const line of tail.split('\n').reverse()) {
-      try { const row: unknown = JSON.parse(line); if (object(row) && row.schema === 'work-market.v1') rows.push(row); } catch { /* Partial journal rows are not evidence. */ }
+      try { const row: unknown = JSON.parse(line); if (isQueueRecord(row) && row.schema === 'work-market.v1') rows.push(row); } catch { /* Partial journal rows are not evidence. */ }
     }
     const row = rows.find(r => r.event === 'posture') ?? rows.find(r => r.event === 'route_decision');
     const input = row?.event === 'posture' ? row.lanes : row?.ranking_inputs;
-    if (!object(input) || !Object.keys(input).length) return null;
+    if (!isQueueRecord(input) || !Object.keys(input).length) return null;
     const lanes: Record<string, { posture: string; postureReason: string; projectedUnusedPct: number | null; hoursToReset: number | null;
       observedAt?: string; lane?: string; accountId?: string; model?: string; windowStart?: string; resetAt?: string;
       costClass?: string; costClassReason?: string; zeroCost?: boolean; freePreview?: boolean; previewExpiresAt?: string; allowance?: Record<string, number | null> }> = {};
     for (const [lane, value] of Object.entries(input)) {
-      if (!object(value) || !['burn', 'balanced', 'preserve'].includes(String(value.posture)) ||
+      if (!isQueueRecord(value) || !['burn', 'balanced', 'preserve'].includes(String(value.posture)) ||
           typeof value.posture_reason !== 'string' || !value.posture_reason) return null;
-      const source = row?.event === 'posture' ? value : object(value.spend_down) ? value.spend_down : {};
+      const source = row?.event === 'posture' ? value : isQueueRecord(value.spend_down) ? value.spend_down : {};
       const unused = source.projected_unused_pct ?? null, hours = source.hours_to_reset ?? null;
       if (!projection(unused) || !projection(hours)) return null;
       lanes[lane] = { posture: String(value.posture), postureReason: value.posture_reason,
@@ -56,7 +56,7 @@ export async function postureEvidence(root: string) {
       if (typeof value.zero_cost === 'boolean') lanes[lane].zeroCost = value.zero_cost;
       if (typeof value.free_preview === 'boolean') lanes[lane].freePreview = value.free_preview;
       if (typeof value.preview_expires_at === 'string' && Number.isFinite(Date.parse(value.preview_expires_at))) lanes[lane].previewExpiresAt = value.preview_expires_at;
-      if (object(value.allowance)) {
+      if (isQueueRecord(value.allowance)) {
         const allowance = value.allowance;
         lanes[lane].allowance = Object.fromEntries(['used', 'limit', 'in_flight', 'reserve', 'session_cap', 'headroom']
           .map(key => {

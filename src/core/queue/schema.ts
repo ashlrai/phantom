@@ -46,14 +46,56 @@ export interface QueueDocument {
   source?: { text: string; jobs: QueueJob[] };
 }
 const TIER_ORDER: readonly string[] = ['fast', 'mid', 'work', 'frontier'];
-const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const nonempty = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
+const READY_LINE_ID = /^- READY\s+([A-Za-z0-9][A-Za-z0-9._-]*)(?=\s|$)/;
+const READY_LINE_ENQ = /(?:^|[\s,(])enq=(\d+)(?=$|[\s,)])/;
+
+/** True for non-null, non-array objects. Browser-safe: shared by web-ui wire guards and queue readers. */
+export const isQueueRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** Trimmed non-empty string, or null for non-strings and blank text. */
+export const trimNonEmpty = (value: unknown): string | null =>
+  typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+
+/** First trimmed non-empty string among `keys` on `row`, or null when absent. */
+export function pickQueueString(row: Record<string, unknown>, keys: readonly string[]): string | null {
+  for (const key of keys) {
+    const value = trimNonEmpty(row[key]);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+/** Non-negative finite number, or null. */
+export const nonNegativeFinite = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+
+/** Non-negative safe integer, or null. */
+export const nonNegativeSafeInt = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+
+/** True when an error carries POSIX `code === 'ENOENT'`. */
+export const isMissingFileError = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'ENOENT';
+
+/** Escape RegExp metacharacters in literal search text. */
+export const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Parse a `- READY <id>` router-queue line's job id and optional `enq=<epoch-s>` stamp (in ms). */
+export function parseReadyLineEnq(line: string): { id: string; enqMs: number | null } | null {
+  const match = READY_LINE_ID.exec(line);
+  if (!match) return null;
+  const token = READY_LINE_ENQ.exec(line);
+  return { id: match[1]!, enqMs: token ? Number(token[1]) * 1000 : null };
+}
+
+const nonempty = (v: unknown): v is string => trimNonEmpty(v) !== null;
 const timestamp = (v: unknown): boolean => typeof v === 'string' && /^\d{4}-\d\d-\d\dT/.test(v) && Number.isFinite(Date.parse(v));
 export function validateQueue(value: unknown): asserts value is QueueDocument {
-  if (!record(value) || value.schema !== 'queue.v1' || !Array.isArray(value.jobs)) throw new Error('Expected queue.v1 document');
+  if (!isQueueRecord(value) || value.schema !== 'queue.v1' || !Array.isArray(value.jobs)) throw new Error('Expected queue.v1 document');
   const ids = new Set<string>();
   for (const job of value.jobs) {
-    if (!record(job) || !nonempty(job.id) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(job.id)) throw new Error('Invalid job id');
+    if (!isQueueRecord(job) || !nonempty(job.id) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(job.id)) throw new Error('Invalid job id');
     if (ids.has(job.id)) throw new Error(`Duplicate job: ${job.id}`);
     ids.add(job.id);
     if (!QUEUE_STATUSES.includes(job.status as QueueStatus)) throw new Error(`Invalid status: ${job.id}`);
@@ -72,7 +114,7 @@ export function validateQueue(value: unknown): asserts value is QueueDocument {
     if (job.impact !== undefined && (typeof job.impact !== 'number' || !Number.isFinite(job.impact))) throw new Error(`Invalid impact: ${job.id}`);
     if (typeof job.acceptance !== 'string') throw new Error(`Invalid acceptance: ${job.id}`);
     if (!Array.isArray(job.deps) || job.deps.some(d => !nonempty(d) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(d) || d === job.id) || new Set(job.deps).size !== job.deps.length) throw new Error(`Invalid deps: ${job.id}`);
-    if (!Array.isArray(job.claims) || job.claims.some(c => !record(c) || !nonempty(c.owner) || !timestamp(c.claimedAt) || (c.finishedAt !== undefined && (!timestamp(c.finishedAt) || Date.parse(c.finishedAt as string) < Date.parse(c.claimedAt as string))))) throw new Error(`Invalid claims: ${job.id}`);
+    if (!Array.isArray(job.claims) || job.claims.some(c => !isQueueRecord(c) || !nonempty(c.owner) || !timestamp(c.claimedAt) || (c.finishedAt !== undefined && (!timestamp(c.finishedAt) || Date.parse(c.finishedAt as string) < Date.parse(c.claimedAt as string))))) throw new Error(`Invalid claims: ${job.id}`);
     if (job.replayOf !== undefined && (!nonempty(job.replayOf) || job.replayOf === job.id || !timestamp(job.replayedAt))) throw new Error(`Invalid replay lineage: ${job.id}`);
     if (job.prUrl !== undefined) {
       if (typeof job.prUrl !== 'string' || !/^https:\/\/[^\s]+$/.test(job.prUrl)) throw new Error(`Invalid PR URL: ${job.id}`);
@@ -86,12 +128,12 @@ export function validateQueue(value: unknown): asserts value is QueueDocument {
   if (value.raw !== undefined) {
     if (!Array.isArray(value.raw)) throw new Error('Invalid raw records');
     for (const entry of value.raw) {
-      if (!record(entry) || !Number.isInteger(entry.line) || (entry.line as number) < 1 || !nonempty(entry.text) || !nonempty(entry.warning)) throw new Error('Invalid raw record');
+      if (!isQueueRecord(entry) || !Number.isInteger(entry.line) || (entry.line as number) < 1 || !nonempty(entry.text) || !nonempty(entry.warning)) throw new Error('Invalid raw record');
     }
   }
   if (value.warnings !== undefined && (!Array.isArray(value.warnings) || value.warnings.some(w => !nonempty(w)))) throw new Error('Invalid warnings');
   if (value.source !== undefined) {
-    if (!record(value.source) || typeof value.source.text !== 'string') throw new Error('Invalid queue source');
+    if (!isQueueRecord(value.source) || typeof value.source.text !== 'string') throw new Error('Invalid queue source');
     validateQueue({ schema: 'queue.v1', jobs: value.source.jobs });
   }
 }

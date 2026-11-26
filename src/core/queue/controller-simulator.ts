@@ -5,6 +5,8 @@
  * silently dropping censored jobs would bias W. Recorded service durations are
  * fixed workload demands, not predictions of how real workers will perform.
  */
+import { nonNegativeFinite, nonNegativeSafeInt } from './schema.js';
+
 export interface ControllerQueueEvent {
   jobId: string;
   station: string;
@@ -34,8 +36,8 @@ export interface CapacityDecision {
 }
 
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
-const count = (n: number) => Number.isSafeInteger(n) && n >= 0;
-const finite = (n: number) => Number.isFinite(n) && n >= 0;
+const count = (n: number) => nonNegativeSafeInt(n) !== null;
+const finite = (n: number) => nonNegativeFinite(n) !== null;
 
 function validateStations(stations: readonly QueueStation[]): void {
   const names = new Set<string>();

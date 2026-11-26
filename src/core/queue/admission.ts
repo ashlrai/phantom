@@ -9,21 +9,22 @@ import { homedir, loadavg, availableParallelism } from 'node:os';
 import { join } from 'node:path';
 import { GLOBAL_SLOT_KEYS } from '../fleet/runs-lane-targets.js';
 import { adaptiveSettle, readAdaptiveSettle, type SettleInputs, type SettleConfig, type SettleDecision } from './adaptive-settle.js';
+import { isQueueRecord } from './schema.js';
 
-export const LOAD_MAX = 36;
-export const PROCS_MAX = 800;
+const LOAD_MAX = 36;
+const PROCS_MAX = 800;
 /** Floor of the active-worktree limit; the limit scales with cores (worktreesMax). */
-export const WORKTREES_MAX = 40;
+const WORKTREES_MAX = 40;
 /** Active job worktrees allowed per core before admission blocks (18 cores → 72). */
-export const WORKTREES_PER_CPU = 4;
+const WORKTREES_PER_CPU = 4;
 /**
  * A job worktree is ACTIVE when its job log, its `.base` record or the worktree
  * directory changed within this window. Parked worktrees (kept for uncommitted
  * work, publish holds) sit idle and are reported as `worktreesParked`, not counted.
  */
-export const ACTIVE_WORKTREE_WINDOW_S = 30 * 60;
+const ACTIVE_WORKTREE_WINDOW_S = 30 * 60;
 
-export function worktreesMax(ncpu: number): number {
+function worktreesMax(ncpu: number): number {
   const cores = Number.isFinite(ncpu) && ncpu >= 1 ? Math.floor(ncpu) : 1;
   return Math.max(WORKTREES_MAX, WORKTREES_PER_CPU * cores);
 }
@@ -33,7 +34,7 @@ export const DAEMON_TICK_MAX_S = 15 * 60;
  * the fixed 18 is gone. A top-level slots.json hard_cap is an optional operator ceiling; a malformed one fails
  * closed to this legacy value, as dispatchd does.
  */
-export const LEGACY_GLOBAL_HARD_CAP = 18;
+const LEGACY_GLOBAL_HARD_CAP = 18;
 const STATUS_TIMEOUT_MS = 30_000;
 
 /** RQ-PACE-TO-RESET: one lane's weekly-quota pacing verdict (mirrors dispatchd's usage_verdict). */
@@ -214,7 +215,7 @@ async function readAdmissionState(opts: ReadAdmissionOptions): Promise<Omit<Admi
   const alive = opts.pidAlive ?? defaultAlive;
 
   let slots: Record<string, unknown> = {};
-  try { const raw = JSON.parse(await text(join(queue, 'slots.json')) ?? '{}'); if (raw && typeof raw === 'object' && !Array.isArray(raw)) slots = raw; } catch { /* unreadable: cap 0 */ }
+  try { const raw: unknown = JSON.parse(await text(join(queue, 'slots.json')) ?? '{}'); if (isQueueRecord(raw)) slots = raw; } catch { /* unreadable: cap 0 */ }
 
   let adaptiveCap: number | null = null;
   try {
@@ -263,12 +264,12 @@ async function readAdmissionState(opts: ReadAdmissionOptions): Promise<Omit<Admi
   // budget-overrides.json for hosts whose dispatcher predates the lanes field.
   let usage: Record<string, unknown> = {};
   try {
-    const raw = JSON.parse(await text(join(queue, 'budget-overrides.json')) ?? '{}');
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) usage = raw;
+    const raw: unknown = JSON.parse(await text(join(queue, 'budget-overrides.json')) ?? '{}');
+    if (isQueueRecord(raw)) usage = raw;
   } catch { /* unknown usage: every verdict admits */ }
   const lanes = Object.fromEntries(Object.keys(slots).filter(lane => !GLOBAL_SLOT_KEYS.has(lane)).map(lane => {
     const row = usage[lane];
-    const r = row && typeof row === 'object' && !Array.isArray(row) ? row as Record<string, unknown> : {};
+    const r = isQueueRecord(row) ? row : {};
     return [lane, { routine: usageVerdict(r, now), critical: usageVerdict(r, now, true) }];
   }));
   const report = evaluateAdmission({

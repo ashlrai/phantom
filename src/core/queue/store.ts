@@ -8,7 +8,7 @@ import { exportMarkdown } from './markdown.js';
 import { exportStacksyncCompletion } from './stacksync.js';
 import { parseSpawn, planSpawn, SPAWN_LIMITS, type SpawnResult } from './decompose.js';
 import { mergedJobsFromJsonl, readSource } from '../fleet/runs-parked-queue.js';
-import { validateQueue, type QueueDocument, type QueueJob } from './schema.js';
+import { isMissingFileError, isQueueRecord, validateQueue, type QueueDocument, type QueueJob } from './schema.js';
 
 /** One bounded spawn proposal; metadata only — never scope, acceptance or dep text. */
 interface SpawnJournalEntry {
@@ -24,13 +24,12 @@ interface SpawnJournalEntry {
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function isSpawnJournalEntry(value: unknown): value is SpawnJournalEntry {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
-  return row['v'] === 1 && typeof row['at'] === 'string' && Number.isFinite(Date.parse(row['at'])) &&
-    typeof row['parent'] === 'string' && JOB_ID.test(row['parent']) &&
-    typeof row['owner'] === 'string' && row['owner'].length <= 128 &&
+  if (!isQueueRecord(value)) return false;
+  return value['v'] === 1 && typeof value['at'] === 'string' && Number.isFinite(Date.parse(value['at'])) &&
+    typeof value['parent'] === 'string' && JOB_ID.test(value['parent']) &&
+    typeof value['owner'] === 'string' && value['owner'].length <= 128 &&
     ['proposed', 'applied', 'duplicates'].every(key =>
-      Number.isSafeInteger(row[key]) && (row[key] as number) >= 0 && (row[key] as number) <= 100_000);
+      Number.isSafeInteger(value[key]) && (value[key] as number) >= 0 && (value[key] as number) <= 100_000);
 }
 
 /**
@@ -43,19 +42,21 @@ export async function loadMergedJobIds(runsDir: string): Promise<Set<string>> {
   return mergedJobsFromJsonl(source.text);
 }
 
-const missing = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === 'ENOENT';
-/** Atomic replacement: readers see a complete old or new snapshot, never a partial write. */
-async function atomicWrite(path: string, text: string, mode = 0o600): Promise<void> {
+/** Atomic replacement: readers see a complete old or new snapshot, never a partial write or link follow. */
+export async function writeQueueFileAtomic(path: string, text: string, mode = 0o600): Promise<void> {
   const temp = `${path}.${randomUUID()}.tmp`;
   const file = await open(temp, 'wx', mode);
   try {
-    await file.writeFile(text, 'utf8');
-    await file.sync();
-    await file.close();
+    try {
+      await file.writeFile(text, 'utf8');
+      await file.sync();
+    } finally {
+      await file.close();
+    }
     await rename(temp, path);
-  } finally {
-    await file.close();
-    await unlink(temp).catch(error => { if (!missing(error)) throw error; });
+  } catch (error) {
+    await unlink(temp).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -70,7 +71,7 @@ export class QueueStore {
       if (!info.isFile() || info.isSymbolicLink()) throw new Error('Queue snapshot must be a regular file');
       text = await readFile(this.path, 'utf8');
     }
-    catch (error) { if (missing(error)) return { schema: 'queue.v1', jobs: [] }; throw error; }
+    catch (error) { if (isMissingFileError(error)) return { schema: 'queue.v1', jobs: [] }; throw error; }
     const doc: unknown = JSON.parse(text);
     validateQueue(doc);
     return doc;
@@ -98,7 +99,7 @@ export class QueueStore {
       // another process acquired after an operator cleared ours.
       await lock.close().catch(() => undefined);
       const held = await readFile(lockPath, 'utf8').catch(() => undefined);
-      if (held?.includes(token)) await unlink(lockPath).catch(error => { if (!missing(error)) throw error; });
+      if (held?.includes(token)) await unlink(lockPath).catch(error => { if (!isMissingFileError(error)) throw error; });
     }
   }
   private async mutate<T>(change: (doc: QueueDocument) => T): Promise<T> {
@@ -106,7 +107,7 @@ export class QueueStore {
       const doc = await this.read();
       const result = change(doc);
       validateQueue(doc);
-      await atomicWrite(this.path, JSON.stringify(doc, null, 2) + '\n');
+      await writeQueueFileAtomic(this.path, JSON.stringify(doc, null, 2) + '\n');
       return result;
     });
   }
@@ -213,10 +214,10 @@ export class QueueStore {
         owner: parsed.owner, proposed: parsed.jobs.length, applied: plan.jobs.length, duplicates: plan.duplicates.length };
       const kept = [...fresh, entry].slice(-SPAWN_LIMITS.journalEntries);
       // Journal before the snapshot: a crash must over-count the rate cap, not under-count it.
-      await atomicWrite(this.spawnJournalPath, kept.map(e => JSON.stringify(e)).join('\n') + '\n');
+      await writeQueueFileAtomic(this.spawnJournalPath, kept.map(e => JSON.stringify(e)).join('\n') + '\n');
       doc.jobs.push(...plan.jobs.map(job => structuredClone(job)));
       validateQueue(doc);
-      await atomicWrite(this.path, JSON.stringify(doc, null, 2) + '\n');
+      await writeQueueFileAtomic(this.path, JSON.stringify(doc, null, 2) + '\n');
       return { schema: 'spawn-result.v1', parent: plan.parent, applied: plan.jobs.map(job => job.id), duplicates: plan.duplicates };
     });
   }
@@ -227,7 +228,7 @@ export class QueueStore {
       const info = await lstat(this.spawnJournalPath);
       if (!info.isFile() || info.isSymbolicLink()) throw new Error('Spawn journal must be a regular file');
       text = await readFile(this.spawnJournalPath, 'utf8');
-    } catch (error) { if (missing(error)) return []; throw error; }
+    } catch (error) { if (isMissingFileError(error)) return []; throw error; }
     if (Buffer.byteLength(text) > 4 * 1024 * 1024) throw new Error('Spawn journal is too large');
     return text.split('\n').filter(line => line.trim()).map((line, index) => {
       let value: unknown;
@@ -239,7 +240,7 @@ export class QueueStore {
   async mirror(): Promise<string> {
     return this.locked(async () => {
       const path = join(this.directory, 'queue.mirror.md');
-      await atomicWrite(path, '<!-- Read-only queue.v1 mirror. Edit through phm queue. -->\n' + exportMarkdown(await this.read()), 0o444);
+      await writeQueueFileAtomic(path, '<!-- Read-only queue.v1 mirror. Edit through phm queue. -->\n' + exportMarkdown(await this.read()), 0o444);
       return path;
     });
   }

@@ -17,10 +17,11 @@ import { lstat, mkdir, open, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { headerValue, isAllowedHost, requestUrl, safeEqual, sendJson } from '../web/read-session.js';
 import { SpawnRejection, type SpawnResult } from './decompose.js';
+import { isMissingFileError } from './schema.js';
 
-export const SPAWN_INGEST_PATH = '/v1/spawn';
-export const SPAWN_INGEST_HEALTH = '/v1/health';
-export const SPAWN_INGEST_MAX_BODY = 64 * 1024;
+const SPAWN_INGEST_PATH = '/v1/spawn';
+const SPAWN_INGEST_HEALTH = '/v1/health';
+const SPAWN_INGEST_MAX_BODY = 64 * 1024;
 
 export interface SpawnIngestOptions {
   /** Applies a validated proposal — typically `store.propose`. */
@@ -53,7 +54,7 @@ export async function loadOrCreateIngestToken(path: string): Promise<string> {
     if (!/^[a-f0-9]{32,128}$/.test(token)) throw new Error('Invalid ingest token shape');
     return token;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (!isMissingFileError(error)) throw error;
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const token = randomBytes(24).toString('hex');
     const file = await open(path, 'wx', 0o600);

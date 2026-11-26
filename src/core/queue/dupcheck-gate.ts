@@ -13,6 +13,7 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DupcheckEvidence, DupcheckReport } from './dupcheck.js';
+import { isMissingFileError } from './schema.js';
 
 export const DUPCHECK_GATE_SCHEMA = 'queue.dupcheck-gate.v1';
 export const DUPCHECK_STATS_SCHEMA = 'queue.dupcheck-stats.v1';
@@ -85,7 +86,7 @@ export function parseDupcheckEvents(text: string): DupcheckEvent[] {
 
 async function readEvents(runsDir: string): Promise<DupcheckEvent[] | null> {
   let text: string;
-  try { text = await readFile(file(runsDir), 'utf8'); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? [] : null; }
+  try { text = await readFile(file(runsDir), 'utf8'); } catch (e) { return isMissingFileError(e) ? [] : null; }
   return parseDupcheckEvents(text);
 }
 
