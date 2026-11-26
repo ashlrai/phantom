@@ -54,7 +54,7 @@ export function relativeText(at: string | null, now: number): string {
   const reading = relativeTime(at, now);
   if (reading) return reading.seconds < 60 ? 'this minute' : ageInSeconds(reading.seconds, 'words');
   const futureSeconds = at === null ? NaN : (Date.parse(at) - now) / 1000;
-  return !Number.isFinite(futureSeconds) ? '—' : futureSeconds < 60 ? 'this minute' : `in ${elapsedTime(futureSeconds)}`;
+  return !Number.isFinite(futureSeconds) ? '—' : futureSeconds < 60 ? 'this minute' : `in ${elapsedTime(futureSeconds, 'words')}`;
 }
 export const newest = <T extends { at: string }>(rows: T[], limit: number): T[] =>
   [...rows].sort((a, b) => (Date.parse(b.at) - Date.parse(a.at)) || b.at.localeCompare(a.at)).slice(0, limit);

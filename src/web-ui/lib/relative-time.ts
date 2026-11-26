@@ -1,5 +1,4 @@
-export function elapsedTime(seconds: number): string {
-  if (!Number.isFinite(seconds)) return 'time unknown';
+function compactDuration(seconds: number): string {
   const whole = Math.floor(Math.max(0, seconds));
   if (whole < 60) return `${whole}s`;
   const minutes = Math.floor(whole / 60);
@@ -10,13 +9,16 @@ export function elapsedTime(seconds: number): string {
   return hours % 24 ? `${days}d ${hours % 24}h` : `${days}d`;
 }
 
-export function ageInSeconds(seconds: number, style: 'compact' | 'spaced' | 'words' = 'compact'): string {
+export function elapsedTime(seconds: number, style: 'compact' | 'spaced' | 'words' = 'compact'): string {
   if (!Number.isFinite(seconds)) return 'time unknown';
-  const duration = elapsedTime(seconds);
+  const duration = compactDuration(seconds);
   const labels = { s: 'second', m: 'minute', h: 'hour', d: 'day' } as const;
-  const text = style === 'words' ? duration.replace(/(\d+)([smhd])/g, (_, n: string, unit: keyof typeof labels) => `${n} ${labels[unit]}${n === '1' ? '' : 's'}`)
+  return style === 'words' ? duration.replace(/(\d+)([smhd])/g, (_, n: string, unit: keyof typeof labels) => `${n} ${labels[unit]}${n === '1' ? '' : 's'}`)
     : style === 'spaced' ? duration.replace(/(\d+)m/g, '$1 min').replace(/(\d+)([shd])/g, '$1 $2') : duration;
-  return `${text} ago`;
+}
+
+export function ageInSeconds(seconds: number, style: 'compact' | 'spaced' | 'words' = 'compact'): string {
+  return Number.isFinite(seconds) ? `${elapsedTime(seconds, style)} ago` : 'time unknown';
 }
 
 export function relativeTime(value: unknown, now = Date.now()) {
