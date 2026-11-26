@@ -67,7 +67,7 @@ describe('resource ledger', () => {
     expect(projectPoolBudgets(rows, new Date(at(11.5))).pools['local-omlx'].buckets.capacity).toMatchObject({
       remaining: 4, burnPerHour: { last2: null }, usageInLastHourBeforeReset: null });
   });
-  it('CLI emits one ledger JSON object from existing readers and preserves plain --json', async () => {
+  it('CLI emits one ledger JSON object and includes Antigravity status in the plain snapshot', async () => {
     const { getResourceSnapshot } = await import('../src/core/fabric/resource-monitor.js');
     const { readPoolBudgets } = await import('../src/core/fleet/pool-budget-store.js');
     vi.mocked(getResourceSnapshot).mockResolvedValue(snapshot);
@@ -79,6 +79,10 @@ describe('resource ledger', () => {
     expect(JSON.parse(log.mock.calls[0]![0] as string)).toEqual(buildResourceLedger(snapshot, budgets));
     log.mockClear();
     expect(await cmdResources(['--json'])).toBe(0);
-    expect(JSON.parse(log.mock.calls[0]![0] as string)).toEqual(snapshot);
+    expect(JSON.parse(log.mock.calls[0]![0] as string)).toEqual({
+      ...snapshot,
+      antigravity: { source: 'antigravity-cli-status', execution_context: 'unknown',
+        groups: null, reset_at: null, reason: 'source-returned-nothing' },
+    });
   });
 });

@@ -1,5 +1,8 @@
 # Mac queue lane scripts (repo copies)
 
+See the [Security re-pin queue](../../docs/SECURITY-REPIN-QUEUE.md) for
+merged changes awaiting review and live adoption.
+
 `restock.py` and `dispatchd.py` are reviewable repository copies of the
 deterministic Mac queue scripts that run under `~/.ashlr-runs` on the dispatch
 host. A repository snapshot can be older than the installed controller: compare
@@ -138,6 +141,18 @@ and load is below `ncpu`, 2 at or above `ncpu`, and 1 while the gate is tripped.
 signal: measured busy cores when the snapshot has `%CPU`, load1 otherwise.
 `LOCAL_MID_CAP` overrides this cap with a nonnegative integer; the effective value
 is recorded as `local_mid_cap` in `admission.json`.
+
+An optional `$ASHLR_HOME/fleet-profile.json` (default `~/.ashlr/fleet-profile.json`,
+schema `fleet.profile.v1`) selects the lanes this dispatcher may launch. Each
+lane needs `authorized: true`, a registered `resource`, and a ready matching
+executor in `slots.json`. Custom resources use `custom:<id>` from
+`custom-resources.json`; metered custom resources also need `metered_opt_in: true`.
+The optional nonnegative integer `floor` defaults to zero and is clamped to the
+slot's ceiling and hard cap. The effective floor is shown in `status.json`;
+the saved slot floor is retained for legacy mode. Missing profiles keep the
+built-in defaults and existing slot overrides, without `codex-cmp`. An empty
+or malformed profile admits no lanes. Already-running jobs still count against
+global concurrency if their lane is removed.
 
 Threshold environment overrides: `GATE_PRESSURE_MIN=2`, `GATE_SWAP_GROWTH_GB=2`,
 `GATE_SWAP_WINDOW_S=300`, `GATE_LOAD_PER_CPU=2`, `GATE_PROCS_MAX=2500`,

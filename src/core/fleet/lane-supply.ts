@@ -1,8 +1,9 @@
 /**
  * lane-supply.ts — one glance: does every lane have work, and does it have usage left?
  *
- * The alarm is "idle with usage left": a lane with free slots, nothing queued and pool usage still
- * available. The Leader card, the phone and `phm fleet lane-supply` all read this one typed report.
+ * The alarm is "idle with usage left": a lane with free slots, nothing queued, no lane-open
+ * supply the market could place on it, and pool usage still available. The Leader card, the
+ * phone and `phm fleet lane-supply` all read this one typed report.
  *
  * Built from the lane console snapshot (queue depth, running, target, hold, pool credit) plus the
  * last self-tick record (planner pass time and the autofill decision). Pure: no I/O, no clock.
@@ -18,6 +19,7 @@ export type LaneSupplyVerdict =
   | 'busy'
   | 'idle-with-usage-left'
   | 'idle-usage-unknown'
+  | 'open-supply'
   | 'out-of-usage'
   | 'held'
   | 'unknown';
@@ -77,8 +79,8 @@ function resetWords(resetAt: string | null): string {
   return Number.isFinite(at) ? new Date(at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'its next reset (time unknown)';
 }
 
-/** The verdict and plain sentence for one lane. */
-export function laneSupplyLane(view: FleetLaneView, nowMs: number): LaneSupplyLane {
+/** The verdict and plain sentence for one lane. `openRows` is the snapshot's lane-open READY count: supply the market may place on any lane, so a positive count keeps a free lane from reading as idle. */
+export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: number | null = null): LaneSupplyLane {
   const running = view.liveJobs;
   const target = view.slotTarget;
   const held = view.hold?.held === true;
@@ -93,11 +95,13 @@ export function laneSupplyLane(view: FleetLaneView, nowMs: number): LaneSupplyLa
     resetAt: view.credit.resetAt, hoursToReset,
   };
   const idle = free !== null && free > 0 && view.queueDepth === 0;
+  const openSupply = typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows > 0;
   let verdict: LaneSupplyVerdict;
   let text: string;
   let detail: string | null = null;
   if (held) { verdict = 'held'; detail = view.hold?.reason ?? null; text = `${view.lane} held${detail ? `: ${detail}` : ''}`; }
   else if (leftPct !== null && leftPct <= 0) { verdict = 'out-of-usage'; detail = `until ${resetWords(view.credit.resetAt)}`; text = `${view.lane} out of usage ${detail}`; }
+  else if (idle && leftPct !== null && openSupply) { verdict = 'open-supply'; text = `${view.lane} open supply: ${plural(free, 'free slot')}, ${pct(leftPct)}% left, ${plural(openRows, 'open row')} wait`; }
   else if (idle && leftPct !== null) { verdict = 'idle-with-usage-left'; text = `${view.lane} idle: ${plural(free, 'free slot')}, ${pct(leftPct)}% left`; }
   else if (idle) { verdict = 'idle-usage-unknown'; text = `${view.lane} idle: ${plural(free, 'free slot')}, usage unknown`; }
   else if (free === null) { verdict = 'unknown'; text = `${view.lane}: running or target unknown`; }
@@ -125,7 +129,8 @@ export function readPlannerFacts(recordJson: string | null, nowMs: number): Pick
 }
 
 export function buildLaneSupply(snapshot: FleetLaneSnapshot, selfTickRecord: string | null, nowMs: number): LaneSupplyReport {
-  const lanes = snapshot.lanes.map(view => laneSupplyLane(view, nowMs)).sort((a, b) => a.lane.localeCompare(b.lane));
+  const openRows = snapshot.starved?.open_rows ?? null;
+  const lanes = snapshot.lanes.map(view => laneSupplyLane(view, nowMs, openRows)).sort((a, b) => a.lane.localeCompare(b.lane));
   const idle = lanes.filter(l => l.verdict === 'idle-with-usage-left').sort((a, b) => (b.freeSlots ?? 0) - (a.freeSlots ?? 0));
   return {
     schema: LANE_SUPPLY_SCHEMA,
@@ -151,7 +156,7 @@ function ageWords(seconds: number): string {
 
 const VERDICT_WORDS: Record<LaneSupplyVerdict, string> = {
   busy: 'busy', 'idle-with-usage-left': 'IDLE WITH USAGE LEFT', 'idle-usage-unknown': 'idle, usage unknown',
-  'out-of-usage': 'out of usage', held: 'held', unknown: 'unknown',
+  'open-supply': 'open supply', 'out-of-usage': 'out of usage', held: 'held', unknown: 'unknown',
 };
 
 /** The plain-text table `phm fleet lane-supply` prints. */

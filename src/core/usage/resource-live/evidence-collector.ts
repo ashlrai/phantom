@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { runDesktopOperator, scrubOperatorJson } from '../../desktop/operator.js';
 import { readPrivateJson, updateEvidence } from './store.js';
 import { bankSchema } from './banked-resets.js';
+import { nextResetCheck } from './cadence.js';
 import type { BankedResetGrant } from './types.js';
 
 const RESET_ID = 'codex-personal-resets';
@@ -139,8 +140,7 @@ function dueAt(prior: unknown, now: number): number {
   const observed = Date.parse(row.observed_at);
   if (!Number.isFinite(observed) || observed > now) return now;
   const end = Math.min(row.reset_at ? Date.parse(row.reset_at) : Infinity, row.expires_at ? Date.parse(row.expires_at) : Infinity);
-  const lead = end - 2 * MINUTE;
-  return Math.min(observed + (row.used === null ? 5 : 10) * MINUTE, observed < lead ? lead : end);
+  return Math.min(observed + (row.used === null ? 5 : 10) * MINUTE, nextResetCheck(observed, end));
 }
 
 async function readWindow(target: Target, operator: typeof runDesktopOperator): Promise<string | null> {

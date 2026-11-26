@@ -14,7 +14,7 @@
  *    not report it → Devin is never drafted for it);
  *  - G6's two-judge rule for Devin work, as a pure gate.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { computeEffectivePolicy, fleetEngineOfSeat, standingAuthorizesDevin } from '../src/core/authority/effective-config.js';
 import { custodySignsDevin } from '../src/core/authority/custody-client.js';
@@ -35,7 +35,8 @@ import { BUDGET_ENGINES, DEVIN_SEAT_ID, defaultBudgetPolicy, effectiveSeatPolicy
 import { routeSeat } from '../src/core/routing/router.js';
 import type { SeatCapacity } from '../src/core/routing/headroom.js';
 import type { DecisionEntry } from '../src/core/types.js';
-import { hashDiff, loadOrCreateKey, signJudgeAttestation } from '../src/core/foundry/provenance.js';
+import { hashDiff, signJudgeAttestation } from '../src/core/foundry/provenance.js';
+import * as privateStorage from '../src/core/util/private-storage.js';
 import { DEVIN_CUSTODY_REINSTALL_NOTE, devinDraftChoice } from '../src/core/verse/authority-api.js';
 import { criteria, makeGrant, TEST_HOST, TEST_KEY_ID, TEST_SURFACE } from './helpers/authority-310b.js';
 
@@ -267,11 +268,20 @@ describe('drafting Devin: opt-in + key + a helper that signs it', () => {
 });
 
 describe('G6 two-judge rule (pure)', () => {
+  let restoreStorage: (() => void) | undefined;
+  beforeEach(() => {
+    if (process.platform === 'win32') {
+      const adapter = vi.spyOn(privateStorage, 'assurePrivateStoragePath')
+        .mockReturnValue({ ok: true, reason: 'exact-private-dacl' });
+      restoreStorage = () => adapter.mockRestore();
+    }
+  });
+  afterEach(() => restoreStorage?.());
+
   const DIFF = 'diff --git a/x b/x\n+1\n';
   const PROPOSAL = 'p-devin-2j';
   const at = (offsetMin: number) => new Date(NOW + offsetMin * 60_000).toISOString();
   function judged(judge: string, verdict: 'ship' | 'review', ts: string): DecisionEntry {
-    loadOrCreateKey();
     const attestation = verdict === 'ship'
       ? signJudgeAttestation({ proposalId: PROPOSAL, judgeEngine: judge, verdict: 'ship', diffHash: hashDiff(DIFF), issuedAt: ts, mergeIntent: 'would-merge' })
       : undefined;

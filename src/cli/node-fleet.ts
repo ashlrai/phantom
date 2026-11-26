@@ -1,7 +1,7 @@
 /** `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave`: thin handlers over DriveNodes. */
 import { hostname } from 'node:os';
-import type { NodesStore } from '../core/drive/nodes/index.js';
-import { UsageError, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
+import type { DriveNodes, NodesStore } from '../core/drive/nodes/index.js';
+import { UsageError, joinHintCommand, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
 import { validId, type NodeAuth } from '../core/drive/nodes/state.js';
 
 export interface NodeFleetDeps {
@@ -35,7 +35,26 @@ const PULL_HELD_WORDS: Record<string, string> = {
   'disk-pressure': 'disk pressure',
 };
 
-function text(verb: string, out: Record<string, unknown>): string {
+/** Rejoin command per expired node in a status view, keyed by node id. The
+ * profile comes from `nodeProfile` — the full advertised owners, caps and
+ * slots, not the scope-filtered view fields — so the hint restores exactly
+ * what the node last advertised and never silently drops a scope it joined
+ * with. A profile read that fails degrades to the generic rejoin hint rather
+ * than failing the status report. */
+function expiredRejoinHints(nodes: DriveNodes, out: Record<string, unknown>): Map<string, string> | undefined {
+  const view = out['nodes'];
+  if (!Array.isArray(view)) return undefined;
+  const hints = new Map<string, string>();
+  for (const n of view as { nodeId?: unknown; live?: unknown }[]) {
+    if (n.live !== false || typeof n.nodeId !== 'string') continue;
+    let profile: ReturnType<DriveNodes['nodeProfile']> = null;
+    try { profile = nodes.nodeProfile(n.nodeId); } catch { /* degrade to the generic rejoin hint */ }
+    hints.set(n.nodeId, joinHintCommand(n.nodeId, profile));
+  }
+  return hints.size ? hints : undefined;
+}
+
+function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<string, string>): string {
   if (verb === 'join') {
     // Join is the first command every new node runs; its text answer is a
     // sentence, not the key:value dump, and it states the 30-second session
@@ -71,9 +90,16 @@ function text(verb: string, out: Record<string, unknown>): string {
     // slots is the advertised admission bound: a reported number (0 holds
     // admission), or 'unbounded' when none was reported — an absent bound is
     // legacy unbounded routing, not a measured zero. held is the last measured
-    // capacity hold, shown only while one is reported.
+    // capacity hold, shown only while one is reported. An expired node names
+    // the rejoin command that restores its last advertised profile — the same
+    // hint a session-expired error prints — so the diagnostic command also
+    // says how to bring the node back.
+    const rejoinFor = (nodeId: string): string => {
+      const cmd = rejoin?.get(nodeId);
+      return cmd === undefined ? '' : ` — rejoin: ${cmd}`;
+    };
     const lines = [`Owner scope: ${scope}`,
-      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} slots=${n.slots ?? 'unbounded'}${n.capacity?.held ? ` held=${n.capacity.held}` : ''} caps=${n.caps.join(',') || '-'}`),
+      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} slots=${n.slots ?? 'unbounded'}${n.capacity?.held ? ` held=${n.capacity.held}` : ''} caps=${n.caps.join(',') || '-'}${n.live ? '' : rejoinFor(n.nodeId)}`),
       ...jobs.map(j => `job ${j.id} ${jobStateWords(j)}${fixes.has(j.id) ? ` — ${fixes.get(j.id)}` : ''}`)];
     // An empty scope is the first-run case: say so and print the join command,
     // the same next step `phm node plan` prints for a job with no live node.
@@ -147,7 +173,13 @@ function text(verb: string, out: Record<string, unknown>): string {
       `Lease token ${claim.token}, leader-token ${claim.leaderToken}; expires ${new Date(claim.expiresAt).toISOString()}. Renew before expiry; pass the token to every effect.`,
     ];
     if (typeof job?.task?.text === 'string' && job.task.text.length) lines.push('', 'Task:', job.task.text);
-    lines.push('', `Run: phm node renew ${lease}`, `Done? Run: phm node complete ${lease} --result <text>`);
+    // The third lifecycle verb matters as much as renew/complete here: a manual
+    // runner that cannot do the job (missing secret, wrong pack, out of its
+    // depth) must hand the claim back at once instead of stranding it until the
+    // lease lapses. --decline stays optional — only a permanent inability bars
+    // this session; a temporary one releases plainly and stays retryable.
+    lines.push('', `Run: phm node renew ${lease}`, `Done? Run: phm node complete ${lease} --result <text>`,
+      `Cannot run it? Run: phm node release ${lease} (add --decline if this node can never run it)`);
     return lines.join('\n');
   }
   if (verb === 'result') {
@@ -181,6 +213,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
       import('../core/drive/nodes/phm-version.js')]);
     const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
+    const drive = new DriveNodes(store, deps.now ? { now: deps.now } : {});
     if (verb === 'join') {
       // A standalone join defaults --node to this computer's sanitized hostname,
       // the same default a pool join applies. Like the version cap below it stays
@@ -207,7 +240,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
         flags.set('--caps', caps.join(','));
       }
     }
-    const out = runNodeFleet(verb, flags, new DriveNodes(store, deps.now ? { now: deps.now } : {}), deps.probeAuth ?? probeLocalAuth);
+    const out = runNodeFleet(verb, flags, drive, deps.probeAuth ?? probeLocalAuth);
     // Standalone join names its keep-alive beat. This stays out of runNodeFleet:
     // pool replies already carry their own `next` (the worker command) and a
     // `next` inside result.result would override it in the spread below. The
@@ -225,7 +258,12 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // assume it joined a shared fleet.
       out['registry'] = 'local';
     }
-    console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out));
+    // status/list name each expired node's rejoin command. Text only: the
+    // --json view stays the scope-filtered projection, and a machine caller
+    // already gets the same command in a session-expired error's fix. The
+    // profile reads run only for the rendered verbs, never for --json.
+    const rejoin = !json && (verb === 'status' || verb === 'list') ? expiredRejoinHints(drive, out) : undefined;
+    console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out, rejoin));
     return 0;
   } catch (error) {
     const known = error instanceof UsageError;

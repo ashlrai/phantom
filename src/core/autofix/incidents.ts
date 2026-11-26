@@ -10,12 +10,11 @@
 import { join } from 'node:path';
 
 import { laneTargetFromSlots, newerReleasePublished, tagOf } from './fixers.js';
-import { RESIDENT_LABEL, type AutofixSnapshot, type IncidentStatusLine, type LaunchdJob } from './types.js';
+import { LANE_RE, RESIDENT_LABEL, type AutofixSnapshot, type IncidentStatusLine, type LaunchdJob } from './types.js';
 
 export const INCIDENT_KEY_RE = /^[a-z0-9._-]{1,96}$/;
 const INCIDENT_FILE_RE = /^INCIDENT-([a-z0-9._-]{1,96})\.md$/;
 const LABEL_RE = /^ai\.ashlr\.[a-z0-9.-]{1,64}$/;
-const LANE_RE = /^[a-z][a-z0-9-]{1,30}$/;
 
 /** Prefixes Eng Ops files today. c and f are not in the table. */
 export const INCIDENT_FIXER_TABLE = {
@@ -53,7 +52,6 @@ export function parseIncidentFilename(name: string): ParsedIncident | RejectedIn
   const match = INCIDENT_FILE_RE.exec(name);
   if (!match) return null;
   const key = match[1]!;
-  if (!INCIDENT_KEY_RE.test(key)) return null;
   const prefix = key.includes('_') ? key.slice(0, key.indexOf('_')) : key;
   if (!Object.hasOwn(INCIDENT_FIXER_TABLE, prefix)) return { key, reason: 'unknown-prefix' };
   const known = prefix as IncidentPrefix;

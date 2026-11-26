@@ -40,6 +40,12 @@ to a sanitized hostname. It does not scan for devices, approve SSH fingerprints,
 install a runner or start background execution. On a configured Mac, repeat
 `phm node join --json` to recheck the route and local capacity using the saved
 identity. A primary or backup retains its role; repeat join never resets its witness.
+If this computer's node id already holds a live pool session — a running worker
+batch or an unexpired join — the repeat join is refused with `node-live`: stop
+the worker or wait about 30 seconds for the session to expire, then retry.
+When the pool cannot be reached at all, join prints per-host approval steps
+instead: the host-check and `ssh-copy-id` commands to run on this computer, and
+a reminder that each pool Mac needs Phantom installed with `phm` on its SSH PATH.
 
 See every computer in one place, from the backup or primary:
 
@@ -462,12 +468,19 @@ bus and approved Slack broker:
 ```sh
 phm agentnet peers list --json
 phm agentnet peers read --after 0 --json
+phm agentnet peers read --peer-kind task --thread sprint-7 --json
 phm agentnet peers send reviewer review "Review pr:123" --json
 phm agentnet peers send builder handoff "Review complete" --reply-to peer-00000000-0000-0000-0000-000000000000 --json
 phm agentnet channels propose parser-review --json
 phm agentnet channels propose parser-review --apply --json
 phm agentnet identity register reviewer --json
 ```
+
+`peers read` accepts the shared bus filters (`--from`, `--exclude-from`,
+`--to`, `--since`, `--before`, `--contains`, `--id`, `--kind`, `--peer-kind`,
+`--thread`, `--job`, `--result`) applied to the admitted page only — they
+narrow the view, never the admission, and the cursor still advances over every
+scanned row.
 
 Channel proposals preview by default; `--apply` and identity registration record
 local drafts. Actual bot/channel provisioning needs a reviewed provisioner and

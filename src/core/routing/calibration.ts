@@ -10,6 +10,7 @@ export interface CalibrationArm {
   arm: string;
   jobs: number;
   resolved: number;
+  observedMergeRate: number | null;
   mergeRate: Metric;
   brier: number | null;
   tokens: Metric;
@@ -181,10 +182,12 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
     group.push(job); groups.set(job.arm, group);
   }
   const arms = [...groups.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([arm, group]): CalibrationArm => {
-    const resolved = group.filter((job) => job.merged !== undefined).length;
+    const resolved = group.filter((job) => job.merged !== undefined);
     const mergeRate = pair(group, (job) => job.prediction, (job) => job.merged === undefined ? undefined : Number(job.merged));
     const scored = group.filter((job) => job.prediction !== undefined && job.merged !== undefined);
-    return { arm, jobs: group.length, resolved, mergeRate,
+    return { arm, jobs: group.length, resolved: resolved.length,
+      observedMergeRate: resolved.length ? resolved.filter((job) => job.merged === true).length / resolved.length : null,
+      mergeRate,
       brier: scored.length ? scored.reduce((sum, job) => sum + (job.prediction! - Number(job.merged)) ** 2 / scored.length, 0) : null,
       tokens: pair(group, (job) => job.predictedTokens, (job) => job.tokens),
       wallTimeMs: pair(group, (job) => job.predictedWallTimeMs, (job) => job.wallTimeMs),
@@ -198,10 +201,10 @@ export function readCalibration(jobsPath: string, posthogPath?: string): Calibra
 export function calibrationMarkdown(report: CalibrationReport): string {
   const format = (n: number | null): string => n === null ? 'n/a' : Number(n.toFixed(4)).toString();
   const metric = (m: Metric): string => `${format(m.predicted)} / ${format(m.actual)} (${m.paired})`;
-  const lines = ['# Router calibration', '', 'Values are predicted / actual (paired jobs). Wall time is in milliseconds.', '',
-    '| Arm | Jobs | Resolved | Merge rate | Brier | Tokens | Wall time ms |',
-    '| --- | ---: | ---: | --- | ---: | --- | --- |'];
-  for (const a of report.arms) lines.push(`| ${a.arm.replace(/[|\\\r\n]/g, ' ')} | ${a.jobs} | ${a.resolved} | ${metric(a.mergeRate)} | ${format(a.brier)} | ${metric(a.tokens)} | ${metric(a.wallTimeMs)} |`);
+  const lines = ['# Router calibration', '', 'Predicted / actual values use paired jobs. Observed merge rate uses all resolved jobs. Wall time is in milliseconds.', '',
+    '| Arm | Jobs | Resolved | Merge rate | Brier | Tokens | Wall time ms | Observed merge rate |',
+    '| --- | ---: | ---: | --- | ---: | --- | --- | ---: |'];
+  for (const a of report.arms) lines.push(`| ${a.arm.replace(/[|\\\r\n]/g, ' ')} | ${a.jobs} | ${a.resolved} | ${metric(a.mergeRate)} | ${format(a.brier)} | ${metric(a.tokens)} | ${metric(a.wallTimeMs)} | ${format(a.observedMergeRate)} |`);
   lines.push('', `Unmatched PostHog runs: ${report.unmatchedPosthogRuns}`, '');
   return lines.join('\n');
 }

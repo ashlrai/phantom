@@ -94,6 +94,7 @@ describe('fleet_work_feed argument parsing', () => {
     expect(parseFleetWorkFeedArgs({ contains: 'parser' })?.filters).toMatchObject({ contains: 'parser' });
     expect(parseFleetWorkFeedArgs({ channel: 'release' })?.filters).toMatchObject({ channel: 'release' });
     expect(parseFleetWorkFeedArgs({ result: 'complete' })?.filters).toMatchObject({ result: 'complete' });
+    expect(parseFleetWorkFeedArgs({ id: 'm-9' })?.filters).toMatchObject({ id: 'm-9' });
   });
 
   it('rejects unknown keys, caller roots and malformed values before any read', () => {
@@ -106,6 +107,7 @@ describe('fleet_work_feed argument parsing', () => {
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
       { channel: 'Has Space' }, { channel: '' }, { channel: 5 }, { channel: 'x'.repeat(33) },
       { result: 'bogus' }, { result: 'COMPLETE' }, { result: '' }, { result: 5 }, { result: null },
+      { id: 'has space' }, { id: '' }, { id: 5 }, { id: null },
       { status: null }, { job: null },
     ]) expect(parseFleetWorkFeedArgs(bad)).toBeNull();
   });
@@ -184,6 +186,8 @@ describe('fleet_work_feed MCP tool', () => {
     expect(tool?.inputSchema.properties?.['tier'])
       .toMatchObject({ type: 'string', enum: expect.arrayContaining(['fast', 'frontier']) });
     expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['id'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
   });
 
   it.each([

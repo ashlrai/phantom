@@ -114,7 +114,11 @@ phm channels --json   # schema phantom.channels.v1, same as GET /api/channels
 The desktop app's **Channels** pane (⌘K → "Open pane: Channels") draws the
 same JSON as one card per channel. A value no source can prove reads
 `unknown`, never a guessed zero; last outbound is `unknown` for channels
-without a per-channel delivery receipt yet.
+without a per-channel delivery receipt yet. A `~/.ashlr/config.json` that
+exists but cannot be read makes the facts it feeds — Telegram's setup state
+and the iMessage verified-sender count — read `unknown` as well, never a
+guessed "not set up" or 0; the iMessage count itself is the size of the
+`comms.imessageAllow`/`imessageHandle` allowlist, not just the handle.
 
 ## Setup and status from the CLI
 

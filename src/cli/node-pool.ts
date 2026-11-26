@@ -46,6 +46,19 @@ function flags(args: string[], values: string[], booleans: string[] = []): Map<s
 function configFrom(f: Map<string, string>, role: PoolConfig['role']): PoolConfig {
   return { role, node: f.get('--node') ?? '', owner: f.get('--owner') ?? '', primary: f.get('--primary') ?? '', backup: f.get('--backup') ?? '' };
 }
+/** True when the pool already holds a live session under this node id. `status`
+ * is a read verb, so it answers even while the witness is demoted; any transport
+ * failure reads as "not live" and the join attempt then reports the real
+ * unreachable error itself. */
+function poolNodeLive(config: PoolConfig): boolean {
+  try {
+    const view = callPool(config, 'status', []).result as { nodes?: unknown };
+    return Array.isArray(view.nodes) && view.nodes.some(entry =>
+      typeof entry === 'object' && entry !== null &&
+      (entry as { nodeId?: unknown }).nodeId === config.node &&
+      (entry as { live?: unknown }).live === true);
+  } catch { return false; }
+}
 async function readRequest(): Promise<NodeRpcRequest> {
   const chunks: Buffer[] = [];
   let bytes = 0;
@@ -74,19 +87,57 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       if (verb === 'join') {
         const capacity = readNodeCapacity();
         const lanes = probeNodeLanes();
-        try {
-          const result = callPool(config, 'join', ['--node', config.node, '--caps', lanes.join(','), '--slots', String(capacity.slots)]);
-          if (result.demoted || !result.result['session']) throw new Error('Node registration held');
-          // Registration proves the route, then release it so worker can establish its own session.
-          callPool(config, 'leave', ['--node', config.node, '--session', String(result.result['session'])]);
-          if (!existing) configurePool(config);
-          emit({ schemaVersion: 1, registered: true, role: config.role, lanes, capacity, ready: !capacity.held && lanes.length > 0,
-            next: 'phm node worker --runner /absolute/host-owned-runner --json', ...result.result });
-          return 0;
-        } catch {
-          emit({ schemaVersion: 1, registered: false, approvalSteps: [sshApprovalStep(config.primary), sshApprovalStep(config.backup)] });
+        // A live session already held under this node id — a running worker or
+        // an unexpired join — makes the pool refuse the join, and that refusal
+        // is indistinguishable from a transport failure over SSH. Ask the
+        // pool's own status read first so the common repeat-join case names
+        // its real fix instead of the generic approval steps.
+        if (poolNodeLive(config)) {
+          emit({ schemaVersion: 1, command: verb, registered: false,
+            error: { code: 'node-live',
+              message: `Node '${config.node}' already holds a live session in this pool — a running worker batch or an unexpired join.`,
+              fix: 'Stop the worker or wait for the session to expire (about 30 seconds after its last heartbeat), then retry: phm node join --json. Check live sessions with: phm node status --json' } });
           return 1;
         }
+        let result: ReturnType<typeof callPool>;
+        try {
+          result = callPool(config, 'join', ['--node', config.node, '--caps', lanes.join(','), '--slots', String(capacity.slots)]);
+        } catch {
+          emit({ schemaVersion: 1, command: verb, registered: false,
+            error: { code: 'unreachable',
+              message: 'Pool join did not complete: the primary or backup did not accept the request. Usual causes are SSH trust not yet approved on this computer, `phm` missing on a pool Mac\'s SSH PATH, or the backup witness being unreachable.',
+              fix: 'Run the printed approval steps, then retry: phm node join --json' },
+            approvalSteps: [sshApprovalStep(config.primary), sshApprovalStep(config.backup)] });
+          return 1;
+        }
+        if (result.demoted || !result.result['session']) {
+          emit({ schemaVersion: 1, command: verb, registered: false,
+            error: { code: 'held',
+              message: 'The pool answered but did not accept this node\'s registration — a live session may have appeared mid-join, or the witness moved.',
+              fix: 'Check live sessions with: phm node status --json, then retry: phm node join --json' } });
+          return 1;
+        }
+        // Registration proves the route, then release the probe session so the
+        // worker can establish its own. A failed release only leaves the probe
+        // session to expire on its own — enrollment itself already succeeded.
+        let released = true;
+        try {
+          callPool(config, 'leave', ['--node', config.node, '--session', String(result.result['session'])]);
+        } catch { released = false; }
+        if (!existing) {
+          try { configurePool(config); } catch {
+            emit({ schemaVersion: 1, command: verb, registered: true, configured: false,
+              error: { code: 'error',
+                message: 'The node registered with the pool, but this computer\'s pool configuration could not be written.',
+                fix: 'Check that the Phantom state directory is a private directory you own, then retry: phm node join --json' } });
+            return 1;
+          }
+        }
+        emit({ schemaVersion: 1, command: verb, registered: true, role: config.role, lanes, capacity,
+          ready: !capacity.held && lanes.length > 0,
+          ...(released ? {} : { note: 'the probe session was not released; it expires within about 30 seconds — a worker started now may report node-already-live once' }),
+          next: 'phm node worker --runner /absolute/host-owned-runner --json', ...result.result });
+        return 0;
       }
       configurePool(config);
       emit({ schemaVersion: 1, configured: true, role, approvalSteps: [sshApprovalStep(config.primary), sshApprovalStep(config.backup)] });

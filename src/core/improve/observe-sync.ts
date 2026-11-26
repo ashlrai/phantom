@@ -16,6 +16,9 @@
  *
  *   - a merged cloud task's recorded outcome (`outcome.mergeSha`, and
  *     `outcome.revertedBy` when no revert-ledger verdict exists for the PR);
+ *   - the fleet merge-state landing record for a superseded task's intake
+ *     proposal — the merge machinery's own merge SHA, which covers fleet
+ *     landings whose tracker outcome read failed or predates it;
  *   - the newest record per PR in improve/revert-outcomes.jsonl — the
  *     git-verified scan `phm fleet reverts --record` writes. A record whose
  *     `relandedBy` is set is positive re-land evidence and supplies the
@@ -25,11 +28,24 @@
  * append-only, scan-verified store, while `outcome.revertedBy` is a mutable
  * single field last written by a manual observe pass.
  *
+ * The PR that actually lands is the carrier, not always `task.pr`: once
+ * cloud intake supersedes the cloud PR, the fleet App PR (`supersededBy`)
+ * is what merges or reverts on the default branch, and the task's outcome
+ * evidence describes it. Evidence is therefore keyed by the carrier PR, and
+ * a proposal whose ledger `pr` event still names the closed cloud PR gets a
+ * fresh `pr` event re-pointed at the fleet PR — so measurement, promotion
+ * checks, revert matching and the reverted-PR sets all follow the PR that
+ * carries the work.
+ *
  * Honesty rules:
  *   - A proposal is observed only through its own ledger events: it needs a
  *     `registered` hypothesis and a `pr` event, and the PR key must match
  *     evidence. Nothing is inferred for proposals the ledger does not tie
  *     to a PR.
+ *   - A `pr` re-key happens only when the task store itself records the
+ *     supersede (`supersededBy`); the ledger never guesses a different PR,
+ *     and fleet merge-state evidence is accepted only when the record's own
+ *     repo and PR number are the task's carrier.
  *   - A standing `reverted` observation clears only on re-land evidence
  *     (a revert record's `relandedBy`, or a fresh merge observation for a
  *     proposal with none). Merge evidence alone never resurrects a reverted
@@ -47,6 +63,7 @@ import { readRevertOutcomeRecords, type RevertLedgerRead } from './revert-ledger
 import type { RevertOutcomeRecord } from './reverted.js';
 import { listCloudTasks } from '../cloud/store.js';
 import type { CloudTaskV1 } from '../cloud/types.js';
+import { proposalStateKey, readFleetMergeState, type FleetMergeStateRead } from '../fleet/fleet-merge-state.js';
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const sha = (v: unknown): string | null => (typeof v === 'string' && SHA40.test(v) ? v : null);
@@ -76,6 +93,7 @@ const emptyEvidence = (): PrEvidence => ({ mergeSha: null, revertSha: null, rela
 export function outcomeObservationEvidence(
   tasks: readonly CloudTaskV1[],
   revertRecords: readonly RevertOutcomeRecord[],
+  fleetState: (key: string) => FleetMergeStateRead = readFleetMergeState,
 ): Map<string, PrEvidence> {
   const byPr = new Map<string, PrEvidence>();
   const entry = (key: string): PrEvidence => {
@@ -86,9 +104,40 @@ export function outcomeObservationEvidence(
   for (const task of tasks) {
     const pr = task.pr;
     if (!pr || (pr.state !== 'merged' && task.state !== 'merged')) continue;
-    const e = entry(prKey(task.repo, pr.number));
+    // The carrier PR is the one that lands: a superseded task's fleet App PR
+    // (its outcome evidence describes that PR), else the task's own PR. The
+    // revert journal keys its records the same way — fleet merges and reverts
+    // are recorded under the fleet PR's number.
+    const carrier = task.supersededBy ?? null;
+    const e = entry(prKey(task.repo, carrier?.number ?? pr.number));
     e.mergeSha ??= sha(task.outcome?.mergeSha);
     e.taskRevertSha ??= sha(task.outcome?.revertedBy);
+  }
+  // Fleet merge-state records are the merge machinery's own landing evidence.
+  // For a superseded task they supply the merge SHA even when the tracker's
+  // outcome read failed or predates it — correlated through intake.proposalId
+  // and accepted only when the record's own PR and repo are this task's
+  // carrier, so a stale or foreign record contributes nothing.
+  for (const task of tasks) {
+    const by = task.supersededBy;
+    const proposalId = task.intake?.proposalId;
+    if (!by || !proposalId || task.state !== 'merged') continue;
+    const key = proposalStateKey(proposalId);
+    if (!key) continue;
+    let read: FleetMergeStateRead;
+    try {
+      read = fleetState(key);
+    } catch {
+      continue;
+    }
+    if (read.state !== 'ok') continue;
+    const rec = read.record;
+    if (rec.kind !== 'change' || rec.proposalId !== proposalId || rec.outcome !== 'merged') continue;
+    if (rec.repo.toLowerCase() !== task.repo.toLowerCase() || rec.pr?.number !== by.number) continue;
+    const mergeSha = rec.landing?.kind === 'merge' ? rec.landing.mergeSha : rec.merge?.phase === 'merged' ? rec.merge.mergeSha : null;
+    const verified = sha(mergeSha);
+    if (verified === null) continue;
+    entry(prKey(task.repo, by.number)).mergeSha ??= verified;
   }
   const newest = new Map<string, RevertOutcomeRecord>();
   for (const rec of revertRecords) newest.set(rec.pr, rec);
@@ -147,6 +196,8 @@ export interface OutcomeObservationSyncDeps {
   ledger?: () => LedgerRead;
   /** Revert-outcomes journal read; defaults to readRevertOutcomeRecords. */
   reverts?: () => RevertLedgerRead;
+  /** Fleet merge-state read by state key; defaults to readFleetMergeState. */
+  fleetState?: (key: string) => FleetMergeStateRead;
   /** Ledger append; defaults to appendLedger. */
   append?: (event: LedgerEvent) => unknown;
 }
@@ -167,6 +218,8 @@ export interface OutcomeObservationSync {
   reverted: number;
   /** 'unreadable' when the revert journal could not be trusted whole; task outcome fields still applied. */
   revertLedger: 'read' | 'missing' | 'unreadable';
+  /** Proposals whose ledger `pr` event was re-pointed at a superseding fleet PR. */
+  rekeyed: number;
   /** Set when the pass stopped early; absent on a complete run. */
   reason?: 'source-unavailable' | 'append-failed';
 }
@@ -180,7 +233,7 @@ export interface OutcomeObservationSync {
  */
 export function syncCloudOutcomeObservations(deps: OutcomeObservationSyncDeps = {}): OutcomeObservationSync {
   const out: OutcomeObservationSync = {
-    intact: true, reasons: [], proposals: 0, matched: 0, appended: 0, merged: 0, reverted: 0, revertLedger: 'missing',
+    intact: true, reasons: [], proposals: 0, matched: 0, appended: 0, merged: 0, reverted: 0, revertLedger: 'missing', rekeyed: 0,
   };
   let records: LedgerRecord[];
   let tasks: readonly CloudTaskV1[];
@@ -195,10 +248,22 @@ export function syncCloudOutcomeObservations(deps: OutcomeObservationSyncDeps = 
     return { ...out, reason: 'source-unavailable' };
   }
   out.revertLedger = revertRead.state;
-  const evidence = outcomeObservationEvidence(tasks, revertRead.state === 'read' ? revertRead.records : []);
+  const fleetState = deps.fleetState ?? readFleetMergeState;
+  const evidence = outcomeObservationEvidence(tasks, revertRead.state === 'read' ? revertRead.records : [], fleetState);
 
   const byProposal = new Map<string, LedgerRecord[]>();
   for (const r of records) byProposal.set(r.proposalId, [...(byProposal.get(r.proposalId) ?? []), r]);
+
+  // Carrier re-key map: a task's own (closed) cloud PR → the fleet App PR
+  // that superseded it. Evidence is keyed by the carrier (see
+  // outcomeObservationEvidence), so a proposal still recording the cloud PR
+  // is matched through this map — and its ledger `pr` event is re-pointed at
+  // the fleet PR, the same event backlogRegistrations emits for tasks first
+  // registered after the supersede.
+  const carriers = new Map<string, { repository: string; number: number }>();
+  for (const t of tasks) {
+    if (t.supersededBy && t.pr) carriers.set(prKey(t.repo, t.pr.number), { repository: t.repo, number: t.supersededBy.number });
+  }
 
   const jobs: { proposalId: string; events: LedgerEvent[] }[] = [];
   for (const [proposalId, rs] of byProposal) {
@@ -206,10 +271,17 @@ export function syncCloudOutcomeObservations(deps: OutcomeObservationSyncDeps = 
     const prEvent = [...rs].reverse().find((r): r is LedgerRecord & { type: 'pr' } => r.type === 'pr');
     if (!prEvent) continue;
     out.proposals += 1;
-    const ev = evidence.get(prKey(prEvent.repository, prEvent.number));
-    if (!ev || (ev.mergeSha === null && ev.revertSha === null && ev.relandSha === null)) continue;
-    out.matched += 1;
-    const events = observationEvents(proposalId, rs, ev);
+    const carrier = carriers.get(prKey(prEvent.repository, prEvent.number));
+    const events: LedgerEvent[] = [];
+    if (carrier && (carrier.number !== prEvent.number || carrier.repository.toLowerCase() !== prEvent.repository.toLowerCase())) {
+      events.push({ type: 'pr', proposalId, repository: carrier.repository, number: carrier.number });
+      out.rekeyed += 1;
+    }
+    const ev = evidence.get(prKey(carrier?.repository ?? prEvent.repository, carrier?.number ?? prEvent.number));
+    if (ev && (ev.mergeSha !== null || ev.revertSha !== null || ev.relandSha !== null)) {
+      out.matched += 1;
+      events.push(...observationEvents(proposalId, rs, ev));
+    }
     if (events.length > 0) jobs.push({ proposalId, events });
   }
 

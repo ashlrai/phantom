@@ -87,7 +87,7 @@ function RepoAction({ row, actions }: { row: FleetRepoRow; actions: SurfaceActio
       disabled={disabled}
       aria-label={`Pause ${row.repo}`}
       onClick={() =>
-        actions.act(() => postFleetLive({ action: 'pause-repo', repo: row.repo, reason: 'Paused by Mason from the Fleet surface' }), `Pause ${row.repo}`, {
+        actions.act(() => postFleetLive({ action: 'pause-repo', repo: row.repo, reason: 'Paused by the owner from the Fleet surface' }), `Pause ${row.repo}`, {
           confirm: {
             title: `Pause ${shortRepo(row.repo)}?`,
             body: 'No new fleet work starts there until you resume it. Runs already in flight finish and are watched as usual.',

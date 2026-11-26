@@ -17,6 +17,7 @@ import type {
   BurnDownPace, BurnDownPlan, BurnDownRow, HistorySample, ResourceLiveId, ResourceLiveReading,
 } from './types.js';
 import { RESOURCE_LIVE_STALE_MS } from './types.js';
+import { ANTIGRAVITY_EXHAUSTION, antigravityQuota } from './antigravity-quota.js';
 
 /** Observed rate within this share of the target is on pace. */
 export const PACE_TOLERANCE = 0.15;
@@ -77,6 +78,11 @@ function planRow(reading: ResourceLiveReading, samples: readonly HistorySample[]
     if (metered) return { ...base, action: 'hold', reason: 'Included credit is not verified. Past it every call is new spend.' };
     if (reading.class === 'reserve') return { ...base, action: 'reserve', reason: 'Reserve lane. No verified reading.' };
     return { ...base, action: 'steady', reason: 'No verified reading. Existing lane rules apply unchanged.' };
+  }
+  if (reading.id === 'antigravity') {
+    const quota = antigravityQuota(reading, nowMs);
+    if (quota.reset_at) return { ...base, action: 'hold', reason: ANTIGRAVITY_EXHAUSTION, remaining: 0,
+      deadline_at: quota.reset_at, hours_to_deadline: round((Date.parse(quota.reset_at) - nowMs) / 3_600_000), projected_unused: 0 };
   }
   const reset = future(reading.reset_at, nowMs);
   const deadlineMs = reset !== null && expiry !== null ? Math.min(reset, expiry) : reset ?? expiry;

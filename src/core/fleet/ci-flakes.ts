@@ -161,7 +161,7 @@ export function enqueueFlakeFixes(flakes: readonly RecurringFlake[], queuePath: 
   mkdirSync(dirname(queuePath), { recursive: true });
   let existing = existsSync(queuePath) ? readFileSync(queuePath, 'utf8') : '';
   const queued: string[] = [];
-  for (const flake of flakes.slice(0, MAX_FLAKE_FIX_ROWS)) {
+  for (const flake of flakes) {
     const base = flakeJobId(flake.repo, flake.test);
     const retry = nextFixGeneration(existing, base);
     if (!retry) continue;
@@ -169,6 +169,7 @@ export function enqueueFlakeFixes(flakes: readonly RecurringFlake[], queuePath: 
     appendFileSync(queuePath, line, 'utf8');
     existing += line;
     queued.push(retry.jobId);
+    if (queued.length === MAX_FLAKE_FIX_ROWS) break;
   }
   return queued;
 }

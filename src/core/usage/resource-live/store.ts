@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../../fleet/local-store-lock.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
 import { EMPTY_RESET_STATE } from './reset-rule.js';
+import { antigravityExecutionContext, antigravityGroupsSchema } from './antigravity-quota.js';
 import {
   RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_SCHEMA, RESOURCE_LIVE_STALE_MS,
   RESOURCE_HISTORY_SCHEMA, type ResourceHistoryFile,
@@ -44,6 +45,8 @@ export const resourceIdSchema = z.union([z.enum(ids),
   z.custom<`custom:${string}`>(value => typeof value === 'string' && /^custom:[a-z0-9][a-z0-9-]{0,62}$/.test(value))]);
 
 export const readingSchema = z.object({
+  groups: antigravityGroupsSchema.optional(),
+  execution_context: antigravityExecutionContext.optional(),
   account_id: z.string().trim().min(1).max(128).optional(),
   model: z.string().trim().min(1).max(128).optional(),
   window_start: instant.optional(),
@@ -63,10 +66,11 @@ export const readingSchema = z.object({
 const pollSchema = z.object({
   last_polled_at: instant, next_poll_at: instant, interval_s: z.number().finite().positive(),
   active: z.boolean(), fingerprint: z.string().max(256).nullable(),
+  reset_checks: z.array(instant).max(32 * 32).optional(),
 });
 const sampleSchema = z.object({ observed_at: instant, used: z.number().finite().nonnegative(), reset_at: instant.nullable() });
 const reasonSchema = z.enum(['no-supported-source', 'source-returned-nothing', 'source-error', 'source-timeout',
-  'invalid-reading', 'needs-signin', 'window-reset']);
+  'invalid-reading', 'needs-signin', 'non_gui_context', 'identity_mismatch', 'window-reset']);
 const draftedSchema = z.object({ drafted_at: instant, window: instant }).nullable();
 
 export function unverified(allowance: ResourceLiveAllowance, reason: ResourceLiveReason): ResourceLiveReading {
@@ -89,6 +93,8 @@ export function toReading(allowance: ResourceLiveAllowance, row: StoredReading &
     ...(row.account_id ? { account_id: row.account_id } : {}),
     ...(row.model ? { model: row.model } : {}),
     ...(row.window_start ? { window_start: row.window_start } : {}),
+    ...(row.id === 'antigravity' && row.groups ? { groups: row.groups } : {}),
+    ...(row.id === 'antigravity' && row.execution_context ? { execution_context: row.execution_context } : {}),
     used: row.used, limit: row.limit, unit: row.unit,
     used_pct: measured ? Math.min(100, Math.round(row.used! / row.limit! * 1000) / 10) : null,
     remaining: measured ? Math.max(0, Math.round((row.limit! - row.used!) * 1000) / 1000) : null,
@@ -124,7 +130,8 @@ export function parseResourceLiveSidecar(raw: unknown, custom: readonly Resource
     if (usable(parsed.data)) readings.push(toReading(allowance, parsed.data));
     else {
       const reason = reasonSchema.safeParse((row as Record<string, unknown>)['reason']);
-      readings.push(unverified(allowance, reason.success ? reason.data : 'source-returned-nothing'));
+      readings.push({ ...unverified(allowance, reason.success ? reason.data : 'source-returned-nothing'),
+        ...(allowance.id === 'antigravity' && parsed.data.execution_context ? { execution_context: parsed.data.execution_context } : {}) });
     }
   }
   const poll: Partial<Record<ResourceLiveId, PollState>> = {};
