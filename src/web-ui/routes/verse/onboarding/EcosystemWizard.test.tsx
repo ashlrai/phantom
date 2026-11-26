@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { ECOSYSTEM_BRANDS } from '../../../../core/brand/ecosystem.js';
 import { EcosystemWizard } from './EcosystemWizard.js';
 
 const client = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), token: vi.fn() }));
@@ -76,6 +77,18 @@ describe('ecosystem wizard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Detect again' }));
     await screen.findByRole('button', { name: 'Grant 2 capabilities' });
     expect(client.get).toHaveBeenCalledTimes(3);
+  });
+
+  it('declares and renders a tile treatment for every ecosystem brand', async () => {
+    render(<EcosystemWizard />);
+    await screen.findByLabelText('Phantom Secrets: locked');
+    for (const brand of Object.values(ECOSYSTEM_BRANDS)) {
+      expect(['none', 'neutral'], brand.label).toContain(brand.tile);
+      expect(screen.getByText(brand.label, { selector: 'a' }).querySelector('img'))
+        .toHaveAttribute('data-tile', brand.tile);
+    }
+    expect(ECOSYSTEM_BRANDS['ashlr-plugin'].tile).toBe('neutral');
+    expect(ECOSYSTEM_BRANDS.locus.tile).toBe('neutral');
   });
 
   it('aborts detection when unmounted and does not grant on a failed detection', async () => {

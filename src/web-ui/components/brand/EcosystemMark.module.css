@@ -4,3 +4,12 @@
   vertical-align: middle;
   margin-inline-end: var(--space-1);
 }
+
+.mark[data-tile='neutral'] {
+  box-sizing: content-box;
+  padding: 2px;
+  color-scheme: light;
+  background: Canvas;
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  border-radius: var(--radius-sm);
+}

@@ -1,15 +1,22 @@
+interface BrandArtwork {
+  label: string;
+  logo: string;
+  tile: 'none' | 'neutral';
+  url: string;
+}
+
 export const ECOSYSTEM_BRANDS = {
-  phantom: { label: 'Phantom', logo: 'phantom-workbench-logo.svg', url: 'https://github.com/ashlrai/phantom' },
-  'phantom-secrets': { label: 'Phantom Secrets', logo: 'phantom-secrets-logo.svg', url: 'https://github.com/ashlrai/phantom-secrets' },
-  locus: { label: 'Locus', logo: 'locus-logo.svg', url: 'https://github.com/ashlrai/locus' },
-  lexicon: { label: 'Lexicon', logo: 'lexicon-logo.svg', url: 'https://github.com/ashlrai/lexicon' },
-  'ashlr-md': { label: 'Ashlr MD', logo: 'ashlr-md-logo.svg', url: 'https://github.com/ashlrai/ashlr-md' },
-  'ashlr-plugin': { label: 'Ashlr Plugin', logo: 'ashlr-plugin-logo.svg', url: 'https://github.com/ashlrai/ashlr-plugin' },
-  'ashlr-stack': { label: 'Ashlr Stack', logo: 'ashlr-stack-logo.svg', url: 'https://github.com/ashlrai/ashlr-stack' },
-  ashlrcode: { label: 'AshlrCode', logo: 'ashlrcode-logo.svg', url: 'https://ashlr.ai/ashlrcode' },
-  binshield: { label: 'Binshield', logo: 'binshield-logo.svg', url: 'https://github.com/ashlrai/binshield' },
-  cortex: { label: 'Cortex', logo: 'cortex-logo.svg', url: 'https://ashlr.ai/cortex' },
-} as const;
+  phantom: { label: 'Phantom', logo: 'phantom-workbench-logo.svg', tile: 'none', url: 'https://github.com/ashlrai/phantom' },
+  'phantom-secrets': { label: 'Phantom Secrets', logo: 'phantom-secrets-logo.svg', tile: 'none', url: 'https://github.com/ashlrai/phantom-secrets' },
+  locus: { label: 'Locus', logo: 'locus-logo.svg', tile: 'neutral', url: 'https://github.com/ashlrai/locus' },
+  lexicon: { label: 'Lexicon', logo: 'lexicon-logo.svg', tile: 'none', url: 'https://github.com/ashlrai/lexicon' },
+  'ashlr-md': { label: 'Ashlr MD', logo: 'ashlr-md-logo.svg', tile: 'none', url: 'https://github.com/ashlrai/ashlr-md' },
+  'ashlr-plugin': { label: 'Ashlr Plugin', logo: 'ashlr-plugin-logo.svg', tile: 'neutral', url: 'https://github.com/ashlrai/ashlr-plugin' },
+  'ashlr-stack': { label: 'Ashlr Stack', logo: 'ashlr-stack-logo.svg', tile: 'neutral', url: 'https://github.com/ashlrai/ashlr-stack' },
+  ashlrcode: { label: 'AshlrCode', logo: 'ashlrcode-logo.svg', tile: 'neutral', url: 'https://ashlr.ai/ashlrcode' },
+  binshield: { label: 'Binshield', logo: 'binshield-logo.svg', tile: 'none', url: 'https://github.com/ashlrai/binshield' },
+  cortex: { label: 'Cortex', logo: 'cortex-logo.svg', tile: 'none', url: 'https://ashlr.ai/cortex' },
+} as const satisfies Record<string, BrandArtwork>;
 
 type EcosystemBrand = (typeof ECOSYSTEM_BRANDS)[keyof typeof ECOSYSTEM_BRANDS];
 
