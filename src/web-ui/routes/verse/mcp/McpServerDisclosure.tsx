@@ -19,6 +19,8 @@
  *   3. The source is a home-relative ref, never an absolute path.
  */
 import type { ReactNode } from 'react';
+import { ecosystemConnectorBrand } from '../../../../core/brand/ecosystem.js';
+import { EcosystemMark } from '../../../components/brand/EcosystemMark.js';
 import type { McpServer } from './mcp-contract.js';
 import styles from './mcp.module.css';
 
@@ -33,7 +35,7 @@ export function McpServerDisclosure({
 
   return (
     <div className={styles.disclosure}>
-      {heading === undefined ? null : <p className={styles.alertTitle}>{heading}</p>}
+      {heading === undefined ? null : <p className={styles.alertTitle}><EcosystemMark brand={ecosystemConnectorBrand(server.name)} />{heading}</p>}
 
       <p className={styles.commandLine}>
         {server.command}

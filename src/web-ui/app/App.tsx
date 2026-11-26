@@ -20,7 +20,7 @@ import { SessionGate } from '../components/auth/SessionGate.js';
 import { AskBar } from '../components/ask-bar/AskBar.js';
 import { ToastProvider } from '../components/primitives/Toast.js';
 import { useAuthPhase } from '../data/hooks.js';
-import { markCheckComplete } from '../data/auth-store.js';
+import { adoptInjectedTokens, isDesktopSession, markCheckComplete } from '../data/auth-store.js';
 import { runQuery, getQuerySnapshot } from '../data/cache.js';
 import { dashboardSnapshotQuery } from '../data/queries.js';
 import '../design/global.css';
@@ -29,11 +29,18 @@ function useBootstrapSessionProbe(phase: ReturnType<typeof useAuthPhase>) {
   useEffect(() => {
     if (phase !== 'checking') return;
     let cancelled = false;
-    void runQuery(dashboardSnapshotQuery.key, dashboardSnapshotQuery.fetch).then(() => {
+    const probe = async () => {
+      if (isDesktopSession()) {
+        const adopted = await adoptInjectedTokens();
+        if (!cancelled && !adopted) markCheckComplete(false);
+        return;
+      }
+      await runQuery(dashboardSnapshotQuery.key, dashboardSnapshotQuery.fetch);
       if (cancelled) return;
       const entry = getQuerySnapshot(dashboardSnapshotQuery.key);
       markCheckComplete(entry.status === 'success');
-    });
+    };
+    void probe();
     return () => {
       cancelled = true;
     };

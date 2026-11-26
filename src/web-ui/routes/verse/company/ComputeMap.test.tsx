@@ -9,6 +9,8 @@ import type { MapSession } from '../../../../core/fleet/sessions-view.js';
 import { getPane } from '../panes/pane-registry.js';
 import './compute.pane.js';
 import FleetWorld from '../fleet/FleetWorld.js';
+import { markCheckComplete } from '../../../data/auth-store.js';
+import { MockEventSource } from '../fixtures.test-support.js';
 
 const stats = { sampledAtMs: NOW, uptimeSeconds: 500, load: [1, 2, 3], ramTotal: 16 * 1024 ** 3, ramUsed: 8 * 1024 ** 3, diskFree: 100 * 1024 ** 3, cores: [{ total: 100, idle: 50 }] };
 const compute: FleetCompute = { schema: 'fleet.compute.v1', generatedAt: at(), localNodeId: 'local', truncated: false, sources: { registry: 'loaded' }, dispatcherAt: at(), lanes: { 'codex-personal': { hardCap: 4, quotaOk: null } }, nodes: [
@@ -92,11 +94,30 @@ it('stops every read while hidden and retains explicitly stale data when refresh
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
   const initial = fetch.mock.calls.length;
   delete payloads['/api/verse/fleet/control/compute'];
-  await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
   expect(screen.getByText('Compute refresh failed. Last reading retained; may be stale.')).toBeInTheDocument();
   expect(fetch.mock.calls.length).toBeGreaterThan(initial);
   view.rerender(<ComputeMap visible={false} />); const count = fetch.mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); }); expect(fetch).toHaveBeenCalledTimes(count);
+});
+it('refreshes compute, sessions, lanes and agent messages on the shared stream', async () => {
+  const { fetch, payloads } = serve();
+  MockEventSource.reset();
+  vi.stubGlobal('EventSource', MockEventSource);
+  markCheckComplete(true);
+  try {
+    render(<ComputeMap visible />);
+    await screen.findByText(/4 hard cap/);
+    fetch.mockClear();
+    payloads['/api/verse/fleet/control/compute'] = { ...compute, lanes: { 'codex-personal': { hardCap: 6, quotaOk: true } } };
+    const source = MockEventSource.instances.find(event => event.url.includes('topics='));
+    expect(source?.url).toContain('fleet-compute');
+    await act(async () => source!.emitNamed('fleet-compute', { refresh: true }));
+    expect(await screen.findByText(/6 hard cap/)).toBeInTheDocument();
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(expect.arrayContaining([
+      '/api/verse/fleet/control/compute', '/api/verse/fleet/control/sessions', '/api/fleet/lanes', '/api/verse/fleet/control/map',
+    ]));
+  } finally { markCheckComplete(false); }
 });
 it('never infers utilization from a first sample, stale/reordered counters, reboot or unknown placement', () => {
   expect(isFleetCompute(compute)).toBe(true);

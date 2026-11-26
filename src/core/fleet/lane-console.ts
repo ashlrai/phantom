@@ -77,6 +77,9 @@ import { readLaneTargets } from './runs-lane-targets.js';
 import { laneHealthFor, type LaneHealth } from './lane-badge.js';
 import { parseStarvedState, readStarved, STARVED_STATE_FILE, type StarvedRead } from './lane-starved.js';
 import { readySpecCell, resolveReadyMarketRow } from './unfed-market.js';
+import { readLedgerTail } from '../router/outcomes.js';
+import { readTelemetryFile } from '../resources/telemetry.js';
+import { budgetTimestamp } from './resource-reset-evidence.js';
 
 // ---------------------------------------------------------------------------
 // Public types — the fleet.lanes.v1 wire shape.
@@ -114,7 +117,7 @@ export interface FleetLaneCreditView {
   burnPerHour: number | null;
   projectedExhaustionAt: string | null;
   observedAt: string | null;
-  source: 'budget-ledger' | 'usage-journal' | null;
+  source: 'budget-ledger' | 'usage-journal' | 'dispatcher' | null;
 }
 
 export interface FleetLaneView {
@@ -768,7 +771,14 @@ async function laneEmptyNotes(runsDir: string, nowMs: number, provider: LaneEmpt
 export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}): Promise<FleetLaneSnapshot> {
   const now = options.now?.() ?? new Date();
   const mergeWindowMs = options.mergeWindowMs ?? DEFAULT_MERGE_WINDOW_MS;
-  const queueDir = options.queueDir ?? join(homedir(), '.ashlr-runs', 'queue');
+  const queueDir = options.queueDir ?? join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue');
+  const status = await readTelemetryFile(join(queueDir, 'status.json')).then(text => {
+    try { return text === null ? null : record(JSON.parse(text)); } catch { return null; }
+  });
+  const tick = typeof status?.last_tick === 'string' ? Date.parse(status.last_tick) : NaN;
+  const dispatchLanes = new Map(Object.entries(record(status?.lanes) ?? {}).filter(([lane]) => LANE_ID.test(lane)));
+  const currentDispatch = now.getTime() >= tick && now.getTime() - tick < 5 * 60_000;
+  const count = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
   const sources: FleetLaneSnapshot['sources'] = {
     queue: { state: 'missing', file: 'ready.tsv', rows: 0, dropped: 0, unhinted: 0 },
     queueState: { state: 'missing', file: 'queue.v1.json', jobs: 0 },
@@ -811,16 +821,21 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   }
 
   // ── 3. jobs.jsonl — merge events in the trailing window ──────────────────
-  let ledgerEvents: LaneLedgerEvent[] = [];
+  const ledgerEvents: LaneLedgerEvent[] = [];
   try {
-    const text = await readBounded(join(queueDir, 'jobs.jsonl'), MAX_LEDGER_FILE_BYTES);
-    if (text === null) throw new Error('ledger unavailable');
-    const parsed = parseJobsJsonl(text);
-    ledgerEvents = parsed.events;
-    sources.ledger = {
-      state: parsed.dropped > 0 ? 'degraded' : 'healthy',
-      file: 'jobs.jsonl', events: parsed.events.length, dropped: parsed.dropped,
-    };
+    const ledgers = await Promise.all([
+      readLedgerTail(join(queueDir, 'jobs.jsonl'), MAX_LEDGER_FILE_BYTES),
+      readLedgerTail(join(dirname(queueDir), 'metrics', 'jobs.jsonl'), MAX_LEDGER_FILE_BYTES),
+    ]);
+    for (const ledger of ledgers) {
+      if (ledger.state === 'missing') continue;
+      if (ledger.state !== 'read') { sources.ledger.state = 'degraded'; continue; }
+      const parsed = parseJobsJsonl(ledger.text);
+      ledgerEvents.push(...parsed.events);
+      sources.ledger.events += parsed.events.length;
+      sources.ledger.dropped += parsed.dropped;
+      sources.ledger.state = parsed.dropped || ledger.truncated || sources.ledger.state === 'degraded' ? 'degraded' : 'healthy';
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') sources.ledger.state = 'degraded';
   }
@@ -880,12 +895,13 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     ...(queueState ? queueState.jobPool.values() : []),
     ...ledgerEvents.map(e => e.pool).filter((p): p is string => p !== null),
     ...holds.keys(),
+    ...dispatchLanes.keys(),
   ]);
   for (const pool of Object.keys(budgets.pools)) lanes.add(pool);
 
   const mergeCounts = new Map<string, number>();
   const candidates: Array<{ pool: string; job: string | null; pr: string | null }> = [];
-  let sawMergeEvidence = sources.ledger.state !== 'missing';
+  let sawMergeEvidence = sources.ledger.state === 'healthy';
   for (const event of ledgerEvents) {
     const at = eventTimestamp(event.at);
     if (!event.merge || at === null || at > now.getTime() || at < cutoff) continue;
@@ -951,14 +967,15 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   for (const lane of heldByLane.keys()) lanes.add(lane);
 
   const views: FleetLaneView[] = [...lanes].map(lane => {
-    const queueDepth = sources.queue.state !== 'missing'
-      ? readyCounts.get(lane) ?? 0
-      : queueState !== null ? queueState.ready.get(lane) ?? 0 : null;
-    const liveJobs = queueState !== null
+    const dispatch = currentDispatch ? record(dispatchLanes.get(lane)) : null;
+    const queueDepth = count(dispatch?.queued) ?? (sources.queue.state !== 'missing'
+      ? readyCounts.get(lane) ?? (sources.queue.state === 'healthy' ? 0 : null)
+      : queueState !== null ? queueState.ready.get(lane) ?? 0 : null);
+    const liveJobs = count(dispatch?.running) ?? (queueState !== null
       ? queueState.live.get(lane) ?? 0
       : sources.queue.state === 'healthy' || sources.queue.state === 'degraded'
-        ? liveFromTsv.get(lane) ?? 0
-        : null;
+        ? liveFromTsv.get(lane) ?? (sources.queue.state === 'healthy' && liveFromTsv.size > 0 ? 0 : null)
+        : null);
     const mergeCount = mergeCounts.get(lane) ?? 0;
     const mergesPerHour = !sawMergeEvidence ? null
       : Math.round((mergeCount / (mergeWindowMs / 3_600_000)) * 100) / 100;
@@ -969,10 +986,21 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
       until: row.heldUntil,
       by: !row.held ? null : row.heldReason?.startsWith('autobackoff') ? 'autobackoff' : 'manual',
       since: row.lastChange,
-    } : null;
+    } : typeof dispatch?.held === 'boolean' ? { held: dispatch.held, reason: null, until: null, by: null, since: null } : null;
+    const budget = record(record(status?.budget)?.[lane]);
+    const observedAt = budgetTimestamp(budget?.observed_at) ?? budgetTimestamp(budget?.as_of);
+    const resetAt = budgetTimestamp(budget?.reset_at);
+    const credit = creditFor(lane, budgets, usage.latest, now.getTime());
+    const used = budget?.weekly_used_pct;
+    const remainingPct = budget?.estimated !== true && budget?.stale !== true && typeof used === 'number' && used >= 0 && used <= 100 &&
+      readingIsFresh({ observedAt, nowMs: now.getTime() }) && (resetAt === null || Date.parse(resetAt) > now.getTime()) ? 100 - used : null;
+    const dispatchCredit: FleetLaneCreditView = { ...UNKNOWN_CREDIT, resetAt, observedAt,
+      ...(remainingPct === null ? {} : { remainingPct, state: 'observed', label: `${remainingPct}% weekly`, source: 'dispatcher' }) };
     const startsInWindow = sawLaunch ? startJobs.get(lane)?.size ?? 0 : null;
     // Placeholder verdict; replaced once the starved read below has run.
-    return { lane, queueDepth, liveJobs, mergesPerHour, startsInWindow, health: { state: 'ok' as const, reason: 'ok', number: null }, credit: creditFor(lane, budgets, usage.latest, now.getTime()), slotTarget: row?.target ?? null, hold,
+    return { lane, queueDepth, liveJobs, mergesPerHour, startsInWindow, health: { state: 'ok' as const, reason: 'ok', number: null },
+      credit: credit.state === 'unknown' && (observedAt !== null || credit.observedAt === null) ? dispatchCredit : credit,
+      slotTarget: count(dispatch?.effective_target) ?? count(dispatch?.target) ?? row?.target ?? null, hold,
       ...(heldByLane.has(lane) ? { held: heldByLane.get(lane)! } : {}) };
   });
 
@@ -989,7 +1017,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   try { stateText = await readBounded(join(options.starvedStateDir ?? join(homedir(), '.ashlr', 'vision', 'leader'), STARVED_STATE_FILE), 16 * 1024); } catch { /* no record yet */ }
   const starved = readStarved(views.map(view => ({
     lane: view.lane,
-    target: holds.get(view.lane)?.target ?? null,
+    target: view.slotTarget,
     running: view.liveJobs,
     ready: view.queueDepth,
     held: view.hold?.held === true,

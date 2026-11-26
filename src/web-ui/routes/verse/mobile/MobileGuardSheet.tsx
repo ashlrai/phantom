@@ -16,7 +16,7 @@
  * and the token goes into the same memory-only hold. Nothing is stored.
  */
 import { useEffect, useId, useState } from 'react';
-import { setMutationToken } from '../../../data/auth-store.js';
+import { hasMutationHold, isDesktopSession, refreshDesktopSession, setMutationToken } from '../../../data/auth-store.js';
 import { cancelGuard, confirmGuard, guardTokenClosed, isCurrentGuardRequest, useGuardState } from '../shell/guard-store.js';
 import { requestStepUp } from './device-permissions.js';
 import { BottomSheet } from './sheet.js';
@@ -44,6 +44,16 @@ export function MobileGuardSheet() {
   if (!request) return null;
 
   if (phase === 'token') {
+    const desktop = isDesktopSession();
+    const reconnect = async () => {
+      setChecking(true);
+      setTokenError(null);
+      const connected = await refreshDesktopSession();
+      if (!isCurrentGuardRequest(request)) return;
+      setChecking(false);
+      if (connected && hasMutationHold()) guardTokenClosed();
+      else setTokenError('Actions are unavailable. The local server may be restarting or running in read-only mode.');
+    };
     const unlock = () => {
       const trimmed = token.trim();
       if (!TOKEN_RE.test(trimmed)) {
@@ -61,38 +71,42 @@ export function MobileGuardSheet() {
         title="Unlock actions"
         footer={(
           <>
-            <Button variant="primary" block onClick={unlock}>Unlock and {request.confirmLabel.toLowerCase()}</Button>
+            <Button variant="primary" block disabled={checking} onClick={desktop ? () => void reconnect() : unlock}>
+              Unlock and {request.confirmLabel.toLowerCase()}
+            </Button>
             <Button variant="plain" block onClick={() => guardTokenClosed()}>Cancel</Button>
           </>
         )}
       >
-        <p className={ui.consequence}>{request.tokenReason ?? 'This action changes state on your Mac and needs the mutation token.'}</p>
-        <div className={ui.field}>
-          <label className={ui.label} htmlFor={tokenId}>Mutation token</label>
-          <input
-            id={tokenId}
-            className={`${ui.input} ${ui.mono}`}
-            type="password"
-            autoComplete="off"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            inputMode="text"
-            placeholder="64 hex characters"
-            value={token}
-            onChange={(e) => {
-              setToken(e.target.value);
-              setTokenError(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') unlock();
-            }}
-            aria-invalid={tokenError ? true : undefined}
-            aria-describedby={tokenError ? `${tokenId}-error` : undefined}
-          />
-          {tokenError ? <p id={`${tokenId}-error`} className={ui.error}>{tokenError}</p> : null}
-        </div>
-        <p className={ui.faint}>Held in memory for 20 idle minutes, then forgotten. Never saved on this phone.</p>
+        <p className={ui.consequence}>{desktop ? 'Reconnect to the local server to unlock actions.' : request.tokenReason ?? 'This action changes state on your Mac and needs the mutation token.'}</p>
+        {desktop ? (tokenError && <p className={ui.error} role="alert">{tokenError}</p>) : <>
+          <div className={ui.field}>
+            <label className={ui.label} htmlFor={tokenId}>Mutation token</label>
+            <input
+              id={tokenId}
+              className={`${ui.input} ${ui.mono}`}
+              type="password"
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              inputMode="text"
+              placeholder="64 hex characters"
+              value={token}
+              onChange={(e) => {
+                setToken(e.target.value);
+                setTokenError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') unlock();
+              }}
+              aria-invalid={tokenError ? true : undefined}
+              aria-describedby={tokenError ? `${tokenId}-error` : undefined}
+            />
+            {tokenError ? <p id={`${tokenId}-error`} className={ui.error}>{tokenError}</p> : null}
+          </div>
+          <p className={ui.faint}>Held in memory for 20 idle minutes, then forgotten. Never saved on this phone.</p>
+        </>}
       </BottomSheet>
     );
   }

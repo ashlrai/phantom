@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>AshlrCode</title>
+  <desc>A faceted terminal prompt and cyan cursor inside an open code frame.</desc>
+  <defs>
+    <linearGradient id="ashlrcode-prompt" x1="17" y1="18" x2="35" y2="45" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#93C5FD"/>
+      <stop offset="1" stop-color="#3B82F6"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="#0A1423"/>
+  <path d="M23 8H14a6 6 0 0 0-6 6v9M41 56h9a6 6 0 0 0 6-6v-9" stroke="#345375" stroke-width="2" stroke-linecap="round"/>
+  <path d="m17 18 19 14-19 14v-9l7-5-7-5z" fill="url(#ashlrcode-prompt)"/>
+  <rect x="35" y="40" width="14" height="6" rx="1.5" fill="#22D3EE"/>
+</svg>

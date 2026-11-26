@@ -97,7 +97,7 @@ describe('self-tick gap hook writes a drop file into the configured drop dir', (
       mkdirSync(join(runs, 'queue'), { recursive: true });
       writeFileSync(join(runs, 'metrics', 'jobs.jsonl'), `${JSON.stringify({ event: 'outcome', job: 'RQ-A', lane: 'claude', empty: true, repo: 'phantom', ts: new Date(NOW - 3_600_000).toISOString() })}\n`);
       mkdirSync(join(wt, 'RQ-A'), { recursive: true });
-      writeFileSync(join(wt, 'RQ-A', 'BRIDGE_NOTES.md'), '## Remaining gaps\n- Wire the digest into the weekly report\n');
+      writeFileSync(join(wt, 'RQ-A', 'BRIDGE_NOTES.md'), '## Remaining gaps\n- Wire the digest into the weekly report in src/core/fleet/supply-doctor.ts\n');
       const report = await runAutofillTick({
         runsDir: runs, apply: true, now: () => NOW, root, entries: [], readOff: async () => false,
         readLanes: async () => ({ lanes: [{ lane: 'claude', running: 0, target: 8, queued: 0, held: false, remainingPct: 68 }] }),

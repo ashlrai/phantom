@@ -1,4 +1,6 @@
 import { useRef, useState } from 'react';
+import { ecosystemConnectorBrand } from '../../../../core/brand/ecosystem.js';
+import { EcosystemMark } from '../../../components/brand/EcosystemMark.js';
 import { useMutationHold, useQuery, useRefetch } from '../../../data/hooks.js';
 import { changeConnector, connectorsQuery, type Connector } from './connectors-client.js';
 import styles from '../../verse/sections/SettingsSection.module.css';
@@ -46,7 +48,7 @@ export function ConnectorsView() {
     {query.status === 'error' ? <p role="alert">Connectors could not be loaded. Refresh to try again.</p> : !query.data ? <p role="status">Loading connectors…</p> : <div className={styles.panelBody}>
       {query.data.connectors.length === 0 && <p>No Phantom gateway connectors configured.</p>}
       {query.data.connectors.map((connector) => <div className={styles.row} key={connector.name}>
-        <div><strong>{connector.name}</strong><p>{connector.enabled ? 'Enabled' : 'Disabled'}</p></div>
+        <div><strong><EcosystemMark brand={ecosystemConnectorBrand(connector.name)} />{connector.name}</strong><p>{connector.enabled ? 'Enabled' : 'Disabled'}</p></div>
         <button type="button" disabled={!hasHold || busy || selected !== null} onClick={() => { setMessage(''); setSelected({ connector, revision: query.data!.revision }); }}>
           {connector.enabled ? 'Disable' : 'Enable'} {connector.name}
         </button>

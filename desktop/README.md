@@ -946,13 +946,16 @@ asks you to paste them:
    The script (`shell_contract.rs`) runs before any page script and sets
    `window.__ASHLR_TOKENS__ = Object.freeze({ readToken, token })`, guarded by
    `window.location.origin === "http://127.0.0.1:7777"`. Values are JSON-encoded
-   into a config object, never interpolated. `SessionGate` reads the global to
-   establish the read session; the mutation dialog uses `token`.
+   into a config object, never interpolated. The console gets the current
+   pair from the `desktop_session_tokens` IPC command before exchanging the
+   read token for its cookie and keeping the mutation token in memory.
+   It uses the same command after a reload, on a 401, and when the sidecar
+   announces a restart. The injected snapshot is a fallback for older hosts.
 4. Fallbacks: if the bundled CLI exits before printing the record (no `verse`
    command yet) the app retries once with
    `ashlr serve --port 7777 --allow-dispatch --json`. If the server is listening
-   but never printed a record, the window opens token-less and the SessionGate
-   prompts as usual. If nothing is listening at all, the launch window shows the
+   but never printed a record, the window shows a reconnect action instead of
+   asking for a token. If nothing is listening at all, the launch window shows the
    timeout state rather than a spinner.
 
 ---
@@ -960,8 +963,9 @@ asks you to paste them:
 ## Security posture
 
 - The Verse window only ever loads `http://127.0.0.1:7777` — no remote origins.
-- Tokens reach the page only through the origin-gated initialization script
-  above; they are never logged, persisted, or emitted as events.
+- Tokens reach only the trusted loopback origin; the session IPC is also
+  restricted to the main and Owner Assist windows. They are never logged,
+  persisted, or emitted as events.
 - CSP restricts `default-src`, `connect-src`, `script-src`, `style-src`,
   `img-src`, and `font-src` to `self` and `http://127.0.0.1:7777`.
 - `shell.open` is not granted to any page. The one Rust-side use is the
@@ -1050,7 +1054,7 @@ node desktop/scripts/prepare-sidecar.mjs    # → desktop/src-tauri/binaries/ash
 npm --prefix desktop run build
 ```
 
-The native app icon is generated from the tracked Phantom ghost SVG on the existing rounded-square canvas. The five bundle icon outputs are generated locally, not checked in; the monochrome `tray.png` remains a separate tracked template icon. See [icon generation and provenance](src-tauri/icons/PLACEHOLDER.md). This artwork change preserves the stable `ai.ashlr.desktop` bundle identifier and signing identity.
+The native app icon is generated from the official Phantom workbench P. The release workflow regenerates the bundle icons, and the monochrome `tray.png` is a separately generated template of the same mark. See [icon generation and provenance](src-tauri/icons/PLACEHOLDER.md). The stable `ai.ashlr.desktop` bundle identifier and signing identity are unchanged.
 
 Timing on this Mac: about 6 minutes cold (the release profile is `lto = true`,
 `codegen-units = 1`, `panic = "abort"`), about 90 seconds when only the bundling
@@ -1459,9 +1463,10 @@ Run `npm run icons` from `desktop/`.
 Tauri's build script requires the sidecar to be staged even for a type-check.
 Run `node desktop/scripts/prepare-sidecar.mjs` from the repo root.
 
-**Window opens on the SessionGate asking for a token**
+**Window asks to reconnect to the local server**
 The sidecar did not print its startup record, or you adopted a server this app
-did not start. The fallback order is `ashlr verse` → `ashlr serve --allow-dispatch`.
+did not start. Stop a separately started server and reopen Phantom to let it
+issue a new session. The fallback order is `ashlr verse` → `ashlr serve --allow-dispatch`.
 
 **Copy/paste does nothing in the composer**
 That was the symptom of a missing Edit menu. If it recurs, the menu bar failed

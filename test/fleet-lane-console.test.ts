@@ -534,7 +534,7 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(snapshot.sources.queue.dropped).toBe(1);
     const devin = snapshot.lanes.find(l => l.lane === 'devin')!;
     expect(devin.queueDepth).toBe(1);      // surviving row still counts
-    expect(devin.liveJobs).toBe(0);        // tsv was readable → live = in-flight rows (none)
+    expect(devin.liveJobs).toBeNull();      // surviving ready rows cannot establish running count
   });
 });
 

@@ -58,7 +58,8 @@ async function serveProjection(published = false) {
     '/api/verse/fleet/control/sessions': sessions,
     '/api/fleet/lanes': { schema: 'fleet.lanes.v1', generatedAt: at, lanes: [lane] },
   };
-  const fetcher = vi.fn(async (url: RequestInfo | URL) => Response.json(payloads[String(url)] ?? {}, { status: payloads[String(url)] ? 200 : 503 }));
+  const fetcher = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) =>
+    Response.json(payloads[String(url)] ?? {}, { status: payloads[String(url)] ? 200 : 503 }));
   vi.stubGlobal('fetch', fetcher);
   return { compute, sessions, now, fetcher };
 }
@@ -101,7 +102,12 @@ it('renders the same disk-backed payloads on Control Fleet without mutations', a
   fireEvent.click(within(local).getByRole('button', { name: 'Inspect session RQ-LOCAL' }));
   expect(screen.getByRole('dialog')).toHaveTextContent('work/contract');
   expect(screen.getByRole('link', { name: 'Open PR' })).toHaveAttribute('href', 'https://github.com/ashlrai/phantom/pull/42');
-  expect(fetcher.mock.calls.map(([url]) => String(url)).sort()).toEqual(['/api/verse/fleet/control/compute', '/api/verse/fleet/control/sessions']);
+  expect(fetcher.mock.calls.map(([url]) => String(url)).sort()).toEqual([
+    '/api/fleet/job/tail?id=RQ-LOCAL&lines=200', '/api/fleet/map/messages', '/api/fleet/message-graph',
+    '/api/verse/fleet/control/compute', '/api/verse/fleet/control/sessions', '/api/verse/fleet/runs',
+    '/api/verse/fleet/runtime-identity/nodes-plan',
+  ]);
+  expect(fetcher.mock.calls.every(([, init]) => (init?.method ?? 'GET') === 'GET')).toBe(true);
 });
 
 

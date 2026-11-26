@@ -86,7 +86,7 @@ export const VERSE_MOBILE_MEDIA_QUERY = '(pointer: coarse) and (max-width: 767.9
  * that page IS the Mac). An explicit choice beats the media query.
  */
 export function prefersVerseMobile(win: Window = window): boolean {
-  if (win.__ASHLR_TOKENS__ !== undefined) return false;
+  if (win.__ASHLR_TOKENS__ !== undefined || '__ASHLR_DESKTOP__' in win) return false;
   const pref = readVerseLayoutPreference();
   if (pref !== 'auto') return pref === 'mobile';
   if (typeof win.matchMedia !== 'function') return false;

@@ -18,6 +18,15 @@ export interface QuotaEvidence {
   maxAgeMs: number;
 }
 const time = (value: string | null): number => value === null ? NaN : Date.parse(value);
+/** Budget overrides can carry ISO timestamps or Unix seconds. A tick is never the quota's capture time. */
+export function budgetTimestamp(value: unknown): string | null {
+  if (typeof value === 'string') {
+    return /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:?\d\d)$/.test(value) && Number.isFinite(Date.parse(value))
+      ? value : null;
+  }
+  const at = typeof value === 'number' ? value * 1000 : NaN;
+  return Number.isFinite(at) && at > 0 && at <= 8.64e15 ? new Date(at).toISOString() : null;
+}
 const valid = (row: QuotaMeasurement | null): row is QuotaMeasurement =>
   row !== null && row.window === 'weekly' && row.usedPct !== null && Number.isFinite(row.usedPct) && row.usedPct >= 0;
 
