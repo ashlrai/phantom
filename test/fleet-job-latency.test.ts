@@ -97,6 +97,27 @@ it('keeps conflicting publish dialects ambiguous rather than picking one', () =>
   expect(report.phases.find(p => p.phase === 'publish_wait')).toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
 });
 
+it('measures job attempts without counting batch sessions or node-pool telemetry', () => {
+  const rows = [
+    { job: 'RQ-BATCH-1', event: 'launch', ts: '2026-01-01T00:00:00Z' },
+    { job: 'RQ-BATCH-1', event: 'finish', ts: '2026-01-01T00:10:00Z' },
+    { job: 'RQ-MEMBER', batch: 'RQ-BATCH-1', event: 'publish', ts: '2026-01-01T00:02:00Z' },
+    { job: 'RQ-MEMBER', outcome: 'MERGED', mergedAt: '2026-01-01T00:03:00Z' },
+    { schema: 'fleet.session-pool.v1', job: 'session:1', event: 'launch', ts: '2026-01-01T00:00:00Z' },
+    { schema: 'fleet.session-pool.v1', job: 'session:1', event: 'finish', ts: '2026-01-01T00:05:00Z' },
+    { schema: 'phm-node-runner.v1', job: 'node:1', event: 'launch', ts: '2026-01-01T00:00:00Z' },
+    { job: 'RQ-SOLO', event: 'launch', ts: '2026-01-01T00:00:00Z' },
+    { job: 'RQ-SOLO', event: 'finish', ts: '2026-01-01T00:01:00Z' },
+  ];
+  const text = rows.map(row => JSON.stringify(row)).join('\n');
+  const report = jobLatency(text);
+  expect(report).toMatchObject({ jobs: 2, ignored_events: 0 });
+  expect(report.phases.find(p => p.phase === 'worker')).toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 1 });
+  const merge = mergeQueueLatency(text);
+  expect(merge).toMatchObject({ jobs: 2, ignored_events: 0 });
+  expect(merge.phases.find(p => p.phase === 'open_to_merge')).toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 1 });
+});
+
 it('supports JSON, reports read errors, and is registered', async () => {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
