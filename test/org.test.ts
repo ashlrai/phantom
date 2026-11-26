@@ -16,7 +16,7 @@ const NOW = Date.parse('2026-11-09T12:00:00.000Z');
 const view = (pctUsed: number, hours: number) => buildResourceView({ readings: { 'claude-max': {
   pool: 'claude-max', source: 'claude-max-reader', fetchedAt: new Date(NOW - 60_000).toISOString(), pctUsed,
   resetAt: new Date(NOW + hours * 3_600_000).toISOString() } } }, NOW);
-const joined = (member: string, lanes: [string, number][]): JoinRecord => ({ v: 1, member, machine: 'm', lanes: lanes.map(([lane, share]) => ({ lane, share })), joinedAt: '2026-11-09T00:00:00.000Z' });
+const joined = (member: string, lanes: [string, number][], machine = 'm'): JoinRecord => ({ v: 1, member, machine, lanes: lanes.map(([lane, share]) => ({ lane, share })), joinedAt: '2026-11-09T00:00:00.000Z' });
 
 describe('org.toml validation', () => {
   it('accepts the shipped example', () => {
@@ -194,6 +194,25 @@ describe('plan', () => {
     expect(p.assignments).toHaveLength(3);
     expect(p.budgets[0]).toMatchObject({ usage: 'unknown', budgetPct: 7.5 });
     expect(p.unassigned).toHaveLength(7);
+  });
+  it('budgets a multi-machine lane at the largest committed share, never record order', () => {
+    // mason-mac offers claude=30 and mason-mac-2 offers claude=90. Both offers
+    // draw on the member's one declared claude pool, so they do not add up:
+    // the member's ceiling is 90 and the plan must say so whichever join
+    // record comes first. Unknown usage: 25 points of headroom x 90% = 22.5.
+    const lowFirst = [joined('mason-wyatt', [['claude', 30]], 'mason-mac'), joined('mason-wyatt', [['claude', 90]], 'mason-mac-2')];
+    const highFirst = [...lowFirst].reverse();
+    for (const joins of [lowFirst, highFirst]) {
+      const p = planOrg(org, joins, null, [{ id: 'J1', priority: 5, costPct: 20, lane: 'claude' }], now);
+      expect(p.budgets.find((b) => b.member === 'mason-wyatt' && b.lane === 'claude')).toMatchObject({ share: 90, budgetPct: 22.5 });
+      expect(p.assignments).toHaveLength(1);
+      expect(p.unassigned).toEqual([]);
+    }
+    // A zero-share machine beside a real offer does not hold the lane.
+    const mixed = [joined('mason-wyatt', [['claude', 0]], 'mason-mac'), joined('mason-wyatt', [['claude', 40]], 'mason-mac-2')];
+    const p = planOrg(org, mixed, null, [], now);
+    expect(p.held.map((h) => `${h.member}/${h.lane}`)).not.toContain('mason-wyatt/claude');
+    expect(p.budgets.find((b) => b.member === 'mason-wyatt' && b.lane === 'claude')).toMatchObject({ share: 40 });
   });
   it('gives a red pool no budget and uses reset urgency for known pools', () => {
     const red = planOrg(org, [joined('mason-wyatt', [['claude', 100]])], view(100, 2), jobs(1), now);
