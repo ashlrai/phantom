@@ -1746,6 +1746,34 @@ describe('Trajectory records', () => {
     });
   });
 
+  it('counts skill-use receipts toward the publication gate only once their timestamp arrives', () => {
+    const futureMs = TEST_NOW_MS + 1;
+    const ids = ['a', 'b', 'c'];
+    const readDeps = deps({
+      readDispatchProductionEvents: () => ids.map((id) => dispatch({
+        itemId: `item-${id}`, runId: `run-${id}`, trajectoryId: `traj-${id}`, proposalId: `prop-${id}`,
+      })),
+      listOutcomeRecords: () => ids.map((id) => outcomeRecord({
+        proposal: {
+          ...outcomeRecord().proposal,
+          id: `prop-${id}`, workItemId: `item-${id}`, runId: `run-${id}`, trajectoryId: `traj-${id}`,
+        },
+      })),
+      readAgentActions: () => [],
+      readSkillUseEvents: () => ids.map((id) => skillUse({
+        eventId: `skill-use:${id}`, runId: `run-${id}`, trajectoryId: `traj-${id}`, proposalId: `prop-${id}`,
+        ts: id === 'c' ? new Date(futureMs).toISOString() : TS1,
+      })),
+    });
+    const before = listTrajectoryRecords({ windowHours: 48, deps: readDeps });
+    expect(before.find((record) => record.runId === 'run-c')?.coverage.skillUse).toBe(false);
+    expect(summarizeTrajectoryLearning(before, 48).skillOutcomes).toBeUndefined();
+
+    vi.mocked(Date.now).mockReturnValue(futureMs);
+    const atReceipt = listTrajectoryRecords({ windowHours: 48, deps: readDeps });
+    expect(summarizeTrajectoryLearning(atReceipt, 48).skillOutcomes?.selections).toBe(3);
+  });
+
   it('preserves joined mode and stage totals when the trajectory array is copied', () => {
     const records = listTrajectoryRecords({
       windowHours: 1000,

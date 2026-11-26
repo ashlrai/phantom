@@ -143,7 +143,9 @@ zero. Plain-text output prints the tallies under each skill.
 The projection is sample-gated exactly like `skillObservation`: per-skill
 counts publish only after at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)
 production trajectories carry skill-use coverage, and the whole section is
-withheld when the skill-use ledger is degraded. A bounded read also marks
+withheld when the skill-use ledger is degraded. A skill-use receipt can
+contribute to coverage and outcome tallies once its recorded timestamp is
+at or before the trajectory snapshot time. A bounded read also marks
 the sample degraded if the file cap omits a daily partition that can contain
 events in the requested window, a partition exceeds the 4 MiB tail read cap,
 its row scan runs out of room, or the number of distinct events exceeds
