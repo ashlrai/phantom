@@ -235,15 +235,29 @@ export async function cmdOrg(argv: string[]): Promise<number> {
     ]);
     const now = new Date();
     const capacity = await readFleetResourcePlan(runsRoot(), now.getTime()).catch(() => null);
-    const plan = planOrg(org, readJoins(), view, queue, now, capacity?.lanes);
+    const joins = readJoins();
+    const plan = planOrg(org, joins, view, queue, now, capacity?.lanes);
     // Text mode names each held lane and the join that opts it in; the JSON plan
     // already carries the same held rows, so --json consumers lose nothing.
+    // A re-join replaces the machine's whole record, so a fix naming only the
+    // held lane would drop the opt-ins that record already carries. When this
+    // machine holds an unambiguous record for the member — the single declared
+    // machine's own, or the member's only record on a declared machine — the
+    // fix keeps its opted-in lanes at their recorded shares and adds the held
+    // lane, the same command join's own open-lane note prints. Lanes the member
+    // no longer declares stay out: joinOrg would refuse them.
     const heldLines = plan.held.map((h) => {
-      const machines = org.members.find((m) => m.id === h.member)?.machines.map((x) => x.id) ?? [];
-      const machineArg = machines.length === 1 ? machines[0]! : machines.length ? `<${machines.join('|')}>` : null;
-      const fix = machineArg === null ? 'add a machine for this member in org.toml before join'
-        : `on that member's machine run: phm org join --member ${h.member} --machine ${machineArg} --lane ${h.lane}`;
-      return `  held ${h.member}/${h.lane}: ${h.reason} — ${fix}`;
+      const member = org.members.find((m) => m.id === h.member);
+      const machines = member?.machines.map((x) => x.id) ?? [];
+      const declared = new Set(member?.contributions.map((c) => c.lane) ?? []);
+      const memberRecords = joins.filter((j) => j.member === h.member && machines.includes(j.machine));
+      const record = machines.length === 1 ? memberRecords.find((j) => j.machine === machines[0])
+        : memberRecords.length === 1 ? memberRecords[0] : undefined;
+      const machineArg = record?.machine ?? (machines.length === 1 ? machines[0]! : machines.length ? `<${machines.join('|')}>` : null);
+      if (machineArg === null) return `  held ${h.member}/${h.lane}: ${h.reason} — add a machine for this member in org.toml before join`;
+      const kept = (record?.lanes ?? []).filter((l) => l.lane !== h.lane && declared.has(l.lane));
+      const laneArgs = [...kept.map((l) => ` --lane ${l.lane}=${l.share}`), ` --lane ${h.lane}`].join('');
+      return `  held ${h.member}/${h.lane}: ${h.reason} — on that member's machine run: phm org join --member ${h.member} --machine ${machineArg}${laneArgs}`;
     });
     // The plan covers only the join records this machine holds; a member's
     // machine sees a partial org, so say which records counted.

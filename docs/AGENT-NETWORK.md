@@ -404,6 +404,9 @@ are refused. Spending stays with each member; nothing here changes billing.
   or no contributed budget left. Text output also lists each held lane
   (`held <member>/<lane>: <reason>`) with the `phm org join` command that opts it
   in on that member's machine, so a member can see why a contribution is unused.
+  Because a re-join replaces the machine's whole record, the printed command
+  keeps the opt-ins that machine's record already carries at their recorded
+  shares and adds the held lane — running it never drops a sibling opt-in.
 
 With `--json`, a failed `phm org` call prints
 `{"schema":"org.error.v1","command","error":{"code","message"}}` on stdout —
