@@ -103,6 +103,30 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs[0]).toMatchObject({ pool: 'omlx', dispatchedAt: '2026-10-28T15:00:00.000Z' });
   });
 
+  it.each([merged, closed])('leaves the pool unknown for conflicting latest dispatch lanes (%o)', (resolve) => {
+    const job = 'RQ-TIED-DISPATCH';
+    const dispatches = [claim(job, 'devin', DISPATCH_ISO), launch(job, 'codex-cmp', DISPATCH_ISO)];
+    for (const rows of [dispatches, [...dispatches].reverse()]) {
+      expect(foldJobsLedgerRewards([...rows, resolve(job)].join('\n'), NOW_MS)).toMatchObject([
+        { jobId: job, pool: null, merged: resolve === merged, dispatchedAt: DISPATCH_ISO },
+      ]);
+    }
+  });
+
+  it('retains one observed lane among matching and unknown latest dispatch receipts', () => {
+    const job = 'RQ-MATCHING-DISPATCH';
+    const rows = [
+      claim(job, 'unknown', DISPATCH_ISO),
+      launch(job, 'codex-cmp', DISPATCH_ISO),
+      claim(job, 'codex-cmp', DISPATCH_ISO),
+      claim(job, 'devin'),
+      merged(job),
+    ];
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, pool: 'codex-cmp', dispatchedAt: DISPATCH_ISO },
+    ]);
+  });
+
   it.each(['closedAt', 'closed_at'])('binds a delayed close receipt to its PR close time (%s)', (field) => {
     const job = 'RQ-DELAYED-CLOSE';
     const rows = [

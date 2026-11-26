@@ -312,13 +312,21 @@ export function foldJobsLedgerRewards(
 
 /** Latest dispatch at or before the outcome, regardless of ledger row order. */
 function dispatchBefore(acc: RewardJobAccum, boundMs: number): DispatchMark | null {
-  let latest: DispatchMark | null = null;
+  let latestMs: number | null = null;
+  const lanes = new Set<string>();
   for (const dispatch of acc.dispatches) {
-    if (dispatch.ms <= boundMs && (latest === null || dispatch.ms > latest.ms)) {
-      latest = dispatch;
+    if (dispatch.ms > boundMs || (latestMs !== null && dispatch.ms < latestMs)) continue;
+    if (dispatch.ms !== latestMs) {
+      latestMs = dispatch.ms;
+      lanes.clear();
+    }
+    if (dispatch.lane !== null && dispatch.lane !== 'unknown' && POOL_PATTERN.test(dispatch.lane)) {
+      lanes.add(dispatch.lane);
     }
   }
-  return latest;
+  // The dispatcher stamps receipts to the second. Conflicting lanes at the
+  // same timestamp cannot prove which pool earned the reward.
+  return latestMs === null ? null : { ms: latestMs, lane: lanes.size === 1 ? [...lanes][0]! : null };
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
@@ -340,7 +348,7 @@ function rewardInput(
     const dispatch = dispatchBefore(acc, merge.mergedAtMs);
     if (dispatch === null) return null;
     return {
-      jobId: id, pool: dispatch.lane !== null && POOL_PATTERN.test(dispatch.lane) ? dispatch.lane : null,
+      jobId: id, pool: dispatch.lane,
       repo: acc.repo !== null && REPO_PATTERN.test(acc.repo) ? acc.repo : null,
       merged: true, dispatchedAt: iso(dispatch.ms), mergedAt: iso(merge.mergedAtMs),
       costUsd: cost,
@@ -357,7 +365,7 @@ function rewardInput(
     const dispatch = dispatchBefore(acc, closedMs);
     if (dispatch === null) return null;
     return {
-      jobId: id, pool: dispatch.lane !== null && POOL_PATTERN.test(dispatch.lane) ? dispatch.lane : null,
+      jobId: id, pool: dispatch.lane,
       repo: acc.repo !== null && REPO_PATTERN.test(acc.repo) ? acc.repo : null,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
