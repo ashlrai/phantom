@@ -629,6 +629,7 @@
 /test/improve-incident-gate-backlog.test.ts @masonwyatt23
 /test/improve-jev-backlog.test.ts @masonwyatt23
 /test/improve-job-control-backlog.test.ts @masonwyatt23
+/test/improve-job-reissue-backlog.test.ts @masonwyatt23
 /test/improve-judge-backlog.test.ts @masonwyatt23
 /test/improve-knowledge-outcome-backlog.test.ts @masonwyatt23
 /test/improve-landed-close-backlog.test.ts @masonwyatt23
