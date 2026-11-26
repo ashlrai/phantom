@@ -210,7 +210,7 @@ counts as a conflict just like `mergeable: CONFLICTING`. An unparseable or
 future timestamp stays `null` — unknown, never guessed.
 
 For revision-pinned triage, supply optional top-level `preparations` (results
-from [lookahead preparation](FLEET-MERGE-BATCH.md#local-lookahead-preparation))
+from [lookahead preparation](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md#local-lookahead-preparation))
 and queue rows with `revision: {repo, headSha, baseSha, predecessors?, mergeGroupSha?}`.
 Use full commit SHAs and ordered `predecessors: [{number, headSha}]` (`[]` means
 known empty). Supply `checksRevision` in the same shape for the observed required
