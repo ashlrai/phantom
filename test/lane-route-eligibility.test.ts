@@ -114,6 +114,20 @@ describe('lane yield weight', () => {
     expect(rows.find(r => r.lane === 'claude' && r.size === 'md')).toMatchObject({ launches: 50, merged: 40, yield: 0.8, weight: 1.6 });
   });
 
+  it('keeps replayed launch receipts from satisfying the minimum yield sample', () => {
+    const receipts = ledger('zai', 'lg', 9, 0);
+    const replay = receipts[0]!;
+    const rows = yields(receipts, [replay]);
+    expect(rows).toHaveLength(2);
+    for (const result of rows) {
+      expect(result).toMatchObject({ launches: 9, known: false, yield: null, emptyRate: null, weight: 1 });
+    }
+
+    const retry = JSON.stringify({ ...JSON.parse(replay), ts: new Date(NOW.getTime() + 1000).toISOString() });
+    expect(yields(receipts, [replay, retry]).find(r => r.size === 'lg'))
+      .toMatchObject({ launches: 10, known: true });
+  });
+
   it('a merge recorded as reverted is not a held merge and sinks the lane weight', () => {
     const reverted = (lane: string, size: string, jobs: number): string[] =>
       Array.from({ length: jobs }, (_, i) => {

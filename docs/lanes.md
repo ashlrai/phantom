@@ -48,7 +48,8 @@ that can launch now, using the same rule.
 to avoid. `phm lanes yield` shows, per lane and size, merged PRs per launch over the
 last 50 jobs, the empty rate and the weight the router uses (1 is neutral; a lane with
 fewer than 10 jobs is unknown and stays neutral). A merge recorded as reverted
-counts as reverted, never as merged. The lane router sends rows bigger
+counts as reverted, never as merged. Exact replays of timestamped launch
+receipts count once toward the yield window and minimum sample. The lane router sends rows bigger
 than small to lanes at 0.5 or better when they have room, and gives a low-yield lane
 small, test-only rows. The yield fold reads the fleet's jobs-ledger dialect, so
 GitHub-resolved merges recorded by the outcome reconciler (`jobId`/`prUrl`/
