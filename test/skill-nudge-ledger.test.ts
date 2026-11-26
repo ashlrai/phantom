@@ -360,6 +360,21 @@ describe('skillNudgeJobsFromLedger', () => {
 describe('syncSkillNudgesFromJobsLedger', () => {
   const NOW = () => new Date('2026-10-28T20:00:00.000Z');
 
+  it.each(['ready', 'defer', 'skip'])('keeps the latest recut admission when an earlier %s receipt replays', async action => {
+    const job = 'RQ-RECUT-REPLAY';
+    const admission = (action: string, ts: string) => line({ job, event: 'recut_admission', action, ts });
+    const earlier = admission(action, '2026-10-28T13:00:00Z');
+    const latest = admission(action === 'ready' ? 'defer' : 'ready', '2026-10-28T13:30:00Z');
+    const text = [earlier, latest, earlier, launch(job), outcome(job, 'MERGED')].join('\n');
+
+    const recut = action !== 'ready';
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', ...(recut ? { recuts: 1 } : {}) },
+    ]);
+    const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(result.candidates).toBe(recut ? 1 : 0);
+  });
+
   it.each(['launch', 'claim', 'batch_claim'])('ignores a replayed %s after recut admission', async event => {
     const job = 'RQ-REPLAY';
     const receipt = line({ event, job, lane: 'codex', ts: '2026-10-28T14:00:00Z' });
