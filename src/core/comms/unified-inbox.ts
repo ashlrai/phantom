@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates twenty-eight local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates twenty-nine local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -185,6 +185,29 @@
  *               belongs to. An absent journal is 'missing' (dispatch never
  *               ran); an unreadable one 'unavailable', never an empty plan
  *               passed off as fact.
+ *   session-handoff  open session-handoff checkpoints — the same
+ *               `listSessionHandoffs` bounded journal scan
+ *               `phm checkpoint handoff list`, `fleet_session_handoffs`,
+ *               the bus-status probe's `sessionHandoffs` section and
+ *               `work mine`'s `sessions` digest serve, so a checkpointed
+ *               session waiting for a resume or failover pass lists beside
+ *               seat handoffs and feed jobs instead of behind a third
+ *               command. Each open journal lists one warn, non-blocking
+ *               item — checkpointed work is agent work, never
+ *               Mason-blocking — carrying the journal's job id as its
+ *               `--job` citation, `since` the latest revision's recorded
+ *               time and `expiresAt` the 24-hour resume bound
+ *               `planSessionResume` refuses past; a pressure signal —
+ *               rate-limit, quota-exhausted or a budget at its threshold,
+ *               the same `handoffPressure` verdict `planSessionFailover`
+ *               applies — marks the item for failover. Journals that fail
+ *               validation or sit past the bounded scan could hide open
+ *               checkpoints, so the read's `unreadable`/`truncated` flags
+ *               degrade the source — pending stays a stated floor, never a
+ *               complete count passed off as fact. An absent store is
+ *               'missing' (no handoff was ever checkpointed); an
+ *               uninspectable one 'unavailable'. Act:
+ *               `phm checkpoint handoff show`, `phm checkpoint handoff list`.
  *   org-outbox  org.membership bus events the org plane still owes the bus —
  *               `<runsDir>/org/agents.json` ledger entries with
  *               `busDelivered:false`, the exact set `previewOrgOutbox`
@@ -510,6 +533,8 @@ import { readLeaderNetworkState, type LeaderNetworkStateRead } from '../agents/l
 import { readLeaderRepliesLedger, type LeaderRepliesLedgerRead } from './leader-replies-ledger.js';
 import { readFleetCoordinationPending, type FleetCoordinationPending } from '../fleet/coordination.js';
 import { readClaimStoreDrift, type ClaimDriftRow, type ClaimStoreDrift } from '../fleet/claim-store-drift.js';
+import { listSessionHandoffs, type SessionHandoffList } from '../agents/session-handoff.js';
+import { handoffPressure } from '../agents/session-handoff-schema.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -522,7 +547,7 @@ const SUGGESTED_LEASE_MS = 600_000;
 export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats',
-  'peer-dispatch', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
+  'peer-dispatch', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
@@ -542,7 +567,7 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
   'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
-  'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'org-membership', 'gmail-over-target',
+  'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'session-handoff', 'org-membership', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
   'inbox-proposal', 'slack-request', 'slack-send-unconfirmed', 'leader-message-undelivered',
   'leader-request', 'leader-request-incomplete', 'leader-reply-unconfirmed', 'leader-digest-unconfirmed',
@@ -575,7 +600,8 @@ export interface UnifiedInboxItem extends AttentionItem {
    * `itemId` (a delivery carries the itemIds of the tasks on its thread,
    * the job-carrying-thread rule `BusBoard.pendingFor` applies), a
    * conversation thread's `jobs`, a teammate task's `jobId`, a seat handoff's
-   * node-job refs, or a peer-dispatch receipt's peer-announced `jobId`.
+   * node-job refs, a peer-dispatch receipt's peer-announced `jobId`, or a
+   * session-handoff journal's job id.
    * Absent when the item names no job — unknown stays out of a
    * `--job` match rather than being guessed in.
    */
@@ -615,8 +641,9 @@ export interface UnifiedInboxFilter {
   blocking?: boolean;
   /** Keep only items that provably name this job id — the same citation
    * rule every `--job` bus read shares, joined with the feed-id, board
-   * `itemId`, conversation-thread, teammate-task and seat node-job
-   * citations each source already records in `jobIds`. */
+   * `itemId`, conversation-thread, teammate-task, seat node-job,
+   * peer-dispatch `jobId` and session-handoff journal citations each
+   * source already records in `jobIds`. */
   job?: string;
   /** Keep only items whose recorded `since` (ISO appearance time) parses to
    * at or after this epoch-ms cutoff — the same inclusive `>=` match every
@@ -753,6 +780,8 @@ export interface UnifiedInboxOptions {
   readSeatHandoffs?: typeof planSeatHandoffs;
   /** Peer-dispatch journal seam; default reads `agentnet/work-dispatch.json` under the bus root like `phm agentnet peers dispatch`. */
   readPeerDispatch?: (options: { busRoot?: string }) => WorkDispatchJournal;
+  /** Session-handoff seam; default reads `<runsDir>/handoffs` through `listSessionHandoffs` — the same bounded journal scan `phm checkpoint handoff list`, `fleet_session_handoffs`, the bus-status probe and `work mine`'s sessions section serve. */
+  readSessionHandoffs?: (options: { runsDir?: string }) => SessionHandoffList;
   /** Org-plane outbox seam; default reads `<runsDir>/org/agents.json` like `phm fleet org-sync`/`org-board`. */
   readOrgOutbox?: (options: { runsDir?: string }) => OrgOutboxRead;
   readRequests?: typeof readCommsRequests;
@@ -2103,6 +2132,68 @@ function peerDispatchItems(read: NonNullable<UnifiedInboxOptions['readPeerDispat
   return { report: { state: 'healthy', pending: items.length }, items };
 }
 
+/** The resume bound `planSessionResume` enforces — a checkpoint older than
+ * 24h refuses resume and failover, so `expiresAt` reports that real deadline. */
+const SESSION_HANDOFF_RESUME_WINDOW_MS = 24 * 3_600_000;
+
+/**
+ * Open session-handoff checkpoints — jobs that yielded mid-run and wait for
+ * a resume or failover pass. The same `listSessionHandoffs` bounded journal
+ * scan `phm checkpoint handoff list`, `fleet_session_handoffs`, the
+ * bus-status probe's `sessionHandoffs` section and `work mine`'s `sessions`
+ * digest serve, so this source and those surfaces can never disagree about
+ * which checkpoints are open. Checkpointed work is agent work, never
+ * Mason-blocking, so items are warn and non-blocking; `since` is the latest
+ * revision's recorded time and `expiresAt` the 24-hour resume bound — both
+ * real journal facts, never invented. A pressure signal — rate-limit,
+ * quota-exhausted or a budget at its threshold, the same `handoffPressure`
+ * verdict `planSessionFailover` applies — marks the item for failover in
+ * its title. The journal's job id is the `--job` citation; the detail
+ * carries the resume facts an agent needs — lane, model, minimum tier,
+ * repo, attempt and revision — scrubbed and single-lined like every other
+ * item. The read's own `unreadable`/`truncated` flags degrade the source:
+ * journals that fail validation or sit past the bounded scan could hide
+ * open checkpoints, so pending stays a stated floor. An absent store is
+ * 'missing' (no handoff was ever checkpointed); an uninspectable one
+ * 'unavailable', never an empty list passed off as fact.
+ */
+function sessionHandoffItems(read: NonNullable<UnifiedInboxOptions['readSessionHandoffs']>,
+  options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let list: SessionHandoffList;
+  try { list = read({ runsDir: options.runsDir }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (list.status === 'unavailable' || list.handoffs === null) {
+    return { report: { state: 'unavailable', pending: null }, items: [] };
+  }
+  if (list.status === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const items = list.handoffs
+    .filter(entry => entry.state === 'open')
+    .map((entry): Omit<UnifiedInboxItem, 'priority'> => {
+      const atMs = Date.parse(entry.at);
+      return {
+        id: `session-handoff:${entry.job}`,
+        source: 'session-handoff',
+        kind: 'session-handoff',
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(`Session handoff ${entry.job}: ${entry.signal.kind}${handoffPressure(entry.signal) ? ' (failover)' : ''}`, TITLE_MAX),
+        detail: oneLine(`${entry.lane} · ${entry.model} · min tier ${entry.minTier} · ${entry.repo}` +
+          ` · attempt ${entry.attempt} rev ${entry.revision} · needs ${entry.needs.join(', ') || 'none'}` +
+          ` · head ${entry.head.slice(0, 12)}`, DETAIL_MAX) || null,
+        since: entry.at,
+        expiresAt: Number.isFinite(atMs) ? new Date(atMs + SESSION_HANDOFF_RESUME_WINDOW_MS).toISOString() : null,
+        ...jobIdsField([entry.job]),
+        act: [
+          `phm checkpoint handoff show ${dir} ${entry.job}`,
+          `phm checkpoint handoff list ${dir} --state open`,
+        ],
+      };
+    });
+  const degraded = list.truncated || (list.unreadable?.length ?? 0) > 0;
+  return { report: { state: degraded ? 'degraded' : 'healthy', pending: items.length }, items };
+}
+
 /**
  * The org-plane store schema, restated locally: the canonical modules
  * (`src/core/org/agent-plane-schema.ts`, `agent-plane-reader.ts`,
@@ -3171,6 +3262,8 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const wakes = wakeItems(options.readWakes ?? ((o) => readAllWakes(undefined, { root: o.root, runsRoot: o.runsRoot, now: o.now })), options);
   const seats = await seatItems(options.readSeatHandoffs ?? planSeatHandoffs, now);
   const peerDispatch = peerDispatchItems(options.readPeerDispatch ?? readPeerDispatchJournal, options);
+  const sessionHandoffs = sessionHandoffItems(options.readSessionHandoffs ?? ((o) => listSessionHandoffs(
+    o.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs'), { state: 'open' })), options);
   const orgOutbox = orgOutboxItems(options.readOrgOutbox ?? readOrgPlaneOutbox, options);
   const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
   const linkedin = linkedInItems(options.readLinkedIn ?? readLinkedInDrop, options.runsDir, now);
@@ -3206,6 +3299,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     wakes: wakes.report,
     seats: seats.report,
     'peer-dispatch': peerDispatch.report,
+    'session-handoff': sessionHandoffs.report,
     'org-outbox': orgOutbox.report,
     gmail: gmail.report,
     linkedin: linkedin.report,
@@ -3222,7 +3316,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     coordination: coordination.report,
     'claim-drift': claimDrift.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

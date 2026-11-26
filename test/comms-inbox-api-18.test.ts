@@ -92,7 +92,7 @@ describe('GET /api/verse/comms/inbox', () => {
     const r = await call({});
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ schema: 'comms.unified-inbox.v1', total: 0, omitted: 0, items: [] });
-    expect(Object.keys(r.body.sources).sort()).toEqual(['board', 'bus', 'claim-drift', 'conversations', 'coordination', 'drafts', 'email-inbox', 'email-outbox', 'gmail', 'imessage', 'leader-delivery', 'leader-network', 'leader-replies', 'linkedin', 'mailbox', 'needs-you', 'needs-you-delivery', 'org-outbox', 'owner-delivery', 'owner-thread', 'peer-dispatch', 'proposals', 'requests', 'seats', 'slack', 'slack-sends', 'team-approvals', 'teammate-tasks', 'wakes']);
+    expect(Object.keys(r.body.sources).sort()).toEqual(['board', 'bus', 'claim-drift', 'conversations', 'coordination', 'drafts', 'email-inbox', 'email-outbox', 'gmail', 'imessage', 'leader-delivery', 'leader-network', 'leader-replies', 'linkedin', 'mailbox', 'needs-you', 'needs-you-delivery', 'org-outbox', 'owner-delivery', 'owner-thread', 'peer-dispatch', 'proposals', 'requests', 'seats', 'session-handoff', 'slack', 'slack-sends', 'team-approvals', 'teammate-tasks', 'wakes']);
   });
 
   it('forwards the view filter to the reader and echoes the applied filter', async () => {

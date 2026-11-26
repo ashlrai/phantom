@@ -41,6 +41,7 @@ import type { LeaderReplyPending, LeaderRepliesLedgerRead } from '../src/core/co
 import { replyTextHash } from '../src/core/fleet/mason-outbox.js';
 import type { FleetAssignment, FleetCoordinationPending, FleetMessage, FleetPendingReturn } from '../src/core/fleet/coordination.js';
 import type { ClaimDriftRow, ClaimStoreDrift } from '../src/core/fleet/claim-store-drift.js';
+import type { SessionHandoffList, SessionHandoffListEntry } from '../src/core/agents/session-handoff.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
@@ -137,6 +138,7 @@ describe('readUnifiedInbox sources', () => {
         wakes: { state: 'healthy', pending: 0 },
         seats: { state: 'missing', pending: 0 },
         'peer-dispatch': { state: 'missing', pending: 0 },
+        'session-handoff': { state: 'missing', pending: 0 },
         'org-outbox': { state: 'missing', pending: 0 },
         'email-inbox': { state: 'missing', pending: 0 },
         'email-outbox': { state: 'missing', pending: 0 },
@@ -2531,6 +2533,137 @@ describe('readUnifiedInbox peer dispatch', () => {
     expect(byText.items).toEqual([]);
     const byPeer = await read({ filter: { contains: 'peer peer-a' } });
     expect(byPeer.items.map(i => i.id).sort()).toEqual([`peer-dispatch:${receiptId('4')}`, `peer-dispatch:${receiptId('b')}`].sort());
+  });
+});
+
+describe('readUnifiedInbox session handoffs', () => {
+  const AT = '2026-11-07T11:00:00.000Z';
+  /** A schema-valid `session-handoff.v1` record — the same shape session-handoff-list.test.ts writes. */
+  const record = (job: string, over: Record<string, unknown> = {}) => ({
+    schema: 'session-handoff.v1', revision: 1, at: AT,
+    signal: { kind: 'checkpoint' },
+    job, attempt: 'att-1', repo: 'test/fixture', lane: 'codex-personal', model: 'model-a',
+    minTier: 'work', needs: ['typescript'], goal: 'Do the fake thing',
+    plan: [{ action: 'step 1', state: 'pending' }], filesTouched: ['result'],
+    decisions: ['keep it'], evidence: ['e1'], nextAction: 'do step 1', contextDigest: 'ctx',
+    repoState: { root: '/fake/host/root', head: 'a'.repeat(40), digest: 'b'.repeat(64), entireCheckpoint: null },
+    ...over,
+  });
+  /** `<runsDir>/handoffs/<job>.jsonl` — the default reader's real path, private modes like the writer's. */
+  const writeJournal = (job: string, records: object[]) => {
+    const dir = join(runsDir, 'handoffs');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, `${job}.jsonl`), records.map(r => JSON.stringify(r)).join('\n') + '\n', { mode: 0o600 });
+  };
+  const entry = (over: Partial<SessionHandoffListEntry> = {}): SessionHandoffListEntry => ({
+    job: 'RQ-SESS-1', attempt: 'att-1', revision: 1, at: AT,
+    lane: 'codex-personal', model: 'model-a', minTier: 'work', repo: 'test/fixture',
+    signal: { kind: 'checkpoint' }, needs: ['typescript'], state: 'open', head: 'a'.repeat(40),
+    ...over,
+  });
+  const list = (over: Partial<SessionHandoffList> = {}): SessionHandoffList => ({
+    schema: 'session-handoff.list.v1', status: 'ok',
+    handoffs: [entry()], unreadable: [], truncated: false, ...over,
+  });
+
+  it('lists open checkpoints from real journals with their resume facts', async () => {
+    writeJournal('RQ-SESS-1', [record('RQ-SESS-1', { signal: { kind: 'rate-limit', status: 429 } })]);
+    writeJournal('RQ-SESS-2', [
+      record('RQ-SESS-2', { revision: 1, at: '2026-11-07T10:00:00.000Z' }),
+      record('RQ-SESS-2', { revision: 2, at: '2026-11-07T10:30:00.000Z' }),
+    ]);
+    // A completed journal is retained history, never pending work.
+    writeJournal('RQ-SESS-3', [
+      record('RQ-SESS-3', { revision: 1 }),
+      record('RQ-SESS-3', { revision: 2, signal: { kind: 'completed' },
+        plan: [{ action: 'step 1', state: 'done' }] }),
+    ]);
+    const inbox = await read();
+    expect(inbox.sources['session-handoff']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'session-handoff');
+    expect(items).toHaveLength(2);
+    const byId = new Map(items.map(i => [i.id, i]));
+    const failover = byId.get('session-handoff:RQ-SESS-1')!;
+    expect(failover).toMatchObject({
+      kind: 'session-handoff', severity: 'warn', blocking: false,
+      title: 'Session handoff RQ-SESS-1: rate-limit (failover)',
+      since: AT, expiresAt: '2026-11-08T11:00:00.000Z', jobIds: ['RQ-SESS-1'],
+    });
+    expect(failover.detail).toContain('codex-personal');
+    expect(failover.detail).toContain('model-a');
+    expect(failover.detail).toContain('test/fixture');
+    expect(failover.detail).toContain('attempt att-1 rev 1');
+    expect(failover.detail).toContain('typescript');
+    expect(failover.act[0]).toBe(`phm checkpoint handoff show ${runsDir} RQ-SESS-1`);
+    expect(failover.act[1]).toBe(`phm checkpoint handoff list ${runsDir} --state open`);
+    // The plain checkpoint lists without the failover marker; its `since`
+    // is the latest revision's time, not the first.
+    expect(byId.get('session-handoff:RQ-SESS-2')).toMatchObject({
+      title: 'Session handoff RQ-SESS-2: checkpoint',
+      since: '2026-11-07T10:30:00.000Z', expiresAt: '2026-11-08T10:30:00.000Z',
+    });
+    expect(byId.has('session-handoff:RQ-SESS-3')).toBe(false);
+  });
+
+  it('reports missing, degraded and unavailable honestly, never an empty pass-off', async () => {
+    const missing = await read();
+    expect(missing.sources['session-handoff']).toEqual({ state: 'missing', pending: 0 });
+
+    // A corrupt journal degrades the source but the readable one still lists.
+    writeJournal('RQ-SESS-1', [record('RQ-SESS-1')]);
+    const dir = join(runsDir, 'handoffs');
+    writeFileSync(join(dir, 'RQ-BAD.jsonl'), 'not json at all\n', { mode: 0o600 });
+    const degraded = await read();
+    expect(degraded.sources['session-handoff']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'session-handoff')).toHaveLength(1);
+
+    const throwing = await read({
+      readSessionHandoffs: () => { throw new Error('boom'); },
+    });
+    expect(throwing.sources['session-handoff']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'session-handoff')).toHaveLength(0);
+
+    const unavailable = await read({ readSessionHandoffs: () => ({ ...list(), status: 'unavailable' as const, handoffs: null, unreadable: null }) });
+    expect(unavailable.sources['session-handoff']).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('degrades on a truncated scan and on seam entries outside the open state', async () => {
+    const truncated = await read({ readSessionHandoffs: () => ({ ...list(), truncated: true }) });
+    expect(truncated.sources['session-handoff']).toEqual({ state: 'degraded', pending: 1 });
+
+    const mixed = await read({
+      readSessionHandoffs: () => list({ handoffs: [
+        entry(),
+        entry({ job: 'RQ-SESS-DONE', state: 'completed', signal: { kind: 'completed' } }),
+      ] }),
+    });
+    expect(mixed.sources['session-handoff']).toEqual({ state: 'healthy', pending: 1 });
+    expect(mixed.items.filter(i => i.source === 'session-handoff').map(i => i.id)).toEqual(['session-handoff:RQ-SESS-1']);
+  });
+
+  it('filters by source, kind, job citation, time window and contains like every other source', async () => {
+    writeJournal('RQ-SESS-1', [record('RQ-SESS-1', { signal: { kind: 'rate-limit', status: 429 } })]);
+    writeJournal('RQ-SESS-2', [record('RQ-SESS-2', { at: '2026-11-07T09:00:00.000Z' })]);
+    const inbox = await read({ filter: { source: 'session-handoff' } });
+    expect(inbox.total).toBe(2);
+    expect(inbox.items.every(i => i.source === 'session-handoff' && i.kind === 'session-handoff')).toBe(true);
+    expect(inbox.sources['session-handoff']).toEqual({ state: 'healthy', pending: 2 });
+
+    const byJob = await read({ filter: { job: 'RQ-SESS-1' } });
+    expect(byJob.items.map(i => i.id)).toEqual(['session-handoff:RQ-SESS-1']);
+
+    const byKind = await read({ filter: { kind: 'session-handoff' } });
+    expect(byKind.total).toBe(2);
+
+    const bySince = await read({ filter: { since: Date.parse('2026-11-07T10:00:00.000Z') } });
+    expect(bySince.items.map(i => i.id)).toEqual(['session-handoff:RQ-SESS-1']);
+    const byBefore = await read({ filter: { before: Date.parse('2026-11-07T10:00:00.000Z') } });
+    expect(byBefore.items.map(i => i.id)).toEqual(['session-handoff:RQ-SESS-2']);
+
+    const byLane = await read({ filter: { contains: 'codex-personal' } });
+    expect(byLane.items.map(i => i.id).sort()).toEqual(['session-handoff:RQ-SESS-1', 'session-handoff:RQ-SESS-2']);
+    const byFailover = await read({ filter: { contains: 'failover' } });
+    expect(byFailover.items.map(i => i.id)).toEqual(['session-handoff:RQ-SESS-1']);
   });
 });
 

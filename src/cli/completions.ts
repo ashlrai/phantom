@@ -246,7 +246,10 @@ const SUBCOMMANDS: Record<string, string[]> = {
   mirror: ['list', 'add', 'sync', 'path', 'remove', 'reconcile', 'release', 'help'],
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
   capacity: ['publish'],
-  checkpoint: ['resume', '--json', '--help'],
+  // Mirror the verb switch in src/cli/checkpoint.ts (cmdCheckpoint): resume
+  // and save read/write agent checkpoints; handoff delegates to
+  // src/cli/session-handoff.ts (cmdSessionHandoff).
+  checkpoint: ['resume', 'save', 'handoff', '--json', '--help'],
   // Mirror the verb switch in src/cli/caps.ts (cmdCaps).
   caps: ['list', 'validate', 'generate', '--registry', '--out', '--check', '--pin-stage', '--json', '--help'],
   // Mirror the verb switch in src/cli/trail.ts (cmdTrail).
