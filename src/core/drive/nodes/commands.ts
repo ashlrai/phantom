@@ -221,6 +221,23 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         // endpoint leaves it off — pool joins release their probe session.
         : `Rejoin with: ${joinHint(nodes, nodeId, opts.rejoinWatch === true)}; then use the new session.`, 1);
   };
+  /** A claim verb refused while its session is dead is a session failure, not
+   * a lease failure: the session's death fenced the claim, so "pull again"
+   * under it can never work — the node must rejoin before renew, complete or
+   * release can succeed. beat and pull already answer session-expired for the
+   * same condition; the claim verbs name it too. Unlike stale()'s fix — which
+   * has beat/pull reuse the new session — the claim's tokens died with the
+   * old one, so this fix ends at re-pull: rejoin (or name the session already
+   * live) and pull the job again. */
+  const claimRefusal = (claim: JobClaim, leaseLost: UsageError): UsageError => {
+    if (nodes.sessionLive(claim)) return leaseLost;
+    const live = liveSession(nodes, claim.nodeId);
+    return new UsageError('session-expired',
+      `Node '${claim.nodeId}' has no live session (it expired, left, or was replaced), so its claim is fenced.`,
+      live !== null
+        ? `Node '${claim.nodeId}' is live as session ${live}: the claim died with session ${claim.session} — pull the job again under session ${live}.`
+        : `Rejoin with: ${joinHint(nodes, claim.nodeId, opts.rejoinWatch === true)}; then pull the job again — the claim's tokens died with the session.`, 1);
+  };
   switch (verb) {
     case 'join': {
       requireOwnerFlag(flags, nodes, 'join');
@@ -336,20 +353,26 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         token: claim.token, leaderToken: claim.leaderToken, expiresAt: claim.expiresAt } };
     }
     case 'renew': {
-      const claim = nodes.renewClaim(claimOf(flags));
-      if (!claim) throw new UsageError('lease-lost', 'The lease is gone: it expired, was reassigned, or the leader changed. Stop work on this job.',
-        'Do not run effects for it. Pull again; a newer token fences this one.', 1);
+      const request = claimOf(flags);
+      const claim = nodes.renewClaim(request);
+      if (!claim) throw claimRefusal(request, new UsageError('lease-lost',
+        'The lease is gone: it expired, was reassigned, or the leader changed. Stop work on this job.',
+        'Do not run effects for it. Pull again; a newer token fences this one.', 1));
       return { jobId: claim.jobId, expiresAt: claim.expiresAt };
     }
     case 'complete': {
-      const done = nodes.complete(claimOf(flags), flags.get('--result') ?? '');
-      if (!done) throw new UsageError('lease-lost', 'Completion refused: the lease is gone or the job is already complete.',
-        'Discard this run\'s result. Another node holds a newer token or the job finished.', 1);
+      const request = claimOf(flags);
+      const done = nodes.complete(request, flags.get('--result') ?? '');
+      if (!done) throw claimRefusal(request, new UsageError('lease-lost',
+        'Completion refused: the lease is gone or the job is already complete.',
+        'Discard this run\'s result. Another node holds a newer token or the job finished.', 1));
       return { jobId: need(flags, '--job'), completed: true };
     }
     case 'release': {
-      if (!nodes.release(claimOf(flags), flags.has('--decline'))) throw new UsageError('lease-lost', 'Release refused: the lease is gone or the job is already complete.',
-        'Nothing to hand back. Another node holds a newer token or the job finished.', 1);
+      const request = claimOf(flags);
+      if (!nodes.release(request, flags.has('--decline'))) throw claimRefusal(request, new UsageError('lease-lost',
+        'Release refused: the lease is gone or the job is already complete.',
+        'Nothing to hand back. Another node holds a newer token or the job finished.', 1));
       return { jobId: need(flags, '--job'), released: true, declined: flags.has('--decline') };
     }
     case 'withdraw': {

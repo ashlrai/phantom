@@ -503,6 +503,86 @@ describe('live-session recovery hints', () => {
   });
 });
 
+describe('claim verbs on a lapsed session', () => {
+  const leaseArgs = (claim: { jobId: string; nodeId: string; session: number; token: number; leaderToken: number },
+    extra: string[] = []) =>
+    ['--job', claim.jobId, '--node', claim.nodeId, '--session', String(claim.session),
+      '--token', String(claim.token), '--leader-token', String(claim.leaderToken), ...extra];
+  function failure(fn: () => unknown): { code?: string; message?: string; fix?: string; exit?: number } {
+    try { fn(); } catch (e) { return e as { code?: string; message?: string; fix?: string; exit?: number }; }
+    throw new Error('expected the verb to refuse');
+  }
+  function claimed(f: ReturnType<typeof fixture>) {
+    const worker = f.a.join('worker', { owners: ['o'] })!;
+    f.a.heartbeat(worker);
+    f.a.enqueue('job', { owner: 'o' });
+    return { worker, claim: f.a.pull(worker)!.claim };
+  }
+  it('renew, complete and release report session-expired — not lease-lost — once the session lapses', () => {
+    const f = fixture();
+    const { claim } = claimed(f);
+    // Past the node TTL the session, its leader and the claim are all gone:
+    // every claim verb must name the dead session and end at rejoin + re-pull,
+    // never "pull again" under a session that cannot act.
+    f.advance(101);
+    for (const verb of ['renew', 'complete', 'release'] as const) {
+      const extra = verb === 'complete' ? ['--result', 'done'] : [];
+      const err = failure(() => executeNodeFleet(verb, leaseArgs(claim, extra), f.a));
+      expect(err).toMatchObject({ code: 'session-expired', exit: 1 });
+      expect(err.message).toContain('worker');
+      expect(err.fix).toContain('phm node join --node worker --owner o');
+      expect(err.fix).toContain('pull the job again');
+      expect(err.fix).not.toContain('live as session');
+    }
+  });
+  it('names the newer live session for the re-pull, and the job pulls fresh under it', () => {
+    const f = fixture();
+    const { claim } = claimed(f);
+    f.advance(101);
+    const again = f.a.join('worker', { owners: ['o'] })!;
+    const err = failure(() => executeNodeFleet('complete', leaseArgs(claim, ['--result', 'done']), f.a));
+    expect(err.code).toBe('session-expired');
+    expect(err.fix).toContain(`live as session ${again.session}`);
+    expect(err.fix).toContain(`pull the job again under session ${again.session}`);
+    // The old tokens are dead with their session; the new session takes the job.
+    const pulled = f.a.pull(again);
+    expect(pulled?.claim.jobId).toBe('job');
+    expect(pulled?.claim.session).toBe(again.session);
+  });
+  it('a live session whose claim lapsed still hears lease-lost', () => {
+    const f = fixture();
+    const { claim } = claimed(f);
+    // The claim TTL (40) lapses while the node session (100) still lives: the
+    // refusal is about the lease, so it keeps the lease-lost wording.
+    f.advance(45);
+    const err = failure(() => executeNodeFleet('renew', leaseArgs(claim), f.a));
+    expect(err).toMatchObject({ code: 'lease-lost', exit: 1 });
+  });
+  it('the standalone CLI envelope carries session-expired with the --watch rejoin', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      let now = 1_000_000;
+      const deps = { store, now: () => now };
+      const nodes = () => new DriveNodes(store, { now: () => now });
+      const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
+      executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], nodes());
+      const claim = (executeNodeFleet('pull', ['--node', 'box', '--session', session], nodes())['claim'] as
+        { jobId: string; nodeId: string; session: number; token: number; leaderToken: number });
+      const lease = ['--job', 'j1', '--node', 'box', '--session', session,
+        '--token', String(claim.token), '--leader-token', String(claim.leaderToken)];
+      // 31 s idle: past the 30 s node, leader and claim TTLs — the session is gone.
+      now += 31_000;
+      expect(await cmdNodeFleet('renew', [...lease, '--json'], deps)).toBe(1);
+      const err = JSON.parse(lines.at(-1)!) as { error: { code: string; fix: string } };
+      expect(err.error.code).toBe('session-expired');
+      expect(err.error.fix).toContain('phm node join --node box --owner acme --watch');
+      expect(err.error.fix).toContain('pull the job again');
+    } finally { vi.restoreAllMocks(); }
+  });
+});
+
 describe('standalone join version reporting', () => {
   it('advertises the running build as a phm-<version> cap so self-update reads it', async () => {
     const lines: string[] = [];
