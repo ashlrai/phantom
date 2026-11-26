@@ -30,7 +30,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-import { parseReadyTsv } from './lane-console.js';
+import { KNOWN_STATUSES, parseReadyTsv } from './lane-console.js';
 import { readSource } from './runs-parked-queue.js';
 import { getLaneQueueCounts } from './queue-counts.js';
 import { readNeedsMason, type NeedsMasonItem } from './needs-mason-resolve.js';
@@ -48,10 +48,10 @@ const MAX_HISTORY = 96;
 const MAX_NEEDS_ITEMS = 10;
 const MAX_TIER_KEYS = 16;
 const TIER_RE = /^[a-z][a-z0-9-]{0,15}$/;
-/** RQ-REBASE-<REPO>-<pr number>-<head sha7> from queuegen (queuegen.rebaseId), anywhere in a queue row. */
-const REBASE_JOB_RE = /\bRQ-REBASE-(?!BATCH-)([A-Z0-9][A-Z0-9-]*)-(\d{1,7})-(?:[0-9a-f]{7,40}|u[0-9a-f]{6})(?![\w-])/i;
+/** RQ-REBASE-<REPO>-<pr number>-<head sha7> from queuegen (queuegen.rebaseId). */
+const REBASE_JOB_RE = /^RQ-REBASE-(?!BATCH-)([A-Z0-9][A-Z0-9-]*)-(\d{1,7})-(?:[0-9a-f]{7,40}|u[0-9a-f]{6})$/i;
 /** Batch members share a repo and end with a six-character hash. */
-const REBASE_BATCH_RE = /\bRQ-REBASE-BATCH-([A-Za-z][A-Za-z0-9-]*?)-((?:\d{1,7}-)*\d{1,7})-[0-9a-f]{6}(?![\w-])/i;
+const REBASE_BATCH_RE = /^RQ-REBASE-BATCH-([A-Za-z][A-Za-z0-9-]*?)-((?:\d{1,7}-)*\d{1,7})-[0-9a-f]{6}$/i;
 
 export interface LeaderBoardLane {
   lane: string;
@@ -160,22 +160,25 @@ export function readyRowsForDepth(text: string): { status: string; tier?: string
 }
 
 /**
- * Distinct PRs named by RQ-REBASE rows in raw ready.tsv text — see the header
- * for why this is the conflict proxy. A raw scan, not parsed rows: the two
- * parked-row encodings and statuses parseReadyTsv drops all still count —
- * a parked rebase job is still a PR sitting in conflicts.
+ * Distinct PRs named by the job ID field of headerless ready.tsv rows.
+ * Only the ID is needed, so a parked row still contributes even if it lacks
+ * the lane or other metadata required by the lane queue projection.
  */
 export function conflictingPrIds(readyTsvText: string): Set<string> {
   const prs = new Set<string>();
   for (const raw of readyTsvText.split('\n')) {
     if (!raw.trim() || raw.trimStart().startsWith('#')) continue;
-    const batch = REBASE_BATCH_RE.exec(raw);
+    const [first = '', second = ''] = raw.split('\t', 2);
+    const lead = first.trim();
+    const statusFirst = KNOWN_STATUSES.has(lead.toUpperCase()) || parkedCell(lead);
+    const id = (statusFirst ? second.trim() : lead).replace(/^(?:id|job|job[_-]?id)=/i, '');
+    const batch = REBASE_BATCH_RE.exec(id);
     if (batch) {
       const repo = batch[1]!.toUpperCase();
       for (const pr of batch[2]!.split('-')) prs.add(`${repo}-${pr}`);
       continue;
     }
-    const match = REBASE_JOB_RE.exec(raw);
+    const match = REBASE_JOB_RE.exec(id);
     if (match) prs.add(`${match[1]!.toUpperCase()}-${match[2]!}`);
   }
   return prs;
