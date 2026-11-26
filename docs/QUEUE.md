@@ -536,6 +536,10 @@ The Leader records these targets and the projected unused quota per deadline
 on the Fleet Board. On a live tick it may also re-hint eligible READY rows
 toward under-target included lanes, earliest verified deadline first. A
 supported reset proposal may affect that order, but does not spend a reset.
+Before moving a hint, the Leader caps the plan's lane target by the dispatcher
+tick's configured target, its effective launch target when valid, and any
+valid lower target in the current `queue/slots.json`. A target increase takes
+effect only after the dispatcher reports it.
 The Leader only edits the existing `queue/ready.tsv` under the dispatcher
 and ready-file locks; it leaves held, parked, retired, exclusive and legacy
 rows without an explicit requirements cell alone. A re-hinted row cannot

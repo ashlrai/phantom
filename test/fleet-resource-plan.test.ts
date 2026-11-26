@@ -130,10 +130,11 @@ describe('fleet resource plan', () => {
       const dispatch = { ...status(), paused: null, admission: { admit: true, decision: 'admit' },
         lanes: Object.fromEntries(lanes.map(lane => [lane, { ...status().lanes[lane], target: 2, queued: 0 }])) };
       await write('queue/status.json', dispatch);
-      await write('queue/slots.json', {
+      const slots = {
         agy: { cost_class: 'included', capabilities: ['git'], tiers: ['work'], data_class: 'internal' },
         'codex-personal': { cost_class: 'included', capabilities: ['git'], tiers: ['work'], data_class: 'internal' },
-      });
+      };
+      await write('queue/slots.json', slots);
       const row = (id: string, spec: object, tier = 'work') => `${id}\tphantom\t\t${tier}\tfixture.md\t${JSON.stringify(spec)}\n`;
       const spec = { needs: ['git'], data_class: 'internal', min_tier: 'work', exclusive: false };
       const ineligible = row('cap', { needs: ['missing'] }) + row('private', { data_class: 'restricted' }) +
@@ -166,6 +167,15 @@ describe('fleet resource plan', () => {
       await writeFile(join(dir, 'PAUSE'), '');
       expect(await routeExpiringCapacity(dir, plan, () => now, quiet)).toEqual([]);
       await rm(join(dir, 'PAUSE'));
+      await write('queue/slots.json', Object.fromEntries(Object.entries(slots).map(([lane, slot]) => [lane, { ...slot, target: 1 }])));
+      expect(await routeExpiringCapacity(dir, plan, () => now, quiet)).toEqual([]);
+      expect(await readFile(join(dir, 'queue/ready.tsv'), 'utf8')).toBe(ready);
+      await write('queue/slots.json', slots);
+      await write('queue/status.json', { ...dispatch, lanes: Object.fromEntries(lanes.map(lane => [lane, {
+        ...dispatch.lanes[lane], target: 1, effective_target: 2,
+      }])) });
+      expect(await routeExpiringCapacity(dir, plan, () => now, quiet)).toEqual([]);
+      await write('queue/status.json', dispatch);
       const receipts = await routeExpiringCapacity(dir, plan, () => now, quiet);
       expect(receipts.map(r => [r.job, r.target_lane])).toEqual([['first', 'agy'], ['second', 'codex-personal']]);
       expect(receipts[0]).toMatchObject({ schema: 'work-market.v1', event: 'queue_reroute',
