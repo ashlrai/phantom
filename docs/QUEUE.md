@@ -995,6 +995,12 @@ has no phantom room, so `fleet admission --details`, `fleet lane-idle`, `fleet l
 all measure "under target", "full" and "starved" against it. `fleet trim`'s
 `SLOTS` suggestion still retunes the configured target it would change.
 
+`ashlr fleet idle-lanes` takes the newest event for each lane at or before
+report time from the bounded tails of `metrics/jobs.jsonl` and the legacy
+`queue/jobs.jsonl` under the runs directory. Events need a lane or pool and a
+timestamp with a timezone offset. A lane without a matching event has unknown
+age and cannot be marked stuck.
+
 `ashlr fleet lane-share [--json]` reads the same file and prints each lane's share
 of the fleet: one line per lane with running of launch target and queued, marked `starved`
 (10 or more queued and none running) or `full` (running equals launch target), then one

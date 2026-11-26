@@ -84,11 +84,43 @@ it.each([
     { lane: 'h', status: 'warn', running: 0, target: 2, queued: 3 },
   ]);
 });
-it('reads the ledger next to status.json and documents the stuck mark in help', async () => {
+it('reads both fleet journals and documents the stuck mark in help', async () => {
   const output = logs();
   const reader = readerFor('');
   await cmdFleetIdleLanes([], reader);
-  expect(reader.mock.calls.map(c => c[0].split('/').pop())).toEqual(['status.json', 'jobs.jsonl']);
+  expect(reader.mock.calls.map(c => c[0].split('/').slice(-2).join('/'))).toEqual([
+    'queue/status.json', 'metrics/jobs.jsonl', 'queue/jobs.jsonl',
+  ]);
   await cmdFleetIdleLanes(['--help'], reader);
   expect(output.mock.calls.at(-1)![0]).toContain('STUCK');
+});
+
+it('uses dispatcher activity even when the legacy ledger is missing', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
+  try {
+    const output = logs();
+    const dispatcherEvent = JSON.stringify({ lane: 'a', ts: '2026-11-04T06:55:00-0500', event: 'launch' });
+    const reader = vi.fn(async (path: string) => {
+      if (path.endsWith('status.json')) return STATUS;
+      if (path.endsWith('metrics/jobs.jsonl')) return dispatcherEvent + '\n' + row('a', -1);
+      throw new Error('ENOENT');
+    });
+    expect(await cmdFleetIdleLanes(['--json'], reader)).toBe(1);
+    expect(JSON.parse(output.mock.calls[0]![0]).lanes[0]).toMatchObject({
+      lane: 'a', lastEventAt: '2026-11-04T06:55:00-0500', quietMin: 5, stuck: false,
+    });
+  } finally { vi.useRealTimers(); }
+});
+
+it('selects the newest observation across both journals', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
+  try {
+    const output = logs();
+    const reader = async (path: string) => path.endsWith('status.json') ? STATUS
+      : path.endsWith('metrics/jobs.jsonl') ? row('a', 45) : row('a', 5);
+    await cmdFleetIdleLanes(['--json'], reader);
+    expect(JSON.parse(output.mock.calls[0]![0]).lanes[0]).toMatchObject({ quietMin: 5, stuck: false });
+  } finally { vi.useRealTimers(); }
 });
