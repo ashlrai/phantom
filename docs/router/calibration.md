@@ -15,7 +15,10 @@ Calibration also accepts dispatcher records with `job` as the job ID and
 finish row's `wall_s` to milliseconds when that row has no millisecond
 measurement. Launch and finish `ts` stamps provide the elapsed-time fallback.
 Eventless `MERGED` or `CLOSED` verdicts and those carried on reconciler publish
-rows resolve the job. An ordinary publish claim alone leaves it unresolved.
+rows resolve the job. Calibration checks all lifecycle aliases for a merge
+or close verdict even if another alias still says `OPEN` or `PUBLISHED`.
+Outcome receipts carrying both merge and close verdict strings are rejected.
+An ordinary publish claim alone leaves the job unresolved.
 Supply a launch, a `batch_claim`, or a reward signal for each included job.
 A batch member's recorded claim lane supplies the arm only for jobs with no
 standalone launch and no recorded reward pool. An unlabeled standalone
