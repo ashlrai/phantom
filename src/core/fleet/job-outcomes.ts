@@ -4,7 +4,7 @@
  * The exit code never decides alone. A job whose PR merged is `merged` even when the worker exited 1.
  * Order of evidence: the merge observation (an `outcome` row in the jobs ledger), then the publish
  * record's last RESULT line (`parsePublishResult`, the same parser as `phm jobs state`), then the
- * worker's own empty mark, and only last a non-zero exit, which means `failed`.
+ * worker's exit/failure evidence, then its empty mark. Empty says no diff, not success.
  *
  * Reuses `ledgerRows`/`finishesIn` (the ledger readers behind `phm fleet empties`) and
  * `classifyEmptyRun` (the log-tail classifier behind `phm fleet empties` "why") for the reasons.
@@ -79,12 +79,12 @@ export function classifyJobOutcome(input: JobOutcomeInput): { outcome: JobOutcom
   if (states.includes('MERGED')) return { outcome: 'merged', pr };
   if (states.at(-1) === 'CLOSED') return { outcome: 'pr_closed', pr };
   if (pr !== null) return { outcome: 'pr_open', pr };
-  if (parsed?.result?.kind === 'empty') return { outcome: 'empty', pr: null };
   const lastResult = input.publish?.split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('RESULT ')).at(-1);
   if (lastResult && /^RESULT (?:ABORT|DENIED)\b/.test(lastResult)) return { outcome: 'failed', pr: null };
-  if (input.empty) return { outcome: 'empty', pr: null };
-  const nonzero = input.exitCode !== null && input.exitCode !== 0;
-  return { outcome: nonzero ? 'failed' : 'empty', pr: null };
+  const finish = [...input.events].reverse().find(row => ledgerEventName(row) === 'finish');
+  const failed = input.exitCode !== null && input.exitCode !== 0 || Boolean(finish?.pool_error)
+    || ['FAILED', 'ERROR'].includes(states.at(-1) ?? '');
+  return { outcome: failed ? 'failed' : 'empty', pr: null };
 }
 
 /** Plain words for each reason; they read as the end of "most empty: ...". */
