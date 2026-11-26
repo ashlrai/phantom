@@ -27,7 +27,10 @@ const {
   viewPrWithReconciliationMock: vi.fn(),
 }));
 
-vi.mock('node:child_process', () => ({ execFileSync: (...args: unknown[]) => execFileSyncMock(...args) }));
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
+  execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
+}));
 
 // remote-handoff reads the host through the Secrets credential wrapper, which
 // probes the real PATH for a `phantom` binary first. An unreadable PATH entry
