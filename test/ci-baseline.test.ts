@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40), s
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; sameHead?: boolean; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
+function github(options: { count?: number; sameHead?: boolean; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; extraPrCheckout?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -86,7 +86,7 @@ function github(options: { count?: number; sameHead?: boolean; touched?: string;
           ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
           : `/usr/bin/git log -1 --format=%H\n${sha}\n`;
       }
-      return success(`${prefix}${fixture(name)}`);
+      return success(`${prefix}${isMaster ? '' : options.extraPrCheckout ?? ''}${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
       const conclusion = isMaster && options.pass ? 'success' : 'failure';
@@ -328,6 +328,26 @@ describe('CI baseline evidence', () => {
     expect(mismatch.groups).toEqual([]);
     expect(mismatch.freshness.every(p => p.state === 'unknown')).toBe(true);
   });
+  it.each([
+    { bound: false, extraPrCheckout: `/usr/bin/git log -1 --format=%H\n${merged}\n` },
+    { bound: false, extraPrCheckout: `Bound candidate ${merged} to event tree ${head}\n` },
+    { bound: true, extraPrCheckout: `Bound candidate ${merged} to event tree ${head}\n` },
+    { bound: true, extraPrCheckout: `/usr/bin/git log -1 --format=%H\n${merged}\n` },
+  ])('withholds PR evidence when explicit checkout receipts disagree (%j)', async options => {
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, ...options }).gh);
+    expect(report.freshness[0]).toMatchObject({
+      state: 'unknown',
+      reason: 'unreadable-log-or-unverified-checkout',
+    });
+    expect(report.groups).toEqual([]);
+  });
+
+  it('accepts repeated explicit checkout receipts that agree on the head', async () => {
+    const extraPrCheckout = `/usr/bin/git log -1 --format=%H\n${head}\nBound candidate ${head} to event tree ${merged}\n`;
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, extraPrCheckout }).gh);
+    expect(report.groups[0]?.classification).toBe('probable-flake');
+  });
+
   it('verifies unbound gate jobs through the checkout ref echo', async () => {
     // secret-shape, quick, clean-tree, authority-drift, fast-gate,
     // secret-scan and the dependency-audit job never run
