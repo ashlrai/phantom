@@ -306,6 +306,22 @@ describe('foldJobsLedgerRewards', () => {
     expect(discounted.find((i) => i.jobId === 'RQ-R1')).toMatchObject({ merged: false });
   });
 
+  it.each([
+    'https://github.com/AshlrAI/Phantom/pull/101',
+    'https://github.com/ashlrai/phantom/pull/101/',
+  ])('checks standing revert claims across PR URL alias %s', (alias) => {
+    const merge = line({
+      job: 'RQ-R1', state: 'MERGED', url: 'https://github.com/ashlrai/phantom/pull/101',
+      mergedAt: MERGED_ISO, ts: '2026-10-28T15:31:00.000Z',
+    });
+    const publish = (job: string) => line({ event: 'publish', job, url: alias, ts: DISPATCH_ISO });
+    const rewards = (claimant: string) =>
+      foldJobsLedgerRewards([launch('RQ-R1'), publish(claimant), merge].join('\n'), NOW_MS, undefined,
+        new Set(['ashlrai/phantom#101']));
+    expect(rewards('RQ-R1')).toEqual([expect.objectContaining({ jobId: 'RQ-R1', merged: false })]);
+    expect(rewards('RQ-R2')).toEqual([expect.objectContaining({ jobId: 'RQ-R1', merged: true })]);
+  });
+
   it('lets a later fresh merge supersede a standing-reverted one', () => {
     const pr = (n: number) => `https://github.com/ashlrai/phantom/pull/${n}`;
     const text = [

@@ -54,7 +54,10 @@ writes only learning reports and append-only genome entries and does not take
 the outward mutation fence. On the same self-improvement cadence a
 `reward-sync` off-tick job folds the jobs-ledger tail into the append-only
 reward-signal ledger (`src/core/metrics/reward-feed.ts`), discounting merges
-the standing revert set proves did not hold. It takes the lane and dispatch
+the standing revert set proves did not hold. A standing revert requires
+an exclusive job claim on the merge's PR. The claim check uses the lowercase
+`owner/repo#n` key, so repository case and a trailing slash do not distinguish
+claims. The fold takes the lane and dispatch
 time from the latest dispatch at or before the outcome, using GitHub's
 merge timestamp when available for a held merge. A closed-unmerged PR uses
 `closedAt` or `closed_at` to select the dispatch and bound CI timing. If
