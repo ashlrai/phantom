@@ -380,7 +380,10 @@ the same store `phm comms status` counts — a sent one is the single
 outstanding slot Mason's numbered reply or button tap resolves and lists as a
 blocking warn, a pending one is queued behind it; informational reports never
 await a reply and never list, and `expiresAt` is the real TTL deadline
-`expireStaleRequests` applies) — plus `*.eml` files still sitting in the
+`expireStaleRequests` applies; the store's bounded tail read marks the source
+`degraded` when the file is larger than the window, listing the rows it
+found rather than claiming coverage it cannot prove) — plus `*.eml` files
+still sitting in the
 email-drop inbox dir (the same saved `queue/email-drop.json` config →
 `inboxDir` → `readEmailDropInbox` the drop pass scans: inbound mail no
 recorded-receipt source can see until `runEmailDropOnce` moves it into

@@ -1524,7 +1524,7 @@ describe('readUnifiedInbox comms requests', () => {
     sentAt: new Date(now - 2 * 3_600_000).toISOString(),
     ...over,
   });
-  const available = (requests: CommsRequest[]): CommsRequestsRead => ({ status: 'available', requests });
+  const available = (requests: CommsRequest[], truncated = false): CommsRequestsRead => ({ status: 'available', requests, truncated });
   const readReq = (read: () => CommsRequestsRead) =>
     readUnifiedInbox({ runsDir, busRoot, now: () => now, requestTtlMs: TTL, readRequests: read });
 
@@ -1582,6 +1582,15 @@ describe('readUnifiedInbox comms requests', () => {
   it('treats an available-but-empty queue as healthy zero, not missing', async () => {
     const inbox = await readReq(() => available([]));
     expect(inbox.sources.requests).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('reports degraded on a truncated tail read while still listing the rows it found', async () => {
+    const r = req();
+    const inbox = await readReq(() => available([r], true));
+    expect(inbox.sources.requests).toEqual({ state: 'degraded', pending: 1 });
+    expect(inbox.items.filter(i => i.source === 'requests').map(i => i.id)).toEqual(['requests:req-1']);
+    const empty = await readReq(() => available([], true));
+    expect(empty.sources.requests).toEqual({ state: 'degraded', pending: 0 });
   });
 
   it('scrubs secret-shaped request text and never copies option labels', async () => {

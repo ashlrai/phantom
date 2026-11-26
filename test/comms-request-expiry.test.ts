@@ -179,7 +179,25 @@ describe('readCommsRequests', () => {
     ]);
     const read = readCommsRequests();
     expect(read.status).toBe('available');
+    expect(read).toMatchObject({ truncated: false });
     expect(read.requests.map((r) => r.id)).toEqual(['q1', 'r1']);
+  });
+
+  it('reports truncated when the store is larger than the tail window', () => {
+    const dir = join(tmpHome, '.ashlr', 'comms');
+    mkdirSync(dir, { recursive: true });
+    // Historical rows past the 8x1024x1024-byte tail cap, then the live request at the tail.
+    const junk = `{"id":"hist","kind":"test","type":"report","text":"${'h'.repeat(1024)}","options":[],"status":"answered","createdAt":"${iso(NOW - 999 * HOUR)}"}\n`.repeat(9000);
+    const live = JSON.stringify({ id: 'live-q', kind: 'test', type: 'question', text: 'live', options: ['y', 'n'], status: 'pending', createdAt: iso(NOW - HOUR) });
+    writeFileSync(join(dir, 'requests.jsonl'), `${junk}${live}\n`, 'utf8');
+
+    const read = readCommsRequests();
+    expect(read.status).toBe('available');
+    expect(read).toMatchObject({ truncated: true });
+    // The window holds only a suffix of the file — the tail request is seen,
+    // the older rows past the cut are honestly absent rather than claimed.
+    expect(read.requests.length).toBeLessThan(9001);
+    expect(read.requests.at(-1)?.id).toBe('live-q');
   });
 
   it('reports unavailable when the store path is not a readable file', () => {

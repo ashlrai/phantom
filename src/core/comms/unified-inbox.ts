@@ -198,7 +198,10 @@
  *               Mason's numbered reply or button tap resolves, a pending
  *               one is queued behind it. Informational reports never await
  *               a reply and never list. `expiresAt` is the real TTL deadline
- *               `expireStaleRequests` applies — never invented.
+ *               `expireStaleRequests` applies — never invented. The store
+ *               read is a bounded tail: a file past the window reports
+ *               'degraded' with the rows it found, never 'healthy' coverage
+ *               it cannot prove.
  *   email-outbox  `.reply.eml` artifacts the email send pass marked `stuck`
  *               in the reply outbox (`<runsDir>/queue/email-drop.json` →
  *               `outboxDir`, else the sibling of `inboxDir`) — interrupted
@@ -1971,18 +1974,22 @@ const PROPOSAL_ID = /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$/;
  * `expiresAt` come from the same age-start and TTL rule
  * `expireStaleRequests` applies, so a request about to age out ranks as the
  * deadline it really is. An unreadable store reports 'unavailable'; a
- * missing one 'missing' — never an empty queue passed off as fact.
+ * missing one 'missing'; a store larger than the bounded tail read reports
+ * 'degraded' — the rows found are real and list while older live requests
+ * past the cut stay honestly unknown, the same rule the proposals source
+ * applies — never an empty queue passed off as fact.
  */
 function requestItems(read: typeof readCommsRequests, now: () => number, ttlOverride?: number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let result: CommsRequestsRead;
   try { result = read(); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
   if (result.status === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
   if (result.status === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  const state: UnifiedInboxSourceState = result.status === 'available' && result.truncated ? 'degraded' : 'healthy';
   // A malformed store row must never take the whole inbox down.
   const candidates = result.requests.filter(r =>
     r !== null && typeof r === 'object' &&
     (r.type === 'question' || r.type === 'approval') && (r.status === 'pending' || r.status === 'sent'));
-  if (candidates.length === 0) return { report: { state: 'healthy', pending: 0 }, items: [] };
+  if (candidates.length === 0) return { report: { state, pending: 0 }, items: [] };
   const nowMs = now();
   const ttlMs = ttlOverride ?? requestTtlMs();
   const items = candidates.map((r): Omit<UnifiedInboxItem, 'priority'> => {
@@ -2008,7 +2015,7 @@ function requestItems(read: typeof readCommsRequests, now: () => number, ttlOver
       act,
     };
   });
-  return { report: { state: 'healthy', pending: items.length }, items };
+  return { report: { state, pending: items.length }, items };
 }
 
 /**

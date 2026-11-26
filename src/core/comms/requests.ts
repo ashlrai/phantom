@@ -134,18 +134,30 @@ function loadAll(): CommsRequest[] {
   }
 }
 
-export type CommsRequestsRead = {
-  /** 'missing': no store file exists (a verified-empty queue). 'available':
-   * the file was read and parsed. 'unavailable': a store entry exists but
-   * could not be read — never an empty list passed off as fact. */
-  status: 'missing' | 'available' | 'unavailable';
-  requests: CommsRequest[];
-};
+export type CommsRequestsRead =
+  | {
+      /** 'missing': no store file exists (a verified-empty queue).
+       * 'unavailable': a store entry exists but could not be read — never
+       * an empty list passed off as fact. */
+      status: 'missing' | 'unavailable';
+      requests: CommsRequest[];
+    }
+  | {
+      /** The bounded tail read succeeded. `truncated` marks a store larger
+       * than the read window: rows older than the cut are invisible to this
+       * read, so live requests past it cannot be ruled out — coverage is
+       * partial, never an empty queue passed off as complete. */
+      status: 'available';
+      requests: CommsRequest[];
+      truncated: boolean;
+    };
 
 /**
- * Honest read of the whole request store for projections that must tell an
- * absent queue apart from an unreadable one. Same bounded tail read and
- * torn-line rule as loadAll; never throws.
+ * Honest read of the request store for projections that must tell an absent
+ * queue apart from an unreadable one — and a partial one apart from a whole
+ * one. Same bounded tail read and torn-line rule as loadAll; `truncated`
+ * reports the cut so a consumer never passes partial coverage off as the
+ * full queue. Never throws.
  */
 export function readCommsRequests(): CommsRequestsRead {
   try {
@@ -156,7 +168,7 @@ export function readCommsRequests(): CommsRequestsRead {
     }
     const read = readStore();
     if (read === null) return { status: 'unavailable', requests: [] };
-    return { status: 'available', requests: parseRequests(read.text, read.truncated) };
+    return { status: 'available', requests: parseRequests(read.text, read.truncated), truncated: read.truncated };
   } catch {
     return { status: 'unavailable', requests: [] };
   }
