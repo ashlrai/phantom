@@ -58,6 +58,7 @@ export interface ResourceLiveAllowance {
 
 export interface ResourceLiveCustom {
   provider: string;
+  logo?: string;
   kind: 'subscription' | 'promo-credit' | 'metered' | 'local' | 'bot';
   source: 'official-endpoint' | 'cli-status' | 'agent-check';
   metered_opt_in: boolean;

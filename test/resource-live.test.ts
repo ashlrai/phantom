@@ -66,11 +66,12 @@ it('registers, ranks, projects and removes user-defined resources without runnin
   const runsDir = tmp();
   vi.stubEnv('ASHLR_HOME', runsDir);
   const registry = join(runsDir, 'custom-resources.json');
-  const base = { id: 'shell-status', name: 'Studio agents', provider: 'Example AI',
+  const logo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jz1kAAAAASUVORK5CYII=';
+  const base = { id: 'shell-status', name: 'Studio agents', provider: 'Example AI', logo,
     kind: 'subscription', source: 'cli-status', unit: 'points', limit: 50, window_hours: 5 };
   const register = (resources: unknown[]) => writeFileSync(registry, JSON.stringify({ schema: 'custom-resources.v1', resources }));
   register([base, { ...base, id: 'metered', kind: 'metered', source: 'official-endpoint' },
-    { ...base, id: 'local', kind: 'local', source: 'agent-check' }, { ...base, id: 'bad', command: 'not accepted' }]);
+    { ...base, id: 'local', kind: 'local', source: 'agent-check', logo: 'https://example.com/logo.png' }, { ...base, id: 'bad', command: 'not accepted' }]);
   mkdirSync(join(runsDir, 'state'));
   const evidence = (at: number, used: number) => writeFileSync(join(runsDir, 'state', 'resource-evidence.json'),
     JSON.stringify({ schema: 'resource-evidence.v1', readings: {
@@ -93,8 +94,9 @@ it('registers, ranks, projects and removes user-defined resources without runnin
   const projected = await readLaneAllowance({ runsDir, nowMs: NOW + HOUR });
   expect(projected.lanes.find(row => row.lane === 'custom:shell-status')).toMatchObject({
     label: 'Studio agents', left: 40, freshness: 'live',
-    resource: { provider: 'Example AI', burnPerHour: 2, projectedUnused: 32 },
+    resource: { provider: 'Example AI', logo, burnPerHour: 2, projectedUnused: 32 },
   });
+  expect(projected.lanes.find(row => row.lane === 'custom:local')?.resource).not.toHaveProperty('logo');
   const stale = await tick(NOW + HOUR + 16 * 60_000);
   expect(byId(stale.sidecar, 'custom:shell-status').used).toBeNull();
   register([{ ...base, id: 'metered', kind: 'metered', source: 'official-endpoint', metered_opt_in: true }]);

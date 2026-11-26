@@ -71,10 +71,10 @@ export function masonLane(events: BusEvent[], from: number, to: number): Swimlan
   const items = events.flatMap((event): SwimlaneItem[] => {
     const at = Date.parse(event.at);
     if (event.kind !== 'inbox' || !Number.isFinite(at) || at < from || at > to) return [];
-    const label = event.text.trim().replace(/^INBOX\b\s*[:-]?\s*/i, '').replace(/^Mason,\s*/i, '').trim().slice(0, 80);
+    const label = event.text.trim().replace(/^INBOX\b\s*[:-]?\s*/i, '').replace(/^(?:Mason|Operator),\s*/i, '').trim().slice(0, 80);
     return [{ id: `inbox:${event.at}`, label, detail: label, start: at, end: at, status: 'interjection' }];
   }).sort((a, b) => a.start - b.start);
-  return items.length ? { id: 'mason', label: 'Mason', items } : null;
+  return items.length ? { id: 'mason', label: 'Operator', items } : null;
 }
 
 export function mergesLane(runs: FleetRuns, from: number, to: number): { lane: SwimlaneLane | null; unplaced: number } {

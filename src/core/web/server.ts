@@ -27,7 +27,7 @@ import type { AshlrConfig, WebServerOptions, WebServerHandle } from '../types.js
 import { handleUsageResourcesApi } from '../verse/usage-resources-api.js';
 import { handleMergeLatencyApi } from '../verse/merge-latency-api.js';
 import { handleBotTemplates } from '../../api/bot-templates.js';
-import { NODE_PROFILES } from '../drive/nodes/profiles.js';
+import { readConfiguredNodeProfiles } from '../drive/nodes/profiles.js';
 import { handleApi, drainSseConnections, drainSseSession, invalidateWebReadCaches } from './api.js';
 import { createReadProjectionWorker, type ReadProjectionReader } from './read-projections.js';
 import { governReadProjections } from './read-projection-governor.js';
@@ -128,6 +128,7 @@ export async function startServer(
     ? governReadProjections(createReadProjectionWorker(cfg))
     : dependencies.readProjections;
 
+  const nodeProfiles = readConfiguredNodeProfiles();
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     // The EventSource client proof appears in its same-origin URL because the
     // browser API cannot set headers. Never allow it to escape in a Referer.
@@ -237,7 +238,7 @@ export async function startServer(
       usageResourcesApi: handleUsageResourcesApi,
       mergeLatencyApi: handleMergeLatencyApi,
       botTemplatesApi: handleBotTemplates,
-      nodeProfiles: NODE_PROFILES,
+      nodeProfiles,
     })
       .then((handled) => {
         // A mutation can partially succeed and still return 409/500 (for
