@@ -1,6 +1,8 @@
 /** Host admission is separate from the browser-safe subscription headroom model. */
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { totalmem } from 'node:os';
+import { parseLinuxMemory } from '../resources/telemetry-parsers.js';
 
 export interface HostHeadroom {
   /** Unallocated plus speculative pages, as a percentage of physical RAM. */
@@ -83,6 +85,54 @@ export function readMacHostHeadroom(read: CommandReader = readCommand, totalByte
     const pressureLevel = parsePressureLevel(read('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level']));
     return diagnostics === null || pressureLevel === null ? null : { ...diagnostics, pressureLevel };
   } catch { return null; }
+}
+
+/** PSI `some avg10` bands for Linux node-capacity admission: the percentage of
+ * the last 10 s any task spent stalled on memory. These cutoffs are admission
+ * policy, not a kernel level — below WARNING is background reclaim noise,
+ * below CRITICAL is sustained partial stalls, at/above is thrashing. A missing
+ * or unreadable PSI file is unknown, never normal. */
+const LINUX_PSI_WARNING_AVG10 = 10;
+const LINUX_PSI_CRITICAL_AVG10 = 30;
+
+/** `/proc/pressure/memory` `some avg10` to a pressure level; null when absent or malformed. */
+export function parseLinuxPressureLevel(text: string | null): 1 | 2 | 4 | null {
+  const avg10 = Number(text?.match(/^some\s+avg10=([0-9]+(?:\.[0-9]+)?)(?=\s|$)/m)?.[1]);
+  if (!Number.isFinite(avg10) || avg10 < 0 || avg10 > 100) return null;
+  return avg10 >= LINUX_PSI_CRITICAL_AVG10 ? 4 : avg10 >= LINUX_PSI_WARNING_AVG10 ? 2 : 1;
+}
+
+type LinuxFileReader = (path: string) => string | null;
+/** Bounded read of a /proc or /etc virtual file; oversized or unreadable is unknown. */
+const readLinuxFile: LinuxFileReader = path => {
+  try {
+    const text = readFileSync(path, 'utf8');
+    return text.length <= 256 * 1024 ? text : null;
+  } catch { return null; }
+};
+
+/** Linux memory headroom, all measured on this host: MemAvailable share and
+ * used swap from /proc/meminfo, pressure level from /proc/pressure/memory.
+ * MemAvailable is the kernel's own estimate of allocatable memory, the honest
+ * counterpart of macOS free-plus-speculative pages. Any missing or malformed
+ * input is unknown, never normal. */
+export function readLinuxHostHeadroom(read: LinuxFileReader = readLinuxFile): HostHeadroom | null {
+  try {
+    const mem = parseLinuxMemory(read('/proc/meminfo'));
+    const pressureLevel = parseLinuxPressureLevel(read('/proc/pressure/memory'));
+    if (mem === null || mem.totalBytes <= 0 || pressureLevel === null) return null;
+    const freePercent = mem.freeBytes / mem.totalBytes * 100;
+    if (!Number.isFinite(freePercent) || freePercent < 0 || freePercent > 100) return null;
+    return { freePercent, swapGb: mem.swapUsedBytes / 1024 ** 3, pressureLevel };
+  } catch { return null; }
+}
+
+/** The platform's memory-headroom reader: macOS kernel telemetry, Linux /proc;
+ * other platforms have no reader and return null, which callers hold as
+ * unmeasured rather than wrongly ready. */
+export function readPlatformHostHeadroom(): HostHeadroom | null {
+  return process.platform === 'darwin' ? readMacHostHeadroom()
+    : process.platform === 'linux' ? readLinuxHostHeadroom() : null;
 }
 
 /** Every attempt samples afresh; the kernel provides pressure recovery smoothing. */
