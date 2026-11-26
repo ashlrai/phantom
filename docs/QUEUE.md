@@ -330,6 +330,11 @@ phm pool admission --json
 
 ## Utilization and unfed capacity
 
+`phm fleet autopilot --once --json` requires a healthy `ready.tsv` read to
+identify starved lanes or propose restock. When that read is missing or
+degraded, per-lane `ready` stays null. The dispatcher’s `queued` count remains
+visible and can include parked work.
+
 An executor is unfed when it has free slots while runnable rows wait under
 another lane's hint. Each tick the dispatcher computes this after its launches
 and publishes it as `unfed_capacity` in `queue/status.json`: per lane `running`,
