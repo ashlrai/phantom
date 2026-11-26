@@ -5,7 +5,7 @@ import { isAbsolute, join } from 'node:path';
 
 import { ashlrHome } from '../cloud/store.js';
 import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
-import { ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
+import { ledgerEventTs, pullRequestKey } from '../fleet/jobs-ledger-dialect.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 
 // Read-only recorded job outcomes from the newest ROUTER_OUTCOME_LEDGER_LIMIT
@@ -1589,15 +1589,6 @@ const mergePhase = (r: Row): string => {
   if (phase !== '') return phase;
   return OUTCOME_EVENT_STATES[(str(r, 'event', 'type', 'kind') ?? '').toLowerCase()] ?? '';
 };
-
-/** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
-const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)\/?$/i;
-
-/** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
-function pullRequestKey(url: string): string | null {
-  const m = GITHUB_PULL_URL.exec(url);
-  return m ? `${m[1]!.toLowerCase()}/${m[2]!.toLowerCase()}#${m[3]}` : null;
-}
 
 /** Landing ids are `${repo}#${prNumber}@${mergeSha12}` (fleet/host-merge.ts landingId()). */
 const LANDING_PR = /^([^#@\s]+)#([1-9]\d*)@/;

@@ -12,7 +12,7 @@ import { loadProposal } from '../inbox/store.js';
 import { readLedgerTail } from '../router/outcomes.js';
 import type { Proposal } from '../types.js';
 import { inspectOneAskReward, type OneAskReward } from './one-ask-reward.js';
-import { isNodePoolLedgerRow, ledgerEventTs } from './jobs-ledger-dialect.js';
+import { isNodePoolLedgerRow, ledgerEventTs, pullRequestKey } from './jobs-ledger-dialect.js';
 
 export const LANE_REWARD_SCHEMA = 'fleet.lane-reward.v1' as const;
 /** Uniform caller weight: every recorded attempt counts the same. */
@@ -95,6 +95,10 @@ const laneOf = (row: Row): string | null => {
   return null;
 };
 const urlOf = (row: Row): string | null => pickString(row, 'url', 'pr_url', 'prUrl', 'pr', 'html_url');
+const urlKey = (url: string): string => {
+  const pr = pullRequestKey(url);
+  return pr === null ? `url:${url}` : `pr:${pr}`;
+};
 const eventOf = (row: Row): string => (pickString(row, 'event', 'type', 'kind') ?? '').toLowerCase();
 function phaseOf(row: Row, event: string): string {
   let published = false;
@@ -132,14 +136,15 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
     if ((receiptAt !== null && receiptAt > asOfMs) || (outcomeAt !== null && outcomeAt > asOfMs)) continue;
     rows.push({ row, job, event, phase });
   }
-  // URL-only rows can resolve only against a unique recorded job.
+  // URL-only rows can resolve only against a unique recorded job for the PR.
   const jobByUrl = new Map<string, string | null>();
   for (const { row, job } of rows) {
     const url = urlOf(row);
     if (job === null || url === null) continue;
-    const previous = jobByUrl.get(url);
-    if (previous === undefined) jobByUrl.set(url, job);
-    else if (previous !== job) jobByUrl.set(url, null);
+    const key = urlKey(url);
+    const previous = jobByUrl.get(key);
+    if (previous === undefined) jobByUrl.set(key, job);
+    else if (previous !== job) jobByUrl.set(key, null);
   }
   const attempts = new Map<string, LaneRewardAttempt>();
   for (const { row, job: explicitJob, event, phase } of rows) {
@@ -147,7 +152,7 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
     if (!launch && !finish && !PUBLISH_EVENTS.has(event) && phase !== 'PUBLISHED' &&
         !OUTCOME_EVENTS.has(event) && !TERMINAL_PHASES.has(phase)) continue;
     const url = urlOf(row);
-    const job = explicitJob ?? (url !== null ? jobByUrl.get(url) ?? null : null);
+    const job = explicitJob ?? (url !== null ? jobByUrl.get(urlKey(url)) ?? null : null);
     if (job === null) continue;
     const attempt = attempts.get(job) ??
       { lane: null, tokens: null, published: false, outcome: null, outcomeTsMs: -1 };

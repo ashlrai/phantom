@@ -181,7 +181,7 @@ describe('fleet lane-reward', () => {
       { event: 'finish', job: 'RQ-FAKE-U1', lane: 'lane-a', tokens_total: 100 },
       { event: 'publish', job: 'RQ-FAKE-U1', lane: 'lane-a', url: URL(5) },
       { event: 'publish', job: 'RQ-FAKE-U1', lane: 'lane-a', url: URL(5) },
-      { event: 'outcome', url: URL(5), state: 'MERGED', ttm_s: 300, ts: '2026-10-31T07:00:00Z' },
+      { event: 'outcome', url: 'https://github.com/Fake-Org/Fake-Repo/pull/5/', state: 'MERGED', ttm_s: 300, ts: '2026-10-31T07:00:00Z' },
       { event: 'finish', job: 'RQ-FAKE-T1', lane: 'lane-a', tokens_total: 100 },
       { event: 'outcome', job: 'RQ-FAKE-T1', state: 'MERGED', ts: '2026-10-31T07:00:00Z' },
       { event: 'outcome', job: 'RQ-FAKE-T1', state: 'CLOSED', ts: '2026-10-31T08:00:00Z' },
@@ -193,7 +193,7 @@ describe('fleet lane-reward', () => {
   it('withholds URL-only outcomes for contested PRs and honors explicit job IDs', () => {
     const fold = foldLaneRewardAttempts(rows(
       { event: 'publish', job: 'RQ-FAKE-A1', lane: 'lane-a', url: URL(5) },
-      { event: 'publish', job: 'RQ-FAKE-B1', lane: 'lane-b', url: URL(5) },
+      { event: 'publish', job: 'RQ-FAKE-B1', lane: 'lane-b', url: 'https://github.com/Fake-Org/Fake-Repo/pull/5/' },
       { event: 'publish', job: 'RQ-FAKE-A1', lane: 'lane-a', url: URL(5) },
       { event: 'outcome', job: 'RQ-FAKE-B1', url: URL(5), state: 'CLOSED', ts: '2026-10-31T07:00:00Z' },
       { event: 'outcome', url: URL(5), state: 'MERGED', ts: '2026-10-31T08:00:00Z' },

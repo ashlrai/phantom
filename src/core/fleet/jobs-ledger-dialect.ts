@@ -132,3 +132,12 @@ export function ledgerOutcomeState(row: Record<string, unknown>, event: string |
   if (event === 'publish' && row['source'] === RECONCILER_SOURCE && TERMINAL_PHASES.has(ph)) return ph;
   return null;
 }
+
+/** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
+const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)\/?$/i;
+
+/** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
+export function pullRequestKey(url: string): string | null {
+  const m = GITHUB_PULL_URL.exec(url);
+  return m ? `${m[1]!.toLowerCase()}/${m[2]!.toLowerCase()}#${m[3]}` : null;
+}
