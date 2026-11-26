@@ -164,8 +164,10 @@ export function planNodeBridge(input: BridgeRouterView & {
     if (nodeSlots != null) free.set(node.nodeId, Math.max(0, nodeSlots - 1));
     if (hostSlots != null) hostFree.set(host, Math.max(0, hostSlots - 1));
   };
+  const hasAuth = (node: NodeView, requires: string[]) => !requires.includes('gh') || node.auth === 'ok';
   const take = (requires: string[]): NodeView | null => {
-    const fits = live.filter(n => requires.every(c => n.caps.includes(c)) && (free.get(n.nodeId) ?? 0) > 0 && (hostFree.get(hostOf(n)) ?? 0) > 0)
+    const fits = live.filter(n => requires.every(c => n.caps.includes(c)) && hasAuth(n, requires) &&
+      (free.get(n.nodeId) ?? 0) > 0 && (hostFree.get(hostOf(n)) ?? 0) > 0)
       .sort((a, b) => ((hostFree.get(hostOf(b)) ?? 0) - (hostFree.get(hostOf(a)) ?? 0)) || (a.nodeId < b.nodeId ? -1 : 1));
     if (!fits[0]) return null;
     reserve(fits[0]);
@@ -214,12 +216,14 @@ export function planNodeBridge(input: BridgeRouterView & {
     let nodeId: string | null = null;
     if (!reasons.length) {
       const capable = live.filter(n => requires.every(c => n.caps.includes(c)));
+      const eligible = capable.filter(n => hasAuth(n, requires));
       if (!live.length) reasons.push('no_live_node');
       else if (!live.some(n => cap && n.caps.includes(cap))) reasons.push('lane_mismatch');
       else if (target!.writes && !NODE_BRIDGE_WORKTREE_PACK_ENABLED) reasons.push('pack_inert');
       else if (!live.some(n => n.caps.includes(`pack:${target!.pack}`))) reasons.push('node_pack_unsupported');
       else if (!capable.length) reasons.push('caps_missing');
-      else if (capable.every(n => free.get(n.nodeId) === null)) reasons.push('slots_unknown');
+      else if (!eligible.length) reasons.push('auth_missing');
+      else if (eligible.every(n => free.get(n.nodeId) === null)) reasons.push('slots_unknown');
       else if (planned >= limit) reasons.push('pass_limit');
       else nodeId = take(requires)?.nodeId ?? null;
       if (!reasons.length && !nodeId) reasons.push('no_free_slot');
