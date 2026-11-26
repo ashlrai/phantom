@@ -35,7 +35,7 @@ const SIGNAL_LABEL: Record<SignalName, string> = {
   'dupcheck-gate': 'Dupcheck gate',
   vision: 'Leader vision',
   queue: 'Work queue',
-  'mason-inbox': 'Mason requests',
+  'mason-inbox': 'Owner requests',
   'job-events': 'Job events',
 };
 

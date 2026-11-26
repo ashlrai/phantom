@@ -15,7 +15,7 @@ const usage = `Usage: phm asks [--all] [--json]
        phm asks usage [<pool>] [--json]
        phm asks sync [--dry-run] [--json]
 Each ask has a type: password, two-factor, device-approval, payment or other. Only the first four are shown by default:
-they are what software cannot do for Mason. --all also shows type other (an outside message, a usage percent, a yes or no
+they are what software cannot do for the owner. --all also shows type other (an outside message, a usage percent, a yes or no
 on a record), each with what the fleet did instead, e.g. "read from sensor <name> at <time>".
   phm asks list         one batch, oldest first, same question merged, with each allowed answer (--json: schema asks.batch.v1)
   phm asks              list open asks, soonest expiry first (unknown expiry last, expired hidden): short id, kind, age,
@@ -24,13 +24,13 @@ on a record), each with what the fleet did instead, e.g. "read from sensor <name
                         time, in the answers ledger; a repeat changes nothing; a reply the ask does not accept records nothing
   add <kind> <request>  raise an ask; kinds: password, 2fa, device, payment, outreach, usage (needs --subject <pool>), approval;
                         never put the secret itself in the request; --expires 2026-11-24T00:00:00Z hides it after that time
-  usage [<pool>]        Mason's latest stated usage for a pool (default grok-ultra), with its time and age (--json: asks.usage.v1)
+  usage [<pool>]        The owner's latest stated usage for a pool (default grok-ultra), with its time and age (--json: asks.usage.v1)
   sync [--dry-run]      raise one ask per pool that needs a sign-in or has a credit ending unused, expiring at its reset; a re-run
                         adds nothing and a cleared pool closes its ask; it never signs in or spends (--json: asks.sync.v1)
 A usage ask for a pool with a fresh sensor reading is not raised: the fleet uses the reading and records the action.
 An approval answer is a record only: nothing is spent and no billing call is made.
 Anything that is not one of the kinds is refused: the fleet decides this itself.
-From Telegram, Mason can reply "yes <id>", "no <id>" or "done <id>".`;
+From Telegram, the owner can reply "yes <id>", "no <id>" or "done <id>".`;
 
 const flagValue = (args: string[], name: string): { value?: string; rest: string[] } => {
   const at = args.indexOf(name);

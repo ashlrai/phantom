@@ -383,11 +383,38 @@ export interface BusWorkFeedViewFilters {
    * positive filter, never counted as any outcome.
    */
   result?: WorkResultOutcome;
+  /**
+   * Keep only jobs whose retained envelope citations include this wire id —
+   * the `work.post` announcement (`postId`), the newest `work.status`
+   * receipt (`statusId`) or the newest `work.result` receipt (`result.id`)
+   * the job's state cites, the same ids the job line prints as
+   * `post=`/`status=`/`receipt=`. The match is the exact wire-id equality
+   * `busWorkFeedJobCitesEnvelope` applies — never a substring or a body
+   * citation — so "which feed job does envelope X belong to" is one
+   * filtered read instead of paging the feed and eyeballing citations. A
+   * job citing none of the three (no status or result yet) can still match
+   * on its `postId`; an id nothing on the feed cites is an honest empty
+   * match, never a fabricated job.
+   */
+  id?: string;
+}
+
+/**
+ * True when the feed job's retained envelope citations include the wire
+ * id — the `work.post` announcement, newest `work.status` receipt or newest
+ * `work.result` receipt the job's state cites, the same ids the job lines
+ * print as `post=`/`status=`/`receipt=`. The feed `--id` filter and the
+ * `work mine` digest's jobs/announced sections share this one rule, so
+ * "which job does envelope X belong to" answers identically on every
+ * surface.
+ */
+export function busWorkFeedJobCitesEnvelope(job: BusWorkFeedJob, id: string): boolean {
+  return job.postId === id || job.statusId === id || job.result?.id === id;
 }
 
 /**
  * Client-side `--status`/`--job`/`--repo`/`--provider`/`--tier`/`--claimable`/`--since`/`--before`/
- * `--to`/`--owner`/`--contains`/`--channel`/`--result` filters and newest-first ordering shared by
+ * `--to`/`--owner`/`--contains`/`--channel`/`--result`/`--id` filters and newest-first ordering shared by
  * the feed CLIs;
  * the matchers are the `busWorkFeedPendingToMatcher`/`busWorkFeedOwnerMatcher`
  * predicates. `since` keeps jobs whose `updatedAt` — the newest status
@@ -429,6 +456,7 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
       && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner))
       && (filters.channel === undefined || job.to.startsWith(`group:${filters.channel}:`))
       && (filters.result === undefined || job.result?.outcome === filters.result)
+      && (filters.id === undefined || busWorkFeedJobCitesEnvelope(job, filters.id))
       && (containsNeedle === undefined || busWorkFeedJobSearchText(job).includes(containsNeedle)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const view: Extract<BusWorkFeedReadResult, { status: 'ok' }> = { ...result, jobs };

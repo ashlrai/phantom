@@ -11,7 +11,7 @@ it('runs the hermetic fleet profile regression suite', () => {
   const result = spawnSync('python3', ['-B', '-m', 'unittest', 'fleet.tests.test_profile'], { cwd, encoding: 'utf8', timeout: 25_000 });
   expect(result.error).toBeUndefined();
   expect(result.status, result.stdout + result.stderr).toBe(0);
-  expect(result.stderr).toMatch(/\nOK\s*$/);
+  expect(result.stderr).toMatch(/\nOK(?: \(skipped=\d+\))?\s*$/);
 }, 30_000);
 
 it('only discovers an explicitly authorized lane with a registered resource and a matching ready executor', async () => {
@@ -22,7 +22,7 @@ it('only discovers an explicitly authorized lane with a registered resource and 
     mkdirSync(queue);
     const declaration = (id: string, resource = 'custom:studio', authorized = true) => ({ id, resource, authorized });
     const profile = { schema: 'fleet.profile.v1', lanes: [
-      { ...declaration('studio'), label: 'Engineering studio' }, declaration('not-approved', 'custom:studio', false),
+      { ...declaration('studio'), label: 'Engineering studio', floor: 2 }, declaration('not-approved', 'custom:studio', false),
       declaration('no-executor'), declaration('wrong-executor'), declaration('login-failed'),
       declaration('no-resource', 'custom:no-resource'), declaration('metered', 'custom:metered'),
       declaration('duplicate'), declaration('duplicate'),

@@ -329,6 +329,17 @@ a read-only `resourceCapacity` projection with lane targets, waste by
 allowance deadline, and the proposal. Recording evidence or reading the
 proposal never consumes a reset.
 
+The Antigravity Resource Live row can carry `execution_context` and validated
+quota `groups` with per-bucket 0–1 `remaining` and UTC `reset_at`. Both
+resource JSON commands expose the `antigravity` projection; untrusted or
+unavailable quota has null groups and a reason. Only current, identity-matched
+GUI quota can set an Antigravity plan target to zero with
+`quota_exhausted_until_reset`; this is advisory, not a dispatcher hold.
+The resident uses the same Resource Live store for scheduled Antigravity
+refreshes, two minutes before and at each reported bucket reset. Optional
+Antigravity poll metadata `reset_checks` retains future UTC reset times for
+scheduling across transient failures, never as quota evidence.
+
 `postureEvidence(root)` is exported from `src/core/queue/route-explain.ts` for
 the shared bounded journal parser. It preserves receipt `ts` (epoch seconds or
 ISO timestamp) as optional `observedAt`, plus lane `lane`, `account_id`, `model`,
@@ -400,7 +411,10 @@ tallies, `pending` unresolved fired reruns inside 24 hours, and
 `resolutionRate` = pass/(pass+fail) or null when none resolved);
 `readCiRerunStatus(path?)` returns the persisted status or null, whose per-repo
 records gain `recurringFlakes`, `flakeFixesQueued`, `verdictsPending` and
-`verdictsResolved` counts.
+`verdictsResolved` counts. An optional `verdictCursor` records the last
+checked rerun (`at` from the successful call row, `repo`, `head`, and
+`runId`). Polling resumes after that position in timestamp and identity
+order and wraps to the oldest eligible rerun.
 Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
 Resident off-tick ticks launch it only with repositories and an elapsed interval.
 Attempt entries use `test` for a singleton or `tests` for multiple eligible
@@ -2220,6 +2234,11 @@ cohorts, observation coverage, unknowns, thresholds and exit codes.
 [CONTRACT-AGENTNET-PEERBUS](docs/contracts/CONTRACT-AGENTNET-PEERBUS.md) pins
 session-bound callsigns, team-only peer messages, Slack provisioning drafts,
 the approval-gated broker and bounded chief-of-staff delegation.
+`phm agentnet peers read` additionally accepts post-admission filters
+(`--from`, `--exclude-from`, `--to`, `--since`, `--before`, `--contains`,
+`--id`, `--kind`, `--peer-kind`, `--thread`, `--job`, `--result`) owned by
+`agentnet/peer-inbox.ts`; they narrow the admitted page only and never affect
+admission or cursor semantics.
 ## Persistent specialist identities (RQ-GROK-SPECIALISTS-1)
 
 `src/core/fleet/roster.ts` owns `fleet-specialist-roster.v1`: named identities,
@@ -2387,6 +2406,16 @@ report unusable evidence. `phm node route --outcomes-ledger [--runs-dir <dir>]`
 merges these tallies under any explicit `--outcomes` file (file wins per
 provider) and reports `outcomes_ledger` state in its JSON plan. See
 [measured capacity and routing](docs/NODE-ROUTER.md#measured-capacity-and-node-provider-model-routing).
+
+## Router calibration
+
+`src/core/routing/calibration.ts` returns schema-version-1 calibration reports.
+Each `CalibrationArm` includes `observedMergeRate: number | null`, the number
+of recorded positive merge outcomes divided by `resolved`. The field is null
+when the arm has no resolved outcomes. `mergeRate` and `brier` use the
+prediction-paired population. Baseline comparisons expose
+`delta.observedMergeRate` as current minus baseline, or null when either
+rate is unavailable.
 
 ## Router queue generation
 
@@ -2872,12 +2901,14 @@ read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
 answer 503. Its query is the feed CLIs' filter set: `claims=true` adds the
 claims hold join, `open=true`/`claimable=true` imply it like the CLI flags,
 and `status`, `job`, `repo`, `provider`, `tier`, `to`, `owner`, `since`,
-`before`, `contains`, `channel` and `result` narrow the answer through the same
+`before`, `contains`, `channel`, `result` and `id` narrow the answer through the same
 `projectBusWorkFeedView` the
 CLIs use — jobs answer newest-first, `to`/`owner` resolve through the
 server-side identity registry with exact-label fallback, `channel` is the
 strict channel-name grammar prefix-matching `group:<channel>:` on the
-announcement address, and `repo`,
+announcement address, `id` keeps only jobs whose retained envelope
+citations (`postId`/`statusId`/`result.id`, the `busWorkFeedJobCitesEnvelope`
+match the feed `--id` flag and `work mine --id` share), and `repo`,
 `since` and `contains` share the CLI normalization. `limit` (1–200,
 `BUS_WORK_FEED_LIMIT_MAX`) pages the filtered view through the shared
 `sliceBusWorkFeedView`, reporting `matched`/`omitted`; absent, the whole
@@ -2934,7 +2965,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
 client-side feed filters (`{status?, jobId?, repo?, provider?, tier?, claimable?, open?,
-since?, before?, toMatch?, ownerMatch?, contains?, channel?, result?}`),
+since?, before?, toMatch?, ownerMatch?, contains?, channel?, result?, id?}`),
 newest-first order and per-job hold regrouping; `repo` is the lowercase
 `owner/name` key `busWorkFeedRepoKey(repo)` normalizes a `--repo` argument to
 (undefined for a non-slug, so callers reject it as usage) and matches a job's
@@ -2994,12 +3025,16 @@ footer adds `receipt=<id>` when the projection blamed a retained envelope,
 and a paged read's footer adds `matched=N omitted=M` —
 both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>`,
-`--channel <name>`, `--result <reserved|admitted|complete|failed>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--contains <text>` and
+`--channel <name>`, `--result <reserved|admitted|complete|failed>`, `--id <envelope-id>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--contains <text>` and
 `--limit <1-200>` beside
 `--status`; `--claimable`
 implies the claims join, `--since` and `--before` parse through the shared `parseSince`
 grammar — `since` inclusive, `before` exclusive on `updatedAt` — `--limit` runs `sliceBusWorkFeedView` after the filters (absent,
-the whole filtered view answers), and `--contains` takes a non-empty needle of at most
+the whole filtered view answers), `--id` keeps only jobs whose retained
+envelope citations include that wire id — the `work.post` announcement,
+newest `work.status` receipt or newest `work.result` receipt, the same
+`busWorkFeedJobCitesEnvelope` match `work mine --id` applies — and
+`--contains` takes a non-empty needle of at most
 `BUS_WORK_FEED_CONTAINS_MAX` (512) characters, refusing unparseable or
 overlong values as usage errors.
 `phm fleet work-feed [--claims]

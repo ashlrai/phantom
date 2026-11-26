@@ -69,7 +69,7 @@ export interface PublisherCollector {
 }
 
 export interface DaemonCapacityPublisherDeps {
-  refreshResourceLive?(cfg: AshlrConfig): Promise<void>;
+  refreshResourceLive?(cfg: AshlrConfig): Promise<number | void>;
   nowMs(): number;
   sleep(ms: number): Promise<void>;
   readSnapshot(): CapacitySnapshot | null;
@@ -127,6 +127,8 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
   let status: PublisherStatus = { state: 'idle', reason: 'the daemon has not checked the capacity snapshot yet', lastPublishedAt: null };
   let inFlight: Promise<PublisherStatus> | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
+  let resourceLiveTimer: ReturnType<typeof setTimeout> | null = null;
+  let resourceLiveInFlight: Promise<void> | null = null;
   let stopped = false;
   let historyError: string | null = null;
   let retryAt = 0;
@@ -263,6 +265,34 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
     }
   }
 
+  function scheduleResourceLive(nextAt?: number | void): void {
+    if (resourceLiveTimer) clearTimeout(resourceLiveTimer);
+    resourceLiveTimer = null;
+    if (stopped || !timer || typeof nextAt !== 'number' || !Number.isFinite(nextAt)) return;
+    resourceLiveTimer = setTimeout(() => { void refreshResourceLive(); }, Math.max(1000, nextAt - deps.nowMs()));
+    resourceLiveTimer.unref?.();
+  }
+
+  function refreshResourceLive(): Promise<void> {
+    if (resourceLiveInFlight) return resourceLiveInFlight;
+    const refresh = deps.refreshResourceLive;
+    if (stopped || !refresh) return Promise.resolve();
+    resourceLiveInFlight = Promise.resolve()
+      .then(() => refresh(cfg))
+      .then(nextAt => {
+        resourceLiveFailed = false;
+        scheduleResourceLive(nextAt);
+      }, error => {
+        if (!(error instanceof ResourceLiveBusyError) && !resourceLiveFailed) {
+          resourceLiveFailed = true;
+          try { deps.log('daemon resource usage refresh failed; existing readings retain their original expiration'); } catch { /* never throws */ }
+        }
+        scheduleResourceLive(deps.nowMs() + CHECK_EVERY_MS);
+      })
+      .finally(() => { resourceLiveInFlight = null; });
+    return resourceLiveInFlight;
+  }
+
   function cycle(): Promise<PublisherStatus> {
     if (inFlight) return inFlight;
     if (stopped || deps.nowMs() < retryAt) return Promise.resolve(status);
@@ -270,15 +300,7 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
     inFlight = runCycle()
       .catch(() => set('failed', 'the capacity publisher failed; check local account configuration and retry phm capacity publish'))
       .then(async (result) => {
-        if (!stopped && deps.refreshResourceLive) {
-          try { await deps.refreshResourceLive(cfg); resourceLiveFailed = false; }
-          catch (error) {
-            if (!(error instanceof ResourceLiveBusyError) && !resourceLiveFailed) {
-              resourceLiveFailed = true;
-              try { deps.log('daemon resource usage refresh failed; existing readings retain their original expiration'); } catch { /* never throws */ }
-            }
-          }
-        }
+        await refreshResourceLive();
         // Status readers may request another cycle immediately after failure.
         // Keep unavailable leases and failed probes idle between timer checks.
         retryAt = ['failed', 'sample-timeout', 'lease-held-elsewhere'].includes(result.state)
@@ -307,6 +329,7 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
       stopped = true;
       if (timer) clearInterval(timer);
       timer = null;
+      scheduleResourceLive();
     },
   };
 }
@@ -326,7 +349,13 @@ export function defaultDaemonCapacityPublisherDeps(): DaemonCapacityPublisherDep
         import('../usage/resource-live/config.js'), import('../usage/resource-live/feed.js'),
       ]);
       const runsDir = defaultResourceLiveRunsDir();
-      await runResourceLiveTick({ runsDir, sources: defaultResourceLiveSources({ runsDir, ...liveSourceOptions(cfg) }), deadlineMs: 20_000 });
+      const { sidecar } = await runResourceLiveTick({ runsDir,
+        sources: defaultResourceLiveSources({ runsDir, ...liveSourceOptions(cfg) }), deadlineMs: 20_000 });
+      const poll = sidecar.poll.antigravity;
+      const context = sidecar.readings.find(row => row.id === 'antigravity')?.execution_context;
+      if (poll && (context === 'gui-resident' || (context === undefined && poll.reset_checks?.length))) {
+        return Date.parse(poll.next_poll_at);
+      }
     },
     nowMs: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),

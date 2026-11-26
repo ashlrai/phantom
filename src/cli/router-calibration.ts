@@ -30,6 +30,7 @@ function compareReports(baseline: CalibrationReport, current: CalibrationReport,
         population: before && after ? 'both' : before ? 'baseline-only' : 'current-only',
         delta: {
           mergeRate: metricDifference(after?.mergeRate, before?.mergeRate),
+          observedMergeRate: difference(after?.observedMergeRate ?? null, before?.observedMergeRate ?? null),
           brier: difference(after?.brier ?? null, before?.brier ?? null),
           tokens: metricDifference(after?.tokens, before?.tokens),
           wallTimeMs: metricDifference(after?.wallTimeMs, before?.wallTimeMs),
@@ -51,12 +52,12 @@ function comparisonMarkdown(comparison: ReturnType<typeof compareReports>): stri
     `## Current (PostHog ${comparison.current.posthogProvided ? 'provided' : 'not provided'})`, '',
     calibrationMarkdown(comparison.current.report).replace(/^# Router calibration\n\n/, '').trimEnd(), '',
     '## Deltas by arm', '',
-    '| Arm | Population | Merge rate | Brier | Tokens | Wall time ms |',
-    '| --- | --- | --- | ---: | --- | --- |',
+    '| Arm | Population | Merge rate | Brier | Tokens | Wall time ms | Observed merge rate |',
+    '| --- | --- | --- | ---: | --- | --- | ---: |',
   ];
   for (const item of comparison.comparisons) {
     const arm = item.arm.replace(/[|\\\r\n]/g, ' ');
-    lines.push(`| ${arm} | ${item.population} | ${metric(item.delta.mergeRate)} | ${format(item.delta.brier)} | ${metric(item.delta.tokens)} | ${metric(item.delta.wallTimeMs)} |`);
+    lines.push(`| ${arm} | ${item.population} | ${metric(item.delta.mergeRate)} | ${format(item.delta.brier)} | ${metric(item.delta.tokens)} | ${metric(item.delta.wallTimeMs)} | ${format(item.delta.observedMergeRate)} |`);
   }
   return lines.join('\n');
 }

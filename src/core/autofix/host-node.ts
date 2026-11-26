@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { readLaneTargets, setLaneTarget } from '../fleet/runs-lane-targets.js';
-import { forbiddenPath } from './guard.js';
+import { forbiddenPath, isForbiddenExecArgv } from './guard.js';
 import type { AutofixHost, ExecResult } from './types.js';
 
 function runsRoot(): string {
@@ -107,7 +107,7 @@ export function createNodeHost(now: () => Date = () => new Date()): AutofixHost 
 }
 
 function execChecked(argv: readonly string[]): ExecResult {
-  if (argv.length === 0 || argv.some((arg) => forbiddenPath(arg) || /^(kill|pkill|killall)$/.test(arg))) {
+  if (isForbiddenExecArgv(argv)) {
     return { code: 1, stdout: '', stderr: 'refused' };
   }
   try {

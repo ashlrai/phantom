@@ -8,11 +8,18 @@
  */
 
 import {
+  epochPlainRecord as record,
+  exactEpochKeys as exactKeys,
+  isValidPrefixedEpochDigest as validDigest,
+} from './agent-os-epoch-shared.js';
+import {
   AGENT_OS_ROLLOVER_AUTHORITY_V1,
   AGENT_OS_ROLLOVER_PROTOCOL_GENERATION_V1,
   agentOsRolloverOperationIdV1,
   classifyAgentOsAnchorCasOutcomeV1,
   compileAgentOsRolloverStatusV1,
+  isValidAgentOsMonotonicAnchorCasResultV1 as validCasResult,
+  isValidAgentOsMonotonicAnchorReadResultV1 as validAnchorRead,
   parseAgentOsObservationEpochHeadV1,
   preflightAgentOsRolloverV1,
   type AgentOsAnchorCasClassificationInputV1,
@@ -106,19 +113,6 @@ export type AgentOsEpochStoreCompatibilityVerifierV1 = (
   evidence: Readonly<AgentOsEpochStoreCompatibilityEvidenceV1>,
 ) => boolean;
 
-/**
- * Boundary expected of a future executor. M554 does not call these methods.
- * Implementations must re-read their own durable inputs and invoke this pure
- * planner again after every method, especially after CAS.
- */
-export interface AgentOsRolloverRecoveryOperationsV1 {
-  readLocalState(): Promise<AgentOsRolloverRecoveryInputV1>;
-  prepareLocalEpoch(plan: AgentOsRolloverRecoveryPlanV1): Promise<void>;
-  compareAndSwapAnchor(plan: AgentOsRolloverRecoveryPlanV1): Promise<AgentOsMonotonicAnchorCasResultV1>;
-  rereadAnchor(plan: AgentOsRolloverRecoveryPlanV1): Promise<AgentOsMonotonicAnchorReadResultV1>;
-  installActivePointer(plan: AgentOsRolloverRecoveryPlanV1): Promise<void>;
-}
-
 export interface AgentOsRolloverRecoveryPlanV1 extends AgentOsRolloverAuthorityV1 {
   schemaVersion: 1;
   protocol: typeof AGENT_OS_ROLLOVER_RECOVERY_PROTOCOL_V1;
@@ -144,59 +138,11 @@ const CAS_ATTEMPT_KEYS = [
   'expectedCurrentHeadBytes', 'intendedNextHeadBytes', 'fleetIdentityDigest',
   'anchorPolicyDigest', 'operationId', 'casResult',
 ] as const;
-const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
 const COMPATIBILITY_KEYS = [
   'schemaVersion', 'protocol', 'protocolGeneration', 'currentHeadDigest', 'targetEpoch',
   'sourceStoreEpochCompatible', 'snapshotStoreEpochCompatible',
   'attemptNamespaceEpochCompatible',
 ] as const;
-
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const sorted = [...expected].sort();
-  return actual.length === sorted.length && actual.every((key, index) => key === sorted[index]);
-}
-
-function validDigest(value: unknown): value is string {
-  return typeof value === 'string' && DIGEST_RE.test(value);
-}
-
-function validAnchorRead(value: unknown): value is AgentOsMonotonicAnchorReadResultV1 {
-  const row = record(value);
-  if (!row || typeof row['state'] !== 'string') return false;
-  if (row['state'] === 'present') {
-    return exactKeys(row, ['state', 'canonicalHeadBytes']) && row['canonicalHeadBytes'] instanceof Uint8Array;
-  }
-  return ['missing', 'unavailable', 'degraded'].includes(row['state']) && exactKeys(row, ['state']);
-}
-
-function validCasResult(value: unknown): value is AgentOsMonotonicAnchorCasResultV1 {
-  const row = record(value);
-  if (!row || typeof row['state'] !== 'string') return false;
-  if (row['state'] === 'advanced' || row['state'] === 'replayed') {
-    return exactKeys(row, ['state', 'canonicalHeadBytes']) && row['canonicalHeadBytes'] instanceof Uint8Array;
-  }
-  if (row['state'] === 'conflict') {
-    return exactKeys(row, ['state', 'canonicalHeadBytes']) &&
-      (row['canonicalHeadBytes'] === null || row['canonicalHeadBytes'] instanceof Uint8Array);
-  }
-  return ['unavailable', 'indeterminate'].includes(row['state']) && exactKeys(row, ['state']);
-}
 
 function validCasAttempt(value: unknown): value is AgentOsRolloverCasAttemptObservationV1 {
   const row = record(value);
