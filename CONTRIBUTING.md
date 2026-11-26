@@ -13,6 +13,14 @@ fork, local checks run once, a pull request, and the one required check,
 walks that path from clone to auto-merge; agents also follow
 [AGENTS.md](AGENTS.md). This guide holds the full conventions behind it.
 
+**New to the project?** Everyone here — contributors and agents alike — works
+under the [Code of Conduct](CODE_OF_CONDUCT.md). Issues labeled
+[`good first issue`](https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+and
+[`help wanted`](https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+are the starter queue, and [The Dev Shack](https://discord.gg/jBQrSU6XeD) on
+Discord is where the community gathers.
+
 ---
 
 ## Contribute with an agent
