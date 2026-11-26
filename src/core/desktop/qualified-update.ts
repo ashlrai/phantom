@@ -20,7 +20,7 @@ import { daemonServiceInstallOptions } from '../daemon/service-config.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
 import { inspectManagedResidentRuntime } from './managed-resident-runtime.js';
 import { beginDesktopUpdateInterlock, beginDesktopUpdateLocalReleasePause, desktopUpdateInterlockPresent, ownsDesktopUpdateInterlock, releaseDesktopUpdateInterlock, type DesktopUpdateInterlock } from './update-interlock.js';
-import { getDesktopUpdateTrust } from './update-trust.js';
+import { getDesktopUpdateTrust, getDesktopUpdateTrustForProfile } from './update-trust.js';
 import { readDesktopHostInterlockCensus, type DesktopHostInterlockCensus } from './host-update-interlock.js';
 import { verifyCompatibleUpdateManifest, desktopUpdateProfileForPackage, verifyMinisign, verifyUpdateBundleRecord, type UpdateTrust, type CompatibleUpdateManifest, type UpdateArtifact } from './update-manifest.js';
 
@@ -131,10 +131,11 @@ function validateArtifact(data: Buffer, artifact: UpdateArtifact, trust: UpdateT
   if (data.length !== artifact.bytes || sha(data) !== artifact.sha256) hold('artifact-mismatch');
   verifyMinisign(data, artifact.signature, trust.publicKey);
 }
-function readStage(stageId: string, deps: DesktopUpdateDependencies): {stage: string; manifest: CompatibleUpdateManifest; digest: string; app: Buffer; entries: readonly AppEntry[]; identity: fs.Stats} {
+function readStage(stageId: string, deps: DesktopUpdateDependencies, consumer = false): {stage: string; manifest: CompatibleUpdateManifest; digest: string; app: Buffer; entries: readonly AppEntry[]; identity: fs.Stats; consumer: boolean} {
   if (!deps.trust) hold('trust-not-commissioned');
   if (deps.platform !== 'darwin' || deps.architecture !== 'arm64' || !deps.packageRoot) hold('unsupported-installed-runtime');
-  const stage = desktopUpdateStagePath(deps.home, stageId);
+  const nativeStage = desktopUpdateStagePath(deps.home, stageId);
+  const stage = consumer ? join(deps.home, '.ashlr', 'updates', 'consumer-staging', `upgrade-${stageId}`) : nativeStage;
   safeAncestors(deps.home, stage); const identity = directory(stage);
   const encoded = bytes(join(stage, 'manifest.json'), 64 * 1024);
   const text = encoded.toString('utf8'); if (!Buffer.from(text).equals(encoded)) hold('verification-failed');
@@ -148,7 +149,7 @@ function readStage(stageId: string, deps: DesktopUpdateDependencies): {stage: st
   try {verifyUpdateBundleRecord(record.data.toString('utf8'), verified.manifest);} catch {hold('app-source-unverified');}
   safeAncestors(deps.home, stage);
   if (!same(identity, directory(stage))) hold('stage-changed');
-  return {stage, manifest: verified.manifest, digest: verified.digest, app, entries, identity};
+  return {stage, manifest: verified.manifest, digest: verified.digest, app, entries, identity, consumer};
 }
 /** The installed consumer rejects stale stages independently of native discovery. */
 function updateMode(deps: DesktopUpdateDependencies, candidate: CompatibleUpdateManifest): 'paired'|'app-only' {
@@ -350,6 +351,7 @@ interface TransactionModule {
   inspectLocalAliases(io: TransactionIo): unknown[]; createLocalAliases(aliases: unknown[], io: TransactionIo): unknown[];
   removeCreatedAliases(aliases: unknown[], io: TransactionIo): void;
   launchedAppIsOwned(io: TransactionIo): boolean;
+  requireLocalAppQuiescence?(io: TransactionIo): void;
 }
 /** Load only this installed Node package's disk helper; a SEA has no package root. */
 export async function loadInstalledDesktopTransaction(root: string): Promise<TransactionModule> {
@@ -436,8 +438,85 @@ export async function prepareQualifiedDesktopUpdate(stageId: string, deps: Deskt
   } catch (error) { return result('blocked', version, error instanceof Held ? error.reason : 'update-unavailable'); }
 }
 
+type ConsumerCoverage = {grantId: string; surfaceDigest: string; transaction: string};
+export interface ConsumerOwnedUpdatePlan {
+  readonly coveredBy: ConsumerCoverage;
+  readonly envelopeDigest: string;
+  readonly releaseDigest: string;
+  readonly app: AppProof;
+}
+interface ConsumerOwnedRun {
+  plan: ConsumerOwnedUpdatePlan;
+  quit(path: string): boolean;
+  resumed: boolean;
+  installed: boolean;
+  crossedSwitch: boolean;
+  candidate?: {root: string; identity: fs.Stats; previous: string};
+}
+function consumerGrantMatches(plan: ConsumerOwnedUpdatePlan, admission: UpdateAdmission): boolean {
+  return admission.active && admission.grantId === plan.coveredBy.grantId &&
+    admission.surfaceDigest === plan.coveredBy.surfaceDigest && admission.envelopeDigest === plan.envelopeDigest;
+}
+export function planConsumerOwnedUpdate(stageId: string, deps: DesktopUpdateDependencies, app: AppProof): ConsumerOwnedUpdatePlan | null {
+  const staged = readStage(stageId, deps, true);
+  updateMode(deps, staged.manifest);
+  const admission = deps.admission();
+  if (admission.surfaceDigest !== staged.manifest.authoritySurfaceDigest || !supportsOwnedPause(deps, admission) ||
+      !deps.ownedResident?.()?.runtime.pid) return null;
+  return Object.freeze({
+    coveredBy: Object.freeze({grantId: admission.grantId!, surfaceDigest: admission.surfaceDigest!, transaction: stageId}),
+    envelopeDigest: admission.envelopeDigest!, releaseDigest: staged.digest, app: Object.freeze({...app}),
+  });
+}
+
+export async function applyConsumerOwnedUpdate(plan: ConsumerOwnedUpdatePlan, deps: DesktopUpdateDependencies, quit: (path: string) => boolean):
+  Promise<{outcome: DesktopUpdateResult; resumed: boolean; installed: boolean}> {
+  const run: ConsumerOwnedRun = {plan, quit, resumed: false, installed: false, crossedSwitch: false};
+  const observation = (outcome: DesktopUpdateResult) => ({outcome, resumed: run.resumed, installed: run.installed});
+  const stageId = plan.coveredBy.transaction;
+  let version: string | null = null;
+  let lock: string | undefined;
+  try {
+    const staged = readStage(stageId, deps, true); version = staged.manifest.version;
+    if (staged.digest !== plan.releaseDigest || staged.manifest.authoritySurfaceDigest !== plan.coveredBy.surfaceDigest) hold('stage-changed');
+    const mode = updateMode(deps, staged.manifest);
+    const deadline = (deps.monotonicNow ?? deps.now)() + ACTIVITY_MAX_DEFER_MS;
+    for (;;) {
+      const admission = deps.admission(), host = deps.hostCensus?.();
+      if (!consumerGrantMatches(plan, admission)) hold('resume-grant-changed');
+      if (!supportsOwnedPause(deps, admission, host)) hold(host?.state === 'unsupported' ? 'drain-interlock-unsupported' : 'resume-ownership-lost');
+      const reason = ownedActivityReason(deps, staged, admission, host);
+      if (!reason) break;
+      const remaining = deadline - (deps.monotonicNow ?? deps.now)();
+      if (remaining <= 0) hold(reason);
+      await deps.sleep(Math.min(30_000, remaining));
+    }
+    const claim = join(staged.stage, 'consumer-lock');
+    fs.mkdirSync(claim, {mode: 0o700}); lock = claim; fsyncDirectory(staged.stage);
+    if (fs.lstatSync(join(staged.stage, 'consumer-attempt.json'), {throwIfNoEntry:false})) hold('update-attempt-already-recorded');
+    const installed = await installPairedUpdate(stageId, staged, deps, mode, true, run);
+    const outcome = typeof installed === 'string' ? result(installed, version, 'installation-recovery-required') : installed;
+    try { saveConsumerResult(staged.stage, outcome, deps); }
+    catch { return observation(result('rollback-held', version, 'result-persistence-unknown')); }
+    return observation(outcome);
+  } catch (error) {
+    return observation(result('blocked', version, error instanceof Held ? error.reason : 'update-unavailable'));
+  } finally {
+    if (run.candidate && (!run.crossedSwitch || run.resumed && !run.installed)) {
+      const {root, identity, previous} = run.candidate;
+      try {
+        const current = directory(root);
+        if (current.dev === identity.dev && current.ino === identity.ino && deps.currentPackageRoot() === previous) {
+          fs.rmSync(root, {recursive:true}); fsyncDirectory(dirname(root));
+        }
+      } catch { /* Preserve uncertain candidate ownership. */ }
+    }
+    if (lock) { try { fs.rmdirSync(lock); fsyncDirectory(dirname(lock)); } catch { /* uncertain claims are preserved */ } }
+  }
+}
+
 async function installPairedUpdate(stageId: string, staged: ReturnType<typeof readStage>, deps: DesktopUpdateDependencies,
-  mode: ReturnType<typeof updateMode>, automatic = false): Promise<DesktopUpdateState | DesktopUpdateResult> {
+  mode: ReturnType<typeof updateMode>, automatic = false, consumer?: ConsumerOwnedRun): Promise<DesktopUpdateState | DesktopUpdateResult> {
   const root = deps.packageRoot!;
   // Only the already-running compiled package supplies the transaction implementation.
   const helper = deps.transaction ? await deps.transaction() : await loadInstalledDesktopTransaction(root);
@@ -448,6 +527,7 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
   if (!previous || fs.realpathSync(previous.target) !== fs.realpathSync(root)) hold('running-current-mismatch');
   const selected = helper.selectLocalApp(staged.manifest.app.signer, io);
   if (!selected) hold('installed-app-unavailable');
+  if (consumer && JSON.stringify(selected) !== JSON.stringify(consumer.plan.app)) hold('app-identity-changed');
   if (mode === 'app-only') {
     if (selected.inventory === staged.manifest.app.inventorySha256) hold('candidate-not-newer');
     requireOlderNativeApp(selected.path, staged.manifest.version, io);
@@ -459,6 +539,7 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
   const destination = join(releases, staged.manifest.source.revision);
   if (mode === 'paired') {
     fs.mkdirSync(destination, {mode: 0o700}); // never overwrite an existing release
+    if (consumer) consumer.candidate = {root:destination, identity:directory(destination), previous:previous.target};
     fsyncDirectory(releases); extractPinnedRuntimeArchive(archive, destination);
   } else {
     if (destination !== root || previous.target !== destination) hold('installed-current-unverified');
@@ -470,7 +551,7 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
   const appRoot = extractApp(entries, appStage); verifyAppReleaseRecord(appRoot, staged.manifest);
   const app = helper.inspectLocalApp(appRoot, staged.manifest.app.signer, io);
   if (app.inventory !== staged.manifest.app.inventorySha256) hold('app-inventory-mismatch');
-  if (readStage(stageId, deps).digest !== staged.digest) hold('stage-changed');
+  if (readStage(stageId, deps, staged.consumer).digest !== staged.digest) hold('stage-changed');
   if (!automatic) freshAdmission(deps);
   const attempted = join(staged.stage, 'consumer-attempt.json');
   writeExclusive(attempted, Buffer.from(JSON.stringify({schemaVersion: 1, manifestDigest: staged.digest, state: 'installation-attempted'}) + '\n'));
@@ -505,7 +586,7 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
     const blocked = (reason: string) => result('rollback-held', version, reason, reason === 'resume-surface-changed');
     try {
       if (!ownsPause()) return blocked('resume-ownership-lost');
-      if (readStage(stageId, deps).digest !== staged.digest) return blocked('resume-ownership-lost');
+      if (readStage(stageId, deps, staged.consumer).digest !== staged.digest) return blocked('resume-ownership-lost');
       const nextRoot = installed ? destination : root;
       if (deps.currentPackageRoot() !== nextRoot) return blocked(installed ? 'resume-install-unverified' : 'resume-abort-unverified');
       const actualApp = helper.selectLocalApp(staged.manifest.app.signer, io);
@@ -568,6 +649,7 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
       if (deps.operatorStop?.() !== 'inactive') return blocked('resume-ownership-lost');
       if (localRestoreFailed) return blocked('resume-local-pause-unverified');
       if (!resumed) return blocked((released ? null : authorityCheck()) ?? 'resume-resident-unverified');
+      if (consumer) consumer.resumed = true;
       return result(installed ? 'applied' : 'blocked', version, installed ? 'applied' :
         capExpired ? 'owned-pause-cap-expired' : 'owned-pause-aborted');
     } catch { return blocked(installed ? 'resume-install-unverified' : 'resume-abort-unverified'); }
@@ -583,7 +665,7 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
     const observed = verifyAuthoritySurfaceAt(destination, 'installed', {fresh: true});
     if (!observed.ok || observed.digest !== staged.manifest.authoritySurfaceDigest) hold('candidate-surface-unverified');
     if (updateMode(deps, staged.manifest) !== mode) hold('current-or-stage-changed');
-    if (JSON.stringify(io.readCurrentPointer(current)) !== JSON.stringify(previous) || readStage(stageId, deps).digest !== staged.digest) hold('current-or-stage-changed');
+    if (JSON.stringify(io.readCurrentPointer(current)) !== JSON.stringify(previous) || readStage(stageId, deps, staged.consumer).digest !== staged.digest) hold('current-or-stage-changed');
   };
   let capExpired = false;
   const checkCap = (deadline: number) => {
@@ -601,7 +683,29 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
   };
   const beginPause = async () => {
     await candidateReady();
+    if (consumer) {
+      if (!helper.requireLocalAppQuiescence) hold('app-quit-unverified');
+      const beforeQuit = deps.admission(), host = deps.hostCensus?.();
+      if (!consumerGrantMatches(consumer.plan, beforeQuit)) hold('resume-grant-changed');
+      if (!supportsOwnedPause(deps, beforeQuit, host)) hold(host?.state === 'unsupported' ? 'drain-interlock-unsupported' : 'resume-ownership-lost');
+      if (!deps.ownedResident?.()?.runtime.pid) hold('resume-resident-unverified');
+      if (JSON.stringify(helper.selectLocalApp(staged.manifest.app.signer, io)) !== JSON.stringify(selected)) hold('app-identity-changed');
+      if (!consumer.quit(selected.path)) hold('app-quit-unverified');
+      const quitBy = tick() + 30_000;
+      for (;;) {
+        try { helper.requireLocalAppQuiescence(io); break; }
+        catch (error) {
+          const code = (error as {code?: unknown})?.code;
+          if (code !== 'app-running' && code !== 'sidecar-live') hold('app-quit-unverified');
+        }
+        const remaining = quitBy - tick();
+        if (remaining <= 0) hold('app-quit-unverified');
+        await deps.sleep(Math.min(100, remaining));
+      }
+      await candidateReady();
+    }
     beforePause = deps.admission();
+    if (consumer && !consumerGrantMatches(consumer.plan, beforePause)) hold('resume-grant-changed');
     const host = deps.hostCensus?.();
     resident = supportsOwnedPause(deps, beforePause, host) ? deps.ownedResident?.() : null;
     if (!resident?.runtime.pid) hold('drain-interlock-unsupported');
@@ -660,8 +764,11 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
         if (automatic) {
           checkCap(pauseDeadline);
           if (!ownsPause()) hold('resume-ownership-lost');
+          if (consumer && !consumerGrantMatches(consumer.plan, deps.admission())) hold('resume-grant-changed');
+          checkCap(pauseDeadline);
         }
         boundary = true;
+        if (consumer) consumer.crossedSwitch = true;
       },
       commitPointer: async () => {
         await candidateReady();
@@ -692,6 +799,7 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
         return false;
       },
     }, io);
+    if (consumer) consumer.installed = true;
     return owned ? terminal(true) : 'applied';
   } catch (error) {
     if (owned) {
@@ -836,7 +944,7 @@ function parentObservation(pid: number): NativeUpdateParent | null {
   const match = /^\s*(\d+)\s+(\d+)\s+((?:\S+\s+){4}\S+)\s+(\/Applications\/(?:Phantom|Ashlr)\.app\/Contents\/MacOS\/ashlr-desktop)\s*$/.exec(output.stdout);
   return match ? {pid: Number(match[1]), ppid: Number(match[2]), started: match[3]!, executable: match[4]!} : null;
 }
-export function createDesktopUpdateDependencies(trust: UpdateTrust | null): DesktopUpdateDependencies {
+export function createDesktopUpdateDependencies(trust: UpdateTrust | null, coordinator: 'native' | 'consumer' = 'native'): DesktopUpdateDependencies {
   const root = runningPackageRoot();
   const home = userInfo().homedir;
   const deps: DesktopUpdateDependencies = {
@@ -854,8 +962,8 @@ export function createDesktopUpdateDependencies(trust: UpdateTrust | null): Desk
       queuedWork: () => queuedDesktopWork(home),
     }),
     operatorStop: () => readKillSwitch().state,
-    ...(trust === getDesktopUpdateTrust() && process.platform === 'darwin' &&
-      process.env['PHANTOM_NATIVE_UPDATE_INTERLOCK'] === 'phantom.desktop-update-interlock.v1' && {ownedResident: () => {
+    ...(process.platform === 'darwin' && (coordinator === 'consumer' ? trust === getDesktopUpdateTrustForProfile('canonical-v2') :
+      trust === getDesktopUpdateTrust() && process.env['PHANTOM_NATIVE_UPDATE_INTERLOCK'] === 'phantom.desktop-update-interlock.v1') && {ownedResident: () => {
       try {
         const managed = inspectManagedResidentRuntime(home);
         if (managed.state !== 'verified' || managed.root !== root) return null;

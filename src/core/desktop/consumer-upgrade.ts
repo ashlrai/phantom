@@ -7,26 +7,36 @@ import {canonicalJson} from '../authority/canonical-json.js';
 import {verifyAuthoritySurfaceAt} from '../authority/surface.js';
 import {readPinnedRuntimeArchive, extractPinnedRuntimeArchive, type PinnedRuntimeArchiveOptions} from '../local-runtime/archive.js';
 import {fsyncDirectory} from '../util/durability.js';
+import {appendBusInbox} from '../fleet/bus-inbox.js';
+import {validateBusEnvelope, type BusEnvelope} from '../fleet/bus-envelope.js';
 import {ConsumerInstallHeld, checkConsumerQuiescence, quiescenceHold, createConsumerInstallDependencies, directory, parents, owned, regular, write, sha, ioRead, packageReady,
   type ConsumerInstallDependencies, type ConsumerInstallIo, type ConsumerTransaction} from './consumer-install.js';
-import {extractSignedAppArchive} from './qualified-update.js';
+import {applyConsumerOwnedUpdate, createDesktopUpdateDependencies, extractSignedAppArchive, planConsumerOwnedUpdate,
+  type ConsumerOwnedUpdatePlan, type DesktopUpdateDependencies} from './qualified-update.js';
 import {verifyCompatibleUpdateManifest, verifyMinisign, verifyUpdateBundleRecord, type CompatibleUpdateManifest} from './update-manifest.js';
 
 export interface ConsumerUpgradeDependencies extends ConsumerInstallDependencies {
   smokeVersion(launcher: string): Promise<string|null>;
   residentStop(): Promise<{ok:boolean; reason?:string}>;
+  ownedUpdate?: {
+    dependencies: DesktopUpdateDependencies;
+    quit(path:string):boolean;
+    post?: typeof appendBusInbox;
+  };
 }
 export interface ConsumerUpgradeOptions {mode:'upgrade'|'rollback'; apply:boolean; requireApp:boolean; to?:string}
 type Release = {version:string; release:string};
 export interface ConsumerUpgradeResult {
   schema:'desktop-upgrade.v1'; mode:'upgrade'|'rollback';
   state:'ready'|'current'|'upgraded'|'reverted'|'rolled-back'|'held'; reason:string|null;
-  applied:boolean; authorityResumed:false; installed:Release|null; candidate:Release|null; previous:Release|null;
+  applied:boolean; authorityResumed:boolean; installed:Release|null; candidate:Release|null; previous:Release|null;
+  busAudit?: 'posted' | 'duplicate' | 'unavailable';
   path?: string; remedyCommand?: string; tightenedPaths?: readonly string[];
   app:{state:'current'|'update-available'|'needs-owner'|'absent'|'unknown'; reason:string|null};
   stop:{engaged:boolean|null; drained:boolean|null; reason:string|null; command:'phm authority stop'};
   daemon:{stop:{command:'phm authority resident stop'; performed:boolean; confirmation:'none'};
-    restart:{command:'phm authority resident start'; performed:false; ownerConfirmation:true; touchId:boolean|'unknown'; reason:string|null}};
+    restart:{command:'phm authority resident start'; performed:boolean; ownerConfirmation:boolean; touchId:boolean|'unknown'; reason:string|null;
+      coveredBy?: ConsumerOwnedUpdatePlan['coveredBy']}};
   steps:string[];
 }
 const semver=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
@@ -57,6 +67,7 @@ interface Admission {
   pins?:PinnedRuntimeArchiveOptions; journal?:Journal; attempted:boolean;
   selected?:NonNullable<ReturnType<ConsumerTransaction['selectLocalApp']>>;
   source?:ReturnType<ConsumerTransaction['inspectLocalApp']>;
+  ownedPlan?: ConsumerOwnedUpdatePlan;
   retryCommand:string;
 }
 const appPaths=['/Applications/Phantom.app','/Applications/Ashlr.app'];
@@ -73,6 +84,7 @@ type Journal={schema:'desktop-upgrade-journal.v1'; previous:Release; current:Rel
 const admissions=new WeakMap<ConsumerUpgradeResult,Admission>();
 function freeze(r:ConsumerUpgradeResult):ConsumerUpgradeResult {
   for(const value of Object.values(r))if(value && typeof value==='object')Object.freeze(value);
+  if(r.daemon.restart.coveredBy)Object.freeze(r.daemon.restart.coveredBy);
   Object.freeze(r.daemon.stop);Object.freeze(r.daemon.restart);return Object.freeze(r);
 }
 function initial(mode:ConsumerUpgradeOptions['mode']):ConsumerUpgradeResult {
@@ -149,7 +161,8 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
       for(const [i,artifact] of [m.app,m.cli].entries()) {
         try {need(downloaded[i]!.length===artifact.bytes&&sha(downloaded[i]!)===artifact.sha256,'artifact-mismatch');verifyMinisign(downloaded[i]!,artifact.signature,deps.trust.publicKey);}catch {throw new Held('artifact-mismatch');}
       }
-      const staging=join(deps.home,'.ashlr/updates/consumer-staging');parents(deps.home,staging,true,tightenedPaths);const stage=fs.mkdtempSync(join(staging,'upgrade-'));fs.chmodSync(stage,0o700);
+      const staging=join(deps.home,'.ashlr/updates/consumer-staging');parents(deps.home,staging,true,tightenedPaths);
+      const stageId=randomBytes(16).toString('hex'),stage=join(staging,`upgrade-${stageId}`);fs.mkdirSync(stage,{mode:0o700});
       write(join(stage,'app.tar.gz'),downloaded[0]!);write(join(stage,'package.tgz'),downloaded[1]!);
       try {
         const appStage=join(stage,'app');fs.mkdirSync(appStage,{mode:0o700});const appRoot=extractSignedAppArchive(downloaded[0]!,appStage);
@@ -164,6 +177,25 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
       if(r.app.state==='current')verifyUpdateBundleRecord(io.readBoundedFile(join(a.selected!.path,'Contents/Resources/phantom-release.json'),8192),m);
       if(order===0&&r.app.state==='current'){r.state='current';r.reason='already-current';return freeze(r);}
       touchId(r,before.target,m.authoritySurfaceDigest);
+      if (deps.ownedUpdate && a.selected && r.app.state === 'update-available') {
+        const ownedDeps = deps.ownedUpdate.dependencies;
+        const host = ownedDeps.hostCensus?.();
+        if (host?.state === 'unsupported') r.daemon.restart.reason='drain-interlock-unsupported';
+        if ((host?.state === 'absent' || host?.state === 'supported') && ownedDeps.operatorStop?.() === 'inactive') {
+          const admission = ownedDeps.admission();
+          need(admission.surfaceDigest === m.authoritySurfaceDigest, 'resume-surface-changed');
+          need(admission.active, 'resume-grant-changed');
+          write(join(stage,'manifest.json'),Buffer.from(latest.phantom.manifestText));
+          write(join(stage,'manifest.sig'),Buffer.from(latest.phantom.signature));
+          fsyncDirectory(stage); fsyncDirectory(staging);
+          const plan = planConsumerOwnedUpdate(stageId, ownedDeps, a.selected);
+          need(plan, 'resume-resident-unverified'); a.ownedPlan = plan;
+          r.daemon.restart = {...r.daemon.restart, ownerConfirmation:false, touchId:false, reason:null, coveredBy:plan.coveredBy};
+          r.steps=['Wait for a low-activity window','Quit the verified Phantom app and verify sidecar exit','Pause and drain local work',
+            'Install the paired signed CLI and Phantom.app','Resume the same resident under the active standing grant'];
+          r.state='ready';const observed=freeze(r);admissions.set(observed,a);return observed;
+        }
+      }
     }
     try {await quiescence(a,r,options.apply);}catch(error) {if(options.apply)throw error;}
     r.steps=['phm authority stop','Close Phantom normally and drain work','phm authority resident stop','Switch managed CLI release; keep previous release'];
@@ -177,6 +209,22 @@ function writeJournal(home:string,journal:Journal):void {
   const root=join(home,'.local/share/ashlr');parents(home,root,false);const temp=join(root,`.upgrade-${randomBytes(12).toString('hex')}`);
   write(temp,Buffer.from(JSON.stringify(journal)));fs.renameSync(temp,join(root,'upgrade.json'));fsyncDirectory(root);
 }
+function auditOwnedUpdate(result: ConsumerUpgradeResult, plan: ConsumerOwnedUpdatePlan, post: typeof appendBusInbox): void {
+  const events = [...(result.authorityResumed ? ['resume'] : []), ...(result.reason ? ['hold'] : [])];
+  for (const event of events) {
+    const envelope: BusEnvelope = {
+      id: `desktop-update:${plan.coveredBy.transaction}:${event}`, from:'desktop-update', to:'leaders', priority:'P2', ttl:86_400_000,
+      body: {kind:`desktop.update.${event}`, ...plan.coveredBy, version:result.candidate?.version ?? null,
+        reason:event==='hold' ? result.reason : null},
+    };
+    const checked = validateBusEnvelope(envelope);
+    try {
+      const status = checked.ok ? post(checked.value).status : 'unavailable';
+      if (status !== 'posted' && status !== 'duplicate') result.busAudit = 'unavailable';
+      else result.busAudit ??= status;
+    } catch { result.busAudit = 'unavailable'; }
+  }
+}
 /** Consume a fresh inspection once, lowering resident authority before the atomic switch. */
 export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult):Promise<ConsumerUpgradeResult> {
   const a=admissions.get(observed),r:ConsumerUpgradeResult=structuredClone(observed);
@@ -184,6 +232,26 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
   const {deps,helper,io}=a,current=join(deps.home,'.local/share/ashlr/current');let created:fs.Stats|undefined,switched:Pointer|undefined;
   const repair=a.destination===a.before.target;
   const tightenedPaths=[...(r.tightenedPaths??[])];r.tightenedPaths=tightenedPaths;
+  if (a.ownedPlan && deps.ownedUpdate) {
+    const {dependencies,quit,post=appendBusInbox} = deps.ownedUpdate;
+    try {
+      deps.assertRunning();
+      const {outcome,resumed,installed} = await applyConsumerOwnedUpdate(a.ownedPlan, dependencies, quit);
+      r.authorityResumed = resumed; r.daemon.restart.performed = resumed;
+      r.state = outcome.state === 'applied' ? 'upgraded' : outcome.state === 'rolled-back' ? 'rolled-back' : 'held';
+      r.applied = installed; r.reason = outcome.state === 'applied' ? null : outcome.reason;
+      r.stop.reason = r.reason; r.stop.drained = r.applied;
+      if (r.applied) {
+        r.app = {state:'current',reason:null};
+        if (!repair) {
+          try {writeJournal(deps.home,{schema:'desktop-upgrade-journal.v1',previous:r.installed!,current:r.candidate!});}
+          catch {r.reason??='journal-failed';}
+        }
+      }
+    } catch (error) { r.state='held';r.reason=heldReason(error,r)??'upgrade-unavailable'; }
+    auditOwnedUpdate(r,a.ownedPlan,post);
+    return freeze(r);
+  }
   try {
     deps.assertRunning();await quiescence(a,r,true);
     need(canonicalJson(io.readCurrentPointer(current))===canonicalJson(a.before),'current-changed');assert.deepEqual(helper.inspectLocalAliases(io),a.aliases);
@@ -277,6 +345,7 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
 }
 export function createConsumerUpgradeDependencies():ConsumerUpgradeDependencies {
   const deps=createConsumerInstallDependencies();return {...deps,
+    ownedUpdate: {dependencies:createDesktopUpdateDependencies(deps.trust,'consumer'), quit:quitVerifiedPhantom},
     smokeVersion:async launcher=> {
       const child=spawnSync(process.execPath,[launcher,'--version'],{encoding:'utf8',timeout:5000,maxBuffer:1024,env:{HOME:deps.home,PATH:'/usr/bin:/bin:/usr/sbin:/sbin',LANG:'C',LC_ALL:'C'}});
       const version=child.stdout?.trim();return !child.error&&child.status===0&&version&&semver.test(version)?version:null;
@@ -285,4 +354,24 @@ export function createConsumerUpgradeDependencies():ConsumerUpgradeDependencies 
       try {const {appendLedger}=await import('../authority/ledger.js');appendLedger({kind:'note',actor:'mason',grantId:null,repo:null,data:{topic:'resident-service:stop',detail:'Resident service stopped for desktop upgrade'}});}catch { /* Lowering does not depend on the ledger. */ }
       return {ok:true};
     }};
+}
+
+const QUIT_PHANTOM = `
+ObjC.import('AppKit');
+function run(argv) {
+  const path = argv[0];
+  const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier('ai.ashlr.desktop');
+  if (apps.count === 0) return 'accepted';
+  if (apps.count !== 1) return 'unverified';
+  const app = apps.objectAtIndex(0);
+  if (ObjC.unwrap(app.bundleURL.path) !== path ||
+      ObjC.unwrap(app.executableURL.path) !== path + '/Contents/MacOS/ashlr-desktop') return 'unverified';
+  return app.terminate ? 'accepted' : 'unverified';
+}
+`;
+function quitVerifiedPhantom(path:string):boolean {
+  if (!appPaths.includes(path)) return false;
+  const child=spawnSync('/usr/bin/osascript',['-l','JavaScript','-e',QUIT_PHANTOM,path],
+    {encoding:'utf8',timeout:5000,maxBuffer:1024,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}});
+  return !child.error&&child.status===0&&child.stdout.trim()==='accepted';
 }

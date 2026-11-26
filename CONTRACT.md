@@ -278,6 +278,14 @@ aborts and restores verified previous state through the scoped capability.
 Release-train pause provenance is local: the updater only removes its own
 `RELEASE_AUTORUN_DESKTOP_UPDATE_OFF` marker, never `RELEASE_AUTORUN_OFF` or
 operator Stop provenance.
+For a covered `desktop install --upgrade` plan with a verified older app,
+the CLI coordinates the normal quit instead of requiring the native updater
+handoff. It waits for low activity, then verifies the app and its sidecar
+have exited before taking the same scoped pause. The plan and result carry
+`daemon.restart.ownerConfirmation: false` and
+`coveredBy: {grantId, surfaceDigest, transaction}`. The stage records the
+installation attempt before taking the pause; it is not reusable. A covered
+resume or apply hold receives a deduplicated Agent Bus record.
 At the custody boundary, `sign-desktop-update -` signs one update approval and
 its prospective standing grant with one Touch ID gesture. The approval uses a
 separate signing domain and binds the transaction ID, release digest, candidate

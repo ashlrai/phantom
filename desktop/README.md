@@ -236,6 +236,14 @@ Stop or a quiet window is rechecked every 30 seconds. On supported hosts,
 queued work can defer adoption for up to five minutes, but active or unknown
 work still blocks installation after that window.
 
+On a compatible host, `phm desktop install --upgrade --require-app` reports
+when an active grant covers the unchanged authority surface. With `--apply`,
+the CLI waits for a low-activity window, quits the verified app normally,
+proves the app and sidecar are gone, installs the signed app and CLI together,
+and resumes the same resident without an owner-start step. An older dispatcher
+still requires manual Stop. The CLI records covered resumes and apply holds on
+the Agent Bus and does not change operator Stop or hosted publishing.
+
 The custody helper can sign a release-specific update approval and prospective
 standing grant together. The signature alone neither installs the grant nor
 restarts the resident. The existing desktop install and native update commands

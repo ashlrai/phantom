@@ -136,6 +136,25 @@ export async function requireLocalQuiescence(io) {
   try { census = await io.executionLeaseCensus(); } catch { /* No readable lease census. */ }
   if (!census || census.unknown !== 0 || !Array.isArray(census.leases) || census.leases.length) hold('leases-active', 'execution leases are active or unknown; finish the supported drain before installation');
   if (census.reaped) io.log(`      reaped ${census.reaped} proven-dead execution leases`);
+  requireLocalAppQuiescence(io);
+  const ashlrRoot = join(io.home, '.ashlr');
+  const accountsRoot = join(ashlrRoot, 'account-connections');
+  const ledgerRoot = join(accountsRoot, 'ledger');
+  for (const path of [ashlrRoot, accountsRoot, ledgerRoot]) {
+    let stat;
+    try { stat = io.lstat(path); } catch { hold('collector-storage-unsafe', 'quota collector storage is unsafe or uncertain'); }
+    if (stat && (!stat.isDirectory || stat.isSymbolicLink)) hold('collector-storage-unsafe', 'quota collector storage is unsafe or uncertain');
+  }
+  // A closed app is not proof that its native quota child registered or exited.
+  // Preserve the collector's own same-boot recovery fence across an app switch.
+  for (const name of ['.resource-quota-refresh-pending.json', '.resource-quota-refresh.lock']) {
+    let stat;
+    try { stat = io.lstat(join(ledgerRoot, name)); } catch { hold('collector-storage-unsafe', 'quota collector storage is unsafe or uncertain'); }
+    if (stat) hold('collector-pending', 'quota collector work or ownership is unresolved; use supported collector recovery before installation');
+  }
+}
+
+export function requireLocalAppQuiescence(io) {
   let processes;
   try { processes = readProcesses(io, io.preSwitchTimeout?.()); } catch (error) {
     if (error?.code === 'process-evidence-unavailable') throw error;
@@ -159,21 +178,6 @@ export async function requireLocalQuiescence(io) {
     if (paths.some((path) => args.startsWith(`${path}/Contents/MacOS/`))) {
       hold('sidecar-live', 'close Phantom normally before installation; a native app or owned sidecar is still running');
     }
-  }
-  const ashlrRoot = join(io.home, '.ashlr');
-  const accountsRoot = join(ashlrRoot, 'account-connections');
-  const ledgerRoot = join(accountsRoot, 'ledger');
-  for (const path of [ashlrRoot, accountsRoot, ledgerRoot]) {
-    let stat;
-    try { stat = io.lstat(path); } catch { hold('collector-storage-unsafe', 'quota collector storage is unsafe or uncertain'); }
-    if (stat && (!stat.isDirectory || stat.isSymbolicLink)) hold('collector-storage-unsafe', 'quota collector storage is unsafe or uncertain');
-  }
-  // A closed app is not proof that its native quota child registered or exited.
-  // Preserve the collector's own same-boot recovery fence across an app switch.
-  for (const name of ['.resource-quota-refresh-pending.json', '.resource-quota-refresh.lock']) {
-    let stat;
-    try { stat = io.lstat(join(ledgerRoot, name)); } catch { hold('collector-storage-unsafe', 'quota collector storage is unsafe or uncertain'); }
-    if (stat) hold('collector-pending', 'quota collector work or ownership is unresolved; use supported collector recovery before installation');
   }
 }
 

@@ -19,8 +19,9 @@ Inspection downloads verified artifacts into a fresh private stage. Plain --appl
 installs only when Phantom/Ashlr.app, the managed current pointer and managed
 phm/ashlr links are absent, after explicit authority Stop/drain.
 No builds, signing keys, credentials, PATH edits or authority restart.
---upgrade replaces only a managed CLI; --rollback selects its journaled previous
-release. Both stop the resident before switching and leave restart to the owner.
+--upgrade replaces a managed CLI and its verified paired app. On a compatible
+host, an unchanged active standing grant can cover unattended drain and resume.
+The manual Stop and rollback paths leave restart to the owner.
 
 Operator verbs read and drive macOS apps through the desktop-operator helper.
 See docs/DESKTOP-OPERATOR.md. phm desktop <verb> --help prints operator usage.

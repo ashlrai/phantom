@@ -11,7 +11,8 @@ import {authoritySurfaceDigest} from '../src/core/authority/surface.js';
 import {acquireResourceQuotaRefreshLease} from '../src/core/resources/quota-refresh-lease.js';
 import * as bootIdentity from '../src/core/resources/native-boot-identity.js';
 import {canonical, digest} from '../src/core/universe/artifacts.js';
-import {extractSignedAppArchive} from '../src/core/desktop/qualified-update.js';
+import {consumeDesktopUpdateResume, extractSignedAppArchive, type DesktopUpdateDependencies} from '../src/core/desktop/qualified-update.js';
+import {desktopUpdateInterlockPath} from '../src/core/desktop/update-interlock.js';
 import {consumerInstallerOsCommand,type ConsumerInstallDependencies,type ConsumerTransaction} from '../src/core/desktop/consumer-install.js';
 import {cmdDesktop,parseDesktopInstallArgs} from '../src/cli/desktop.js';
 import type {CompatibleUpdateManifest,UpdateTrust} from '../src/core/desktop/update-manifest.js';
@@ -94,7 +95,7 @@ function installFixture(version='3.30.35') {
     assertRunning:vi.fn(),download:vi.fn(async(url)=>{const bytes=published.get(url);if(!bytes)throw new Error('unpublished fixture');return Buffer.from(bytes);}),
     transaction:vi.fn(async()=>helper),readManagedVersion:vi.fn(async()=>version),discover:vi.fn(async managed=>(['phm','ashlr'] as const).map(name=>({name,target:managed,version,versionSource:'executed-managed' as const})))};
   const current=join(home,'.local/share/ashlr/current');
-  return {root,home,applications,version,manifest,published,publish,deps,helper,io,census,current,appRoot,setLive:(value:boolean)=>{live=value;},setHealth:(value:boolean)=>{health=value;},failOpen:()=>{spawnFailure=true;}};
+  return {root,home,applications,version,manifest,published,publish,deps,helper,io,census,current,appRoot,surface,code,setLive:(value:boolean)=>{live=value;},setHealth:(value:boolean)=>{health=value;},failOpen:()=>{spawnFailure=true;}};
 }
 
 import {applyConsumerDesktopUpgrade,inspectConsumerDesktopUpgrade,type ConsumerUpgradeDependencies} from '../src/core/desktop/consumer-upgrade.js';
@@ -117,6 +118,100 @@ function oldApp(f:ReturnType<typeof fixture>):string {
   return app;
 }
 describe('managed consumer upgrade',()=> {
+  function coveredFixture() {
+    const f=fixture('3.30.76'), app=oldApp(f), marker=desktopUpdateInterlockPath(f.home);
+    write(join(f.old,'package.json'),JSON.stringify({name:'@ashlr/phantom',version:'3.30.75',type:'module',bin:{ashlr:'bin/ashlr'}}));
+    write(join(f.old,'dist/build-identity.json'),JSON.stringify({schemaVersion:1,packageVersion:'3.30.75',revision:basename(f.old),dirty:false,provenance:'git'}));
+    write(join(f.old,'dist/authority-surface.json'),JSON.stringify(f.surface));
+    write(join(f.old,'dist/core/authority/fixture.js'),f.code);
+    const plist=join(app,'Contents/Info.plist');
+    write(plist,fs.readFileSync(plist,'utf8').replaceAll('3.30.24','3.30.39'),0o644);
+    fs.unlinkSync(join(f.home,'.ashlr/KILL'));f.setLive(true);
+    const sidecar = join(f.home,'.ashlr/.desktop-sidecar.json');
+    write(sidecar,JSON.stringify({desktopPid:100,sidecarPid:101,port:7777,sidecarPath:'/Applications/Phantom.app/Contents/MacOS/ashlr'}));
+    let now=Date.now(),queued=true;
+    const admission={active:true,stop:false,grantId:'a'.repeat(32),envelopeDigest:'e'.repeat(64),surfaceDigest:f.surface.digest,leaseCount:0,unknownLeases:0};
+    const queuedWork=vi.fn(()=>queued);
+    const resident={previous:{platform:'darwin' as const,homeDir:f.home,binPath:join(f.old,'bin/ashlr')},
+      dev:1,ino:2,ctimeMs:3,target:'gui/42/ai.ashlr.daemon',processStart:'Wed Oct 7 12:00:00 2026'};
+    const owned:DesktopUpdateDependencies={
+      home:f.home,platform:'darwin',architecture:'arm64',packageRoot:f.old,trust:f.deps.trust,admission:()=>admission,
+      currentPackageRoot:()=>fs.realpathSync(f.current),captureParent:()=>{throw new Error('native handshake forbidden');},
+      verifyParent:async()=>false,parentState:()=> 'unknown',operatorStop:()=>fs.existsSync(join(f.home,'.ashlr/KILL'))?'active':'inactive',
+      hostCensus:()=>({state:'supported',activeJobs:0,unknown:0}),queuedWork,now:()=>now,sleep:async(ms)=>{now+=ms;queued=false;},
+      download:f.deps.download,transaction:async()=>f.helper as unknown as Awaited<ReturnType<NonNullable<DesktopUpdateDependencies['transaction']>>>,
+      ownedResident:()=>({...resident,runtime:fs.existsSync(marker)?{loaded:true}:{loaded:true,pid:42}}),
+    };
+    const resume=vi.fn<NonNullable<DesktopUpdateDependencies['resumeOwned']>>(async(capability,consume)=>{
+      expect(consumeDesktopUpdateResume(capability)).toBeNull();
+      const authorized=consume(capability)!;
+      expect(consume(capability)).toBeNull();expect(authorized.pid).toBe(42);
+      expect(authorized.next.binPath).toBe(join(fs.realpathSync(f.current),'bin/ashlr'));
+      expect(authorized.release()).toBe(true);return true;
+    });
+    owned.resumeOwned=resume;
+    const quit=vi.fn((path:string)=>{
+      expect(path).toBe('/Applications/Phantom.app'); expect(queued).toBe(false);expect(fs.existsSync(marker)).toBe(false);
+      f.setLive(false); fs.unlinkSync(sidecar);return true;
+    });
+    const post=vi.fn((value:unknown)=>({status:'posted' as const,id:(value as {id:string}).id,cursor:1}));
+    f.deps.ownedUpdate={dependencies:owned,quit,post};
+    return {...f,app,marker,owned,admission,resume,quit,post};
+  }
+
+  it('plans and applies the Pro paired upgrade without native handoff or owner confirmation', async()=>{
+    const f=coveredFixture();
+    const plan=await inspectConsumerDesktopUpgrade(f.deps,{...options,requireApp:true});
+    expect(plan).toMatchObject({state:'ready',installed:{version:'3.30.75'},candidate:{version:'3.30.76'},
+      app:{state:'update-available'},daemon:{restart:{ownerConfirmation:false,touchId:false,coveredBy:{
+        grantId:f.admission.grantId,surfaceDigest:f.surface.digest,transaction:expect.stringMatching(/^[a-f0-9]{32}$/),
+      }}}});
+    expect(f.quit).not.toHaveBeenCalled();
+    expect(await applyConsumerDesktopUpgrade(plan)).toMatchObject({state:'upgraded',applied:true,authorityResumed:true,busAudit:'posted',
+      daemon:{restart:{performed:true,ownerConfirmation:false,coveredBy:plan.daemon.restart.coveredBy}}});
+    expect(f.quit).toHaveBeenCalledOnce(); expect(f.resume).toHaveBeenCalledOnce(); expect(f.post).toHaveBeenCalledOnce();
+    expect(f.post).toHaveBeenCalledWith(expect.objectContaining({body:expect.objectContaining({kind:'desktop.update.resume'})}));
+    expect(f.deps.residentStop).not.toHaveBeenCalled();
+    expect(JSON.parse(fs.readFileSync(join(f.app,'Contents/Info.plist'),'utf8')).CFBundleShortVersionString).toBe('3.30.76');
+    expect(fs.realpathSync(f.current)).toBe(join(dirname(f.old),f.manifest.source.revision));
+    expect(fs.existsSync(f.marker)).toBe(false);
+    expect(fs.existsSync(join(f.home,'.ashlr/KILL'))).toBe(false);
+    const {transaction:stage}=plan.daemon.restart.coveredBy!;
+    expect(fs.existsSync(join(f.home,'.ashlr/updates/consumer-staging',`upgrade-${stage}`,'consumer-attempt.json'))).toBe(true);
+    expect(await applyConsumerDesktopUpgrade(plan)).toMatchObject({state:'held',reason:'inspection-required'});
+    expect(f.post).toHaveBeenCalledOnce();
+  });
+
+  it('does not quit or hold Stop when authority changes after the covered plan',async()=>{
+    const f=coveredFixture();
+    const plan=await inspectConsumerDesktopUpgrade(f.deps,{...options,requireApp:true});
+    expect(plan.state).toBe('ready');
+    f.admission.envelopeDigest='f'.repeat(64);
+    expect(await applyConsumerDesktopUpgrade(plan)).toMatchObject({state:'held',reason:'resume-grant-changed',authorityResumed:false});
+    expect(f.quit).not.toHaveBeenCalled();expect(fs.existsSync(f.marker)).toBe(false);
+    expect(f.post).toHaveBeenCalledOnce();
+    expect(f.post).toHaveBeenCalledWith(expect.objectContaining({body:expect.objectContaining({kind:'desktop.update.hold',reason:'resume-grant-changed'})}));
+  });
+
+  it('keeps the manual Stop plan for a host with an older dispatcher',async()=>{
+    const f=coveredFixture();
+    f.owned.hostCensus=()=>({state:'unsupported',activeJobs:0,unknown:1});
+    expect(await inspectConsumerDesktopUpgrade(f.deps,{...options,requireApp:true})).toMatchObject({
+      state:'ready',daemon:{restart:{ownerConfirmation:true,reason:'drain-interlock-unsupported'}},
+    });
+    expect(f.quit).not.toHaveBeenCalled();
+  });
+
+  it('holds on a refused normal quit and leaves a fresh upgrade eligible',async()=>{
+    const f=coveredFixture(), opt={...options,requireApp:true};
+    f.quit.mockReturnValueOnce(false);
+    const plan=await inspectConsumerDesktopUpgrade(f.deps,opt);
+    expect(await applyConsumerDesktopUpgrade(plan)).toMatchObject({state:'held',reason:'app-quit-unverified',applied:false});
+    expect(fs.realpathSync(f.current)).toBe(f.old);
+    expect(fs.existsSync(f.marker)).toBe(false);
+    expect(fs.existsSync(join(dirname(f.old),f.manifest.source.revision))).toBe(false);
+    expect(await inspectConsumerDesktopUpgrade(f.deps,opt)).toMatchObject({state:'ready'});
+  });
   it('does not claim already-current with an absent required app',async()=> {
     const f=fixture('3.30.24');
     expect(await inspectConsumerDesktopUpgrade(f.deps,{...options,requireApp:true})).toMatchObject({state:'held',reason:'app-needs-owner',app:{state:'absent'}});
