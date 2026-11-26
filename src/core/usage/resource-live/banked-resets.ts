@@ -1,7 +1,10 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { readPrivateJson, readResourceEvidenceFile, updateEvidence } from './store.js';
-import { RESOURCE_LIVE_STALE_MS, type BankedResetGrant, type BurnDownPlan, type BurnDownRow } from './types.js';
+import {
+  CODEX_RESET_BANK_MIN_VERSION, CODEX_RESET_BANK_TOO_OLD, CODEX_RESET_BANK_UNKNOWN_REASONS, RESOURCE_LIVE_STALE_MS,
+  type BankedResetGrant, type BurnDownPlan, type BurnDownRow, type CodexResetBankUnknownReason,
+} from './types.js';
 
 const time = z.iso.datetime().refine(value => Number.isFinite(Date.parse(value)));
 const grantSchema = z.object({
@@ -13,19 +16,34 @@ const grantSchema = z.object({
 export const bankSchema = z.object({ observed_at: time, count: z.number().int().min(0).max(100), grants: z.array(grantSchema).max(100) })
   .strict().refine(row => row.grants.reduce((n, grant) => n + grant.count, 0) === row.count);
 
-export async function publishCodexResetBank(runsDir: string, observedAt: string, grants: BankedResetGrant[]): Promise<void> {
-  const bank = bankSchema.safeParse({ observed_at: observedAt, count: grants.length, grants });
-  if (!bank.success) return;
+const BANK_KEY = 'codex-personal-resets';
+const STATUS_KEY = 'codex-personal-reset-status';
+const resetStatusSchema = z.object({ observed_at: time, unknown_reason: z.enum(CODEX_RESET_BANK_UNKNOWN_REASONS).nullable() }).strict();
+
+export function codexResetBankUpgradeHint(reason?: CodexResetBankUnknownReason | null): string | undefined {
+  return reason === CODEX_RESET_BANK_TOO_OLD ? `Upgrade codex-cli to ${CODEX_RESET_BANK_MIN_VERSION} or newer to read the reset bank.` : undefined;
+}
+
+export async function publishCodexResetBank(runsDir: string, observedAt: string, grants: BankedResetGrant[] | null,
+  reason?: CodexResetBankUnknownReason,
+): Promise<void> {
+  const bank = grants && bankSchema.safeParse({ observed_at: observedAt, count: grants.length, grants });
+  const status = resetStatusSchema.safeParse({ observed_at: observedAt, unknown_reason: bank?.success ? null : reason });
+  if (!status.success) return;
   await updateEvidence(runsDir, async readings => {
-    const key = 'codex-personal-resets';
-    const previous = bankSchema.safeParse(readings[key]);
-    const changed = !previous.success || Date.parse(previous.data.observed_at) < Date.parse(observedAt);
-    if (changed) readings[key] = bank.data;
-    return { changed, result: undefined };
+    const at = Date.parse(observedAt);
+    const previousStatus = resetStatusSchema.safeParse(readings[STATUS_KEY]);
+    const newerStatus = !previousStatus.success || Date.parse(previousStatus.data.observed_at) < at;
+    if (!newerStatus) return { changed: false, result: undefined };
+    readings[STATUS_KEY] = status.data;
+    const previousBank = bankSchema.safeParse(readings[BANK_KEY]);
+    if (bank?.success && (!previousBank.success || Date.parse(previousBank.data.observed_at) < at)) readings[BANK_KEY] = bank.data;
+    return { changed: true, result: undefined };
   });
 }
 
-interface ResetInputs { observed_at: string | null; grants: BankedResetGrant[] | null; queued: number | null }
+interface ResetInputs { observed_at: string | null; grants: BankedResetGrant[] | null; queued: number | null;
+  unknown_reason?: CodexResetBankUnknownReason }
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
   ? value as Record<string, unknown> : {};
 
@@ -33,8 +51,11 @@ export async function readBankedResets(runsDir: string, now: number): Promise<Re
   const [evidence, status] = await Promise.all([
     readResourceEvidenceFile(runsDir), readPrivateJson(join(runsDir, 'queue', 'status.json'), 1024 * 1024),
   ]).then(rows => rows.map(object));
-  const entry = evidence?.['schema'] === 'resource-evidence.v1' ? object(evidence['readings'])['codex-personal-resets'] : null;
-  const parsed = bankSchema.safeParse(entry);
+  const readings = evidence?.['schema'] === 'resource-evidence.v1' ? object(evidence['readings']) : {};
+  const parsed = bankSchema.safeParse(readings[BANK_KEY]);
+  const nativeStatus = resetStatusSchema.safeParse(readings[STATUS_KEY]);
+  const statusAge = nativeStatus.success ? now - Date.parse(nativeStatus.data.observed_at) : Infinity;
+  const reason = nativeStatus.success && statusAge >= 0 && statusAge < RESOURCE_LIVE_STALE_MS ? nativeStatus.data.unknown_reason : null;
   const age = parsed.success ? now - Date.parse(parsed.data.observed_at) : Infinity;
   const tick = now - Date.parse(String(status?.['last_tick'] ?? ''));
   const queued = object(object(status?.['lanes'])['codex-personal'])['queued'];
@@ -43,6 +64,7 @@ export async function readBankedResets(runsDir: string, now: number): Promise<Re
     .sort((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at)) : null;
   return {
     observed_at: grants && parsed.success ? parsed.data.observed_at : null,
+    ...(!grants && reason ? { unknown_reason: reason } : {}),
     grants, queued: status?.['schema'] === 'dispatchd.status.v1' && tick >= 0 && tick <= 5 * 60_000 &&
       typeof queued === 'number' && Number.isSafeInteger(queued) && queued >= 0 ? queued : null,
   };
@@ -51,9 +73,10 @@ export async function readBankedResets(runsDir: string, now: number): Promise<Re
 export function planBankedReset(
   input: ResetInputs, allowances: BurnDownRow[], sources: ReadonlyMap<string, string | null>, now: number,
 ): NonNullable<BurnDownPlan['banked_resets']> {
-  const { grants, observed_at, queued } = input;
+  const { grants, observed_at, queued, unknown_reason } = input;
   const output: NonNullable<BurnDownPlan['banked_resets']> = {
     observed_at, grants, count: grants?.reduce((sum, grant) => sum + grant.count, 0) ?? null, proposal: null,
+    ...(unknown_reason ? { unknown_reason } : {}),
   };
   if (!grants?.length || queued === null || queued === 0) return output;
   const windows = allowances.flatMap(row => {

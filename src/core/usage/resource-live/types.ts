@@ -167,8 +167,14 @@ export interface BurnDownPlan {
   /** Lanes in spend order, each once. Lanes whose every allowance is held are absent. */
   lane_order: string[];
   allowances: BurnDownRow[];
-  banked_resets?: { observed_at: string | null; count: number | null; grants: BankedResetGrant[] | null; proposal: BankedResetProposal | null };
+  banked_resets?: { observed_at: string | null; count: number | null; grants: BankedResetGrant[] | null; proposal: BankedResetProposal | null;
+    unknown_reason?: CodexResetBankUnknownReason };
 }
+
+export const CODEX_RESET_BANK_MIN_VERSION = '0.172.0';
+export const CODEX_RESET_BANK_TOO_OLD = `codex-cli-too-old (<${CODEX_RESET_BANK_MIN_VERSION})` as const;
+export const CODEX_RESET_BANK_UNKNOWN_REASONS = [CODEX_RESET_BANK_TOO_OLD, 'codex-cli-version-unknown', 'codex-reset-bank-unavailable'] as const;
+export type CodexResetBankUnknownReason = typeof CODEX_RESET_BANK_UNKNOWN_REASONS[number];
 
 export interface BankedResetGrant {
   count: number;

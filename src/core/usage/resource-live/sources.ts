@@ -59,7 +59,7 @@ export interface ResourceLiveSourceOptions extends LiveSourcesConfig {
   readClaudeQuota?: (runsDir: string) => Promise<ClaudeQuotaReadingV1 | null>;
   readClaudeEvent?: (nowMs: number) => unknown;
   readFable?: (nowMs: number) => FablePlan;
-  readCodex?: (home: string) => Promise<Pick<CodexUsageReading, 'pctUsed' | 'resetAt' | 'fetchedAt' | 'windows' | 'resetBank'>>;
+  readCodex?: (home: string) => Promise<Pick<CodexUsageReading, 'pctUsed' | 'resetAt' | 'fetchedAt' | 'windows' | 'resetBank' | 'resetBankUnknownReason'>>;
   readGrok?: (nowMs: number) => Promise<GrokUltraRunway>;
   resourceReaders?: UsageResourceReaderDeps;
   /** Devin weekly session-list measurement and the last published one. */
@@ -115,8 +115,8 @@ function codexPersonal(o: ResourceLiveSourceOptions): Record<'5h' | 'weekly', Re
     if (last?.at !== now) {
       const reading = (o.readCodex ?? (dir => readCodexUsage({ home: dir, includeResetBank: true })))(home).then(async row => {
         const fetched = Date.parse(row.fetchedAt);
-        if (row.resetBank && Number.isFinite(fetched) && now - fetched < RESOURCE_LIVE_STALE_MS) {
-          await publishCodexResetBank(o.runsDir, iso(Math.min(now, fetched)), row.resetBank).catch(() => {});
+        if ((row.resetBank || row.resetBankUnknownReason) && Number.isFinite(fetched) && now - fetched < RESOURCE_LIVE_STALE_MS) {
+          await publishCodexResetBank(o.runsDir, iso(Math.min(now, fetched)), row.resetBank ?? null, row.resetBankUnknownReason).catch(() => {});
         }
         return row;
       });

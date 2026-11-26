@@ -70,6 +70,7 @@ describe('CMP isolated status and log pipeline', () => {
   let sent: Record<string, unknown>[];
   let child: EventEmitter & { stdin: Writable; stdout: PassThrough; stderr: PassThrough; kill: ReturnType<typeof vi.fn> };
   let nativePayload: unknown;
+  let userAgent: string | undefined;
   let mode: string;
   let privateDiagnostic: string;
 
@@ -78,7 +79,7 @@ describe('CMP isolated status and log pipeline', () => {
     root = await mkdtemp(join(await realpath(tmpdir()), 'phantom-cmp-usage-test-'));
     home = join(root, 'cmp');
     await mkdir(join(home, '.codex'), { recursive: true });
-    sent = []; mode = 'ok'; nativePayload = payload();
+    sent = []; mode = 'ok'; nativePayload = payload(); userAgent = undefined;
     // Secret-shaped fixtures are constructed at runtime and never printed.
     privateDiagnostic = ['sk', 'TEST', 'x'.repeat(48)].join('-');
     vi.mocked(spawn).mockImplementation((_command, _args, options) => {
@@ -97,7 +98,7 @@ describe('CMP isolated status and log pipeline', () => {
               if (request.method === 'initialize') {
                 const env = options!.env!;
                 const codexHome = mode === 'wrong-home' ? join(root, 'other') : env.CODEX_HOME;
-                child.stdout.write(JSON.stringify({ id: 1, result: { codexHome } }) + '\n');
+                child.stdout.write(JSON.stringify({ id: 1, result: { codexHome, userAgent } }) + '\n');
               } else if (request.method === 'account/rateLimits/read') {
                 child.stderr.write(privateDiagnostic);
                 if (mode === 'account-change') {
@@ -176,6 +177,19 @@ describe('CMP isolated status and log pipeline', () => {
       nativePayload = { ...payload(), rateLimitResetCredits: { availableCount: 2, credits } };
       expect((await readCodexUsage({ home, includeResetBank: true })).resetBank).toBeNull();
     }
+  });
+
+  it.each([
+    ['codex_cli_rs/0.169.0 (Mac OS 15; arm64) fixture', 'codex-cli-too-old (<0.172.0)'],
+    ['codex_cli_rs/0.172.0-alpha.1 (Mac OS 15; arm64) fixture', 'codex-cli-too-old (<0.172.0)'],
+    ['codex_cli_rs/0.172.0 (Mac OS 15; arm64) fixture', 'codex-reset-bank-unavailable'],
+    ['unrecognized 0.169.0', 'codex-cli-version-unknown'],
+    [undefined, 'codex-cli-version-unknown'],
+  ])('distinguishes a missing reset bank with App Server agent %s', async (agent, reason) => {
+    userAgent = agent;
+    expect(await readCodexUsage({ home, includeResetBank: true })).toMatchObject({
+      resetBank: null, resetBankUnknownReason: reason, pctUsed: 25,
+    });
   });
 
   it('reports each personal window by duration without changing the binding percentage', async () => {

@@ -160,6 +160,12 @@ available `codexRateLimits` grants with future expiries is recorded as full
 resets; an explicit empty list with count zero records an empty bank. Missing,
 partial or ambiguous details do not overwrite evidence or imply zero. Phantom
 does not store provider credit IDs or call a reset redemption method.
+If the field is absent and the App Server reports a version older than 0.172.0,
+the bank is unknown with reason `codex-cli-too-old (<0.172.0)`. If the version
+cannot be read, the reason is `codex-cli-version-unknown`. After the Resource Live
+poll records an old-CLI result, `phm resources`, `phm resources plan` and
+`phm doctor` suggest upgrading Codex; Phantom does not upgrade it automatically.
+Fresh desktop or manual bank evidence remains usable.
 Record the count and each separately expiring grant with the local CLI:
 
 ```sh

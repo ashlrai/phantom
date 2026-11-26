@@ -88,12 +88,24 @@ describe('personal Codex resets', () => {
     const observed = JSON.parse(readFileSync(path, 'utf8'));
     expect(observed).toEqual({ schema: 'resource-evidence.v1', readings: {
       'codex-personal-resets': { count: 1, observed_at: iso(NOW), grants: [grant] },
+      'codex-personal-reset-status': { observed_at: iso(NOW), unknown_reason: null },
     } });
     readCodex.mockResolvedValueOnce({ fetchedAt: iso(NOW + 1000), pctUsed: null, resetAt: null, resetBank: null });
     await poll(NOW + 1000);
     readCodex.mockResolvedValueOnce({ fetchedAt: iso(NOW - 1000), pctUsed: null, resetAt: null, resetBank: [] });
     await poll(NOW + 2000);
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(observed);
+  });
+
+  it('reports a fresh old-CLI diagnostic with an unknown count', async () => {
+    const runsDir = tmp();
+    const reason = 'codex-cli-too-old (<0.172.0)' as const;
+    const sources = defaultResourceLiveSources({ runsDir, operatorHome: '/Users/op', codexPersonalHome: '/pools/personal',
+      readCodex: async () => ({ fetchedAt: iso(NOW), pctUsed: null, resetAt: null, resetBank: null, resetBankUnknownReason: reason }) });
+    const { sidecar } = await runResourceLiveTick({ runsDir, sources: {
+      'codex-personal-5h': sources['codex-personal-5h'],
+    }, nowMs: NOW });
+    expect(sidecar.burn_down.banked_resets).toMatchObject({ count: null, grants: null, unknown_reason: reason });
   });
 
   it('proposes at most one expiring full reset for queued work before measured exhaustion', async () => {
