@@ -30,7 +30,7 @@ import { installScheduleUnits } from './steward.js';
 const USAGE =
   'usage: phm disk-maint [--apply] [--json] [--only <class>]... [--allow <class>]... ' +
   '[--compress-days N] [--prune-days N]\n' +
-  '       phm disk-maint schedule [--install] [--apply] [--hour 0-23]\n' +
+  '       phm disk-maint schedule [--install] [--apply] [--hour 0-23 | --worktrees]\n' +
   `classes: ${ALL_CLASSES.join(', ')}  (gated: ${[...GATED_CLASSES].join(', ')})`;
 
 type Output = { log: (message: string) => void; error: (message: string) => void };
@@ -53,7 +53,7 @@ function schedule(argv: string[], deps: DiskMaintCliDeps): number {
   const flags = new Set<string>();
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
-    if (!['--hour', '--install', '--apply'].includes(arg) || flags.has(arg)) {
+    if (!['--hour', '--install', '--apply', '--worktrees'].includes(arg) || flags.has(arg)) {
       out.error(`error: unknown or repeated argument: ${arg}\n${USAGE}`);
       return 2;
     }
@@ -67,9 +67,14 @@ function schedule(argv: string[], deps: DiskMaintCliDeps): number {
       hour = Number(value);
     }
   }
+  const worktrees = flags.has('--worktrees');
+  if (worktrees && hour !== undefined) {
+    out.error('error: --worktrees runs every 30 minutes and cannot be combined with --hour');
+    return 2;
+  }
   try {
     const phmPath = deps.phmPath ?? fileURLToPath(new URL('../../bin/ashlr', import.meta.url));
-    const units = diskMaintSchedule({ phmPath, apply: flags.has('--apply'), hour, platform: deps.platform });
+    const units = diskMaintSchedule({ phmPath, apply: flags.has('--apply'), hour, worktrees, platform: deps.platform });
     if (!flags.has('--install')) {
       for (const unit of units) out.log(`# ${unit.path}\n${unit.contents}`);
       out.log('Re-run with --install to enable (report-only unless --apply).');
@@ -78,9 +83,9 @@ function schedule(argv: string[], deps: DiskMaintCliDeps): number {
     if (process.getuid?.() === 0) throw new Error('Install disk-maint as a regular user, not root.');
     const built = deps.built ?? (() => existsSync(fileURLToPath(new URL('../../dist/cli/index.js', import.meta.url))));
     if (!built()) throw new Error('Compiled CLI missing; run npm run build before installing the schedule.');
-    const code = installScheduleUnits(units, { logName: 'disk-maint.jsonl' });
+    const code = installScheduleUnits(units, { logName: worktrees ? 'disk-maint-worktrees.jsonl' : 'disk-maint.jsonl' });
     if (code !== 0) return code;
-    out.log(`disk-maint scheduled daily (${flags.has('--apply') ? 'apply' : 'report-only'}).`);
+    out.log(`disk-maint scheduled ${worktrees ? 'every 30 minutes, worktrees only' : 'daily'} (${flags.has('--apply') ? 'apply' : 'report-only'}).`);
     return 0;
   } catch (error) {
     out.error(`error: ${(error as Error).message}`);
@@ -100,6 +105,7 @@ export function formatDiskMaint(plan: DiskMaintPlan, applied?: Awaited<ReturnTyp
     const tag = cls.gated && !cls.enabled ? ` - gated, ${cls.note ?? 'off'}` : '';
     const freed = result ? ` - freed ${gb(result.freedBytes)}${result.failures ? `, ${result.failures} failed` : ''}${result.refusals ? `, ${result.refusals} refused` : ''}` : '';
     lines.push(`${cls.id}: ${cls.candidates.length} items, ${gb(cls.bytes)}${cls.complete ? '' : ' (partial scan)'}${tag}${freed}`);
+    if (cls.reasonCounts) lines.push(`  ${Object.entries(cls.reasonCounts).sort().map(([reason, count]) => `${reason}=${count}`).join(', ')}`);
     for (const r of result?.results ?? []) {
       if (r.status === 'done') lines.push(`  done: ${r.path} - ${gb(r.freedBytes)}${r.detail ? ` (${r.detail})` : ''}`);
       else if (r.status === 'failed') lines.push(`  FAILED: ${r.path} - ${r.detail ?? 'error'}`);
@@ -182,10 +188,11 @@ export async function cmdDiskMaint(args: string[], deps: DiskMaintCliDeps = {}):
   }
   const roots = deps.roots ?? resolveMaintRoots(rootOverrides);
   const plan = await planDiskMaint({
+    readJobs: deps.readJobs, readWorktreeProcesses: deps.readWorktreeProcesses, worktreeHasUnpushed: deps.worktreeHasUnpushed,
     ...deps.plan, roots, only: only.size ? only : undefined, allow, policy, now: deps.now,
     deadlineMs: deps.deadlineMs,
   });
-  const applied = apply ? await applyDiskMaint(plan, { roots, runner: deps.runner, now: deps.now, readJobs: deps.readJobs, freeBytes: deps.freeBytes }) : undefined;
+  const applied = apply ? await applyDiskMaint(plan, { ...deps, roots }) : undefined;
   if (json) {
     out.log(JSON.stringify(sanitizePublicJson({ ...plan, apply, ...(applied ? { reclaimAdvice: null, freeGb: applied.freeGb, results: applied.classes, totals: { ...plan.totals, freedBytes: applied.totals.freedBytes, failures: applied.totals.failures } } : {}) }), null, 2));
   } else {

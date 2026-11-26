@@ -58,6 +58,8 @@ const baseDeps = (extra: MaintDeps = {}): MaintDeps => ({
   now: NOW,
   roots,
   readJobs: HEALTHY(''),
+  readWorktreeProcesses: async () => ({ argv: '', cwd: '' }),
+  worktreeHasUnpushed: async () => false,
   kept: () => false,
   freeBytes: () => 200e9,
   measure: (_d: string) => ({ bytes: 1000, complete: true }),
@@ -302,6 +304,57 @@ describe('worktree classes', () => {
     const { cls } = await classPlan('worktrees-jobs', { readJobs: HEALTHY(ledger), kept: p => p === pinned });
     expect(cls.candidates).toHaveLength(0);
   });
+
+  it('classifies a leader-sized worktree root from terminal outcomes without a dispatcher finish', async () => {
+    const rows: Record<string, unknown>[] = [];
+    const groups = [
+      ['RQ-DEVINCLOUD-RQ-DVL-BUS', 65], ['RQ-DEVINCLOUD-RQ-DVL-RSI', 60],
+      ['RQ-MD', 29], ['RQ-PS', 19], ['RQ-REBASE-PHANTOM', 17], ['RQ-STACK', 13], ['RQ-MIXED', 643],
+    ] as const;
+    for (const [prefix, count] of groups) {
+      for (let i = 0; i < count; i++) {
+        const job = `${prefix}-${i}`;
+        dir(`Projects/ashlrai/wt/${job}`, 10);
+        if (i % 5 === 2) file(`.ashlr-runs/queue/run/${job}.batched`, 1, 9);
+        const prUrl = `https://github.com/ashlrai/phantom/pull/${i + 1}`;
+        if (i % 5 === 0 && prefix.startsWith('RQ-DEVINCLOUD-')) {
+          rows.push({ jobId: job, event: 'publish', prUrl, ts: '2026-10-01T00:05:00Z', headSha: 'a'.repeat(40) });
+        } else if (i % 5 !== 4) rows.push({ jobId: job, prUrl,
+          outcome: 'MERGED', mergedAt: '2026-10-01T00:05:00Z', source: 'metrics-outcomes-reconciler' });
+      }
+    }
+    const live = groups.flatMap(([prefix, count]) => Array.from({ length: count }, (_, i) => i)
+      .filter(i => i % 5 === 1).map(i => `n${roots.wtDir}/${prefix}-${i}/src`)).join('\n');
+    const { cls } = await classPlan('worktrees-jobs', {
+      readJobs: HEALTHY(jobsText(rows)),
+      readWorktreeProcesses: async () => ({ argv: '', cwd: live }),
+      worktreeHasUnpushed: async path => /-(?:\d*[38])$/.test(path),
+    });
+    expect(cls.candidates).toHaveLength(171);
+    expect(cls.reasonCounts).toEqual({
+      'publisher-pushed': 25, merged: 146, 'live-process': 171, 'active-lease': 170, 'unpushed-commits': 168, 'state-unknown': 166,
+    });
+  });
+
+  it('checks the exact cloud-publisher PR head, and keeps retried or queued jobs', async () => {
+    const names = ['RQ-DEVINCLOUD-PUSHED', 'RQ-RETRY', 'RQ-QUEUED'];
+    const ts = '2026-10-01T00:05:00Z';
+    const headSha = 'a'.repeat(40);
+    for (const name of names) dir(`Projects/ashlrai/wt/${name}`, 10);
+    writeFileSync(file('.ashlr-runs/queue/ready.tsv', 1, 9), 'RQ-QUEUED\tphantom\tcodex\twork\tqueue/prompt.md\n');
+    const checked: Array<[string, string | undefined]> = [];
+    const { cls } = await classPlan('worktrees-jobs', {
+      readJobs: HEALTHY(jobsText([
+        { job: names[0], event: 'publish', url: 'https://github.com/ashlrai/phantom/pull/1', ts, headSha },
+        { job: names[1], event: 'outcome', state: 'CLOSED', ts },
+        { job: names[1], event: 'claim' },
+        { job: names[2], event: 'outcome', state: 'CLOSED', ts },
+      ])),
+      worktreeHasUnpushed: async (path, head) => { checked.push([path, head]); return head !== headSha; },
+    });
+    expect(checked).toEqual([[join(roots.wtDir, names[0]!), headSha]]);
+    expect(cls.reasonCounts).toEqual({ 'publisher-pushed': 1, 'state-unknown': 1, queued: 1 });
+  });
 });
 
 describe('bridge-targets class', () => {
@@ -423,10 +476,38 @@ describe('apply', () => {
       return '';
     };
     const plan = await planDiskMaint(baseDeps({ readJobs: HEALTHY(ledger), only: new Set(['worktrees-runs']) }));
-    const applied = await applyDiskMaint(plan, { roots, runner });
+    const applied = await applyDiskMaint(plan, { ...baseDeps({ readJobs: HEALTHY(ledger) }), runner });
     expect(calls.some(a => a.includes('worktree') && a.includes('remove'))).toBe(true);
     expect(calls.flat().some(a => a === '--force' || a === '-f')).toBe(false);
     expect(applied.classes[0]!.results[0]!.status).toBe('done');
+  });
+
+  it('rechecks leases created after planning before calling Git', async () => {
+    const name = 'RQ-NEW-LEASE';
+    dir(`Projects/ashlrai/wt/${name}`, 5);
+    const deps = baseDeps({ readJobs: HEALTHY(jobsText([
+      { job: name, event: 'outcome', state: 'CLOSED', ts: '2026-10-01T00:05:00Z' },
+    ])), only: new Set(['worktrees-jobs']) });
+    const plan = await planDiskMaint(deps);
+    expect(plan.classes[0]!.candidates).toHaveLength(1);
+    file(`.ashlr-runs/queue/run/${name}.batched`, 1, 0);
+    const applied = await applyDiskMaint(plan, { ...deps, runner: async () => { throw new Error('must not run Git'); } });
+    expect(applied.totals.refusals).toBe(1);
+    expect(applied.totals.failures).toBe(0);
+  });
+
+  it('preserves a worktree containing protected payloads, including when they appear after planning', async () => {
+    const name = 'RQ-WITH-PAYLOAD';
+    dir(`Projects/ashlrai/wt/${name}`, 5);
+    const deps = baseDeps({ readJobs: HEALTHY(jobsText([
+      { job: name, event: 'outcome', state: 'CLOSED', ts: '2026-10-01T00:05:00Z' },
+    ])), only: new Set(['worktrees-jobs']) });
+    const plan = await planDiskMaint(deps);
+    expect(plan.classes[0]!.candidates).toHaveLength(1);
+    file(`Projects/ashlrai/wt/${name}/ignored/model.gguf`, 1, 0);
+    expect((await planDiskMaint(deps)).classes[0]!.reasonCounts).toEqual({ 'protected-payload': 1 });
+    const applied = await applyDiskMaint(plan, { ...deps, runner: async () => { throw new Error('must not run Git'); } });
+    expect(applied.classes[0]!.results[0]).toMatchObject({ status: 'refused', detail: 'protected-payload' });
   });
 });
 
@@ -616,5 +697,16 @@ describe('schedule', () => {
     expect(() => diskMaintSchedule({ phmPath: 'relative', apply: false, platform: 'linux' })).toThrow(/paths/);
     expect(() => diskMaintSchedule({ phmPath: '/x\nExecStart=/bin/sh', apply: false, platform: 'linux' })).toThrow(/paths/);
     expect(() => diskMaintSchedule({ phmPath: '/bin/phm', apply: false, platform: 'win32' })).toThrow(/macOS and Linux/);
+  });
+
+  it('schedules a separate 30-minute job for the two worktree classes only', () => {
+    const opts = { phmPath: '/bin/phm', apply: true, worktrees: true };
+    const [mac] = diskMaintSchedule({ ...opts, platform: 'darwin' });
+    expect(mac!.path).toMatch(/disk-maint-worktrees\.plist$/);
+    expect(mac!.contents).toContain('<key>StartInterval</key><integer>1800</integer>');
+    expect(mac!.contents).toContain('<string>--only</string><string>worktrees-runs,worktrees-jobs</string>');
+    const [service, timer] = diskMaintSchedule({ ...opts, platform: 'linux' });
+    expect(service!.contents).toContain('"--apply" "--json" "--only" "worktrees-runs,worktrees-jobs"');
+    expect(timer!.contents).toContain('OnCalendar=*-*-* *:00,30:00');
   });
 });

@@ -17,7 +17,7 @@
  *                   temp worktrees under ~/.ashlr.
  *   caches          summary-cache entries and genome-index-*.cache files.
  *   worktrees-runs  ~/.ashlr-runs/wt job worktrees, wt-reap semantics.
- *   worktrees-jobs  ~/Projects/ashlrai/wt job worktrees, merged only.
+ *   worktrees-jobs  ~/Projects/ashlrai/wt job and publisher worktrees.
  *   bridge-targets  ~/.ashlr-runs/repos/<key>/target build output gone quiet.
  *   venvs           side-project .venv trees - gated behind --allow venvs.
  *   hub-claude      ashlr-hub/.claude session cache - gated --allow hub-claude.
@@ -32,8 +32,9 @@ import { readSource, type Source } from '../fleet/runs-parked-queue.js';
 import { ledgerPhase } from '../fleet/empty-cause.js';
 import { ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
 import { isKeptWorktree, readKeptWorktrees, measureWorktreeBytes, type KeptWorktrees } from '../worktree-retention.js';
-import { classifyWorktree, parseJobLedger } from '../../cli/disk.js';
+import { parseJobLedger } from '../../cli/disk.js';
 import { protectedReason, protectedRoots, resolveMaintRoots, type MaintRoots } from './protect.js';
+import { worktreeActivity, worktreeHasUnpushed, worktreeHold, worktreeOutcomes, worktreePayloadHold, type WorktreeDeps } from './worktrees.js';
 
 /** Matches dispatchd's DISK_REUSE_ONLY_GB default. Reported, never changed. */
 export const DISKGUARD_REUSE_ONLY_GB = 100;
@@ -73,6 +74,7 @@ export interface MaintClassPlan {
   note?: string;
   candidates: MaintCandidate[];
   bytes: number;
+  reasonCounts?: Record<string, number>;
 }
 
 export interface MaintPolicy {
@@ -159,7 +161,7 @@ function reclaimAdvice(classes: MaintClassPlan[], freeBytes: number | null, comp
     neededBytes, candidateBytes, estimatedShortfallBytes, status, message };
 }
 
-export interface MaintDeps {
+export interface MaintDeps extends WorktreeDeps {
   now?: number;
   roots?: MaintRoots;
   only?: ReadonlySet<MaintClassId>;
@@ -506,23 +508,39 @@ function scanCaches(ctx: ScanCtx): MaintCandidate[] {
   return out;
 }
 
-function scanWorktrees(ctx: ScanCtx, root: string, states: ReadonlySet<string>): MaintCandidate[] {
-  const out: MaintCandidate[] = [];
-  const minAge = ctx.policy.worktreeMinAgeHours;
-  for (const dir of children(root, ctx, 'dir')) {
-    if (dir.name.startsWith('guardian-') || dir.name.includes('/') || dir.name.includes('\\')) continue;
-    const path = join(root, dir.name);
-    const record = ctx.ledger?.get(dir.name);
-    const state = ctx.ledger === null ? 'unknown' : classifyWorktree(record);
-    if (!states.has(state)) continue;
-    const ageHours = record?.finishMs == null ? null : (ctx.now - record.finishMs) / HOUR_MS;
-    if (ageHours === null || ageHours <= minAge) continue;
-    if (ctx.kept(path)) continue;
-    if (refused(ctx, path)) continue;
-    const measured = ctx.measure(path);
-    out.push({ path, action: 'worktree-remove', bytes: measured.bytes, ageDays: Math.floor(ageHours / 24), mtimeMs: record?.finishMs ?? null, reason: `${state} worktree, finished ${Math.floor(ageHours)}h ago` });
-  }
-  return out;
+async function scanWorktrees(ctx: ScanCtx, root: string, outcomes: ReturnType<typeof worktreeOutcomes>,
+  activity: Awaited<ReturnType<typeof worktreeActivity>>, deps: WorktreeDeps): Promise<Pick<MaintClassPlan, 'candidates' | 'complete' | 'reasonCounts'>> {
+  const candidates: MaintCandidate[] = [];
+  const reasonCounts: Record<string, number> = {};
+  const bump = (reason: string) => { reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1; };
+  const dirs = children(root, ctx, 'dir').sort((a, b) => a.name.localeCompare(b.name));
+  let next = 0;
+  let complete = outcomes !== null && activity !== null;
+  await Promise.all(Array.from({ length: Math.min(4, dirs.length) }, async () => {
+    while (next < dirs.length) {
+      const { name } = dirs[next++]!;
+      const path = join(root, name);
+      const hold = worktreeHold(ctx.roots, name, activity);
+      if (hold) { bump(hold); continue; }
+      const record = outcomes?.get(name);
+      if (!record) { bump('state-unknown'); continue; }
+      const ageHours = (ctx.now - record.at) / HOUR_MS;
+      if (ageHours <= ctx.policy.worktreeMinAgeHours) { bump('too-new'); continue; }
+      if (ctx.kept(path)) { bump('kept'); continue; }
+      if (refused(ctx, path)) { bump('protected'); continue; }
+      if (Date.now() >= ctx.deadlineMs) { bump('budget'); complete = false; continue; }
+      const unpushed = await (deps.worktreeHasUnpushed ?? worktreeHasUnpushed)(path, record.prHead).catch(() => null);
+      if (unpushed !== false) { bump(unpushed ? 'unpushed-commits' : 'git-unknown'); continue; }
+      const payloadHold = await worktreePayloadHold(path, ctx.roots, ctx.protectedRoots, Math.min(ctx.deadlineMs, Date.now() + 500));
+      if (payloadHold) { bump(payloadHold); complete &&= payloadHold !== 'payload-unknown'; continue; }
+      const measured = ctx.measure(path);
+      complete &&= measured.complete;
+      bump(record.reason);
+      candidates.push({ path, action: 'worktree-remove', bytes: measured.bytes, ageDays: Math.floor(ageHours / 24), mtimeMs: record.at,
+        reason: `${record.reason} worktree, terminal evidence ${Math.floor(ageHours)}h ago` });
+    }
+  }));
+  return { candidates: candidates.sort((a, b) => a.path.localeCompare(b.path)), complete, reasonCounts };
 }
 
 function scanBridgeTargets(ctx: ScanCtx): MaintCandidate[] {
@@ -568,15 +586,14 @@ function scanHubClaude(ctx: ScanCtx): MaintCandidate[] {
   return out;
 }
 
-const SCANNERS: Record<MaintClassId, (ctx: ScanCtx) => MaintCandidate[]> = {
+type WorktreeClass = 'worktrees-runs' | 'worktrees-jobs';
+const SCANNERS: Record<Exclude<MaintClassId, WorktreeClass>, (ctx: ScanCtx) => MaintCandidate[]> = {
   'run-logs': scanRunLogs,
   'agent-sessions': scanAgentSessions,
   'ashlr-logs': scanAshlrLogs,
   'recovery-dirs': scanRecovery,
   'staging': scanStaging,
   'caches': scanCaches,
-  'worktrees-runs': (ctx) => scanWorktrees(ctx, join(ctx.roots.runsDir, 'wt'), new Set(['merged', 'empty'])),
-  'worktrees-jobs': (ctx) => scanWorktrees(ctx, ctx.roots.wtDir, new Set(['merged'])),
   'bridge-targets': scanBridgeTargets,
   'job-artifacts': scanJobArtifacts,
   'venvs': scanVenvs,
@@ -637,6 +654,8 @@ export async function planDiskMaint(deps: MaintDeps = {}): Promise<DiskMaintPlan
     refused: [],
   };
   const classes: MaintClassPlan[] = [];
+  let activity: ReturnType<typeof worktreeActivity> | undefined;
+  let outcomes: ReturnType<typeof worktreeOutcomes> | undefined;
   for (const id of ALL_CLASSES) {
     if (deps.only && !deps.only.has(id)) continue;
     const gated = GATED_CLASSES.has(id);
@@ -644,6 +663,13 @@ export async function planDiskMaint(deps: MaintDeps = {}): Promise<DiskMaintPlan
     let candidates: MaintCandidate[] = [];
     let complete = true;
     const note = CLASS_NOTES[id];
+    if (id === 'worktrees-runs' || id === 'worktrees-jobs') {
+      activity ??= worktreeActivity(roots, deps);
+      if (outcomes === undefined) outcomes = worktreeOutcomes(jobs);
+      const scan = await scanWorktrees(ctx, id === 'worktrees-runs' ? join(roots.runsDir, 'wt') : roots.wtDir, outcomes, await activity, deps);
+      classes.push({ id, gated, enabled, ...scan, bytes: scan.candidates.reduce((s, c) => s + c.bytes, 0) });
+      continue;
+    }
     if (!enabled && gated) {
       // Show what the flag would reclaim without listing actionable paths.
       try { candidates = SCANNERS[id](ctx); } catch { complete = false; }

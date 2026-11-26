@@ -15,6 +15,7 @@ phm disk-maint --only run-logs,agent-sessions
 phm disk-maint --apply --allow venvs --allow hub-claude
 phm disk-maint schedule          # print the daily launchd/systemd units
 phm disk-maint schedule --install --hour 4   # install the daily job (report-only)
+phm disk-maint schedule --worktrees         # print a separate 30-minute worktree timer
 ```
 
 ## Reclaim classes
@@ -39,9 +40,19 @@ and the apply report's `freedBytes` attribute every byte to one of:
   leftovers under `~/.ashlr/tmp` older than 7 days.
 - `caches`: `summary-cache/` entries and `genome-index-*.cache` files older
   than 14 days.
-- `worktrees-runs`: `~/.ashlr-runs/wt` worktrees whose job is `merged` or
-  `empty` in the ledger, using `git worktree remove` (never `--force`).
-- `worktrees-jobs`: `~/Projects/ashlrai/wt` worktrees, merged only.
+- `worktrees-runs`: job worktrees under `~/.ashlr-runs/wt`.
+- `worktrees-jobs`: job and publisher worktrees under `~/Projects/ashlrai/wt`.
+  Both classes use terminal metrics ledger outcomes (including outcome-only
+  reconciler rows), explicit empty finishes, or a cloud-publisher PR receipt.
+  A PR URL alone is not proof its current HEAD was pushed. The reaper requires
+  HEAD to match the published receipt's `headSha` or be reachable from a local
+  remote-tracking ref. It protects queued, leased, live, pinned, and unknown
+  trees. Git refuses dirty worktrees, and disk-maint refuses worktrees with
+  protected local payloads even when Git ignores them. Committed copies of
+  repository files whose names match a protection pattern are not local payloads.
+  The leader's cloud publisher is not shipped here; the worktree timer is the
+  repository-side cleanup path for these publisher receipts, not a post-push
+  hook in the installed publisher.
 - `job-artifacts`: archived dispatcher results (`JOB.publish.prev-<timestamp>`)
   older than 45 days for jobs whose latest attempt finished and merged. A
   surviving workspace, base, dispatch or reap marker keeps the artifact;
@@ -73,7 +84,7 @@ unprotects them:
 - `~/Documents` and the named Desktop client trees (`dhs*`, `rde*`,
   `client*work*`), including `hle-solver/models`
 - Git internals (`.git` components, refs, stashes: worktrees leave through
-  `git worktree remove`, which itself refuses dirty or unmerged trees)
+  `git worktree remove`, which itself refuses dirty worktrees)
 - Auth and secrets: `.ssh`, `.gnupg`, `.aws`, `.kube`, `.env*`, `netrc`,
   keychains, `secrets`/`credentials`/`tokens` names, `auth.json`,
   `config.toml`, key/cert extensions, plus `~/.phantom`, `~/.ashlr` secret
@@ -95,14 +106,17 @@ any failure.
 daily run at minute 43 of the chosen hour (03:43 by default). The installed
 job runs `phm disk-maint --json`; add `--apply` at install time for the
 applying variant. It never carries `--allow`: gated classes stay off in the
-scheduled job. Uninstall by deleting the printed unit paths and running the
+scheduled job. Use `phm disk-maint schedule --worktrees --install --apply`
+for the separate 30-minute worktree-only job. Preview without `--install`;
+`--worktrees` and `--hour` cannot be combined. Uninstall by deleting the printed unit paths and running the
 printed activation commands' disable forms (`launchctl bootout` /
 `systemctl --user disable --now`).
 
 ## JSON shape
 
 `phm disk-maint --json` prints `disk-maint.v1`: `roots`, `freeGb`,
-`diskguardReuseOnlyGb`, `jobsSource`, per-class `candidates`/`bytes`, plan
+`diskguardReuseOnlyGb`, `jobsSource`, per-class `candidates`/`bytes`, worktree
+`reasonCounts` (candidate outcomes and reasons for retention), plan
 `totals`, and the `refused` evidence list. With `--apply` the same object
 gains `results` (per-class per-path status and `freedBytes`), updates `freeGb`
 from the runs volume after the sweep, and adds
