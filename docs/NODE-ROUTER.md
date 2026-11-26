@@ -548,7 +548,9 @@ the same `{provider: {attempts, merged}}` tallies from
 `<runs-dir>/metrics/jobs.jsonl` (default `ASHLR_RUNS_DIR`, then
 `~/.ashlr-runs`; `--runs-dir` requires the flag). A job counts as an attempt
 only when its merge verdict is known — MERGED or CLOSED — so in-flight and
-aborted work never deflates a lane's rate; a merge recorded as reverted
+aborted work never deflates a lane's rate. A standing terminal no-op
+excludes the job even if a PR verdict is present. A later launch clears
+the no-op, allowing a known verdict to contribute again. A merge recorded as reverted
 counts as an attempt but not as a held merge; an absent ledger means no
 recorded outcomes, while an unreadable one refuses the route. Explicit `--outcomes`
 entries win per provider over ledger tallies, and the JSON plan reports the
