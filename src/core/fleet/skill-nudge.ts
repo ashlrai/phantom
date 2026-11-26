@@ -294,6 +294,13 @@ export function skillNudgeJobsFromLedger(
     const terminalAt = terminalPhase === null ? null : ledgerEventTs(row, terminalPhase);
     if ((rowAt !== null && rowAt > nowMs) || (terminalAt !== null && terminalAt > nowMs)) continue;
     const event = ledgerEventName(row);
+    const revertAt = [row['revertedAt'], row['reverted_at']]
+      .map(value => typeof value === 'string' ? Date.parse(value) : NaN)
+      .find(Number.isFinite);
+    const futureRevert = revertAt !== undefined && revertAt > nowMs;
+    const phase = ledgerPhase(row);
+    if (futureRevert && ((phase !== null && REVERT_PHASES.has(phase))
+      || event === 'revert' || event === 'reverted')) continue;
     const dispatched = (event !== null && ATTEMPT_EVENTS.has(event))
       || (event === 'claim' && row['launch_dedupe'] !== true);
     // A replay must not move a verdict past later failures or capture
@@ -345,7 +352,7 @@ export function skillNudgeJobsFromLedger(
     }
     const failureClass = failureClassOf(row, event);
     if (failureClass !== null) evidence.failureClass = failureClass;
-    if (hasRevertEvidence(row)) acc.reverted = true;
+    if (!futureRevert && hasRevertEvidence(row)) acc.reverted = true;
     if (outcome !== undefined) {
       acc.recutReady = false;
       acc.verdictEvidence = { ...evidence };
@@ -417,12 +424,12 @@ export async function syncSkillNudgesFromJobsLedger(
   const jobsPath = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
   const empty = { jobsPath, truncated: false, folded: 0, candidates: 0 };
   try {
+    const now = (opts.now ?? (() => new Date()))();
     const jobs = opts.jobsText !== undefined
       ? { state: 'read' as const, text: opts.jobsText, truncated: false }
       : await readLedgerTail(jobsPath);
     if (jobs.state !== 'read') return { state: jobs.state, ...empty };
     if (opts.signal?.aborted) return { state: 'read', ...empty, truncated: jobs.truncated };
-    const now = (opts.now ?? (() => new Date()))();
     const folded = skillNudgeJobsFromLedger(jobs.text, opts.revertedPrKeys, now.getTime());
     const candidates = nudgeSkillsFromJobs(folded, now.toISOString());
     return { state: 'read', jobsPath, truncated: jobs.truncated, folded: folded.length, candidates: candidates.length };
