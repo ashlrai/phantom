@@ -99,6 +99,46 @@ def tick(home, env_extra=None, script=None):
 def slots_of(home):
     return json.loads((home / '.ashlr-runs' / 'queue' / 'slots.json').read_text())
 
+class DispatchProfileTests(unittest.TestCase):
+    def test_only_ready_authorized_profile_lanes_hold_floor_and_missing_profile_restores_defaults(self):
+        slot = dict(target=0, floor=1, ceiling=4, hard_cap=3, executor_ready=True, capabilities=['git'])
+        with build(slots={'studio': dict(slot, resource_id='custom:studio'),
+                          'wrong-seat': dict(slot, resource_id='custom:elsewhere'),
+                          'unapproved': dict(slot, resource_id='custom:studio'),
+                          'paid-seat': dict(slot, resource_id='custom:paid'),
+                          'codex-cmp': dict(slot, resource_id='custom:studio')}) as root:
+            home = Path(root)
+            cfg = home / 'custom-config'
+            cfg.mkdir()
+            profile = cfg / 'fleet-profile.json'
+            profile.write_text(json.dumps(dict(schema='fleet.profile.v1', lanes=[
+                dict(id=lane, resource=resource, authorized=authorized, floor=8)
+                for lane, resource, authorized in [
+                    ('studio', 'custom:studio', True), ('wrong-seat', 'custom:studio', True),
+                    ('unapproved', 'custom:studio', False), ('paid-seat', 'custom:paid', True),
+                    ('codex-cmp', 'custom:studio', True), ('devin', 'devin', True),
+                ]
+            ])))
+            resource = dict(name='Studio', provider='Example', source='cli-status', unit='points')
+            (cfg / 'custom-resources.json').write_text(json.dumps(dict(schema='custom-resources.v1', resources=[
+                dict(resource, id='studio', kind='subscription'), dict(resource, id='paid', kind='metered'),
+            ])))
+            status = home / '.ashlr-runs' / 'queue' / 'status.json'
+            for expected in ({'studio'}, set(), {'studio', 'unapproved', 'paid-seat', 'wrong-seat',
+                                                'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local', 'omlx'}):
+                res = tick(home, {'ASHLR_HOME': str(cfg)})
+                self.assertEqual(res.returncode, 0, res.stderr)
+                lanes = json.loads(status.read_text())['lanes']
+                self.assertEqual(set(lanes), expected)
+                if expected == {'studio'}:
+                    self.assertEqual(lanes['studio']['floor'], 3)
+                    self.assertEqual(slots_of(home)['studio']['floor'], 1)
+                    profile.write_text('not JSON')
+                elif not expected:
+                    profile.unlink()
+                else:
+                    self.assertEqual(lanes['codex-personal']['floor'], 10)
+
 
 def events(home):
     f = home / '.ashlr-runs' / 'dispatch-events.log'

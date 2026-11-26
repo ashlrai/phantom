@@ -32,8 +32,6 @@ import {
 import { readOptOut, subscribeOptOut, writeOptOut } from '../dock/fleet-workspace-auto.js';
 import { resetDockLayout } from './dock-reset.js';
 import { Panel, SettingRow } from './SettingRow.js';
-import { UpdateStatusRow } from './UpdateStatusRow.js';
-import { ReleaseGapRow } from './ReleaseGapRow.js';
 import styles from './SettingsSection.module.css';
 
 /** How long to wait for native's answer before saying it did not come. */
@@ -94,8 +92,6 @@ export function DesktopSettingsPanel() {
   if (state === null) {
     return (
       <Panel title="Desktop">
-        <UpdateStatusRow />
-        <ReleaseGapRow />
         <p className={styles.panelNote} aria-busy={isDesktopShell() || undefined}>
           {isDesktopShell()
             ? 'Reading the desktop app’s settings…'
@@ -124,8 +120,6 @@ export function DesktopSettingsPanel() {
 
   return (
     <Panel title="Desktop">
-      <UpdateStatusRow />
-      <ReleaseGapRow />
       <FleetWorkspaceSetting />
       <SettingRow label="Dock layout" description="Forget saved tabs, splits and sizes and reopen the fleet workspace.">
         <Button size="sm" onClick={() => { resetDockLayout(); toast.show('Dock layout reset'); }}>Reset</Button>

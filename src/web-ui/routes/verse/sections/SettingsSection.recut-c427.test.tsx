@@ -8,6 +8,10 @@ import { evictAll } from '../../../data/cache.js';
 import { resetUiSettingsSyncForTest, UI_SETTINGS_ENDPOINT } from '../../../data/ui-settings-sync.js';
 import { getVerseUiState, resetVerseUi } from '../verse-ui-store.js';
 import { SettingsSection } from './SettingsSection.js';
+import { setSettingsView } from './settings-groups.js';
+
+// The long page these suites assert is the "All settings" view.
+beforeEach(() => { setSettingsView('all'); });
 
 describe('SettingsSection file reload through the recovered panels (C427)', () => {
   beforeEach(() => {

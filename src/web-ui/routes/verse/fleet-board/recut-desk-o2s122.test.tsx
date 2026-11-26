@@ -73,7 +73,7 @@ it('fetches /api/fleet/board and renders lanes, depth and the needs-Mason item',
   expect(screen.getByText('2026-11-09T13:00:00.000Z')).toHaveAttribute('datetime', '2026-11-09T13:00:00.000Z');
   expect(screen.getByText('Queue depth')).toBeInTheDocument();
   expect(screen.getByText('8')).toBeInTheDocument();
-  expect(screen.getAllByText('Needs Mason').length).toBeGreaterThanOrEqual(1);
+  expect(screen.getAllByText('Needs the owner').length).toBeGreaterThanOrEqual(1);
   expect(screen.getByText('approve the staging deploy')).toBeInTheDocument();
   // A lane the tick could not measure prints 'unknown', never 0.
   expect(screen.getAllByText('unknown').length).toBeGreaterThanOrEqual(1);

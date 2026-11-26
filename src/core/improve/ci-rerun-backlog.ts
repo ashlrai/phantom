@@ -226,12 +226,15 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
       if (!inWindow(entry, nowMs, windowMs)) continue;
       if (entry.outcome === 'ok') { callOk += 1; continue; }
       if (entry.outcome === 'failed') { callFailed += 1; continue; }
-      if (typeof entry.test !== 'string' || entry.test === '') continue;
       if (entry.outcome === 'attempt') {
-        attempts.set(entry.test, (attempts.get(entry.test) ?? 0) + 1);
+        const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
+        for (const test of new Set(tests)) {
+          if (typeof test !== 'string' || !test || test.length > JOURNAL_TEST_MAX) continue;
+          attempts.set(test, (attempts.get(test) ?? 0) + 1);
+        }
         continue;
       }
-      if (entry.outcome !== 'verdict') continue;
+      if (entry.outcome !== 'verdict' || typeof entry.test !== 'string' || !entry.test) continue;
       const group = verdicts.get(entry.test) ?? { test: entry.test, fails: 0, passes: 0, inconclusive: 0, failHeads: new Set<string>(), attempts: 0 };
       if (entry.verdict === 'fail') {
         group.fails += 1;

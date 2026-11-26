@@ -35,8 +35,8 @@ export async function cmdFleetNeeds(args: string[], deps: {
     return 1;
   }
   const lines: string[] = [];
-  if (!items.length) lines.push('Nothing needs Mason.');
-  else lines.push(...items.map(item => `${item.id}  ${item.text}`), `${items.length} item(s) need Mason.`, 'Resolve: ashlr fleet needs-resolve <id> --reply "..."');
+  if (!items.length) lines.push('Nothing needs the owner.');
+  else lines.push(...items.map(item => `${item.id}  ${item.text}`), `${items.length} item(s) need the owner.`, 'Resolve: ashlr fleet needs-resolve <id> --reply "..."');
   if (replyDeliveries.status === 'unavailable') lines.push('Reply delivery status unavailable.');
   else {
     if (replyDeliveries.pending.length > 0) {

@@ -2240,6 +2240,11 @@ cohorts, observation coverage, unknowns, thresholds and exit codes.
 [CONTRACT-AGENTNET-PEERBUS](docs/contracts/CONTRACT-AGENTNET-PEERBUS.md) pins
 session-bound callsigns, team-only peer messages, Slack provisioning drafts,
 the approval-gated broker and bounded chief-of-staff delegation.
+`phm agentnet peers read` additionally accepts post-admission filters
+(`--from`, `--exclude-from`, `--to`, `--since`, `--before`, `--contains`,
+`--id`, `--kind`, `--peer-kind`, `--thread`, `--job`, `--result`) owned by
+`agentnet/peer-inbox.ts`; they narrow the admitted page only and never affect
+admission or cursor semantics.
 ## Persistent specialist identities (RQ-GROK-SPECIALISTS-1)
 
 `src/core/fleet/roster.ts` owns `fleet-specialist-roster.v1`: named identities,
@@ -2892,12 +2897,14 @@ read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
 answer 503. Its query is the feed CLIs' filter set: `claims=true` adds the
 claims hold join, `open=true`/`claimable=true` imply it like the CLI flags,
 and `status`, `job`, `repo`, `provider`, `tier`, `to`, `owner`, `since`,
-`before`, `contains`, `channel` and `result` narrow the answer through the same
+`before`, `contains`, `channel`, `result` and `id` narrow the answer through the same
 `projectBusWorkFeedView` the
 CLIs use — jobs answer newest-first, `to`/`owner` resolve through the
 server-side identity registry with exact-label fallback, `channel` is the
 strict channel-name grammar prefix-matching `group:<channel>:` on the
-announcement address, and `repo`,
+announcement address, `id` keeps only jobs whose retained envelope
+citations (`postId`/`statusId`/`result.id`, the `busWorkFeedJobCitesEnvelope`
+match the feed `--id` flag and `work mine --id` share), and `repo`,
 `since` and `contains` share the CLI normalization. `limit` (1–200,
 `BUS_WORK_FEED_LIMIT_MAX`) pages the filtered view through the shared
 `sliceBusWorkFeedView`, reporting `matched`/`omitted`; absent, the whole
@@ -2954,7 +2961,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
 client-side feed filters (`{status?, jobId?, repo?, provider?, tier?, claimable?, open?,
-since?, before?, toMatch?, ownerMatch?, contains?, channel?, result?}`),
+since?, before?, toMatch?, ownerMatch?, contains?, channel?, result?, id?}`),
 newest-first order and per-job hold regrouping; `repo` is the lowercase
 `owner/name` key `busWorkFeedRepoKey(repo)` normalizes a `--repo` argument to
 (undefined for a non-slug, so callers reject it as usage) and matches a job's
@@ -3014,12 +3021,16 @@ footer adds `receipt=<id>` when the projection blamed a retained envelope,
 and a paged read's footer adds `matched=N omitted=M` —
 both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>`,
-`--channel <name>`, `--result <reserved|admitted|complete|failed>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--contains <text>` and
+`--channel <name>`, `--result <reserved|admitted|complete|failed>`, `--id <envelope-id>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--contains <text>` and
 `--limit <1-200>` beside
 `--status`; `--claimable`
 implies the claims join, `--since` and `--before` parse through the shared `parseSince`
 grammar — `since` inclusive, `before` exclusive on `updatedAt` — `--limit` runs `sliceBusWorkFeedView` after the filters (absent,
-the whole filtered view answers), and `--contains` takes a non-empty needle of at most
+the whole filtered view answers), `--id` keeps only jobs whose retained
+envelope citations include that wire id — the `work.post` announcement,
+newest `work.status` receipt or newest `work.result` receipt, the same
+`busWorkFeedJobCitesEnvelope` match `work mine --id` applies — and
+`--contains` takes a non-empty needle of at most
 `BUS_WORK_FEED_CONTAINS_MAX` (512) characters, refusing unparseable or
 overlong values as usage errors.
 `phm fleet work-feed [--claims]
@@ -4314,7 +4325,7 @@ and bound, each bracket naming `#<channel>:<topic>`. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the twelve dependencies the unified verbs touch — the
+read-only probe over the thirteen dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -4354,7 +4365,15 @@ resolve — `agentnetPaths().busRoot` = `realHome()/.ashlr/fleet`, or the
 probe's `root` override — `source` plus a `liveRows` count of unexpired
 coordination rows the send budget still counts; 0 on a verified-missing
 ledger, null when unreadable, never peer names, claim keys, digests, threads
-or bodies), and — as a verdict over the claim journal and
+or bodies), the session-handoff journal store (`listSessionHandoffs` over
+`<runsRoot>/handoffs` under the same runs root the wake probe resolves —
+`options.runsRoot`, else `ASHLR_RUNS_DIR` or `~/.ashlr-runs` — the read
+`phm checkpoint handoff list|show` and `fleet_session_handoffs` serve;
+`source` plus `journals` scanned, `open` non-`completed` journals,
+`awaitingFailover` open journals whose signal satisfies `handoffPressure`,
+`unreadable` journals that failed `show`'s validation and a `truncated`
+flag; 0 counts on a verified-missing store, null when unreadable, never job
+ids, lanes, models or signal payloads), and — as a verdict over the claim journal and
 coordination table rather than another dependency — the claim-store drift
 comparison (`readClaimStoreDrift` run over the probe's own two reads, the
 same `fleet.claim-drift.v1` read `ashlr fleet claim-drift` serves:
