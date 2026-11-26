@@ -506,6 +506,48 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ channel: '-lead' }).ok).toBe(false);
   });
 
+  it('filters to one group-address topic — the component every room shares', () => {
+    const root = store();
+    // Room traffic under two topics, the same topic in another room, agent
+    // mail and labels that never parse as a well-formed group address.
+    post(root, T0, { id: 'tp1', from: 'agent:claude-1', to: 'group:eng:general',
+      body: { kind: 'note', text: 'deploy window this afternoon?' } });
+    post(root, T0 + 1_000, { id: 'tp2', from: 'agent:codex-2', to: 'group:eng:releases',
+      body: { kind: 'note', text: 'release notes drafted', replyTo: 'tp1' } });
+    post(root, T0 + 2_000, { id: 'tp3', from: 'agent:grok-3', to: 'group:ops:general',
+      body: { kind: 'note', text: 'same topic, other room' } });
+    post(root, T0 + 3_000, { id: 'tp4', from: 'agent:claude-1', to: 'agent:codex-2',
+      body: { kind: 'note', text: 'direct mail never carries a topic' } });
+    post(root, T0 + 4_000, { id: 'tp5', from: 'agent:claude-1', to: 'group:eng',
+      body: { kind: 'note', text: 'bare group label, no topic' } });
+    post(root, T0 + 5_000, { id: 'tp6', from: 'agent:claude-1', to: 'group:eng:general:extra',
+      body: { kind: 'note', text: 'deeper label never parses' } });
+    const topic = read(root, { topic: 'general' });
+    expect(topic.messages.map(m => m.id)).toEqual(['tp3', 'tp1']);
+    expect(topic.matched).toBe(2);
+    // --topic composes with --channel into one room AND one topic; an
+    // unmatched topic is an empty page, not an error, and matched counts
+    // only accepted rows.
+    expect(read(root, { channel: 'eng', topic: 'general' }).messages.map(m => m.id)).toEqual(['tp1']);
+    expect(read(root, { topic: 'general', kind: 'ask' }).messages.map(m => m.id)).toEqual(['tp1']);
+    expect(read(root, { topic: 'gone' })).toMatchObject({ matched: 0, messages: [] });
+    expect(read(root, { topic: 'general', limit: 1 })).toMatchObject({ matched: 2, messages: [{ id: 'tp3' }] });
+    // The same read through the API query carries the filter untouched.
+    const parsed = parseAgentMessagesQuery({ topic: 'general', channel: 'eng' });
+    expect(parsed).toEqual({ ok: true, query: { topic: 'general', channel: 'eng' } });
+  });
+
+  it('parses --topic as the strict channel-name grammar and refuses anything else', () => {
+    expect(parseAgentMessagesQuery({ topic: 'general' })).toEqual({ ok: true, query: { topic: 'general' } });
+    expect(parseAgentMessagesQuery({ topic: 'team_2-x', kind: 'ask', limit: '5' })).toEqual({ ok: true, query: { topic: 'team_2-x', kind: 'ask', limit: 5 } });
+    expect(parseAgentMessagesQuery({ topic: 'General' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ topic: 'has space' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ topic: '' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ topic: 'x'.repeat(33) }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ topic: '-lead' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ topic: 'a:b' }).ok).toBe(false);
+  });
+
   it('filters to messages whose scrubbed summary carries the needle', () => {
     const root = store();
     post(root, T0, { id: 'c1', from: 'a', to: 'b', body: { kind: 'note', text: 'the parser fix is ready for review' } });
@@ -889,12 +931,13 @@ describe('phm messages projection', () => {
       const handled = await api(ctx, { url, headers: {} } as never, res, url.split('?')[0]!, 'GET');
       return { handled, status: status || (res as { statusCode: number }).statusCode, body };
     };
-    const ok = await send('/api/verse/agent-bus/messages?since=1704067200000&before=1704153600000&agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&from=atlas&excludeFrom=grok&inReplyTo=m-1&id=m-2&bodyKind=work.post&result=failed&limit=5');
+    const ok = await send('/api/verse/agent-bus/messages?since=1704067200000&before=1704153600000&agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&channel=eng&topic=general&contains=parser%20fix&from=atlas&excludeFrom=grok&inReplyTo=m-1&id=m-2&bodyKind=work.post&result=failed&limit=5');
     expect(ok.handled).toBe(true);
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ schema: 'agent-messages.v1' });
-    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', since: 1704067200000, before: 1704153600000, agent: 'claude', limit: 5, from: 'atlas', excludeFrom: 'grok', inReplyTo: 'm-1', id: 'm-2', bodyKind: 'work.post', result: 'failed' }]);
+    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', channel: 'eng', topic: 'general', contains: 'parser fix', since: 1704067200000, before: 1704153600000, agent: 'claude', limit: 5, from: 'atlas', excludeFrom: 'grok', inReplyTo: 'm-1', id: 'm-2', bodyKind: 'work.post', result: 'failed' }]);
     expect((await send('/api/verse/agent-bus/messages?limit=0')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?topic=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?kind=chatter')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?before=never')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?before=1h&before=2h')).status).toBe(400);

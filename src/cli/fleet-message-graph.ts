@@ -2,7 +2,7 @@
 import { parseAgentMessagesQuery, parseSince } from '../core/fleet/agent-messages.js';
 import { formatMessageGraphText, readMessageGraph } from '../core/fleet/message-graph.js';
 
-const usage = `Usage: phm fleet message-graph [--json] [--since <10m|2h|1d|ISO>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>]
+const usage = `Usage: phm fleet message-graph [--json] [--since <10m|2h|1d|ISO>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>]
 
 Recent agent messages as lines between organizations (default: the last 15
 minutes). Each line lists the agents behind it with message counts and the
@@ -18,7 +18,7 @@ Exit 0 read, 1 bus unreadable, 2 bad usage.`;
 /** The `phm messages` filter flags this read forwards to the shared parser — dashed flag to query key, the same set `phm map edges` takes (no `--limit`: the graph aggregates the whole matched set and never paginates). */
 const FILTER_FLAGS: Record<string, string> = {
   '--agent': 'agent', '--with': 'with', '--kind': 'kind', '--priority': 'priority',
-  '--job': 'job', '--thread': 'thread', '--channel': 'channel', '--contains': 'contains',
+  '--job': 'job', '--thread': 'thread', '--channel': 'channel', '--topic': 'topic', '--contains': 'contains',
   '--from': 'from', '--exclude-from': 'excludeFrom', '--to': 'to',
   '--in-reply-to': 'inReplyTo', '--id': 'id', '--body-kind': 'bodyKind', '--result': 'result',
 };

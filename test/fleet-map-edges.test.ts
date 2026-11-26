@@ -123,6 +123,9 @@ describe('phm map edges', () => {
     expect(filtered({ job: 'RQ-ONE-1' })).toMatchObject({ messages: 1 });
     expect(filtered({ thread: 'build' })).toMatchObject({ messages: 1 });
     expect(filtered({ channel: 'build' })).toMatchObject({ messages: 1 });
+    expect(filtered({ topic: 'general' })).toMatchObject({ messages: 1 });
+    expect(filtered({ channel: 'build', topic: 'general' })).toMatchObject({ messages: 1 });
+    expect(filtered({ topic: 'gone' })).toMatchObject({ messages: 0, edges: [] });
     expect(filtered({ inReplyTo: 'm1' })).toMatchObject({ messages: 1 });
     expect(filtered({ id: 'm3' })).toMatchObject({ messages: 1 });
     expect(filtered({ id: 'm-gone' })).toMatchObject({ messages: 0, edges: [] });
@@ -227,6 +230,9 @@ describe('GET /api/verse/fleet/control/map-edges', () => {
     expect((await send(api, `${MAP_EDGES_PATH}?excludeFrom=claude`)).body).toMatchObject({ messages: 3 });
     expect((await send(api, `${MAP_EDGES_PATH}?agent=claude&with=leader`)).body).toMatchObject({ messages: 4 });
     expect((await send(api, `${MAP_EDGES_PATH}?inReplyTo=m1`)).body).toMatchObject({ messages: 1 });
+    expect((await send(api, `${MAP_EDGES_PATH}?topic=general`)).body).toMatchObject({ messages: 1 });
+    expect((await send(api, `${MAP_EDGES_PATH}?channel=build&topic=general`)).body).toMatchObject({ messages: 1 });
+    expect((await send(api, `${MAP_EDGES_PATH}?topic=gone`)).body).toMatchObject({ messages: 0, edges: [] });
     expect((await send(api, `${MAP_EDGES_PATH}?bodyKind=note`)).body).toMatchObject({ messages: 1 });
     expect((await send(api, `${MAP_EDGES_PATH}?result=failed`)).body).toMatchObject({ messages: 0, edges: [] });
     // Filters compose with the window params.
@@ -234,7 +240,7 @@ describe('GET /api/verse/fleet/control/map-edges', () => {
     // The same once-each rule and the same parser refusals the other reads apply.
     for (const url of [`${MAP_EDGES_PATH}?kind=ask&kind=reply`, `${MAP_EDGES_PATH}?agent=claude&agent=codex`,
       `${MAP_EDGES_PATH}?kind=bogus`, `${MAP_EDGES_PATH}?with=claude`, `${MAP_EDGES_PATH}?result=released`,
-      `${MAP_EDGES_PATH}?bodyKind=has%20space`, `${MAP_EDGES_PATH}?inReplyTo=m1&inReplyTo=m2`, `${MAP_EDGES_PATH}?limit=5`])
+      `${MAP_EDGES_PATH}?bodyKind=has%20space`, `${MAP_EDGES_PATH}?inReplyTo=m1&inReplyTo=m2`, `${MAP_EDGES_PATH}?topic=BAD!`, `${MAP_EDGES_PATH}?limit=5`])
       expect((await send(api, url)).status).toBe(400);
   });
 

@@ -75,7 +75,7 @@ export function readMessageGraph(since: string = MAP_EDGES_DEFAULT_SINCE, option
  * aggregates the whole matched set into organization pairs and never
  * paginates, so a `limit` param is a bad query, never a silently ignored one.
  */
-const MESSAGE_GRAPH_FILTER_KEYS = ['agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains',
+const MESSAGE_GRAPH_FILTER_KEYS = ['agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'topic', 'contains',
   'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to', 'result'] as const;
 
 /** GET /api/fleet/message-graph[?since=10m&before=1h&job=RQ-1&…]: 200 the graph, 400 a bad query, 503 the typed "unknown" graph. Every filter is a `phm messages` param of the same name (camelCase where the flag is dashed), validated by the same parser, each at most once. */

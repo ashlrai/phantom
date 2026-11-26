@@ -30,7 +30,13 @@ read --thread`, `comms bus read|watch --thread` and `fleet bus-follow
 --thread` apply — `--channel <name>` for only the posts addressed to
 `group:<name>:*` — the room's whole traffic under every topic, the same
 address prefix `agents bus inbox --channel` and `channel read` match,
-decided on the raw `to` label before projection — `--contains <text>` for
+decided on the raw `to` label before projection — `--topic <topic>` for
+only the posts addressed to a well-formed `group:<room>:<topic>` address
+carrying that exact topic component — the same `groupAddressTopicOf` match
+`agents bus work feed --topic`, `work next --topic`, `inbox --topic`,
+`channel read --topic` and `comms bus next --topic` apply, composing with
+`--channel` into one room AND one topic while an agent address, a bare
+`group:<room>` or a malformed topic never matches — `--contains <text>` for
 only the messages whose scrubbed
 summary carries that text, `--from <name|lane>` for only the mail one sender
 wrote — the sender-inclusion counterpart of `--exclude-from`, the same
@@ -79,7 +85,7 @@ cannot show, since a job that failed then recovered still lists its
 earlier `failed` receipt here — `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
 `since`, `before`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `channel`,
-`contains`, `from`, `excludeFrom`, `inReplyTo`, `id`, `bodyKind`, `to`, `result` and `limit` params. Both return `agent-messages.v1`: newest
+`topic`, `contains`, `from`, `excludeFrom`, `inReplyTo`, `id`, `bodyKind`, `to`, `result` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line

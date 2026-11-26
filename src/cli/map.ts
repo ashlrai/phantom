@@ -2,7 +2,7 @@ import type { MapFilter } from '../core/fleet/map-filter.js';
 
 /** `phm map [--json]`: the whole fleet as one graph. Thin: core/fleet/live-map.ts builds it. `phm map edges`: core/fleet/map-edges.ts. */
 export const MAP_USAGE = `Usage: phm map [--json] [--lane <lane>] [--repo <repo>] [--state <running|waiting|done|failed|unknown>]
-       phm map edges [--json] [--since <10m|2h|1d|ISO> | --minutes <n>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>]
+       phm map edges [--json] [--since <10m|2h|1d|ISO> | --minutes <n>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>]
        phm map replay [--json] [--since <6h|90m|1d|ISO>] [--step <5m|1h>]
 
 The whole fleet on one map: the leader, each lane, its running jobs, every
@@ -27,15 +27,17 @@ same vocabulary \`phm messages\` parses — --agent with --with keeps only what
 those two said to each other; --kind keeps one classified kind; --priority
 keeps one envelope band; --job keeps the traffic naming one job; --thread
 keeps note/context bodies carrying that v2 thread label; --channel keeps
-posts addressed to group:<name>:*; --contains keeps summaries carrying that
-text; --from/--exclude-from keep or drop one sender's mail; --in-reply-to
-keeps only envelopes citing that id through their own inReplyTo field; --id
-keeps only the envelope whose own wire id equals it; --body-kind keeps only
-bodies carrying that exact kind discriminator; --result keeps only
-work.result receipts whose own outcome strictly equals reserved, admitted,
-complete or failed — with the same matching rules and identity resolution
-\`phm messages --help\` describes, so the lines answer the same filtered
-question every other bus read does.
+posts addressed to group:<name>:*; --topic keeps posts addressed to a
+well-formed group:<room>:<topic> address carrying that topic, composing
+with --channel into one room and one topic; --contains keeps summaries
+carrying that text; --from/--exclude-from keep or drop one sender's mail;
+--in-reply-to keeps only envelopes citing that id through their own
+inReplyTo field; --id keeps only the envelope whose own wire id equals it;
+--body-kind keeps only bodies carrying that exact kind discriminator;
+--result keeps only work.result receipts whose own outcome strictly equals
+reserved, admitted, complete or failed — with the same matching rules and
+identity resolution \`phm messages --help\` describes, so the lines answer
+the same filtered question every other bus read does.
 --json prints fleet.map-edges.v1. Exit 0 read, 1 bus unreadable, 2 bad usage.
 
 map replay shows the fleet as it was, one frame per step (default: the last 6
@@ -48,7 +50,7 @@ frames on its time slider. Exit 0 read, 1 jobs and messages both unreadable,
 /** The `phm messages` filter flags `map edges` forwards to the shared parser — dashed flag to query key. */
 const MAP_EDGE_FILTER_FLAGS: Record<string, string> = {
   '--agent': 'agent', '--with': 'with', '--kind': 'kind', '--priority': 'priority',
-  '--job': 'job', '--thread': 'thread', '--channel': 'channel', '--contains': 'contains',
+  '--job': 'job', '--thread': 'thread', '--channel': 'channel', '--topic': 'topic', '--contains': 'contains',
   '--from': 'from', '--exclude-from': 'excludeFrom', '--to': 'to',
   '--in-reply-to': 'inReplyTo', '--id': 'id', '--body-kind': 'bodyKind', '--result': 'result',
 };

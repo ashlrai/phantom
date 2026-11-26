@@ -124,6 +124,9 @@ describe('fleet message graph', () => {
     expect(filtered({ job: 'RQ-ONE-1' })).toMatchObject({ messages: 1 });
     expect(filtered({ thread: 'build' })).toMatchObject({ messages: 1 });
     expect(filtered({ channel: 'build' })).toMatchObject({ messages: 1 });
+    expect(filtered({ topic: 'general' })).toMatchObject({ messages: 1 });
+    expect(filtered({ channel: 'build', topic: 'general' })).toMatchObject({ messages: 1 });
+    expect(filtered({ topic: 'gone' })).toMatchObject({ messages: 0, groups: [] });
     expect(filtered({ inReplyTo: 'm1' })).toMatchObject({ messages: 1 });
     expect(filtered({ id: 'm3' })).toMatchObject({ messages: 1 });
     expect(filtered({ id: 'm-gone' })).toMatchObject({ messages: 0, groups: [], organizations: [] });
@@ -191,6 +194,7 @@ describe('fleet message graph', () => {
     expect(filtered('job=RQ-ONE-1')).toMatchObject({ status: 200, body: { messages: 1 } });
     expect(filtered('thread=build')).toMatchObject({ status: 200, body: { messages: 1 } });
     expect(filtered('channel=build')).toMatchObject({ status: 200, body: { messages: 1 } });
+    expect(filtered('topic=general')).toMatchObject({ status: 200, body: { messages: 1 } });
     expect(filtered('inReplyTo=m1')).toMatchObject({ status: 200, body: { messages: 1 } });
     expect(filtered('id=m3')).toMatchObject({ status: 200, body: { messages: 1 } });
     expect(filtered('bodyKind=note')).toMatchObject({ status: 200, body: { messages: 1 } });
@@ -210,7 +214,7 @@ describe('fleet message graph', () => {
     // The same once-each rule and the same parser refusals the other reads apply;
     // `limit` is not a graph param — the aggregate never paginates.
     for (const query of ['limit=5', 'kind=ask&kind=reply', 'agent=claude&agent=codex', 'kind=bogus', 'with=claude',
-      'result=released', 'bodyKind=has%20space', 'inReplyTo=m1&inReplyTo=m2', 'priority=P9', 'job=has space'])
+      'result=released', 'bodyKind=has%20space', 'inReplyTo=m1&inReplyTo=m2', 'priority=P9', 'job=has space', 'topic=BAD!'])
       expect(filtered(query).status).toBe(400);
   });
 
@@ -221,8 +225,8 @@ describe('fleet message graph', () => {
     expect(out.mock.lastCall![0]).toContain('phm fleet message-graph [--json] [--since <10m|2h|1d|ISO>] [--before <10m|2h|1d|ISO|epoch>]');
     for (const args of [['--since'], ['--json', '--json'], ['--since', 'soon'], ['--before'], ['--before', 'soon'], ['--apply'],
       ['--limit', '5'], ['--kind', 'bogus'], ['--with', 'claude'], ['--result', 'released'], ['--id'],
-      ['--agent', 'claude', '--agent', 'codex'], ['--kind', 'ask', '--kind', 'reply']]) expect(await cmdFleetMessageGraph(args)).toBe(2);
-    expect(err).toHaveBeenCalledTimes(13);
+      ['--topic', 'BAD TOPIC'], ['--agent', 'claude', '--agent', 'codex'], ['--kind', 'ask', '--kind', 'reply']]) expect(await cmdFleetMessageGraph(args)).toBe(2);
+    expect(err).toHaveBeenCalledTimes(14);
     expect(await cmdFleetMessageGraph(['--json', '--since', '1m'])).toBe(0);
     const printed = JSON.parse(out.mock.lastCall![0]);
     expect(Object.keys(printed)).toEqual(KEYS);
@@ -230,7 +234,7 @@ describe('fleet message graph', () => {
     expect(await cmdFleetMessageGraph(['--json', '--before', '1h'])).toBe(0);
     expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.message-graph.v1', version: 1 });
     // The phm messages filter flags parse through the shared parser and reach the read.
-    expect(await cmdFleetMessageGraph(['--json', '--kind', 'ask', '--contains', 'build'])).toBe(0);
+    expect(await cmdFleetMessageGraph(['--json', '--kind', 'ask', '--contains', 'build', '--topic', 'general'])).toBe(0);
     expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.message-graph.v1', version: 1, source: 'missing', messages: 0 });
     expect(await cmdFleetMessageGraph(['--json', '--from', 'claude', '--priority', 'P0'])).toBe(0);
     expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.message-graph.v1', version: 1, source: 'missing', messages: 0 });

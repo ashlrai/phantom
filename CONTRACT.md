@@ -5160,10 +5160,13 @@ reader's newest-first
 keeps only rows received strictly before its cutoff, composing with `--since`
 into one `[since, before)` window. `phm fleet map messages`, `phm fleet
 messages` and GET `/api/fleet/map/messages` share the `phm messages` filter
-vocabulary — agent/with, kind, priority, job, thread, channel, contains,
-from/exclude-from, in-reply-to, id, body-kind, to and result (the
+vocabulary — agent/with, kind, priority, job, thread, channel, topic,
+contains, from/exclude-from, in-reply-to, id, body-kind, to and result (the
 kind-scoped `work.result` outcome match `busBodyResultOutcome` applies,
-validated against `WORK_RESULT_OUTCOMES`) — applied by the same
+validated against `WORK_RESULT_OUTCOMES`; `topic` is the strict
+channel-name grammar matched as the topic component of a well-formed
+`group:<room>:<topic>` address through the shared `groupAddressTopicOf`
+parse every other bus read's `--topic` applies) — applied by the same
 `matchAgentMessages` pipeline every bus read uses, so a filtered question
 gets the same answer on each. The existing
 `fleet.map-messages.v1` adds optional scrubbed `text` (8192 characters); receipts
