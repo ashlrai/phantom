@@ -211,7 +211,11 @@ describe('verify-changed dedupe end-to-end', () => {
       expect(result.stdout).toContain('PASS contrib typecheck');
       expect(readFileSync(join(root, 'observed.txt'), 'utf8')).toBe('compiled');
     } else {
-      expect(result.stdout).toContain(`verify: 1 changed files (status), ${project}, incremental`);
+      // Backend src paths also select the scripts file-list check, so the
+      // scope names both; the fixture's scripts/ tree holds no .ts roots,
+      // so that step skips without touching the tsgo stub's observed.txt.
+      const scope = project === 'backend' ? 'backend and scripts' : project;
+      expect(result.stdout).toContain(`verify: 1 changed files (status), ${scope}, incremental`);
       expect(JSON.parse(readFileSync(join(root, 'observed.txt'), 'utf8'))).toEqual([[
         '--noEmit', '-p', project === 'web' ? 'src/web-ui/tsconfig.json' : 'tsconfig.json',
         '--incremental', '--tsBuildInfoFile', join(realpathSync(root), `.ashlr-gate/verify/${project}.tsbuildinfo`),
