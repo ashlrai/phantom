@@ -135,9 +135,33 @@ describe('foldWorkMarket', () => {
     const fold = foldWorkMarket(bad, NOW_MS, 168);
     expect(fold.unfed.size).toBe(0);
   });
+
+  it('counts only the last usable snapshot per tick at or before report time', () => {
+    const old = unfedRow(NOW_S, 'devin', { quota_exhausted: 1 });
+    const replacement = unfedRow(NOW_S, 'devin', { missing_capability: 2 });
+    const held = JSON.parse(replacement);
+    held.lanes.devin.held = true;
+    const inconsistent = JSON.parse(unfedRow(sec(DAY), 'devin'));
+    inconsistent.lanes.devin.headroom = 5;
+    const excessWaiting = JSON.parse(unfedRow(sec(2 * DAY), 'devin'));
+    excessWaiting.waiting = 1;
+    const rows = [old, replacement, J(held), J(inconsistent), J(excessWaiting), unfedRow(NOW_S + 1, 'devin')];
+
+    const fold = foldWorkMarket(rows.join('\n'), NOW_MS, 168);
+
+    expect(fold.unfed.get('devin')).toMatchObject({
+      ticks: 1, slotTicks: 2, blocked: new Map([['missing_capability', 2]]),
+    });
+  });
 });
 
 describe('unfedLaneCells / marketDecisionCells', () => {
+  it('does not turn replayed ticks into recurring unfed work', () => {
+    const actualTicks = unfedSeries('devin', UNFED_LANE_MIN_DAYS, 1);
+    const repeated = Array.from({ length: UNFED_LANE_MIN_TICKS }, () => actualTicks).flat();
+    expect(unfedLaneCells(foldWorkMarket(repeated.join('\n'), NOW_MS, 168))).toEqual([]);
+  });
+
   it('emits an unfed lane only across enough days and ticks', () => {
     const oneDay = unfedSeries('devin', 1, UNFED_LANE_MIN_TICKS + 2, { quota_exhausted: 3 });
     const foldOne = foldWorkMarket(oneDay.join('\n'), NOW_MS, 168);

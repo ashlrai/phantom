@@ -7,14 +7,10 @@
 import { parseLedgerTs } from '../metrics/loop.js';
 import { foldRouterOutcomes } from '../router/outcomes.js';
 import { laneLaunchTarget } from './lane-launch-target.js';
-import { derivedRowCodes, marketContext, marketLaneView, parseReadyMarketRows, stoppedReadyHints, type ReadyMarketRow, type UnfedMarketInputs } from './unfed-market.js';
+import { derivedRowCodes, marketContext, marketLaneView, marketBlockedCodes as codes, MARKET_REASON_CODE as CODE, MARKET_RECORDED_LANE as LANE, MAX_MARKET_CODES as MAX_CODES, unfedTickLanes, parseReadyMarketRows, stoppedReadyHints, type ReadyMarketRow, type UnfedMarketInputs } from './unfed-market.js';
 
 export const FLEET_UNFED_SCHEMA = 'fleet.unfed.v1';
 
-/** Reason codes are short lowercase identifiers written by the dispatcher. */
-const CODE = /^[a-z][a-z0-9_]{0,63}$/;
-const LANE = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
-const MAX_CODES = 32;
 /** Same freshness rule as the spend projection: a dispatcher tick in the last two minutes. */
 const STATUS_FRESH_MS = 120_000;
 
@@ -257,17 +253,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const count = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
-/** Keep only well-formed reason codes with nonnegative counts. */
-function codes(value: unknown): Record<string, number> {
-  const out: Record<string, number> = {};
-  if (!isRecord(value)) return out;
-  for (const [code, n] of Object.entries(value)) {
-    if (Object.keys(out).length >= MAX_CODES) break;
-    if (CODE.test(code) && count(n) && n > 0) out[code] = n;
-  }
-  return out;
-}
-
 function utilization(running: number, target: number): number | null {
   return target > 0 ? Math.round(Math.min(1, running / target) * 1000) / 1000 : null;
 }
@@ -440,27 +425,17 @@ export function foldUnfedHistory(jsonl: string | null, nowMs: number, windowHour
   if (jsonl === null) return history;
   const until = nowMs / 1000;
   const since = until - windowHours * 3600;
-  const ticks = new Map<number, { lane: string; slots: number; blocked: Record<string, number> }[]>();
+  const ticks = new Map<number, ReturnType<typeof unfedTickLanes>>();
   const lanes = new Map<string, UnfedHistoryLane & { last: number }>();
   for (const line of jsonl.split('\n')) {
     // Cheap prefilter: the file is mostly route decisions.
     if (!line.includes('"unfed_capacity"')) continue;
     let row: unknown;
     try { row = JSON.parse(line); } catch { continue; }
-    if (!isRecord(row) || row.schema !== 'work-market.v1' || row.event !== 'unfed_capacity' || !isRecord(row.lanes)) continue;
+    if (!isRecord(row) || row.schema !== 'work-market.v1' || row.event !== 'unfed_capacity') continue;
     const ts = row.ts;
     if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > until) continue;
-    const waiting = count(row.waiting) ? row.waiting : null;
-    const snapshot = [];
-    for (const [lane, value] of Object.entries(row.lanes)) {
-      if (!LANE.test(lane) || !isRecord(value) || value.unfed !== true || value.held === true
-        || !count(value.headroom) || value.headroom === 0
-        || !count(value.waiting_elsewhere) || value.waiting_elsewhere === 0) continue;
-      if (waiting !== null && value.waiting_elsewhere > waiting) continue;
-      if (count(value.running) && count(value.target) &&
-          value.headroom !== Math.max(0, value.target - value.running)) continue;
-      snapshot.push({ lane, slots: Math.min(value.headroom, value.waiting_elsewhere), blocked: codes(value.blocked) });
-    }
+    const snapshot = unfedTickLanes(row);
     if (snapshot.length > 0) ticks.set(ts, snapshot);
   }
   history.ticks = ticks.size;

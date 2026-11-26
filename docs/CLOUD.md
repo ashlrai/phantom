@@ -516,8 +516,9 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   (otherwise only visible through `phm fleet unfed`, `phm route
   explain` and the router outcome/weight folds — reports someone had
   to run and read). A lane becomes an item while its recorded unfed
-  ticks span enough distinct UTC days inside the 7-day window — free
-  target slots while runnable rows waited under other lanes' hints —
+  ticks span enough distinct UTC days inside the 7-day window. It counts the
+  last usable snapshot per timestamp at or before report time. It shares the
+  unfed report's cross-checks for holds, headroom and waiting counts.
   a (lane, reason-code) cell becomes an item while distinct jobs keep
   recording that lane's rejection for the same non-mechanical code
   across days. Each exact lane and code pair must meet the recurrence
