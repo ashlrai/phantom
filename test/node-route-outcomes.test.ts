@@ -90,6 +90,22 @@ describe('readRouteLaneOutcomes', () => {
     expect(read.outcomes).toEqual({ grok: { attempts: 2, merged: 1 } });
   });
 
+  it('excludes standing terminal no-ops even when the ledger records PR verdicts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'route-out-'));
+    ledger(dir, [
+      { job: 'already-merged', lane: 'codex', event: 'outcome', state: 'DONE-NOOP', launched: false },
+      { job: 'already-merged', lane: 'codex', state: 'MERGED' },
+      { job: 'already-closed', lane: 'claude', event: 'outcome', state: 'DONE-NOOP', launched: false },
+      { job: 'already-closed', lane: 'claude', state: 'CLOSED' },
+      { job: 'retried', lane: 'claude', event: 'outcome', state: 'DONE-NOOP', launched: false },
+      { job: 'retried', lane: 'claude', event: 'launch' },
+      { job: 'retried', lane: 'claude', state: 'MERGED' },
+    ]);
+
+    const read = await readRouteLaneOutcomes({ runsDir: dir });
+    expect(read.outcomes).toEqual({ claude: { attempts: 1, merged: 1 } });
+  });
+
   it('reports a missing ledger as missing with empty tallies, and a non-file as not-file', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'route-out-'));
     const missing = await readRouteLaneOutcomes({ runsDir: dir });
