@@ -120,3 +120,41 @@ describe('fleet_bus_inbox bodyKind filter', () => {
     expect(rest.parsed).toMatchObject({ messages: [], nextCursor: 3 });
   });
 });
+
+describe('fleet_bus_inbox result filter', () => {
+  it('exposes result in the tool schema beside the other read filters', async () => {
+    const client = await connect();
+    const { tools } = await client.listTools();
+    const tool = tools.find(candidate => candidate.name === 'fleet_bus_inbox');
+    expect(tool?.inputSchema.properties?.['result'])
+      .toMatchObject({ type: 'string', enum: ['reserved', 'admitted', 'complete', 'failed'] });
+    expect(tool?.description).toContain('result');
+  });
+
+  it.each([
+    [{ result: 'bogus' }], [{ result: '' }], [{ result: 5 }], [{ result: null }],
+    [{ result: 'COMPLETE' }], [{ result: 'P0' }],
+  ])('rejects invalid result arguments before invoking the reader: %j', async args => {
+    const busInbox = vi.fn();
+    const client = await connect({ status: async () => ({}), loop: async () => ({}), busInbox });
+    await expect(client.callTool({ name: 'fleet_bus_inbox', arguments: args }))
+      .rejects.toMatchObject({ code: -32602 });
+    expect(busInbox).not.toHaveBeenCalled();
+  });
+
+  it('keeps only work.result bodies reporting the requested outcome', async () => {
+    expect(post('r-complete', { kind: 'work.result', jobId: 'RQ-1', outcome: 'complete' }).status).toBe('posted');
+    expect(post('r-failed', { kind: 'work.result', jobId: 'RQ-1', outcome: 'failed' }).status).toBe('posted');
+    // A work.release outcome is a different vocabulary and never matches.
+    expect(post('r-release', { kind: 'work.release', claimKey: 'queue:RQ-1', outcome: 'failed' }).status).toBe('posted');
+    expect(post('r-note', { kind: 'note', text: 'done', outcome: 'failed' }).status).toBe('posted');
+    const client = await connect();
+    const failed = await callInbox(client, { result: 'failed' });
+    expect(failed.parsed['filters']).toEqual({ result: 'failed' });
+    expect(rows(failed.parsed).map(row => row.envelope.id)).toEqual(['r-failed']);
+    const complete = await callInbox(client, { result: 'complete' });
+    expect(rows(complete.parsed).map(row => row.envelope.id)).toEqual(['r-complete']);
+    const reserved = await callInbox(client, { result: 'reserved' });
+    expect(reserved.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0 });
+  });
+});

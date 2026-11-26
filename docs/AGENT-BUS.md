@@ -2051,8 +2051,10 @@ apply — `--kind`/`--topic` keep only protocol-v1 bodies whose
 namespace prefix like `fleet.*`, and `--body-kind <kind>` keeps only
 envelopes whose body carries that exact kind discriminator — the same
 `busBodyKind` own-field match `agents bus inbox --body-kind`, `channel
-read --body-kind`, `wakes --body-kind`, `agents conversations --body-kind`
-and `phm messages --body-kind` apply:
+read --body-kind`, `wakes --body-kind`, `agents conversations --body-kind`,
+`phm messages --body-kind`, `bus recent --body-kind`, `phm bus
+inbox --body-kind` and `fleet bus-follow --body-kind` apply, shared by
+`comms bus read|watch`'s `--body-kind` and `fleet_bus_inbox`'s `bodyKind`:
 the v2 `kind` field, else a bus-transport v1 `protocol.kind`, else the
 `type`/`schema` a kindless notice keys on, exact and case-sensitive, a
 body carrying no discriminator never matching and an unrecognized but
@@ -2061,7 +2063,9 @@ printable value an honest empty stream. `--result
 own `outcome` strictly equals the code — the same `busBodyResultOutcome`
 own-field match and `WORK_RESULT_OUTCOMES` vocabulary `phm messages
 --result`, `agents messages --result`, `fleet messages`, `bus recent`,
-`fleet_agent_messages`'s `result` and the work feed's `--result` share —
+`phm bus inbox --result`, `comms bus read|watch --result`,
+`fleet_bus_inbox`'s `result`, `fleet_agent_messages`'s `result` and the
+work feed's `--result` share —
 so the envelope-level audit trail a job-scoped follow already narrows by
 `--job` answers "stream only this job's failed result receipts" in one
 filtered read; every other body kind, including a `work.release` body's
