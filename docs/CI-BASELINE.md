@@ -563,7 +563,11 @@ verbose per-test line (`✓ file > suite > test`) resolves only the named
 test, while the default reporter's green-module line (`✓ file (N tests)`)
 resolves any failure identity in that file because every test the module
 contains passed on that run. Other pass output does not establish a test
-pass. The scan caps open PRs, runs, and jobs
+pass. A PR is eligible for an unaffected classification only when GitHub's
+changed-file count matches the number of distinct, valid paths returned.
+A partial listing can still show that the PR changed the failing file or a
+known dependency. Without such a match, a missing count or incomplete list
+leaves the PR's impact unknown. The scan caps open PRs, runs, and jobs
 at 100 each and reports unknown rather than drawing conclusions from truncated
 run/job listings. Master reproduction remains an explicit step in the fix brief.
 

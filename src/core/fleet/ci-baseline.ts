@@ -9,7 +9,7 @@ import { defaultCiGh } from './ci-failure-groups.js';
 import { nextFixGeneration } from './ci-fix-generations.js';
 
 type Failure = { testId: string; file: string; names: string; excerpt: string };
-type Pr = { number: number; headRefOid: string; headRefName: string; files: { path: string }[] };
+type Pr = { number: number; headRefOid: string; headRefName: string; files?: { path: string }[]; changedFiles?: number };
 type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string };
 type Job = { id: number; conclusion: string; head_sha: string };
 type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: number };
@@ -2555,7 +2555,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
 
   let prs: Pr[] = [];
   try {
-    const r = await gh(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', 'number,headRefOid,headRefName,files']);
+    const r = await gh(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', 'number,headRefOid,headRefName,files,changedFiles']);
     if (r.ok) prs = JSON.parse(r.stdout) as Pr[]; else errors.push('open PRs unreadable');
     if (!Array.isArray(prs)) { prs = []; errors.push('invalid PR list'); }
   } catch { errors.push('open PRs unreadable'); }
@@ -2588,6 +2588,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     }
     freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: incomplete ? 'incomplete-check' : 'unreadable-log-or-unverified-checkout' } : {}) });
     if (!known) continue;
+    const entries = Array.isArray(pr.files) ? pr.files : [];
+    const changedPaths = new Set(entries.flatMap(entry =>
+      typeof entry?.path === 'string' && entry.path.trim() !== '' ? [entry.path] : []));
+    const completeFiles = Array.isArray(pr.files) &&
+      pr.changedFiles === entries.length && changedPaths.size === entries.length;
     for (const failure of found) {
       // Lint-guard, first-paint, test-runner and install-step failures are
       // per-file/per-arm/per-runner/per-manifest like eslint: the checkers
@@ -2610,7 +2615,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // secret-scan/version-provenance trust gates have no vitest harness
       // at all, so the ambient set cannot reach any of them.
       const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === BUILD_STEP_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
-      const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
+      const touched = changedPaths.has(failure.file) ||
+        [...changedPaths].some(path => deps?.has(path) || ambient?.has(path))
+        ? true
+        : deps && ambient && completeFiles ? false : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }
   }
