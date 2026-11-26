@@ -3,12 +3,14 @@ import { hostname } from 'node:os';
 import type { DriveNodes, NodesStore } from '../core/drive/nodes/index.js';
 import { UsageError, joinHintCommand, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
 import { validId, type NodeAuth } from '../core/drive/nodes/state.js';
+import type { SelfUpdatePlan } from '../core/drive/nodes/phm-version.js';
 
 export interface NodeFleetDeps {
   store?: NodesStore;
   now?: () => number;
   probeAuth?: () => NodeAuth;
-  /** This build's version for the join `phm-<version>` cap; defaults to localPhmVersion. */
+  /** This build's version for the join `phm-<version>` cap and the status/list
+   * drift target; defaults to localPhmVersion. */
   phmVersion?: () => string | null;
   /** This computer's hostname for the join `--node` default; defaults to os.hostname. */
   hostname?: () => string;
@@ -54,7 +56,7 @@ function expiredRejoinHints(nodes: DriveNodes, out: Record<string, unknown>): Ma
   return hints.size ? hints : undefined;
 }
 
-function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<string, string>): string {
+function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<string, string>, drift?: SelfUpdatePlan): string {
   if (verb === 'join') {
     // Join is the first command every new node runs; its text answer is a
     // sentence, not the key:value dump, and it states the 30-second session
@@ -98,14 +100,29 @@ function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<s
       const cmd = rejoin?.get(nodeId);
       return cmd === undefined ? '' : ` — rejoin: ${cmd}`;
     };
+    // A node that outlived a phm upgrade keeps advertising its join-time build —
+    // beats renew the session but never re-stamp caps — so status reads the same
+    // drift verdict `phm node self-update` plans instead of leaving the stale
+    // `phm-<version>` cap for the operator to interpret. Only non-current
+    // states annotate; the version itself already sits in caps.
+    const driftFor = (nodeId: string): string => {
+      const row = drift?.nodes.find(n => n.nodeId === nodeId);
+      return row !== undefined && row.status !== 'current' ? ` phm=${row.status}` : '';
+    };
     const lines = [`Owner scope: ${scope}`,
-      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} slots=${n.slots ?? 'unbounded'}${n.capacity?.held ? ` held=${n.capacity.held}` : ''} caps=${n.caps.join(',') || '-'}${n.live ? '' : rejoinFor(n.nodeId)}`),
+      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} slots=${n.slots ?? 'unbounded'}${n.capacity?.held ? ` held=${n.capacity.held}` : ''} caps=${n.caps.join(',') || '-'}${driftFor(n.nodeId)}${n.live ? '' : rejoinFor(n.nodeId)}`),
       ...jobs.map(j => `job ${j.id} ${jobStateWords(j)}${fixes.has(j.id) ? ` — ${fixes.get(j.id)}` : ''}`)];
     // An empty scope is the first-run case: say so and print the join command,
     // the same next step `phm node plan` prints for a job with no live node.
     if (!nodes.length) lines.push('No nodes joined in this scope.');
     if (!jobs.length) lines.push('No jobs queued in this scope.');
     if (!nodes.length && !jobs.length && scope) lines.push(`Join this computer: phm node join --owner ${scope}`);
+    // self-update takes one --owner scope; a multi-scope status keeps the
+    // placeholder rather than silently checking only the first scope.
+    if (drift !== undefined && drift.drifted.length) {
+      const owner = scope.includes(',') ? '<scope>' : scope;
+      lines.push(`Some nodes run a different phm build than this machine or do not report one: phm node self-update --owner ${owner} reports the per-node update plan.`);
+    }
     return lines.join('\n');
   }
   if (verb === 'enqueue') {
@@ -208,7 +225,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       if (hasNodePool()) return cmdNodePool(verb, args);
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
-    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join }, { localPhmVersion, versionCap, versionFromCaps }] = await Promise.all([
+    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join }, { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }] = await Promise.all([
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
       import('../core/drive/nodes/phm-version.js')]);
@@ -263,7 +280,13 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     // already gets the same command in a session-expired error's fix. The
     // profile reads run only for the rendered verbs, never for --json.
     const rejoin = !json && (verb === 'status' || verb === 'list') ? expiredRejoinHints(drive, out) : undefined;
-    console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out, rejoin));
+    // status/list read phm-build drift against this machine through the same
+    // pure plan self-update prints, so the two commands can never disagree.
+    // Text only like rejoin: --json consumers already get caps per node.
+    const drift = !json && (verb === 'status' || verb === 'list')
+      ? planNodeSelfUpdate(out['nodes'] as Parameters<typeof planNodeSelfUpdate>[0], (deps.phmVersion ?? localPhmVersion)())
+      : undefined;
+    console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out, rejoin, drift));
     return 0;
   } catch (error) {
     const known = error instanceof UsageError;
