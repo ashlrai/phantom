@@ -657,9 +657,11 @@ for retry while later reruns still get checked.
 window: `pass`/`fail`/`inconclusive` counts, `pending` fired reruns still
 awaiting an outcome inside 24 hours, and `resolutionRate` (pass over
 pass+fail, null when nothing has resolved). Recurring-flake entries carry the
-same per-test verdict tallies and the `RQ-CIFLAKE-*` brief names them. Shared
-reruns contribute a workflow verdict only, since the run conclusion does
-not identify which test passed or failed. For singleton reruns, the per-test tally includes the workflow verdict. A `fail` verdict is evidence the classification may be wrong, not proof;
+same per-test verdict tallies and the `RQ-CIFLAKE-*` brief names them. A
+workflow verdict enters the per-test tally only when the baseline report
+identifies a single triggering test and records no other failures for that
+workflow run. Other recorded failures include groups ineligible for a rerun,
+such as PR-caused failures. A `fail` verdict is evidence the classification may be wrong, not proof;
 rerun firing rules are unchanged. In recurring-failure briefs from
 `phm improve discover`, a shared attempt counts once for each recorded
 triggering test. The shared workflow verdict does not count toward any

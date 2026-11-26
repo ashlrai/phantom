@@ -163,14 +163,21 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
         s.errors.push(...report.errors);
         const eligibleGroups = report.groups.filter(group =>
           group.classification === 'probable-flake' && group.action === 'rerun-failed');
+        const rerunGroups = new Set(eligibleGroups);
+        const runsWithOtherFailures = new Set<string>();
         const testsByRun = new Map<string, Set<string>>();
-        for (const group of eligibleGroups) {
-          if (typeof group.testId !== 'string' || !group.testId) continue;
-          const test = scrubSecrets(group.testId).slice(0, JOURNAL_TEST_MAX);
+        for (const group of report.groups) {
+          const test = rerunGroups.has(group) && typeof group.testId === 'string'
+            ? scrubSecrets(group.testId).slice(0, JOURNAL_TEST_MAX)
+            : '';
           for (const run of group.runs) {
             const key = rerunKey({ repo, ...run });
+            if (!test) {
+              runsWithOtherFailures.add(key);
+              continue;
+            }
             const tests = testsByRun.get(key) ?? new Set<string>();
-            if (test) tests.add(test);
+            tests.add(test);
             testsByRun.set(key, tests);
           }
         }
@@ -190,7 +197,9 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
             let ok = false;
             try { ok = (await gh(['run', 'rerun', String(run.runId), '--failed', '--repo', repo])).ok; }
             catch (error) { if (opts.signal.aborted) throw error; }
-            append({ ...entry, tests: undefined, at: new Date(now()).toISOString(), outcome: ok ? 'ok' : 'failed' });
+            // A failed-job rerun can include failures outside the triggering flakes.
+            const test = runsWithOtherFailures.has(rerunKey(entry)) ? undefined : entry.test;
+            append({ ...entry, test, tests: undefined, at: new Date(now()).toISOString(), outcome: ok ? 'ok' : 'failed' });
             if (ok) s.ok++; else s.failed++;
           }
         }
