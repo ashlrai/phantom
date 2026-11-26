@@ -128,7 +128,7 @@ async function keptCheck(o: FleetDoctorOptions, readJobs: TaskCheckReader): Prom
 
 async function lanesCheck(o: FleetDoctorOptions): Promise<DoctorCheck> {
   const lanes = parseIdleLanes(await (o.readLaneStatus ?? readQueueStatus)());
-  if (lanes.length === 0) return check('lanes', 'ok', 'no queued work waiting');
+  if (lanes.length === 0) return check('lanes', 'ok', 'no lanes with queued work and room to launch');
   const red = lanes.filter(lane => lane.status === 'red');
   if (red.length) return check('lanes', 'red', `room and queued work: ${red.map(lane => `${lane.lane} ${lane.running}/${lane.target} running, ${lane.queued} queued`).join('; ')}`);
   return check('lanes', 'warn', `held with queued work: ${lanes.map(lane => `${lane.lane} (${lane.queued})`).join(', ')}`);
