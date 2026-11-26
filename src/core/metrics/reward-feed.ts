@@ -21,7 +21,7 @@
  *     state, not a proven non-merge, and stays unwritten.
  *   - REVERTS ARE NOT HELD MERGES. Positive revert evidence (the slot-yield
  *     vocabulary: reverted:true, reverted_at/revertedAt, revert event/state
- *     names) newer than the latest merge resolves the job as merged:false —
+ *     names) at or after the latest effective merge resolves the job as merged:false —
  *     the v1 schema has no revert dimension and consumers score held merges.
  *     A later merge is a fresh held merge. For a known merge, its merge time
  *     bounds dispatch and CI evidence even when a revert changes the verdict.
@@ -78,6 +78,7 @@ const STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion
 const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const MERGED_AT_KEYS = ['mergedAt', 'merged_at', 'closedAt', 'closed_at'] as const;
 const CLOSED_AT_KEYS = ['closedAt', 'closed_at'] as const;
+const REVERTED_AT_KEYS = ['revertedAt', 'reverted_at'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
@@ -192,7 +193,7 @@ interface RewardJobAccum {
   merge: { atMs: number; mergedAtMs: number; url: string | null } | null;
   /** Latest closed-unmerged resolution time, falling back to the row stamp. */
   closedMs: number | null;
-  /** Latest positive revert-evidence row time. */
+  /** Latest effective revert time, falling back to the row stamp. */
   revertMs: number | null;
   /** True when the standing revert set proves the held merge's PR was reverted. */
   standingReverted: boolean;
@@ -290,12 +291,16 @@ export function foldJobsLedgerRewards(
         noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at);
       }
     }
-    if (hasRevertEvidence(row)) acc.revertMs = Math.max(acc.revertMs ?? 0, at);
+    if (hasRevertEvidence(row)) {
+      const revertedAtMs = resolutionAt(row, REVERTED_AT_KEYS) ?? at;
+      if (revertedAtMs <= nowMs) acc.revertMs = Math.max(acc.revertMs ?? 0, revertedAtMs);
+    }
     const state = outcomeStateOf(row);
     if (row['merged'] === true || MERGE_STATES.has(state)) {
       const mergedAtMs = resolutionAt(row, MERGED_AT_KEYS) ?? at;
       if (mergedAtMs > nowMs) continue;
-      if (acc.merge === null || at >= acc.merge.atMs) {
+      if (acc.merge === null || mergedAtMs > acc.merge.mergedAtMs ||
+          (mergedAtMs === acc.merge.mergedAtMs && at >= acc.merge.atMs)) {
         acc.merge = { atMs: at, mergedAtMs, url: firstString(row, URL_KEYS) };
       }
     } else if (row['merged'] === false || CLOSED_STATES.has(state)) {
@@ -345,7 +350,7 @@ function rewardInput(
 ): RewardSignalInput | null {
   const cost = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : null;
   const heldMerge = acc.merge !== null && !acc.standingReverted &&
-    (acc.revertMs === null || acc.merge.atMs > acc.revertMs);
+    (acc.revertMs === null || acc.merge.mergedAtMs > acc.revertMs);
   if (acc.merge !== null) {
     const merge = acc.merge;
     const dispatch = dispatchBefore(acc, merge.mergedAtMs);

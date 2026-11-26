@@ -190,6 +190,35 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs.find((i) => i.jobId === 'RQ-F')).toMatchObject({ merged: true, mergedAt: '2026-10-28T18:00:00.000Z' });
   });
 
+  it('keeps a merge reverted when its receipt is replayed later', () => {
+    const job = 'RQ-REPLAY';
+    const rows = [
+      launch(job),
+      merged(job),
+      line({ event: 'revert', job, ts: '2026-10-28T17:00:00.000Z' }),
+      merged(job, MERGED_ISO, '2026-10-28T19:00:00.000Z'),
+    ];
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toEqual([
+      expect.objectContaining({ jobId: job, merged: false, mergedAt: null, dispatchedAt: DISPATCH_ISO }),
+    ]);
+  });
+
+  it('credits the later merge even when receipts for the earlier merge and revert arrive last', () => {
+    const job = 'RQ-LATE-RECEIPTS';
+    const dispatchAt = '2026-10-28T17:00:00.000Z';
+    const mergeAt = '2026-10-28T18:00:00.000Z';
+    const rows = [
+      launch(job),
+      launch(job, 'devin', dispatchAt),
+      merged(job, mergeAt, '2026-10-28T18:01:00.000Z'),
+      merged(job, MERGED_ISO, '2026-10-28T19:00:00.000Z'),
+      line({ event: 'revert', job, revertedAt: '2026-10-28T16:30:00.000Z', ts: '2026-10-28T19:01:00.000Z' }),
+    ];
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toEqual([
+      expect.objectContaining({ jobId: job, pool: 'devin', merged: true, mergedAt: mergeAt, dispatchedAt: dispatchAt }),
+    ]);
+  });
+
   it.each(['ledger', 'standing set'])('attributes a revert from the %s to the original merge attempt', (source) => {
     const job = 'RQ-REUSED';
     const original = launch(job);
