@@ -80,6 +80,27 @@ describe('init', () => {
     // Every refused init left nothing behind.
     for (const f of ['a.toml', 'b.toml', 'c.toml', 'd.toml']) expect(existsSync(join(dir, f))).toBe(false);
   });
+  it('writes declared agents as implementers on the init machine reporting to the founder', () => {
+    const file = join(tmp(), 'org.toml');
+    const r = initOrg({ member: 'ada', machine: 'ada-mac', lanes: [{ lane: 'claude', share: 100 }, { lane: 'devin', share: 50 }],
+      agents: [{ id: 'ada-claude', lane: 'claude' }, { id: 'ada-devin', lane: 'devin' }] }, file);
+    expect(r.org.members[0]!.agents).toEqual([
+      { id: 'ada-claude', lane: 'claude', machine: 'ada-mac', roles: ['implementer'], reports_to: 'ada' },
+      { id: 'ada-devin', lane: 'devin', machine: 'ada-mac', roles: ['implementer'], reports_to: 'ada' },
+    ]);
+    // The file round-trips: loadOrg accepts what init wrote.
+    expect(loadOrg(file).members[0]!.agents).toHaveLength(2);
+    // An agent on a lane the member never declared, a repeated agent id and an
+    // agent id colliding with the member id are all refused before anything is written.
+    const dir = tmp();
+    expect(() => initOrg({ member: 'ok', machine: 'm', lanes: [{ lane: 'claude', share: 100 }],
+      agents: [{ id: 'a1', lane: 'devin' }] }, join(dir, 'a.toml'))).toThrow(/not a contribution/);
+    expect(() => initOrg({ member: 'ok', machine: 'm', lanes: [{ lane: 'claude', share: 100 }],
+      agents: [{ id: 'a1', lane: 'claude' }, { id: 'a1', lane: 'claude' }] }, join(dir, 'b.toml'))).toThrow(/Duplicate id/);
+    expect(() => initOrg({ member: 'ok', machine: 'm', lanes: [{ lane: 'claude', share: 100 }],
+      agents: [{ id: 'ok', lane: 'claude' }] }, join(dir, 'c.toml'))).toThrow(/Duplicate id/);
+    for (const f of ['a.toml', 'b.toml', 'c.toml']) expect(existsSync(join(dir, f))).toBe(false);
+  });
 });
 
 describe('join', () => {
@@ -502,6 +523,65 @@ describe('cmdOrg', () => {
     expect(text).toContain('phm org join --member grace --machine g-mac --json');
     expect(text).toContain('phm org plan --json');
     expect(errs).toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
+  it('init --agent declares implementers so a fresh org can actually plan work', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = join(home, 'org.toml');
+    // The first-run path in one pass: init with an agent, opt the machine in,
+    // then plan — before --agent existed this dead-ended on "no implementer".
+    expect(await cmdOrg(['init', '--member', 'ada', '--machine', 'ada-mac', '--lane', 'claude',
+      '--agent', 'ada-claude:claude', '--json'])).toBe(0);
+    const init = JSON.parse(logs.pop()!);
+    expect(init.agents).toEqual([{ id: 'ada-claude', lane: 'claude', machine: 'ada-mac',
+      roles: ['implementer'], reports_to: 'ada' }]);
+    expect(await cmdOrg(['join', '--file', file, '--member', 'ada', '--machine', 'ada-mac', '--lane', 'claude', '--json'])).toBe(0);
+    logs.pop();
+    const queue = join(home, 'jobs.json');
+    writeFileSync(queue, JSON.stringify([{ id: 'RQ-1', priority: 3, costPct: 2, lane: 'claude' }]));
+    expect(await cmdOrg(['plan', '--file', file, '--queue', queue, '--json'])).toBe(0);
+    const plan = JSON.parse(logs.pop()!);
+    expect(plan.assignments).toEqual([{ job: 'RQ-1', member: 'ada', agent: 'ada-claude', lane: 'claude', costPct: 2 }]);
+    expect(plan.unassigned).toEqual([]);
+    // Text mode names the agents the file declares.
+    const other = join(home, 'other.toml');
+    expect(await cmdOrg(['init', '--file', other, '--member', 'grace', '--machine', 'g-mac',
+      '--lane', 'devin=50', '--lane', 'codex', '--agent', 'grace-devin:devin', '--agent', 'grace-codex:codex'])).toBe(0);
+    const text = logs.pop()!;
+    expect(text).toContain('agents grace-devin (implementer on devin), grace-codex (implementer on codex)');
+    vi.unstubAllEnvs();
+  });
+
+  it('refuses malformed --agent arguments with the org envelope', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = join(home, 'org.toml');
+    const base = ['init', '--member', 'ada', '--machine', 'ada-mac', '--lane', 'claude'];
+    const malformed: [string[], string][] = [
+      [[...base, '--agent', 'ada-claude', '--json'], '--agent takes <id>:<lane>'],   // no lane
+      [[...base, '--agent', ':claude', '--json'], '--agent takes <id>:<lane>'],    // empty id
+      [[...base, '--agent', 'ada-claude:', '--json'], '--agent takes <id>:<lane>'],// empty lane
+      [[...base, '--agent', 'a:b:c', '--json'], '--agent takes <id>:<lane>'],      // extra colon
+      [[...base, '--agent', 'x:devin', '--json'], 'not a contribution'],           // lane never declared
+      [[...base, '--agent', 'ada:claude', '--json'], 'Duplicate id'],              // agent id is the member id
+      [[...base, '--agent', 'a1:claude', '--agent', 'a1:claude', '--json'], 'more than once'],
+      [[...base, '--agent', '--json'], '--agent needs a value'],
+    ];
+    for (const [args, said] of malformed) {
+      expect(await cmdOrg(args), args.join(' ')).toBe(1);
+      const failure = JSON.parse(logs.pop()!);
+      expect(failure).toMatchObject({ schema: 'org.error.v1', command: 'init', error: { code: 'rejected' } });
+      expect(failure.error.message).toContain(said);
+    }
+    // A repeated agent id on different lanes is still one agent id — refused.
+    expect(await cmdOrg([...base, '--agent', 'a1:claude', '--agent', 'a1:devin', '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message).toContain('more than once');
+    // Nothing was written by any refused init.
+    expect(existsSync(file)).toBe(false);
     vi.unstubAllEnvs();
   });
 

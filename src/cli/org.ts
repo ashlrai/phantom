@@ -22,11 +22,13 @@ export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
                                 A re-join replaces this machine's opt-ins; dropped lanes are listed. Nothing is sent
                                 and no provider auth is read; sign in to your own CLIs here.
   plan [--queue <jobs.json>]    Propose queue assignments and agent roles within each member's contributed limits
-  init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]...
+  init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]... [--agent <id>:<lane>]...
                                 Write a starter org.toml (default ~/.ashlr/org.toml, or --file)
                                 declaring <member> as leader (founder) of a new org on <machine>.
-                                A bare --lane declares share 100; =<share> sets 0-100. Refuses to
-                                overwrite an existing file. Add members, agents and lanes by editing
+                                A bare --lane declares share 100; =<share> sets 0-100. Each --agent
+                                declares an implementer agent on <machine> for that lane, reporting
+                                to the founder; without one phm org plan can assign nothing. Refuses
+                                to overwrite an existing file. Add members, agents and lanes by editing
                                 the file; nothing is sent and no auth is read.
 Default file: ~/.ashlr/org.toml (create one with init, or use a copy of the leader's file). Guide: docs/AGENT-NETWORK.md#team-org
 
@@ -131,6 +133,7 @@ export async function cmdOrg(argv: string[]): Promise<number> {
     if (sub === 'init') {
       const member = one(rest, '--member'), machine = one(rest, '--machine'), name = one(rest, '--name');
       const laneArgs = take(rest, '--lane');
+      const agentArgs = take(rest, '--agent');
       noLeftovers(rest);
       if (!member || !machine) throw new OrgError('init needs --member and --machine.');
       // Same flag shape as join's --lane, except a bare lane declares the full share (100)
@@ -152,11 +155,24 @@ export async function cmdOrg(argv: string[]): Promise<number> {
         if (seenLanes.has(l.lane)) throw new OrgError(`--lane ${l.lane} was given more than once.`);
         seenLanes.add(l.lane);
       }
-      const r = initOrg({ member, machine, ...(name === undefined ? {} : { name }), lanes }, file);
+      // --agent takes <id>:<lane>; the schema allows one lane per agent id, so a
+      // repeated id is refused here with the same shape as a repeated --lane.
+      const agents = agentArgs.map((s) => {
+        const parts = s.split(':');
+        if (parts.length !== 2 || parts[0] === '' || parts[1] === '') throw new OrgError(`--agent takes <id>:<lane>: '${s}'`);
+        return { id: parts[0]!, lane: parts[1]! };
+      });
+      const seenAgents = new Set<string>();
+      for (const a of agents) {
+        if (seenAgents.has(a.id)) throw new OrgError(`--agent ${a.id} was given more than once.`);
+        seenAgents.add(a.id);
+      }
+      const r = initOrg({ member, machine, ...(name === undefined ? {} : { name }), lanes, agents }, file);
       const m = r.org.members[0]!;
       const laneText = m.contributions.length ? m.contributions.map((c) => `${c.lane} ${c.share}%`).join(', ') : 'none';
-      return print({ schema: 'org.init.v1', file: r.file, leader: r.org.leader, member: m.id, machine: m.machines[0]!.id, lanes: m.contributions },
-        `Wrote ${r.file}: ${r.org.leader} leads ${m.name} on ${m.machines[0]!.id} with lanes ${laneText}.\nEdit the file to add members, agents and lanes. Each machine opts in with:\n  phm org join --member ${m.id} --machine ${m.machines[0]!.id}${m.contributions.length ? ` --lane ${m.contributions.map((c) => c.lane).join(' --lane ')}` : ''} --json\nThe leader plans with: phm org plan --json`);
+      const agentText = m.agents.length ? `, agents ${m.agents.map((a) => `${a.id} (${a.roles.join('/')} on ${a.lane})`).join(', ')}` : '';
+      return print({ schema: 'org.init.v1', file: r.file, leader: r.org.leader, member: m.id, machine: m.machines[0]!.id, lanes: m.contributions, agents: m.agents },
+        `Wrote ${r.file}: ${r.org.leader} leads ${m.name} on ${m.machines[0]!.id} with lanes ${laneText}${agentText}.\nEdit the file to add members, agents and lanes. Each machine opts in with:\n  phm org join --member ${m.id} --machine ${m.machines[0]!.id}${m.contributions.length ? ` --lane ${m.contributions.map((c) => c.lane).join(' --lane ')}` : ''} --json\nThe leader plans with: phm org plan --json`);
     }
     const org = loadOrg(file);
     if (sub === 'show') {
