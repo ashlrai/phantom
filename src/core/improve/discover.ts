@@ -1155,6 +1155,27 @@
  *     own recorded verdicts; 'missing' and clean reads never emit,
  *     and only the fleet's own repository inherits the items since
  *     the ledgers describe this install's learned memory;
+ *   - the needs-you auto-resolve audit's recurring failed attempts:
+ *     the {item, action, at, reason, result?, error?} records
+ *     resolveAutoNeedsYou appends to needs-you-auto.jsonl directly
+ *     under the runs dir on every non-dry-run `phm needs-you resolve
+ *     --auto` and needs-you resolve web-API pass — result:'failed'
+ *     with a bounded scrubbed error when resolveNeedsMason answers
+ *     !ok for a code other than 'already-resolved' or the call
+ *     throws, the bare record when it lands
+ *     (needsYouAutoBacklogItems below). Until now the ledger's only
+ *     readers were readNeedsYouAudit's point-in-time folds — the web
+ *     API's newest-50 audit tail and `phm needs-you log` — so a
+ *     resolve path that kept failing left every auto item open on
+ *     the NEEDS-MASON ledger, still owed its forward action, without
+ *     ever becoming work. A cell emits only at the recurring bars of
+ *     three failed rows across two distinct UTC days inside the
+ *     7-day window, resolved rows count as context, item ids,
+ *     titles, action/reason and error text are counted never
+ *     emitted, truncated tails are stated as lower bounds, and only
+ *     the fleet's own repository inherits the items since the
+ *     ledger describes this install's needs-you machinery and
+ *     carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1272,6 +1293,7 @@ import { outsidePrBacklogItems } from './outside-pr-backlog.js';
 import { repoShareBacklogItems } from './repo-share-backlog.js';
 import { reasoningInsightBacklogItems } from './reasoning-insight-backlog.js';
 import { fleetGapBacklogItems } from './fleet-gap-backlog.js';
+import { needsYouAutoBacklogItems } from './needs-you-auto-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2725,6 +2747,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the evidence describes this
   // install's dispatcher and carries no repository column.
   items.push(...await fleetGapBacklogItems({ repo }));
+
+  // Needs-you auto-resolve audit (<runs>/needs-you-auto.jsonl): the
+  // {item, action, at, reason, result?, error?} records
+  // resolveAutoNeedsYou appends on every non-dry-run `phm needs-you
+  // resolve --auto` and needs-you resolve web-API pass — recurring
+  // result:'failed' attempts become backlog items too. Until now the
+  // ledger's only readers were readNeedsYouAudit's point-in-time
+  // folds — the web API's newest-50 audit tail and `phm needs-you
+  // log` — so a resolve path that kept failing left every auto item
+  // open on the NEEDS-MASON ledger without ever becoming work. The
+  // read is the bounded no-follow tail at the writer's own retained
+  // 256 KiB bound; a cell emits only at the recurring bars of three
+  // failed rows across two distinct UTC days inside the 7-day
+  // window, resolved rows are context, item ids/titles/action/reason/
+  // error text are counted never emitted, truncated tails are stated
+  // as lower bounds, and only the fleet's own repository inherits
+  // the items since the ledger describes this install's needs-you
+  // machinery and carries no repo column.
+  items.push(...await needsYouAutoBacklogItems({ repo }));
   return { items, errors };
 }
 

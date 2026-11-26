@@ -69,7 +69,10 @@ reason}` to `needs-you-auto.jsonl` in the runs folder; an attempt that fails
 to resolve appends the same record marked `result: "failed"` with a bounded
 `error`, so a recurring auto-resolve failure stays visible in `phm needs-you
 log` instead of living only in the resolve report. `phm needs-you log`
-lists those records. `phm needs-you batch` puts every hard_limit item in one
+lists those records, and `phm improve` discovery folds recurring failed
+attempts (three rows across two UTC days in the evidence window) into the
+self-improvement backlog so a resolve path that keeps failing becomes work.
+`phm needs-you batch` puts every hard_limit item in one
 message with a one-word reply each (`1 yes, 2 no`) for a single phone tap.
 Existing checks still run on every answer.
 
