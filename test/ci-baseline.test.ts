@@ -301,6 +301,35 @@ describe('CI baseline evidence', () => {
       expect(report.master.known).toBe(true);
     }
   });
+  it('withholds freshness for a failed PR workflow with only green verified jobs', async () => {
+    const { gh } = github({ count: 1, runConclusion: 'failure', prJobConclusion: 'success' });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      if (args[1]?.endsWith('/jobs/20/logs')) {
+        return { ok: true, stdout: `/usr/bin/git log -1 --format=%H\n${head}\n${fixture('pass')}`, stderr: '' };
+      }
+      return gh(args);
+    });
+    expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
+    expect(report.groups).toEqual([]);
+    expect(report.master.known).toBe(true);
+  });
+  it('withholds master pass evidence when only an unverified aggregator failed', async () => {
+    const { gh } = github({ count: 1, pass: true, gate: true, runConclusion: 'failure' });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      if (args[1]?.endsWith('/jobs/11/logs')) {
+        return { ok: true, stdout: '##[error]Process completed with exit code 1.\n', stderr: '' };
+      }
+      const response = await gh(args);
+      if (!args[1]?.endsWith('/runs/1/jobs?per_page=100')) return response;
+      const page = JSON.parse(response.stdout) as { jobs: { name?: string; conclusion: string }[] };
+      const gate = page.jobs.find(job => job.name === 'Merge Gate')!;
+      gate.conclusion = 'failure';
+      return { ...response, stdout: JSON.stringify(page) };
+    });
+    expect(report.master.known).toBe(false);
+    expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
+    expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+  });
   it('tolerates inert no-checkout aggregator jobs but rejects unverifiable evidence', async () => {
     // Merge Gate never checks out the workspace, so its log cannot carry the
     // checkout SHA marker. An inert aggregator log is dropped from evidence
