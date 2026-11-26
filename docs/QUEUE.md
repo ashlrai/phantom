@@ -333,7 +333,12 @@ phm pool admission --json
 `phm fleet autopilot --once --json` requires a healthy `ready.tsv` read to
 identify starved lanes or propose restock. When that read is missing or
 degraded, per-lane `ready` stays null. The dispatcher’s `queued` count remains
-visible and can include parked work.
+visible for fresh ticks and can include parked work.
+Autopilot uses dispatcher snapshots whose `last_tick` is at most 60 seconds
+old and no later than report time. A missing, invalid, future or older tick
+degrades the dispatcher source. Dispatcher counts and lane headroom stay
+unknown, suppressing starvation and restock proposals. Ready supply, configured
+slots and independent dependency or rebase evidence remain available.
 Autopilot honors a hold reported by either dispatcher status or the configured
 slots, so a newly held lane is excluded from starvation, restock and suggestions
 to hold a sibling while the dispatcher catches up.

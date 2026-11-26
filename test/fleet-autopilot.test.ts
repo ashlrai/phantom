@@ -303,6 +303,7 @@ describe('readFleetAutopilotState', () => {
       runsDir: dir,
       repos: ['ashlrai/phantom'],
       statusText: async () => JSON.stringify({
+        last_tick: '2026-11-06T23:59:00Z',
         admission: { cap: 4, running: 2, load1: 1, reason: null },
         lanes: { devin: { running: 1, target: 2, queued: 1, held: false } },
       }),
@@ -322,6 +323,33 @@ describe('readFleetAutopilotState', () => {
     expect(assembled.admission?.lanes[0]).toMatchObject({ lane: 'devin', running: 1, target: 2 });
     expect(assembled.rebase).toEqual([{ repo: 'ashlrai/phantom', source: 'ok', conflicting: 2, uncovered: 1, staleHeadOnly: 0 }]);
   });
+
+  it.each([undefined, 'invalid', '2026-11-06T23:58:59.999Z', '2026-11-07T00:00:00.001Z'])(
+    'withholds utilization recommendations when the dispatcher tick is %s',
+    async (last_tick) => {
+      const state = await readFleetAutopilotState({
+        now: () => new Date('2026-11-07T00:00:00Z'),
+        statusText: async () => JSON.stringify({
+          last_tick,
+          admission: { cap: 4, running: 1, load1: 1, reason: null },
+          lanes: {
+            devin: { running: 1, target: 2, queued: 1, held: false },
+            codex: { running: 0, target: 2, queued: 0, held: false },
+          },
+        }),
+        queue: async () => queueView({ byLane: [{ lane: 'devin', ready: 1, parked: 0 }] }),
+        slots: async () => slotsView([slotLane('devin', 2), slotLane('codex', 2)]),
+      });
+      const report = planFleetAutopilot(state);
+      expect(report.sources.status).toBe('degraded');
+      expect(report.global).toMatchObject({ running: null, cap: null, atCap: null });
+      expect(report.lanes.find((lane) => lane.lane === 'devin')).toMatchObject({
+        running: null, queued: null, freeSlots: null, ready: 1, target: 2,
+      });
+      expect(report.gaps).toEqual([]);
+      expect(report.action).toMatchObject({ kind: 'no-op' });
+    },
+  );
 
   it('reports missing status and skips rebase reads without --repo', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fleet-autopilot-'));
@@ -491,6 +519,7 @@ describe('fleet autopilot end-to-end on a fixture runs dir', () => {
     await writeFile(join(dir, 'metrics', 'jobs.jsonl'),
       `${JSON.stringify({ event: 'outcome', state: 'MERGED', job: 'RQ-DONE' })}\n`);
     await writeFile(join(dir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: '2026-11-07T00:00:00Z',
       admission: { cap: 4, running: 2, load1: 1, reason: null },
       lanes: { devin: { running: 2, target: 2, queued: 1, held: false } },
     }));
@@ -515,13 +544,14 @@ describe('fleet autopilot end-to-end on a fixture runs dir', () => {
     await writeFile(join(dir, 'queue', 'ready.tsv'),
       'READY\tRQ-NEW\tdevin\twork\tphantom\tprompts/x.md\n');
     await writeFile(join(dir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: '2026-11-07T00:00:00Z',
       admission: { cap: 4, running: 1, load1: 1, reason: null },
       lanes: {
         devin: { running: 1, target: 1, queued: 1, held: false },
         'codex-local': { running: 0, target: 2, queued: 0, held: false },
       },
     }));
-    const st = await readFleetAutopilotState({ runsDir: dir });
+    const st = await readFleetAutopilotState({ runsDir: dir, now: () => new Date('2026-11-07T00:00:00Z') });
     const report = planFleetAutopilot(st);
     expect(report.topGap?.kind).toBe('missing-restock');
     expect(report.action).toMatchObject({ kind: 'enqueue', type: 'restock', count: 2, lane: 'codex-local' });
