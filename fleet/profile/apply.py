@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 import tomllib
+from urllib.parse import parse_qsl, urlsplit
 
 
 ROOT = Path(__file__).parent
@@ -28,6 +29,32 @@ CONFIGS = {
     "codex": (".codex/config.toml", {"approval_policy": str, "sandbox_mode": str}),
 }
 GH_VERIFY = "https://github.com/login/device"
+GUI_LOGINS = {"agy", "devin", "cursor-agent"}
+TERMINAL_START = {"agy": ["agy"], "devin": ["devin", "auth", "login"]}
+CLAUDE_STATUS = ["claude", "auth", "status", "--json"]
+CLAUDE_START = ["claude", "auth", "login"]
+GUI_WAIT = 27
+TERMINAL = 'on run argv\n tell application "Terminal" to do script (item 1 of argv)\nend run'
+BROWSER_WORKER = """
+import os, selectors, subprocess, sys, time
+with subprocess.Popen(sys.argv[1:], stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as child:
+    with selectors.DefaultSelector() as ready:
+        ready.register(child.stdout, selectors.EVENT_READ)
+        deadline, forward = time.monotonic() + 900, True
+        while ready.select(max(0, deadline - time.monotonic())) and time.monotonic() < deadline:
+            chunk = os.read(child.stdout.fileno(), 1024)
+            if not chunk:
+                break
+            if forward:
+                try:
+                    os.write(1, chunk)
+                except BrokenPipeError:
+                    forward = False
+        try:
+            child.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            child.kill()
+"""
 OS_INSTALLERS = {"macos": ("brew", "brewCask", "npm"), "windows": ("winget",),
                  "linux": ("apt", "npm", "pipx")}
 PACKAGE = re.compile(r"(?:@[a-zA-Z0-9][a-zA-Z0-9._-]*/)?[a-zA-Z0-9][a-zA-Z0-9._+-]*")
@@ -42,7 +69,7 @@ REMOTE = (
     "source,profile,args=json.load(sys.stdin); "
     "scope={'__file__':'apply.py','__name__':'fleet_profile'}; "
     "exec(compile(source,'apply.py','exec'),scope); "
-    "sys.exit(scope['main'](args,profile))"
+    "sys.exit(scope['main'](args,profile,remote_source=source))"
 )
 
 
@@ -74,8 +101,14 @@ def parse_profile(profile):
         for value in detect.values():
             if not (isinstance(value, str) and value or argv_list(value)):
                 raise ValueError
-        if "login" in entry and not all(argv_list(entry["login"][key]) for key in ("status", "start")):
-            raise ValueError
+        if "login" in entry:
+            login = entry["login"]
+            if kind == "desktop-app":
+                if (set(login) != {"app"} or not isinstance(login["app"], str)
+                        or not APP.fullmatch(f"/Applications/{login['app']}.app")):
+                    raise ValueError
+            elif not all(argv_list(login[key]) for key in ("status", "start")):
+                raise ValueError
         if "models" in entry and (kind != "local-model" or not argv_list(entry["models"])):
             raise ValueError
         if "copyFromHost" in entry:
@@ -311,7 +344,7 @@ def install_packages(selections):
         return False
 
 
-def local_report(profile, apply):
+def local_report(profile, apply, remote_source=None):
     entries, defaults = parse_profile(profile)
     os_name = host_os()
     choices = {entry["id"]: installer_for(entry, os_name) for entry in entries}
@@ -349,13 +382,14 @@ def local_report(profile, apply):
                     items.update({f"config:{agent}.{key}": "in-sync" for key in defaults[agent]})
                 except (OSError, ValueError):
                     errors.append(f"cannot update {agent} config")
+    states = login_states(profile_logins(profile), remote_source)
     for entry in entries:
         name = entry["id"]
         items[f"entry:{name}"] = package_state(entry, *choices[name], inventories, os_name)
         for model in entry.get("models", []):
             items[f"model:{name}:{model}"] = "report-only"
-        if "login" in entry:
-            items[f"login:{name}"] = login_status(name, entry["login"]["status"])
+        if name in states:
+            items[f"login:{name}"] = states[name]
     return {"schema": SCHEMA, "dry_run": not apply, "items": items, "errors": errors}
 
 
@@ -369,7 +403,15 @@ def login_status(tool, command):
         proc = run(command, timeout=8, env=login_env(), stderr=subprocess.PIPE)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return "unknown"
+    if tool == "claude" and command == CLAUDE_STATUS:
+        try:
+            logged_in = json.loads(proc.stdout).get("loggedIn")
+        except (ValueError, AttributeError):
+            return "unknown"
+        return {True: "logged-in", False: "login-needed"}[logged_in] if type(logged_in) is bool else "unknown"
     answer = proc.stdout + "\n" + proc.stderr
+    if tool == "agy" and re.search(r"\bplease sign in\b", answer, re.I):
+        return "login-needed"
     if re.search(r"\b(?:not (?:logged|signed) in|login required|unauthenticated)\b", answer, re.I):
         return "login-needed"
     if proc.returncode == 0:
@@ -377,24 +419,100 @@ def login_status(tool, command):
     return "login-needed" if proc.returncode == 1 and tool in ("claude", "codex") else "unknown"
 
 
-def github_approval():
-    command = ["gh", "auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "https", "--skip-ssh-key"]
+def terminal_launch(command):
     try:
-        worker = subprocess.Popen([sys.executable, "-I", "-c",
-                                   "import subprocess,sys; subprocess.run(sys.argv[1:],timeout=900)", *command],
+        shell = "cd / && " + shlex.join(command)
+        return run(["osascript", "-e", TERMINAL, shell], timeout=5).returncode == 0
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
+
+def gui_checks(commands, source):
+    if not commands:
+        return {}
+    with tempfile.TemporaryDirectory(prefix="fleet-gui-") as temp:
+        script, result = Path(temp) / "probe.py", Path(temp) / "states.json"
+        script.write_text(source + "\n" + """
+def write_gui_states(commands, result):
+    states = {tool: login_status(tool, command) for tool, command in commands.items()}
+    booleans = {tool: state == "logged-in" for tool, state in states.items() if state != "unknown"}
+    fd = os.open(result, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as output:
+        json.dump(booleans, output)
+
+write_gui_states(json.loads(sys.argv[1]), sys.argv[2])
+""", encoding="utf-8")
+        script.chmod(0o600)
+        launch = ["/usr/bin/env", f"PATH={os.environ.get('PATH', os.defpath)}", sys.executable,
+                  "-I", "-c", "import runpy,sys; sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0])",
+                  str(script), json.dumps(commands), str(result)]
+        if terminal_launch(launch):
+            deadline = time.monotonic() + GUI_WAIT
+            while time.monotonic() < deadline:
+                try:
+                    states = json.loads(result.read_text(encoding="utf-8"))
+                    return {tool: "logged-in" if states[tool] else "login-needed"
+                            for tool in commands if type(states.get(tool)) is bool}
+                except (OSError, ValueError, AttributeError):
+                    time.sleep(0.1)
+    return {}
+
+
+def login_states(logins, remote_source):
+    cli = {tool: login["status"] for tool, login in logins.items() if "status" in login}
+    gui = {tool: cli.pop(tool) for tool in cli.keys() & GUI_LOGINS} if (
+        remote_source is not None and host_os() == "macos") else {}
+    states = {tool: login_status(tool, command) for tool, command in cli.items()}
+    states.update(dict.fromkeys(gui, "unknown-over-ssh"))
+    try:
+        states.update(gui_checks(gui, remote_source))
+    except OSError:
+        pass
+    return states
+
+
+def github_code(log):
+    code = re.search(rb"(?m)^! First copy your one-time code: ([A-Z0-9]{4}-[A-Z0-9]{4})\r?$", log)
+    if code and f"Open this URL to continue in your web browser: {GH_VERIFY}\n".encode() in log:
+        return code[1].decode("ascii")
+
+
+def claude_url(url):
+    if not re.fullmatch(r"https://[A-Za-z0-9./?&=%_~+:-]{1,4096}", url):
+        return None
+    target = urlsplit(url)
+    if (target.netloc in {"claude.ai", "claude.com", "platform.claude.com", "console.anthropic.com"}
+            and target.path in {"/oauth/authorize", "/oauth/authorize/"} and all(
+                key in {"client_id", "redirect_uri", "response_type", "scope", "code_challenge",
+                        "code_challenge_method", "state", "prompt", "audience"} or (key, value) == ("code", "true")
+                for key, value in parse_qsl(target.query, keep_blank_values=True, strict_parsing=True))):
+        return url
+
+
+def claude_approval_url(log):
+    for url in re.findall(rb"https://[^\s<>\x1b]+(?=\s|\x1b)", log):
+        try:
+            if approved := claude_url(url.decode("ascii")):
+                return approved
+        except (UnicodeError, ValueError):
+            continue
+
+
+def browser_approval(command, extract):
+    try:
+        worker = subprocess.Popen([sys.executable, "-I", "-c", BROWSER_WORKER, *command],
                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                   cwd="/", env=login_env(), start_new_session=True)
         deadline, log = time.monotonic() + 15, b""
         with worker.stdout, selectors.DefaultSelector() as ready:
             ready.register(worker.stdout, selectors.EVENT_READ)
             while len(log) < 8192 and ready.select(max(0, deadline - time.monotonic())):
-                chunk = os.read(worker.stdout.fileno(), 1024)
+                chunk = os.read(worker.stdout.fileno(), min(1024, 8192 - len(log)))
                 if not chunk:
                     break
                 log += chunk
-                code = re.search(rb"(?m)^! First copy your one-time code: ([A-Z0-9]{4}-[A-Z0-9]{4})\r?$", log)
-                if code and f"Open this URL to continue in your web browser: {GH_VERIFY}\n".encode() in log:
-                    return code[1].decode("ascii")
+                if approval := extract(log):
+                    return approval
         os.killpg(worker.pid, signal.SIGTERM)
         worker.wait()
     except (OSError, ValueError):
@@ -402,18 +520,43 @@ def github_approval():
     return None
 
 
-def login_plan(profile, host):
-    plan = []
-    for tool, login in profile_logins(profile).items():
-        status = login_status(tool, login["status"])
-        if status == "logged-in":
-            continue
-        row = {"tool": tool, "host": host}
-        code = github_approval() if tool == "gh" and login["start"] == ["gh", "auth", "login"] and (
+def login_action(tool, login, status):
+    if "app" in login:
+        command = ["open", "-a", login["app"]]
+        try:
+            if host_os() == "macos" and run(command, timeout=5).returncode == 0:
+                return {"action": "approve-in-app"}
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+        return {"action": "manual", "app": login["app"]}
+    start = login["start"]
+    if status == "login-needed" and os.name == "posix":
+        if tool == "gh" and start == ["gh", "auth", "login"] and (
             login["status"] == ["gh", "auth", "status", "--hostname", "github.com"]
-            and status == "login-needed" and os.name == "posix") else None
-        plan.append({**row, "action": "approve", "url": GH_VERIFY, "code": code} if code else
-                    {**row, "action": "manual", "command": shlex.join(login["start"])})
+        ):
+            command = [*start, "--hostname", "github.com", "--web", "--git-protocol", "https", "--skip-ssh-key"]
+            if code := browser_approval(command, github_code):
+                return {"action": "approve", "url": GH_VERIFY, "code": code}
+        elif tool == "claude" and start == CLAUDE_START and login["status"] == CLAUDE_STATUS:
+            if url := browser_approval(start, claude_approval_url):
+                return {"action": "approve", "url": url}
+        elif TERMINAL_START.get(tool) == start and host_os() == "macos":
+            binary = shutil.which(start[0])
+            if binary and terminal_launch([binary, *start[1:]]):
+                return {"action": "approve-in-terminal"}
+    row = {"action": "manual", "command": shlex.join(start)}
+    if status == "unknown-over-ssh":
+        row["status"] = status
+    return row
+
+
+def login_plan(profile, host, remote_source=None):
+    logins = profile_logins(profile)
+    states = login_states(logins, remote_source)
+    plan = []
+    for tool, login in logins.items():
+        if states.get(tool) != "logged-in":
+            plan.append({"tool": tool, "host": host, **login_action(tool, login, states.get(tool))})
     return plan
 
 
@@ -443,18 +586,30 @@ def remote_report(host, source, profile, args):
 
 def login_row(row, host, logins):
     tool, action = row["tool"], row["action"]
-    if tool == "gh" and action == "approve" and re.fullmatch(r"[A-Z0-9]{4}-[A-Z0-9]{4}", row["code"]):
-        return {"tool": tool, "host": host, "action": action, "url": GH_VERIFY, "code": row["code"]}
-    if tool not in logins or action != "manual":
-        raise ValueError
-    return {"tool": tool, "host": host, "action": action, "command": shlex.join(logins[tool]["start"])}
+    login, result = logins[tool], {"tool": tool, "host": host, "action": action}
+    if action == "approve":
+        if tool == "gh" and re.fullmatch(r"[A-Z0-9]{4}-[A-Z0-9]{4}", row["code"]):
+            return {**result, "url": GH_VERIFY, "code": row["code"]}
+        if tool == "claude" and (url := claude_url(row["url"])):
+            return {**result, "url": url}
+    if action == "approve-in-terminal" and tool in TERMINAL_START:
+        return result
+    if action == "approve-in-app" and "app" in login:
+        return result
+    if action == "manual":
+        if "app" in login:
+            return {**result, "app": login["app"]}
+        if tool in GUI_LOGINS and row.get("status") == "unknown-over-ssh":
+            result["status"] = "unknown-over-ssh"
+        return {**result, "command": shlex.join(login["start"])}
+    raise ValueError
 
 
-def main(argv=None, profile=None):
+def main(argv=None, profile=None, remote_source=None):
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--apply", action="store_true", help="install packages and update only managed defaults")
-    modes.add_argument("--login", action="store_true", help="start supported device flows and report owner actions")
+    modes.add_argument("--login", action="store_true", help="start supported sign-in flows and report owner actions")
     parser.add_argument("--json", action="store_true", help="emit JSON (the default)")
     parser.add_argument("--host", action="append", default=[], help="explicit SSH config alias; repeat for a matrix")
     args = parser.parse_args(argv)
@@ -480,10 +635,10 @@ def main(argv=None, profile=None):
             report = {"schema": "fleet.profile.matrix.v1", "dry_run": not args.apply, "hosts": hosts,
                       "items": matrix, "errors": {host: errors for host, (_, errors) in results.items() if errors}}
         elif args.login:
-            print(json.dumps(login_plan(profile, "local"), indent=2))
+            print(json.dumps(login_plan(profile, "local", remote_source), indent=2))
             return 0
         else:
-            report = local_report(profile, args.apply)
+            report = local_report(profile, args.apply, remote_source)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         parser.exit(2, "fleet profile: cannot read or validate profile declarations\n")
     print(json.dumps(report, indent=2))
