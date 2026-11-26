@@ -8,8 +8,6 @@
  * signature callback so callback reentrancy cannot silently change context.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
-
 import {
   AGENT_OS_EPOCH_RECORD_AUTHORITY_V1,
   AGENT_OS_EPOCH_SOURCE_RAW_GENESIS_DIGEST_V2,
@@ -17,33 +15,40 @@ import {
   type AgentOsPrefixedSha256DigestV1,
   type AgentOsRawSha256DigestV1,
 } from './agent-os-epoch-records.js';
+import {
+  DEFAULT_CANONICAL_EPOCH_BOUNDS,
+  canonicalEpochBytes as canonicalBytes,
+  canonicalEpochClone as canonicalClone,
+  decodeEpochBase64url as decodeBase64url,
+  deepFreezeEpochValue as deepFreeze,
+  epochPlainRecord as record,
+  exactEpochBytes as exactBytes,
+  exactEpochKeys as exactKeys,
+  isValidEpoch as validEpoch,
+  isValidEpochPolicyGeneration as validPolicyGeneration,
+  isValidEpochTimestamp as validTimestamp,
+  isValidPrefixedEpochDigest as prefixedDigestValue,
+  isValidRawEpochDigest as rawDigestValue,
+  matchesEpochAuthority,
+  rawEpochDigest as rawDigest,
+} from './agent-os-epoch-shared.js';
 
 export const AGENT_OS_EPOCH_SOURCE_RENEWAL_PROTOCOL_V1 =
   'ashlr-agent-os-epoch-source-renewal-v1' as const;
-export const AGENT_OS_EPOCH_SOURCE_RENEWAL_SIGNATURE_ALGORITHM_V1 = 'ed25519' as const;
+const AGENT_OS_EPOCH_SOURCE_RENEWAL_SIGNATURE_ALGORITHM_V1 = 'ed25519' as const;
 export const AGENT_OS_EPOCH_SOURCE_RENEWAL_SIGNATURE_DOMAIN_V1 =
   'ashlr:agent-os:epoch-source-renewal:signature:v1\0' as const;
 export const AGENT_OS_EPOCH_SOURCE_RENEWAL_DIGEST_DOMAIN_V1 =
   'ashlr:agent-os:epoch-source-renewal:digest:v1\0' as const;
-export const AGENT_OS_EPOCH_SOURCE_RENEWAL_PAYLOAD_DOMAIN_V1 =
+const AGENT_OS_EPOCH_SOURCE_RENEWAL_PAYLOAD_DOMAIN_V1 =
   'ashlr:agent-os:epoch-source-renewal:payload:v1\0' as const;
 
-const RAW_DIGEST_RE = /^[a-f0-9]{64}$/u;
-const PREFIXED_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;
-const BASE64URL_RE = /^[A-Za-z0-9_-]+$/u;
-const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
-const MAX_EPOCH = 999_999_999_999;
 const MAX_EPOCH_SEQUENCE = 4_096;
-const MAX_POLICY_GENERATION = 1_000_000;
 const MAX_PAYLOAD_BYTES = 768 * 1_024;
-const MAX_CANONICAL_BYTES = 1_024 * 1_024;
-const MAX_CANONICAL_DEPTH = 32;
-const MAX_CANONICAL_NODES = 100_000;
+const MAX_CANONICAL_BYTES = DEFAULT_CANONICAL_EPOCH_BOUNDS.maxBytes;
 const MAX_OUTCOME_PRINCIPALS = 12;
 const MAX_SOURCE_LIFETIME_MS = 5 * 60_000;
 const MAX_SOURCE_FUTURE_SKEW_MS = 60_000;
-
-type Canonical = null | boolean | number | string | Canonical[] | { [key: string]: Canonical };
 
 export interface AgentOsEpochSourceRenewalInputV1 {
   epoch: number;
@@ -172,139 +177,12 @@ const CONTEXT_KEYS = [
   'policyGeneration', 'expectedSourceKeyId', 'expectedSourcePrincipalDigest', 'observedAt',
 ] as const;
 
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
-
-function canonicalize(
-  value: unknown,
-  state = { depth: 0, nodes: 0, ancestors: new Set<object>() },
-): Canonical {
-  state.nodes += 1;
-  if (state.depth > MAX_CANONICAL_DEPTH || state.nodes > MAX_CANONICAL_NODES) {
-    throw new TypeError('canonical value exceeds bounds');
-  }
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isSafeInteger(value) || Object.is(value, -0)) throw new TypeError('non-canonical number');
-    return value;
-  }
-  if (typeof value !== 'object' || state.ancestors.has(value)) throw new TypeError('non-json value');
-  state.ancestors.add(value);
-  state.depth += 1;
-  try {
-    if (Array.isArray(value)) {
-      if (Reflect.ownKeys(value).some((key) => typeof key === 'symbol' ||
-        (key !== 'length' && !/^(?:0|[1-9][0-9]*)$/u.test(key)))) throw new TypeError('invalid array');
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse array');
-        return canonicalize(entry, state);
-      });
-    }
-    const row = record(value);
-    if (!row) throw new TypeError('non-plain object');
-    const output: { [key: string]: Canonical } = Object.create(null) as { [key: string]: Canonical };
-    for (const key of Object.keys(row).sort()) output[key] = canonicalize(row[key], state);
-    return output;
-  } finally {
-    state.depth -= 1;
-    state.ancestors.delete(value);
-  }
-}
-
-function canonicalBytes(value: unknown): Buffer | null {
-  try {
-    const bytes = Buffer.from(JSON.stringify(canonicalize(value)), 'utf8');
-    return bytes.length >= 2 && bytes.length <= MAX_CANONICAL_BYTES ? bytes : null;
-  } catch {
-    return null;
-  }
-}
-
-function canonicalClone<T>(value: T): T | null {
-  const bytes = canonicalBytes(value);
-  if (!bytes) return null;
-  try { return JSON.parse(bytes.toString('utf8')) as T; } catch { return null; }
-}
-
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
-  if (ArrayBuffer.isView(value)) return value;
-  if (value !== null && typeof value === 'object' && !seen.has(value)) {
-    seen.add(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested, seen);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function exactBytes(left: Uint8Array, right: Uint8Array): boolean {
-  const a = Buffer.from(left);
-  const b = Buffer.from(right);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function rawDigest(domain: string, bytes: Uint8Array): string {
-  return createHash('sha256').update(domain, 'utf8').update(bytes).digest('hex');
-}
-
-function rawDigestValue(value: unknown): value is AgentOsRawSha256DigestV1 {
-  return typeof value === 'string' && RAW_DIGEST_RE.test(value);
-}
-
-function prefixedDigestValue(value: unknown): value is AgentOsPrefixedSha256DigestV1 {
-  return typeof value === 'string' && PREFIXED_DIGEST_RE.test(value);
-}
-
-function validEpoch(value: unknown): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= MAX_EPOCH;
-}
-
 function validEpochSequence(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 2 && Number(value) <= MAX_EPOCH_SEQUENCE;
 }
 
-function validPolicyGeneration(value: unknown): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= MAX_POLICY_GENERATION;
-}
-
-function validTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || !TIMESTAMP_RE.test(value)) return false;
-  const milliseconds = Date.parse(value);
-  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
-}
-
-function decodeBase64url(value: unknown, minimum: number, maximum: number): Buffer | null {
-  if (typeof value !== 'string' || !BASE64URL_RE.test(value)) return null;
-  try {
-    const bytes = Buffer.from(value, 'base64url');
-    return bytes.length >= minimum && bytes.length <= maximum && bytes.toString('base64url') === value
-      ? bytes
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 function validAuthority(value: Record<string, unknown>): boolean {
-  return Object.entries(AGENT_OS_EPOCH_RECORD_AUTHORITY_V1)
-    .every(([key, expected]) => value[key] === expected);
+  return matchesEpochAuthority(value, AGENT_OS_EPOCH_RECORD_AUTHORITY_V1);
 }
 
 function validDistinctPrincipals(source: unknown, evidence: unknown, outcomes: unknown): outcomes is string[] {

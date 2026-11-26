@@ -7,7 +7,7 @@
  * layout and atomically maintains a local cache pointer.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
@@ -36,8 +36,22 @@ import {
   type AgentOsEpochCoordinationLeaseV1,
 } from './agent-os-epoch-coordination.js';
 import {
+  AGENT_OS_EPOCH_PRIVATE_DIRECTORY_MODE as PRIVATE_DIRECTORY_MODE,
+  AGENT_OS_EPOCH_PRIVATE_FILE_MODE as PRIVATE_FILE_MODE,
+  deepFreezeEpochValue as deepFreeze,
+  epochPlainRecord as plainRecord,
+  epochToken,
+  exactEpochBytes as exactBytes,
+  exactEpochKeys as exactKeys,
+  isPrivateEpochDirectory as privateDirectory,
+  isPrivateEpochFile as privateFile,
+  isValidEpoch as validEpoch,
+  isValidPrefixedEpochDigest as validDigest,
+  isValidRawEpochDigest as validRawDigest,
+  sameEpochFileIdentity as sameIdentity,
+} from './agent-os-epoch-shared.js';
+import {
   AGENT_OS_ROLLOVER_AUTHORITY_V1,
-  AGENT_OS_ROLLOVER_MAX_EPOCH_V1,
   canonicalAgentOsObservationEpochHeadBytesV1,
   canonicalAgentOsObservationEpochManifestBytesV1,
   parseAgentOsObservationEpochHeadV1,
@@ -47,18 +61,13 @@ import {
   type AgentOsPreparedEpochEvidenceVerifierV1,
 } from './agent-os-rollover-protocol.js';
 
-export const AGENT_OS_EPOCH_STORE_PROTOCOL_V1 = 'ashlr-agent-os-local-epoch-store-v1' as const;
-export const AGENT_OS_EPOCH_RECOVERY_PROTOCOL_V1 = 'ashlr-agent-os-epoch-recovery-marker-v1' as const;
+const AGENT_OS_EPOCH_RECOVERY_PROTOCOL_V1 = 'ashlr-agent-os-epoch-recovery-marker-v1' as const;
 export const AGENT_OS_ACTIVE_POINTER_PROTOCOL_V1 = 'ashlr-agent-os-active-epoch-pointer-v1' as const;
 
-const PRIVATE_DIRECTORY_MODE = 0o700;
-const PRIVATE_FILE_MODE = 0o600;
 const MAX_PROTOCOL_BYTES = 64 * 1024;
 const MAX_FIRST_SOURCE_BYTES = 768 * 1024;
 const MAX_POINTER_BYTES = 128 * 1024;
 const MAX_EPOCH_ENTRIES = 4_096;
-const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
-const RAW_DIGEST_RE = /^[a-f0-9]{64}$/;
 const EPOCH_DIRECTORY_RE = /^epoch-([0-9]{12})$/;
 const PREPARE_DIRECTORY_RE = /^\.epoch-([0-9]{12})-([a-f0-9]{64})\.prepare$/;
 
@@ -348,35 +357,6 @@ function pointerReadResult(
   });
 }
 
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
-    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
-
-function plainRecord(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
 function canonicalObjectBytes(value: Record<string, unknown>): Buffer | null {
   try {
     const ordered = Object.fromEntries(Object.keys(value).sort().map((key) => [key, value[key]]));
@@ -389,46 +369,6 @@ function canonicalObjectBytes(value: Record<string, unknown>): Buffer | null {
 
 function sha256(bytes: Uint8Array): string {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
-}
-
-function exactBytes(left: Uint8Array, right: Uint8Array): boolean {
-  const a = Buffer.from(left);
-  const b = Buffer.from(right);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function validDigest(value: unknown): value is string {
-  return typeof value === 'string' && DIGEST_RE.test(value);
-}
-
-function validRawDigest(value: unknown): value is string {
-  return typeof value === 'string' && RAW_DIGEST_RE.test(value);
-}
-
-function epochToken(epoch: number): string {
-  return String(epoch).padStart(12, '0');
-}
-
-function validEpoch(epoch: unknown): epoch is number {
-  return Number.isSafeInteger(epoch) && Number(epoch) > 0 && Number(epoch) <= AGENT_OS_ROLLOVER_MAX_EPOCH_V1;
-}
-
-function owned(stat: Pick<BigIntStats, 'uid'>): boolean {
-  return typeof process.getuid !== 'function' || stat.uid === BigInt(process.getuid());
-}
-
-function privateDirectory(stat: BigIntStats): boolean {
-  return stat.isDirectory() && !stat.isSymbolicLink() && owned(stat) &&
-    (process.platform === 'win32' || (stat.mode & 0o777n) === BigInt(PRIVATE_DIRECTORY_MODE));
-}
-
-function privateFile(stat: BigIntStats): boolean {
-  return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1n && owned(stat) &&
-    (process.platform === 'win32' || (stat.mode & 0o777n) === BigInt(PRIVATE_FILE_MODE));
-}
-
-function sameIdentity(left: Pick<BigIntStats, 'dev' | 'ino'>, right: Pick<BigIntStats, 'dev' | 'ino'>): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
 }
 
 function pinDependencies(value: AgentOsEpochStoreDependenciesV1): PinnedDependencies | null {

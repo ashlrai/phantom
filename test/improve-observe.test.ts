@@ -121,4 +121,30 @@ describe('post-merge observation', () => {
     git('update-ref', 'refs/remotes/origin/main', 'HEAD');
     expect(observeCloudReverts([reverted], 'ashlrai/phantom', repo, 'main', exec).changes).toEqual([{ taskId: 'ct_a', revertedBy: null }]);
   });
+
+  it('matches a revert-PR body against the fleet PR that superseded the cloud PR', () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), '1'); git('add', '.'); git('commit', '-qm', 'base');
+    fs.writeFileSync(path.join(repo, 'a.txt'), '2'); git('commit', '-qam', 'fleet change');
+    const merge = git('rev-parse', 'HEAD');
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    const exec: ObserveExec = (cmd, args, cwd) => (args.includes('fetch') ? '' : execFileSync(cmd, args, { cwd, encoding: 'utf8' }));
+    const outcome = { observedAt: '2026-10-17T00:00:00.000Z', headSha: 'e'.repeat(40), mergeSha: merge, ci: 'success' as const, failedChecks: [], reviewDecision: null, changesRequested: 0 };
+    // Cloud PR #5 was closed when fleet PR #77 carried the change to a merge.
+    const task = {
+      id: 'ct_a', repo: 'AshlrAI/Phantom', state: 'merged',
+      pr: { number: 5, url: 'https://github.com/ashlrai/phantom/pull/5', state: 'closed', draft: false, title: 't' },
+      supersededBy: { repo: 'AshlrAI/Phantom', number: 77 },
+      outcome,
+    } as unknown as CloudTaskV1;
+
+    // A revert naming only the closed cloud PR is not this task's revert.
+    git('commit', '--allow-empty', '-qm', 'Revert "fleet change"', '-m', 'Reverts ashlrai/phantom#5');
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    expect(observeCloudReverts([task], 'ashlrai/phantom', repo, 'main', exec).changes).toEqual([]);
+
+    git('commit', '--allow-empty', '-qm', 'Revert "fleet change"', '-m', 'Reverts ashlrai/phantom#77');
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    const fleetRevert = git('rev-parse', 'HEAD');
+    expect(observeCloudReverts([task], 'ashlrai/phantom', repo, 'main', exec).changes).toEqual([{ taskId: 'ct_a', revertedBy: fleetRevert }]);
+  });
 });

@@ -87,8 +87,9 @@ job's outcome: `pending`, `running` (naming the node whose live claim can act),
 
 A text `pull` (no `--json`) prints the same claim for a person: the job's
 owner, requirements, pack and secret names, the embedded task text when the
-job carries one, the lease token pair and expiry, and paste-ready `renew` and
-`complete` commands.
+job carries one, the lease token pair and expiry, and paste-ready `renew`,
+`complete` and `release` commands — the last names `--decline` for a job this
+node can never run.
 
 The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
@@ -176,8 +177,11 @@ carrying the node's last advertised owner scopes, caps and slots while the
 registry still holds the record (placeholders when it does not). If the node
 already rejoined under a newer session, the fix names that session and the
 exact `leave` command instead, so an operator who lost track of the number can
-resume without re-joining again. A `node-live` error from `join` names the live
-session the same way. `leave` under a stale session answers `"left":false` with
+resume without re-joining again. A `node-live` error from a standalone `join`
+names the live session the same way; a pool `join` reports `node-live` when
+this computer's node id already holds a live session (a running worker or an
+unexpired join) and its fix points at `phm node status --json`. `leave` under
+a stale session answers `"left":false` with
 `liveSession` and a ready `next` command; use the current session number.
 `pull` answers `{"pulled":false}` only while the session is live, so "no job"
 never masks a dead session. The same answer carries this node's own admission

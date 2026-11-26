@@ -264,7 +264,7 @@ describe('resident CI reruns', () => {
     expect(failedStatus.repos['org/repo']?.verdictsPending).toBe(0);
     expect(failing.gh.mock.calls.filter(call => call[0][0] === 'api')).toHaveLength(0);
   });
-  it('bounds verdict checks per pass and drains the backlog over later passes', async () => {
+  it.each([false, true])('bounds verdict checks and reaches later reruns (oldest unresolved: %s)', async oldestUnresolved => {
     const { opts, gh, report } = setup();
     report.groups = [];
     const firedAt = '2026-01-01T11:00:00Z';
@@ -277,14 +277,20 @@ describe('resident CI reruns', () => {
       if (args[0] !== 'api') return { ok: true, stdout: '', stderr: '' };
       const id = Number(args[1]!.split('/').pop());
       const head = String(id - 100).padStart(40, '0');
-      return { ok: true, stdout: JSON.stringify({ id, status: 'completed', conclusion: 'success', head_sha: head, updated_at: '2026-01-01T11:30:00Z' }), stderr: '' };
+      const status = oldestUnresolved && id < 108 ? 'in_progress' : 'completed';
+      return { ok: true, stdout: JSON.stringify({ id, status, conclusion: 'success', head_sha: head, updated_at: '2026-01-01T11:30:00Z' }), stderr: '' };
     });
     const first = await runCiRerunMaintenance(opts);
     expect(first.repos['org/repo']?.verdictsPending).toBe(10);
-    expect(first.repos['org/repo']?.verdictsResolved).toBe(8);
+    expect(first.repos['org/repo']?.verdictsResolved).toBe(oldestUnresolved ? 0 : 8);
     expect(gh.mock.calls.filter(call => call[0][0] === 'api')).toHaveLength(8);
+    gh.mockClear();
     const second = await runCiRerunMaintenance(opts);
     expect(second.repos['org/repo']?.verdictsResolved).toBe(2);
-    expect(readCiReruns(opts.journalPath!, opts.now!()).verdicts).toMatchObject({ pass: 10, pending: 0, resolutionRate: 1 });
+    expect(gh.mock.calls.map(([args]) => Number(args[1]!.split('/').pop())))
+      .toEqual(oldestUnresolved ? [108, 109, 100, 101, 102, 103, 104, 105] : [108, 109]);
+    expect(readCiReruns(opts.journalPath!, opts.now!()).verdicts).toMatchObject({
+      pass: oldestUnresolved ? 2 : 10, pending: oldestUnresolved ? 8 : 0, resolutionRate: 1,
+    });
   });
 });

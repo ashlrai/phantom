@@ -9,7 +9,6 @@
  * This module owns no anchor adapter, key loading, daemon wiring, or effects.
  */
 
-import { timingSafeEqual } from 'node:crypto';
 import {
   closeSync,
   constants as fsConstants,
@@ -19,7 +18,6 @@ import {
   openSync,
   opendirSync,
   readSync,
-  type BigIntStats,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 
@@ -67,6 +65,18 @@ import {
   type AgentOsEpochAttemptVerifierV2,
 } from './agent-os-epoch-records.js';
 import {
+  deepFreezeEpochValue as deepFreeze,
+  epochPlainRecord as record,
+  exactDenseEpochArray as exactDenseArray,
+  exactEpochBytes as exactBytes,
+  exactEpochKeys as exactKeys,
+  isPrivateEpochDirectory as privateDirectory,
+  isPrivateEpochFile as privateFile,
+  isValidEpoch as validEpoch,
+  isValidEpochTimestamp as validTimestamp,
+  sameEpochFileIdentity as sameIdentity,
+} from './agent-os-epoch-shared.js';
+import {
   canonicalAgentOsEpochSourceRenewalBytesV1,
   createAgentOsEpochSourceRenewalV1,
   parseAgentOsEpochSourceRenewalV1,
@@ -78,14 +88,11 @@ import {
 } from './agent-os-epoch-source-ledger.js';
 import { isAgentOsEpochStorePlatformSupportedV1 } from './agent-os-epoch-store.js';
 
-export const AGENT_OS_EPOCH_SOURCE_DIRECTORY_V1 = 'sources' as const;
+const AGENT_OS_EPOCH_SOURCE_DIRECTORY_V1 = 'sources' as const;
 
-const PRIVATE_DIRECTORY_MODE = 0o700;
-const PRIVATE_FILE_MODE = 0o600;
 const FIRST_SOURCE_FILE = 'first-source.json';
 const SOURCE_STORE_LOCK = '.agent-os-epoch-source-v1.lock';
 const RECORD_FILE_RE = /^([0-9]{12})\.json$/;
-const MAX_EPOCH = 999_999_999_999;
 const MAX_SOURCE_SEQUENCE = 4_096;
 const MAX_FIRST_SOURCE_BYTES = 768 * 1024;
 const MAX_RENEWAL_BYTES = 1024 * 1024;
@@ -93,7 +100,6 @@ const DEFAULT_MAX_BYTES = 768 * 1024 * 1024;
 const HARD_MAX_BYTES = 1024 * 1024 * 1024;
 const MAX_LOCK_WAIT_MS = 2_000;
 const MAX_FUTURE_SKEW_MS = 60_000;
-const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 export interface AgentOsAuthenticatedActiveEpochSourceContextV1 {
   epoch: number;
@@ -303,89 +309,6 @@ function leaveRootOperation(rootPath: string, state: RootOperationState): void {
 
 function operationSafe(dependencies: PinnedDependencies): boolean {
   return ACTIVE_ROOT_OPERATIONS.get(dependencies.epochStoreRootPath)?.reentered === false;
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
-
-function exactDenseArray(value: unknown, maxLength: number): unknown[] | null {
-  try {
-    if (!Array.isArray(value) || value.length < 0 || value.length > maxLength) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const keys = Reflect.ownKeys(descriptors);
-    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
-    if (keys.some((key) => typeof key !== 'string') || keys.length !== value.length + 1 ||
-      !lengthDescriptor || lengthDescriptor.enumerable !== false) return null;
-    const result: unknown[] = [];
-    for (let index = 0; index < value.length; index += 1) {
-      const descriptor = descriptors[String(index)];
-      if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) return null;
-      result.push(descriptor.value);
-    }
-    return result;
-  } catch {
-    return null;
-  }
-}
-
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
-  if (ArrayBuffer.isView(value)) return value;
-  if (value !== null && typeof value === 'object' && !seen.has(value)) {
-    seen.add(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested, seen);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function validEpoch(value: unknown): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= MAX_EPOCH;
-}
-
-function validTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || !TIMESTAMP_RE.test(value)) return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
-function exactBytes(left: Uint8Array, right: Uint8Array): boolean {
-  const a = Buffer.from(left);
-  const b = Buffer.from(right);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function privateDirectory(stat: BigIntStats): boolean {
-  return stat.isDirectory() && !stat.isSymbolicLink() &&
-    (typeof process.getuid !== 'function' || stat.uid === BigInt(process.getuid())) &&
-    (process.platform === 'win32' || (stat.mode & 0o777n) === BigInt(PRIVATE_DIRECTORY_MODE));
-}
-
-function privateFile(stat: BigIntStats): boolean {
-  return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1n &&
-    (typeof process.getuid !== 'function' || stat.uid === BigInt(process.getuid())) &&
-    (process.platform === 'win32' || (stat.mode & 0o777n) === BigInt(PRIVATE_FILE_MODE));
-}
-
-function sameIdentity(left: BigIntStats, right: BigIntStats): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
 }
 
 function validContext(value: unknown): value is AgentOsAuthenticatedActiveEpochSourceContextV1 {

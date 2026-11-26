@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { planBurnDown } from './burn-down.js';
 import { planBankedReset, readBankedResets } from './banked-resets.js';
 import { nextPollState, nextWakeMs, pollDue, readingFingerprint } from './cadence.js';
+import { antigravityPollState } from './antigravity-quota.js';
 import { customResourceSources, readCustomResources } from './custom.js';
 import { evaluateResetRule, renderResetDecision } from './reset-rule.js';
 import { NEEDS_SIGNIN, type ResourceLiveObservation, type ResourceLiveSource, type ResourceLiveSources } from './source-types.js';
@@ -191,17 +192,20 @@ export async function runResourceLiveTick(options: ResourceLiveTickOptions): Pro
     const readings = await Promise.all([...RESOURCE_LIVE_ALLOWANCES, ...custom].map(async (allowance): Promise<ResourceLiveReading> => {
       const id = allowance.id;
       const kept = prior.readings.find(row => row.id === id);
-      const laneActive = allowance.lane !== null && active.has(allowance.lane);
+      const resetScheduled = id === 'antigravity' && prior.poll[id]?.reset_checks !== undefined;
+      const laneActive = allowance.lane !== null && active.has(allowance.lane) && !resetScheduled;
       const entry = customById.get(id);
       const windowOver = [kept?.reset_at, allowance.class === 'metered-included' || entry ? kept?.expires_at : null]
         .some(at => at != null && Date.parse(at) <= nowMs);
-      const due = options.force === true || windowOver || pollDue(prior.poll[id], laneActive, nowMs);
+      const due = options.force === true || windowOver || (id === 'antigravity' && kept?.groups && !resetScheduled) ||
+        pollDue(prior.poll[id], laneActive, nowMs);
       let reading: ResourceLiveReading;
       if (due) {
         reading = await readAllowance(allowance, entry ? customSources(entry) : options.sources[id] ?? [], nowMs, options.deadlineMs ?? SOURCE_DEADLINE_MS);
         if (!reading.verified && windowOver && id !== 'antigravity') reading = unverified(allowance, 'window-reset');
         polled.push(id);
-        poll[id] = nextPollState(prior.poll[id], readingFingerprint(reading), laneActive, nowMs);
+        const next = nextPollState(prior.poll[id], readingFingerprint(reading), laneActive, nowMs);
+        poll[id] = id === 'antigravity' ? antigravityPollState(reading, prior.poll[id], next, nowMs) : next;
       } else {
         reading = kept ?? unverified(allowance, 'source-returned-nothing');
         poll[id] = prior.poll[id];

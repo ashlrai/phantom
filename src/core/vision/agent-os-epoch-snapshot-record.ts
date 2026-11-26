@@ -5,8 +5,6 @@
  * It performs no I/O, owns no key material, and grants no runtime authority.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
-
 import type { AgentOsReadModelV1 } from './agent-os-read-model.js';
 import {
   AGENT_OS_EPOCH_RECORD_AUTHORITY_V1,
@@ -15,11 +13,24 @@ import {
   isAgentOsRawSha256DigestV1,
   type AgentOsEpochRecordAuthorityV1,
 } from './agent-os-epoch-records.js';
+import {
+  AGENT_OS_EPOCH_MAX_V1 as MAX_EPOCH,
+  DEFAULT_CANONICAL_EPOCH_BOUNDS,
+  canonicalEpochBytes as canonicalBytes,
+  canonicalEpochClone,
+  deepFreezeEpochValue as deepFreeze,
+  epochPlainRecord as record,
+  exactEpochBytes as exactBytes,
+  exactEpochKeys as exactKeys,
+  isValidEpochTimestamp as timestamp,
+  matchesEpochAuthority,
+  rawEpochDigest as rawDigest,
+} from './agent-os-epoch-shared.js';
 import { AGENT_OS_EPOCH_GENESIS_V1 } from './agent-os-rollover-protocol.js';
 
-export const AGENT_OS_EPOCH_SNAPSHOT_PROTOCOL_V2 =
+const AGENT_OS_EPOCH_SNAPSHOT_PROTOCOL_V2 =
   'ashlr-agent-os-epoch-snapshot-envelope-v2' as const;
-export const AGENT_OS_EPOCH_SNAPSHOT_AUTHENTICATOR_ALGORITHM_V2 = 'hmac-sha256' as const;
+const AGENT_OS_EPOCH_SNAPSHOT_AUTHENTICATOR_ALGORITHM_V2 = 'hmac-sha256' as const;
 export const AGENT_OS_EPOCH_SNAPSHOT_PAYLOAD_DOMAIN_V2 =
   'ashlr:agent-os:epoch-snapshot:payload:v2\0' as const;
 export const AGENT_OS_EPOCH_SNAPSHOT_ENVELOPE_DOMAIN_V2 =
@@ -27,17 +38,11 @@ export const AGENT_OS_EPOCH_SNAPSHOT_ENVELOPE_DOMAIN_V2 =
 export const AGENT_OS_EPOCH_SNAPSHOT_AUTHENTICATOR_DOMAIN_V2 =
   'ashlr:agent-os:epoch-snapshot:authenticator:v2\0' as const;
 
-const MAX_EPOCH = 999_999_999_999;
 const MAX_SEQUENCE = 4_096;
 const MAX_KEY_GENERATION = 1_000_000;
-const MAX_CANONICAL_BYTES = 1024 * 1024;
-const MAX_CANONICAL_DEPTH = 32;
-const MAX_CANONICAL_NODES = 100_000;
+const MAX_CANONICAL_BYTES = DEFAULT_CANONICAL_EPOCH_BOUNDS.maxBytes;
 const MAX_TEXT_BYTES = 512;
 const MAX_RENDER_LAG_MS = 5 * 60_000;
-const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-
-type Canonical = null | boolean | number | string | Canonical[] | { [key: string]: Canonical };
 
 export interface AgentOsEpochSnapshotPayloadV2 {
   snapshot: AgentOsReadModelV1;
@@ -184,87 +189,6 @@ const OUTCOME_KEYS = ['state', 'label'] as const;
 const EVIDENCE_KEYS = ['state', 'label'] as const;
 const NEXT_ACTION_KEYS = ['kind', 'title', 'reason', 'evidenceState'] as const;
 
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const sorted = [...expected].sort();
-  return actual.length === sorted.length && actual.every((key, index) => key === sorted[index]);
-}
-
-function canonicalize(
-  value: unknown,
-  state = { depth: 0, nodes: 0, ancestors: new Set<object>() },
-): Canonical {
-  state.nodes += 1;
-  if (state.nodes > MAX_CANONICAL_NODES || state.depth > MAX_CANONICAL_DEPTH) {
-    throw new TypeError('canonical value exceeds bounds');
-  }
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isSafeInteger(value) || Object.is(value, -0)) throw new TypeError('non-canonical number');
-    return value;
-  }
-  if (typeof value !== 'object' || state.ancestors.has(value)) throw new TypeError('non-json value');
-  state.ancestors.add(value);
-  state.depth += 1;
-  try {
-    if (Array.isArray(value)) {
-      if (Reflect.ownKeys(value).some((key) => typeof key === 'symbol' ||
-        (key !== 'length' && !/^(?:0|[1-9][0-9]*)$/u.test(key)))) throw new TypeError('invalid array');
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse array');
-        return canonicalize(entry, state);
-      });
-    }
-    const row = record(value);
-    if (!row) throw new TypeError('non-plain object');
-    const output: { [key: string]: Canonical } = Object.create(null) as { [key: string]: Canonical };
-    for (const key of Object.keys(row).sort()) output[key] = canonicalize(row[key], state);
-    return output;
-  } finally {
-    state.depth -= 1;
-    state.ancestors.delete(value);
-  }
-}
-
-function canonicalBytes(value: unknown): Buffer | null {
-  try {
-    const bytes = Buffer.from(JSON.stringify(canonicalize(value)), 'utf8');
-    return bytes.length > 1 && bytes.length <= MAX_CANONICAL_BYTES ? bytes : null;
-  } catch {
-    return null;
-  }
-}
-
-function exactBytes(left: Uint8Array, right: Uint8Array): boolean {
-  const leftBytes = Buffer.from(left);
-  const rightBytes = Buffer.from(right);
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
-}
-
-function rawDigest(domain: string, bytes: Uint8Array): string {
-  return createHash('sha256').update(domain, 'utf8').update(bytes).digest('hex');
-}
-
-function timestamp(value: unknown): value is string {
-  return typeof value === 'string' && TIMESTAMP_RE.test(value) &&
-    Number.isFinite(Date.parse(value)) && new Date(Date.parse(value)).toISOString() === value;
-}
-
 function boundedInteger(value: unknown, minimum: number, maximum: number): value is number {
   return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
 }
@@ -278,8 +202,7 @@ function enumValue(value: unknown, allowed: readonly string[]): boolean {
 }
 
 function validAuthority(value: Record<string, unknown>): boolean {
-  return AUTHORITY_KEYS.every((key) => value[key] ===
-    AGENT_OS_EPOCH_RECORD_AUTHORITY_V1[key as keyof AgentOsEpochRecordAuthorityV1]);
+  return matchesEpochAuthority(value, AGENT_OS_EPOCH_RECORD_AUTHORITY_V1);
 }
 
 function validSnapshot(value: unknown): value is AgentOsReadModelV1 {
@@ -414,20 +337,9 @@ function authenticatorPayload(unsigned: AgentOsEpochSnapshotUnsignedV2): Buffer 
     : null;
 }
 
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
-  if (ArrayBuffer.isView(value)) return value;
-  if (value !== null && typeof value === 'object' && !seen.has(value)) {
-    seen.add(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested, seen);
-    Object.freeze(value);
-  }
-  return value;
-}
-
 function ownedFrozen<T>(value: T): T | null {
-  const bytes = canonicalBytes(value);
-  if (!bytes) return null;
-  try { return deepFreeze(JSON.parse(bytes.toString('utf8')) as T); } catch { return null; }
+  const cloned = canonicalEpochClone(value);
+  return cloned === null ? null : deepFreeze(cloned);
 }
 
 export function createAgentOsEpochSnapshotEnvelopeV2(
