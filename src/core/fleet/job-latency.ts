@@ -169,7 +169,8 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
       const a = events.get(start), b = events.get(end);
       if (a?.length !== 1 || b?.length !== 1 || !Number.isFinite(a[0]) || !Number.isFinite(b[0]) || b[0]! < a[0]!) continue;
       const from = a[0]!, to = b[0]!;
-      if (end !== 'launch' && events.get('launch')?.some(at => from < at && at <= to)) continue;
+      // An undated launch could fall anywhere in the interval.
+      if (end !== 'launch' && events.get('launch')?.some(at => !Number.isFinite(at) || (from < at && at <= to))) continue;
       samples.push((to - from) / 1000);
       if (phases === jobPhases && phase === 'checkout') {
         checkout.push(to - from);

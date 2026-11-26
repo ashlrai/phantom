@@ -191,6 +191,23 @@ it('measures phases whose boundaries both follow the last launch', () => {
     .toMatchObject({ total_seconds: 30, measured_jobs: 1, missing_jobs: 0 });
 });
 
+it.each([null, 'bad-date'])('withholds phase timings when a launch timestamp is %s', timestamp => {
+  const text = [
+    event('enqueue', start),
+    event('launch', end),
+    event('checkout_complete', '2026-01-01T00:01:10Z'),
+    event('finish', '2026-01-01T00:01:30Z'),
+    event('publish', '2026-01-01T00:02:00Z'),
+    event('merged', '2026-01-01T00:03:00Z'),
+    event('launch', timestamp),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  for (const report of [jobLatency(text), mergeQueueLatency(text)]) {
+    expect(report).toMatchObject({ jobs: 1, ignored_events: 1, top_wastes: [] });
+    expect(report.phases.every(phase => phase.missing_jobs === 1 && phase.total_seconds === null)).toBe(true);
+  }
+});
+
 it.each([
   ['missing', [event('ci_start', start)]],
   ['reversed', [event('ci_start', end), event('ci_complete', start)]],
