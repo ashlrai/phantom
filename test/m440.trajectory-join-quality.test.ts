@@ -406,6 +406,39 @@ describe('trajectory join quality', () => {
     }
   });
 
+  it.each([
+    ['before the window', '2026-07-27T20:05:00.999Z', false],
+    ['at the start of the window', '2026-07-27T20:05:01.000Z', true],
+    ['at report time', NOW, true],
+    ['after report time', '2026-07-28T20:05:01.001Z', false],
+    ['with an invalid timestamp', 'invalid', false],
+  ] as const)('bounds the post-merge edge for observations %s', (_label, observedAt, joined) => {
+    const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
+    for (const record of outcomes.records) {
+      record.postMergeObservations = record.postMergeObservations?.map((row) => ({ ...row, observedAt }));
+    }
+
+    const result = listTrajectoryJoinQuality({
+      windowHours: 24,
+      deps: {
+        readDispatchProductionEventsDetailed: () => dispatchRead(),
+        listOutcomeRecordsDetailed: () => outcomes,
+        readAgentActionsDetailed: () => actionRead(),
+        loadProposal: () => proposal(),
+      },
+    });
+
+    expect(result.edges.realizedMergeToPostMerge).toMatchObject({
+      denominator: 1,
+      joined: Number(joined),
+      unjoined: Number(!joined),
+    });
+    const trajectory = result.records.find((record) => record.proposalId === PROPOSAL_ID);
+    expect(trajectory?.terminalOutcome).toBe('merged');
+    expect(trajectory?.realizedOutcome).toBe(joined ? 'regressed' : undefined);
+    expect(trajectory?.timeline.some((row) => row.kind === 'post-merge')).toBe(joined);
+  });
+
   it('excludes historical outcomes from join indices and every outcome edge denominator', () => {
     const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
     const current = outcomes.records[0];
