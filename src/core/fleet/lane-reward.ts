@@ -115,7 +115,7 @@ const tokensOf = (row: Row): number | null => {
 
 /** Fold a jobs ledger into attempts; malformed lines are counted, never thrown. */
 export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attempts: Map<string, LaneRewardAttempt>; dropped: number } {
-  const rows: { row: Row; job: string | null; event: string; phase: string }[] = [];
+  const rows: { row: Row; job: string | null; event: string; phase: string; receiptAt: number | null }[] = [];
   let dropped = 0;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -130,7 +130,7 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
     const receiptAt = ledgerEventTs(row, null);
     const outcomeAt = TERMINAL_PHASES.has(phase) ? ledgerEventTs(row, phase) : null;
     if ((receiptAt !== null && receiptAt > asOfMs) || (outcomeAt !== null && outcomeAt > asOfMs)) continue;
-    rows.push({ row, job, event, phase });
+    rows.push({ row, job, event, phase, receiptAt });
   }
   // URL-only rows can resolve only against a unique recorded job.
   const jobByUrl = new Map<string, string | null>();
@@ -143,7 +143,8 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
   }
   const attempts = new Map<string, LaneRewardAttempt>();
   const batchClaimLanes = new Map<string, string>();
-  for (const { row, job: explicitJob, event, phase } of rows) {
+  const usageTimes = new Map<string, number>();
+  for (const { row, job: explicitJob, event, phase, receiptAt } of rows) {
     const launch = LAUNCH_EVENTS.has(event), finish = FINISH_EVENTS.has(event);
     const batchClaim = event === 'batch_claim';
     if (!batchClaim && !launch && !finish && !PUBLISH_EVENTS.has(event) && phase !== 'PUBLISHED' &&
@@ -159,7 +160,20 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
     } else {
       attempt.lane = lane ?? attempt.lane;
     }
-    if (finish) attempt.tokens = tokensOf(row) ?? attempt.tokens;
+    if (finish) {
+      const tokens = tokensOf(row);
+      const previousAt = usageTimes.get(job);
+      if (tokens !== null) {
+        if (receiptAt !== null && (previousAt === undefined || receiptAt > previousAt)) {
+          usageTimes.set(job, receiptAt);
+          attempt.tokens = tokens;
+        } else if (previousAt === undefined) {
+          attempt.tokens = tokens;
+        } else if (receiptAt === previousAt && tokens !== attempt.tokens) {
+          attempt.tokens = null;
+        }
+      }
+    }
     attempt.published ||= PUBLISH_EVENTS.has(event) || phase === 'PUBLISHED' || url !== null;
     if (TERMINAL_PHASES.has(phase)) {
       const tsMs = ledgerEventTs(row, phase) ?? 0;

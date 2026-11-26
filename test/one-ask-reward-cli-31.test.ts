@@ -97,6 +97,30 @@ describe('fleet lane-reward', () => {
     expect(later).toMatchObject({ attempts: 2, tokensMeasured: 900, verifiedResults: 0 });
   });
 
+  it('uses the latest measured finish despite late arrivals and replays', async () => {
+    const job = 'RQ-FAKE-USAGE';
+    const old = { event: 'finish', job, tokens_total: 100, ts: '2026-10-31T09:00:00Z' };
+    const latest = { event: 'finish', job, tokens_total: 200, ts: '2026-10-31T10:00:00Z' };
+    const undated = { event: 'finish', job, tokens_total: 300 };
+    const report = await readLaneReward({ deps: deps({ jobsText: read(rows(
+      old, latest, old, latest, undated,
+    )) }) });
+    expect(report).toMatchObject({ attempts: 1, tokensMeasured: 200 });
+  });
+
+  it('withholds conflicting measurements until a newer measured finish', () => {
+    const job = 'RQ-FAKE-USAGE';
+    const first = { event: 'finish', job, tokens_total: 100, ts: '2026-10-31T09:00:00Z' };
+    const conflict = { ...first, tokens_total: 200 };
+    const later = { ...first, tokens_total: 300, ts: '2026-10-31T10:00:00Z' };
+    const undated = { event: 'finish', job, tokens_total: 400 };
+    expect(foldLaneRewardAttempts(rows(first, conflict, first, undated)).attempts.get(job)?.tokens).toBeNull();
+    expect(foldLaneRewardAttempts(rows(conflict, first)).attempts.get(job)?.tokens).toBeNull();
+    expect(foldLaneRewardAttempts(rows(first, conflict, later, first)).attempts.get(job)?.tokens).toBe(300);
+    expect(foldLaneRewardAttempts(rows({ event: 'finish', job, tokens_total: 50 }, undated))
+      .attempts.get(job)?.tokens).toBe(400);
+  });
+
   it('scores merged attempts through the inspector using the trusted proposal', async () => {
     const proposal = { id: 'RQ-FAKE-M1', repo: '/fake/repo', status: 'applied' } as Proposal;
     const seen: unknown[] = [];
