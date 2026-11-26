@@ -1116,7 +1116,8 @@ class RestockTriggerTests(unittest.TestCase):
         restock_script = SCRIPT.parent / 'restock.py'
         def recover():
             return subprocess.run([sys.executable, '-B', str(restock_script), '--per-lane', '0'],
-                                  env={'HOME': str(home), 'PATH': str(home / 'stubbin') + ':' + os.environ.get('PATH', '/usr/bin:/bin')},
+                                  env={'HOME': str(home), 'PATH': str(SCRIPT.parent / 'tests/fixtures/restock-authority') + ':' +
+                                       str(home / 'stubbin') + ':' + os.environ.get('PATH', '/usr/bin:/bin')},
                                   capture_output=True, text=True, timeout=60)
         r = recover()
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -1375,7 +1376,8 @@ class QueueWaitTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         rows = self.metrics(home)
         self.assertEqual([r['event'] for r in rows], ['enqueue', 'claim', 'launch'])
-        wait = (datetime.fromisoformat(rows[1]['ts']) - datetime.fromisoformat(rows[0]['ts'])).total_seconds()
+        fmt = '%Y-%m-%dT%H:%M:%S%z'
+        wait = (datetime.strptime(rows[1]['ts'], fmt) - datetime.strptime(rows[0]['ts'], fmt)).total_seconds()
         self.assertGreaterEqual(wait, 0)
         self.assertLess(wait, 300)
         for key in ('job', 'repo', 'lane', 'tier'):
@@ -1458,7 +1460,7 @@ class DispatchPriorityTests(unittest.TestCase):
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), sorted(jobs[1:]) + ['RQ-A-OTHER'])
 
-    def test_repo_rank_precedes_size_and_job_path(self):
+    def test_flat_repo_share_preserves_size_and_job_path_ties(self):
         home, env = self.fixture()
         repos = ['phantom', 'phantom-secrets', 'locus', 'lexicon',
                  'ashlr-md', 'ashlr-stack', 'ashlr-plugin', 'unknown-repo']
@@ -1469,7 +1471,7 @@ class DispatchPriorityTests(unittest.TestCase):
             queue_job(home, job, 'codex-cmp', repo=repo, size=1000 - index)
         self.run_tick(home, env)
         self.run_tick(home, env)
-        self.assertEqual(self.claims(home), expected)
+        self.assertEqual(self.claims(home), expected[::-1])
 
     def test_repo_size_and_path_rank_override_lane_order_and_old_cursor(self):
         home, env = self.fixture(('codex-cmp', 'codex-personal', 'claude', 'devin'))
@@ -1483,7 +1485,7 @@ class DispatchPriorityTests(unittest.TestCase):
         (home / '.ashlr-runs/queue/claim-cursor.json').write_text('{"lane":"devin"}')
         self.run_tick(home, env)
         self.run_tick(home, env)
-        self.assertEqual(self.claims(home), ['RQ-B-20', 'RQ-C-20', 'RQ-Z-100', 'RQ-A-1', 'RQ-0-1'])
+        self.assertEqual(self.claims(home), ['RQ-B-20', 'RQ-0-1', 'RQ-A-1', 'RQ-C-20', 'RQ-Z-100'])
 
     def test_numeric_size_hint_then_path_with_missing_and_invalid_last(self):
         home, env = self.fixture()

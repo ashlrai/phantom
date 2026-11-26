@@ -20,6 +20,9 @@ type AppProof = {path: string; inventory: string; dev: number; ino: number; sign
 type Alias = {path: string; target: string; identity: unknown};
 export interface ConsumerInstallIo extends Record<string, unknown> {
   home: string; log(line: string): void;
+  exists(path: string): boolean;
+  exec(bin: string, argv: string[]): {status: number; stdout: string};
+  readBoundedFile(path: string, maximum: number): string;
   readCurrentPointer(path: string): Pointer | null;
   isCanonicalLauncher(path: string): boolean;
   switchCurrentPointer(path: string, before: Pointer | null, target: string): Pointer;
@@ -307,7 +310,11 @@ export async function applyConsumerDesktopInstall(observed: ConsumerInstallResul
 
 /** Closed verify/copy/open adapter; no signing, plist write, sudo or credential command. */
 export function consumerInstallerOsCommand(bin: string, argv: readonly string[]): boolean {
-  if (bin==='/usr/bin/ditto') return argv.length===2 && argv.every(path=>path.startsWith('/'));
+  if (bin==='/usr/bin/ditto') {
+    const operands=argv.slice(-2);
+    return operands.length===2 && operands.every(path=>path.startsWith('/')) &&
+      [[],['-c','-k','--sequesterRsrc','--keepParent'],['-x','-k']].some(flags=>canonicalJson(flags)===canonicalJson(argv.slice(0,-2)));
+  }
   if (bin==='/usr/bin/open') return argv.length===1 && argv[0]==='/Applications/Phantom.app';
   if (bin==='/bin/ps') return canonicalJson(argv)===canonicalJson(['-axww','-o','pid=,ppid=,lstart=,args=']);
   if (bin==='/usr/sbin/lsof') return argv.length===7 && argv[0]==='-nP' && argv[1]==='-a' && argv[2]==='-p' &&

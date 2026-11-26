@@ -6,7 +6,8 @@
  * fleet/ready-row-edit.ts). This adds no reader of its own. It lists the rows
  * that are waiting to launch and edits them:
  *   top   move a job's row to the front;
- *   lane  rewrite the row's lane column;
+ *   lane  rewrite the row's lane column and its spec's preferred_lane — the
+ *         work market prefers the spec hint, so both must move together;
  *   drop  take the row out, after copying it to queue/dropped.tsv.
  *
  * EVERY WRITE holds queue/ready.lock, the flock(2) lock dispatchd.py,
@@ -29,6 +30,7 @@ import { lstat, open, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DROP_JOB_LANES } from '../fleet/drop-job-writer.js';
 import { defaultRunsDir } from '../fleet/landed-closes-read.js';
+import { readySpecCell } from '../fleet/unfed-market.js';
 import { parseReadyRows, readReadyText, type ReadyRow } from '../fleet/ready-row-edit.js';
 import { readLaneTargets } from '../fleet/runs-lane-targets.js';
 import { replaceQueueText } from './dedupe.js';
@@ -129,6 +131,29 @@ export async function readQueueOrder(opts: QueueOrderOptions = {}): Promise<Queu
   return { schema: 'queue.order.v1', version: 1, generatedAt: now.toISOString(), count: jobs.length, parked: rows.length - live.length, lanes: await openLanes(runsDir), jobs };
 }
 
+/**
+ * The lane the work market prefers for this ready row: the requirements
+ * cell's `preferred_lane` when the row carries a spec — explicit `null` is
+ * the open hint — else the lane column, the fallback work_market.requirements
+ * applies when the key is absent. Null when the hint is open or the row has
+ * no lane at all. A spec the market would reject still reports its declared
+ * preference: the steer rewrites that cell, not the market's verdict. Spec-less
+ * rows read column-only — their router-queue.md envelope is transient, since
+ * the dispatcher materializes it into the spec cell on the next tick.
+ */
+function marketHint(row: ReadyRow): string | null {
+  const cells = row.raw.split('\t');
+  if (cells.length > 5) {
+    const spec = readySpecCell(cells[5]);
+    if (spec !== null && spec !== 'invalid' && Object.hasOwn(spec, 'preferred_lane')) {
+      const value = spec.preferred_lane;
+      return typeof value === 'string' ? value : null;
+    }
+  }
+  const lane = cells[2] ?? '';
+  return lane === '' ? null : lane;
+}
+
 /** Pure: the rows after the action, or null when the queue already is the way the action wants it. */
 export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionRequest): ReadyRow[] | null {
   const mine = rows.filter(row => row.id === req.id && !parked(row));
@@ -137,13 +162,26 @@ export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionReque
   if (req.action === 'drop') return rest;
   if (req.action === 'top') return rows.filter(row => !parked(row)).slice(0, mine.length).every((row, i) => row === mine[i]) ? null : [...mine, ...rest];
   const lane = req.lane ?? '';
-  if (mine.every(row => row.lane === lane)) return null;
+  // The market prefers a row's spec preferred_lane over the lane column, so a
+  // row is "already on" the lane only when both agree — a spec pinning another
+  // lane still needs the rewrite even when its column already says it.
+  if (mine.every(row => row.lane === lane && marketHint(row) === lane)) return null;
   // The dispatcher can hand back the old row beside the moved one; moving both leaves one copy.
   const seen = new Set<string>();
   return rows.flatMap(row => {
     if (!mine.includes(row)) return [row];
     const cells = row.raw.split('\t');
     cells[2] = lane;
+    // Sync the requirements cell's preferred_lane so the market's resolved
+    // hint moves with the column; a cell it cannot parse stays untouched —
+    // the row is already dead to the market either way.
+    if (cells.length > 5) {
+      const spec = readySpecCell(cells[5]);
+      if (spec !== null && spec !== 'invalid' && spec.preferred_lane !== lane) {
+        spec.preferred_lane = lane;
+        cells[5] = JSON.stringify(spec) + (cells[5]!.endsWith('\r') ? '\r' : '');
+      }
+    }
     const raw = cells.join('\t');
     if (seen.has(raw)) return [];
     seen.add(raw);
@@ -200,7 +238,9 @@ export async function steerQueue(req: QueueActionRequest, opts: QueueOrderOption
       const rows = parseReadyRows(text), live = rows.filter(row => !parked(row)), at = live.findIndex(row => row.id === req.id);
       if (!from) {
         if (at < 0) throw new QueueSteerError('job-not-found');
-        from = { position: at + 1, of: live.length, lane: live[at]!.lane };
+        // Report the lane the market actually prefers, not just the column —
+        // a spec pinning another lane is the lane the job was really on.
+        from = { position: at + 1, of: live.length, lane: marketHint(live[at]!) ?? live[at]!.lane };
       }
       const next = planQueueAction(rows, req);
       if (next === null) { verified = writes ? true : null; break; }

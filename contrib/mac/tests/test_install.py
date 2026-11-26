@@ -40,7 +40,9 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)
         self.assertTrue(out['ok'])
-        self.assertEqual([f['status'] for f in out['files']], ['installed'] * len(FILES))
+        by = {f['file']: f['status'] for f in out['files']}
+        self.assertEqual(by, dict.fromkeys(FILES, 'installed') | {'launch.sh': 'held'})
+        self.assertFalse((self.bin / 'launch.sh').exists())
         for f in FILES:
             self.assertEqual(sha(self.bin / f), sha(MAC / f), f)
         self.assertFalse([p for p in self.bin.iterdir() if '.bak-' in p.name or '.tmp.' in p.name])
@@ -54,6 +56,8 @@ class InstallTests(unittest.TestCase):
         by = {f['file']: f for f in out['files']}
         self.assertEqual(by['dispatchd.py']['status'], 'changed')
         self.assertEqual(by['install-gate.py']['status'], 'new')
+        self.assertEqual(by['launch.sh']['status'], 'new')
+        self.assertEqual(by['launch.sh']['new_sha256'], sha(MAC / 'host-integration/launch.candidate.sh'))
         self.assertEqual((self.bin / 'dispatchd.py').read_text(), 'old\n')
         self.assertEqual(sorted(p.name for p in self.bin.iterdir()), ['dispatchd.py'])
 
@@ -68,8 +72,20 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(by['dispatchd.py']['old_sha256'], hashlib.sha256(b'old live copy\n').hexdigest())
         self.assertEqual(sha(self.bin / 'dispatchd.py'), sha(MAC / 'dispatchd.py'))
         again = json.loads(self.run_install('--json').stdout)
-        self.assertEqual({f['status'] for f in again['files']}, {'unchanged'})
+        self.assertEqual({f['file']: f['status'] for f in again['files']},
+                         dict.fromkeys(FILES, 'unchanged') | {'launch.sh': 'held'})
         self.assertEqual(len(list(self.bin.glob('dispatchd.py.bak-*'))), 1)
+
+    def test_launcher_candidate_requires_an_explicit_matching_pin(self):
+        live = self.bin / 'launch.sh'
+        live.write_text('existing live launcher\n')
+        self.assertEqual(self.run_install('--launcher-pin', 'a' * 64).returncode, 1)
+        self.assertEqual(live.read_text(), 'existing live launcher\n')
+        pin = sha(MAC / 'host-integration/launch.candidate.sh')
+        run = self.run_install('--launcher-pin', pin, '--json')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(sha(live), pin)
+        self.assertEqual(next(self.bin.glob('launch.sh.bak-*')).read_text(), 'existing live launcher\n')
 
     def test_human_output_shows_a_diff(self):
         (self.bin / 'dispatchd.py').write_text('old live copy\n')

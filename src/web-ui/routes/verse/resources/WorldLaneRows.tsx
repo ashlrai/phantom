@@ -9,6 +9,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { WORLD_CACHE_TTL_MS } from '../../../../core/world/types.js';
 import type { LaneAllowanceRow } from '../../../../core/usage/lane-allowance.js';
+import type { BankedResetProposal } from '../../../../core/usage/resource-live/types.js';
 import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { WindowBar, WindowBarSwatch } from '../../../components/primitives/WindowBar.js';
 import { Tooltip } from '../../../components/primitives/Tooltip.js';
@@ -16,7 +17,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { openResources } from './resources-store.js';
 import { resourceWorldModelQuery } from './world-query.js';
-import { sameWorldLaneRow, WORLD_LANE_STALE_MS, worldLaneRows, type LaneEngine, type WorldLaneRow } from './world-lane-rows.js';
+import { extraIdentity, sameWorldLaneRow, WORLD_LANE_STALE_MS, worldLaneRows, type LaneEngine, type WorldLaneRow } from './world-lane-rows.js';
 import styles from './WorldLaneRows.module.css';
 import { BurnSparkline } from './BurnSparkline.js';
 import { PoolAllowanceBar } from './LaneAllowanceCards.js';
@@ -145,6 +146,43 @@ function providerGroups(rows: readonly WorldLaneRow[]): Array<{ engine: LaneEngi
   return groups;
 }
 
+interface ResourceCapacity {
+  generated_at: string;
+  reset_proposal: BankedResetProposal | null;
+  lanes: Array<{ lane: string; target_concurrency: number | null }>;
+  allowances: Array<{ id: string; label: string; lane: string | null; unit: string | null; deadline_at: string | null; projected_waste_at_deadline: number | null }>;
+}
+
+function CapacityAdvice({ plan, now, expanded }: { plan: ResourceCapacity; now: number; expanded: boolean }) {
+  const targets = plan.lanes.filter(row => row.target_concurrency !== null);
+  const windows = plan.allowances.filter(row => row.deadline_at && Date.parse(row.deadline_at) > now && row.projected_waste_at_deadline !== null);
+  const reset = plan.reset_proposal;
+  const proposal = reset && Date.parse(reset.grant.expires_at) > now && Date.parse(reset.projected_exhaustion_at) > now ? reset : null;
+  if (!targets.length && !windows.length && !proposal) return null;
+  return <div className={styles.capacity} role="group" aria-label="Fleet capacity advice">
+    {expanded && <span className={styles.providerName}>Capacity advice</span>}
+    {targets.map(row => {
+      const { engine, label } = extraIdentity(row.lane);
+      const text = `${label} · Target ${row.target_concurrency} ${row.target_concurrency === 1 ? 'agent' : 'agents'}`;
+      return <div className={styles.capacityLine} key={row.lane} title={text} aria-label={text}>
+        <Mark engine={engine} /><span>{expanded ? text : `${row.target_concurrency} agents`}</span>
+      </div>;
+    })}
+    {windows.map(row => {
+      const deadline = new Date(row.deadline_at!).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      const waste = row.unit === 'percent' ? `${row.projected_waste_at_deadline}%`
+        : `${row.projected_waste_at_deadline}${row.unit ? ` ${row.unit}` : ''}`;
+      const text = `${row.label} · ${waste} projected unused by ${deadline}`;
+      return <div className={styles.capacityLine} key={row.id} title={text} aria-label={text}>
+        <Mark engine={extraIdentity(row.lane ?? row.id).engine} /><span>{expanded ? text : `${waste} unused`}</span>
+      </div>;
+    })}
+    {proposal && <div className={styles.resetProposal} title={`Use reset now for the ${proposal.window} window · ${proposal.queued_jobs} queued · grant expires ${proposal.grant.expires_at} · explicit request required`}>
+      <Mark engine="codex" /><span>{expanded ? 'Use reset now · explicit request required' : 'Reset proposal'}</span>
+    </div>}
+  </div>;
+}
+
 export function WorldLaneRows({ expanded, enabled = true, now: fixedNow, onLive, snapshot }: {
   expanded: boolean;
   enabled?: boolean;
@@ -176,10 +214,14 @@ export function WorldLaneRows({ expanded, enabled = true, now: fixedNow, onLive,
     return hold.current;
   }, [live, source, now]);
   const pools = (source as { resourcePools?: LaneAllowanceRow[] } | null)?.resourcePools;
-  if (!live || rows.length === 0 && !pools?.length) return null;
+  const capacity = (source as { resourceCapacity?: ResourceCapacity } | null)?.resourceCapacity;
+  const capacityAge = capacity ? now - Date.parse(capacity.generated_at) : Infinity;
+  const showCapacity = capacity && capacityAge >= 0 && capacityAge < 5 * 60_000;
+  if (!live || rows.length === 0 && !pools?.length && !showCapacity) return null;
   return (
     <div className={styles.group} data-expanded={expanded || undefined} data-world-lanes role="group" aria-label="Lane resources">
       {pools?.length ? <PoolAllowanceBar lanes={pools} expanded={expanded} now={now} /> : null}
+      {showCapacity ? <CapacityAdvice plan={capacity} now={now} expanded={expanded} /> : null}
       {expanded ? providerGroups(rows).map((group) => (
         <div key={group.engine} className={styles.provider} role="group" aria-label={`${PROVIDER[group.engine]} resources`}>
           <span className={styles.providerName} aria-hidden="true"><Mark engine={group.engine} /> {PROVIDER[group.engine]}</span>

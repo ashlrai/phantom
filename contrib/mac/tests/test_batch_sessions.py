@@ -41,7 +41,7 @@ class Config(unittest.TestCase):
             self.assertEqual(cfg['lanes'], ['claude'])
             self.assertFalse(cfg['devin']['route'])
             self.assertEqual(cfg['devin']['fallback_lanes'], ['claude'])
-            self.assertEqual(cfg['models']['claude']['hard'], 'opus')   # unsafe model id ignored
+            self.assertEqual(cfg['models']['claude']['hard'], 'claude-opus-5-5')   # unsafe model id ignored
             p.write_text('{"schema": "other"}')
             self.assertFalse(bs.load_config(str(p))['devin']['route'])
 
@@ -49,10 +49,12 @@ class Config(unittest.TestCase):
 class ModelMix(unittest.TestCase):
     cfg = bs.load_config(str(MAC / 'batch-sessions.json'))
 
-    def test_claude_sonnet_by_default_opus_for_hard_lines(self):
-        self.assertEqual(bs.model_for('claude', 'work', 'Fix the typo in docs/a.md', self.cfg)[0], 'sonnet')
-        self.assertEqual(bs.model_for('claude', 'frontier', 'Fix the typo', self.cfg)[0], 'opus')
-        self.assertEqual(bs.model_for('claude', 'work', 'Rework the lease ARCHITECTURE', self.cfg)[0], 'opus')
+    def test_claude_tiers_and_hard_lines(self):
+        self.assertEqual(bs.model_for('claude', 'work', 'Fix the typo in docs/a.md', self.cfg)[0], 'claude-opus-5-5')
+        self.assertEqual(bs.model_for('claude', 'frontier', 'Fix the typo', self.cfg)[0], 'claude-opus-5-5')
+        self.assertEqual(bs.model_for('claude', 'work', 'Rework the lease ARCHITECTURE', self.cfg)[0], 'claude-opus-5-5')
+        self.assertEqual(bs.model_for('claude', 'mid', '', self.cfg)[0], 'claude-sonnet-5-5')
+        self.assertEqual(bs.model_for('claude', 'fast', '', self.cfg)[0], 'claude-haiku-5-5')
 
     def test_codex_tiers_devin_flash_and_no_fable_pick(self):
         self.assertEqual(bs.model_for('codex-personal', 'work', '', self.cfg)[0], 'gpt-6.2-sol')
@@ -71,8 +73,9 @@ class ModelMix(unittest.TestCase):
 
     def test_codex_lower_tiers_and_fallbacks(self):
         for lane in ('codex-personal', 'codex-cmp'):
-            for tier in ('work', 'mid', 'fast', 'computer', '', 'unknown'):
+            for tier in ('work', 'mid', 'computer', '', 'unknown'):
                 self.assertEqual(bs.model_for(lane, tier, '', self.cfg)[0], 'gpt-6.2-sol')
+            self.assertEqual(bs.model_for(lane, 'fast', '', self.cfg)[0], 'gpt-6-luna')
             self.assertEqual(bs.model_for(lane, 'frontier', '', bs.load_config('/nonexistent'))[0], 'gpt-6.2-astra')
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / 'config.json'

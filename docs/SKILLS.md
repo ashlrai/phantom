@@ -17,7 +17,9 @@ daemon's `skill-nudge` off-tick job folds the tail of the fleet jobs ledger
 uses only recorded evidence: launch and batch-claim attempts, bounded
 launch-failure receipts, finish-row failure classifications, recut-admission
 decisions, revert evidence, and terminal outcome phases (MERGED, CLOSED,
-DONE-NOOP, CANCELLED). The fold reads the fleet jobs-ledger dialect the
+DONE-NOOP, CANCELLED). Batch members contribute their own job evidence.
+Batch session wrappers and node-pool attempt telemetry are excluded from
+recovery evidence. The fold reads the fleet jobs-ledger dialect the
 sibling outcome readers share — job ids `job|job_id|jobId|id`, lanes
 `lane|pool|arm`, events `event|type|kind` (`published` folds to `publish`),
 terminal phases `phase|state|outcome|status|result|conclusion`, and
@@ -32,6 +34,8 @@ proved did not hold never seeds a "recovery" draft. A merged,
 non-reverted job that needed a retry, a
 recut, or recovered a failure class seen on three earlier failed jobs seeds
 one bounded draft card.
+For recurrence, Phantom orders jobs by their latest terminal outcome row in
+the retained ledger. Later bookkeeping rows do not change that order.
 
 These cards are `candidate`/`imported` shadow records: they persist to the
 same card ledger, are deduplicated by content hash across ticks, and stay out

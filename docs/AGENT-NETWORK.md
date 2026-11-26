@@ -204,10 +204,31 @@ leases. The already shipped node router is reused for execution fencing instead.
 
 ## Company desktop view
 
+For lane discovery, add a `lanes` array to a `fleet.profile.v1` document at
+`$ASHLR_HOME/fleet-profile.json` (default `~/.ashlr/fleet-profile.json`).
+See [the example profile](../examples/fleet-profile.json). The local
+`phm fleet profile --json` report explains whether a declaration is ready,
+unauthorized, missing its resource, or missing a matching executor. It leaves
+the remote setup matrix unchanged.
+
+A declaration must explicitly set `authorized: true`, reference a known
+resource, and match a slot with `executor_ready: true` and nonzero capacity.
+For a renamed lane or a `custom:<id>` resource from `custom-resources.v1`, the
+executor must advertise the matching `resource_id` in its slot. Metered custom
+resources also require their own `metered_opt_in`. The fleet map adds ready lanes
+and continues to report observed jobs and dispatcher state. No profile means no
+prepopulated lane roster. A declaration cannot install an executor, change its
+capacity, or grant dispatch or billing authority.
+
+The optional `nodes` array declares the host profiles shown by the Fleet Nodes
+CLI and desktop. A declaration can describe a host that is still offline; only
+the live registry marks a host ready. Without configured profiles, only observed
+hosts are listed.
+
 Open **Company overview** from the Fleet hub, choose **Company** in the pane
 menu, or open `/verse/?pane=company`. The read-only view combines the recorded
 mission/leader verdict, READY queue depth and departures per hour, live and
-recent sessions, PR merges, lane quota windows, enrolled nodes (including muse)
+recent sessions, PR merges, lane quota windows, enrolled nodes
 and their heartbeats, and observed agent/channel assignments. Job buttons open
 the existing worker log; PR links open the recorded GitHub pull request.
 

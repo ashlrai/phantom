@@ -9,7 +9,7 @@ import {
 } from '../src/cli/fleet-ship-gap.js';
 import { cmdFleet } from '../src/cli/fleet-entry.js';
 import type { CloudGh } from '../src/core/cloud/pr-actions.js';
-import { QUEUEGEN_REPOS } from '../src/core/drive/queuegen.js';
+import { COMPANION_PROBE_REPOS } from '../src/core/fleet/planner-real-supply.js';
 
 const TAGGED_AT = '2026-10-01T12:00:00.000Z';
 const NOW = '2026-10-31T12:00:00.000Z';
@@ -65,7 +65,7 @@ describe('ashlr fleet ship-gap', () => {
     expect(r.generatedAt).toBe(NOW);
     expect(r.measured).toBe(7);
     expect(r.unknown).toBe(0);
-    expect(r.repos.map((row) => row.repo)).toEqual([...QUEUEGEN_REPOS]);
+    expect(r.repos.map((row) => row.repo)).toEqual([...COMPANION_PROBE_REPOS]);
     const phantom = r.repos.find((row) => row.repo === 'ashlrai/phantom')!;
     expect(phantom).toMatchObject({ status: 'ok', tag: 'v3.29.15', taggedAt: TAGGED_AT, tagAgeDays: 30, ahead: 712 });
     const locus = r.repos.find((row) => row.repo === 'ashlrai/locus')!;

@@ -162,16 +162,15 @@ jobs:
         run: node scripts/canonical-npm-publisher.mjs handoff "$RUNNER_TEMP/phantom-npm-admitted"
       - name: Publish original archive once or reconcile public presence
         env:
-          VERSION: ${{ steps.handoff.outputs.version }}
           FILENAME: ${{ steps.handoff.outputs.filename }}
         shell: bash
         run: |
           set -euo pipefail
-          status="$(curl --silent --show-error --max-time 30 --output "$RUNNER_TEMP/npm-before.json" --write-out '%{http_code}' "https://registry.npmjs.org/@ashlr%2Fphantom/$VERSION")"
-          if [[ "$status" == '404' ]]; then
+          status="$(node scripts/canonical-npm-publisher.mjs publication-status "$RUNNER_TEMP/phantom-npm-admitted")"
+          if [[ "$status" == 'absent' ]]; then
             # Unknown contact is reconciled below, never replayed.
             npm publish "$RUNNER_TEMP/phantom-npm-admitted/$FILENAME" --ignore-scripts --provenance --access public --registry=https://registry.npmjs.org --tag "qualified-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" || true
-          elif [[ "$status" != '200' ]]; then
+          elif [[ "$status" != 'present' ]]; then
             echo 'Registry state unknown; no publication attempted.' >&2
             exit 1
           fi

@@ -150,8 +150,11 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
   if (!tree) gaps.push('Org unknown: lane structure and messages could not be read.');
   if (liveSource ? !jobsKnown : tree && !tree.jobsKnown) gaps.push('Running jobs unknown: no job source answered.');
   const laneId = (lane: string) => `lane:${lane}`;
+  const orgLanes = new Map(org?.nodes.filter(row => row.kind === 'lane' && !row.machine).map(row => [row.lane ?? row.label, row]));
   const addLane = (lane: string, status = 'unknown', detail = 'counts unknown', machine?: string) =>
-    node('lane', machine ? `peer:${machine}:${lane}` : laneId(lane), machine ? `${lane} @ ${machine}` : lane, status, detail, providerFor(lane).name);
+    machine
+      ? node('lane', `peer:${machine}:${lane}`, `${lane} @ ${machine}`, status, detail, providerFor(lane).name)
+      : node('lane', laneId(lane), orgLanes.get(lane)?.label ?? lane, status, detail, orgLanes.get(lane)?.provider ?? providerFor(lane).name);
   const processLive = new Map(org?.nodes.filter(row => row.kind === 'job').map(row => [row.jobId!, row.processLive ?? 'unknown']));
   const localJobs: string[] = [];
   const addJob = (job: OrgTreeJob, lane: string | null) => {
@@ -170,7 +173,7 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
     if (!nodes.has(laneId(job.lane))) edge('reports-to', addLane(job.lane), 'leader');
     const minutes = typeof job.elapsed === 'number' ? Math.floor(job.elapsed / 60) : 'unknown';
     const id = node('job', `job:${job.id}`, job.id, 'running',
-      `${job.repo} · ${minutes === 'unknown' ? 'time unknown' : `${minutes} min running`}`, providerFor(job.lane).name,
+      `${job.repo} · ${minutes === 'unknown' ? 'time unknown' : `${minutes} min running`}`, orgLanes.get(job.lane)?.provider ?? providerFor(job.lane).name,
       orgLive(job.lastLogWrite === 'unknown' ? null : job.lastLogWrite, now));
     Object.assign(nodes.get(id)!, { lane: shown(job.lane), repo: shown(job.repo), state: 'running', ageMinutes: minutes === 'unknown' ? null : minutes });
     edge('reports-to', id, laneId(job.lane));

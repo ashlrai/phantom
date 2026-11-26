@@ -125,18 +125,25 @@ function claimOf(flags: Map<string, string>): JobClaim {
     token: num(flags, '--token'), leaderToken: num(flags, '--leader-token'), expiresAt: 0 };
 }
 
-/** Rejoin command for a dead session's fix text: a concrete `--node` whenever the
- * id is valid, the last advertised `--owner`/`--caps`/`--slots` while the registry
- * still holds the record, placeholders when it does not. Only id-valid node ids
- * are inlined, so the hint can never carry shell metacharacters into a paste. */
-function joinHint(nodes: DriveNodes, nodeId: string): string {
+/** Paste-ready standalone rejoin for a node id and its last advertised profile:
+ * a concrete `--node` whenever the id is valid, the last advertised
+ * `--owner`/`--caps`/`--slots` while the registry still holds the record,
+ * placeholders when it does not. Only id-valid node ids are inlined, and every
+ * profile value comes from a parseState-validated record (validId owners,
+ * validCap caps, bounded-integer slots), so the hint can never carry shell
+ * metacharacters into a paste. `phm nodes` prints the same hint for an expired
+ * local session, so both surfaces restore the full advertised profile. */
+export function joinHintCommand(nodeId: string, profile: { owners?: string[]; caps?: string[]; slots?: number } | null): string {
   if (!validId(nodeId)) return 'phm node join --node <id> --owner <scope>';
-  const profile = nodes.nodeProfile(nodeId);
-  if (!profile) return `phm node join --node ${nodeId} --owner <scope>`;
   return ['phm node join', `--node ${nodeId}`,
-    profile.owners.length ? `--owner ${profile.owners.join(',')}` : '--owner <scope>',
-    ...(profile.caps?.length ? [`--caps ${profile.caps.join(',')}`] : []),
-    ...(profile.slots === undefined ? [] : [`--slots ${profile.slots}`])].join(' ');
+    profile?.owners?.length ? `--owner ${profile.owners.join(',')}` : '--owner <scope>',
+    ...(profile?.caps?.length ? [`--caps ${profile.caps.join(',')}`] : []),
+    ...(profile?.slots === undefined ? [] : [`--slots ${profile.slots}`])].join(' ');
+}
+
+/** Rejoin command for a dead session's fix text. */
+function joinHint(nodes: DriveNodes, nodeId: string): string {
+  return joinHintCommand(nodeId, nodes.nodeProfile(nodeId));
 }
 
 /** The session a node id is live under right now, or null. Read-only, and used

@@ -68,7 +68,7 @@ export function LaneAllowanceCard({ row, now }: { row: LaneAllowanceRow; now: nu
   const bar = allowanceBar(row, reading, now, localTime);
   const reset = row.resetAt ? Date.parse(row.resetAt) : NaN;
   return <li className={styles.card} data-posture={displayRow.posture} data-freshness={invalid ? 'invalid-future' : stale ? 'stale' : row.freshness} aria-label={row.label}>
-    <header className={styles.header}><strong className={styles.name}><BrandMark brand={poolBrand(row)} size={14} />{row.label}</strong>
+    <header className={styles.header}><strong className={styles.name}><BrandMark brand={poolBrand(row)} logo={row.resource?.logo} size={14} />{row.label}</strong>
       <span className={styles.chips}><span className={styles.chip} data-posture={displayRow.posture} title={postureText(displayRow)} aria-describedby={description}>{postureLabels[displayRow.posture]}</span>
       <span className={styles.tag}>{costLabels[cost]}</span></span></header>
     <span id={description} className={styles.hidden}>{postureText(displayRow)}</span>
@@ -108,7 +108,7 @@ export function PoolAllowanceBar({ expanded, lanes, now }: { expanded: boolean; 
       const details = [time, reading.stale || reading.invalid ? null : rateText(row), reading.stale || reading.invalid ? null : wasteText(row),
         sourceText(row), freshness].filter(Boolean).join(' · ');
       return <li key={row.lane} title={`${row.label}: ${usage} · ${details}`} data-freshness={reading.stale ? 'stale' : row.freshness}>
-        <span className={styles.poolName}><BrandMark brand={poolBrand(row)} size={14} /><span>{row.label}</span></span>
+        <span className={styles.poolName}><BrandMark brand={poolBrand(row)} logo={row.resource?.logo} size={14} /><span>{row.label}</span></span>
         <WindowBar label={`${row.label} used`} valueText={`${usage} · ${details}`} valueNow={bar.used} used={bar.used} more={bar.more} unused={bar.unused} />
         <span className={styles.poolDetail}>{usage} · {details}</span>
       </li>;

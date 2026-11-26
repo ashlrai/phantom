@@ -10,11 +10,22 @@ import { ledgerFilePresent, readLedger } from '../intent/store.js';
 import { readObserveSession, readObserveSnapshot } from '../observe/read.js';
 import { readWorldModel } from '../world/read.js';
 import { readLaneAllowance } from '../usage/lane-allowance.js';
+import { defaultResourceLiveRunsDir } from '../usage/resource-live/feed.js';
+import { readFleetResourcePlan } from '../usage/resource-live/fleet-plan.js';
 
 export const OBSERVE_PATH = '/api/verse/observe';
 export const OBSERVE_SESSION_PATH = '/api/verse/observe/session';
 export const WORLD_PATH = '/api/verse/world';
 export const INTENT_PATH = '/api/verse/intent';
+
+let capacityRead: { runsDir: string; at: number; value: ReturnType<typeof readFleetResourcePlan> } | undefined;
+function readResourceCapacity() {
+  const runsDir = defaultResourceLiveRunsDir(), now = Date.now();
+  if (!capacityRead || capacityRead.runsDir !== runsDir || now < capacityRead.at || now - capacityRead.at >= 60_000) {
+    capacityRead = { runsDir, at: now, value: readFleetResourcePlan(runsDir, now) };
+  }
+  return capacityRead.value.catch(() => null);
+}
 
 export function isObservePath(path: string): boolean {
   return path === OBSERVE_PATH || path === OBSERVE_SESSION_PATH || path === WORLD_PATH || path === INTENT_PATH;
@@ -49,10 +60,15 @@ export async function handleObserveApi(req: IncomingMessage, res: ServerResponse
       sendJson(res, 200, await readWorldModel());
       return true;
     }
-    const [world, allowance] = await Promise.all([
-      readWorldModel(), readLaneAllowance().catch(() => null),
+    const [world, allowance, capacity] = await Promise.all([
+      readWorldModel(), readLaneAllowance().catch(() => null), readResourceCapacity(),
     ]);
-    sendJson(res, 200, { ...world, resourcePools: allowance?.lanes.filter(row => row.resource) ?? [] });
+    sendJson(res, 200, { ...world, resourcePools: allowance?.lanes.filter(row => row.resource) ?? [], resourceCapacity: capacity && {
+      generated_at: capacity.generated_at, reset_proposal: capacity.reset_proposal,
+      lanes: capacity.lanes.map(({ lane, target_concurrency }) => ({ lane, target_concurrency })),
+      allowances: capacity.allowances.map(({ id, label, lane, unit, deadline_at, projected_waste_at_deadline }) =>
+        ({ id, label, lane, unit, deadline_at, projected_waste_at_deadline })),
+    } });
     return true;
   }
   if (path === INTENT_PATH) {

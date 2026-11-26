@@ -551,6 +551,7 @@ export const REAL_IO_TEST_FILES = [
   'test/universe-resource-quota-integration.test.ts', // inert native metadata capture before confined Universe generation
   'test/universe-capacity-wait-integration.test.ts', // parallel inert campaigns sharing collector and worker capacity
   'test/universe-local-refresh-integration.test.ts', // inert inventory and local-chat campaign lifecycle
+  'test/swarm-pilot-mac.test.ts', // disposable Git seed and real fixed shell oracles without provider contact
   'test/universe-campaign-readiness.test.ts', // immutable private campaign and evaluator readback
   'test/universe-supervision-integration.test.ts', // confined multi-campaign supervision and owned cleanup
   'test/universe-campaign-supervisor-restart.test.ts', // real campaign ledgers, admission and leases across foreground reinvocations
@@ -840,6 +841,7 @@ export const REAL_IO_TEST_FILES = [
   'test/wiki-generate-315.test.ts', // real h1-fixture repos + a real commit per staleness case (repo wiki build/refresh)
   'test/wiki-ask-315.test.ts', // real h1-fixture repos, wiki + knowledge-index builds per case (repo wiki Ask)
   'test/wiki-api-315.test.ts', // binds a real loopback HTTP server over a real built wiki (Verse wiki routes)
+  'test/wiki-system-map.test.ts', // real git object reads, diffs and commit-pinned refreshes
   'test/verse-computer-api-315.test.ts', // 3.15: real loopback http server bind for the /api/verse/computer routes (desktop-control relay)
   'test/verse-browser-api-315.test.ts', // 3.15: real loopback http server bind for the /api/verse/browser routes (incl. the grant-authenticated MCP endpoint)
   'test/verse-agent-tools-api-315.test.ts', // 3.15 agent tools: real loopback http server bind for /api/verse/agent-tools (bearer MCP endpoint + stdio bridge relay)

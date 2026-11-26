@@ -17,7 +17,7 @@ describe('masonLane', () => {
       event('2026-10-31T12:00:00Z', ' INBOX: Mason, first order  '),
     ];
     const lane = masonLane(events, from, to)!;
-    expect(lane).toMatchObject({ id: 'mason', label: 'Mason' });
+    expect(lane).toMatchObject({ id: 'mason', label: 'Operator' });
     expect(lane.items).toEqual([
       { id: 'inbox:2026-10-31T12:00:00Z', label: 'first order', detail: 'first order', start: from, end: from, status: 'interjection' },
       { id: 'inbox:2026-10-31T13:00:00Z', label: 'second order', detail: 'second order', start: to, end: to, status: 'interjection' },

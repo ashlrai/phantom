@@ -1,5 +1,5 @@
 /**
- * The "Mason" panel (desktop pane and phone card): one timeline of what Mason
+ * The operator panel (desktop pane and phone card): one timeline of what the operator
  * said on any channel and what the leader sent back, each of his messages
  * tagged Received, Assigned, Running, Blocked or Verified with its jobs. The
  * same request on two channels shows once. Read-only: nothing here sends.
@@ -16,7 +16,7 @@ const time = (iso: string): string => iso.slice(11, 16);
 
 function title(item: MasonThreadItem): string {
   const also = item.also_on.length > 0 ? ` (also ${item.also_on.join(', ')})` : '';
-  return item.dir === 'in' ? `Mason via ${item.channel}${also}` : `Leader to ${[item.channel, ...item.also_on].join(', ')}`;
+  return item.dir === 'in' ? `Operator via ${item.channel}${also}` : `Leader to ${[item.channel, ...item.also_on].join(', ')}`;
 }
 
 export function MasonThreadCard() {
@@ -24,13 +24,13 @@ export function MasonThreadCard() {
   const thread = query.data;
   if (!thread) {
     return query.status === 'error'
-      ? <Section title="Mason"><Row title="Unknown right now" subtitle={readFailureReason(query.error)} /></Section>
+      ? <Section title="Operator"><Row title="Unknown right now" subtitle={readFailureReason(query.error)} /></Section>
       : null;
   }
   return (
-    <Section title="Mason">
+    <Section title="Operator">
       {thread.items.length === 0 ? <Row title={MASON_THREAD_EMPTY} /> : (
-        <ul aria-label="Mason thread" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        <ul aria-label="Operator thread" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
           {thread.items.map((item) => (
             <li key={`${item.at}-${item.dir}-${item.channel}-${item.text.slice(0, 24)}`}>
               <Row

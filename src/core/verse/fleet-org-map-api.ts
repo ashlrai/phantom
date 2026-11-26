@@ -10,6 +10,7 @@ import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir
 import { readResourceLedger, type ResourceLedgerV1 } from '../fleet/runs-resource-ledger.js';
 import type { LaneHealth } from '../fleet/lane-badge.js';
 import { buildLeaderSeat } from '../fleet/leader-seat.js';
+import { readPortableFleetLanes, type PortableFleetLane } from '../fleet/portable-lanes.js';
 import { loadVerifiedRegistry, type VerifiedModelRegistryEntry } from '../fleet/model-verify.js';
 import { fleetPeerReports, localFleetSource, readFleetReplica, refreshFleetReplicaOnRead } from '../fleet/fleet-replica.js';
 import { providerFor } from '../fleet/provider.js';
@@ -25,10 +26,11 @@ export interface FleetOrgReaders {
   /** Lane health badges; may fail alone, then every lane's health reads null. */
   laneHealth: () => Promise<{ lanes: readonly { lane: string; health?: LaneHealth | null }[] }>;
   messages: (options: { now: () => number; windowMinutes: number }) => FleetEdges | null;
+  profileLanes: () => Promise<PortableFleetLane[]>;
   now: () => number;
 }
 export const fleetOrgReaders: FleetOrgReaders = { live: buildFleetLiveSnapshot, sessions: getFleetSessions, runs: readFleetRunsDirState,
-  registry: loadVerifiedRegistry,
+  registry: loadVerifiedRegistry, profileLanes: readPortableFleetLanes,
   ledger: readResourceLedger, models: () => getLaneModelSnapshot(),
   laneHealth: async () => {
     const { getFleetLaneSnapshot } = await import('../fleet/lane-console.js');
@@ -54,13 +56,14 @@ export async function readFleetOrgSources(minutes = 60, readers: Partial<FleetOr
     } }, usage: null };
   }
   const settled = <T>(result: PromiseSettledResult<T>) => result.status === 'fulfilled' ? result.value : null;
-  const [live, sessions, runs, ledger, models, registry, health] = await Promise.allSettled([read.live(), read.sessions(clock), read.runs(clock), read.ledger(clock), read.models(), read.registry(), read.laneHealth()]);
+  const [live, sessions, runs, ledger, models, registry, health, profileLanes] = await Promise.allSettled([read.live(), read.sessions(clock), read.runs(clock), read.ledger(clock), read.models(), read.registry(), read.laneHealth(), read.profileLanes()]);
   let messages: FleetEdges | null = null;
   try { messages = read.messages({ ...clock, windowMinutes: minutes }); } catch { /* messages then read unknown */ }
-  const snapshot = settled(live)?.snapshot ?? null, usage = settled(ledger);
-  const map = fleetOrgMap(snapshot, { sessions: settled(sessions), messages, minutes, now });
+  const snapshot = settled(live)?.snapshot ?? null, usage = settled(ledger), runState = settled(runs);
+  const map = fleetOrgMap(snapshot, { sessions: settled(sessions), messages, minutes, now, profileLanes: settled(profileLanes) ?? [],
+    observedLanes: runState?.lanes.map(lane => lane.lane) });
   const leaderSeat = buildLeaderSeat(settled(runs), settled(models), settled(registry), now);
-  const tree = fleetOrgTree(map, { runs: settled(runs), usage, engineLanes: snapshot?.lanes, models: settled(models), leaderSeat, laneHealth: settled(health)?.lanes });
+  const tree = fleetOrgTree(map, { runs: runState, usage, engineLanes: snapshot?.lanes, models: settled(models), leaderSeat, laneHealth: settled(health)?.lanes });
   const source = localFleetSource(tree.generatedAt, now);
   const lanes = tree.lanes.map(lane => ({ ...lane, machine: source.machine ?? undefined }));
   for (const peer of fleetPeerReports(now)) {

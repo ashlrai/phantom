@@ -1,0 +1,151 @@
+(version 1)
+(allow default)
+(deny file-write* (subpath "/Users/masonwyatt"))
+(allow file-write*
+  (subpath "/Users/masonwyatt/Projects/ashlrai")
+  (subpath "/Users/masonwyatt/.cache") (subpath "/Users/masonwyatt/Library/Caches") (subpath "/Users/masonwyatt/.npm") (subpath "/Users/masonwyatt/.bun/install/cache")
+  (subpath "/Users/masonwyatt/Library/pnpm") (subpath "/Users/masonwyatt/.local/share/pnpm") (subpath "/Users/masonwyatt/.cargo/registry") (subpath "/Users/masonwyatt/.cargo/git")
+  (subpath "/Users/masonwyatt/.yarn/berry/cache") (subpath "/Users/masonwyatt/Library/Logs") (subpath "/Users/masonwyatt/.zai-lane/claude"))
+(deny file-write*
+  (regex #"^/Users/masonwyatt/Projects/ashlrai/[^/]+/\.git/(hooks|config)")
+  (regex #"^/Users/masonwyatt/Projects/ashlrai/[^/]+/\.git/worktrees/[^/]+/(hooks|config)")
+  (literal "/Users/masonwyatt/.claude/settings.json") (literal "/Users/masonwyatt/.claude/CLAUDE.md") (subpath "/Users/masonwyatt/.claude/hooks") (subpath "/Users/masonwyatt/.claude/commands") (subpath "/Users/masonwyatt/.claude/agents") (subpath "/Users/masonwyatt/.claude/skills"))
+(deny file-write*
+  (regex #"^/Users/masonwyatt/Projects/ashlrai/[^/]+/\.git$")
+  (regex #"^/Users/masonwyatt/Projects/ashlrai/wt/[^/]+/\.git$")
+  (regex #"^/Users/masonwyatt/Projects/ashlrai/[^/]+/\.git/worktrees/[^/]+/(commondir|gitdir)$")
+  (regex #"^/Users/masonwyatt/Projects/ashlrai/[^/]+/\.git/info(/|$)"))
+(deny file-write*
+  (subpath "/opt/homebrew")
+  (subpath "/usr/local")
+  (subpath "/Library/LaunchAgents")
+  (subpath "/Library/LaunchDaemons"))
+(deny file-write*
+  (regex #"^/Users/masonwyatt/Projects/ashlrai/[^/]+/\.git/config$")
+  (regex #"^/Users/masonwyatt/Projects/ashlrai/[^/]+/\.git/modules(/|$)")
+  (regex #"^/Users/masonwyatt/Projects/ashlrai/[^/]+/\.git/worktrees/[^/]+/config\.worktree$")
+  (regex #"^/Users/masonwyatt/Projects/ashlrai/[^/]+/\.git/config\.worktree$"))
+(deny file-read* file-write* (subpath "/Users/masonwyatt/.config/gh") (subpath "/Users/masonwyatt/.ssh") (literal "/Users/masonwyatt/.git-credentials") (literal "/Users/masonwyatt/.netrc") (subpath "/Users/masonwyatt/.ashlr-runs"))
+(allow file-read* (regex #"^/Users/masonwyatt/\.ashlr-runs/[^/]+\.prompt$"))
+(deny process-exec (literal "/opt/homebrew/bin/gh") (regex #"git-credential-osxkeychain$") (literal "/bin/launchctl") (literal "/usr/bin/crontab") (literal "/usr/bin/at") (literal "/usr/bin/batch"))
+(deny file-read* file-write* (subpath "/Users/masonwyatt/.codex") (subpath "/Users/masonwyatt/.codex-2") (subpath "/Users/masonwyatt/Library/Keychains"))
+(deny process-exec (literal "/usr/bin/security"))
+; SB-16 RQ-OMLX-MODELS deny-only block. Append at the END of agent.sb, claude.sb, codex-cmp.sb, codex-personal.sb (and codex-local.sb).
+(deny file-read* file-write*
+  (subpath "/Users/masonwyatt/.omlx")
+  (subpath "/Users/masonwyatt/.omlx-secrets")
+  (literal "/Users/masonwyatt/.omlx-secrets/key"))
+
+;; G1 SANDBOX-DENY-OSA (Security pin 2026-10-28 13:58): tightening only; blocks the LaunchServices/osascript escape (ppid 1).
+(deny process-exec (literal "/usr/bin/osascript") (literal "/usr/bin/osacompile") (literal "/usr/bin/open") (literal "/usr/bin/sudo") (literal "/usr/bin/tmutil") (literal "/bin/launchctl"))
+(deny file-write* (regex #"\.app(/|$)") (regex #"\.scpt$"))
+(deny file-read* file-write* (literal "/Users/masonwyatt/.claude-org/lane.key") (regex #"^/Users/masonwyatt/\.claude-org/lane\.key\.tmp\."))
+(deny process-exec (literal "/Users/masonwyatt/.ashlr-runs/bin/mason-inbox-append"))
+;; ZAI-LANE rev1 (Security 2026-11-03): CLAUDE_CONFIG_DIR=~/.zai-lane/claude is the only writable home dir besides the worktree and caches.
+;; Key file, run.sh and the rest of ~/.zai-lane are unreadable: launch.sh reads the key on fd 3 before sandbox-exec.
+(deny file-read* file-write* (literal "/Users/masonwyatt/.zai-lane/api_key") (literal "/Users/masonwyatt/.zai-lane/run.sh") (regex #"^/Users/masonwyatt/\.zai-lane/[^/]+$"))
+(allow file-read* file-write* (literal "/Users/masonwyatt/.zai-lane/claude"))
+(deny file-write* (literal "/Users/masonwyatt/.zai-lane/claude/settings.json") (literal "/Users/masonwyatt/.zai-lane/claude/settings.local.json") (literal "/Users/masonwyatt/.zai-lane/claude/CLAUDE.md")
+  (subpath "/Users/masonwyatt/.zai-lane/claude/hooks") (subpath "/Users/masonwyatt/.zai-lane/claude/commands") (subpath "/Users/masonwyatt/.zai-lane/claude/agents") (subpath "/Users/masonwyatt/.zai-lane/claude/skills") (subpath "/Users/masonwyatt/.zai-lane/claude/plugins"))
+(deny file-read* file-write* (subpath "/Users/masonwyatt/.claude") (subpath "/Users/masonwyatt/.claude-org") (literal "/Users/masonwyatt/.claude.json") (regex #"^/Users/masonwyatt/\.claude\.json\.") (subpath "/Users/masonwyatt/.claude-worktrees")
+  (subpath "/Users/masonwyatt/.gemini") (subpath "/Users/masonwyatt/.gemini-lane") (subpath "/Users/masonwyatt/.codex-local") (subpath "/Users/masonwyatt/.codex_backup") (subpath "/Users/masonwyatt/.devin") (subpath "/Users/masonwyatt/.config/devin") (subpath "/Users/masonwyatt/.local/share/devin") (subpath "/Users/masonwyatt/.local/state/devin") (subpath "/Users/masonwyatt/Library/Application Support/devin")
+  (subpath "/Users/masonwyatt/.aws") (subpath "/Users/masonwyatt/.config/gcloud") (subpath "/Users/masonwyatt/.gsutil") (subpath "/Users/masonwyatt/.phantom") (subpath "/Users/masonwyatt/.phantom-secrets") (subpath "/Users/masonwyatt/.tokens") (subpath "/Users/masonwyatt/.mcp-auth") (literal "/Users/masonwyatt/.kalshi_alpaca_keys")
+  (literal "/Users/masonwyatt/.npmrc") (literal "/Users/masonwyatt/.docker/config.json") (regex #"^/Users/masonwyatt/\.clasprc\.json") (subpath "/Users/masonwyatt/.cloudflared") (subpath "/Users/masonwyatt/.fly") (subpath "/Users/masonwyatt/.railway") (subpath "/Users/masonwyatt/.supabase") (subpath "/Users/masonwyatt/.terraform.d")
+  (subpath "/Users/masonwyatt/.gnupg") (subpath "/Users/masonwyatt/.grok") (subpath "/Users/masonwyatt/.grokbot") (subpath "/Users/masonwyatt/.cursor") (subpath "/Users/masonwyatt/.copilot") (subpath "/Users/masonwyatt/.hermes") (subpath "/Users/masonwyatt/.openclaw") (subpath "/Users/masonwyatt/.openclaw-sales") (subpath "/Users/masonwyatt/.vercel-cmp") (subpath "/Users/masonwyatt/.cmp-private")
+  (subpath "/Users/masonwyatt/.ashlr") (subpath "/Users/masonwyatt/.config/ashlr") (subpath "/Users/masonwyatt/.config/stripe") (subpath "/Users/masonwyatt/.config/neon") (subpath "/Users/masonwyatt/.config/vercel-cmp-board") (subpath "/Users/masonwyatt/.config/configstore") (subpath "/Users/masonwyatt/.config/cmp") (literal "/Users/masonwyatt/.env"))
+;; AGY-LANE rev1 (Security 2026-11-03): the agy lane home holds its file OAuth token; no other lane may read or write it.
+(deny file-read* file-write* (subpath "/Users/masonwyatt/.agy-lane"))
+;; AGY-LANE rev1b: real ~/.gemini/antigravity-cli (Mason's own agy state; held a file token at sign-in) is off-limits to every lane.
+(deny file-read* file-write* (subpath "/Users/masonwyatt/.gemini/antigravity-cli"))
+;; GROK-CURSOR-LANES rev1 (Security 2026-11-03): no other lane may read or write Grok or Cursor credentials, config or lane homes.
+(deny file-read* file-write* (subpath "/Users/masonwyatt/.grok") (subpath "/Users/masonwyatt/.grok-lane") (subpath "/Users/masonwyatt/.cursor") (subpath "/Users/masonwyatt/.cursor-lane")
+  (subpath "/Users/masonwyatt/Library/Application Support/Cursor"))
+
+;; LANE-MCP rev1 (Security 2026-11-03): shared lane MCP config and safe-fetch are read-only to every lane (no cross-lane MCP injection).
+(deny file-write* (subpath "/Users/masonwyatt/.lane-mcp"))
+
+;; STACKSYNC rev1 (Security 2026-11-03): official stacksync CLI login store (~/.stacksync: credentials, env.json) is off-limits to every lane;
+;; the pinned CLI tree is read-only to lanes. Lanes never hold STACKSYNC_API_KEY.
+(deny file-read* file-write* (subpath "/Users/masonwyatt/.stacksync"))
+(deny file-write* (subpath "/Users/masonwyatt/.local/lib/stacksync-1.0.11") (literal "/Users/masonwyatt/.local/bin/stacksync"))
+
+;; CLAUDE-BROKER rev1 (Security 2026-11-04): the fleet Claude token lives only in ~/.claude-fleet-broker, read by the out-of-sandbox broker.
+(deny file-read* file-write* (subpath "/Users/masonwyatt/.claude-fleet-broker") (regex #"^/Users/masonwyatt/\.ashlr-runs/bin/claude-broker"))
+
+;; SIGNKEY-DENY rev1 (Security 2026-11-04, P0): Phantom desktop updater signing key dir is off-limits to every lane; last so it wins over earlier allows.
+(deny file-read* file-write* (subpath "/Users/masonwyatt/Library/Application Support/PhantomReleaseSigning"))
+
+;; TOOLCHAIN-WDENY rev1 (Security 2026-11-04): Phantom release toolchain is read+exec only for every lane (release scripts run outside lanes); last so it wins.
+(deny file-write* (subpath "/Users/masonwyatt/Library/Application Support/PhantomReleaseToolchain"))
+
+;; WEYV-LANE-BASE-1-rev3: per-job weyv worktree git dir, report/metrics, a narrow
+;; commit allow, and explicit denies. When a WEYV_* param is missing, wp falls
+;; back to an empty sentinel so pinned callers that do not pass -D (orch-tick,
+;; orch-pass, lane probes) can still start. Non-weyv jobs launched via
+;; launch.sh get /private/var/empty/ashlr-weyv-lane-none/... sentinels, so
+;; these allows add no home or ashlr-runs access.
+(define (wp n) (or (param n) "/private/var/empty/ashlr-weyv-lane-none/x"))
+;;
+;; Job worktree git dir + report/metrics (rev1, unchanged in scope).
+(allow file-read* file-write* (subpath (wp "WEYV_GIT_WT")))
+(deny file-write*
+  (subpath (string-append (wp "WEYV_GIT_WT") "/hooks"))
+  (literal (string-append (wp "WEYV_GIT_WT") "/config"))
+  (literal (string-append (wp "WEYV_GIT_WT") "/commondir"))
+  (literal (string-append (wp "WEYV_GIT_WT") "/gitdir"))
+  (literal (string-append (wp "WEYV_GIT_WT") "/config.worktree")))
+(allow file-read* (subpath (wp "WEYV_METRICS_RO")))
+(allow file-read* file-write* (subpath (wp "WEYV_REPORT")) (subpath (wp "WEYV_METRICS")))
+;;
+;; Objects (rev2): param-gated subpath of the common objects dir so two-hex
+;; object subdirs, pack/, and the temporary files git writes in objects/ itself
+;; all work. A hardcoded weyv regex would also apply to non-weyv lanes, so the
+;; path comes from WEYV_OBJECTS (a sentinel for every other repo). objects/info/
+;; including alternates is denied next, as is objects/incoming/.
+(allow file-read* file-write* (subpath (wp "WEYV_OBJECTS")))
+;;
+;; Rev3: deny unlink and overwrite of existing packs and loose objects.
+;; SBPL regex has no {n} quantifiers, so the loose-object pattern uses a
+;; two-hex directory plus a hex filename rather than {38,62}. tmp_pack_*
+;; and tmp_obj_* names are not matched, so creating new objects and git's
+;; write-temp-then-rename into a new name still work. Rename-over an
+;; existing pack or loose object needs unlink of the destination and is
+;; denied.
+(deny file-write-unlink file-write-data
+  (require-all
+    (subpath (string-append (wp "WEYV_OBJECTS") "/pack"))
+    (regex #"pack-[0-9a-f]+\.(pack|idx|rev)$"))
+  (require-all
+    (subpath (wp "WEYV_OBJECTS"))
+    (regex #"/[0-9a-f][0-9a-f]/[0-9a-f]+$")))
+;;
+;; Job branch ref + reflog as LITERALS from per-job params (rev2). Not subpath
+;; and not a prefix glob, so refs/heads/codex-bridge/<job> cannot match
+;; <job>-2 or another job. Git updates a ref by creating the literal
+;; <ref>.lock and then renaming it onto <ref>; the reflog uses the same
+;; <reflog>.lock pattern. Those two lock paths are also literals.
+(allow file-read* file-write*
+  (literal (wp "WEYV_REF"))
+  (literal (wp "WEYV_REF_LOCK"))
+  (literal (wp "WEYV_REFLOG"))
+  (literal (wp "WEYV_REFLOG_LOCK")))
+;;
+;; Explicit still-deny list (rev2). These are not in the allows above; the
+;; denies are last so they win. packed-refs, refs/heads/macos, other refs
+;; paths, common hooks/, config, info/, commondir, and objects/info/alternates
+;; stay closed. Other-job worktree dirs stay closed because only this job's
+;; WEYV_GIT_WT is allowed (a parent worktrees/ deny would also clobber this
+;; job, so it is not added).
+(deny file-write*
+  (subpath (string-append (wp "WEYV_COMMON") "/hooks"))
+  (literal (string-append (wp "WEYV_COMMON") "/config"))
+  (literal (string-append (wp "WEYV_COMMON") "/config.lock"))
+  (subpath (string-append (wp "WEYV_COMMON") "/info"))
+  (literal (string-append (wp "WEYV_COMMON") "/commondir"))
+  (literal (string-append (wp "WEYV_COMMON") "/packed-refs"))
+  (literal (string-append (wp "WEYV_COMMON") "/packed-refs.lock"))
+  (literal (string-append (wp "WEYV_COMMON") "/refs/heads/macos"))
+  (literal (string-append (wp "WEYV_COMMON") "/refs/heads/macos.lock"))
+  (subpath (string-append (wp "WEYV_OBJECTS") "/info"))
+  (literal (string-append (wp "WEYV_OBJECTS") "/info/alternates"))
+  (subpath (string-append (wp "WEYV_OBJECTS") "/incoming")))

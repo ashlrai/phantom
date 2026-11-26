@@ -1,0 +1,46 @@
+.root { min-width: 0; display: grid; gap: var(--space-4); container-type: inline-size; }
+.breadcrumb, .breadcrumb span { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.breadcrumb { color: var(--text-tertiary); font-size: var(--text-sm-size); }
+.root button { color: var(--text-primary); font: inherit; cursor: pointer; }
+.breadcrumb button, .detail li button {
+  background: transparent; border: 0; padding: var(--space-1); text-align: left; overflow-wrap: anywhere;
+}
+.breadcrumb button[aria-current] { color: var(--text-secondary); font-weight: var(--font-weight-medium); }
+.root button:focus-visible, .root a:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.header { display: flex; justify-content: space-between; align-items: end; gap: var(--space-4); flex-wrap: wrap; }
+.header h2 { margin: var(--space-1) 0 0; font-size: var(--text-xl-size); color: var(--text-primary); overflow-wrap: anywhere; }
+.header h2:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
+.eyebrow, .commit span, .nodeKind { font-family: var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.eyebrow, .commit span { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.commit { display: grid; justify-items: start; gap: var(--space-1); }
+.commit code { color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); }
+.coverage { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); color: var(--text-secondary); font-size: var(--text-sm-size); }
+.coverage strong { color: var(--text-primary); }
+.layout { display: grid; gap: var(--space-3); grid-template-columns: minmax(0, 1fr) minmax(220px, 285px); align-items: start; }
+.viewport { min-width: 0; max-height: 500px; overflow: auto; border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--bg-canvas); }
+.diagram { display: block; width: 100%; min-width: 530px; }
+.edges path { fill: none; stroke: var(--border-focus); stroke-width: 1.7; opacity: 0.75; }
+.edges path[data-kind='imports'] { stroke-dasharray: 4 3; }
+.diagram marker, .card circle { fill: var(--border-focus); }
+.card { cursor: pointer; outline: none; }
+.card rect { fill: var(--bg-surface); stroke: var(--border-default); }
+.card:hover rect, .card[aria-pressed='true'] rect { fill: var(--bg-hover); stroke: var(--border-focus); }
+.card:focus-visible rect { stroke: var(--border-focus); stroke-width: 3; }
+.nodeKind { fill: var(--text-secondary); font-size: var(--text-2xs-size); pointer-events: none; }
+.nodeLabel { fill: var(--text-primary); font-size: var(--text-sm-size); font-weight: var(--font-weight-medium); pointer-events: none; }
+.detail { max-height: 500px; min-width: 0; overflow: auto; box-sizing: border-box; padding: var(--space-4); border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--bg-surface); }
+.detail h3 { color: var(--text-primary); font-size: var(--text-lg-size); margin: var(--space-2) 0 var(--space-1); overflow-wrap: anywhere; }
+.detail h4 { color: var(--text-primary); font-size: var(--text-sm-size); margin: var(--space-4) 0 var(--space-2); }
+.detail h4 span { margin-left: var(--space-1); color: var(--text-secondary); }
+.detail p:not(.eyebrow), .guide { color: var(--text-secondary); font-size: var(--text-sm-size); margin: 0; }
+.source { display: grid; gap: var(--space-1); margin-top: var(--space-2); color: var(--text-secondary); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.source a { color: var(--text-link); width: fit-content; }
+.explore { width: 100%; margin-top: var(--space-3); padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-hover); }
+.detail ul { list-style: none; margin: 0; padding: 0; }
+.detail li { border-top: 1px solid var(--border-default); padding: var(--space-2) 0; font-size: var(--text-sm-size); }
+.detail li > span { display: block; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.root button:hover { text-decoration: underline; }
+@container (max-width: 760px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .viewport, .detail { max-height: 360px; }
+}

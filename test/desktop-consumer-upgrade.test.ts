@@ -77,7 +77,12 @@ function installFixture(version='3.30.35') {
     expect(consumerInstallerOsCommand(bin,args)).toBe(true);
     if(bin==='/usr/bin/plutil')return {status:0,stdout:JSON.parse(fs.readFileSync(mapped(args.at(-1)!),'utf8'))[args[1]]+'\n'};
     if(bin==='/usr/bin/codesign') {expect(args[0]).toBe('--verify');expect(args[3]).toContain(manifest.app.signer);return {status:0,stdout:''};}
-    if(bin==='/usr/bin/ditto') {expect(args).toHaveLength(2);fs.cpSync(mapped(args[0]),mapped(args[1]),{recursive:true,preserveTimestamps:true});return {status:0,stdout:''};}
+    if(bin==='/usr/bin/ditto') {
+      const [from,to]=args.slice(-2).map(mapped);
+      if(args[0]==='-c')fs.cpSync(from,join(to,basename(from)),{recursive:true,preserveTimestamps:true});
+      else fs.cpSync(from,to,{recursive:true,preserveTimestamps:true});
+      return {status:0,stdout:''};
+    }
     if(bin==='/usr/bin/open') {if(spawnFailure)return {status:1,stdout:''};live=true;write(join(home,'.ashlr/.desktop-sidecar.json'),JSON.stringify({desktopPid:100,sidecarPid:101,port:7777,sidecarPath:'/Applications/Phantom.app/Contents/MacOS/ashlr'}));return {status:0,stdout:''};}
     if(bin==='/bin/ps')return {status:0,stdout:live?'100 1 Thu Oct 8 00:00:00 2026 /Applications/Phantom.app/Contents/MacOS/ashlr-desktop\n101 100 Thu Oct 8 00:00:00 2026 /Applications/Phantom.app/Contents/MacOS/ashlr verse --port 7777 --no-open --json\n':''};
     if(bin==='/usr/sbin/lsof')return {status:0,stdout:health?'p101\nf8\n':'p999\nf8\n'};
@@ -105,9 +110,42 @@ function fixture(version='3.30.35') {
   return {...f,old,deps};
 }
 const options={mode:'upgrade' as const,apply:false,requireApp:false};
+function oldApp(f:ReturnType<typeof fixture>):string {
+  const app=join(f.applications,'Phantom.app'),plist=join(app,'Contents/Info.plist');
+  fs.cpSync(f.appRoot,app,{recursive:true});
+  const info=JSON.parse(fs.readFileSync(plist,'utf8'));info.CFBundleShortVersionString='3.30.24';info.CFBundleVersion='3.30.24';write(plist,JSON.stringify(info),0o644);
+  return app;
+}
 describe('managed consumer upgrade',()=> {
-  it('recovers a proven same-boot dead collector before quiescence on apply',async()=> {
+  it('does not claim already-current with an absent required app',async()=> {
+    const f=fixture('3.30.24');
+    expect(await inspectConsumerDesktopUpgrade(f.deps,{...options,requireApp:true})).toMatchObject({state:'held',reason:'app-needs-owner',app:{state:'absent'}});
+  });
+  it('replaces the verified native app as part of the managed CLI switch',async()=> {
+    const f=fixture();oldApp(f);
+    const inspected=await inspectConsumerDesktopUpgrade(f.deps,{...options,requireApp:true});
+    expect(await applyConsumerDesktopUpgrade(inspected)).toMatchObject({state:'upgraded',app:{state:'current'},authorityResumed:false});
+    expect(f.io.appInventory('/Applications/Phantom.app')).toBe(f.manifest.app.inventorySha256);
+    expect(fs.readlinkSync(f.current)).toBe(join(dirname(f.old),f.manifest.source.revision));
+  });
+  it('repairs an older app without changing the verified current CLI pointer',async()=> {
+    const f=fixture();
+    expect(await applyConsumerDesktopUpgrade(await inspectConsumerDesktopUpgrade(f.deps,options))).toMatchObject({state:'upgraded'});
+    const before=fs.lstatSync(f.current);oldApp(f);f.deps.residentStop=async()=>({ok:true});
+    const inspected=await inspectConsumerDesktopUpgrade(f.deps,{...options,requireApp:true});
+    expect(await applyConsumerDesktopUpgrade(inspected)).toMatchObject({state:'upgraded',app:{state:'current'}});
+    expect(fs.lstatSync(f.current).ino).toBe(before.ino);
+  });
+  it('restores both members after the replacement app fails to launch',async()=> {
+    const f=fixture();oldApp(f);const inventory=f.io.appInventory('/Applications/Phantom.app');f.failOpen();
+    const inspected=await inspectConsumerDesktopUpgrade(f.deps,{...options,requireApp:true});
+    expect(await applyConsumerDesktopUpgrade(inspected)).toMatchObject({state:'rolled-back',applied:false});
+    expect(fs.readlinkSync(f.current)).toBe(f.old);
+    expect(f.io.appInventory('/Applications/Phantom.app')).toBe(inventory);
+  });
+  it.each([false,true])('recovers a proven same-boot dead collector before quiescence on apply (paired app: %s)',async paired=> {
     const f=fixture(),ledger=join(f.home,'.ashlr/account-connections/ledger');
+    if(paired)oldApp(f);
     fs.mkdirSync(ledger,{recursive:true,mode:0o700});
     vi.spyOn(bootIdentity,'readNativeBootIdentity').mockReturnValue({machineDigest:'a'.repeat(64),bootId:'11111111-2222-3333-4444-555555555555'});
     const lease=await acquireResourceQuotaRefreshLease(ledger,{scope:'native-connection-metadata',trackNativeActivity:true});
@@ -124,7 +162,23 @@ describe('managed consumer upgrade',()=> {
     const emit=vi.fn();
     expect(await cmdDesktop(['install','--upgrade','--apply'],undefined,emit,undefined,f.deps)).toBe(0);
     expect(emit).toHaveBeenCalledWith(expect.objectContaining({state:'upgraded'}));
+    if(paired)expect(emit).toHaveBeenCalledWith(expect.objectContaining({app:{state:'current',reason:null}}));
     expect(fs.existsSync(pending)).toBe(false);
+  });
+  it('reports a fixed hold if a quota marker appears at the paired app transaction boundary',async()=> {
+    const f=fixture();oldApp(f);
+    const inspected=await inspectConsumerDesktopUpgrade(f.deps,options);
+    const pending=join(f.home,'.ashlr/account-connections/ledger/.resource-quota-refresh-pending.json');
+    vi.mocked(f.deps.residentStop).mockImplementationOnce(async()=> {
+      f.io.executionLeaseCensus.mockImplementationOnce(async()=>{
+        f.io.executionLeaseCensus.mockImplementationOnce(async()=>{write(pending,'{}');return f.census;});
+        return f.census;
+      });
+      return {ok:true};
+    });
+    expect(await applyConsumerDesktopUpgrade(inspected)).toMatchObject({state:'held',reason:'collector-pending',stop:{reason:'collector-pending',drained:false},remedyCommand:expect.any(String)});
+    expect(fs.readlinkSync(f.current)).toBe(f.old);
+    expect(fs.readFileSync(pending,'utf8')).toBe('{}');
   });
   it('reports the exact private path in inspection and tightens it only on explicit apply',async()=> {
     const f=fixture(),local=join(f.home,'.local'),share=join(local,'share');
@@ -226,14 +280,12 @@ describe('managed consumer upgrade',()=> {
     const r=await inspectConsumerDesktopUpgrade(f.deps,{...options,mode:'rollback'});
     expect(r).toMatchObject({state:'held',reason:'launcher-identity'});
   });
-  it('reports ad-hoc app as owner work without blocking CLI unless required',async()=> {
+  it('holds on an ad-hoc app rather than splitting the app and CLI',async()=> {
     const f=fixture();fs.cpSync(f.appRoot,join(f.applications,'Phantom.app'),{recursive:true});
     const exec=f.io.exec;f.io.exec=(bin:string,args:string[])=>bin==='/usr/bin/codesign'&&args.at(-1)==='/Applications/Phantom.app'?{status:1,stdout:''}:exec(bin,args);
     expect(await inspectConsumerDesktopUpgrade(f.deps,{...options,requireApp:true})).toMatchObject({state:'held',reason:'app-needs-owner',app:{state:'needs-owner',reason:'app-identity-unverified'}});
-    const r=await inspectConsumerDesktopUpgrade(f.deps,options);expect(r.app.state).toBe('needs-owner');
-    expect(r.steps).toContain('Owner: reinstall the signed Phantom.app');
-    expect(r.steps.at(-1)).toBe('phm authority resident start (owner confirmation)');
-    expect(await applyConsumerDesktopUpgrade(r)).toMatchObject({state:'upgraded',app:{state:'needs-owner'}});
+    expect(await inspectConsumerDesktopUpgrade(f.deps,options)).toMatchObject({state:'held',reason:'app-needs-owner',app:{state:'needs-owner'}});
+    expect(fs.readlinkSync(f.current)).toBe(f.old);
   });
   it('requires Stop only at apply and never stops the resident on a refusal',async()=> {
     const f=fixture();fs.unlinkSync(join(f.home,'.ashlr/KILL'));const r=await inspectConsumerDesktopUpgrade(f.deps,options);expect(r).toMatchObject({state:'ready',stop:{engaged:false,drained:false}});

@@ -191,18 +191,21 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(job).not.toHaveProperty('reverted');
   });
 
-  it('excludes batch sessions and node-pool rows from PR claims', () => {
+  it('excludes batch sessions and node-pool rows from the recovery fold and PR claims', () => {
     const url = 'https://github.com/ashlrai/phantom/pull/782';
     const text = [
-      line({ event: 'launch', job: 'RQ-BATCH-9', batch_size: 1, pr_url: url,
-        ts: '2026-10-28T10:00:00-0400' }),
+      launch('RQ-BATCH-9'), launch('RQ-BATCH-9'),
+      outcome('RQ-BATCH-9', 'MERGED', { pr_url: url }),
       line({ schema: 'fleet.session-pool.v1', job: 'sess:1', jobId: 'ready:x', pr_url: url,
         ts: '2026-10-28T10:00:00-0400' }),
-      launch('RQ-POOL'), outcome('RQ-POOL', 'MERGED', { pr_url: url }),
+      line({ schema: 'phm-node-runner.v1', event: 'finish', job: 'node:1', jobId: 'RQ-POOL',
+        outcome: 'failed' }),
+      line({ event: 'batch_claim', job: 'RQ-POOL', batch: 'RQ-BATCH-9', lane: 'codex' }),
+      outcome('RQ-POOL', 'MERGED', { pr_url: url }),
     ].join('\n');
-    const byId = new Map(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#782']))
-      .map(job => [job.id, job]));
-    expect(byId.get('RQ-POOL')).toMatchObject({ outcome: 'merged', reverted: true });
+    expect(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#782']))).toEqual([
+      { id: 'RQ-POOL', lane: 'codex', outcome: 'merged', reverted: true },
+    ]);
   });
 
   it('does not mark non-merged outcomes reverted through the standing set', () => {
@@ -256,7 +259,7 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(byId.get('RQ-T')).not.toHaveProperty('recuts');
   });
 
-  it('orders jobs by last ledger position and ignores malformed rows', () => {
+  it('orders resolved jobs by latest terminal outcome and ignores malformed rows', () => {
     const text = [
       'not json',
       '[]',
@@ -264,6 +267,7 @@ describe('skillNudgeJobsFromLedger', () => {
       line({ event: 'launch', repo: 'ashlrai/phantom' }),
       launch('RQ-U'), launch('RQ-V'), outcome('RQ-U', 'CLOSED'), outcome('RQ-V', 'MERGED'),
       launch('RQ-W', 'bad lane!!'), outcome('RQ-W', 'MERGED'),
+      enqueue('RQ-U', 'fast'),
     ].join('\n');
     const jobs = skillNudgeJobsFromLedger(text);
     expect(jobs.map(job => job.id)).toEqual(['RQ-U', 'RQ-V', 'RQ-W']);
@@ -274,6 +278,24 @@ describe('skillNudgeJobsFromLedger', () => {
 
 describe('syncSkillNudgesFromJobsLedger', () => {
   const NOW = () => new Date('2026-10-28T20:00:00.000Z');
+
+  it.each([true, false])('uses terminal outcome order for recurrence (third failure before merge: %s)', async beforeMerge => {
+    const firstFailures = ['RQ-F1', 'RQ-F2'].flatMap(id => [
+      launch(id), finish(id, { failure_class: 'quota' }), outcome(id, 'CLOSED'),
+    ]);
+    const thirdFailure = outcome('RQ-F3', 'CLOSED');
+    const merge = outcome('RQ-REC', 'MERGED');
+    const text = [
+      ...firstFailures,
+      launch('RQ-F3'), finish('RQ-F3', { failure_class: 'quota' }),
+      launch('RQ-REC'), finish('RQ-REC', { failure_class: 'quota', exit_code: 0 }),
+      ...(beforeMerge ? [thirdFailure, merge, enqueue('RQ-F3')] : [merge, thirdFailure, enqueue('RQ-REC')]),
+    ].join('\n');
+
+    await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+
+    expect(cards.map(card => card.sourceJobIds)).toEqual(beforeMerge ? [['RQ-F1', 'RQ-F2', 'RQ-F3', 'RQ-REC']] : []);
+  });
 
   it('folds injected ledger text into persisted candidate cards', async () => {
     const failed = (id: string) => [

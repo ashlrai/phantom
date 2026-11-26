@@ -56,7 +56,7 @@ export function nativeUpdateLabel(state: DesktopUpdateState | null): string | nu
     case 'waiting-for-app-quit': return `${update} ready · installs when idle`;
     case 'installing': return `Installing ${update}…`;
     case 'installed': return `${update} installed · restarts when idle`;
-    case 'adoption-held': return 'Update held · open Settings';
+    case 'adoption-held': return state.reason ? `Update held · ${state.reason}` : 'Update held · open Settings';
     case 'failed': return 'Update failed · open Settings';
     default: return null;
   }

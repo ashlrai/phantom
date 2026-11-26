@@ -93,6 +93,49 @@ class PruneTests(unittest.TestCase):
         self.assertIn(f'freed_bytes=0 would_free_bytes={size} removed=0', log)
         self.assertEqual((path / 'payload').read_bytes(), before)
 
+    def test_discovery_never_opens_non_worktree_descendants(self):
+        direct = self.tree('direct')
+        registered = self.tree('wt/registered')
+        for i in range(846):
+            (self.root / 'unrelated' / str(i) / 'deep').mkdir(parents=True)
+        with patch.object(prune, 'opened', wraps=prune.opened) as opened:
+            self.assertEqual(set(prune.worktrees(self.root)), {direct.relative_to(self.root), registered.relative_to(self.root)})
+        self.assertEqual(len(opened.call_args_list), 2)
+
+    def test_registered_tree_sweep_calls_classifier_once_and_skips_terminal_before_scan(self):
+        terminal = self.tree('wt/RQ-FINISHED')
+        idle = self.tree('wt/RQ-KEPT')
+        a, b = self.artifact(terminal), self.artifact(idle)
+        report = json.dumps({'schema': 'disk-maint.v1', 'apply': False, 'classes': [{
+            'id': 'worktrees-runs', 'complete': True, 'reapable': 1,
+            'reapReasons': {'merged': 1}, 'protectReasons': {'kept': 1},
+            'candidates': [{'action': 'worktree-remove', 'path': '~/.ashlr-runs/wt/RQ-FINISHED'}],
+        }]})
+        real_run = prune.run
+        calls = []
+        def classify(args):
+            if args[0] == 'phm':
+                calls.append(args)
+                return report.encode()
+            return real_run(args)
+        with patch.object(prune, 'run', side_effect=classify), patch.object(prune, 'scan', wraps=prune.scan) as scan:
+            self.assertEqual(self.sweep()[0], 0)
+        self.assertEqual(calls, [['phm', 'disk-maint', '--json', '--only', 'worktrees-runs',
+                                  '--home', str(self.home), '--runs-dir', str(self.root)]])
+        self.assertEqual({call.args[0] for call in scan.call_args_list}, {idle})
+        self.assertTrue(a.exists())
+        self.assertFalse(b.exists())
+
+    def test_old_classifier_fails_closed(self):
+        path = self.artifact(self.tree('wt/RQ-KEEP'))
+        legacy = b'{"schema":"disk-maint.v1","apply":false,"classes":[{"id":"worktrees-runs","complete":true,"candidates":[]}]}'
+        with patch.object(prune, 'run', return_value=legacy), patch.object(prune, 'scan') as scan:
+            rc, log = self.sweep()
+        self.assertEqual(rc, 1)
+        self.assertIn('disk_maint_classifier_unavailable=1', log)
+        scan.assert_not_called()
+        self.assertTrue(path.exists())
+
     def test_gitfile_worktree_with_external_metadata_is_pruned(self):
         wt = self.tree()
         path = self.artifact(wt)
