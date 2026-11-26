@@ -17,7 +17,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import * as http from 'node:http';
@@ -599,6 +599,42 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(snapshot.sources.queue).toMatchObject({ state: 'healthy', rows: 2, dropped: 0, unhinted: 2 });
     expect(snapshot.starved.open_rows).toBe(2);
     expect(JSON.stringify(snapshot)).not.toContain('/Users/x/prompts');
+  });
+
+  it('resolves spec-less rows through a router-queue.md past the ready.tsv bound', async () => {
+    // router-queue.md is append-mostly history and outgrows the 4 MiB
+    // ready.tsv bound in normal operation. The lane view reads it with the
+    // wider bound the other market readers use, so the (attrs) envelope
+    // still decides the hint instead of degrading the whole queue read.
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'ready.tsv'), 'RQ-ENV-BIG\tphantom\tdevin\twork\tprompts/big.md\n');
+    const padding = '# archive\n'.repeat(Math.ceil((5 * 1024 * 1024) / 10));
+    await writeFile(join(dir, 'router-queue.md'),
+      '- READY RQ-ENV-BIG (preferred_lane=claude): hinted job\n' + padding);
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    const byLane = new Map(snapshot.lanes.map(l => [l.lane, l]));
+    expect(snapshot.sources.queue).toMatchObject({ state: 'healthy', rows: 1, dropped: 0, unhinted: 0 });
+    expect(byLane.get('claude')!.queueDepth).toBe(1);
+    expect(snapshot.starved.open_rows).toBe(0);
+  });
+
+  it('marks the queue read degraded when router-queue.md exceeds its bound', async () => {
+    // Past the envelope bound the file is unreadable evidence: the snapshot
+    // reports degraded queue sources and null supply counts, never a
+    // lane-column guess.
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'ready.tsv'), 'READY\tRQ-1\tdevin\n');
+    await writeFile(join(dir, 'router-queue.md'), '- READY RQ-1 (preferred_lane=devin): job\n');
+    await truncate(join(dir, 'router-queue.md'), 33 * 1024 * 1024);
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    expect(snapshot.sources.queue).toMatchObject({ state: 'degraded', rows: 0 });
+    expect(snapshot.starved.open_rows).toBeNull();
   });
 
   it('marks a present-but-corrupt file degraded and still projects its rows', async () => {

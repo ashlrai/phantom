@@ -203,6 +203,8 @@ export interface FleetLaneConsoleOptions {
 
 const MAX_QUEUE_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_LEDGER_FILE_BYTES = 8 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; give it the same wider bound the other market readers use (unfed-read, runs-parked-queue). */
+const MAX_ROUTER_QUEUE_BYTES = 32 * 1024 * 1024;
 const MAX_ROWS = 50_000;
 const DEFAULT_MERGE_WINDOW_MS = 60 * 60_000;
 
@@ -822,7 +824,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   try {
     const text = await readBounded(join(queueDir, 'ready.tsv'), MAX_QUEUE_FILE_BYTES);
     if (text !== null) {
-      const routerQueue = await readBounded(join(queueDir, 'router-queue.md'), MAX_QUEUE_FILE_BYTES).catch(error => {
+      const routerQueue = await readBounded(join(queueDir, 'router-queue.md'), MAX_ROUTER_QUEUE_BYTES).catch(error => {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
         throw error;
       });
