@@ -237,6 +237,8 @@ export interface UnfedReport {
   /** Slots that could be filled now: sum of min(headroom, waiting rows) over unfed lanes. */
   unfedSlots: number;
   resources: UnfedResource[];
+  /** Whether older work-market journal bytes were omitted from the window folds. */
+  marketTruncated: boolean;
   history: UnfedHistory;
   /** lane_override accounting over the same window's route_decision rows. */
   overrides: UnfedOverrides;
@@ -333,7 +335,7 @@ function publishedFleetStop(resources: readonly UnfedResource[]): FleetStopCode 
  * dispatcher's own input files; when present and slots.json parses, a derived
  * report recomputes per-lane reason codes instead of leaving them unknown.
  */
-export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'history' | 'overrides' | 'claims' | 'decisionOutcomes' | 'rejections'> {
+export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'marketTruncated' | 'history' | 'overrides' | 'claims' | 'decisionOutcomes' | 'rejections'> {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const tickMs = typeof data.last_tick === 'string' ? Date.parse(data.last_tick) : NaN;
@@ -518,13 +520,13 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const prev = latest.get(job);
     if (prev !== undefined && prev.ts >= ts) continue;
+    const preferred = laneField(row.preferred_lane);
+    const chosen = laneField(row.chosen_lane);
     let override: LatestRouteDecision['override'] = null;
-    if (isRecord(row.override)) {
-      const from = row.override.from, to = row.override.to, reason = row.override.reason;
-      if ((from === null || (typeof from === 'string' && LANE.test(from)))
-          && typeof to === 'string' && LANE.test(to)
-          && typeof reason === 'string' && CODE.test(reason)) {
-        override = { from: from as string | null, to, reason };
+    if (preferred !== null && chosen !== null && preferred !== chosen && isRecord(row.override)) {
+      const { from, to, reason } = row.override;
+      if (from === preferred && to === chosen && typeof reason === 'string' && CODE.test(reason)) {
+        override = { from: preferred, to: chosen, reason };
       }
     }
     const workClass = typeof row.work_class === 'string' && MARKET_WORK_CLASSES.has(row.work_class)
@@ -532,8 +534,8 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     latest.set(job, {
       ts,
       override,
-      preferred: laneField(row.preferred_lane),
-      chosen: laneField(row.chosen_lane),
+      preferred,
+      chosen,
       workClass,
       rejected: rejectedLanes(row.rejected_lanes),
     });
@@ -614,6 +616,7 @@ export function foldClaimOverrides(
     // malformed lane_hint means the pair cannot be named honestly.
     const hint = row.lane_hint;
     if (hint !== null && (typeof hint !== 'string' || !LANE.test(hint))) continue;
+    if (hint === lane) continue;
     tally.overridden++;
     if (tally.byReason[reason] !== undefined || Object.keys(tally.byReason).length < MAX_CODES) {
       tally.byReason[reason] = (tally.byReason[reason] ?? 0) + 1;
@@ -809,6 +812,9 @@ export function renderUnfed(report: UnfedReport): string[] {
         : 'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.');
   }
   const h = report.history;
+  if (report.marketTruncated) {
+    lines.push(`Last ${h.windowHours}h: work-market journal tail only. History, route decisions, rejections and linked outcomes may be incomplete.`);
+  }
   if (!h.available) lines.push(`Last ${h.windowHours}h: no metrics/work-market.jsonl history.`);
   else if (h.lanes.length === 0) lines.push(`Last ${h.windowHours}h: no unfed ticks recorded.`);
   else {

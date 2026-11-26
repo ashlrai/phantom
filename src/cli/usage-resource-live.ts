@@ -41,6 +41,9 @@ function printTable(sidecar: Pick<ResourceLiveSidecar, 'readings' | 'burn_down'>
       ? `${reading.id} used=${used} reset=${reading.reset_at ?? 'unknown'} source=${reading.source} (${reading.source_tier}) confidence=${reading.confidence} observed=${reading.observed_at} plan=${plan?.action ?? 'unknown'}${target}`
       : `${reading.id} unverified (${reading.reason}) confidence=null plan=${plan?.action ?? 'unknown'}`);
   }
+  const bank = sidecar.burn_down.banked_resets;
+  if (bank) console.log(`banked Codex resets: ${bank.count ?? 'unknown'}`);
+  if (bank?.proposal) console.log(`use reset now: ${bank.proposal.grant.kind} for ${bank.proposal.window} (expires ${bank.proposal.grant.expires_at}; explicit request required)`);
   console.log(`spend order: ${sidecar.burn_down.lane_order.join(', ') || 'none'}`);
 }
 
