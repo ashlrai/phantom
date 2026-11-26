@@ -327,9 +327,12 @@ export interface TrainPlan { state: TrainState; writes: ReleaseWrite[]; exitCode
 export function fleetKillPath(home = homedir()): string { return join(home, '.ashlr', 'KILL'); }
 function readLocalTrainStop(home = homedir()): KillObservation {
   const operator = readSentinel(fleetKillPath(home));
-  return operator === 'inactive' ? readSentinel(join(home, '.ashlr', 'DESKTOP_UPDATE_STOP')) : operator;
+  if (operator !== 'inactive') return operator;
+  const update = readSentinel(join(home, '.ashlr', 'DESKTOP_UPDATE_STOP'));
+  return update === 'inactive' ? readSentinel(desktopUpdateTrainOffPath(home)) : update;
 }
 export function autorunOffPath(home = homedir()): string { return join(home, '.ashlr-runs', 'RELEASE_AUTORUN_OFF'); }
+export function desktopUpdateTrainOffPath(home = homedir()): string { return join(home, '.ashlr-runs', 'RELEASE_AUTORUN_DESKTOP_UPDATE_OFF'); }
 export const RELEASE_TRAIN_STOP_SCHEMA = 'phantom.release-train-stop.v1';
 const RELEASE_TRAIN_STOP_MARKER = 'release train off (fleet-stop)\n';
 const RELEASE_TRAIN_STOP_RECORD = 'RELEASE_TRAIN_PAUSED_BY_STOP';

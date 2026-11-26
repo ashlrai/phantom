@@ -262,6 +262,15 @@ Stop. It records the resident, grant and surface before switching. A verified
 installation or abort can consume one in-process capability to restore that
 resident on the corresponding managed release only while those proofs still
 agree. Ownership, grant, surface and recovery failures return fixed holds.
+On supported hosts, the updater prefers an empty dispatcher queue and
+rechecks the verified stage while waiting. After five minutes it no longer
+defers just for queued work; active or unknown jobs and leases still block
+adoption. The owned pause has a 30-second pre-switch budget, with its last
+10 seconds reserved for switch checks. Expiry before the first app move
+aborts and restores verified previous state through the scoped capability.
+Release-train pause provenance is local: the updater only removes its own
+`RELEASE_AUTORUN_DESKTOP_UPDATE_OFF` marker, never `RELEASE_AUTORUN_OFF` or
+operator Stop provenance.
 `phm desktop-update prepare --stage <id> --json` verifies the private staged
 app and the original CLI archive before Stop, including the app inventory and
 the candidate authority surface. It caches only the verified original package

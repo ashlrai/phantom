@@ -104,6 +104,13 @@ class AutorunTest(unittest.TestCase):
   marker.unlink()
   self.execute()
   self.assertEqual(len(self.calls()),1)
+ def test_desktop_update_release_pause_holds_independently_of_fleet_stop(self):
+  marker=self.root/'RELEASE_AUTORUN_DESKTOP_UPDATE_OFF'
+  marker.write_text('desktop update train pause\n')
+  self.execute()
+  self.assertEqual(self.gh_calls(),[])
+  self.assertEqual(self.calls(),[])
+  self.assertFalse(self.kill.exists())
  def test_foreign_branch_audit_is_held(self):
   self.data['repos/ashlrai/phantom/actions/runs/33']['head_branch']='feature'
   self.execute(); self.assertEqual(self.calls(),[])

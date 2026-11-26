@@ -526,8 +526,8 @@ function launchdLoaded(serviceTarget: string): boolean {
   return readLaunchdRuntimeState(serviceTarget).loaded;
 }
 
-function launchdDisabled(domainTarget: string, label: string): boolean {
-  const result = runCmd(['launchctl', 'print-disabled', domainTarget]);
+function launchdDisabled(domainTarget: string, label: string, timeoutMs?: number): boolean {
+  const result = runCmd(['launchctl', 'print-disabled', domainTarget], undefined, timeoutMs);
   if (!result.ok) throw commandError(`launchctl print-disabled ${domainTarget}`, result);
   const matches = [...result.stdout.matchAll(
     new RegExp(`"${escapeRegExp(label)}"\\s*=>\\s*(enabled|disabled)(?:\\s|$)`, 'g'),
@@ -1490,7 +1490,7 @@ function desktopUpdateLaunchdRuntime(opts: ServiceInstallOptions) {
         stat.size !== Buffer.byteLength(def.content) || fs.readFileSync(fd, 'utf8') !== def.content)
       throw new Error('unverified resident registration');
   } finally { fs.closeSync(fd); }
-  if (launchdDisabled(domain, label)) throw new Error('unverified resident activation');
+  if (launchdDisabled(domain, label, 2_000)) throw new Error('unverified resident activation');
   const runtime = readLaunchdRuntimeState(target, {
     expectedPath: def.filePath, expectedProgram: spec.program, expectedArguments: spec.arguments, timeoutMs: 2_000,
   });

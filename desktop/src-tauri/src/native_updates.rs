@@ -771,6 +771,7 @@ const HOST_REASONS: &[&str] = &[
     "native-parent-unverified",
     "operator-restart-required",
     "owned-pause-aborted",
+    "owned-pause-cap-expired",
     "package-archive-refused",
     "pointer-recovery-unknown",
     "result-persistence-unknown",
@@ -778,6 +779,7 @@ const HOST_REASONS: &[&str] = &[
     "resume-abort-unverified",
     "resume-grant-changed",
     "resume-install-unverified",
+    "resume-local-pause-unverified",
     "resume-ownership-lost",
     "resume-resident-unverified",
     "resume-surface-changed",
@@ -795,6 +797,7 @@ const HOST_REASONS: &[&str] = &[
     "update-unavailable",
     "verification-failed",
     "work-active-or-unknown",
+    "waiting-for-low-activity",
 ];
 pub fn host_result(raw: &str, version: &str) -> Result<HostResult, String> {
     need(

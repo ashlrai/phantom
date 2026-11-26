@@ -341,7 +341,7 @@ mod platform {
             Phase::WaitingForAppQuit
         } else if matches!(
             result.reason.as_deref(),
-            Some("stop-required" | "work-active-or-unknown" | "drain-interlock-unsupported")
+            Some("stop-required" | "work-active-or-unknown" | "drain-interlock-unsupported" | "waiting-for-low-activity")
         ) {
             Phase::WaitingForIdle
         } else {
@@ -419,8 +419,18 @@ mod platform {
             && inner.state.phase == Phase::WaitingForIdle
             && elapsed >= Duration::from_secs(30)
     }
-    async fn check(app: AppHandle, updates: Updates, epoch: u64) {
+    async fn check(app: AppHandle, updates: Updates, epoch: u64, window: Option<Stage>) {
         let result = async {
+            if let Some(stage) = window {
+                let checked = tauri::async_runtime::spawn_blocking(move || inspect(&stage))
+                    .await
+                    .map_err(|_| "host-status-unavailable")??;
+                return if change(&app, &updates, epoch, inspected_phase(&checked), checked.reason.as_deref()) {
+                    Ok(())
+                } else {
+                    Err("disabled")
+                };
+            }
             let (key, endpoint, _repository) = trusted_config()?;
             if std::env::consts::ARCH != "aarch64" {
                 return Err("unsupported-platform");
@@ -677,6 +687,10 @@ mod platform {
         if !i.state.enabled || i.checking || i.handoff {
             return;
         }
+        let window = (i.state.phase == Phase::WaitingForIdle
+            && i.state.reason.as_deref() == Some("waiting-for-low-activity"))
+        .then(|| i.stage.clone())
+        .flatten();
         i.checking = true;
         i.state.phase = Phase::Checking;
         i.state.reason = None;
@@ -688,7 +702,7 @@ mod platform {
         let h = app.clone();
         let u = updates.inner().clone();
         tauri::async_runtime::spawn(async move {
-            let _ = futures_util::future::Abortable::new(check(h, u, epoch), registration).await;
+            let _ = futures_util::future::Abortable::new(check(h, u, epoch, window), registration).await;
         });
     }
     fn quit_sequence(
@@ -871,6 +885,10 @@ mod platform {
             assert_eq!(inspected_phase(&r), Phase::WaitingForIdle);
             r.reason = Some("work-active-or-unknown".into());
             assert_eq!(inspected_phase(&r), Phase::WaitingForIdle);
+            r.reason = Some("waiting-for-low-activity".into());
+            assert_eq!(inspected_phase(&r), Phase::WaitingForIdle);
+            r.reason = Some("owned-pause-cap-expired".into());
+            assert_eq!(inspected_phase(&r), Phase::AdoptionHeld);
             r.reason = Some("authority-reapproval-required".into());
             assert_eq!(inspected_phase(&r), Phase::AdoptionHeld);
         }

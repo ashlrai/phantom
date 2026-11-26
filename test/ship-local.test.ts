@@ -750,6 +750,21 @@ describe('identity-bound Phantom native migration', () => {
     f.kill(true);
     await expect(requireLocalQuiescence(io)).rejects.toThrow(/ownership|owns/);
   });
+  it('runs the final pause-budget check after preparation and before either exclusive move', async () => {
+    const f = appIo();
+    const selected = selectLocalApp(HASH, f.io);
+    f.kill(false);
+    await expect(installLocalApp({
+      ...nativeInput(selected),
+      beginUpdatePause: async () => {
+        expect(f.calls.some(call => call.includes('archive-check')) ||
+          f.calls.some(call => call.includes('-k'))).toBe(true);
+        f.kill(true);
+      },
+      atSwitch: () => { throw new Error('owned-pause-cap-expired'); },
+    }, f.io)).rejects.toThrow('owned-pause-cap-expired');
+    expect(f.calls.some(call => call[0] === 'exclusive-rename')).toBe(false);
+  });
   it.each(['.resource-quota-refresh-pending.json', '.resource-quota-refresh.lock'])('holds installation while quota collector %s remains, without reading its contents', async name => {
     const f = appIo(); const selected = selectLocalApp(HASH, f.io);
     const ledger = `${HOME}/.ashlr/account-connections/ledger`;

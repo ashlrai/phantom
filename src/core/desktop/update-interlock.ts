@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { realHome } from '../real-home.js';
+import { autorunOffPath, desktopUpdateTrainOffPath, readSentinel } from '../release/train.js';
 import { fsyncDirectory } from '../util/durability.js';
 
 export const DESKTOP_UPDATE_INTERLOCK = 'DESKTOP_UPDATE_STOP';
@@ -95,4 +96,46 @@ export function releaseDesktopUpdateInterlock(home: string, value: DesktopUpdate
   } catch {
     return false;
   }
+}
+
+export function beginDesktopUpdateLocalReleasePause(home: string, value: Readonly<DesktopUpdateInterlock>) {
+  const path = desktopUpdateTrainOffPath(home);
+  const parent = dirname(path);
+  const directory = lstatSync(parent, {throwIfNoEntry:false});
+  if (!directory) return {prior:'no-local-train', restore:() => true} as const;
+  if (!directory.isDirectory() || directory.uid !== process.getuid?.() || directory.mode & 0o022)
+    throw new Error('unverified local release train directory');
+  const content = Buffer.from(JSON.stringify({schema:'phantom.release-train-desktop-pause.v1',
+    stage:value.stage, nonce:value.nonce}) + '\n');
+  const prior = readSentinel(autorunOffPath(home));
+  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  let created;
+  try {
+    writeFileSync(fd, content);
+    fsyncSync(fd);
+    created = fstatSync(fd);
+  } finally { closeSync(fd); }
+  fsyncDirectory(parent);
+  return {prior, restore:() => {
+    try {
+      const current = lstatSync(parent);
+      if (current.dev !== directory.dev || current.ino !== directory.ino || current.mode & 0o022) return false;
+      const named = lstatSync(path, {throwIfNoEntry:false});
+      if (!named) return true;
+      if (named.dev !== created.dev || named.ino !== created.ino || named.ctimeMs !== created.ctimeMs) return false;
+      const read = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const actual = fstatSync(read);
+        const bytes = Buffer.alloc(content.length);
+        if (!actual.isFile() || actual.nlink !== 1 || actual.dev !== created.dev || actual.ino !== created.ino ||
+            actual.ctimeMs !== created.ctimeMs || actual.size !== content.length ||
+            readSync(read, bytes, 0, bytes.length, 0) !== bytes.length || !bytes.equals(content)) return false;
+        const final = lstatSync(path);
+        if (final.dev !== actual.dev || final.ino !== actual.ino || final.ctimeMs !== actual.ctimeMs) return false;
+        unlinkSync(path);
+        fsyncDirectory(parent);
+        return true;
+      } finally { closeSync(read); }
+    } catch { return false; }
+  }} as const;
 }

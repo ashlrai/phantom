@@ -237,6 +237,7 @@ function pairedFixture(profile: DesktopUpdateProfileName = 'legacy-v1', currentR
   fs.writeFileSync(join(f.stage,'app.tar.gz'),app);f.publish();
   let previous={target:f.deps.packageRoot!};let pointer=previous;let held=false;let appOnly=false;let installations=0;let mutation:string|null=null;let beforeSwitch:(()=>Promise<void>)|null=null;
   let beforeHealth = () => {};
+  let beforeRename = () => {};
   const io={home:f.home,clock:()=>0,sleep:async()=>{},fetchStatus:async()=>200,readCurrentPointer:()=>pointer,
     switchCurrentPointer:(_path:string,_before:unknown,target:string)=>{pointer={target};return pointer;},restoreCurrentPointer:()=>{pointer=previous;},
     writeInstallJournal:(_owner:string,_value:{phase:string})=>{},readBoundedFile:()=>record,exec:()=>({status:0,stdout:'3.25.0'})};
@@ -245,12 +246,16 @@ function pairedFixture(profile: DesktopUpdateProfileName = 'legacy-v1', currentR
     inspectLocalApp:(path:string)=>({path,inventory:f.manifest.app.inventorySha256,dev:1,ino:2,signer:f.manifest.app.signer}),
     inspectLocalAliases:()=>[],createLocalAliases:()=>[],removeCreatedAliases:()=>{},launchedAppIsOwned:()=>true,
     installLocalApp:async(input:Record<string,unknown>)=>{
-      installations++;expect(input.preserveSigned).toBe(true);expect(input.prepare).toBeUndefined();
+      expect(input.preserveSigned).toBe(true);expect(input.prepare).toBeUndefined();
       beforeSwitch=input.beforeSwitch as ()=>Promise<void>;
       if(held)f.admission.stop=false;
       const mutate=()=>fs.writeFileSync(join(f.home,'.local/share/ashlr/releases',f.manifest.source.revision,'dist/core/authority/fixture.js'),'changed after initial signed-package proof');
       if(mutation==='beforeSwitch')mutate();
+      await (input.beginUpdatePause as (()=>Promise<void>) | undefined)?.();
+      installations++;
       await beforeSwitch();
+      beforeRename();
+      (input.atSwitch as ()=>void)();
       if(mutation==='beforePointer'||mutation==='beforePointerChangedCurrent')mutate();
       if(mutation==='beforePointerChangedCurrent')pointer={target:join(f.home,'external-release')};
       try {await (input.commitPointer as ()=>Promise<void>)();}
@@ -271,7 +276,7 @@ function pairedFixture(profile: DesktopUpdateProfileName = 'legacy-v1', currentR
     pointer=previous={target};appOnly=true;f.deps.packageRoot=target;f.deps.currentPackageRoot=()=>target;
   };
   return {...f,cli,record,seedCurrent,getPointer:()=>pointer,installations:()=>installations,clearStopBeforeSwitch:()=>{held=true;},mutateCandidateAt:(phase:string)=>{mutation=phase;},
-    afterSwitch:(action:()=>void)=>{beforeHealth=action;}};
+    afterSwitch:(action:()=>void)=>{beforeHealth=action;}, beforeRename:(action:()=>void)=>{beforeRename=action;}};
 }
 
 describe.skipIf(process.platform === 'win32')('original package extraction and installed-byte readback',()=>{
@@ -314,8 +319,7 @@ describe('transaction-owned desktop pause', () => {
     expect(consumeDesktopUpdateResume({transaction:f.id})).toBeNull();
   });
 
-  it('aborts before the switch and restores only the previous verified runtime', async () => {
-    const f = ownedFixture();
+  function verifyPrevious(f: ReturnType<typeof ownedFixture>) {
     const surface = join(f.deps.packageRoot!, 'dist');
     fs.writeFileSync(join(surface, 'authority-surface.json'), JSON.stringify({
       v:1,roots:['dist/core/authority/fixture.js'],missingRoots:[],files:[{path:'dist/core/authority/fixture.js',
@@ -324,12 +328,97 @@ describe('transaction-owned desktop pause', () => {
     }));
     fs.mkdirSync(join(surface, 'core/authority'), {recursive:true});
     fs.writeFileSync(join(surface, 'core/authority/fixture.js'), 'export const trusted = true;');
+  }
+
+  it('aborts at the drain deadline and uses the reserve to restore the previous runtime and local train', async () => {
+    const f = ownedFixture();
+    verifyPrevious(f);
+    const train = join(f.home, '.ashlr-runs');
+    const off = join(train, 'RELEASE_AUTORUN_DESKTOP_UPDATE_OFF');
+    fs.mkdirSync(train, {mode:0o700});
     f.deps.ownedResident = () => ({...f.resident, runtime:{loaded:true,pid:42}});
-    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'blocked',reason:'owned-pause-aborted'});
+    const resume = f.deps.resumeOwned!;
+    f.deps.resumeOwned = async (capability, claim) => {
+      expect(f.deps.now()).toBe(20_000);
+      expect(fs.readFileSync(off, 'utf8')).toContain('phantom.release-train-desktop-pause.v1');
+      return resume(capability, claim);
+    };
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'blocked',reason:'owned-pause-cap-expired'});
+    expect(await readQualifiedDesktopUpdateResult(f.id, f.deps)).toMatchObject({state:'blocked',reason:'owned-pause-cap-expired'});
     expect(f.installations()).toBe(0);
     expect(f.resume).toHaveBeenCalledOnce();
     expect(fs.existsSync(f.marker)).toBe(false);
+    expect(fs.existsSync(off)).toBe(false);
     expect(JSON.parse(fs.readFileSync(join(f.stage, 'resident-terminal.json'), 'utf8'))).toMatchObject({state:'aborted'});
+  });
+
+  it('does not cross the irreversible boundary when the reserve is spent, even if the wall clock moves', async () => {
+    const f = ownedFixture();
+    verifyPrevious(f);
+    let tick = 0;
+    f.deps.monotonicNow = () => tick;
+    f.beforeRename(() => {
+      expect(fs.existsSync(f.marker)).toBe(true);
+      f.deps.now = () => -100_000;
+      tick = 30_000;
+    });
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'blocked',reason:'owned-pause-cap-expired'});
+    expect(f.getPointer().target).toBe(f.deps.packageRoot);
+    expect(f.resume).toHaveBeenCalledOnce();
+    expect(fs.existsSync(f.marker)).toBe(false);
+  });
+
+  it('prefers a quiet queue but bounds deferral without bypassing work safety', async () => {
+    const f = ownedFixture();
+    const stagedAt = fs.statSync(f.stage).birthtimeMs;
+    f.deps.now = () => stagedAt + 299_999;
+    f.deps.queuedWork = () => true;
+    expect(inspectQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'blocked',reason:'waiting-for-low-activity'});
+    const progress = vi.fn();
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps, undefined, progress)).toMatchObject({state:'blocked',reason:'waiting-for-low-activity'});
+    expect(progress).not.toHaveBeenCalled();
+    expect(fs.existsSync(f.marker)).toBe(false);
+    f.deps.queuedWork = () => false;
+    expect(inspectQualifiedDesktopUpdate(f.id, f.deps).state).toBe('ready');
+    f.deps.queuedWork = () => true;
+    f.deps.now = () => stagedAt + 300_000;
+    expect(inspectQualifiedDesktopUpdate(f.id, f.deps).state).toBe('ready');
+    f.deps.hostCensus = () => ({state:'supported',activeJobs:1,unknown:0});
+    expect(inspectQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'blocked',reason:'work-active-or-unknown'});
+  });
+
+  it.each(['prior','later'] as const)('preserves a %s operator train pause', async kind => {
+    const f = ownedFixture();
+    const root = join(f.home, '.ashlr-runs');
+    const off = join(root, 'RELEASE_AUTORUN_OFF');
+    const ownedOff = join(root, 'RELEASE_AUTORUN_DESKTOP_UPDATE_OFF');
+    const provenance = join(root, 'RELEASE_TRAIN_PAUSED_BY_STOP');
+    fs.mkdirSync(root, {mode:0o700});
+    fs.writeFileSync(provenance, 'operator provenance', {mode:0o600});
+    if (kind === 'prior') fs.writeFileSync(off, 'operator pause', {mode:0o600});
+    f.afterSwitch(() => {
+      expect(fs.readFileSync(ownedOff, 'utf8')).toContain('phantom.release-train-desktop-pause.v1');
+      if (kind === 'later') {
+        fs.writeFileSync(off, 'operator pause', {mode:0o600});
+      }
+    });
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'applied',reason:'applied'});
+    expect(fs.readFileSync(off, 'utf8')).toBe('operator pause');
+    expect(fs.readFileSync(provenance, 'utf8')).toBe('operator provenance');
+    expect(fs.existsSync(f.marker)).toBe(false);
+    expect(fs.existsSync(ownedOff)).toBe(false);
+  });
+
+  it('does not clear either hold if local pause ownership is unproven', async () => {
+    const f = ownedFixture();
+    const root = join(f.home, '.ashlr-runs');
+    fs.mkdirSync(root, {mode:0o700});
+    const off = join(root, 'RELEASE_AUTORUN_DESKTOP_UPDATE_OFF');
+    f.afterSwitch(() => fs.writeFileSync(off, 'unknown provenance'));
+    f.deps.resumeOwned = async (capability, consume) => consume(capability)?.release() === true;
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'rollback-held',reason:'resume-local-pause-unverified'});
+    expect(fs.readFileSync(off, 'utf8')).toBe('unknown provenance');
+    expect(fs.existsSync(f.marker)).toBe(true);
   });
 
   it.each(['grant','expiry','surface','ownership','operator','installation'] as const)('holds after the switch if %s is not proven', async kind => {

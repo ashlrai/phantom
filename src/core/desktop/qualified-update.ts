@@ -19,7 +19,7 @@ import { readDesktopUpdateResident, resumeDesktopUpdateResident, type ServiceIns
 import { daemonServiceInstallOptions } from '../daemon/service-config.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
 import { inspectManagedResidentRuntime } from './managed-resident-runtime.js';
-import { beginDesktopUpdateInterlock, desktopUpdateInterlockPresent, ownsDesktopUpdateInterlock, releaseDesktopUpdateInterlock } from './update-interlock.js';
+import { beginDesktopUpdateInterlock, beginDesktopUpdateLocalReleasePause, desktopUpdateInterlockPresent, ownsDesktopUpdateInterlock, releaseDesktopUpdateInterlock, type DesktopUpdateInterlock } from './update-interlock.js';
 import { getDesktopUpdateTrust } from './update-trust.js';
 import { readDesktopHostInterlockCensus, type DesktopHostInterlockCensus } from './host-update-interlock.js';
 import { verifyCompatibleUpdateManifest, desktopUpdateProfileForPackage, verifyMinisign, verifyUpdateBundleRecord, type UpdateTrust, type CompatibleUpdateManifest, type UpdateArtifact } from './update-manifest.js';
@@ -37,7 +37,9 @@ export interface NativeUpdateParent { pid: number; ppid: number; started: string
 export interface DesktopUpdateDependencies {
   home: string; platform: NodeJS.Platform; architecture: string; packageRoot: string | null; trust: UpdateTrust | null;
   admission(): UpdateAdmission;
-  hostCensus?(): DesktopHostInterlockCensus;
+  hostCensus?(timeoutMs?: number): DesktopHostInterlockCensus;
+  queuedWork?(): boolean | null;
+  monotonicNow?(): number;
   currentPackageRoot(): string | null;
   captureParent(): NativeUpdateParent | null;
   verifyParent(parent: NativeUpdateParent, manifest: CompatibleUpdateManifest): Promise<boolean>;
@@ -74,12 +76,14 @@ export function consumeDesktopUpdateResume(capability: unknown): UpdateResume | 
   return consumeResume(updateResumes, capability);
 }
 
-function supportsOwnedPause(deps: DesktopUpdateDependencies, admission: UpdateAdmission): boolean {
+function supportsOwnedPause(deps: DesktopUpdateDependencies, admission: UpdateAdmission, host = deps.hostCensus?.()): boolean {
   if (deps.platform !== 'darwin' || !deps.ownedResident || deps.operatorStop?.() !== 'inactive' || desktopUpdateInterlockPresent(deps.home) ||
       admission.stop || !admission.active || !admission.grantId || !admission.envelopeDigest || !admission.surfaceDigest) return false;
-  const host = deps.hostCensus?.();
   return host?.state === 'absent' || host?.state === 'supported';
 }
+const ACTIVITY_MAX_DEFER_MS = 5 * 60_000;
+const OWNED_PAUSE_CAP_MS = 30_000;
+const SWITCH_RESERVE_MS = 10_000;
 const ID = /^[a-f0-9]{32}$/;
 const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 class Held extends Error { constructor(readonly reason: string) { super(reason); } }
@@ -173,11 +177,32 @@ function admissionReason(a: UpdateAdmission): string | null {
   if (a.unknownLeases !== 0 || a.leaseCount !== 0) return 'work-active-or-unknown';
   return null;
 }
-function workAdmissionReason(deps: DesktopUpdateDependencies, admission: UpdateAdmission): string | null {
+function workAdmissionReason(deps: DesktopUpdateDependencies, admission: UpdateAdmission, host = deps.hostCensus?.()): string | null {
   const reason = admissionReason(admission);
   if (reason) return reason;
-  const host = deps.hostCensus?.();
   return host?.state === 'supported' && (host.activeJobs !== 0 || host.unknown !== 0) ? 'work-active-or-unknown' : null;
+}
+function ownedActivityReason(deps: DesktopUpdateDependencies, staged: ReturnType<typeof readStage>,
+  admission: UpdateAdmission, host: DesktopHostInterlockCensus | undefined): string | null {
+  const work = workAdmissionReason(deps, {...admission, stop:true}, host);
+  if (work) return work;
+  const age = deps.now() - staged.identity.birthtimeMs;
+  return deps.queuedWork && age < ACTIVITY_MAX_DEFER_MS && deps.queuedWork() !== false ?
+    'waiting-for-low-activity' : null;
+}
+
+function queuedDesktopWork(home: string): boolean | null {
+  try {
+    const root = join(home, '.ashlr-runs');
+    if (!fs.lstatSync(root, {throwIfNoEntry:false})) return false;
+    directory(root, false);
+    const queue = join(root, 'queue');
+    directory(queue, false);
+    return ['ready.tsv', 'desktop-update-requeue.tsv'].some(name => {
+      try { return Boolean(installedBytes(join(queue, name), 1024 * 1024, true).toString('utf8').trim()); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+    });
+  } catch { return null; }
 }
 function freshAdmission(deps: DesktopUpdateDependencies): void {
   const reason = workAdmissionReason(deps, deps.admission());
@@ -192,9 +217,10 @@ export function inspectQualifiedDesktopUpdate(stageId: string, deps: DesktopUpda
     catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
     updateMode(deps, staged.manifest);
     const admission = deps.admission();
-    const automatic = supportsOwnedPause(deps, admission) && Boolean(deps.ownedResident?.()?.runtime.pid);
-    const reason = !admission.stop && !automatic ? 'drain-interlock-unsupported' :
-      workAdmissionReason(deps, {...admission, stop: admission.stop || automatic});
+    const host = deps.hostCensus?.();
+    const automatic = supportsOwnedPause(deps, admission, host) && Boolean(deps.ownedResident?.()?.runtime.pid);
+    const reason = automatic ? ownedActivityReason(deps, staged, admission, host) :
+      !admission.stop ? 'drain-interlock-unsupported' : workAdmissionReason(deps, admission, host);
     return result(reason ? 'blocked' : 'ready', version, reason);
   } catch (error) { return result('blocked', version, error instanceof Held ? error.reason : 'verification-failed'); }
 }
@@ -445,40 +471,33 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
   const app = helper.inspectLocalApp(appRoot, staged.manifest.app.signer, io);
   if (app.inventory !== staged.manifest.app.inventorySha256) hold('app-inventory-mismatch');
   if (readStage(stageId, deps).digest !== staged.digest) hold('stage-changed');
-  const beforePause = deps.admission();
-  const resident = automatic && supportsOwnedPause(deps, beforePause) ? deps.ownedResident?.() : null;
-  if (automatic && !resident?.runtime.pid) hold('drain-interlock-unsupported');
   if (!automatic) freshAdmission(deps);
   const attempted = join(staged.stage, 'consumer-attempt.json');
   writeExclusive(attempted, Buffer.from(JSON.stringify({schemaVersion: 1, manifestDigest: staged.digest, state: 'installation-attempted'}) + '\n'));
   fsyncDirectory(staged.stage);
-  const deadline = deps.now() + 10_000;
+  const tick = deps.monotonicNow ?? deps.now;
   const pausePath = join(staged.stage, 'resident-pause.json');
+  let beforePause: UpdateAdmission;
+  let resident: UpdateResident | null | undefined;
+  let owned: DesktopUpdateInterlock | null = null;
+  let localPause: ReturnType<typeof beginDesktopUpdateLocalReleasePause> | undefined;
+  let pauseDeadline = 0;
+  let boundary = false;
   let pauseRecord: string | undefined;
-  const owned = resident ? beginDesktopUpdateInterlock(deps.home, stageId, staged.digest, deadline, marker => {
-    pauseRecord = JSON.stringify({owned:marker, resident, grantId:beforePause.grantId,
-      envelopeDigest:beforePause.envelopeDigest, surface:beforePause.surfaceDigest, previous, destination});
-    writeExclusive(pausePath, Buffer.from(pauseRecord));
-    fsyncDirectory(staged.stage);
-    if (deps.operatorStop?.() !== 'inactive') hold('resume-ownership-lost');
-  }) : null;
-  if (resident && !owned) return result('rollback-held', staged.manifest.version, 'resume-ownership-lost');
   const ownsPause = () => {
     try {
       return Boolean(owned && deps.operatorStop?.() === 'inactive' &&
         ownsDesktopUpdateInterlock(deps.home, owned) && bytes(pausePath, 16_384).toString('utf8') === pauseRecord);
     } catch { return false; }
   };
-  if (owned) {
-    io.updatePause = owned;
-    io.ownsUpdatePause = ownsPause;
-  }
   const admissionAtSwitch = () => {
     if (!owned) return freshAdmission(deps);
     if (!ownsPause()) hold('resume-ownership-lost');
-    const host = deps.hostCensus?.();
+    if (!boundary) checkCap(pauseDeadline);
+    const host = deps.hostCensus?.(boundary ? undefined : pauseDeadline - tick());
     if (!host || host.state === 'unsupported') hold('drain-interlock-unsupported');
-    const verdict = workAdmissionReason(deps, {...deps.admission(), stop: true});
+    const verdict = pausedWork(host);
+    if (!boundary) checkCap(pauseDeadline);
     if (verdict) hold(verdict);
   };
   const terminal = async (installed: boolean): Promise<DesktopUpdateResult> => {
@@ -521,13 +540,19 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
         catch { return false; }
       };
       let released = false;
+      let localRestoreFailed = false;
       const resume: UpdateResume = Object.freeze({
         previous: resident!.previous, dev: resident!.dev, ino: resident!.ino, ctimeMs: resident!.ctimeMs,
         pid: resident!.runtime.pid!, processStart: resident!.processStart!,
         next: Object.freeze({...resident!.previous, binPath: join(nextRoot, 'bin', 'ashlr')}),
         check, release: () => {
           if (released) return false;
-          released = check() && releaseDesktopUpdateInterlock(deps.home, owned!);
+          if (!check()) return false;
+          if (!localPause?.restore()) {
+            localRestoreFailed = true;
+            return false;
+          }
+          released = ownsPause() && releaseDesktopUpdateInterlock(deps.home, owned!);
           return released && deps.operatorStop?.() === 'inactive';
         },
       });
@@ -541,8 +566,10 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
           await deps.resumeOwned?.(capability, value => consumeResume(capabilities, value)) === true;
       } finally { capabilities.delete(capability); }
       if (deps.operatorStop?.() !== 'inactive') return blocked('resume-ownership-lost');
+      if (localRestoreFailed) return blocked('resume-local-pause-unverified');
       if (!resumed) return blocked((released ? null : authorityCheck()) ?? 'resume-resident-unverified');
-      return result(installed ? 'applied' : 'blocked', version, installed ? 'applied' : 'owned-pause-aborted');
+      return result(installed ? 'applied' : 'blocked', version, installed ? 'applied' :
+        capExpired ? 'owned-pause-cap-expired' : 'owned-pause-aborted');
     } catch { return blocked(installed ? 'resume-install-unverified' : 'resume-abort-unverified'); }
   };
   let phase: string | null = null;
@@ -557,36 +584,88 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
     if (!observed.ok || observed.digest !== staged.manifest.authoritySurfaceDigest) hold('candidate-surface-unverified');
     if (updateMode(deps, staged.manifest) !== mode) hold('current-or-stage-changed');
     if (JSON.stringify(io.readCurrentPointer(current)) !== JSON.stringify(previous) || readStage(stageId, deps).digest !== staged.digest) hold('current-or-stage-changed');
-    admissionAtSwitch();
   };
-  let boundary = false;
+  let capExpired = false;
+  const checkCap = (deadline: number) => {
+    if (tick() >= deadline) {
+      capExpired = true;
+      hold('owned-pause-cap-expired');
+    }
+  };
+  const pausedWork = (census: DesktopHostInterlockCensus) => {
+    if (productionDeps.has(deps)) {
+      const leases = censusExecutionLeases();
+      return leases.leases.length || leases.unknown || census.activeJobs || census.unknown ? 'work-active-or-unknown' : null;
+    }
+    return workAdmissionReason(deps, {...deps.admission(), stop:true}, census);
+  };
+  const beginPause = async () => {
+    await candidateReady();
+    beforePause = deps.admission();
+    const host = deps.hostCensus?.();
+    resident = supportsOwnedPause(deps, beforePause, host) ? deps.ownedResident?.() : null;
+    if (!resident?.runtime.pid) hold('drain-interlock-unsupported');
+    pauseDeadline = tick() + OWNED_PAUSE_CAP_MS;
+    const drainBy = pauseDeadline - SWITCH_RESERVE_MS;
+    let localPauseFailed = false;
+    owned = beginDesktopUpdateInterlock(deps.home, stageId, staged.digest, deps.now() + OWNED_PAUSE_CAP_MS, marker => {
+      if (deps.operatorStop?.() !== 'inactive') hold('resume-ownership-lost');
+      try { localPause = beginDesktopUpdateLocalReleasePause(deps.home, marker); }
+      catch { localPauseFailed = true; hold('resume-local-pause-unverified'); }
+      pauseRecord = JSON.stringify({owned:marker, resident, grantId:beforePause.grantId,
+        envelopeDigest:beforePause.envelopeDigest, surface:beforePause.surfaceDigest, previous, destination, localReleaseTrain:localPause.prior});
+      writeExclusive(pausePath, Buffer.from(pauseRecord));
+      fsyncDirectory(staged.stage);
+      if (deps.operatorStop?.() !== 'inactive') hold('resume-ownership-lost');
+    });
+    if (!owned) {
+      if (localPauseFailed || localPause && !localPause.restore()) hold('resume-local-pause-unverified');
+      hold('resume-ownership-lost');
+    }
+    io.updatePause = owned;
+    io.ownsUpdatePause = ownsPause;
+    io.preSwitchTimeout = () => {
+      if (boundary) return undefined;
+      checkCap(pauseDeadline);
+      return Math.max(1, Math.floor(pauseDeadline - tick()));
+    };
+    for (;;) {
+      checkCap(drainBy);
+      if (!ownsPause()) hold('resume-ownership-lost');
+      const claim = productionDeps.has(deps) ? readDesktopUpdateResident(resident.previous) : deps.ownedResident?.();
+      checkCap(drainBy);
+      if (!claim || !claim.runtime.loaded || claim.dev !== resident.dev || claim.ino !== resident.ino || claim.ctimeMs !== resident.ctimeMs ||
+          claim.runtime.pid !== undefined && (claim.runtime.pid !== resident.runtime.pid || claim.processStart !== resident.processStart))
+        hold('resume-resident-unverified');
+      if (!claim.runtime.pid) {
+        const census = deps.hostCensus?.(drainBy - tick());
+        if (!census || census.state === 'unsupported') hold('drain-interlock-unsupported');
+        const work = pausedWork(census);
+        checkCap(drainBy);
+        if (!work) return;
+      }
+      await deps.sleep(Math.min(100, Math.max(0, drainBy - tick())));
+    }
+  };
   let switched: Pointer | null = null; let created: unknown[] = [];
   try {
-    if (owned) {
-      let drained = false;
-      while (deps.now() < deadline) {
-        if (!ownsPause()) hold('resume-ownership-lost');
-        const claim = deps.ownedResident?.();
-        if (!claim || claim.dev !== resident!.dev || claim.ino !== resident!.ino || claim.ctimeMs !== resident!.ctimeMs) hold('resume-resident-unverified');
-        if (claim.runtime.pid !== undefined &&
-            (claim.runtime.pid !== resident!.runtime.pid || claim.processStart !== resident!.processStart)) hold('resume-resident-unverified');
-        if (!claim.runtime.pid && !workAdmissionReason(deps, {...deps.admission(), stop: true})) {
-          drained = true;
-          break;
-        }
-        await deps.sleep(100);
-      }
-      if (!drained) hold('owned-pause-aborted');
-    }
     await helper.installLocalApp({selected, source: appRoot, sourceProof: app, signer: staged.manifest.app.signer,
       version: staged.manifest.version, native: true, preserveSigned: true, previousCurrent: previous.target,
+      ...(automatic && {beginUpdatePause:beginPause}),
       beforeSwitch: async () => {
-        await candidateReady();
-        if (owned && deps.now() >= deadline) hold('owned-pause-aborted');
+        if (!automatic) await candidateReady();
+        admissionAtSwitch();
+      },
+      atSwitch: () => {
+        if (automatic) {
+          checkCap(pauseDeadline);
+          if (!ownsPause()) hold('resume-ownership-lost');
+        }
         boundary = true;
       },
       commitPointer: async () => {
         await candidateReady();
+        admissionAtSwitch();
         if (mode === 'paired') {
           switched = io.switchCurrentPointer(current, previous, destination);
           created = helper.createLocalAliases(aliases, io);
@@ -616,11 +695,16 @@ async function installPairedUpdate(stageId: string, staged: ReturnType<typeof re
     return owned ? terminal(true) : 'applied';
   } catch (error) {
     if (owned) {
+      io.preSwitchTimeout = undefined;
       if (error instanceof Held && error.reason === 'resume-resident-unverified')
         return result('rollback-held', staged.manifest.version, error.reason);
-      if (!boundary || phase === 'rolled-back') return terminal(false);
+      if (!boundary || phase === 'rolled-back') {
+        if (!boundary && tick() >= pauseDeadline) capExpired = true;
+        return terminal(false);
+      }
       return result('rollback-held', staged.manifest.version, phase === 'rollback-held' ? 'resume-abort-unverified' : 'resume-install-unverified');
     }
+    if (automatic && error instanceof Held) return result('blocked', staged.manifest.version, error.reason);
     return phase === 'rolled-back' ? 'rolled-back' : 'rollback-held';
   }
 }
@@ -666,7 +750,9 @@ export async function readQualifiedDesktopUpdateResult(stageId: string, deps: De
         saved.requiresReapproval !== (saved.state === 'rollback-held' && saved.reason === 'resume-surface-changed')) hold('update-result-unverified');
     if (saved.state === 'rollback-held' || saved.state === 'rolled-back') return result(saved.state, version,
       typeof saved.reason === 'string' && updateResumeHoldReasons.has(saved.reason) ? saved.reason : 'installation-recovery-required', saved.requiresReapproval === true);
-    if (saved.state === 'blocked' && saved.reason === 'owned-pause-aborted') return result('blocked', version, saved.reason);
+    if (saved.state === 'blocked' && (saved.reason === 'owned-pause-aborted' || saved.reason === 'owned-pause-cap-expired' ||
+        saved.reason === 'drain-interlock-unsupported' || saved.reason === 'resume-ownership-lost' || saved.reason === 'resume-local-pause-unverified'))
+      return result('blocked', version, saved.reason);
     if (saved.state !== 'applied' || (saved.reason !== 'operator-restart-required' && saved.reason !== 'applied')) hold('update-result-unverified');
     const root = deps.packageRoot;
     if (!root || deps.currentPackageRoot() !== root) hold('installed-current-unverified');
@@ -687,7 +773,7 @@ export async function readQualifiedDesktopUpdateResult(stageId: string, deps: De
 
 const updateResumeHoldReasons = new Set([
   'resume-grant-changed', 'resume-surface-changed', 'resume-ownership-lost', 'resume-install-unverified',
-  'resume-abort-unverified', 'resume-resident-unverified',
+  'resume-abort-unverified', 'resume-local-pause-unverified', 'resume-resident-unverified',
 ]);
 
 function saveConsumerResult(stage: string, value: DesktopUpdateResult, deps: DesktopUpdateDependencies): void {
@@ -705,12 +791,14 @@ export async function applyQualifiedDesktopUpdate(stageId: string, deps: Desktop
   try {
     const staged = readStage(stageId, deps); version = staged.manifest.version;
     const admission = deps.admission();
-    const automatic = supportsOwnedPause(deps, admission) && Boolean(deps.ownedResident?.()?.runtime.pid);
+    const initialCensus = deps.hostCensus?.();
+    const automatic = supportsOwnedPause(deps, admission, initialCensus) && Boolean(deps.ownedResident?.()?.runtime.pid);
     const fresh = () => {
       if (!automatic) return freshAdmission(deps);
       const now = deps.admission();
-      if (!supportsOwnedPause(deps, now)) hold('resume-ownership-lost');
-      const reason = workAdmissionReason(deps, {...now, stop: true});
+      const host = deps.hostCensus?.();
+      if (!supportsOwnedPause(deps, now, host)) hold('resume-ownership-lost');
+      const reason = ownedActivityReason(deps, staged, now, host);
       if (reason) hold(reason);
     };
     fresh();
@@ -761,7 +849,10 @@ export function createDesktopUpdateDependencies(trust: UpdateTrust | null): Desk
         leaseCount: leases.leases.length, unknownLeases: leases.unknown};
     },
     currentPackageRoot: () => {try {return fs.realpathSync(join(userInfo().homedir, '.local', 'share', 'ashlr', 'current'));} catch {return null;}},
-    ...(process.platform === 'darwin' && {hostCensus: () => readDesktopHostInterlockCensus(userInfo().homedir)}),
+    ...(process.platform === 'darwin' && {
+      hostCensus: (timeoutMs?: number) => readDesktopHostInterlockCensus(home, undefined, timeoutMs),
+      queuedWork: () => queuedDesktopWork(home),
+    }),
     operatorStop: () => readKillSwitch().state,
     ...(trust === getDesktopUpdateTrust() && process.platform === 'darwin' &&
       process.env['PHANTOM_NATIVE_UPDATE_INTERLOCK'] === 'phantom.desktop-update-interlock.v1' && {ownedResident: () => {
@@ -816,7 +907,7 @@ export function createDesktopUpdateDependencies(trust: UpdateTrust | null): Desk
       try {process.kill(expected.pid, 0); return 'unknown';}
       catch (error) {return (error as NodeJS.ErrnoException).code === 'ESRCH' ? 'gone' : 'unknown';}
     },
-    now: Date.now, sleep: delay, download: downloadQualifiedUpdateArtifact,
+    now: Date.now, monotonicNow: () => performance.now(), sleep: delay, download: downloadQualifiedUpdateArtifact,
   };
   productionDeps.add(deps);
   return Object.freeze(deps);

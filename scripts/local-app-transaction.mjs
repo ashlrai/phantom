@@ -25,7 +25,8 @@ const canonicalLauncherDigestSet = new Set(canonicalLauncherDigests);
 const canonicalLauncherMatches = (actual, expected) => actual.equals(expected) ||
   canonicalLauncherDigestSet.has(createHash('sha256').update(actual).digest('hex'));
 const call = (io, cmd, argv) => {
-  const result = io.exec(cmd, argv);
+  const timeout = io.preSwitchTimeout?.();
+  const result = timeout === undefined ? io.exec(cmd, argv) : io.exec(cmd, argv, {timeout});
   if (result.status !== 0) fail(`${cmd} ${argv[0]} failed; no unverified app will be installed`);
   return result.stdout;
 };
@@ -136,7 +137,7 @@ export async function requireLocalQuiescence(io) {
   if (!census || census.unknown !== 0 || !Array.isArray(census.leases) || census.leases.length) hold('leases-active', 'execution leases are active or unknown; finish the supported drain before installation');
   if (census.reaped) io.log(`      reaped ${census.reaped} proven-dead execution leases`);
   let processes;
-  try { processes = readProcesses(io); } catch (error) {
+  try { processes = readProcesses(io, io.preSwitchTimeout?.()); } catch (error) {
     if (error?.code === 'process-evidence-unavailable') throw error;
     hold('process-evidence-unavailable', 'process liveness is unreadable');
   }
@@ -176,8 +177,9 @@ export async function requireLocalQuiescence(io) {
   }
 }
 
-function readProcesses(io) {
-  const result = io.exec('/bin/ps', ['-axww', '-o', 'pid=,ppid=,lstart=,args=']);
+function readProcesses(io, timeout) {
+  const args = ['-axww', '-o', 'pid=,ppid=,lstart=,args='];
+  const result = timeout === undefined ? io.exec('/bin/ps', args) : io.exec('/bin/ps', args, {timeout});
   if (result.status !== 0) hold('process-evidence-unavailable', 'process liveness is unreadable');
   const processes = new Map();
   for (const line of result.stdout.split('\n').filter((line) => line.trim())) {
@@ -298,7 +300,7 @@ export async function installLocalApp(input, io) {
   io.exclusiveRenamePreflight();
   if (selected) sameApp(selected, io);
   else if (paths.some((path) => io.exists(path))) fail('an app appeared after the install plan');
-  await requireLocalQuiescence(io);
+  if (!input.beginUpdatePause) await requireLocalQuiescence(io);
   const dir = io.makeInstallStage();
   const staged = join(dir, 'Phantom.app');
   const retired = join(dir, 'retired-bundle'); // no .app name: never another registered installation
@@ -339,10 +341,16 @@ export async function installLocalApp(input, io) {
       sameApp(selected, io);
     } else if (paths.some((path) => io.exists(path))) fail('an app appeared before installation');
     if (io.appInventory(staged) !== verified.inventory) fail('the verified staged app changed before installation');
+    if (input.beginUpdatePause) {
+      await input.beginUpdatePause();
+      if (selected) sameApp(selected, io);
+      if (io.appInventory(staged) !== verified.inventory) fail('the verified staged app changed during drain');
+    }
     await requireLocalQuiescence(io); // last-contact guard after the potentially slow inventories
     if (input.beforeSwitch) await input.beforeSwitch(); // fresh caller admission after slow inventories
     await requireLocalQuiescence(io); // callback work cannot make collector ownership uncertain before the first move
     journal('verified');
+    input.atSwitch?.();
     if (selected) { io.renameExclusive(selected.path, retired, selected); moved = true; }
     io.renameExclusive(staged, PHANTOM_APP_PATH, verified); installed = true;
     const active = inspectLocalApp(PHANTOM_APP_PATH, signer, io);
@@ -427,7 +435,7 @@ export function createLocalAppTransactionIo({packageRoot, home = homedir(), Refu
     return safeFile(path, 65536);
   };
 
-  return {
+  const io = {
     platform: process.platform,
     home: home,
     tmp: tmpdir(),
@@ -465,6 +473,7 @@ export function createLocalAppTransactionIo({packageRoot, home = homedir(), Refu
     appInventory: (path) => {
       const hash = createHash('sha256');
       const visit = (file) => {
+        io.preSwitchTimeout?.();
         const stat = lstatSync(file);
         if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) throw new Refusal('unsafe app inventory entry');
         hash.update(JSON.stringify([relative(path, file), stat.mode & 0o777, stat.isDirectory() ? 'directory' : 'file']));
@@ -507,7 +516,8 @@ export function createLocalAppTransactionIo({packageRoot, home = homedir(), Refu
         rmSync(target, { recursive: true, force: true });
         return { status: 0, stdout: '' };
       }
-      const res = spawnSync(cmd, argv, { cwd: opts.cwd ?? repoRoot, encoding: 'utf8', stdio: opts.stdio === 'inherit' ? 'inherit' : 'pipe' });
+      const res = spawnSync(cmd, argv, { cwd: opts.cwd ?? repoRoot, encoding: 'utf8', stdio: opts.stdio === 'inherit' ? 'inherit' : 'pipe',
+        ...(opts.timeout !== undefined && {timeout:opts.timeout, killSignal:'SIGKILL'}) });
       return { status: res.error ? 127 : res.status, stdout: res.stdout ?? '' };
     },
     fetchStatus: async (url) => {
@@ -519,4 +529,5 @@ export function createLocalAppTransactionIo({packageRoot, home = homedir(), Refu
       }
     },
   };
+  return io;
 }

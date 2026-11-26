@@ -10,7 +10,7 @@
 # rc 0, 5 and 16 stay final. Any other rc is retried up to 3 times, then rc 14 writes NEEDS-MASON.
 # v3.30.34 is superseded by the next version: this pass skips it and never edits, publishes, deletes, or moves that draft or tag.
 # Until ~/.ashlr-runs/release-sign/keychain-allowed exists (Masbot creates it after Mason clicks Always Allow once), it only writes
-# NEEDS-MASON-<tag> with the exact command and starts nothing. Local holds: KILL, DESKTOP_UPDATE_STOP and RELEASE_AUTORUN_OFF.
+# NEEDS-MASON-<tag> with the exact command and starts nothing. Honors operator and desktop-update local holds.
 # rev2: after selection, each completed successful signing outcome gets a bounded GET-only published-state proof  -
 # the tag's public release must carry exactly the seven signed desktop assets, its latest.json must bind GitHub's
 # recorded asset digests to the signed manifest fields and detached signatures, and while that release is latest
@@ -40,6 +40,7 @@ export HOME="$_RH"; unset _RH
 REPO=ashlrai/phantom; R=${RA_ROOT_SELFTEST:-$HOME/.ashlr-runs}; ST=$R/release-sign; D=$ST/autorun
 GH=${RA_GH_SELFTEST:-/opt/homebrew/bin/gh}; RS=${RA_RS_SELFTEST:-$R/bin/release-sign.sh}; SCRUB=$R/bin/scrub.pl
 [ -f $R/RELEASE_AUTORUN_OFF ] && exit 0
+if [ -e "$R/RELEASE_AUTORUN_DESKTOP_UPDATE_OFF" ] || [ -L "$R/RELEASE_AUTORUN_DESKTOP_UPDATE_OFF" ]; then exit 0; fi
 mkdir -p -m 700 "$ST" "$D"; L=$D/autorun.log
 log(){ echo "$(date '+%F %T') $*" | /usr/bin/perl "$SCRUB" >> "$L"; }
 # Fleet KILL (~/.ashlr/KILL), same sentinel as ashlr stop. Present or unreadable dir fails closed before any network.
