@@ -2522,6 +2522,10 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
         sqTag(sc.learning.sourceQuality),
     );
     console.log(
+      `    skill cards:         ${fmt(sc.learning.skillCardsWritten)}` +
+        sqTag(sc.learning.sourceQuality),
+    );
+    console.log(
       `    capability (eval):   ${sc.capability.state}` +
         (sc.capability.latest
           ? ` — resolved ${sc.capability.latest.resolved}/${sc.capability.latest.total} ` +

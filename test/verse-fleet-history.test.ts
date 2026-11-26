@@ -500,6 +500,7 @@ function trendResult(wrote: boolean): ScorecardHistoryMaintenanceResult {
   const point = (ts: string, window: '7d' | '30d') => ({
     ts, window, merges: { realized: 1, released: null }, releasedState: 'uncommissioned' as const,
     costPerMergedChangeUsd: null, proposalsFiled: 3, rejectionLessonsWritten: 0,
+    skillCardsWritten: 0,
   });
   const healthy = { sourceState: 'healthy' as const, complete: true, reasons: [] };
   return {
