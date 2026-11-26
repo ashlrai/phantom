@@ -402,6 +402,23 @@ describe('skillNudgeJobsFromLedger', () => {
 describe('syncSkillNudgesFromJobsLedger', () => {
   const NOW = () => new Date('2026-10-28T20:00:00.000Z');
 
+  it('drafts generic retry recovery when the failure class belongs to a previous lane', async () => {
+    const job = 'RQ-LANE-MOVE';
+    const text = [
+      launch(job, 'claude'),
+      finish(job, { failure_class: 'quota' }, 'claude'),
+      launch(job, 'devin', '2026-10-28T13:00:00-0400'),
+      outcome(job, 'MERGED', { lane: 'devin' }),
+    ].join('\n');
+
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: job, lane: 'devin', outcome: 'merged', retries: 1 },
+    ]);
+    const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(result.candidates).toBe(1);
+    expect(cards.map(card => card.trigger)).toEqual(['devin: recover after retry']);
+  });
+
   it.each(['ready', 'defer', 'skip'])('keeps the latest recut admission when an earlier %s receipt replays', async action => {
     const job = 'RQ-RECUT-REPLAY';
     const admission = (action: string, ts: string) => line({ job, event: 'recut_admission', action, ts });
