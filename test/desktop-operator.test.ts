@@ -125,7 +125,7 @@ describe('desktop operator policy reuses computer-use rules', () => {
     const writable = /let writableBundles = \[([\s\S]*?)\]/.exec(swift)?.[1] ?? '';
     const ids = [...writable.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
     expect(ids).toEqual([...DESKTOP_WRITE_BUNDLE_IDS]);
-    expect(ids).not.toContain('ai.ashlr.desktop');
+    expect(ids).toContain('ai.ashlr.desktop');
   });
 
   it('never reads a fullscreen app through its title-bar strip', () => {
@@ -146,7 +146,7 @@ describe('desktop operator policy reuses computer-use rules', () => {
     expect(DESKTOP_OPERATOR_BUILD).toContain('-target arm64-apple-macos13.0');
   });
 
-  it('allows Cursor typing by exact bundle id, and keeps Phantom, mail, chat, browsers and terminals read-only', () => {
+  it('allows Cursor typing by exact bundle id, and Phantom by its exact bundle id, and keeps mail, chat, browsers and terminals read-only', () => {
     expect(operatorDenyReason({ name: 'Cursor', bundleId: 'com.todesktop.230313mzl4w4u92', verb: 'type' })).toBeNull();
     expect(operatorDenyReason({ name: 'Codex', bundleId: 'com.openai.codex', verb: 'click' })).toBeNull();
     expect(operatorDenyReason({ name: 'Codex', bundleId: 'com.openai.codex.helper', verb: 'type' })).toEqual(expect.any(String));
@@ -154,7 +154,7 @@ describe('desktop operator policy reuses computer-use rules', () => {
     expect(operatorDenyReason({ name: 'Phantom', bundleId: 'ai.ashlr.desktop', verb: 'screenshot' })).toBeNull();
     expect(operatorDenyReason({ name: 'Ashlr', bundleId: null, verb: 'read' })).toBeNull();
     for (const verb of ['type', 'click', 'focus', 'scroll'] as const) {
-      expect(operatorDenyReason({ name: 'Phantom', bundleId: 'ai.ashlr.desktop', verb })).toEqual(expect.any(String));
+      expect(operatorDenyReason({ name: 'Phantom', bundleId: 'ai.ashlr.desktop', verb })).toBeNull();
       expect(operatorDenyReason({ name: 'Ashlr', bundleId: null, verb })).toEqual(expect.any(String));
       expect(operatorDenyReason({ name: 'Mail', bundleId: 'com.apple.mail', verb })).toEqual(expect.any(String));
       expect(operatorDenyReason({ name: 'Slack', bundleId: 'com.tinyspeck.slackmacgap', verb })).toEqual(expect.any(String));
@@ -266,7 +266,7 @@ describe('runDesktopOperator', () => {
     expect(read.ok).toBe(true);
   });
 
-  it('denies Phantom type and click, and still reads Phantom', async () => {
+  it('drives Phantom by its exact bundle id under the bus, KILL and comms-pause gates, and still reads it', async () => {
     const order: string[] = [];
     const surface = mockSurface({ order });
     const posted: unknown[] = [];
@@ -276,10 +276,15 @@ describe('runDesktopOperator', () => {
         return { status: 'posted' };
       },
     });
-    expect(await runDesktopOperator({ verb: 'type', app: 'Phantom', text: 'approve' }, base)).toMatchObject({ ok: false, code: 'denied' });
-    expect(await runDesktopOperator({ verb: 'click', app: 'Phantom', x: 10, y: 10 }, base)).toMatchObject({ ok: false, code: 'denied' });
-    expect(posted).toEqual([]);
-    expect(order.filter((step) => step === 'type' || step === 'click')).toEqual([]);
+    expect(await runDesktopOperator({ verb: 'click', app: 'Phantom', x: 10, y: 10 }, base)).toMatchObject({ ok: true });
+    expect(posted).toHaveLength(1);
+    expect(await runDesktopOperator({ verb: 'click', app: 'Phantom', x: 10, y: 10 }, { ...base, killed: () => true })).toMatchObject({ ok: false, code: 'killed' });
+    expect(await runDesktopOperator({ verb: 'type', app: 'Phantom', text: 'x' }, { ...base, commsPaused: () => true })).toMatchObject({ ok: false, code: 'comms_paused' });
+    expect(await runDesktopOperator({ verb: 'click', app: 'Phantom', x: 10, y: 10 }, { ...base, postIntent: () => ({ status: 'unavailable' }) })).toMatchObject({ ok: false, code: 'intent_not_posted' });
+    // A display name alone never unlocks a write.
+    const unnamed = deps(mockSurface({ apps: [{ name: 'Phantom', bundleId: null, pid: 40 }] }), { postIntent: () => ({ status: 'posted' }) });
+    expect(await runDesktopOperator({ verb: 'click', app: 'Phantom', x: 1, y: 1 }, unnamed)).toMatchObject({ ok: false, code: 'denied' });
+    expect(order.filter((step) => step === 'click')).toHaveLength(1);
     const read = await runDesktopOperator({ verb: 'read', app: 'Phantom' }, deps(surface));
     expect(read.ok).toBe(true);
   });

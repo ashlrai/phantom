@@ -91,6 +91,11 @@ const ADDED_NATIVE_NAMES = [
   'desktop_scroll',
   'desktop_type',
   'desktop_click',
+  'self_snapshot',
+  'self_screenshot',
+  'self_navigate',
+  'self_act',
+  'self_check',
   'phm_wiki_map',
   'phm_wiki_ecosystem',
   'phm_wiki_brain',
@@ -145,7 +150,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(98);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(103);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -179,6 +184,10 @@ describe('native MCP tool inventory', () => {
     const desktop = addedTools.filter(tool => tool.name.startsWith('desktop_'));
     const desktopBytes = desktop.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(desktopBytes).toBeLessThanOrEqual(4500);
+    const selfTools = addedTools.filter(tool => tool.name.startsWith('self_'));
+    const selfBytes = selfTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    // The five self-surface tools measured 2,140 bytes.
+    expect(selfBytes).toBeLessThanOrEqual(2200);
     const observeTools = addedTools.filter(tool => tool.name === 'world_model' || tool.name === 'phantom_observe' || tool.name === 'phantom_observe_session' || tool.name === 'phantom_spend_budget');
     const observeBytes = observeTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(observeBytes).toBeLessThanOrEqual(2500);
@@ -239,11 +248,11 @@ describe('native MCP tool inventory', () => {
     const ecosystem = addedTools.find(tool => tool.name === 'phm_wiki_ecosystem')!;
     const ecosystemBytes = Buffer.byteLength(JSON.stringify(ecosystem)) + 1;
     expect(ecosystemBytes).toBeLessThanOrEqual(192);
-    const addedBytes = addedTools.filter(tool => tool !== brain && tool !== wiki && tool !== ecosystem && tool !== verbs && tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && !intentTools.includes(tool) && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    const addedBytes = addedTools.filter(tool => tool !== brain && tool !== wiki && tool !== ecosystem && tool !== verbs && tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && !intentTools.includes(tool) && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !selfTools.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9884);
     // 24,205 + 9,884 preserves the historical headroom. Later tool groups are
     // measured on their own caps above.
-    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes + needsWaitBytes + accessRequestBytes + watchBytes + verbsBytes + intentBytes + wikiBytes + brainBytes + ecosystemBytes);
+    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes + needsWaitBytes + accessRequestBytes + watchBytes + verbsBytes + intentBytes + wikiBytes + brainBytes + ecosystemBytes + selfBytes);
   });
 });
 

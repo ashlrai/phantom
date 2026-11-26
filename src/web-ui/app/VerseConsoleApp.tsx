@@ -131,7 +131,10 @@ export function PhantomConsoleApp() {
     void firstPaintSurface.then(() => { if (live) setSurface(true); });
     // app/sidecar-restart.ts: a chunk of its own, off the first-paint path.
     void import('./sidecar-restart.js').then((m) => { if (live) off = m.listenForSidecarRestart(); }, () => undefined);
-    return () => { live = false; off?.(); };
+    // app/self-surface-client.ts: agents see and drive this window; idle until a mutation token is held.
+    let offSelf: (() => void) | undefined;
+    void import('./self-surface-client.js').then((m) => { if (live) offSelf = m.startSelfSurface(); }, () => undefined);
+    return () => { live = false; off?.(); offSelf?.(); };
   }, []);
   useEffect(() => {
     if (phase === 'authenticated') {
