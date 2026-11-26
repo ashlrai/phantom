@@ -1570,8 +1570,10 @@ unavailable ready queue, distinct from an empty string. In that case
 `readyHinted` and `invalidRows` are null. `waiting` and a free, unheld lane's
 `waitingElsewhere` and `unfed` are null where dispatcher counts are missing.
 `unfedLanes` lists confirmed lanes and `unfedSlots` is null when the fleet-wide
-bound cannot be established. The CLI exit status still follows confirmed
-unfed lanes. The report's `marketTruncated` boolean
+bound cannot be established. `unfedExitCode(report)` returns 2 when freshness
+is unconfirmed. For fresh reports it returns 1 when any lane is confirmed
+unfed, 2 when no lane is confirmed unfed and the bound is unknown, or 0
+when the report establishes no unfed capacity. The report's `marketTruncated` boolean
 is true when the bounded work-market journal read omitted older bytes.
 History, overrides, rejections and decision outcomes may then be incomplete
 for the requested window. The additive `resourcePlan` block compares the
