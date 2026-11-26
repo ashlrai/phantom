@@ -142,7 +142,11 @@ label), `job` (one job id), `bodyKind` (the exact body-kind discriminator —
 the v2 `kind` field, a `worker-handoff` assignment, a notice kind, a v1
 `protocol.kind` or a `type`/`schema` notice discriminator — matched through
 the shared `busBodyKind` own-field rule a body carrying no discriminator
-never passes), `channel` (envelopes addressed to
+never passes), `result` (only `work.result` bodies whose own `outcome`
+strictly equals one `WORK_RESULT_OUTCOMES` code — the same kind-scoped
+`busBodyResultOutcome` match `phm comms bus read --result` and `fleet
+bus-follow --result` apply, so every other body kind and a result carrying
+no outcome never passes), `channel` (envelopes addressed to
 `group:<name>:*` — one room's whole traffic under every topic, the same raw
 `to`-prefix the `phm comms bus read --channel` and `fleet bus-follow
 --channel` flags apply), `since` (a `15m`/`2h`/`1d`, epoch-ms or ISO cutoff),
