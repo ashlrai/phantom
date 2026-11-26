@@ -7,7 +7,7 @@ export const CLAIM_LOAD = 100;
 export const NODE_OFFLINE_MS = 300_000;
 
 /** Missing or old heartbeat evidence never admits new work. */
-export function nodeCanAcceptWork(node: NodeRecord, now: number): boolean {
+export function nodeCanAcceptWork(node: Pick<NodeRecord, 'expiresAt' | 'heartbeatAt'>, now: number): boolean {
   return node.expiresAt > now && node.heartbeatAt > 0 && node.heartbeatAt <= now && now - node.heartbeatAt < NODE_OFFLINE_MS;
 }
 
