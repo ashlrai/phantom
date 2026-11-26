@@ -123,6 +123,36 @@ describe('autoscale router scoring', () => {
     expect(plan[0]!.nodeId).toBe('masons-macbook-pro');
   });
 
+  it.each([null, 0])('honors zero CPU headroom with a learned CPU cost of %s', (cpuCores) => {
+    const snapshot = mbp();
+    const previous = computeNodeCapacity(snapshot);
+    previous.per_harness_footprint.codex!.cpu_cores_per_session = cpuCores;
+    const saturated = computeNodeCapacity(mbp({
+      measuredAtMs: T0 + 1_000,
+      cpu: { ...snapshot.cpu, busyPercent: 90 },
+      sessions: [],
+    }), previous);
+    expect(saturated.cpu.headroom_cores).toBe(0);
+    expect(saturated.agents_runnable_now.codex).toBe(0);
+    expect(saturated.basis.limiting.codex).toBe('cpu');
+    expect(saturated.agents_runnable_now.devin).toBeNull();
+
+    // Older measurements could still advertise memory-only slots.
+    const legacy = structuredClone(saturated);
+    legacy.agents_runnable_now.codex = 2;
+    const nowMs = T0 + 1_000;
+    expect(fleetRunnable([legacy], nowMs).codex).toBe(0);
+    expect(fleetRunnable([legacy], nowMs).devin).toBeNull();
+    const input = { costs: [COSTS[0]!], outcomes: {}, nowMs, jobs: [{ id: 'j' }] };
+    expect(planAutoscaleRoutes({ ...input, nodes: [{ doc: legacy }] })[0]).toMatchObject({
+      nodeId: null, rejected: { cpu: 1 },
+    });
+    const idle = node(mbp8({ measuredAtMs: nowMs }));
+    expect(planAutoscaleRoutes({ ...input, nodes: [{ doc: legacy }, idle] })[0]).toMatchObject({
+      nodeId: idle.doc.node, footprint: 'fleet',
+    });
+  });
+
   it('is deterministic regardless of input order', () => {
     const a = planAutoscaleRoutes({ nodes: [node(mbp()), node(mbp8())], costs: COSTS, outcomes: {}, nowMs: T0, jobs: [{ id: '1' }, { id: '2' }, { id: '3' }] });
     const b = planAutoscaleRoutes({ nodes: [node(mbp8()), node(mbp())], costs: [...COSTS].reverse(), outcomes: {}, nowMs: T0, jobs: [{ id: '1' }, { id: '2' }, { id: '3' }] });
