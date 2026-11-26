@@ -61,12 +61,16 @@ export function draftSkillNudges(jobs: readonly SkillNudgeJob[], ts: string): Sk
     ];
     const skillId = `skill.nudge.${createHash('sha256').update(JSON.stringify([trigger, steps])).digest('hex')}`;
     const old = drafts.get(skillId);
+    // Keep the recovery that justified this draft even when failures fill the cap.
+    const otherSources = new Set([...(old?.sourceJobIds ?? []), ...sources]);
+    otherSources.delete(job.id);
+    const sourceJobIds = [...[...otherSources].sort().slice(0, 15), job.id].sort();
     drafts.set(skillId, sanitizeSkillCard({
       schemaVersion: 1, skillId, revision: 1, ts,
       name: 'Draft recovery workflow', summary: trigger,
       status: 'candidate', source: 'imported', tags: ['skill-nudge', 'shadow'],
       trigger, steps,
-      sourceJobIds: [...new Set([...(old?.sourceJobIds ?? []), ...sources, job.id])].sort().slice(0, 16),
+      sourceJobIds,
       verification: { passed: false },
     }));
   }

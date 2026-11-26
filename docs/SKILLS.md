@@ -37,6 +37,8 @@ proved did not hold never seeds a "recovery" draft. A merged,
 non-reverted job that needed a retry, a
 recut, or recovered a failure class seen on three earlier failed jobs seeds
 one bounded draft card.
+Each draft lists up to 16 source job IDs and always includes the latest
+qualifying merge for that draft, even when earlier failures fill the list.
 For recurrence, Phantom orders jobs by their latest terminal outcome row in
 the retained ledger. Later bookkeeping rows do not change that order.
 For each resolved job, the learner uses the lane, retries, recuts and
