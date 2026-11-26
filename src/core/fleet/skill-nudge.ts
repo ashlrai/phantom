@@ -97,7 +97,7 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 // its latest terminal outcome (or its last row while unresolved).
 //
 // Field provenance, all real ledger evidence:
-//   - id/lane: job plus the last execution-side lane (enqueue/queued rows are
+//   - id/lane: job plus the last execution-side lane (enqueue/enqueued/queued rows are
 //     queue hints and never set the lane).
 //   - outcome: the latest terminal lifecycle phase on any row — the phase
 //     fields (phase|state|outcome|status|result|conclusion via the shared
@@ -142,7 +142,7 @@ const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
 /** Same identifier alphabet draftSkillNudges accepts for id, lane and failureClass. */
 const LEDGER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 
-const QUEUE_HINT_EVENTS: ReadonlySet<string> = new Set(['enqueue', 'queued']);
+const QUEUE_HINT_EVENTS: ReadonlySet<string> = new Set(['enqueue', 'enqueued', 'queued']);
 const ATTEMPT_EVENTS: ReadonlySet<string> = new Set(['launch', 'batch_claim']);
 const MERGED_PHASES: ReadonlySet<string> = new Set(['MERGED']);
 const FAILED_PHASES: ReadonlySet<string> = new Set(['CLOSED', 'FAILED', 'ERROR']);
@@ -301,8 +301,12 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     const outcome = outcomeOf(row);
     const evidence = acc.evidence;
     if (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event)) {
-      const lane = firstString(row, LEDGER_LANE_KEYS);
-      if (lane !== null && hasKnownLane(lane)) evidence.lane = lane;
+      for (const key of LEDGER_LANE_KEYS) {
+        const value = row[key];
+        if (typeof value !== 'string' || !hasKnownLane(value.trim())) continue;
+        evidence.lane = value.trim();
+        break;
+      }
     }
     if (event !== null && ATTEMPT_EVENTS.has(event)) evidence.attempts += 1;
     else if (event === 'claim' && row['launch_dedupe'] !== true) evidence.attempts += 1;
