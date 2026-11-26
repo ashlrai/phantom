@@ -992,6 +992,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         repo: { type: 'string', pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$', description: 'Keep only checkpoints for this owner/name repo — matched case-insensitively.' },
         signal: { type: 'string', enum: [...HANDOFF_SIGNAL_KINDS], description: 'Keep only checkpoints whose latest signal kind is this — checkpoint, rate-limit, quota-exhausted, budget or completed.' },
         pressure: { type: 'boolean', description: 'Keep only checkpoints whose latest signal asks for failover (true) or does not (false) — the same handoffPressure verdict planSessionFailover applies.' },
+        capabilities: { type: 'array', items: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$' }, maxItems: 32, description: 'Keep only checkpoints a candidate holding this capability set could resume — every declared need must be covered, the same admission rule planSessionResume applies; an empty list keeps only checkpoints that declare no needs.' },
         since: { type: 'string', description: 'Keep only checkpoints whose latest revision time is at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time.' },
         before: { type: 'string', description: 'Keep only checkpoints whose latest revision time is strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with since into one [since, before) window.' },
       }, additionalProperties: false },

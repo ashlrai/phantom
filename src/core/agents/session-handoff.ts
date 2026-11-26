@@ -90,6 +90,10 @@ export interface SessionHandoffListFilter {
   signal?: HandoffSignal['kind'];
   /** Keep only checkpoints whose latest signal asks for failover — the same `handoffPressure` verdict `planSessionFailover` applies. */
   pressure?: boolean;
+  /** Keep only checkpoints a candidate holding this capability set could resume — every
+   * declared need must be covered, the same admission rule `planSessionResume` applies.
+   * An empty set keeps only checkpoints that declare no needs. */
+  capabilities?: readonly string[];
   /** Keep only checkpoints whose latest revision `at` is at or after this epoch-ms cutoff. */
   since?: number;
   /** Keep only checkpoints whose latest revision `at` is strictly before this epoch-ms cutoff — the exclusive upper bound composing with `since` into one [since, before) window. */
@@ -98,7 +102,7 @@ export interface SessionHandoffListFilter {
 
 /** Every filter key `parseSessionHandoffListArgs` accepts. */
 export const SESSION_HANDOFF_LIST_FILTER_KEYS = [
-  'state', 'job', 'lane', 'repo', 'signal', 'pressure', 'since', 'before',
+  'state', 'job', 'lane', 'repo', 'signal', 'pressure', 'capabilities', 'since', 'before',
 ] as const;
 
 /** The owner/name slug rule `handoffDraftSchema.repo` enforces, shared by the filter's `repo` value. */
@@ -114,10 +118,12 @@ export type SessionHandoffListArgsResult =
  * args, so the two surfaces can never disagree about what a value means.
  * `state` takes open or completed, `job` and `lane` the handoff-id grammar
  * journals enforce, `repo` the owner/name slug (matched case-insensitively),
- * `signal` one of the wire union's kinds, `pressure` a boolean, and `since`/
- * `before` the shared `parseSince` grammar resolved against `options.now`
- * into epoch-ms cutoffs on each entry's `at`. Unknown keys and malformed
- * values are usage errors, never a silently empty index.
+ * `signal` one of the wire union's kinds, `pressure` a boolean,
+ * `capabilities` a capability id or list of them (a checkpoint matches when
+ * every need it declares is covered — the `planSessionResume` admission rule),
+ * and `since`/`before` the shared `parseSince` grammar resolved against
+ * `options.now` into epoch-ms cutoffs on each entry's `at`. Unknown keys and
+ * malformed values are usage errors, never a silently empty index.
  */
 export function parseSessionHandoffListArgs(
   args: Record<string, unknown>, options: { now?: number } = {},
@@ -160,6 +166,22 @@ export function parseSessionHandoffListArgs(
     if (typeof pressure !== 'boolean') return { ok: false, error: 'pressure takes true or false.' };
     filter.pressure = pressure;
   }
+  const capabilities = args.capabilities;
+  if (capabilities !== undefined) {
+    const items = typeof capabilities === 'string' ? [capabilities]
+      : Array.isArray(capabilities) ? capabilities : null;
+    if (items === null || items.length > 32) {
+      return { ok: false, error: 'capabilities takes up to 32 capability ids.' };
+    }
+    const seen = new Set<string>();
+    for (const item of items) {
+      if (typeof item !== 'string' || !handoffId.safeParse(item).success) {
+        return { ok: false, error: 'capabilities takes up to 32 capability ids.' };
+      }
+      seen.add(item);
+    }
+    filter.capabilities = [...seen];
+  }
   for (const key of ['since', 'before'] as const) {
     const value = args[key];
     if (value === undefined) continue;
@@ -182,6 +204,8 @@ function sessionHandoffEntryMatches(entry: SessionHandoffListEntry, filter: Sess
   if (filter.repo !== undefined && entry.repo.toLowerCase() !== filter.repo.toLowerCase()) return false;
   if (filter.signal !== undefined && entry.signal.kind !== filter.signal) return false;
   if (filter.pressure !== undefined && handoffPressure(entry.signal) !== filter.pressure) return false;
+  const capabilities = filter.capabilities;
+  if (capabilities !== undefined && !entry.needs.every(need => capabilities.includes(need))) return false;
   if (filter.since !== undefined || filter.before !== undefined) {
     const at = Date.parse(entry.at);
     if (!Number.isFinite(at)) return false;

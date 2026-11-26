@@ -186,6 +186,25 @@ describe('listSessionHandoffs read filters', () => {
       .toEqual(['open-budget-ok']);
   });
 
+  it('filters by the resuming candidate\'s capability coverage', () => {
+    const runs = runsDir(tmpdir_());
+    writeJournal(runs, 'ts-only', [journalRecord('ts-only')]);
+    writeJournal(runs, 'ts-rust', [journalRecord('ts-rust', { needs: ['typescript', 'rust'] })]);
+    writeJournal(runs, 'no-needs', [journalRecord('no-needs', { needs: [] })]);
+    writeJournal(runs, 'bad', [journalRecord('bad', { revision: 2 })]); // broken history lands in unreadable
+    const jobs = (filter: Parameters<typeof listSessionHandoffs>[1]) =>
+      listSessionHandoffs(runs, filter).handoffs!.map(entry => entry.job);
+    // Every declared need must be covered — the planSessionResume admission rule.
+    expect(jobs({ capabilities: ['typescript'] })).toEqual(['no-needs', 'ts-only']);
+    expect(jobs({ capabilities: ['typescript', 'rust'] })).toEqual(['no-needs', 'ts-only', 'ts-rust']);
+    expect(jobs({ capabilities: ['rust'] })).toEqual(['no-needs']);
+    expect(jobs({ capabilities: [] })).toEqual(['no-needs']);
+    // A journal that fails validation keeps its unreadable diagnostic — no
+    // field but the job id is provable, so capabilities cannot narrow it.
+    expect(listSessionHandoffs(runs, { capabilities: ['typescript'] }).unreadable).toEqual(['bad']);
+    expect(jobs({ capabilities: ['typescript'], state: 'open' })).toEqual(['no-needs', 'ts-only']);
+  });
+
   it('narrows unreadable by job only — other fields are unprovable for a journal that cannot be read', () => {
     const runs = filteredRuns();
     expect(listSessionHandoffs(runs, { job: 'bad' })).toMatchObject({ handoffs: [], unreadable: ['bad'] });
@@ -197,12 +216,22 @@ describe('listSessionHandoffs read filters', () => {
   it('parses the shared filter args once for CLI and MCP', () => {
     expect(parseSessionHandoffListArgs({})).toEqual({ ok: true });
     expect(parseSessionHandoffListArgs({ state: 'open', job: 'j', lane: 'l', repo: 'a/b',
-      signal: 'budget', pressure: false, since: '2h', before: '2026-11-20T00:00:00.000Z' },
+      signal: 'budget', pressure: false, capabilities: ['typescript', 'rust'],
+      since: '2h', before: '2026-11-20T00:00:00.000Z' },
       { now: Date.parse('2026-11-20T12:00:00.000Z') })).toEqual({ ok: true, filter: {
         state: 'open', job: 'j', lane: 'l', repo: 'a/b', signal: 'budget', pressure: false,
+        capabilities: ['typescript', 'rust'],
         since: Date.parse('2026-11-20T10:00:00.000Z'), before: Date.parse('2026-11-20T00:00:00.000Z') } });
+    expect(parseSessionHandoffListArgs({ capabilities: 'typescript' }))
+      .toEqual({ ok: true, filter: { capabilities: ['typescript'] } });
+    expect(parseSessionHandoffListArgs({ capabilities: ['a', 'a', 'b'] }))
+      .toEqual({ ok: true, filter: { capabilities: ['a', 'b'] } });
+    expect(parseSessionHandoffListArgs({ capabilities: [] }))
+      .toEqual({ ok: true, filter: { capabilities: [] } });
     for (const bad of [{ bogus: 1 }, { state: 'x' }, { job: 'a b' }, { lane: 3 }, { repo: 'x' },
-      { signal: 'x' }, { pressure: 1 }, { since: 'soon' }, { before: null }]) {
+      { signal: 'x' }, { pressure: 1 }, { since: 'soon' }, { before: null },
+      { capabilities: 3 }, { capabilities: {} }, { capabilities: [3] }, { capabilities: ['bad id!'] },
+      { capabilities: ['x'.repeat(97)] }, { capabilities: Array.from({ length: 33 }, (_, i) => `c${i}`) }]) {
       expect(parseSessionHandoffListArgs(bad).ok).toBe(false);
     }
   });
@@ -219,23 +248,36 @@ it('serves the list filters through the checkpoint handoff CLI', async () => {
   expect(JSON.parse(printed.at(-1)!).handoffs.map((entry: { job: string }) => entry.job)).toEqual(['open-job']);
   expect(await cmdSessionHandoff(['list', runs, '--pressure', '--job', 'open-job', '--json'])).toBe(0);
   expect(JSON.parse(printed.at(-1)!).handoffs).toEqual([]);
+  writeJournal(runs, 'rust-job', [journalRecord('rust-job', { needs: ['typescript', 'rust'] })]);
+  expect(await cmdSessionHandoff(['list', runs, '--capabilities', 'typescript', '--capabilities', 'rust', '--json'])).toBe(0);
+  expect(JSON.parse(printed.at(-1)!).handoffs.map((entry: { job: string }) => entry.job))
+    .toEqual(['done-job', 'open-job', 'rust-job']);
+  expect(await cmdSessionHandoff(['list', runs, '--capabilities', 'typescript', '--json'])).toBe(0);
+  expect(JSON.parse(printed.at(-1)!).handoffs.map((entry: { job: string }) => entry.job))
+    .toEqual(['done-job', 'open-job']);
   expect(await cmdSessionHandoff(['list', runs, '--state', 'bogus'])).toBe(2);
   expect(await cmdSessionHandoff(['list', runs, '--bogus'])).toBe(2);
   expect(await cmdSessionHandoff(['list', runs, '--job'])).toBe(2);
+  expect(await cmdSessionHandoff(['list', runs, '--capabilities'])).toBe(2);
+  expect(await cmdSessionHandoff(['list', runs, '--capabilities', 'bad id!'])).toBe(2);
   expect(await cmdSessionHandoff(['list', '--state', 'open', runs, '--json'])).toBe(0);
-  expect(JSON.parse(printed.at(-1)!).handoffs.map((entry: { job: string }) => entry.job)).toEqual(['open-job']);
+  expect(JSON.parse(printed.at(-1)!).handoffs.map((entry: { job: string }) => entry.job))
+    .toEqual(['open-job', 'rust-job']);
 });
 
 describe('fleet_session_handoffs MCP tool', () => {
   it('parses the shared filter args and refuses unknown or malformed ones', () => {
     expect(parseFleetSessionHandoffsArgs({})).toEqual({});
     expect(parseFleetSessionHandoffsArgs({ state: 'open', job: 'a', lane: 'codex-personal', repo: 'A/B',
-      signal: 'rate-limit', pressure: true, since: '1h', before: '2026-11-20T00:00:00.000Z' }))
+      signal: 'rate-limit', pressure: true, capabilities: ['typescript'], since: '1h', before: '2026-11-20T00:00:00.000Z' }))
       .toEqual({ state: 'open', job: 'a', lane: 'codex-personal', repo: 'A/B', signal: 'rate-limit',
-        pressure: true, since: expect.any(Number), before: expect.any(Number) });
+        pressure: true, capabilities: ['typescript'], since: expect.any(Number), before: expect.any(Number) });
+    expect(parseFleetSessionHandoffsArgs({ capabilities: 'typescript' }))
+      .toEqual({ capabilities: ['typescript'] });
     for (const bad of [{ runs: '/x' }, { limit: 1 }, { state: 'bogus' }, { job: 'bad job!' },
       { lane: 'bad lane!' }, { repo: 'no-slash' }, { signal: 'bogus' }, { pressure: 'yes' },
-      { since: 'not-a-time' }, { before: 'also-not' }]) {
+      { since: 'not-a-time' }, { before: 'also-not' }, { capabilities: 3 }, { capabilities: [3] },
+      { capabilities: ['bad id!'] }, { capabilities: Array.from({ length: 33 }, (_, i) => `c${i}`) }]) {
       expect(parseFleetSessionHandoffsArgs(bad)).toBeNull();
     }
   });
