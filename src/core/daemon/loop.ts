@@ -367,6 +367,7 @@ import { productionAttemptLearningLabelFromSignals } from '../learning/attempt-s
 import { mintRoutingAssignmentReceipt } from '../learning/routing-assignment-receipt.js';
 import { readSkillCards } from '../fleet/skill-records.js';
 import { observeShadowSkills } from '../fleet/skill-shadow-observer.js';
+import { withVerifiedSkillGuidance } from '../fleet/skill-inject.js';
 // worked-ledger is used transitively via LocalWorkQueueCoordinator (selectWorkQueueCoordinator).
 import { selectWorkQueueCoordinator } from '../seams/work-queue-coordinator.js';
 import type { QueueClaimCooldownPolicy } from '../fleet/shared-store.js';
@@ -5151,13 +5152,23 @@ export async function tick(
     return resolveNativeSeatLaunch({ accountsRoot: resolveAccountsRoot(routingCfg), provider, seatId: route.seatId,
       ...(provider === 'claude' ? { requireClaudeBrokerSafety: true } : {}) }).ok;
   };
+  // Verified skill cards for prompt injection, loaded once per tick below in
+  // the dispatch section (same gate as shadow observation). Declared here so
+  // producerGoalWithGuidance can consult it; stays empty when the block below
+  // does not run or the skillLibrary gate is off.
+  let shadowSkillCards: readonly SkillCard[] = [];
   const producerGoalWithGuidance = (prompt: string, item: WorkItem, runId: string, preview = false): string => {
     const harnessGoal = standingTick ? withHarnessProducerPrompt(prompt, hooks) : prompt;
     const baseGoal = withFleetPlaybook(harnessGoal, item, runId, { recordUse: !preview });
-    return withApprovedKnowledge(baseGoal,
+    const guided = withApprovedKnowledge(baseGoal,
       { repo: item.repo, paths: [], kind: null, text: `${item.title}\n${item.detail}` },
       { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: !preview,
         trajectoryId: `run:${runId}`, revertedPrKeys: revertedKeys });
+    // Verified learned skills ride only real launches: manager candidates keep
+    // their prepared prompt byte-identical (no block, no events) so the
+    // admission digest check still holds, and read-only previews record nothing.
+    return preview ? guided : withVerifiedSkillGuidance(guided, item, shadowSkillCards, runId,
+      { trajectoryId: `run:${runId}` });
   };
   // Per-tick private prompt bytes, never persisted in the backlog, tags or trace.
   // A context tag carries only the existing conservative routing forecast.
@@ -6549,7 +6560,7 @@ export async function tick(
   }
 
   const shadowSkillSelectedAt = new Date().toISOString();
-  let shadowSkillCards: readonly SkillCard[] = [];
+  shadowSkillCards = [];
   if (routingCfg.foundry?.skillLibrary !== false) {
     try {
       shadowSkillCards = Object.freeze([...readSkillCards({ complete: true })]);

@@ -937,6 +937,7 @@
     "src/core/fleet/self.ts",
     "src/core/fleet/shared-store.ts",
     "src/core/fleet/skill-attestation.ts",
+    "src/core/fleet/skill-inject.ts",
     "src/core/fleet/skill-library.ts",
     "src/core/fleet/skill-nudge.ts",
     "src/core/fleet/skill-outcomes.ts",

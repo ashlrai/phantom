@@ -129,6 +129,25 @@ An empty corpus is normal on a fresh install: the plain-text output says
 
 ## Did a skill help?
 
+Eligible verified skills are consumed, not only observed. When the fleet
+daemon assembles a producer goal for a real launch, it runs the same
+`selectVerifiedSkills` ranking used for shadow telemetry and, when the
+selection is non-empty, appends a bounded `## Verified learned skills for
+this task` block (card name and summary only — no diff, prompt or reasoning
+text, capped at 2 KiB) to the goal. Each injected skill records an
+`active`/`injected` skill-use event against the dispatch identity, so the
+trajectory join measures skills that actually steered a run alongside the
+`shadow`/`selected` association events. Manager-candidate previews and
+read-only launches never inject and never record.
+
+Eligibility stays fail-closed: only the newest revision of a `verified`,
+`verified-proposal` card with passing verification evidence, proven
+post-merge credit release and no tainting can inject — the same gate shadow
+selection applies. Today no card can prove credit release (the release
+protocol is report-only pending its remaining proofs), so the selection is
+empty, the prompt is byte-identical and no events are written; the wiring
+activates automatically when release proof exists.
+
 Shadow skill selections are observe-only, but their outcomes are recorded:
 `phm fleet status --json` exposes `trajectoryLearning.skillOutcomes`, which
 attributes each trajectory's resolved terminal outcome (and deterministic
