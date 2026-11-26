@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DriveNodes, LocalNodesStore, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { probeLocalAuth } from '../src/core/drive/nodes/auth-probe.js';
+import { nodeCapacityView } from '../src/core/drive/nodes/router.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { localPhmVersion, versionCap } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNode } from '../src/cli/node.js';
@@ -118,6 +119,44 @@ describe('job leases: no job runs twice', () => {
     expect(f.mac.complete(second.claim, 'ok')).toBe(false);
     expect(f.box.pull(a)).toBeNull(); // completed jobs never run again
     expect(f.mac.pull(b)).toBeNull();
+  });
+
+  it.each(['pull', 'claim'] as const)('frees node and host slots after leader expiry for %s', (method) => {
+    const f = fixture();
+    const a = f.box.join('a', { owners: ['o'] })!;
+    const b = f.mac.join('b', { owners: ['o'] })!;
+    f.store.state.pool = { primary: 'a', backup: 'b', active: 'primary', epoch: 1, heartbeatAt: 1_000 };
+    const sample = { hostId: 'host-b', sampledAtMs: 1_000, ramBytes: 16_000, slots: 1, held: null };
+    f.box.heartbeat(a, { slots: 0 });
+    f.mac.heartbeat(b, { capacity: sample });
+    f.box.enqueue('first', { owner: 'o' });
+    f.box.enqueue('second', { owner: 'o' });
+
+    const first = f.mac.pull(b)!.claim;
+    expect(f.mac.plan()).toMatchObject([{ jobId: 'second', nodeId: null }]);
+    expect(nodeCapacityView(f.mac.snapshot(), 1_000)).toContainEqual(
+      expect.objectContaining({ hostId: 'host-b', running: 1, freeSlots: 0 }),
+    );
+
+    f.advance(20);
+    expect(f.mac.renewClaim(first)).toBeNull();
+    expect(f.mac.view(['o']).jobs[0]).not.toHaveProperty('claimedBy');
+    expect(f.mac.plan()).toMatchObject([{ jobId: 'second', nodeId: 'b' }]);
+    expect(nodeCapacityView(f.mac.snapshot(), 1_020)).toContainEqual(
+      expect.objectContaining({ hostId: 'host-b', running: 0, freeSlots: 1 }),
+    );
+
+    const second = method === 'pull'
+      ? f.mac.pull(b)?.claim
+      : f.mac.claim(f.mac.heartbeat(b)!.leader!, b, 'second');
+    expect(second).toMatchObject({ jobId: 'second', leaderToken: f.mac.snapshot().leader?.token });
+    expect(second!.leaderToken).toBeGreaterThan(first.leaderToken);
+    expect(f.mac.complete(first, 'late')).toBe(false);
+    expect(f.mac.complete(second!, 'done')).toBe(true);
+    f.advance(20);
+    const retry = f.mac.pull(b)!.claim;
+    expect(retry.jobId).toBe('first');
+    expect(retry.token).toBeGreaterThan(first.token);
   });
 
   it('works across real store instances sharing a directory', () => {

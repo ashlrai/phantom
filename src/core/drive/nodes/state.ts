@@ -46,6 +46,12 @@ export interface NodesState {
   pool?: { primary: string; backup: string; active: 'primary' | 'backup'; epoch: number; heartbeatAt: number };
 }
 
+export function liveLeader(state: NodesState, now: number): LeaderLease | null {
+  const leader = state.leader;
+  return leader && leader.expiresAt > now && state.nodes.some(node =>
+    node.nodeId === leader.nodeId && node.session === leader.session && node.expiresAt > now) ? leader : null;
+}
+
 export function emptyState(): NodesState {
   return { version: 'drive.nodes.v1', sequence: 0, observedAt: 0, nodes: [], leader: null, jobs: [] };
 }
