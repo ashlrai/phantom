@@ -142,7 +142,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     quarantineCheck: changed.some((path) => QUARANTINE_TEST_FILE.test(path) || path === QUARANTINE_LEDGER),
     rustFiles: changed.filter((path) => existing.has(path) && /\.rs$/.test(path)),
     swiftFiles: changed.filter((path) => existing.has(path) && /\.swift$/.test(path)),
-    yamlFiles: changed.filter((path) => existing.has(path) && /\.ya?ml$/.test(path)),
+    yamlFiles: changed.filter((path) => existing.has(path) && /\.(?:ya?ml|cff)$/.test(path)),
     tomlFiles: changed.filter((path) => existing.has(path) && (/\.toml$/.test(path) || CARGO_LOCK_FILE.test(path))),
     cssFiles: changed.filter((path) => existing.has(path) && /\.css$/i.test(path)),
     snapFiles: changed.filter((path) => existing.has(path) && /\.snap$/i.test(path)),
@@ -945,14 +945,15 @@ export function runSwiftSyntaxCheck(root, files, spawn = spawnSync) {
 }
 
 /**
- * .yaml/.yml and .toml files — GitHub workflows, dependabot, codecov,
+ * .yaml/.yml, .cff and .toml files — GitHub workflows, dependabot, codecov,
  * socket, the pnpm workspace and lock manifests, agent-network, lexicon
- * and cliff configs, Cargo.toml — are consumed by parsers a text diff can
- * never prove. `yaml` and `smol-toml` are already bundled dependencies, so
- * the grammar steps use the same parsers the codebase itself ships, but
- * they run in a child node process: a top-level import here would keep
- * this script from loading at all when node_modules is absent, while the
- * preflight reports that case as SKIP like the ESLint and docs checks.
+ * and cliff configs, CITATION.cff, Cargo.toml — are consumed by parsers a
+ * text diff can never prove. `yaml` and `smol-toml` are already bundled
+ * dependencies, so the grammar steps use the same parsers the codebase
+ * itself ships, but they run in a child node process: a top-level import
+ * here would keep this script from loading at all when node_modules is
+ * absent, while the preflight reports that case as SKIP like the ESLint
+ * and docs checks.
  * Bare specifiers resolve against the spawned cwd (the repo root), which
  * is where npm ci and install:worktree place the packages.
  */
@@ -991,7 +992,7 @@ for (const path of process.argv.slice(1)) {
 process.exit(failed ? 1 : 0);
 `;
 
-/** Syntax-check changed .yaml/.yml files with the bundled yaml parser; false on any parse failure. */
+/** Syntax-check changed .yaml/.yml/.cff files with the bundled yaml parser; false on any parse failure. */
 export function runYamlSyntaxCheck(root, files, spawn = spawnSync) {
   const result = spawn(process.execPath, ['--input-type=module', '-e', YAML_SYNTAX_CHECK, ...files], {
     cwd: root, encoding: 'utf8', timeout: 120000,
@@ -1017,7 +1018,7 @@ export function runYamlSyntaxCheck(root, files, spawn = spawnSync) {
  * an unterminated fence or a block the yaml parser rejects fails here,
  * the same rejection the loader's own YAML read applies. Files without a
  * leading fence are plain markdown and pass untouched. The child shares
- * the yaml package and its SKIP preflight with the .yaml/.yml check.
+ * the yaml package and its SKIP preflight with the .yaml/.yml/.cff check.
  */
 const MDC_SYNTAX_CHECK = `import { readFileSync } from 'node:fs';
 import pkg from 'yaml';
@@ -2208,7 +2209,7 @@ function main() {
     }
   }
   if (selection.yamlFiles.length === 0) {
-    console.log('PASS yaml syntax check skipped: no yaml change');
+    console.log('PASS yaml syntax check skipped: no yaml or cff change');
   } else {
     const yaml = parserPackagePreflight(root, 'yaml');
     if (!yaml.ok) {
