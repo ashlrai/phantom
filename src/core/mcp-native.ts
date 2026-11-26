@@ -52,7 +52,9 @@ import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 import { desktopOperatorTools } from './desktop/operator-mcp.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, type OwnerThreadSettings } from './comms/owner-channel.js';
 import type { OwnerThreadReadFilter } from './comms/owner-thread.js';
-import type { CommsDraftsFilter, CommsDraftStatusFilter } from './comms-agent/run.js';
+import type { CommsDraftsFilter, CommsDraftStatusFilter, CommsInboxFilter } from './comms-agent/run.js';
+import type { CommsTransport } from './comms-agent/policy.js';
+import type { MailClass } from './comms-agent/triage.js';
 
 // Handler-only dependencies are imported lazily inside each handler so
 // `tools/list` pays for schemas and the safety gate only — not the ~300-file
@@ -1693,6 +1695,43 @@ const TOOLS: NativeToolImpl[] = [
       if (args.status !== undefined) filter.status = args.status as CommsDraftStatusFilter;
       if (transport !== undefined) filter.transport = transport;
       return commsDrafts(commsRunsRoot(), filter);
+    },
+  },
+  {
+    name: 'ashlr_comms_agent_inbox',
+    description: 'List pending Comms inbox messages awaiting triage — the read `phm comms-agent inbox` serves; status only counts them and run mutates the store to surface them. Rows carry id, transport, sender, subject, the class a pass would file under, labels and a scrubbed body excerpt. transport, class, contains and limit narrow the page; pending keeps the store depth. Read-only: writes nothing, sends nothing, drafts nothing.',
+    inputSchema: { type: 'object', properties: {
+      transport: { type: 'string' },
+      class: { type: 'string', enum: ['owner', 'person', 'bulk', 'bot', 'unknown'] },
+      contains: { type: 'string' },
+      limit: { type: 'integer', minimum: 1 },
+    }, additionalProperties: false },
+    safety: 'read',
+    handler: async args => {
+      const { commsInbox } = await import('./comms-agent/run.js');
+      const { commsRunsRoot } = await import('./comms-agent/store.js');
+      const { isCommsTransport } = await import('./comms-agent/policy.js');
+      const { MAIL_CLASSES } = await import('./comms-agent/triage.js');
+      const transport = args.transport;
+      if (transport !== undefined && (typeof transport !== 'string' || !isCommsTransport(transport))) {
+        throw new Error('transport must be a Comms transport.');
+      }
+      const mailClass = args.class;
+      if (mailClass !== undefined && (typeof mailClass !== 'string' || !(MAIL_CLASSES as readonly string[]).includes(mailClass))) {
+        throw new Error(`class must be one of: ${MAIL_CLASSES.join(', ')}.`);
+      }
+      const contains = args.contains;
+      if (contains !== undefined && typeof contains !== 'string') throw new Error('contains must be a string.');
+      const limit = args.limit;
+      if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1)) {
+        throw new Error('limit must be a positive integer.');
+      }
+      const filter: CommsInboxFilter = {};
+      if (transport !== undefined) filter.transport = transport as CommsTransport;
+      if (mailClass !== undefined) filter.class = mailClass as MailClass;
+      if (contains !== undefined) filter.contains = contains;
+      if (limit !== undefined) filter.limit = limit;
+      return commsInbox(commsRunsRoot(), {}, filter);
     },
   },
   {

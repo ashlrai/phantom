@@ -94,6 +94,7 @@ describe('native MCP tool surface lock', () => {
       'ashlr_browser_task:proposal',
       'ashlr_comms:read',
       'ashlr_comms_agent_drafts:read',
+      'ashlr_comms_agent_inbox:read',
       'ashlr_comms_agent_run:append',
       'ashlr_comms_agent_status:read',
       'ashlr_comms_send_owner:append',
@@ -183,6 +184,9 @@ describe('native MCP tool surface lock', () => {
       'phm_team_publish:append',
       'phm_team_register:append',
       'phm_team_view:read',
+      'phm_wiki_brain:read',
+      'phm_wiki_ecosystem:read',
+      'phm_wiki_map:read',
       'world_model:read',
     ]);
   });

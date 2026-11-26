@@ -96,6 +96,7 @@ const ADDED_NATIVE_NAMES = [
   'phm_wiki_brain',
   'ashlr_comms_agent_status',
   'ashlr_comms_agent_drafts',
+  'ashlr_comms_agent_inbox',
   'ashlr_comms_agent_run',
   'phantom_fleet_apps_history',
   'phantom_fleet_apps_follow',
@@ -145,7 +146,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(98);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(99);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -190,8 +191,8 @@ describe('native MCP tool inventory', () => {
     expect(ownerCommsBytes).toBeLessThanOrEqual(1900);
     const agentComms = addedTools.filter(tool => tool.name.startsWith('ashlr_comms_agent_'));
     const agentCommsBytes = agentComms.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    // Standing-approvals status disclosure adds 108 discovery bytes; keep the measured cap.
-    expect(agentCommsBytes).toBeLessThanOrEqual(875);
+    // ashlr_comms_agent_inbox measured 1,786 discovery bytes with its comma; keep the measured cap.
+    expect(agentCommsBytes).toBeLessThanOrEqual(1786);
     // phantom_fleet_needs measured 380 bytes with its comma; no headroom.
     const needs = addedTools.find(tool => tool.name === 'phantom_fleet_needs')!;
     const needsBytes = Buffer.byteLength(JSON.stringify(needs)) + 1;

@@ -1,18 +1,21 @@
 /**
  * `phm comms-agent status|run|drafts [--status pending|sent|all] [--transport <transport>] [--json]`.
+ * `phm comms-agent inbox [--transport <transport>] [--class <class>] [--contains <text>] [--limit <n>] [--json]`.
  * Thin handler. The role, triage and send policy live in src/core/comms-agent/.
  */
-import { COMMS_DRAFT_STATUSES, commsDrafts, commsStatus, runCommsAgent, type CommsDraftsFilter, type CommsDraftStatusFilter } from '../core/comms-agent/run.js';
+import { COMMS_DRAFT_STATUSES, commsDrafts, commsInbox, commsStatus, runCommsAgent, type CommsDraftsFilter, type CommsDraftStatusFilter, type CommsInboxFilter } from '../core/comms-agent/run.js';
 import { isCommsTransport } from '../core/comms-agent/policy.js';
+import { MAIL_CLASSES, type MailClass } from '../core/comms-agent/triage.js';
 import { commsRunsRoot } from '../core/comms-agent/store.js';
 
 const USAGE = `phm comms-agent status [--dir <runs>] [--json]
 phm comms-agent run [--lanes <lane,lane>] [--dir <runs>] [--json]
 phm comms-agent drafts [--status pending|sent|all] [--transport <transport>] [--dir <runs>] [--json]
+phm comms-agent inbox [--transport <transport>] [--class <class>] [--contains <text>] [--limit <n>] [--dir <runs>] [--json]
 The Comms role is under the Leader. The router picks the lane; none is hard-coded.
 Sends require an owner standing approval. See docs/COMMS-AGENT.md.`;
 
-const VERBS = ['status', 'run', 'drafts'] as const;
+const VERBS = ['status', 'run', 'drafts', 'inbox'] as const;
 
 function emit(json: boolean, value: unknown): void {
   console.log(JSON.stringify(value, null, json ? undefined : 2));
@@ -38,12 +41,15 @@ export async function cmdCommsAgent(args: string[]): Promise<number> {
   const lanesFlag = valueOf('--lanes');
   const statusFlag = valueOf('--status');
   const transportFlag = valueOf('--transport');
-  if (!dir.ok || !lanesFlag.ok || !statusFlag.ok || !transportFlag.ok) {
+  const classFlag = valueOf('--class');
+  const containsFlag = valueOf('--contains');
+  const limitFlag = valueOf('--limit');
+  if (!dir.ok || !lanesFlag.ok || !statusFlag.ok || !transportFlag.ok || !classFlag.ok || !containsFlag.ok || !limitFlag.ok) {
     emit(json, { ok: false, error: 'Missing value for flag. See phm comms-agent --help.' });
     return 2;
   }
   const consumed = new Set<number>();
-  for (const flag of ['--dir', '--lanes', '--status', '--transport']) {
+  for (const flag of ['--dir', '--lanes', '--status', '--transport', '--class', '--contains', '--limit']) {
     const index = args.indexOf(flag);
     if (index >= 0) { consumed.add(index); consumed.add(index + 1); }
   }
@@ -54,33 +60,52 @@ export async function cmdCommsAgent(args: string[]): Promise<number> {
     return 0;
   }
   if (rest.length === 0) {
-    emit(json, { ok: false, error: 'Use phm comms-agent status|run|drafts --json' });
+    emit(json, { ok: false, error: 'Use phm comms-agent status|run|drafts|inbox --json' });
     if (!json) console.error(USAGE);
     return 2;
   }
   const [verb, ...extra] = rest;
   const usageFail = (): number => {
-    emit(json, { ok: false, error: 'Use phm comms-agent status|run|drafts --json' });
+    emit(json, { ok: false, error: 'Use phm comms-agent status|run|drafts|inbox --json' });
     if (!json) console.error(USAGE);
     return 2;
   };
   if (extra.length > 0 || !VERBS.includes(verb as typeof VERBS[number]) || rest.some(arg => arg.startsWith('-'))) {
     return usageFail();
   }
-  // --status/--transport narrow the drafts read only; on status|run they are
-  // a usage error rather than silently ignored flags.
+  // Filter flags narrow one read each and are a usage error on the others:
+  // --status picks the drafts slice, --transport narrows drafts and inbox,
+  // and --class/--contains/--limit narrow the inbox page only.
   const draftsFilter: CommsDraftsFilter = {};
-  if (verb !== 'drafts' && (statusFlag.value !== undefined || transportFlag.value !== undefined)) {
-    return usageFail();
+  const inboxFilter: CommsInboxFilter = {};
+  const filterFlagUsed = statusFlag.value !== undefined || transportFlag.value !== undefined
+    || classFlag.value !== undefined || containsFlag.value !== undefined || limitFlag.value !== undefined;
+  if ((verb === 'status' || verb === 'run') && filterFlagUsed) return usageFail();
+  if (verb === 'drafts' && (classFlag.value !== undefined || containsFlag.value !== undefined || limitFlag.value !== undefined)) return usageFail();
+  if (verb === 'inbox' && statusFlag.value !== undefined) return usageFail();
+  if (verb === 'drafts' || verb === 'inbox') {
+    if (transportFlag.value !== undefined) {
+      if (!isCommsTransport(transportFlag.value)) return usageFail();
+      if (verb === 'drafts') draftsFilter.transport = transportFlag.value;
+      else inboxFilter.transport = transportFlag.value;
+    }
   }
   if (verb === 'drafts') {
     if (statusFlag.value !== undefined) {
       if (!(COMMS_DRAFT_STATUSES as readonly string[]).includes(statusFlag.value)) return usageFail();
       draftsFilter.status = statusFlag.value as CommsDraftStatusFilter;
     }
-    if (transportFlag.value !== undefined) {
-      if (!isCommsTransport(transportFlag.value)) return usageFail();
-      draftsFilter.transport = transportFlag.value;
+  }
+  if (verb === 'inbox') {
+    if (classFlag.value !== undefined) {
+      if (!(MAIL_CLASSES as readonly string[]).includes(classFlag.value)) return usageFail();
+      inboxFilter.class = classFlag.value as MailClass;
+    }
+    if (containsFlag.value !== undefined) inboxFilter.contains = containsFlag.value;
+    if (limitFlag.value !== undefined) {
+      const limit = Number(limitFlag.value);
+      if (!Number.isInteger(limit) || limit < 1) return usageFail();
+      inboxFilter.limit = limit;
     }
   }
   const runsDir = commsRunsRoot(dir.value);
@@ -92,6 +117,10 @@ export async function cmdCommsAgent(args: string[]): Promise<number> {
     }
     if (verb === 'drafts') {
       emit(json, await commsDrafts(runsDir, draftsFilter));
+      return 0;
+    }
+    if (verb === 'inbox') {
+      emit(json, await commsInbox(runsDir, {}, inboxFilter));
       return 0;
     }
     emit(json, await runCommsAgent({ runsDir, lanes }));

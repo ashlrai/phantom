@@ -357,6 +357,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "ashlr_comms_agent_inbox",
+      "safety": "read",
+    },
+    {
       "name": "ashlr_comms_agent_run",
       "safety": "append",
     },
@@ -2691,10 +2695,51 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
   {
     "inputSchema": {
       "additionalProperties": false,
-      "properties": {},
+      "properties": {
+        "status": {
+          "enum": [
+            "pending",
+            "sent",
+            "all",
+          ],
+          "type": "string",
+        },
+        "transport": {
+          "type": "string",
+        },
+      },
       "type": "object",
     },
     "name": "ashlr_comms_agent_drafts",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "class": {
+          "enum": [
+            "owner",
+            "person",
+            "bulk",
+            "bot",
+            "unknown",
+          ],
+          "type": "string",
+        },
+        "contains": {
+          "type": "string",
+        },
+        "limit": {
+          "minimum": 1,
+          "type": "integer",
+        },
+        "transport": {
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_comms_agent_inbox",
   },
   {
     "inputSchema": {
