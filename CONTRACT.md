@@ -2526,6 +2526,8 @@ store location; `localBridgeRouter(nodes, storeDirectory)` and
 `poolBridgeRouter(call, storeDirectory)` derive it from the real store path.
 The `BridgeRouter.view(owner)` result and `planNodeBridge(input)` input may
 include `routes: RouteAssignment[]` alongside the scoped node and job lists.
+The planner takes `now` in epoch milliseconds to check capacity samples against
+the two-heartbeat freshness window.
 Assigned routes reserve slots on their destination node and host. Older views
 that omit routes use capability-based reservation estimates.
 Bridge manifests bind `owner` and
