@@ -54,6 +54,22 @@ describe('per-pool budgets', () => {
   it('manual with no reset persists, including out-of-order imports', () => {
     expect(view([reading(5, 10), reading(30, 9, { source: 'manual', resetAt: null })])).toMatchObject({ remaining: 30, source: 'manual' });
   });
+  it('starts a new usage series at a manual override in the same reset window', () => {
+    const resetAt = at(11);
+    const entered = '2026-10-25T10:15:00.000Z';
+    const updated = '2026-10-25T10:30:00.000Z';
+    const rows = [reading(90, 10, { resetAt }), reading(30, 10, { resetAt, source: 'manual', timestamp: entered }),
+      reading(20, 10, { resetAt, source: 'manual', timestamp: updated })];
+    const bucket = (samples: BudgetReading[], now: string) =>
+      projectPoolBudgets(samples, new Date(now)).pools['codex-personal'].buckets.weeklyPct;
+    expect(bucket(rows.slice(0, 2), entered)).toMatchObject({
+      remaining: 30, burnPerHour: { last2: null, last12h: null }, projectedExhaustion: null, usageInLastHourBeforeReset: null,
+    });
+    expect(bucket(rows, updated)).toMatchObject({
+      burnPerHour: { last2: 40, last12h: 40 },
+      usageInLastHourBeforeReset: { used: 10, from: entered, to: updated },
+    });
+  });
   it('manual wins equal timestamp; duplicate samples do not divide by zero', () => {
     expect(view([reading(30, 9, { source: 'manual' }), reading(5, 9)])).toMatchObject({ remaining: 30, burnPerHour: { last2: null } });
   });

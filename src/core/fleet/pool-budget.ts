@@ -86,11 +86,12 @@ function bucketView(readings: BudgetReading[], now: number, capacity: boolean): 
     resetAt: latest.resetAt, timestamp: latest.timestamp, source: latest.source,
     state: expired ? 'reset-pending' : 'observed' };
   if (capacity) return view;
-  // Never interpret a refill or a window boundary as negative burn or bridge it.
+  // A refill, window boundary or change into/out of a manual override starts a new series.
   let start = effective.length - 1;
   while (start > 0) {
     const prev = effective[start - 1]!;
     const next = effective[start]!;
+    if ((prev.source === 'manual') !== (next.source === 'manual')) break;
     if (prev.remaining < next.remaining || (prev.resetAt && next.timestamp >= prev.resetAt) || prev.resetAt !== next.resetAt) break;
     start--;
   }

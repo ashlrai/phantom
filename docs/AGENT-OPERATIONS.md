@@ -982,7 +982,9 @@ imports cannot overwrite each other's batches. Unreadable or malformed records
 make the snapshot `unavailable`, with unknown balances. Bucket projections
 include remaining amount, source, timestamp, reset, last-two and trailing-12-hour
 burn per hour, and projected exhaustion. Rates use observations in the current
-uninterrupted window; refills and resets break the series. The 12-hour rate uses
+uninterrupted window. Refills, resets, and transitions between automatic and
+manual readings break the series for both burn estimates and final-hour usage.
+The 12-hour rate uses
 the earliest available reading within that interval, so it can cover less than
 12 hours. Projection uses the last-two rate from the observation timestamp and
 is unknown if exhaustion would occur after reset. Capacity has no burn estimate.
