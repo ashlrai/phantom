@@ -60,19 +60,37 @@ const DETACHED_SCRIPT_TREE = /^(?:src\/raycast|examples\/universe-site)\//;
 const DETACHED_SCRIPT_FILE = /\.(?:[cm]?[jt]sx?)$/;
 
 /**
- * contrib/router/*.ts is the Ashlr issue→PR router supervisor — operational
- * fleet machinery that dispatches, reviews and merges pull requests. It runs
- * under tsx, which transpiles without type checking, and no tsconfig project
- * covers the tree: the backend project includes only src/, the web and
- * desktop projects their own trees. ESLint's flat config still lints the
- * files, but no check ever type-checked them — SUPERVISOR.md documents a
- * manual `tsc --noEmit` invocation nothing ran on a diff. The program's only
- * reach outside the directory is src/core/authority/protected-paths.ts, and
- * a dependency bump can break it through the shared manifests, so the
- * trigger names those inputs; a new cross-boundary import must extend it.
+ * The contrib/ TypeScript surface is operational fleet machinery — the
+ * Ashlr issue→PR router supervisor and the Mac bridge's memory guard —
+ * that runs under tsx or node directly: ESLint's flat config still lints
+ * the files, but no tsconfig project covers the tree (the backend project
+ * includes only src/, the web and desktop projects their own trees) and
+ * no check ever type-checked them. verify-changed closes the hole with
+ * one tsc file-list run over the whole contrib TypeScript surface, the
+ * invocation contrib/router/SUPERVISOR.md documents.
+ *
+ * Two program boundaries feed that run:
+ *  - contrib/router keeps its documented non-recursive boundary: top-level
+ *    *.ts only — lib/ holds shell helpers and router_io.cjs (a spawned
+ *    subprocess payload, never imported) and test/ a bash suite — so
+ *    nested files are never program roots; they still join through
+ *    imports.
+ *  - Every other .ts-family file under contrib/, at any depth, is a
+ *    satellite root — today contrib/mac/memguard, the Mac bridge's memory
+ *    guard backend tests import, which sat in the same hole.
+ *
+ * The program's only reach outside contrib/ is
+ * src/core/authority/protected-paths.ts, and a dependency bump can break
+ * it through the shared manifests, so the trigger names those inputs; a
+ * new cross-boundary import must extend it. scripts/, examples/, test/
+ * and the root configs stay outside every project on their own
+ * boundaries — each needs its own verified program before a check can
+ * claim it.
  */
+const CONTRIB_DIR = 'contrib';
 const CONTRIB_ROUTER_DIR = 'contrib/router';
 const ROUTER_PROGRAM_FILE = /\.ts$/;
+const CONTRIB_TS_FILE = /\.[cm]?tsx?$/;
 const ROUTER_SRC_BOUNDARY = 'src/core/authority/protected-paths.ts';
 const SHARED_MANIFEST_FILE = /^package(?:-lock)?\.json$/;
 
@@ -151,8 +169,8 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     seatbeltFiles: changed.filter((path) => existing.has(path) && /\.sb$/i.test(path)),
     mdcFiles: changed.filter((path) => existing.has(path) && /\.mdc$/i.test(path)),
     detachedScriptFiles: changed.filter((path) => existing.has(path) && DETACHED_SCRIPT_TREE.test(path) && DETACHED_SCRIPT_FILE.test(path)),
-    contribRouterTypecheck: changed.some((path) =>
-      (path.startsWith(`${CONTRIB_ROUTER_DIR}/`) && ROUTER_PROGRAM_FILE.test(path)) ||
+    contribTypecheck: changed.some((path) =>
+      (path.startsWith(`${CONTRIB_DIR}/`) && CONTRIB_TS_FILE.test(path)) ||
       path === ROUTER_SRC_BOUNDARY || SHARED_MANIFEST_FILE.test(path)),
     realioLaneCheck: changed.some((path) => REALIO_LANE_TEST_FILE.test(path) || REALIO_LANE_INPUTS.has(path)),
     verseSyncIoCheck: changed.some((path) => VERSE_ROUTE_FILE.test(path) || path === VERSE_SYNC_IO_CHECKER),
@@ -1583,7 +1601,52 @@ export function contribRouterProgramFiles(root, readdir = readdirSync) {
 }
 
 /**
- * Type-check the whole contrib/router program in one tsc run with the flags
+ * Every .ts-family file under contrib/ outside the router subtree, sorted
+ * for a deterministic command line. The router keeps its documented
+ * non-recursive boundary, so the walk prunes the whole contrib/router/
+ * subtree rather than re-admitting nested files the boundary excludes;
+ * node_modules is pruned the same way — vendored trees are never program
+ * roots. An absent or unreadable directory yields an empty list for that
+ * branch — the caller skips rather than fails.
+ */
+export function contribSatelliteProgramFiles(root, readdir = readdirSync) {
+  const files = [];
+  const walk = (rel) => {
+    let entries;
+    try {
+      entries = readdir(resolve(root, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || child === CONTRIB_ROUTER_DIR) continue;
+        walk(child);
+      } else if (entry.isFile() && CONTRIB_TS_FILE.test(entry.name)) {
+        files.push(child);
+      }
+    }
+  };
+  walk(CONTRIB_DIR);
+  return files.sort();
+}
+
+/**
+ * The whole contrib TypeScript program: the router's documented
+ * top-level *.ts boundary plus every other .ts-family file under
+ * contrib/. Sorted and deduplicated for a deterministic command line, so
+ * one tsc run can never split the program's verdict.
+ */
+export function contribProgramFiles(root, readdir = readdirSync) {
+  return [...new Set([
+    ...contribRouterProgramFiles(root, readdir),
+    ...contribSatelliteProgramFiles(root, readdir),
+  ])].sort();
+}
+
+/**
+ * Type-check the whole contrib program in one tsc run with the flags
  * SUPERVISOR.md documents — file-list mode ignores tsconfig.json, so the
  * flags are the contract, and tsc follows the program's
  * ../../src/core/authority/protected-paths.js import into src/ on its own.
@@ -1592,7 +1655,7 @@ export function contribRouterProgramFiles(root, readdir = readdirSync) {
  * under load. The caller holds a typecheck slot like the project checks —
  * a compiler is a compiler on a shared machine.
  */
-export function runContribRouterTypecheck(root, files, spawn = spawnSync) {
+export function runContribTypecheck(root, files, spawn = spawnSync) {
   const result = spawn(process.execPath,
     ['--max-old-space-size=4096', 'node_modules/typescript/bin/tsc', '--noEmit',
      '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022',
@@ -1602,10 +1665,10 @@ export function runContribRouterTypecheck(root, files, spawn = spawnSync) {
     if (result.stdout) console.log(result.stdout.trimEnd());
     if (result.stderr) console.error(result.stderr.trimEnd());
     if (result.error) console.error(result.error.message);
-    console.log('FAIL contrib router typecheck');
+    console.log('FAIL contrib typecheck');
     return false;
   }
-  console.log('PASS contrib router typecheck');
+  console.log('PASS contrib typecheck');
   return true;
 }
 
@@ -2032,7 +2095,7 @@ function main() {
     const projectScope = projectNames.length > 1
       ? `${projectNames.slice(0, -1).join(', ')} and ${projectNames.at(-1)}`
       : projectNames[0] ?? null;
-    const scope = [projectScope, selection.contribRouterTypecheck && 'contrib router'].filter(Boolean).join(' and ') || 'typecheck skipped';
+    const scope = [projectScope, selection.contribTypecheck && 'contrib'].filter(Boolean).join(' and ') || 'typecheck skipped';
     console.log(`verify: ${new Set(changed).size} changed files (${comparison?.mode ?? 'merge-base'}), ${scope}${projects.backend || projects.web || projects.desktop ? ', incremental' : changed.length ? ': no project change' : ': no changes'}`);
     const shebangScripts = selectShebangScripts(changed, existing, (path) => readFirstLine(root, path));
     pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
@@ -2298,24 +2361,24 @@ function main() {
   } else {
     run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
   }
-  if (projects.backend || projects.web || projects.desktop || selection.contribRouterTypecheck) try {
+  if (projects.backend || projects.web || projects.desktop || selection.contribTypecheck) try {
     const timeout = Number(process.env.PHANTOM_TSC_TIMEOUT_SECONDS ?? 900);
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
       throw new Error('PHANTOM_TSC_TIMEOUT_SECONDS must be a positive number of seconds within the supported timeout range');
     }
     const held = withTscSlot(tscSlotsDir(root), { count: tscSlotCount(), maxWaitMs: timeout * 1000 }, () => {
       mkdirSync(resolve(root, '.ashlr-gate/verify'), { recursive: true });
-      if (!selection.contribRouterTypecheck) {
-        console.log('PASS contrib router typecheck skipped: no router program input changed');
+      if (!selection.contribTypecheck) {
+        console.log('PASS contrib typecheck skipped: no contrib program input changed');
       } else {
-        const router = parserPackagePreflight(root, 'typescript');
-        if (!router.ok) {
-          console.log(`SKIP contrib router typecheck: ${router.reason}`);
+        const contrib = parserPackagePreflight(root, 'typescript');
+        if (!contrib.ok) {
+          console.log(`SKIP contrib typecheck: ${contrib.reason}`);
         } else {
-          const routerFiles = contribRouterProgramFiles(root);
-          if (routerFiles.length === 0) {
-            console.log('PASS contrib router typecheck skipped: no program files under contrib/router/');
-          } else if (!runContribRouterTypecheck(root, routerFiles)) {
+          const contribFiles = contribProgramFiles(root);
+          if (contribFiles.length === 0) {
+            console.log('PASS contrib typecheck skipped: no program files under contrib/');
+          } else if (!runContribTypecheck(root, contribFiles)) {
             process.exitCode = 1;
           }
         }
