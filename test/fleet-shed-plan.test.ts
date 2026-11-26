@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { planFleetShed } from '../src/core/fleet/shed-plan.js';
 import { cmdFleetShedPlan } from '../src/cli/fleet-shed-plan.js';
@@ -56,7 +58,16 @@ describe('fleet shed plan', () => {
       expect(await cmdFleetShedPlan([], async () => JSON.stringify(current))).toBe(0);
       expect(String(log.mock.calls[1]?.[0])).toContain('Reduce codex-local admission first');
       expect(await cmdFleetShedPlan(['--json'], async () => 'bad secret')).toBe(2);
-      expect(String(log.mock.calls[2]?.[0])).not.toContain('bad secret');
+      const statusPath = join(homedir(), '.ashlr-runs', 'queue', 'status.json');
+      expect(JSON.parse(String(log.mock.calls[2]?.[0]))).toEqual({
+        schema: 'fleet.shed-plan.v1', readOnly: true,
+        error: `Cannot read queue status: ${statusPath} is not valid JSON.`,
+      });
+      expect(await cmdFleetShedPlan(['--json'], async () => '{}')).toBe(2);
+      expect(JSON.parse(String(log.mock.calls[3]?.[0]))).toEqual({
+        schema: 'fleet.shed-plan.v1', readOnly: true,
+        error: `Cannot read queue status: ${statusPath} is not a valid dispatchd status document.`,
+      });
     } finally { log.mockRestore(); }
   });
 });

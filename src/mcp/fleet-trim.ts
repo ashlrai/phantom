@@ -4,13 +4,9 @@
  * nothing is applied, and an unreadable or invalid status is reported as an
  * error body, never as a clean fleet.
  */
-import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { readQueueStatusView } from '../core/fleet/queue-status-read.js';
 import { FLEET_TRIM_SCHEMA, trimFleet, type FleetTrimReader, type FleetTrimReport } from '../cli/fleet-trim.js';
-
-const UNREADABLE = 'Queue status is unreadable or invalid.';
 
 export interface FleetTrimErrorV1 {
   schema: typeof FLEET_TRIM_SCHEMA;
@@ -26,10 +22,10 @@ export function parseFleetTrimArgs(args: Record<string, unknown>): Record<string
 export async function readFleetTrimTool(
   deps: { readStatus?: FleetTrimReader } = {},
 ): Promise<FleetTrimReport | FleetTrimErrorV1> {
-  try {
-    const text = await (deps.readStatus ?? (path => readFile(path, 'utf8')))(join(homedir(), '.ashlr-runs', 'queue', 'status.json'));
-    return sanitizePublicJson(trimFleet(JSON.parse(text))) as FleetTrimReport;
-  } catch {
-    return { schema: FLEET_TRIM_SCHEMA, readOnly: true, error: UNREADABLE };
-  }
+  const result = await readQueueStatusView(
+    value => sanitizePublicJson(trimFleet(value)) as FleetTrimReport,
+    { read: deps.readStatus, subject: 'fleet_trim' },
+  );
+  if (!result.ok) return { schema: FLEET_TRIM_SCHEMA, readOnly: true, error: result.message };
+  return result.view;
 }

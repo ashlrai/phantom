@@ -1,8 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import type { StarvedLane, StarvedRead } from '../core/fleet/lane-starved.js';
 import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
+import { readQueueStatusView } from '../core/fleet/queue-status-read.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 export const FLEET_STARVED_SCHEMA = 'fleet.starved.v1';
@@ -55,8 +54,6 @@ const USAGE = `Usage: ashlr fleet starved [--json]
 Name lanes with free slots and no ready rows ("claude: 8 free slots, 0 ready rows for 42 min; next step: add work for claude"), count the READY rows waiting on a held or drained pool, then read queue/status.json and print one plain line per lane that still has queued work: running of target, queued, marked starved when running is below target while the admission reason starts with at_cap, then the admission running, cap and reason. Target is the launch target: the configured target tightened by the controller's effective_target shed. Read-only; the queue is never written.
 Exits 1 when any lane has ${FLEET_STARVED_RED_QUEUED} or more queued and none running, or when a lane has free slots and no ready rows. Unreadable status exits 2.
 Related: ashlr fleet lane-share, ashlr fleet admission.`;
-
-const UNREADABLE = 'Queue status is unreadable or invalid.';
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid status');
@@ -159,14 +156,16 @@ export async function cmdFleetStarved(
     console.error(USAGE);
     return 2;
   }
-  try {
-    const status = JSON.parse(await reader(join(homedir(), '.ashlr-runs', 'queue', 'status.json')));
-    const view = sanitizePublicJson(explainFleetStarved(status, await lanes().catch(() => null))) as FleetStarvedView;
-    console.log(args.includes('--json') ? JSON.stringify(view) : formatFleetStarved(view));
-    return view.status === 'red' || (view.starved_lanes?.length ?? 0) > 0 ? 1 : 0;
-  } catch {
-    const body = { schema: FLEET_STARVED_SCHEMA, readOnly: true, error: UNREADABLE };
-    console.log(args.includes('--json') ? JSON.stringify(body) : UNREADABLE);
+  const result = await readQueueStatusView(
+    async value => sanitizePublicJson(explainFleetStarved(value, await lanes().catch(() => null))) as FleetStarvedView,
+    { read: reader, subject: 'phm fleet starved' },
+  );
+  if (!result.ok) {
+    const body = { schema: FLEET_STARVED_SCHEMA, readOnly: true, error: result.message };
+    console.log(args.includes('--json') ? JSON.stringify(body) : result.message);
     return 2;
   }
+  const view = result.view;
+  console.log(args.includes('--json') ? JSON.stringify(view) : formatFleetStarved(view));
+  return view.status === 'red' || (view.starved_lanes?.length ?? 0) > 0 ? 1 : 0;
 }

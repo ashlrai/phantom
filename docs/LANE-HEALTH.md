@@ -69,7 +69,8 @@ For `phm lanes pressure`, a valid `memory_class` in `queue/slots.json`
 takes precedence.
 
 Run `phm fleet shed-plan` for the next suggested action, or add `--json` for
-`fleet.shed-plan.v1`. The read-only plan uses `~/.ashlr-runs/queue/status.json`:
+`fleet.shed-plan.v1`. The read-only plan uses `queue/status.json` under the runs
+root (`~/.ashlr-runs`, or `ASHLR_RUNS_DIR` when it names an absolute directory):
 free memory at or below 30% is high pressure, matching the dispatcher's fallback.
 The snapshot's `last_tick` must be readable, at most 60 seconds old, and at or
 before report time. Otherwise the report keeps lane names and kinds, shows

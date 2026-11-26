@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
+import { readQueueStatusView } from '../core/fleet/queue-status-read.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 export const FLEET_LANE_SHARE_SCHEMA = 'fleet.lane-share.v1';
@@ -38,8 +37,6 @@ Read queue/status.json and print each lane's share of the fleet: one line per la
 A lane is marked starved when it has ${FLEET_LANE_SHARE_STARVED_QUEUED} or more queued and none running, full when its running equals its launch target (the configured target tightened by the controller's effective_target shed); starved wins when both are true.
 Exits 1 when a lane is starved while the admission reason starts with at_cap (queued work parked because the whole fleet is full). Unreadable status exits 2.
 Related: ashlr fleet admission, ashlr fleet trim.`;
-
-const UNREADABLE = 'Queue status is unreadable or invalid.';
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid status');
@@ -128,15 +125,16 @@ export async function cmdFleetLaneShare(
     console.error(USAGE);
     return 2;
   }
-  try {
-    const view = sanitizePublicJson(explainFleetLaneShare(JSON.parse(
-      await reader(join(homedir(), '.ashlr-runs', 'queue', 'status.json')),
-    ))) as FleetLaneShareView;
-    console.log(args.includes('--json') ? JSON.stringify(view) : formatFleetLaneShare(view));
-    return view.status === 'red' ? 1 : 0;
-  } catch {
-    const body = { schema: FLEET_LANE_SHARE_SCHEMA, readOnly: true, error: UNREADABLE };
-    console.log(args.includes('--json') ? JSON.stringify(body) : UNREADABLE);
+  const result = await readQueueStatusView(
+    value => sanitizePublicJson(explainFleetLaneShare(value)) as FleetLaneShareView,
+    { read: reader, subject: 'phm fleet lane-share' },
+  );
+  if (!result.ok) {
+    const body = { schema: FLEET_LANE_SHARE_SCHEMA, readOnly: true, error: result.message };
+    console.log(args.includes('--json') ? JSON.stringify(body) : result.message);
     return 2;
   }
+  const view = result.view;
+  console.log(args.includes('--json') ? JSON.stringify(view) : formatFleetLaneShare(view));
+  return view.status === 'red' ? 1 : 0;
 }
