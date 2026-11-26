@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -13,6 +13,7 @@ import { BusBoard } from '../src/core/fleet/bus-board.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import { SharedStore } from '../src/core/fleet/shared-store.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
+import { appendBusHop } from '../src/core/fleet/bus-hoplog.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
@@ -38,6 +39,9 @@ describe('readUnifiedBusStatus', () => {
     // A verifiably absent queue holds no hints: 0 is the real count, and
     // nothing can be truncated out of a queue that does not exist.
     expect(status.wakes).toEqual({ state: 'missing', hints: 0, truncated: false });
+    // A verifiably absent hop log holds no hops: 0 is the real count.
+    expect(status.hoplog).toEqual({ state: 'missing', bytes: 0, hops: 0,
+      skippedRows: 0, truncated: false });
     expect(status.coordination).toEqual({ source: 'missing', liveClaims: null, statuses: null });
     expect(status.workClaims).toEqual({ source: 'missing', claims: null });
     // Two verified-empty stores agree trivially: VERIFIED with real zeros.
@@ -90,6 +94,9 @@ describe('readUnifiedBusStatus', () => {
     expect(status.registry).toEqual({ source: 'available', identities: 2, channels: 0 });
     expect(status.wakes.state).toBe('ok');
     expect(status.wakes.hints).toBeGreaterThanOrEqual(1);
+    // The wake request above appended one hop to the send path's own log.
+    expect(status.hoplog).toMatchObject({ state: 'ok', hops: 1, skippedRows: 0, truncated: false });
+    expect(status.hoplog.bytes).toBeGreaterThan(0);
     expect(status.coordination.source).toBe('available');
     expect(status.coordination.liveClaims).toBe(1);
     expect(status.feed).toEqual({ status: 'ok', jobs: 1 });
@@ -707,6 +714,35 @@ describe('sessionHandoffs section', () => {
   });
 });
 
+describe('hoplog section', () => {
+  const hoplogFile = (options: UnifiedBusStatusOptions) => join(options.root!, 'bus', 'hops.jsonl');
+
+  it('counts valid hops and reports malformed rows as skipped evidence', () => {
+    const options = setup();
+    const file = hoplogFile(options);
+    expect(appendBusHop({ id: 'hop-1', from: 'agent:atlas', to: 'agent:nova' }, file)).toBe(true);
+    expect(appendBusHop({ id: 'hop-2', from: 'agent:atlas', to: 'agent:nova' }, file)).toBe(true);
+    appendFileSync(file, 'not json\n');
+    const status = readUnifiedBusStatus(options);
+    expect(status.hoplog).toMatchObject({ state: 'ok', hops: 2, skippedRows: 1, truncated: false });
+    expect(status.hoplog.bytes).toBeGreaterThan(0);
+    // A sick log degrades only its own section; the rest of the bus stays readable.
+    expect(status.wakes.state).toBe('missing');
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('reports unreadable with null counts when the log fails custody', () => {
+    const options = setup();
+    const file = hoplogFile(options);
+    expect(appendBusHop({ id: 'hop-1', from: 'agent:a', to: 'agent:b' }, file)).toBe(true);
+    chmodSync(file, 0o644);
+    try {
+      expect(readUnifiedBusStatus(options).hoplog).toEqual({ state: 'unreadable',
+        bytes: null, hops: null, skippedRows: null, truncated: null });
+    } finally { chmodSync(file, 0o600); }
+  });
+});
+
 describe('phm agents bus status', () => {
   it('prints one honest line per section in human mode and the object as JSON', async () => {
     const options = setup();
@@ -718,6 +754,8 @@ describe('phm agents bus status', () => {
     expect(json.store.source).toBe('missing');
     expect(json.registry.identities).toBe(0);
     expect(json.wakes.state).toBe('missing');
+    expect(json.hoplog).toEqual({ state: 'missing', bytes: 0, hops: 0,
+      skippedRows: 0, truncated: false });
     expect(json.workClaims).toEqual({ source: 'missing', claims: null });
     expect(json.claimDrift).toEqual({ state: 'VERIFIED', matched: 0, busOnly: 0,
       coordOnly: 0, ownerMismatch: 0 });
@@ -751,5 +789,6 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('sessionHandoffs missing journals=0 open=0 awaitingFailover=0 unreadable=0 truncated=false');
     expect(lines.join('\n')).toContain('sendGate open kill=inactive:missing pause=clear');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
+    expect(lines.join('\n')).toContain('hoplog missing bytes=0 hops=0 skipped=0 truncated=false');
   });
 });

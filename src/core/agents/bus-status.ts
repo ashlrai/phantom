@@ -1,6 +1,7 @@
 /** One read-only health probe over every store the unified `agents bus` verbs
  * touch: the message inbox, the identity registry, the wake queue, the shared
  * coordination table, the message-id claim journal, the v2 work feed, the
+ * bus hop log every wake-enabled send appends, the
  * shared task board and fleet queue `work mine`'s board section reads, the
  * owner-chat share receipts ledger `inbox` consults for `agent-chat-owner`
  * envelopes, the legacy `phm bus` mailbox `work mine` still reads, the
@@ -32,6 +33,7 @@ import { loadConfigReadOnlyStrict } from '../config.js';
 import type { AshlrConfig } from '../types.js';
 import { listCoordination } from './claim-store.js';
 import { readBusWakes } from '../fleet/bus-wake-queue.js';
+import { BUS_HOPLOG_TAIL_MAX_ROWS, readBusHoplogTail } from '../fleet/bus-hoplog.js';
 import { readAgentRegistry } from './bus-identity.js';
 import { inspectSeatStore } from '../bots/seats.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
@@ -80,6 +82,33 @@ export interface UnifiedBusStatus {
     /** Hints observed in the bounded queue tail, before the read's row cap; null unless the queue was read. */
     hints: number | null;
     /** Older bytes or hints sit beyond the bounded tail or row cap; null when the queue state is unknown. */
+    truncated: boolean | null;
+  };
+  /** Bus hop log (`<root>/bus/hops.jsonl`, or `busHoplogPath()` when no
+   * root override is set) behind `fleet_bus_hops`, the fleet live-bus
+   * feed's hop pane and the wake-hop recording every `dm`, `post`,
+   * `channel post`, `handoff`, `wake` and channel-mirror send appends —
+   * read by `readBusHoplogTail`, the same bounded tail
+   * `readFleetBusHops` serves under the same path the send path's
+   * `hoplogFile` resolves, so a corrupt, permissive or otherwise
+   * unreadable log is named here instead of leaving status green while
+   * hop reads report unreadable and sends record `hoplog: 'failed'`.
+   * Counts only, never message ids, agent labels or bodies. */
+  hoplog: {
+    state: 'missing' | 'unreadable' | 'ok';
+    /** On-disk byte size when the log passed custody checks; 0 on a
+     * verified-missing log (an absent file holds no bytes), null when
+     * it cannot be read. */
+    bytes: number | null;
+    /** Valid hops inside the bounded tail window — a floor the
+     * `truncated` flag qualifies, never a fleet-wide total; 0 on a
+     * verified-missing log, null when unreadable. */
+    hops: number | null;
+    /** Malformed, torn or unvalidated rows inside the read window —
+     * degraded evidence, never recorded activity; same null rule. */
+    skippedRows: number | null;
+    /** Older bytes or further hops sit beyond the bounded read; null
+     * when the log state is unknown. */
     truncated: boolean | null;
   };
   /** Shared coordination table behind `claim` and feed `--claims` joins. */
@@ -356,6 +385,30 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     wakes = { state: 'unreadable', hints: null, truncated: null };
   }
 
+  // The hop log is the send path's own observability tail: every wake a
+  // bus send requests appends one validated row under
+  // `<root>/bus/hops.jsonl` — the same path `hoplogFile()` resolves for
+  // writes (or `busHoplogPath()` with no root, probed with its full
+  // ancestor custody chain). `readBusHoplogTail` is the same bounded
+  // read `readFleetBusHops` serves, so a sick log is named here instead
+  // of leaving status green while `fleet_bus_hops` reports unreadable
+  // and sends keep recording `hoplog: 'failed'`. Counts only, never
+  // ids, labels or bodies; a verified-missing log reports real zeros,
+  // the same convention the wake queue applies.
+  let hoplog: UnifiedBusStatus['hoplog'];
+  try {
+    const tail = readBusHoplogTail(BUS_HOPLOG_TAIL_MAX_ROWS,
+      options.root === undefined ? undefined : join(options.root, 'bus', 'hops.jsonl'));
+    hoplog = tail.state === 'ok'
+      ? { state: 'ok', bytes: tail.logBytes, hops: tail.hops?.length ?? null,
+          skippedRows: tail.skippedRows, truncated: tail.truncated }
+      : tail.state === 'missing'
+        ? { state: 'missing', bytes: 0, hops: 0, skippedRows: 0, truncated: false }
+        : { state: 'unreadable', bytes: null, hops: null, skippedRows: null, truncated: null };
+  } catch {
+    hoplog = { state: 'unreadable', bytes: null, hops: null, skippedRows: null, truncated: null };
+  }
+
   let coordinationRead: ReturnType<typeof listCoordination> | undefined;
   let coordination: UnifiedBusStatus['coordination'];
   try {
@@ -552,5 +605,5 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     kill, pause,
   };
 
-  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, sessionHandoffs, sendGate };
+  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, sessionHandoffs, sendGate };
 }

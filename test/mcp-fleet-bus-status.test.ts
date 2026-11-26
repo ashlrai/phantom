@@ -28,6 +28,7 @@ const probe = (over: Partial<UnifiedBusStatus> = {}): UnifiedBusStatus => ({
   },
   registry: { source: 'available', identities: 4, channels: 2 },
   wakes: { state: 'ok', hints: 1, truncated: false },
+  hoplog: { state: 'ok', bytes: 256, hops: 2, skippedRows: 0, truncated: false },
   coordination: { source: 'available', liveClaims: 2, statuses: 5 },
   workClaims: { source: 'available', claims: 3 },
   claimDrift: { state: 'VERIFIED', matched: 2, busOnly: 0, coordOnly: 0, ownerMismatch: 0 },
