@@ -269,6 +269,13 @@ Where interlock compatibility is unproven it reports
 `~/.ashlr/KILL` remains operator-owned and separate from
 `~/.ashlr/DESKTOP_UPDATE_STOP`. The hosted status query never pauses or resumes
 publishing.
+On macOS, the CLI reports the dispatcher under `drain.hostCensus`. A missing
+capability marker on any installed host launcher reports `unsupported`, and a
+busy or unreadable census reports unknown work rather than idle. Qualified
+updates count active and unknown dispatcher work alongside native execution
+leases when the host supports the census. The dispatcher and its launchers
+refuse new work while `DESKTOP_UPDATE_STOP` is present. These source changes
+do not install or update any live host files; Security re-pinning still applies.
 The install module also exports `ConsumerInstallHeld` for shared error
 classification and the `directory`, `parents`, `owned`, `regular`, `write`,
 `sha`, `ioRead` and `packageReady` guards.

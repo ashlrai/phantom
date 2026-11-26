@@ -1,4 +1,10 @@
 #!/bin/bash
+# phantom.desktop-update-interlock.v1
+update_stop="$HOME/.ashlr/DESKTOP_UPDATE_STOP"
+if [ -L "$update_stop" ] || [ -e "$update_stop" ] || { [ -e "${update_stop%/*}" ] && [ ! -x "${update_stop%/*}" ]; }; then
+  echo "HELD: desktop update interlock"
+  exit 3
+fi
 # batch-launch.sh <bundle-job> <repo> <pool> [tier] ; bundle prompt on stdin  (RQ-BATCH-SESSIONS-2)
 # Wrapper that dispatchd runs instead of launch.sh for RQ-BATCH-* bundles. It gives every member line its own
 # worktree, branch and .base record (the same shape launch.sh writes for a solo job), so each line later reaps and

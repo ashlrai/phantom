@@ -15,6 +15,7 @@ import { readKillSwitch } from '../sandbox/policy.js';
 import { readPinnedRuntimeArchive, extractPinnedRuntimeArchive, type PinnedRuntimeArchiveOptions } from '../local-runtime/archive.js';
 import { parseBuildIdentity } from '../build-identity.js';
 import { fsyncDirectory } from '../util/durability.js';
+import { readDesktopHostInterlockCensus, type DesktopHostInterlockCensus } from './host-update-interlock.js';
 import { verifyCompatibleUpdateManifest, desktopUpdateProfileForPackage, verifyMinisign, verifyUpdateBundleRecord, type UpdateTrust, type CompatibleUpdateManifest, type UpdateArtifact } from './update-manifest.js';
 
 export type DesktopUpdateState = 'waiting-native-exit' | 'ready' | 'blocked' | 'applied' | 'rollback-held' | 'rolled-back';
@@ -30,6 +31,7 @@ export interface NativeUpdateParent { pid: number; ppid: number; started: string
 export interface DesktopUpdateDependencies {
   home: string; platform: NodeJS.Platform; architecture: string; packageRoot: string | null; trust: UpdateTrust | null;
   admission(): UpdateAdmission;
+  hostCensus?(): DesktopHostInterlockCensus;
   currentPackageRoot(): string | null;
   captureParent(): NativeUpdateParent | null;
   verifyParent(parent: NativeUpdateParent, manifest: CompatibleUpdateManifest): Promise<boolean>;
@@ -133,8 +135,14 @@ function admissionReason(a: UpdateAdmission): string | null {
   if (a.unknownLeases !== 0 || a.leaseCount !== 0) return 'work-active-or-unknown';
   return null;
 }
+function workAdmissionReason(deps: DesktopUpdateDependencies, admission: UpdateAdmission): string | null {
+  const reason = admissionReason(admission);
+  if (reason) return reason;
+  const host = deps.hostCensus?.();
+  return host?.state === 'supported' && (host.activeJobs !== 0 || host.unknown !== 0) ? 'work-active-or-unknown' : null;
+}
 function freshAdmission(deps: DesktopUpdateDependencies): void {
-  const reason = admissionReason(deps.admission());
+  const reason = workAdmissionReason(deps, deps.admission());
   if (reason) hold(reason);
 }
 
@@ -146,7 +154,7 @@ export function inspectQualifiedDesktopUpdate(stageId: string, deps: DesktopUpda
     catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
     updateMode(deps, staged.manifest);
     const admission = deps.admission();
-    const reason = !admission.stop ? 'drain-interlock-unsupported' : admissionReason(admission);
+    const reason = !admission.stop ? 'drain-interlock-unsupported' : workAdmissionReason(deps, admission);
     return result(reason ? 'blocked' : 'ready', version, reason);
   } catch (error) { return result('blocked', version, error instanceof Held ? error.reason : 'verification-failed'); }
 }
@@ -568,6 +576,7 @@ export function createDesktopUpdateDependencies(trust: UpdateTrust | null): Desk
         leaseCount: leases.leases.length, unknownLeases: leases.unknown};
     },
     currentPackageRoot: () => {try {return fs.realpathSync(join(userInfo().homedir, '.local', 'share', 'ashlr', 'current'));} catch {return null;}},
+    ...(process.platform === 'darwin' && {hostCensus: () => readDesktopHostInterlockCensus(userInfo().homedir)}),
     residentStop: async () => {
       try {const service=await import('../daemon/service.js');await service.uninstall({});return true;}
       catch {return false;}

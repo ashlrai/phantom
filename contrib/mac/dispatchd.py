@@ -13,13 +13,20 @@
 import sys, os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from typing import TypedDict
+import desktop_update_interlock
+# phantom.desktop-update-interlock.v1
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
+if sys.argv[1:] == ["--desktop-update-census"]:
+    from process_snapshot import capture
+    print(json.dumps(desktop_update_interlock.census(H, Q, capture)))
+    raise SystemExit(0)
 # A kernel-held claim serializes the complete tick, including liveness sampling and
 # queue reconciliation. It is released automatically if the dispatcher crashes.
-_tick_claim = open(Q + "/dispatchd.tick.lock", "a")
-try: fcntl.flock(_tick_claim, fcntl.LOCK_EX | fcntl.LOCK_NB)
+try: _tick_claim = desktop_update_interlock.tick_claim(Q)
 except BlockingIOError: raise SystemExit(0)
+if desktop_update_interlock.held(H):
+    raise SystemExit(0)
 NOW = time.time(); TS = time.strftime("%F %T")
 MAX_LAUNCH_PER_TICK = 8; GRACE = 120; RAISE_GAP = 120
 LANES = ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local", "omlx"]   # tie-break order: cmp first
@@ -2112,7 +2119,7 @@ elif not _now_reason and _prev: ev("LOADGATE clear")
 _pw = jload(Q + "/admission.json", {}).get("warnings") or []
 if GATE["warnings"] and _pw != GATE["warnings"]: ev("LOADGATE warn (non-tripping): " + "; ".join(GATE["warnings"]))
 if disk_hard_stop: ev("DISKGUARD hard_stop %.0fG < %.0fG, no launches" % (disk_free_gb, DISK_HARD_STOP_GB))
-if not pause and not disk_hard_stop and not GATE["tripped"]:
+if not pause and not desktop_update_interlock.held(H) and not disk_hard_stop and not GATE["tripped"]:
     cand = []
     for l in lines:
         if parked_row(l):
@@ -2418,6 +2425,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 ev("DONE-NOOP %s [%s]" % (j, reason)); continue
         if empty_gate(j, repo, pf, lane): continue
         batch = form_batch(f)
+        if desktop_update_interlock.held(H):
+            rest.append(line)
+            continue
         if batch:   # leases first: a line another bundle already holds is dropped; too few left launches solo
             picked, blane, size = batch; area = picked[0]["area"]
             bid = batcher.batch_id(repo, area, [c["job"] for c in picked])

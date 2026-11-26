@@ -50,6 +50,13 @@ describe('local desktop update interlock', () => {
     expect(await applyQualifiedDesktopUpdate(f.id, unpaused)).toMatchObject({state: 'blocked', reason: 'stop-required'});
     expect(f.installations()).toBe(0);
   });
+  it.each([{activeJobs: 1, unknown: 0}, {activeJobs: 0, unknown: 1}])('holds with active or unknown dispatcher work (%j)', async census => {
+    const f = pairedFixture();
+    const deps = { ...f.deps, hostCensus: () => ({state: 'supported' as const, ...census}) };
+    expect(inspectQualifiedDesktopUpdate(f.id, deps)).toMatchObject({state: 'blocked', reason: 'work-active-or-unknown'});
+    expect(await applyQualifiedDesktopUpdate(f.id, deps)).toMatchObject({state: 'blocked', reason: 'work-active-or-unknown'});
+    expect(f.installations()).toBe(0);
+  });
 });
 afterEach(() => {vi.unstubAllGlobals(); for (const root of roots.splice(0)) fs.rmSync(root, {recursive:true,force:true});});
 const {publicKey,privateKey} = generateKeyPairSync('ed25519'); const keyId = Buffer.from('1122334455667788','hex');

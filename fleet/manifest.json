@@ -22,6 +22,7 @@
     { "src": "contrib/mac/postrun_pr.py", "root": "runs-bin", "class": "managed" },
     { "src": "contrib/mac/arm_gate.py", "root": "runs-bin", "class": "managed" },
     { "src": "contrib/mac/dispatchd.py", "root": "runs-bin", "class": "managed", "note": "per-tick supervisor; Security re-pin before live install" },
+    { "src": "contrib/mac/desktop_update_interlock.py", "root": "runs-bin", "class": "managed", "note": "dispatcher interlock and census; Security re-pin before live install" },
     { "src": "contrib/mac/concurrency.py", "root": "runs-bin", "class": "managed" },
     { "src": "contrib/mac/batcher.py", "root": "runs-bin", "class": "managed" },
     { "src": "contrib/mac/local_job.py", "root": "runs-bin", "class": "managed" },

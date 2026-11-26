@@ -1,4 +1,5 @@
 #!/bin/bash
+# phantom.desktop-update-interlock.v1
 # RELEASE-AUTORUN rev2b-sec (STANDING-RELEASE-AUTHORITY rev1b + ANCESTOR-sec, Security 2026-11-09; base: #4135 + #4190).
 # ANCESTOR-sec: attestor sha must equal the peeled release-tag sha; head_branch must be that tag or master-with-sha==master.
 # Ancestor-of-master alone is not enough (replay). Compare is URL-encoded, repo-bound, fail-closed on truncation.

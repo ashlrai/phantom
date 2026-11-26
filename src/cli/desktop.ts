@@ -4,7 +4,9 @@ import {cmdDesktopOperator, type DesktopOperatorCliDeps} from './desktop-operato
 import {applyConsumerDesktopUpgrade, createConsumerUpgradeDependencies, inspectConsumerDesktopUpgrade,
   type ConsumerUpgradeDependencies, type ConsumerUpgradeOptions, type ConsumerUpgradeResult} from '../core/desktop/consumer-upgrade.js';
 import { desktopUpdateInterlockPresent } from '../core/desktop/update-interlock.js';
+import { readDesktopHostInterlockCensus } from '../core/desktop/host-update-interlock.js';
 import { readHostedReleaseTrainPause } from '../core/release/train.js';
+import { realHome } from '../core/real-home.js';
 
 const USAGE = `usage: phm desktop install [--apply]
        phm desktop update status --json
@@ -44,12 +46,16 @@ export async function cmdDesktop(args: string[], dependencies?: ConsumerInstallD
     if (args.length === 2 && ['--help', '-h', 'help'].includes(args[1]!)) {console.log(USAGE);return 0;}
     if (args.length !== 3 || args[1] !== 'status' || args[2] !== '--json') {console.error(USAGE);return 2;}
     const {readNativeUpdateStatus}=await import('../core/desktop/native-update-status.js');
+    const home = realHome();
     console.log(JSON.stringify({
       ...readNativeUpdateStatus(),
       drain: {
         automaticDrain: false,
         reason: 'drain-interlock-unsupported',
         localInterlock: desktopUpdateInterlockPresent() ? 'held-or-unreadable' : 'clear',
+        ...(process.platform === 'darwin' && {
+          hostCensus: home ? readDesktopHostInterlockCensus(home) : {state: 'unsupported', activeJobs: 0, unknown: 1},
+        }),
         remedy: 'Engage operator Stop and let local work drain before installing.',
       },
       hostedReleaseTrain: readHostedReleaseTrainPause(),

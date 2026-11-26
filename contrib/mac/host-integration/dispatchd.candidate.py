@@ -1,13 +1,21 @@
 #!/usr/bin/python3
 # dispatchd core (one tick). Run only via dispatchd.sh (lockf). No LLM calls, no network of its own.
 import os, re, json, time, fcntl, subprocess, glob
+import sys
+import desktop_update_interlock
+# phantom.desktop-update-interlock.v1
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
+if sys.argv[1:] == ["--desktop-update-census"]:
+    from process_snapshot import capture
+    print(json.dumps(desktop_update_interlock.census(H, Q, capture)))
+    raise SystemExit(0)
 # A kernel-held claim serializes the complete tick, including liveness sampling and
 # queue reconciliation. It is released automatically if the dispatcher crashes.
-_tick_claim = open(Q + "/dispatchd.tick.lock", "a")
-try: fcntl.flock(_tick_claim, fcntl.LOCK_EX | fcntl.LOCK_NB)
+try: _tick_claim = desktop_update_interlock.tick_claim(Q)
 except BlockingIOError: raise SystemExit(0)
+if desktop_update_interlock.held(H):
+    raise SystemExit(0)
 NOW = time.time(); TS = time.strftime("%F %T")
 # One operator-requested standard profile; private timing/call metadata only.
 if os.path.exists(Q + "/PROFILE_CONTROL_ONCE"):
@@ -861,7 +869,7 @@ elif not _now_reason and _prev: ev("LOADGATE clear")
 _pw = jload(Q + "/admission.json", {}).get("warnings") or []
 if GATE["warnings"] and _pw != GATE["warnings"]: ev("LOADGATE warn (non-tripping): " + "; ".join(GATE["warnings"]))
 if disk_hard_stop: ev("DISKGUARD hard_stop %.0fG < %.0fG, no launches" % (disk_free_gb, DISK_HARD_STOP_GB))
-if not pause and not disk_hard_stop and not GATE["tripped"]:
+if not pause and not desktop_update_interlock.held(H) and not disk_hard_stop and not GATE["tripped"]:
     # interleave lanes so neither starves: take candidates round-robin, cmp first
     cand = {l: [] for l in LANES}
     for l in lines:
@@ -906,6 +914,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     ROUTER_ON = not os.path.exists(Q + "/ROUTER_OFF")
     for f in order:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
+        if desktop_update_interlock.held(H):
+            rest.append(line)
+            continue
         s = slots[lane]; res = result(j)
         if j in seen: continue  # duplicate line
         why = retired(j)
