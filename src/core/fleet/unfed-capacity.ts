@@ -450,11 +450,15 @@ export function foldUnfedHistory(jsonl: string | null, nowMs: number, windowHour
     if (!isRecord(row) || row.schema !== 'work-market.v1' || row.event !== 'unfed_capacity' || !isRecord(row.lanes)) continue;
     const ts = row.ts;
     if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > until) continue;
+    const waiting = count(row.waiting) ? row.waiting : null;
     const snapshot = [];
     for (const [lane, value] of Object.entries(row.lanes)) {
-      if (!LANE.test(lane) || !isRecord(value) || value.unfed !== true
+      if (!LANE.test(lane) || !isRecord(value) || value.unfed !== true || value.held === true
         || !count(value.headroom) || value.headroom === 0
         || !count(value.waiting_elsewhere) || value.waiting_elsewhere === 0) continue;
+      if (waiting !== null && value.waiting_elsewhere > waiting) continue;
+      if (count(value.running) && count(value.target) &&
+          value.headroom !== Math.max(0, value.target - value.running)) continue;
       snapshot.push({ lane, slots: Math.min(value.headroom, value.waiting_elsewhere), blocked: codes(value.blocked) });
     }
     if (snapshot.length > 0) ticks.set(ts, snapshot);
