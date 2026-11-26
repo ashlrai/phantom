@@ -242,8 +242,8 @@ export function NeedsMasonRows() {
     </div>
   );
   return (
-    <section aria-label="Needs Mason">
-      <div className={styles.batch}><p className={styles.rowKind}>Needs Mason</p></div>
+    <section aria-label="Needs the owner">
+      <div className={styles.batch}><p className={styles.rowKind}>Needs the owner</p></div>
       {error && <p role="status">{error}</p>}
       {confirmation && <p role="status">{confirmation.text} {confirmation.prefill &&
         <Button size="sm" variant="ghost" onClick={() => openInterjectDialog({ prefill: confirmation.prefill })}>Tell the leaders</Button>}</p>}

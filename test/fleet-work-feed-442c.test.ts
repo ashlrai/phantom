@@ -730,6 +730,70 @@ describe('work-feed --channel room filter', () => {
   });
 });
 
+describe('work-feed --id filter', () => {
+  it('keeps jobs citing the wire id across post, status and result slots', async () => {
+    append(post, 1, 'fake-agent');
+    now += 10;
+    append({ kind: 'work.status', jobId: post.jobId, status: 'running' }, 2, 'fake-agent');
+    now += 10;
+    append({ ...post, jobId: 'fake-other' }, 3, 'fake-agent');
+    now += 10;
+    append({ kind: 'work.result', jobId: post.jobId, claimKey: 'repo:fake/repo',
+      queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', outcome: 'complete' }, 4, 'agent:worker');
+    const result = readBusWorkFeed({ root });
+    // fake-job cites post=fake-message-1, status=fake-message-2 and
+    // receipt=fake-message-4; fake-other cites only its post=fake-message-3.
+    // The read keeps post order — the view's newest-first sort is a filter
+    // step, and the result never moves updatedAt anyway.
+    expect(result).toMatchObject({ status: 'ok', jobs: [
+      { id: post.jobId, postId: 'fake-message-1', statusId: 'fake-message-2',
+        result: { id: 'fake-message-4', outcome: 'complete' } },
+      { id: 'fake-other', postId: 'fake-message-3', statusId: null }] });
+    const log = output();
+    const jobLines = () => log.mock.calls.map(call => String(call[0])).filter(line => line.startsWith('fake-'));
+    // Every citation slot resolves to the same job in text and JSON.
+    for (const id of ['fake-message-1', 'fake-message-2', 'fake-message-4']) {
+      log.mockClear();
+      expect(await cmdFleetWorkFeed(['--root', root, '--id', id])).toBe(0);
+      expect(jobLines()).toEqual([expect.stringContaining(`${post.jobId} running`)]);
+      expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=1');
+    }
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--id', 'fake-message-3', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).jobs.map((job: { id: string }) => job.id))
+      .toEqual(['fake-other']);
+    log.mockClear();
+    // An id nothing on the feed cites is an honest empty view, and the match
+    // is exact wire-id equality — never a substring or the job id itself.
+    for (const id of ['fake-message', post.jobId]) {
+      log.mockClear();
+      expect(await cmdFleetWorkFeed(['--root', root, '--id', id])).toBe(0);
+      expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0');
+    }
+    // The filter composes with the others.
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--id', 'fake-message-4', '--status', 'queued'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0');
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--id', 'fake-message-4', '--status', 'running', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).jobs.map((job: { id: string }) => job.id))
+      .toEqual([post.jobId]);
+  });
+
+  it('rejects bad --id values with usage on stderr and exit 2', async () => {
+    const log = output();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--id'], ['--id', 'two words'], ['--id', 'a\nb'], ['--id', 'x'.repeat(129)],
+      ['--id', 'x', '--id', 'y'], ['--root', root, '--id', '']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(log).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(6);
+    expect(error.mock.calls[0]?.[0]).toContain('Usage: ashlr fleet work-feed');
+  });
+});
+
 describe('work-feed --job and --owner filters', () => {
   it('keeps one job id and jobs announced by an agent label in text and JSON', async () => {
     append(post, 1, 'fake-agent');

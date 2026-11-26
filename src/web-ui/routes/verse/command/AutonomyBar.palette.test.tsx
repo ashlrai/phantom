@@ -626,10 +626,12 @@ describe('grant review shows starting-stage Leader permission', () => {
   it('lists the draft seats and uses an owner-neutral reserve label in the sheet', () => {
     const draft = grantDraft();
     draft.payload.spend.seats = { 'claude-a': draft.payload.spend.seats['claude-a']! };
-    render(<DraftScope draft={draft} />);
+    const { rerender } = render(<DraftScope draft={draft} />);
     const spend = screen.getByRole('region', { name: 'Spend' });
     expect(spend).toHaveTextContent('claude-a: keep 40% for the owner');
     expect(spend).not.toHaveTextContent(/codex-cmp|Mason|for you/);
+    rerender(<DraftScope draft={{ ...draft, ownerDisplayName: 'Alex Rivera' }} />);
+    expect(spend).toHaveTextContent('claude-a: keep 40% for Alex Rivera');
   });
 
   it('shows advisory work when top-level A/B is unavailable in the elite stage', () => {

@@ -12,7 +12,7 @@
  */
 import { join } from 'node:path';
 
-import { alreadyRecorded, ledgerLine, scrubText } from './guard.js';
+import { ledgerLine, scrubText, skipIfRecorded } from './guard.js';
 import {
   CRASH_THRESHOLD, FRESH_MS, HOUR_MS, OPERATOR_QUIET_MS, RESIDENT_LABEL, SAMPLE_GAP_MS,
   type AutofixHost, type LaunchdJob, type LedgerLine, type RunsSample,
@@ -31,11 +31,30 @@ export interface CrashAssessment {
   lastExitCode: number | null;
 }
 
-export function isAuthorityGoverned(job: { label: string; authorityGoverned?: boolean }): boolean {
+export function launchAgentsDir(host: AutofixHost): string {
+  return join(host.homeDir(), 'Library', 'LaunchAgents');
+}
+
+export function newestRollbackMtime(
+  host: AutofixHost,
+  label: string,
+  entries: readonly string[] = host.listDir(launchAgentsDir(host)),
+): number | null {
+  const dir = launchAgentsDir(host);
+  let rollback: number | null = null;
+  for (const name of entries) {
+    if (!name.includes('.rollback.') || !name.startsWith(label)) continue;
+    const mtime = host.statMtime(join(dir, name));
+    if (mtime !== null && (rollback === null || mtime > rollback)) rollback = mtime;
+  }
+  return rollback;
+}
+
+function isAuthorityGoverned(job: { label: string; authorityGoverned?: boolean }): boolean {
   return job.authorityGoverned === true || job.label === RESIDENT_LABEL;
 }
 
-export function parseLaunchctlPrint(text: string): { runs: number; lastExitCode: number | null; pid: number | null } | null {
+function parseLaunchctlPrint(text: string): { runs: number; lastExitCode: number | null; pid: number | null } | null {
   const runs = /^\s*runs\s*=\s*(\d+)\s*$/m.exec(text);
   if (!runs) return null;
   const exit = /^\s*last exit code\s*=\s*(-?\d+|\(never exited\)|never exited)\s*$/m.exec(text);
@@ -146,11 +165,7 @@ function rememberSample(host: AutofixHost, label: string, sample: RunsSample): v
 }
 
 function finish(ctx: FixContext, line: LedgerLine): LedgerLine {
-  const prior = alreadyRecorded(ctx.ledger, line);
-  if (prior && line.result !== 'dry-run') {
-    return ledgerLine(ctx.host.now().toISOString(), line.fixer, line.target, line.action, line.before, prior.after, 'skipped');
-  }
-  return line;
+  return skipIfRecorded(ctx.ledger, line) ?? line;
 }
 
 export function fixLaunchdCrashloop(job: LaunchdJob, ctx: FixContext): LedgerLine | null {
@@ -219,8 +234,8 @@ export function fixLaunchdCrashloop(job: LaunchdJob, ctx: FixContext): LedgerLin
       const line = ledgerLine(ts, 'launchd-crashloop', job.label, 'refuse-disable', {
         ...before, admission: 'admitted',
       }, { disabled: false, bootedOut: false }, 'refused_admitted');
-      const prior = alreadyRecorded(ctx.ledger, line);
-      if (prior) return ledgerLine(ts, line.fixer, line.target, line.action, line.before, prior.after, 'skipped');
+      const skipped = skipIfRecorded(ctx.ledger, line);
+      if (skipped) return skipped;
       const path = writeRq(ctx.host, job.label, rqBody(job, rate, 'refused_admitted', status.stdout));
       return ledgerLine(ts, 'launchd-crashloop', job.label, 'refuse-disable', line.before, {
         disabled: false, bootedOut: false, rq: path,
@@ -236,8 +251,8 @@ export function fixLaunchdCrashloop(job: LaunchdJob, ctx: FixContext): LedgerLin
   const planned = ledgerLine(ts, 'launchd-crashloop', job.label, 'disable-keepalive', before, {
     disabled: true, bootedOut: true,
   }, 'applied');
-  const prior = alreadyRecorded(ctx.ledger, planned);
-  if (prior) return ledgerLine(ts, planned.fixer, planned.target, planned.action, planned.before, prior.after, 'skipped');
+  const skipped = skipIfRecorded(ctx.ledger, planned);
+  if (skipped) return skipped;
 
   const disabled = ctx.host.exec(['launchctl', 'disable', target]);
   const booted = ctx.host.exec(['launchctl', 'bootout', target]);

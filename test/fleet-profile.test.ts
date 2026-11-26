@@ -22,7 +22,7 @@ it('only discovers an explicitly authorized lane with a registered resource and 
     mkdirSync(queue);
     const declaration = (id: string, resource = 'custom:studio', authorized = true) => ({ id, resource, authorized });
     const profile = { schema: 'fleet.profile.v1', lanes: [
-      { ...declaration('studio'), label: 'Engineering studio' }, declaration('not-approved', 'custom:studio', false),
+      { ...declaration('studio'), label: 'Engineering studio', floor: 2 }, declaration('not-approved', 'custom:studio', false),
       declaration('no-executor'), declaration('wrong-executor'), declaration('login-failed'),
       declaration('no-resource', 'custom:no-resource'), declaration('metered', 'custom:metered'),
       declaration('duplicate'), declaration('duplicate'),

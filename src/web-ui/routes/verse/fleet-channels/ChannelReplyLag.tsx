@@ -13,7 +13,7 @@ export function ChannelReplyLag({ lag, nowMs, channelName }: { lag: ChannelReply
   const waiting = lag.waitingMs !== null;
   return <>
     <p className={styles.presence} data-testid="channel-reply-lag">
-      {channelName !== undefined && `${channelName} · `}Last from Mason {formatRelative(lag.lastFromMasonAt, nowMs)} · {lag.preview}
+      {channelName !== undefined && `${channelName} · `}Last from the owner {formatRelative(lag.lastFromMasonAt, nowMs)} · {lag.preview}
     </p>
     <p className={styles.presence}>
       {waiting
