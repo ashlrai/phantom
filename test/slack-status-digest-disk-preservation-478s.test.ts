@@ -169,7 +169,7 @@ describe('Slack "Phantom status" digest from persisted runs state (PR #4885 disk
     expect(body.text).toContain('App: installed 3.29.15 · published 3.30.32 · update pending');
     expect(body.text).toContain('Merges: 1 in the last hour · 3 in the last 24h');
     expect(body.text).toContain('Lanes: claude 4/8, devin 2/6 · held: zai (usage cap)');
-    expect(body.text).toContain('Needs Mason: 1 hard-limit ask waiting');
+    expect(body.text).toContain('Needs the owner: 1 hard-limit ask waiting');
     expect(body.text).toContain('Top P0: Phantom status (0m ago)');
 
     // The socket ack is transport bookkeeping, not delivery. The journaled

@@ -55,7 +55,7 @@ describe('buildStatusDigest Peers line', () => {
   });
   it('keeps the existing line order and appends Peers last', () => {
     const lines = buildStatusDigest({ ...base(peers({ nearCap: 1 })), workClaims: ok(null) });
-    expect(lines.map(l => l.split(':')[0])).toEqual(['App', 'Merges', 'Lanes', 'Needs Mason', 'Top P0', 'Claims', 'Peers']);
+    expect(lines.map(l => l.split(':')[0])).toEqual(['App', 'Merges', 'Lanes', 'Needs the owner', 'Top P0', 'Claims', 'Peers']);
   });
 });
 

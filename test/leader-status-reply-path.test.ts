@@ -77,6 +77,6 @@ describe('"Phantom status" over Slack gets the digest in the same channel', () =
     expect(body).toMatchObject({ channel: 'D000TEST', thread_ts: '1793920000.000001' });
     expect(body.text).toContain('Leader: Phantom status, 21:00 ET\n');
     for (const line of ['App: installed 3.29.15 · published 3.30.32 · update pending', 'Merges: 1 in the last hour · 1 in the last 24h',
-      'Lanes: claude 4/8', 'Needs Mason: 1 hard-limit ask waiting', 'Top P0: Phantom status (']) expect(body.text).toContain(line);
+      'Lanes: claude 4/8', 'Needs the owner: 1 hard-limit ask waiting', 'Top P0: Phantom status (']) expect(body.text).toContain(line);
   });
 });
