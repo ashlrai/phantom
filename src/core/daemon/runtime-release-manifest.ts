@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
   closeSync,
   constants as fsConstants,
@@ -8,17 +8,28 @@ import {
   opendirSync,
   readSync,
   realpathSync,
-  type BigIntStats,
 } from 'node:fs';
 import {
   isAbsolute,
   join,
   posix,
-  relative,
   resolve,
-  sep,
   win32,
 } from 'node:path';
+import {
+  RUNTIME_SHA256_RE as SHA256_RE,
+  domainCanonicalSha256,
+  equalSha256Digest as equalDigest,
+  formatStatSnapshotIdentity as snapshotIdentity,
+  hasExactKeys,
+  isBoundedSingleLineText as isBoundedText,
+  isPathContained as isContained,
+  isPlainRecord,
+  sameStatIdentity as sameIdentity,
+  sameStatSnapshot as sameSnapshot,
+  sha256Hex,
+  strictCanonicalJson,
+} from './runtime-protocol-shared.js';
 import {
   requireBeforeRuntimeReleaseObservationDeadline,
   RuntimeReleaseObservationDeadlineExceededError,
@@ -49,7 +60,6 @@ const MAX_DIRECTORY_ENTRIES = 1_024;
 const MAX_DIRECTORIES = 512;
 const MAX_JSON_NESTING_DEPTH = 128;
 const READ_CHUNK_BYTES = 64 * 1024;
-const SHA256_RE = /^[a-f0-9]{64}$/;
 const REVISION_RE = /^[a-f0-9]{40}$/;
 const NODE_VERSION_RE = /^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 const PACKAGE_MANIFEST_PATH = 'package.json';
@@ -74,8 +84,6 @@ const FIXED_ARTIFACT_PATHS = new Set([
   LOCAL_APP_TRANSACTION_PATH,
   ...PREPARATION_HELPER_PATHS,
 ]);
-
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export interface UnsignedRuntimeReleaseArtifact {
   executable: boolean;
@@ -217,44 +225,8 @@ function manifestTestHooks(
     .__testHooks;
 }
 
-function canonicalize(value: unknown, ancestors: Set<object>): JsonValue | undefined {
-  if (value === undefined) return undefined;
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new TypeError('non-finite JSON number');
-    return Object.is(value, -0) ? 0 : value;
-  }
-  if (typeof value !== 'object' || ancestors.has(value)) throw new TypeError('invalid JSON value');
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse JSON array');
-        const canonical = canonicalize(entry, ancestors);
-        if (canonical === undefined) throw new TypeError('undefined JSON array entry');
-        return canonical;
-      });
-    }
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new TypeError('non-plain JSON object');
-    }
-    const output: Record<string, JsonValue> = Object.create(null) as Record<string, JsonValue>;
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) {
-      const canonical = canonicalize(entry, ancestors);
-      if (canonical !== undefined) output[key] = canonical;
-    }
-    return output;
-  } finally {
-    ancestors.delete(value);
-  }
-}
-
 function canonicalJson(value: unknown): string {
-  const canonical = canonicalize(value, new Set<object>());
-  if (canonical === undefined) throw new TypeError('undefined root JSON value');
-  return JSON.stringify(canonical);
+  return strictCanonicalJson(value, { omitUndefinedProperties: true });
 }
 
 function manifestPayload(manifest: UnsignedRuntimeReleaseManifest): Omit<UnsignedRuntimeReleaseManifest, 'manifestDigest'> {
@@ -263,32 +235,9 @@ function manifestPayload(manifest: UnsignedRuntimeReleaseManifest): Omit<Unsigne
 }
 
 function manifestDigest(payload: Omit<UnsignedRuntimeReleaseManifest, 'manifestDigest'>): string {
-  return createHash('sha256')
-    .update(MANIFEST_DIGEST_DOMAINS[payload.schemaVersion], 'utf8')
-    .update('\n', 'utf8')
-    .update(canonicalJson(payload), 'utf8')
-    .digest('hex');
-}
-
-function equalDigest(left: string, right: string): boolean {
-  if (!SHA256_RE.test(left) || !SHA256_RE.test(right)) return false;
-  return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-
-function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
-
-function isBoundedText(value: unknown, max: number): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= max &&
-    !/[\0\r\n]/.test(value);
+  return domainCanonicalSha256(MANIFEST_DIGEST_DOMAINS[payload.schemaVersion], payload, {
+    omitUndefinedProperties: true,
+  });
 }
 
 function isReleasePath(value: unknown): value is string {
@@ -312,40 +261,6 @@ function isAbsoluteInterpreterPath(value: unknown): value is string {
   return isBoundedText(value, 16_384) &&
     (posix.isAbsolute(value) || win32.isAbsolute(value)) &&
     !value.includes('\0');
-}
-
-function isContained(root: string, candidate: string): boolean {
-  const nested = relative(root, candidate);
-  return nested !== '' && nested !== '..' && !nested.startsWith(`..${sep}`) && !isAbsolute(nested);
-}
-
-function sameIdentity(left: BigIntStats, right: BigIntStats): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
-function sameSnapshot(left: BigIntStats, right: BigIntStats): boolean {
-  return sameIdentity(left, right) &&
-    left.mode === right.mode &&
-    left.uid === right.uid &&
-    left.gid === right.gid &&
-    left.nlink === right.nlink &&
-    left.size === right.size &&
-    left.mtimeNs === right.mtimeNs &&
-    left.ctimeNs === right.ctimeNs;
-}
-
-function snapshotIdentity(stat: BigIntStats): string {
-  return [
-    stat.dev,
-    stat.ino,
-    stat.mode,
-    stat.uid,
-    stat.gid,
-    stat.nlink,
-    stat.size,
-    stat.mtimeNs,
-    stat.ctimeNs,
-  ].map(String).join(':');
 }
 
 function snapshotRegularFile(
@@ -855,7 +770,7 @@ function completeReleaseScan(
     layout.paths,
     parsedInventory.inventory,
   );
-  const packageManifestSha256 = createHash('sha256').update(packageBytes).digest('hex');
+  const packageManifestSha256 = sha256Hex(packageBytes);
   if (!equalDigest(packageManifestSha256, parsedInventory.inventory.package.manifestSha256)) {
     throw new Error('runtime dependency inventory package manifest mismatch');
   }
@@ -894,7 +809,7 @@ function completeReleaseScan(
     directories,
     interpreter: { ...interpreter, path: interpreterPath },
     dependencyInventory: parsedInventory.inventory,
-    dependencyInventorySha256: createHash('sha256').update(dependencyInventoryBytes).digest('hex'),
+    dependencyInventorySha256: sha256Hex(dependencyInventoryBytes),
     installedDependencyTreeSha256: installedDependencies.installedTreeSha256,
     packageName: pkg.name,
     packageVersion: pkg.version,

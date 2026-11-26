@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
   closeSync,
   constants as fsConstants,
@@ -14,6 +14,18 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fsyncDirectory } from '../util/durability.js';
+import {
+  RUNTIME_SHA256_RE as SHA256_RE,
+  domainBytesSha256 as domainBytesDigest,
+  domainCanonicalSha256 as domainDigest,
+  equalSha256Digest as equalDigest,
+  formatStatSnapshotIdentity as snapshotIdentity,
+  isPathContained as contained,
+  parseStrictCanonicalJsonBytes,
+  sameStatSnapshot as sameSnapshot,
+  strictCanonicalJson as canonicalJson,
+  type RuntimeJsonValue as JsonValue,
+} from './runtime-protocol-shared.js';
 import {
   requireBeforeRuntimeReleaseObservationDeadline,
   type RuntimeReleaseObservationDeadline,
@@ -37,9 +49,9 @@ import {
 
 const STAGED_TREE_IDENTITY_DOMAIN =
   'ashlr:runtime-release-immutable-staged-tree:v1';
-export const RUNTIME_RELEASE_IMMUTABLE_STAGED_TREE_RECEIPT_DOMAIN_V2 =
+const RUNTIME_RELEASE_IMMUTABLE_STAGED_TREE_RECEIPT_DOMAIN_V2 =
   'ashlr:runtime-release-immutable-staged-tree-receipt:v2' as const;
-export const RUNTIME_RELEASE_LAUNCH_OBSERVATION_RECEIPT_DOMAIN_V2 =
+const RUNTIME_RELEASE_LAUNCH_OBSERVATION_RECEIPT_DOMAIN_V2 =
   'ashlr:runtime-release-launch-observation-receipt:v2' as const;
 const ARTIFACT_ROOT_DOMAIN = 'ashlr:runtime-release-artifact-root:v1';
 const INTERPRETER_ROOT_DOMAIN = 'ashlr:runtime-release-interpreter-root:v1';
@@ -65,19 +77,10 @@ const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_BYTES = 64 * 1024;
 const MAX_POLICY_BYTES = 64 * 1024;
 const READ_CHUNK_BYTES = 64 * 1024;
-const SHA256_RE = /^[a-f0-9]{64}$/;
 const REVISION_RE = /^[a-f0-9]{40}$/;
 const KEY_ID_RE = /^ed25519-sha256:[a-f0-9]{64}$/;
 const POLICY_ID_RE = /^sha256:[a-f0-9]{64}$/;
 const HOST_PLATFORM = process.platform;
-
-type JsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | JsonValue[]
-  | { [key: string]: JsonValue };
 
 interface FileObservation {
   bytes?: Buffer;
@@ -273,117 +276,12 @@ export type ObserveRuntimeReleaseLaunchInputsResult =
   }
   | { ok: false; reason: string };
 
-function canonicalize(value: unknown, ancestors: Set<object>): JsonValue {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new TypeError('non-finite JSON number');
-    return Object.is(value, -0) ? 0 : value;
-  }
-  if (typeof value !== 'object' || ancestors.has(value)) {
-    throw new TypeError('invalid JSON value');
-  }
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse JSON array');
-        return canonicalize(entry, ancestors);
-      });
-    }
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new TypeError('non-plain JSON object');
-    }
-    const output = Object.create(null) as Record<string, JsonValue>;
-    for (const key of Object.keys(value as Record<string, unknown>)
-      .sort((left, right) => left < right ? -1 : left > right ? 1 : 0)) {
-      output[key] = canonicalize((value as Record<string, unknown>)[key], ancestors);
-    }
-    return output;
-  } finally {
-    ancestors.delete(value);
-  }
-}
-
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalize(value, new Set<object>()));
-}
-
 function parseCanonicalJsonBytes(
   input: string | Buffer,
   maxBytes: number,
   label: string,
 ): string {
-  const bytes = Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf8');
-  if (bytes.length === 0 || bytes.length > maxBytes) {
-    throw new Error(`${label} byte length is invalid`);
-  }
-  const text = bytes.toString('utf8');
-  if (!Buffer.from(text, 'utf8').equals(bytes)) {
-    throw new Error(`${label} is not valid UTF-8`);
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new Error(`${label} is not valid JSON`);
-  }
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${label} must be a JSON object`);
-  }
-  const encoded = `${canonicalJson(value)}\n`;
-  if (encoded !== text) throw new Error(`${label} encoding is not canonical`);
-  return encoded;
-}
-
-function domainDigest(domain: string, value: unknown): string {
-  return createHash('sha256')
-    .update(domain, 'utf8')
-    .update('\n', 'utf8')
-    .update(canonicalJson(value), 'utf8')
-    .digest('hex');
-}
-
-function domainBytesDigest(domain: string, value: string | Buffer): string {
-  return createHash('sha256')
-    .update(domain, 'utf8')
-    .update('\n', 'utf8')
-    .update(value)
-    .digest('hex');
-}
-
-function equalDigest(left: string, right: string): boolean {
-  if (!SHA256_RE.test(left) || !SHA256_RE.test(right)) return false;
-  return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
-}
-
-function sameIdentity(left: BigIntStats, right: BigIntStats): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
-function sameSnapshot(left: BigIntStats, right: BigIntStats): boolean {
-  return sameIdentity(left, right) &&
-    left.mode === right.mode &&
-    left.uid === right.uid &&
-    left.gid === right.gid &&
-    left.nlink === right.nlink &&
-    left.size === right.size &&
-    left.mtimeNs === right.mtimeNs &&
-    left.ctimeNs === right.ctimeNs;
-}
-
-function snapshotIdentity(stat: BigIntStats): string {
-  return [
-    stat.dev,
-    stat.ino,
-    stat.mode,
-    stat.uid,
-    stat.gid,
-    stat.nlink,
-    stat.size,
-    stat.mtimeNs,
-    stat.ctimeNs,
-  ].map(String).join(':');
+  return parseStrictCanonicalJsonBytes(input, maxBytes, label, { requireObject: true }).canonicalJson;
 }
 
 function requireImmutable(stat: BigIntStats, label: string): void {
@@ -402,12 +300,6 @@ function requireBeforeDeadline(
   label: string,
 ): void {
   requireBeforeRuntimeReleaseObservationDeadline(deadline, label);
-}
-
-function contained(root: string, candidate: string): boolean {
-  const nested = relative(root, candidate);
-  return nested !== '' && nested !== '..' && !nested.startsWith(`..${sep}`) &&
-    !isAbsolute(nested);
 }
 
 function canonicalDirectory(path: string, label: string): string {

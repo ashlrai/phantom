@@ -7,22 +7,27 @@
  * broker must own those effects and the acknowledgement transport.
  */
 
-import {
-  createHash,
-  createPublicKey,
-  sign,
-  timingSafeEqual,
-  verify,
-  type KeyObject,
-} from 'node:crypto';
+import { sign, type KeyObject } from 'node:crypto';
 
 import { canonicalizeDaemonActivationValue } from './activation-permit.js';
+import {
+  RUNTIME_SHA256_RE as SHA256_RE,
+  canonicalValuesEqual,
+  decodeCanonicalBase64url as canonicalBase64url,
+  decodeCanonicalJsonFrame,
+  equalSha256Digest as sameDigest,
+  isCanonicalTimestamp as canonicalTimestamp,
+  runtimePermitKeyId,
+  sha256Hex as sha256,
+  strictDataRecord as dataRecord,
+  verifyEd25519RuntimePermit,
+} from './runtime-protocol-shared.js';
 
 export const RUNTIME_ACTIVATION_RESIDENT_START_PROTOCOL =
   'runtime-activation-resident-start-v1' as const;
-export const RUNTIME_ACTIVATION_RESIDENT_START_PERMIT_DOMAIN =
+const RUNTIME_ACTIVATION_RESIDENT_START_PERMIT_DOMAIN =
   'ashlr:runtime-activation-resident-start:permit:v1' as const;
-export const RUNTIME_ACTIVATION_RESIDENT_START_ACK_DOMAIN =
+const RUNTIME_ACTIVATION_RESIDENT_START_ACK_DOMAIN =
   'ashlr:runtime-activation-resident-start:ack:v1' as const;
 
 const PERMIT_SIGNATURE_DOMAIN = `${RUNTIME_ACTIVATION_RESIDENT_START_PERMIT_DOMAIN}\0`;
@@ -31,7 +36,6 @@ const MAX_ACK_FRAME_BYTES = 64 * 1024;
 const MAX_PERMIT_VALIDITY_MS = 120_000;
 const MAX_FUTURE_SKEW_MS = 30_000;
 const MAX_ACK_DEADLINE_MS = 30_000;
-const SHA256_RE = /^[a-f0-9]{64}$/u;
 const SHA1_RE = /^[a-f0-9]{40}$/u;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const KEY_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
@@ -159,62 +163,6 @@ export interface RuntimeActivationResidentStartEvidenceResultV1 {
   acknowledgementDigest: string | null;
 }
 
-function dataRecord(
-  value: unknown,
-  expectedKeys: readonly string[],
-): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  let prototype: object | null;
-  let descriptors: Record<string, PropertyDescriptor>;
-  let keys: PropertyKey[];
-  try {
-    prototype = Object.getPrototypeOf(value) as object | null;
-    descriptors = Object.getOwnPropertyDescriptors(value);
-    keys = Reflect.ownKeys(value);
-  } catch {
-    return null;
-  }
-  if (prototype !== Object.prototype && prototype !== null) return null;
-  if (keys.some((key) => typeof key !== 'string')) return null;
-  const actual = (keys as string[]).sort();
-  const expected = [...expectedKeys].sort();
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) return null;
-  for (const key of actual) {
-    const descriptor = descriptors[key];
-    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function sha256(value: string | Buffer): string {
-  return createHash('sha256').update(value).digest('hex');
-}
-
-function sameDigest(left: string, right: string): boolean {
-  return SHA256_RE.test(left) && SHA256_RE.test(right)
-    && timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
-}
-
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
-function canonicalBase64url(value: unknown, bytes?: number): Buffer | null {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/u.test(value)) return null;
-  try {
-    const decoded = Buffer.from(value, 'base64url');
-    return decoded.length > 0
-      && (bytes === undefined || decoded.length === bytes)
-      && decoded.toString('base64url') === value
-      ? decoded
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 function parseBindings(value: unknown): RuntimeActivationResidentStartBindingsV1 | null {
   const record = dataRecord(value, [
     'activationId',
@@ -335,36 +283,10 @@ function parsePermitPayload(value: unknown): RuntimeActivationResidentStartPermi
   return payload as unknown as RuntimeActivationResidentStartPermitPayloadV1;
 }
 
-function decodeCanonicalFrame(
-  input: string | Buffer,
-  maxBytes: number,
-): { text: string; value: unknown } | null {
-  const bytes = Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf8');
-  if (bytes.length === 0 || bytes.length > maxBytes || bytes.at(-1) !== 0x0a) return null;
-  let text: string;
-  try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    return null;
-  }
-  if (Buffer.byteLength(text, 'utf8') !== bytes.length || !text.endsWith('\n')) return null;
-  let value: unknown;
-  try {
-    value = JSON.parse(text.slice(0, -1));
-  } catch {
-    return null;
-  }
-  try {
-    return `${canonicalizeDaemonActivationValue(value)}\n` === text ? { text, value } : null;
-  } catch {
-    return null;
-  }
-}
-
 export function parseRuntimeActivationResidentStartPermitFrame(
   input: string | Buffer,
 ): RuntimeActivationResidentStartPermitEnvelopeV1 | null {
-  const decoded = decodeCanonicalFrame(input, MAX_PERMIT_FRAME_BYTES);
+  const decoded = decodeCanonicalJsonFrame(input, MAX_PERMIT_FRAME_BYTES, canonicalizeDaemonActivationValue);
   return decoded ? parseRuntimeActivationResidentStartPermit(decoded.value) : null;
 }
 
@@ -381,11 +303,7 @@ export function runtimeActivationResidentStartPermitPayloadDigest(
 }
 
 export function runtimeActivationResidentStartKeyId(publicKey: KeyObject): string {
-  const spki = publicKey.export({ format: 'der', type: 'spki' });
-  return sha256(Buffer.concat([
-    Buffer.from(`${RUNTIME_ACTIVATION_RESIDENT_START_PERMIT_DOMAIN}:key\0`, 'utf8'),
-    spki,
-  ]));
+  return runtimePermitKeyId(RUNTIME_ACTIVATION_RESIDENT_START_PERMIT_DOMAIN, publicKey);
 }
 
 export function signRuntimeActivationResidentStartPermit(
@@ -405,53 +323,20 @@ export function verifyRuntimeActivationResidentStartPermit(
 ): string | null {
   const parsed = parseRuntimeActivationResidentStartPermit(envelope);
   if (!parsed) return 'runtime activation resident-start permit is invalid';
-  const issued = Date.parse(parsed.payload.issuedAt);
-  const expires = Date.parse(parsed.payload.expiresAt);
-  if (!Number.isFinite(nowMs)
-    || expires <= issued
-    || expires - issued > MAX_PERMIT_VALIDITY_MS
-    || nowMs < issued - MAX_FUTURE_SKEW_MS
-    || nowMs >= expires) {
-    return 'runtime activation resident-start permit is outside its validity window';
-  }
-  const parsedRoots: RuntimeActivationResidentStartTrustRootV1[] = [];
-  const seenKeyIds = new Set<string>();
-  for (const candidate of roots) {
-    const record = dataRecord(candidate, ['algorithm', 'keyId', 'publicKeySpki', 'validFrom', 'validUntil']);
-    if (!record
-      || record['algorithm'] !== 'ed25519'
-      || typeof record['keyId'] !== 'string' || !KEY_ID_RE.test(record['keyId'])
-      || canonicalBase64url(record['publicKeySpki']) === null
-      || !canonicalTimestamp(record['validFrom'])
-      || !canonicalTimestamp(record['validUntil'])
-      || seenKeyIds.has(record['keyId'])) {
-      return 'runtime activation resident-start signing root is unavailable';
-    }
-    seenKeyIds.add(record['keyId']);
-    parsedRoots.push(record as unknown as RuntimeActivationResidentStartTrustRootV1);
-  }
-  const root = parsedRoots.find((entry) => entry.keyId === parsed.payload.keyId) ?? null;
-  if (!root
-    || Date.parse(root.validFrom) > issued
-    || Date.parse(root.validUntil) < expires
-    || nowMs < Date.parse(root.validFrom)
-    || nowMs >= Date.parse(root.validUntil)) {
-    return 'runtime activation resident-start signing root is unavailable';
-  }
-  const spki = canonicalBase64url(root.publicKeySpki);
-  const signature = canonicalBase64url(parsed.signature, 64);
-  if (!spki || !signature) return 'runtime activation resident-start permit signature is invalid';
-  try {
-    const key = createPublicKey({ key: spki, format: 'der', type: 'spki' });
-    if (key.asymmetricKeyType !== 'ed25519'
-      || runtimeActivationResidentStartKeyId(key) !== root.keyId
-      || !verify(null, permitSigningBytes(parsed.payload), key, signature)) {
-      return 'runtime activation resident-start permit signature is invalid';
-    }
-  } catch {
-    return 'runtime activation resident-start permit signature is invalid';
-  }
-  return null;
+  return verifyEd25519RuntimePermit({
+    label: 'runtime activation resident-start',
+    permitDomain: RUNTIME_ACTIVATION_RESIDENT_START_PERMIT_DOMAIN,
+    issuedAt: parsed.payload.issuedAt,
+    expiresAt: parsed.payload.expiresAt,
+    keyId: parsed.payload.keyId,
+    signature: parsed.signature,
+    signingBytes: permitSigningBytes(parsed.payload),
+    roots,
+    nowMs,
+    maxValidityMs: MAX_PERMIT_VALIDITY_MS,
+    maxFutureSkewMs: MAX_FUTURE_SKEW_MS,
+    keyIdPattern: KEY_ID_RE,
+  });
 }
 
 function parseAuthority(value: unknown): typeof RUNTIME_ACTIVATION_RESIDENT_START_AUTHORITY | null {
@@ -537,7 +422,7 @@ export function parseRuntimeActivationResidentStartAcknowledgement(
 export function parseRuntimeActivationResidentStartAcknowledgementFrame(
   input: string | Buffer,
 ): RuntimeActivationResidentStartAcknowledgementV1 | null {
-  const decoded = decodeCanonicalFrame(input, MAX_ACK_FRAME_BYTES);
+  const decoded = decodeCanonicalJsonFrame(input, MAX_ACK_FRAME_BYTES, canonicalizeDaemonActivationValue);
   return decoded ? parseRuntimeActivationResidentStartAcknowledgement(decoded.value) : null;
 }
 
@@ -554,13 +439,7 @@ export function runtimeActivationResidentStartAcknowledgementFrame(
 }
 
 function canonicalEqual(left: unknown, right: unknown): boolean {
-  try {
-    const leftDigest = sha256(canonicalizeDaemonActivationValue(left));
-    const rightDigest = sha256(canonicalizeDaemonActivationValue(right));
-    return sameDigest(leftDigest, rightDigest);
-  } catch {
-    return false;
-  }
+  return canonicalValuesEqual(left, right, canonicalizeDaemonActivationValue);
 }
 
 /**

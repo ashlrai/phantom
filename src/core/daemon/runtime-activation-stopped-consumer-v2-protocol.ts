@@ -7,17 +7,21 @@
  * effects require a separately installed protected native broker.
  */
 
-import {
-  createHash,
-  createPublicKey,
-  sign,
-  timingSafeEqual,
-  verify,
-  type KeyObject,
-} from 'node:crypto';
+import { sign, type KeyObject } from 'node:crypto';
 import { posix } from 'node:path';
 
 import { canonicalizeDaemonActivationValue } from './activation-permit.js';
+import {
+  RUNTIME_SHA256_RE as SHA256_RE,
+  canonicalValuesEqual,
+  decodeCanonicalBase64url as canonicalBase64url,
+  decodeCanonicalJsonFrame,
+  isCanonicalTimestamp as canonicalTimestamp,
+  runtimePermitKeyId,
+  sha256Hex as sha256,
+  strictDataRecord as dataRecord,
+  verifyEd25519RuntimePermit,
+} from './runtime-protocol-shared.js';
 
 export const RUNTIME_ACTIVATION_STOPPED_CONSUMER_V2_PROTOCOL =
   'runtime-activation-stopped-consumer-v2' as const;
@@ -29,7 +33,6 @@ const MAX_PERMIT_FRAME_BYTES = 64 * 1024;
 const MAX_PERMIT_VALIDITY_MS = 120_000;
 const MAX_FUTURE_SKEW_MS = 30_000;
 const MAX_PATH_BYTES = 2_048;
-const SHA256_RE = /^[a-f0-9]{64}$/u;
 const SHA1_RE = /^[a-f0-9]{40}$/u;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const KEY_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
@@ -174,62 +177,6 @@ const BINDING_KEYS = [
   'serviceTarget',
 ] as const;
 
-function dataRecord(
-  value: unknown,
-  expectedKeys: readonly string[],
-): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  let prototype: object | null;
-  let descriptors: Record<string, PropertyDescriptor>;
-  let keys: PropertyKey[];
-  try {
-    prototype = Object.getPrototypeOf(value) as object | null;
-    descriptors = Object.getOwnPropertyDescriptors(value);
-    keys = Reflect.ownKeys(value);
-  } catch {
-    return null;
-  }
-  if (prototype !== Object.prototype && prototype !== null) return null;
-  if (keys.some((key) => typeof key !== 'string')) return null;
-  const actual = (keys as string[]).sort();
-  const expected = [...expectedKeys].sort();
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) return null;
-  for (const key of actual) {
-    const descriptor = descriptors[key];
-    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function sha256(value: string | Buffer): string {
-  return createHash('sha256').update(value).digest('hex');
-}
-
-function sameDigest(left: string, right: string): boolean {
-  return SHA256_RE.test(left) && SHA256_RE.test(right)
-    && timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
-}
-
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
-function canonicalBase64url(value: unknown, bytes?: number): Buffer | null {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/u.test(value)) return null;
-  try {
-    const decoded = Buffer.from(value, 'base64url');
-    return decoded.length > 0
-      && (bytes === undefined || decoded.length === bytes)
-      && decoded.toString('base64url') === value
-      ? decoded
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 function boundedAbsolutePath(value: unknown): value is string {
   return typeof value === 'string'
     && posix.isAbsolute(value)
@@ -357,34 +304,11 @@ export function parseRuntimeActivationStoppedConsumerV2Permit(
   }
 }
 
-function decodeCanonicalFrame(input: string | Buffer): unknown | null {
-  const bytes = Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf8');
-  if (bytes.length === 0 || bytes.length > MAX_PERMIT_FRAME_BYTES || bytes.at(-1) !== 0x0a) return null;
-  let text: string;
-  try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    return null;
-  }
-  if (Buffer.byteLength(text, 'utf8') !== bytes.length || !text.endsWith('\n')) return null;
-  let value: unknown;
-  try {
-    value = JSON.parse(text.slice(0, -1));
-  } catch {
-    return null;
-  }
-  try {
-    return `${canonicalizeDaemonActivationValue(value)}\n` === text ? value : null;
-  } catch {
-    return null;
-  }
-}
-
 export function parseRuntimeActivationStoppedConsumerV2PermitFrame(
   input: string | Buffer,
 ): RuntimeActivationStoppedConsumerV2PermitEnvelope | null {
-  const decoded = decodeCanonicalFrame(input);
-  return decoded ? parseRuntimeActivationStoppedConsumerV2Permit(decoded) : null;
+  const decoded = decodeCanonicalJsonFrame(input, MAX_PERMIT_FRAME_BYTES, canonicalizeDaemonActivationValue);
+  return decoded ? parseRuntimeActivationStoppedConsumerV2Permit(decoded.value) : null;
 }
 
 function permitSigningBytes(payload: RuntimeActivationStoppedConsumerV2PermitPayload): Buffer {
@@ -401,11 +325,7 @@ export function runtimeActivationStoppedConsumerV2PermitPayloadDigest(
 }
 
 export function runtimeActivationStoppedConsumerV2KeyId(publicKey: KeyObject): string {
-  const spki = publicKey.export({ format: 'der', type: 'spki' });
-  return sha256(Buffer.concat([
-    Buffer.from(`${RUNTIME_ACTIVATION_STOPPED_CONSUMER_V2_PERMIT_DOMAIN}:key\0`, 'utf8'),
-    spki,
-  ]));
+  return runtimePermitKeyId(RUNTIME_ACTIVATION_STOPPED_CONSUMER_V2_PERMIT_DOMAIN, publicKey);
 }
 
 export function signRuntimeActivationStoppedConsumerV2Permit(
@@ -431,70 +351,26 @@ export function verifyRuntimeActivationStoppedConsumerV2Permit(
 ): string | null {
   const parsed = parseRuntimeActivationStoppedConsumerV2Permit(envelope);
   if (!parsed) return 'runtime activation stopped-consumer v2 permit is invalid';
-  const issued = Date.parse(parsed.payload.issuedAt);
-  const expires = Date.parse(parsed.payload.expiresAt);
-  if (!Number.isFinite(nowMs)
-    || expires <= issued
-    || expires - issued > MAX_PERMIT_VALIDITY_MS
-    || nowMs < issued - MAX_FUTURE_SKEW_MS
-    || nowMs >= expires) {
-    return 'runtime activation stopped-consumer v2 permit is outside its validity window';
-  }
-  if (!Array.isArray(roots) || roots.length > 8) {
-    return 'runtime activation stopped-consumer v2 signing root is unavailable';
-  }
-  const parsedRoots: RuntimeActivationStoppedConsumerV2TrustRoot[] = [];
-  const seenKeyIds = new Set<string>();
-  for (const candidate of roots) {
-    const record = dataRecord(candidate, ['algorithm', 'keyId', 'publicKeySpki', 'validFrom', 'validUntil']);
-    if (!record
-      || record['algorithm'] !== 'ed25519'
-      || typeof record['keyId'] !== 'string' || !KEY_ID_RE.test(record['keyId'])
-      || canonicalBase64url(record['publicKeySpki']) === null
-      || !canonicalTimestamp(record['validFrom'])
-      || !canonicalTimestamp(record['validUntil'])
-      || Date.parse(record['validUntil']) <= Date.parse(record['validFrom'])
-      || seenKeyIds.has(record['keyId'])) {
-      return 'runtime activation stopped-consumer v2 signing root is unavailable';
-    }
-    seenKeyIds.add(record['keyId']);
-    parsedRoots.push(record as unknown as RuntimeActivationStoppedConsumerV2TrustRoot);
-  }
-  const root = parsedRoots.find((entry) => entry.keyId === parsed.payload.keyId) ?? null;
-  if (!root
-    || Date.parse(root.validFrom) > issued
-    || Date.parse(root.validUntil) < expires
-    || nowMs < Date.parse(root.validFrom)
-    || nowMs >= Date.parse(root.validUntil)) {
-    return 'runtime activation stopped-consumer v2 signing root is unavailable';
-  }
-  const spki = canonicalBase64url(root.publicKeySpki);
-  const signature = canonicalBase64url(parsed.signature, 64);
-  if (!spki || !signature) {
-    return 'runtime activation stopped-consumer v2 permit signature is invalid';
-  }
-  try {
-    const key = createPublicKey({ key: spki, format: 'der', type: 'spki' });
-    if (key.asymmetricKeyType !== 'ed25519'
-      || runtimeActivationStoppedConsumerV2KeyId(key) !== root.keyId
-      || !verify(null, permitSigningBytes(parsed.payload), key, signature)) {
-      return 'runtime activation stopped-consumer v2 permit signature is invalid';
-    }
-  } catch {
-    return 'runtime activation stopped-consumer v2 permit signature is invalid';
-  }
-  return null;
+  return verifyEd25519RuntimePermit({
+    label: 'runtime activation stopped-consumer v2',
+    permitDomain: RUNTIME_ACTIVATION_STOPPED_CONSUMER_V2_PERMIT_DOMAIN,
+    issuedAt: parsed.payload.issuedAt,
+    expiresAt: parsed.payload.expiresAt,
+    keyId: parsed.payload.keyId,
+    signature: parsed.signature,
+    signingBytes: permitSigningBytes(parsed.payload),
+    roots,
+    nowMs,
+    maxValidityMs: MAX_PERMIT_VALIDITY_MS,
+    maxFutureSkewMs: MAX_FUTURE_SKEW_MS,
+    keyIdPattern: KEY_ID_RE,
+    maxRoots: 8,
+    requireOrderedRootWindow: true,
+  });
 }
 
 function canonicalEqual(left: unknown, right: unknown): boolean {
-  try {
-    return sameDigest(
-      sha256(canonicalizeDaemonActivationValue(left)),
-      sha256(canonicalizeDaemonActivationValue(right)),
-    );
-  } catch {
-    return false;
-  }
+  return canonicalValuesEqual(left, right, canonicalizeDaemonActivationValue);
 }
 
 /**

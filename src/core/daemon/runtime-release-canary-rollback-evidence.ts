@@ -1,16 +1,18 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
-
+import {
+  RUNTIME_SHA256_RE as SHA256_RE,
+  equalSha256Digest as equalDigest,
+  sha256Hex as sha256,
+} from './runtime-protocol-shared.js';
 import {
   verifyRuntimeReleaseEvidenceEnvelope,
   type VerifyRuntimeReleaseEvidenceEnvelopeResult,
 } from './runtime-release-evidence-envelope.js';
 import { parseUnsignedRuntimeReleaseManifest } from './runtime-release-manifest.js';
 
-export const RUNTIME_RELEASE_CANARY_ROLLBACK_EVIDENCE_SCHEMA_VERSION = 2 as const;
-export const RUNTIME_RELEASE_CANARY_ROLLBACK_EVIDENCE_AUTHORITY =
+const RUNTIME_RELEASE_CANARY_ROLLBACK_EVIDENCE_SCHEMA_VERSION = 2 as const;
+const RUNTIME_RELEASE_CANARY_ROLLBACK_EVIDENCE_AUTHORITY =
   'observation-only' as const;
 
-const SHA256_RE = /^[a-f0-9]{64}$/;
 const REVISION_RE = /^[a-f0-9]{40}$/;
 
 export type RuntimeReleaseCanaryRollbackEvidenceBlockerCode =
@@ -149,15 +151,6 @@ function pinArtifact(
     manifest: bytes(artifact.manifest),
     trustRoot: bytes(artifact.trustRoot),
   };
-}
-
-function sha256(value: Buffer): string {
-  return createHash('sha256').update(value).digest('hex');
-}
-
-function equalDigest(left: string, right: string): boolean {
-  if (!SHA256_RE.test(left) || !SHA256_RE.test(right)) return false;
-  return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
 }
 
 function blocker(
