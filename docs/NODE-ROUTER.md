@@ -383,7 +383,10 @@ It also reduces measured runnable counts to zero, including in fleet totals
 that read older capacity documents. Unmeasured harness counts remain null.
 Kernel pressure above normal or swap growth stop placements and reduce
 measured runnable counts to zero in fleet totals. Both reads honor direct
-measurements and recorded limiter labels. A cloud
+measurements and recorded limiter labels. Without a known stop, a node needs
+measured normal pressure and measured memory headroom to accept placements
+or contribute runnable counts to fleet totals. Missing memory evidence
+produces `node-unmeasured` in the placement plan. A cloud
 CLI therefore costs a node only its own measured footprint. A whole-host
 backoff only happens when one of those gates is hit. A harness never seen on
 the node reports `null` (unknown), never a guess. The previous document supplies swap growth and footprints
@@ -409,8 +412,8 @@ harness independently. CPU cost stays `null` when no donor measured it.
 A node with its own memory footprint but an unknown CPU cost keeps its
 memory measurement and uses the largest eligible peer CPU cost, if available.
 The placement's `footprint` field identifies the source of the memory cost.
-A fresh snapshot from a node under pressure or swap growth can still supply
-a footprint. If no eligible measurement exists, the router reports
+A fresh snapshot can still supply a measured footprint when the node is held
+or its memory evidence is incomplete. If no eligible measurement exists, the router reports
 `footprint-unmeasured` for that candidate.
 
 An unplaced job's `rejected` counts name why: `provider-not-in-job` and
