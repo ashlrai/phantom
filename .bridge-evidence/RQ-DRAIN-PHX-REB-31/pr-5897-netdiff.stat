@@ -1,0 +1,20 @@
+ AGENTS.md                                          |   2 +
+ CHANGELOG.md                                       |  33 +++
+ README.md                                          |   3 +
+ docs/CLI-REFERENCE.md                              |   7 +-
+ docs/CODEMAP.md                                    |   6 +
+ docs/FLEET-API.md                                  |  21 ++
+ docs/FLEET-VERBS.md                                |   8 +
+ docs/QUICKSTART.md                                 |   2 +-
+ docs/cli.md                                        |   7 +-
+ examples/quickstart.md                             |   2 +-
+ notes.md                                           |  27 ---
+ site/llms-full.txt                                 |   2 +-
+ src/cli/completions.ts                             |   7 +-
+ src/cli/wb.ts                                      |   6 +
+ src/core/intent/native-stale.ts                    |  40 ++++
+ src/core/mcp-native.ts                             |  15 +-
+ task_plan.md                                       |  55 -----
+ test/intent-native-stale-preservation-232s.test.ts | 224 +++++++++++++++++++++
+ test/wb-secrets-cli.test.ts                        |  11 +
+ 19 files changed, 378 insertions(+), 100 deletions(-)

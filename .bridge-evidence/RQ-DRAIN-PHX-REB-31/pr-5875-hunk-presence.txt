@@ -1,0 +1,19 @@
+PR #5875: files=18 added(m>=8c)=455 present_on_master=189 deleted(m>=8c)=6 still_on_master=0
+  .github/CODEOWNERS: add all, del n/a
+  contrib/mac/README.md: add none, del n/a
+  contrib/mac/dispatchd.py: add 1/24, del n/a
+  contrib/mac/fleet-heavy: add none, del n/a [path absent on master]
+  contrib/mac/tests/test_fleet_heavy.py: add none, del n/a [path absent on master]
+  scripts/fleet-heavy.mjs: add none, del n/a [path absent on master]
+  scripts/test-ci.mjs: add none, del n/a
+  scripts/typecheck-fast.mjs: add none, del n/a
+  scripts/verify-changed.mjs: add none, del n/a
+  src/core/daemon/loop.ts: add all, del all
+  src/core/receipt/receipt-dispatch.ts: add all, del all
+  src/core/run/custody-capture.ts: add all, del n/a
+  src/core/run/engines.ts: add all, del n/a
+  test/custody-wrap-receipt.test.ts: add 100/106, del n/a
+  test/fixtures/authority/tier1-closure.json: add all, del n/a
+  test/m372.test-ci-watchdog.test.ts: add none, del n/a
+  test/verify-changed-dedupe.test.ts: add none, del n/a
+  test/verify-changed-tsc-cache.test.ts: add none, del n/a

@@ -1,0 +1,19 @@
+ .github/CODEOWNERS                         |   4 +
+ contrib/mac/README.md                      |  26 ++++++
+ contrib/mac/dispatchd.py                   |  26 ++++++
+ contrib/mac/fleet-heavy                    |  92 +++++++++++++++++++
+ contrib/mac/tests/test_fleet_heavy.py      | 123 +++++++++++++++++++++++++
+ scripts/fleet-heavy.mjs                    |  14 +++
+ scripts/test-ci.mjs                        |   3 +
+ scripts/typecheck-fast.mjs                 |   2 +
+ scripts/verify-changed.mjs                 |   2 +
+ src/core/daemon/loop.ts                    |  12 ++-
+ src/core/receipt/receipt-dispatch.ts       |  15 ++-
+ src/core/run/custody-capture.ts            |  74 +++++++++++++++
+ src/core/run/engines.ts                    |  13 +++
+ test/custody-wrap-receipt.test.ts          | 143 +++++++++++++++++++++++++++++
+ test/fixtures/authority/tier1-closure.json |   1 +
+ test/m372.test-ci-watchdog.test.ts         |   3 +
+ test/verify-changed-dedupe.test.ts         |   3 +
+ test/verify-changed-tsc-cache.test.ts      |   3 +
+ 18 files changed, 553 insertions(+), 6 deletions(-)

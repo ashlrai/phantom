@@ -1,20 +1,44 @@
-# RQ-DRAIN-PHX-REB-01 outcomes
+# RQ-DRAIN-PHX-REB-31 outcomes
 
-All six PRs were open and matched their supplied heads when inspected on 2026-11-24. Master used for merge-tree analysis: `11a917d5c872c86a2acd15f742a1f24efc2b4723`.
+All six PRs were verified: supplied head SHAs match the GitHub API exactly, but every PR
+was already **closed unmerged** (batch-closed by owner `masonwyatt23` on
+2026-11-24T22:35:36Z-49Z with an identical stale-closure comment: "conflicted with master
+since 2026-11-15... If the change is still wanted, re-cut the job from current master or
+reopen this PR. (Backlog drain by Devin, standing autonomy.)"), roughly 23.5 hours before
+this job's dispatch roster snapshot. Per the task's step 1 (skip if the PR is not open),
+all six were skipped: no rework, no merge, no push, no closure, no comment.
 
-| PR | Action | New head SHA | Hosted check status at unchanged head | Replacement URL if closed |
+Lineage, verified with merge-base retries against pinned master
+`f4d32986e72f724dbe755b39076739de2175cecc`: all six heads descend from the pre-recut root
+`814f3c385d` while current master has a single root `30da2cce8c`, so none of the six has
+any common ancestor with master. Merging current master into these branches is impossible
+without unrelated-history reconciliation, which is why they were permanently dirty; the
+owner's re-cut guidance is the only recovery path.
+
+| PR | Action | New head SHA | Check status | Replacement URL if closed |
 | --- | --- | --- | --- | --- |
-| [8564](https://github.com/ashlrai/phantom/pull/8564) | blocked | none; unchanged `0c6d0d4069e74411737b72ad0ffa0cd0c83a7c17` | Merge Gate and Fast gate success; merge conflicts | n/a |
-| [8544](https://github.com/ashlrai/phantom/pull/8544) | blocked | none; unchanged `a3d7c3469e4e50387b7ced6c82169ba692e169bf` | Merge Gate and Fast gate failure; merge conflicts | n/a |
-| [8491](https://github.com/ashlrai/phantom/pull/8491) | blocked | none; unchanged `787e7dd47e0768516e8e10b4c8affad368f4ba48` | Merge Gate and Fast gate success; merge conflicts | n/a |
-| [8376](https://github.com/ashlrai/phantom/pull/8376) | blocked | none; unchanged `bd9fccf1ce616f8876dddbd15f3afe133779ba6a` | Merge Gate and Fast gate success; merge conflicts | n/a |
-| [8319](https://github.com/ashlrai/phantom/pull/8319) | blocked | none; unchanged `787834a312e47348910e744bb27f2dcbe1227859` | Merge Gate and Fast gate failure; merge conflicts | n/a |
-| [8316](https://github.com/ashlrai/phantom/pull/8316) | blocked | none; unchanged `ec300acd1fef8fbcd6188fbd2f62fd175dc963d9` | Merge Gate, Fast gate and Quick typecheck failure; merge conflicts | n/a |
+| [5897](https://github.com/ashlrai/phantom/pull/5897) | skipped: closed stale by owner before dispatch; no action possible or needed | none; unchanged `8abebe7868938ca9151ae94b88ebb81cbd5c61f8` | not run by this job (no new head); last hosted state dirty (merge conflicts) | intent-stale slice landed via [#5572](https://github.com/ashlrai/phantom/pull/5572); no replacement for the small unlanded `wb --help` slice |
+| [5894](https://github.com/ashlrai/phantom/pull/5894) | skipped: closed stale by owner before dispatch; no action possible or needed | none; unchanged `84cb3a1698d4c703308ad7b0542a0f8d498b7cb7` | not run by this job (no new head); last hosted state dirty (merge conflicts) | landed slices replaced by [#5550](https://github.com/ashlrai/phantom/pull/5550), [#5482](https://github.com/ashlrai/phantom/pull/5482), [#5441](https://github.com/ashlrai/phantom/pull/5441); no replacement for the unlanded cli-registry-sort tooling |
+| [5885](https://github.com/ashlrai/phantom/pull/5885) | skipped: closed stale by owner before dispatch; no action possible or needed | none; unchanged `725d3b712c13665f85687201ce269a30fab018ec` | not run by this job (no new head); last hosted state dirty (merge conflicts) | test landed by pre-existing M2-era commit; 3 fixture entries remain unlanded, no replacement |
+| [5875](https://github.com/ashlrai/phantom/pull/5875) | skipped: closed stale by owner before dispatch; no action possible or needed | none; unchanged `785bda519657dd224150b38fb4b9fa5780a4fc0d` | not run by this job (no new head); last hosted state dirty (merge conflicts) | custody slice landed via [#3926](https://github.com/ashlrai/phantom/pull/3926) and pre-existing commits; no replacement for the unlanded fleet-heavy runner |
+| [5870](https://github.com/ashlrai/phantom/pull/5870) | skipped: closed stale by owner before dispatch; no action possible or needed | none; unchanged `bdfeea1df026efa5092498f71aa46119afba04b8` | not run by this job (no new head); last hosted state dirty (merge conflicts) | work-result slice landed via [#5550](https://github.com/ashlrai/phantom/pull/5550); no replacement for the 45 unlanded files (connect, routing, fleet-status, ecosystem-changelog) |
+| [5869](https://github.com/ashlrai/phantom/pull/5869) | skipped: closed stale by owner before dispatch; no action possible or needed | none; unchanged `634536080548239a2bc951fd48e272a762be8043` | not run by this job (no new head); last hosted state dirty (merge conflicts) | action-classes core landed via [#6380](https://github.com/ashlrai/phantom/pull/6380); no replacement for the unlanded `fleet-action-classes` CLI verb |
 
-Secret-shape scan, Secret scan (diff), generated-files and authority-drift checks succeeded at all six inspected heads. No check-run named exactly `secret-shape` or `clean-tree` appeared in these responses; no required-check configuration was read or changed. The separate Vercel commit status failed on all six; this is not a Merge Gate verdict.
+Supersession accounting (full detail in `.bridge-evidence/RQ-DRAIN-PHX-REB-31/` and
+`disposition-notes.md`): each PR is a single commit on its pre-recut parent, so its own
+change is `git diff prhead^ prhead`, compared per file (blob identity) and per hunk
+(added-line presence on master) against pinned master. Landed fractions of meaningful
+added lines: 5897 216/301, 5894 1952/2767, 5885 7/10, 5875 189/455, 5870 3668/13803,
+5869 820/1110. Unlanded unique work (candidate re-cut targets, none covered by any open
+PR): the `wb` read-verb help slice (5897); cli-registry-sort tooling plus partial slack/
+recheck hunks (5894); 3 authority-closure fixture entries (5885); the fleet-heavy runner
+and CI-script changes (5875); 45 files spanning connect, routing, fleet-status and
+ecosystem-changelog (5870); the fleet-action-classes CLI verb and mac install integration
+(5869).
 
-The final task instruction forbids commits, pushes, tags and publishing. No merge commit, push, auto-merge update, closure or PR comment was performed. The GitHub CLI could not read its protected configuration; connected tools available here provide GitHub reads only. Blocker comments could not be posted through those tools. All six remain open.
-
-Supersession is not fully established. Merged [8569](https://github.com/ashlrai/phantom/pull/8569) replaces desktop-error recurrence with different IDs and validation. Open [8415](https://github.com/ashlrai/phantom/pull/8415) recovers the worker-session slice of 8376, including identical session-test blobs. Open [8409](https://github.com/ashlrai/phantom/pull/8409) explicitly covers only the skill-revert slice of 8316. None justifies claiming complete preservation of every change without further accounting. Conflict details are in notes.md.
-
-The requested external handoff directory could not be created: OS permission denied. This worktree-local RESULT.md is the fallback. No credentials were read or copied to work around access restrictions.
+No merge commit, push, auto-merge update, closure or PR comment was performed: the origin
+push URL is no_push, the GitHub CLI cannot read its protected configuration on this host,
+the publisher is operator-only, and the job's final rules forbid commits, pushes and
+publishing. No credentials were read or copied to work around access restrictions. The
+requested operator handoff directory could not be created (OS permission denied); this
+worktree-local RESULT.md is the fallback, as with RQ-DRAIN-PHX-REB-01.
