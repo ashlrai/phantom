@@ -9,7 +9,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
-import { executeNodeFleet, UsageError } from '../src/core/drive/nodes/commands.js';
+import { executeNodeFleet, parseNodeFleetFlags, runNodeFleet, UsageError } from '../src/core/drive/nodes/commands.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { cmdNodeFleet } from '../src/cli/node-fleet.js';
 
@@ -168,6 +168,56 @@ describe('an --owner the store does not know names the scopes it does', () => {
       expect(Object.keys(parsed).sort()).toEqual(['command', 'jobs', 'nodes', 'owners', 'routes', 'schemaVersion']);
       expect(parsed.nodes).toEqual([]);
       expect(parsed.jobs).toEqual([]);
+    } finally { vi.restoreAllMocks(); }
+  });
+});
+
+describe('unrouted-job join fixes carry --watch on the standalone path', () => {
+  // One live node under 'ops' and two unrouted jobs: j1 has no node in its
+  // owner scope at all (the join fix), j2 has a node that lacks its cap (the
+  // caps fix, which names no join command).
+  function seed(): { store: MemoryStore; nodes: DriveNodes } {
+    const store = new MemoryStore();
+    const nodes = new DriveNodes(store);
+    executeNodeFleet('join', ['--node', 'box', '--owner', 'ops'], nodes);
+    executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], nodes);
+    executeNodeFleet('enqueue', ['--job', 'j2', '--owner', 'ops', '--requires', 'build'], nodes);
+    return { store, nodes };
+  }
+  const fixOf = (out: Record<string, unknown>, jobId: string): string | undefined =>
+    (out['routes'] as { jobId: string; fix?: string }[]).find(r => r.jobId === jobId)?.fix;
+
+  it('the pool endpoint keeps the bare join hint; the standalone path adds --watch', () => {
+    const { nodes } = seed();
+    // executeNodeFleet is the SSH/pool endpoint: rejoinWatch stays unset, so
+    // the fix keeps the bare join — pool joins release their probe session and
+    // `join --watch` is refused there.
+    const pooled = executeNodeFleet('plan', ['--owner', 'acme'], nodes);
+    expect(fixOf(pooled, 'j1')).toBe("No live node belongs to owner 'acme'. Run: phm node join --owner acme");
+
+    // runNodeFleet with rejoinWatch is the standalone CLI path: the same fix
+    // ends in --watch so the pasted join also holds the session live.
+    const local = runNodeFleet('plan', parseNodeFleetFlags('plan', ['--owner', 'acme']), nodes, () => 'unknown', { rejoinWatch: true });
+    expect(fixOf(local, 'j1')).toBe("No live node belongs to owner 'acme'. Run: phm node join --owner acme --watch");
+  });
+
+  it('status and list carry the same hint; a fix naming no join is untouched', () => {
+    const { nodes } = seed();
+    for (const verb of ['status', 'list'] as const) {
+      const out = runNodeFleet(verb, parseNodeFleetFlags(verb, ['--owner', 'acme,ops']), nodes, () => 'unknown', { rejoinWatch: true });
+      expect(fixOf(out, 'j1'), verb).toContain('phm node join --owner acme --watch');
+      // The caps fix names no join command, so it is never rewritten.
+      expect(fixOf(out, 'j2'), verb).toBe("No node owned by 'ops' advertises build. Rejoin a node with --caps including them.");
+    }
+  });
+
+  it('status text shows the watch hint on the pending job line end to end', async () => {
+    const { store } = seed();
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], { store })).toBe(0);
+      expect(lines.at(-1)).toContain("job j1 pending — No live node belongs to owner 'acme'. Run: phm node join --owner acme --watch");
     } finally { vi.restoreAllMocks(); }
   });
 });
