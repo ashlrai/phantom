@@ -71,14 +71,10 @@ import {
 
 const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
-/**
- * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
- * recordedAt|updatedAt — the same field set and order dispatchd `_vc_pick`
- * and metrics/loop accept. `at` stays the row's own stamp; the GitHub merge
- * time is read separately through MERGED_AT_KEYS.
- */
-const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-const MERGED_AT_KEYS = ['mergedAt', 'merged_at', 'closedAt', 'closed_at'] as const;
+// Terminal timestamps belong to the matching verdict. Generic receipt timestamps
+// can date any row and independently bound when a verdict becomes observable.
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'recordedAt', 'updatedAt'] as const;
+const MERGED_AT_KEYS = ['mergedAt', 'merged_at'] as const;
 const CLOSED_AT_KEYS = ['closedAt', 'closed_at'] as const;
 const REVERTED_AT_KEYS = ['revertedAt', 'reverted_at'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
@@ -292,13 +288,13 @@ export function foldJobsLedgerRewards(
     } catch { continue; }
     const id = firstString(row, JOB_ID_KEYS);
     if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
-    const at = timestampOf(row, TS_KEYS);
-    if (at !== null && at > nowMs) continue;
     const state = outcomeStateOf(row);
     const isMerge = row['merged'] === true || MERGE_STATES.has(state);
     const isClose = !isMerge && (row['merged'] === false || CLOSED_STATES.has(state));
     const resolvedAt = isMerge ? timestampOf(row, MERGED_AT_KEYS)
       : isClose ? timestampOf(row, CLOSED_AT_KEYS) : null;
+    const at = timestampOf(row, TS_KEYS) ?? resolvedAt;
+    if (at !== null && at > nowMs) continue;
     // A future verdict cannot establish PR ownership or supply other evidence yet.
     if (resolvedAt !== null && resolvedAt > nowMs) continue;
     if (claims !== null) {

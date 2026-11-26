@@ -780,7 +780,10 @@ arrived later. The latest effective merge time selects the rewarded attempt.
 Receipt, merge, close and revert timestamps accept ISO strings or numeric
 epoch milliseconds. Merge and close receipts enter the reward fold only once
 both their receipt and effective resolution timestamps are within the evaluation
-time. A future resolution cannot contest a standing revert's PR claim.
+time. Merge verdicts use `mergedAt` or `merged_at`, and closed-unmerged verdicts
+use `closedAt` or `closed_at`. A matching resolution timestamp can date a
+terminal receipt on its own. A generic receipt timestamp dates the resolution
+when the matching field is absent or unusable. A future resolution cannot contest a standing revert's PR claim.
 A revert at or after that merge changes its verdict. When the revert
 receipt identifies a GitHub PR by URL, it can change only the verdict for
 that PR, even if another PR used the same job ID. The reward feed reads PR

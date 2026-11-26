@@ -567,6 +567,32 @@ describe('foldJobsLedgerRewards', () => {
     expect(foldJobsLedgerRewards([launch(job), future].join('\n'), NOW_MS)).toEqual([]);
   });
 
+  it.each([
+    ['MERGED', 'merged_at'],
+    ['CLOSED', 'closed_at'],
+  ])('accepts a %s verdict dated solely by %s', (state, field) => {
+    const job = 'RQ-RESOLUTION-ONLY';
+    const text = [launch(job), line({ job, state, [field]: MERGED_ISO })].join('\n');
+    const held = state === 'MERGED';
+    expect(foldJobsLedgerRewards(text, NOW_MS)).toMatchObject([{
+      dispatchedAt: DISPATCH_ISO, merged: held, mergedAt: held ? MERGED_ISO : null,
+    }]);
+  });
+
+  it.each(['closedAt', 'closed_at'])('keeps %s out of the merge time', (field) => {
+    const job = 'RQ-UNRELATED-CLOSE';
+    const receipt = { job, state: 'MERGED', [field]: '2026-10-28T17:00:00Z' };
+    expect(foldJobsLedgerRewards([launch(job), line(receipt)].join('\n'), NOW_MS)).toEqual([]);
+    const text = [
+      launch(job),
+      launch(job, 'devin', '2026-10-28T16:00:00Z'),
+      line({ ...receipt, ts: MERGED_ISO }),
+    ].join('\n');
+    expect(foldJobsLedgerRewards(text, NOW_MS)).toMatchObject([{
+      dispatchedAt: DISPATCH_ISO, merged: true, mergedAt: MERGED_ISO,
+    }]);
+  });
+
   it('orders a timestamp-only epoch-millisecond revert by its effective time', () => {
     const job = 'RQ-EPOCH-REVERT';
     const revert = (timestamp: number) => line({
