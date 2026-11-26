@@ -1746,6 +1746,54 @@ describe('Trajectory records', () => {
     });
   });
 
+  it('withholds skill outcomes until the third selection and its receipt are in the snapshot', () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(TS3));
+    try {
+      const options = {
+        windowHours: 24,
+        deps: deps({
+          readDispatchProductionEvents: () => [
+            dispatch({ ts: TS1, proposalId: undefined, runId: 'run-a', trajectoryId: 'traj-a' }),
+            dispatch({ ts: TS2, proposalId: undefined, runId: 'run-b', trajectoryId: 'traj-b' }),
+            dispatch({ ts: TS3, proposalId: undefined, runId: 'run-c', trajectoryId: 'traj-c' }),
+          ],
+          readSkillUseEvents: () => [
+            skillUse({ eventId: 'skill-use:a', proposalId: undefined, runId: 'run-a', trajectoryId: 'traj-a' }),
+            skillUse({ eventId: 'skill-use:b', proposalId: undefined, runId: 'run-b', trajectoryId: 'traj-b' }),
+            skillUse({
+              eventId: 'skill-use:c-future-receipt',
+              ts: TS4,
+              selectedAt: TS3,
+              proposalId: undefined,
+              runId: 'run-c',
+              trajectoryId: 'traj-c',
+            }),
+            skillUse({
+              eventId: 'skill-use:c-future-selection',
+              ts: TS3,
+              selectedAt: TS4,
+              proposalId: undefined,
+              runId: 'run-c',
+              trajectoryId: 'traj-c',
+            }),
+          ],
+        }),
+      };
+
+      const before = summarizeTrajectoryLearning(listTrajectoryRecords(options), 24);
+      expect(before.skillObservation.sampleState).toBe('insufficient-sample');
+      expect(before.skillOutcomes).toBeUndefined();
+
+      clock.mockReturnValue(Date.parse(TS4));
+      const atBoundary = summarizeTrajectoryLearning(listTrajectoryRecords(options), 24);
+      expect(atBoundary.skillObservation.sampleState).toBe('observed');
+      expect(atBoundary.skillObservation.observedTrajectoryCoverage.count).toBe(3);
+      expect(atBoundary.skillObservation.joined).toBe(3);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('preserves joined mode and stage totals when the trajectory array is copied', () => {
     const records = listTrajectoryRecords({
       windowHours: 1000,
