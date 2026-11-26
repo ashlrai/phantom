@@ -404,6 +404,9 @@ For a node without its own harness footprint, routing can borrow measurements
 from other nodes whose latest snapshots pass the same freshness check.
 A borrowed footprint uses the largest observed memory and CPU costs for the
 harness independently. CPU cost stays `null` when no donor measured it.
+A node with its own memory footprint but an unknown CPU cost keeps its
+memory measurement and uses the largest eligible peer CPU cost, if available.
+The placement's `footprint` field identifies the source of the memory cost.
 A fresh snapshot from a node under pressure or swap growth can still supply
 a footprint. If no eligible measurement exists, the router reports
 `footprint-unmeasured` for that candidate.
