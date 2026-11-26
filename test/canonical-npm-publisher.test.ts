@@ -4,7 +4,7 @@ import {mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, readFileSync
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {parse} from 'yaml';
-import {publisherInput, bindAttestedArtifact, acceptPackageIdentity, verifyHandoff, assertRegistryPackage, assertLatestPromotion, verifyCanonicalProvenance, reconcileRegistry, reconcileLatest, installPublishedPackage, installPublishedArgs, INSTALL_ETARGET_ATTEMPTS, INSTALL_ETARGET_DELAY_MS} from '../scripts/canonical-npm-publisher.mjs';
+import {publisherInput, bindAttestedArtifact, acceptPackageIdentity, verifyHandoff, assertRegistryPackage, assertLatestPromotion, verifyCanonicalProvenance, publicationStatus, reconcileRegistry, reconcileLatest, installPublishedPackage, installPublishedArgs, INSTALL_ETARGET_ATTEMPTS, INSTALL_ETARGET_DELAY_MS} from '../scripts/canonical-npm-publisher.mjs';
 import {resolveReleaseSourceRef} from '../scripts/hosted-build-artifact.mjs';
 const hash = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 const env = {GITHUB_REPOSITORY: 'ashlrai/phantom', GITHUB_REPOSITORY_ID: '1263526319', GITHUB_REPOSITORY_OWNER_ID: '258113726',
@@ -104,6 +104,7 @@ describe('canonical npm publication admission', () => {
     expect(workflow.permissions).toEqual({});
     expect(workflow.jobs.admit.permissions['id-token']).toBeUndefined();
     expect(workflow.jobs.publish.needs).toBe('admit');
+    expect(workflow.jobs.consumer.needs).toEqual(['admit', 'publish']);
     const tagCheck = workflow.jobs.admit.steps.find((step: {name?: string}) => step.name === 'Verify release tag before publication');
     expect(tagCheck.run).toContain('scripts/verify-release-policy.mjs --prepublish-tag');
     expect(tagCheck.run).toContain('set -euo pipefail');
@@ -121,6 +122,13 @@ describe('canonical npm publication admission', () => {
     expect(promotion.match(/npm dist-tag add/g)).toHaveLength(1);
     expect(promotion.indexOf('npm dist-tag add')).toBeLessThan(promotion.indexOf('latest-readback'));
     expect(promotion).not.toContain('Latest readback differs');
+  });
+  it('allows publication only for confirmed absence and verifies the archive before the consumer', () => {
+    const workflow = parse(readFileSync(new URL('../.github/workflows/publish-canonical-npm.yml', import.meta.url), 'utf8'));
+    const steps: {name?: string; run?: string}[] = workflow.jobs.publish.steps;
+    const publish = steps.findIndex(step => step.name === 'Publish original archive once or reconcile public presence');
+    expect(steps[publish].run).toMatch(/publication-status[^\n]*\nif \[\[ "\$status" == 'absent' \]\]; then\n(?: *#[^\n]*\n)? *npm publish[^\n]*\nelif \[\[ "\$status" != 'present' \]\]; then/);
+    expect(steps[publish + 1].run).toContain('canonical-npm-publisher.mjs registry');
   });
   it('initializes runner-local npm configuration after runner assignment', () => {
     const workflow = parse(readFileSync(new URL('../.github/workflows/publish-canonical-npm.yml', import.meta.url), 'utf8'));
@@ -172,6 +180,38 @@ describe('public registry processing', () => {
     dist: {tarball: `https://registry.npmjs.org/@ashlr/phantom/-/phantom-${accepted.version}.tgz`, integrity: accepted.integrity,
       attestations: {provenance: {predicateType: 'https://slsa.dev/provenance/v1'}}}});
   const installCatalog = (metadata = versionMetadata()) => ({name: accepted.name, versions: {[accepted.version]: metadata}});
+  it('reconciles an already published version after a stale exact-version 404', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-recovery-'));
+    const metadata = versionMetadata();
+    const read = vi.fn().mockResolvedValueOnce(new Response('', {status: 404}))
+      .mockResolvedValueOnce(Response.json({...installCatalog(metadata), 'dist-tags': {latest: '3.26.1', 'qualified-9-1': accepted.version}}))
+      .mockResolvedValueOnce(Response.json(metadata)).mockResolvedValueOnce(Response.json(installCatalog(metadata)))
+      .mockResolvedValueOnce(new Response(bytes));
+    vi.stubGlobal('fetch', read);
+    try {
+      expect(await publicationStatus(accepted)).toBe('present');
+      await reconcileRegistry(accepted, dir);
+      expect(JSON.parse(readFileSync(join(dir, 'registry-metadata.json'), 'utf8'))).toEqual(metadata);
+      expect(read.mock.calls.map(([url]) => String(url))).toEqual([
+        `https://registry.npmjs.org/@ashlr%2Fphantom/${accepted.version}`,
+        'https://registry.npmjs.org/@ashlr%2Fphantom',
+        `https://registry.npmjs.org/@ashlr%2Fphantom/${accepted.version}`,
+        'https://registry.npmjs.org/@ashlr%2Fphantom',
+        metadata.dist.tarball,
+      ]);
+      for (const [, options] of read.mock.calls) expect(options?.method).toBeUndefined();
+    } finally {vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
+  });
+  it.each([
+    [{latest: '3.26.1', 'qualified-9-1': accepted.version}, 'present'],
+    [{latest: '3.26.1'}, 'absent'],
+  ])('only reports absence if neither the packument versions nor its tags mention the version: %j', async (tags, expected) => {
+    const read = vi.fn().mockResolvedValueOnce(new Response('', {status: 404}))
+      .mockResolvedValueOnce(Response.json({name: accepted.name, versions: {}, 'dist-tags': tags}));
+    vi.stubGlobal('fetch', read);
+    try {expect(await publicationStatus(accepted)).toBe(expected);}
+    finally {vi.unstubAllGlobals();}
+  });
   it('reconciles a stale latest read without replaying publication or tag changes', async () => {
     vi.useFakeTimers();
     const read = vi.fn().mockResolvedValueOnce(Response.json(packument('3.26.1')))
@@ -282,7 +322,7 @@ describe('public registry processing', () => {
       }
       const [catalogUrl, catalogOptions] = read.mock.calls.at(-2)!;
       expect(catalogUrl).toBe('https://registry.npmjs.org/@ashlr%2Fphantom');
-      expect(catalogOptions).toEqual({redirect: 'error', signal: expect.any(AbortSignal), headers: {Accept: 'application/vnd.npm.install-v1+json'}});
+      expect(catalogOptions).toEqual({redirect: 'error', signal: expect.any(AbortSignal), headers: {'Cache-Control': 'no-cache', Accept: 'application/vnd.npm.install-v1+json'}});
       const [url, options] = read.mock.calls.at(-1)!;
       expect(String(url)).toBe(metadata.dist.tarball);
       expect(options).toEqual({redirect: 'error', signal: expect.any(AbortSignal)});
@@ -368,7 +408,7 @@ describe('public registry processing', () => {
       await vi.runAllTimersAsync(); await rejected;
       expect(Date.now() - started).toBe(900_000);
       const attempts = [0, 2000, 6000, ...Array.from({length: 178}, (_, index) => 11000 + index * 5000)];
-      expect(catalogTimes).toEqual(attempts); expect(versionTimes).toEqual([...attempts, 900_000]);
+      expect(catalogTimes).toEqual(attempts); expect(versionTimes).toEqual(attempts);
       expect(existsSync(join(dir, 'registry-metadata.json'))).toBe(false); expect(vi.getTimerCount()).toBe(0);
     } finally {log.mockRestore(); vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
   });
@@ -392,9 +432,39 @@ describe('public registry processing', () => {
     vi.stubGlobal('fetch', read);
     try {
       await reconcileRegistry(accepted, dir);
-      expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([30_000, 10, 30_000]);
+      expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([30_000, 10, 10]);
       expect(read).toHaveBeenCalledTimes(3); expect(vi.getTimerCount()).toBe(0);
     } finally {timeout.mockRestore(); vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
+  });
+  it('never accepts an archive that finishes reading at the deadline', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-catalog-'));
+    vi.useFakeTimers(); const started = Date.now();
+    const read = vi.fn().mockResolvedValueOnce(Response.json(versionMetadata()))
+      .mockResolvedValueOnce(Response.json(installCatalog()))
+      .mockImplementationOnce(async () => {vi.setSystemTime(started + 900_000); return new Response(bytes);});
+    vi.stubGlobal('fetch', read);
+    try {
+      await expect(reconcileRegistry(accepted, dir)).rejects.toThrow('Public registry');
+      expect(read).toHaveBeenCalledTimes(3);
+      expect(existsSync(join(dir, 'registry-metadata.json'))).toBe(false);
+    } finally {vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
+  });
+  it('backs off when headers arrive but the registry response body fails to read', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-catalog-'));
+    vi.useFakeTimers(); const started = Date.now();
+    const broken = Response.json(versionMetadata());
+    vi.spyOn(broken, 'text').mockRejectedValueOnce(new TypeError('terminated'));
+    const read = vi.fn().mockResolvedValueOnce(broken).mockResolvedValueOnce(Response.json(versionMetadata()))
+      .mockResolvedValueOnce(Response.json(installCatalog())).mockResolvedValueOnce(new Response(bytes));
+    vi.stubGlobal('fetch', read);
+    try {
+      const pending = reconcileRegistry(accepted, dir);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(read).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2000); await pending;
+      expect(Date.now() - started).toBe(2000);
+      expect(read).toHaveBeenCalledTimes(4);
+    } finally {vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
   });
   it('refuses malformed install-catalog JSON immediately', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-catalog-')); vi.useFakeTimers();
@@ -418,7 +488,7 @@ describe('public registry processing', () => {
     } finally {vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
   });
 
-  it('keeps the fifteen-minute registry deadline with capped waits and logs the final failure', async () => {
+  it('keeps the fifteen-minute registry deadline without reading again at expiry', async () => {
     vi.useFakeTimers();
     const started = Date.now();
     const times: number[] = [];
@@ -431,9 +501,10 @@ describe('public registry processing', () => {
     try {
       const rejected = expect(reconcileRegistry(accepted, 'unused')).rejects.toThrow('Public registry is still processing or unavailable');
       await vi.runAllTimersAsync(); await rejected;
-      expect(times).toEqual([0, 2000, 6000, ...Array.from({length: 178}, (_, index) => 11000 + index * 5000), 900000]);
+      expect(Date.now() - started).toBe(900_000);
+      expect(times).toEqual([0, 2000, 6000, ...Array.from({length: 178}, (_, index) => 11000 + index * 5000)]);
       expect(log).toHaveBeenCalledTimes(times.length);
-      expect(log).toHaveBeenLastCalledWith(`Registry verification attempt ${times.length}: elapsed=900000ms HTTP status=404`);
+      expect(log).toHaveBeenLastCalledWith(`Registry verification attempt ${times.length}: elapsed=896000ms HTTP status=404`);
       expect(vi.getTimerCount()).toBe(0);
     } finally {log.mockRestore(); vi.useRealTimers(); vi.unstubAllGlobals();}
   });

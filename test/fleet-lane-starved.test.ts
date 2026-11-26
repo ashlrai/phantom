@@ -158,7 +158,10 @@ describe('lanes read: starved object', () => {
     ].join('\n'));
     await writeFile(join(queueDir, 'status.json'), JSON.stringify({
       last_tick: new Date(NOW).toISOString(),
-      lanes: { claude: { running: 0 } },
+      lanes: {
+        claude: { running: 0, target: 8, held: false },
+        devin: { running: 0, target: 4, held: false },
+      },
     }));
     await writeFile(join(queueDir, 'slots.json'), JSON.stringify({
       claude: { target: 8, floor: 8, ceiling: 12 },
