@@ -1222,6 +1222,25 @@
  *     unified inbox's point-in-time projection, so a request kind that
  *     kept expiring — an ask Mason never answered, a queue that never
  *     drained, a transport that kept refusing — never became work;
+ *   - the selector ranker's recurring 7d miscalibration: the
+ *     {pickId, window, gradedAt, predicted, realized, hit, features}
+ *     rows runPickGrader appends to ~/.ashlr/picks/grades.jsonl on
+ *     every non-dry `phm select` pass — the hourly selector schedule's
+ *     own prediction-versus-outcome journal, resolved through the
+ *     writer's pickGraderPaths (pickGradesBacklogItems below). Until
+ *     now the journal's only readers were the grader's dedupe set and
+ *     the daily line's accuracy fragment, so a ranker whose confident
+ *     picks kept realizing far below their predictions — or whose
+ *     low-scored picks kept merging anyway — looked identical to a
+ *     calibrated one while the SGD step nudged weights blindly. A
+ *     class emits only at three distinct pick ids across two UTC days
+ *     inside the 7-day window, signed error at the recorded margin in
+ *     either direction (the hit flag's coin-flip misses are context,
+ *     never cells), 24h grades count as context only since the fleet's
+ *     own contract never grades trust on the early read, a withheld
+ *     journal suppresses the source, truncated tails are stated as
+ *     lower bounds, and only the fleet's own repository inherits the
+ *     items since the grades describe this install's funded picks;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1344,6 +1363,7 @@ import { reasoningInsightBacklogItems } from './reasoning-insight-backlog.js';
 import { fleetGapBacklogItems } from './fleet-gap-backlog.js';
 import { needsYouAutoBacklogItems } from './needs-you-auto-backlog.js';
 import { commsRequestsBacklogItems } from './comms-requests-backlog.js';
+import { pickGradesBacklogItems } from './pick-grades-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2896,6 +2916,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // describes this install's comms traffic and carries no repository
   // column.
   items.push(...await commsRequestsBacklogItems({ repo }));
+
+  // Selector pick grades: the {pickId, window, gradedAt, predicted,
+  // realized, hit, features} rows runPickGrader appends to
+  // ~/.ashlr/picks/grades.jsonl on every non-dry `phm select` pass —
+  // syncPickGrades' own prediction-versus-outcome journal, resolved
+  // through the writer's pickGraderPaths. Until now the journal fed
+  // only the grader's dedupe set, the weights.json SGD step and the
+  // daily line's accuracy fragment — reports someone had to run — so
+  // recurring 7d miscalibration never became work. A class emits only
+  // at three distinct pick ids across two UTC days inside the window,
+  // signed error at the recorded margin in either direction (24h
+  // grades are context only — the fleet's own contract never grades
+  // trust on the early read), a withheld journal suppresses the
+  // source, truncated tails are stated as lower bounds, and only the
+  // fleet's own repository inherits the items since the grades
+  // describe this install's funded picks.
+  items.push(...await pickGradesBacklogItems({ repo }));
   return { items, errors };
 }
 
