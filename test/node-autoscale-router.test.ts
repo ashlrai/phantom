@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { computeNodeCapacity, parseNodeCapacityDoc, type NodeSnapshot } from '../src/core/drive/nodes/capacity-model.js';
+import { CAPACITY_POLICY, computeNodeCapacity, parseNodeCapacityDoc, type NodeSnapshot } from '../src/core/drive/nodes/capacity-model.js';
 import {
   fleetFootprints, fleetRunnable, mergeRate, planAutoscaleRoutes, type HarnessModelCost, type RouteNode,
 } from '../src/core/drive/nodes/autoscale-router.js';
@@ -44,6 +44,33 @@ const COSTS: HarnessModelCost[] = [
 ];
 
 describe('autoscale router scoring', () => {
+  it('expires learned costs for local placements, peer borrowing and runnable totals while the snapshot is fresh', () => {
+    const learnedAt = T0 - CAPACITY_POLICY.learnedFootprintTtlMs;
+    const prior = computeNodeCapacity(mbp({ measuredAtMs: learnedAt }));
+    const doc = computeNodeCapacity(mbp({ sessions: [] }), prior);
+    const peer = node(mbp8());
+    const input = { costs: [COSTS[0]!], outcomes: {}, jobs: [{ id: 'j' }] };
+    expect(doc.agents_runnable_now.codex).toBeGreaterThan(0);
+    expect(planAutoscaleRoutes({ ...input, nodes: [{ doc }], nowMs: T0 })[0]).toMatchObject({
+      nodeId: doc.node, footprint: 'node',
+    });
+    expect(planAutoscaleRoutes({ ...input, nodes: [{ doc, providers: [] }, peer], nowMs: T0 })[0]).toMatchObject({
+      nodeId: peer.doc.node, footprint: 'fleet',
+    });
+    expect(fleetRunnable([doc], T0).codex).toBe(doc.agents_runnable_now.codex);
+
+    const nowMs = T0 + 1;
+    expect(planAutoscaleRoutes({ ...input, nodes: [{ doc }, peer], nowMs })[0]).toMatchObject({
+      nodeId: null, rejected: { 'footprint-unmeasured': 2 },
+    });
+    expect(fleetRunnable([doc, peer.doc], nowMs).codex).toBeNull();
+    const freshDonor = node(mbp({ node: 'fresh', measuredAtMs: nowMs }), { providers: [] });
+    expect(planAutoscaleRoutes({ ...input, nodes: [{ doc }, freshDonor], nowMs })[0]).toMatchObject({
+      nodeId: doc.node, footprint: 'fleet',
+    });
+    expect(fleetRunnable([{ ...doc, swap: { ...doc.swap, growing: true } }], nowMs).codex).toBe(0);
+  });
+
   it.each([
     [84.95, 0.3, 1],
     [84.92, 0.8, 0],
