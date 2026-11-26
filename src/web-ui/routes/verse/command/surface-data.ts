@@ -172,6 +172,7 @@ export function optionalQuery<T>(key: string, path: string | (() => string), wha
 
 export const authorityQuery = optionalQuery(SURFACE_KEYS.authority, AUTHORITY_PATH, 'The authority service', narrow.authority);
 export const authorityDraftQuery = optionalQuery(SURFACE_KEYS.authorityDraft, AUTHORITY_DRAFT_PATH, 'The grant draft', narrow.draft);
+export const authorityNewRepoDraftQuery = optionalQuery('authority-new-repo-draft', `${AUTHORITY_DRAFT_PATH}?kind=new`, 'The new grant draft', narrow.draft);
 /** 3.15: the same draft with the one `elite-direct` rung (elite models land on green tests, no judge). */
 export const authorityEliteDraftQuery = optionalQuery(SURFACE_KEYS.authorityEliteDraft, `${AUTHORITY_DRAFT_PATH}?eliteDirect=1`, 'The elite-direct grant draft', narrow.draft);
 export const fleetLiveQuery = optionalQuery(SURFACE_KEYS.fleetLive, FLEET_LIVE_PATH, 'The live fleet view', narrow.fleetLive);

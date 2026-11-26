@@ -2,6 +2,8 @@
 import json
 import math
 import re
+from collections import defaultdict
+from pathlib import Path
 
 TIERS = {"fast": 0, "mid": 1, "work": 2, "frontier": 3}
 COSTS = {"local": 0, "included": 1, "metered": 2}
@@ -104,6 +106,55 @@ def from_envelope(attrs, prompt=""):
 
 def priority(spec):
     return (int(spec.get("priority", "P2")[1:]), -spec.get("impact", 0))
+
+
+def repo_key(label):
+    label = label.lower()
+    if "/" not in label: label = "ashlrai/" + label
+    return label if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,38}/[a-z0-9][a-z0-9._-]{0,99}", label) else None
+
+
+def repo_priority(home, repo):
+    if not repo: return "normal"
+    try:
+        with open(Path(home) / ".ashlr" / "repo-priority" / repo.replace("/", "@"), encoding="utf-8") as source:
+            value = source.read(16).strip()
+        return value if value in ("boost", "pause") else "normal"
+    except (OSError, UnicodeError): return "normal"
+
+
+def repo_shares(rows, home):
+    """Rows are (canonical repo, job ID, work spec, observed merge rate)."""
+    evidence = defaultdict(list)
+    for repo, job, spec, rate in rows:
+        if repo: evidence[repo].append((job, spec, rate))
+    result = {}
+    for repo, jobs in sorted(evidence.items()):
+        nudge = repo_priority(home, repo)
+        reasons = ["flat_baseline", "ready_work"]
+        score = 1 + min(.5, math.log2(1 + len(jobs)) / 5)
+        impact = max((max(0, job[1].get("impact", 0)) for job in jobs), default=0)
+        for present, code, bonus in (
+            (any(j.upper().startswith("RQ-FIX-MAIN-") for j, _, _ in jobs), "default_branch_ci_fix_ready", 1),
+            (any(re.search(r"(?:^|[-_])(?:BUG|REGRESSION)(?:[-_]|$)", j, re.I) for j, _, _ in jobs), "bug_fix_ready", .6),
+            (any(re.search(r"(?:^|[-_])(?:RESEARCH|EVAL)(?:[-_]|$)", j, re.I) for j, _, _ in jobs), "research_work_ready", .3),
+            (impact > 0, "declared_mission_impact", min(.75, math.log2(1 + impact) / 5)),
+        ):
+            if present:
+                score += bonus
+                reasons.append(code)
+        rates = [rate for _, _, rate in jobs if rate is not None]
+        if rates and max(rates) > 0:
+            score += .5 * max(rates)
+            reasons.append("historical_solution_yield")
+        if nudge != "normal": reasons.append("owner_" + nudge)
+        score *= {"normal": 1, "boost": 1.25, "pause": 0}[nudge]
+        result[repo] = dict(schema="work-market.v1", event="repo_share", repo=repo, priority=nudge,
+                            score=score, share=0, reason_codes=reasons)
+    total = sum(row["score"] for row in result.values())
+    if total > 0:
+        for row in result.values(): row["share"] = row["score"] / total
+    return result
 
 
 def work_class(spec, tier):

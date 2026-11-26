@@ -39,7 +39,7 @@ import { useCommandHandler } from '../shell/command-bus.js';
 import { findCommand } from '../shell/command-catalog.js';
 import { shellNotify } from '../shell/run-command.js';
 import { actionForDraft, SWITCH_LABEL, SWITCH_RANK, classifySwitch, grantChip, stopOutcomeSentence, switchOptions, type ChipTone } from './authority-model.js';
-import { GrantSheet, type GrantIntent } from './GrantSheet.js';
+import { GrantSheet, type GrantIntent, type RepoGrantChange } from './GrantSheet.js';
 import { postAuthority, type OptionalRead } from './surface-data.js';
 import type { ConfirmSpec, SurfaceActions } from './actions.js';
 import styles from './command.module.css';
@@ -80,13 +80,13 @@ export interface GrantFlow {
    * `then`: the switch position to apply after signing, if the new grant allows it.
    * `edit` (3.15): open straight into the scope editor.
    */
-  open: (intent: GrantIntent, why: string, then?: AutonomySwitch | null, opts?: { edit?: boolean }) => void;
+  open: (intent: GrantIntent, why: string, then?: AutonomySwitch | null, opts?: { edit?: boolean; repoChange?: RepoGrantChange }) => void;
   /** Render once (the bar does unless its owner passes the flow in). */
   sheet: ReactNode;
 }
 
 export function useGrantFlow(actions: SurfaceActions): GrantFlow {
-  const [sheet, setSheet] = useState<{ intent: GrantIntent; then: AutonomySwitch | null; why: string; edit: boolean } | null>(null);
+  const [sheet, setSheet] = useState<{ intent: GrantIntent; then: AutonomySwitch | null; why: string; edit: boolean; repoChange?: RepoGrantChange | undefined } | null>(null);
 
   function approve(draft: AuthorityGrantDraft): void {
     if (!sheet) return;
@@ -112,7 +112,7 @@ export function useGrantFlow(actions: SurfaceActions): GrantFlow {
   }
 
   return {
-    open: (intent, why, then = null, opts = {}) => setSheet({ intent, then, why, edit: opts.edit === true }),
+    open: (intent, why, then = null, opts = {}) => setSheet({ intent, then, why, edit: opts.edit === true, repoChange: opts.repoChange }),
     sheet: (
       <GrantSheet
         open={sheet !== null}
@@ -125,6 +125,7 @@ export function useGrantFlow(actions: SurfaceActions): GrantFlow {
         onClose={() => setSheet(null)}
         act={actions.act}
         startEditing={sheet?.edit === true}
+        repoChange={sheet?.repoChange}
       />
     ),
   };
