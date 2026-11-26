@@ -429,6 +429,33 @@ describe('owner thread', () => {
     expect(await proveOwnerDirectMessage(slackProbe({ id: 'C123', is_im: false }, ['U0123456789', 'U0BOTUSER1']).call, 'slack:T123:C123:1700000000.000100', 'U0123456789')).toBe(false);
   });
 
+  it('threads a Telegram owner reply under the inbound message id and never fails on a foreign ref', async () => {
+    const forged = mkdtempSync(join(tmpdir(), 'owner-telegram-'));
+    roots.push(forged);
+    const ash = join(forged, '.ashlr');
+    mkdirSync(join(ash, 'comms'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(ash, 'agent-network.toml'),
+      '[mason]\nidentities = [{ channel = "telegram", id = "telegram:4242" }]\n' +
+      '[team]\nidentities = [{ channel = "telegram", id = "telegram:4242" }]\n', { mode: 0o600 });
+    writeFileSync(join(ash, 'comms', 'owner-adapters.toml'),
+      '[telegram]\nsecretHandle = "phm_TELEGRAM_BOT_TOKEN"\n', { mode: 0o600 });
+    writeFileSync(join(ash, 'config.json'),
+      JSON.stringify({ comms: { telegram: { chatId: '4242' } } }), { mode: 0o600 });
+    vi.stubEnv('HOME', forged);
+    try {
+      const replyTargets: (number | undefined)[] = [];
+      const transports = liveOwnerTransports(loadOwnerThreadSettings(ash), join(forged, '.ashlr-runs'), {
+        telegramSend: async (_text, opts) => { replyTargets.push(opts?.replyToMessageId); return { ok: true, messageId: 1 }; },
+      });
+      const deliver = transports.telegram!.deliver;
+      expect((await deliver({ idempotencyKey: 'tg-key-0001', text: 'threaded', ownerId: 'telegram:4242', channelRef: '777001' })).status).toBe('sent');
+      expect((await deliver({ idempotencyKey: 'tg-key-0002', text: 'plain', ownerId: 'telegram:4242', channelRef: 'slack:T123:D123:1700000000.000100' })).status).toBe('sent');
+      expect((await deliver({ idempotencyKey: 'tg-key-0003', text: 'plain', ownerId: 'telegram:4242' })).status).toBe('sent');
+      expect((await deliver({ idempotencyKey: 'tg-key-0004', text: 'no', ownerId: 'telegram:9999', channelRef: '777001' })).status).toBe('refused');
+      expect(replyTargets).toEqual([777001, undefined, undefined]);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('blocks a delivery when KILL is armed after the reply is queued', async () => {
     const home = mkdtempSync(join(tmpdir(), 'owner-kill-'));
     roots.push(home);

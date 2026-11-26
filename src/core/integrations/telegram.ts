@@ -122,6 +122,18 @@ export interface PollResult {
   newOffset: number;
 }
 
+/**
+ * The message id a stored channel ref names, or undefined when the ref is not
+ * one. Telegram thread refs carry `String(messageId)` (the same grammar
+ * telegram-inbox-bridge and the Leader delivery path already enforce); a ref
+ * of any other shape is simply not a reply target and never fails a send.
+ */
+export function telegramReplyMessageId(channelRef: string | null | undefined): number | undefined {
+  if (typeof channelRef !== 'string' || !/^[1-9]\d*$/.test(channelRef)) return undefined;
+  const id = Number(channelRef);
+  return Number.isSafeInteger(id) ? id : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
