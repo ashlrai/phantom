@@ -4505,7 +4505,9 @@ carries the needle as a case-insensitive whitespace-collapsed substring;
 stored kind — the item's own classification, finer than `source` where one
 source emits several kinds (the `bus` source's
 `bus-work`/`bus-handoff`/`bus-dead-letter` split, the `board` source's
-`board-delivery`/`board-task` split) — and
+`board-delivery`/`board-task` split, the `work-board` source's
+`work-board-received`/`work-board-assigned`/`work-board-blocked` pending-state
+split) — and
 ANDs with every other view dimension while the per-source `pending`
 reports stay the unfiltered store truth;
 and

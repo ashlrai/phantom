@@ -335,7 +335,28 @@ pending`/`ack` for a delivery and `phm bus task claim`/`list` or `phm bus
 board pending` for a task, an absent board is `missing`, an unreadable
 board, config or queue is `unavailable`, and unreadable claims or a
 truncated item list is `degraded`, never an empty list passed off as fact —
-plus agent
+plus the coordination work board's pending requests (`phm fleet work-board`,
+the `listWorkBoard`/`classifyWorkItem` projection `fleet_work_board` and the
+cloud work-board route also serve): every durable bus request envelope the
+board classifies RECEIVED (no named owner or durable claim receipt yet),
+ASSIGNED (owned but its running evidence stale or absent) or BLOCKED (a
+reply named what it waits on) lists with its state as the kind —
+`work-board-received`/`work-board-assigned`/`work-board-blocked` — while
+RUNNING (fresh running evidence) and VERIFIED (proof of completion) never
+list, since done or provably progressing work is not pending. An envelope
+the bus source already represents — claimable work, a worker handoff or a
+`work.post` feed announcement — stays under `bus`, one pending thing one
+item, so what lists here is only what the board's ownership classification
+adds. `since` is the request's recorded `receivedAt`; `expiresAt` stays
+null (a retained receipt has no deadline). Items name the envelope id,
+channel, owner, claim receipt and missing-evidence list — never message
+bodies — and carry no provable job citation, so `--job` never matches;
+severity is warn for RECEIVED and BLOCKED, info for ASSIGNED, all
+non-blocking agent coordination. An unreadable inbox scan is `unavailable`
+with a null pending — never an empty board passed off as fact — and
+unreadable claims or coordination evidence, or a truncated board, is
+`degraded`. Act: `phm fleet work-board --state <state>`, `phm fleet
+work-trace --id <id>` — plus agent
 conversation threads still needing a person — the same `waiting` and
 `blocked` threads the one shared conversations projection computes,
 fleet-wide: a waiting item names who must answer, how long it has waited
