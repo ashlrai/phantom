@@ -2400,6 +2400,16 @@ merges these tallies under any explicit `--outcomes` file (file wins per
 provider) and reports `outcomes_ledger` state in its JSON plan. See
 [measured capacity and routing](docs/NODE-ROUTER.md#measured-capacity-and-node-provider-model-routing).
 
+## Router calibration
+
+`src/core/routing/calibration.ts` returns schema-version-1 calibration reports.
+Each `CalibrationArm` includes `observedMergeRate: number | null`, the number
+of recorded positive merge outcomes divided by `resolved`. The field is null
+when the arm has no resolved outcomes. `mergeRate` and `brier` use the
+prediction-paired population. Baseline comparisons expose
+`delta.observedMergeRate` as current minus baseline, or null when either
+rate is unavailable.
+
 ## Router queue generation
 
 `runQueuegenCycle` takes explicit repository scope in `QueuegenOptions.repos`.
