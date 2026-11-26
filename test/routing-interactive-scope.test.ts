@@ -133,7 +133,7 @@ describe('interactive routing (default) keeps the pre-3.10 rule', () => {
   });
 
   it('budget reserves do NOT apply interactively (they protect interactive headroom)', () => {
-    // 80% of the five-hour window is above the balanced 70% autonomy ceiling.
+    updateBudgetPolicy({ seatId: 'claude', policy: { maxSessionWindowPercent: 70 } });
     writeCapacitySnapshot([claudeSeat(80, 10)]);
     const d = routeTask(hardItem(), cfg(), ctx(['claude', 'builtin']));
     expect(d.engine).toBe('claude');
@@ -175,10 +175,10 @@ describe('autonomous routing fails closed and applies the budget', () => {
     expect(d.engine).not.toBe('claude');
   });
 
-  it('balanced: above the 70% five-hour ceiling holds claude back', () => {
-    writeCapacitySnapshot([claudeSeat(80, 10)]);
+  it.each([[80, 'claude'], [100, 'builtin']])('balanced: %i percent five-hour usage routes to %s', (used, engine) => {
+    writeCapacitySnapshot([claudeSeat(used, 10)]);
     const d = routeTask(hardItem(), cfg(), ctx(['claude', 'builtin'], true));
-    expect(d.engine).not.toBe('claude');
+    expect(d.engine).toBe(engine);
   });
 
   it('the balanced default permits Codex autonomy with a fresh eligible reading', () => {

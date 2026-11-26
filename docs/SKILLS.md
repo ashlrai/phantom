@@ -32,6 +32,8 @@ proved did not hold never seeds a "recovery" draft. A merged,
 non-reverted job that needed a retry, a
 recut, or recovered a failure class seen on three earlier failed jobs seeds
 one bounded draft card.
+For recurrence, Phantom orders jobs by their latest terminal outcome row in
+the retained ledger. Later bookkeeping rows do not change that order.
 
 These cards are `candidate`/`imported` shadow records: they persist to the
 same card ledger, are deduplicated by content hash across ticks, and stay out

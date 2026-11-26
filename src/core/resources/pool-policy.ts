@@ -1,9 +1,11 @@
 import { validSubscriptionOnlyBoundary } from '../routing/subscription-only.js';
 /** Pure task admission: no credential lookup, provider contact, reservation or execution. */
 import { resourceQuotaBuckets, validateResourceQuotaScope, type ResourceQuotaScope } from './quota-scope.js';
+import { isResourceBridgeLane, isResourceBridgeModel, isResourceBridgePin, qualifyResourceBridgeEvidence,
+  type ResourceBridgeLane, type ResourceBridgePin } from './pool-bridge-evidence.js';
 export interface ResourceWorker {
   id: string;
-  provider: 'codex' | 'claude' | 'local';
+  provider: 'codex' | 'claude' | 'local' | ResourceBridgeLane;
   model: string;
   /** Explicit versioned association; absent preserves conservative shared-account quota. */
   quotaScope?: ResourceQuotaScope;
@@ -15,6 +17,7 @@ export interface ResourceWorker {
   priority: number;
   /** Explicit bootstrap under operator caps only; known refusal/exhaustion still blocks. */
   allowUnknownQuota?: boolean;
+  bridge?: ResourceBridgePin;
 }
 
 export interface ResourcePool { schemaVersion: 1; id: string; workers: ResourceWorker[] }
@@ -66,6 +69,8 @@ export interface ResourceAssignmentInput {
   nowMs: number;
   /** Operator-only veto; never interpreted as provider quota evidence. */
   quotaScopeExcludedWorkerIds?: string[];
+  bridgeEvidence?: Record<string, unknown>;
+  bridgeDispatchUnavailable?: true;
 }
 export type ResourceExclusionReason =
   | 'worker-not-allowed'
@@ -81,7 +86,8 @@ export type ResourceExclusionReason =
   | 'concurrency-exhausted'
   | 'operator-task-cap-reached'
   | 'operator-quota-scope-excluded'
-  | 'commissioning-quota-provenance-required' | 'commissioning-billing-boundary-required';
+  | 'commissioning-quota-provenance-required' | 'commissioning-billing-boundary-required'
+  | 'bridge-not-commissioned';
 export interface ResourceAssignmentCandidate {
   workerId: string;
   provider: ResourceWorker['provider'];
@@ -92,6 +98,7 @@ export interface ResourceAssignmentCandidate {
   usedPercent: number | null;
   activeCount: number;
   taskReservationCount: number;
+  bridgeEvidenceKind?: 'verified' | 'owner-attested-plan';
   /** Maximum of known quota/usable-percent, active/concurrent, and tasks/task-cap. */
   pressure: number;
 }
@@ -179,17 +186,25 @@ export function validateResourcePool(value: unknown): ResourcePool {
   const known = new Set<string>(); const workers: ResourceWorker[] = [];
   for (const worker of value.workers) {
     if (!object(worker) || !exact(worker, ['id', 'provider', 'model', 'maxConcurrent', 'reservePercent',
-      'maxTasksPerWindow', 'taskWindowMs', 'priority'], ['allowUnknownQuota', 'quotaScope']) || !identifier(worker.id) ||
-      known.has(worker.id) || typeof worker.provider !== 'string' || !['codex', 'claude', 'local'].includes(worker.provider) ||
+      'maxTasksPerWindow', 'taskWindowMs', 'priority'], ['allowUnknownQuota', 'quotaScope', 'bridge']) || !identifier(worker.id) ||
+      known.has(worker.id) || typeof worker.provider !== 'string' ||
+      !(['codex', 'claude', 'local'].includes(worker.provider) || isResourceBridgeLane(worker.provider)) ||
       !model(worker.model) || !integer(worker.maxConcurrent, 1, 16) || !percent(worker.reservePercent, 99) ||
       !integer(worker.maxTasksPerWindow, 1, 10_000) || !integer(worker.taskWindowMs, 1_000, 604_800_000) ||
       !integer(worker.priority, 0, 100) || (worker.allowUnknownQuota !== undefined && typeof worker.allowUnknownQuota !== 'boolean')) {
       throw new Error('Invalid resource pool: unique workers and finite explicit resource bounds required');
     }
+    const lane = worker.provider;
+    const bridge = worker.bridge;
+    if (isResourceBridgeLane(lane) ? (!isResourceBridgePin(bridge, lane) || !isResourceBridgeModel(lane, worker.model) ||
+        worker.allowUnknownQuota === true || lane === 'devin-flash' && worker.taskWindowMs !== 3_600_000) : Object.hasOwn(worker, 'bridge')) {
+      throw new Error('Invalid resource pool: exact bridge lane, identity pin and local reservation window required');
+    }
     known.add(worker.id);
     workers.push({ id: worker.id, provider: worker.provider as ResourceWorker['provider'], model: worker.model,
       maxConcurrent: worker.maxConcurrent, reservePercent: worker.reservePercent, maxTasksPerWindow: worker.maxTasksPerWindow,
       taskWindowMs: worker.taskWindowMs, priority: worker.priority,
+      ...(isResourceBridgeLane(lane) && isResourceBridgePin(bridge, lane) ? { bridge: { ...bridge } } : {}),
       ...(worker.quotaScope === undefined ? {} : { quotaScope: validateResourceQuotaScope(worker.provider, worker.model, worker.quotaScope) }),
       ...(worker.allowUnknownQuota === undefined ? {} : { allowUnknownQuota: worker.allowUnknownQuota }) });
   }
@@ -277,7 +292,10 @@ function validateCounts(value: unknown, known: Set<string>, reservations: boolea
  * fresh quota. Known exhaustion/unavailability cannot be erased by stale data.
  */
 export function planResourceAssignment(input: ResourceAssignmentInput): ResourceAssignmentPlan {
-  if (!object(input) || !exact(input, ['pool', 'observations', 'allowedWorkerIds', 'activeCounts', 'taskReservationCounts', 'nowMs'], ['quotaScopeExcludedWorkerIds']) ||
+  if (!object(input) || !exact(input, ['pool', 'observations', 'allowedWorkerIds', 'activeCounts', 'taskReservationCounts', 'nowMs'],
+    ['quotaScopeExcludedWorkerIds', 'bridgeEvidence', 'bridgeDispatchUnavailable']) ||
+      input.bridgeEvidence !== undefined && !object(input.bridgeEvidence) ||
+      input.bridgeDispatchUnavailable !== undefined && input.bridgeDispatchUnavailable !== true ||
       !integer(input.nowMs, 0, Date.parse('9999-12-31T23:59:59.999Z'))) {
     throw new Error('Invalid resource assignment: exact snapshot and bounded current time required');
   }
@@ -302,10 +320,18 @@ export function planResourceAssignment(input: ResourceAssignmentInput): Resource
       exclusions.push({ workerId: worker.id, reasons: ['worker-not-allowed'], nextEligibleAt: null }); continue;
     }
     const observed = byId.get(worker.id); const count = active[worker.id] ?? 0;
+    const provider = worker.provider;
+    const bridgeLane = isResourceBridgeLane(provider);
+    const bridge = bridgeLane && worker.bridge ? qualifyResourceBridgeEvidence(
+      Object.getOwnPropertyDescriptor(input.bridgeEvidence ?? {}, worker.id)?.value,
+      provider, worker.model, worker.bridge, input.nowMs) : null;
+    if (bridgeLane && (!bridge || input.bridgeDispatchUnavailable)) reasons.add('bridge-not-commissioned');
+    const concurrency = Math.min(worker.maxConcurrent, bridge?.reservationCap?.maxConcurrent ?? Infinity);
+    const taskCap = Math.min(worker.maxTasksPerWindow, bridge?.reservationCap?.maxPerHour ?? Infinity);
     if (scopeExcluded.includes(worker.id)) reasons.add('operator-quota-scope-excluded');
     const tasks = reservations[worker.id] ?? { count: 0, nextEligibleAt: null };
-    if (count >= worker.maxConcurrent) reasons.add('concurrency-exhausted');
-    if (tasks.count >= worker.maxTasksPerWindow) {
+    if (count >= concurrency) reasons.add('concurrency-exhausted');
+    if (tasks.count >= taskCap) {
       reasons.add('operator-task-cap-reached'); if (future(tasks.nextEligibleAt)) retry.push(tasks.nextEligibleAt);
     }
     // Refusal/exhaustion is sticky across stale timestamps. Only a superseding
@@ -317,7 +343,18 @@ export function planResourceAssignment(input: ResourceAssignmentInput): Resource
     let unknown = false; let usedPercent: number | null = null;
     const freshness: ResourceExclusionReason | null = !observed ? 'observation-missing' :
       Date.parse(observed.expiresAt) <= input.nowMs ? 'observation-stale' : null;
-    if (worker.provider === 'local') {
+    if (bridgeLane) {
+      unknown = bridge?.quota.kind === 'unknown';
+      if (bridge?.quota.kind === 'measured') {
+        usedPercent = bridge.quota.usedPercent;
+        if (usedPercent >= 100 - worker.reservePercent) {
+          reasons.add('quota-reserve-reached'); retry.push(new Date(bridge.quota.resetsAt).toISOString());
+        }
+      }
+      if (observed?.windows.some(window => window.usedPercent !== null && window.usedPercent >= 100 - worker.reservePercent)) {
+        reasons.add('quota-reserve-reached');
+      }
+    } else if (worker.provider === 'local') {
       if (freshness) reasons.add(freshness);
     } else {
       if (observed?.windows.some((window) => window.usedPercent !== null && window.usedPercent >= 100 - worker.reservePercent)) {
@@ -338,11 +375,11 @@ export function planResourceAssignment(input: ResourceAssignmentInput): Resource
       exclusions.push({ workerId: worker.id, reasons: [...reasons],
         nextEligibleAt: scopeExcluded.includes(worker.id) ? null : retry.sort()[0] ?? null }); continue;
     }
-    const pressure = Math.max(count / worker.maxConcurrent, tasks.count / worker.maxTasksPerWindow,
+    const pressure = Math.max(count / concurrency, tasks.count / taskCap,
       usedPercent === null ? 0 : usedPercent / (100 - worker.reservePercent));
     candidates.push({ workerId: worker.id, provider: worker.provider, model: worker.model, priority: worker.priority,
       reason: unknown ? 'operator-capped-unknown-quota' : 'eligible', usedPercent, activeCount: count,
-      taskReservationCount: tasks.count, pressure });
+      taskReservationCount: tasks.count, pressure, ...(bridge ? { bridgeEvidenceKind: bridge.kind } : {}) });
   }
   candidates.sort((left, right) => right.priority - left.priority || left.pressure - right.pressure ||
     (left.workerId < right.workerId ? -1 : left.workerId > right.workerId ? 1 : 0));

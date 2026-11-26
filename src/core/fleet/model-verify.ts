@@ -66,7 +66,8 @@ export async function verifyFleetModels(opts: ModelVerifyOptions = {}): Promise<
 export const MODEL_SOURCE_HOSTS: Readonly<Record<string, readonly string[]>> = {
   openai: ['learn.chatgpt.com', 'developers.openai.com', 'platform.openai.com'],
   anthropic: ['platform.claude.com'], xai: ['docs.x.ai'], zai: ['docs.z.ai'],
-  google: ['ai.google.dev'],
+  google: ['ai.google.dev', 'aistudio.google.com', 'antigravity.google'],
+  devin: ['docs.devin.ai'], cursor: ['cursor.com'],
   qwen: ['qwenlm.github.io', 'qwen.readthedocs.io'],
 };
 const MODEL_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/, LANE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$/;
@@ -200,6 +201,8 @@ export interface DocsModelRecord {
   source_url: string;
   /** ISO date or timestamp. The newest record for a model wins. */
   seen_at: string;
+  /** A targeted deprecation notice, not a claim to cover the provider's inventory. */
+  partial?: true;
 }
 /** A registry entry as the docs check reads it. Lanes, capabilities and added_at are carried, never judged. */
 export interface RegistryModelInput { provider: string; id: string; lanes?: readonly string[]; capabilities?: readonly string[]; added_at?: string | null }
@@ -225,7 +228,7 @@ const some = (count: number, one: string, many: string) => `${count} ${count ===
 export function checkModelsAgainstDocs(registry: readonly RegistryModelInput[], docs: readonly DocsModelRecord[]): DocsCheckResult {
   const latest = new Map<string, DocsModelRecord>();
   for (const record of docs) if (record.seen_at > (latest.get(docsKey(record))?.seen_at ?? '')) latest.set(docsKey(record), record);
-  const covered = new Set(docs.map(record => record.provider));
+  const covered = new Set(docs.filter(record => !record.partial).map(record => record.provider));
   const counts: Record<DocsVerdict, number> = { confirmed: 0, deprecated: 0, retired: 0, unconfirmed: 0, unknown: 0 };
   const models = [...registry].sort(byProviderId).map((entry): DocsCheckRow => {
     const record = latest.get(docsKey(entry));
@@ -249,24 +252,35 @@ export function checkModelsAgainstDocs(registry: readonly RegistryModelInput[], 
 
 export const MODEL_DOCS_SCHEMA = 'models.docs.v1';
 /**
- * The confirmed list a docs-watch job writes: {schema: "models.docs.v1", version: 1, records: DocsModelRecord[]}.
- * Null means unknown (no file, or another shape), and callers then skip the docs check. A row that is
- * malformed or whose source is not on the provider's own doc site is dropped.
+ * The local confirmed list and shipped targeted notices in models.docs.v1 format.
+ * Null means no valid list. Malformed rows and sources outside official hosts are dropped.
  */
 export async function readDocsRecords(opts: ModelVerifyOptions = {}): Promise<DocsModelRecord[] | null> {
   const path = homeFile('model-docs.json', opts.docsPath, opts);
   const raw = path === null ? null : await readJson(path).catch(() => null);
-  if (!object(raw) || raw.schema !== MODEL_DOCS_SCHEMA || raw.version !== 1 || !Array.isArray(raw.records)) return null;
-  return raw.records.flatMap((row): DocsModelRecord[] => {
-    if (!object(row)) return [];
-    const { provider, id, status, replacement = null, source_url, seen_at } = row;
-    return typeof provider === 'string' && typeof id === 'string' && MODEL_ID.test(id)
-      && (status === 'current' || status === 'deprecated' || status === 'retired')
-      && (replacement === null || typeof replacement === 'string' && MODEL_ID.test(replacement))
-      && typeof source_url === 'string' && !sourceHostError(provider, source_url)
-      && typeof seen_at === 'string' && /^\d{4}-\d{2}-\d{2}/.test(seen_at) && Number.isFinite(Date.parse(seen_at))
-      ? [{ provider, id, status, replacement, source_url, seen_at }] : [];
-  });
+  const bundled = opts.registryPath || opts.docsPath !== undefined ? null :
+    await readJson(new URL('../../../docs/model-docs.json', import.meta.url)).catch(() => null);
+  const now = (opts.now ?? Date.now)();
+  function parse(input: unknown, partial: boolean): DocsModelRecord[] | null {
+    if (!object(input) || input.schema !== MODEL_DOCS_SCHEMA || input.version !== 1 || !Array.isArray(input.records)) return null;
+    return input.records.flatMap((row): DocsModelRecord[] => {
+      if (!object(row)) return [];
+      const { provider, id, status, replacement = null, source_url, seen_at } = row;
+      return typeof provider === 'string' && typeof id === 'string' && MODEL_ID.test(id)
+        && (status === 'current' || status === 'deprecated' || status === 'retired')
+        && (replacement === null || typeof replacement === 'string' && MODEL_ID.test(replacement))
+        && typeof source_url === 'string' && !sourceHostError(provider, source_url)
+        && typeof seen_at === 'string' && /^\d{4}-\d{2}-\d{2}/.test(seen_at) && Number.isFinite(Date.parse(seen_at))
+        ? [{
+          provider, id, replacement, source_url, seen_at,
+          status: partial && status === 'deprecated' && typeof row.retires_at === 'string'
+            && /^\d{4}-\d{2}-\d{2}$/.test(row.retires_at) && Date.parse(row.retires_at) <= now ? 'retired' : status,
+          ...(partial ? { partial: true } : {}),
+          }] : [];
+    });
+  }
+  const local = parse(raw, false), shipped = parse(bundled, true);
+  return local === null && shipped === null ? null : [...local ?? [], ...shipped ?? []];
 }
 
 /**

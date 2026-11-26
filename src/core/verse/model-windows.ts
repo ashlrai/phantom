@@ -107,7 +107,7 @@ export const VERSE_CLAUDE_MODEL_SPECS: readonly {
   { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', contextWindow: 200_000, maxOutputTokens: 32_000, minCliVersion: null, native1m: false },
   // Orchestrator-only admission owns selection. Unconfirmed context/output
   // limits stay conservative; this does not enable expansive mode.
-  { id: 'claude-fable-5-2', label: 'Fable 5.2 · planning and orchestration', contextWindow: 200_000, maxOutputTokens: null, minCliVersion: null, native1m: false },
+  { id: 'claude-fable-5-2', label: 'Fable 5.2 · planning and orchestration', contextWindow: 1_000_000, maxOutputTokens: 128_000, minCliVersion: null, native1m: true },
 ];
 
 type ClaudeModelSpec = (typeof VERSE_CLAUDE_MODEL_SPECS)[number];

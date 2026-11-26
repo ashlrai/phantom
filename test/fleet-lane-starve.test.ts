@@ -133,6 +133,15 @@ describe('cmdFleetLaneStarve', () => {
     expect(code).toBe(0);
     expect(lines).toEqual(['No starved lanes.']);
   });
+  it('excludes held lanes with queued work from starvation alerts', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      lanes: { 'claude-api': { running: 1, target: 3, queued: 4, held: true } },
+    }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), READY);
+    const { code, lines } = await run();
+    expect(code).toBe(0);
+    expect(JSON.parse(lines[0]!).lanes).toEqual([]);
+  });
   it('exits 2 when status.json is missing', async () => {
     const { code, lines } = await run();
     expect(code).toBe(2);

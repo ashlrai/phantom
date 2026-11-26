@@ -10,6 +10,7 @@ import type { UniverseManifest } from '../src/core/universe/types.js';
 const port = vi.hoisted(() => ({
   generate: vi.fn(), run: vi.fn(), evaluate: vi.fn(), delivery: vi.fn(), deliverElite: vi.fn(),
   manifest: vi.fn(), init: vi.fn(), github: vi.fn(),
+  plan: vi.fn(),
   localWorkers: ['planner', 'worker'],
 }));
 vi.mock('node:child_process', async original => ({ ...await original<typeof import('node:child_process')>(), execFileSync: port.github }));
@@ -33,10 +34,12 @@ vi.mock('../src/core/resources/pool-runtime.js', async original => {
   return { ...real, readResourceJson: (path: string) => path.endsWith('ledger.json') ? real.readResourceJson(path) : {} };
 });
 vi.mock('../src/core/resources/pool-policy.js', () => ({ validateResourcePool: () => ({
-  id: 'pool', workers: [{ id: 'planner', provider: 'local' }, { id: 'worker', provider: 'local' }, { id: 'native', provider: 'codex' }],
+  id: 'pool', workers: [{ id: 'planner', provider: 'local' }, { id: 'worker', provider: 'local' },
+    { id: 'other', provider: 'local' }, { id: 'native', provider: 'codex' }],
 }) }));
 vi.mock('../src/core/resources/worker.js', () => ({ validateResourceBindings: () => [] }));
 vi.mock('../src/core/universe/runner.js', () => ({ runUniverse: port.run }));
+vi.mock('../src/core/usage/resource-live/fleet-plan.js', () => ({ readFleetResourcePlan: port.plan }));
 vi.mock('../src/core/universe/store.js', () => ({
   universePath: (root: string, id: string) => join(root, 'universes', id),
   initUniverse: port.init, manifestRecord: port.manifest,
@@ -67,6 +70,7 @@ const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 beforeEach(() => {
   vi.resetAllMocks();
   port.localWorkers = ['planner', 'worker'];
+  port.plan.mockResolvedValue(null);
   root = realpathSync(mkdtempSync(join(tmpdir(), 'swarm-pilot-')));
   oracle = join(root, 'oracle');
   writeFileSync(oracle, '#!/bin/sh\n', { mode: 0o700 });
@@ -151,6 +155,7 @@ describe('resource-pool swarm pilot', () => {
     });
     port.evaluate.mockResolvedValue({ status, score: status === 'passed' ? 10 : null });
     const report = await runSwarmPilot(spec(), '/runtime', { root, apply: true });
+    expect(manifests.get('demo-n-a')?.budget).toMatchObject({ maxTrials: 2, maxParallel: 2 });
     expect(port.generate).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       expectedRuntimeDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
     }));
@@ -165,5 +170,42 @@ describe('resource-pool swarm pilot', () => {
       port.github.mockReturnValue(JSON.stringify({ state: 'MERGED', headRefOid: 'd'.repeat(40), mergedAt, mergeCommit: { oid: commit } }));
       expect(() => readSwarmPilotReport('demo', root, 34)).toThrow('merge-receipt-mismatch');
     }
+  });
+
+  it('shares measured spare slots across ready leaves and prioritizes the earlier deadline', async () => {
+    Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
+    port.localWorkers.push('other');
+    const input = { ...spec(), workers: [
+      { workerId: 'worker', tier: 'fast', fleetLane: 'later' },
+      { workerId: 'other', tier: 'fast', fleetLane: 'earlier' },
+    ] };
+    port.plan.mockImplementation(async (_runsDir: string, now: number) => ({
+      lanes: [{ lane: 'later', target_concurrency: 1, running: 0 }, { lane: 'earlier', target_concurrency: 2, running: 1 }],
+      allowances: ['later', 'earlier'].map((lane, index) => ({
+        lane, action: 'burn', deadline_at: new Date(now + (2 - index) * 60_000).toISOString(),
+      })),
+    }));
+    port.run.mockImplementation(async (id: string) => {
+      const file = graph.find(node => node.id === id.at(-1))!.files[0]!;
+      const path = join(root, id);
+      mkdirSync(join(path, 'src'), { recursive: true });
+      writeFileSync(join(path, file), 'accepted leaf\n');
+      return { status: 'completed', trials: [{ id, variantId: 'attempt-0', status: 'passed', selected: true, score: 10,
+        artifact: { path }, generation: { status: 'succeeded', changedFiles: [file], usage: { inputTokens: 1, outputTokens: 1 } } }] };
+    });
+    await expect(runSwarmPilot(input, '/runtime', { root, apply: true })).resolves.toMatchObject({ status: 'delivered' });
+    for (const [id, workerId] of [['demo-n-a', 'other'], ['demo-n-b', 'worker']]) {
+      expect(manifests.get(id!)).toMatchObject({ budget: { maxTrials: 1, maxParallel: 1 },
+        variants: [{ generation: { allowedWorkerIds: [workerId] } }] });
+    }
+    expect(port.plan).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not start leaf attempts when the only enrolled lane has a known zero target', async () => {
+    Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
+    port.plan.mockResolvedValue({ lanes: [{ lane: 'worker', target_concurrency: 1, running: 1 }], allowances: [] });
+    await expect(runSwarmPilot(spec(), '/runtime', { root, apply: true }))
+      .resolves.toMatchObject({ status: 'held', reason: 'worker-capacity-unavailable' });
+    expect(port.run).not.toHaveBeenCalled();
   });
 });
