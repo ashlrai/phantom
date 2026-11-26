@@ -721,6 +721,7 @@ function readRecordsWithDiagnostics<T>(
   guard: (value: unknown) => value is T,
   sanitize: (record: T) => T,
   opts: ReadSkillRecordsOptions,
+  checkRowLimit = false,
 ): RecordsReadResult<T> {
   const complete = opts.complete === true;
   const limit = complete ? Number.POSITIVE_INFINITY : boundedOption(opts.limit, DEFAULT_READ_LIMIT, MAX_READ_LIMIT);
@@ -796,8 +797,8 @@ function readRecordsWithDiagnostics<T>(
     if (!complete) files.splice(maxFiles);
     const out: T[] = [];
     const completeSnapshots: Array<{ filePath: string; snapshot: BigIntStats }> = [];
-    for (const file of files) {
-      if (out.length >= limit) break;
+    partitions: for (const file of files) {
+      if (!checkRowLimit && out.length >= limit) break;
       if (sinceMs !== undefined && !fileMayContainSince(file, sinceMs)) continue;
       filesScanned += 1;
       const filePath = join(canonicalDir, file);
@@ -825,7 +826,7 @@ function readRecordsWithDiagnostics<T>(
         continue;
       }
       for (const line of raw.split('\n').reverse()) {
-        if (out.length >= limit) break;
+        if (!checkRowLimit && out.length >= limit) break;
         if (!line.trim()) continue;
         rowsScanned += 1;
         if (complete && rowsScanned > MAX_COMPLETE_CORPUS_ROWS) {
@@ -842,6 +843,10 @@ function readRecordsWithDiagnostics<T>(
           if (sinceMs !== undefined) {
             const recordMs = Date.parse((record as { ts: string }).ts);
             if (Number.isFinite(recordMs) && recordMs < sinceMs) continue;
+          }
+          if (out.length >= limit) {
+            limitExceeded = true;
+            break partitions;
           }
           out.push(record);
         } catch {
@@ -927,10 +932,12 @@ export function readSkillUseEventsWithDiagnostics(
   opts: ReadSkillRecordsOptions = {},
 ): SkillUseEventReadResult {
   const requested = boundedOption(opts.limit, DEFAULT_READ_LIMIT, MAX_READ_LIMIT);
+  // Allow room for replays and detect an additional eligible row before
+  // calling a full scan budget incomplete.
   const scanned = readRecordsWithDiagnostics(skillUseEventsDir(), isSkillUseEvent, sanitizeSkillUseEvent, {
     ...opts,
     limit: Math.min(MAX_READ_LIMIT, Math.max(requested, requested * 4)),
-  });
+  }, true);
   const byEventId = new Map<string, {
     fingerprint: string;
     event: SkillUseEvent;
@@ -950,7 +957,7 @@ export function readSkillUseEventsWithDiagnostics(
     .filter((entry) => !entry.conflict)
     .map((entry) => entry.event)
     .slice(0, requested);
-  const degraded = scanned.sourceState === 'degraded' || conflict;
+  const degraded = scanned.sourceState === 'degraded' || conflict || byEventId.size > requested;
   return {
     events,
     sourceState: degraded ? 'degraded' : scanned.sourceState,

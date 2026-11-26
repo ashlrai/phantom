@@ -135,7 +135,10 @@ zero. Plain-text output prints the tallies under each skill.
 The projection is sample-gated exactly like `skillObservation`: per-skill
 counts publish only after at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)
 production trajectories carry skill-use coverage, and the whole section is
-withheld when the skill-use ledger is degraded. Below the gate the field is
+withheld when the skill-use ledger is degraded. A bounded read also marks
+the sample degraded if its row scan runs out of room or if the number of
+distinct events exceeds the requested result limit. Exact replays within
+the scan budget count as a single event. Below the gate the field is
 absent — unknown stays unknown, never a zero.
 
 Recurring adverse tallies do not stay report-only:
