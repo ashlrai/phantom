@@ -161,6 +161,8 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
       if (new Set([...a.prs, ...b.prs]).size > 1) continue;
       // An undated launch could fall anywhere in the interval.
       if (end !== 'launch' && [...(events.get('launch')?.times ?? [])].some(at => !Number.isFinite(at) || (from < at && at <= to))) continue;
+      // A member claim may start another attempt, but does not prove execution.
+      if ([...(events.get('batch_claim')?.times ?? [])].some(at => !Number.isFinite(at) || (from <= at && at <= to))) continue;
       samples.push((to - from) / 1000);
       if (phases === jobPhases && phase === 'checkout') {
         checkout.push(to - from);
