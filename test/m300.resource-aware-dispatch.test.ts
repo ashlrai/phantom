@@ -255,7 +255,7 @@ afterEach(() => {
 describe('M300 [D1] exhausted claude → reroutes to codex', () => {
   it('dispatches to codex when claude is exhausted', async () => {
     const cfg = makeConfig();
-    writeTasks([baseTask({ engine: 'claude' })]);
+    expect(() => writeTasks([baseTask({ engine: 'claude' })]), 'M300 task fixture setup').not.toThrow();
 
     mockGetResourceSnapshot.mockResolvedValue(makeSnapshot([
       { backend: 'claude', availability: 'exhausted' },
@@ -271,12 +271,20 @@ describe('M300 [D1] exhausted claude → reroutes to codex', () => {
     const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
     const result = await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
 
-    expect(result.errors, JSON.stringify(result.errors)).toHaveLength(0);
-    expect(result.proposalsFiled).toBe(1);
+    const diagnostic = `M300 conductor: ${JSON.stringify({
+      errors: result.errors,
+      tasksAttempted: result.tasksAttempted,
+      activationRefused: result.activationRefused,
+      taskStoreUnavailable: result.taskStoreUnavailable,
+      killSwitchTripped: result.killSwitchTripped,
+      deferred: result.deferred,
+    })}`;
+    expect(result.errors, diagnostic).toHaveLength(0);
+    expect(result.proposalsFiled, diagnostic).toBe(1);
     // runEngineSandboxed was called with 'codex', NOT 'claude'
-    expect(mockRunEngineSandboxed).toHaveBeenCalledOnce();
+    expect(mockRunEngineSandboxed, diagnostic).toHaveBeenCalledOnce();
     const [calledEngine] = mockRunEngineSandboxed.mock.calls[0]!;
-    expect(calledEngine).toBe('codex');
+    expect(calledEngine, diagnostic).toBe('codex');
   });
 
   it('dispatches to codex when claude is throttled', async () => {
