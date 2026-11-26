@@ -958,7 +958,9 @@ spec-less row, wins over the lane column; an explicit `null` or empty lane
 cell is lane-open shared supply reported once as `open_rows` (`openRows` in
 the core result and `openRows` in `fleet.launchable.v1`), and a row the
 market would reject is dead work, never counted. Rows in any other dialect
-keep the tolerant lane-column read. `queued` comes from the status snapshot,
+keep the tolerant lane-column read. Each job contributes once, using its first
+valid ready row across all supported formats, including lane-open rows.
+`queued` comes from the status snapshot,
 so it can differ from `ready`. When `ready.tsv` is missing, the split reads
 `unknown` in text, all three counts (`ready`, `filler`, `real`) are `null`
 in JSON, and `open_rows` is `null`. An empty file yields zero counts. Lane
