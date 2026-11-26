@@ -341,6 +341,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "phm_wiki_ecosystem",
+      "safety": "read",
+    },
+    {
       "name": "phm_wiki_brain",
       "safety": "read",
     },
@@ -2647,6 +2651,14 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phm_wiki_map",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phm_wiki_ecosystem",
   },
   {
     "inputSchema": {

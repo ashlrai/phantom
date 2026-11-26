@@ -877,6 +877,14 @@
  *     sitting in a report someone had to run — a lost order produces
  *     no job, so outcome learning and every job-level fold never see
  *     it;
+ *   - the bets lane's recurring scorer-killed metrics: the kept/killed/
+ *     hold decisions `phm bets score` appends to metrics/bets.jsonl for
+ *     every launched hypothesis, folded per loop metric
+ *     (betOutcomeBacklogItems below), so a target the experiment lane
+ *     keeps losing money on becomes work instead of sitting in a
+ *     report someone had to run — operator kills are deliberate stops,
+ *     never scorer verdicts, and truncated tails or ignored fold events
+ *     state counts as recorded floors;
  *   - the Slack bridge observation journal's recurring adverse cells:
  *     the {at, decision, reason?, bus?, channelId?, ...} rows
  *     recordSlackObservation (src/core/agents/slack-journal.ts) appends
@@ -1085,6 +1093,7 @@ import { usageLiveAlertsBacklogItems } from './usage-live-alerts-backlog.js';
 import { harnessBacklogItems } from './harness-backlog.js';
 import { spawnProposalsBacklogItems } from './spawn-proposals-backlog.js';
 import { betAuditBacklogItems } from './bet-audit-backlog.js';
+import { betOutcomeBacklogItems } from './bet-outcome-backlog.js';
 import { slackBridgeBacklogItems } from './slack-bridge-backlog.js';
 import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
 import { efficiencyBacklogItems } from './efficiency-backlog.js';
@@ -2297,6 +2306,20 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fabricate losses); a repo cell emits only at the recurring bar
   // inside the window and only for the fleet's own repository.
   items.push(...await betAuditBacklogItems({ repo }));
+
+  // Bets-lane scorer outcomes: the kept/killed/hold decisions `phm bets
+  // score` appends to metrics/bets.jsonl for every launched hypothesis.
+  // Until now the ledger's only readers were `phm bets list|explain` —
+  // a loop metric whose bets keep dying at the kill-fast bar was visible
+  // only to someone who ran the report and read it, so the experiment
+  // machinery never learned which targets do not pay. A metric cell
+  // emits only at the recurring bar of scorer-killed bets decided
+  // inside the window (operator kills are deliberate stops, never
+  // scorer verdicts); truncated tails and ignored fold events state
+  // counts as recorded floors, and only the fleet's own repository
+  // inherits the items since the ledger describes this install's
+  // experiment lane and carries no repo column.
+  items.push(...await betOutcomeBacklogItems({ repo }));
 
   // Slack bridge observation journal: the {at, decision, reason?, bus?,
   // channelId?, ...} rows recordSlackObservation appends to
