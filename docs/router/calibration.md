@@ -17,7 +17,10 @@ with one launch per included job or a matching reward signal.
 
 The jobs input also accepts reward-signal rows. Each supplies the resolved
 merge outcome and any recorded pool and joins launch or PostHog evidence by
-job ID. Execution wall time uses explicit measurements or the launch and
+job ID. When both ledgers supply a verdict for the same job, calibration
+uses the reward verdict regardless of row order. This lets a recorded
+revert count against a historical merge. Conflicting verdicts within either
+source still cause an error. Execution wall time uses explicit measurements or the launch and
 finish timestamps. Reward timestamps describe dispatch and PR resolution,
 and `ciWallMs` measures CI, so a reward row alone leaves execution wall time
 unknown.
