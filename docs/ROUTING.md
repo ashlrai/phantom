@@ -807,7 +807,10 @@ cost figures the retained jobs window dropped rejoin from the
 substrate without ever contradicting a recorded jobs-ledger value;
 the reward row's `merged:false` covers its closed-unmerged and
 reverted resolutions alike (the v1 schema has no revert dimension —
-`reverted` still joins independently). `pool_pct_used` is the row's
+`reverted` still joins independently). When the reward row fills a missing
+merge verdict, recorded PR-level revert evidence applies only if the
+retained jobs ledger links the job to a single, uncontested PR.
+`pool_pct_used` is the row's
 recorded subscription-pool percentage points consumed
 (`cost.pctUsedDelta`) — the only per-job subscription-quota cost
 figure, since subscription lanes record no `cost_usd` and `acus`
