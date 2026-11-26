@@ -2173,15 +2173,18 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       return r.ok ? JSON.parse(r.stdout) as T : null;
     } catch { return null; }
   }
-  async function runs(ref: string): Promise<Run[] | null> {
-    const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?head_sha=${encodeURIComponent(ref)}&per_page=100`);
-    if (!Array.isArray(data?.workflow_runs) || data.total_count > 100) return null;
+  function isCompletePage<T>(rows: T[] | undefined, total: number | undefined): rows is T[] {
+    return Array.isArray(rows) && rows.length <= 100 && rows.length === total;
+  }
+  async function runs(filter: 'head_sha' | 'branch', ref: string): Promise<Run[] | null> {
+    const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?${filter}=${encodeURIComponent(ref)}&per_page=100`);
+    if (!data || !isCompletePage(data.workflow_runs, data.total_count)) return null;
     const seen = new Set<number>();
     return data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
   }
   async function logs(run: Run, head: string): Promise<{ entries: { conclusion: string; text: string }[]; incomplete: boolean } | null> {
     const data = await json<{ jobs: Job[]; total_count: number }>(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
-    if (!Array.isArray(data?.jobs) || data.total_count > 100) return null;
+    if (!data || !isCompletePage(data.jobs, data.total_count)) return null;
     // A job that never reached a verdict — cancelled while queued, timed
     // out, awaiting action, failed to start, or marked stale — is
     // incomplete evidence even when its log is absent or empty: the run
@@ -2241,7 +2244,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     return { entries: result, incomplete };
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);
-  const masterRuns = branch?.commit?.sha ? await runs(branch.commit.sha) : null;
+  const masterRuns = branch?.commit?.sha ? await runs('head_sha', branch.commit.sha) : null;
   const masterLogs: { conclusion: string; text: string }[] = [];
   let masterKnown = !!branch?.commit?.sha && !!masterRuns?.length;
   for (const run of masterRuns ?? []) {
@@ -2563,10 +2566,8 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   const freshness: { pr: number; head: string; state: string; reason?: string }[] = [];
   const observations: Observation[] = [];
   for (const pr of prs) {
-    const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?branch=${encodeURIComponent(pr.headRefName)}&per_page=100`);
-    const seen = new Set<number>();
-    const latest = data?.workflow_runs?.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
-    if (!latest?.length || data!.total_count > 100) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'unknown', reason: 'missing-or-capped-runs' }); continue; }
+    const latest = await runs('branch', pr.headRefName);
+    if (!latest?.length) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'unknown', reason: 'missing-or-capped-runs' }); continue; }
     if (latest.some(r => r.head_sha !== pr.headRefOid)) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'stale', reason: 'stale-head' }); continue; }
     let known = true;
     let incomplete = false;
