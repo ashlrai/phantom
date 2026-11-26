@@ -45,9 +45,10 @@ A run that stays in one phase past its timeout gets a **stuck** badge with the
 phase and how long it has been there, instead of silently hanging. Timeouts:
 queued 30m, producing 45m, verifying 20m, judging 10m, landing 10m, reverting
 10m. `parked` and `watching` wait on the world by design and are never stuck.
-A stuck verdict requires a readable timestamp for the current phase. If that
-timestamp is missing or malformed, the run can still count as a call and its
-phase age stays unknown.
+A stuck verdict requires a readable timestamp for the current phase. That
+timestamp must be at or before report time and at or after the run start when
+one is recorded and readable. Queued runs can qualify using their phase
+timestamp alone. A run can still count as a call when its phase age is unknown.
 
 ## Memory shed plan
 

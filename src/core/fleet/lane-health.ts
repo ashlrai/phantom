@@ -72,13 +72,14 @@ function ms(iso: string | null): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
-/** The run's stuck verdict, or null. A run with no readable phase start is not judged. */
+/** The run's stuck verdict, or null when phase age cannot be established. */
 export function stuckRun(run: FleetLiveRun, nowMs: number): StuckRun | null {
   const timeoutMs = PHASE_TIMEOUT_MS[run.phase];
   if (run.endedAt || timeoutMs === null) return null;
   const since = ms(run.phaseStartedAt);
-  if (since === null) return null;
-  const phaseAgeMs = Math.max(0, nowMs - since);
+  const started = ms(run.startedAt);
+  if (since === null || since > nowMs || (started !== null && since < started)) return null;
+  const phaseAgeMs = nowMs - since;
   return phaseAgeMs > timeoutMs ? { runId: run.id, repo: run.repo, phase: run.phase, phaseAgeMs, timeoutMs } : null;
 }
 
