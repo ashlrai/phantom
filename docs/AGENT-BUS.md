@@ -2682,6 +2682,18 @@ agent-to-agent mail — are excluded. The local bus retains and expires
 messages, so these links are not a complete history; A2A events are not yet
 included. A missing or unreadable bus reports unknown edges, not an empty list.
 
+`phm fleet bus-hops [--limit <1..50>] [--from <agent>] [--to <agent>]
+[--exclude-from <agent>] [--id <id>] [--json]` reads the private hop log —
+the same `fleet_bus_hops` MCP tool's bounded tail — as the newest recorded
+cross-agent send attempts, oldest first: message id, from/to routing labels
+and nullable token usage, never a body, delivery or lifecycle claim. The
+`--from`/`--to`/`--exclude-from` sender filters resolve through the identity
+registry like every other bus read's address filters, `--id` keeps one exact
+message id, and `matched` counts filter hits inside the scanned window with
+`truncated` marking rows beyond it. The log carries no timestamps, so there
+is no time filter; a missing log is a verified-empty store while an
+unreadable one reports unknown, never an invented empty page.
+
 Group-chat projection: [Agent group chat](AGENT-CHAT.md) documents the scoped CLI and local read API.
 
 Local-only preparation component: [Owner note draft composer](AGENT-CHAT-DRAFT.md).
