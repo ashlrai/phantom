@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readEmptyJobs, type EmptyJobResult } from '../core/fleet/empty-jobs.js';
 import { guardianReceipt, planGuardianEmptyRecovery } from '../core/fleet/guardian-empty-recovery.js';
+import { loadRouteSources } from '../core/routing/decision-candidates.js';
 
 const usage = 'Usage: phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>]';
 const receipt = (id: string): string => createHash('sha256').update(id).digest('hex');
@@ -88,7 +89,7 @@ export async function cmdJobsRetryEmpty(args: string[]): Promise<number> {
     const receipts = new Set(await readdir(receiptDir).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return []; throw error; }));
     const jobsPath = join(root, 'metrics/jobs.jsonl');
     const ledger = await readFile(jobsPath, 'utf8');
-    const recovery = planGuardianEmptyRecovery(before, ledger, receipts);
+    const recovery = planGuardianEmptyRecovery(before, ledger, receipts, await loadRouteSources(root));
     const lines = [...planEmptyRetries(before, report.jobs, receipts), ...recovery.lines];
     if (mode === 'apply' && lines.length) {
       const ids = lines.map(line => {

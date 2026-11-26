@@ -9,6 +9,10 @@ The Fleet page shows the five most common causes, counts, and an example job for
 of why a job ended empty.
 
 For failed empty guardian repairs, preview `phm jobs retry-empty --dry-run --json`,
-then use `--apply` to queue one retry per original job and tier. Existing repairs
-defer retries. Original logs and finish records stay intact; exhausted retries
+then use `--apply` to queue one retry per original job and tier on an eligible
+alternate lane. Clean zero-exit no-ops are not retried; nonzero empty exits are
+failed outcomes. Routing uses the existing `models.json`, `queue/slots.json`,
+`queue/admission.json`, `queue/route-request.json` and `queue/route-capacity.json`
+snapshots. Missing or stale eligibility evidence, local-only work, metered lanes
+and existing repairs defer retries. Original logs and finish records stay intact; exhausted retries
 appear in `escalations` with the failed job, root, tier, exit code and reason.

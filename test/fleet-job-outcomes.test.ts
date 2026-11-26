@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { classifyJobOutcome, outcomeSummaryLine, readJobOutcomes } from '../src/core/fleet/job-outcomes.js';
+import { cmdFleetOutcomes } from '../src/cli/fleet-outcomes.js';
 
 const NOW = Date.parse('2026-11-19T12:00:00Z');
 const at = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
@@ -31,14 +32,24 @@ describe('job outcomes', () => {
     expect(report.schema).toBe('fleet.job-outcomes.v1');
   });
 
-  it('exit 1 with no diff is empty, with the reason from the log tail', async () => {
+  it('exit 1 with no diff is failed, retaining the reason from the log tail', async () => {
     const dir = await runs([
       { event: 'launch', job: 'RQ-TWO', lane: 'zai', ts: at(90) },
       { event: 'finish', job: 'RQ-TWO', lane: 'zai', exit_code: 1, empty: true, ts: at(60) },
     ], { 'RQ-TWO.log': 'looking\nthe task is already on master\n', 'RQ-TWO.publish': 'RESULT EMPTY\n' });
     const report = await readJobOutcomes({ hours: 24, now: NOW, runsDir: dir, lane: 'zai' });
-    expect(report.jobs[0]).toMatchObject({ outcome: 'empty', exit_code: 1, reason: 'task already on master' });
-    expect(report.lanes[0]!.summary).toBe('zai: 0 merged of 1; most empty: task already on master');
+    expect(report.jobs[0]).toMatchObject({ outcome: 'failed', exit_code: 1, reason: 'task already on master' });
+    expect(report.lanes[0]!.summary).toBe('zai: 0 merged of 1; most failed: task already on master');
+  });
+
+  it.each([0, 1, 124, null])('classifies empty exit %s consistently with and without duplicate finish events', exitCode => {
+    const finish = { event: 'finish', empty: true, exit_code: exitCode };
+    for (const events of [[finish], [finish, finish]]) {
+      for (const publish of [null, 'RESULT EMPTY\n']) {
+        expect(classifyJobOutcome({ events, publish, empty: true, exitCode }).outcome).toBe(exitCode ? 'failed' : 'empty');
+      }
+    }
+    expect(classifyJobOutcome({ events: [{ ...finish, pool_error: 'rate_limit' }], publish: null, empty: true, exitCode }).outcome).toBe('failed');
   });
 
   it('exit 0 with a closed PR is pr_closed', async () => {
@@ -62,7 +73,7 @@ describe('job outcomes', () => {
     const rows: object[] = [];
     const files: Record<string, string> = {};
     for (let i = 0; i < 5; i++) {
-      rows.push({ event: 'finish', job: `RQ-E${i}`, lane: 'zai', exit_code: 1, empty: true, ts: at(60 + i) });
+      rows.push({ event: 'finish', job: `RQ-E${i}`, lane: 'zai', exit_code: 0, empty: true, ts: at(60 + i) });
       files[`RQ-E${i}.log`] = i < 3 ? 'already on master\n' : 'tail without a known cause\n';
     }
     rows.push({ event: 'finish', job: 'RQ-OTHER', lane: 'codex', exit_code: 0, empty: true, ts: at(5) });
@@ -97,7 +108,7 @@ describe('job outcomes', () => {
     const byJob = new Map(report.jobs.map(job => [job.job, job]));
     expect(byJob.get('RQ-REC')).toMatchObject({ outcome: 'merged', pr: PR });
     expect(byJob.get('RQ-ALIAS')).toMatchObject({ outcome: 'pr_closed', pr: PR });
-    expect(byJob.get('RQ-FIN')).toMatchObject({ outcome: 'empty', lane: 'zai', exit_code: 1 });
+    expect(byJob.get('RQ-FIN')).toMatchObject({ outcome: 'failed', lane: 'zai', exit_code: 1 });
   });
 
   it('reports unknown when the ledger is missing, and a plain line for an idle lane', async () => {
@@ -110,7 +121,6 @@ describe('job outcomes', () => {
 describe('phm fleet outcomes --lane', () => {
   it('prints one JSON object with the schema id, and exits 2 on a bad hours value', async () => {
     const dir = await runs([{ event: 'finish', job: 'RQ-CLI', lane: 'zai', exit_code: 1, empty: true, ts: new Date().toISOString() }]);
-    const { cmdFleetOutcomes } = await import('../src/cli/fleet-outcomes.js');
     let out = '';
     const write = process.stdout.write.bind(process.stdout);
     const err = process.stderr.write.bind(process.stderr);
@@ -122,6 +132,6 @@ describe('phm fleet outcomes --lane', () => {
     } finally { process.stdout.write = write; process.stderr.write = err; }
     const parsed = JSON.parse(out);
     expect(parsed.schema).toBe('fleet.job-outcomes.v1');
-    expect(parsed.counts.empty).toBe(1);
+    expect(parsed.counts.failed).toBe(1);
   });
 });

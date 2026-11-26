@@ -2,27 +2,54 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { guardianReceipt, planGuardianEmptyRecovery as plan } from '../src/core/fleet/guardian-empty-recovery.js';
+import { guardianReceipt, planGuardianEmptyRecovery } from '../src/core/fleet/guardian-empty-recovery.js';
 import { cmdJobsRetryEmpty } from '../src/cli/jobs-retry-empty.js';
 
 const job = 'RQ-FIX-MAIN-phantom-abc1234';
 const queue = `- DONE ${job} (P0, pool=codex-personal, tier=work, repo=phantom, size<=80): Fix failing typecheck.\n`;
-const launch = { event: 'launch', job, repo: 'phantom', tier: 'work', ts: '2026-11-23T12:00:00Z' };
+const launch = { event: 'launch', job, lane: 'codex-personal', repo: 'phantom', tier: 'work', ts: '2026-11-23T12:00:00Z' };
 const finish = { event: 'finish', job, empty: true, exit_code: 124, failure_reason: 'launch_timeout', ts: '2026-11-23T12:05:00Z' };
 const ledger = (...rows: object[]) => rows.map(row => JSON.stringify(row)).join('\n');
 const initial = ledger(launch, finish);
+const routing = () => ({ models: { claude: 'gpt-6.1-sol' }, admission: { admit: true },
+  slots: { claude: { target: 1, hard_cap: 1, tiers: ['fast', 'mid', 'work', 'frontier'], cost_class: 'included', data_class: 'internal', capabilities: ['git'] } },
+  capacity: { claude: { resetAt: null, remainingPercent: 50, observedAt: new Date().toISOString() } },
+  request: { task_class: 'bug-fix', repo: 'phantom', tier_hint: 'work', lane_candidates: ['claude', 'codex-personal'],
+    quota_state: { claude: 'available' }, machine_state: { admit: true, running_by_lane: { claude: 0 } } } });
+const plan = (q: string, l: string, r: Set<string>) => planGuardianEmptyRecovery(q, l, r, routing());
 const retry = () => plan(queue, initial, new Set()).lines[0]!;
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 it('preserves failure references, source constraints and measured tier with one deterministic retry', () => {
   const line = retry();
-  expect(line).toContain(`${job}-EMPTYRETRY-work (P0, pool=codex-personal, tier=work, repo=phantom, size<=80)`);
+  expect(line).toContain(`${job}-EMPTYRETRY-work (P0, pool=claude, tier=work, repo=phantom, size<=80)`);
   expect(line).toContain(`${job}.log`); expect(line).toContain('exit 124');
   expect(plan(queue, initial, new Set()).lines).toEqual([line]);
   expect(plan(queue.replace('tier=work', 'tier=fast'), initial, new Set()).lines[0]).toContain('tier=work');
   expect(plan(queue, ledger(launch, { ...finish, exit_code: 0 }), new Set()).lines).toEqual([]);
   expect(plan(queue, ledger(launch, { ...finish, exit_code: null }), new Set()).lines).toEqual([]);
   expect(plan(queue, ledger(launch, { ...finish, exit_code: 0, pool_error: 'rate_limit' }), new Set()).lines).toHaveLength(1);
+});
+
+it.each(['missing', 'quota', 'held', 'full', 'stale', 'metered', 'needs', 'data', 'ceiling', 'local', 'unknown-lane'])('defers recovery when alternate routing is %s', gate => {
+  const s = routing(); let q = queue, l = initial;
+  if (gate === 'quota') s.request.quota_state.claude = 'exhausted';
+  if (gate === 'held') Object.assign(s.slots.claude, { held: true });
+  if (gate === 'full') s.request.machine_state.running_by_lane.claude = 1;
+  if (gate === 'stale') s.capacity.claude.observedAt = '2026-11-01T00:00:00Z';
+  if (gate === 'metered') s.slots.claude.cost_class = 'metered';
+  if (gate === 'needs') q = q.replace('size<=80', 'size<=80, needs=browser');
+  if (gate === 'data') q = q.replace('size<=80', 'size<=80, data_class=restricted');
+  if (gate === 'ceiling') q = q.replace('size<=80', 'size<=80, max_tier=fast');
+  if (gate === 'local') q = q.replace('pool=codex-personal', 'pool=codex-local');
+  if (gate === 'unknown-lane') l = ledger({ ...launch, lane: undefined }, finish);
+  expect(planGuardianEmptyRecovery(q, l, new Set(), gate === 'missing' ? undefined : s).lines).toEqual([]);
+});
+
+it('excludes the measured failed lane and updates every routing hint while retaining requirements', () => {
+  expect(plan(queue, ledger({ ...launch, lane: 'claude' }, finish), new Set()).lines).toEqual([]);
+  const q = queue.replace('size<=80', 'size<=80, preferred_lane=codex-personal, needs=git, data_class=internal');
+  expect(plan(q, initial, new Set()).lines[0]).toContain('pool=claude, tier=work, repo=phantom, size<=80, preferred_lane=claude, needs=git, data_class=internal');
 });
 
 it('deduplicates queued and live jobs, duplicate finishes, pending PRs and torn evidence', () => {
@@ -33,6 +60,11 @@ it('deduplicates queued and live jobs, duplicate finishes, pending PRs and torn 
   }
   for (const extra of [{ ...launch, job: child }, { event: 'publish', job, ts: finish.ts, url: 'https://github.com/ashlrai/phantom/pull/42' }]) {
     expect(plan(queue, ledger(launch, finish, extra), new Set()).lines).toEqual([]);
+  }
+  for (const extra of [{ event: 'publish', job, ts: finish.ts, url: 'https://github.com/ashlrai/phantom/pull/42' },
+    { event: 'outcome', job, ts: finish.ts, state: 'MERGED' }, { id: job, ts: finish.ts, status: 'MERGED' },
+    { ...finish, conclusion: 'CLOSED' }]) {
+    expect(plan(queue, ledger(launch, finish, extra, finish), new Set()).lines).toEqual([]);
   }
   expect(plan(queue, initial + '\n{', new Set()).lines).toEqual([]);
   expect(plan(queue + queue, initial, new Set()).lines).toEqual([]);
@@ -54,6 +86,7 @@ it('exhausts one retry per tier without retry chains and retains the failed chil
   const exhausted = plan(pending, done, receipt);
   expect(exhausted.lines).toEqual([]);
   expect(exhausted.escalations).toEqual([{ job: child, root: job, tier: 'work', exitCode: 2, reason: 'The run failed without a publishable change.' }]);
+  expect(plan(pending, done + '\n' + JSON.stringify({ ...finish, job: child, exit_code: 2 }), receipt)).toEqual(exhausted);
   expect(plan(queue, initial, receipt).lines).toEqual([]); // Receipt survives queue removal.
   expect(plan(queue.replace('tier=work', 'tier=mid'), ledger({ ...launch, tier: 'mid' }, finish), receipt).lines).toHaveLength(1);
 });
@@ -64,6 +97,9 @@ it('CLI previews then applies once, preserving the original ledger, log and queu
     vi.stubEnv('ASHLR_RUNS_DIR', dir); vi.stubEnv('ASHLR_WT_DIR', join(dir, 'wt'));
     const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     await mkdir(join(dir, 'queue')); await mkdir(join(dir, 'metrics'));
+    const s = routing();
+    for (const [path, data] of Object.entries({ 'models.json': s.models, 'queue/slots.json': s.slots, 'queue/admission.json': s.admission,
+      'queue/route-capacity.json': s.capacity, 'queue/route-request.json': s.request })) await writeFile(join(dir, path), JSON.stringify(data));
     const file = join(dir, 'queue/router-queue.md'), jobs = join(dir, 'metrics/jobs.jsonl'), log = join(dir, `${job}.log`);
     await writeFile(file, queue); await writeFile(jobs, initial); await writeFile(log, 'worker failed');
     expect(await cmdJobsRetryEmpty(['--dry-run', '--json'])).toBe(0);
