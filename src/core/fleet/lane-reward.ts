@@ -11,6 +11,7 @@ import { join, resolve } from 'node:path';
 import { loadProposal } from '../inbox/store.js';
 import { readLedgerTail } from '../router/outcomes.js';
 import type { Proposal } from '../types.js';
+import { prKeyOf } from './eval-report.js';
 import { inspectOneAskReward, type OneAskReward } from './one-ask-reward.js';
 import { isNodePoolLedgerRow, ledgerEventTs } from './jobs-ledger-dialect.js';
 
@@ -115,7 +116,7 @@ const tokensOf = (row: Row): number | null => {
 
 /** Fold a jobs ledger into attempts; malformed lines are counted, never thrown. */
 export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attempts: Map<string, LaneRewardAttempt>; dropped: number } {
-  const rows: { row: Row; job: string | null; event: string; phase: string; receiptAt: number | null }[] = [];
+  const rows: { row: Row; job: string | null; event: string; phase: string; receiptAt: number | null; prKey: string | null }[] = [];
   let dropped = 0;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -130,27 +131,26 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
     const receiptAt = ledgerEventTs(row, null);
     const outcomeAt = TERMINAL_PHASES.has(phase) ? ledgerEventTs(row, phase) : null;
     if ((receiptAt !== null && receiptAt > asOfMs) || (outcomeAt !== null && outcomeAt > asOfMs)) continue;
-    rows.push({ row, job, event, phase, receiptAt });
+    const url = urlOf(row);
+    rows.push({ row, job, event, phase, receiptAt, prKey: prKeyOf(url)?.key ?? url });
   }
   // URL-only rows can resolve only against a unique recorded job.
-  const jobByUrl = new Map<string, string | null>();
-  for (const { row, job } of rows) {
-    const url = urlOf(row);
-    if (job === null || url === null) continue;
-    const previous = jobByUrl.get(url);
-    if (previous === undefined) jobByUrl.set(url, job);
-    else if (previous !== job) jobByUrl.set(url, null);
+  const jobByPr = new Map<string, string | null>();
+  for (const { prKey, job } of rows) {
+    if (job === null || prKey === null) continue;
+    const previous = jobByPr.get(prKey);
+    if (previous === undefined) jobByPr.set(prKey, job);
+    else if (previous !== job) jobByPr.set(prKey, null);
   }
   const attempts = new Map<string, LaneRewardAttempt>();
   const batchClaimLanes = new Map<string, string>();
   const usageTimes = new Map<string, number>();
-  for (const { row, job: explicitJob, event, phase, receiptAt } of rows) {
+  for (const { row, job: explicitJob, event, phase, receiptAt, prKey } of rows) {
     const launch = LAUNCH_EVENTS.has(event), finish = FINISH_EVENTS.has(event);
     const batchClaim = event === 'batch_claim';
     if (!batchClaim && !launch && !finish && !PUBLISH_EVENTS.has(event) && phase !== 'PUBLISHED' &&
         !OUTCOME_EVENTS.has(event) && !TERMINAL_PHASES.has(phase)) continue;
-    const url = urlOf(row);
-    const job = explicitJob ?? (url !== null ? jobByUrl.get(url) ?? null : null);
+    const job = explicitJob ?? (prKey !== null ? jobByPr.get(prKey) ?? null : null);
     if (job === null) continue;
     const attempt = attempts.get(job) ??
       { lane: null, tokens: null, published: false, outcome: null, outcomeTsMs: -1 };
@@ -174,7 +174,7 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
         }
       }
     }
-    attempt.published ||= PUBLISH_EVENTS.has(event) || phase === 'PUBLISHED' || url !== null;
+    attempt.published ||= PUBLISH_EVENTS.has(event) || phase === 'PUBLISHED' || prKey !== null;
     if (TERMINAL_PHASES.has(phase)) {
       const tsMs = ledgerEventTs(row, phase) ?? 0;
       if (tsMs >= attempt.outcomeTsMs) {

@@ -1414,8 +1414,10 @@ full-window refusal share.
 
 Run `phm fleet lane-reward --json` to see reward and measured token usage by
 lane. The report attributes a PR outcome that carries only a URL when exactly
-one distinct job in the retained jobs ledger records that URL. If several jobs
-record it, the outcome remains unattributed. Rows that identify a job directly
+one distinct job in the retained jobs ledger claims that PR. GitHub PR URLs
+match across repository casing and a trailing slash. Other URL forms require
+an exact match. If several jobs claim the PR, the outcome remains unattributed.
+Rows that identify a job directly
 still apply to that job. An `unknown` lane field leaves the last observed lane
 in place or allows a valid `pool` or `arm` alias on the same row. Jobs with no
 observed lane appear under `unattributed`.
