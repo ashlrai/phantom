@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DriveNodes, JobClaim } from './index.js';
 import type { NodeAuth, NodeCapacitySample } from './state.js';
 import { isNodeCapacity, isHostStats, validCap, validId, validSecretName } from './state.js';
+import { jobBlockers, routable } from './router.js';
 import { NODE_TASK_LIMIT, validNodeTask } from './task.js';
 
 export class UsageError extends Error {
@@ -303,9 +304,18 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         const state = nodes.snapshot();
         const rec = state.nodes.find(n => n.nodeId === s.nodeId && n.session === s.session);
         if (rec === undefined || rec.expiresAt <= state.observedAt) throw stale(s.nodeId, s.session);
+        // An empty pull has three honest readings: nothing open to this
+        // session's scopes, open work this session cannot run (a cap, auth or
+        // decline fence — not counted), or open work that fit but routed to
+        // other nodes or waits on a free slot. `open` counts the last group
+        // from the same snapshot, so "no job" never masquerades as an empty
+        // queue while work this node could do sits elsewhere.
+        const open = state.jobs.filter(j => j.owner !== undefined && rec.owners?.includes(j.owner) === true &&
+          routable(j, state.observedAt) && jobBlockers(rec, j).length === 0).length;
         return { pulled: false,
           ...(rec.slots === undefined ? {} : { slots: rec.slots }),
-          ...(rec.capacity?.held ? { held: rec.capacity.held } : {}) };
+          ...(rec.capacity?.held ? { held: rec.capacity.held } : {}),
+          ...(open > 0 ? { open } : {}) };
       }
       const { claim, job } = pulled;
       return { pulled: true, job, claim: { jobId: claim.jobId, nodeId: claim.nodeId, session: claim.session,

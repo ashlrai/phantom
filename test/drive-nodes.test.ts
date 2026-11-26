@@ -360,6 +360,52 @@ describe('pull session honesty', () => {
   });
 });
 
+describe('pull open-work count', () => {
+  const pullArgs = (nodeId: string, session: number) => ['--node', nodeId, '--session', String(session)];
+  it('counts open work that fit this node but routed to other nodes', () => {
+    const f = fixture();
+    f.a.join('aaa', { owners: ['o'], slots: 1 });
+    const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    f.a.enqueue('job', { owner: 'o' });
+    // 'aaa' sorts first and ties on load, so the router gives it the job; the
+    // empty pull must say work exists rather than read as an empty queue.
+    expect(f.a.plan('o')[0]).toMatchObject({ jobId: 'job', nodeId: 'aaa' });
+    expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a))
+      .toEqual({ pulled: false, slots: 1, open: 1 });
+  });
+  it('counts every open job that fit, however many routed elsewhere', () => {
+    const f = fixture();
+    f.a.join('aaa', { owners: ['o'], slots: 1 });
+    f.a.join('aab', { owners: ['o'], slots: 1 });
+    const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    f.a.enqueue('job1', { owner: 'o' });
+    f.a.enqueue('job2', { owner: 'o' });
+    expect(f.a.plan('o').map(r => r.nodeId)).toEqual(['aaa', 'aab']);
+    expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a))
+      .toEqual({ pulled: false, slots: 1, open: 2 });
+  });
+  it('does not count work behind a capability fence', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'], caps: ['build'], slots: 1 })!;
+    f.a.enqueue('needs-gh', { owner: 'o', requires: ['gh'] });
+    // Open to the scope but 'gh' is not advertised here: not work this node can run.
+    expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a))
+      .toEqual({ pulled: false, slots: 1 });
+  });
+  it('does not count a job this session declined', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    f.a.heartbeat(worker);
+    f.a.enqueue('job', { owner: 'o', requires: [], secrets: [] });
+    const claim = f.a.pull(worker)!.claim;
+    executeNodeFleet('release', ['--job', claim.jobId, '--node', claim.nodeId, '--session', String(claim.session),
+      '--token', String(claim.token), '--leader-token', String(claim.leaderToken), '--decline'], f.a);
+    // Pending again but fenced for this session: not work it can run.
+    expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a))
+      .toEqual({ pulled: false, slots: 1 });
+  });
+});
+
 describe('session-expired rejoin hint', () => {
   const args = (nodeId: string, session: number) => ['--node', nodeId, '--session', String(session)];
   function failure(fn: () => unknown): { code?: string; message?: string; fix?: string } {
@@ -823,6 +869,17 @@ describe('text output names outcomes in plain words', () => {
       executeNodeFleet('beat', ['--node', 'box', '--session', session, '--capacity', JSON.stringify(held)], nodes());
       expect(await cmdNodeFleet('pull', ['--node', 'box', '--session', session], deps)).toBe(0);
       expect(last(lines)).toBe('No job for this node; this node is held (memory pressure). Run: phm node plan');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('an empty pull counts open work that routed to other nodes', async () => {
+    const { deps, nodes, lines } = harness();
+    try {
+      executeNodeFleet('join', ['--node', 'aaa', '--owner', 'acme'], nodes());
+      const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
+      executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], nodes());
+      // 'aaa' sorts first at equal load and takes the job; 'box' hears the count.
+      expect(await cmdNodeFleet('pull', ['--node', 'box', '--session', session], deps)).toBe(0);
+      expect(last(lines)).toBe('No job for this node; 1 open job fit this node but routed to other nodes or wait on a free slot. Run: phm node plan');
     } finally { vi.restoreAllMocks(); }
   });
   it('release hands a claim back in plain words, and --decline bars this session', async () => {
