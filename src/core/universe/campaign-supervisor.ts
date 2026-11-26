@@ -1,6 +1,6 @@
 import { isAbsolute, parse, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { canonical, digest } from './artifacts.js';
+import { canonical, digest, isSafeIntegerInRange as integer } from './artifacts.js';
 import { runUniverseCampaign } from './campaign.js';
 import { deliverCompletedUniverseCampaign, preflightUniverseCampaignDelivery, validateUniverseCampaignDeliveryPlan,
   type UniverseCampaignDeliveryPlan, type UniverseCampaignDeliveryResult } from './campaign-delivery.js';
@@ -55,9 +55,6 @@ function path(value: unknown): value is string {
   return typeof value === 'string' && Buffer.byteLength(value, 'utf8') <= 4_096 &&
     ![...value].some((character) => { const code = character.charCodeAt(0); return code < 32 || code >= 127 && code <= 159; }) &&
     isAbsolute(value) && resolve(value) === value && parse(value).root !== value;
-}
-function integer(value: unknown, min: number, max: number): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= min && Number(value) <= max;
 }
 function snapshot(input: string[], options: UniverseCampaignSupervisorOptions) {
   const keys = ['root', 'maxDurationMs', 'maxConcurrent', 'pollIntervalMs', 'resourceRuntime', 'deliveryPlan', 'signal', 'onTransition'];

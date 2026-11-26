@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initUniverse, readUniverseOverview, runUniverse, validateUniverseManifest,
   type UniverseManifest } from '../src/core/universe/index.js';
-import { canonical } from '../src/core/universe/artifacts.js';
+import {
+  canonical, hasExactDataKeys, hasExactOwnKeys, hasOnlyAllowedKeys, isDataObject,
+  isFiniteNumber, isIsoTimestamp, isPlainObject, isSafeIntegerInRange, isSha256Hex,
+  isStrictIsoTimestamp, isUniverseId, isValidMetricsMap, UNIVERSE_GIT_OID_RE,
+  UNIVERSE_UUID_V4_RE,
+} from '../src/core/universe/artifacts.js';
 import { appendRecord, manifestRecord, newRun, parseEvaluation, scheduledVariants, selectWinners } from '../src/core/universe/store.js';
 
 const roots: string[] = [];
@@ -241,5 +246,58 @@ describe.runIf(process.platform === 'darwin')('Universe confined local execution
     const elite = readUniverseOverview({ root }).universes[0]!.elites[0]!;
     run.trials[0]!.score = 1e308;
     expect(() => selectWinners(run, manifestRecord(directory).manifest, [{ ...elite, score: -1e308 }])).toThrow(/finite/);
+  });
+
+  it('enforces exact object, descriptor, identity, range, timestamp and metrics validation primitives', () => {
+    expect(isPlainObject({ a: 1 })).toBe(true);
+    expect(isPlainObject(Object.create(null))).toBe(true);
+    expect(isPlainObject(null)).toBe(false);
+    expect(isPlainObject([])).toBe(false);
+    expect(isPlainObject(new Date())).toBe(false);
+
+    const sym = Symbol('hidden');
+    expect(hasExactOwnKeys({ a: 1, b: 2 }, ['a', 'b'])).toBe(true);
+    expect(hasExactOwnKeys({ a: 1 }, ['a', 'b'])).toBe(false);
+    expect(hasExactOwnKeys({ a: 1, [sym]: 2 } as Record<string, unknown>, ['a'])).toBe(false);
+
+    const withGetter = Object.defineProperty({}, 'a', { get: () => 1, enumerable: true });
+    const withNonEnum = Object.defineProperty({ a: 1 }, 'b', { value: 2, enumerable: false });
+    expect(hasExactDataKeys({ a: 1 }, ['a'])).toBe(true);
+    expect(hasExactDataKeys(withGetter, ['a'])).toBe(false);
+    expect(hasOnlyAllowedKeys({ a: 1 }, ['a', 'b'])).toBe(true);
+    expect(hasOnlyAllowedKeys({ a: 1, c: 3 }, ['a', 'b'])).toBe(false);
+
+    expect(isDataObject({ a: 1 }, ['a'], ['b'])).toBe(true);
+    expect(isDataObject(withNonEnum, ['a'], ['b'], false)).toBe(true);
+    expect(isDataObject(withNonEnum, ['a'], ['b'], true)).toBe(false);
+    expect(isDataObject(withGetter, ['a'])).toBe(false);
+
+    expect(isUniverseId('universe_1-a')).toBe(true);
+    expect(isUniverseId('UpperCase')).toBe(false);
+    expect(isSha256Hex('a'.repeat(64))).toBe(true);
+    expect(isSha256Hex('A'.repeat(64))).toBe(false);
+    expect(UNIVERSE_GIT_OID_RE.test('b'.repeat(40))).toBe(true);
+    expect(UNIVERSE_GIT_OID_RE.test('b'.repeat(64))).toBe(true);
+    expect(UNIVERSE_GIT_OID_RE.test('b'.repeat(41))).toBe(false);
+    expect(UNIVERSE_UUID_V4_RE.test('12345678-1234-4123-8123-1234567890ab')).toBe(true);
+    expect(UNIVERSE_UUID_V4_RE.test('12345678-1234-1123-8123-1234567890ab')).toBe(false);
+
+    expect(isSafeIntegerInRange(5, 1, 5)).toBe(true);
+    expect(isSafeIntegerInRange(6, 1, 5)).toBe(false);
+    expect(isSafeIntegerInRange(1.5, 1, 5)).toBe(false);
+    expect(isFiniteNumber(0)).toBe(true);
+    expect(isFiniteNumber(Number.NaN)).toBe(false);
+    expect(isFiniteNumber(Number.POSITIVE_INFINITY)).toBe(false);
+
+    expect(isIsoTimestamp('2026-11-25T12:34:56.789Z')).toBe(true);
+    expect(isIsoTimestamp('2026-11-25T12:34:56Z')).toBe(false);
+    expect(isStrictIsoTimestamp('2026-11-25T12:34:56.789Z')).toBe(true);
+    expect(isStrictIsoTimestamp('+010000-01-01T00:00:00.000Z')).toBe(false);
+
+    expect(isValidMetricsMap({ score: 1.5, pass_rate: 0 })).toBe(true);
+    expect(isValidMetricsMap({ '0bad': 1 })).toBe(false);
+    expect(isValidMetricsMap({ score: Number.POSITIVE_INFINITY })).toBe(false);
+    const tooMany = Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`m${i}`, i]));
+    expect(isValidMetricsMap(tooMany)).toBe(false);
   });
 });

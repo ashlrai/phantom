@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { UniverseOverview, UniverseRun, UniverseTrial } from './types.js';
 import type { UniverseGraph, UniverseGraphEdgeKind, UniverseGraphFinding, UniverseGraphNode, UniverseGraphNodeKind } from './graph-types.js';
 
-export const UNIVERSE_GRAPH_LIMITS = Object.freeze({ maxNodes: 25_000, maxEdges: 100_000, maxFindings: 256 });
+const UNIVERSE_GRAPH_LIMITS = Object.freeze({ maxNodes: 25_000, maxEdges: 100_000, maxFindings: 256 });
 interface TrialOccurrence { nodeId: string; artifactId?: string; run: UniverseRun; trial: UniverseTrial }
 
 /** Opaque occurrence identities cannot disclose private source IDs or merge equal-content artifacts. */

@@ -4,7 +4,7 @@ import { createFirmEngineeringControlHandler, type FirmEngineeringControlHost } 
 import { runControlGraph, validateControlGraph } from '../core/universe/control-graph.js';
 import { isAbsolute, resolve } from 'node:path';
 
-export const FIRM_ENGINEERING_HELP = `Usage: ashlr universe firm engineer --root <existing-private-graph-dir>
+const FIRM_ENGINEERING_HELP = `Usage: ashlr universe firm engineer --root <existing-private-graph-dir>
        --enrollment <private-canonical-json> [--check] [--json]
        [--expected-enrollment-digest <sha256-from-check>]
 

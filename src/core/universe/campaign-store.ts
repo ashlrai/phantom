@@ -5,16 +5,18 @@ import {
   readImmutablePrivateRecordPoint, readImmutablePrivateRecords, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig,
 } from '../util/immutable-private-record-store.js';
-import { canonical, defaultUniverseRoot, digest, ensureUniverseRoot, inspectPrivateDirectory, privateDirectory } from './artifacts.js';
+import {
+  canonical, defaultUniverseRoot, digest, ensureUniverseRoot, hasExactDataKeys as exact,
+  inspectPrivateDirectory, isPlainObject as object, isSafeIntegerInRange as integer,
+  isSha256Hex as hash, isStrictIsoTimestamp as iso, isUniverseId as identifier, privateDirectory,
+  UNIVERSE_UUID_V4_RE as UUID,
+} from './artifacts.js';
 import { parseEvaluation, projectUniverse, scheduledVariants, universePath } from './store.js';
 import type {
   UniverseCampaignDefinition, UniverseCampaignSeedEvaluation, UniverseCampaignSeedIntent, UniverseCampaignSeedResult,
   UniverseCampaignStep, UniverseCampaignSummary, UniverseStoreOptions, UniverseSummary,
 } from './types.js';
 
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
-const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const MAX_EVENTS = 2_048;
 export type CampaignOwner = { pid: number; startRef: string };
 type SettledState = 'paused' | 'stopped' | 'completed' | 'interrupted' | 'failed';
@@ -30,24 +32,6 @@ export type CampaignEvent = CampaignEventInput & { id: string; sequence: number 
 type CreatedEvent = Extract<CampaignEvent, { kind: 'created' }>;
 type StepEvent = Extract<CampaignEvent, { kind: 'step' }>;
 
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-function exact(value: Record<string, unknown>, keys: string[]): boolean {
-  return Reflect.ownKeys(value).length === keys.length && Reflect.ownKeys(value).every((key) => typeof key === 'string' &&
-    keys.includes(key) && Object.hasOwn(Object.getOwnPropertyDescriptor(value, key)!, 'value'));
-}
-function integer(value: unknown, low: number, high: number): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= low && Number(value) <= high;
-}
-function iso(value: unknown): value is string {
-  if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value)) return false;
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) && date.toISOString() === value;
-}
-function identifier(value: unknown): value is string { return typeof value === 'string' && ID.test(value); }
-function hash(value: unknown): value is string { return typeof value === 'string' && HASH.test(value); }
 export function validCampaignDispatchId(value: unknown): value is string { return typeof value === 'string' && UUID.test(value); }
 
 export function validateUniverseCampaignDefinition(value: unknown): UniverseCampaignDefinition {
@@ -145,7 +129,7 @@ export function terminalCampaign(state: UniverseCampaignSummary['state']): boole
 }
 
 /** PID reuse or an unavailable start probe must never imply permission to steal a live owner. */
-export function campaignOwnerAlive(owner: CampaignOwner): boolean {
+function campaignOwnerAlive(owner: CampaignOwner): boolean {
   try { process.kill(owner.pid, 0); return true; }
   catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
 }

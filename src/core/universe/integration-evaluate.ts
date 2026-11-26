@@ -3,8 +3,12 @@ import { dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
-import { artifactDigest, canonical, copyArtifact, defaultUniverseRoot, digest, freezeArtifact, privateDirectory,
-  type UniverseArtifactEntry } from './artifacts.js';
+import {
+  artifactDigest, canonical, copyArtifact, defaultUniverseRoot, digest, freezeArtifact,
+  hasExactOwnKeys as exact, isIsoTimestamp as timestamp, isPlainObject as object,
+  isValidMetricsMap as validMetrics, privateDirectory, UNIVERSE_ID_RE as ID,
+  UNIVERSE_SHA256_RE as HASH, type UniverseArtifactEntry,
+} from './artifacts.js';
 import { deliveryGit, type GitTreeEntry } from './delivery-git.js';
 import { assertUniverseExecution, withUniverseExecution } from './execution.js';
 import { runFixedUniverseEvaluator } from './fixed-evaluator.js';
@@ -15,8 +19,6 @@ import type { UniverseIntegrationEvaluationEvidence, UniverseIntegrationEvaluati
 import { assertComparatorUnchanged, manifestRecord, parseEvaluation, projectUniverse, readRecords, universePath } from './store.js';
 import type { UniverseStoreOptions } from './types.js';
 
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
 const MAX_ATTEMPTS = 128;
 const RECEIPT_HEADROOM_BYTES = 32 * 1024;
 
@@ -27,21 +29,6 @@ type AttemptRecord =
   { id: string; kind: 'intent'; request: UniverseIntegrationEvaluationRequest; requestDigest: string; startedAt: string } |
   { id: string; kind: 'receipt'; request: UniverseIntegrationEvaluationRequest; requestDigest: string; startedAt: string; result: UniverseIntegrationEvaluationResult };
 
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-function exact(value: Record<string, unknown>, keys: string[]): boolean {
-  const own = Reflect.ownKeys(value);
-  return own.length === keys.length && own.every((key) => typeof key === 'string' && keys.includes(key));
-}
-function timestamp(value: unknown): value is string {
-  return typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
-}
-function validMetrics(value: unknown): value is Record<string, number> {
-  return object(value) && Object.keys(value).length <= 32 && Object.entries(value).every(([key, item]) =>
-    /^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/.test(key) && typeof item === 'number' && Number.isFinite(item));
-}
 function requestDigest(request: UniverseIntegrationEvaluationRequest): string {
   return digest(canonical({ domain: 'universe-integration-evaluation-v1', request }));
 }

@@ -1,27 +1,24 @@
 import { lstatSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { canonical, digest, inspectPrivateDirectory, readArtifactSnapshot } from './artifacts.js';
+import {
+  canonical, digest, inspectPrivateDirectory, isPlainObject as object, isSafeIntegerInRange,
+  isSha256Hex as hash, readArtifactSnapshot,
+} from './artifacts.js';
 import { fileOperationsPathKey, validateGenerationConfig, validFileOperationsPath, validGenerationReceipt } from './generation.js';
 import type { UniverseArtifact, UniverseGenerationConfig, UniverseGenerationReceipt, UniverseSummary, UniverseVariant } from './types.js';
 import type { UniverseFileOperationsContext, UniverseFileState } from './file-operations-types.js';
 
-const HASH = /^[a-f0-9]{64}$/;
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 const MAX_FILE_BYTES = 64 * 1024;
 const MAX_TEXT_BYTES = 128 * 1024;
-export const MAX_FILE_OPERATIONS_CONTEXT_BYTES = 160 * 1024;
+const MAX_FILE_OPERATIONS_CONTEXT_BYTES = 160 * 1024;
 
 function fail(reason: string): never { throw new Error(`Invalid Universe file operations: ${reason}`); }
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
 function exact(value: Record<string, unknown>, keys: string[]): boolean {
   return Object.keys(value).length === keys.length && Object.keys(value).every((key) => keys.includes(key));
 }
-function hash(value: unknown): value is string { return typeof value === 'string' && HASH.test(value); }
 function id(value: unknown): value is string { return typeof value === 'string' && ID.test(value); }
-function generation(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 10_001; }
+function generation(value: unknown): value is number { return isSafeIntegerInRange(value, 1, 10_001); }
 function states(value: unknown, paths: string[]): UniverseFileState[] {
   if (!Array.isArray(value) || value.length !== paths.length) fail('file-state scope does not match the declared order');
   return value.map((item: unknown, index) => {

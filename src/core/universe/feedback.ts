@@ -1,29 +1,23 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync, type Stats } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { artifactDigest, canonical, digest, inspectPrivateDirectory } from './artifacts.js';
+import {
+  artifactDigest, canonical, digest, hasOnlyAllowedKeys as exact, inspectPrivateDirectory,
+  isPlainObject as object, isSha256Hex as hash, isValidMetricsMap as validMetrics,
+} from './artifacts.js';
 import { validGenerationPath, validateGenerationConfig } from './generation.js';
 import type { UniverseDiagnostic, UniverseFeedback, UniverseGenerationReceipt, UniverseSummary, UniverseVariant } from './types.js';
 import { readUniverseFileOperationInputs } from './file-operations-context.js';
 
-export const MAX_FEEDBACK_FILE_BYTES = 64 * 1024;
-export const MAX_FEEDBACK_CONTEXT_BYTES = 128 * 1024;
-const HASH = /^[a-f0-9]{64}$/;
+const MAX_FEEDBACK_FILE_BYTES = 64 * 1024;
+const MAX_FEEDBACK_CONTEXT_BYTES = 128 * 1024;
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-function exact(value: Record<string, unknown>, keys: string[]): boolean {
-  return Object.keys(value).every((key) => keys.includes(key));
-}
 function text(value: unknown, max: number): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= max &&
     [...value].every((character) => { const code = character.charCodeAt(0); return code >= 32 && (code < 127 || code > 159); }) &&
     Buffer.from(value, 'utf8').toString('utf8') === value;
 }
 function identifier(value: unknown): value is string { return typeof value === 'string' && ID.test(value); }
-function hash(value: unknown): value is string { return typeof value === 'string' && HASH.test(value); }
 function positive(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) > 0; }
 
 /** Only deliberately shareable evaluator diagnostics enter subsequent prompts. */
@@ -41,11 +35,6 @@ export function validateDiagnostics(value: unknown): UniverseDiagnostic[] {
   });
   if (Buffer.byteLength(canonical(diagnostics), 'utf8') > 8 * 1024) throw new Error('Invalid Universe diagnostics: byte limit exceeded');
   return diagnostics;
-}
-
-function validMetrics(value: unknown): value is Record<string, number> {
-  return object(value) && Object.keys(value).length <= 32 && Object.entries(value).every(([key, item]) =>
-    /^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/.test(key) && typeof item === 'number' && Number.isFinite(item));
 }
 
 /** Validate again at the model boundary; callers cannot extend file authority. */

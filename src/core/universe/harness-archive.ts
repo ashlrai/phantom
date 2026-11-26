@@ -4,10 +4,11 @@ import { isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
-import { canonical, digest, inspectPrivateDirectory, readArtifactSnapshot } from './artifacts.js';
+import {
+  canonical, digest, hasExactDataKeys, inspectPrivateDirectory, isPlainObject,
+  isSha256Hex as hash, isUniverseId as id, readArtifactSnapshot,
+} from './artifacts.js';
 
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
 const MAX_BYTES = 256 * 1024;
 const MAX_FILES = 256;
 const MAX_RECORDS = 257;
@@ -42,17 +43,12 @@ export interface StoreHarnessCandidateOptions {
 }
 
 function exact(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
-  const actual = Reflect.ownKeys(value);
-  return actual.length === keys.length && actual.every((key) => typeof key === 'string' && keys.includes(key) &&
-    'value' in Object.getOwnPropertyDescriptor(value, key)!);
+  return isPlainObject(value) && hasExactDataKeys(value, keys);
 }
 function array(value: unknown, maximum: number): value is unknown[] {
   return Array.isArray(value) && value.length <= maximum && Reflect.ownKeys(value).length === value.length + 1 &&
     Array.from({ length: value.length }, (_, index) => Object.getOwnPropertyDescriptor(value, index)).every((item) => item && 'value' in item);
 }
-function id(value: unknown): value is string { return typeof value === 'string' && ID.test(value); }
-function hash(value: unknown): value is string { return typeof value === 'string' && HASH.test(value); }
 function controls(value: string, allowWhitespace = false): boolean {
   return [...value].some((character) => {
     const code = character.charCodeAt(0);
