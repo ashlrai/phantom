@@ -188,6 +188,27 @@ describe('getFleetTruth', () => {
     expect(truth.queued).toBe(2);
   });
 
+  it('counts lane-open and envelope-resolved dispatcher rows and drops market-invalid ones', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'), [
+      'RQ-TRUTH-LANE\tphantom\tclaude\twork\tqueue/prompts/a.md',
+      'RQ-TRUTH-OPEN\tphantom\t\twork\tqueue/prompts/b.md',
+      'RQ-TRUTH-ENV\tphantom\t\twork\tqueue/prompts/c.md',
+      'RQ-TRUTH-NOLANE\tphantom\t\twork\tqueue/prompts/d.md',
+      'RQ-TRUTH-BADENV\tphantom\tclaude\twork\tqueue/prompts/e.md',
+    ].join('\n'));
+    writeFileSync(join(root, 'queue', 'router-queue.md'), [
+      '- READY RQ-TRUTH-ENV (P1, preferred_lane=codex): c',
+      '- READY RQ-TRUTH-NOLANE (P2): d',
+      '- READY RQ-TRUTH-BADENV (P1, impact=not-a-number): e',
+    ].join('\n'));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root });
+    // LANE and ENV resolve to lanes, OPEN and NOLANE stay lane-open supply,
+    // BADENV's malformed envelope makes it dead work — never queued.
+    expect(truth.queued).toBe(4);
+  });
+
   it('falls back to live job pids when admission.json is stale', async () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
     mkdirSync(join(root, 'queue'));

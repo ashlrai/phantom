@@ -71,10 +71,18 @@ async function fetchRepoFacts(repos: readonly string[], now: number, run: GitRun
 const root = () => process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
 let factsCache: { key: string; at: number; facts: Promise<Map<string, RepoFacts>> } | undefined;
 
+/** router-queue.md is append-mostly Markdown history; same bound the unfed read uses. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
+
 async function readyDepth(runsDir: string): Promise<Map<string, number> | null> {
-  const source = await readSource(join(runsDir, 'queue', 'ready.tsv'), 2 * 1024 * 1024, false);
+  const [source, router] = await Promise.all([
+    readSource(join(runsDir, 'queue', 'ready.tsv'), 2 * 1024 * 1024, false),
+    readSource(join(runsDir, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
+  ]);
   if (source.state !== 'healthy') return null;
-  const parsed = parseReadyTsv(source.text);
+  // Spec-less dispatcher rows resolve their lane through the router-queue.md
+  // envelope like the market; a row it rejects is dead work, never depth.
+  const parsed = parseReadyTsv(source.text, router.state === 'healthy' ? router.text : null);
   const depths = new Map<string, number>();
   const rows = [...parsed.rows.filter(row => row.status === 'READY'), ...parsed.unhintedRows];
   for (const row of rows) {

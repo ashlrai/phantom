@@ -6,6 +6,8 @@ import { parseReadyTsv } from './lane-console.js';
 import { readSource } from './runs-parked-queue.js';
 
 const LIMIT = 1000;
+/** router-queue.md is append-mostly Markdown history; same bound the unfed read uses. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 type Pr = { number: number; title: string; mergeable: string; mergeStateStatus: string; createdAt: string; headRefOid: string };
 type QueueRow = { id: string | null; status: string };
 
@@ -30,7 +32,13 @@ export function summarizeRebases(repo: string, prs: Pr[], jobs: QueueRow[], now:
 
 export async function readRebaseStatus(repos: string[], runsDir: string, now = new Date()) {
   const queue = await readSource(join(runsDir, 'queue/ready.tsv'), 2 * 1024 * 1024, false);
-  const parsed = parseReadyTsv(queue.text);
+  const router = await readSource(join(runsDir, 'queue/router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false);
+  // Spec-less dispatcher rows resolve their lane through the router-queue.md
+  // envelope like the market; a row it rejects is dead work, never coverage.
+  // Lane-open rows carry no lane but are still READY jobs the market may run
+  // anywhere, so they count as coverage too.
+  const parsed = parseReadyTsv(queue.text, router.state === 'healthy' ? router.text : null);
+  const jobs: QueueRow[] = [...parsed.rows, ...parsed.unhintedRows.map(row => ({ id: row.id, status: 'READY' }))];
   const queueSource = queue.state === 'healthy' && (parsed.dropped || parsed.rows.length >= 50_000) ? 'degraded' : queue.state;
   const results = [];
   for (const repo of repos) {
@@ -41,7 +49,7 @@ export async function readRebaseStatus(repos: string[], runsDir: string, now = n
       results.push({ repo, source: 'unavailable', summary: null });
       continue;
     }
-    const summary = summarizeRebases(repo, rows as Pr[], parsed.rows, now.getTime());
+    const summary = summarizeRebases(repo, rows as Pr[], jobs, now.getTime());
     results.push({ repo, source: rows.length >= LIMIT ? 'truncated' : 'ok', summary: { ...summary, coverage: queueSource === 'healthy' ? summary.coverage : null } });
   }
   return { v: 1, generatedAt: now.toISOString(), queueSource, repos: results };

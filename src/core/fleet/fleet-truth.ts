@@ -26,6 +26,9 @@ const CACHE_MS = 120_000;
 const GH_TIMEOUT_MS = 30_000;
 const GH_MAX_BUFFER = 8 * 1024 * 1024;
 const ADMISSION_MAX_AGE_MS = 15 * 60_000;
+/** Same bounds the other ready.tsv readers apply; router-queue.md is append-mostly history. */
+const READY_MAX_BYTES = 2 * 1024 * 1024;
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 export interface FleetMergedPr {
   repo: string;
@@ -221,15 +224,26 @@ function runsRoot(opts: FleetTruthOptions): string {
 
 async function readQueue(root: string): Promise<{ ready: number; blocked: number } | null> {
   try {
-    const { parseReadyTsv } = await import('./lane-console.js');
-    const text = await readFile(join(root, 'queue', 'ready.tsv'), 'utf8');
-    const rows = parseReadyTsv(text).rows;
+    const [{ parseReadyTsv }, { readSource }] = await Promise.all([
+      import('./lane-console.js'), import('./runs-parked-queue.js'),
+    ]);
+    const [ready, router] = await Promise.all([
+      readSource(join(root, 'queue', 'ready.tsv'), READY_MAX_BYTES, false),
+      readSource(join(root, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
+    ]);
+    if (ready.state !== 'healthy') return null;
+    // Spec-less dispatcher rows resolve their lane through the router-queue.md
+    // envelope exactly like the market; a row it rejects is dead work, never
+    // queued supply. Lane-open rows (resolved hint null) are READY work the
+    // market may place on any lane — they count in `ready` like every READY
+    // row, matching readFleetQueue's own `ready`/`unhinted` accounting.
+    const parsed = parseReadyTsv(ready.text, router.state === 'healthy' ? router.text : null);
     const parked = (pool: string): boolean => /^PARKED[^.]*\./i.test(pool);
     return {
-      ready: rows.filter((r) => r.status === 'READY' && !parked(r.pool)).length,
+      ready: parsed.rows.filter((r) => r.status === 'READY' && !parked(r.pool)).length + parsed.unhintedRows.length,
       // PARKED-<reason>[.<lane>] statuses are held work too — parked rows no
       // longer hide inside READY once the dispatcher dialect parses natively.
-      blocked: rows.filter((r) => ['BLOCKED', 'HOLD'].includes(r.status) || parked(r.pool) || r.status.startsWith('PARKED')).length,
+      blocked: parsed.rows.filter((r) => ['BLOCKED', 'HOLD'].includes(r.status) || parked(r.pool) || r.status.startsWith('PARKED')).length,
     };
   } catch {
     return null;

@@ -34,7 +34,10 @@ envelope naming no lane stays lane-open, and a malformed envelope or lane
 cell is `invalid_requirements`, never supply. Without it the lane column
 alone decides, exactly as before. `readyRowsForDepth`
 (`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
-`tier` for the tier tally, including lane-open jobs as `READY`.
+`tier` for the tier tally, including lane-open jobs as `READY`. Its optional
+`routerQueue` argument carries `queue/router-queue.md` text and resolves
+spec-less rows through the same envelope rules as `parseReadyTsv`'s own
+`routerQueue` parameter.
 `readyTsvHeader(cells)` returns the canonical column map for a recognized
 queue TSV header, or `null` for a data row. `conflictingPrIds(readyTsvText)`
 reads rebase identifiers from the job ID field, including parked rows.
