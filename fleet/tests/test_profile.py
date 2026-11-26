@@ -16,6 +16,8 @@ from pathlib import Path
 tool, *args = sys.argv
 tool = Path(tool).name
 if tool == 'ssh':
+    # Keep the simulated remote on the fixture PATH, not the runner's Homebrew PATH.
+    sys.platform = 'linux'
     platform.system = lambda: os.environ['TEST_SYSTEM']
     os.environ['TEST_SSH'] = '1'
     exec(shlex.split(args[-1])[-1])
