@@ -109,7 +109,10 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
 export function planRoutes(state: NodesState, now: number, owner?: string): RouteAssignment[] {
   const capacity = nodeCapacityView(state, now);
   const hosts = new Map(capacity.flatMap(h => h.nodeIds.map(id => [id, h] as const)));
-  const measuredLatency = capacity.map(h => h.latency.medianMs).filter((n): n is number => n !== null && n > 0);
+  const measuredLatency = capacity
+    .filter(h => (h.freeSlots ?? 0) > 0 && h.eligibleNodeIds.length > 0)
+    .map(h => h.latency.medianMs)
+    .filter((n): n is number => n !== null && n > 0);
   const neutralLatency = measuredLatency.length ? measuredLatency.reduce((a, b) => a + b, 0) / measuredLatency.length : 1;
   const reserved = new Map<string, number>();
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));

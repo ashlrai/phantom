@@ -129,6 +129,32 @@ test('accepted witness boundaries weight observed latency and discard expired or
   f.advance(86_400_001); expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.latency.samples === 0)).toBe(true);
 });
 
+test.each(['offline', 'held', 'full'])('an %s host does not set the fallback latency for a new worker', unavailable => {
+  const f = fixture();
+  const fast = f.add('fast', { slots: 1 });
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  f.enqueue('fast-sample');
+  const first = nodes.pull(fast)!.claim;
+  f.advance(100);
+  expect(nodes.complete(first, 'done')).toBe(true);
+  f.advance(6001);
+  if (unavailable === 'held') f.beat('fast', { slots: 0, held: 'disk-pressure' });
+  if (unavailable === 'full') f.beat('fast', { slots: 0 });
+
+  const measured = f.add('a-measured', { slots: 1 });
+  f.enqueue('measured-sample');
+  const second = nodes.pull(measured)!.claim;
+  f.advance(1000);
+  expect(nodes.complete(second, 'done')).toBe(true);
+  f.add('z-new', { slots: 1 });
+  f.enqueue('next');
+
+  const hosts = projectFleetAwareness(f.state, f.now()).hosts;
+  expect(hosts.find(h => h.hostId === 'fast')?.latency.medianMs).toBe(100);
+  expect(hosts.find(h => h.hostId === 'z-new')?.latency.medianMs).toBeNull();
+  expect(f.plan()).toMatchObject([{ jobId: 'next', nodeId: 'a-measured' }]);
+});
+
 test('a producer withdrawal is a fence, not latency evidence; accepted completions still count', () => {
   const f = fixture();
   const worker = f.add('worker', { hostId: 'mac', slots: 4 });
