@@ -37,7 +37,7 @@ export interface LaneQueueCountsReport {
   lanes: LaneQueueCountsRow[];
 }
 
-const sum = (rows: readonly LaneQueueCountsRow[], key: 'ready' | 'parked' | 'running' | 'merges' | 'stale'): number =>
+const sum = (rows: readonly LaneQueueCountsRow[], key: 'ready' | 'parked' | 'running' | 'stale'): number =>
   rows.reduce((total, row) => total + (row[key] ?? 0), 0);
 
 const rankReasons = (counts: ReadonlyMap<string, number>) => [...counts]
@@ -57,8 +57,9 @@ const MEMBER_RETRY_OUTCOMES = new Set(['failed', 'deferred', 'unreported']);
 /**
  * Per-lane ready / parked / running counts plus actual merges in the trailing
  * hour. Composes the existing readers so every count keeps their rules:
- * rows without a pool are dropped, rows without a usable timestamp never count
- * as merges, and duplicate merge events fold by PR, then job. Read-only.
+ * rows without a usable timestamp never count as merges, and duplicate merge
+ * events fold by PR, then job. Identifiable merges without a pool count toward
+ * the fleet total. Read-only.
  */
 export async function getLaneQueueCounts(
   opts: { runsDir: string; now?: () => Date; ledgerBytes?: number },
@@ -179,7 +180,7 @@ export async function getLaneQueueCounts(
       ready: readyKnown ? sum(rows, 'ready') : null,
       parked: readyKnown ? sum(rows, 'parked') : null,
       running: (snapshot.sources.queueState.state === 'healthy' || snapshot.sources.queue.state === 'healthy') && rows.every(r => r.running !== null) ? sum(rows, 'running') : null,
-      merges: snapshot.sources.ledger.state === 'healthy' && rows.every(r => r.merges !== null) ? sum(rows, 'merges') : null,
+      merges: snapshot.mergesInWindow,
       blockedReasons: rankReasons(totalReasons),
       stale: readyKnown ? sum(rows, 'stale') : null,
     },

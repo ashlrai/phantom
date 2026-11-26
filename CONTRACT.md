@@ -25,6 +25,11 @@ remain eligible.
 with a timezone. The lane snapshot uses it for the merge window and falls
 back to `at` when absent. `at` continues to carry the event timestamp.
 
+`getFleetLaneSnapshot` exposes `mergesInWindow` on `FleetLaneSnapshot`.
+It counts observed merges across lanes, including receipts with a PR or job
+identity and no resolvable lane. Duplicate receipts fold by PR, then job.
+The count is `null` when the merge ledger is missing or degraded.
+
 `parseReadyTsv` returns `unhintedRows` entries with `id`, `repo` and `tier`
 for validated lane-open dispatcher jobs. Its optional `routerQueue` argument
 carries `queue/router-queue.md` text so a spec-less (five-column) dispatcher

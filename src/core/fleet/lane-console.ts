@@ -153,6 +153,8 @@ export interface FleetLaneSnapshot {
   schema: 'fleet.lanes.v1';
   generatedAt: string;
   mergeWindowMinutes: number;
+  /** Unique observed merges in the window, including receipts without a lane. */
+  mergesInWindow: number | null;
   holdSource: 'healthy' | 'missing' | 'degraded';
   notes: string[];
   /** Per-source health + counts. Basenames only — absolute paths never leave the host. */
@@ -931,7 +933,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   for (const pool of Object.keys(budgets.pools)) lanes.add(pool);
 
   const mergeCounts = new Map<string, number>();
-  const candidates: Array<{ pool: string; job: string | null; pr: string | null }> = [];
+  const candidates: Array<{ pool: string | null; job: string | null; pr: string | null }> = [];
   // Index explicit merge times before filtering by window. Legacy receipts
   // may arrive much later and must not move the same merge into this window.
   const timedPrs = new Set<string>();
@@ -957,8 +959,8 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     const receiptPool = event.mergedAt === undefined ? undefined :
       (event.pr ? receiptPools.get(`pr:${event.pr}`) : undefined) ?? (event.job ? receiptPools.get(`job:${event.job}`) : undefined);
     const pool = event.pool ?? receiptPool ?? (event.job ? queueState?.jobPool.get(event.job) ?? readyPoolOf(queueRows, event.job) : undefined);
-    if (!pool) continue;
-    candidates.push({ pool, job: event.job, pr: event.pr });
+    if (!pool && !event.job && !event.pr) continue;
+    candidates.push({ pool: pool ?? null, job: event.job, pr: event.pr });
   }
   // ready.tsv LAND rows with their own timestamps count too — some routers
   // export the whole queue, lands included, in one file.
@@ -970,13 +972,21 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   }
   // Prefer PR identity; a legacy job-only observation of that PR is a duplicate.
   const jobsWithPr = new Set(candidates.filter(c => c.pr && c.job).map(c => c.job!));
+  const jobsWithLanePr = new Set(candidates.filter(c => c.pool && c.pr && c.job).map(c => c.job!));
   const seen = new Set<string>();
+  const seenOnLane = new Set<string>();
+  let mergesInWindow = 0;
   for (const candidate of candidates) {
-    if (!candidate.pr && candidate.job && jobsWithPr.has(candidate.job)) continue;
-    const key = candidate.pr ? `pr:${candidate.pr}` : candidate.job ? `job:${candidate.job}` : null;
-    if (key && seen.has(key)) continue;
-    if (key) seen.add(key);
-    mergeCounts.set(candidate.pool, (mergeCounts.get(candidate.pool) ?? 0) + 1);
+    const { pool, job, pr } = candidate;
+    const key = pr ? `pr:${pr}` : job ? `job:${job}` : null;
+    if ((pr || !job || !jobsWithPr.has(job)) && (!key || !seen.has(key))) {
+      if (key) seen.add(key);
+      mergesInWindow++;
+    }
+    // A receipt without a lane cannot replace an attributed observation.
+    if (pool === null || (!pr && job && jobsWithLanePr.has(job)) || (key && seenOnLane.has(key))) continue;
+    if (key) seenOnLane.add(key);
+    mergeCounts.set(pool, (mergeCounts.get(pool) ?? 0) + 1);
   }
 
   // Starts = distinct jobs launched in the window, for the wasteful verdict.
@@ -1103,6 +1113,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     schema: 'fleet.lanes.v1',
     generatedAt: now.toISOString(),
     mergeWindowMinutes: Math.round(mergeWindowMs / 60_000),
+    mergesInWindow: sources.ledger.state === 'healthy' ? mergesInWindow : null,
     holdSource,
     notes,
     sources,
