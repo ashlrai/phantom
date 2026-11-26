@@ -329,7 +329,19 @@ and deep-links `phm agents conversations`, `phm agents bus show` and a
 reported the block, who was told and how long it has stood, with the same
 deep links. A thread whose latest message is already a pending bus item or
 whose `job:` thread the feed already lists stays under the bus source, one
-pending thing one item — plus bot seats whose projected handoff plan still has work to
+pending thing one item — plus pending wake hints fleet-wide (the same
+`readAllWakes` projection `phm agents bus wakes --all` and
+`fleet_agent_wakes` serve, grouped by addressee so the bounded queue tail
+never floods the view: each warn item names the addressee, its hint count,
+the newest hint time and up to three cited referents with the jobs they
+provably name, deep-linking `phm agents bus wakes <label>` and `--all`; a
+wake is only a pointer to read the inbox, never pending work itself, so
+items stay warn and non-blocking and `expiresAt` stays null — a hint ages
+out of the bounded tail with no deadline; a queue-tail read that cut older
+hints or capped matched rows beyond the shown slice reports `degraded`,
+the same `matched`/`truncated` honesty the wakes reads surface, while an
+unreadable queue, registry or bus store is `unavailable`, never an empty
+page passed off as "no wakes") — plus bot seats whose projected handoff plan still has work to
 move (the same `planSeatHandoffs` read `phm bots handoffs` serves; only
 eligible seats with pending, not yet journaled, handoff records list, each
 item deep-linking `phm bots handoff --seat` and `phm bots handoffs`) — plus
