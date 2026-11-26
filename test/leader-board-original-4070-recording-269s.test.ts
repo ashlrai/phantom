@@ -104,3 +104,26 @@ it('reports honest failures for hostile paths and the reader stays truthful', as
   expect((await readFleetBoard({ runsDir: root })).status).toBe('unavailable');
   expect(fleetBoardResponse({ status: 'unavailable', board: null }, NOW_MS).ageSeconds).toBeNull();
 });
+
+it('validates five-column rows against the queue envelopes for tier depth', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    'RQ-BAD\tphantom\tcodex\twork\tprompts/bad.md',
+    'RQ-OPEN\tphantom\tcodex\tfrontier\tprompts/open.md',
+    'RQ-INLINE\tphantom\tcodex\tfast\tprompts/inline.md\t{"preferred_lane":"codex"}',
+  ].join('\n'));
+  const routerPath = join(queueDir, 'router-queue.md');
+  await writeFile(routerPath, [
+    '- READY RQ-BAD (tier=work, exclusive=maybe): Job',
+    '- READY RQ-OPEN (tier=frontier): Job',
+    '- READY RQ-INLINE (tier=fast, exclusive=maybe): Job',
+  ].join('\n'));
+  const record = () => recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  const measured = await record();
+  expect(measured.wrote && measured.board.queueDepthByTier).toEqual({ frontier: 1, fast: 1 });
+  await rm(routerPath);
+  await mkdir(routerPath);
+  expect(await record()).toMatchObject({
+    wrote: true,
+    board: { queueDepthByTier: null, conflictingPrs: { count: 0 }, sources: { readyTsv: 'healthy' } },
+  });
+});
