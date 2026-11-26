@@ -10,6 +10,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet, UsageError } from '../src/core/drive/nodes/commands.js';
+import { initializePool } from '../src/core/drive/nodes/pool.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { cmdNodeFleet } from '../src/cli/node-fleet.js';
 
@@ -35,13 +36,24 @@ describe('missing --owner names the store scopes or the join', () => {
       const err = failure(() => executeNodeFleet(verb, [], nodes));
       expect(err).toMatchObject({ code: 'missing-flag', message: '--owner is required.', exit: 2 });
       expect(err.fix).toContain('No owner scope exists in this store yet');
-      expect(err.fix).toContain('phm node join --owner <scope>');
+      // The standalone keep-alive is `join --watch`: the first join a new
+      // contributor runs must hold the session past the 30 s expiry.
+      expect(err.fix).toContain('phm node join --owner <scope> --watch');
     }
     const join = failure(() => executeNodeFleet('join', ['--node', 'x'], nodes));
     expect(join).toMatchObject({ code: 'missing-flag' });
     expect(join.fix).toContain('--owner <scope>');
     expect(join.fix).toContain('label your jobs carry');
     expect(join.fix).not.toContain('store knows');
+  });
+
+  it('a pool witness store keeps the plain join hint — join --watch is refused there', () => {
+    const store = new MemoryStore();
+    initializePool(store, 'primary-mac', 'backup-mac');
+    const err = failure(() => executeNodeFleet('status', [], new DriveNodes(store)));
+    expect(err).toMatchObject({ code: 'missing-flag' });
+    expect(err.fix).toContain('phm node join --owner <scope>');
+    expect(err.fix).not.toContain('--watch');
   });
 
   it('a populated store names every known scope, sorted and deduped', () => {

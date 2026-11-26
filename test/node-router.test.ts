@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DriveNodes, LocalNodesStore, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { probeLocalAuth } from '../src/core/drive/nodes/auth-probe.js';
+import { initializePool } from '../src/core/drive/nodes/pool.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { localPhmVersion, versionCap } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNode } from '../src/cli/node.js';
@@ -77,9 +78,22 @@ describe('node router', () => {
     f.box.enqueue('j-caps', { owner: 'o', requires: ['build', 'gh'] });
     f.box.enqueue('j-plain', { owner: 'o' });
     const plan = f.box.plan();
+    // The standalone keep-alive is `join --watch`: a bare join's session dies
+    // 30 s after its last beat, so the recovery command must hold it.
     expect(plan.find(r => r.jobId === 'j-caps')).toMatchObject({ nodeId: null,
-      fix: "No live node belongs to owner 'o'. Run: phm node join --owner o --caps build,gh" });
+      fix: "No live node belongs to owner 'o'. Run: phm node join --owner o --caps build,gh --watch" });
     expect(plan.find(r => r.jobId === 'j-plain')).toMatchObject({ nodeId: null,
+      fix: "No live node belongs to owner 'o'. Run: phm node join --owner o --watch" });
+  });
+
+  it('a pool witness store keeps the plain join fix — join --watch is refused there', () => {
+    const store = new MemoryStore();
+    initializePool(store, 'primary-mac', 'backup-mac', 1_000);
+    const nodes = new DriveNodes(store, { now: () => 1_000 });
+    nodes.enqueue('j', { owner: 'o' });
+    // A pool join releases its probe session and workers hold their own, so
+    // the witness's fix must not name the standalone-only keep-alive.
+    expect(nodes.plan()[0]).toMatchObject({ nodeId: null,
       fix: "No live node belongs to owner 'o'. Run: phm node join --owner o" });
   });
 });

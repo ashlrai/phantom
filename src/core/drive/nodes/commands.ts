@@ -171,18 +171,27 @@ function liveSession(nodes: DriveNodes, nodeId: string): number | null {
   } catch { return null; }
 }
 
-/** The owner scopes a store already knows — node profiles and job owners —
- * deduped and sorted, for the missing --owner refusal and the empty-scope
- * status/list hint. null when the store cannot be read, so a fix never
- * claims scopes it could not see. */
-export function knownOwnerScopes(nodes: DriveNodes): string[] | null {
+/** What one store read tells a missing-flag fix: the owner scopes it knows —
+ * node profiles and job owners, deduped and sorted — and whether it is a pool
+ * witness, where `join --watch` is refused (a pool join releases its probe
+ * session; workers hold their own). null scopes when the store cannot be
+ * read, so a fix never claims scopes it could not see. */
+function ownerScopeContext(nodes: DriveNodes): { scopes: string[] | null; pooled: boolean } {
   try {
     const state = nodes.snapshot();
     const scopes = new Set<string>();
     for (const n of state.nodes) for (const o of n.owners ?? []) scopes.add(o);
     for (const j of state.jobs) if (j.owner !== undefined) scopes.add(j.owner);
-    return [...scopes].sort();
-  } catch { return null; }
+    return { scopes: [...scopes].sort(), pooled: state.pool !== undefined };
+  } catch { return { scopes: null, pooled: false }; }
+}
+
+/** The owner scopes a store already knows — node profiles and job owners —
+ * deduped and sorted, for the missing --owner refusal and the empty-scope
+ * status/list hint. null when the store cannot be read, so a fix never
+ * claims scopes it could not see. */
+export function knownOwnerScopes(nodes: DriveNodes): string[] | null {
+  return ownerScopeContext(nodes).scopes;
 }
 
 /** A missing --owner is the first-run dead end (`phm node status` on a machine
@@ -190,12 +199,16 @@ export function knownOwnerScopes(nodes: DriveNodes): string[] | null {
  * empty store — the join that creates the first, instead of a bare "Add
  * --owner <value>". join gets the semantic explanation because it is itself
  * the command that creates a scope. */
-function missingOwnerFix(verb: string, scopes: string[] | null): string {
+function missingOwnerFix(verb: string, scopes: string[] | null, pooled: boolean): string {
   if (scopes === null) return 'Add --owner <scope>. Run: phm node --help';
   if (scopes.length > 0) return `Add --owner <scope>; this store knows: ${scopes.join(', ')}. Run: phm node --help`;
+  // The standalone keep-alive is `join --watch`: a bare join's session dies
+  // 30 s after its last beat. A pool witness refuses --watch, so only the
+  // local store's first-run hint names it.
+  const watch = pooled ? '' : ' --watch';
   return verb === 'join'
     ? 'Add --owner <scope> — the label your jobs carry; this node then sees only jobs enqueued under it. Run: phm node --help'
-    : 'No owner scope exists in this store yet — --owner is any scope label. Join this computer first: phm node join --owner <scope>. Run: phm node --help';
+    : `No owner scope exists in this store yet — --owner is any scope label. Join this computer first: phm node join --owner <scope>${watch}. Run: phm node --help`;
 }
 
 /** --owner stays required on the scoped verbs; only an absent flag gets the
@@ -203,7 +216,8 @@ function missingOwnerFix(verb: string, scopes: string[] | null): string {
  * still names --job before --owner. */
 function requireOwnerFlag(flags: Map<string, string>, nodes: DriveNodes, verb: string): void {
   if (!flags.has('--owner')) {
-    throw new UsageError('missing-flag', '--owner is required.', missingOwnerFix(verb, knownOwnerScopes(nodes)));
+    const { scopes, pooled } = ownerScopeContext(nodes);
+    throw new UsageError('missing-flag', '--owner is required.', missingOwnerFix(verb, scopes, pooled));
   }
 }
 

@@ -116,6 +116,12 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
   const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
   const plan: RouteAssignment[] = [];
+  // The standalone registry's recovery join must also hold the session:
+  // `join --watch` is the only beat form that keeps it past the 30 s expiry,
+  // so a bare join here would be dead before the operator could pull. A pool
+  // witness refuses --watch (a pool join releases its probe session and
+  // workers hold their own), so the hint names it only on the local store.
+  const joinWatch = state.pool === undefined ? ' --watch' : '';
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
     const reasons = new Map<string, number>();
@@ -143,7 +149,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
     }
     const requires = job.requires ?? [];
     const fix = !nodes.some(n => n.owners?.includes(job.owner!))
-      ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
+      ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}${joinWatch}`
       : reasons.has('capacity')
         ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
       : reasons.has('declined') && !reasons.has('caps')
