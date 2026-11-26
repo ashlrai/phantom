@@ -25,6 +25,21 @@ Clone the upstream repository as `origin` and add your fork as a second remote.
 `node scripts/verify-changed.mjs` diffs against `origin/master`, so `origin`
 must be `ashlrai/phantom`, not your fork.
 
+One-time GitHub setup on this machine — a person runs it once and every agent
+on the machine reuses the sign-in. The `gh` commands below and `git push fork`
+both need it, and the fork must exist before the remote can push:
+
+```sh
+gh auth login                              # sign in to GitHub on this machine
+gh auth setup-git                          # git push uses the gh sign-in (safe to re-run)
+gh repo fork ashlrai/phantom --clone=false # creates github.com/<you>/phantom if missing
+```
+
+Skip `gh repo fork` once your fork exists. Prefer SSH for pushes? Keep
+`git remote add fork` pointed at `git@github.com:<you>/phantom.git` with your
+own deploy key instead of running `gh auth setup-git`; the `gh` commands still
+need the sign-in above.
+
 ```sh
 git clone https://github.com/ashlrai/phantom.git
 cd phantom
@@ -33,8 +48,9 @@ git switch -c <topic-branch>
 npm ci
 ```
 
-Requires Node 22.15 or newer and git. If you run several agents in parallel
-worktrees on one machine, use `npm run install:worktree` instead of `npm ci`
+Requires Node 22.15 or newer, git and the GitHub CLI (`gh`). If you run
+several agents in parallel worktrees on one machine, use
+`npm run install:worktree` instead of `npm ci`
 in each worktree: it needs pnpm 10.28.2 and shares one dependency store
 across worktrees (details in [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#shared-installs-for-trusted-local-worktrees)).
 Run the CLI from source with `npm run dev -- --help`. To open the web console
