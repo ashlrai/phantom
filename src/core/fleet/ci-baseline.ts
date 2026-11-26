@@ -2238,6 +2238,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // unattributed evidence pass as head-verified.
       if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
     }
+    // An aggregator may summarize a verified failure, but it cannot be the
+    // only evidence behind a failed workflow or job conclusion.
+    const failed = run.conclusion === 'failure' || data.jobs.some(job => job.conclusion === 'failure');
+    if (!incomplete && failed && !result.some(job => job.conclusion === 'failure')) return null;
     return { entries: result, incomplete };
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);

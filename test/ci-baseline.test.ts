@@ -254,6 +254,26 @@ describe('CI baseline evidence', () => {
       expect(poisoned.freshness.every(p => p.state === 'unknown')).toBe(true);
     }
   });
+  it('withholds freshness when an unbound aggregator is the only failed job', async () => {
+    const { gh } = github({ count: 1, gate: true, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      if (args[1]?.includes('/runs/2/jobs?')) {
+        return { ok: true, stderr: '', stdout: JSON.stringify({ total_count: 2, jobs: [
+          { id: 20, conclusion: 'success', head_sha: head },
+          { id: 21, conclusion: 'failure', head_sha: head },
+        ] }) };
+      }
+      return gh(args);
+    });
+    expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'unreadable-log-or-unverified-checkout' }]);
+    expect(report.groups).toEqual([]);
+  });
+  it('withholds master pass evidence when only green jobs explain a failed workflow', async () => {
+    const { gh } = github({ count: 1, pass: true, masterRunConclusion: 'failure' });
+    const report = await analyzeCiBaseline('owner/repo', gh);
+    expect(report.master.known).toBe(false);
+    expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+  });
   it('accepts the source-binding receipt as checkout proof', async () => {
     // Bound CI jobs print `Bound candidate <sha> to event tree|merge ...`
     // instead of a `git log -1` echo; the bound revision must equal head.

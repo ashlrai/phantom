@@ -24,6 +24,10 @@ only when they carry no parseable failure or per-test pass output. The
 default reporter's green-module pass lines are expected from checkout jobs
 that never bound a receipt, so they neither verify nor poison a run; any
 other consumable evidence in an unverifiable log keeps the run unknown.
+A failed workflow or failed job also needs at least one checkout-verified
+failed job in that run. A no-checkout aggregator may summarize a verified
+failure, but an aggregator failure alongside only green jobs leaves the run
+unknown. On master this withholds pass evidence used for flake reruns.
 Unreadable, incomplete, capped, or unverified logs are unknown, never clean.
 A job whose conclusion is not a verdict — `cancelled`, `timed_out`,
 `action_required`, `startup_failure` or `stale` — is incomplete evidence
