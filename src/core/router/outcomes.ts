@@ -2865,7 +2865,7 @@ export function foldRewardSignals(text: string): Map<string, RewardOutcomeEviden
         typeof recordedAt !== 'string' || !Number.isFinite(Date.parse(recordedAt))) continue;
     const cost = r['cost'];
     const costRow = cost !== null && typeof cost === 'object' && !Array.isArray(cost) ? cost as Row : null;
-    const ttmMs = num(r['timeToMergeMs']);
+    const ttmMs = r['merged'] ? num(r['timeToMergeMs']) : null;
     const ciWallMs = num(r['ciWallMs']);
     const repo = str(r, 'repo');
     rewards.set(jobId, {

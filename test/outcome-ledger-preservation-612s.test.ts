@@ -2278,7 +2278,7 @@ describe('router outcome reward-signals join', () => {
       JSON.stringify({ ...rewardRow('J3', true), jobId: 'bad id!' }),
       JSON.stringify({ ...rewardRow('J4', true), merged: 'yes' }),
       JSON.stringify({ ...rewardRow('J5', true), dispatchedAt: 'not a date' }),
-      JSON.stringify(rewardRow('J1', false, { timeToMergeMs: null, mergedAt: null })),
+      JSON.stringify(rewardRow('J1', false, { timeToMergeMs: 5000, mergedAt: null })),
       JSON.stringify(rewardRow('J6', true, {
         cost: { pool: 'codex-cmp', pctUsedStart: 10, pctUsedEnd: 12.5, pctUsedDelta: 140, costUsd: -1 },
         repo: '../escape', timeToMergeMs: 500, ciWallMs: null,
@@ -2339,6 +2339,22 @@ describe('router outcome reward-signals join', () => {
     writeSpend(root, '{"job":"J1","cost_usd":1.5,"ts":"2026-11-01T00:30:00Z"}\n');
     const result = await readRouterOutcomes({ runsDir: root, ashlarDir: rewardLedger([rewardRow('J1', true)]) });
     expect(result.outcomes[0]).toMatchObject({ cost_usd: 1.5, pool_pct_used: 2.5 });
+  });
+
+  it('requires a reward merge verdict to fill a missing time to merge', async () => {
+    const root = runsDir([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T01:00:00Z"}',
+      '{"job":"J2","lane":"alpha","phase":"MERGED","ts":"2026-11-01T01:00:00Z"}',
+    ].join('\n'));
+    const ashlarDir = rewardLedger([
+      rewardRow('J1', false, { timeToMergeMs: 5_000 }),
+      rewardRow('J2', true, { timeToMergeMs: 5_000 }),
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir, authorityEvidence: null });
+    expect(result.outcomes).toMatchObject([
+      { job_id: 'J1', merged: true, ttm_s: null, pool_pct_used: 2.5 },
+      { job_id: 'J2', merged: true, ttm_s: 5, pool_pct_used: 2.5 },
+    ]);
   });
 
   it('keeps jobs-ledger values and reports reward_state when the ledger is absent, refused or the jobs read failed', async () => {

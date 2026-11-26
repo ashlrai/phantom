@@ -749,8 +749,8 @@ Missing or ambiguous timing stays unknown, and existing
 reward rows retain their original values.
 `foldRewardSignals` collapses the bounded tail to
 each job's recorded evidence and the read fills only what the jobs
-fold left null — `merged`, `ttm_s` (only while the standing verdict is
-a merge, the same gate the jobs-ledger dialect applies), `ci_wall_s`,
+fold left null — `merged`, `ttm_s` (only when both the standing verdict
+and the reward row record a merge), `ci_wall_s`,
 `cost_usd` (after the api-spend join) and `repo` — so verdicts and
 cost figures the retained jobs window dropped rejoin from the
 substrate without ever contradicting a recorded jobs-ledger value;
