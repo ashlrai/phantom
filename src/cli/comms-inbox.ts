@@ -19,7 +19,7 @@ answers not confirmed in the planner inbox or with unreadable delivery receipts,
 unanswered iMessage
 teammate texts, unsettled Dot/Instinct teammate tasks, owner-thread messages awaiting a recorded reply, recorded owner
 replies whose channel fanout is not fully delivered, drafts awaiting approval,
-pending bus work (unclaimed envelopes, open, unclaimable or stalled feed jobs and worker handoffs), pending legacy phm bus mailbox mail across every recipient label, pending shared task board deliveries and unheld tasks across every peer, agent
+pending bus work (unclaimed envelopes, open, unclaimable or stalled feed jobs, worker handoffs and dead-lettered deliveries), pending legacy phm bus mailbox mail across every recipient label, pending shared task board deliveries and unheld tasks across every peer, agent
 conversation threads waiting on a reply or blocked, pending wake hints grouped by addressee, bot seats with pending handoffs, unpublished peer work-dispatch
 results, comms
 questions/approvals awaiting an answer, inbound .eml files awaiting the email
@@ -30,7 +30,7 @@ one prioritized list whose
 items carry the deep-link commands that act on them. The bare view's --source keeps
 one source's items, --kind one item kind — the item's own classification,
 finer than --source where one source emits several kinds (the bus source's
-bus-work/bus-handoff split, the board source's board-delivery/board-task
+bus-work/bus-handoff/bus-dead-letter split, the board source's board-delivery/board-task
 split) — --severity one severity band, --blocking only items that
 block, --job only items that provably name one job id — a bus or mailbox
 body's job citation, a feed job's id, a board task's fleet item or a

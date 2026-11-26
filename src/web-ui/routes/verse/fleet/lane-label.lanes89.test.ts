@@ -14,7 +14,7 @@ describe('fleet lane labels', () => {
   });
 
   it.each([
-    ['codex-personal', 'PERS'], ['codex-cmp', 'CMP'], ['codex-local', 'LOCAL'],
+    ['codex-personal', 'PERS'], ['codex-cmp', 'RET'], ['codex-local', 'LOCAL'],
     ['claude', 'CL'], ['claude-api', 'API'], ['devin', 'DEVIN'],
     ['devin-flash', 'FLASH'], ['zai', 'ZAI'], ['gemini', 'GEM'],
     ['agy', 'AGY'], ['grok', 'GROK'], ['cursor', 'CUR'],

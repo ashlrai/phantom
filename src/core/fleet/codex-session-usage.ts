@@ -2,10 +2,8 @@
  * codex-session-usage.ts - RQ-CODEX-USAGE-SOURCE: automatic per-account Codex
  * subscription usage from the session logs the codex CLI already writes.
  *
- * WHY THIS EXISTS. The fleet runs two Codex accounts (`~/.codex` and
- * `~/.codex-2`; the seats named `codex-cmp` and `codex-personal` in the fleet
- * pool vocabulary). `observability/codex-source.ts` reads only the default
- * home, and the App Server probe requires live credentials. Every codex run
+ * The personal fleet seat uses `~/.codex-2` by default. The App Server
+ * probe requires live credentials, but every Codex run
  * already appends its own rate-limit snapshot to its rollout file:
  *
  *   $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<id>.jsonl
@@ -96,7 +94,7 @@ export interface CodexSessionCredits {
 
 /** The allowlisted session/status plus rate-limit state of one account home. */
 export interface CodexSessionUsage {
-  /** Fleet pool id for the credential slot: 'codex-cmp' or 'codex-personal'. */
+  /** Fleet pool id for the credential slot: 'codex-personal'. */
   accountId: string;
   /** Which credential slot the reading came from. */
   slot: 'primary' | 'secondary';
@@ -455,9 +453,7 @@ export interface CodexAccountHome {
 }
 
 /**
- * The codex credential homes the fleet knows about. The primary account lives
- * in `$CODEX_HOME` (default `~/.codex`) and the secondary in `$CODEX_HOME_ALT`
- * (default `~/.codex-2`). Identical resolved paths collapse to the primary.
+ * The personal Codex lane uses `$CODEX_HOME_ALT` (default `~/.codex-2`).
  */
 export function codexAccountHomes(
   env: NodeJS.ProcessEnv = process.env,
@@ -467,17 +463,10 @@ export function codexAccountHomes(
     const value = env[key];
     return typeof value === 'string' && value.trim() !== '' ? resolve(value.trim()) : fallback;
   };
-  const primary = read('CODEX_HOME', join(homeDir, '.codex'));
-  const secondary = read('CODEX_HOME_ALT', join(homeDir, '.codex-2'));
-  const homes: CodexAccountHome[] = [
-    { accountId: 'codex-cmp', slot: 'primary', home: primary, sessionsDir: join(primary, 'sessions') },
-  ];
-  if (secondary !== primary) {
-    homes.push({
-      accountId: 'codex-personal', slot: 'secondary', home: secondary, sessionsDir: join(secondary, 'sessions'),
-    });
-  }
-  return homes;
+  const retired = read('CODEX_HOME', join(homeDir, '.codex'));
+  const personal = read('CODEX_HOME_ALT', join(homeDir, '.codex-2'));
+  if (personal === retired) return [];
+  return [{ accountId: 'codex-personal', slot: 'secondary', home: personal, sessionsDir: join(personal, 'sessions') }];
 }
 
 // ---------------------------------------------------------------------------

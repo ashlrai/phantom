@@ -47,12 +47,12 @@ function emptyRowChecks(row: { used: number | null; limit: number | null; resets
 }
 
 describe('readUsageResources', () => {
-  it('always returns the twelve resources, in roster order', async () => {
+  it('always returns the eleven resources, in roster order', async () => {
     const snapshot = await readUsageResources({ ...quietDeps });
     expect(snapshot.v).toBe(1);
     expect(snapshot.generatedAt).toBe(new Date(NOW).toISOString());
     expect(snapshot.resources.map((row) => row.id)).toEqual(USAGE_RESOURCES.map((r) => r.id));
-    expect(snapshot.resources).toHaveLength(12);
+    expect(snapshot.resources).toHaveLength(11);
   });
 
   it('marks resources with no reader as no-reader, never a fake number', async () => {
@@ -64,28 +64,21 @@ describe('readUsageResources', () => {
     for (const row of snapshot.resources.filter((r) => EMPTY_STATES.has(r.state))) emptyRowChecks(row);
   });
 
-  it('feeds the codex rows from session-log windows (cmp + personal)', async () => {
+  it('uses the personal Codex windows without reporting an old CMP reading', async () => {
     const collectCodex = vi.fn(() => [
       { accountId: 'codex-cmp', observedAt: '2026-11-02T11:00:00.000Z',
         primary: { usedPercent: 30, windowMinutes: 300, resetsAt: 1762600000 },
         secondary: { usedPercent: 62, windowMinutes: 10080, resetsAt: 1763000000 } } as CodexSessionUsage,
       { accountId: 'codex-personal', observedAt: '2026-11-02T11:30:00.000Z',
         primary: { usedPercent: 5, windowMinutes: 300, resetsAt: 1762600000 },
-        secondary: null } as unknown as CodexSessionUsage,
+        secondary: { usedPercent: 7, windowMinutes: 10080, resetsAt: 1763000000 } } as unknown as CodexSessionUsage,
     ]);
     const snapshot = await readUsageResources({ ...quietDeps, collectCodex });
-    const cmp = snapshot.resources.find((row) => row.id === 'codex-cmp')!;
-    expect(cmp.state).toBe('ok');
-    // The most-saturated window governs: secondary 62% beats primary 30%.
-    expect(cmp.used).toBe(62);
-    expect(cmp.limit).toBe(100);
-    expect(cmp.unit).toBe('percent');
-    expect(cmp.resetsAt).toBe(new Date(1763000000 * 1000).toISOString());
-    expect(cmp.source).toBe('codex-session-logs');
-    expect(cmp.asOf).toBe('2026-11-02T11:00:00.000Z');
+    expect(snapshot.resources.map(row => row.id)).not.toContain('codex-cmp');
     const personal = snapshot.resources.find((row) => row.id === 'codex-personal')!;
     expect(personal.state).toBe('ok');
-    expect(personal.used).toBe(5);
+    expect(personal).toMatchObject({ used: 7, limit: 100, unit: 'percent', resetsAt: new Date(1763000000 * 1000).toISOString(),
+      source: 'codex-session-logs', asOf: '2026-11-02T11:30:00.000Z' });
     expect(collectCodex).toHaveBeenCalledExactlyOnceWith({ env: quietDeps.env, homeDir: undefined });
   });
 
@@ -103,7 +96,6 @@ describe('readUsageResources', () => {
 
   it('keeps codex/devin honest when their readers report nothing', async () => {
     const snapshot = await readUsageResources({ ...quietDeps });
-    expect(snapshot.resources.find((r) => r.id === 'codex-cmp')!.state).toBe('no-reading');
     expect(snapshot.resources.find((r) => r.id === 'codex-personal')!.state).toBe('no-reading');
     expect(snapshot.resources.find((r) => r.id === 'devin')!.state).toBe('no-reading');
   });
@@ -248,7 +240,7 @@ describe('handleUsageResourcesApi', () => {
       const ok = await request();
       expect(ok.handled).toBe(true);
       expect(ok.status).toBe(200);
-      expect(ok.body.resources).toHaveLength(12);
+      expect(ok.body.resources).toHaveLength(11);
       expect((await request('POST')).status).toBe(404);
       expect((await request('GET', '?pool=zai')).status).toBe(400);
       expect((await request('GET', '', '/api/verse/usage-resources/extra')).handled).toBe(false);

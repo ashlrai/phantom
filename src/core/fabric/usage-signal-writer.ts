@@ -5,7 +5,7 @@ import { privateDirectory } from '../universe/artifacts.js';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 
-export const USAGE_POOLS = ['grok-ultra', 'codex-cmp', 'codex-personal', 'claude-max', 'terra'] as const;
+export const USAGE_POOLS = ['grok-ultra', 'codex-personal', 'claude-max', 'terra'] as const;
 export type UsagePool = typeof USAGE_POOLS[number];
 export const USAGE_EVENTS = ['dispatch-start', 'pr-merge', '429', 'limit-message', 'manual-reading', 'hourly'] as const;
 export type UsageEvent = typeof USAGE_EVENTS[number];
@@ -16,7 +16,7 @@ export interface UsageCutSignal {
   pool: 'grok-ultra'; kind: 'cut'; pctUsed: number; fetchedAt: string;
 }
 export interface UsageReading {
-  pool: UsagePool; pctUsed: number | null; resetAt: string | null; source: string; fetchedAt: string;
+  pool: UsagePool | 'codex-cmp'; pctUsed: number | null; resetAt: string | null; source: string; fetchedAt: string;
   writtenAt: string; event: UsageEvent; burnRatePctPerHour: number | null; projected100At: string | null;
   cutActive: boolean;
 }
@@ -43,7 +43,7 @@ function timestamp(value: unknown): value is string {
 function percent(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
 }
-function source(pool: UsagePool): string { return pool === 'grok-ultra' ? 'grok-reader' : `${pool}-reader`; }
+function source(pool: UsageReading['pool']): string { return pool === 'grok-ultra' ? 'grok-reader' : `${pool}-reader`; }
 
 /** Fixed private store files only. No native profiles, auth files or provider payloads. */
 function openPrivate(path: string, append = false): number {
@@ -81,9 +81,9 @@ function readPrivate(path: string): string | null {
 
 function checkedReading(value: unknown): value is UsageReading {
   if (!object(value)) return false;
-  return USAGE_POOLS.includes(value.pool as UsagePool) && USAGE_EVENTS.includes(value.event as UsageEvent) &&
+  return (value.pool === 'codex-cmp' || USAGE_POOLS.some(pool => pool === value.pool)) && USAGE_EVENTS.includes(value.event as UsageEvent) &&
     (value.pctUsed === null || percent(value.pctUsed)) && (value.resetAt === null || timestamp(value.resetAt)) &&
-    timestamp(value.fetchedAt) && timestamp(value.writtenAt) && value.source === source(value.pool as UsagePool) &&
+    timestamp(value.fetchedAt) && timestamp(value.writtenAt) && value.source === source(value.pool as UsageReading['pool']) &&
     typeof value.cutActive === 'boolean' &&
     (value.burnRatePctPerHour === null || typeof value.burnRatePctPerHour === 'number' &&
       Number.isFinite(value.burnRatePctPerHour) && value.burnRatePctPerHour >= 0) &&
@@ -103,6 +103,7 @@ function journal(root: string): { latest: Partial<Record<UsagePool, UsageReading
     let row: unknown;
     try { row = JSON.parse(line); } catch { throw new Error('Usage journal is invalid'); }
     if (!checkedReading(row)) throw new Error('Usage journal is invalid');
+    if (row.pool === 'codex-cmp') continue;
     if (latest[row.pool] && row.writtenAt < latest[row.pool]!.writtenAt) throw new Error('Usage journal moved backwards');
     latest[row.pool] = row;
     if (row.pool === 'grok-ultra') {
@@ -142,7 +143,7 @@ function reading(pool: UsagePool, raw: unknown, previous: UsageReading | undefin
 const pending = new Map<string, Promise<unknown>>();
 /** Leading-edge throttle: dropped events schedule no trailing read and no polling. */
 export async function writeUsageSignal(options: UsageSignalOptions): Promise<UsageSignalResult> {
-  if (!USAGE_EVENTS.includes(options.event) || options.pools?.some(pool => !USAGE_POOLS.includes(pool)) ||
+  if (!USAGE_EVENTS.includes(options.event) || options.pools?.some(pool => !USAGE_POOLS.some(active => active === pool)) ||
     /(?:^|\/)\.codex(?:-2)?(?:\/|$)/.test(options.directory)) {
     throw new Error('Invalid usage signal');
   }
@@ -216,7 +217,8 @@ async function writeLocked(root: string, options: UsageSignalOptions): Promise<U
         fsyncSync(fd);
       } finally { closeSync(fd); }
     }
-    const readings = { ...(fleet.readings as Record<string, unknown> | undefined), ...latest };
+    const readings: Record<string, unknown> = { ...(fleet.readings as Record<string, unknown> | undefined), ...latest };
+    delete readings['codex-cmp'];
     const usageSignals = { ...(fleet.usageSignals as Record<string, unknown> | undefined) };
     const grok = latest['grok-ultra'];
     if (grok?.cutActive && history.cut) usageSignals['grok-ultra'] = history.cut;

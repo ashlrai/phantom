@@ -168,6 +168,14 @@ describe('/api/verse/wiki', () => {
     expect((await post('/api/verse/wiki/open', { repoKey: key, ...edge!.citations![0] })).status).toBe(409);
   });
 
+  it('keeps ecosystem scope local and rejects extra GET parameters', async () => {
+    const route = '/api/verse/wiki/ecosystem';
+    expect(classifyRemoteRoute('GET', route)).toEqual({ kind: 'deny' });
+    expect((await get(route + '?repo=acme/notes')).status).toBe(400);
+    expect((await post(route, {})).status).toBe(404);
+    expect(await (await get(route)).json()).toMatchObject({ status: 'unavailable', repos: [], edges: [] });
+  });
+
   it('serves the pinned graph by enrolled key and exact focus, without reading the worktree', async () => {
     const route = `/api/verse/wiki/repo/${wikiKey(repo.dir)}/system-map`;
     repo.writeFile('src/server.ts', 'export const dirty = true;\n');

@@ -2,17 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { BUDGET_POOLS, parseBudgetOutput, projectPoolBudgets, validateBudgetReading, type BudgetReading } from '../src/core/fleet/pool-budget.js';
 const at = (hour: number) => `2026-10-25T${String(hour).padStart(2, '0')}:00:00.000Z`;
-const reading = (remaining: number, hour: number, extra: Partial<BudgetReading> = {}): BudgetReading => ({ pool: 'codex-cmp', bucket: 'weeklyPct', remaining, timestamp: at(hour), resetAt: '2026-11-01T12:00:00.000Z', source: 'log', ...extra });
-const view = (rows: BudgetReading[], hour = 11) => projectPoolBudgets(rows, new Date(at(hour))).pools['codex-cmp'].buckets.weeklyPct!;
+const reading = (remaining: number, hour: number, extra: Partial<BudgetReading> = {}): BudgetReading => ({ pool: 'codex-personal', bucket: 'weeklyPct', remaining, timestamp: at(hour), resetAt: '2026-11-01T12:00:00.000Z', source: 'log', ...extra });
+const view = (rows: BudgetReading[], hour = 11) => projectPoolBudgets(rows, new Date(at(hour))).pools['codex-personal'].buckets.weeklyPct!;
 describe('per-pool budgets', () => {
-  it('keeps CMP weekly exhaustion, reset, and credits independent', () => {
-    const rows = JSON.parse(readFileSync(new URL('./fixtures/pool-budget/cmp-reset.json', import.meta.url), 'utf8')).map(validateBudgetReading);
-    const exhausted = projectPoolBudgets(rows, new Date(at(11))).pools['codex-cmp'];
+  it('keeps personal Codex weekly exhaustion, reset, and credits independent', () => {
+    const retired = JSON.parse(readFileSync(new URL('./fixtures/pool-budget/cmp-reset.json', import.meta.url), 'utf8')).map(validateBudgetReading) as BudgetReading[];
+    const historical = projectPoolBudgets(retired, new Date(at(11)));
+    expect(historical.pools).not.toHaveProperty('codex-cmp');
+    expect(historical.pools['codex-personal'].remainingWeeklyPct).toBeNull();
+    const rows = retired.map(row => validateBudgetReading({ ...row, pool: 'codex-personal' }));
+    const exhausted = projectPoolBudgets(rows, new Date(at(11))).pools['codex-personal'];
     expect(exhausted.remainingWeeklyPct).toBe(0);
     expect(exhausted.remainingCredits).toBe(42);
     expect(exhausted.buckets.weeklyPct?.burnPerHour.last2).toBe(10);
     expect(view(rows, 12)).toMatchObject({ remaining: null, state: 'reset-pending' });
-    const reset = projectPoolBudgets(rows, new Date(at(13))).pools['codex-cmp'];
+    const reset = projectPoolBudgets(rows, new Date(at(13))).pools['codex-personal'];
     expect(reset.remainingWeeklyPct).toBe(100);
     expect(reset.remainingCredits).toBe(42);
     expect(reset.buckets.weeklyPct?.burnPerHour.last2).toBeNull();
@@ -66,19 +70,19 @@ describe('per-pool budgets', () => {
     }
   });
   it('parses labelled status and rate-limit lines without retaining unrelated text', () => {
-    const parsed = parseBudgetOutput('codex-cmp', 'cli', 'weekly remaining: 25% reset: 2026-11-01T12:00:00Z\ncredits remaining: 42\nprivate-token=discard\nrate-limit weekly used: 90%', at(9));
+    const parsed = parseBudgetOutput('codex-personal', 'cli', 'weekly remaining: 25% reset: 2026-11-01T12:00:00Z\ncredits remaining: 42\nprivate-token=discard\nrate-limit weekly used: 90%', at(9));
     expect(parsed.map(r => r.remaining)).toEqual([25, 42, 10]);
     expect(JSON.stringify(parsed)).not.toContain('private-token');
     expect(parseBudgetOutput('devin', 'log', 'acus remaining: 12.5', at(9))[0]?.remaining).toBe(12.5);
   });
   it('parses native Codex quota logs with their original time, ignoring five-hour allowance and transcript', () => {
     const output = readFileSync(new URL('./fixtures/pool-budget/codex.jsonl', import.meta.url), 'utf8');
-    const parsed = parseBudgetOutput('codex-cmp', 'log', output, at(11));
+    const parsed = parseBudgetOutput('codex-personal', 'log', output, at(11));
     expect(parsed.map(r => [r.bucket, r.remaining, r.timestamp])).toEqual([['weeklyPct', 0, at(10)], ['credits', 42.5, at(10)]]);
     expect(JSON.stringify(parsed)).not.toContain('transcript');
   });
   it('ignores ambiguous output and rejects oversized input', () => {
-    expect(parseBudgetOutput('codex-cmp', 'log', '429 too many requests\ncredits used: 5\ncredits remaining: 5%', at(9))).toEqual([]);
-    expect(() => parseBudgetOutput('codex-cmp', 'log', 'x'.repeat(1_048_577), at(9))).toThrow();
+    expect(parseBudgetOutput('codex-personal', 'log', '429 too many requests\ncredits used: 5\ncredits remaining: 5%', at(9))).toEqual([]);
+    expect(() => parseBudgetOutput('codex-personal', 'log', 'x'.repeat(1_048_577), at(9))).toThrow();
   });
 });

@@ -3,7 +3,7 @@ import { readingIsFresh } from '../sensor-reading.js';
 import type { ResourceLiveSource } from './source-types.js';
 import type { LiveSourcesConfig } from './config.js';
 
-export function capacitySource(lane: 'claude-weekly' | 'codex-personal' | 'codex-cmp',
+export function capacitySource(lane: 'claude-weekly' | 'codex-personal',
   seatMap: LiveSourcesConfig['codexSeatMap'] = {}, read: () => CapacitySnapshot | null = readCapacitySnapshot): ResourceLiveSource {
   return { tier: 'official', read: nowMs => {
     const seats = read()?.seats.filter(s => lane === 'claude-weekly'

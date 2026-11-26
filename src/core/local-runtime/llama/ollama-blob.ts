@@ -20,7 +20,7 @@
  */
 
 import { readFileSync, readdirSync, statSync, type Dirent } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { ollamaModelsRoot } from './paths.js';
 
 /** Media type of the weights layer inside an Ollama manifest. */
@@ -174,7 +174,7 @@ export function resolveOllamaRefForBlobPath(
   blobPath: string,
   root = ollamaModelsRoot(),
 ): string | null {
-  const basename = blobPath.split('/').pop() ?? blobPath;
+  const basename = blobPath.split(/[\\/]/).pop() ?? blobPath;
   if (!/^sha256-[0-9a-f]{8,}$/i.test(basename)) return null;
   const wanted = `sha256:${basename.slice('sha256-'.length).toLowerCase()}`;
 
@@ -207,7 +207,7 @@ export function resolveOllamaRefForBlobPath(
         continue;
       }
       // `manifests/<registry>/<namespace>/<name>/<tag>` -> the canonical ref.
-      const parts = full.slice(manifestsRoot.length + 1).split('/');
+      const parts = full.slice(manifestsRoot.length + 1).split(sep);
       if (parts.length < 4) continue;
       const tag = parts[parts.length - 1] as string;
       const name = parts[parts.length - 2] as string;

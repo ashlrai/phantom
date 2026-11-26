@@ -23,7 +23,7 @@ export const RUNS_READ_MAX_AGE_MS = 15 * 60_000;
 /**
  * The dispatchd lane (queue/status.json id, see LANES in
  * contrib/mac/dispatchd.py) a Fleet lane reads through — fleet ids are the
- * LANE_LABEL / LANE_ENGINE keys in live-model.ts. `codex` maps to codex-cmp,
+ * LANE_LABEL / LANE_ENGINE keys in live-model.ts. `codex` maps to codex-personal,
  * the general codex pool: codex-personal serves only LAND/FIXUP/DRAIN/DAILYFIX
  * maintenance lines (drive/pool-routing.ts), and claude-api is API-credit
  * capacity with no lane chip of its own. dispatchd has no grok lane today; the
@@ -33,7 +33,7 @@ const DISPATCHD_LANE: Readonly<Record<FleetEngine, string>> = {
   local: 'codex-local',
   'grok-cli': 'grok',
   'claude-cli': 'claude',
-  codex: 'codex-cmp',
+  codex: 'codex-personal',
   'devin-cli': 'devin',
 };
 

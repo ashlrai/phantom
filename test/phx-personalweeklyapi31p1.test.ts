@@ -39,10 +39,10 @@ async function snapshot(): Promise<FleetRunsV1> {
   expect(response.writeHead).toHaveBeenCalledWith(200, expect.anything());
   const personalHome = join('/fake-personal-weekly-home', '.codex-2');
   expect(collectCodexSessionUsages).toHaveBeenCalledExactlyOnceWith({
-    env: { CODEX_HOME: personalHome, CODEX_HOME_ALT: personalHome }, homeDir: '/fake-personal-weekly-home',
+    env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: personalHome }, homeDir: '/fake-personal-weekly-home',
   });
-  const targets = Object.values(vi.mocked(collectCodexSessionUsages).mock.calls[0]![0]!.env!);
-  expect(targets.every(target => typeof target === 'string' && !target.split(/[\\/]/).includes('.codex'))).toBe(true);
+  const target = vi.mocked(collectCodexSessionUsages).mock.calls[0]![0]!.env!.CODEX_HOME_ALT!;
+  expect(target.split(/[\\/]/)).not.toContain('.codex');
   return JSON.parse(body) as FleetRunsV1;
 }
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });

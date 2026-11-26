@@ -45,6 +45,11 @@ it('rejects an invalid replacement and reads a recovered status without stale la
   const rejected = await read({ ...status, mem_free_pct: 101 });
   expect(rejected).toEqual({
     schema: 'lanes.dispatchd.v1', sourceState: 'degraded', lastTick: null, lanes: [],
+    pause: {
+      global: { state: 'off', since: null, reasons: [] },
+      local: { state: 'off', since: null, reasons: [] },
+    },
+    pauseLine: null,
   });
 
   const recovered = await read({ ...status, last_tick: '2026-11-16T12:01:00Z', lanes: {

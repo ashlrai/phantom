@@ -33,7 +33,7 @@ export interface FleetOrgMap {
   /** The same facts as a leader > lanes > jobs tree (`phm org`). Set by the reader; views fall back to `fleetOrgTree(map)`. */
   tree?: FleetOrgTree;
 }
-export const ORG_LANES = ['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor'] as const;
+export const ORG_LANES = ['codex-personal', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor'] as const;
 const known = (value: string | null | undefined) => value?.trim() || 'unknown';
 const age = (value: number | null | undefined) => value != null && Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
 /** A title as one plain line of at most 120 characters; null when empty or only the job id. */

@@ -65,7 +65,7 @@ describe('personal usage exit status', () => {
       limitId: null, limitName: null, model: null, cli: { originator: null, version: null },
     }] });
     expect(mocks.collect).toHaveBeenCalledWith({
-      env: { CODEX_HOME: join('/fake-home', '.codex-2'), CODEX_HOME_ALT: join('/fake-home', '.codex-2') },
+      env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: join('/fake-home', '.codex-2') },
       homeDir: '/fake-home',
     });
     expect(mocks.report).toHaveBeenCalledWith([expect.objectContaining({ accountId: 'codex-personal', slot: 'secondary' })], [], Date.parse(now));
@@ -105,6 +105,6 @@ describe('personal usage exit status', () => {
     mocks.report.mockReturnValueOnce({ v: 'resource.v1', generatedAt: now, resources: [] });
     expect(cmdResourcePersonalUsage({ json: true, home: '/fake-custom' })).toBe(1);
     expect(jsonOutput().resources).toEqual([]);
-    expect(mocks.collect).toHaveBeenCalledWith({ env: { CODEX_HOME: '/fake-custom', CODEX_HOME_ALT: '/fake-custom' }, homeDir: '/fake-home' });
+    expect(mocks.collect).toHaveBeenCalledWith({ env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: '/fake-custom' }, homeDir: '/fake-home' });
   });
 });

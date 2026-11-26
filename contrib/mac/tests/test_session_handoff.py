@@ -34,7 +34,7 @@ class SessionHandoffTests(unittest.TestCase):
             self.assertFalse((home / ".ashlr-runs/handffs").exists())
 
     def test_pending_zero_quota_uses_existing_market_and_adds_advice(self):
-        slots = held_lanes(); slots.update({"codex-personal": lane_slot(quota=0), "codex-cmp": lane_slot()})
+        slots = held_lanes(); slots.update({"codex-personal": lane_slot(quota=0), "claude": lane_slot()})
         with build(slots=slots) as temp:
             home = Path(temp).resolve(); env = launch_stubs(home)
             queue_job(home, "RQ-PENDING", "codex-personal")

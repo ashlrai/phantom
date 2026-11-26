@@ -25,7 +25,7 @@ class EmptyJobAdmission(unittest.TestCase):
 
     def test_identity_keeps_actionable_differences(self):
         key = request_hash('A', 'phantom', prompt('A'))
-        self.assertEqual(key, request_hash('B', 'phantom', prompt('B', 'pool=codex-cmp, P0')))
+        self.assertEqual(key, request_hash('B', 'phantom', prompt('B', 'pool=codex-personal, P0')))
         variants = [prompt('B', 'pr=42'), prompt('B', 'after=DEP'), prompt('B', 'size<=80'),
                     prompt('B', text='Fix src/core/queue/Store.ts retry handling.'),
                     prompt('B') + '\nAlso fix the timeout.', 'Context changed\n' + prompt('B')]
@@ -65,14 +65,14 @@ class EmptyJobAdmission(unittest.TestCase):
 
     def test_stale_duplicate_and_actionable_jobs(self):
         for blocked in (False, True):
-            with self.subTest(blocked=blocked), build(slots={'codex-cmp': lane_slot()}) as tmp:
+            with self.subTest(blocked=blocked), build(slots={'codex-personal': lane_slot()}) as tmp:
                 home = Path(tmp).resolve(); env = launch_stubs(home)
                 q = home / '.ashlr-runs/queue'
                 rows = [dict(event='outcome', state='MERGED', job='RQ-STALE', repo='ashlrai/phantom')]
                 ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
                 ledger.write_text(json.dumps(rows[0]) + '\n')
                 for job in ('RQ-STALE', 'RQ-A', 'RQ-B', 'RQ-WORK'):
-                    queue_job(home, job, 'codex-cmp')
+                    queue_job(home, job, 'codex-personal')
                     text = 'Fix src/core/queue/store.ts timeout handling.' if job == 'RQ-WORK' else None
                     (q / f'prompts/{job}.md').write_text(prompt(job, **({'text': text} if text else {})))
                 if blocked:
