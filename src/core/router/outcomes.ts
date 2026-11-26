@@ -1713,6 +1713,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
 function foldRouterOutcomesWithCiCoverage(
   text: string, opts: RouterOutcomeFoldOptions, ambiguousCiJobs: Set<string>,
   mergeEventCoverage?: MergeEventCoverage,
+  rewards?: ReadonlyMap<string, RewardOutcomeEvidence>,
 ): RouterOutcomeFold {
   const rows: Row[] = [];
   let malformed = 0;
@@ -2224,8 +2225,11 @@ function foldRouterOutcomesWithCiCoverage(
       if (verdictClaim === null) continue;
       const prKey = verdictClaim ?? latestClaim;
       if (prKey === undefined) continue;
-      if (verdictClaim === undefined && o.merged !== null && soleClaimByJob.get(o.job_id) !== `pr:${prKey}`) continue;
-      if (o.merged === true && opts.revertedPrKeys?.has(prKey)) o.reverted = true;
+      const solePrClaim = soleClaimByJob.get(o.job_id) === `pr:${prKey}`;
+      if (verdictClaim === undefined && o.merged !== null && !solePrClaim) continue;
+      // Reward rows resolve the job but carry no PR identity of their own.
+      const rewardMerge = o.merged === null && solePrClaim && rewards?.get(o.job_id)?.merged === true;
+      if ((o.merged === true || rewardMerge) && opts.revertedPrKeys?.has(prKey)) o.reverted = true;
       if (opts.mergeEvents !== undefined) {
         const evidence = opts.mergeEvents.get(prKey);
         if (evidence !== undefined) {
@@ -3456,6 +3460,7 @@ export async function readRouterOutcomes(opts: {
     : opts.authorityEvidence;
   const ambiguousCiJobs = new Set<string>();
   const mergeEvents = mergeEventsRead.state === 'read' ? parseMergeEvents(mergeEventsRead.text) : undefined;
+  const rewards = rewardRead.state === 'read' ? foldRewardSignals(rewardRead.text) : undefined;
   const folded = foldRouterOutcomesWithCiCoverage(read.text, {
     passkFor: laneScoreLookup(laneScores),
     workClassFor: (jobId) => workClasses.get(jobId) ?? null,
@@ -3465,7 +3470,7 @@ export async function readRouterOutcomes(opts: {
     mergeEvents: mergeEvents?.evidence,
     mergeEventsTruncated,
     crossReviews: crossReviewRead.state === 'read' ? foldCrossReviews(crossReviewRead.text) : undefined,
-  }, ambiguousCiJobs, mergeEvents?.coverage);
+  }, ambiguousCiJobs, mergeEvents?.coverage, rewards);
   if (spendRead.state === 'read' && !spendTruncated) {
     const costs = foldSpendCosts(spendRead.text);
     for (const o of folded.outcomes) {
@@ -3474,8 +3479,7 @@ export async function readRouterOutcomes(opts: {
       if (sum !== undefined) o.cost_usd = sum;
     }
   }
-  if (rewardRead.state === 'read') {
-    const rewards = foldRewardSignals(rewardRead.text);
+  if (rewards !== undefined) {
     for (const o of folded.outcomes) {
       const reward = rewards.get(o.job_id);
       if (reward === undefined) continue;

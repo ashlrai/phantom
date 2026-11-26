@@ -2775,6 +2775,21 @@ describe('router outcome authority revert join', () => {
   const MERGE = 'ashlrai/phantom#42@abc123def456';
   const REVERT = 'ashlrai/phantom#43@fff000aaa111';
 
+  it.each([
+    { name: 'sole claim', extra: [], merged: true, reverted: true },
+    { name: 'multiple PRs', extra: [{ job: 'J1', pr: 'https://github.com/ashlrai/phantom/pull/7' }], merged: true, reverted: null },
+    { name: 'contested claim', extra: [{ job: 'J2', pr: 'https://github.com/AshlrAI/Phantom/pull/42/' }], merged: true, reverted: null },
+    { name: 'unmerged reward', extra: [], merged: false, reverted: null },
+  ])('applies recorded reverts to reward verdicts with $name', async ({ extra, merged, reverted }) => {
+    const rows = [{ job: 'J1', pr: 'https://github.com/ashlrai/phantom/pull/42' }, ...extra];
+    const result = await readRouterOutcomes({
+      runsDir: runsDir(rows.map(row => JSON.stringify(row)).join('\n')),
+      ashlarDir: rewardLedger([rewardRow('J1', merged)]),
+      authorityEvidence: [ev('merge:landed', MERGE), ev('revert:landed', REVERT, MERGE)],
+    });
+    expect(result.outcomes.find(o => o.job_id === 'J1')).toMatchObject({ merged, reverted });
+  });
+
   it('resolves a revert:landed row to its merge landing\'s PR key', () => {
     const keys = authorityRevertedPrKeys([
       ev('merge:landed', MERGE),
