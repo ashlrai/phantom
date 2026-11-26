@@ -34,6 +34,17 @@ function snap(over: Partial<NodeSnapshot> & { sessions?: NodeSnapshot['sessions'
   };
 }
 
+it.each([[81.25, 0.30, 3], [81.375, 0.29, 2]])(
+  'counts CPU-limited sessions at %s%% host utilization', (busyPercent, headroom, expected) => {
+    const doc = computeNodeCapacity(snap({
+      cpu: { cores: 8, load: null, busyPercent },
+      sessions: [{ harness: 'codex', rootPid: 10, processes: 1, memBytes: 400 * MIB, cpuPercent: 10 }],
+    }));
+    expect(doc.cpu.headroom_cores).toBe(headroom);
+    expect(doc.agents_runnable_now.codex).toBe(expected);
+  },
+);
+
 describe('harness adapters', () => {
   it('maps CLI kernel names to company-agnostic harness ids and ignores desktop apps', () => {
     expect(harnessFor('codex')?.id).toBe('codex');

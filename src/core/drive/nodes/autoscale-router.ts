@@ -139,6 +139,8 @@ interface NodeState {
   loaded: Set<string>;
   bytes: number;
   cores: number | null;
+  /** Allow for binary roundoff relative to the original CPU budget. */
+  cpuRoundoff: number;
   blocked: string | null;
 }
 
@@ -158,7 +160,9 @@ function nodeStates(input: RouterInput): NodeState[] {
       const blocked = conflict ? 'capacity-conflict'
         : !finite(age) || age < -60_000 || age > maxAge ? 'stale'
         : capacityHold(node.doc) ?? (node.doc.mem_free.headroom_bytes === null ? 'unmeasured' : null);
-      return { node, loaded: new Set(node.localModels ?? []), bytes: node.doc.mem_free.headroom_bytes ?? 0, cores: node.doc.cpu.headroom_cores, blocked };
+      const cores = node.doc.cpu.headroom_cores;
+      return { node, loaded: new Set(node.localModels ?? []), bytes: node.doc.mem_free.headroom_bytes ?? 0,
+        cores, cpuRoundoff: (cores ?? 0) * Number.EPSILON, blocked };
     });
 }
 
@@ -193,7 +197,8 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
         const fp = own ?? fleet[cost.harness];
         if (!fp) { reject('footprint-unmeasured'); continue; }
         if (fp.mem_bytes_max + load > state.bytes) { reject('memory'); continue; }
-        if (state.cores === 0 || (state.cores !== null && fp.cpu_cores_per_session !== null && fp.cpu_cores_per_session > state.cores)) { reject('cpu'); continue; }
+        if (state.cores === 0 || (state.cores !== null && fp.cpu_cores_per_session !== null &&
+          fp.cpu_cores_per_session - state.cores > state.cpuRoundoff)) { reject('cpu'); continue; }
         const p = mergeRate(input.outcomes[cost.provider]);
         cands.push({ state, cost, fp, fpSource: own ? 'node' : 'fleet', load, p,
           perMTok: p / cost.tokensPerJob * 1e6, perHour: p / (cost.minutesPerJob + Math.max(0, state.node.overheadMinutes ?? 0)) * 60 });
@@ -219,7 +224,10 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
     }
     best!.state.bytes -= best!.fp.mem_bytes_max + best!.load;
     if (best!.cost.local) best!.state.loaded.add(best!.cost.model);
-    if (best!.state.cores !== null && best!.fp.cpu_cores_per_session !== null) best!.state.cores -= best!.fp.cpu_cores_per_session;
+    if (best!.state.cores !== null && best!.fp.cpu_cores_per_session !== null) {
+      const remaining = best!.state.cores - best!.fp.cpu_cores_per_session;
+      best!.state.cores = remaining <= best!.state.cpuRoundoff ? 0 : remaining;
+    }
     const r = (n: number) => Math.round(n * 1e4) / 1e4;
     plan.push({ jobId: job.id, nodeId: best!.state.node.doc.node, provider: best!.cost.provider, model: best!.cost.model,
       score: r(bestScore), mergeRate: r(best!.p), mergesPerMTok: r(best!.perMTok), mergesPerHour: r(best!.perHour), footprint: best!.fpSource });
