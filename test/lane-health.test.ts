@@ -93,6 +93,17 @@ it('checks phase chronology while allowing queued runs without a run start', () 
   ] });
 });
 
+it('requires an end timestamp within the current phase to suppress a stuck alert', () => {
+  const h = computeLaneHealth(snap([
+    run({ id: 'malformed-end', startedAt: at(60), phaseStartedAt: at(50), endedAt: 'invalid' }),
+    run({ id: 'future-end', startedAt: at(60), phaseStartedAt: at(50), endedAt: at(-1) }),
+    run({ id: 'prior-phase-end', startedAt: at(60), phaseStartedAt: at(50), endedAt: at(55) }),
+    run({ id: 'ended-now', startedAt: at(60), phaseStartedAt: at(50), endedAt: at(0) }),
+    run({ id: 'ended-at-phase-start', startedAt: at(60), phaseStartedAt: at(50), endedAt: at(50) }),
+  ]));
+  expect(h.lanes[0]!.stuck.map(({ runId }) => runId)).toEqual(['malformed-end', 'future-end', 'prior-phase-end']);
+});
+
 it('keeps owner-lane handoffs out of stuck alerts while still flagging overdue automated landings', () => {
   const h = computeLaneHealth(snap([
     run({ id: 'handed-off', phase: 'landing', startedAt: at(30), phaseStartedAt: at(20), outcome: 'owner-lane' }),
