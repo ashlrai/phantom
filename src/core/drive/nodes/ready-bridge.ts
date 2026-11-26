@@ -165,9 +165,14 @@ export function planNodeBridge(input: BridgeRouterView & {
     if (hostSlots != null) hostFree.set(host, Math.max(0, hostSlots - 1));
   };
   const hasAuth = (node: NodeView, requires: string[]) => !requires.includes('gh') || node.auth === 'ok';
+  const available = (node: NodeView): number | null => {
+    const nodeSlots = free.get(node.nodeId) ?? null;
+    const hostSlots = hostFree.get(hostOf(node)) ?? null;
+    return nodeSlots === null || hostSlots === null ? null : Math.min(nodeSlots, hostSlots);
+  };
   const take = (requires: string[]): NodeView | null => {
     const fits = live.filter(n => requires.every(c => n.caps.includes(c)) && hasAuth(n, requires) &&
-      (free.get(n.nodeId) ?? 0) > 0 && (hostFree.get(hostOf(n)) ?? 0) > 0)
+      (available(n) ?? 0) > 0)
       .sort((a, b) => ((hostFree.get(hostOf(b)) ?? 0) - (hostFree.get(hostOf(a)) ?? 0)) || (a.nodeId < b.nodeId ? -1 : 1));
     if (!fits[0]) return null;
     reserve(fits[0]);
@@ -183,7 +188,7 @@ export function planNodeBridge(input: BridgeRouterView & {
     // Older router views lack assignments. Keep their capability-based estimate.
     for (const job of input.jobs) if (job.state === 'pending' || (job.state === 'running' && !job.claimedBy)) take(job.requires);
   }
-  const nodes = live.map(n => ({ nodeId: n.nodeId, lanes: n.lanes, slots: n.slots ?? null, running: running(n.nodeId), freeSlots: free.get(n.nodeId) ?? null }));
+  const nodes = live.map(n => ({ nodeId: n.nodeId, lanes: n.lanes, slots: n.slots ?? null, running: running(n.nodeId), freeSlots: available(n) }));
   const limit = input.maxPerPass ?? NODE_BRIDGE_MAX_PER_PASS;
   const seen = new Set<string>();
   let planned = 0;
@@ -223,7 +228,7 @@ export function planNodeBridge(input: BridgeRouterView & {
       else if (!live.some(n => n.caps.includes(`pack:${target!.pack}`))) reasons.push('node_pack_unsupported');
       else if (!capable.length) reasons.push('caps_missing');
       else if (!eligible.length) reasons.push('auth_missing');
-      else if (eligible.every(n => free.get(n.nodeId) === null)) reasons.push('slots_unknown');
+      else if (eligible.every(n => available(n) === null)) reasons.push('slots_unknown');
       else if (planned >= limit) reasons.push('pass_limit');
       else nodeId = take(requires)?.nodeId ?? null;
       if (!reasons.length && !nodeId) reasons.push('no_free_slot');
