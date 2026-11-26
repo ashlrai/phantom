@@ -1102,9 +1102,13 @@ Blocked jobs are the parked ones. Each lane has `blockedReasons`
 parked dependency jobs whose gates all show MERGED but were never unparked
 (capped at 50 per run). `totals` carries the same two fields across lanes. The
 top-level `sources` (`ready`, `running`, `ledger`: `healthy`, `missing` or
-`degraded`) and plain-words `notes` say which file made a count `null`, so an
-empty queue (zeros, no notes) is never confused with unavailable data
-(`null`, with a note).
+`degraded`) and plain-words `notes` explain the evidence behind each count.
+With a degraded `ready.tsv`, positive observed per-lane `ready`, `parked`
+and `stale` counts and blocked reasons remain visible and may be incomplete.
+Zero values for those per-lane counts and fleet-wide totals for those counts
+require a healthy queue read. Otherwise those values are `null`.
+A queue export can include recognized running or terminal rows without
+degrading the waiting-work counts.
 
 ## Incident pipeline
 

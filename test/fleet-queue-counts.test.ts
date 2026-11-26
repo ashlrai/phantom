@@ -36,6 +36,7 @@ it('counts ready, parked, running and last-hour merges per lane', async () => {
     merge('m-3', 'devin', minutesAgo(61)), merge('m-4', 'codex', minutesAgo(5)),
   ].join('\n'));
   const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.sources.ready).toBe('healthy');
   expect(report.lanes).toEqual([
     { lane: 'codex', ready: 1, parked: 0, running: 1, merges: 1, oldestWaitSeconds: null, blockedReasons: [], stale: 0 },
     { lane: 'devin', ready: 2, parked: 1, running: 1, merges: 2, oldestWaitSeconds: null, blockedReasons: [{ reason: 'DEP', count: 1 }], stale: 0 },
@@ -296,6 +297,26 @@ it('marks a malformed queue as degraded and keeps counts null-safe', async () =>
   expect(report.sources.ready).toBe('degraded');
   expect(report.sources.ledger).toBe('degraded');
   expect(report.notes.some(n => n.includes('unreadable or has malformed rows'))).toBe(true);
+});
+
+it('preserves observed queue counts without reporting zeros or complete totals for a degraded queue', async () => {
+  const ready = row('READY', 'a-1', 'devin');
+  const parked = row('PARKED-HOLD.claude', 'a-2', 'claude');
+  await writeFile(join(queueDir, 'jobs.jsonl'), merge('m-1', 'codex', minutesAgo(1)));
+  await writeFile(join(queueDir, 'ready.tsv'), [ready, parked, 'malformed'].join('\n'));
+  const degraded = await getLaneQueueCounts({ runsDir: root, now });
+  expect(degraded.sources.ready).toBe('degraded');
+  expect(degraded.lanes).toMatchObject([
+    { lane: 'claude', ready: null, parked: 1, stale: null, blockedReasons: [{ reason: 'HOLD', count: 1 }] },
+    { lane: 'codex', ready: null, parked: null, stale: null, merges: 1 },
+    { lane: 'devin', ready: 1, parked: null, stale: null },
+  ]);
+  expect(degraded.totals).toMatchObject({ ready: null, parked: null, stale: null, merges: 1 });
+
+  await writeFile(join(queueDir, 'ready.tsv'), [ready, parked].join('\n'));
+  const healthy = await getLaneQueueCounts({ runsDir: root, now });
+  expect(healthy.lanes.find(lane => lane.lane === 'codex')).toMatchObject({ ready: 0, parked: 0, stale: 0 });
+  expect(healthy.totals).toMatchObject({ ready: 1, parked: 1, stale: 0, merges: 1 });
 });
 
 it('prints blocked reasons and notes in text output', async () => {

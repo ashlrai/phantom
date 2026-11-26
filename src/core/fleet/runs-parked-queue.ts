@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { lstat, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
-import { parseReadyTsv } from './lane-console.js';
+import { KNOWN_STATUSES, parseReadyTsv } from './lane-console.js';
 import { MARKET_LANE_ID } from './unfed-market.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -374,7 +374,11 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     // Dispatcher 5-col parked rows keep status READY and put PARKED-REASON.lane in the pool column.
     const poolParked = parseParkedState(row.pool);
     const parkedState = statusParked.parked ? statusParked : poolParked;
-    if (!row.id || !JOB_ID.test(row.id) || (!parkedState.parked && row.status !== 'READY')) { malformed++; continue; }
+    if (!row.id || !JOB_ID.test(row.id)) { malformed++; continue; }
+    if (!parkedState.parked && row.status !== 'READY') {
+      if (!KNOWN_STATUSES.has(row.status)) malformed++;
+      continue;
+    }
     // The parser uppercases the whole PARKED marker inside `status`, so its
     // lane capture can differ in case from the lane the row's own pool cell
     // names (lane-column parked rows carry the marker's lane there verbatim).
