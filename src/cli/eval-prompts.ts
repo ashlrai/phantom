@@ -33,6 +33,7 @@ import {
   parsePromptExperimentSpec,
   type PromptExperimentSpec,
 } from '../core/eval/prompt-variants.js';
+import { isEvalHelpArgs, parseStrictEvalFlags } from './eval-args.js';
 
 const USAGE = `Usage: phm eval prompts --dataset <jobs.jsonl> [--spec <experiment.json>] [--promote] [--write <report.json>] [--check <promotions.json>] [--json]
 
@@ -53,44 +54,9 @@ export interface EvalPromptsCliDeps {
   now?: string;
 }
 
-interface ParsedArgs {
-  dataset?: string;
-  spec?: string;
-  promote: boolean;
-  json: boolean;
-  write?: string;
-  check?: string;
-  usageError?: string;
-}
-
-function parseArgs(args: string[]): ParsedArgs {
-  const parsed: ParsedArgs = { promote: false, json: false };
-  const valueFlags = new Set(['--dataset', '--spec', '--write', '--check']);
-  const seen = new Set<string>();
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (seen.has(arg)) { parsed.usageError = `repeated argument: ${arg}`; return parsed; }
-    if (arg === '--json') { parsed.json = true; seen.add(arg); continue; }
-    if (arg === '--promote') { parsed.promote = true; seen.add(arg); continue; }
-    if (valueFlags.has(arg)) {
-      const value = args[++i];
-      if (value === undefined || value.startsWith('-')) {
-        parsed.usageError = `${arg} requires a value`;
-        return parsed;
-      }
-      parsed[arg.slice(2) as 'dataset' | 'spec' | 'write' | 'check'] = value;
-      seen.add(arg);
-      continue;
-    }
-    parsed.usageError = `unknown argument: ${arg}`;
-    return parsed;
-  }
-  return parsed;
-}
-
 /** The shipped experiment — class matchers and arms for the baked variants.
  * Parsed through parsePromptExperimentSpec so the match.task regexes compile. */
-export const DEFAULT_PROMPT_EXPERIMENT: PromptExperimentSpec = parsePromptExperimentSpec({
+const DEFAULT_PROMPT_EXPERIMENT: PromptExperimentSpec = parsePromptExperimentSpec({
   v: 1,
   id: 'prompt-ab-default',
   note: 'Builtin spec: docs/test/secrets job classes, plain vs adaptive prompts.',
@@ -152,14 +118,18 @@ export async function cmdEvalPrompts(args: string[], overrides: EvalPromptsCliDe
     now: new Date().toISOString(),
     ...overrides,
   };
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { deps.out(USAGE); return 0; }
-  const parsed = parseArgs(args);
+  if (isEvalHelpArgs(args)) { deps.out(USAGE); return 0; }
+  const parsed = parseStrictEvalFlags(args, {
+    booleans: ['--json', '--promote'],
+    values: ['--dataset', '--spec', '--write', '--check'],
+  });
   if (parsed.usageError) { deps.err(`error: ${parsed.usageError}\n${USAGE}`); return 2; }
-  if (!parsed.dataset) { deps.err(`error: --dataset is required\n${USAGE}`); return 2; }
+  const datasetPath = parsed.values['--dataset'];
+  if (!datasetPath) { deps.err(`error: --dataset is required\n${USAGE}`); return 2; }
 
   let dataset: RouterEvalDataset;
   try {
-    dataset = parseRouterEvalDataset(deps.readFile(parsed.dataset));
+    dataset = parseRouterEvalDataset(deps.readFile(datasetPath));
   } catch {
     // Dataset contents and paths may be private; do not echo them.
     deps.err('error: could not read or parse the router-eval dataset');
@@ -167,9 +137,10 @@ export async function cmdEvalPrompts(args: string[], overrides: EvalPromptsCliDe
   }
 
   let spec: PromptExperimentSpec = DEFAULT_PROMPT_EXPERIMENT;
-  if (parsed.spec !== undefined) {
+  const specPath = parsed.values['--spec'];
+  if (specPath !== undefined) {
     try {
-      spec = parsePromptExperimentSpec(JSON.parse(deps.readFile(parsed.spec)));
+      spec = parsePromptExperimentSpec(JSON.parse(deps.readFile(specPath)));
     } catch {
       deps.err('error: could not read or parse the prompt experiment spec');
       return 1;
@@ -179,16 +150,17 @@ export async function cmdEvalPrompts(args: string[], overrides: EvalPromptsCliDe
   const report: PromptAbReport = evaluatePromptExperiment(dataset, spec, { now: deps.now });
   const registry = promotionsRegistry(report);
 
-  if (parsed.write !== undefined) {
+  const writePath = parsed.values['--write'];
+  if (writePath !== undefined) {
     try {
-      deps.writeFile(parsed.write, `${JSON.stringify(registry, null, 2)}\n`);
+      deps.writeFile(writePath, `${JSON.stringify(registry, null, 2)}\n`);
     } catch {
       deps.err('error: could not write the promotions file');
       return 1;
     }
   }
 
-  if (parsed.promote) {
+  if (parsed.booleans['--promote']) {
     try {
       deps.saveRegistry(mergePromotions(deps.loadRegistry(), registry));
     } catch {
@@ -197,10 +169,11 @@ export async function cmdEvalPrompts(args: string[], overrides: EvalPromptsCliDe
     }
   }
 
-  if (parsed.check !== undefined) {
+  const checkPath = parsed.values['--check'];
+  if (checkPath !== undefined) {
     let committed: PromptPromotionsRegistry;
     try {
-      committed = JSON.parse(deps.readFile(parsed.check)) as PromptPromotionsRegistry;
+      committed = JSON.parse(deps.readFile(checkPath)) as PromptPromotionsRegistry;
     } catch {
       deps.err('error: could not read the committed promotions file');
       return 1;
@@ -214,6 +187,6 @@ export async function cmdEvalPrompts(args: string[], overrides: EvalPromptsCliDe
     return 0;
   }
 
-  deps.out(parsed.json ? JSON.stringify({ ...report, registry }, null, 2) : formatPromptAbMarkdown(report).trimEnd());
+  deps.out(parsed.booleans['--json'] ? JSON.stringify({ ...report, registry }, null, 2) : formatPromptAbMarkdown(report).trimEnd());
   return 0;
 }

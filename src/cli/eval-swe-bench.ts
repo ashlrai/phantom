@@ -136,7 +136,7 @@ const FIXTURE_DIR = path.join(
 );
 
 /** Load the bundled fixture tasks. Builds a minimal self-contained repo in a temp dir. */
-export function loadFixtureTasks(): BenchTask[] {
+function loadFixtureTasks(): BenchTask[] {
   const tasksFile = path.join(FIXTURE_DIR, 'tasks.json');
   const rawTasks: Array<{
     id: string;

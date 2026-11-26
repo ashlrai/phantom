@@ -9,9 +9,9 @@
  * registry is always the current winners, never a history.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { evalAshlrRoot, writeEvalFileAtomic } from './dataset-jsonl.js';
 
 export interface PromptPromotionMetric {
   value: number | null;
@@ -51,15 +51,8 @@ export interface PromptPromotionsStoreOptions {
   rootDir?: string;
 }
 
-function ashlrRoot(rootDir: string | undefined): string {
-  if (rootDir && rootDir.trim() !== '') return rootDir;
-  const configuredHome = process.env.ASHLR_HOME;
-  if (typeof configuredHome === 'string' && configuredHome.trim() !== '') return configuredHome;
-  return path.join(homedir(), '.ashlr');
-}
-
 export function promptPromotionsPath(opts: PromptPromotionsStoreOptions = {}): string {
-  return path.join(ashlrRoot(opts.rootDir), 'eval', 'prompts', 'promotions.json');
+  return path.join(evalAshlrRoot(opts.rootDir), 'eval', 'prompts', 'promotions.json');
 }
 
 export function loadPromptPromotions(opts: PromptPromotionsStoreOptions = {}): PromptPromotionsRegistry | null {
@@ -96,24 +89,12 @@ export function mergePromotions(
   return { ...next, promoted, held };
 }
 
-/** Atomic write (tmp + rename), same stance as the attention report store. */
+/** Atomic write (tmp + rename), sharing the eval file-store helper. */
 export function savePromptPromotions(
   registry: PromptPromotionsRegistry,
   opts: PromptPromotionsStoreOptions = {},
 ): string {
   const file = promptPromotionsPath(opts);
-  mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    writeFileSync(tmp, JSON.stringify(registry, null, 2) + '\n', 'utf8');
-    renameSync(tmp, file);
-    return file;
-  } catch (err) {
-    try {
-      unlinkSync(tmp);
-    } catch {
-      // best-effort cleanup only
-    }
-    throw err;
-  }
+  writeEvalFileAtomic(file, JSON.stringify(registry, null, 2) + '\n');
+  return file;
 }
