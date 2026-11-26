@@ -1155,6 +1155,29 @@
  *     own recorded verdicts; 'missing' and clean reads never emit,
  *     and only the fleet's own repository inherits the items since
  *     the ledgers describe this install's learned memory;
+ *   - the needs-you auto-resolve audit journal's recurring failure
+ *     cells: the {item:{id,title}, action, at, reason, result?, error?}
+ *     rows resolveAutoNeedsYou appends to needs-you-auto.jsonl under
+ *     the fleet runs directory for `phm needs-you resolve --auto` and
+ *     POST /api/needs-you/resolve — one per auto-class NEEDS-MASON.md
+ *     item's forward action through resolveNeedsMason, with
+ *     result:'failed' rows carrying the resolve step's bounded,
+ *     scrubbed error (needsYouAutoBacklogItems below). Until now the
+ *     journal's only readers were `phm needs-you log` and the
+ *     last-50 audit slice inside GET /api/needs-you — point-in-time
+ *     surfaces someone had to run and read — so an item that kept
+ *     failing to self-resolve, a failure mode recurring across items,
+ *     or a broad failure pattern never became work even though the
+ *     writer journals failures precisely to stay durable evidence. A
+ *     per-item cell emits only at the recurring bars of failed
+ *     attempts across distinct UTC days inside the 7-day window, an
+ *     error-mode cell only when one recorded error covers distinct
+ *     items across days, a wave cell only at the distinct-item bar,
+ *     resolved attempts count as window context never as adverse,
+ *     truncated tails are stated as lower bounds, and only the
+ *     fleet's own repository inherits the items since the journal is
+ *     this install's auto-resolve record and carries no repository
+ *     column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1272,6 +1295,7 @@ import { outsidePrBacklogItems } from './outside-pr-backlog.js';
 import { repoShareBacklogItems } from './repo-share-backlog.js';
 import { reasoningInsightBacklogItems } from './reasoning-insight-backlog.js';
 import { fleetGapBacklogItems } from './fleet-gap-backlog.js';
+import { needsYouAutoBacklogItems } from './needs-you-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2725,6 +2749,29 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the evidence describes this
   // install's dispatcher and carries no repository column.
   items.push(...await fleetGapBacklogItems({ repo }));
+
+  // Needs-you auto-resolve audit journal: the
+  // {item:{id,title}, action, at, reason, result?, error?} rows
+  // resolveAutoNeedsYou appends to needs-you-auto.jsonl under the
+  // fleet runs directory for `phm needs-you resolve --auto` and POST
+  // /api/needs-you/resolve — one per auto-class NEEDS-MASON.md item's
+  // forward action through resolveNeedsMason, result:'failed' rows
+  // carrying the resolve step's bounded, scrubbed error. Until now the
+  // journal's only readers were `phm needs-you log` and the last-50
+  // audit slice inside GET /api/needs-you — point-in-time surfaces
+  // someone had to run and read — so an item that kept failing to
+  // self-resolve, a failure mode recurring across items, or a broad
+  // failure pattern never became work even though the writer journals
+  // failures precisely to stay durable evidence. A per-item cell emits
+  // only at the recurring bars of failed attempts across distinct UTC
+  // days inside the 7-day window, an error-mode cell only when one
+  // recorded error covers distinct items across days, a wave cell only
+  // at the distinct-item bar, resolved attempts count as window context
+  // never as adverse, truncated tails are stated as lower bounds, and
+  // only the fleet's own repository inherits the items since the
+  // journal is this install's auto-resolve record and carries no
+  // repository column.
+  items.push(...await needsYouAutoBacklogItems({ repo }));
   return { items, errors };
 }
 
