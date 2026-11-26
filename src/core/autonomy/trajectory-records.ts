@@ -1330,6 +1330,7 @@ function listTrajectoryRecordsAt(
   const skillUses = safeArray(() =>
     (deps.readSkillUseEvents ?? readSkillUseEvents)({
       sinceMs,
+      untilMs: asOfMs,
       limit: Math.max(limit * 8, 400),
       maxFiles,
     }),
@@ -1685,6 +1686,7 @@ function listTrajectoryRecordsAt(
   const skillObservationByRecordId = new Map<string, SkillObservationCounts>();
   const skillSelectionsByRecordId = new Map<string, Map<string, { skillId: string; skillRevision: number }>>();
   for (const event of skillUses) {
+    if (eventMs(event.ts) > asOfMs) continue;
     const aliases = aliasesFromIds({
       trajectoryId: cleanId(event.trajectoryId, 240),
       runId: cleanId(event.runId, 160),

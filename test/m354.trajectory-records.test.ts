@@ -1998,18 +1998,21 @@ describe('Trajectory records', () => {
   });
 
   it('withholds per-skill outcomes below the observed sample gate', () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
     const records = listTrajectoryRecords({
       windowHours: 1000,
       deps: deps({
         readDispatchProductionEvents: () => [
           dispatch({ proposalId: undefined, runId: 'run-a', trajectoryId: 'traj-a' }),
           dispatch({ ts: TS1, itemId: 'item-b', proposalId: undefined, runId: 'run-b', trajectoryId: 'traj-b' }),
+          dispatch({ ts: TS2, itemId: 'item-c', proposalId: undefined, runId: 'run-c', trajectoryId: 'traj-c' }),
         ],
         listOutcomeRecords: () => [],
         readAgentActions: () => [],
         readSkillUseEvents: () => [
           skillUse({ eventId: 'use-a', proposalId: undefined, runId: 'run-a', trajectoryId: 'traj-a' }),
           skillUse({ eventId: 'use-b', proposalId: undefined, runId: 'run-b', trajectoryId: 'traj-b' }),
+          skillUse({ eventId: 'use-c', ts: future, proposalId: undefined, runId: 'run-c', trajectoryId: 'traj-c' }),
         ],
       }),
     });

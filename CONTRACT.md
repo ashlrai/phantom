@@ -2464,6 +2464,14 @@ merges these tallies under any explicit `--outcomes` file (file wins per
 provider) and reports `outcomes_ledger` state in its JSON plan. See
 [measured capacity and routing](docs/NODE-ROUTER.md#measured-capacity-and-node-provider-model-routing).
 
+## Skill record read windows
+
+Bounded skill-record reads accept an optional inclusive `untilMs` Unix
+timestamp in milliseconds alongside `sinceMs`. Only UTC partitions that
+intersect the requested interval count toward the file limit. Row timestamp
+filtering precedes the record limit. Complete lifecycle scans still read
+all partitions.
+
 ## Router calibration
 
 `src/core/routing/calibration.ts` returns schema-version-1 calibration reports.
