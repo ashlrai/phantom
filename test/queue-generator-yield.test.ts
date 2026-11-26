@@ -69,6 +69,19 @@ describe('generator yield', () => {
       { generator: 'fixup', jobs: 2, prs: 2, merged: 1, tokensPerMergedPr: 30 },
     ]);
   });
+  it('uses the first parseable ledger timestamp for jobs and generation decisions', () => {
+    const job = 'RQ-X';
+    const report = generatorYield([
+      row({ job, event: 'launch', ts: 'invalid', timestamp: '2026-11-09 05:00:00-0500' }),
+      row({ job, outcome: 'MERGED', mergedAt: 'invalid', ts: 'invalid', at: '2026-11-09T11:00:00Z' }),
+      row({ job: 'FIXUP-Y', event: 'launch', ts: 'invalid', timestamp: 'invalid' }),
+      row({ job: 'FIXUP-Z', event: 'launch', ts: '2026-11-09T12:01:00Z', timestamp: '2026-11-09T11:00:00Z' }),
+    ].join('\n'), 24, now, row({ job, src: 'ideas', event: 'drafted', ts: 'invalid', recordedAt: '2026-11-09T09:00:00Z' }));
+    expect(report.malformedLines).toBe(1);
+    expect(report.generators).toMatchObject([
+      { generator: 'ideas', jobs: 1, drafted: 1, launched: 1, prs: 1, merged: 1 },
+    ]);
+  });
   it('reads the jobs-ledger field dialect', () => {
     const report = generatorYield([
       JSON.stringify({ job_id: 'RQ-FOOA9Q8', type: 'finish', timestamp: '2026-11-09T10:00:00Z', result: 'empty', pr_url: 'https://github.com/x/y/pull/1' }),

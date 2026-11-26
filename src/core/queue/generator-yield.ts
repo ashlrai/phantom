@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { isNodePoolLedgerRow } from '../fleet/jobs-ledger-dialect.js';
+import { isNodePoolLedgerRow, ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
 
 export interface GenerationDecision {
   job: string; src: string; event: 'drafted' | 'rejected';
@@ -27,7 +27,6 @@ const count = (v: unknown): number | null => typeof v === 'number' && Number.isF
 const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
-const TS_KEYS = ['ts', 'timestamp', 'at', 'startedAt', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const PR_KEYS = ['pr', 'pr_url', 'prUrl', 'url', 'html_url'] as const;
 const pickString = (r: Record<string, unknown>, keys: readonly string[]): string | null => {
   for (const key of keys) {
@@ -72,12 +71,8 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     const event = pickString(r, EVENT_KEYS)?.toLowerCase();
     const terminal = terminalVerdict(r, event);
     // Reconciled outcomes can retain the original publish timestamp.
-    const terminalAt = terminal === 'MERGED' ? string(r.mergedAt)
-      : terminal === 'CLOSED' ? string(r.closedAt) : null;
-    const timestamp = pickString(r, TS_KEYS);
-    const terminalMs = terminalAt === null ? NaN : Date.parse(terminalAt);
-    const at = Number.isFinite(terminalMs) ? terminalMs : Date.parse(timestamp ?? '');
-    if (!id || !Number.isFinite(at)) { malformedLines++; continue; }
+    const at = ledgerEventTs(r, terminal);
+    if (!id || at === null) { malformedLines++; continue; }
     if (at < since || at > now) continue;
     rows.push({ id, at, event, terminal, row: r });
   }
