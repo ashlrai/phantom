@@ -426,6 +426,75 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(snapshot.sources.ledger).toMatchObject({ state: 'healthy', events: 2 });
   });
 
+  it('times colon-less dispatchd offsets and attributes merges via the job lane map', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'jobs.jsonl'), [
+      // dispatchd stamps rows with a basic-format offset (-0400, no colon);
+      // outcome rows carry no lane, so the merge resolves through the same
+      // job's earlier launch row — the lane that actually ran it.
+      JSON.stringify({ event: 'launch', job: 'RQ-OFFSET', lane: 'codex-cmp', ts: '2026-10-27T21:30:00-0400' }),
+      JSON.stringify({ event: 'outcome', job: 'RQ-OFFSET', state: 'MERGED', ts: '2026-10-27T21:45:00-0400' }),
+      JSON.stringify({ event: 'outcome', job: 'RQ-UNLANED', state: 'MERGED', ts: '2026-10-27T21:50:00-0400' }),
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    const lane = snapshot.lanes.find(l => l.lane === 'codex-cmp')!;
+    expect(lane.mergesPerHour).toBe(1);
+    expect(lane.startsInWindow).toBe(1);
+    expect(snapshot.sources.ledger.mergeWindow).toBe('complete');
+  });
+
+  it('reports merges from a truncated tail that still covers the window', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    // The cut lands inside the padding row, so the first retained event is
+    // the pre-window row — the tail provably reaches back past the window.
+    const pad = JSON.stringify({ event: 'launch', job: 'RQ-PAD', lane: 'devin', ts: '2026-10-26T00:00:00Z', padding: 'x'.repeat(600) });
+    await writeFile(join(dir, 'jobs.jsonl'), [
+      pad,
+      JSON.stringify({ event: 'outcome', job: 'RQ-PRE', state: 'MERGED', lane: 'devin', ts: '2026-10-28T00:30:00Z' }),
+      JSON.stringify({ event: 'outcome', job: 'RQ-IN', state: 'MERGED', lane: 'devin', ts: '2026-10-28T01:30:00Z' }),
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR, ledgerBytes: 512,
+    });
+    expect(snapshot.sources.ledger.state).toBe('degraded');   // file read was partial — honest
+    expect(snapshot.sources.ledger.mergeWindow).toBe('complete');
+    expect(snapshot.lanes.find(l => l.lane === 'devin')!.mergesPerHour).toBe(1);
+  });
+
+  it('keeps merges unknown when the truncated tail cannot reach the window', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    // The only pre-window event sits in the cut prefix; the retained tail
+    // starts inside the window, so an earlier in-window merge could be lost.
+    await writeFile(join(dir, 'jobs.jsonl'), [
+      JSON.stringify({ event: 'outcome', job: 'RQ-CUT', state: 'MERGED', lane: 'devin', ts: '2026-10-28T01:30:00Z', padding: 'x'.repeat(500) }),
+      JSON.stringify({ event: 'launch', job: 'RQ-LATE', lane: 'devin', ts: '2026-10-28T01:45:00Z' }),
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR, ledgerBytes: 512,
+    });
+    expect(snapshot.sources.ledger.mergeWindow).toBe('partial');
+    expect(snapshot.lanes.find(l => l.lane === 'devin')!.mergesPerHour).toBeNull();
+  });
+
+  it('marks the merge window partial when retained rows fail to parse', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'jobs.jsonl'), [
+      '{"event":"outcome","job":"RQ-BAD","state":"MERGED","lane":"devin","ts":"2026-10-28T01:30:00Z"}',
+      'not json at all',
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    expect(snapshot.sources.ledger).toMatchObject({ state: 'degraded', dropped: 1, mergeWindow: 'partial' });
+    expect(snapshot.lanes.find(l => l.lane === 'devin')!.mergesPerHour).toBe(1); // observed merge still reports
+  });
+
   it('projects credit, queue depth, live jobs and merges per lane', async () => {
     const snapshot = await getFleetLaneSnapshot(fixtureOptions);
     expect(snapshot.schema).toBe('fleet.lanes.v1');

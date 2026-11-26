@@ -32,6 +32,16 @@ remain eligible.
 `LaneLedgerEvent.mergedAt` when a merge row carries a readable timestamp
 with a timezone. The lane snapshot uses it for the merge window and falls
 back to `at` when absent. `at` continues to carry the event timestamp.
+Ledger timestamps accept `Z` and `±HH:MM`/`±HHMM` offsets — dispatchd writes
+the colon-less form. Merge and launch rows that name no pool resolve their
+lane through the same job's earlier ledger rows (last write wins) after the
+queue's job→pool lookups, so outcome receipts still count per lane.
+`sources.ledger.mergeWindow` reports whether the retained ledger bytes
+provably cover the whole merge window: `complete` (a truncated tail still
+counts when its first retained event predates the window and no rows were
+dropped), `partial` (a zero merge count is unknown, not zero) or `absent`.
+`mergesPerHour` is null exactly when no merge was observed and the window is
+not `complete`.
 
 `parseReadyTsv` returns `unhintedRows` entries with `id`, `repo` and `tier`
 for validated lane-open dispatcher jobs. Its optional `routerQueue` argument
