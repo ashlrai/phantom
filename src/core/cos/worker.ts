@@ -92,7 +92,7 @@ const PEER_PLAN_PROMPT = '\nReturn strict JSON {reply: string, peers: [], deadli
   + 'Put the peer id, objective and scope in each request; deadline is when you want the coordination done (within 7 days). '
   + 'For a direct task with a known repository, exact file scope and acceptance criteria, include an optional work object: '
   + '{kind: "work.post", jobId: string, title: string, repo: "owner/repo", claimKeys: string[], '
-  + 'provider: "claude"|"codex-cmp"|"codex-personal"|"devin"|"cursor-cloud"|"grokbot"|"openai-dot"|"glm"|"stacksync"|"local", '
+  + 'provider: "claude"|"codex-personal"|"devin"|"cursor-cloud"|"grokbot"|"openai-dot"|"glm"|"stacksync"|"local", '
   + 'dispatch: {tier: "fast"|"mid"|"work"|"frontier", scope: string, acceptance: string}}. '
   + 'provider is required: the shared work feed refuses posts it cannot attribute. '
   + 'Use a stable jobId (1-128 letters, digits, dots, underscores or hyphens, starting with a letter or digit). '

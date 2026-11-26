@@ -23,7 +23,7 @@ import time
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'dispatchd.py'
-LANES = ['codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local']
+LANES = ['codex-personal', 'claude', 'devin', 'claude-api', 'codex-local']
 
 AP_GREEN = ('#!/usr/bin/python3\n'
             'import json, sys\n'
@@ -321,7 +321,7 @@ class MaxRuntimeTests(unittest.TestCase):
             'process_snapshot.read_start_time = fake_start_time\n')
         (home / 'mock-pgids.json').write_text('{}')
 
-    def write_ps(self, home, start_time=START_TIME, lane='codex-cmp', include_leader=True):
+    def write_ps(self, home, start_time=START_TIME, lane='codex-personal', include_leader=True):
         if include_leader:
             inventory = f'{self.PID} {start_time} /bin/bash' if start_time else f'{self.PID} /bin/bash'
             command = f'{self.PID} /bin/bash {home}/.ashlr-runs/bin/launch.sh RQ-HUNG phantom {lane} work'
@@ -348,7 +348,7 @@ class MaxRuntimeTests(unittest.TestCase):
         self.mock_watchdog(home, self.START_TIME)
         (home / 'mock-start-times.json').write_text(json.dumps({str(pid): start for pid, start in starts.items()}))
 
-    def write_ps_two(self, home, lane='codex-cmp', starts=None, include_pid2=True):
+    def write_ps_two(self, home, lane='codex-personal', starts=None, include_pid2=True):
         starts = starts or (self.START_TIME, self.START_TIME2)
         def _inv(pid, start):
             return f'{pid} {start} /bin/bash' if start else f'{pid} /bin/bash'
@@ -366,7 +366,7 @@ class MaxRuntimeTests(unittest.TestCase):
             'fi\n')
         (home / 'stubbin' / 'ps').chmod(0o755)
 
-    def hung_two(self, age, lane='codex-cmp', env_extra=None):
+    def hung_two(self, age, lane='codex-personal', env_extra=None):
         tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
         r = home / '.ashlr-runs'; run = r / 'queue/run'
         self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: self.START_TIME2})
@@ -378,7 +378,7 @@ class MaxRuntimeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return home, run
 
-    def hung(self, age, lane='codex-cmp', slots=None, env_extra=None, snapshot_start=START_TIME, current_start=START_TIME):
+    def hung(self, age, lane='codex-personal', slots=None, env_extra=None, snapshot_start=START_TIME, current_start=START_TIME):
         tmp = build(slots=slots); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
         r = home / '.ashlr-runs'; run = r / 'queue/run'
         self.mock_watchdog(home, current_start)
@@ -397,7 +397,7 @@ class MaxRuntimeTests(unittest.TestCase):
         marker = run / 'RQ-HUNG.maxruntime'
         self.assertEqual([json.loads(line) for line in marker.read_text().splitlines()],
                          [{'pid': self.PID, 'start': self.START_TIME}])
-        self.assertIn('REAP TIMEOUT RQ-HUNG lane=codex-cmp', events(home))
+        self.assertIn('REAP TIMEOUT RQ-HUNG lane=codex-personal', events(home))
 
     def test_job_inside_limit_is_left_alone(self):
         home, run = self.hung(3600)
@@ -406,7 +406,7 @@ class MaxRuntimeTests(unittest.TestCase):
         self.assertNotIn('REAP TIMEOUT', events(home))
 
     def test_lane_override_in_slots_json(self):
-        slots = {'codex-cmp': {'target': 2, 'floor': 0, 'ceiling': 4, 'hard_cap': 4, 'last_change': 0, 'max_runtime_s': 600}}
+        slots = {'codex-personal': {'target': 2, 'floor': 0, 'ceiling': 4, 'hard_cap': 4, 'last_change': 0, 'max_runtime_s': 600}}
         home, run = self.hung(900, slots=slots)
         self.assertEqual(self.killpg_calls(home), [{'pid': self.PID, 'signal': signal.SIGTERM}])
         self.assertIn('limit=600s', events(home))
@@ -531,7 +531,7 @@ class MaxRuntimeTests(unittest.TestCase):
         r = home / '.ashlr-runs'; run = r / 'queue/run'
         self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: None})
         self.write_ps_two(home)
-        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-personal\twork\t/x\n')
         (run / 'RQ-HUNG.dispatched').write_text('0')
         t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
         self.assertEqual(tick(home).returncode, 0)
@@ -580,7 +580,7 @@ class MaxRuntimeTests(unittest.TestCase):
         r = home / '.ashlr-runs'; run = r / 'queue/run'
         self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: None})
         self.write_ps_two(home, starts=(self.START_TIME, None))
-        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-personal\twork\t/x\n')
         (run / 'RQ-HUNG.dispatched').write_text('0')
         t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
         self.assertEqual(tick(home).returncode, 0)
@@ -629,7 +629,7 @@ class MaxRuntimeTests(unittest.TestCase):
         r = home / '.ashlr-runs'; run = r / 'queue/run'
         self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: None})
         self.write_ps_two(home, starts=(self.START_TIME, None))
-        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-personal\twork\t/x\n')
         (run / 'RQ-HUNG.dispatched').write_text('0')
         t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
         self.assertEqual(tick(home).returncode, 0)
@@ -661,7 +661,7 @@ class MaxRuntimeTests(unittest.TestCase):
         r = home / '.ashlr-runs'; run = r / 'queue/run'
         self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: self.START_TIME2})
         self.write_ps_two(home)
-        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-personal\twork\t/x\n')
         (run / 'RQ-HUNG.dispatched').write_text('0')
         t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
         self.assertEqual(tick(home).returncode, 0)
@@ -697,12 +697,12 @@ class MaxRuntimeTests(unittest.TestCase):
         tmp = build(slots=held_lanes()); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
         r = home / '.ashlr-runs'; run = r / 'queue/run'
         wt = home / 'Projects/ashlrai/wt/RQ-HUNG'; wt.mkdir(parents=True)
-        (r / 'RQ-HUNG.base').write_text(f'deadbeef x {wt} codex-cmp\n')
+        (r / 'RQ-HUNG.base').write_text(f'deadbeef x {wt} codex-personal\n')
         (r / 'RQ-HUNG.log').write_text('work\n')
         old = time.time() - 3600; os.utime(r / 'RQ-HUNG.base', (old, old)); os.utime(r / 'RQ-HUNG.log', (old, old))
         self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: self.START_TIME2})
         self.write_ps_two(home)
-        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-personal\twork\t/x\n')
         (run / 'RQ-HUNG.dispatched').write_text('0')
         t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
         self.assertEqual(tick(home).returncode, 0)
@@ -717,7 +717,7 @@ class MaxRuntimeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotEqual(marker.read_text().splitlines()[-1], 'KILL')
         status = json.loads((r / 'queue/status.json').read_text())
-        self.assertEqual(status['lanes']['codex-cmp']['running'], 1)
+        self.assertEqual(status['lanes']['codex-personal']['running'], 1)
         self.assertTrue(wt.is_dir())
         self.assertFalse(any('REAP RQ-HUNG' in line for line in events(home)))
         # Group finally empty: escalation completes.
@@ -732,10 +732,10 @@ class MaxRuntimeTests(unittest.TestCase):
         tmp = build(slots=held_lanes()); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
         r = home / '.ashlr-runs'; run = r / 'queue/run'
         wt = home / 'Projects/ashlrai/wt/RQ-HUNG'; wt.mkdir(parents=True)
-        (r / 'RQ-HUNG.base').write_text(f'deadbeef x {wt} codex-cmp\n')
+        (r / 'RQ-HUNG.base').write_text(f'deadbeef x {wt} codex-personal\n')
         (r / 'RQ-HUNG.log').write_text('work\n')
         old = time.time() - 3600; os.utime(r / 'RQ-HUNG.base', (old, old)); os.utime(r / 'RQ-HUNG.log', (old, old))
-        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-personal\twork\t/x\n')
         marker = run / 'RQ-HUNG.maxruntime'
         marker.write_text(json.dumps({'pid': 424242, 'start': 'x'}) + '\n')
         os.chmod(marker, 0)
@@ -744,7 +744,7 @@ class MaxRuntimeTests(unittest.TestCase):
         result = tick(home)
         self.assertEqual(result.returncode, 0, result.stderr)
         status = json.loads((r / 'queue/status.json').read_text())
-        self.assertEqual(status['lanes']['codex-cmp']['running'], 1)
+        self.assertEqual(status['lanes']['codex-personal']['running'], 1)
         self.assertTrue(wt.is_dir())
         self.assertFalse(any('REAP RQ-HUNG' in line for line in events(home)))
 
@@ -755,12 +755,12 @@ class MaxRuntimeTests(unittest.TestCase):
         tmp = build(slots=held_lanes()); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
         r = home / '.ashlr-runs'; run = r / 'queue/run'
         wt = home / 'Projects/ashlrai/wt/RQ-HUNG'; wt.mkdir(parents=True)
-        (r / 'RQ-HUNG.base').write_text(f'deadbeef x {wt} codex-cmp\n')
+        (r / 'RQ-HUNG.base').write_text(f'deadbeef x {wt} codex-personal\n')
         (r / 'RQ-HUNG.log').write_text('work\n')
         old = time.time() - 3600; os.utime(r / 'RQ-HUNG.base', (old, old)); os.utime(r / 'RQ-HUNG.log', (old, old))
         self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: self.START_TIME2})
         self.write_ps_two(home)
-        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-personal\twork\t/x\n')
         (run / 'RQ-HUNG.dispatched').write_text('0')
         t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
         self.assertEqual(tick(home).returncode, 0)   # tick 1: TERM both wrappers
@@ -776,7 +776,7 @@ class MaxRuntimeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotEqual(marker.read_text().splitlines()[-1], 'KILL')
         status = json.loads((r / 'queue/status.json').read_text())
-        self.assertEqual(status['lanes']['codex-cmp']['running'], 1)
+        self.assertEqual(status['lanes']['codex-personal']['running'], 1)
         self.assertTrue(wt.is_dir())
         self.assertFalse(any('REAP RQ-HUNG' in line for line in events(home)))
         # Group finally empty: KILL completes, then the receipt releases the slot.
@@ -785,7 +785,7 @@ class MaxRuntimeTests(unittest.TestCase):
         self.assertEqual(tick(home).returncode, 0)   # tick 3
         self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
         status = json.loads((r / 'queue/status.json').read_text())
-        self.assertEqual(status['lanes']['codex-cmp']['running'], 0)
+        self.assertEqual(status['lanes']['codex-personal']['running'], 0)
 
     def test_gone_group_marks_sigkill_escalation_complete(self):
         home, run = self.hung(7300)
@@ -923,6 +923,18 @@ class CloudCompletionCountTests(unittest.TestCase):
 
 
 class SlotDefaultTests(unittest.TestCase):
+    def test_retired_seat_ignores_stale_floor_and_executor_advertisement(self):
+        lane = 'codex-cmp'
+        stale = dict(target=10, floor=10, ceiling=32, hard_cap=32,
+                     executor_ready=True, capabilities=['git', 'node', 'codex'])
+        with build(slots={lane: stale}) as path:
+            home = Path(path)
+            run = tick(home)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertNotIn(lane, slots_of(home))
+            status = json.loads((home / '.ashlr-runs/queue/status.json').read_text())
+            self.assertNotIn(lane, status['lanes'])
+
     def test_missing_devin_slot_seeds_leverage_defaults(self):
         # No devin entry in slots.json: the DEFAULT row seeds target 6, floor 3, ceiling 10, hard_cap 10.
         tmp = build(slots=held_lanes())
@@ -1237,23 +1249,23 @@ class AuthBackoffTests(unittest.TestCase):
         self.assertTrue(slots_of(home)['devin'].get('held'))
 
     def test_produced_work_and_lane_isolation(self):
-        home, env = self._home({'devin': lane_slot(), 'codex-cmp': lane_slot()})
+        home, env = self._home({'devin': lane_slot(), 'codex-personal': lane_slot()})
         dead(home, 'RQ-A1', 'devin', [AUTH_401])
         dead(home, 'RQ-PR', 'devin', [AUTH_401], result='PR https://example.invalid/pr/1')
-        dead(home, 'RQ-C1', 'codex-cmp', [AUTH_REFRESH])
+        dead(home, 'RQ-C1', 'codex-personal', [AUTH_REFRESH])
         r = tick(home, env)
         self.assertEqual(r.returncode, 0, r.stderr)
         slots = slots_of(home)
         # One EMPTY + one PR on devin is a single countable failure: no hold.
         self.assertNotIn('held', slots['devin'])
         self.assertEqual(auth_mark(home, 'RQ-PR'), 'work devin_auth_failure')
-        # One failure on codex-cmp is likewise below its own threshold.
-        self.assertNotIn('held', slots['codex-cmp'])
-        dead(home, 'RQ-C2', 'codex-cmp', [AUTH_401])
+        # One failure on codex-personal is likewise below its own threshold.
+        self.assertNotIn('held', slots['codex-personal'])
+        dead(home, 'RQ-C2', 'codex-personal', [AUTH_401])
         self.assertEqual(tick(home, env).returncode, 0)
         slots = slots_of(home)
-        self.assertTrue(slots['codex-cmp'].get('held'))
-        self.assertIn('codex_auth_failure', slots['codex-cmp']['held_reason'])
+        self.assertTrue(slots['codex-personal'].get('held'))
+        self.assertIn('codex_auth_failure', slots['codex-personal']['held_reason'])
         self.assertNotIn('held', slots['devin'])
 
     def test_usage_limit_lines_are_not_auth_failures(self):
@@ -1279,11 +1291,11 @@ class AuthBackoffTests(unittest.TestCase):
         self.assertNotIn('LANE_HOLD devin autobackoff', events(home))
 
     def test_held_lane_stays_held_while_its_preferred_work_uses_a_healthy_lane(self):
-        home, env = self._home({'devin': lane_slot(), 'codex-cmp': lane_slot()})
+        home, env = self._home({'devin': lane_slot(), 'codex-personal': lane_slot()})
         dead(home, 'RQ-A1', 'devin', [AUTH_401])
         dead(home, 'RQ-A2', 'devin', [AUTH_401])
         queue_job(home, 'RQ-D-WAIT', 'devin')
-        queue_job(home, 'RQ-C-RUN', 'codex-cmp')
+        queue_job(home, 'RQ-C-RUN', 'codex-personal')
         r = tick(home, env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(slots_of(home)['devin'].get('held'))
@@ -1293,7 +1305,7 @@ class AuthBackoffTests(unittest.TestCase):
         self.assertEqual(ready_lines(home), [])
         claim = json.loads((home / '.ashlr-runs/queue/run/RQ-D-WAIT.line').read_text().split('\t')[5])
         self.assertEqual(claim['preferred_lane'], 'devin')
-        self.assertEqual((home / '.ashlr-runs/queue/run/RQ-D-WAIT.line').read_text().split('\t')[2], 'codex-cmp')
+        self.assertEqual((home / '.ashlr-runs/queue/run/RQ-D-WAIT.line').read_text().split('\t')[2], 'codex-personal')
         self.assertIn('LAUNCH RQ-C-RUN', events(home))
 
     def test_expired_auth_hold_recovers_and_launches(self):
@@ -1360,8 +1372,8 @@ class QueueWaitTests(unittest.TestCase):
 
     def test_enqueue_once_while_paused_then_claim_with_measurable_wait(self):
         from datetime import datetime
-        home, env = self.fixture(['codex-cmp'])
-        queue_job(home, 'RQ-WAIT', 'codex-cmp')
+        home, env = self.fixture(['codex-personal'])
+        queue_job(home, 'RQ-WAIT', 'codex-personal')
         pause = home / '.ashlr-runs/PAUSE'
         pause.write_text("fixture pause")
         for _ in range(2):
@@ -1370,7 +1382,7 @@ class QueueWaitTests(unittest.TestCase):
         rows = self.metrics(home)
         self.assertEqual([r['event'] for r in rows], ['enqueue'])
         self.assertEqual({k: rows[0][k] for k in ('job', 'repo', 'lane', 'tier')},
-                         dict(job='RQ-WAIT', repo='phantom', lane='codex-cmp', tier='work'))
+                         dict(job='RQ-WAIT', repo='phantom', lane='codex-personal', tier='work'))
         pause.unlink()
         r = tick(home, env)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -1384,11 +1396,11 @@ class QueueWaitTests(unittest.TestCase):
             self.assertEqual(rows[0][key], rows[1][key])
 
     def test_claim_limit_preserves_priority_across_ticks_and_skips_blocked_head(self):
-        lanes = ['codex-cmp', 'codex-personal', 'claude', 'devin']
+        lanes = ['codex-personal', 'claude', 'devin']
         home, env = self.fixture(lanes)
         # MAX_LAUNCH_PER_TICK limits claims to eight. Priority holds even when
         # several lanes remain backlogged; the blocked first path waits.
-        queue_job(home, 'RQ-BLOCKED', 'codex-cmp')
+        queue_job(home, 'RQ-BLOCKED', 'codex-personal')
         (home / 'Projects/ashlrai/wt/RQ-BLOCKED').mkdir()
         jobs = []
         for n in range(3):
@@ -1406,7 +1418,7 @@ class QueueWaitTests(unittest.TestCase):
 
 
 class DispatchPriorityTests(unittest.TestCase):
-    def fixture(self, lanes=('codex-cmp',)):
+    def fixture(self, lanes=('codex-personal',)):
         slots = held_lanes()
         for lane in lanes:
             slots[lane] = lane_slot(target=10)
@@ -1425,10 +1437,10 @@ class DispatchPriorityTests(unittest.TestCase):
         return result
 
     def test_local_oversized_and_unknown_jobs_remain_queued(self):
-        home, env = self.fixture(('codex-local', 'codex-cmp'))
+        home, env = self.fixture(('codex-local', 'codex-personal'))
         for job, size in [('RQ-LOCAL-LARGE', 61), ('RQ-LOCAL-UNKNOWN', None), ('RQ-LOCAL-BAD', 'oops')]:
             queue_job(home, job, 'codex-local', size=size)
-        queue_job(home, 'RQ-OTHER', 'codex-cmp', size=200)
+        queue_job(home, 'RQ-OTHER', 'codex-personal', size=200)
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), ['RQ-OTHER'])
         remaining = '\n'.join(ready_lines(home))
@@ -1436,15 +1448,15 @@ class DispatchPriorityTests(unittest.TestCase):
             self.assertIn(job, remaining)
 
     def test_launch_buckets_override_queue_order_and_lane_cursor(self):
-        home, env = self.fixture(('codex-cmp', 'codex-personal', 'devin'))
-        jobs = [('RQ-OTHER', 'codex-cmp'), ('LAND-A', 'codex-cmp'),
-                ('RQ-DESK-A', 'codex-personal'), ('RQ-REL-A', 'devin'),
+        home, env = self.fixture(('codex-personal', 'claude', 'devin'))
+        jobs = [('RQ-OTHER', 'codex-personal'), ('LAND-A', 'codex-personal'),
+                ('RQ-DESK-A', 'claude'), ('RQ-REL-A', 'devin'),
                 ('RQ-FIX-MAIN-A', 'devin')]
         for job, lane in jobs:
             queue_job(home, job, lane)
         # MAX_LAUNCH_PER_TICK is 8; pad the lowest bucket so the cap still binds.
         for n in range(4):
-            queue_job(home, 'RQ-TAIL-%d' % n, 'codex-cmp')
+            queue_job(home, 'RQ-TAIL-%d' % n, 'codex-personal')
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-REL-A', 'RQ-DESK-A', 'LAND-A',
                                               'RQ-OTHER', 'RQ-TAIL-0', 'RQ-TAIL-1', 'RQ-TAIL-2'])
@@ -1455,7 +1467,7 @@ class DispatchPriorityTests(unittest.TestCase):
         jobs = ['RQ-A-OTHER', 'RQ-RECUT-Z', 'RQ-LAND-Y', 'RQ-FIXUP-X',
                 'RECUT-C', 'LAND-B', 'FIXUP-A']
         for job in jobs:
-            queue_job(home, job, 'codex-cmp')
+            queue_job(home, job, 'codex-personal')
         self.run_tick(home, env)
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), sorted(jobs[1:]) + ['RQ-A-OTHER'])
@@ -1468,16 +1480,16 @@ class DispatchPriorityTests(unittest.TestCase):
         for index, repo in reversed(list(enumerate(repos))):
             job = f'RQ-WORK-{8 - index}'
             expected.insert(0, job)
-            queue_job(home, job, 'codex-cmp', repo=repo, size=1000 - index)
+            queue_job(home, job, 'codex-personal', repo=repo, size=1000 - index)
         self.run_tick(home, env)
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), expected[::-1])
 
     def test_repo_size_and_path_rank_override_lane_order_and_old_cursor(self):
-        home, env = self.fixture(('codex-cmp', 'codex-personal', 'claude', 'devin'))
-        jobs = [('RQ-Z-100', 'phantom', 'codex-cmp', 100),
-                ('RQ-C-20', 'phantom', 'codex-cmp', 20),
-                ('RQ-B-20', 'phantom', 'codex-personal', 20),
+        home, env = self.fixture(('codex-personal', 'claude', 'devin'))
+        jobs = [('RQ-Z-100', 'phantom', 'codex-personal', 100),
+                ('RQ-C-20', 'phantom', 'codex-personal', 20),
+                ('RQ-B-20', 'phantom', 'claude', 20),
                 ('RQ-A-1', 'locus', 'devin', 1),
                 ('RQ-0-1', 'unknown-repo', 'claude', 1)]
         for job, repo, lane, size in jobs:
@@ -1491,7 +1503,7 @@ class DispatchPriorityTests(unittest.TestCase):
         home, env = self.fixture()
         for job, size in [('RQ-D-MISSING', None), ('RQ-C-INVALID', 'oops'),
                           ('RQ-B-100', '100'), ('RQ-Z-20', '20'), ('RQ-A-20', '20')]:
-            queue_job(home, job, 'codex-cmp', size=size)
+            queue_job(home, job, 'codex-personal', size=size)
         self.run_tick(home, env)
         self.run_tick(home, env)
         self.assertEqual(self.claims(home),
@@ -1499,9 +1511,9 @@ class DispatchPriorityTests(unittest.TestCase):
 
     def test_size_hint_is_scoped_to_exact_job_envelope(self):
         home, env = self.fixture()
-        queue_job(home, 'RQ-WORK-A', 'codex-cmp', size=100)
-        queue_job(home, 'RQ-WORK-AB', 'codex-cmp', size=1)
-        queue_job(home, 'RQ-WORK-Z', 'codex-cmp')
+        queue_job(home, 'RQ-WORK-A', 'codex-personal', size=100)
+        queue_job(home, 'RQ-WORK-AB', 'codex-personal', size=1)
+        queue_job(home, 'RQ-WORK-Z', 'codex-personal')
         q = home / '.ashlr-runs/queue'
         with (q / 'router-queue.md').open('a') as f:
             f.write('Unrelated prose RQ-WORK-Z size<=0\n')
@@ -1511,8 +1523,8 @@ class DispatchPriorityTests(unittest.TestCase):
 
     def test_equal_size_uses_prompt_path_as_final_launch_tiebreaker(self):
         home, env = self.fixture()
-        queue_job(home, 'RQ-WORK-A', 'codex-cmp', size=20)
-        queue_job(home, 'RQ-WORK-Z', 'codex-cmp', size=20)
+        queue_job(home, 'RQ-WORK-A', 'codex-personal', size=20)
+        queue_job(home, 'RQ-WORK-Z', 'codex-personal', size=20)
         q = home / '.ashlr-runs/queue'
         lines = []
         for line, filename in zip(ready_lines(home), ['z-prompt.md', 'a-prompt.md']):
@@ -1527,14 +1539,14 @@ class DispatchPriorityTests(unittest.TestCase):
 
     def test_size_hint_falls_back_to_actual_arbitrary_prompt_path(self):
         home, env = self.fixture()
-        queue_job(home, 'RQ-WORK-A', 'codex-cmp', size=100)
-        queue_job(home, 'RQ-WORK-Z', 'codex-cmp')
+        queue_job(home, 'RQ-WORK-A', 'codex-personal', size=100)
+        queue_job(home, 'RQ-WORK-Z', 'codex-personal')
         q = home / '.ashlr-runs/queue'
         lines = ready_lines(home)
         fields = lines[-1].split('\t')
         custom = q / 'prompts/arbitrary-task.md'
         Path(fields[4]).rename(custom)
-        custom.write_text('Job RQ-WORK-Z (pool codex-cmp, tier work, repo phantom).\n\n'
+        custom.write_text('Job RQ-WORK-Z (pool codex-personal, tier work, repo phantom).\n\n'
                           'RQ-WORK-Z (repo=phantom, size<=20): fixture\n')
         fields[4] = str(custom)
         lines[-1] = '\t'.join(fields)
@@ -1545,8 +1557,8 @@ class DispatchPriorityTests(unittest.TestCase):
 
     def test_size_hint_accepts_optional_router_revision(self):
         home, env = self.fixture()
-        queue_job(home, 'RQ-WORK-A', 'codex-cmp', size=100)
-        queue_job(home, 'RQ-WORK-Z', 'codex-cmp')
+        queue_job(home, 'RQ-WORK-A', 'codex-personal', size=100)
+        queue_job(home, 'RQ-WORK-Z', 'codex-personal')
         q = home / '.ashlr-runs/queue'
         (q / 'router-queue.md').write_text('- READY RQ-WORK-A (size<=100): fixture\n'
                                           '- READY RQ-WORK-Z r2 (size<=20): fixture\n')
@@ -1554,10 +1566,10 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertEqual(self.claims(home), ['RQ-WORK-Z', 'RQ-WORK-A'])
 
     def test_same_repo_fix_main_cap_spans_lanes_and_does_not_block_other_work(self):
-        home, env = self.fixture(('codex-cmp', 'codex-personal'))
-        queue_job(home, 'RQ-FIX-MAIN-A', 'codex-cmp')
-        queue_job(home, 'RQ-FIX-MAIN-B', 'codex-personal')
-        queue_job(home, 'RQ-ORDINARY', 'codex-personal')
+        home, env = self.fixture(('codex-personal', 'claude'))
+        queue_job(home, 'RQ-FIX-MAIN-A', 'codex-personal')
+        queue_job(home, 'RQ-FIX-MAIN-B', 'claude')
+        queue_job(home, 'RQ-ORDINARY', 'claude')
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-ORDINARY'])
         self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-FIX-MAIN-B'])
@@ -1567,25 +1579,25 @@ class DispatchPriorityTests(unittest.TestCase):
 
     def test_fix_main_cap_is_per_repo(self):
         home, env = self.fixture()
-        queue_job(home, 'RQ-FIX-MAIN-A', 'codex-cmp', repo='phantom')
-        queue_job(home, 'RQ-FIX-MAIN-B', 'codex-cmp', repo='locus')
-        queue_job(home, 'RQ-FIX-MAIN-C', 'codex-cmp', repo='phantom')
+        queue_job(home, 'RQ-FIX-MAIN-A', 'codex-personal', repo='phantom')
+        queue_job(home, 'RQ-FIX-MAIN-B', 'codex-personal', repo='locus')
+        queue_job(home, 'RQ-FIX-MAIN-C', 'codex-personal', repo='phantom')
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-FIX-MAIN-B'])
         self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-FIX-MAIN-C'])
 
     def test_refix_drains_serialize_per_pr_and_skip_empty_duplicates(self):
-        home, env = self.fixture(('codex-cmp', 'codex-personal'))
+        home, env = self.fixture(('codex-personal', 'claude'))
         empty = 'RQ-DRAIN-phantom-7-aaaaaaa'
         (home / '.ashlr-runs' / f'{empty}.publish').write_text('RESULT EMPTY\n')
-        for job, lane, repo in [(empty, 'codex-cmp', 'phantom'),
-                                ('RQ-DRAIN-phantom-8-aaaaaaa', 'codex-cmp', 'phantom'),
-                                ('RQ-DRAIN-phantom-8-bbbbbbb', 'codex-personal', 'phantom'),
-                                ('RQ-DRAIN-phantom-9-aaaaaaa', 'codex-personal', 'phantom'),
-                                ('RQ-DRAIN-locus-8-aaaaaaa', 'codex-personal', 'locus'),
-                                ('RQ-ORDINARY', 'codex-personal', 'phantom')]:
+        for job, lane, repo in [(empty, 'codex-personal', 'phantom'),
+                                ('RQ-DRAIN-phantom-8-aaaaaaa', 'codex-personal', 'phantom'),
+                                ('RQ-DRAIN-phantom-8-bbbbbbb', 'claude', 'phantom'),
+                                ('RQ-DRAIN-phantom-9-aaaaaaa', 'claude', 'phantom'),
+                                ('RQ-DRAIN-locus-8-aaaaaaa', 'claude', 'locus'),
+                                ('RQ-ORDINARY', 'claude', 'phantom')]:
             queue_job(home, job, lane, repo=repo)
-        queue_job(home, empty, 'codex-cmp')
+        queue_job(home, empty, 'codex-personal')
         self.run_tick(home, env)
         self.assertEqual(set(self.claims(home)), {'RQ-DRAIN-phantom-8-aaaaaaa',
                          'RQ-DRAIN-phantom-9-aaaaaaa', 'RQ-DRAIN-locus-8-aaaaaaa', 'RQ-ORDINARY'})
@@ -1595,8 +1607,8 @@ class DispatchPriorityTests(unittest.TestCase):
         home, env = self.fixture()
         active = 'RQ-DRAIN-phantom-8-aaaaaaa'
         r = self.active_fix(home, job=active)
-        queue_job(home, 'RQ-DRAIN-phantom-8-bbbbbbb', 'codex-cmp')
-        queue_job(home, 'RQ-ORDINARY', 'codex-cmp')
+        queue_job(home, 'RQ-DRAIN-phantom-8-bbbbbbb', 'codex-personal')
+        queue_job(home, 'RQ-ORDINARY', 'codex-personal')
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), ['RQ-ORDINARY'])
         (r / f'{active}.publish').write_text('RESULT EMPTY\n')
@@ -1606,11 +1618,11 @@ class DispatchPriorityTests(unittest.TestCase):
     def active_fix(self, home, job='RQ-FIX-MAIN-A', line=True, base=True):
         r = home / '.ashlr-runs'
         if line:
-            (r / 'queue/run' / f'{job}.line').write_text(f'{job}\tphantom\tcodex-cmp\twork\tunused\n')
+            (r / 'queue/run' / f'{job}.line').write_text(f'{job}\tphantom\tcodex-personal\twork\tunused\n')
         if base:
             wt = home / 'Projects/ashlrai/wt' / job
             wt.mkdir()
-            (r / f'{job}.base').write_text(f'deadbeef phantom {wt} codex-cmp\n')
+            (r / f'{job}.base').write_text(f'deadbeef phantom {wt} codex-personal\n')
             (r / f'{job}.log').write_text('fixture running\n')
         return r
 
@@ -1618,8 +1630,8 @@ class DispatchPriorityTests(unittest.TestCase):
         home, env = self.fixture()
         self.active_fix(home, line=False)
         (home / 'stubbin/ps').write_text('#!/bin/sh\necho "123 launch.sh RQ-FIX-MAIN-A phantom"\n')
-        queue_job(home, 'RQ-FIX-MAIN-B', 'codex-cmp')
-        queue_job(home, 'RQ-OTHER', 'codex-cmp')
+        queue_job(home, 'RQ-FIX-MAIN-B', 'codex-personal')
+        queue_job(home, 'RQ-OTHER', 'codex-personal')
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), ['RQ-OTHER'])
         self.assertIn('RQ-FIX-MAIN-B', ready_lines(home)[0])
@@ -1628,7 +1640,7 @@ class DispatchPriorityTests(unittest.TestCase):
         home, env = self.fixture()
         r = self.active_fix(home, base=False)
         (r / 'queue/run/RQ-FIX-MAIN-A.dispatched').write_text(str(int(time.time())))
-        queue_job(home, 'RQ-FIX-MAIN-B', 'codex-cmp')
+        queue_job(home, 'RQ-FIX-MAIN-B', 'codex-personal')
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), [])
         self.assertIn('RQ-FIX-MAIN-B', ready_lines(home)[0])
@@ -1636,7 +1648,7 @@ class DispatchPriorityTests(unittest.TestCase):
     def test_recent_worker_without_visible_process_reserves_fix_main_repo(self):
         home, env = self.fixture()
         self.active_fix(home)
-        queue_job(home, 'RQ-FIX-MAIN-B', 'codex-cmp')
+        queue_job(home, 'RQ-FIX-MAIN-B', 'codex-personal')
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), [])
 
@@ -1656,8 +1668,8 @@ class DispatchPriorityTests(unittest.TestCase):
                     os.utime(path, (old, old))
                 (home / 'stubbin/ps').write_text('#!/bin/sh\nexit 1\n')
                 (r / 'PUBLISH_HOLD').write_text('fixture hold')
-                queue_job(home, 'RQ-FIX-MAIN-B', 'codex-cmp')
-                queue_job(home, 'RQ-OTHER', 'codex-cmp')
+                queue_job(home, 'RQ-FIX-MAIN-B', 'codex-personal')
+                queue_job(home, 'RQ-OTHER', 'codex-personal')
                 self.run_tick(home, env)
                 # Unknown global ownership stops the entire tick, including unrelated launches.
                 self.assertEqual(self.claims(home), [])
@@ -1679,7 +1691,7 @@ class DispatchPriorityTests(unittest.TestCase):
         old = time.time() - 600
         os.utime(receipt, (old, old))
         (r / 'RQ-FIX-MAIN-A.launch').write_text('HELD: fixture provider hold\n')
-        queue_job(home, 'RQ-FIX-MAIN-B', 'codex-cmp')
+        queue_job(home, 'RQ-FIX-MAIN-B', 'codex-personal')
         self.run_tick(home, env)
         self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-B'])
         self.assertFalse(receipt.exists())
@@ -1694,12 +1706,12 @@ class DispatchPriorityTests(unittest.TestCase):
                 else:
                     (r / 'RQ-FIX-MAIN-A.publish').write_text('RESULT EMPTY\n')
                 (r / 'PUBLISH_HOLD').write_text('fixture hold')
-                queue_job(home, 'RQ-FIX-MAIN-B', 'codex-cmp')
+                queue_job(home, 'RQ-FIX-MAIN-B', 'codex-personal')
                 self.run_tick(home, env)
                 self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-B'])
 
     def finished_worktree(self, home, job, repo='phantom', size=None):
-        queue_job(home, job, 'codex-cmp', repo=repo, size=size)
+        queue_job(home, job, 'codex-personal', repo=repo, size=size)
         r = home / '.ashlr-runs'
         q = r / 'queue'
         ready = ready_lines(home)
@@ -1707,7 +1719,7 @@ class DispatchPriorityTests(unittest.TestCase):
         (q / 'ready.tsv').write_text('\n'.join(ready[:-1]) + ('\n' if ready[:-1] else ''))
         wt = home / 'Projects/ashlrai/wt' / job
         wt.mkdir()
-        for path, content in [(r / f'{job}.base', f'deadbeef {repo} {wt} codex-cmp\n'),
+        for path, content in [(r / f'{job}.base', f'deadbeef {repo} {wt} codex-personal\n'),
                               (r / f'{job}.log', 'fixture finished\n')]:
             path.write_text(content)
             old = time.time() - 600
@@ -1907,7 +1919,7 @@ class EmptyGateIntegrationTests(unittest.TestCase):
     fixture = QueueWaitTests.fixture
     metrics = QueueWaitTests.metrics
     def test_same_base_empty_is_dropped_without_model_launch(self):
-        home, env = self.fixture(['codex-cmp'])
+        home, env = self.fixture(['codex-personal'])
         repo = home / 'Projects/ashlrai/phantom'
         for args in (['init'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
                                 'commit', '--allow-empty', '-m', 'base'],
@@ -1915,7 +1927,7 @@ class EmptyGateIntegrationTests(unittest.TestCase):
                      ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']):
             subprocess.run(['git', '-C', str(repo)] + args, check=True, capture_output=True)
         job = 'RQ-UPKEEP-REL-TEST'
-        queue_job(home, job, 'codex-cmp')
+        queue_job(home, job, 'codex-personal')
         sha = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
         ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
         ledger.write_text(json.dumps(dict(event='claim', job=job, repo='phantom', base_sha=sha)) + '\n' +
@@ -1933,7 +1945,7 @@ if __name__ == '__main__':
 
 
 class DiffMetricsTests(unittest.TestCase):
-    def measure(self, scenario, base_override=None, lane='codex-cmp', log='finished\n', rc=None):
+    def measure(self, scenario, base_override=None, lane='codex-personal', log='finished\n', rc=None):
         tmp = build(slots=held_lanes())
         self.addCleanup(tmp.cleanup)
         home = Path(tmp.name)
@@ -2067,7 +2079,7 @@ class DiffMetricsTests(unittest.TestCase):
         self.assertEqual(row['usage_missing'], 'devin-usage-incomplete')
 
         # Other lanes keep the 'tokens used' line; its absence is named too.
-        row = self.measure(lambda wt, git: None, lane='codex-cmp')
+        row = self.measure(lambda wt, git: None, lane='codex-personal')
         self.assertIsNone(row['tokens_total'])
         self.assertEqual(row['usage_missing'], 'tokens-line-not-in-log')
 
@@ -2115,7 +2127,7 @@ class DiffMetricsTests(unittest.TestCase):
 
 
 class SnapshotSafetyTests(unittest.TestCase):
-    def preserved_fixture(self, lane='codex-cmp'):
+    def preserved_fixture(self, lane='codex-personal'):
         tmp = build(slots=held_lanes())
         self.addCleanup(tmp.cleanup)
         home = Path(tmp.name)
@@ -2129,7 +2141,7 @@ class SnapshotSafetyTests(unittest.TestCase):
         old = time.time() - 1000
         os.utime(root / (job + '.base'), (old, old))
         os.utime(root / (job + '.log'), (old, old))
-        queue_job(home, 'RQ-NEXT', 'codex-cmp')
+        queue_job(home, 'RQ-NEXT', 'codex-personal')
         return home, root, wt
 
     def assert_preserved(self, home, root, wt, ready):

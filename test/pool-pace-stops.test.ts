@@ -54,18 +54,18 @@ it('explains free slots, stale provider records, history and exhausted pools wit
   await mkdir(join(root, 'queue')); await mkdir(join(root, 'metrics'));
   await writeFile(join(root, 'queue/status.json'), JSON.stringify({ last_tick: at(0), lanes: {
     'codex-local': { running: 1, target: 3 }, 'devin-flash': { running: 0, target: 2 }, devin: { target: 0 },
-  }, budget: { 'codex-cmp': { weekly_used_pct: 100, reset_at: at(12), observed_at: at(0) } } }));
+  }, budget: { 'codex-personal': { weekly_used_pct: 100, reset_at: at(12), observed_at: at(0) } } }));
   await writeFile(join(root, 'queue/grok-reading.json'), JSON.stringify({ pct: 30, ts: now / 1000 - 72 * 3600, reset_at: (now / 1000) + 3600, src: 'provider' }));
   await writeFile(join(root, 'metrics/usage-history.json'), JSON.stringify({ schema: 'fleet.usage-history.v1', v: 1,
     rows: [-1, 0].map(h => ({ pool: 'cursor', used_pct: 20 + h, observed_at: at(h), reset_at: at(10), source: 'provider' })) }));
   const read = () => readFleetPace({ runsDir: root, now: () => now });
   const data = await read(), rows = Object.fromEntries(data.pools.map(p => [p.pool, p]));
-  expect(data.pools).toHaveLength(12);
+  expect(data.pools).toHaveLength(11);
   expect(rows['codex-local']).toMatchObject({ state: 'behind', verdict: 'free', headroom: { slots: 2 } });
   expect(rows['codex-local']!.headroom!.ramBytes).toBeGreaterThan(0);
   expect(rows['devin-flash']).toMatchObject({ state: 'behind', verdict: 'free', headroom: { slots: 2 } });
   expect(rows.grok).toMatchObject({ verdict: 'stale', ageHours: 72, usedPct: null, line: 'grok: stale (72h); refresh the provider reading' });
-  expect(rows['codex-cmp']).toMatchObject({ state: 'ahead', verdict: 'spent', safeBurnPerHour: 0, line: `codex-cmp: spent until ${at(12)}` });
+  expect(rows['codex-personal']).toMatchObject({ state: 'ahead', verdict: 'spent', safeBurnPerHour: 0, line: `codex-personal: spent until ${at(12)}` });
   expect(rows.cursor).toMatchObject({ usedPct: 20, recentPerHour: 1, source: 'metrics/usage-history.json' });
   expect(rows.devin!.source).toContain('queue/devin-reading.json');
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});

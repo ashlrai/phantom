@@ -413,7 +413,7 @@ describe('CLI registration', () => {
     const dir = path.join(tmpHome, '.ashlr-runs', 'queue');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'status.json'), JSON.stringify({ schema: 'dispatchd.status.v1',
-      last_tick: '2026-11-17T12:00:00Z', budget: { 'codex-cmp': { use_it_all: {
+      last_tick: '2026-11-17T12:00:00Z', budget: { 'codex-personal': { use_it_all: {
         known: true, stale: false, used_pct: 25, burn_pct_per_hour: 5, reset_at: '2026-11-17T22:00:00Z',
       } } } }));
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -424,7 +424,7 @@ describe('CLI registration', () => {
     expect(result.generatedAt).toMatch(/^2026-11-17T/);
     expect(result.engines.map(row => row.engine)).toEqual(expect.arrayContaining(['claude', 'codex']));
     expect(result.spend).toEqual(await readUsageSpend());
-    expect(result.spend.pools.find(row => row.pool === 'codex-cmp')).toMatchObject({
+    expect(result.spend.pools.find(row => row.pool === 'codex-personal')).toMatchObject({
       usedPercent: 25, burnPerHour: 5, projectedUnusedPercent: 25, verdict: 'behind',
     });
   });

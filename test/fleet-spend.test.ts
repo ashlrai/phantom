@@ -74,15 +74,15 @@ describe('fleet spend projection', () => {
 
   it('sorts behind first, then unknown, expired, on pace, used up', () => {
     expect(rows().map(r => `${r.verdict}:${r.pool}`)).toEqual([
-      'behind:claude', 'unknown:claude-api', 'unknown:codex-cmp', 'unknown:gemini', 'unknown:local', 'expired:devin', 'on-pace:codex-personal', 'used-up:zai']);
+      'behind:claude', 'unknown:claude-api', 'unknown:gemini', 'unknown:local', 'expired:devin', 'on-pace:codex-personal', 'used-up:zai']);
   });
 
   it('puts the pool that will waste the most first among the behind pools', () => {
     const gift = { gift: { usd_remaining: 60, as_of: iso(NOW), expires_at: iso(NOW + 300 * HOUR), usd_burn_per_hour: 0.1 } };
-    const order = rows(status({ claude: measured(41, 80, 0.6125), zai: measured(10, 20, 1), 'codex-cmp': measured(50, 5, 0), 'claude-api': gift }))
+    const order = rows(status({ claude: measured(41, 80, 0.6125), zai: measured(10, 20, 1), 'codex-personal': measured(50, 5, 0), 'claude-api': gift }))
       .filter(r => r.status === 'behind').map(r => `${r.pool}:${Math.round(r.projectedUnusedPercent ?? r.projectedUnusedUsd! / r.remainingUsd! * 100)}`);
-    // zai resets soonest after codex-cmp but wastes the most, so it leads; the ungranted gift ranks by its balance share.
-    expect(order).toEqual(['zai:70', 'codex-cmp:50', 'claude-api:50', 'claude:10']);
+    // zai resets soonest after codex-personal but wastes the most, so it leads; the ungranted gift ranks by its balance share.
+    expect(order).toEqual(['zai:70', 'codex-personal:50', 'claude-api:50', 'claude:10']);
   });
 
   it('carries a schema, a version and one plain sentence about the worst pool', () => {
@@ -105,7 +105,7 @@ describe('fleet spend projection', () => {
     expect(projectUsageSpend(null, NOW).headline).toBe('Unknown: the dispatcher status is missing or stale.');
     expect(projectUsageSpend(status({}), NOW).headline).toBe('Unknown: no pool has a complete reading.');
     expect(projectUsageSpend(status({ 'codex-personal': measured(65, 100, 0.35), zai: measured(103, 50, 1) }), NOW).headline)
-      .toBe('Nothing measured will go unused; 6 unknown.');
+      .toBe('Nothing measured will go unused; 5 unknown.');
   });
 
   it('counts down in days and hours, then hours and minutes', () => {

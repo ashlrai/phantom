@@ -12,7 +12,7 @@
  *
  * LANE HOMES scanned:
  *   devin           <ashlrDir>/devin — one `tasks/<id>.json` per remote session
- *   codex-cmp       $CODEX_HOME (default ~/.codex)
+ *   codex-cmp       $CODEX_HOME (default ~/.codex), retired session history only
  *   codex-personal  $CODEX_HOME_ALT (default ~/.codex-2)
  *   claude          $CLAUDE_CONFIG_DIR (default ~/.claude)
  *   <profile>       <ashlrDir>/native-profiles/<name>/native-state, provider
@@ -134,7 +134,7 @@ const defaultFs: SessionAuditFs = {
 // ---------------------------------------------------------------------------
 
 export interface SessionLaneHome {
-  /** Lane id: 'devin', 'codex-cmp', 'codex-personal', 'claude', or a native-profile name. */
+  /** Lane id: 'devin', 'codex-cmp' (retired), 'codex-personal', 'claude', or a native-profile name. */
   lane: string;
   provider: SessionProvider;
   /** The session-state root (never the whole home — state subtrees only). */
@@ -170,7 +170,7 @@ export function resolveSessionAuditRoots(
   };
 }
 
-/** One devin lane home plus the three pool CLI homes — always known. */
+
 function poolLaneHomes(roots: SessionAuditRoots, env: NodeJS.ProcessEnv): SessionLaneHome[] {
   const read = (key: string, fallback: string): string => {
     const value = env[key];
@@ -183,9 +183,7 @@ function poolLaneHomes(roots: SessionAuditRoots, env: NodeJS.ProcessEnv): Sessio
     { lane: 'claude', provider: 'claude', home: read('CLAUDE_CONFIG_DIR', join(roots.home, '.claude')), source: 'pool' },
   ];
   const secondary = read('CODEX_HOME_ALT', join(roots.home, '.codex-2'));
-  if (secondary !== homes[1]!.home) {
-    homes.push({ lane: 'codex-personal', provider: 'codex', home: secondary, source: 'pool' });
-  }
+  homes.push({ lane: 'codex-personal', provider: 'codex', home: secondary, source: 'pool' });
   return homes;
 }
 
@@ -849,13 +847,14 @@ export function formatSessionAudit(report: SessionAuditReport): string[] {
   lines.push(`lane homes: ${t.lanes}, sessions: ${t.sessions} (${formatGb(t.bytes)}${t.complete ? '' : ', partial sizes'})`);
   if (t.oldestAgeDays !== null) lines.push(`oldest session: ${round1(t.oldestAgeDays)}d`);
   for (const lane of report.lanes) {
+    const name = lane.lane === 'codex-cmp' ? 'codex-cmp (retired)' : lane.lane;
     if (lane.state === 'missing') continue;
     const ages = lane.oldestAgeDays === null ? 'ages unknown'
       : `newest ${round1(lane.newestAgeDays ?? 0)}d / oldest ${round1(lane.oldestAgeDays)}d`;
     const pub = lane.published.sessions > 0 ? `, ${lane.published.sessions} published` : '';
     const prunable = lane.pruneable.sessions > 0 ? `, ${lane.pruneable.sessions} pruneable` : '';
     const store = lane.stores.length ? ` [${lane.stores.map(s => s.store).join(', ')}]` : '';
-    lines.push(`  ${lane.lane} (${lane.provider}): ${lane.sessions} sessions, ${formatGb(lane.bytes)}, ${ages}${pub}${prunable}${store}${lane.complete ? '' : ' (partial)'}`);
+    lines.push(`  ${name} (${lane.provider}): ${lane.sessions} sessions, ${formatGb(lane.bytes)}, ${ages}${pub}${prunable}${store}${lane.complete ? '' : ' (partial)'}`);
   }
   if (t.pruneable.sessions === 0) {
     lines.push(`pruneable now: none at >=${round1(report.olderThanDays)}d with published results`);

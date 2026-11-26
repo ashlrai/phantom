@@ -9,12 +9,12 @@ describe('provider cards', () => {
   it('groups pools by vendor and keeps unread pools unknown', () => {
     const view = buildResourceView({ readings: {
       'claude-max': { pool: 'claude-max', pctUsed: 40, resetAt: iso(3), fetchedAt: iso(0), source: 'claude-max-reader', burnRatePctPerHour: 30 },
-      'codex-cmp': { pool: 'codex-cmp', pctUsed: 10, resetAt: iso(5), fetchedAt: iso(0), source: 'codex-cmp-reader', burnRatePctPerHour: 1 },
+      'codex-personal': { pool: 'codex-personal', pctUsed: 10, resetAt: iso(5), fetchedAt: iso(0), source: 'codex-personal-reader', burnRatePctPerHour: 1 },
     } }, NOW);
     const cards = buildProviderCards(view);
     expect(cards.providers.map(c => c.provider)).toEqual(['openai', 'anthropic', 'cognition', 'xai']);
     const by = Object.fromEntries(cards.providers.map(c => [c.provider, c]));
-    expect(by.openai!.pools.map(p => p.pool)).toEqual(['codex-cmp', 'codex-personal', 'terra']);
+    expect(by.openai!.pools.map(p => p.pool)).toEqual(['codex-personal', 'terra']);
     expect(by.openai).toMatchObject({ status: 'green', maxPctUsed: 10, nextResetAt: iso(5) });
     expect(by.anthropic).toMatchObject({ status: 'amber', maxPctUsed: 40 });
     expect(by.xai).toMatchObject({ status: 'unknown', maxPctUsed: null, nextResetAt: null });

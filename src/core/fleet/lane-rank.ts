@@ -3,7 +3,7 @@ import { BUDGET_POOLS, type BudgetPool, type PoolBudgetSnapshot } from './pool-b
 import type { RouteDecision } from './router.js';
 
 export const LANE_BACKENDS: Readonly<Record<BudgetPool, EngineId | null>> = {
-  'codex-cmp': 'codex', 'codex-personal': 'codex', devin: null, claude: 'claude',
+  'codex-personal': 'codex', devin: null, claude: 'claude',
   'grok-build': 'grok', 'grok-ultra': 'grok', 'local-omlx': 'local-coder',
 };
 export type LaneSlots = Partial<Record<BudgetPool, number | null>>;

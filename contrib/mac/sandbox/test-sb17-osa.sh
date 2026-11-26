@@ -10,7 +10,7 @@
 # needs eyes). Exit 0 only when every probe is BLOCKED/ok.
 set -u
 B=${ASHLR_RUNS_BIN:-$HOME/.ashlr-runs/bin}
-PROFILES="agent.sb claude.sb codex-cmp.sb codex-local.sb codex-personal.sb"
+PROFILES="agent.sb claude.sb codex-local.sb codex-personal.sb"
 FX=$(mktemp -d); trap 'rm -rf "$FX"' EXIT
 mkdir -p "$FX/bun" "$FX/crate/src"
 printf 'import {test, expect} from "bun:test"; test("sb17 fixture", () => expect(1+1).toBe(2));\n' > "$FX/bun/sb17.test.ts"
