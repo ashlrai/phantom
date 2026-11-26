@@ -6,8 +6,8 @@
  */
 import type { AshlrConfig } from '../types.js';
 import * as childProcess from 'node:child_process';
-import { accessSync, constants, statSync } from 'node:fs';
-import { basename, delimiter, resolve } from 'node:path';
+import { accessSync, constants, lstatSync, statSync } from 'node:fs';
+import { basename, delimiter, join, resolve } from 'node:path';
 import { fileURLToPath, URL as NodeURL } from 'node:url';
 import { promisify } from 'node:util';
 import { hasInheritedLocusSession, hasLocusJobEnv } from './locus-job-env.js';
@@ -92,11 +92,28 @@ function credentialCommand(command: string, args: readonly string[]): boolean {
 type CredentialOptions = Pick<childProcess.SpawnOptions, 'cwd' | 'env' | 'shell'>;
 let warnedMissingSecrets = false;
 
+function childCwd(options: CredentialOptions): string {
+  return options.cwd instanceof NodeURL ? fileURLToPath(options.cwd) : options.cwd ?? process.cwd();
+}
+
+/** `phantom exec` reads `.phantom.toml` only from the child's working directory,
+ * and only as a regular, non-symlink file; anywhere else it exits before the
+ * child starts ("No .phantom.toml found"). Wrapping a launch there can only
+ * fail, so it runs unwrapped — the same path as an absent Secrets install.
+ * engines.ts applies the same rule to engine spawns (phantomInitializedAt). */
+function phantomExecHasProject(cwd: string): boolean {
+  try {
+    return lstatSync(join(cwd, '.phantom.toml')).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function installedSecrets(options: CredentialOptions): string | undefined {
   const env = options.env ?? process.env;
   const pathKey = process.platform === 'win32' ? Object.keys(env).find(key => key.toUpperCase() === 'PATH') : 'PATH';
   const searchPath = (pathKey ? env[pathKey] : undefined) ?? (process.platform === 'win32' ? '' : '/usr/bin:/bin');
-  const cwd = options.cwd instanceof NodeURL ? fileURLToPath(options.cwd) : options.cwd ?? process.cwd();
+  const cwd = childCwd(options);
   // Secrets ships a native executable. Do not launch a .cmd via a shell: that
   // would reinterpret the caller's argv and weaken the no-shell contract.
   const filename = process.platform === 'win32' ? 'phantom.exe' : 'phantom';
@@ -142,11 +159,15 @@ function credentialInvocation(invocation: unknown[], required = false): unknown[
   }
   if (options.shell) throw new Error('Credential CLI execution requires argv without a shell');
   const phantom = installedSecrets(options);
-  if (phantom) return [phantom, ['exec', '--', command, ...args], ...rest];
+  if (phantom !== undefined && phantomExecHasProject(childCwd(options))) {
+    return [phantom, ['exec', '--', command, ...args], ...rest];
+  }
   if (!warnedMissingSecrets) {
     warnedMissingSecrets = true;
     // Fixed, value-free diagnostic: no argv, paths, environment, or CLI stderr.
-    process.stderr.write('Warning: Phantom Secrets is not installed on the child PATH; credential CLIs are running without phantom exec.\n');
+    process.stderr.write(phantom === undefined
+      ? 'Warning: Phantom Secrets is not installed on the child PATH; credential CLIs are running without phantom exec.\n'
+      : 'Warning: Phantom Secrets is installed but the working directory has no usable .phantom.toml; credential CLIs are running without phantom exec.\n');
   }
   return invocation;
 }

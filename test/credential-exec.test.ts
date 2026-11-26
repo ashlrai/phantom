@@ -4,15 +4,16 @@ import { resolve } from 'node:path';
 
 const fakes = vi.hoisted(() => ({
   installed: false,
+  projectConfig: true,
   spawnSync: vi.fn(), execFileSync: vi.fn(), spawn: vi.fn(), execFile: vi.fn(),
-  access: vi.fn(), stat: vi.fn(),
+  access: vi.fn(), stat: vi.fn(), lstat: vi.fn(),
 }));
 vi.mock('node:child_process', () => ({
   spawnSync: fakes.spawnSync, execFileSync: fakes.execFileSync,
   spawn: fakes.spawn, execFile: fakes.execFile,
 }));
 vi.mock('node:fs', () => ({
-  accessSync: fakes.access, statSync: fakes.stat, constants: { X_OK: 1 },
+  accessSync: fakes.access, statSync: fakes.stat, lstatSync: fakes.lstat, constants: { X_OK: 1 },
 }));
 import {
   credentialSpawnSync, credentialExecFileSync, credentialSpawn, credentialExecFile, providerSpawnSync,
@@ -25,6 +26,7 @@ let warning: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.clearAllMocks();
   fakes.installed = true;
+  fakes.projectConfig = true;
   vi.stubEnv('LOCUS_SESSION_ID', undefined);
   vi.stubEnv('LOCUS_EXECUTOR_CAPABILITY', undefined);
   fakes.access.mockImplementation((candidate: string) => {
@@ -33,6 +35,12 @@ beforeEach(() => {
   fakes.stat.mockImplementation((candidate: string) => {
     if (!fakes.installed || candidate !== phantom) throw new Error('ENOENT');
     return { isFile: () => true };
+  });
+  // phantom exec reads .phantom.toml as a regular, non-symlink file in the
+  // child's cwd; the default fixture is an initialized project.
+  fakes.lstat.mockImplementation((candidate: string) => {
+    if (!fakes.projectConfig || !String(candidate).endsWith('.phantom.toml')) throw new Error('ENOENT');
+    return { isFile: () => true, isSymbolicLink: () => false };
   });
   fakes.spawnSync.mockReturnValue({ status: 0, stdout: 'result', stderr: '' });
   fakes.execFileSync.mockReturnValue('result');
@@ -82,6 +90,27 @@ describe('credential subprocess boundary', () => {
     const message = String(warning.mock.calls[0]?.[0]);
     expect(message).toContain('without phantom exec');
     expect(message).not.toMatch(/private|phm_fixture|synthetic/);
+  });
+  it('runs unwrapped when Secrets is installed but the working directory has no .phantom.toml', async () => {
+    // phantom exec exits before the child starts without a project config, so
+    // wrapping there can only fail — the launch takes the absent-Secrets path.
+    fakes.projectConfig = false;
+    // warnedMissingSecrets is once per module instance; a fresh import re-arms it.
+    vi.resetModules();
+    const secrets = await import('../src/core/integrations/secrets.js');
+    secrets.credentialSpawnSync('gh', ['api', 'repos/o/r'], options);
+    secrets.credentialExecFile('gh', ['pr', 'list'], options, vi.fn());
+    expect(fakes.spawnSync).toHaveBeenCalledExactlyOnceWith('gh', ['api', 'repos/o/r'], options);
+    expect(fakes.execFile).toHaveBeenCalledExactlyOnceWith('gh', ['pr', 'list'], options, expect.any(Function));
+    expect(warning).toHaveBeenCalledTimes(1);
+    const message = String(warning.mock.calls[0]?.[0]);
+    expect(message).toContain('.phantom.toml');
+    expect(message).not.toMatch(/synthetic|phm_fixture/);
+  });
+  it('runs unwrapped when .phantom.toml is not a regular file', () => {
+    fakes.lstat.mockReturnValue({ isFile: () => false, isSymbolicLink: () => true });
+    credentialSpawnSync('gh', ['api'], options);
+    expect(fakes.spawnSync).toHaveBeenCalledExactlyOnceWith('gh', ['api'], options);
   });
   it('does not fall back after a Secrets nonzero exit or launch error', () => {
     fakes.spawnSync.mockReturnValue({ status: 1, stderr: 'refused' });

@@ -599,6 +599,10 @@ filters, proposal deduplication and persistence always run again. Without a
 snapshot all reads are fresh. `runGhAsync`, `listIssuesAsync` and
 `githubCiStatusAsync` are abortable, never-throw read APIs; synchronous GitHub
 APIs retain their existing behavior. CI-only reads do not fetch PR/issue counts.
+`runGhAttempt(cwd, args, { signal, timeoutMs })` is the uncached sibling that
+reports why a read failed (`spawn`, `timeout`, `exit`, `aborted`) instead of
+collapsing to null; release notes uses it so a dead gh transport is never
+reported as an unreadable repo or tag.
 
 `SelfHealCycleResult.checkedRepos` lists repos whose detector ran or whose
 self-heal queue projections were pruned during the cycle. Both cycle entry

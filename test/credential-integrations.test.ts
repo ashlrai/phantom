@@ -23,6 +23,9 @@ beforeEach(() => {
   phantom = join(root, process.platform === 'win32' ? 'phantom.exe' : 'phantom');
   writeFileSync(phantom, 'synthetic executable; all subprocess calls are mocked');
   chmodSync(phantom, 0o700);
+  // phantom exec only runs inside an initialized project; without this config
+  // the credential boundary correctly launches the CLI unwrapped.
+  writeFileSync(join(root, '.phantom.toml'), '[phantom]\n');
   vi.stubEnv('PATH', root);
   child.execFileSync.mockImplementation((file: string, args: string[]) => {
     if ((file === 'which' || file === 'where') && args[0] === 'phantom') return phantom;
