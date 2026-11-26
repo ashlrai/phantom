@@ -86,6 +86,32 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs[0]).toMatchObject({ pool: 'omlx', dispatchedAt: '2026-10-28T15:00:00.000Z' });
   });
 
+  it.each(['closedAt', 'closed_at'])('binds a delayed close receipt to its PR close time (%s)', (field) => {
+    const job = 'RQ-DELAYED-CLOSE';
+    const rows = [
+      launch(job),
+      ciStart(job, '2026-10-28T15:55:00.000Z'),
+      ciComplete(job, '2026-10-28T16:03:00.000Z'),
+      line({ job, outcome: 'CLOSED', [field]: '2026-10-28T16:00:00.000Z', ts: '2026-10-28T16:10:00.000Z' }),
+    ];
+
+    const retry = launch(job, 'omlx', '2026-10-28T16:05:00.000Z');
+    const inputs = foldJobsLedgerRewards([...rows, retry].join('\n'), NOW_MS);
+    expect(inputs).toMatchObject([{ jobId: job, merged: false, pool: 'codex-cmp', dispatchedAt: DISPATCH_ISO }]);
+    expect(inputs[0]).not.toHaveProperty('ciWallMs');
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)[0]).not.toHaveProperty('ciWallMs');
+  });
+
+  it('keeps a close timestamp after the observation window unresolved', () => {
+    const job = 'RQ-FUTURE-CLOSE';
+    const text = [
+      launch(job),
+      line({ job, outcome: 'CLOSED', closedAt: '2026-10-29T00:00:00.000Z', ts: '2026-10-28T16:10:00.000Z' }),
+    ].join('\n');
+
+    expect(foldJobsLedgerRewards(text, NOW_MS)).toEqual([]);
+  });
+
   it.each([merged, closed])('ignores later dispatches when attributing a resolved PR (%o)', (resolve) => {
     const job = 'RQ-RELAUNCH';
     const text = [
