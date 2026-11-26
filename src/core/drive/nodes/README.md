@@ -23,7 +23,13 @@ Call `heartbeat(session)` periodically, comfortably within both the node and
 leader TTLs (defaults: 30 seconds and 10 seconds). Every live node participates:
 a follower heartbeat acquires leadership automatically when the old leader
 expires. Leader renewal preserves its token; acquisition allocates a larger
-one. `renewClaim` extends a current claim (default 30 seconds). An expired
+one. The leader lease is a handoff window for other sessions, not a
+self-destruct timer: when it lapses while `state.leader` still names the same
+live session, that session's next heartbeat, pull, `claim` or claim operation
+(renew/complete/release) resumes the epoch under the same token instead of
+minting a new one — leadership never changed hands, so nothing was fenced.
+Only a different live session's takeover is a fresh epoch. `renewClaim`
+extends a current claim (default 30 seconds). An expired
 session must `join` again. Duplicate live node IDs are refused. `leave` revokes
 the session immediately and enables failover without waiting for expiry.
 Expired registry entries remain visible with their deadlines for diagnosis.
@@ -37,8 +43,10 @@ state before retrying. Completion is terminal and a repeated completion returns
 false. Enqueue deduplicates job IDs, including completed jobs.
 
 The authority compares the stored session, leader epoch, claim token and expiry
-inside the same transaction that completes the job. A leader transition fences
-all claims from its previous epoch immediately, even if their own TTL remains.
+inside the same transaction that completes the job. A leader transition — a
+different session taking over — fences all claims from its previous epoch
+immediately, even if their own TTL remains; a lapse the same live session
+resumes is continuity, not a transition, and fences nothing.
 A stale worker cannot renew or complete; a live leader can reassign its job with
 a higher token. Caller-provided expiry never grants authority. Tokens are
 internal concurrency identifiers, not authentication credentials.

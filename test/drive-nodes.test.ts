@@ -290,6 +290,99 @@ describe('drive node leases', () => {
   });
 });
 
+describe('leader epoch continuity across the holder\'s own gaps', () => {
+  // Production TTLs: node session and claim 30 s, leader lease 10 s. The
+  // documented keep-alive (`beat --watch`) beats at the lease edge, so the
+  // epoch must survive the holder's own heartbeat gaps — rotating it killed
+  // every claim ~10 s after pull even though session and claim still lived.
+  function live() {
+    let now = 1_000_000;
+    const store = new MemoryStore();
+    const nodes = new DriveNodes(store, { now: () => now });
+    return { nodes, store, advance: (ms: number) => { now += ms; } };
+  }
+
+  it('a same-session heartbeat past the leader TTL keeps the epoch and its claims', () => {
+    const f = live();
+    const s = f.nodes.join('box', { owners: ['o'] })!;
+    const leader = f.nodes.heartbeat(s)!.leader!;
+    f.nodes.enqueue('job', { owner: 'o' });
+    const claim = f.nodes.pull(s)!.claim;
+    expect(claim.leaderToken).toBe(leader.token);
+    f.advance(15_000); // past the 10 s leader lease, inside the 30 s session/claim horizon
+    const again = f.nodes.heartbeat(s)!.leader!;
+    expect(again.token).toBe(leader.token);
+    expect(f.nodes.complete(claim, 'done')).toBe(true);
+  });
+
+  it('renew and complete work across the gap with no heartbeat at all', () => {
+    const f = live();
+    const s = f.nodes.join('box', { owners: ['o'] })!;
+    f.nodes.heartbeat(s);
+    f.nodes.enqueue('job', { owner: 'o' });
+    const claim = f.nodes.pull(s)!.claim;
+    f.advance(15_000);
+    const renewed = f.nodes.renewClaim(claim)!;
+    expect(renewed.token).toBe(claim.token);
+    f.advance(10_000); // claim renewed to +45 s; session lease still live until +30 s
+    f.nodes.heartbeat(s);
+    expect(f.nodes.complete(renewed, 'done')).toBe(true);
+  });
+
+  it('a different session during the gap takes a fresh epoch and fences the old claims', () => {
+    let now = 1_000_000;
+    const store = new MemoryStore();
+    const options = { now: () => now };
+    const a = new DriveNodes(store, options);
+    const b = new DriveNodes(store, options);
+    const sa = a.join('a', { owners: ['o'] })!;
+    const sb = b.join('b', { owners: ['o'] })!;
+    const leader = a.heartbeat(sa)!.leader!;
+    a.enqueue('job', { owner: 'o' });
+    const claim = a.pull(sa)!.claim;
+    now += 15_000; // a's leader lease lapsed; both sessions still live
+    const next = b.heartbeat(sb)!.leader!;
+    expect(next.token).toBeGreaterThan(leader.token);
+    expect(a.complete(claim, 'stale')).toBe(false);
+    expect(a.renewClaim(claim)).toBeNull();
+    expect(b.complete({ ...claim, nodeId: 'b', session: sb.session, leaderToken: next.token }, 'not-mine')).toBe(false);
+  });
+
+  it('a lapsed session cannot revive the epoch; rejoin elects a fresh one', () => {
+    const f = live();
+    const s = f.nodes.join('box', { owners: ['o'] })!;
+    const leader = f.nodes.heartbeat(s)!.leader!;
+    f.nodes.enqueue('job', { owner: 'o' });
+    const claim = f.nodes.pull(s)!.claim;
+    f.advance(35_000); // session, claim and leader leases all lapse
+    expect(f.nodes.heartbeat(s)).toBeNull();
+    const s2 = f.nodes.join('box', { owners: ['o'] })!;
+    const next = f.nodes.heartbeat(s2)!.leader!;
+    expect(next.token).toBeGreaterThan(leader.token);
+    expect(f.nodes.complete(claim, 'stale')).toBe(false);
+  });
+
+  it('pull and leader-side claim by the epoch holder keep the epoch across the gap', () => {
+    const f = live();
+    const s = f.nodes.join('box', { owners: ['o'] })!;
+    const leader = f.nodes.heartbeat(s)!.leader!;
+    f.nodes.enqueue('j1', { owner: 'o' });
+    f.nodes.enqueue('j2', { owner: 'o' });
+    const first = f.nodes.pull(s)!.claim;
+    f.advance(15_000);
+    const second = f.nodes.pull(s)!.claim;
+    expect(second.jobId).toBe('j2');
+    expect(second.leaderToken).toBe(first.leaderToken);
+    expect(f.nodes.complete(first, 'one')).toBe(true);
+    // claim() presents the same stale lease object and still assigns under it.
+    const worker = f.nodes.join('helper', { owners: ['o'] })!;
+    f.nodes.heartbeat(worker);
+    f.nodes.enqueue('j3', { owner: 'o' });
+    const assigned = f.nodes.claim(leader, worker, 'j3');
+    expect(assigned?.leaderToken).toBe(first.leaderToken);
+  });
+});
+
 describe('release: decline versus retry (CLI + router)', () => {
   const lease = (c: { nodeId: string; session: number; jobId: string; token: number; leaderToken: number }) =>
     ['--job', c.jobId, '--node', c.nodeId, '--session', String(c.session), '--token', String(c.token), '--leader-token', String(c.leaderToken)];
