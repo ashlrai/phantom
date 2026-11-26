@@ -2668,7 +2668,11 @@ Per-job phase totals and job counts exclude
 still contribute their own recorded boundaries. Excluded rows do not
 count as ignored events. Merge and close verdicts across
 `outcome|state|status|phase|result|conclusion` take precedence over a publish
-claim, even when that claim is carried in an earlier field. A phase is
+claim, even when that claim is carried in an earlier field. A terminal receipt
+that names the publish event or comes from the metrics outcomes reconciler
+requires a parseable `mergedAt` or `closedAt` matching its verdict. If that
+timestamp is missing or invalid, the receipt still contributes its PR identity
+as undated evidence. A phase is
 unmeasured when a recorded launch falls
 after its start and at or before its end, or when a launch has no usable
 timestamp. A launch tied with the start also makes the phase unmeasured

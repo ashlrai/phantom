@@ -300,6 +300,35 @@ it('uses actual merge time, aliases and shuffled events without counting duplica
   expect(mergeQueueLatency([event('ci_start', start), event('ci_complete', start)].map(row => JSON.stringify(row)).join('\n')).phases[1]?.total_seconds).toBe(0);
 });
 
+it.each([
+  { type: 'published' },
+  { source: 'metrics-outcomes-reconciler', mergedAt: 'invalid-date' },
+])('does not use the publish timestamp of a terminal receipt (%j)', terminal => {
+  const prUrl = 'https://github.com/acme/phantom/pull/1';
+  const text = [
+    { ...event('publish', start), prUrl },
+    { ...event('ci_complete', start), prUrl },
+    { job: 'attempt-1', outcome: 'MERGED', ts: start, prUrl, ...terminal },
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  for (const report of [jobLatency(text), mergeQueueLatency(text)]) {
+    for (const phase of report.phases.filter(row => ['merge', 'open_to_merge'].includes(row.phase))) {
+      expect(phase).toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+    }
+  }
+});
+
+it('retains undated close receipts as possible intervening PR evidence', () => {
+  const text = [
+    { ...event('publish', start), url: 'https://github.com/acme/phantom/pull/1' },
+    { ...event('publish', '2025-12-31T23:59:59Z'), outcome: 'CLOSED', url: 'https://github.com/acme/phantom/pull/2' },
+    event('merged', end),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(mergeQueueLatency(text).phases.find(phase => phase.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+});
+
 it('withholds phases whose boundaries name different pull requests', () => {
   const first = 'https://github.com/acme/phantom/pull/1';
   const second = 'https://github.com/acme/phantom/pull/2';
