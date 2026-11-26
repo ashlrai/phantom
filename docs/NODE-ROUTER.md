@@ -76,7 +76,10 @@ phm node status --owner acme
 `phm node join` may omit `--node`: the node id then defaults to this
 computer's sanitized hostname — the same default a pool join applies — so
 `phm node join --owner <scope>` is the shortest first join. A job with no
-live node prints a `phm node join --owner` fix that names the caps it needs.
+live node prints a `phm node join --owner` fix that names the caps it needs
+and, on the standalone registry, ends in `--watch` so the suggested join also
+keeps the session live (a pool store's fix stays the plain join — `join
+--watch` is refused there).
 
 To send real work instead of an empty claim, embed the task text in the job:
 
@@ -255,8 +258,9 @@ not `sha256:<64 lowercase hex>` or does not match the text is
 usage errors (exit 2) before anything is recorded — never an operational
 failure about the registry. A verb missing its required `--owner` names what
 the store already knows — the scopes present, or the `phm node join --owner
-<scope>` that creates the first on an empty store — instead of a bare "add
---owner" dead end.
+<scope>` that creates the first on an empty store (with `--watch` on the
+standalone registry, so that first join keeps the session live) — instead of
+a bare "add --owner" dead end.
 
 ## Version drift
 

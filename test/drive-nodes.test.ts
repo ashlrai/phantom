@@ -791,10 +791,11 @@ describe('text output names outcomes in plain words', () => {
   it('status names why a waiting job has no taker', async () => {
     const { deps, nodes, lines } = harness();
     try {
-      // No live node at all: the pending job carries the same fix plan prints.
+      // No live node at all: the pending job carries the same fix plan prints —
+      // on the standalone store that join must also hold the session (--watch).
       executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], nodes());
       expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
-      expect(last(lines)).toContain("job j1 pending — No live node belongs to owner 'acme'. Run: phm node join --owner acme");
+      expect(last(lines)).toContain("job j1 pending — No live node belongs to owner 'acme'. Run: phm node join --owner acme --watch");
       // A live node that lacks the job's cap gets the caps fix; jobs the node
       // can take stay bare — their node will pull them.
       executeNodeFleet('join', ['--node', 'box', '--owner', 'acme', '--caps', 'build'], nodes());
