@@ -281,7 +281,7 @@ describe('end-to-end ledger fold', () => {
       '',
     ].join('\n'));
     writeFileSync(join(root, 'metrics', 'work-market.jsonl'), [
-      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'RQ-MERGED', chosen_lane: 'alpha', preferred_lane: 'beta', reason_codes: ['preferred_lane'], ts: 1761955260000 }),
+      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'RQ-MERGED', chosen_lane: 'alpha', preferred_lane: 'beta', reason_codes: ['preferred_lane'], ts: Date.parse('2026-11-01T00:01:00Z') / 1000 }),
       '',
     ].join('\n'));
 

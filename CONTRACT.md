@@ -787,6 +787,11 @@ All decision receipts at the newest timestamp must agree on the class.
 A missing or conflicting class at that timestamp withholds the market
 fallback. A later timestamp can establish a new class.
 Rows with a missing or non-finite `ts` or a wrong schema/event are skipped.
+`foldRouteDecisionWorkClasses`, `foldRouteDecisions` and
+`foldMarketHandoffAdvisories` accept an optional inclusive
+`throughEpochSeconds` cutoff (unbounded by default). Router outcome reads
+pass the report start time in epoch seconds to all three folds so future
+market receipts cannot supply evidence or displace an eligible verdict.
 The same newest-decision collapse also supplies the market's
 recorded routing verdict: `foldRouteDecisions` returns each job's
 latest `route_decision` row as `{lane, preferred, override, reasons,

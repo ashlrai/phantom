@@ -1925,6 +1925,37 @@ describe('router outcome market handoff advisory join', () => {
     expect(advisories.size).toBe(3);
   });
 
+  it('joins market receipts only through report start, including its exact boundary', async () => {
+    const asOfMs = Date.parse('2026-11-25T12:00:00.123Z');
+    const boundary = asOfMs / 1000;
+    const future = (asOfMs + 1) / 1000;
+    const root = runsDir(['J1', 'J2'].map(job => JSON.stringify({ job, phase: 'MERGED' })).join('\n'));
+    writeMarket(root, [
+      decision('J1', 'judgment', future, { chosen_lane: 'future-lane' }),
+      decision('J1', 'bulk', boundary, { chosen_lane: 'alpha', reason_codes: ['resource_fit'] }),
+      decision('J2', 'judgment', future, { chosen_lane: 'future-lane' }),
+      marketAdvisory('J1', 'quota-exhausted', boundary, { target: 'beta' }),
+      marketAdvisory('J1', 'quota-exhausted', future, { target: 'future-lane' }),
+      marketAdvisory('J2', 'quota-exhausted', future, { target: 'future-lane' }),
+    ]);
+
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(asOfMs + 1).mockReturnValueOnce(asOfMs);
+    try {
+      const result = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null });
+      expect(result).toMatchObject({
+        market_state: 'read',
+        outcomes: [
+          { job_id: 'J1', work_class: 'bulk', market_lane: 'alpha', market_reasons: ['resource_fit'],
+            handoff_trigger: 'quota-exhausted', handoff_target: 'beta' },
+          { job_id: 'J2', work_class: null, market_lane: null, market_reasons: null,
+            handoff_trigger: null, handoff_target: null },
+        ],
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('joins market advisories onto outcomes only when they are the newest recorded verdict', async () => {
     const root = runsDir([
       '{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
@@ -1944,18 +1975,18 @@ describe('router outcome market handoff advisory join', () => {
     ].join('\n'));
     writeMarket(root, [
       // J1 recorded no jobs advisory: the market verdict fills the triple.
-      marketAdvisory('J1', 'quota-exhausted', 2000000000, { lane: 'alpha', target: 'devin' }),
+      marketAdvisory('J1', 'quota-exhausted', Date.parse('2026-11-04T00:00:00Z') / 1000, { lane: 'alpha', target: 'devin' }),
       // J2 likewise has no jobs advisory — the market verdict fills it.
       marketAdvisory('J2', 'quota-exhausted', 1000, { lane: 'beta', target: 'gamma' }),
-      // J3's market advisory (epoch ~2033) postdates the jobs advisory.
-      marketAdvisory('J3', 'quota-exhausted', 2000000000, { lane: 'market-lane', target: 'market-target' }),
+      // J3's market advisory (2026-11-04) postdates the jobs advisory.
+      marketAdvisory('J3', 'quota-exhausted', Date.parse('2026-11-04T00:00:00Z') / 1000, { lane: 'market-lane', target: 'market-target' }),
       // J4's market advisory is newer in wall time but the jobs
       // advisory's missing ts makes ordering impossible — jobs stands.
-      marketAdvisory('J4', 'quota-exhausted', 2000000000, { lane: 'market-lane', target: 'market-target' }),
+      marketAdvisory('J4', 'quota-exhausted', Date.parse('2026-11-04T00:00:00Z') / 1000, { lane: 'market-lane', target: 'market-target' }),
       // J5's market advisory (epoch ~1970) predates the jobs advisory.
       marketAdvisory('J5', 'quota-exhausted', 1000, { lane: 'market-lane', target: 'market-target' }),
       // A market advisory naming a job with no jobs outcome joins nothing.
-      marketAdvisory('J-UNADVISED', 'quota-exhausted', 2000000000, { lane: 'alpha', target: 'devin' }),
+      marketAdvisory('J-UNADVISED', 'quota-exhausted', Date.parse('2026-11-04T00:00:00Z') / 1000, { lane: 'alpha', target: 'devin' }),
     ]);
     const result = await readRouterOutcomes({ runsDir: root });
     expect(result).toMatchObject({ state: 'read', market_state: 'read', market_truncated: false });
@@ -1982,7 +2013,7 @@ describe('router outcome market handoff advisory join', () => {
       '{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
     ].join('\n'));
     const target = join(linked, 'real-market.jsonl');
-    writeFileSync(target, JSON.stringify(marketAdvisory('J1', 'quota-exhausted', 2000000000, { lane: 'beta', target: 'gamma' })) + '\n');
+    writeFileSync(target, JSON.stringify(marketAdvisory('J1', 'quota-exhausted', Date.parse('2026-11-04T00:00:00Z') / 1000, { lane: 'beta', target: 'gamma' })) + '\n');
     symlinkSync(target, marketPath(linked));
     const refused = await readRouterOutcomes({ runsDir: linked });
     expect(refused).toMatchObject({ state: 'read', market_state: 'unreadable' });
