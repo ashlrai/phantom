@@ -167,7 +167,9 @@ export interface BoardNotifyPlan {
 
 /** One printable line; ids, owners and dependency text are untrusted. */
 const field = (value: string, max: number): string =>
-  value.replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, '?').slice(0, max).trim();
+  value.replace(/[\r\n\u0085\u2028\u2029]+/g, ' ')
+    .replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, char => char === '\u200c' || char === '\u200d' ? char : '?')
+    .slice(0, max).replace(/[\uD800-\uDBFF]$/, '').trim();
 
 export function boardNotifyLedgerKey(itemId: string, state: string, delta?: string): string {
   return delta === undefined ? `${itemId} ${state}` : `${itemId} ${state} ${delta}`;
@@ -276,7 +278,7 @@ export function boardNoticeText(state: BoardNotifyState, itemId: string, asOf: s
 function proofField(value: string): string {
   const clean = field(scrubSecrets(value), Infinity);
   const omitted = ' [... omitted]';
-  return clean.length <= 512 ? clean : `${clean.slice(0, 512 - omitted.length)}${omitted}`;
+  return clean.length <= 512 ? clean : `${clean.slice(0, 512 - omitted.length).replace(/[\uD800-\uDBFF]$/, '')}${omitted}`;
 }
 
 /** The bounded evidence a postable state cites: ASSIGNED names the owner
