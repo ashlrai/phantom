@@ -708,6 +708,23 @@
  *     days inside the 7-day window, truncated tails are stated as lower
  *     bounds, and items emit only for the fleet's own repository since
  *     the journal carries no repo column;
+ *   - the superseded-close attempt journal's recurring failed closes:
+ *     the {at, pr, supersededBy, ok, error?} rows `ashlr fleet
+ *     superseded-close --apply` appends to
+ *     <runs>/queue/superseded-closes.jsonl — one row per attempted
+ *     `gh pr close` of an open `bridge: RQ-PHX-` PR whose merged
+ *     recut's job prompt names it, the run stopping at the first
+ *     failure — until now read by NOTHING (not even a point-in-time
+ *     display), so a close path that kept failing left every
+ *     superseded PR open — still counting against the backlog and
+ *     re-running CI on branch refreshes — without ever becoming
+ *     work (supersededCloseBacklogItems below). A cell emits only at
+ *     the recurring bars of three failed rows across two distinct
+ *     UTC days inside the 7-day window — per-PR, plus a shared
+ *     close-path cell when failures span distinct PRs — truncated
+ *     tails are stated as lower bounds, and items emit only for the
+ *     fleet's own repository since the journal carries no repo
+ *     column;
  *   - the work market's posture journal's recurring adverse posture
  *     reasons: the per-tick `posture` events dispatchd's market_metric
  *     appends to metrics/work-market.jsonl whenever any lane carries a
@@ -1385,6 +1402,7 @@ import { launchCostBacklogItems } from './launch-cost-backlog.js';
 import { knowledgeOutcomeBacklogItems } from './knowledge-outcome-backlog.js';
 import { playbookOutcomeBacklogItems } from './playbook-outcome-backlog.js';
 import { landedCloseBacklogItems } from './landed-close-backlog.js';
+import { supersededCloseBacklogItems } from './superseded-close-backlog.js';
 import { marketPostureBacklogItems } from './market-posture-backlog.js';
 import { liveConfigBacklogItems } from './live-config-backlog.js';
 import { leaderRepliesBacklogItems } from './leader-replies-backlog.js';
@@ -2539,6 +2557,27 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // stated as lower bounds, and only the fleet's own repository
   // inherits the items since the journal carries no repo column.
   items.push(...await landedCloseBacklogItems({ repo }));
+
+  // Superseded-close attempt journal (queue/superseded-closes.jsonl
+  // under the runs dir): the {at, pr, supersededBy, ok, error?} rows
+  // `fleet superseded-close --apply` appends per attempted `gh pr
+  // close` of an open `bridge: RQ-PHX-` PR whose merged recut's job
+  // prompt names it — the run stopping at the first failure. Until
+  // now the ledger had NO reader at all — only the writer's own test
+  // asserts its lines — so recurring per-PR close failures and a
+  // shared close path failing across PRs never became work while
+  // every stuck superseded PR stayed open, counting against the
+  // backlog and re-running CI on branch refreshes. The read is the
+  // bounded no-follow tail at both journal locations the writer
+  // variants can produce (its homedir()/.ashlr-runs resolution, plus
+  // the env/override runs dir when it differs); a cell emits only at
+  // the recurring bars of three failed rows across two distinct UTC
+  // days inside the 7-day window — per-PR, plus a shared close-path
+  // cell when failures span distinct PRs — ok:true rows are healthy
+  // context, error text is scrubbed and capped, truncated tails are
+  // stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the journal carries no repo column.
+  items.push(...await supersededCloseBacklogItems({ repo }));
 
   // Live fleet-config audit journal (queue/live-config-audit.jsonl under
   // the runs dir): the {v, at, op, key, from, to, by, reason}
