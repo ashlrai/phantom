@@ -681,11 +681,12 @@ When timestamps match, ledger order decides which receipt came first.
 job's standing pull request — the `metrics/merge-events.jsonl`
 observations the host merge observer and `phm fleet merge-retry`
 append (the same ledger `phm fleet merge-latency` reads), joined
-through the job's newest unambiguous canonical github.com pull URL
-claim — the same `owner/repo#n` claim rule the authority revert join
-applies, so a contested or foreign URL never resolves and a PR no
-outcome claims unambiguously joins nothing (merge-events rows never
-create outcomes). `foldMergeEvents` keeps only rows passing the
+through the canonical github.com pull URL on the job's winning merge or
+close verdict. An older verdict appended later cannot change the join.
+If the winning verdict lacks a URL, the job must have exactly one claimed
+PR identity in the retained ledger. Unresolved jobs use the newest
+unambiguous canonical claim. A contested or foreign verdict URL leaves
+the join unknown. Merge-events rows never create outcomes. `foldMergeEvents` keeps only rows passing the
 merge-latency reader's own validation — a `blocked` row needs a
 recorded in-vocabulary `reason`, a `check_observed` row a recorded
 `conclusion` (with `required` only as a boolean when present), and
@@ -819,11 +820,8 @@ bounded `at` stamp) and collapses them to each PR's newest verdict —
 decision rows, wrong-schema rows, malformed rows and foreign kinds
 are skipped, never counted, and the reviewer's pool/family, reasons
 and semantic detail stay audit-side rather than joining. The join
-resolves each outcome's `cross_review` through the job's newest
-unambiguous canonical github.com pull URL claim — the same claim rule
-the merge-queue join applies, so a contested or foreign URL never
-resolves and a PR no outcome claims unambiguously joins nothing
-(cross-review rows never create outcomes). The evidence is
+resolves each outcome's `cross_review` through the same PR identity as
+`merge_queue`. Cross-review rows never create outcomes. The evidence is
 review-gate context like `merge_queue`: a `reject` is the recorded
 reason the PR may never merge, but a review verdict is not a merge
 verdict — the join never feeds routing, ranking, admission or weight

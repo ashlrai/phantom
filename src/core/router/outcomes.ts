@@ -154,8 +154,7 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // host merge observer and `phm fleet merge-retry` append — opened,
 // queued, eligible, blocked, conflict, check_observed, retry_*,
 // recut_requested, auto_merge_* and the merged/closed terminals). The
-// join runs through each job's newest unambiguous canonical PR claim —
-// the same owner/repo#n prKey the authority revert join uses — so a
+// join uses each job's standing PR claim, so a
 // job's recorded merge-queue friction (blocked reasons, conflicts,
 // failed checks, dropped auto-merges, recuts, retries) reaches
 // router.outcome.v1 instead of stopping at the merge-latency report.
@@ -215,8 +214,7 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // review verdict and merge decision to. `foldCrossReviews` keeps the
 // `kind:'review'` rows' per-PR verdicts (approve/reject/failed/skipped)
 // and the fold joins each outcome's `cross_review` through the job's
-// unambiguous canonical PR claim — the same claim rule merge_queue and
-// the revert joins use — carrying the verdict and its `at` timestamp.
+// standing PR claim, carrying the verdict and its `at` timestamp.
 // `cross_review_state` reports the ledger's health and
 // `cross_review_truncated` marks a cut tail; anything but 'read' leaves
 // every cross_review null — unknown, never a guessed review.
@@ -918,16 +916,15 @@ export interface RouterOutcome {
   node_pack: string | null;
   /**
    * The job's recorded merge-queue evidence — the merge-events.jsonl
-   * observations for the job's newest unambiguous canonical PR claim
+   * observations for the job's standing PR claim
    * (`owner/repo#n`, the same prKey the authority revert join uses),
    * joined by readRouterOutcomes under `merge_events_state`. See
    * MergeQueueEvidence for the field semantics. Null when the merge
    * ledger was not read, the job never claimed a canonical github.com
    * pull URL unambiguously, or no merge-events row named that PR —
-   * unknown, never a guessed queue history. Earlier PRs the job claimed
-   * (a superseded recut's, say) are not joined: the standing claim is
-   * the newest recorded one, the same newest-wins rule the merge
-   * verdict follows.
+   * unknown. For resolved jobs the standing PR follows the winning
+   * merge or close verdict. Unresolved jobs use their latest
+   * unambiguous canonical claim.
    */
   merge_queue: MergeQueueEvidence | null;
   /**
@@ -936,8 +933,7 @@ export interface RouterOutcome {
    * (`<ashlr>/fleet/cross-review.jsonl`, the audit journal
    * src/core/fleet/cross-review-run.ts appends), joined by
    * readRouterOutcomes under `cross_review_state` through the job's
-   * newest unambiguous canonical PR claim (`owner/repo#n`, the same
-   * prKey the merge-queue and authority revert joins use). `outcome` is
+   * standing PR claim (`owner/repo#n`, shared with the merge-queue join). `outcome` is
    * the review record's verdict in the producer's closed vocabulary —
    * `approve`/`reject` are the independent reviewer's recorded verdicts,
    * `failed`/`skipped` the recorded non-verdicts (the reviewer could not
@@ -1688,8 +1684,7 @@ export interface RouterOutcomeFoldOptions {
   /**
    * `owner/repo#n` (lowercase repo) → recorded merge-queue evidence, e.g.
    * `foldMergeEvents` over metrics/merge-events.jsonl. The fold joins each
-   * outcome's newest unambiguous canonical PR claim (the same claim rule
-   * `revertedPrKeys` applies) to its summary as `merge_queue`; a job with
+   * outcome's standing PR claim to its summary as `merge_queue`; a job with
    * no unambiguous claim or no recorded events keeps null. The joined
    * check record also resolves `ci_first_pass` fill-only — any recorded
    * check failure reads false, a `checks_passed` boundary reads true in
@@ -1703,8 +1698,7 @@ export interface RouterOutcomeFoldOptions {
    * `owner/repo#n` (lowercase repo) → the PR's newest recorded cross-model
    * review verdict, e.g. `foldCrossReviews` over
    * <ashlr>/fleet/cross-review.jsonl. The fold joins each outcome's
-   * newest unambiguous canonical PR claim (the same claim rule
-   * `mergeEvents` and `revertedPrKeys` apply) to its summary as
+   * standing PR claim (shared with `mergeEvents`) to its summary as
    * `cross_review`; a job with no unambiguous claim or no recorded review
    * keeps null. Absent means no cross-review join — every cross_review
    * stays null.
@@ -1743,6 +1737,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
   // including across URL spellings. Other URLs still match literally. Batch
   // session rows are infrastructure: they never claim URLs themselves.
   const claims = new Map<string, Set<string>>();
+  const soleClaimByJob = new Map<string, string | null>();
   for (const r of rows) {
     const j = jobId(r), u = prUrl(r);
     if (!j || !u || j.startsWith(BATCH_SESSION_PREFIX)) continue;
@@ -1750,6 +1745,9 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     const jobs = claims.get(key) ?? new Set<string>();
     jobs.add(j);
     claims.set(key, jobs);
+    const prior = soleClaimByJob.get(j);
+    if (prior === undefined) soleClaimByJob.set(j, key);
+    else if (prior !== key) soleClaimByJob.set(j, null);
   }
   const ambiguous = new Set([...claims].filter(([, jobs]) => jobs.size > 1).map(([u]) => u));
   const claimToJob = new Map([...claims].filter(([key]) => !ambiguous.has(key))
@@ -1851,11 +1849,11 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     if (waitMs >= 0) publishWaitS.set(j, waitMs / 1000);
   }
 
-  // Each job's standing PR identity for side-ledger joins: the newest row
-  // (ledger order) whose canonical github.com pull URL this job claims
-  // unambiguously — the same claim rule the authority revert join applies,
-  // so a contested or foreign URL never resolves to a prKey.
   const jobPrKeys = new Map<string, string>();
+  // A terminal verdict binds side-ledger evidence to its own PR. Missing
+  // legacy URLs can only use a sole claim, and explicit invalid URLs
+  // withhold the join entirely.
+  const verdictPrKeys = new Map<string, string | null>();
 
   const outcomes = new Map<string, RouterOutcome>();
   const mergedAt = new Map<string, number>();
@@ -1867,10 +1865,8 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     const j = jobId(r) ?? claimant;
     if (!j) { unattached++; continue; }
     if (j.startsWith(BATCH_SESSION_PREFIX)) { sessionRows++; continue; }
-    if (u !== null && claimant === j) {
-      const prKey = pullRequestKey(u);
-      if (prKey !== null) jobPrKeys.set(j, prKey);
-    }
+    const rowPrKey = u !== null && claimant === j ? pullRequestKey(u) : null;
+    if (rowPrKey !== null) jobPrKeys.set(j, rowPrKey);
     const o: RouterOutcome = outcomes.get(j) ?? {
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
       repo: null,
@@ -1930,6 +1926,8 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       if (ts >= (mergedAt.get(j) ?? -1)) {
         o.merged = merged;
         mergedAt.set(j, ts);
+        if (u === null) verdictPrKeys.delete(j);
+        else verdictPrKeys.set(j, rowPrKey);
         // ttm_s is merge evidence: only the row that stands as the merge
         // verdict supplies it, so a close clears it and a non-merge row's
         // figure is never attached (the sibling fleet readers gate the same
@@ -2190,8 +2188,13 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
   }
   if (opts.mergeEvents !== undefined || opts.crossReviews !== undefined) {
     for (const o of outcomes.values()) {
-      const prKey = jobPrKeys.get(o.job_id);
+      const latestClaim = jobPrKeys.get(o.job_id);
+      const verdictClaim = verdictPrKeys.get(o.job_id);
+      // A null verdict claim records an explicit URL that could not be joined.
+      if (verdictClaim === null) continue;
+      const prKey = verdictClaim ?? latestClaim;
       if (prKey === undefined) continue;
+      if (verdictClaim === undefined && o.merged !== null && soleClaimByJob.get(o.job_id) !== `pr:${prKey}`) continue;
       if (opts.mergeEvents !== undefined) {
         const evidence = opts.mergeEvents.get(prKey);
         if (evidence !== undefined) {
@@ -3246,9 +3249,8 @@ function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: Reado
  * advisory rows naming jobs outside the jobs window join nothing.
  * The merge-events tail folds through
  * `foldMergeEvents` into per-PR `owner/repo#n` evidence and joins each
- * outcome's `merge_queue` through the job's newest unambiguous
- * canonical PR claim under the same claim rule the authority revert
- * join applies; merge_events_state reports the ledger's health and
+ * outcome's `merge_queue` through the job's standing PR claim.
+ * merge_events_state reports the ledger's health and
  * merge_events_truncated marks a cut tail — anything but 'read' leaves
  * every merge_queue null. `reverted` additionally joins the
  * authority ledger's verified
@@ -3305,9 +3307,8 @@ function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: Reado
  * (`approve`/`reject`/`failed`/`skipped`); `kind:'decision'` rows are
  * merge-action evidence and never join, and the last appended review
  * row for a PR stands. The fold's `crossReviews` option joins each
- * outcome's `cross_review` through the job's newest unambiguous
- * canonical PR claim — the same claim rule `mergeEvents` and
- * `revertedPrKeys` apply, so a contested or foreign URL never resolves
+ * outcome's `cross_review` through the job's standing PR claim — shared with
+ * `mergeEvents` — so a contested or foreign URL never resolves
  * — carrying the verdict and the review record's `at` timestamp.
  * Review rows for PRs no outcome claims unambiguously join nothing and
  * never create outcomes. `cross_review_state` reports the ledger's

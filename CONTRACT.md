@@ -795,10 +795,11 @@ of), `retries`/`retry_failures` (distinct `at`+`head_sha` pairs, the
 sibling reader's replay-dedupe), `recuts` and `auto_merge` (the last
 recorded toggle in append order, `enabled`/`disabled`/`null`). The
 fold's `mergeEvents` option joins each outcome's `merge_queue` through
-the job's newest unambiguous canonical PR claim — the same claim rule
-the authority revert join applies, so a contested or foreign URL never
-resolves — and merge-events rows for PRs no outcome claims unambiguously
-join nothing and never create outcomes. GitHub pull URLs that differ only
+the unambiguous canonical PR on the winning merge or close verdict.
+A URL-less winning verdict can use a sole PR claim in the retained ledger.
+An explicit contested or foreign verdict URL withholds the join.
+Unresolved jobs use the newest unambiguous canonical PR claim.
+Merge-events rows never create outcomes. GitHub pull URLs that differ only
 in case or a trailing slash share one claim identity for URL-only jobs
 rows and all PR evidence joins. Multiple jobs claiming that identity
 count once in `ambiguous_urls` and receive no evidence through it. Other
@@ -899,10 +900,8 @@ malformed rows and foreign kinds are skipped, never counted. The
 evidence records only `{outcome, at}` — the reviewer's pool/family,
 reasons and semantic detail stay audit-side and never join. The fold's
 `crossReviews` option joins each outcome's `cross_review` through the
-job's newest unambiguous canonical PR claim — the same claim rule the
-merge-queue join applies, so a contested or foreign URL never
-resolves — and review rows for PRs no outcome claims unambiguously
-join nothing and never create outcomes. The join is fill-only
+same PR identity as the merge-queue join. Review rows never create
+outcomes. The join is fill-only
 diagnostic context: it explains what the review gate recorded while
 the merge verdict stayed unrecorded, and it never feeds routing,
 ranking, admission or weight math. The read degrades independently:
