@@ -93,6 +93,16 @@ it('checks phase chronology while allowing queued runs without a run start', () 
   ] });
 });
 
+it('keeps owner-lane handoffs out of stuck alerts while still flagging overdue automated landings', () => {
+  const h = computeLaneHealth(snap([
+    run({ id: 'handed-off', phase: 'landing', startedAt: at(30), phaseStartedAt: at(20), outcome: 'owner-lane' }),
+    run({ id: 'overdue', phase: 'landing', startedAt: at(30), phaseStartedAt: at(20) }),
+  ]));
+  expect(h.lanes[0]).toMatchObject({ calls: 2, errorRate: null, latencyP50Ms: null, stuck: [
+    { runId: 'overdue', repo: 'a/b', phase: 'landing', phaseAgeMs: 20 * 60_000, timeoutMs: 10 * 60_000 },
+  ] });
+});
+
 it('requires a readable current-phase start before flagging an old run as stuck', () => {
   const h = computeLaneHealth(snap([
     run({ id: 'missing', phase: 'verifying', startedAt: at(90), phaseStartedAt: null }),
