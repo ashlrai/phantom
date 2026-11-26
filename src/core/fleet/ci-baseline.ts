@@ -2202,19 +2202,28 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const result: { conclusion: string; text: string }[] = [];
     for (const job of data.jobs) {
       if (job.conclusion === 'skipped') continue;
-      if (job.head_sha !== head) return null;
+      // Incomplete jobs already withhold freshness. Keep verified sibling
+      // evidence even when a partial log cannot prove this job's checkout.
+      const jobIncomplete = INCOMPLETE_CONCLUSIONS.has(job.conclusion);
+      if (job.head_sha !== head) {
+        if (jobIncomplete) continue;
+        return null;
+      }
       let r = null;
       try { r = await gh(['api', `repos/${repo}/actions/jobs/${job.id}/logs`]); } catch { /* Log unavailable. */ }
       if (!r?.ok) {
         // The job list already marks this run incomplete. A job that
         // never started may have no log, while its siblings still do.
-        if (INCOMPLETE_CONCLUSIONS.has(job.conclusion)) continue;
+        if (jobIncomplete) continue;
         return null;
       }
       const output = lines(r.stdout);
       const checkout = output.findIndex(line => /(?:^|\/)git log -1 --format=%H$/.test(line));
       if (checkout >= 0) {
-        if (output[checkout + 1] !== head) return null;
+        if (output[checkout + 1] !== head) {
+          if (jobIncomplete) continue;
+          return null;
+        }
         result.push({ conclusion: job.conclusion, text: r.stdout });
         continue;
       }
@@ -2223,7 +2232,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // analyzed head exactly like the marker's following line does.
       const bound = output.find(line => BOUND_LINE.test(line));
       if (bound !== undefined) {
-        if (BOUND_LINE.exec(bound)![1] !== head) return null;
+        if (BOUND_LINE.exec(bound)![1] !== head) {
+          if (jobIncomplete) continue;
+          return null;
+        }
         result.push({ conclusion: job.conclusion, text: r.stdout });
         continue;
       }
@@ -2241,7 +2253,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the analyzer consumes; any recognizable failure or pass output in
       // an unverifiable log keeps the whole run unknown rather than letting
       // unattributed evidence pass as head-verified.
-      if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
+      if (!jobIncomplete && (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line)))) return null;
     }
     return { entries: result, incomplete };
   }
