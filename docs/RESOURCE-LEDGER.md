@@ -46,6 +46,12 @@ Each element in `lanes`.
 | `deadSignal` | `LaneDeadSignal \| null` | Health from the last jobs: `state` is `'ok'`, `'suspect'`, or `'dead'`; `lastFinishes` counts the latest valid runs per lane and `emptyFailures` counts empty-failure runs. | When no job data exists for the lane. |
 | `observation` | `{ source: 'codex-personal-sessions'; asOf: string }` | Present only when this reading originated from personal Codex session files; `asOf` is the session snapshot time. | On all non-codex-personal readings. |
 
+For personal Codex, dispatcher status takes precedence over an eligible session
+reading when it contains a valid weekly usage percentage, including zero, and
+its capture time is at least as recent as the session reading and no later than
+report time. A timestamped status entry with missing or invalid weekly usage
+leaves the session reading visible.
+
 ## Interface: `ApiSpendSummary`
 
 When present, `apiSpend` on the ledger.

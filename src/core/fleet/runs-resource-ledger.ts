@@ -217,12 +217,14 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
     const personal = report.resources[0];
     const observed = personal?.observedAt ? Date.parse(personal.observedAt) : NaN;
     let lane = result.lanes.find(row => row.lane === 'codex-personal');
-    const quotaAt = statusMeasurements.get('codex-personal')?.observedAt;
+    const statusQuota = statusMeasurements.get('codex-personal') ?? null;
+    const quotaAt = statusQuota?.observedAt;
     const statusAt = quotaAt ? Date.parse(quotaAt) : NaN;
+    const statusHasDatedReading = statusQuota?.usedPct != null && statusAt <= now;
     if (personal?.weekly?.usedPct != null &&
         (personal.weekly.windowMinutes === null || personal.weekly.windowMinutes > 315) &&
         Number.isFinite(observed) && observed <= now &&
-        (!lane || !Number.isFinite(statusAt) || statusAt > now || observed > statusAt)) {
+        (!statusHasDatedReading || observed > statusAt)) {
       if (!lane) {
         lane = { lane: 'codex-personal', running: null, target: null, held: null,
           window: 'weekly', usedPct: null, creditsRemaining: null, resetAt: null,
@@ -233,7 +235,7 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
       const measured: QuotaMeasurement = { lane: lane.lane, window: 'weekly',
         usedPct: personal.weekly.usedPct, resetAt: personal.weekly.resetsAt,
         source: 'codex-personal-sessions', observedAt: personal.observedAt };
-      lane.quotaEvidence = quotaEvidence(statusMeasurements.get(lane.lane) ?? null, measured, lane.held, now);
+      lane.quotaEvidence = quotaEvidence(statusQuota, measured, lane.held, now);
       lane.usedPct = personal.weekly.usedPct;
       lane.resetAt = personal.weekly.resetsAt;
       lane.burnPctPerHour = personal.weekly.burnPctPerHour;
