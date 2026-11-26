@@ -110,6 +110,9 @@ enum Runner {
     case let .signGrant(path):
       try signGrant(path: path)
 
+    case .signDesktopUpdate:
+      try signDesktopUpdate()
+
     case .storeGithubApp:
       let data = try IO.readStdin(limit: 64 * 1024)
       let credential: GitHubApp.Credential
@@ -188,6 +191,34 @@ enum Runner {
     let context = try Presence.authenticate(reason: prompt.reason)
     let signature = try EnclaveKey.sign(GrantSigning.message(for: grant), record: record, context: context)
     IO.out(try GrantSigning.envelope(for: grant, signatureP1363: signature))
+  }
+
+  static func signDesktopUpdate() throws {
+    let data = try IO.readStdin(limit: StrictJSONParser.defaultMaxBytes)
+    let approval: DesktopUpdateApproval
+    do {
+      approval = try DesktopUpdateApproval(data: data, context: GrantValidationContext(now: Date()))
+    } catch {
+      throw CustodyFailure("refused", "invalid or expired desktop update approval; nothing was signed", exit: .refused)
+    }
+    guard let record = try KeyStore.load() else {
+      throw CustodyFailure("key-missing", "no custody key yet; run `ashlr-custody init`", exit: .missing)
+    }
+    guard record.keyId == approval.grant.keyId else {
+      throw CustodyFailure("keyid-mismatch", "the update grant names a different custody key", exit: .refused)
+    }
+    guard let binding = Host.binding(), binding == approval.grant.hostBinding else {
+      throw CustodyFailure("host-mismatch", "the update grant is bound to a different Mac", exit: .refused)
+    }
+    let prompt = approval.prompt
+    IO.err(prompt.fullScope)
+    let context = try Presence.authenticate(reason: prompt.reason, biometricsOnly: true)
+    guard Date() < approval.expiresAt else {
+      throw CustodyFailure("refused", "the desktop update approval expired; nothing was signed", exit: .refused)
+    }
+    let grantSignature = try EnclaveKey.sign(GrantSigning.message(for: approval.grant), record: record, context: context)
+    let approvalSignature = try EnclaveKey.sign(approval.message, record: record, context: context)
+    IO.out(try approval.envelope(grantSignature: grantSignature, approvalSignature: approvalSignature))
   }
 }
 

@@ -102,7 +102,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   map: ['--json', '--help'],
   'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
   autofix: ['--apply', '--dry-run', '--json', '--only', '--older-than', '--stuck-minutes', 'release-stuck-draft', 'launchd-crashloop', 'stuck-lane', 'outside-load', '--help'],
-  desktop: ['install', 'list-apps', 'windows', 'focus', 'read', 'scroll', 'type', 'click', 'screenshot', 'doctor', '--upgrade', '--rollback', '--require-app', '--to', '--apply', '--json', '--app', '--window', '--text', '--x', '--y', '--dx', '--dy', '--ref', '--help'],
+  desktop: ['install', 'update', 'status', 'list-apps', 'windows', 'focus', 'read', 'scroll', 'type', 'click', 'screenshot', 'doctor', '--upgrade', '--rollback', '--require-app', '--to', '--apply', '--json', '--app', '--window', '--text', '--x', '--y', '--dx', '--dy', '--ref', '--help'],
   'desktop-update': ['inspect', 'prepare', 'apply', '--help'],
   desktopctl: ['capabilities', 'doctor', 'status', 'run', '--task', '--timeout', '--poll', '--json', '--help'],
   app: ['update', 'status', 'steer', '--text', 'restart', '--json', '--help'],

@@ -1035,6 +1035,7 @@ export interface InstallGrantOptions {
   surface: SurfaceTarget;
   nowMs?: number;
   actor?: 'mason';
+  expectedAuthority?: (snapshot: LedgerSnapshot) => boolean;
 }
 
 export type InstallGrantResult =
@@ -1065,6 +1066,8 @@ export function installStandingGrant(envelope: unknown, opts: InstallGrantOption
   const nowMs = opts.nowMs ?? Date.now();
   const result = withLedgerTransaction((tx): InstallGrantResult => {
     const snapshot = tx.snapshot;
+    if (opts.expectedAuthority && !opts.expectedAuthority(snapshot))
+      return {ok:false, code:'ledger', reason:'Authority changed after the approval was drafted.'};
     // Verify everything except sequence first: never archive a broken ledger for a grant that is not valid anyway.
     const ctx = verifyContextFrom(snapshot, nowMs, opts.surface);
     const verdict = verifyStandingGrant(envelope, { ...ctx, minGrantSeq: 0, revokedGrantIds: snapshot.chain === 'broken' ? new Set() : ctx.revokedGrantIds }, STANDING_GRANT_TRUST_ROOTS);

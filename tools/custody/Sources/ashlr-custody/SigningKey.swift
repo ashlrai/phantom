@@ -132,16 +132,19 @@ enum Presence {
   /// Evaluate device-owner authentication (Touch ID, or the login password)
   /// with the helper's own text. The evaluated context is then handed to the
   /// Secure Enclave, which accepts it for the key's .userPresence constraint.
-  static func authenticate(reason: String) throws -> LAContext {
+  static func authenticate(reason: String, biometricsOnly: Bool = false) throws -> LAContext {
     let context = LAContext()
     context.localizedCancelTitle = "Cancel"
+    if biometricsOnly { context.localizedFallbackTitle = "" }
+    let policy: LAPolicy = biometricsOnly ? .deviceOwnerAuthenticationWithBiometrics : .deviceOwnerAuthentication
     var canError: NSError?
-    guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &canError) else {
-      throw CustodyFailure("auth-failed", "this Mac cannot ask for Touch ID or the login password right now", exit: .auth)
+    guard context.canEvaluatePolicy(policy, error: &canError) else {
+      throw CustodyFailure("auth-failed", biometricsOnly ? "this Mac cannot ask for Touch ID right now" :
+        "this Mac cannot ask for Touch ID or the login password right now", exit: .auth)
     }
     let done = DispatchSemaphore(value: 0)
     var outcome: Result<Void, Error> = .success(())
-    context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, error in
+    context.evaluatePolicy(policy, localizedReason: reason) { success, error in
       if !success { outcome = .failure(error ?? CustodyFailure("auth-failed", "authentication failed", exit: .auth)) }
       done.signal()
     }

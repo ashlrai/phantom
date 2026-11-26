@@ -7,7 +7,10 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { Header, type HeaderData } from 'tar';
 import { canonicalJson } from '../src/core/authority/canonical-json.js';
+import { beginDesktopUpdateInterlock, desktopUpdateInterlockPath, releaseDesktopUpdateInterlock } from '../src/core/desktop/update-interlock.js';
+import { killSwitchOn, killSwitchPath, readKillSwitch, setKill } from '../src/core/sandbox/policy.js';
 import { applyQualifiedDesktopUpdate, desktopUpdateStagePath, downloadQualifiedUpdateArtifact,
+  consumeDesktopUpdateResume,
   inspectQualifiedDesktopUpdate, inspectSignedAppArchive, prepareQualifiedDesktopUpdate, readQualifiedDesktopUpdateResult,
   loadInstalledDesktopTransaction,
   type DesktopUpdateDependencies, type UpdateAdmission } from '../src/core/desktop/qualified-update.js';
@@ -17,6 +20,57 @@ import {extractPinnedRuntimeArchive,readPinnedRuntimeArchive} from '../src/core/
 import {getDesktopUpdateProfile, type DesktopUpdateProfileName, type CompatibleUpdateManifest, type UpdateTrust } from '../src/core/desktop/update-manifest.js';
 
 const roots: string[] = [];
+describe('local desktop update interlock', () => {
+  it.each([true, false])('preserves independent operator Stop (already active: %s)', operatorFirst => {
+    if (process.getuid === undefined) {
+      const home = fs.mkdtempSync(join(tmpdir(), 'update-interlock-'));
+      roots.push(home);
+      const operator = join(home, '.ashlr', 'KILL');
+      fs.mkdirSync(join(home, '.ashlr'), {mode: 0o700});
+      if (operatorFirst) fs.writeFileSync(operator, 'operator stop\n', {mode: 0o600});
+      expect(beginDesktopUpdateInterlock(home, 'a'.repeat(32), 'b'.repeat(64), 42)).toBeNull();
+      expect(fs.existsSync(desktopUpdateInterlockPath(home))).toBe(false);
+      if (operatorFirst) expect(fs.readFileSync(operator, 'utf8')).toBe('operator stop\n');
+      else expect(fs.existsSync(operator)).toBe(false);
+      return;
+    }
+    const home = process.env.HOME!;
+    fs.mkdirSync(join(home, '.ashlr'), {mode: 0o700, recursive: true});
+    if (operatorFirst) expect(setKill(true).ok).toBe(true);
+    const marker = beginDesktopUpdateInterlock(home, 'a'.repeat(32), 'b'.repeat(64), 42);
+    expect(marker).not.toBeNull();
+    try {
+      expect(fs.lstatSync(desktopUpdateInterlockPath(home)).mode & 0o777).toBe(0o600);
+      expect(readKillSwitch().state).toBe(operatorFirst ? 'active' : 'inactive');
+      expect(killSwitchOn()).toBe(true);
+      expect(beginDesktopUpdateInterlock(home, 'a'.repeat(32), 'b'.repeat(64), 42)).toBeNull();
+      expect(releaseDesktopUpdateInterlock(home, {...marker!, nonce: 'c'.repeat(32)})).toBe(false);
+      if (!operatorFirst) expect(setKill(true).ok).toBe(true);
+      const operator = fs.readFileSync(killSwitchPath());
+      expect(releaseDesktopUpdateInterlock(home, marker!)).toBe(true);
+      expect(fs.readFileSync(killSwitchPath())).toEqual(operator);
+      expect(readKillSwitch().state).toBe('active');
+    } finally {
+      if (marker) releaseDesktopUpdateInterlock(home, marker);
+      setKill(false);
+    }
+  });
+  it('falls back to manual Stop when drain compatibility is unproven', async () => {
+    const f = pairedFixture();
+    const unpaused = { ...f.deps, admission: () => ({...f.deps.admission(), stop: false}) };
+    expect(inspectQualifiedDesktopUpdate(f.id, unpaused))
+      .toMatchObject({state: 'blocked', reason: 'drain-interlock-unsupported'});
+    expect(await applyQualifiedDesktopUpdate(f.id, unpaused)).toMatchObject({state: 'blocked', reason: 'stop-required'});
+    expect(f.installations()).toBe(0);
+  });
+  it.each([{activeJobs: 1, unknown: 0}, {activeJobs: 0, unknown: 1}])('holds with active or unknown dispatcher work (%j)', async census => {
+    const f = pairedFixture();
+    const deps = { ...f.deps, hostCensus: () => ({state: 'supported' as const, ...census}) };
+    expect(inspectQualifiedDesktopUpdate(f.id, deps)).toMatchObject({state: 'blocked', reason: 'work-active-or-unknown'});
+    expect(await applyQualifiedDesktopUpdate(f.id, deps)).toMatchObject({state: 'blocked', reason: 'work-active-or-unknown'});
+    expect(f.installations()).toBe(0);
+  });
+});
 afterEach(() => {vi.unstubAllGlobals(); for (const root of roots.splice(0)) fs.rmSync(root, {recursive:true,force:true});});
 const {publicKey,privateKey} = generateKeyPairSync('ed25519'); const keyId = Buffer.from('1122334455667788','hex');
 const key = Buffer.from(`untrusted comment: ephemeral test key\n${Buffer.concat([Buffer.from('Ed'),keyId,publicKey.export({format:'der',type:'spki'}).subarray(-32)]).toString('base64')}\n`).toString('base64');
@@ -100,11 +154,17 @@ describe.skipIf(process.platform === 'win32')('signed paired installed update ad
     const install=vi.fn(async()=> 'applied' as const);
     expect(await applyQualifiedDesktopUpdate(f.id,f.deps,install)).toMatchObject({state:'applied',requiresReapproval:false});
   });
-  it('holds with a fixed reason before acknowledging exit when resident stop fails',async()=>{
+  it('holds with a fixed reason before acknowledging exit when resident quiescence is unproven',async()=>{
     const f=fixture(),progress=vi.fn(),install=vi.fn(async()=> 'applied' as const);
-    f.deps.residentStop=async()=>false;
+    f.deps.residentQuiescent=async()=>false;
     expect(await applyQualifiedDesktopUpdate(f.id,f.deps,install,progress)).toMatchObject({state:'blocked',reason:'resident-stop-failed'});
     expect(progress).not.toHaveBeenCalled();expect(install).not.toHaveBeenCalled();
+  });
+  it('rechecks resident quiescence after the native parent exits',async()=>{
+    const f=fixture(),progress=vi.fn(),install=vi.fn(async()=> 'applied' as const);
+    f.deps.residentQuiescent=vi.fn(async()=>false).mockResolvedValueOnce(true);
+    expect(await applyQualifiedDesktopUpdate(f.id,f.deps,install,progress)).toMatchObject({state:'blocked',reason:'resident-stop-failed'});
+    expect(progress).toHaveBeenCalledOnce();expect(install).not.toHaveBeenCalled();
   });
   it('admits the supported installed identity0644 while refusing writable replacement files',async()=>{
     const f=fixture(),identity=join(f.deps.packageRoot!,'dist/build-identity.json');fs.chmodSync(identity,0o644);
@@ -188,6 +248,8 @@ function pairedFixture(profile: DesktopUpdateProfileName = 'legacy-v1', currentR
   f.manifest.app.bytes=app.length;f.manifest.app.sha256=createHash('sha256').update(app).digest('hex');f.manifest.app.signature=signature(app);
   fs.writeFileSync(join(f.stage,'app.tar.gz'),app);f.publish();
   let previous={target:f.deps.packageRoot!};let pointer=previous;let held=false;let appOnly=false;let installations=0;let mutation:string|null=null;let beforeSwitch:(()=>Promise<void>)|null=null;
+  let beforeHealth = () => {};
+  let beforeRename = () => {};
   const io={home:f.home,clock:()=>0,sleep:async()=>{},fetchStatus:async()=>200,readCurrentPointer:()=>pointer,
     switchCurrentPointer:(_path:string,_before:unknown,target:string)=>{pointer={target};return pointer;},restoreCurrentPointer:()=>{pointer=previous;},
     writeInstallJournal:(_owner:string,_value:{phase:string})=>{},readBoundedFile:()=>record,exec:()=>({status:0,stdout:'3.25.0'})};
@@ -196,12 +258,16 @@ function pairedFixture(profile: DesktopUpdateProfileName = 'legacy-v1', currentR
     inspectLocalApp:(path:string)=>({path,inventory:f.manifest.app.inventorySha256,dev:1,ino:2,signer:f.manifest.app.signer}),
     inspectLocalAliases:()=>[],createLocalAliases:()=>[],removeCreatedAliases:()=>{},launchedAppIsOwned:()=>true,
     installLocalApp:async(input:Record<string,unknown>)=>{
-      installations++;expect(input.preserveSigned).toBe(true);expect(input.prepare).toBeUndefined();
+      expect(input.preserveSigned).toBe(true);expect(input.prepare).toBeUndefined();
       beforeSwitch=input.beforeSwitch as ()=>Promise<void>;
       if(held)f.admission.stop=false;
       const mutate=()=>fs.writeFileSync(join(f.home,'.local/share/ashlr/releases',f.manifest.source.revision,'dist/core/authority/fixture.js'),'changed after initial signed-package proof');
       if(mutation==='beforeSwitch')mutate();
+      await (input.beginUpdatePause as (()=>Promise<void>) | undefined)?.();
+      installations++;
       await beforeSwitch();
+      beforeRename();
+      (input.atSwitch as ()=>void)();
       if(mutation==='beforePointer'||mutation==='beforePointerChangedCurrent')mutate();
       if(mutation==='beforePointerChangedCurrent')pointer={target:join(f.home,'external-release')};
       try {await (input.commitPointer as ()=>Promise<void>)();}
@@ -211,6 +277,7 @@ function pairedFixture(profile: DesktopUpdateProfileName = 'legacy-v1', currentR
         throw error;
       }
       expect(await (input.health as ()=>Promise<boolean>)()).toBe(true);
+      beforeHealth();
     }};
   f.deps.download=async(url)=>{expect(url).toBe(f.manifest.cli.url);return cli;};f.deps.transaction=async()=>transaction;
   const seedCurrent=async()=> {
@@ -220,18 +287,222 @@ function pairedFixture(profile: DesktopUpdateProfileName = 'legacy-v1', currentR
     extractPinnedRuntimeArchive(await readPinnedRuntimeArchive({artifactPath,sha256:f.manifest.cli.sha256,revision:f.manifest.source.revision,version,identityProfile:profile}),target);
     pointer=previous={target};appOnly=true;f.deps.packageRoot=target;f.deps.currentPackageRoot=()=>target;
   };
-  return {...f,cli,record,seedCurrent,getPointer:()=>pointer,installations:()=>installations,clearStopBeforeSwitch:()=>{held=true;},mutateCandidateAt:(phase:string)=>{mutation=phase;}};
+  return {...f,cli,record,seedCurrent,getPointer:()=>pointer,installations:()=>installations,clearStopBeforeSwitch:()=>{held=true;},mutateCandidateAt:(phase:string)=>{mutation=phase;},
+    afterSwitch:(action:()=>void)=>{beforeHealth=action;}, beforeRename:(action:()=>void)=>{beforeRename=action;}};
 }
 
 describe.skipIf(process.platform === 'win32')('original package extraction and installed-byte readback',()=>{
+describe('transaction-owned desktop pause', () => {
+  function ownedFixture() {
+    const f = pairedFixture();
+    const marker = desktopUpdateInterlockPath(f.home);
+    f.admission.stop = false;
+    f.deps.operatorStop = () => fs.existsSync(join(f.home, '.ashlr', 'KILL')) ? 'active' : 'inactive';
+    f.deps.hostCensus = () => ({state:'supported',activeJobs:0,unknown:0});
+    f.deps.currentPackageRoot = () => f.getPointer().target;
+    const resident = {previous:{platform:'darwin' as const, homeDir:f.home, binPath:join(f.deps.packageRoot!, 'bin/ashlr')},
+      dev:1,ino:2,ctimeMs:3,target:'gui/42/ai.ashlr.daemon',processStart:'Wed Oct 7 12:00:00 2026'};
+    f.deps.ownedResident = () => ({...resident, runtime:fs.existsSync(marker) ? {loaded:true} : {loaded:true,pid:42}});
+    const resume = vi.fn<NonNullable<DesktopUpdateDependencies['resumeOwned']>>(async (capability, consume) => {
+      expect(capability).toEqual({transaction:f.id});
+      expect(consumeDesktopUpdateResume(capability)).toBeNull();
+      expect(consume({transaction:f.id})).toBeNull();
+      const proof = consume(capability)!;
+      expect(consume(capability)).toBeNull();
+      expect(proof.check()).toBe(true);
+      expect(proof.pid).toBe(42);
+      expect(proof.next.binPath).toBe(join(f.getPointer().target, 'bin/ashlr'));
+      expect(proof.release()).toBe(true);
+      expect(proof.release()).toBe(false);
+      return true;
+    });
+    f.deps.resumeOwned = resume;
+    return {...f, marker, resident, resume};
+  }
+
+  it('holds a matching pause through install and releases only with verified terminal proof', async () => {
+    const f = ownedFixture();
+    expect(inspectQualifiedDesktopUpdate(f.id, f.deps).state).toBe('ready');
+    f.afterSwitch(() => expect(fs.existsSync(f.marker)).toBe(true));
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'applied',reason:'applied'});
+    expect(f.resume).toHaveBeenCalledOnce();
+    expect(fs.existsSync(f.marker)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(join(f.stage, 'resident-terminal.json'), 'utf8'))).toMatchObject({stageId:f.id,state:'installed'});
+    expect(consumeDesktopUpdateResume({transaction:f.id})).toBeNull();
+  });
+
+  function verifyPrevious(f: ReturnType<typeof ownedFixture>) {
+    const surface = join(f.deps.packageRoot!, 'dist');
+    fs.writeFileSync(join(surface, 'authority-surface.json'), JSON.stringify({
+      v:1,roots:['dist/core/authority/fixture.js'],missingRoots:[],files:[{path:'dist/core/authority/fixture.js',
+        sha256:createHash('sha256').update('export const trusted = true;').digest('hex'),bytes:Buffer.byteLength('export const trusted = true;')}],
+      packages:[],unresolved:[],digest:f.admission.surfaceDigest,
+    }));
+    fs.mkdirSync(join(surface, 'core/authority'), {recursive:true});
+    fs.writeFileSync(join(surface, 'core/authority/fixture.js'), 'export const trusted = true;');
+  }
+
+  it('aborts at the drain deadline and uses the reserve to restore the previous runtime and local train', async () => {
+    const f = ownedFixture();
+    verifyPrevious(f);
+    const train = join(f.home, '.ashlr-runs');
+    const off = join(train, 'RELEASE_AUTORUN_DESKTOP_UPDATE_OFF');
+    fs.mkdirSync(train, {mode:0o700});
+    f.deps.ownedResident = () => ({...f.resident, runtime:{loaded:true,pid:42}});
+    const resume = f.deps.resumeOwned!;
+    f.deps.resumeOwned = async (capability, claim) => {
+      expect(f.deps.now()).toBe(20_000);
+      expect(fs.readFileSync(off, 'utf8')).toContain('phantom.release-train-desktop-pause.v1');
+      return resume(capability, claim);
+    };
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'blocked',reason:'owned-pause-cap-expired'});
+    expect(await readQualifiedDesktopUpdateResult(f.id, f.deps)).toMatchObject({state:'blocked',reason:'owned-pause-cap-expired'});
+    expect(f.installations()).toBe(0);
+    expect(f.resume).toHaveBeenCalledOnce();
+    expect(fs.existsSync(f.marker)).toBe(false);
+    expect(fs.existsSync(off)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(join(f.stage, 'resident-terminal.json'), 'utf8'))).toMatchObject({state:'aborted'});
+  });
+
+  it('does not cross the irreversible boundary when the reserve is spent, even if the wall clock moves', async () => {
+    const f = ownedFixture();
+    verifyPrevious(f);
+    let tick = 0;
+    f.deps.monotonicNow = () => tick;
+    f.beforeRename(() => {
+      expect(fs.existsSync(f.marker)).toBe(true);
+      f.deps.now = () => -100_000;
+      tick = 30_000;
+    });
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'blocked',reason:'owned-pause-cap-expired'});
+    expect(f.getPointer().target).toBe(f.deps.packageRoot);
+    expect(f.resume).toHaveBeenCalledOnce();
+    expect(fs.existsSync(f.marker)).toBe(false);
+  });
+
+  it('prefers a quiet queue but bounds deferral without bypassing work safety', async () => {
+    const f = ownedFixture();
+    const stagedAt = fs.statSync(f.stage).birthtimeMs;
+    f.deps.now = () => stagedAt + 299_999;
+    f.deps.queuedWork = () => true;
+    expect(inspectQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'blocked',reason:'waiting-for-low-activity'});
+    const progress = vi.fn();
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps, undefined, progress)).toMatchObject({state:'blocked',reason:'waiting-for-low-activity'});
+    expect(progress).not.toHaveBeenCalled();
+    expect(fs.existsSync(f.marker)).toBe(false);
+    f.deps.queuedWork = () => false;
+    expect(inspectQualifiedDesktopUpdate(f.id, f.deps).state).toBe('ready');
+    f.deps.queuedWork = () => true;
+    f.deps.now = () => stagedAt + 300_000;
+    expect(inspectQualifiedDesktopUpdate(f.id, f.deps).state).toBe('ready');
+    f.deps.hostCensus = () => ({state:'supported',activeJobs:1,unknown:0});
+    expect(inspectQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'blocked',reason:'work-active-or-unknown'});
+  });
+
+  it.each(['prior','later'] as const)('preserves a %s operator train pause', async kind => {
+    const f = ownedFixture();
+    const root = join(f.home, '.ashlr-runs');
+    const off = join(root, 'RELEASE_AUTORUN_OFF');
+    const ownedOff = join(root, 'RELEASE_AUTORUN_DESKTOP_UPDATE_OFF');
+    const provenance = join(root, 'RELEASE_TRAIN_PAUSED_BY_STOP');
+    fs.mkdirSync(root, {mode:0o700});
+    fs.writeFileSync(provenance, 'operator provenance', {mode:0o600});
+    if (kind === 'prior') fs.writeFileSync(off, 'operator pause', {mode:0o600});
+    f.afterSwitch(() => {
+      expect(fs.readFileSync(ownedOff, 'utf8')).toContain('phantom.release-train-desktop-pause.v1');
+      if (kind === 'later') {
+        fs.writeFileSync(off, 'operator pause', {mode:0o600});
+      }
+    });
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'applied',reason:'applied'});
+    expect(fs.readFileSync(off, 'utf8')).toBe('operator pause');
+    expect(fs.readFileSync(provenance, 'utf8')).toBe('operator provenance');
+    expect(fs.existsSync(f.marker)).toBe(false);
+    expect(fs.existsSync(ownedOff)).toBe(false);
+  });
+
+  it('does not clear either hold if local pause ownership is unproven', async () => {
+    const f = ownedFixture();
+    const root = join(f.home, '.ashlr-runs');
+    fs.mkdirSync(root, {mode:0o700});
+    const off = join(root, 'RELEASE_AUTORUN_DESKTOP_UPDATE_OFF');
+    f.afterSwitch(() => fs.writeFileSync(off, 'unknown provenance'));
+    f.deps.resumeOwned = async (capability, consume) => consume(capability)?.release() === true;
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'rollback-held',reason:'resume-local-pause-unverified'});
+    expect(fs.readFileSync(off, 'utf8')).toBe('unknown provenance');
+    expect(fs.existsSync(f.marker)).toBe(true);
+  });
+
+  it.each(['grant','expiry','surface','ownership','operator','installation'] as const)('holds after the switch if %s is not proven', async kind => {
+    const f = ownedFixture();
+    if (kind === 'surface') f.admission.surfaceDigest = 'f'.repeat(64);
+    f.afterSwitch(() => {
+      if (kind === 'grant') f.admission.grantId = 'changed';
+      if (kind === 'expiry') f.admission.active = false;
+      if (kind === 'ownership') {
+        const content = fs.readFileSync(f.marker);
+        fs.renameSync(f.marker, f.marker + '.replaced');
+        fs.writeFileSync(f.marker, content, {mode:0o600});
+      }
+      if (kind === 'operator') fs.writeFileSync(join(f.home, '.ashlr', 'KILL'), 'stop', {mode:0o600});
+      if (kind === 'installation') fs.writeFileSync(join(f.getPointer().target, 'dist/cli/index.js'), 'tampered');
+    });
+    const reason = kind === 'operator' || kind === 'ownership' ? 'resume-ownership-lost' :
+      kind === 'installation' ? 'resume-install-unverified' : kind === 'expiry' ? 'resume-grant-changed' : `resume-${kind}-changed`;
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'rollback-held',reason});
+    expect(await readQualifiedDesktopUpdateResult(f.id, f.deps)).toMatchObject({state:'rollback-held',reason});
+    expect(f.resume).not.toHaveBeenCalled();
+    expect(fs.existsSync(f.marker)).toBe(true);
+    if (kind === 'operator') expect(fs.readFileSync(join(f.home, '.ashlr', 'KILL'), 'utf8')).toBe('stop');
+  });
+
+  it('does not create the update pause when an installed host component is unsupported', async () => {
+    const f = ownedFixture();
+    f.deps.hostCensus = () => ({state:'unsupported',activeJobs:0,unknown:1});
+    expect(inspectQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'blocked',reason:'drain-interlock-unsupported'});
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'blocked',reason:'stop-required'});
+    expect(fs.existsSync(f.marker)).toBe(false);
+    expect(f.resume).not.toHaveBeenCalled();
+  });
+
+  it('keeps pre-existing operator Stop on the manual path even on a supported host', async () => {
+    const f = ownedFixture();
+    const kill = join(f.home, '.ashlr', 'KILL');
+    fs.writeFileSync(kill, 'operator Stop', {mode:0o600});
+    f.admission.stop = true;
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'applied',reason:'operator-restart-required'});
+    expect(f.resume).not.toHaveBeenCalled();
+    expect(fs.existsSync(f.marker)).toBe(false);
+    expect(fs.readFileSync(kill, 'utf8')).toBe('operator Stop');
+  });
+
+  it('keeps the interlock when rollback cannot prove the original managed pointer', async () => {
+    const f = ownedFixture();
+    f.mutateCandidateAt('beforePointerChangedCurrent');
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'rollback-held',reason:'resume-abort-unverified'});
+    expect(f.resume).not.toHaveBeenCalled();
+    expect(fs.existsSync(f.marker)).toBe(true);
+  });
+
+  it('does not restore a different resident that appears during drain', async () => {
+    const f = ownedFixture();
+    f.deps.ownedResident = () => ({...f.resident,
+      runtime:{loaded:true,pid:fs.existsSync(f.marker) ? 43 : 42}});
+    expect(await applyQualifiedDesktopUpdate(f.id, f.deps)).toMatchObject({state:'rollback-held',reason:'resume-resident-unverified'});
+    expect(f.installations()).toBe(0);
+    expect(f.resume).not.toHaveBeenCalled();
+    expect(fs.existsSync(f.marker)).toBe(true);
+  });
+});
+
   it('prepares both signed artifacts before Stop and reuses the verified download on apply',async()=>{
     const f=pairedFixture();
-    const admission=vi.fn(f.deps.admission), download=vi.fn(f.deps.download), residentStop=vi.fn(async()=>true);
-    Object.assign(f.deps,{admission,download,residentStop});
+    const admission=vi.fn(f.deps.admission), download=vi.fn(f.deps.download), residentQuiescent=vi.fn(async()=>true);
+    Object.assign(f.deps,{admission,download,residentQuiescent});
     f.admission.stop=false;
     expect(await prepareQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'ready'});
     expect(admission).not.toHaveBeenCalled();
-    expect(residentStop).not.toHaveBeenCalled();
+    expect(residentQuiescent).not.toHaveBeenCalled();
     expect(f.installations()).toBe(0);
     expect(fs.readFileSync(join(f.stage,'package.tgz'))).toEqual(f.cli);
     expect(fs.readdirSync(f.stage).sort()).toEqual(['app.tar.gz','manifest.json','manifest.sig','package.tgz']);
@@ -297,10 +568,10 @@ describe.skipIf(process.platform === 'win32')('original package extraction and i
   });
   it('replaces only the app when the current CLI matches the signed revision and package',async()=>{
     const f=pairedFixture('canonical-v2');await f.seedCurrent();const previous=f.getPointer();
-    const residentStop=vi.fn(async()=>true);f.deps.residentStop=residentStop;
+    const residentQuiescent=vi.fn(async()=>true);f.deps.residentQuiescent=residentQuiescent;
     expect(inspectQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'ready'});
     expect(await applyQualifiedDesktopUpdate(f.id,f.deps)).toMatchObject({state:'applied',requiresReapproval:false});
-    expect(f.getPointer()).toBe(previous);expect(residentStop).toHaveBeenCalledOnce();
+    expect(f.getPointer()).toBe(previous);expect(residentQuiescent).toHaveBeenCalledTimes(2);
   });
   it.each(['beforeSwitch','beforePointer'])('holds actual late candidate mutation at %s without publishing current',async phase=>{
     const f=pairedFixture();f.mutateCandidateAt(phase);

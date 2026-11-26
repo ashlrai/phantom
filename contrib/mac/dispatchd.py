@@ -13,12 +13,18 @@
 import sys, os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse, stat
 from concurrent.futures import ThreadPoolExecutor
 from typing import TypedDict
+import desktop_update_interlock
+# phantom.desktop-update-interlock.v1
+# phantom.desktop-update-dispatch-reconcile.v1
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
+if sys.argv[1:] == ["--desktop-update-census"]:
+    from process_snapshot import capture
+    print(json.dumps(desktop_update_interlock.census(H, Q, capture)))
+    raise SystemExit(0)
 # A kernel-held claim serializes the complete tick, including liveness sampling and
 # queue reconciliation. It is released automatically if the dispatcher crashes.
-_tick_claim = open(Q + "/dispatchd.tick.lock", "a")
-try: fcntl.flock(_tick_claim, fcntl.LOCK_EX | fcntl.LOCK_NB)
+try: _tick_claim = desktop_update_interlock.tick_claim(Q)
 except BlockingIOError: raise SystemExit(0)
 NOW = time.time(); TS = time.strftime("%F %T")
 MAX_LAUNCH_PER_TICK = 8; GRACE = 120; RAISE_GAP = 120
@@ -845,7 +851,7 @@ alive, publishing, cwdjobs = set(), set(), set()
 pat_wt = re.compile(re.escape(WTROOT) + r"/([A-Za-z0-9._-]+)")
 pat_pr = re.compile(re.escape(R) + r"/([A-Za-z0-9._-]+?)\.prompt\b")
 pat_ln = re.compile(r"launch\.sh ([A-Za-z0-9._-]+) ")
-pat_pb = re.compile(r"(?:publish|reap-one)\.sh ([A-Za-z0-9._-]+)")
+pat_pb = re.compile(r"(?:(?:publish|reap-one)\.sh|postrun_pr\.py) ([A-Za-z0-9._-]+)")
 pat_lj = re.compile(r"(?:launch\.sh|local_job\.py) ([A-Za-z0-9._-]+) ")   # session leaders spawned by the launch phase
 job_leaders = {}   # job -> (pid, start time) identities of its launch wrapper
 ps_result = PS_F.result()
@@ -885,6 +891,10 @@ for j in cwdjobs:
     if len(b) >= 4: alive.add(j)
 reaping = {os.path.basename(p)[:-8] for p in glob.glob(RUN + "/*.reaping")}
 publish_processes = set(publishing)   # a publisher may remove .base before its final auto-merge call
+_reconcile_only = desktop_update_interlock.held(H)
+_receipt_owners = alive | publish_processes | cwdjobs | set(job_leaders)
+if _reconcile_only:
+    desktop_update_interlock.retire_completed_reaps(R, RUN, _receipt_owners, NOW, GRACE)
 publishing = {j for j in publishing if os.path.exists("%s/%s.base" % (R, j))}
 alive -= (reaping | publishing)   # publish.sh children run inside the worktree
 for p in glob.glob(RUN + "/*.dispatched"):   # launch grace (fetch/worktree add before agent starts)
@@ -1143,7 +1153,8 @@ def job_watchdog():
             else:
                 ev("REAP TIMEOUT %s identity-unknown retry" % j)
         except Exception as e: log("job_watchdog err %s %s" % (j, type(e).__name__))
-job_watchdog()
+if not desktop_update_interlock.held(H):
+    job_watchdog()
 
 keep = set(rd(Q + "/keep.txt").split())
 def result(j):
@@ -1239,14 +1250,20 @@ def _handled(m, j, job, outcome):
     """Record one member as finished in the manifest before the next one starts, so a reap that a maintenance
     deadline interrupts resumes where it stopped instead of requeueing (and duplicating) members it already handled."""
     m.setdefault("handled", {})[job] = outcome; jsave(Q + "/batches/" + j + ".json", m)
-def release_batch(j, why, into=None):   # a bundle that never started: every member goes back as it was, attempt refunded
+def release_batch(j, why, into=None, deferred=None):   # a bundle that never started: every member goes back as it was, attempt refunded
     m = batch_manifest(j)
     if not m or m.get("reaped"): return
     done = m.get("handled") if isinstance(m.get("handled"), dict) else {}
     for x in _members(m):
         if x["job"] in done: continue
         open(RUN + "/" + x["job"] + ".batch-attempts", "w").write(str(max(0, batch_attempts(x["job"]) - 1)))
-        requeue_member(x, j, m.get("repo", ""), into); _handled(m, j, x["job"], "released")
+        if deferred is None:
+            requeue_member(x, j, m.get("repo", ""), into)
+        else:
+            lines = []
+            requeue_member(x, j, m.get("repo", ""), lines)
+            desktop_update_interlock.persist_requeue(deferred, lines)
+        _handled(m, j, x["job"], "released")
     m.update(reaped=NOW, released=why); jsave(Q + "/batches/" + j + ".json", m)
     ev("BATCH_RELEASED %s %d tasks requeued (%s)" % (j, len(m["members"]), why))
 def handoff_member(x, bid):
@@ -1346,12 +1363,15 @@ def launch_failed(j, ln, out, why_ev):
 # Lines a bundle reap requeued after ready.tsv was already written (the reap phase runs after launch), carried over
 # when the lock was busy at the end of the previous tick.
 _REQUEUE_PENDING = Q + "/requeue-pending.tsv"
-if os.path.exists(_REQUEUE_PENDING):
+_reconcile_only = _reconcile_only or desktop_update_interlock.held(H)
+_update_deferred = Q + "/" + desktop_update_interlock.DEFERRED if _reconcile_only else None
+if not _reconcile_only and os.path.exists(_REQUEUE_PENDING):
     requeue.extend(l for l in rd(_REQUEUE_PENDING).splitlines() if l.strip()); os.remove(_REQUEUE_PENDING)
 for p in glob.glob(RUN + "/*.dispatched"):
     j = os.path.basename(p)[:-11]
-    if j in alive: continue
+    if j in alive or (_reconcile_only and j in _receipt_owners): continue
     out = rd("%s/%s.launch" % (R, j))
+    requeue_start = len(requeue)
     if (ps_result.returncode and j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j)
             and not re.search(r"^(PAUSED|HELD|SKIPPED):", out, re.M)):
         alive.add(j); continue   # unknown liveness during a long fetch, even before .base exists
@@ -1360,24 +1380,29 @@ for p in glob.glob(RUN + "/*.dispatched"):
         os.remove(p); continue
     if re.search(r"^(PAUSED|HELD)", out, re.M):
         ln = rd(RUN + "/" + j + ".line").strip()
-        if batch_manifest(j): release_batch(j, "launch held")   # members go back alone; the bundle id never requeues
+        if batch_manifest(j): release_batch(j, "launch held", deferred=_update_deferred)   # members go back alone; the bundle id never requeues
         elif ln: requeue.append(ln)
         ev("LAUNCH_DEFERRED %s %s (requeued)" % (j, out.split(":")[0].strip()))
     elif re.search(r"^SKIPPED: BRANCH_IN_WORKTREE", out, re.M):
         ev("LAUNCH_SKIPPED %s BRANCH_IN_WORKTREE (not a failure, not requeued; see %s.launch)" % (j, j))
-        release_batch(j, "launch skipped")
+        release_batch(j, "launch skipped", deferred=_update_deferred)
     elif not out.strip() and not base(j):
         ln = rd(RUN + "/" + j + ".line").strip()
-        if batch_manifest(j): release_batch(j, "launch interrupted"); ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
+        if batch_manifest(j): release_batch(j, "launch interrupted", deferred=_update_deferred); ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
         else: launch_failed(j, ln, out, "LAUNCH_INTERRUPTED")
     else:
         ln = rd(RUN + "/" + j + ".line").strip()
         ev("LAUNCH_FAILED %s (see %s.launch)" % (j, j))
         if FORK_RX.search(out): fork_seen.append(NOW); ev("FORK_FAILED %s (concurrency backoff)" % j)
-        if batch_manifest(j): release_batch(j, "launch failed")
+        if batch_manifest(j): release_batch(j, "launch failed", deferred=_update_deferred)
         else: launch_failed(j, ln, out, "LAUNCH_RETRY")
     metric(dict(event="launch_terminal", job=j, reason="launcher-exited"))
+    if _update_deferred is not None:
+        desktop_update_interlock.persist_requeue(_update_deferred, requeue[requeue_start:])
     os.remove(p)
+
+if _reconcile_only:
+    raise SystemExit(0)
 
 # ---- (a) reap
 running = {l: 0 for l in LANES}; kept = []; nreap = len(reaping); local_mid = 0
@@ -1518,6 +1543,7 @@ def postrun_pr_start(j, wt, b, res):
 def reap_worktrees():
     global nreap, publish_busy, drip_budget
     for bp in _reap_candidates:
+        if desktop_update_interlock.held(H): return
         j = os.path.basename(bp)[:-5]; b = base(j)
         if not b or not JID.match(j): continue
         wt, pool = b[2], b[3]
@@ -1922,6 +1948,8 @@ def qlock(who="dispatchd", timeout=None):
     return fd
 lk = qlock("dispatchd-read")
 if lk is None: log("ready.lock busy; tick skipped"); raise SystemExit(0)
+if not desktop_update_interlock.held(H):
+    desktop_update_interlock.restore_requeue(Q)
 _raw = rd(Q + "/ready.tsv").splitlines()
 # One recovery attempt gets its own id: never overwrite failed logs or move an
 # immutable launched route. Persist before queueing so tick replay cannot multiply it.
@@ -2201,7 +2229,7 @@ elif not _now_reason and _prev: ev("LOADGATE clear")
 _pw = jload(Q + "/admission.json", {}).get("warnings") or []
 if GATE["warnings"] and _pw != GATE["warnings"]: ev("LOADGATE warn (non-tripping): " + "; ".join(GATE["warnings"]))
 if disk_hard_stop: ev("DISKGUARD hard_stop %.0fG < %.0fG, no launches" % (disk_free_gb, DISK_HARD_STOP_GB))
-if not pause and not disk_hard_stop and not GATE["tripped"]:
+if not pause and not desktop_update_interlock.held(H) and not disk_hard_stop and not GATE["tripped"]:
     cand = []
     for l in lines:
         if parked_row(l):
@@ -2508,6 +2536,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 ev("DONE-NOOP %s [%s]" % (j, reason)); continue
         if empty_gate(j, repo, pf, lane): continue
         batch = form_batch(f)
+        if desktop_update_interlock.held(H):
+            rest.append(line)
+            continue
         if batch:   # leases first: a line another bundle already holds is dropped; too few left launches solo
             picked, blane, size = batch; area = picked[0]["area"]
             bid = batcher.batch_id(repo, area, [c["job"] for c in picked])
@@ -2687,7 +2718,7 @@ concurrency.save(CONC_PATH, CONC)
 # Terminal cleanup is independent of publishing, even when publish is held.
 # Helpers are installed only through reviewed host machinery; never run repo copies.
 _disk_stamp = Q + "/.disk-maintenance.stamp"
-if not os.path.exists(_disk_stamp) or NOW - os.path.getmtime(_disk_stamp) >= 600:
+if not desktop_update_interlock.held(H) and (not os.path.exists(_disk_stamp) or NOW - os.path.getmtime(_disk_stamp) >= 600):
     open(_disk_stamp, "w").close()
     for _helper, _args in [("disk-growth.py", ["--json"])] + [
             ("wt_closed_prune.py", ["--apply", "--json", "--wtroot", root])
@@ -3077,7 +3108,7 @@ def roll(key):
 st["rollup_24h"] = {"by_lane": roll("lane"), "by_tier": roll("tier")}
 st["verified_completion"] = verified_completion(mets, NOW, missing=not os.path.exists(MD + "/jobs.jsonl"))
 stamp = MD + "/.outcomes.stamp"
-if not os.path.exists(stamp) or NOW - os.path.getmtime(stamp) > 600:
+if not desktop_update_interlock.held(H) and (not os.path.exists(stamp) or NOW - os.path.getmtime(stamp) > 600):
     open(stamp, "w").close()
     spawn(["/bin/bash", R + "/bin/metrics-outcomes.sh"], stdin=subprocess.DEVNULL, stdout=open(MD + "/outcomes.log", "a"),
                      stderr=subprocess.STDOUT, start_new_session=True)

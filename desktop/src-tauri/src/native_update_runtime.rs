@@ -230,6 +230,38 @@ mod platform {
         let home = crate::fleet_ops::home_dir().ok_or("host-unavailable")?;
         launch_at(&home, stage, verb)
     }
+    fn approved_consumer_stage_exists(home: &std::path::Path) -> bool {
+        fs::read_dir(home.join(".ashlr/updates/consumer-staging"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| {
+                entry.file_name().to_str()
+                    .and_then(|name| name.strip_prefix("upgrade-"))
+                    .is_some_and(policy::stage_id)
+                    && entry.path().join("approval.json").is_file()
+                    && !entry.path().join("consumer-attempt.json").exists()
+                    && !entry.path().join("approval-closed.json").exists()
+            })
+    }
+
+    fn retry_approved_consumer(home: &std::path::Path) -> Result<bool, &'static str> {
+        if !approved_consumer_stage_exists(home) {
+            return Ok(false);
+        }
+        let bin = current_cli(home)?;
+        let path_env = crate::fleet_ops::resolve_cli(home).map_err(|_| "host-unavailable")?.path_env;
+        let status = Command::new(bin)
+            .args(["desktop", "update", "retry-approved"])
+            .env_clear()
+            .envs(crate::fleet_ops::base_env(home, &path_env))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|_| "host-unavailable")?;
+        Ok(status.code() == Some(75))
+    }
     fn launch_at(
         home: &std::path::Path,
         stage: &Stage,
@@ -254,7 +286,11 @@ mod platform {
             "--json",
         ]);
         cmd.env_clear()
-            .envs(crate::fleet_ops::base_env(&home, &stage.path_env));
+            .envs(crate::fleet_ops::base_env(&home, &stage.path_env))
+            .env(
+                "PHANTOM_NATIVE_UPDATE_INTERLOCK",
+                "phantom.desktop-update-interlock.v1",
+            );
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -337,7 +373,7 @@ mod platform {
             Phase::WaitingForAppQuit
         } else if matches!(
             result.reason.as_deref(),
-            Some("stop-required" | "work-active-or-unknown")
+            Some("stop-required" | "work-active-or-unknown" | "drain-interlock-unsupported" | "waiting-for-low-activity")
         ) {
             Phase::WaitingForIdle
         } else {
@@ -415,8 +451,27 @@ mod platform {
             && inner.state.phase == Phase::WaitingForIdle
             && elapsed >= Duration::from_secs(30)
     }
-    async fn check(app: AppHandle, updates: Updates, epoch: u64) {
+    async fn check(app: AppHandle, updates: Updates, epoch: u64, window: Option<Stage>) {
         let result = async {
+            if let Some(home) = crate::fleet_ops::home_dir() {
+                let pending = tauri::async_runtime::spawn_blocking(move || retry_approved_consumer(&home))
+                    .await
+                    .map_err(|_| "host-unavailable")??;
+                if pending {
+                    change(&app, &updates, epoch, Phase::WaitingForIdle, Some("waiting-for-low-activity"));
+                    return Ok(());
+                }
+            }
+            if let Some(stage) = window {
+                let checked = tauri::async_runtime::spawn_blocking(move || inspect(&stage))
+                    .await
+                    .map_err(|_| "host-status-unavailable")??;
+                return if change(&app, &updates, epoch, inspected_phase(&checked), checked.reason.as_deref()) {
+                    Ok(())
+                } else {
+                    Err("disabled")
+                };
+            }
             let (key, endpoint, _repository) = trusted_config()?;
             if std::env::consts::ARCH != "aarch64" {
                 return Err("unsupported-platform");
@@ -620,7 +675,9 @@ mod platform {
                 let retry_stage = handle.try_state::<Updates>().is_some_and(|updates| {
                     retry_idle_stage(&lock(&updates.0), now.saturating_sub(checked))
                 });
-                if retry_stage || check_due(checked, polled, now) {
+                let retry_consumer = now.saturating_sub(checked) >= Duration::from_secs(30)
+                    && crate::fleet_ops::home_dir().is_some_and(|home| approved_consumer_stage_exists(&home));
+                if retry_consumer || retry_stage || check_due(checked, polled, now) {
                     refresh(&handle);
                     checked = now;
                 }
@@ -673,6 +730,10 @@ mod platform {
         if !i.state.enabled || i.checking || i.handoff {
             return;
         }
+        let window = (i.state.phase == Phase::WaitingForIdle
+            && i.state.reason.as_deref() == Some("waiting-for-low-activity"))
+        .then(|| i.stage.clone())
+        .flatten();
         i.checking = true;
         i.state.phase = Phase::Checking;
         i.state.reason = None;
@@ -684,7 +745,7 @@ mod platform {
         let h = app.clone();
         let u = updates.inner().clone();
         tauri::async_runtime::spawn(async move {
-            let _ = futures_util::future::Abortable::new(check(h, u, epoch), registration).await;
+            let _ = futures_util::future::Abortable::new(check(h, u, epoch, window), registration).await;
         });
     }
     fn quit_sequence(
@@ -867,6 +928,10 @@ mod platform {
             assert_eq!(inspected_phase(&r), Phase::WaitingForIdle);
             r.reason = Some("work-active-or-unknown".into());
             assert_eq!(inspected_phase(&r), Phase::WaitingForIdle);
+            r.reason = Some("waiting-for-low-activity".into());
+            assert_eq!(inspected_phase(&r), Phase::WaitingForIdle);
+            r.reason = Some("owned-pause-cap-expired".into());
+            assert_eq!(inspected_phase(&r), Phase::AdoptionHeld);
             r.reason = Some("authority-reapproval-required".into());
             assert_eq!(inspected_phase(&r), Phase::AdoptionHeld);
         }

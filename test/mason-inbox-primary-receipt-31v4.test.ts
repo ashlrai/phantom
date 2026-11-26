@@ -1,10 +1,15 @@
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createChannelReceiver } from '../src/core/fleet/channel-envelope.js';
 import { appendInboxEntry } from '../src/core/fleet/mason-inbox.js';
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...fs, appendFile: vi.fn(fs.appendFile) };
+});
 
 let runsDir: string;
 const when = new Date('2026-01-02T05:04:05Z');
@@ -17,10 +22,19 @@ afterEach(async () => { await rm(runsDir, { recursive: true, force: true }); });
 
 describe('primary inbox receipt', () => {
   it('returns only a generic failure when the primary append fails', async () => {
+    const append = vi.mocked(appendFile);
+    append.mockClear().mockRejectedValueOnce(Object.assign(new Error('private append failure'), { code: 'ENOSPC' }));
+    const result = await appendInboxEntry('fake message', { runsDir, now: () => when });
+    expect(append).toHaveBeenCalledExactlyOnceWith(inboxPath(), expect.any(String), { encoding: 'utf8', flag: 'a' });
+    expect(result).toEqual({ ok: false, reason: 'write-failed' });
+    await expect(readFile(join(runsDir, 'dispatch-events.log'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('refuses an inbox path that is a directory without writing a receipt', async () => {
     await mkdir(join(runsDir, 'leader'));
     await mkdir(inboxPath());
     const result = await appendInboxEntry('fake message', { runsDir, now: () => when });
-    expect(result).toEqual({ ok: false, reason: 'write-failed' });
+    expect(result).toEqual({ ok: false, reason: 'inbox-permission-denied' });
     await expect(readFile(join(runsDir, 'dispatch-events.log'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 

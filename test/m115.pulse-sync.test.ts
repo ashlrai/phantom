@@ -384,13 +384,19 @@ describe('pulse-sync — command dispatch (cloud queues → local executes)', ()
 
     const out = await pollAndApplyCommands(cfg);
 
-    expect(goals.createGoalIfAbsent).toHaveBeenCalledTimes(1);
-    expect(inbox.setStatus).toHaveBeenCalledTimes(2);
-    expect(inbox.setStatus).toHaveBeenCalledWith('p-a', 'approved', expect.any(String));
-    expect(inbox.setStatus).toHaveBeenCalledWith('p-r', 'rejected', expect.any(String));
-    expect(policy.enroll).toHaveBeenCalledTimes(1);
-    expect(out.map((c) => c.outcome)).toEqual(['done', 'done', 'done', 'done']);
-    expect(exporter.patchFleetCommand).toHaveBeenCalledTimes(4);
+    const diagnostic = `M115 mixed batch: ${JSON.stringify({
+      outcomes: out,
+      polls: vi.mocked(exporter.pollFleetCommands).mock.calls.length,
+      claims: vi.mocked(exporter.claimFleetCommand).mock.calls.length,
+      writebacks: vi.mocked(exporter.patchFleetCommand).mock.calls.length,
+    })}`;
+    expect(goals.createGoalIfAbsent, diagnostic).toHaveBeenCalledTimes(1);
+    expect(inbox.setStatus, diagnostic).toHaveBeenCalledTimes(2);
+    expect(inbox.setStatus, diagnostic).toHaveBeenCalledWith('p-a', 'approved', expect.any(String));
+    expect(inbox.setStatus, diagnostic).toHaveBeenCalledWith('p-r', 'rejected', expect.any(String));
+    expect(policy.enroll, diagnostic).toHaveBeenCalledTimes(1);
+    expect(out.map((c) => c.outcome), diagnostic).toEqual(['done', 'done', 'done', 'done']);
+    expect(exporter.patchFleetCommand, diagnostic).toHaveBeenCalledTimes(4);
   });
 
   it('runPulseSync wires the full round-trip: tick + commands + deps', async () => {

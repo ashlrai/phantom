@@ -735,6 +735,36 @@ describe('identity-bound Phantom native migration', () => {
     f.processes(''); await expect(requireLocalQuiescence(f.io)).resolves.toBeUndefined();
     expect(f.calls.some((c) => ['kill', 'osascript', 'launchctl'].includes(c[0]!))).toBe(false);
   });
+  it('accepts only the matching transaction-owned Stop and still checks leases', async () => {
+    const f = appIo();
+    f.kill(false);
+    const updatePause = {stage:'a'.repeat(32),manifest:'b'.repeat(64),nonce:'c'.repeat(32),deadline:42};
+    const io = {...f.io, updatePause, ownsUpdatePause:() => true, lstat:(path:string) =>
+      path.endsWith('/DESKTOP_UPDATE_STOP') ? {isFile:true,isSymbolicLink:false} : f.io.lstat(path),
+      readBoundedFile:() => JSON.stringify(updatePause) + '\n'};
+    await expect(requireLocalQuiescence(io)).resolves.toBeUndefined();
+    f.unknown(1);
+    await expect(requireLocalQuiescence(io)).rejects.toThrow(/leases/);
+    f.unknown(0);
+    await expect(requireLocalQuiescence({...io, updatePause:{...updatePause, nonce:'d'.repeat(32)}})).rejects.toThrow(/ownership|owns/);
+    f.kill(true);
+    await expect(requireLocalQuiescence(io)).rejects.toThrow(/ownership|owns/);
+  });
+  it('runs the final pause-budget check after preparation and before either exclusive move', async () => {
+    const f = appIo();
+    const selected = selectLocalApp(HASH, f.io);
+    f.kill(false);
+    await expect(installLocalApp({
+      ...nativeInput(selected),
+      beginUpdatePause: async () => {
+        expect(f.calls.some(call => call.includes('archive-check')) ||
+          f.calls.some(call => call.includes('-k'))).toBe(true);
+        f.kill(true);
+      },
+      atSwitch: () => { throw new Error('owned-pause-cap-expired'); },
+    }, f.io)).rejects.toThrow('owned-pause-cap-expired');
+    expect(f.calls.some(call => call[0] === 'exclusive-rename')).toBe(false);
+  });
   it.each(['.resource-quota-refresh-pending.json', '.resource-quota-refresh.lock'])('holds installation while quota collector %s remains, without reading its contents', async name => {
     const f = appIo(); const selected = selectLocalApp(HASH, f.io);
     const ledger = `${HOME}/.ashlr/account-connections/ledger`;

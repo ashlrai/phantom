@@ -78,6 +78,7 @@ Every command, grouped by topic.
     init [--yes]                                                                                                         Idempotent onboarding: ensure config, detect phantom + models, set editor.
     install <url|owner/repo|name>                                                                                        Install a pinned Node tool and its project MCP registration; --dry-run previews, --json reports.
     desktop install [--upgrade [--require-app] [--to x.y.z] | --rollback] [--apply]                                      Inspect signed macOS arm64 artifacts; explicitly install on an empty system or upgrade/roll back a managed CLI after Stop/drain. Never resumes authority.
+    desktop update status --json                                                                                         Read local update-drain compatibility and hosted release-train pause status.
     desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]                                    Operate macOS desktop apps through the desktop-operator helper. Reads are free. focus, scroll, type and click post a bus intent first. KILL and comms pause block writes.
     apps log [--limit <n>] [--json]                                                                                      Every app open, focus, quit and restart on record in the feed, newest first, with its outcome. Read-only.
     apps list|open|quit|restart|focus|status [<app>] [--json] [--dry-run] | apps request open|quit|focus <app> [--json]  Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Per-app action policy; logged to the feed. Requests and unsafe quits go to needs-you.
@@ -163,6 +164,8 @@ Every command, grouped by topic.
     wiki status [repo]                                 Wiki freshness: generated at <commit>, N pages stale.
     wiki map [repo] [--focus <node-or-file>] [--json]  Commit-pinned modules, declarations and source relationships for an enrolled repo.
     wiki brain [repo] [--focus <node-id>] [--json]     Commit-aware evidence links for an enrolled repo.
+    wiki brain stats --json                            Fleet and Cloud merge rates with and without Wiki slices.
+    wiki ecosystem --json                              Commit-pinned relationships across the signed repository scope.
 
   Autonomy - enrollment, backlog, daemon, inbox, goals
     bots list|show|create --dry-run|explain|seats|handoffs|handoff --seat <id> [--apply] [--json]                                                                                                                                                                                                                                                                                                                             Provider-neutral bot metadata, seat quota and draining handoffs. handoffs plans every seat; handoff --seat is dry-run unless --apply.

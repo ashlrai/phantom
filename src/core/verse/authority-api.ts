@@ -63,6 +63,7 @@ import { ledgerSnapshot, readLedger, withLedgerTransaction } from '../authority/
 import {
   buildDefaultGrantPayload,
   buildReapprovalGrantPayload,
+  verifyStandingGrant,
   describeGrantScope,
   FLEET_CANARY_REPO,
   installStandingGrant,
@@ -811,6 +812,30 @@ export async function buildStandingGrantDraft(
     diff: grantScopeDiff(current, payload),
     editable,
   };
+}
+
+export async function draftDesktopUpdateGrant(candidateSurface: string, nowMs: number): Promise<StandingGrantV1> {
+  const [keyId, hostBinding] = [await signingKeyId(), currentHostBinding()];
+  if (!hostBinding) throw new AuthorityDraftError('host-unknown', 'Cannot bind the update grant to this Mac.');
+  const installed = readInstalledGrant();
+  const snapshot = ledgerSnapshot('prefix');
+  if (installed.state === 'ok' && snapshot.chain === 'ok') {
+    const prior = installed.envelope.payload;
+    const proof = verifyStandingGrant(installed.envelope, {
+      nowMs: Math.min(nowMs, Date.parse(prior.expiresAt) - 1), hostBinding,
+      surfaceDigest: prior.authoritySurfaceDigest, minGrantSeq: Math.max(snapshot.index.maxAcceptedGrantSeq, snapshot.index.minGrantSeq),
+      revokedGrantIds: snapshot.index.revokedGrantIds,
+    }, STANDING_GRANT_TRUST_ROOTS);
+    if (proof.ok && snapshot.index.lastAccepted?.envelopeDigest === proof.envelopeDigest) {
+      const draft = buildReapprovalGrantPayload(prior, ledgerPositionIndex(prior), {
+        nowMs, grantSeq: nextGrantSeq(), grantId: randomBytes(16).toString('hex'), keyId, hostBinding,
+        authoritySurfaceDigest: candidateSurface,
+      });
+      return {...draft, repos:prior.repos, rollout: {...draft.rollout, autoAdvance: prior.rollout.autoAdvance}};
+    }
+  }
+  const draft = await buildStandingGrantDraft('new', nowMs);
+  return {...draft.payload, authoritySurfaceDigest:candidateSurface};
 }
 
 /** Rollout position straight from the ledger for a grant that no longer verifies (paused / expired). */

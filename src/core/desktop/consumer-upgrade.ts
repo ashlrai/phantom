@@ -2,35 +2,60 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-import {basename, join} from 'node:path';
+import {posix} from 'node:path';
 import {canonicalJson} from '../authority/canonical-json.js';
 import {verifyAuthoritySurfaceAt} from '../authority/surface.js';
 import {readPinnedRuntimeArchive, extractPinnedRuntimeArchive, type PinnedRuntimeArchiveOptions} from '../local-runtime/archive.js';
 import {fsyncDirectory} from '../util/durability.js';
+import {appendBusInbox} from '../fleet/bus-inbox.js';
+import {validateBusEnvelope, type BusEnvelope} from '../fleet/bus-envelope.js';
 import {ConsumerInstallHeld, checkConsumerQuiescence, quiescenceHold, createConsumerInstallDependencies, directory, parents, owned, regular, write, sha, ioRead, packageReady,
   type ConsumerInstallDependencies, type ConsumerInstallIo, type ConsumerTransaction} from './consumer-install.js';
-import {extractSignedAppArchive} from './qualified-update.js';
+import {applyConsumerOwnedUpdate, createDesktopUpdateDependencies, extractSignedAppArchive, planConsumerOwnedUpdate,
+  planApprovedConsumerUpdate, verifyConsumerApprovalStage,
+  type ConsumerOwnedUpdatePlan, type DesktopUpdateDependencies} from './qualified-update.js';
+import {consumerApprovalAuthority, type ConsumerApprovalAuthority, type ConsumerApprovalRequest} from './consumer-approval.js';
 import {verifyCompatibleUpdateManifest, verifyMinisign, verifyUpdateBundleRecord, type CompatibleUpdateManifest} from './update-manifest.js';
+
+const {basename, join}=posix;
 
 export interface ConsumerUpgradeDependencies extends ConsumerInstallDependencies {
   smokeVersion(launcher: string): Promise<string|null>;
   residentStop(): Promise<{ok:boolean; reason?:string}>;
+  ownedUpdate?: {
+    dependencies: DesktopUpdateDependencies;
+    quit(path:string):boolean;
+    post?: typeof appendBusInbox;
+    authority?: ConsumerApprovalAuthority;
+  };
 }
 export interface ConsumerUpgradeOptions {mode:'upgrade'|'rollback'; apply:boolean; requireApp:boolean; to?:string}
 type Release = {version:string; release:string};
 export interface ConsumerUpgradeResult {
   schema:'desktop-upgrade.v1'; mode:'upgrade'|'rollback';
   state:'ready'|'current'|'upgraded'|'reverted'|'rolled-back'|'held'; reason:string|null;
-  applied:boolean; authorityResumed:false; installed:Release|null; candidate:Release|null; previous:Release|null;
+  applied:boolean; authorityResumed:boolean; installed:Release|null; candidate:Release|null; previous:Release|null;
+  busAudit?: 'posted' | 'duplicate' | 'unavailable';
+  ownerAction?: {reason:string; command:string; touchId:true};
+  scheduleHint?: 'next-low-activity-window';
   path?: string; remedyCommand?: string; tightenedPaths?: readonly string[];
   app:{state:'current'|'update-available'|'needs-owner'|'absent'|'unknown'; reason:string|null};
   stop:{engaged:boolean|null; drained:boolean|null; reason:string|null; command:'phm authority stop'};
   daemon:{stop:{command:'phm authority resident stop'; performed:boolean; confirmation:'none'};
-    restart:{command:'phm authority resident start'; performed:false; ownerConfirmation:true; touchId:boolean|'unknown'; reason:string|null}};
+    restart:{command:'phm authority resident start'; performed:boolean; ownerConfirmation:boolean; touchId:boolean|'unknown'; reason:string|null;
+      coveredBy?: ConsumerOwnedUpdatePlan['coveredBy']}};
   steps:string[];
 }
 const semver=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const releasePattern=/^[a-f0-9]{40}$/;
+const stagePattern=/^[a-f0-9]{32}$/;
+const approvalLifetime=30*60_000;
+const requestFile='approval-request.json';
+const signedFile='approval.json';
+const attemptFile='consumer-attempt.json';
+const approvalClosedFile='approval-closed.json';
+const consumerStaging=(home:string)=>join(home,'.ashlr/updates/consumer-staging');
+const consumerStage=(home:string,id:string)=>join(consumerStaging(home),`upgrade-${id}`);
 class Held extends Error {}
 function need(value:unknown,reason:string):asserts value {if(!value)throw new Held(reason);}
 function heldReason(error:unknown,r:ConsumerUpgradeResult):string|null {
@@ -57,6 +82,7 @@ interface Admission {
   pins?:PinnedRuntimeArchiveOptions; journal?:Journal; attempted:boolean;
   selected?:NonNullable<ReturnType<ConsumerTransaction['selectLocalApp']>>;
   source?:ReturnType<ConsumerTransaction['inspectLocalApp']>;
+  ownedPlan?: ConsumerOwnedUpdatePlan;
   retryCommand:string;
 }
 const appPaths=['/Applications/Phantom.app','/Applications/Ashlr.app'];
@@ -73,6 +99,7 @@ type Journal={schema:'desktop-upgrade-journal.v1'; previous:Release; current:Rel
 const admissions=new WeakMap<ConsumerUpgradeResult,Admission>();
 function freeze(r:ConsumerUpgradeResult):ConsumerUpgradeResult {
   for(const value of Object.values(r))if(value && typeof value==='object')Object.freeze(value);
+  if(r.daemon.restart.coveredBy)Object.freeze(r.daemon.restart.coveredBy);
   Object.freeze(r.daemon.stop);Object.freeze(r.daemon.restart);return Object.freeze(r);
 }
 function initial(mode:ConsumerUpgradeOptions['mode']):ConsumerUpgradeResult {
@@ -127,7 +154,7 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
       need(options.to===undefined||semver.test(options.to),'invalid-version');
       const url=options.to?`https://github.com/ashlrai/phantom/releases/download/v${options.to}/latest.json`:'https://github.com/ashlrai/phantom/releases/latest/download/latest.json';
       const raw=await deps.download(url,128*1024);need(raw.length<=128*1024,'discovery-size');const latest=JSON.parse(raw.toString());
-      const m=verifyCompatibleUpdateManifest(latest.phantom,deps.trust).manifest;
+      const {manifest:m,digest}=verifyCompatibleUpdateManifest(latest.phantom,deps.trust);
       need(m.schemaVersion===2 && (!options.to||m.version===options.to),'release-mismatch');
       need(canonicalJson(latest)===canonicalJson({version:m.version,platforms:{'darwin-aarch64':{url:m.app.url,signature:m.app.signature}},phantom:latest.phantom}),'discovery-mismatch');
       r.candidate={version:m.version,release:m.source.revision};r.previous=r.installed;
@@ -145,11 +172,39 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
       a.destination=join(releases,m.source.revision);
       if(order===0) need(a.destination===before.target,'installed-current-unverified');
       else try {fs.lstatSync(a.destination);throw new Held('release-exists');}catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+      const ownedUpdate = deps.ownedUpdate;
+      const ownedDeps = ownedUpdate?.dependencies;
+      const host = ownedDeps?.hostCensus?.();
+      const admission = ownedDeps?.admission();
+      const auto = Boolean(a.selected && r.app.state==='update-available' && admission?.surfaceDigest && ownedDeps?.ownedResident &&
+        (host?.state==='absent' || host?.state==='supported') && ownedDeps.operatorStop?.()==='inactive');
+      const askReason = auto && (admission!.grantState==='none' ? 'update-grant-missing' :
+        admission!.grantState==='expired' ? 'update-grant-expired' :
+        admission!.surfaceDigest!==m.authoritySurfaceDigest ? 'update-surface-changed' :
+        !admission!.active ? 'update-grant-unavailable' : null);
+      const authority = askReason && ownedUpdate?.authority ? ownedUpdate.authority : null;
+      const authoritySnapshot = authority?.snapshot();
+      const now = ownedDeps?.now() ?? Date.now();
+      const expiresAtMs = (Math.floor(now / approvalLifetime) + 1) * approvalLifetime;
+      const stageId = authoritySnapshot === undefined ? randomBytes(16).toString('hex') :
+        sha(Buffer.from(canonicalJson({digest, previous:before.target, authoritySnapshot, expiresAtMs}))).slice(0,32);
+      const stage = consumerStage(deps.home,stageId), staging = consumerStaging(deps.home);
+      parents(deps.home,staging,true,tightenedPaths);
+      if (authority && fs.existsSync(stage)) {
+        const request = readApprovalRequest(deps.home,stageId);
+        need(request.authority===authoritySnapshot && request.previous===before.target &&
+          request.binding.releaseDigest===digest && request.binding.expiresAtMs>now,'update-stage-unverified');
+        if (fs.existsSync(join(stage,attemptFile))) {r.reason='update-attempt-already-recorded';return freeze(r);}
+        if (fs.existsSync(join(stage,signedFile))) {
+          r.reason='update-approved';r.scheduleHint='next-low-activity-window';return freeze(r);
+        }
+        return reportApprovalRequest(r,request,askReason as string,ownedUpdate?.post);
+      }
       const downloaded=await Promise.all([deps.download(m.app.url,m.app.bytes),deps.download(m.cli.url,m.cli.bytes)]);
       for(const [i,artifact] of [m.app,m.cli].entries()) {
         try {need(downloaded[i]!.length===artifact.bytes&&sha(downloaded[i]!)===artifact.sha256,'artifact-mismatch');verifyMinisign(downloaded[i]!,artifact.signature,deps.trust.publicKey);}catch {throw new Held('artifact-mismatch');}
       }
-      const staging=join(deps.home,'.ashlr/updates/consumer-staging');parents(deps.home,staging,true,tightenedPaths);const stage=fs.mkdtempSync(join(staging,'upgrade-'));fs.chmodSync(stage,0o700);
+      fs.mkdirSync(stage,{mode:0o700});
       write(join(stage,'app.tar.gz'),downloaded[0]!);write(join(stage,'package.tgz'),downloaded[1]!);
       try {
         const appStage=join(stage,'app');fs.mkdirSync(appStage,{mode:0o700});const appRoot=extractSignedAppArchive(downloaded[0]!,appStage);
@@ -164,6 +219,32 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
       if(r.app.state==='current')verifyUpdateBundleRecord(io.readBoundedFile(join(a.selected!.path,'Contents/Resources/phantom-release.json'),8192),m);
       if(order===0&&r.app.state==='current'){r.state='current';r.reason='already-current';return freeze(r);}
       touchId(r,before.target,m.authoritySurfaceDigest);
+      if (ownedDeps && a.selected && r.app.state === 'update-available') {
+        if (host?.state === 'unsupported') r.daemon.restart.reason='drain-interlock-unsupported';
+        if (auto) {
+          write(join(stage,'manifest.json'),Buffer.from(latest.phantom.manifestText));
+          write(join(stage,'manifest.sig'),Buffer.from(latest.phantom.signature));
+          fsyncDirectory(stage); fsyncDirectory(staging);
+          if (askReason) {
+            need(authority && authoritySnapshot!==undefined,'update-grant-unavailable');
+            const grant = await authority.draft(m.authoritySurfaceDigest,now);
+            const request:ConsumerApprovalRequest = {
+              binding:{transaction:stageId, releaseDigest:digest, surfaceDigest:m.authoritySurfaceDigest,
+                expiresAtMs:Math.min(expiresAtMs,Date.parse(grant.expiresAt))},
+              previous:before.target, authority:authoritySnapshot, grant, app:a.selected,
+            };
+            need(authority.snapshot()===authoritySnapshot && verifyConsumerApprovalStage(ownedDeps,request),'update-stage-unverified');
+            write(join(stage,requestFile),Buffer.from(canonicalJson(request)));fsyncDirectory(stage);
+            return reportApprovalRequest(r,request,askReason,ownedUpdate?.post);
+          }
+          const plan = planConsumerOwnedUpdate(stageId, ownedDeps, a.selected);
+          need(plan, 'resume-resident-unverified'); a.ownedPlan = plan;
+          r.daemon.restart = {...r.daemon.restart, ownerConfirmation:false, touchId:false, reason:null, coveredBy:plan.coveredBy};
+          r.steps=['Wait for a low-activity window','Quit the verified Phantom app and verify sidecar exit','Pause and drain local work',
+            'Install the paired signed CLI and Phantom.app','Resume the same resident under the active standing grant'];
+          r.state='ready';const observed=freeze(r);admissions.set(observed,a);return observed;
+        }
+      }
     }
     try {await quiescence(a,r,options.apply);}catch(error) {if(options.apply)throw error;}
     r.steps=['phm authority stop','Close Phantom normally and drain work','phm authority resident stop','Switch managed CLI release; keep previous release'];
@@ -177,6 +258,124 @@ function writeJournal(home:string,journal:Journal):void {
   const root=join(home,'.local/share/ashlr');parents(home,root,false);const temp=join(root,`.upgrade-${randomBytes(12).toString('hex')}`);
   write(temp,Buffer.from(JSON.stringify(journal)));fs.renameSync(temp,join(root,'upgrade.json'));fsyncDirectory(root);
 }
+function auditUpgrade(result: ConsumerUpgradeResult, transaction:string, event:string, post:typeof appendBusInbox, detail:Record<string,unknown>): void {
+  const checked=validateBusEnvelope({
+    id:`desktop-update:${transaction}:${event}`, from:'desktop-update', to:'leaders', priority:'P2', ttl:86_400_000,
+    body:{kind:`desktop.update.${event}`, transaction, version:result.candidate?.version??null, reason:result.reason, ...detail},
+  } satisfies BusEnvelope);
+  try {
+    const status=checked.ok ? post(checked.value).status : 'unavailable';
+    if (status !== 'posted' && status !== 'duplicate') result.busAudit='unavailable';
+    else result.busAudit??=status;
+  } catch {result.busAudit='unavailable';}
+}
+function auditOwnedUpdate(result: ConsumerUpgradeResult, plan: ConsumerOwnedUpdatePlan, post: typeof appendBusInbox): void {
+  const events = [...(result.authorityResumed ? ['resume'] : []), ...(result.reason ? ['hold'] : [])];
+  for (const event of events) auditUpgrade(result,plan.coveredBy.transaction,event,post,{...plan.coveredBy,reason:event==='hold'?result.reason:null});
+}
+function readApprovalRequest(home:string,id:string):ConsumerApprovalRequest {
+  need(stagePattern.test(id),'invalid-update-stage');
+  const stage = consumerStage(home,id);
+  parents(home,stage,false);
+  const request=JSON.parse(owned(join(stage,requestFile),256*1024).data.toString()) as ConsumerApprovalRequest;
+  need(request.binding?.transaction===id,'update-stage-unverified');
+  return request;
+}
+function reportApprovalRequest(r:ConsumerUpgradeResult,request:ConsumerApprovalRequest,reason:string,post=appendBusInbox):ConsumerUpgradeResult {
+  const id=request.binding.transaction;
+  r.scheduleHint='next-low-activity-window';
+  r.reason=reason;
+  r.daemon.restart={...r.daemon.restart,ownerConfirmation:true,touchId:true,reason};
+  r.ownerAction={reason,command:`phm desktop update sign-desktop-update --stage ${id}`,touchId:true};
+  r.steps=[r.ownerAction.command,'Retry the approved paired install in the next low-activity window'];
+  auditUpgrade(r,id,'owner-action',post,{ownerAction:r.ownerAction,scheduleHint:r.scheduleHint});
+  return freeze(r);
+}
+export async function approveConsumerDesktopUpdate(deps:ConsumerUpgradeDependencies,id:string):Promise<ConsumerUpgradeResult> {
+  const r=initial('upgrade');
+  let lock:string|undefined;
+  try {
+    deps.assertRunning();
+    const ownedUpdate=deps.ownedUpdate, authority=ownedUpdate?.authority;
+    need(ownedUpdate && authority,'update-approval-unavailable');
+    const request=readApprovalRequest(deps.home,id), stage=consumerStage(deps.home,id);
+    const claim=join(stage,'approval-lock');
+    fs.mkdirSync(claim,{mode:0o700});lock=claim;fsyncDirectory(stage);
+    const current=()=>request.binding.expiresAtMs>ownedUpdate.dependencies.now() &&
+      authority.snapshot()===request.authority && verifyConsumerApprovalStage(ownedUpdate.dependencies,request) &&
+      !fs.existsSync(join(stage,attemptFile));
+    need(!fs.existsSync(join(stage,approvalClosedFile)) && current(),'update-approval-unverified');
+    if (!fs.existsSync(join(stage,signedFile))) {
+      const signed=await authority.sign(request);
+      need(current() && authority.verify(request,signed,ownedUpdate.dependencies.now()),'update-approval-unverified');
+      write(join(stage,signedFile),Buffer.from(canonicalJson(signed)));fsyncDirectory(stage);
+    }
+    return await retryApprovedConsumerDesktopUpdate(deps,id) ?? freeze({...r,reason:'update-approved',scheduleHint:'next-low-activity-window'});
+  } catch(error) {
+    r.reason=heldReason(error,r)??'update-approval-unavailable';
+    return freeze(r);
+  } finally {
+    if(lock) {try {fs.rmdirSync(lock);fsyncDirectory(consumerStage(deps.home,id));}catch { /* Preserve an uncertain approval lock. */ }}
+  }
+}
+
+export async function retryApprovedConsumerDesktopUpdate(deps:ConsumerUpgradeDependencies,id?:string):Promise<ConsumerUpgradeResult|null> {
+  const ownedUpdate=deps.ownedUpdate,authority=ownedUpdate?.authority;
+  if (!ownedUpdate || !authority) return null;
+  const {dependencies,quit,post=appendBusInbox}=ownedUpdate;
+  deps.assertRunning();
+  const home=deps.home,staging=consumerStaging(home);
+  try {parents(home,staging,false);}catch {return null;}
+  const ids=id?[id]:fs.readdirSync(staging).filter(name=>name.startsWith('upgrade-')).map(name=>name.slice(8));
+  for (const transaction of ids) {
+    if (!stagePattern.test(transaction)) continue;
+    const stage=consumerStage(home,transaction);
+    if (!fs.existsSync(join(stage,signedFile)) || fs.existsSync(join(stage,attemptFile)) ||
+      fs.existsSync(join(stage,approvalClosedFile))) continue;
+    const r=initial('upgrade');
+    try {
+      const request=readApprovalRequest(home,transaction);
+      const file=owned(join(stage,signedFile),256*1024);
+      const signed:unknown=JSON.parse(file.data.toString());
+      need(authority.verify(request,signed,dependencies.now()),'update-approval-unverified');
+      const approval={request,value:signed,authority,approvedAt:file.identity.mtimeMs};
+      const plan=planApprovedConsumerUpdate(dependencies,approval);
+      const {outcome,resumed,installed}=await applyConsumerOwnedUpdate(plan,dependencies,quit,approval);
+      if (outcome.reason==='update-attempt-busy' || outcome.reason==='update-attempt-already-recorded') return null;
+      r.state=outcome.state==='applied'?'upgraded':outcome.state==='rolled-back'?'rolled-back':'held';
+      r.applied=installed;r.authorityResumed=resumed;r.reason=outcome.state==='applied'?null:outcome.reason;
+      r.candidate=plan.candidate;
+      r.previous=r.installed={version:versionAt(request.previous),release:basename(request.previous)};
+      if (installed) {
+        r.app={state:'current',reason:null};
+        if (r.previous.release!==r.candidate.release) {
+          try {writeJournal(home,{schema:'desktop-upgrade-journal.v1',previous:r.previous,current:r.candidate});}
+          catch {r.reason??='journal-failed';}
+        }
+      }
+      r.daemon.restart={...r.daemon.restart,performed:resumed,ownerConfirmation:false,touchId:false,coveredBy:plan.coveredBy,reason:r.reason};
+      if (!fs.existsSync(join(stage,attemptFile)) &&
+        (r.reason==='waiting-for-low-activity' || r.reason==='work-active-or-unknown' || r.reason==='resume-ownership-lost'))
+        r.scheduleHint='next-low-activity-window';
+      if (!r.scheduleHint) {
+        auditUpgrade(r,transaction,'outcome',post,{state:r.state,applied:installed,resumed,...plan.coveredBy});
+        closeApproval(stage,r);
+      }
+      else auditUpgrade(r,transaction,'hold',post,{state:r.state,scheduleHint:r.scheduleHint});
+      return freeze(r);
+    } catch(error) {
+      r.reason=heldReason(error,r)??'update-approval-unverified';
+      auditUpgrade(r,transaction,'outcome',post,{state:r.state});
+      try {parents(home,stage,false);closeApproval(stage,r);} catch { /* Unverified stage paths remain untouched. */ }
+      if (id) return freeze(r);
+    }
+  }
+  return null;
+}
+function closeApproval(stage:string,result:ConsumerUpgradeResult):void {
+  try {write(join(stage,approvalClosedFile),Buffer.from(canonicalJson(result)));fsyncDirectory(stage);}
+  catch { /* An existing close or attempt prevents replay. */ }
+}
 /** Consume a fresh inspection once, lowering resident authority before the atomic switch. */
 export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult):Promise<ConsumerUpgradeResult> {
   const a=admissions.get(observed),r:ConsumerUpgradeResult=structuredClone(observed);
@@ -184,6 +383,26 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
   const {deps,helper,io}=a,current=join(deps.home,'.local/share/ashlr/current');let created:fs.Stats|undefined,switched:Pointer|undefined;
   const repair=a.destination===a.before.target;
   const tightenedPaths=[...(r.tightenedPaths??[])];r.tightenedPaths=tightenedPaths;
+  if (a.ownedPlan && deps.ownedUpdate) {
+    const {dependencies,quit,post=appendBusInbox} = deps.ownedUpdate;
+    try {
+      deps.assertRunning();
+      const {outcome,resumed,installed} = await applyConsumerOwnedUpdate(a.ownedPlan, dependencies, quit);
+      r.authorityResumed = resumed; r.daemon.restart.performed = resumed;
+      r.state = outcome.state === 'applied' ? 'upgraded' : outcome.state === 'rolled-back' ? 'rolled-back' : 'held';
+      r.applied = installed; r.reason = outcome.state === 'applied' ? null : outcome.reason;
+      r.stop.reason = r.reason; r.stop.drained = r.applied;
+      if (r.applied) {
+        r.app = {state:'current',reason:null};
+        if (!repair) {
+          try {writeJournal(deps.home,{schema:'desktop-upgrade-journal.v1',previous:r.installed!,current:r.candidate!});}
+          catch {r.reason??='journal-failed';}
+        }
+      }
+    } catch (error) { r.state='held';r.reason=heldReason(error,r)??'upgrade-unavailable'; }
+    auditOwnedUpdate(r,a.ownedPlan,post);
+    return freeze(r);
+  }
   try {
     deps.assertRunning();await quiescence(a,r,true);
     need(canonicalJson(io.readCurrentPointer(current))===canonicalJson(a.before),'current-changed');assert.deepEqual(helper.inspectLocalAliases(io),a.aliases);
@@ -277,6 +496,7 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
 }
 export function createConsumerUpgradeDependencies():ConsumerUpgradeDependencies {
   const deps=createConsumerInstallDependencies();return {...deps,
+    ownedUpdate: {dependencies:createDesktopUpdateDependencies(deps.trust,'consumer'), quit:quitVerifiedPhantom, authority:consumerApprovalAuthority},
     smokeVersion:async launcher=> {
       const child=spawnSync(process.execPath,[launcher,'--version'],{encoding:'utf8',timeout:5000,maxBuffer:1024,env:{HOME:deps.home,PATH:'/usr/bin:/bin:/usr/sbin:/sbin',LANG:'C',LC_ALL:'C'}});
       const version=child.stdout?.trim();return !child.error&&child.status===0&&version&&semver.test(version)?version:null;
@@ -285,4 +505,24 @@ export function createConsumerUpgradeDependencies():ConsumerUpgradeDependencies 
       try {const {appendLedger}=await import('../authority/ledger.js');appendLedger({kind:'note',actor:'mason',grantId:null,repo:null,data:{topic:'resident-service:stop',detail:'Resident service stopped for desktop upgrade'}});}catch { /* Lowering does not depend on the ledger. */ }
       return {ok:true};
     }};
+}
+
+const QUIT_PHANTOM = `
+ObjC.import('AppKit');
+function run(argv) {
+  const path = argv[0];
+  const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier('ai.ashlr.desktop');
+  if (apps.count === 0) return 'accepted';
+  if (apps.count !== 1) return 'unverified';
+  const app = apps.objectAtIndex(0);
+  if (ObjC.unwrap(app.bundleURL.path) !== path ||
+      ObjC.unwrap(app.executableURL.path) !== path + '/Contents/MacOS/ashlr-desktop') return 'unverified';
+  return app.terminate ? 'accepted' : 'unverified';
+}
+`;
+function quitVerifiedPhantom(path:string):boolean {
+  if (!appPaths.includes(path)) return false;
+  const child=spawnSync('/usr/bin/osascript',['-l','JavaScript','-e',QUIT_PHANTOM,path],
+    {encoding:'utf8',timeout:5000,maxBuffer:1024,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}});
+  return !child.error&&child.status===0&&child.stdout.trim()==='accepted';
 }

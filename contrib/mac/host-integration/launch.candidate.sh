@@ -1,4 +1,10 @@
 #!/bin/bash
+# phantom.desktop-update-interlock.v1
+update_stop="$HOME/.ashlr/DESKTOP_UPDATE_STOP"
+if [ -L "$update_stop" ] || [ -e "$update_stop" ] || { [ -e "${update_stop%/*}" ] && [ ! -x "${update_stop%/*}" ]; }; then
+  echo "HELD: desktop update interlock"
+  exit 3
+fi
 # launch.sh <job> <repo> <pool> [tier: frontier|work|mid|fast] ; prompt body on stdin
 # GATES v4: sandbox profile shas come from the pinned table bin/sandbox-pins.tsv (written only by bin/sb-autopin.py or a Security pin;
 # write-denied to every lane and the leader). An absent entry yields an empty sha, so the check below refuses.

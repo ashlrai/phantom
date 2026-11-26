@@ -26,7 +26,7 @@ public enum GrantPromptRenderer {
     value == GrantContract.maxSafeInteger ? "No volume cap" : String(value)
   }
 
-  public static func render(_ g: ValidatedGrant) -> GrantPrompt {
+  public static func render(_ g: ValidatedGrant, prefix: String = "") -> GrantPrompt {
     let days = Int((g.expiresAtDate.timeIntervalSince(g.issuedAtDate) / 86_400).rounded())
     let until = humanInstant(g.expiresAtDate)
     let shortDigest = String(g.digestHex.prefix(12))
@@ -64,10 +64,10 @@ public enum GrantPromptRenderer {
     }
 
     var limit = repoPhrases.count
-    var text = reason(repoLimit: limit)
+    var text = prefix + reason(repoLimit: limit)
     while text.count > maxReasonLength && limit > 1 {
       limit -= 1
-      text = reason(repoLimit: limit)
+      text = prefix + reason(repoLimit: limit)
     }
     if text.count > maxReasonLength {
       text = String(text.prefix(maxReasonLength - 1)) + "…"
