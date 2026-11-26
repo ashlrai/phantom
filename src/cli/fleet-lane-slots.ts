@@ -1,7 +1,7 @@
 import { buildFleetLiveSnapshot } from '../core/verse/fleet-live-api.js';
 import { brandBadge, terminalColor } from '../core/brand/registry.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
-import { readFleetLiveReplica, stampLocalFleetSnapshot } from '../core/fleet/fleet-replica.js';
+import { readFleetLiveReplica, refreshFleetReplicaOnRead, stampLocalFleetSnapshot } from '../core/fleet/fleet-replica.js';
 
 const usage = `Usage: phm fleet lane-slots [--json]
 Read current standing lane slots, even during mirror prep. Unobserved capacity is unknown.`;
@@ -13,6 +13,7 @@ export async function cmdFleetLaneSlots(args: string[]): Promise<number> {
     return 0;
   }
   if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) return 2;
+  await refreshFleetReplicaOnRead();
   const snapshot = readFleetLiveReplica() ?? stampLocalFleetSnapshot((await buildFleetLiveSnapshot()).snapshot);
   const lanes = snapshot.lanes.map(lane => ({ ...lane,
     slots: lane.capReason === 'No standing tick has reported lanes in the last 10 minutes.' ? null : lane.slots,

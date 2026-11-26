@@ -229,9 +229,10 @@ worker sends a bounded observation of its lane loops and node-worker claims,
 not command lines, credentials or grant data.
 
 `phm node worker` and `phm node beat --watch` refresh observations in the
-background, at most once every 30 seconds per machine. For a separately
-managed runner that uses neither, run `phm node replica sync --json` on a
-30-second schedule. A failed snapshot exchange does not affect heartbeat,
+background, at most once every 30 seconds per machine. Fleet CLI and API
+reads also refresh if no sync was attempted in the last 30 seconds, even
+without a pool worker, and wait at most five seconds for the refresh.
+A failed snapshot exchange does not affect heartbeat,
 claim or fencing behavior. The worker keeps the last good observation for
 two minutes, then reports unavailable with its last successful timestamp
 instead of counting unknown capacity as zero. Check `lastError` in status

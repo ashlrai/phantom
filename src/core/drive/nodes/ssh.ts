@@ -30,10 +30,13 @@ export function callNodeSsh(host: string, request: unknown, run: typeof spawnSyn
   try { return JSON.parse(child.stdout); } catch { throw new Error('Invalid node SSH reply'); }
 }
 
-export async function callNodeSshReadOnly(host: string, request: unknown, maxBuffer: number): Promise<unknown> {
+export async function callNodeSshReadOnly(
+  host: string, request: unknown, maxBuffer: number, options: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<unknown> {
   const { args, input, env } = nodeSshInvocation(host, request);
   return new Promise((resolve, reject) => {
-    const child = execFile('ssh', args, { encoding: 'utf8', timeout: 12_000, killSignal: 'SIGKILL', maxBuffer, env }, (error, stdout) => {
+    const child = execFile('ssh', args, { encoding: 'utf8', timeout: options.timeoutMs ?? 12_000,
+      signal: options.signal, killSignal: 'SIGKILL', maxBuffer, env }, (error, stdout) => {
       if (error) { reject(new Error('Node SSH unavailable')); return; }
       try { resolve(JSON.parse(stdout)); } catch { reject(new Error('Invalid node SSH reply')); }
     });

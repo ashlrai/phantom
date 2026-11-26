@@ -24,6 +24,7 @@ const MAX_PEERS = 32;
 const MAX_LANES = 64;
 const FRESH_MS = 120_000;
 const SYNC_MS = 30_000;
+const READ_SYNC_MS = 5_000;
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$/;
 const safeId = (value: unknown): value is string => typeof value === 'string' && ID.test(value) && scrubSecrets(value) === value;
 
@@ -64,7 +65,8 @@ interface Cache {
   lastError: string | null;
   replica: FleetReplica | null;
 }
-type ReadOnlySsh = (host: string, request: unknown, maxBuffer: number) => unknown | Promise<unknown>;
+type ReadOnlySsh = (host: string, request: unknown, maxBuffer: number,
+  options?: Parameters<typeof callNodeSshReadOnly>[3]) => unknown | Promise<unknown>;
 const counter = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n <= 65_536;
 
 function dispatchCounts(value: unknown): PeerLane['dispatch'] {
@@ -118,8 +120,8 @@ function parseMachineReport(value: unknown): MachineReport {
 const LOOP = /(?:^|[\s/])(rloop\.sh|arloop\.sh|loop2\.sh|(?:ashlr-)?(?:muse-|node-)runner)(?=\s|$)(.*)$/;
 const LANE_FLAG = /(?:^|\s)--lane(?:=|\s+)([a-zA-Z0-9][a-zA-Z0-9_.-]{0,99})(?=\s|$)/;
 
-async function readProcesses(): Promise<string | null> {
-  return new Promise(resolve => execFile('ps', ['-ax', '-o', 'args='], { timeout: 3_000, maxBuffer: MAX_BYTES },
+async function readProcesses(signal?: AbortSignal): Promise<string | null> {
+  return new Promise(resolve => execFile('ps', ['-ax', '-o', 'args='], { timeout: 3_000, maxBuffer: MAX_BYTES, signal },
     (error, stdout) => resolve(error ? null : stdout)));
 }
 export function machineReport(machine: string, processes: string | null, claims: readonly string[], localLanes?: Record<string, unknown>): MachineReport {
@@ -273,7 +275,11 @@ export function stampLocalFleetSnapshot(snapshot: FleetLiveSnapshotV1, now = Dat
   return { ...snapshot, source, lanes: snapshot.lanes.map(lane => ({ ...lane, machine: source.machine ?? undefined })) };
 }
 
-export async function syncFleetReplica(options: { leader?: string; claims?: readonly string[]; ssh?: ReadOnlySsh; force?: boolean } = {}) {
+export async function refreshFleetReplicaOnRead(): Promise<void> {
+  try { await syncFleetReplica({ timeoutMs: READ_SYNC_MS }); } catch { /* keep the last readable observation */ }
+}
+
+export async function syncFleetReplica(options: { leader?: string; claims?: readonly string[]; ssh?: ReadOnlySsh; force?: boolean; timeoutMs?: number } = {}) {
   if (options.leader !== undefined) {
     if (!validSshHost(options.leader)) throw new Error('Use an explicit SSH config alias for --leader');
     const root = privateDirectory(canonicalPath(ashlrHome()));
@@ -289,13 +295,33 @@ export async function syncFleetReplica(options: { leader?: string; claims?: read
     receivedAt: cache?.receivedAt ?? null, replica: cache?.replica ?? null };
   // Persist the attempt before SSH so short-lived worker invocations share the cadence.
   writeJson(root, 'leader-replica.json', next, MAX_BYTES + 4096);
+  const controller = new AbortController();
+  const pull = async () => {
+    const processes = await readProcesses(controller.signal);
+    controller.signal.throwIfAborted();
+    const report = machineReport(fleetMachine(), processes, options.claims ?? [], localDispatchLanes(now));
+    return (options.ssh ?? callNodeSshReadOnly)(leader, { kind: 'replica', report }, MAX_BYTES,
+      { timeoutMs: options.timeoutMs, signal: controller.signal });
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const report = machineReport(fleetMachine(), await readProcesses(), options.claims ?? [], localDispatchLanes(now));
-    const response = await (options.ssh ?? callNodeSshReadOnly)(leader, { kind: 'replica', report }, MAX_BYTES);
+    const timeoutMs = options.timeoutMs;
+    const response = timeoutMs === undefined ? await pull() : await Promise.race([
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error('Fleet replica deadline exceeded');
+          controller.abort(error);
+          reject(error);
+        }, timeoutMs);
+      }),
+      pull(),
+    ]);
     next.replica = parseReplica(sanitizePublicJson(response));
     next.receivedAt = new Date().toISOString();
   } catch {
     next.lastError = 'Fleet leader snapshot unavailable over SSH';
+  } finally {
+    clearTimeout(timer);
   }
   writeJson(root, 'leader-replica.json', next, MAX_BYTES + 4096);
   return fleetReplicaStatus();

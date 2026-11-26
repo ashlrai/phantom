@@ -11,7 +11,7 @@ import { readResourceLedger, type ResourceLedgerV1 } from '../fleet/runs-resourc
 import type { LaneHealth } from '../fleet/lane-badge.js';
 import { buildLeaderSeat } from '../fleet/leader-seat.js';
 import { loadVerifiedRegistry, type VerifiedModelRegistryEntry } from '../fleet/model-verify.js';
-import { fleetPeerReports, localFleetSource, readFleetReplica } from '../fleet/fleet-replica.js';
+import { fleetPeerReports, localFleetSource, readFleetReplica, refreshFleetReplicaOnRead } from '../fleet/fleet-replica.js';
 import { providerFor } from '../fleet/provider.js';
 
 /** Every source the org reads. Tests pass fixtures; each reader may fail alone and its facts then read unknown. */
@@ -39,8 +39,10 @@ export const fleetOrgReaders: FleetOrgReaders = { live: buildFleetLiveSnapshot, 
 /** The org map, its tree and the pool-usage ledger it was built from (`phm map` also draws the ledger's resources). */
 export async function readFleetOrgSources(minutes = 60, readers: Partial<FleetOrgReaders> = {}): Promise<{ map: FleetOrgMap & { tree: FleetOrgTree }; usage: ResourceLedgerV1 | null }> {
   mapWindowMinutes(String(minutes));
+  const useReplica = Object.keys(readers).length === 0;
+  if (useReplica) await refreshFleetReplicaOnRead();
   const read = { ...fleetOrgReaders, ...readers }, now = read.now(), clock = { now: () => now };
-  const observation = Object.keys(readers).length === 0 ? readFleetReplica(now) : null;
+  const observation = useReplica ? readFleetReplica(now) : null;
   if (observation) {
     const { source, replica } = observation;
     if (replica) return { map: { ...replica.map, tree: { ...replica.map.tree, source } }, usage: replica.usage };

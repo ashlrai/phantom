@@ -8,7 +8,14 @@ import { fleetReplicaStatus, machineReport, serveFleetReplica, syncFleetReplica 
 import { renderOrgTreeText } from '../src/core/fleet/org-tree.js';
 import { readFleetOrgMap } from '../src/core/verse/fleet-org-map-api.js';
 
-const location = vi.hoisted(() => ({ machine: 'leader-mac' }));
+const { location, readOnlySsh } = vi.hoisted(() => ({
+  location: { machine: 'leader-mac' },
+  readOnlySsh: vi.fn<typeof import('../src/core/drive/nodes/ssh.js').callNodeSshReadOnly>(),
+}));
+vi.mock('../src/core/drive/nodes/ssh.js', async original => ({
+  ...await original<typeof import('../src/core/drive/nodes/ssh.js')>(),
+  callNodeSshReadOnly: readOnlySsh,
+}));
 vi.mock('node:os', async original => ({ ...await original<typeof import('node:os')>(),
   homedir: () => process.env.HOME!, hostname: () => location.machine,
 }));
@@ -36,6 +43,7 @@ function put(path: string, content: unknown): void {
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'fleet-replica-'));
   vi.useFakeTimers({ toFake: ['Date'] });
+  readOnlySsh.mockReset().mockRejectedValue(new Error('offline'));
   vi.setSystemTime(NOW);
   useHost('leader-mac');
   const at = new Date(NOW).toISOString();
@@ -109,6 +117,43 @@ describe('authenticated fleet projection across two homes', () => {
     expect(JSON.parse(log.mock.lastCall![0]).lanes).toEqual(expect.arrayContaining([
       expect.objectContaining({ lane: 'claude-cli', slots: null, busy: null, capReason: 'leader unreachable since 2026-11-24T12:00:00.000Z' }),
     ]));
+  });
+
+  it('refreshes a stale configured replica when org is read', async () => {
+    useHost('muse');
+    await syncFleetReplica({ leader: 'leader-mac', ssh: leaderRpc });
+    vi.setSystemTime(NOW + 120_001);
+    readOnlySsh.mockImplementation(leaderRpc);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdOrg(['--text'])).toBe(0);
+    expect(await cmdOrg(['--text'])).toBe(0);
+    expect(readOnlySsh).toHaveBeenCalledTimes(1);
+    expect(readOnlySsh.mock.calls[0]?.[3]?.timeoutMs).toBe(5_000);
+    expect(log.mock.lastCall?.[0]).toContain('Source: leader-mac (leader-replica)');
+    expect(log.mock.lastCall?.[0]).not.toContain('leader unreachable');
+  });
+
+  it('abandons an unresponsive replica pull at five seconds and retains the observation', async () => {
+    useHost('muse');
+    await syncFleetReplica({ leader: 'leader-mac', ssh: leaderRpc });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(NOW + 120_001);
+    let started!: (signal: AbortSignal | undefined) => void;
+    const sshStarted = new Promise<AbortSignal | undefined>(resolve => { started = resolve; });
+    readOnlySsh.mockImplementation((_host, _request, _size, options) => {
+      started(options?.signal);
+      return new Promise(() => undefined);
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const org = cmdOrg(['--text']);
+    const signal = await sshStarted;
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(log).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await org).toBe(0);
+    expect(signal?.aborted).toBe(true);
+    expect(log.mock.lastCall?.[0]).toContain('leader unreachable since 2026-11-24T12:00:00.000Z');
+    expect(fleetReplicaStatus().lastError).toBe('Fleet leader snapshot unavailable over SSH');
   });
 
   it('refuses malformed peer input and distinguishes an empty cache from zero capacity', async () => {

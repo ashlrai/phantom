@@ -1982,7 +1982,8 @@ export const handleFleetLiveApi: ApiModule = async (ctx, req, res, path, method)
     }
     const { readFleetQueue } = await import('../fleet/runs-parked-queue.js');
     const { sanitizePublicJson } = await import('../util/public-json.js');
-    const { readFleetReplica } = await import('../fleet/fleet-replica.js');
+    const { readFleetReplica, refreshFleetReplicaOnRead } = await import('../fleet/fleet-replica.js');
+    await refreshFleetReplicaOnRead();
     const observation = readFleetReplica(deps.now());
     if (observation) {
       const { replica, source } = observation;
@@ -2039,7 +2040,8 @@ export const handleFleetLiveApi: ApiModule = async (ctx, req, res, path, method)
         sendInvalid(res, `unknown query parameter: ${key}`);
         return true;
       }
-      const { readFleetLiveReplica, stampLocalFleetSnapshot } = await import('../fleet/fleet-replica.js');
+      const { readFleetLiveReplica, refreshFleetReplicaOnRead, stampLocalFleetSnapshot } = await import('../fleet/fleet-replica.js');
+      await refreshFleetReplicaOnRead();
       const replica = readFleetLiveReplica(deps.now());
       if (replica) {
         sendJson(res, 200, replica);

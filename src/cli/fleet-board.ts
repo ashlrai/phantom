@@ -10,7 +10,7 @@ import { cmdFleetCoordination } from './fleet-coordination.js';
 
 import { LEADER_BOARD_SCHEMA, readLeaderBoard, type LeaderBoardRead, type LeaderBoardV1 } from '../core/fleet/leader-board.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
-import { readFleetReplica } from '../core/fleet/fleet-replica.js';
+import { readFleetReplica, refreshFleetReplicaOnRead } from '../core/fleet/fleet-replica.js';
 
 export const FLEET_BOARD_USAGE = 'Usage: ashlr fleet board [--json] | --leader [--json] [--runs-dir DIR]';
 
@@ -66,8 +66,10 @@ export async function cmdFleetLeaderBoard(args: string[], deps: FleetBoardDeps =
     }
   }
   const read = deps.readBoard ?? readLeaderBoard;
+  const useReplica = runsDir === undefined && deps.readBoard === undefined;
+  if (useReplica) await refreshFleetReplicaOnRead();
   const nowMs = (deps.now ?? Date.now)();
-  const observation = runsDir === undefined && deps.readBoard === undefined ? readFleetReplica(nowMs) : null;
+  const observation = useReplica ? readFleetReplica(nowMs) : null;
   const result: LeaderBoardRead = observation
     ? observation.replica?.board ?? { status: 'unavailable', board: null }
     : await read({ runsDir: runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs') });
