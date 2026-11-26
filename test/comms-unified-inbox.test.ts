@@ -33,6 +33,8 @@ import { SharedStore } from '../src/core/fleet/shared-store.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import type { AgentConversations } from '../src/core/fleet/agent-conversations.js';
 import type { SlackJournalRead, SlackObservation } from '../src/core/agents/slack-journal.js';
+import type { SlackSendReceiptRead } from '../src/core/agents/slack-send-receipts.js';
+import type { SentReceipt } from '../src/core/agents/slack-reply-binding.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
@@ -2062,6 +2064,122 @@ describe('readUnifiedInbox slack requests', () => {
     expect(inbox.sources.slack).toEqual({ state: 'unavailable', pending: null });
     expect(inbox.items.filter(i => i.source === 'slack')).toHaveLength(0);
     expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+});
+
+describe('readUnifiedInbox slack sends', () => {
+  const KEY_A = 'a'.repeat(64);
+  const KEY_B = 'b'.repeat(64);
+  const receipt = (over: Partial<SentReceipt> = {}): SentReceipt => ({
+    key: KEY_A, channel: 'C0123ABCD', state: 'attempted',
+    thread: '1762000000.000100', ...over,
+  });
+  const sends = (receipts: SentReceipt[], state: 'ok' | 'missing' | 'degraded' = 'ok'): SlackSendReceiptRead => ({ state, receipts });
+  const pinned = {
+    readRequests: () => ({ status: 'missing' as const, requests: [] }),
+  };
+  const readWith = (readSlackSends: () => SlackSendReceiptRead) =>
+    readUnifiedInbox({ runsDir, busRoot, now: () => now, ...pinned, readSlackSends });
+
+  it('lists attempted sends as warn items and keeps proved sends out', async () => {
+    const inbox = await readWith(() => sends([
+      receipt(),
+      // A sent receipt is a proved delivery — history, never pending.
+      receipt({ key: KEY_B, state: 'sent', ts: '1762000001.000100' }),
+    ]));
+    expect(inbox.sources['slack-sends']).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'slack-sends');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: `slack-sends:${KEY_A}`,
+      kind: 'slack-send-unconfirmed', severity: 'warn', blocking: false,
+      title: 'Slack send unconfirmed',
+      detail: 'channel C0123ABCD · thread 1762000000.000100',
+      since: null, expiresAt: null,
+      act: [
+        'phm channels slack status --json',
+        'phm fleet slack-trace --channel C0123ABCD --thread 1762000000.000100 --json',
+        'phm channels slack run --seconds 60 --json',
+      ],
+    });
+    // Receipts carry channel/thread/key evidence only — never send text,
+    // digests or client ids.
+    expect(JSON.stringify(items[0])).not.toContain('digest');
+    expect(JSON.stringify(items[0])).not.toContain('clientId');
+  });
+
+  it('scopes the trace link to the channel alone when the send carried no thread', async () => {
+    const inbox = await readWith(() => sends([receipt({ thread: undefined })]));
+    const item = inbox.items.find(i => i.source === 'slack-sends')!;
+    expect(item.detail).toBe('channel C0123ABCD');
+    expect(item.act).toEqual([
+      'phm channels slack status --json',
+      'phm fleet slack-trace --channel C0123ABCD --json',
+      'phm channels slack run --seconds 60 --json',
+    ]);
+  });
+
+  it('keeps only the bare reads when receipt ids fail the shape guard', async () => {
+    const inbox = await readWith(() => sends([receipt({ channel: 'bad id; touch /tmp/x', thread: 'also bad' })]));
+    const item = inbox.items.find(i => i.source === 'slack-sends')!;
+    expect(item.act).toEqual([
+      'phm channels slack status --json',
+      'phm fleet slack-trace --json',
+      'phm channels slack run --seconds 60 --json',
+    ]);
+    expect(item.detail).toBe('channel bad id; touch /tmp/x');
+  });
+
+  it('collapses duplicate keys and identical unkeyed rows to one item each', async () => {
+    const inbox = await readWith(() => sends([
+      receipt(),
+      receipt(),
+      // A seam row without a store key still lists under a content hash.
+      receipt({ key: undefined }),
+      receipt({ key: undefined }),
+      receipt({ key: undefined, thread: '1762000000.000999' }),
+    ]));
+    const items = inbox.items.filter(i => i.source === 'slack-sends');
+    expect(items).toHaveLength(3);
+    expect(items.filter(i => i.id === `slack-sends:${KEY_A}`)).toHaveLength(1);
+    expect(new Set(items.map(i => i.id)).size).toBe(3);
+  });
+
+  it('reports the send-store state as the source state, never a fabricated healthy', async () => {
+    const missing = await readWith(() => sends([], 'missing'));
+    expect(missing.sources['slack-sends']).toEqual({ state: 'missing', pending: 0 });
+    const degraded = await readWith(() => sends([receipt()], 'degraded'));
+    expect(degraded.sources['slack-sends']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'slack-sends')).toHaveLength(1);
+  });
+
+  it('reports unavailable on a throwing seam while other sources still list', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readSlackSends: () => { throw new Error('boom'); },
+    });
+    expect(inbox.sources['slack-sends']).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'slack-sends')).toHaveLength(0);
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('filters by its own source and kind like every other source', async () => {
+    const inbox = await readWith(() => sends([receipt()]));
+    const bySource = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readSlackSends: () => sends([receipt()]),
+      filter: { source: 'slack-sends' },
+    });
+    expect(bySource.items.map(i => i.id)).toEqual([`slack-sends:${KEY_A}`]);
+    expect(bySource.filter).toEqual({ source: 'slack-sends' });
+    const byKind = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readSlackSends: () => sends([receipt()]),
+      filter: { kind: 'slack-send-unconfirmed' },
+    });
+    expect(byKind.items.map(i => i.id)).toEqual([`slack-sends:${KEY_A}`]);
+    expect(inbox.items.filter(i => i.kind === 'slack-send-unconfirmed')).toHaveLength(1);
   });
 });
 

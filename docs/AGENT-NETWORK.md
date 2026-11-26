@@ -300,7 +300,7 @@ poster checks `conversations.info` (`is_shared`, `is_ext_shared`,
 `conversations.members` (each member's workspace `team_id`, guest,
 deleted and bot flags). Slack Connect, shared channels, guests, unknown
 bots and any member who is not an allowlisted team identity refuse; anything
-that cannot be proved stays a draft. Explicitly mapped DMs require the same authenticated membership proof. A durable intent precedes one post; uncertain outcomes are reconciled by client message ID through history, never blindly resent. Rate limits stop the bounded pass.
+that cannot be proved stays a draft. Explicitly mapped DMs require the same authenticated membership proof. A durable intent precedes one post; uncertain outcomes are reconciled by client message ID through history, never blindly resent. Rate limits stop the bounded pass. Sends still unconfirmed surface as `slack-sends` items in `phm comms inbox` — the same send-store receipts `phm channels slack status` counts as `uncertainSends` — until a later pass proves or leaves them uncertain.
 
 ```sh
 phm channels slack status --json
