@@ -384,6 +384,11 @@ Input can contain several snapshots for one node ID. Routing and fleet-wide
 runnable totals use the newest timestamp per node, so copying a snapshot
 cannot increase capacity and a newer hold takes precedence. Conflicting
 inputs at the same newest timestamp leave that node's capacity unknown.
+For a node without its own harness footprint, routing can borrow measurements
+from other nodes whose latest snapshots pass the same freshness check.
+A fresh snapshot from a node under pressure or swap growth can still supply
+a footprint. If no eligible measurement exists, the router reports
+`footprint-unmeasured` for that candidate.
 
 An unplaced job's `rejected` counts name why: `provider-not-in-job` and
 `model-not-in-job` count cost rows the job's own provider/model lists excluded,

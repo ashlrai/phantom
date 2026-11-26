@@ -154,7 +154,9 @@ function nodeStates(input: RouterInput): NodeState[] {
 /** Plan every job in order; each placement consumes the node's measured headroom. */
 export function planAutoscaleRoutes(input: RouterInput): Placement[] {
   const states = nodeStates(input);
-  const fleet = fleetFootprints(states.filter(s => s.blocked !== 'capacity-conflict').map(s => s.node.doc));
+  const fleet = fleetFootprints(states
+    .filter(s => s.blocked !== 'stale' && s.blocked !== 'capacity-conflict')
+    .map(s => s.node.doc));
   const exhausted = new Set(input.exhausted ?? []);
   const known = new Set(HARNESS_ADAPTERS.map(a => a.id));
   const costs = input.costs.filter(c => known.has(c.harness) && finite(c.tokensPerJob) && c.tokensPerJob > 0 &&

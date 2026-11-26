@@ -89,6 +89,24 @@ describe('autoscale router scoring', () => {
     expect(served[0]).toMatchObject({ provider: 'local', model: 'qwen3-32b', nodeId: 'main-mbp' });
   });
 
+  it.each([-120_001, 60_001])('excludes footprint donors outside the freshness window (%s ms)', offset => {
+    const snapshot = mbp();
+    const stale = node(mbp({
+      measuredAtMs: T0 + offset,
+      sessions: [{ ...snapshot.sessions[0]!, memBytes: 3 * GIB }],
+    }));
+    const current = node(mbp({ node: 'current' }), { providers: [] });
+    const idle = node(mbp8());
+    const input = { costs: [COSTS[0]!], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }] };
+
+    expect(planAutoscaleRoutes({ ...input, nodes: [stale, idle] })[0]).toMatchObject({
+      nodeId: null, rejected: { 'node-stale': 1, 'footprint-unmeasured': 1 },
+    });
+    expect(planAutoscaleRoutes({ ...input, nodes: [stale, current, idle] })[0]).toMatchObject({
+      nodeId: idle.doc.node, footprint: 'fleet',
+    });
+  });
+
   it('loads an unserved local model only where its weights fit, once per node', () => {
     const local = (modelBytes?: number): HarnessModelCost[] => [{ provider: 'local', model: 'm', harness: 'codex', tokensPerJob: 1, minutesPerJob: 60, local: true,
       ...(modelBytes === undefined ? {} : { modelBytes }) }];
