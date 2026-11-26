@@ -136,17 +136,22 @@ interface NodeState {
   blocked: string | null;
 }
 
+function capacityHold(doc: NodeCapacityDoc): 'pressure' | 'swap-growth' | null {
+  const limits = Object.values(doc.basis?.limiting ?? {});
+  const pressure = doc.mem_free.pressure_level;
+  if ((finite(pressure) && pressure !== 1) || limits.includes('pressure')) return 'pressure';
+  if (doc.swap.growing === true || limits.includes('swap-growth')) return 'swap-growth';
+  return null;
+}
+
 function nodeStates(input: RouterInput): NodeState[] {
   const maxAge = input.maxAgeMs ?? ROUTER_DEFAULTS.maxAgeMs;
   return latestByNode(input.nodes, node => node.doc)
     .sort((a, b) => a.item.doc.node.localeCompare(b.item.doc.node)).map(({ item: node, at, conflict }) => {
       const age = input.nowMs - at;
-      const limits = Object.values(node.doc.basis?.limiting ?? {});
       const blocked = conflict ? 'capacity-conflict'
         : !finite(age) || age < -60_000 || age > maxAge ? 'stale'
-        : limits.includes('pressure') ? 'pressure'
-        : limits.includes('swap-growth') ? 'swap-growth'
-        : node.doc.mem_free.headroom_bytes === null ? 'unmeasured' : null;
+        : capacityHold(node.doc) ?? (node.doc.mem_free.headroom_bytes === null ? 'unmeasured' : null);
       return { node, loaded: new Set(node.localModels ?? []), bytes: node.doc.mem_free.headroom_bytes ?? 0, cores: node.doc.cpu.headroom_cores, blocked };
     });
 }
@@ -225,13 +230,13 @@ export function fleetRunnable(docs: NodeCapacityDoc[], nowMs: number, maxAgeMs =
   const current = latestByNode(docs, doc => doc).filter(({ at, conflict }) => {
     const age = nowMs - at;
     return !conflict && finite(age) && age >= -60_000 && age <= maxAgeMs;
-  });
+  }).map(({ item: doc }) => ({ doc, stopped: capacityHold(doc) !== null || doc.cpu.headroom_cores === 0 }));
   const out: Record<string, number | null> = {};
   for (const adapter of HARNESS_ADAPTERS) {
     let sum: number | null = null;
-    for (const { item: doc } of current) {
+    for (const { doc, stopped } of current) {
       const n = doc.agents_runnable_now[adapter.id];
-      if (Number.isSafeInteger(n)) sum = (sum ?? 0) + (doc.cpu.headroom_cores === 0 ? 0 : (n as number));
+      if (Number.isSafeInteger(n)) sum = (sum ?? 0) + (stopped ? 0 : (n as number));
     }
     out[adapter.id] = sum;
   }
