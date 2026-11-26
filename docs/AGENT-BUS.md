@@ -902,7 +902,16 @@ refused unless the feed shows the job and the sender resolves to the identity
 that announced it, under any of its labels. A refused, retryable, invalid or
 unavailable feed refuses the send rather than posting a receipt that would
 poison the projection. Neither verb dispatches, claims or executes anything;
-the bodies remain untrusted contract data until a consumer admits them.
+the bodies remain untrusted contract data until a consumer admits them. A
+`work.status` send also records the job's latest status in the shared
+coordination `statuses` table on a newly-posted envelope — the durable
+per-job registry `claimBoard` returns and `agents bus status` counts beside
+live claims; a duplicate post adds no cursor so it never overwrites a newer
+feed status with a stale one, and the send result's `statusRecorded` reports
+the write (`true`/`false`/`null` for written/refused/unknown), a store fault
+never failing the posted send. The announce verb does not record — `queued`
+is already the feed's projection of `work.post`, and a locked coordination
+write per announcement is too costly for a state the feed already shows.
 
 **Claim-holder wakes.** When a `work.status` reaches a terminal state
 (`done`, `failed` or `terminated`), the send also queues one routing-only wake

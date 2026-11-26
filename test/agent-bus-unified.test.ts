@@ -12,7 +12,7 @@ import {
   sendWakeRequest, shouldWake, updateWorkStatus, type AgentWakeRow, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
-import { acquireCoordination } from '../src/core/agents/claim-store.js';
+import { acquireCoordination, listCoordination } from '../src/core/agents/claim-store.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import {
   attachBusCliSession, busAgentView, busSelfFromEnv, detectBusCli, frameBusChannelRead, frameBusInbox, getBusCliAdapter, listBusCliAdapters,
@@ -2405,6 +2405,46 @@ describe('v2 work announcements and statuses on the one bus store', () => {
     writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
     expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-7' }, options))
       .toMatchObject({ status: 'unavailable' });
+  });
+
+  it('records each posted work status in the coordination statuses table', async () => {
+    const options = setup();
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    register(options, 'nova');
+    // The announce verb does not write a status row: `queued` is already the
+    // feed's projection of work.post, and a locked coordination write per
+    // announcement is too costly for a state the feed already shows.
+    const announced = await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-STAT-1' }, options);
+    expect(announced).toMatchObject({ status: 'posted' });
+    expect('statusRecorded' in announced).toBe(false);
+    expect(listCoordination(options.root, options.now!()).statuses).toEqual([]);
+    // The first status move upserts the job's row into the shared registry.
+    const moved = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-STAT-1', status: 'running', id: 'w-stat-run' }, options);
+    expect(moved).toMatchObject({ status: 'posted', statusRecorded: true });
+    let listed = listCoordination(options.root, options.now!());
+    expect(listed.statuses).toEqual([expect.objectContaining({ jobId: 'RQ-STAT-1', owner: 'agent:atlas',
+      provider: 'claude', repo: 'ashlrai/phantom', status: 'running',
+      claimKeys: ['repo:ashlrai/phantom'] })]);
+    // A status move upserts the same job row rather than adding a second.
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-STAT-1', status: 'done', id: 'w-stat-done' }, options))
+      .toMatchObject({ status: 'posted', statusRecorded: true });
+    listed = listCoordination(options.root, options.now!());
+    expect(listed.statuses).toHaveLength(1);
+    expect(listed.statuses[0]).toMatchObject({ jobId: 'RQ-STAT-1', status: 'done' });
+    // A reposted older status is a duplicate: it adds no cursor, so it must
+    // not drag the recorded status back from the newer one the feed shows.
+    const stale = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-STAT-1', status: 'running', id: 'w-stat-run' }, options);
+    expect(stale.status).toBe('duplicate');
+    expect('statusRecorded' in stale).toBe(false);
+    listed = listCoordination(options.root, options.now!());
+    expect(listed.statuses).toHaveLength(1);
+    expect(listed.statuses[0]).toMatchObject({ status: 'done' });
+    // A conflicting announcement never reaches the record path.
+    expect(await announceWork({ from: 'nova', ...announce, jobId: 'RQ-STAT-1', provider: 'devin' }, options))
+      .toMatchObject({ status: 'conflict' });
+    listed = listCoordination(options.root, options.now!());
+    expect(listed.statuses).toHaveLength(1);
+    expect(listed.statuses[0]).toMatchObject({ status: 'done' });
   });
 });
 

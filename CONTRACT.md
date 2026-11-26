@@ -3870,7 +3870,8 @@ with a `reason`); they never throw for bad input or storage faults.
 `postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
 `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
+carry `claimHoldersWoken` and `statusRecorded`; the three conversational sends
+accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
 check `thread` gets, and `kind` — `note` or `context`, the v2 conversational
 body kind `postLabelMessage` already exposed, now shared by all three so a
@@ -4319,7 +4320,17 @@ claim owner whose coordination keys overlap the job's claim keys — capped at
 32, deduped by a deterministic per-envelope-and-holder id, skipped for the
 poster's own identity, and suppressed by `--no-wake`; the posted result's
 `claimHoldersWoken` counts hints present afterwards, `null` when the claim
-table is unreadable. `sendWakeRequest(WakeRequestInput)` posts a
+table is unreadable. `updateWorkStatus` also records the job's latest status
+in the shared coordination `statuses` table (`setWorkStatus`) on a
+newly-posted envelope — the durable per-job registry `claimBoard` returns
+and `agents bus status` counts beside live claims, surviving feed retention.
+`announceWork` does not record: `queued` is already the feed's projection of
+`work.post`, and a locked coordination write on every announcement is too
+costly for a state the feed already shows. A duplicate post adds no cursor so
+it never overwrites a newer feed status with a stale one, and the posted
+result's `statusRecorded` reports the write (`true` written, `false` on a
+definitive refusal such as a full store, `null` when the outcome is unknown).
+A store fault never fails the posted send. `sendWakeRequest(WakeRequestInput)` posts a
 schema-checked v2 `wake` body to `agent:<handle>` for a registered recipient
 and always records the routing-only wake hint for that same address — the
 body's purpose is the hint, so `wake: false` is refused — with `reason` capped

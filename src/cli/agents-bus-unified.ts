@@ -1290,8 +1290,11 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const holders = 'id' in result ? result.claimHoldersWoken : undefined;
       const holderNote = holders === undefined ? '' :
         ` claim-holders=${holders === null ? 'unknown' : holders}`;
+      const recorded = 'id' in result ? result.statusRecorded : undefined;
+      const recordedNote = recorded === undefined ? '' :
+        ` status-recorded=${recorded === null ? 'unknown' : recorded ? 'yes' : 'no'}`;
       return finish(result, 'id' in result ?
-        `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})${holderNote}` : '');
+        `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})${holderNote}${recordedNote}` : '');
     }
     if (verb === 'claim') {
       if (sub === 'message') {

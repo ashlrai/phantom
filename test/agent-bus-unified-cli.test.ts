@@ -1251,7 +1251,7 @@ describe('phm agents bus (unified)', () => {
         detail: 'picked up the feed' }] });
     expect((await run(['work', 'feed', '--status', 'queued'])).json).toMatchObject({ status: 'ok', jobs: [] });
     expect((await run(['work', 'feed', '--status', 'running', '--claims'])).json)
-      .toMatchObject({ status: 'ok', claims: { source: 'missing', holds: [] } });
+      .toMatchObject({ status: 'ok', claims: { source: 'available', holds: [] } });
 
     // A live claim lists with no token, narrows by --key, and joins the feed.
     expect((await run(['claim', 'acquire', '--key', 'repo:ashlrai/phantom', '--lease-ms', '600000',
@@ -1862,7 +1862,7 @@ describe('phm agents bus (unified)', () => {
     // Filters compose: atlas's running job only; holds regroup under shown jobs.
     expect((await run(['work', 'feed', '--owner', 'atlas', '--status', 'queued'])).json.jobs).toEqual([]);
     expect((await run(['work', 'feed', '--job', 'RQ-J-1', '--owner', 'atlas', '--claims'])).json)
-      .toMatchObject({ status: 'ok', claims: { source: 'missing', holds: [] } });
+      .toMatchObject({ status: 'ok', claims: { source: 'available', holds: [] } });
     expect((await run(['work', 'feed', '--job', 'RQ-J-1', '--owner', 'nova'])).json.jobs).toEqual([]);
     // Unresolvable owner refs keep exact-label matching — never widen.
     expect((await run(['work', 'feed', '--owner', 'ghost'])).json.jobs).toEqual([]);
