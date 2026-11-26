@@ -151,9 +151,9 @@ export function buildAgentConversations(scan: { source: AgentConversations['sour
 export function readAgentConversations(query: ConversationQuery = {}, options: BusInboxOptions = {}): AgentConversations {
   // The registry backs `agent`, `waitingOn`, `with`, `to` and the
   // `from`/`excludeFrom` sender filters' identity matching; every other
-  // filter — `channel`, `priority`, `inReplyTo`, `thread`, `bodyKind`,
-  // `result`, `kind` included — decides on member-message fields alone
-  // and needs no read.
+  // filter — `channel`, `topic`, `priority`, `inReplyTo`, `thread`,
+  // `bodyKind`, `result`, `kind` included — decides on member-message
+  // fields alone and needs no read.
   const needsRegistry = query.agent !== undefined || query.waitingOn !== undefined ||
     query.from !== undefined || query.excludeFrom !== undefined || query.with !== undefined ||
     query.to !== undefined;

@@ -187,7 +187,7 @@ MCP server) serves the shared `agents.conversations.v1` thread read —
 lines and Conversations panel all run the one `readAgentConversations`
 projection, and the tool is that read with the same dimensions as
 arguments: `agent`, `waiting`, `blocked`, `state`, `job`, `waitingOn`,
-`since`, `before`, `contains`, `inReplyTo`, `id`, `channel`, `priority`, `from`,
+`since`, `before`, `contains`, `inReplyTo`, `id`, `channel`, `topic`, `priority`, `from`,
 `excludeFrom`, `to`, `with`, `thread`, `bodyKind`, `result`, `kind` and `limit`
 all optional — so an MCP-connected agent
 answers "which threads wait for a reply, which are blocked, which are

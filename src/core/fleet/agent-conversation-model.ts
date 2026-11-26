@@ -6,6 +6,7 @@ import type { AgentMessageKind } from './agent-messages.js';
 import type { AgentIdentityKeyFor } from '../agents/bus-identity.js';
 import type { WorkResultOutcome } from '../agents/bus-v2-schema.js';
 import type { BusPriority } from './bus-envelope.js';
+import { groupAddressTopicOf } from './group-address.js';
 
 export const CONVERSATION_STATES = ['waiting', 'answered', 'blocked', 'done'] as const;
 export type ConversationState = typeof CONVERSATION_STATES[number];
@@ -177,6 +178,19 @@ export interface ConversationQuery {
    * "which threads touch channel X" is one filtered read. Whole threads,
    * never partial message lists. */
   channel?: string;
+  /** Keep only threads where at least one member message is addressed to a
+   * well-formed `group:<room>:<topic>` label carrying this exact topic
+   * component — the same `groupAddressTopicOf` parse every bus read's
+   * `--topic` applies (`phm agents bus work next --topic`, `phm comms bus
+   * next --topic`, the work feed's `--topic`, `agents bus inbox --topic`),
+   * decided on each member message's `to` label across every room — compose
+   * with `channel` for one room AND one topic — so "which threads carry
+   * mail on topic X" is one filtered read of whole threads. A `to` that is
+   * no well-formed group address — an agent address, a bare label, a
+   * `group:<room>` without a topic — never matches, and a topic nothing on
+   * the bus cites is an honest empty list, never a widened one. Whole
+   * threads, never partial message lists. */
+  topic?: string;
   /** Keep only threads where at least one member message carries this exact
    * P0..P3 band — the same match every other bus read's `--priority`
    * applies; a member message with no recorded band names no provable band
@@ -370,7 +384,12 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * `phm messages --id` reports only the row. `channel` keeps only the
  * threads where at least one member
  * message is addressed to `group:<channel>:*` — the same raw `to`-prefix
- * rule every bus read's `--channel` matches. `priority` keeps only the
+ * rule every bus read's `--channel` matches. `topic` keeps only the
+ * threads where at least one member message is addressed to a well-formed
+ * `group:<room>:<topic>` label carrying that exact topic component — the
+ * same `groupAddressTopicOf` parse every bus read's `--topic` applies,
+ * across every room and composing with `channel` into one room AND one
+ * topic. `priority` keeps only the
  * threads where at least one member message carries that exact P0..P3 band
  * — a member with no recorded band never matches. `from` keeps only the
  * threads where at least one member message was sent under the ref's
@@ -450,6 +469,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     : (c: Conversation) => c.messages.some(m =>
       (agentMatch(m.from) && peerMatch(m.to)) || (peerMatch(m.from) && agentMatch(m.to)));
   const channelPrefix = query.channel === undefined ? undefined : `group:${query.channel}:`;
+  const topic = query.topic;
   return list.filter(c => (query.job === undefined || c.jobs.includes(query.job))
     && (query.since === undefined || Date.parse(c.lastAt) >= query.since)
     && (query.before === undefined || Date.parse(c.lastAt) < query.before)
@@ -461,6 +481,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     && (query.result === undefined || c.messages.some(m => m.result === query.result))
     && (query.kind === undefined || c.messages.some(m => m.kind === query.kind))
     && (channelPrefix === undefined || c.messages.some(m => m.to.startsWith(channelPrefix)))
+    && (topic === undefined || c.messages.some(m => groupAddressTopicOf(m.to) === topic))
     && (query.to === undefined || c.messages.some(m => toMatch?.(m.to) === true))
     && (query.priority === undefined || c.messages.some(m => m.priority === query.priority))
     && (fromMatch === undefined || c.messages.some(m => fromMatch(m.from)))

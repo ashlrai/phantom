@@ -243,6 +243,33 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { channel: 'dev', agent: 'grok' })).toEqual([]);
   });
 
+  it('topic keeps whole threads where a member message is addressed to that group topic', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'group:dev:deploy', 0, { kind: 'ask' }),
+      say('b', 'claude', 'group:dev:deploy', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'grok', 'group:dev:alerts', 2, { kind: 'status' }),
+      say('d', 'zai', 'group:ops:deploy', 3, { kind: 'status' }),
+      say('e', 'peer', 'group:dev', 4, { kind: 'status' }),
+      say('f', 'peer-a', 'peer-b', 5, { kind: 'status' }),
+    ], NOW);
+    // 'a'+'b' sit on dev:deploy, 'c' on dev:alerts, 'd' on ops:deploy — the
+    // topic matches across every room; 'e' is a bare room with no topic and
+    // 'f' is agent mail, so neither ever matches.
+    expect(filterConversations(list, { topic: 'deploy' }).map(c => c.id).sort()).toEqual(['a', 'd']);
+    expect(filterConversations(list, { topic: 'alerts' }).map(c => c.id)).toEqual(['c']);
+    expect(filterConversations(list, { topic: 'missing' })).toEqual([]);
+    // A member `to` that is no well-formed group:<room>:<topic> label — a
+    // bare room, a deeper label, an agent address — names no provable topic.
+    expect(filterConversations(list, { topic: 'dev' })).toEqual([]);
+    // It composes with channel into one room AND one topic, and with the
+    // other filters like every flag here.
+    expect(filterConversations(list, { topic: 'deploy', channel: 'dev' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { topic: 'deploy', channel: 'ops' }).map(c => c.id)).toEqual(['d']);
+    expect(filterConversations(list, { topic: 'deploy', channel: 'missing' })).toEqual([]);
+    expect(filterConversations(list, { topic: 'deploy', agent: 'claude' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { topic: 'deploy', agent: 'grok' })).toEqual([]);
+  });
+
   it('priority keeps whole threads where a member message carries that band', () => {
     const list = buildConversations([
       say('a', 'leader', 'claude', 0, { kind: 'ask', priority: 'P0' }),
@@ -898,6 +925,29 @@ describe('phm agents conversations --json', () => {
     expect(read({ inReplyTo: 'r1', from: 'grok' })).toEqual([]);
   });
 
+  it('topic keeps the threads carrying mail on that group topic, whole threads', () => {
+    const root = bus([
+      [T0, 'g1', 'leader', 'group:dev:deploy', { kind: 'note', text: 'deploy window?' }],
+      [T0 + MIN, 'g2', 'claude', 'group:dev:deploy', { kind: 'note', text: 'on it', replyTo: 'g1' }],
+      [T0 + 2 * MIN, 'g3', 'grok', 'group:dev:alerts', { kind: 'note', text: 'alert!' }],
+      [T0 + 3 * MIN, 'g4', 'zai', 'group:ops:deploy', { kind: 'note', text: 'ops deploy' }],
+      [T0 + 4 * MIN, 'g5', 'peer', 'leader', { text: 'agent mail' }],
+    ]);
+    const read = (query: Parameters<typeof readAgentConversations>[0]) =>
+      readAgentConversations(query, { root, now: () => NOW }).conversations!.map(c => c.id);
+    // g1+g2 are one reply chain on dev:deploy; g4 sits on ops:deploy — the
+    // topic matches across every room while g3's alerts and g5's agent mail
+    // stay out, and the whole thread survives, never a partial message list.
+    expect(read({ topic: 'deploy' }).sort()).toEqual(['g1', 'g4']);
+    expect(read({ topic: 'alerts' })).toEqual(['g3']);
+    expect(read({ topic: 'deploy', channel: 'dev' })).toEqual(['g1']);
+    expect(read({ topic: 'deploy', channel: 'ops' })).toEqual(['g4']);
+    expect(read({ topic: 'missing' })).toEqual([]);
+    const thread = readAgentConversations({ topic: 'deploy', channel: 'dev' }, { root, now: () => NOW }).conversations![0]!;
+    expect(thread.messages.map(m => m.id)).toEqual(['g1', 'g2']);
+    expect(thread.messages.map(m => m.to)).toEqual(['group:dev:deploy', 'group:dev:deploy']);
+  });
+
   it('thread keeps the declared bucket and bodyKind the member discriminator, whole threads', () => {
     const root = bus([
       [T0, 't1', 'leader', 'claude', { kind: 'note', text: 'ship it?', thread: 'release-1' }],
@@ -949,6 +999,28 @@ describe('phm agents conversations --json', () => {
     expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-T2']);
     expect(await run(['--thread'])).toBe(2);
     expect(await run(['--body-kind', '--json'])).toBe(2);
+    expect(errors.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('the CLI --topic filters and refuses bad values', async () => {
+    const root = bus([
+      [T0, 'g1', 'leader', 'group:dev:deploy', { kind: 'note', text: 'deploy window?' }],
+      [T0 + MIN, 'g2', 'claude', 'group:dev:deploy', { kind: 'note', text: 'on it', replyTo: 'g1' }],
+      [T0 + 2 * MIN, 'g3', 'grok', 'group:ops:deploy', { kind: 'note', text: 'ops deploy' }],
+      [T0 + 3 * MIN, 'g4', 'zai', 'leader', { text: 'agent mail' }],
+    ]);
+    const lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    expect(await run(['--topic', 'deploy', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id).sort()).toEqual(['g1', 'g3']);
+    // --topic composes with --channel into one room AND one topic.
+    expect(await run(['--topic', 'deploy', '--channel', 'dev', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['g1']);
+    expect(await run(['--topic', 'alerts', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations).toEqual([]);
+    // Bad values are usage errors, never a silent default.
+    expect(await run(['--topic', 'Has Space'])).toBe(2);
+    expect(await run(['--topic'])).toBe(2);
     expect(errors.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -1264,6 +1336,27 @@ describe('phm agents conversations --json', () => {
     expect((await resultCall(`${AGENT_CONVERSATIONS_PATH}?result=bogus`)).status).toBe(400);
     expect((await resultCall(`${AGENT_CONVERSATIONS_PATH}?result=`)).status).toBe(400);
     expect((await resultCall(`${AGENT_CONVERSATIONS_PATH}?result=a&result=b`)).status).toBe(400);
+    // topic keeps the threads carrying mail on that group topic across every
+    // room — the same groupAddressTopicOf parse --topic applies — composing
+    // with channel into one room AND one topic; bad values are refused.
+    const topicRoot = bus([
+      [T0, 'g1', 'leader', 'group:dev:deploy', { kind: 'note', text: 'deploy window?' }],
+      [T0 + MIN, 'g2', 'claude', 'group:dev:deploy', { kind: 'note', text: 'on it', replyTo: 'g1' }],
+      [T0 + 2 * MIN, 'g3', 'grok', 'group:ops:deploy', { kind: 'note', text: 'ops deploy' }],
+      [T0 + 3 * MIN, 'g4', 'zai', 'leader', { text: 'agent mail' }],
+    ]);
+    const topicCall = serve(createFleetLiveMapApi(undefined, undefined, undefined,
+      query => readAgentConversations(query, { root: topicRoot, now: () => NOW })));
+    const onTopic = await topicCall(`${AGENT_CONVERSATIONS_PATH}?topic=deploy`);
+    expect(onTopic.status).toBe(200);
+    expect(onTopic.body.conversations.map((c: { id: string }) => c.id).sort()).toEqual(['g1', 'g3']);
+    expect(onTopic.body.matched).toBe(2);
+    expect((await topicCall(`${AGENT_CONVERSATIONS_PATH}?topic=deploy&channel=dev`)).body.conversations
+      .map((c: { id: string }) => c.id)).toEqual(['g1']);
+    expect((await topicCall(`${AGENT_CONVERSATIONS_PATH}?topic=alerts`)).body.conversations).toEqual([]);
+    expect((await topicCall(`${AGENT_CONVERSATIONS_PATH}?topic=`)).status).toBe(400);
+    expect((await topicCall(`${AGENT_CONVERSATIONS_PATH}?topic=a&topic=b`)).status).toBe(400);
+    expect((await topicCall(`${AGENT_CONVERSATIONS_PATH}?topic=has%20space`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?extra=1`)).status).toBe(400);
     expect((await call(AGENT_CONVERSATIONS_PATH, null)).status).toBe(401);
     // blocked=1 keeps only the blocked threads, same as --blocked.
