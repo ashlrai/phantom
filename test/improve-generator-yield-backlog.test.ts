@@ -226,6 +226,28 @@ describe('generatorYieldBacklogItems', () => {
     expect(all.every((item) => validBacklogItem(item) !== null)).toBe(true);
   });
 
+  it('keeps recurrence but withholds the refusal share for a clipped ledger', async () => {
+    const source = 'autofill:bet';
+    const rows = [
+      draft('older-draft', source, at(5)),
+      ...recurringRows(source, 'duplicate', 4, [4, 3], 'clipped'),
+    ];
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true });
+    const ledger = join(runsDir, 'metrics', 'generation.jsonl');
+
+    writeFileSync(ledger, rows.join('\n'));
+    const [complete] = await generatorYieldBacklogItems({ repo: REPO, now: NOW });
+    expect(complete?.prompt).toContain('4 of 5 recorded autofill:bet decisions');
+
+    const [olderDraft, ...rejections] = rows;
+    writeFileSync(ledger, [olderDraft, ' '.repeat(4 * 1024 * 1024), ...rejections].join('\n'));
+    const [clipped] = await generatorYieldBacklogItems({ repo: REPO, now: NOW });
+    expect(clipped?.id).toBe(complete?.id);
+    expect(clipped?.title).toContain('4 retained in 7d');
+    expect(clipped?.prompt).toContain('counts cover only the retained decisions');
+    expect(clipped?.prompt).not.toMatch(/4 of \d+ recorded/);
+  });
+
   it('reads the real ledger under a runs dir', async () => {
     mkdirSync(join(runsDir, 'metrics'), { recursive: true });
     writeFileSync(join(runsDir, 'metrics', 'generation.jsonl'), `${recurringRows('autofill:bet', 'stopped_family', 4, [4, 3, 4, 3], 'bet-r').join('\n')}\n`);

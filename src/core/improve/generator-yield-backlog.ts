@@ -34,15 +34,15 @@
  * sources beside it.
  *
  * Honesty rules, same as every other backlog source:
- *  - Read-only. metrics/generation.jsonl is read through readSource's
+ *  - Read-only. metrics/generation.jsonl is read through readLedgerTail's
  *    bounded no-follow tail read; nothing is written and no network is
  *    touched. Only the decision's job id, src, event, reason and
  *    timestamp are consumed — candidate goals and prompts never reach a
  *    prompt.
  *  - Healthy-only evidence. A missing ledger yields no items (a fresh
  *    install or autofill never applied is normal, not a finding); an
- *    unreadable or oversized source yields no items — unknown stays
- *    unknown, never a guessed tally. Malformed lines and rows missing
+ *    unreadable source yields no items. A clipped tail can prove recurrence,
+ *    but cannot establish the full-window refusal share. Malformed lines and rows missing
  *    the fields the fold needs are skipped, never counted.
  *  - Windowed on recorded evidence. A rejection counts only when its
  *    recorded timestamp lands inside the window; a row with no
@@ -80,7 +80,7 @@ import { join } from 'node:path';
 
 import { CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
-import { readSource } from '../fleet/runs-parked-queue.js';
+import { readLedgerTail } from '../router/outcomes.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 /** Items one call may emit; the (src, reason) cell set is small and bounded. */
@@ -261,7 +261,7 @@ export function foldGenerationRejections(
       continue;
     }
     rejections += 1;
-    const key = `${src} ${reason}`;
+    const key = `${src}\0${reason}`;
     let cell = cells.get(key);
     if (cell === undefined) {
       cell = { src, reason, events: 0, days: new Set(), jobs: new Set(), examples: [], srcDecisions: 0 };
@@ -308,17 +308,18 @@ const NO_CHANGE = 'If the window has rolled forward, the refusals were correct f
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
-function cellPrompt(cell: GenerationCell, windowDays: number): string {
+function cellPrompt(cell: GenerationCell, windowDays: number, truncated: boolean): string {
   const src = safeToken(cell.src, 80);
   const reason = safeToken(cell.reason, 80);
   const jobs = cell.jobs.size;
   const days = cell.days.size;
-  const share = cell.srcDecisions > 0 ? ` — ${cell.events} of ${cell.srcDecisions} recorded ${src} decisions inside the window` : '';
+  const share = !truncated && cell.srcDecisions > 0 ? ` — ${cell.events} of ${cell.srcDecisions} recorded ${src} decisions inside the window` : '';
   const lines: string[] = [
     `Phantom's queue intake keeps refusing candidates — ${plural(cell.events, 'rejection')} for reason '${reason}' from '${src}' across ${plural(days, 'distinct UTC day')} and ${plural(jobs, 'distinct job')} inside the ${windowDays}-day window${share}, the self-improvement work this backlog exists for.`,
     '',
     `Every applied autofill or supply-floor pass records each candidate it drafts or refuses in the generation journal. '${reason}' means ${reasonNote(cell.reason)}. Refusals are the intake's own filter working — the question is whether the candidate sources keep minting work the fleet already refuses, or the refusal checks in src/core/fleet/queue-autofill.ts (candidateRank, stoppedFamilies, laneLacks) mis-fire or their vocabulary drifted from what the sources produce.`,
   ];
+  if (truncated) lines.push('', 'The generation journal was clipped. These counts cover only the retained decisions in the window.');
   lines.push('', EVIDENCE);
   if (cell.examples.length > 0) {
     lines.push('', `Example job ids: ${cell.examples.map((id) => safeToken(id, 80)).join(', ')}.`);
@@ -330,15 +331,15 @@ function cellPrompt(cell: GenerationCell, windowDays: number): string {
   return lines.join('\n');
 }
 
-function cellItem(cell: GenerationCell, repo: string, windowDays: number): CloudBacklogItem {
+function cellItem(cell: GenerationCell, repo: string, windowDays: number, truncated: boolean): CloudBacklogItem {
   const src = safeToken(cell.src, 80);
   const reason = safeToken(cell.reason, 80);
   const id = `fleet-generation-${createHash('sha256').update(`generation-yield:${cell.src}:${cell.reason}`).digest('hex').slice(0, 16)}`;
-  const title = `Queue intake '${src}' keeps refusing candidates: ${reason} (${cell.events} in ${windowDays}d)`;
+  const title = `Queue intake '${src}' keeps refusing candidates: ${reason} (${cell.events} ${truncated ? 'retained ' : ''}in ${windowDays}d)`;
   return {
     id,
     title: title.slice(0, MAX_TITLE_CHARS),
-    prompt: cellPrompt(cell, windowDays),
+    prompt: cellPrompt(cell, windowDays, truncated),
     area: 'fleet-generation',
     priority: 3,
     ...(CLOUD_REPO_PATTERN.test(repo) ? { repo } : {}),
@@ -357,12 +358,15 @@ export async function generatorYieldBacklogItems(opts: GeneratorYieldItemsOption
     if (repo === '' || fleetRepoName(repo) !== FLEET_REPO_NAME) return [];
     const now = opts.now ?? Date.now();
     let text: string | null;
+    let truncated = false;
     if (opts.ledgerText !== undefined) {
       text = opts.ledgerText;
     } else {
       const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(opts.homeDir ?? homedir(), '.ashlr-runs');
-      const read = await readSource(join(runsDir, 'metrics', 'generation.jsonl'), GENERATION_LEDGER_MAX_BYTES, true);
-      text = read.state === 'healthy' ? read.text : null;
+      const read = await readLedgerTail(join(runsDir, 'metrics', 'generation.jsonl'), GENERATION_LEDGER_MAX_BYTES);
+      if (read.state !== 'read') return [];
+      text = read.text;
+      truncated = read.truncated;
     }
     if (text === null) return [];
     const windowMs = opts.windowMs !== undefined && Number.isFinite(opts.windowMs) && opts.windowMs > 0
@@ -372,7 +376,7 @@ export async function generatorYieldBacklogItems(opts: GeneratorYieldItemsOption
     if (fold.cells.length === 0) return [];
     const windowDays = Math.max(1, Math.round(windowMs / 86_400_000));
     const limit = Math.max(1, Math.min(opts.limit ?? GENERATOR_YIELD_MAX_ITEMS, GENERATOR_YIELD_ITEM_HARD_MAX));
-    return fold.cells.slice(0, limit).map((cell) => cellItem(cell, repo, windowDays));
+    return fold.cells.slice(0, limit).map((cell) => cellItem(cell, repo, windowDays, truncated));
   } catch {
     return [];
   }

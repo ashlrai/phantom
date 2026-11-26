@@ -1349,7 +1349,9 @@ distinct recorded rejection observations for one source and reason across
 at least two UTC days in the last seven days. Replayed decisions with the
 same job, source, event, reason and recorded instant count once in both the
 recurrence threshold and the refusal share. Later observations for the
-same job still count.
+same job still count. When the bounded journal read clips older decisions,
+the brief labels the counts as retained evidence and withholds the
+full-window refusal share.
 
 Run `phm fleet lane-reward --json` to see reward and measured token usage by
 lane. The report attributes a PR outcome that carries only a URL when exactly
