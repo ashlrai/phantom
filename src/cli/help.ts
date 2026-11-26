@@ -1535,7 +1535,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'serve --allow-dispatch',       desc: 'Enable guarded POST /api/run + web inbox approve/reject (prints session token).', topic: 'web' },
   { cmd: 'console [--port N] [--no-open]', desc: 'Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
   { cmd: 'verse [--port N] [--no-open]', desc: 'Alias of `console` (the original name; same flags). Opens /verse/, the same page.', topic: 'web' },
-  { cmd: 'settings appearance [set]', desc: 'Read or change the app theme, accent (hex), density and font size: [--json] to read; [--theme <t>] [--accent <hex>] [--density <d>] [--font-size <n>] to change, --reset for defaults. A running desktop or phone app applies it live.', topic: 'web' },
+  { cmd: 'settings appearance [set]', desc: 'Read or change theme, accent, density, font size and the desktop sidebar mark. Use --brand p|ghost or --brand-file <path> for the mark, --reset for defaults, and --json for structured output.', topic: 'web' },
 
   { cmd: 'pages publish <file.md|file.json> [--slug <s>] [--title <t>] [--json]', desc: 'Publish a report into the loopback dashboard at /pages/<slug> (stored under ~/.ashlr/pages; nothing public).', topic: 'web' },
   { cmd: 'pages list [--json]',          desc: 'List published report pages, newest first.', topic: 'web' },
