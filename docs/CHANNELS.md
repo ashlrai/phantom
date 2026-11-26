@@ -512,7 +512,22 @@ it; the owner-held lease-verified `return` retry is the detail, and lease
 material never leaves the store; `missing` is a verified-absent ledger,
 `unknown` any refusal — never an empty backlog passed off as fact; deep
 links `phm fleet coordination board` and `phm fleet coordination inbox
---agent`) — and each item carries `act` deep-link commands (`phm fleet
+--agent`) — and the claim-store drift verdict's disagreeing rows (the
+`fleet.claim-drift.v1` read `phm fleet claim-drift` serves — the same
+comparison `agents bus status` reports as counts only: live bus work
+claims against the live `queue:<id>` coordination leases they are
+dual-written to, joined on the `<id>:<cursor>:<receivedAt>` coordinate —
+a bus-only row the coordination overlap check cannot see, a
+coordination-only row the bus claims journal never recorded, and an
+owner-mismatch pair where the same lease shows two holders each list as
+warn `claim-drift-bus`/`claim-drift-coordination`/`claim-drift-owner`
+items naming envelope id, owner labels, cursor and lease deadline,
+`since` the claim coordinate's receipt time and `expiresAt` the lease
+expiry that ends the disagreement; `UNKNOWN` — a claim store that could
+not be read — reports `unavailable` with a null pending, never an empty
+verdict passed off as fact, and VERIFIED with both stores absent is
+`missing`; deep links `phm fleet claim-drift`, `phm agents bus show`,
+`phm agents bus claim list --key`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -526,7 +541,8 @@ ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 `phm team approve|deny`, `phm inbox approve|reject`,
 `phm fleet slack-trace`, `phm channels slack status`, `phm channels slack
 run`, `phm channels`, `phm comms cycle`, `phm leader inbox`, `phm fleet
-coordination board`, `phm fleet coordination inbox --agent`). It never claims, replies, or mutates; a source
+coordination board`, `phm fleet coordination inbox --agent`, `phm fleet
+claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:

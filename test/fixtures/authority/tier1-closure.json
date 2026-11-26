@@ -696,6 +696,7 @@
     "src/core/fleet/ci-flakes.ts",
     "src/core/fleet/ci-rerun.ts",
     "src/core/fleet/claim-lease-reap.ts",
+    "src/core/fleet/claim-store-drift.ts",
     "src/core/fleet/claude-quota-reading.ts",
     "src/core/fleet/cloud-intake.ts",
     "src/core/fleet/codex-session-usage.ts",

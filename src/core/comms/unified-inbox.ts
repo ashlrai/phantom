@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates twenty-three local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates twenty-eight local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -384,6 +384,32 @@
  *               refusal — never an empty backlog passed off as fact.
  *               Act: `phm fleet coordination board`,
  *               `phm fleet coordination inbox --agent`.
+ *   claim-drift  the claim-store drift verdict's (`fleet.claim-drift.v1`)
+ *               disagreeing rows — live bus work claims against the live
+ *               `queue:<id>` coordination leases they are dual-written to,
+ *               through `readClaimStoreDrift`, the same read `phm fleet
+ *               claim-drift` and the bus-status probe's `claimDrift`
+ *               section serve. The verdict's counts were the only surface:
+ *               `agents bus status` reports numbers, and an agent had to
+ *               already know the verb to see WHICH claims disagree. A
+ *               bus-only row is a live lease the coordination overlap
+ *               check cannot see (a second acquire could double-grant), a
+ *               coord-only row a `queue:<id>` lease the bus claims journal
+ *               never recorded, and an owner-mismatch pair the same lease
+ *               showing two different holders — each lists as a warn,
+ *               agent work to reconcile before the lease lapses, never
+ *               Mason-blocking. `since` is the claim coordinate's recorded
+ *               receipt time (null when a coord row's sourceId tail cannot
+ *               be parsed — unknown stays unknown) and `expiresAt` the
+ *               lease deadline that ends the disagreement; items name the
+ *               envelope id, owner labels, cursor and stamps only — no job
+ *               citation is provable from a drift row, so `--job` never
+ *               matches. UNKNOWN — a claim store that could not be read —
+ *               reports 'unavailable' with a null pending, never an empty
+ *               verdict passed off as fact; VERIFIED with both stores
+ *               absent is 'missing' (verified-empty). Act:
+ *               `phm fleet claim-drift`, `phm agents bus show`,
+ *               `phm agents bus claim list --key`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -448,6 +474,7 @@ import { imessageStateDir } from '../integrations/imessage.js';
 import { readLeaderThreadUndelivered, type LeaderThreadUndeliveredRead } from '../vision/leader-thread.js';
 import { readLeaderNetworkState, type LeaderNetworkStateRead } from '../agents/leader-network-read.js';
 import { readFleetCoordinationPending, type FleetCoordinationPending } from '../fleet/coordination.js';
+import { readClaimStoreDrift, type ClaimDriftRow, type ClaimStoreDrift } from '../fleet/claim-store-drift.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -461,7 +488,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
-  'slack-sends', 'leader-delivery', 'leader-network', 'coordination',
+  'slack-sends', 'leader-delivery', 'leader-network', 'coordination', 'claim-drift',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -473,8 +500,9 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
   (UNIFIED_INBOX_SEVERITIES as readonly string[]).includes(value);
 /** Every pending-item kind the unified view can report. Most kinds are 1:1
  * with their source; the `bus` source splits into
- * `bus-work`/`bus-handoff`/`bus-dead-letter` and the `board` source into
- * `board-delivery`/`board-task`, so `kind` is the finer classification
+ * `bus-work`/`bus-handoff`/`bus-dead-letter`, the `board` source into
+ * `board-delivery`/`board-task` and `claim-drift` into its three row
+ * classes, so `kind` is the finer classification
  * `--kind` filters on. */
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
@@ -484,6 +512,7 @@ export const UNIFIED_INBOX_KINDS = [
   'inbox-proposal', 'slack-request', 'slack-send-unconfirmed', 'leader-message-undelivered',
   'leader-request', 'leader-request-incomplete', 'leader-reply-unconfirmed', 'leader-digest-unconfirmed',
   'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
+  'claim-drift-bus', 'claim-drift-coordination', 'claim-drift-owner',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -709,6 +738,8 @@ export interface UnifiedInboxOptions {
   readLeaderNetwork?: (options: { runsDir?: string }) => LeaderNetworkStateRead;
   /** Coordination-ledger seam; default reads the advisory `fleet.coordination.v1` ledger through `readFleetCoordinationPending` — the same replay `readFleetBoard` runs, never its reaping mutation path. */
   readFleetCoordination?: typeof readFleetCoordinationPending;
+  /** Claim-drift seam; default reads the same `fleet.claim-drift.v1` verdict `phm fleet claim-drift` and the bus-status probe's `claimDrift` section serve. */
+  readClaimDrift?: typeof readClaimStoreDrift;
   /** Optional narrowing of the returned item list by stored source, severity,
    * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
@@ -2797,6 +2828,102 @@ function coordinationItems(read: NonNullable<UnifiedInboxOptions['readFleetCoord
 }
 
 /**
+ * The claim-store drift verdict's (`fleet.claim-drift.v1`) disagreeing rows —
+ * the one claim-correctness surface no other source reads: `agents bus
+ * status` reports only the verdict's counts, `phm fleet claim-drift` is a
+ * verb an agent must already know to run, and the bus/mailbox/board sources
+ * each consult ONE of the two claim stores, so a live lease the other store
+ * never recorded — or a pair whose owners disagree — is invisible to every
+ * pending view until the lease lapses. `mutateBusWorkClaim` writes the bus
+ * claims table and the coordination table one after the other, so a crash
+ * or settle failure between the writes leaves them disagreeing: a bus-only
+ * row is a lease the coordination overlap check cannot see (a second
+ * acquire could double-grant), a coord-only row a `queue:<id>` lease the
+ * bus claims journal never recorded, and an owner-mismatch pair the same
+ * lease showing two different holders. `readClaimStoreDrift` compares only
+ * live rows and never throws; UNKNOWN — a store that could not be read —
+ * reports 'unavailable' with a null pending, never an empty verdict passed
+ * off as fact (the row arrays are empty by construction whenever a side is
+ * unreadable), and VERIFIED with both stores absent is 'missing'
+ * (verified-empty). Each row lists as a warn — agent work to reconcile
+ * before the lease expires, never Mason-blocking — `since` the claim
+ * coordinate's recorded receipt time (null when a coord row's sourceId
+ * tail cannot be parsed — unknown stays unknown) and `expiresAt` the
+ * lease deadline that ends the disagreement. Items name the envelope id,
+ * owner labels, cursor and stamps only — claim keys beyond `queue:<id>`
+ * and fencing material never leave the read, and no job citation is
+ * provable from a drift row, so `--job` never matches.
+ */
+function claimDriftItems(read: NonNullable<UnifiedInboxOptions['readClaimDrift']>,
+  options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let drift: ClaimStoreDrift;
+  try { drift = read({ root: options.busRoot, now: (options.now ?? Date.now)() }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (drift.state === 'UNKNOWN') return { report: { state: 'unavailable', pending: null }, items: [] };
+  // The drift read reports an unparseable coord sourceId tail as the epoch;
+  // that is "unknown", not a 1970 appearance time.
+  const EPOCH_ISO = '1970-01-01T00:00:00.000Z';
+  const sinceOf = (row: ClaimDriftRow): string | null => row.receivedAt === EPOCH_ISO ? null : row.receivedAt;
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const row of drift.busOnly) {
+    items.push({
+      id: `claim-drift:bus:${row.id}:${row.cursor}:${row.receivedAt}`,
+      source: 'claim-drift',
+      kind: 'claim-drift-bus',
+      // A live lease only the bus claims table recorded — the coordination
+      // overlap check cannot see it, so a second acquire could double-grant;
+      // agent work to reconcile before the lease lapses, never Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Claim drift · bus-only lease on ${row.id}`, TITLE_MAX),
+      detail: oneLine(`bus claims table holds a live lease coordination does not · owner ${row.owner} · cursor ${row.cursor} · lease until ${row.leaseUntil}`, DETAIL_MAX) || null,
+      since: sinceOf(row),
+      expiresAt: row.leaseUntil,
+      act: ['phm fleet claim-drift --json', `phm agents bus show ${row.id}`],
+    });
+  }
+  for (const row of drift.coordOnly) {
+    items.push({
+      id: `claim-drift:coord:${row.id}:${row.cursor}:${row.receivedAt}`,
+      source: 'claim-drift',
+      kind: 'claim-drift-coordination',
+      // A live `queue:<id>` lease only the coordination table recorded — the
+      // bus claims journal never saw the acquire; agent work, never
+      // Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Claim drift · coordination-only lease on ${row.id}`, TITLE_MAX),
+      detail: oneLine(`coordination table holds a live queue:${row.id} lease the bus claims table does not · owner ${row.owner} · lease until ${row.leaseUntil}`, DETAIL_MAX) || null,
+      since: sinceOf(row),
+      expiresAt: row.leaseUntil,
+      act: ['phm fleet claim-drift --json', `phm agents bus claim list --key queue:${row.id}`],
+    });
+  }
+  for (const row of drift.ownerMismatch) {
+    items.push({
+      id: `claim-drift:owner:${row.id}:${row.cursor}:${row.receivedAt}`,
+      source: 'claim-drift',
+      kind: 'claim-drift-owner',
+      // The same live lease shows two different holders depending which
+      // store an agent consults — agent work to reconcile, never
+      // Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Claim drift · owner mismatch on ${row.id}`, TITLE_MAX),
+      detail: oneLine(`bus owner ${row.busOwner ?? row.owner} vs coordination owner ${row.coordOwner ?? 'unknown'} · lease until ${row.leaseUntil}`, DETAIL_MAX) || null,
+      since: sinceOf(row),
+      expiresAt: row.leaseUntil,
+      act: ['phm fleet claim-drift --json', `phm agents bus show ${row.id}`, `phm agents bus claim list --key queue:${row.id}`],
+    });
+  }
+  // VERIFIED with both claim stores absent is a verified-empty pair — the
+  // same 'missing' state every other never-used store reports.
+  const state: UnifiedInboxSourceState =
+    drift.state === 'VERIFIED' && drift.bus === 'missing' && drift.coordination === 'missing' ? 'missing' : 'healthy';
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
+}
+
+/**
  * The same drop inbox `runEmailDropOnce` scans, resolved at the shared runs
  * dir: saved email-drop config → `inboxDir` → `readEmailDropInbox`. A missing
  * config or inbox dir is 'missing' (the pass treats an absent inbox as an
@@ -2962,6 +3089,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const leaderDelivery = leaderDeliveryItems(options.readLeaderUndelivered ?? readLeaderThreadUndelivered, now);
   const leaderNetwork = leaderNetworkItems(options.readLeaderNetwork ?? readLeaderNetworkState, options.runsDir);
   const coordination = coordinationItems(options.readFleetCoordination ?? readFleetCoordinationPending);
+  const claimDrift = claimDriftItems(options.readClaimDrift ?? readClaimStoreDrift, options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -2991,8 +3119,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'leader-delivery': leaderDelivery.report,
     'leader-network': leaderNetwork.report,
     coordination: coordination.report,
+    'claim-drift': claimDrift.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...coordination.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...coordination.items, ...claimDrift.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

@@ -38,6 +38,7 @@ import type { SentReceipt } from '../src/core/agents/slack-reply-binding.js';
 import type { LeaderThreadUndeliveredItem, LeaderThreadUndeliveredRead } from '../src/core/vision/leader-thread.js';
 import type { LeaderNetworkDigestFact, LeaderNetworkRequestFact, LeaderNetworkStateRead } from '../src/core/agents/leader-network-read.js';
 import type { FleetAssignment, FleetCoordinationPending, FleetMessage, FleetPendingReturn } from '../src/core/fleet/coordination.js';
+import type { ClaimDriftRow, ClaimStoreDrift } from '../src/core/fleet/claim-store-drift.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
@@ -4031,5 +4032,135 @@ describe('readUnifiedInbox coordination', () => {
     const byKind = await readCoord(pending, { filter: { kind: 'coordination-return-unposted' } });
     expect(byKind.items.map(i => i.id)).toEqual(['coordination:return-claim-1']);
     expect(byKind.sources.coordination).toEqual({ state: 'healthy', pending: 2 });
+  });
+});
+
+describe('readUnifiedInbox claim drift', () => {
+  const driftRow = (over: Partial<ClaimDriftRow> = {}): ClaimDriftRow => ({
+    id: 'env-1', cursor: 7,
+    receivedAt: new Date(now - 60_000).toISOString(),
+    owner: 'agent:peer', leaseUntil: new Date(now + 600_000).toISOString(),
+    ...over,
+  });
+  const drift = (over: Partial<ClaimStoreDrift> = {}): ClaimStoreDrift => ({
+    schema: 'fleet.claim-drift.v1', asOf: new Date(now).toISOString(),
+    bus: 'available', coordination: 'available', matched: 3,
+    busOnly: [], coordOnly: [], ownerMismatch: [], state: 'VERIFIED', missing: [],
+    ...over,
+  });
+  const readDrift = (d: ClaimStoreDrift, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readClaimDrift: () => d, ...extra });
+
+  it('lists each drift row class as a warn with its own kind, stamps and acts', async () => {
+    const inbox = await readDrift(drift({
+      state: 'DRIFT',
+      busOnly: [driftRow({ id: 'env-bus', cursor: 3, owner: 'agent:bus-owner' })],
+      coordOnly: [driftRow({
+        id: 'env-coord', cursor: 9, owner: 'agent:coord-owner',
+        sourceId: 'env-coord:9:1762619940000',
+      })],
+      ownerMismatch: [driftRow({
+        id: 'env-owner', cursor: 5, owner: 'agent:bus-side',
+        busOwner: 'agent:bus-side', coordOwner: 'agent:coord-side',
+      })],
+    }));
+    expect(inbox.sources['claim-drift']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'claim-drift');
+    expect(items).toHaveLength(3);
+
+    const busOnly = items.find(i => i.id.startsWith('claim-drift:bus:env-bus:3:'))!;
+    expect(busOnly).toMatchObject({
+      kind: 'claim-drift-bus', severity: 'warn', blocking: false,
+      title: 'Claim drift · bus-only lease on env-bus',
+      since: new Date(now - 60_000).toISOString(),
+      expiresAt: new Date(now + 600_000).toISOString(),
+    });
+    expect(busOnly.id).toContain('env-bus:3:');
+    expect(busOnly.detail).toContain('bus claims table');
+    expect(busOnly.detail).toContain('agent:bus-owner');
+    expect(busOnly.detail).toContain('cursor 3');
+    expect(busOnly.act).toEqual(['phm fleet claim-drift --json', 'phm agents bus show env-bus']);
+    expect(busOnly.jobIds).toBeUndefined();
+
+    const coordOnly = items.find(i => i.id.startsWith('claim-drift:coord:env-coord:9:'))!;
+    expect(coordOnly).toMatchObject({
+      kind: 'claim-drift-coordination', severity: 'warn', blocking: false,
+      title: 'Claim drift · coordination-only lease on env-coord',
+      since: new Date(now - 60_000).toISOString(),
+      expiresAt: new Date(now + 600_000).toISOString(),
+    });
+    expect(coordOnly.detail).toContain('queue:env-coord');
+    expect(coordOnly.detail).toContain('agent:coord-owner');
+    expect(coordOnly.act).toEqual(['phm fleet claim-drift --json', 'phm agents bus claim list --key queue:env-coord']);
+
+    const mismatch = items.find(i => i.id.startsWith('claim-drift:owner:env-owner:5:'))!;
+    expect(mismatch).toMatchObject({
+      kind: 'claim-drift-owner', severity: 'warn', blocking: false,
+      title: 'Claim drift · owner mismatch on env-owner',
+    });
+    expect(mismatch.detail).toContain('agent:bus-side');
+    expect(mismatch.detail).toContain('agent:coord-side');
+    expect(mismatch.act).toEqual([
+      'phm fleet claim-drift --json',
+      'phm agents bus show env-owner',
+      'phm agents bus claim list --key queue:env-owner',
+    ]);
+  });
+
+  it('reports VERIFIED healthy-empty, both-stores-missing as missing, and UNKNOWN or a throwing read as unavailable', async () => {
+    const verified = await readDrift(drift());
+    expect(verified.sources['claim-drift']).toEqual({ state: 'healthy', pending: 0 });
+    expect(verified.items.filter(i => i.source === 'claim-drift')).toHaveLength(0);
+
+    const absent = await readDrift(drift({ bus: 'missing', coordination: 'missing' }));
+    expect(absent.sources['claim-drift']).toEqual({ state: 'missing', pending: 0 });
+
+    // One store still present keeps VERIFIED healthy — an absent side is an
+    // empty claim set, not a missing source.
+    const half = await readDrift(drift({ bus: 'missing' }));
+    expect(half.sources['claim-drift']).toEqual({ state: 'healthy', pending: 0 });
+
+    const unknown = await readDrift(drift({
+      state: 'UNKNOWN', bus: 'unavailable', missing: ['bus'],
+      busOnly: [driftRow()], // a seam that still returns rows under UNKNOWN never lists them
+    }));
+    expect(unknown.sources['claim-drift']).toEqual({ state: 'unavailable', pending: null });
+    expect(unknown.items.filter(i => i.source === 'claim-drift')).toHaveLength(0);
+
+    const throwing = await read({
+      readClaimDrift: () => { throw new Error('drift boom'); },
+    });
+    expect(throwing.sources['claim-drift']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'claim-drift')).toHaveLength(0);
+  });
+
+  it('maps an unparseable coord receipt stamp to a null since — unknown stays unknown', async () => {
+    const inbox = await readDrift(drift({
+      state: 'DRIFT',
+      coordOnly: [driftRow({
+        id: 'env-old', cursor: 0, receivedAt: '1970-01-01T00:00:00.000Z',
+        sourceId: 'env-old:garbage',
+      })],
+    }));
+    const item = inbox.items.find(i => i.source === 'claim-drift')!;
+    expect(item.since).toBeNull();
+    expect(item.expiresAt).toBe(new Date(now + 600_000).toISOString());
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = drift({
+      state: 'DRIFT',
+      busOnly: [driftRow({ id: 'env-bus' })],
+      ownerMismatch: [driftRow({ id: 'env-owner', busOwner: 'a', coordOwner: 'b' })],
+    });
+    const bySource = await readDrift(pending, { filter: { source: 'claim-drift' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'claim-drift')).toBe(true);
+    const byKind = await readDrift(pending, { filter: { kind: 'claim-drift-owner' } });
+    expect(byKind.items.map(i => i.id)).toEqual([`claim-drift:owner:env-owner:7:${new Date(now - 60_000).toISOString()}`]);
+    expect(byKind.sources['claim-drift']).toEqual({ state: 'healthy', pending: 2 });
+    // A drift row provably names no job — --job never matches it.
+    const byJob = await readDrift(pending, { filter: { job: 'job-1' } });
+    expect(byJob.items.filter(i => i.source === 'claim-drift')).toHaveLength(0);
   });
 });
