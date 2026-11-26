@@ -1665,6 +1665,8 @@ export interface RouterOutcomeFold {
 }
 
 export interface RouterOutcomeFoldOptions {
+  /** Require dated jobs-ledger merge and revert verdicts at or before this time. */
+  verdictAsOfMs?: number;
   /** Resolve the advisory pass^k score for a (lane, model) pair; absent or null stays null. */
   passkFor?: (lane: string, model: string) => number | null;
   /**
@@ -1922,8 +1924,10 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     const state = mergePhase(r);
     const merged = state === 'MERGED' ? true : state === 'CLOSED' ? false : typeof r['merged'] === 'boolean' ? r['merged'] : null;
     if (merged !== null) {
-      const ts = Date.parse(str(r, ...ledgerTsKeys(state)) ?? '') || 0;
-      if (ts >= (mergedAt.get(j) ?? -1)) {
+      const verdictAt = Date.parse(str(r, ...ledgerTsKeys(state)) ?? '');
+      const ts = verdictAt || 0;
+      if ((opts.verdictAsOfMs === undefined || verdictAt <= opts.verdictAsOfMs)
+        && ts >= (mergedAt.get(j) ?? -1)) {
         o.merged = merged;
         mergedAt.set(j, ts);
         if (u === null) verdictPrKeys.delete(j);
@@ -1938,7 +1942,8 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     // Sticky-true, matching metrics-ingest: any recorded revert evidence wins
     // and a later reverted:false cannot undo it; explicit false only stands
     // when no positive evidence exists anywhere in the job's rows.
-    if (o.reverted !== true) {
+    if (o.reverted !== true && (opts.verdictAsOfMs === undefined
+      || Date.parse(str(r, 'reverted_at', 'revertedAt', ...LEDGER_TS_KEYS) ?? '') <= opts.verdictAsOfMs)) {
       if (r['reverted'] === true || hasRevertStamp(r) || hasRevertName(r, EVENT_NAME_KEYS) || hasRevertName(r, PHASE_KEYS)) {
         o.reverted = true;
       } else if (r['reverted'] === false) {

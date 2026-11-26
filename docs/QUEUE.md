@@ -403,8 +403,10 @@ preferred lane), `overridden` (recorded a well-formed `lane_override`),
 `open` (chose a lane with no declared preference), `unrouted` (chose no
 lane) or `unexplained` (left a declared preference with no well-formed
 override record) — then to the newest recorded outcome through the same
-fold `phm router outcomes` uses, so merged, closed-unmerged, reverted and
-still-unresolved jobs keep identical semantics. `byReason` recounts
+fold `phm router outcomes` uses. This report considers dated merge, close
+and revert evidence at or before report time. A later verdict leaves earlier
+eligible evidence in place. A recorded revert timestamp takes precedence over
+the row timestamp. `byReason` recounts
 overridden jobs by override reason and `byClass` tallies outcomes per
 recorded `work_class` (`unclassified` when absent or outside the market's
 closed values). A missing jobs ledger leaves every decided job
