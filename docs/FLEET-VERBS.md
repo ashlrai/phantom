@@ -129,6 +129,12 @@ list --json statusCheckRollup` exports do not supply all this evidence, so they
 report unknown until enriched by a trustworthy observer. These observations do
 not establish historical branch protection or grant merge authority.
 
+Revert, follow-up and CI adverse rates use resolved post-merge outcomes
+(stable, reverted, regressed or followed-up). Pending and unobserved merges
+still appear in merge totals. Each CI bucket reports its resolved count
+alongside its total, and the direction is insufficient data until both
+required-check buckets have resolved outcomes.
+
 ## Open PR snapshot
 
 Run `phm fleet open-prs --repo ashlrai/phantom --json` to read GitHub and save

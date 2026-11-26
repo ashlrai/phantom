@@ -133,6 +133,13 @@ export interface EvalGroupRow {
   checks: { clean: number; failedChecks: number; adverseWithClean: number; adverseWithFailedChecks: number };
 }
 
+interface EvalCiBucket {
+  merged: number;
+  resolved: number;
+  adverse: number;
+  adverseRate: number | null;
+}
+
 export interface FleetEvalReport {
   schema: typeof FLEET_EVAL_REPORT_SCHEMA;
   generatedAt: string;
@@ -171,9 +178,9 @@ export interface FleetEvalReport {
   ci: {
     measured: number;
     unknown: number;
-    clean: { merged: number; adverse: number; adverseRate: number | null };
-    failedChecks: { merged: number; adverse: number; adverseRate: number | null };
-    jobFinishFailed: { merged: number; adverse: number; adverseRate: number | null };
+    clean: EvalCiBucket;
+    failedChecks: EvalCiBucket;
+    jobFinishFailed: EvalCiBucket;
     direction: 'failed-checks-more-adverse' | 'clean-more-adverse' | 'even' | 'insufficient-data';
   };
   byLane: EvalGroupRow[];
@@ -613,8 +620,8 @@ function finishGroup(group: GroupAcc): EvalGroupRow {
     rate: resolved > 0 ? group.stable / resolved : null,
     ci95: wilsonInterval(group.stable, resolved),
   };
-  group.revertRate = group.merged > 0 ? group.reverted / group.merged : null;
-  group.followUpRate = group.merged > 0 ? (group.regressed + group.followedUp) / group.merged : null;
+  group.revertRate = resolved > 0 ? group.reverted / resolved : null;
+  group.followUpRate = resolved > 0 ? (group.regressed + group.followedUp) / resolved : null;
   const t = timeStats(group._ttm);
   group.ttm = { measured: t.measured, median_s: t.median_s, p90_s: t.p90_s };
   const l = timeStats(group._lead);
@@ -862,12 +869,18 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
   const merges = { total: entries.length, attributed: 0, unattributed: 0, stable: 0, reverted: 0, regressed: 0, followedUp: 0, pending: 0, unobserved: 0 };
   const ttmLedger: number[] = [];
   const lead: number[] = [];
+  const tallyCi = (bucket: Omit<EvalCiBucket, 'adverseRate'>, durability: MergeDurability): void => {
+    bucket.merged++;
+    const adverse = adverseOf(durability);
+    if (adverse || durability === 'stable') bucket.resolved++;
+    if (adverse) bucket.adverse++;
+  };
   const ci = {
     measured: 0,
     unknown: 0,
-    clean: { merged: 0, adverse: 0 },
-    failedChecks: { merged: 0, adverse: 0 },
-    jobFinishFailed: { merged: 0, adverse: 0 },
+    clean: { merged: 0, resolved: 0, adverse: 0 },
+    failedChecks: { merged: 0, resolved: 0, adverse: 0 },
+    jobFinishFailed: { merged: 0, resolved: 0, adverse: 0 },
   };
   for (const { pr } of entries) {
     if (pr.jobId) merges.attributed++; else merges.unattributed++;
@@ -882,12 +895,10 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
     if (pr.checkState !== 'unknown') {
       ci.measured++;
       const bucket = pr.checkState === 'clean' ? ci.clean : ci.failedChecks;
-      bucket.merged++;
-      if (adverseOf(pr.durability)) bucket.adverse++;
+      tallyCi(bucket, pr.durability);
     } else ci.unknown++;
     if (pr.jobFinishFailed === true) {
-      ci.jobFinishFailed.merged++;
-      if (adverseOf(pr.durability)) ci.jobFinishFailed.adverse++;
+      tallyCi(ci.jobFinishFailed, pr.durability);
     }
   }
   const jobsCounts = { launched: 0, finished: 0, failedFinishes: 0, emptyFinishes: 0, published: 0, merged: 0, closed: 0 };
@@ -901,10 +912,12 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
 
   const resolved = merges.stable + merges.reverted + merges.regressed + merges.followedUp;
   const rate = (a: number, n: number): number | null => (n > 0 ? a / n : null);
+  const cleanRate = rate(ci.clean.adverse, ci.clean.resolved);
+  const failedRate = rate(ci.failedChecks.adverse, ci.failedChecks.resolved);
   const direction: FleetEvalReport['ci']['direction'] =
-    ci.clean.merged === 0 || ci.failedChecks.merged === 0 ? 'insufficient-data'
-    : ci.failedChecks.adverse / ci.failedChecks.merged > ci.clean.adverse / ci.clean.merged ? 'failed-checks-more-adverse'
-    : ci.failedChecks.adverse / ci.failedChecks.merged < ci.clean.adverse / ci.clean.merged ? 'clean-more-adverse'
+    cleanRate === null || failedRate === null ? 'insufficient-data'
+    : failedRate > cleanRate ? 'failed-checks-more-adverse'
+    : failedRate < cleanRate ? 'clean-more-adverse'
     : 'even';
 
   const ranked = (['lane', 'tier', 'laneTier', 'repo'] as const).flatMap((dim) =>
@@ -953,9 +966,9 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
     ci: {
       measured: ci.measured,
       unknown: ci.unknown,
-      clean: { ...ci.clean, adverseRate: rate(ci.clean.adverse, ci.clean.merged) },
-      failedChecks: { ...ci.failedChecks, adverseRate: rate(ci.failedChecks.adverse, ci.failedChecks.merged) },
-      jobFinishFailed: { ...ci.jobFinishFailed, adverseRate: rate(ci.jobFinishFailed.adverse, ci.jobFinishFailed.merged) },
+      clean: { ...ci.clean, adverseRate: cleanRate },
+      failedChecks: { ...ci.failedChecks, adverseRate: failedRate },
+      jobFinishFailed: { ...ci.jobFinishFailed, adverseRate: rate(ci.jobFinishFailed.adverse, ci.jobFinishFailed.resolved) },
       direction,
     },
     byLane: sortedGroups('lane'),
@@ -983,8 +996,8 @@ export function formatFleetEvalReport(report: FleetEvalReport): string {
   lines.push(`Time to merge: ${report.timeToMerge.measured ? `median ${report.timeToMerge.median_s}s, p90 ${report.timeToMerge.p90_s}s (${report.timeToMerge.measured} measured)` : 'no ledger ttm samples'}; ` +
     `merge lead: ${report.mergeLead.measured ? `median ${report.mergeLead.median_s}s, p90 ${report.mergeLead.p90_s}s` : 'unmeasured'}`);
   const ci = report.ci;
-  lines.push(`CI correlation: ${ci.measured ? `clean ${pct(ci.clean.adverseRate)} adverse (${ci.clean.merged}), failed-checks ${pct(ci.failedChecks.adverseRate)} adverse (${ci.failedChecks.merged}) — ${ci.direction}` : 'no check data'}; unknown ${ci.unknown}; ` +
-    `job-finish-failed ${pct(ci.jobFinishFailed.adverseRate)} adverse (${ci.jobFinishFailed.merged})`);
+  lines.push(`CI correlation: ${ci.measured ? `clean ${pct(ci.clean.adverseRate)} adverse (${ci.clean.resolved}/${ci.clean.merged} resolved), failed-checks ${pct(ci.failedChecks.adverseRate)} adverse (${ci.failedChecks.resolved}/${ci.failedChecks.merged} resolved) — ${ci.direction}` : 'no check data'}; unknown ${ci.unknown}; ` +
+    `job-finish-failed ${pct(ci.jobFinishFailed.adverseRate)} adverse (${ci.jobFinishFailed.resolved}/${ci.jobFinishFailed.merged} resolved)`);
   for (const [label, rows] of [['By lane', report.byLane], ['By tier', report.byTier]] as const) {
     if (rows.length === 0) continue;
     lines.push(label + ':');

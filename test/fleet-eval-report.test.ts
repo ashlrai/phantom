@@ -149,8 +149,8 @@ describe('buildFleetEvalReport', () => {
     expect(lane(report, 'devin')!.durability.resolved).toBe(1);
     expect(lane(report, 'codex')).toMatchObject({ launched: 1, failedFinishes: 1, merged: 1, followedUp: 1 });
     expect(lane(report, 'claude-api')).toMatchObject({ merged: 1, regressed: 1 });
-    expect(lane(report, 'stack')).toMatchObject({ merged: 1, unobserved: 1 });
-    expect(tier(report, 'work')).toMatchObject({ launched: 4, merged: 4, reverted: 1, regressed: 1, pending: 1, unobserved: 1 });
+    expect(lane(report, 'stack')).toMatchObject({ merged: 1, unobserved: 1, revertRate: null, followUpRate: null });
+    expect(tier(report, 'work')).toMatchObject({ launched: 4, merged: 4, reverted: 1, regressed: 1, pending: 1, unobserved: 1, revertRate: 0.5, followUpRate: 0.5 });
     expect(tier(report, 'mid')).toMatchObject({ launched: 1, closed: 1, merged: 0 });
     expect(repo(report, 'ashlrai/phantom')).toMatchObject({ merged: 6, stable: 2, reverted: 2, regressed: 1, followedUp: 1 });
     expect(repo(report, 'ashlrai/phantom')!.durability.rate).toBeCloseTo(2 / 6);
@@ -166,6 +166,41 @@ describe('buildFleetEvalReport', () => {
     expect(report.ci).toMatchObject({
       measured: 0, unknown: 8, clean: { merged: 0 }, failedChecks: { merged: 0 },
       jobFinishFailed: { merged: 1, adverse: 1 }, direction: 'insufficient-data',
+    });
+  });
+
+  it('uses only resolved outcomes in required-check adverse rates and comparisons', async () => {
+    const rows = JSON.parse(await prsFixture());
+    const head = 'a'.repeat(40);
+    const withChecks = (includeRevert: boolean) => JSON.stringify(rows.map((row: {
+      number: number; mergedAt?: string;
+    }) => {
+      if (row.number !== 50 && row.number !== 104 && !(includeRevert && row.number === 100)) return row;
+      return {
+        ...row,
+        headRefOid: head,
+        requiredChecks: ['gate'],
+        statusCheckRollup: [{
+          name: 'gate', status: 'COMPLETED', headSha: head,
+          conclusion: row.number === 104 ? 'FAILURE' : 'SUCCESS',
+          completedAt: row.mergedAt,
+        }],
+      };
+    }));
+    const observed = await build({ prsTexts: [withChecks(true)] });
+    expect(observed.ci).toMatchObject({
+      measured: 3,
+      clean: { merged: 2, resolved: 1, adverse: 1, adverseRate: 1 },
+      failedChecks: { merged: 1, resolved: 1, adverse: 0, adverseRate: 0 },
+      direction: 'clean-more-adverse',
+    });
+    expect(formatFleetEvalReport(observed)).toContain('clean 100.0% adverse (1/2 resolved)');
+
+    const pending = await build({ prsTexts: [withChecks(false)] });
+    expect(pending.ci).toMatchObject({
+      measured: 2,
+      clean: { merged: 1, resolved: 0, adverseRate: null },
+      direction: 'insufficient-data',
     });
   });
 
@@ -201,6 +236,7 @@ describe('buildFleetEvalReport', () => {
     expect(pr(noGh, '/pull/9')!.durability).toBe('unobserved');
     expect(pr(noGh, '/pull/100')!.durability).toBe('followed-up');
     expect(noGh.merges.unobserved).toBe(2);
+    expect(noGh.ci.jobFinishFailed).toEqual({ merged: 1, resolved: 0, adverse: 0, adverseRate: null });
     const noObs = await build({ observations: null });
     expect(noObs.sources.observations.state).toBe('disabled');
     // Without the ledger, PR #103 is stable (window elapsed, gh row present).
