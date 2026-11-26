@@ -308,8 +308,20 @@ it('marks a malformed queue as degraded and keeps counts null-safe', async () =>
   await writeFile(join(queueDir, 'jobs.jsonl'), 'not json');
   const report = await getLaneQueueCounts({ runsDir: root, now });
   expect(report.sources.ready).toBe('degraded');
+  expect(report.totals).toMatchObject({ ready: 1, parked: 0 });
   expect(report.sources.ledger).toBe('degraded');
   expect(report.notes.some(n => n.includes('unreadable or has malformed rows'))).toBe(true);
+});
+
+it('keeps queue counts unknown when ready.tsv is unreadable', async () => {
+  await mkdir(join(queueDir, 'ready.tsv'));
+  await writeFile(join(queueDir, 'jobs.jsonl'), merge('m-1', 'devin', minutesAgo(3)));
+
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+
+  expect(report.sources.ready).toBe('degraded');
+  expect(report.totals).toMatchObject({ ready: null, parked: null, stale: null, blockedReasons: [] });
+  expect(report.lanes).toMatchObject([{ lane: 'devin', ready: null, parked: null, stale: null, merges: 1 }]);
 });
 
 it('prints blocked reasons and notes in text output', async () => {
