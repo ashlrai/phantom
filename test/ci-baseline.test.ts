@@ -173,6 +173,32 @@ describe('CI baseline evidence', () => {
       expect(report.freshness.every(p => p.state === (options.stale ? 'stale' : 'unknown'))).toBe(true);
     }
   });
+  it.each([
+    ['master', `/actions/runs?head_sha=${master}`, 'workflow_runs'],
+    ['master', '/actions/runs/1/jobs?', 'jobs'],
+    ['PR', '/actions/runs?branch=feature', 'workflow_runs'],
+    ['PR', '/actions/runs/2/jobs?', 'jobs'],
+  ])('withholds %s evidence from an incomplete Actions page at %s', async (source, endpoint, key) => {
+    const { gh } = github({ count: 1, pass: true });
+    for (const defect of ['missing row', 'duplicate ID'] as const) {
+      const report = await analyzeCiBaseline('owner/repo', async args => {
+        const result = await gh(args);
+        if (!args[1]?.includes(endpoint)) return result;
+        const page = JSON.parse(result.stdout);
+        page.total_count += 1;
+        if (defect === 'duplicate ID') page[key].push(page[key][0]);
+        return { ...result, stdout: JSON.stringify(page) };
+      });
+      if (source === 'master') {
+        expect(report.master.known).toBe(false);
+        expect(report.groups[0]).toMatchObject({ classification: 'unknown', master: 'unknown' });
+      } else {
+        expect(report.master.known).toBe(true);
+        expect(report.freshness[0]?.state).toBe('unknown');
+        expect(report.groups).toEqual([]);
+      }
+    }
+  });
   it('reads jobs that never reached a verdict as unknown, never fresh', async () => {
     // A cancelled, timed-out, action-required, startup-failed or stale job
     // produced no verdict even when its log verifies: the run cannot prove
