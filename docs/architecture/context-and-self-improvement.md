@@ -139,7 +139,9 @@ with a randomized holdout, not with hit counts:
   covering landings whose tracker read failed or predates it), and the
   newest record per PR in `improve/revert-outcomes.jsonl` (the
   git-verified `phm fleet reverts --record` journal, whose `relandedBy` is
-  positive re-land evidence). Evidence keys on the carrier PR: a proposal
+  positive re-land evidence). Both delivery lanes feed the pass — Devin
+  tasks carry no `outcome` block, so their merge evidence is the fleet
+  merge-state record and the revert journal. Evidence keys on the carrier PR: a proposal
   whose ledger `pr` event still names the closed cloud PR is re-pointed at
   the fleet PR that superseded it. A standing revert clears only on re-land
   evidence; an unreadable revert journal contributes nothing rather than a

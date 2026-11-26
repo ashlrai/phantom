@@ -1,9 +1,11 @@
 /**
- * Bridge from the cloud self-improvement backlog to the outcome ledger. A
- * cloud task whose backlog item declares a metric and that has opened a PR
- * becomes a registered proposal: kind = the item's area, source = the
- * deterministic backlog (the item was chosen by priority and file order, not
- * by a model). Idempotent: a task already registered is skipped.
+ * Bridge from the self-improvement backlog to the outcome ledger. A task of
+ * either delivery lane — a cloud CloudTaskV1 or a devin DevinTaskV1, which
+ * claims items from the same backlog — whose backlog item declares a metric
+ * and that has opened a PR becomes a registered proposal: kind = the item's
+ * area, source = the deterministic backlog (the item was chosen by priority
+ * and file order, not by a model). Idempotent: a task already registered is
+ * skipped.
  *
  * The `pr` event names the PR that can still carry the work to a merge. When
  * cloud intake has superseded the task's cloud PR (`supersededBy`), that is
@@ -22,15 +24,32 @@
 import { createHash } from 'node:crypto';
 import { readCloudBacklog } from '../cloud/backlog.js';
 import { listCloudTasks } from '../cloud/store.js';
-import type { CloudBacklogItem, CloudTaskV1 } from '../cloud/types.js';
+import type { CloudBacklogItem, CloudSupersededBy, CloudTaskPr, CloudTaskState, CloudTaskV1 } from '../cloud/types.js';
+import { listDevinTasks } from '../devin/store.js';
+import type { DevinTaskV1 } from '../devin/types.js';
 import { appendLedger, kindOf, readLedger, type LedgerEvent, type LedgerRead, type LedgerRecord } from './outcomes.js';
 
 export const BACKLOG_SOURCE_RULE = 'cloud-backlog';
 export const backlogProposalId = (taskId: string) => createHash('sha256').update(`cloud-task:${taskId}`).digest('hex').slice(0, 10);
 
+/**
+ * A backlog-carrying task of either delivery lane: a cloud CloudTaskV1 or a
+ * devin DevinTaskV1 (devin/types.ts mirrors the cloud PR/supersede shapes so
+ * the shared triage reads both). Devin's extra in-progress `blocked` state
+ * matches neither carrier check, same as every other non-terminal state.
+ */
+export interface BacklogOutcomeTask {
+  id: string;
+  repo: string;
+  title: string;
+  pr: CloudTaskPr | null;
+  backlogItemId: string | null;
+  state?: CloudTaskState | 'blocked';
+  supersededBy?: CloudSupersededBy | null;
+}
+
 export function backlogRegistrations(
-  tasks: readonly (Pick<CloudTaskV1, 'id' | 'repo' | 'title' | 'pr' | 'backlogItemId'> &
-    Partial<Pick<CloudTaskV1, 'state' | 'supersededBy'>>)[],
+  tasks: readonly BacklogOutcomeTask[],
   items: readonly CloudBacklogItem[],
   records: readonly LedgerRecord[],
 ): LedgerEvent[] {
@@ -69,8 +88,15 @@ export function backlogRegistrations(
 export interface BacklogOutcomeSyncDeps {
   /** Cloud task store read; defaults to every stored task. */
   tasks?: () => readonly CloudTaskV1[];
-  /** Backlog view the tasks are matched against; defaults to readCloudBacklog. */
-  items?: (tasks: readonly CloudTaskV1[]) => readonly CloudBacklogItem[];
+  /**
+   * Devin-lane task store read; defaults to every stored Devin task. Devin
+   * sessions claim items from the same backlog (cloud/service.ts folds them
+   * into claims identically), so a Devin-delivered PR is the same proposal
+   * evidence a cloud PR is. Unreadable ⇒ none, matching the claim fold.
+   */
+  devinTasks?: () => readonly DevinTaskV1[];
+  /** Backlog view the tasks are matched against; defaults to readCloudBacklog over both lanes. */
+  items?: (tasks: readonly (CloudTaskV1 | DevinTaskV1)[]) => readonly CloudBacklogItem[];
   /** Outcome ledger read; defaults to readLedger. */
   ledger?: () => LedgerRead;
   /** Ledger append; defaults to appendLedger. */
@@ -92,12 +118,13 @@ export interface BacklogOutcomeSync {
 }
 
 /**
- * Register every cloud task whose backlog item declares a metric and whose PR
- * is not closed (open or merged — a merge still needs its outcome measured) —
- * the same events `phm improve sync-backlog` appends, as a total function
- * safe to run on a timer. Never throws: an unreadable ledger, an unavailable
- * store or a failed append is reported in the result, and a second call
- * appends nothing (backlogRegistrations dedupes on the chain).
+ * Register every backlog-carrying task of either lane whose item declares a
+ * metric and whose PR is not closed (open or merged — a merge still needs its
+ * outcome measured) — the same events `phm improve sync-backlog` appends, as
+ * a total function safe to run on a timer. Never throws: an unreadable
+ * ledger, an unavailable store or a failed append is reported in the result,
+ * and a second call appends nothing (backlogRegistrations dedupes on the
+ * chain).
  */
 export function syncCloudBacklogOutcomes(deps: BacklogOutcomeSyncDeps = {}): BacklogOutcomeSync {
   const out: BacklogOutcomeSync = { intact: true, reasons: [], registered: 0, appended: 0 };
@@ -106,8 +133,16 @@ export function syncCloudBacklogOutcomes(deps: BacklogOutcomeSyncDeps = {}): Bac
     const read = (deps.ledger ?? readLedger)();
     if (!read.intact) return { ...out, intact: false, reasons: read.reasons };
     const tasks = (deps.tasks ?? (() => listCloudTasks(Number.MAX_SAFE_INTEGER)))();
-    const items = deps.items ? deps.items(tasks) : readCloudBacklog(tasks, (deps.now ?? (() => new Date()))()).items;
-    events = backlogRegistrations(tasks, items, read.records);
+    // Devin sessions claim the same backlog items, so their PRs are the same
+    // proposals — but an unreadable Devin store must not starve the cloud
+    // lane's registrations (same rule as backlogClaimsFromDevin).
+    let devin: readonly DevinTaskV1[] = [];
+    try {
+      devin = (deps.devinTasks ?? (() => listDevinTasks(Number.MAX_SAFE_INTEGER)))();
+    } catch { /* unreadable ⇒ none */ }
+    const all: readonly (CloudTaskV1 | DevinTaskV1)[] = [...tasks, ...devin];
+    const items = deps.items ? deps.items(all) : readCloudBacklog(all, (deps.now ?? (() => new Date()))()).items;
+    events = backlogRegistrations(all, items, read.records);
   } catch {
     return { ...out, reason: 'source-unavailable' };
   }
