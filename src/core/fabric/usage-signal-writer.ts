@@ -9,7 +9,7 @@ export const USAGE_POOLS = ['grok-ultra', 'codex-personal', 'claude-max', 'terra
 export type UsagePool = typeof USAGE_POOLS[number];
 export const USAGE_EVENTS = ['dispatch-start', 'pr-merge', '429', 'limit-message', 'manual-reading', 'hourly'] as const;
 export type UsageEvent = typeof USAGE_EVENTS[number];
-export const USAGE_DEBOUNCE_MS = 30 * 60_000;
+const USAGE_DEBOUNCE_MS = 30 * 60_000;
 const MAX_BYTES = 8 * 1024 * 1024;
 
 export interface UsageCutSignal {

@@ -16,10 +16,10 @@ import {
 } from './execution-identity.js';
 
 export const CAPABILITY_SPECTRUM_PROTOCOL = 'capability-spectrum-shadow-v1' as const;
-export const CAPABILITY_SPECTRUM_OBSERVATION_MAX_AGE_MS = 5 * 60_000;
+const CAPABILITY_SPECTRUM_OBSERVATION_MAX_AGE_MS = 5 * 60_000;
 export const CAPABILITY_SPECTRUM_MAX_RESOURCES = 128;
-export const CAPABILITY_SPECTRUM_MAX_LANES = 64;
-export const CAPABILITY_SPECTRUM_MAX_REQUIREMENTS_PER_LANE = 16;
+const CAPABILITY_SPECTRUM_MAX_LANES = 64;
+const CAPABILITY_SPECTRUM_MAX_REQUIREMENTS_PER_LANE = 16;
 
 const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
 const LINEAGE_DIGEST_RE = /^(?:sha256:)?[a-f0-9]{64}$/;
