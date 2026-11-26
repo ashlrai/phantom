@@ -373,6 +373,7 @@ pub(crate) fn base_env(home: &Path, path_env: &str) -> Vec<(String, String)> {
 
 const BIN_MARK: &str = "__ASHLR_FLEET_BIN__";
 const PATH_MARK: &str = "__ASHLR_FLEET_PATH__";
+const FALLBACK_CLI_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 
 /// PURE: pick the marked lines out of a login shell's output (startup files
 /// may print anything before them).
@@ -394,7 +395,7 @@ pub fn parse_cli_probe(stdout: &str) -> Option<(PathBuf, String)> {
 pub fn resolve_cli(home: &Path) -> Result<Cli, String> {
     let script =
         format!("printf '\\n{BIN_MARK}%s\\n{PATH_MARK}%s\\n' \"$(command -v ashlr)\" \"$PATH\"");
-    let fallback_path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+    let fallback_path = FALLBACK_CLI_PATH;
     let out = run_child(
         Command::new(login_shell()).arg("-l").arg("-c").arg(&script),
         &base_env(home, fallback_path),
@@ -419,6 +420,23 @@ pub fn resolve_cli(home: &Path) -> Result<Cli, String> {
         }
     }
     Err("The Phantom CLI (ashlr) was not found on your login PATH. Install a qualified release (npm i -g @ashlr/phantom) and try again.".to_string())
+}
+
+fn resolve_resident_cli(home: &Path) -> Result<Cli, String> {
+    #[cfg(target_os = "macos")]
+    match std::fs::symlink_metadata(home.join(".local/share/ashlr/current")) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) | Ok(_) => {
+            let bin = crate::native_update_runtime::current_cli(home).map_err(|_| {
+                "managed-resident-runtime-unverified: inspect the managed desktop install"
+            })?;
+            let path_env = resolve_cli(home)
+                .map(|cli| cli.path_env)
+                .unwrap_or_else(|_| FALLBACK_CLI_PATH.to_string());
+            return Ok(Cli { bin, path_env });
+        }
+    }
+    resolve_cli(home)
 }
 
 // ── child processes ───────────────────────────────────────────────────────────
@@ -788,7 +806,7 @@ fn resident_start(app: &AppHandle, req: &FleetRequest) {
             "Locating the installed command-line tool…",
         ),
     );
-    let cli = match resolve_cli(&home) {
+    let cli = match resolve_resident_cli(&home) {
         Ok(cli) => cli,
         Err(message) => return send(app, event(req, Phase::Failed, message)),
     };

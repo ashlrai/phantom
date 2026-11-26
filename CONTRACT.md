@@ -232,6 +232,13 @@ separate `agy` seat uses only IDs returned by `agy models`.
 
 # Managed desktop upgrade
 
+`phm desktop update status --json` and `fleet_desktop_update_status` read the
+same bounded, private native observation (`desktop.native-update-status.v1`),
+not upgrade admission or a live process check. Managed macOS resident starts
+require the admitted running release to match the verified managed current
+pointer. Resident status reports registration drift and known alternate CLI
+copies; neither read mutates those installations or changes authority.
+
 `src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`
 (the consumer install ports plus `smokeVersion` and lowering-only
 `residentStop`), `ConsumerUpgradeOptions`, `ConsumerUpgradeResult`,
