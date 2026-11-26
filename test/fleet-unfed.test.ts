@@ -933,6 +933,20 @@ describe('fleet stop verdicts', () => {
     expect(report.fleetStop).toBe('admission_stopped');
   });
 
+  it('keeps the fleet stop when no lane has a published rejection', () => {
+    const lanes = { b: { running: 1, target: 1, held: false } };
+    const unfed_capacity = { waiting: 2, lanes: { b: { waiting_elsewhere: 0, blocked: {} } } };
+    for (const [evidence, fleetStop] of [
+      [{ paused: 'maintenance window' }, 'admission_stopped'],
+      [{ admission: { gate_reason: 'disk pressure' } }, 'admission_stopped'],
+      [{ admission: { running: 1, cap: 1 } }, 'global_admission'],
+    ] as const) {
+      const report = currentUnfed(JSON.stringify({ lanes, unfed_capacity, ...evidence }), TWO_WAITING);
+      expect(report).toMatchObject({ source: 'dispatcher', fleetStop, unfedLanes: [], unfedSlots: 0 });
+      expect(report.resources[0]?.blocked).toEqual({});
+    }
+  });
+
   it('prints the fleet stop line in text output', async () => {
     writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
       schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(), lanes: STOP_LANES, paused: 'hold',
