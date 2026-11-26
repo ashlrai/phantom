@@ -1172,7 +1172,9 @@ hash. Counts deduplicate by source and target within the window; stages can
 overlap. Only draft evidence attributes later launches and PRs to that source.
 Rejections never claim another generator's results. `generationKnown: false`
 means the generation ledger is unavailable; `jobsKnown` does the same for the
-jobs ledger. Counts cover recorded evidence only.
+jobs ledger. If either journal is missing or unreadable, the report still
+includes evidence from the readable journal. Interpret counts using the
+availability flag for the journal they depend on.
 
 The self-improvement discovery feed queues recurring refusals after four
 distinct recorded rejection observations for one source and reason across
