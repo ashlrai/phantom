@@ -1,0 +1,5 @@
+RQ-LEDGER-DEAD-01	devin	mid	fake/repo	Fake ledger dead job
+RQ-LEDGER-DEAD-02	devin	mid	fake/repo	Fake precheck-declined job
+RQ-LEDGER-VETO-03	devin	mid	fake/repo	Fake dry-run vetoed job
+RQ-LEDGER-OVER-04	devin	mid	fake/repo	Fake marker overridden job
+RQ-LEDGER-LIVE-05	devin	mid	fake/repo	Fake launchable job

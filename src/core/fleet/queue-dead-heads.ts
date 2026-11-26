@@ -1,5 +1,6 @@
 /** Offline queue advisory. Absence of a skip marker is not dispatch authority. */
 import { parseReadyTsv } from './lane-console.js';
+import { ledgerEventName, ledgerJobId } from './empty-cause.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export interface DeadQueueLine { job: string; position: number; reason: string }
@@ -38,4 +39,43 @@ export function queueDeadHeads(readyTsv: string, skippedEmpty: ReadonlyMap<strin
     }
   }
   return [...lanes.values()].map(state => state.report);
+}
+
+export interface DeadHeadSkipVerdict {
+  /** True when the newest skip verdict for the job was applied; false marks a dry run that still launched. */
+  dead: boolean;
+  /** The recorded skip reason; null when the row carried none. */
+  reason: string | null;
+}
+
+/**
+ * jobs.jsonl `skipped_empty` rows are the live dispatcher's empty-gate evidence:
+ * the gate re-emits one row per skipped job per tick, so the last row per job in
+ * the append-ordered ledger is its current verdict. A row carrying a numeric
+ * `code` is a precheck decline instead — that job is DONE-NOOP'd and leaves the
+ * queue, never a dead READY head (the same split isPrecheckSkipRow documents).
+ * `applied:false` is the gate's dry run: the job still launched, so the verdict
+ * is not dead and it vetoes older marker-file evidence. The caller's bounded
+ * tail read is the evidence window; a job whose skips aged out simply has no
+ * verdict here.
+ */
+export function ledgerDeadHeadSkips(ledger: string | null): Map<string, DeadHeadSkipVerdict> {
+  const verdicts = new Map<string, DeadHeadSkipVerdict>();
+  if (ledger === null) return verdicts;
+  for (const line of ledger.split('\n')) {
+    if (!line.includes('skipped_empty')) continue;
+    let row: Record<string, unknown>;
+    try {
+      const value: unknown = JSON.parse(line);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      row = value as Record<string, unknown>;
+    } catch { continue; }
+    if (ledgerEventName(row) !== 'skipped_empty') continue;
+    if (typeof row['code'] === 'number' && Number.isFinite(row['code'])) continue;
+    const job = ledgerJobId(row);
+    if (!job) continue;
+    const reason = typeof row['reason'] === 'string' && row['reason'].trim() ? row['reason'].trim() : null;
+    verdicts.set(job, { dead: row['applied'] !== false, reason });
+  }
+  return verdicts;
 }
