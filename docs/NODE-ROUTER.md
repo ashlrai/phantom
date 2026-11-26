@@ -92,7 +92,9 @@ job carries one, the lease token pair and expiry, and paste-ready `renew` and
 
 The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
-expiry and prints the keep-alive `beat --watch` command; `status`/`list` name
+expiry, prints the keep-alive `beat --watch` command and says the registry is
+local to this machine — only jobs enqueued on this computer reach the node
+(`"registry":"local"` in `--json`); `status`/`list` name
 the node holding each running claim (`claimed by`, or `no live claim` once the
 claim lapsed or was fenced), show each node's advertised slot bound (`slots=N`,
 or `slots=unbounded` when no bound was ever reported — an absent bound is

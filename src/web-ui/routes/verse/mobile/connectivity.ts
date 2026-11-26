@@ -13,6 +13,7 @@
  * hidden) is the heartbeat, so this costs no request of its own. Whether the
  * page itself loads offline is the service worker's job (public/verse-m/sw.js).
  */
+import { ageInSeconds, relativeTime } from '../../../lib/relative-time.js';
 import { useSyncExternalStore } from 'react';
 import type { ActivityState } from '../shell/useActivity.js';
 
@@ -37,12 +38,8 @@ export function reachabilityOf(online: boolean, activity: Pick<ActivityState, 's
 /** "Updated 2 min ago" — for the banner under a stale screen. */
 export function sinceText(updatedAt: number | null, now: number = Date.now()): string {
   if (updatedAt === null) return 'No update yet';
-  const s = Math.max(0, Math.round((now - updatedAt) / 1000));
-  if (s < 45) return 'Updated just now';
-  const m = Math.round(s / 60);
-  if (m < 60) return `Updated ${m} min ago`;
-  const h = Math.round(m / 60);
-  return h < 24 ? `Updated ${h} h ago` : `Updated ${Math.round(h / 24)} d ago`;
+  const reading = relativeTime(updatedAt, now);
+  return reading ? `Updated ${reading.seconds < 60 ? 'just now' : ageInSeconds(reading.seconds, 'spaced')}` : 'Update time unknown';
 }
 
 function subscribeOnline(listener: () => void): () => void {

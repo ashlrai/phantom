@@ -14,6 +14,7 @@
  *   4. Wrap anything sourced from a `sourceQuality`-bearing field in
  *      <Epistemic/> (see DaemonPanel.tsx) instead of trusting it blindly.
  */
+import { RelativeTime } from '../../components/primitives/RelativeTime.js';
 import { dashboardSnapshotQuery, controlSnapshotQuery } from '../../data/queries.js';
 import { useQuery } from '../../data/hooks.js';
 import { RefreshIndicator } from '../../components/primitives/RefreshIndicator.js';
@@ -38,7 +39,7 @@ export function FleetDashboardView() {
         <div className={styles.freshness} aria-live="polite">
           {snapshotQuery.status === 'refreshing' ? <RefreshIndicator /> : null}
           {snapshotQuery.updatedAt ? (
-            <span className={styles.freshnessLabel}>Updated {formatRelative(snapshotQuery.updatedAt)}</span>
+            <span className={styles.freshnessLabel}>Updated <RelativeTime value={snapshotQuery.updatedAt} /></span>
           ) : null}
         </div>
       </header>
@@ -86,12 +87,4 @@ function ErrorBanner({ message }: { message: string }) {
       {message}
     </div>
   );
-}
-
-function formatRelative(ts: number): string {
-  const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (seconds < 5) return 'just now';
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
-  return `${minutes}m ago`;
 }

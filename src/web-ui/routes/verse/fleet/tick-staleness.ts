@@ -3,9 +3,11 @@
  * the orchestrator tick is, so fleet views share one precise helper
  * instead of ad-hoc "tick N s ago" logic.
  *
- * Pure function: no imports, no Date.now(), no external state.  nowMs
+ * Pure function: no Date.now() or external state.  nowMs
  * is injected so the function can be tested deterministically.
  */
+
+import { ageInSeconds } from '../../../lib/relative-time.js';
 
 export type TickStaleness = {
   level: 'fresh' | 'late' | 'stale' | 'unknown';
@@ -65,16 +67,5 @@ export function tickStaleness(
 
 /** Format age-seconds into the user-facing "tick … ago" text. */
 function formatStalenessText(ageSeconds: number): string {
-  if (ageSeconds < 60) {
-    return `tick ${ageSeconds} s ago`;
-  }
-
-  const totalMinutes = Math.floor(ageSeconds / 60);
-  if (totalMinutes < 60) {
-    return `tick ${totalMinutes} min ago`;
-  }
-
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return `tick ${hours} h ${String(minutes).padStart(2, '0')} min ago`;
+  return `tick ${ageInSeconds(ageSeconds, 'spaced')}`;
 }

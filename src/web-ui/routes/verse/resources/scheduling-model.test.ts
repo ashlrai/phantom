@@ -153,7 +153,7 @@ describe('read-only scheduling evidence', () => {
     const value = budget(); value.scheduling.accounts = Array.from({ length: 5000 }, (_, index) => account({ seatId: `other-${index}` }));
     value.scheduling.accounts.push(account({ forecast: forecast({ recordedAt: new Date(NOW - 86_400_000).toISOString() }) }));
     const view = schedulingEvidence(value, seat, NOW);
-    expect(view.state).toBe('ready'); expect(view.forecast[0]).toMatch(/recorded 24h 00m ago/);
+    expect(view.state).toBe('ready'); expect(view.forecast[0]).toMatch(/recorded 1d ago/);
     expect(view.forecast[0]).toMatch(/not the current task or model selection/);
   });
   it('does not print private or credential-like model payloads', () => {

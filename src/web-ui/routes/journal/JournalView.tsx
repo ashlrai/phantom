@@ -11,6 +11,7 @@
  * sourceQuality-bearing field wrapped in <Epistemic/> (done inside
  * JournalEntryRow via <EpistemicBadge/>).
  */
+import { RelativeTime } from '../../components/primitives/RelativeTime.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery, useRefetch } from '../../data/hooks.js';
@@ -37,14 +38,6 @@ import styles from './JournalView.module.css';
  * data/sse.ts's EVENT_TO_CACHE_KEYS) — poll it ourselves, same rationale as
  * the notification engine's summary poll. */
 const LOGS_POLL_MS = 8000;
-
-function formatRelative(ts: number): string {
-  const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (seconds < 5) return 'just now';
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
-  return `${minutes}m ago`;
-}
 
 export function JournalView() {
   const location = useLocation();
@@ -123,7 +116,7 @@ export function JournalView() {
         </div>
         <div className={styles.freshness} aria-live="polite">
           {anyRefreshing ? <RefreshIndicator /> : null}
-          {latestUpdatedAt > 0 ? <span className={styles.freshnessLabel}>Updated {formatRelative(latestUpdatedAt)}</span> : null}
+          {latestUpdatedAt > 0 ? <span className={styles.freshnessLabel}>Updated <RelativeTime value={latestUpdatedAt} /></span> : null}
         </div>
       </header>
 

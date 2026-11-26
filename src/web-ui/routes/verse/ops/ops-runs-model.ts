@@ -1,4 +1,5 @@
 /** Local wire contract: no dependency on the independently landing backend. */
+import { ageInSeconds, elapsedTime, relativeTime } from '../../../lib/relative-time.js';
 type Check<T> = (value: unknown) => value is T;
 const str: Check<string> = (v): v is string => typeof v === 'string';
 const num: Check<number> = (v): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -50,9 +51,10 @@ export function ageText(seconds: number | null): string {
     : `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
 }
 export function relativeText(at: string | null, now: number): string {
-  if (at === null || !Number.isFinite(Date.parse(at))) return '—';
-  const minutes = Math.round((Date.parse(at) - now) / 60_000);
-  return new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(minutes, 'minute');
+  const reading = relativeTime(at, now);
+  if (reading) return reading.seconds < 60 ? 'this minute' : ageInSeconds(reading.seconds, 'words');
+  const futureSeconds = at === null ? NaN : (Date.parse(at) - now) / 1000;
+  return !Number.isFinite(futureSeconds) ? '—' : futureSeconds < 60 ? 'this minute' : `in ${elapsedTime(futureSeconds, 'words')}`;
 }
 export const newest = <T extends { at: string }>(rows: T[], limit: number): T[] =>
   [...rows].sort((a, b) => (Date.parse(b.at) - Date.parse(a.at)) || b.at.localeCompare(a.at)).slice(0, limit);

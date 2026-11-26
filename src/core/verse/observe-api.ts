@@ -9,6 +9,7 @@ import { summarize } from '../intent/summary.js';
 import { ledgerFilePresent, readLedger } from '../intent/store.js';
 import { readObserveSession, readObserveSnapshot } from '../observe/read.js';
 import { readWorldModel } from '../world/read.js';
+import { readLaneAllowance } from '../usage/lane-allowance.js';
 
 export const OBSERVE_PATH = '/api/verse/observe';
 export const OBSERVE_SESSION_PATH = '/api/verse/observe/session';
@@ -44,7 +45,14 @@ export async function handleObserveApi(req: IncomingMessage, res: ServerResponse
     return true;
   }
   if (path === WORLD_PATH) {
-    sendJson(res, 200, await readWorldModel());
+    if (req.url !== `${WORLD_PATH}?resourcePools=1`) {
+      sendJson(res, 200, await readWorldModel());
+      return true;
+    }
+    const [world, allowance] = await Promise.all([
+      readWorldModel(), readLaneAllowance().catch(() => null),
+    ]);
+    sendJson(res, 200, { ...world, resourcePools: allowance?.lanes.filter(row => row.resource) ?? [] });
     return true;
   }
   if (path === INTENT_PATH) {

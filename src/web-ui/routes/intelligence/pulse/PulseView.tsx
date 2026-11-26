@@ -1,3 +1,4 @@
+import { RelativeTime } from '../../../components/primitives/RelativeTime.js';
 import { tokenEvidenceLabel } from '../../../../core/run/token-evidence.js';
 /**
  * routes/intelligence/pulse/PulseView.tsx — cost/token rollups over
@@ -47,7 +48,7 @@ export function PulseView() {
         <div className={styles.freshness} aria-live="polite">
           {query.status === 'refreshing' ? <RefreshIndicator /> : null}
           {query.updatedAt ? (
-            <span className={styles.freshnessLabel}>Updated {formatRelative(query.updatedAt)}</span>
+            <span className={styles.freshnessLabel}>Updated <RelativeTime value={query.updatedAt} /></span>
           ) : null}
         </div>
       </header>
@@ -200,12 +201,4 @@ function PulseBody({ rollup }: { rollup: ActivityRollup }) {
       </div>
     </>
   );
-}
-
-function formatRelative(ts: number): string {
-  const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (seconds < 5) return 'just now';
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
-  return `${minutes}m ago`;
 }

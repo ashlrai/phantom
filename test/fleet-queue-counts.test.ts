@@ -193,8 +193,8 @@ it('prints text and JSON from the CLI and rejects bad arguments', async () => {
   const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   expect(await cmdFleetQueueCounts(['--root', root])).toBe(0);
   expect(log.mock.calls.map(c => String(c[0]))).toEqual([
-    'devin  ready 1  parked 0  running 0  oldest wait unknown  merges in last hour unknown',
-    'total  ready 1  parked 0  running 0  merges in last hour unknown',
+    'devin  ready 1  parked 0  running unknown  oldest wait unknown  merges in last hour unknown',
+    'total  ready 1  parked 0  running unknown  merges in last hour unknown',
     'note: merge ledger (jobs.jsonl) not found: merges are unknown.',
     'note: metrics/jobs.jsonl not found: oldest waits are unknown.',
   ]);

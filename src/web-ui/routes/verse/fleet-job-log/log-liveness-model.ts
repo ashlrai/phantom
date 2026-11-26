@@ -1,3 +1,4 @@
+import { ageInSeconds } from '../../../lib/relative-time.js';
 import type { FleetJobDetailV1 } from './worker-log-model.js';
 
 type State = FleetJobDetailV1['state'];
@@ -27,8 +28,7 @@ const finished = (state: State) => state === 'published' || state === 'archived'
 export function livenessText(lastGrowthAt: number | null, state: State, nowMs: number): string {
   if (finished(state)) return 'Finished';
   if (lastGrowthAt === null) return 'No output yet';
-  const seconds = Math.floor(Math.max(0, nowMs - lastGrowthAt) / 1000);
-  return seconds < 60 ? `Output ${seconds} s ago` : `Output ${Math.floor(seconds / 60)} min ago`;
+  return `Output ${ageInSeconds((nowMs - lastGrowthAt) / 1000, 'spaced')}`;
 }
 export function livenessTone(lastGrowthAt: number | null, state: State, nowMs: number): 'running' | 'neutral' | 'warning' {
   if (state !== 'running' || lastGrowthAt === null) return 'neutral';

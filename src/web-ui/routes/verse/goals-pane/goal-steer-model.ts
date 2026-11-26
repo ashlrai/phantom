@@ -7,6 +7,7 @@ const TEXT_MAX = 600;
 
 const oneLine = (value: string): string => value.replace(/\s+/g, ' ').trim();
 
+import { relativeTime } from '../../../lib/relative-time.js';
 export function goalSteerText(goal: { id: string; objective: string }, text: string): string | null {
   const body = oneLine(text).slice(0, TEXT_MAX).trim();
   if (!body) return null;
@@ -14,9 +15,6 @@ export function goalSteerText(goal: { id: string; objective: string }, text: str
 }
 
 export function steeredLabel(at: number, now: number): string {
-  const minutes = Math.floor(Math.max(0, now - at) / 60_000);
-  if (minutes < 1) return 'Steered just now';
-  if (minutes < 60) return `Steered ${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `Steered ${hours}h ago` : `Steered ${Math.floor(hours / 24)}d ago`;
+  const reading = relativeTime(at, now);
+  return `Steered ${reading ? reading.seconds < 60 ? 'just now' : reading.text : 'at an unknown time'}`;
 }

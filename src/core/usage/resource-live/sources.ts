@@ -13,6 +13,7 @@
  * an empty list has no supported source yet and stays unverified.
  */
 import { homedir } from 'node:os';
+import { z } from 'zod';
 import { readLatestClaudeRateLimitEvent } from '../../fabric/claude-rate-limit-event.js';
 import { readCodexUsage, type CodexUsageReading } from '../../fabric/readers/codex-usage.js';
 import { readClaudeQuotaReading, usableClaudeWeekly, type ClaudeQuotaReadingV1 } from '../../fleet/claude-quota-reading.js';
@@ -28,7 +29,8 @@ import { codexPoolHomeAllowed } from '../sensor-pull.js';
 import type { DevinModelCatalog } from '../../devin/models.js';
 import type { DevinWeeklyCapacity } from '../../devin/weekly-capacity.js';
 import { NEEDS_SIGNIN, type ResourceLiveSource, type ResourceLiveSources } from './source-types.js';
-import type { ResourceLiveTier } from './types.js';
+import { RESOURCE_LIVE_STALE_MS, type ResourceLiveTier } from './types.js';
+import { readResourceEvidenceFile } from './store.js';
 import type { CapacitySnapshot } from '../../routing/budget-store.js';
 import type { LiveSourcesConfig } from './config.js';
 import { capacitySource } from './capacity-source.js';
@@ -110,7 +112,10 @@ function registry(o: ResourceLiveSourceOptions, id: UsageResourceId, tier: Resou
       env: { ...(o.resourceReaders?.env ?? {}), ASHLR_RUNS_DIR: o.runsDir } })[id];
     const reading = reader ? await reader() : null;
     if (!reading || !validUsageReading(reading)) return null;
-    return { used: reading.used, limit: reading.limit, unit: reading.unit, reset_at: reading.resetsAt, source: reading.source, observed_at: reading.asOf };
+    return { used: reading.used, limit: reading.limit, unit: reading.unit,
+      reset_at: id === 'claude-api-gift' ? null : reading.resetsAt,
+      ...(id === 'claude-api-gift' && reading.resetsAt ? { expires_at: reading.resetsAt } : {}),
+      source: reading.source, observed_at: reading.asOf };
   } };
 }
 
@@ -136,6 +141,45 @@ function local(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
     if (count === 0) return null;
     return { used: null, limit: count, unit: 'models', reset_at: null, source: 'omlx-loopback-models', observed_at: iso(nowMs) };
   } }];
+}
+
+function loopbackModels(o: ResourceLiveSourceOptions, runtime: 'lm-studio' | 'ollama'): ResourceLiveSource[] {
+  const path = runtime === 'lm-studio' ? 'http://127.0.0.1:1234/v1/models' : 'http://127.0.0.1:11434/api/tags';
+  return [{ tier: 'official', read: async nowMs => {
+    const response = await (o.fetchImpl ?? fetch)(path, { redirect: 'error', signal: AbortSignal.timeout(3000) });
+    if (!response.ok) return null;
+    const body = await response.json() as { data?: unknown; models?: unknown } | null;
+    const models = runtime === 'lm-studio' ? body?.data : body?.models;
+    return Array.isArray(models) ? { used: null, limit: models.length, unit: 'models', reset_at: null,
+      source: `${runtime}-loopback-models`, observed_at: iso(nowMs) } : null;
+  } }];
+}
+
+const evidenceSchema = z.object({
+  used: z.number().finite().nonnegative(),
+  limit: z.number().finite().positive(),
+  observed_at: z.string().datetime(),
+  reset_at: z.string().datetime().nullable(),
+  window_start: z.string().datetime().optional(),
+  expires_at: z.string().datetime().optional(),
+}).strict();
+
+type EvidenceId = 'antigravity' | 'google-workspace' | 'dot' | 'cursor' | 'grok-bot' | 'claude-api' | 'openai-api';
+function agentCheck(load: () => Promise<unknown>, id: EvidenceId): ResourceLiveSource {
+  const credit = id === 'claude-api' || id === 'openai-api';
+  return { tier: 'operator-entry', read: async nowMs => {
+    const file = await load() as Record<string, unknown> | null;
+    if (file?.schema !== 'resource-evidence.v1' || typeof file.readings !== 'object' || file.readings === null) return null;
+    const parsed = evidenceSchema.safeParse((file.readings as Record<string, unknown>)[id]);
+    if (!parsed.success) return null;
+    const row = parsed.data;
+    const observed = Date.parse(row.observed_at);
+    const start = row.window_start ? Date.parse(row.window_start) : null;
+    if (observed > nowMs || nowMs - observed >= RESOURCE_LIVE_STALE_MS || row.used > row.limit
+      || (start !== null && (start > observed || row.reset_at === null || start >= Date.parse(row.reset_at)))
+      || (!credit && row.limit !== 100) || (credit && (!row.expires_at || Date.parse(row.expires_at) <= nowMs))) return null;
+    return { ...row, unit: credit ? 'usd' : 'percent', source: `${id}-agent-check` };
+  } };
 }
 
 function visible(o: ResourceLiveSourceOptions, siteId: UsageSite['id']): ResourceLiveSource[] {
@@ -177,24 +221,32 @@ function devinPreview(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
 
 export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): ResourceLiveSources {
   const operator = (provider: 'claude' | 'codex-personal' | 'codex-cmp') => operatorPageSources(o.operatorPageFallback, provider, o.operatorPageReader);
+  const evidence = (id: EvidenceId) => agentCheck(() => readResourceEvidenceFile(o.runsDir), id);
+  const anthropic = o.anthropicCost ? [anthropicCostSource(o.anthropicCost, o.runAnthropicCost)] : [];
   return {
     'claude-weekly': [...claudeWeekly(o), ...visible(o, 'claude'), ...operator('claude')],
     'claude-fable': claudeFable(o),
-    'claude-api': [...(o.anthropicCost ? [anthropicCostSource(o.anthropicCost, o.runAnthropicCost)] : []),
-      ...(o.accountsRoot ? [registry(o, 'claude-api-gift', 'official')] : [])],
+    'claude-api': [...(o.anthropicCost?.expiresAt ? anthropic : []),
+      ...(o.accountsRoot ? [registry(o, 'claude-api-gift', 'operator-entry')] : []), evidence('claude-api'),
+      ...(!o.anthropicCost?.expiresAt ? anthropic : [])],
     'codex-personal': [...codex(o, o.codexPersonalHome), capacitySource('codex-personal', o.codexSeatMap, o.readCapacity), ...visible(o, 'chatgpt-codex'), ...operator('codex-personal')],
     'codex-cmp': [...codex(o, o.codexCmpHome), capacitySource('codex-cmp', o.codexSeatMap, o.readCapacity), ...operator('codex-cmp')],
+    'openai-api': [evidence('openai-api')],
     devin: [registry(o, 'devin', 'official'), ...devinWeekly(o), ...visible(o, 'devin')],
     // Zero-cost SWE-2 Lightning/Flash previews the CLI lists as free, until they expire.
     'devin-flash': devinPreview(o),
     // The lane's own quota window, published by the dispatcher from its own calls.
     'glm-lite': [registry(o, 'zai', 'own-call'), ...visible(o, 'zai')],
     gemini: visible(o, 'gemini'),
-    antigravity: [],
-    dot: [],
+    antigravity: [evidence('antigravity')],
+    'google-workspace': [evidence('google-workspace')],
+    dot: [evidence('dot')],
     instinct: [],
     local: local(o),
+    'lm-studio': loopbackModels(o, 'lm-studio'),
+    ollama: loopbackModels(o, 'ollama'),
     grok: grok(o),
-    cursor: [],
+    cursor: [evidence('cursor')],
+    'grok-bot': [evidence('grok-bot')],
   };
 }
