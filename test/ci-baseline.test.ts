@@ -264,6 +264,31 @@ describe('CI baseline evidence', () => {
     expect(mismatch.groups).toEqual([]);
     expect(mismatch.freshness.every(p => p.state === 'unknown')).toBe(true);
   });
+  it.each([
+    ['raw then raw', false, false],
+    ['raw then bound', false, true],
+    ['bound then raw', true, false],
+    ['bound then bound', true, true],
+  ] as const)('checks every explicit checkout proof (%s)', async (_label, bound, nextBound) => {
+    const { gh } = github({ count: 1, bound });
+    const withSecondProof = (sha: string): CloudGh => async args => {
+      const response = await gh(args);
+      if (!args[1]?.endsWith('/jobs/20/logs')) return response;
+      const receipt = nextBound
+        ? `Bound candidate ${sha} to event tree ${'e'.repeat(40)}`
+        : `/usr/bin/git log -1 --format=%H\n${sha}`;
+      return { ...response, stdout: `${response.stdout}\n${receipt}\n` };
+    };
+    const matching = await analyzeCiBaseline('owner/repo', withSecondProof(head));
+    expect(matching.freshness[0]?.state).toBe('fresh');
+    expect(matching.groups).toHaveLength(1);
+    const conflicting = await analyzeCiBaseline('owner/repo', withSecondProof(master));
+    expect(conflicting.freshness[0]).toMatchObject({
+      state: 'unknown',
+      reason: 'unreadable-log-or-unverified-checkout',
+    });
+    expect(conflicting.groups).toEqual([]);
+  });
   it('verifies unbound gate jobs through the checkout ref echo', async () => {
     // secret-shape, quick, clean-tree, authority-drift, fast-gate,
     // secret-scan and the dependency-audit job never run
