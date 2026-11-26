@@ -6,7 +6,7 @@ import type { ProactiveProfile } from './types.js';
 import type { ProactiveEvidenceState, ProactiveResourceCost, ProactiveResourceCredit,
   ProactiveResourceEvidenceResponse, ProactiveResourceEvidenceRow, ProactiveResourceIdentity, ProactiveResourceKind } from './resource-evidence-types.js';
 import {
-  hasNoControlChars, isCanonicalIsoTimestamp, isDenseDataArray, isPlainDataObject, isProactiveSlug,
+  hasNoControlChars, isCanonicalIsoTimestamp, isDenseDataArray, isNonNegativeDecimal, isPlainDataObject, isProactiveSlug,
 } from './validation.js';
 
 export interface ProactiveCapacityEvidence { identity: ProactiveResourceIdentity; capacity: SeatCapacity }
@@ -56,7 +56,7 @@ function number(value: unknown, max = Number.MAX_SAFE_INTEGER): number | null {
 }
 function decimal(value: unknown): string | null {
   if (value === null || value === undefined) return null;
-  const result = text(value, 64); if (!/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/u.test(result)) throw new Error('Invalid native amount'); return result;
+  if (!isNonNegativeDecimal(value)) throw new Error('Invalid native amount'); return value;
 }
 function oneOf<T extends string>(value: unknown, choices: readonly T[]): T { if (!choices.includes(value as T)) throw new Error('Invalid snapshot state'); return value as T; }
 function bool(value: unknown): boolean { if (typeof value !== 'boolean') throw new Error('Invalid boolean'); return value; }
@@ -124,14 +124,22 @@ function conflicted(row: ProactiveResourceEvidenceRow): void {
   row.notes.push('Conflicting identity or source rows; measurements are unknown.');
 }
 
+function assertValidProjectionClock(nowMs: number, maxAgeMs?: number): void {
+  if (!Number.isFinite(nowMs) || nowMs < 0 || !Number.isFinite(new Date(nowMs).getTime()) ||
+    maxAgeMs !== undefined && (!Number.isSafeInteger(maxAgeMs) || maxAgeMs < 1 || maxAgeMs > 24 * 60 * 60_000)) {
+    throw new Error('Invalid projection clock');
+  }
+}
+function invalidEvidenceResponse(nowMs: number, note: string): ProactiveResourceEvidenceResponse {
+  return { schemaVersion: 1, sampledAt: new Date(nowMs).toISOString(), sourceState: 'invalid', resources: [], executionAuthorized: false, notes: [note] };
+}
+
 export function projectProactiveResourceEvidence(input: ProactiveResourceSnapshots, options: ProactiveResourceProjectionOptions): ProactiveResourceEvidenceResponse {
-  if (!Number.isFinite(options.nowMs) || options.nowMs < 0 || !Number.isFinite(new Date(options.nowMs).getTime()) ||
-    options.maxAgeMs !== undefined && (!Number.isSafeInteger(options.maxAgeMs) || options.maxAgeMs < 1 || options.maxAgeMs > 24 * 60 * 60_000)) throw new Error('Invalid projection clock');
+  assertValidProjectionClock(options.nowMs, options.maxAgeMs);
   const opts = { nowMs: options.nowMs, maxAgeMs: options.maxAgeMs ?? DEFAULT_MAX_AGE };
   const resources: ProactiveResourceEvidenceRow[] = [], notes: string[] = [];
   try { record(input); }
-  catch { return { schemaVersion: 1, sampledAt: new Date(opts.nowMs).toISOString(), sourceState: 'invalid', resources: [], executionAuthorized: false,
-    notes: ['Invalid snapshot envelope; no sources were evaluated.'] }; }
+  catch { return invalidEvidenceResponse(opts.nowMs, 'Invalid snapshot envelope; no sources were evaluated.'); }
   let invalid = false, present = false;
   const collect = (source: string, supplied: unknown, project: () => ProactiveResourceEvidenceRow[]) => {
     if (supplied === undefined || supplied === null) return;
@@ -286,8 +294,7 @@ export function projectProactiveResourceEvidence(input: ProactiveResourceSnapsho
 
 /** Inject only a getter for an already captured public snapshot. Never pass collector refresh/touch/credits methods. */
 export function projectCachedProactiveResourceEvidence(readCache: () => ProactiveResourceSnapshots | null, options: ProactiveResourceProjectionOptions): ProactiveResourceEvidenceResponse {
-  if (!Number.isFinite(options.nowMs) || options.nowMs < 0 || !Number.isFinite(new Date(options.nowMs).getTime())) throw new Error('Invalid projection clock');
+  assertValidProjectionClock(options.nowMs);
   try { return projectProactiveResourceEvidence(readCache() ?? {}, options); }
-  catch { return { schemaVersion: 1, sampledAt: new Date(options.nowMs).toISOString(), sourceState: 'invalid', resources: [], executionAuthorized: false,
-    notes: ['Cached public evidence is unavailable; no fallback probes, native reads or provider contacts were attempted.'] }; }
+  catch { return invalidEvidenceResponse(options.nowMs, 'Cached public evidence is unavailable; no fallback probes, native reads or provider contacts were attempted.'); }
 }

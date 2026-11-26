@@ -6,24 +6,23 @@ import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { companionDigest, companionIdentityEqual } from './coordination-types.js';
 import { companionSafeText, companionToken, validCompanionIdentity } from './coordination-store.js';
-import { RoutingLabStore, ROUTING_LAB_LIMITS, routingLabEvaluationId, routingLabId, routingLabReference } from './routing-lab-store.js';
+import {
+  ROUTING_LAB_LIMITS, ROUTING_LAB_MODEL, ROUTING_LAB_POLICY, RoutingLabStore,
+  hasEligibleRoutingCandidate, isQualifiedRoutingCandidate, routingLabEvaluationId, routingLabId, routingLabReference,
+} from './routing-lab-store.js';
 import type { ProactiveResourceEvidenceResponse, ProactiveResourceEvidenceRow } from './resource-evidence-types.js';
 import type { OfflineChoiceAdapter, OfflineChoicePayload, RoutingLab, RoutingLabCandidate, RoutingLabCaseReceipt,
   RoutingLabCommand, RoutingLabEvaluation, RoutingLabOptions, RoutingLabTask } from './routing-lab-types.js';
-import { hasPlainDataKeys, isCanonicalIsoTimestamp, isPlainDataObject, isSha256Hex } from './validation.js';
-export type * from './routing-lab-types.js';
+import { compareLex, hasPlainDataKeys, isCanonicalIsoTimestamp, isNonNegativeDecimal, isPlainDataObject, isSha256Hex, isUniqueStringList } from './validation.js';
 
-const POLICY = 'companion-routing-lab-v1' as const;
-const MODEL = 'jev-1.13.0' as const;
 const THRESHOLD = 0.8;
 const MAX_AGE_MS = 5 * 60_000;
 function validTask(task: unknown): task is RoutingLabTask {
   if (!hasPlainDataKeys(task, ['taskId', 'tenantId', 'projectBindingId', 'packetDigest', 'capabilityIds', 'accountRefs', 'deadline', 'maxCostUsd'], ['allowedDestination'])) return false;
   const input = task as unknown as RoutingLabTask;
   return companionToken(input.taskId) && companionToken(input.tenantId) && companionToken(input.projectBindingId) && isSha256Hex(input.packetDigest) &&
-    Array.isArray(input.capabilityIds) && input.capabilityIds.length <= 64 && input.capabilityIds.every(companionToken) &&
-    new Set(input.capabilityIds).size === input.capabilityIds.length && Array.isArray(input.accountRefs) && input.accountRefs.length <= 64 &&
-    input.accountRefs.every(routingLabReference) && new Set(input.accountRefs).size === input.accountRefs.length &&
+    isUniqueStringList(input.capabilityIds, 64, companionToken) &&
+    isUniqueStringList(input.accountRefs, 64, routingLabReference) &&
     (input.allowedDestination === undefined || validCompanionIdentity(input.allowedDestination)) && (input.deadline === null || isCanonicalIsoTimestamp(input.deadline)) &&
     (input.maxCostUsd === null || typeof input.maxCostUsd === 'number' && Number.isFinite(input.maxCostUsd) && input.maxCostUsd >= 0 && input.maxCostUsd <= 1_000_000);
 }
@@ -75,7 +74,7 @@ function fresh(at: string | null, state: string, nowMs: number): boolean {
 }
 function candidates(task: RoutingLabTask, snapshot: ProactiveResourceEvidenceResponse, mode: 'fixture' | 'shadow-readonly', at: string): RoutingLabCandidate[] {
   const nowMs = Date.parse(at);
-  return [...snapshot.resources].sort((a, b) => a.resourceId < b.resourceId ? -1 : a.resourceId > b.resourceId ? 1 : 0).map(row => {
+  return [...snapshot.resources].sort((a, b) => compareLex(a.resourceId, b.resourceId)).map(row => {
     const holds: string[] = []; const matched = task.capabilityIds.filter(id => row.capabilityIds.includes(id));
     if (task.capabilityIds.length === 0) holds.push('requirements-unknown');
     if (row.kind === 'funding-pool') holds.push('funding-only-not-execution-resource');
@@ -101,7 +100,7 @@ function candidates(task: RoutingLabTask, snapshot: ProactiveResourceEvidenceRes
     if (row.kind !== 'local' && !row.credits.some(credit => credit.recordKind === 'balance' && credit.eligibilityState === 'declared' &&
       credit.fundingAccountId === row.identity.accountId && credit.fundingProductId !== null && Array.isArray(credit.eligibleSurfaces) &&
       credit.eligibleSurfaces.includes(row.kind) && Array.isArray(credit.excludedSurfaces) && !credit.excludedSurfaces.includes(row.kind) &&
-      credit.amount !== null && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(credit.amount) && Number.isFinite(Number(credit.amount)) && Number(credit.amount) > 0 &&
+      credit.amount !== null && isNonNegativeDecimal(credit.amount) && Number.isFinite(Number(credit.amount)) && Number(credit.amount) > 0 &&
       fresh(credit.asOf, credit.evidenceState, nowMs) && credit.expiryState !== 'expired' &&
       (credit.expiresAt === null || Date.parse(credit.expiresAt) > nowMs))) holds.push('funding-unknown-or-expired');
     const basicFit = matched.length === task.capabilityIds.length && !holds.some(reason => ['requirements-unknown', 'funding-only-not-execution-resource', 'source-missing', 'source-stale-or-unknown',
@@ -112,12 +111,12 @@ function candidates(task: RoutingLabTask, snapshot: ProactiveResourceEvidenceRes
   });
 }
 function fallback(rows: RoutingLabCandidate[], snapshot: ProactiveResourceEvidenceResponse): string | null {
-  const eligible = rows.filter(row => row.qualification !== 'held' && row.holds.length === 0);
+  const eligible = rows.filter(isQualifiedRoutingCandidate);
   eligible.sort((a, b) => {
     const left = snapshot.resources.find(row => row.resourceId === a.resourceId)!;
     const right = snapshot.resources.find(row => row.resourceId === b.resourceId)!;
     return Number(left.kind !== 'local') - Number(right.kind !== 'local') || (left.cost.value ?? Infinity) - (right.cost.value ?? Infinity) ||
-      (a.resourceId < b.resourceId ? -1 : a.resourceId > b.resourceId ? 1 : 0);
+      compareLex(a.resourceId, b.resourceId);
   });
   return eligible[0]?.resourceId ?? null;
 }
@@ -206,13 +205,13 @@ async function evaluateCase(input: FixtureCase, mode: 'fixture' | 'shadow-readon
   else if (!receipt.selectedResourceId) { receipt.path = 'held'; receipt.fallbackReason = input.snapshot.sourceState === 'snapshot'
     ? 'no-qualified-planning-option' : input.snapshot.sourceState === 'invalid' ? 'source-invalid' : 'source-missing'; }
   else if (mode === 'fixture' && input.behavior !== 'deterministic') {
-    const eligible = projected.filter(row => row.holds.length === 0 && row.qualification !== 'held');
+    const eligible = projected.filter(isQualifiedRoutingCandidate);
     const state = JSON.stringify(eligible.map((_, i) => ({ choice: `c${i}`, synthetic: true })));
     if (eligible.length > ROUTING_LAB_LIMITS.choices) receipt.fallbackReason = 'choice-cardinality';
     else if (state.length > 6000) receipt.fallbackReason = 'choice-state-bound';
     else {
       const criteria = Object.fromEntries(eligible.map((_, i) => [`c${i}`, 'This synthetic already-qualified option fits the fixture task.']));
-      const answer = await boundedChoice(adapter, { model: MODEL, mode: 'offline-fixture', state,
+      const answer = await boundedChoice(adapter, { model: ROUTING_LAB_MODEL, mode: 'offline-fixture', state,
         questions: { resource_choice: { type: 'choice', criteria, instructions: 'Choose one synthetic closed-set option. This answer grants no execution authority.' } } }, input.behavior, signal, budgetMs);
       budgetExhausted = answer.budgetExhausted;
       if (answer.aborted) { receipt.path = 'aborted'; receipt.selectedResourceId = null; receipt.fallbackReason = 'cancelled'; }
@@ -244,8 +243,7 @@ export function createRoutingLab(options: RoutingLabOptions = {}): RoutingLab {
         if (command.kind === 'propose-preference') {
           const id = `rp_${companionDigest([command.evaluationId, command.resourceId, command.reason]).slice(0, 32)}`;
           return store.append(snapshotCommand, 'proposal', id, state => {
-            if (!state.evaluations.some(evaluation => evaluation.id === command.evaluationId && evaluation.status === 'completed' && evaluation.cases.some(item =>
-              item.candidates.some(candidate => candidate.resourceId === command.resourceId && candidate.qualification !== 'held')))) throw new Error('Held');
+            if (!hasEligibleRoutingCandidate(state, command.evaluationId, command.resourceId)) throw new Error('Held');
             if (state.proposals.some(proposal => proposal.id === id)) return;
             if (state.proposals.length >= ROUTING_LAB_LIMITS.proposals) throw new Error('Capacity');
             state.proposals.push({ id, evaluationId: command.evaluationId, resourceId: command.resourceId, reason: command.reason, state: 'proposed',
@@ -267,10 +265,10 @@ export function createRoutingLab(options: RoutingLabOptions = {}): RoutingLab {
           inputs = [{ id: 'actual-snapshot-preview', task: structuredClone(task), snapshot: structuredClone(snapshot), expected: null, behavior: 'deterministic' }];
         }
         const id = routingLabEvaluationId(command.requestId); const inputDigest = companionDigest({ command: snapshotCommand,
-          inputs: inputs.map(input => ({ caseId: input.id, task: input.task, behavior: input.behavior })), policyId: POLICY, modelId: MODEL,
+          inputs: inputs.map(input => ({ caseId: input.id, task: input.task, behavior: input.behavior })), policyId: ROUTING_LAB_POLICY, modelId: ROUTING_LAB_MODEL,
           adapterMode: mode === 'fixture' ? 'offline-fixture' : 'deterministic-only', timeBudgetMs: budget });
         const evaluation: RoutingLabEvaluation = { id, requestId: command.requestId, kind: command.kind, mode, status: 'uncertain', inputDigest,
-          snapshotDigest: companionDigest(inputs.map(input => input.snapshot)), policyId: POLICY, modelId: MODEL,
+          snapshotDigest: companionDigest(inputs.map(input => input.snapshot)), policyId: ROUTING_LAB_POLICY, modelId: ROUTING_LAB_MODEL,
           adapterMode: mode === 'fixture' ? 'offline-fixture' : 'deterministic-only', createdAt: at, completedAt: null,
           localDurationMs: null, providerLatencyMs: null, cases: [], summary: { total: inputs.length, evaluated: 0, expected: 0, passed: 0, failed: 0, coverage: 0 },
           executionAuthorized: false, notes: ['No provider contacted. Local duration is not provider latency or an efficiency measurement.',

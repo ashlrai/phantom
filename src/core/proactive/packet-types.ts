@@ -1,5 +1,7 @@
 /** A provider-neutral reference. Display labels never confer account authority. */
-export interface CompanionPacketDestination { provider: string; accountId: string; agentId: string }
+import type { ProactiveIdentity } from './types.js';
+
+export type CompanionPacketDestination = ProactiveIdentity;
 export interface CompanionPacketArtifact {
   repo?: string; expectedHeadSha?: string; artifactRef?: string; revision?: string;
 }

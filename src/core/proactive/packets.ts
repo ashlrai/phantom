@@ -4,7 +4,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { companionDigest, companionIdentityEqual } from './coordination-types.js';
 import type { CompanionPacketAuthorization, CompanionPacketDestination, CompanionPacketFreshness,
   CompanionPacketInput, CompanionPacketV1 } from './packet-types.js';
-import { canonicalJson, hasPlainDataKeys, isDenseDataArray } from './validation.js';
+import { canonicalJson, compareLex, hasNoControlChars, hasPlainDataKeys, isDenseDataArray } from './validation.js';
 
 const PACKET_KEYS = ['schemaVersion', 'projectBindingId', 'tenantId', 'taskId', 'goal', 'acceptance', 'accountRefs',
   'allowedDestination', 'artifact', 'evidence', 'asOf', 'coverage', 'deadline', 'limits'];
@@ -15,13 +15,8 @@ function record(value: unknown, required: readonly string[], optional: readonly 
   return hasPlainDataKeys(value, required, optional, { requireEnumerable: true });
 }
 function text(value: unknown, max: number): value is string {
-  if (typeof value !== 'string' || value.trim().length === 0 || value.length > max ||
-      /\p{Surrogate}/u.test(value) || scrubSecrets(value) !== value) return false;
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
-    if ((code < 32 || code === 127) && ![9, 10, 13].includes(code)) return false;
-  }
-  return true;
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= max &&
+    !/\p{Surrogate}/u.test(value) && hasNoControlChars(value, { allowMultiline: true }) && scrubSecrets(value) === value;
 }
 function list(value: unknown, max: number, valid: (item: unknown) => boolean): value is unknown[] {
   return isDenseDataArray(value, max) && value.every(valid);
@@ -79,10 +74,7 @@ export function parseScopedCompanionPacket(value: unknown): CompanionPacketV1 | 
     }
     // Canonical set ordering makes equivalent scope and provenance order independent.
     packet.accountRefs.sort();
-    packet.evidence.sort((a, b) => {
-      const left = canonicalJson(a), right = canonicalJson(b);
-      return left < right ? -1 : left > right ? 1 : 0;
-    });
+    packet.evidence.sort((a, b) => compareLex(canonicalJson(a), canonicalJson(b)));
     if (new Set(packet.evidence.map(item => canonicalJson(item.source))).size !== packet.evidence.length ||
         Buffer.byteLength(canonicalJson(packet), 'utf8') > packet.limits.maxContextBytes) return null;
     return packet;

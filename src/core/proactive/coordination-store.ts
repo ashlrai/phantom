@@ -1,25 +1,23 @@
 /** Bounded immutable local evidence ledger. Hashes detect corruption, not provider truth. */
-import { join, resolve } from 'node:path';
-import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
-import { inspectPrivateDirectory, privateDirectory } from '../universe/artifacts.js';
+import { resolve } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
-import { createRevisionRecordCodec, readReplayWatermark, reserveReplayWatermark } from './replay-watermark.js';
-import { readImmutablePrivateRecords, recoverImmutablePrivateRecordStore, writeImmutablePrivateRecord,
-  type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
-import { COMPANION_LIMITS, companionDigest, companionIdentityEqual, companionTaskId, companionTextDigest,
+import {
+  commitWatermarkedLedgerRecord, createRevisionRecordCodec, createWatermarkedLedgerConfig, readWatermarkedLedger,
+} from './replay-watermark.js';
+import {
+  COMPANION_LIMITS, companionDigest, companionIdentityEqual, companionTaskId, companionTextDigest,
+  isCanceledBeforeIntent, isTerminalAttemptContact,
   type CompanionIdentity, type CompanionLedger, type CompanionRecord, type CompanionReviewer, type CompanionTask,
-  type CompanionTaskInput, type CompanionWrite } from './coordination-types.js';
-import { canonicalJson, hasNoControlChars, hasPlainDataKeys, isCanonicalIsoTimestamp, isProactiveSlug, isSha256Hex } from './validation.js';
+  type CompanionTaskInput, type CompanionWrite,
+} from './coordination-types.js';
+import { canonicalJson, hasNoControlChars, hasPlainDataKeys, isCanonicalIsoTimestamp, isProactiveSlug, isSha256Hex, isUniqueStringList } from './validation.js';
 
 export const companionToken = (value: unknown): value is string => typeof value === 'string' &&
   /^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/.test(value) && scrubSecrets(value) === value;
 export const companionId = (value: unknown): value is string => typeof value === 'string' && /^ct_[a-f0-9]{32}$/.test(value);
 export function companionText(value: unknown, maxBytes: number): value is string {
   return typeof value === 'string' && !!value.trim() && Buffer.byteLength(value) <= maxBytes &&
-    ![...value].some(character => {
-      const code = character.charCodeAt(0);
-      return code < 32 && ![9, 10, 13].includes(code) || code >= 127 && code <= 159;
-    });
+    hasNoControlChars(value, { allowMultiline: true, rejectC1: true });
 }
 export function companionSafeText(value: unknown, maxBytes: number): value is string {
   return companionText(value, maxBytes) && scrubSecrets(value) === value;
@@ -43,10 +41,8 @@ export function validCompanionTaskInput(value: unknown): value is CompanionTaskI
   const input = value as unknown as CompanionTaskInput;
   return companionToken(input.tenantId) && companionToken(input.projectBindingId) && companionToken(input.taskKey) &&
     companionText(input.goal, COMPANION_LIMITS.goalBytes) && isSha256Hex(input.packetDigest) &&
-    Array.isArray(input.acceptance) && input.acceptance.length > 0 && input.acceptance.length <= 32 &&
-    input.acceptance.every(item => companionText(item, 2000)) && new Set(input.acceptance).size === input.acceptance.length &&
-    Array.isArray(input.capabilityIds) && input.capabilityIds.length <= 64 && input.capabilityIds.every(companionToken) &&
-    new Set(input.capabilityIds).size === input.capabilityIds.length &&
+    isUniqueStringList(input.acceptance, 32, (item): item is string => companionText(item, 2000)) && input.acceptance.length > 0 &&
+    isUniqueStringList(input.capabilityIds, 64, companionToken) &&
     (input.deadline === undefined || input.deadline === null || isCanonicalIsoTimestamp(input.deadline)) &&
     (input.maxCostUsd === undefined || input.maxCostUsd === null || typeof input.maxCostUsd === 'number' && Number.isFinite(input.maxCostUsd) && input.maxCostUsd >= 0 && input.maxCostUsd <= 1_000_000) &&
     (input.maxAttempts === undefined || Number.isSafeInteger(input.maxAttempts) && input.maxAttempts >= 1 && input.maxAttempts <= COMPANION_LIMITS.attempts);
@@ -80,12 +76,11 @@ function validTask(task: CompanionTask): boolean {
       !(attempt.providerRunId === null || companionToken(attempt.providerRunId)) ||
       !(attempt.observationReference === null || companionText(attempt.observationReference, 2000)) ||
       (attempt.contact === 'not-contacted' ? attempt.handoffAt !== null : !attempt.handoffAt &&
-        !(['proved-unstarted', 'cancel-confirmed'].includes(attempt.contact) && attempt.cancelRequestedAt !== null && attempt.providerRunId === null)) ||
+        !(isTerminalAttemptContact(attempt.contact) && attempt.cancelRequestedAt !== null && attempt.providerRunId === null)) ||
       (['accepted', 'unknown', 'proved-unstarted', 'cancel-confirmed'].includes(attempt.contact) && !attempt.observationReference) ||
       (attempt.contact === 'accepted' && !attempt.providerRunId) ||
       (attempt.contact === 'cancel-confirmed' && !attempt.cancelRequestedAt) ||
-      (index < task.attempts.length - 1 && !['proved-unstarted', 'cancel-confirmed'].includes(attempt.contact) &&
-        !(attempt.contact === 'not-contacted' && attempt.handoffAt === null && attempt.cancelRequestedAt !== null && attempt.providerRunId === null))) return false;
+      (index < task.attempts.length - 1 && !isTerminalAttemptContact(attempt.contact) && !isCanceledBeforeIntent(attempt))) return false;
   }
   const reportIds = new Set<string>();
   for (const report of task.reports) {
@@ -151,105 +146,80 @@ export interface CompanionStoreRead { sourceState: 'healthy' | 'missing' | 'degr
 export class CompanionCoordinationStore {
   readonly directory: string;
   constructor(directory: string) { this.directory = resolve(directory); }
-  private config(): ImmutablePrivateRecordStoreConfig<CompanionRecord> {
-    return { label: 'Companion coordination', anchorPath: this.directory, rootPath: join(this.directory, 'ledger'), lockFileName: '.records.lock',
-      maxRecordBytes: COMPANION_LIMITS.recordBytes, defaultMaxFiles: COMPANION_LIMITS.records, hardMaxFiles: COMPANION_LIMITS.records,
-      defaultMaxBytes: COMPANION_LIMITS.ledgerBytes, hardMaxBytes: COMPANION_LIMITS.ledgerBytes, codecForRead: () => codec, codecForWrite: () => codec };
+  private config() {
+    return createWatermarkedLedgerConfig({ label: 'Companion coordination', directory: this.directory,
+      maxRecordBytes: COMPANION_LIMITS.recordBytes, maxRecords: COMPANION_LIMITS.records, maxAggregateBytes: COMPANION_LIMITS.ledgerBytes, codec });
   }
   read(): CompanionStoreRead {
-    try {
-      inspectPrivateDirectory(this.directory);
-      const watermark = readReplayWatermark(this.directory, { maxRecords: COMPANION_LIMITS.records });
-      if (watermark.sourceState === 'degraded') return { sourceState: 'degraded', state: null, records: [] };
-      const read = readImmutablePrivateRecords(this.config(), { requireComplete: true });
-      if (read.sourceState === 'missing') return { sourceState: watermark.sourceState === 'missing' ? 'missing' : 'degraded', state: null, records: [] };
-      if (!read.complete || read.sourceState !== 'healthy') return { sourceState: 'degraded', state: null, records: [] };
-      if (watermark.revision !== read.records.length || watermark.ledgerDigest !== (read.records.at(-1)?.digest ?? null)) {
-        return { sourceState: 'degraded', state: null, records: [] };
-      }
-      const commands = new Set<string>();
-      for (const [index, record] of read.records.entries()) {
-        const previous = read.records[index - 1];
-        if (record.revision !== index + 1 || record.previousDigest !== (previous?.digest ?? null) || commands.has(record.commandId)) {
-          return { sourceState: 'degraded', state: null, records: [] };
-        }
-        // Prior immutable scope and event history may never disappear or be rewritten.
-        if (previous && Object.entries(previous.state.tasks).some(([id, task]) => {
-          const next = record.state.tasks[id];
-          return !next || canonicalJson(companionTaskScope(task)) !== canonicalJson(companionTaskScope(next)) ||
-            canonicalJson(next.events.slice(0, task.events.length)) !== canonicalJson(task.events) ||
-            next.attempts.length < task.attempts.length || task.attempts.some((attempt, index) => {
-              const candidate = next.attempts[index];
-              if (!candidate) return true;
-              const fixed = (value: typeof attempt) => {
-                const { contact: _contact, handoffAt: _handoff, cancelRequestedAt: _cancel, providerRunId: _run,
-                  observationReference: _reference, ...immutable } = value; return immutable;
-              };
-              return canonicalJson(fixed(attempt)) !== canonicalJson(fixed(candidate)) ||
-                attempt.handoffAt !== null && candidate.handoffAt !== attempt.handoffAt ||
-                attempt.cancelRequestedAt !== null && candidate.cancelRequestedAt !== attempt.cancelRequestedAt ||
-                attempt.providerRunId !== null && candidate.providerRunId !== attempt.providerRunId ||
-                ['proved-unstarted', 'cancel-confirmed'].includes(attempt.contact) && candidate.contact !== attempt.contact;
-            }) || next.reports.length < task.reports.length || task.reports.some((report, index) => {
-              const candidate = next.reports[index];
-              const fixed = (value: typeof report) => { const { stale: _stale, ...immutable } = value; return immutable; };
-              return !candidate || canonicalJson(fixed(report)) !== canonicalJson(fixed(candidate)) || report.stale && !candidate.stale;
-            }) || canonicalJson(next.verifications.slice(0, task.verifications.length)) !== canonicalJson(task.verifications);
-        })) return { sourceState: 'degraded', state: null, records: [] };
-        commands.add(record.commandId);
-      }
-      return { sourceState: read.records.length ? 'healthy' : 'missing', state: read.records.at(-1)?.state ?? null, records: read.records };
-    } catch (error) { return { sourceState: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded', state: null, records: [] }; }
+    const commands = new Set<string>();
+    const ledgerRead = readWatermarkedLedger(this.directory, this.config(), COMPANION_LIMITS.records, (record, previous) => {
+      if (commands.has(record.commandId)) return false;
+      // Prior immutable scope and event history may never disappear or be rewritten.
+      if (previous && Object.entries(previous.state.tasks).some(([id, task]) => {
+        const next = record.state.tasks[id];
+        return !next || canonicalJson(companionTaskScope(task)) !== canonicalJson(companionTaskScope(next)) ||
+          canonicalJson(next.events.slice(0, task.events.length)) !== canonicalJson(task.events) ||
+          next.attempts.length < task.attempts.length || task.attempts.some((attempt, index) => {
+            const candidate = next.attempts[index];
+            if (!candidate) return true;
+            const fixed = (value: typeof attempt) => {
+              const { contact: _contact, handoffAt: _handoff, cancelRequestedAt: _cancel, providerRunId: _run,
+                observationReference: _reference, ...immutable } = value; return immutable;
+            };
+            return canonicalJson(fixed(attempt)) !== canonicalJson(fixed(candidate)) ||
+              attempt.handoffAt !== null && candidate.handoffAt !== attempt.handoffAt ||
+              attempt.cancelRequestedAt !== null && candidate.cancelRequestedAt !== attempt.cancelRequestedAt ||
+              attempt.providerRunId !== null && candidate.providerRunId !== attempt.providerRunId ||
+              isTerminalAttemptContact(attempt.contact) && candidate.contact !== attempt.contact;
+          }) || next.reports.length < task.reports.length || task.reports.some((report, index) => {
+            const candidate = next.reports[index];
+            const fixed = (value: typeof report) => { const { stale: _stale, ...immutable } = value; return immutable; };
+            return !candidate || canonicalJson(fixed(report)) !== canonicalJson(fixed(candidate)) || report.stale && !candidate.stale;
+          }) || canonicalJson(next.verifications.slice(0, task.verifications.length)) !== canonicalJson(task.verifications);
+      })) return false;
+      commands.add(record.commandId); return true;
+    });
+    return { sourceState: ledgerRead.sourceState, state: ledgerRead.sourceState === 'healthy' ? ledgerRead.records.at(-1)?.state ?? null : null, records: ledgerRead.records };
+  }
+  private replayFromRecords(records: readonly CompanionRecord[], commandId: string, requestDigest: string): CompanionWrite | null {
+    const record = records.find(value => value.commandId === commandId);
+    if (!record) return null;
+    if (record.requestDigest !== requestDigest) return { ok: false, reason: 'conflict', dispatchAuthorized: false };
+    return { ok: true, disposition: 'replayed', revision: record.revision, taskId: record.taskId,
+      task: structuredClone(record.state.tasks[record.taskId]!), dispatchAuthorized: false };
   }
   replay(commandId: string, request: unknown): CompanionWrite | null {
     const read = this.read();
     if (read.sourceState === 'degraded') return { ok: false, reason: 'unavailable', dispatchAuthorized: false };
-    const record = read.records.find(value => value.commandId === commandId);
-    if (!record) return null;
-    if (record.requestDigest !== companionDigest(request)) return { ok: false, reason: 'conflict', dispatchAuthorized: false };
-    return { ok: true, disposition: 'replayed', revision: record.revision, taskId: record.taskId,
-      task: structuredClone(record.state.tasks[record.taskId]!), dispatchAuthorized: false };
+    return this.replayFromRecords(read.records, commandId, companionDigest(request));
   }
   transact(commandId: string, expectedRevision: number, request: unknown, taskId: string,
     update: (state: CompanionLedger) => void): CompanionWrite {
     const fail = (reason: 'invalid' | 'conflict' | 'held' | 'not-found' | 'unavailable' | 'capacity'): CompanionWrite => ({ ok: false, reason, dispatchAuthorized: false });
     if (!companionToken(commandId) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !companionId(taskId)) return fail('invalid');
-    try { privateDirectory(this.directory); } catch { return fail('unavailable'); }
-    const acquired = acquireLocalStoreLockWithOutcome(join(this.directory, '.coordination.lock'), 0, { anchorPath: this.directory, exactPrivateStorage: true });
-    if (acquired.state !== 'acquired') return fail(acquired.state === 'contended' ? 'conflict' : 'unavailable');
-    try {
-      const requestDigest = companionDigest(request);
-      if (this.read().sourceState === 'degraded') return fail('unavailable');
-      const recovery = recoverImmutablePrivateRecordStore(this.config());
-      if (!['clean', 'recovered', 'missing'].includes(recovery)) return fail('unavailable');
-      const read = this.read();
-      if (read.sourceState === 'degraded') return fail('unavailable');
-      const replay = read.records.find(record => record.commandId === commandId);
-      if (replay) return replay.requestDigest !== requestDigest ? fail('conflict') : {
-        ok: true, disposition: 'replayed', revision: replay.revision, taskId: replay.taskId,
-        task: structuredClone(replay.state.tasks[replay.taskId]!), dispatchAuthorized: false };
-      if ((read.state?.revision ?? 0) !== expectedRevision) return fail('conflict');
-      if (read.records.length >= COMPANION_LIMITS.records) return fail('capacity');
-      const state: CompanionLedger = structuredClone(read.state ?? { schemaVersion: 1, revision: 0, tasks: {} });
-      try { update(state); } catch (error) {
-        const reason = (error as { reason?: string }).reason;
-        return fail(['invalid', 'conflict', 'held', 'not-found', 'capacity'].includes(reason ?? '') ? reason as 'held' : 'invalid');
-      }
-      state.revision += 1;
-      const payload = { schemaVersion: 1 as const, revision: state.revision, previousDigest: read.records.at(-1)?.digest ?? null,
-        commandId, requestDigest, taskId, state };
-      const record = { ...payload, digest: companionDigest(payload) };
-      if (!parse(record)) return fail('invalid');
-      if (Buffer.byteLength(codec.serialize(record)) > COMPANION_LIMITS.recordBytes) return fail('capacity');
-      if (!ownsLocalStoreLock(acquired.lock)) return fail('unavailable');
-      const reserved = reserveReplayWatermark(this.directory, { revision: record.revision, ledgerDigest: record.digest,
-        previousLedgerDigest: record.previousDigest }, { maxRecords: COMPANION_LIMITS.records });
-      if (!['recorded', 'replayed'].includes(reserved)) return fail('unavailable');
-      const disposition = writeImmutablePrivateRecord(this.config(), record, { prepublish: () => ownsLocalStoreLock(acquired.lock) });
-      if (!['recorded', 'replayed'].includes(disposition)) return fail(disposition === 'conflicted' ? 'conflict' : 'unavailable');
-      return { ok: true, disposition: disposition as 'recorded' | 'replayed', revision: state.revision, taskId,
-        task: structuredClone(state.tasks[taskId]!), dispatchAuthorized: false };
-    } catch { return fail('unavailable'); }
-    finally { releaseLocalStoreLock(acquired.lock); }
+    return commitWatermarkedLedgerRecord({
+      directory: this.directory, lockFileName: '.coordination.lock', config: this.config(), maxRecords: COMPANION_LIMITS.records,
+      read: () => this.read(), allowReplayedWatermark: true, mapConflictDisposition: true, fail,
+      prepare: (records) => {
+        const requestDigest = companionDigest(request);
+        const replayed = this.replayFromRecords(records, commandId, requestDigest);
+        if (replayed) return { kind: 'short-circuit', value: replayed };
+        const latest = records.at(-1);
+        if ((latest?.state.revision ?? 0) !== expectedRevision) return { kind: 'short-circuit', value: fail('conflict') };
+        if (records.length >= COMPANION_LIMITS.records) return { kind: 'short-circuit', value: fail('capacity') };
+        const state: CompanionLedger = structuredClone(latest?.state ?? { schemaVersion: 1, revision: 0, tasks: {} });
+        try { update(state); } catch (error) {
+          const reason = (error as { reason?: string }).reason;
+          return { kind: 'short-circuit', value: fail(['invalid', 'conflict', 'held', 'not-found', 'capacity'].includes(reason ?? '') ? reason as 'held' : 'invalid') };
+        }
+        state.revision += 1;
+        const payload = { schemaVersion: 1 as const, revision: state.revision, previousDigest: latest?.digest ?? null, commandId, requestDigest, taskId, state };
+        const record = { ...payload, digest: companionDigest(payload) };
+        if (!parse(record)) return { kind: 'short-circuit', value: fail('invalid') };
+        if (Buffer.byteLength(codec.serialize(record)) > COMPANION_LIMITS.recordBytes) return { kind: 'short-circuit', value: fail('capacity') };
+        return { kind: 'commit', record };
+      },
+      onCommitted: (record, disposition) => ({ ok: true, disposition, revision: record.revision, taskId, task: structuredClone(record.state.tasks[taskId]!), dispatchAuthorized: false }),
+    });
   }
 }

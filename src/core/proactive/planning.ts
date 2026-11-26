@@ -1,7 +1,7 @@
 /** Deterministic local assignment advice. A preference score is not quality, funding or eligibility evidence. */
 import type { ProactiveProfile } from './types.js';
 import type { CompanionTask } from './coordination-types.js';
-import { companionIdentityEqual } from './coordination-types.js';
+import { companionIdentityEqual, isTerminalAttemptContact } from './coordination-types.js';
 
 export interface CompanionCandidate {
   profileId: string; displayName: string; localAssignmentEligible: boolean; executionEligible: false;
@@ -14,7 +14,7 @@ export function rankCompanionCandidates(task: CompanionTask, profiles: readonly 
       const attempt = value.attempts.at(-1);
       return attempt && companionIdentityEqual(attempt.assignee, profile.identity)
         && !['verified', 'draft'].includes(value.state)
-        && !['proved-unstarted', 'cancel-confirmed'].includes(attempt.contact);
+        && !isTerminalAttemptContact(attempt.contact);
     }).length;
     const reasons = [
       ...(!profile.enabled ? ['Profile planning preference is disabled.'] : []),
