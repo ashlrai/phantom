@@ -47,6 +47,8 @@ export interface BoardSnapshotItem {
   verified: WorkItemEvidence['verified'] | null;
 }
 
+const usablePr = (pr: unknown): pr is number => typeof pr === 'number' && Number.isSafeInteger(pr) && pr > 0;
+
 /** Enrich a work-board listing with the blocker/verified evidence each
  * item's own classification already used. `readEvidence` is the only I/O
  * seam; items in other states need none and stay unenriched. */
@@ -61,7 +63,8 @@ export function snapshotBoard(
       try {
         const evidence = readEvidence(item.id);
         blocker = evidence?.blocker ?? null;
-        verified = evidence?.verified ?? null;
+        verified = evidence?.verified ? { ...evidence.verified } : null;
+        if (verified && !usablePr(verified.pr)) delete verified.pr;
       } catch { /* A failed evidence read leaves nulls: the planner drops it loud. */ }
     }
     return { ...item, blocker, verified };
@@ -227,8 +230,8 @@ export function boardNotifyDeltaMaterial(f: BoardNotifyDeltaFields): string | nu
     core = { dependency };
   } else if (f.state === 'VERIFIED') {
     const head = normDeltaField(f.head), tests = normDeltaField(f.tests), artifact = normDeltaField(f.artifact);
-    if (f.pr === undefined && head === '' && tests === '' && artifact === '') return null;
-    core = { pr: f.pr ?? null, head: head === '' ? null : head, tests: tests === '' ? null : tests, artifact: artifact === '' ? null : artifact };
+    if (!usablePr(f.pr) && head === '' && tests === '' && artifact === '') return null;
+    core = { pr: usablePr(f.pr) ? f.pr : null, head: head === '' ? null : head, tests: tests === '' ? null : tests, artifact: artifact === '' ? null : artifact };
   } else return null;
   if (f.state === 'BLOCKED' || f.state === 'VERIFIED') {
     const owner = normDeltaField(f.owner), claim = normDeltaField(f.claimReceipt);
@@ -295,7 +298,7 @@ function detail(t: BoardTransition, state: BoardNotifyState): string | null {
   }
   if (state === 'BLOCKED') return e.dependency ? proofField(e.dependency) : null;
   const parts: string[] = [];
-  if (e.pr !== undefined) parts.push(`PR #${e.pr}`);
+  if (usablePr(e.pr)) parts.push(`PR #${e.pr}`);
   if (normDeltaField(e.head)) parts.push(`head ${proofField(e.head!)}`);
   if (normDeltaField(e.tests)) parts.push(`tests ${proofField(e.tests!)}`);
   if (normDeltaField(e.artifact)) parts.push(parts.length === 0 ? proofField(e.artifact!) : `artifact ${proofField(e.artifact!)}`);
@@ -313,7 +316,7 @@ export function missingNoticeEvidence(t: BoardTransition, state: BoardNotifyStat
   if (state === 'BLOCKED') {
     return normDeltaField(e.dependency) ? null : 'BLOCKED dropped: no dependency named';
   }
-  if (e.pr !== undefined || normDeltaField(e.head) || normDeltaField(e.tests) || normDeltaField(e.artifact)) return null;
+  if (usablePr(e.pr) || normDeltaField(e.head) || normDeltaField(e.tests) || normDeltaField(e.artifact)) return null;
   return 'VERIFIED dropped: no PR, head or test artifact';
 }
 
@@ -490,7 +493,7 @@ function validSnapshotItem(v: unknown): v is BoardSnapshotItem {
   const blocker = blockerField === null || (record(blockerField)
     && optString(blockerField.dependency, 256) && optString(blockerField.source, 512) && optString(blockerField.at, 64));
   const verified = verifiedField === null || (record(verifiedField)
-    && (verifiedField.pr === undefined || (typeof verifiedField.pr === 'number' && Number.isSafeInteger(verifiedField.pr)))
+    && (verifiedField.pr === undefined || usablePr(verifiedField.pr))
     && ['head', 'tests', 'artifact', 'source', 'at'].every(key => optString(verifiedField[key], 512)));
   return boundedString(item.id, 128) && states.includes(String(item.state))
     && boundedString(item.asOf, 64) && boundedString(item.source, 512)
@@ -516,6 +519,7 @@ export function readBoardNotifySnapshot(stateDir: string): BoardSnapshotItem[] |
 /** Persist this pass's board for the next diff; never throws. */
 export function writeBoardNotifySnapshot(stateDir: string, items: readonly BoardSnapshotItem[]): { ok: true } | { ok: false } {
   try {
+    if (!items.every(validSnapshotItem)) return { ok: false };
     ensurePrivateDirectory(stateDir);
     writePrivateFileAtomic(boardNotifySnapshotPath(stateDir),
       JSON.stringify({ v: 1, at: new Date().toISOString(), items }));
