@@ -230,7 +230,7 @@ let sseHistoryProjection: SseHistoryProjection | null = null;
  * No `topics` parameter means every group (the historical behaviour).
  */
 export const SSE_TOPICS = [
-  'verse-sessions', 'verse-account-readings', 'runs', 'swarms', 'inbox', 'daemon', 'fleet-activity', 'snapshot', 'leader-thread',
+  'verse-sessions', 'verse-account-readings', 'runs', 'swarms', 'inbox', 'daemon', 'fleet-activity', 'fleet-compute', 'snapshot', 'leader-thread',
 ] as const;
 export type SseTopic = typeof SSE_TOPICS[number];
 
@@ -1045,6 +1045,7 @@ function handleSseEvents(
   const unwatchLeaderThread = topics.has('leader-thread')
     ? watchLeaderThread(() => sendNamed('leader-thread', { at: new Date().toISOString() }))
     : () => {};
+  let lastComputePulse = 0;
 
   // Send an initial snapshot immediately.
   pushVerseSessionsIfChanged();
@@ -1061,6 +1062,12 @@ function handleSseEvents(
   const intervalId = setInterval(() => {
     pushVerseSessionsIfChanged();
     pushAccountReadingsIfChanged();
+    // External dispatchd and node workers don't share this process. The
+    // console resamples its local observations on this bounded cadence.
+    if (topics.has('fleet-compute') && !cleaned && !backpressured && Date.now() - lastComputePulse >= 3 * SSE_POLL_MS) {
+      lastComputePulse = Date.now();
+      sendNamed('fleet-compute', { refresh: true });
+    }
     try {
       void emitUpdate().catch(() => { /* Retry a failed read on the next bounded tick. */ });
     } catch {
