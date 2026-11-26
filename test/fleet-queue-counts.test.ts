@@ -89,6 +89,28 @@ it('counts a duplicated merge event once, by PR then by job', async () => {
   expect(devin!.merges).toBe(2);
 });
 
+it('keeps late duplicate receipts out of the trailing-hour merge count', async () => {
+  const url = (id: number) => `https://github.com/example/phantom/pull/${id}`;
+  const receipts = [
+    { job: 'old', lane: 'devin', state: 'MERGED', prUrl: url(1), ts: minutesAgo(5), mergedAt: minutesAgo(70) },
+    { job: 'other-attempt', lane: 'claude', state: 'MERGED', prUrl: url(1), ts: minutesAgo(4) },
+    { job: 'old', lane: 'devin', state: 'MERGED', ts: minutesAgo(3) },
+    { job: 'old', lane: 'devin', state: 'MERGED', prUrl: url(2), ts: minutesAgo(2) },
+    { job: 'recent', lane: 'codex', state: 'MERGED', prUrl: url(3), ts: minutesAgo(1), mergedAt: minutesAgo(15) },
+    { job: 'recent-copy', lane: 'claude', state: 'MERGED', prUrl: url(3), ts: minutesAgo(16) },
+    { job: 'unattributed', state: 'MERGED', prUrl: url(4), mergedAt: minutesAgo(20) },
+    { job: 'unattributed-copy', lane: 'devin', state: 'MERGED', prUrl: url(4), ts: minutesAgo(19) },
+  ];
+  await writeFile(join(queueDir, 'jobs.jsonl'), receipts.reverse().map(receipt => JSON.stringify(receipt)).join('\n'));
+  await writeFile(join(queueDir, 'ready.tsv'), `id\tstatus\tpool\tat\nold\tLAND\tdevin\t${minutesAgo(5)}\n`);
+
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.lanes.map(({ lane, merges }) => ({ lane, merges }))).toEqual([
+    { lane: 'codex', merges: 1 }, { lane: 'devin', merges: 2 },
+  ]);
+  expect(report.totals.merges).toBe(3);
+});
+
 it('reports unknown (null), not zero, when sources are absent', async () => {
   const report = await getLaneQueueCounts({ runsDir: root, now });
   expect(report.lanes).toEqual([]);

@@ -52,6 +52,8 @@ export function shardWorkers(cpus, shards) {
 }
 
 const BAIL = '--bail=1';
+const FAILURE_LOG_LINES = 200;
+const FAILURE_LOG_CHARS = 64 * 1024;
 
 function withBail(args) {
   if (args[0] !== 'scripts/test-ci.mjs' || args.includes(BAIL)) return args;
@@ -149,6 +151,8 @@ export async function main(planPath, outPath) {
   writeFileSync(outPath, JSON.stringify({ failed, ok: !bad }, null, 2));
   if (bad) {
     if (bail) {
+      const tail = results.at(-1).log.trimEnd().split('\n').slice(-FAILURE_LOG_LINES).join('\n').slice(-FAILURE_LOG_CHARS);
+      if (tail) console.error(tail);
       const located = firstFailureLocation(log);
       console.error(located ? failureAnnotation(located) : '::error::affected test failed');
     }

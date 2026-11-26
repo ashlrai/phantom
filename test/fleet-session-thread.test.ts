@@ -5,6 +5,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import * as config from '../src/core/config.js';
 import type { AgentMessage, AgentMessages } from '../src/core/fleet/agent-messages.js';
 import type { FleetCompute } from '../src/core/fleet/compute-view.js';
 import type { JobControlLedgerRow } from '../src/core/fleet/job-control-types.js';
@@ -131,7 +132,7 @@ describe('buildSessionThread', () => {
     expect(unread.gaps).toEqual(['Leader replies unknown: the plan log could not be read.']);
   });
 
-  it('shows a worker the messages Mason aimed at it in the Leader inbox, and no others', async () => {
+  it('shows a worker the messages the owner aimed at it in the Leader inbox, and no others', async () => {
     const entries = [
       wrote('06:55', '@RQ-A also keep the draft', { channel: 'desktop', id: 'desk-2' }), wrote('06:50', 'How is the fleet?', { channel: 'telegram', id: 'tg-1' }),
       wrote('06:45', 'for @RQ-AB only'), wrote('06:40', 'Stop, @RQ-A. Use the shared form.', { channel: 'desktop', id: 'desk-1' }), wrote('06:30', 'mail me@RQ-A'),
@@ -139,12 +140,12 @@ describe('buildSessionThread', () => {
     const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([message('m1', 'leader', 'RQ-A')]), owner: inbox(entries) }, NOW);
     expect(thread.messages.map(m => [m.key, m.kind, m.side, m.label, m.at, m.text])).toEqual([
       ['bus:m1', 'bus', 'other', 'leader to RQ-A, status', ago(5), 'leader says m1'],
-      ['owner:desk-1', 'owner', 'other', 'Mason to the Leader, aimed at RQ-A, from desktop', '2026-11-17T11:40:00.000Z', 'Stop, @RQ-A. Use the shared form.'],
-      ['owner:desk-2', 'owner', 'other', 'Mason to the Leader, aimed at RQ-A, from desktop', '2026-11-17T11:55:00.000Z', '@RQ-A also keep the draft'],
+      ['owner:desk-1', 'owner', 'other', 'The owner to the Leader, aimed at RQ-A, from desktop', '2026-11-17T11:40:00.000Z', 'Stop, @RQ-A. Use the shared form.'],
+      ['owner:desk-2', 'owner', 'other', 'The owner to the Leader, aimed at RQ-A, from desktop', '2026-11-17T11:55:00.000Z', '@RQ-A also keep the draft'],
     ]);
     expect(thread.sources.owner).toBe('available');
-    expect(thread.summary.at(-1)).toBe('Mason aimed 2 messages at it through the Leader inbox, the newest at 2026-11-17T11:55:00.000Z.');
-    expect(renderSessionThreadText(thread)).toContain('> Mason to the Leader, aimed at RQ-A, from desktop [2026-11-17T11:40:00.000Z]\n    Stop, @RQ-A. Use the shared form.');
+    expect(thread.summary.at(-1)).toBe('The owner aimed 2 messages at it through the Leader inbox, the newest at 2026-11-17T11:55:00.000Z.');
+    expect(renderSessionThreadText(thread)).toContain('> The owner to the Leader, aimed at RQ-A, from desktop [2026-11-17T11:40:00.000Z]\n    Stop, @RQ-A. Use the shared form.');
 
     const other = buildSessionThread(await liveList(), 'RQ-QUIET', { sessionsRead: true, bus: bus([]), owner: inbox(entries) }, NOW);
     expect(other.messages).toEqual([]);
@@ -160,7 +161,7 @@ describe('buildSessionThread', () => {
       const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([]), owner }, NOW);
       expect(thread.sources.owner).toBe('unavailable');
       expect(thread.messages).toEqual([]);
-      expect(thread.gaps).toEqual(['Messages from Mason unknown: the Leader inbox could not be read.']);
+      expect(thread.gaps).toEqual(['Messages from the owner unknown: the Leader inbox could not be read.']);
     }
     const absent = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([]), owner: inbox([], 'missing') }, NOW);
     expect([absent.sources.owner, absent.gaps]).toEqual(['none', []]);
@@ -170,9 +171,9 @@ describe('buildSessionThread', () => {
     const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([]), owner: inbox(many) }, NOW);
     expect(thread.messages).toHaveLength(THREAD_OWNER_SHOWN);
     expect(new Set(thread.messages.map(m => m.key)).size).toBe(THREAD_OWNER_SHOWN);
-    expect(thread.messages.at(-1)).toMatchObject({ key: `owner:Tuesday#${THREAD_OWNER_SHOWN - 1}`, at: null, text: '@RQ-A note 0', label: 'Mason to the Leader, aimed at RQ-A' });
-    expect(thread.gaps).toEqual(['2 earlier messages from Mason not shown.']);
-    expect(thread.summary.at(-1)).toBe(`Mason aimed ${THREAD_OWNER_SHOWN + 2} messages at it through the Leader inbox.`);
+    expect(thread.messages.at(-1)).toMatchObject({ key: `owner:Tuesday#${THREAD_OWNER_SHOWN - 1}`, at: null, text: '@RQ-A note 0', label: 'The owner to the Leader, aimed at RQ-A' });
+    expect(thread.gaps).toEqual(['2 earlier messages from the owner not shown.']);
+    expect(thread.summary.at(-1)).toBe(`The owner aimed ${THREAD_OWNER_SHOWN + 2} messages at it through the Leader inbox.`);
   });
 
   it('reads the leader as question then answer when every line is dated', async () => {
@@ -182,8 +183,8 @@ describe('buildSessionThread', () => {
     const entries = [wrote('06:55', '@RQ-A also keep the draft', { channel: 'desktop', id: 'desk-2' }), wrote('06:40', 'How is the fleet?', { channel: 'telegram', id: 'tg-1' })];
     const thread = buildSessionThread(await liveList(), 'leader', { sessionsRead: true, bus: bus([]), owner: inbox(entries), replies: dated }, NOW);
     expect(thread.messages.map(m => [m.key, m.side, m.label])).toEqual([
-      ['owner:tg-1', 'other', 'Mason to Leader, from telegram'], ['reply:0', 'session', 'Leader to Mason'],
-      ['owner:desk-2', 'other', 'Mason to Leader, from desktop'], ['reply:1', 'session', 'Leader to Mason'],
+      ['owner:tg-1', 'other', 'The owner to Leader, from telegram'], ['reply:0', 'session', 'Leader to the owner'],
+      ['owner:desk-2', 'other', 'The owner to Leader, from desktop'], ['reply:1', 'session', 'Leader to the owner'],
     ]);
     expect(thread.sources).toMatchObject({ owner: 'available', replies: 'available' });
     expect(thread.summary.join(' ')).not.toContain('aimed');
@@ -193,7 +194,7 @@ describe('buildSessionThread', () => {
     expect(mixed.messages.map(m => m.key)).toEqual(['owner:tg-1', 'owner:desk-2', 'reply:0', 'reply:1']);
     const long = buildSessionThread(await liveList(), 'leader', { sessionsRead: true, bus: bus([]),
       owner: inbox(Array.from({ length: THREAD_OWNER_SHOWN + 1 }, (_, index) => wrote('06:40', `note ${index}`))) }, NOW);
-    expect(long.gaps).toEqual(['Earlier messages from Mason are not shown here; the Leader chat holds them.']);
+    expect(long.gaps).toEqual(['Earlier messages from the owner are not shown here; the Leader chat holds them.']);
   });
 
   it('opens a worker with the message of Mason\'s it serves and where that message was routed', async () => {
@@ -202,7 +203,7 @@ describe('buildSessionThread', () => {
       routedJob('RQ-C', 'launched', { lane: 'codex', endedEmptyAt: ago(4) })]], [other, [routedJob('RQ-Z', 'merged')]]]);
     const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, activity: activity(), bus: bus([]), owner: inbox([ask, other]), orders }, NOW);
     expect(thread.messages.slice(0, 3).map(m => [m.key, m.kind, m.side, m.label, m.at])).toEqual([
-      ['order:desk-0', 'order', 'other', 'Mason to the Leader, served by RQ-A, from desktop', '2026-11-17T11:20:00.000Z'],
+      ['order:desk-0', 'order', 'other', 'The owner to the Leader, served by RQ-A, from desktop', '2026-11-17T11:20:00.000Z'],
       ['routing:desk-0', 'routing', 'record', 'Routed to 3 jobs', null],
       ['brief', 'brief', 'other', 'Brief', null],
     ]);
@@ -211,14 +212,14 @@ describe('buildSessionThread', () => {
       'RQ-A (this session), on claude: published https://github.com/ashlrai/phantom/pull/9', 'RQ-B, lane unknown: queued',
       'RQ-C, on codex: launched, then ended with nothing to publish',
     ]);
-    expect(thread.summary.slice(0, 2)).toEqual(['Worker on claude, fixture-model, in phantom.', 'Serves Mason\'s message of 2026-11-17 06:20 ET, with 2 other jobs.']);
+    expect(thread.summary.slice(0, 2)).toEqual(['Worker on claude, fixture-model, in phantom.', 'Serves the owner\'s message of 2026-11-17 06:20 ET, with 2 other jobs.']);
     expect([thread.sources.orders, thread.sources.owner, thread.gaps]).toEqual(['available', 'none', []]);
     expect(renderSessionThreadText(thread)).toContain('- Routed to 3 jobs\n    RQ-A (this session), on claude: published');
 
     // The only job of its order needs no routing line; a session no prompt ties to a message gets nothing invented.
     const alone = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([]), owner: inbox([ask]), orders: trace([[ask, [routedJob('RQ-A', 'launched')]]]) }, NOW);
     expect(alone.messages.map(m => m.key)).toEqual(['order:desk-0']);
-    expect(alone.summary[1]).toBe('Serves Mason\'s message of 2026-11-17 06:20 ET.');
+    expect(alone.summary[1]).toBe('Serves the owner\'s message of 2026-11-17 06:20 ET.');
     const untied = buildSessionThread(await liveList(), 'RQ-QUIET', { sessionsRead: true, bus: bus([]), owner: inbox([ask, other]), orders }, NOW);
     expect([untied.messages, untied.sources.orders, untied.summary.join(' ').includes('Serves')]).toEqual([[], 'none', false]);
   });
@@ -226,7 +227,7 @@ describe('buildSessionThread', () => {
   it('names a served message whose text it did not read, and keeps to the newest few', async () => {
     const ask = wrote('06:20', 'Fix the reply box.');
     const blind = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([]), owner: null, orders: trace([[ask, [routedJob('RQ-A', 'launched')]]]) }, NOW);
-    expect(blind.messages).toEqual([{ key: 'order:2026-11-17 06:20#desktop', kind: 'order', side: 'record', label: 'Serves Mason\'s message of 2026-11-17 06:20 ET, from desktop',
+    expect(blind.messages).toEqual([{ key: 'order:2026-11-17 06:20#desktop', kind: 'order', side: 'record', label: 'Serves the owner\'s message of 2026-11-17 06:20 ET, from desktop',
       at: '2026-11-17T11:20:00.000Z', text: 'Its text is not among the inbox messages this thread read.', format: 'plain' }]);
     expect(JSON.stringify(blind)).not.toContain('Fix the reply box.');
 
@@ -234,11 +235,11 @@ describe('buildSessionThread', () => {
     const many = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([]), owner: inbox(asks),
       orders: trace(asks.map(entry => [entry, [routedJob('RQ-A', 'launched')]])) }, NOW);
     expect(many.messages.map(m => m.text)).toEqual(['ask 2', 'ask 3', 'ask 4']);
-    expect(many.gaps).toEqual(['2 earlier messages from Mason that this session serves not shown.']);
-    expect(many.summary[1]).toBe('Serves 5 of Mason\'s messages, the newest of 2026-11-17 06:14 ET.');
+    expect(many.gaps).toEqual(['2 earlier messages from the owner that this session serves not shown.']);
+    expect(many.summary[1]).toBe('Serves 5 of the owner\'s messages, the newest of 2026-11-17 06:14 ET.');
   });
 
-  it('shows the leader where each of Mason\'s messages was routed', async () => {
+  it('shows the leader where each of the owner\'s messages was routed', async () => {
     const dated: LeaderRepliesV1 = { schema: 'leader.replies.v1', version: 1, sourceState: 'healthy', entries: [], replies: [{ at: '2026-11-17T11:45:00Z', text: 'On it.', source: 'outbox' }] };
     const first = wrote('06:40', 'Fix the reply box.', { id: 'desk-1' }), chat = wrote('06:50', 'Thanks.', { id: 'desk-2' }), second = wrote('06:55', 'And the draft.', { id: 'desk-3' });
     const jobs = Array.from({ length: THREAD_ROUTED_SHOWN + 2 }, (_, index) => routedJob(`RQ-N${index}`, 'queued'));
@@ -251,7 +252,7 @@ describe('buildSessionThread', () => {
     expect(thread.messages.at(-1)!.text.split('\n')).toHaveLength(THREAD_ROUTED_SHOWN + 1);
     expect(thread.messages.at(-1)!.text).toMatch(/\nand 2 more$/);
     // RQ-N0 serves both messages and is counted once.
-    expect(thread.summary[1]).toBe(`Routed 2 of the 3 messages shown from Mason to ${THREAD_ROUTED_SHOWN + 3} jobs: 1 merged, ${THREAD_ROUTED_SHOWN + 2} queued.`);
+    expect(thread.summary[1]).toBe(`Routed 2 of the 3 messages shown from the owner to ${THREAD_ROUTED_SHOWN + 3} jobs: 1 merged, ${THREAD_ROUTED_SHOWN + 2} queued.`);
     expect(thread.sources.orders).toBe('available');
 
     const none = buildSessionThread(await liveList(), 'leader', { sessionsRead: true, bus: bus([]), owner: inbox([chat]), orders: trace([[chat, []]]) }, NOW);
@@ -349,6 +350,17 @@ describe('readSessionThread', () => {
     readOrders: vi.fn(async () => trace([])),
   });
 
+  it('uses the configured owner name for labels but preserves historical message text', async () => {
+    vi.spyOn(config, 'loadConfigReadOnly').mockReturnValue({ ...config.defaultConfig(), user: { name: 'Avery' } });
+    const thread = await readSessionThread('RQ-A', { now: NOW, ...reads(),
+      readOwner: async () => inbox([wrote('06:40', '@RQ-A keep Mason in the historical record', { id: 'desk-1' })]) });
+    expect(thread.summary.at(-1)).toContain('Avery aimed 1 message');
+    expect(thread.messages.at(-1)).toMatchObject({
+      key: 'owner:desk-1', kind: 'owner', label: 'Avery to the Leader, aimed at RQ-A',
+      text: '@RQ-A keep Mason in the historical record',
+    });
+  });
+
   it('reads only what the session needs', async () => {
     const worker = reads();
     const thread = await readSessionThread('RQ-A', { now: NOW, ...worker });
@@ -382,7 +394,7 @@ describe('readSessionThread', () => {
     expect(thread.sources).toMatchObject({ activity: 'unavailable', bus: 'unavailable', owner: 'available' });
     const noInbox = await readSessionThread('RQ-A', { now: NOW, ...reads(), readOwner: async () => { throw new Error('z'); } });
     expect(noInbox.sources).toMatchObject({ activity: 'available', bus: 'available', owner: 'unavailable' });
-    expect(noInbox.gaps).toEqual(['Messages from Mason unknown: the Leader inbox could not be read.']);
+    expect(noInbox.gaps).toEqual(['Messages from the owner unknown: the Leader inbox could not be read.']);
     const down = await readSessionThread('RQ-A', { now: NOW, ...reads(), readMap: async () => { throw new Error('runs dir unreadable'); } });
     expect(down).toMatchObject({ session: null, sources: { sessions: 'unavailable' } });
   });
@@ -653,7 +665,7 @@ describe('depth: the newest few of each record, or as much as the same reads hol
     const list = await liveList();
     const recent = buildSessionThread(list, 'RQ-A', parts(), NOW), full = buildSessionThread(list, 'RQ-A', parts(), NOW, 'full');
     expect([recent.depth, recent.deeper, full.depth, full.deeper]).toEqual(['recent', true, 'full', false]);
-    expect(recent.gaps).toEqual(['3 earlier bus messages not shown.', '2 earlier messages from Mason not shown.', '2 earlier control requests not shown.']);
+    expect(recent.gaps).toEqual(['3 earlier bus messages not shown.', '2 earlier messages from the owner not shown.', '2 earlier control requests not shown.']);
     expect(full.gaps).toEqual([]);
     expect(['bus', 'owner', 'control'].map(kind => [kind, count(recent, kind), count(full, kind)])).toEqual([
       ['bus', THREAD_BUS_SHOWN, THREAD_BUS_SHOWN + 3], ['owner', THREAD_OWNER_SHOWN, THREAD_OWNER_SHOWN + 2], ['control', THREAD_CONTROLS_SHOWN, THREAD_CONTROLS_SHOWN + 2]]);
