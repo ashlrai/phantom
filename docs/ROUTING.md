@@ -780,7 +780,11 @@ use their own `batch_claim` rows and PR verdicts. The daemon records
 and resolution window contains exactly one distinct CI start and one distinct
 completion in order. Any PR URLs on the selected boundaries or resolution
 receipt must identify the same PR, including claims on replays at the same
-boundary timestamp. Legacy receipts without PR URLs still contribute timing.
+boundary timestamp. Recorded repository identities on those boundaries must
+also agree with each other and with the reward's repository when available.
+Comparison ignores repository casing, and a boundary's PR URL takes
+precedence over its repository label. Receipts without identity metadata
+still contribute timing.
 CI receipts outside that window are ignored when
 checking for ambiguity, so earlier attempts can coexist with a measured
 retry. A merge uses its recorded merge time even if its ledger receipt
