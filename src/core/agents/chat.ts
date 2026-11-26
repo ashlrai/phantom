@@ -7,6 +7,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { busBodySchema } from './bus-v2-schema.js';
 import { readAgentRegistry, resolveAgent, agentChannelNameSchema, agentRefAddressMatcher } from './bus-identity.js';
 import { busBodyInReplyToMatch, busReadContains, busReadContainsMatch, labelIdentityOf } from './bus-unified.js';
+import { groupAddress } from '../fleet/bus-group.js';
 
 export const CHAT_SCHEMA = 'agent-chat.v1';
 const THREAD = /^(outcome|run):[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
@@ -41,6 +42,15 @@ export interface ChatQuery {
    * filtered read. */
   from?: string; excludeFrom?: string; contains?: string;
   since?: number; before?: number; id?: string; inReplyTo?: string; priority?: BusPriority;
+  /**
+   * Room-topic filter: keep only rows addressed to the one
+   * `group:<channel>:<topic>` room — the same exact room-topic match
+   * `agents bus channel read --topic` applies, so a channel running several
+   * rooms reads one room's conversation instead of every topic's. The value
+   * takes the shared room/topic grammar `groupAddress` enforces; an invalid
+   * topic is an `invalid` read, never a widened one.
+   */
+  topic?: string;
 }
 
 /** Local owner read boundary only; never combines DMs, inboxes, or external transports.
@@ -63,6 +73,14 @@ export function readAgentChat(query: ChatQuery, options: BusInboxOptions = {}): 
       (query.priority !== undefined && !BUS_PRIORITIES.includes(query.priority)) ||
       containsNeedle === null) {
     return { status: 'invalid' };
+  }
+  // The room-topic filter resolves to the one exact `group:<channel>:<topic>`
+  // address `channel read --topic` matches; an unparseable topic refuses the
+  // read rather than widening it to every room.
+  let exact: string | undefined;
+  if (query.topic !== undefined) {
+    try { exact = groupAddress(query.channel, query.topic); }
+    catch { return { status: 'invalid' }; }
   }
   const asOf = (options.now ?? Date.now)();
   if (!Number.isSafeInteger(asOf) || asOf < 0) return { status: 'invalid' };
@@ -110,7 +128,8 @@ export function readAgentChat(query: ChatQuery, options: BusInboxOptions = {}): 
       // counts and the message page alike — so a filtered `list` names only
       // the threads the filter selects and a filtered `read` never shows a
       // row the filter rejects.
-      if ((fromMatch !== undefined && !fromMatch(e.from)) ||
+      if ((exact !== undefined && e.to !== exact) ||
+          (fromMatch !== undefined && !fromMatch(e.from)) ||
           (excludeFromMatch !== undefined && excludeFromMatch(e.from)) ||
           (query.priority !== undefined && e.priority !== query.priority) ||
           (containsNeedle !== undefined && !busReadContainsMatch(e.body, containsNeedle)) ||

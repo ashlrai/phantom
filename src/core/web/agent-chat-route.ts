@@ -6,13 +6,14 @@ export function agentChatResponse(method: string, url: string,
   read: (query: ChatQuery) => ChatResult = readAgentChat): { code: number; body: unknown } {
   if (method !== 'GET') return { code: 405, body: { status: 'method-not-allowed' } };
   const params = new URL(url, 'http://localhost').searchParams;
-  const allowed = new Set(['channel', 'thread', 'after', 'limit',
+  const allowed = new Set(['channel', 'topic', 'thread', 'after', 'limit',
     'from', 'excludeFrom', 'contains', 'since', 'before', 'id', 'inReplyTo', 'priority']);
   if ([...params.keys()].some(key => !allowed.has(key) || params.getAll(key).length !== 1)) {
     return { code: 400, body: { status: 'invalid' } };
   }
   const query: ChatQuery = { channel: params.get('channel') ?? '' };
   if (params.has('thread')) query.thread = params.get('thread')!;
+  if (params.has('topic')) query.topic = params.get('topic')!;
   for (const key of ['after', 'limit'] as const) {
     if (!params.has(key)) continue;
     const value = params.get(key)!;
