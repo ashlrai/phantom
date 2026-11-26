@@ -398,7 +398,7 @@ const mechanical = (code: string): boolean =>
 export function marketDecisionCells(fold: MarketFold): EmittedCell[] {
   const cells = new Map<string, DecisionCell>();
   const cellFor = (kind: DecisionCell['kind'], lane: string | null, code: string | null): DecisionCell => {
-    const key = `${kind}${lane ?? ''}${code ?? ''}`;
+    const key = `${kind}:${lane ?? ''}:${code ?? ''}`;
     let cell = cells.get(key);
     if (cell === undefined) {
       cell = { kind, lane, code, jobs: 0, days: new Set(), pairs: new Map(), reasonCodes: new Map(), firstMs: null, lastMs: null };

@@ -192,6 +192,16 @@ describe('unfedLaneCells / marketDecisionCells', () => {
     expect(rejects.find((c) => c.code === 'held')).toBeUndefined();
   });
 
+  it('requires recurrence for each lane and rejection code independently', () => {
+    const rows = decisionSeries(2, (job, day) => ({
+      job, chosen: 'claude',
+      rejected: day === 0
+        ? [{ lane: 'custom', codes: ['provider_backoff'] }]
+        : [{ lane: 'customprovider_', codes: ['backoff'] }],
+    }));
+    expect(marketDecisionCells(foldWorkMarket(rows.join('\n'), NOW_MS, 168))).toEqual([]);
+  });
+
   it('emits unrouted and unknown-preference umbrellas at the recurring bar', () => {
     const unrouted = decisionSeries(3, (job) => ({
       job, chosen: null, codes: ['no_runnable_lane'], rejected: [],
