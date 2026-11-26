@@ -266,7 +266,7 @@ export function poolUsageSeries(pool: string, rows: readonly UsageReading[], now
   const known = Number.isFinite(resetMs);
   const window = mine.slice(start).filter(r => {
     const observedAt = ms(r.observed_at);
-    return !known || (observedAt >= startMs && observedAt < resetMs);
+    return !known || (ms(r.reset_at) === resetMs && observedAt >= startMs && observedAt < resetMs);
   });
   const latest = window.at(-1) ?? null;
   const points = window.map(r => ({ at: r.observed_at, used_pct: r.used_pct }));

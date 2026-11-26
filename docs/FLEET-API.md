@@ -132,8 +132,9 @@ receipt proves coordination, not job execution.
 | POST | `/api/verse/leader/questions/` (QUESTION_PATH_RE or ANSWER_PATH_RE) + {questionId} + /answer | none | [AnswerLeaderQuestionResult or SubmitLeaderQuestionResult](../src/core/vision/leader-thread-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"text":"Proceed"}' 'http://127.0.0.1:7777/api/verse/leader/questions/example-question/answer'` |
 | POST | `/api/verse/leader/actions/` (APPROVE_PATH_RE) + {actionId} + /approve | none | [ApproveLeaderActionResult](../src/core/vision/leader-thread-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:7777/api/verse/leader/actions/example-action/approve'` |
 
-Usage history charts readings from the quota window start up to its reset
-time. Pace stays unknown until the window has at least two readings.
+Usage history charts readings that name the current quota reset and were
+observed from the window start up to, but excluding, that reset. Pace and
+runway need at least two readings from that window.
 
 The Leader resource ledger keeps the Claude dispatcher quota when its recorded
 capture time is later than the usable native weekly reading, no later than
