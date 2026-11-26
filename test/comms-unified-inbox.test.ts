@@ -37,6 +37,8 @@ import type { SlackSendReceiptRead } from '../src/core/agents/slack-send-receipt
 import type { SentReceipt } from '../src/core/agents/slack-reply-binding.js';
 import type { LeaderThreadUndeliveredItem, LeaderThreadUndeliveredRead } from '../src/core/vision/leader-thread.js';
 import type { LeaderNetworkDigestFact, LeaderNetworkRequestFact, LeaderNetworkStateRead } from '../src/core/agents/leader-network-read.js';
+import type { LeaderReplyPending, LeaderRepliesLedgerRead } from '../src/core/comms/leader-replies-ledger.js';
+import { replyTextHash } from '../src/core/fleet/mason-outbox.js';
 import type { FleetAssignment, FleetCoordinationPending, FleetMessage, FleetPendingReturn } from '../src/core/fleet/coordination.js';
 import type { ClaimDriftRow, ClaimStoreDrift } from '../src/core/fleet/claim-store-drift.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
@@ -4162,5 +4164,187 @@ describe('readUnifiedInbox claim drift', () => {
     // A drift row provably names no job — --job never matches it.
     const byJob = await readDrift(pending, { filter: { job: 'job-1' } });
     expect(byJob.items.filter(i => i.source === 'claim-drift')).toHaveLength(0);
+  });
+});
+
+describe('readUnifiedInbox leader replies', () => {
+  const HASH_A = 'a'.repeat(64);
+  const HASH_B = 'b'.repeat(64);
+  const replyPending = (over: Partial<LeaderReplyPending> = {}): LeaderReplyPending => ({
+    hash: HASH_A, state: 'failed',
+    since: new Date(now - 30 * 60_000).toISOString(),
+    lastAt: new Date(now - 10 * 60_000).toISOString(),
+    failedAttempts: 2, claimedAt: null,
+    reply: null,
+    ...over,
+  });
+  const repliesLedger = (over: Partial<LeaderRepliesLedgerRead> = {}): LeaderRepliesLedgerRead => ({
+    state: 'healthy', items: [], ...over,
+  });
+  const readReplies = (r: LeaderRepliesLedgerRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readLeaderReplies: async () => r, ...extra });
+
+  it('lists failed and orphaned replies as warns with their own kinds, stamps and acts', async () => {
+    const inbox = await readReplies(repliesLedger({
+      items: [
+        replyPending({
+          hash: HASH_A, state: 'failed', failedAttempts: 3,
+          reply: { at: '2026-11-07 09:30', text: 'the deploy is green' },
+        }),
+        replyPending({
+          hash: HASH_B, state: 'orphaned', failedAttempts: 0,
+          claimedAt: new Date(now - 3 * 3_600_000).toISOString(),
+          since: new Date(now - 3 * 3_600_000).toISOString(),
+          reply: { at: '2026-11-07T09:00:00.000Z', text: 'standup moved to 9' },
+        }),
+      ],
+    }));
+    expect(inbox.sources['leader-replies']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'leader-replies');
+    expect(items).toHaveLength(2);
+
+    const failed = items.find(i => i.id === `leader-replies:${HASH_A}`)!;
+    expect(failed).toMatchObject({
+      kind: 'leader-reply-failed', severity: 'warn', blocking: false,
+      title: 'iMessage leader reply failed',
+      since: new Date(now - 30 * 60_000).toISOString(),
+      expiresAt: null,
+    });
+    expect(failed.detail).toContain('"the deploy is green"');
+    expect(failed.detail).toContain('outbox 2026-11-07 09:30');
+    expect(failed.detail).toContain('failed after 3 recorded send attempts');
+    expect(failed.act).toEqual(['phm imessage replies --json', 'phm leader replies --json']);
+    expect(failed.jobIds).toBeUndefined();
+
+    const orphaned = items.find(i => i.id === `leader-replies:${HASH_B}`)!;
+    expect(orphaned).toMatchObject({
+      kind: 'leader-reply-orphaned', severity: 'warn', blocking: false,
+      title: 'iMessage leader reply unconfirmed',
+      since: new Date(now - 3 * 3_600_000).toISOString(),
+    });
+    expect(orphaned.detail).toContain('"standup moved to 9"');
+    expect(orphaned.detail).toContain('no outcome ever recorded');
+    expect(orphaned.detail).toContain('no pass retries it');
+    expect(orphaned.act).toEqual([
+      'phm imessage replies --json',
+      'phm leader replies --json',
+      'phm comms send-owner --text "<same reply text>"',
+    ]);
+  });
+
+  it('says honestly when the reply text is not in the current outbox read', async () => {
+    const inbox = await readReplies(repliesLedger({
+      items: [replyPending({ hash: HASH_A, state: 'failed', failedAttempts: 1, reply: null })],
+    }));
+    const item = inbox.items.find(i => i.source === 'leader-replies')!;
+    expect(item.detail).toContain('reply text unresolved');
+    expect(item.detail).toContain('not in the current outbox read');
+    expect(item.detail).toContain('failed after 1 recorded send attempt');
+    expect(item.detail).toContain('awaiting the next live replies pass');
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readReplies(repliesLedger({ state: 'missing' }));
+    expect(missing.sources['leader-replies']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'leader-replies')).toHaveLength(0);
+
+    const unavailable = await readReplies(repliesLedger({
+      state: 'unavailable', items: [replyPending()],
+    }));
+    expect(unavailable.sources['leader-replies']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'leader-replies')).toHaveLength(0);
+
+    const degraded = await readReplies(repliesLedger({
+      state: 'degraded', items: [replyPending()],
+    }));
+    expect(degraded.sources['leader-replies']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'leader-replies')).toHaveLength(1);
+
+    const throwing = await read({
+      readLeaderReplies: () => { throw new Error('ledger boom'); },
+    });
+    expect(throwing.sources['leader-replies']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'leader-replies')).toHaveLength(0);
+  });
+
+  it('reads the real ledger and resolves reply text through the outbox journals', async () => {
+    const imessageDir = join(runsDir, 'imessage');
+    mkdirSync(imessageDir, { recursive: true, mode: 0o700 });
+    const hFail = replyTextHash('the deploy is green');
+    const hOrph = replyTextHash('standup moved to 9');
+    const hFresh = replyTextHash('fresh reply');
+    const hSent = replyTextHash('already sent');
+    const rows = [
+      { at: '2026-11-07T10:00:00.000Z', hash: 'start', status: 'baseline' },
+      { at: '2026-11-07T10:00:00.000Z', hash: hFail, status: 'pending' },
+      { at: '2026-11-07T10:05:00.000Z', hash: hFail, status: 'failed' },
+      { at: '2026-11-07T11:00:00.000Z', hash: hFail, status: 'failed' },
+      { at: '2026-11-07T09:00:00.000Z', hash: hOrph, status: 'pending' },
+      { at: '2026-11-07T11:59:00.000Z', hash: hFresh, status: 'pending' },
+      { at: '2026-11-07T10:00:00.000Z', hash: hSent, status: 'pending' },
+      { at: '2026-11-07T10:01:00.000Z', hash: hSent, status: 'sent' },
+      // A torn line is skipped, never guessed.
+      '{"at":"not-a-date","hash":"' + hFail + '","status":"failed"}',
+    ];
+    writeFileSync(join(imessageDir, 'leader-sent.jsonl'), rows.map(r => typeof r === 'string' ? r : JSON.stringify(r)).join('\n') + '\n', { mode: 0o600 });
+    mkdirSync(join(runsDir, 'leader'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(runsDir, 'leader', 'MASON-OUTBOX.md'), '## 2026-11-07T09:30:00Z\nstandup moved to 9\n', { mode: 0o600 });
+
+    const inbox = await read();
+    expect(inbox.sources['leader-replies']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'leader-replies');
+    expect(items).toHaveLength(2);
+
+    const orphaned = items.find(i => i.id === `leader-replies:${hOrph}`)!;
+    expect(orphaned).toMatchObject({
+      kind: 'leader-reply-orphaned', severity: 'warn', blocking: false,
+      since: '2026-11-07T09:00:00.000Z',
+    });
+    expect(orphaned.detail).toContain('"standup moved to 9"');
+    expect(orphaned.detail).toContain('outbox 2026-11-07T09:30:00Z');
+
+    const failed = items.find(i => i.id === `leader-replies:${hFail}`)!;
+    expect(failed).toMatchObject({
+      kind: 'leader-reply-failed', severity: 'warn', blocking: false,
+      since: '2026-11-07T10:00:00.000Z',
+    });
+    expect(failed.detail).toContain('reply text not in the current outbox read');
+    expect(failed.detail).toContain('failed after 2 recorded send attempts');
+  });
+
+  it('reports a missing ledger as missing and an unreadable one as unavailable', async () => {
+    const missing = await read();
+    expect(missing.sources['leader-replies']).toEqual({ state: 'missing', pending: 0 });
+
+    const imessageDir = join(runsDir, 'imessage');
+    mkdirSync(imessageDir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(imessageDir, 'leader-sent.jsonl'), 'not json at all\n', { mode: 0o600 });
+    chmodSync(join(imessageDir, 'leader-sent.jsonl'), 0o600);
+    const garbage = await read();
+    // On-contract rows: none — a readable ledger with no valid rows is healthy-empty.
+    expect(garbage.sources['leader-replies']).toEqual({ state: 'healthy', pending: 0 });
+
+    rmSync(join(imessageDir, 'leader-sent.jsonl'));
+    mkdirSync(join(imessageDir, 'leader-sent.jsonl'), { recursive: true });
+    const unavailable = await read();
+    expect(unavailable.sources['leader-replies']).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = repliesLedger({
+      items: [
+        replyPending({ hash: HASH_A, state: 'failed' }),
+        replyPending({ hash: HASH_B, state: 'orphaned', claimedAt: new Date(now - 3_600_000).toISOString() }),
+      ],
+    });
+    const bySource = await readReplies(pending, { filter: { source: 'leader-replies' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'leader-replies')).toBe(true);
+    const byKind = await readReplies(pending, { filter: { kind: 'leader-reply-orphaned' } });
+    expect(byKind.items.map(i => i.id)).toEqual([`leader-replies:${HASH_B}`]);
+    expect(byKind.sources['leader-replies']).toEqual({ state: 'healthy', pending: 2 });
+    // A send-ledger row provably names no job — --job never matches it.
+    const byJob = await readReplies(pending, { filter: { job: 'job-1' } });
+    expect(byJob.items.filter(i => i.source === 'leader-replies')).toHaveLength(0);
   });
 });

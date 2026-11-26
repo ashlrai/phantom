@@ -317,7 +317,13 @@ is never sent twice. The first live pass marks existing replies as already seen,
 so old history is not texted out. At most three go out per pass, and only one
 pass runs at a time. `phm imessage poll --apply` runs the same pass after intake;
 the sidecar worker does not send replies yet. Texts from any other handle never
-reach `MASON-INBOX.md`.
+reach `MASON-INBOX.md`. Replies still owed a proven delivery are listed in
+`phm comms inbox` as the `leader-replies` source: a reply whose ledger hash
+ended `failed` lists as `leader-reply-failed` and is retried by the next live
+pass; one stuck `pending` past the one-hour in-flight bound lists as
+`leader-reply-orphaned` — `readClaimed` counts it as sent forever, so the
+inbox is the only place it surfaces, alongside `phm comms send-owner` as the
+manual resend act.
 
 ## Poll
 

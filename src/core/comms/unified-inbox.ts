@@ -358,6 +358,40 @@
  *               source. `missing` is a verified-absent store,
  *               `unavailable` any refusal — never an empty backlog passed
  *               off as fact. Act: `phm leader inbox`, `phm comms thread`.
+ *   leader-replies  leader replies to Mason still owed a proven iMessage
+ *               delivery — the send ledger `<imessageStateDir>/
+ *               leader-sent.jsonl` `sendLeaderReplies` appends
+ *               (`{at, hash, status}` per attempted reply; the hash is a
+ *               content fingerprint, never text) read through
+ *               `readLeaderRepliesLedger`, the same last-status-per-hash
+ *               fold `readClaimed` applies so the projection can never
+ *               disagree with what the next pass does. A hash whose last
+ *               row is `failed` lists as warn `leader-reply-failed` — the
+ *               send provably did not land and the next live `phm
+ *               imessage replies` pass retries it; a hash whose last row
+ *               is `pending` older than the one-hour in-flight bound
+ *               lists as warn `leader-reply-orphaned` — the process died
+ *               between the claim and the outcome append, `readClaimed`
+ *               counts it as sent forever, and no pass ever retries it, so
+ *               the reply is a dead letter until re-posted. Fresh pending
+ *               rows may be in flight and never list; `sent`/`baseline`
+ *               rows are resolved claims. Each item resolves its reply
+ *               text through the same bounded `readOutboxEntries` read the
+ *               sender uses — the ledger claims by text hash, so identical
+ *               texts share one pending unit and the newest posting is the
+ *               identifier — and shows a scrubbed snippet with its outbox
+ *               stamp when the bounded read still holds it, saying "reply
+ *               text not in the current outbox read" when it does not;
+ *               `since` is the first recorded attempt (first pending row,
+ *               else first failed row, else the last row — a truncated
+ *               tail can only raise it, never invent it) and `expiresAt`
+ *               stays null: a failed or orphaned send waits for a pass or
+ *               a decision, never a guessed deadline. `missing` is a
+ *               verified-absent ledger, `degraded` a tail-truncated read
+ *               (older rows unseen — pending is a stated lower bound),
+ *               `unavailable` an unreadable store — never an empty backlog
+ *               passed off as fact. Act: `phm imessage replies`, `phm
+ *               leader replies`, `phm comms send-owner`.
  *   coordination  the advisory coordination ledger's (`fleet.coordination.v1`,
  *               `~/.ashlr/fleet/coordination.jsonl`) whole pending surface
  *               through `readFleetCoordinationPending` — the same replay
@@ -473,6 +507,7 @@ import { listTeammateTasks } from './imessage-teammate-tasks.js';
 import { imessageStateDir } from '../integrations/imessage.js';
 import { readLeaderThreadUndelivered, type LeaderThreadUndeliveredRead } from '../vision/leader-thread.js';
 import { readLeaderNetworkState, type LeaderNetworkStateRead } from '../agents/leader-network-read.js';
+import { readLeaderRepliesLedger, type LeaderRepliesLedgerRead } from './leader-replies-ledger.js';
 import { readFleetCoordinationPending, type FleetCoordinationPending } from '../fleet/coordination.js';
 import { readClaimStoreDrift, type ClaimDriftRow, type ClaimStoreDrift } from '../fleet/claim-store-drift.js';
 
@@ -488,7 +523,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
-  'slack-sends', 'leader-delivery', 'leader-network', 'coordination', 'claim-drift',
+  'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -511,6 +546,7 @@ export const UNIFIED_INBOX_KINDS = [
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
   'inbox-proposal', 'slack-request', 'slack-send-unconfirmed', 'leader-message-undelivered',
   'leader-request', 'leader-request-incomplete', 'leader-reply-unconfirmed', 'leader-digest-unconfirmed',
+  'leader-reply-failed', 'leader-reply-orphaned',
   'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
   'claim-drift-bus', 'claim-drift-coordination', 'claim-drift-owner',
 ] as const;
@@ -736,6 +772,8 @@ export interface UnifiedInboxOptions {
   readLeaderUndelivered?: typeof readLeaderThreadUndelivered;
   /** Leader-network seam; default reads `<runsDir>/leader/network-state.json` through the same bounded anchored read `readRouteReplyFacts` applies — never the locking `pending()` recovery pass. */
   readLeaderNetwork?: (options: { runsDir?: string }) => LeaderNetworkStateRead;
+  /** Leader-reply ledger seam; default reads `<imessageStateDir>/leader-sent.jsonl` through the same last-status-per-hash fold `readClaimed` applies and resolves reply text through the bounded outbox read the sender uses. */
+  readLeaderReplies?: (options: { runsDir?: string; now?: () => number }) => Promise<LeaderRepliesLedgerRead>;
   /** Coordination-ledger seam; default reads the advisory `fleet.coordination.v1` ledger through `readFleetCoordinationPending` — the same replay `readFleetBoard` runs, never its reaping mutation path. */
   readFleetCoordination?: typeof readFleetCoordinationPending;
   /** Claim-drift seam; default reads the same `fleet.claim-drift.v1` verdict `phm fleet claim-drift` and the bus-status probe's `claimDrift` section serve. */
@@ -2744,6 +2782,67 @@ function leaderNetworkItems(read: NonNullable<UnifiedInboxOptions['readLeaderNet
 }
 
 /**
+ * Leader replies to Mason still owed a proven iMessage delivery — the send
+ * ledger `<imessageStateDir>/leader-sent.jsonl` `sendLeaderReplies` appends,
+ * read through `readLeaderRepliesLedger`'s last-status-per-hash fold (the
+ * same fold `readClaimed` applies, so the projection can never disagree with
+ * what the next pass does). A `failed` last row lists as warn
+ * `leader-reply-failed` — the send provably did not land and the next live
+ * `phm imessage replies` pass retries it; a stale `pending` last row lists
+ * as warn `leader-reply-orphaned` — the process died between claim and
+ * outcome, `readClaimed` counts it as sent forever, and no pass ever retries
+ * it. Fresh pending rows may be in flight and never list; `sent`/`baseline`
+ * are resolved. Each item names the reply through the bounded outbox read
+ * the sender uses — a scrubbed snippet and outbox stamp when the read still
+ * holds the text, an honest "not in the current outbox read" when it does
+ * not — `since` the first recorded attempt, `expiresAt` null. Agent work —
+ * a pass retry or a deliberate re-post — never Mason-blocking. `missing` is
+ * a verified-absent ledger, `degraded` a truncated read whose pending is a
+ * stated lower bound, `unavailable`/a throwing seam — never an empty list
+ * passed off as fact.
+ */
+async function leaderReplyItems(
+  read: NonNullable<UnifiedInboxOptions['readLeaderReplies']>,
+  options: UnifiedInboxOptions, now: () => number,
+): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  let result: LeaderRepliesLedgerRead;
+  try { result = await read({ runsDir: options.runsDir, now: () => now() }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing' || result.state === 'unavailable') {
+    return { report: { state: result.state, pending: pendingCount(result.state, 0) }, items: [] };
+  }
+  const items = result.items.map((entry): Omit<UnifiedInboxItem, 'priority'> => {
+    const orphaned = entry.state === 'orphaned';
+    const snippet = entry.reply ? oneLine(entry.reply.text, 120) : '';
+    const where = entry.reply
+      ? `${entry.reply.at !== '' ? ` · outbox ${entry.reply.at}` : ''}`
+      : ' · reply text not in the current outbox read';
+    return {
+      id: `leader-replies:${entry.hash}`,
+      source: 'leader-replies',
+      kind: orphaned ? 'leader-reply-orphaned' : 'leader-reply-failed',
+      // A leader reply Mason never provably received on iMessage is agent
+      // work to retry or re-post — warn, never blocking.
+      severity: 'warn',
+      blocking: false,
+      title: orphaned ? 'iMessage leader reply unconfirmed' : 'iMessage leader reply failed',
+      detail: oneLine(
+        (snippet !== '' ? `"${snippet}"` : 'reply text unresolved') + where +
+        (orphaned
+          ? ` · claimed ${entry.claimedAt ?? 'at an unrecorded time'} · no outcome ever recorded — the dedupe read counts it as sent, so no pass retries it`
+          : ` · failed after ${entry.failedAttempts} recorded send attempt${entry.failedAttempts === 1 ? '' : 's'} · awaiting the next live replies pass`),
+        DETAIL_MAX) || null,
+      since: entry.since,
+      expiresAt: null,
+      act: orphaned
+        ? ['phm imessage replies --json', 'phm leader replies --json', 'phm comms send-owner --text "<same reply text>"']
+        : ['phm imessage replies --json', 'phm leader replies --json'],
+    };
+  });
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/**
  * The advisory coordination ledger's (`fleet.coordination.v1`) whole pending
  * surface — a store no other source reads: bus, mailbox and board cover the
  * agent bus and shared board, while coordination mail, assignments and
@@ -3088,6 +3187,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const slackSends = slackSendItems(options.readSlackSends ?? readSlackSendReceipts);
   const leaderDelivery = leaderDeliveryItems(options.readLeaderUndelivered ?? readLeaderThreadUndelivered, now);
   const leaderNetwork = leaderNetworkItems(options.readLeaderNetwork ?? readLeaderNetworkState, options.runsDir);
+  const leaderReplies = await leaderReplyItems(options.readLeaderReplies ?? readLeaderRepliesLedger, options, now);
   const coordination = coordinationItems(options.readFleetCoordination ?? readFleetCoordinationPending);
   const claimDrift = claimDriftItems(options.readClaimDrift ?? readClaimStoreDrift, options);
 
@@ -3118,10 +3218,11 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'slack-sends': slackSends.report,
     'leader-delivery': leaderDelivery.report,
     'leader-network': leaderNetwork.report,
+    'leader-replies': leaderReplies.report,
     coordination: coordination.report,
     'claim-drift': claimDrift.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...coordination.items, ...claimDrift.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
