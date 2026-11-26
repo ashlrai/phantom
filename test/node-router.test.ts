@@ -441,6 +441,29 @@ describe('phm node CLI', () => {
     expect(text.err).toContain('--usage must be an integer from 0 to 1000.');
   });
 
+  it('names each self-reported flag\'s own fix on a non-numeric value', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const joined = JSON.parse((await cli('join', '--node', 'laptop', '--owner', 'acme', '--json')).out);
+    const s = String(joined.session);
+    // --slots and --usage are bounds the operator chooses; join and pull never
+    // print them, so their fix must describe the flag itself. Lease numbers
+    // (--session, --token) do come from join/pull and keep that pointer.
+    const cases: [string[], string][] = [
+      [['join', '--node', 'other', '--owner', 'acme', '--slots', 'lots', '--json'], 'concurrent job slots'],
+      [['beat', '--node', 'laptop', '--session', s, '--slots', 'lots', '--json'], 'concurrent job slots'],
+      [['beat', '--node', 'laptop', '--session', s, '--usage', 'busy', '--json'], 'self-reported load in permille'],
+      [['beat', '--node', 'laptop', '--session', 'many', '--json'], 'printed by phm node join or pull'],
+    ];
+    for (const [args, fixPart] of cases) {
+      const res = await cli(...args);
+      expect(res.code).toBe(2);
+      expect(res.err).toBe('');
+      expect(JSON.parse(res.out)).toMatchObject({ schemaVersion: 1, command: args[0],
+        error: { code: 'bad-number', fix: expect.stringContaining(fixPart) } });
+    }
+  });
+
   it('sends bare and --json-only join to the standalone registry error, not the pool', async () => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
     vi.stubEnv('ASHLR_HOME', dir);
