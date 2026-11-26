@@ -3251,6 +3251,32 @@ holds the job's scopes. Each hold is `{claimKey, owner, leaseUntil}`.
 means holds are unknown, never an empty free set. A feed that cannot be read refuses
 rather than claiming against a guessed job. `phm agents bus work claim --job <id> --lease-ms <ms> [--key]
 [--owner] [--id]` prints it, exit 0 acquired, 2 invalid, 1 otherwise.
+`claimNextBusWorkJob(BusWorkJobNextOptions)` (`owner`, `leaseMs`, the
+`BusClaimOptions` `root?`/`now?`, and the `BusWorkJobNextFilters` dims
+`jobId?`/`repo?`/`provider?`/`tier?`/`to?`/`announcer?`/`channel?`/`topic?`/
+`result?`/`id?`/`since?`/`before?`/`contains?`) is the job-level companion
+to `claimNextBusWork`: it reads the claims-joined work feed once, keeps the
+filtered open jobs with declared claim keys — the feed `--open` rule minus
+its complete-coverage exclusion, so a fully held job still counts as a held
+candidate — and walks them newest-first, running the same `claimBusWorkJob`
+path per candidate key (`queue:<jobId>` preferred, then the provably-free
+set the claims join computed, else every declared key under unknown
+coverage). A candidate whose `claimable` is provably false counts `held`
+with no attempt spent; `acquired` returns the `claimBusWorkJob` acquired
+shape plus `attempted` (key-level acquire calls made); `empty` reports
+`{candidates, held, attempted}` — candidates the filtered open keyed jobs,
+held the ones whose declared keys are all provably or observably held —
+while `invalid`/`refused`/`unavailable`/`retryable`/`full` stay honest
+failures and a feed that cannot be read never produces a guessed claim.
+`phm agents bus work claim-next [<agent>] --lease-ms <ms> [--owner]
+[--job] [--repo] [--provider] [--tier] [--announcer] [--channel] [--topic]
+[--result] [--id <envelope-id>] [--since] [--before] [--contains]` prints
+it — the positional agent (default `PHM_AGENT_ID`) is the pending-work
+address filter, `--owner` the lease label (default `PHM_AGENT_ID` then the
+agent), `--announcer` the feed `--owner` job-announcer filter under a name
+that cannot collide with the lease owner, and `--id` the retained-envelope
+citation filter, never an operation id (each call mints its own) — exit 0
+on `acquired`/`empty`, 2 on invalid, 1 otherwise.
 `phm agents bus claim message acquire|renew|release|complete --id <envelope-id>`
 is the same message-id claim journal `fleet bus-claim`/`comms bus claim` drive:
 `acquire` takes `--lease-ms` and `--owner` (default `PHM_AGENT_ID`), the other

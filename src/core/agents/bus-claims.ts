@@ -9,10 +9,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 import { acquireCoordination, COORDINATION_ORIGINS, coordinationRowBlocks, listCoordination, renewCoordination, settleCoordination, type CoordinationOrigin, type CoordinationView } from './claim-store.js';
-import { CLAIM_MAX_LEASE_MS, parseClaimKey, workClaimBodySchema, workReleaseBodySchema, type WorkJob } from './bus-v2-schema.js';
-import { readAgentRegistry, resolveAgent, type AgentRegistry } from './bus-identity.js';
+import { CLAIM_MAX_LEASE_MS, parseClaimKey, providerSchema, WORK_RESULT_OUTCOMES, WORK_TIERS,
+  workClaimBodySchema, workReleaseBodySchema,
+  type Participant, type WorkDispatch, type WorkJob, type WorkResultOutcome } from './bus-v2-schema.js';
+import { agentChannelNameSchema, readAgentRegistry, resolveAgent, type AgentRegistry } from './bus-identity.js';
 import { busReadContains, busReadContainsMatch } from './bus-unified.js';
-import { BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
+import { BUS_FEED_OPEN_STATUSES, busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey,
+  BUS_WORK_FEED_CONTAINS_MAX, projectBusWorkFeedView, readBusWorkFeed,
+  type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 
 export interface BusClaimOptions {
   /** Coordination store root; defaults to the shared fleet root. */
@@ -506,4 +510,199 @@ export function claimBusWorkJob(options: BusWorkJobClaimOptions): BusWorkJobClai
   if (result.status === 'unavailable') return { status: 'unavailable', reason: 'claim-unavailable', job: ref, scope: fullScope };
   if (result.status === 'full') return { status: 'full', reason: 'claim-full', job: ref, scope: fullScope };
   return { status: 'unavailable', reason: 'claim-unexpected', job: ref, scope: fullScope };
+}
+
+// ─── Next-job claims ────────────────────────────────────────────────
+
+/**
+ * The `work feed` view filters `claimNextBusWorkJob` narrows its candidate
+ * set with — every field the feed read serves except the implied
+ * open-plus-claimable pair (a next-claim only ever considers provably
+ * claimable open jobs) and `status`/`limit`, which a claim cannot use.
+ * `repo` takes the same `owner/name` slug `busWorkFeedRepoKey` normalizes;
+ * `to`/`announcer` are routing refs resolved through the same matchers the
+ * feed's `--to`/`--owner` flags build; `id` is the retained-envelope
+ * citation wire id `busWorkFeedJobCitesEnvelope` matches.
+ */
+export interface BusWorkJobNextFilters {
+  /** Keep only the job with this exact id — the feed `--job` filter. */
+  jobId?: string;
+  /** `owner/name` repo slug, normalized through `busWorkFeedRepoKey` like the feed `--repo`. */
+  repo?: string;
+  /** Keep only jobs announced for this provider — the feed `--provider` filter. */
+  provider?: Participant['provider'];
+  /** Keep only jobs whose announcement declared this dispatch tier — the feed `--tier` filter. */
+  tier?: WorkDispatch['tier'];
+  /**
+   * Keep only jobs whose announcement `to` addresses this agent under the
+   * pending-work rule — the literal label, every label of the identity it
+   * resolves to, and `group:<channel>:<topic>` addresses of registry
+   * channels it belongs to, minus the identity's own channel posts. This is
+   * the `work next [<agent>]` positional's meaning on the feed side.
+   */
+  to?: string;
+  /**
+   * Keep only jobs announced by this routing ref — the feed `--owner`
+   * filter under a name that cannot collide with the lease `owner`: a ref
+   * resolving through the identity registry matches every label of that
+   * identity, an unresolvable ref or unreadable registry keeps
+   * exact-label matching.
+   */
+  announcer?: string;
+  /** Keep only jobs announced to `group:<channel>:*` — the feed `--channel` filter. */
+  channel?: string;
+  /** Keep only jobs announced to a `group:<room>:<topic>` address carrying this topic — the feed `--topic` filter. */
+  topic?: string;
+  /** Keep only jobs whose newest retained `work.result` citation carries this outcome — the feed `--result` filter. */
+  result?: WorkResultOutcome;
+  /**
+   * Keep only jobs whose retained envelope citations include this wire id —
+   * the feed `--id` filter. On `claim-next` this is the citation filter,
+   * never a claim operation id: each call mints its own op id internally.
+   */
+  id?: string;
+  /** Keep only jobs whose `updatedAt` is at or after this epoch-ms cutoff — the feed `--since` filter. */
+  since?: number;
+  /** Keep only jobs whose `updatedAt` is strictly before this epoch-ms cutoff — the feed `--before` filter. */
+  before?: number;
+  /** Keep only jobs whose descriptive text carries this needle — the feed `--contains` filter. */
+  contains?: string;
+}
+
+export interface BusWorkJobNextOptions extends BusClaimOptions, BusWorkJobNextFilters {
+  /** Lease owner routing label; claims coordinate, never authenticate. */
+  owner: string;
+  /** Lease length in milliseconds; the same 1..CLAIM_MAX_LEASE_MS bound as claim acquire. */
+  leaseMs: number;
+}
+
+/**
+ * The outcome of `claimNextBusWorkJob`. `acquired` is the `claimBusWorkJob`
+ * acquired shape plus `attempted` — the number of key-level acquire calls
+ * made across all candidates before the successful one. `empty` means no
+ * candidate could be claimed this pass: `candidates` counts the filtered
+ * open jobs with declared claim keys the claims-joined feed showed —
+ * `held` counts the candidates whose declared keys are all held, either
+ * proven by complete hold coverage at scan time or observed when every
+ * tried key answered `conflict` — a live claim on that key, possibly the
+ * requester's own — and `attempted` the total key attempts, so
+ * `candidates - held` names candidates that failed for other reasons: a
+ * job that went non-open or vanished mid-claim, or a store-level refusal.
+ * All counts are observed over the filtered scan, never estimated. Every
+ * other status is an honest failure: `invalid` rejects malformed arguments
+ * before any read, and `refused`/`unavailable`/`retryable`/`full` pass
+ * through the feed or coordination store's own state — a feed that cannot
+ * be read never produces a guessed claim.
+ */
+export type BusWorkJobNextResult =
+  | { status: 'acquired'; job: BusWorkJobClaimRef; scope: BusWorkJobClaimScope;
+      claim: { claimKey: string; owner: string; leaseMs: number; token: string; leaseUntil: number };
+      attempted: number }
+  | { status: 'empty'; candidates: number; held: number; attempted: number }
+  | { status: 'invalid' | 'refused' | 'unavailable' | 'retryable' | 'full'; reason: string; attempted: number };
+
+/** The keys one candidate tries, `queue:<jobId>` first like `claimBusWorkJob`'s default: the provably-free set the claims join computed when it is non-empty, else every declared key — unknown coverage means a "held" key might still be free, so the attempt itself decides. */
+function nextJobClaimKeys(job: BusWorkFeedJob): string[] {
+  const keys = job.freeKeys !== null && job.freeKeys !== undefined && job.freeKeys.length > 0 ? job.freeKeys : job.claimKeys;
+  const queueKey = `queue:${job.id}`;
+  return keys.includes(queueKey) ? [queueKey, ...keys.filter(key => key !== queueKey)] : keys;
+}
+
+/**
+ * Claim the next claimable work-feed job — the job-level companion
+ * to `claimNextBusWork`, the same find-then-claim-in-one-step the v1
+ * `work next` envelope claim provides. The candidate set is the
+ * claims-joined feed view filtered by the `BusWorkJobNextFilters` dims,
+ * narrowed to open jobs (`queued`/`rescheduled`) with declared claim keys —
+ * the feed `--open` rule minus its complete-coverage exclusion, so a job
+ * whose every key is provably held still counts as a held candidate rather
+ * than vanishing from the scan. Candidates keep the feed view's
+ * newest-first `updatedAt` order.
+ *
+ * Each candidate then runs the same `claimBusWorkJob` path — a fresh feed
+ * and coordination read per attempt, so a job that moved between the scan
+ * and its turn refuses rather than claiming stale state. A candidate whose
+ * `claimable` is provably false counts as held with no attempt spent
+ * re-learning what complete hold coverage already proved; otherwise its
+ * keys are tried in `queue:<jobId>`-first order over the provably-free set
+ * when the join computed one, else every declared key — a conflict on one
+ * key still lets a sibling free key take the lease, and only a candidate
+ * whose every tried key conflicts counts as `held`. `refused`/`invalid`
+ * per-attempt outcomes (job-not-open, unknown-job, …) mark the candidate
+ * stale and move to the next job; `unavailable`/`retryable`/`full` stop
+ * the walk and return their own status. Claims coordinate scope only; they
+ * grant no execution authority.
+ */
+export function claimNextBusWorkJob(options: BusWorkJobNextOptions): BusWorkJobNextResult {
+  const invalid = (reason: string): BusWorkJobNextResult => ({ status: 'invalid', reason, attempted: 0 });
+  if (!JOB_LABEL.test(options.owner)) return invalid('invalid-owner');
+  if (!Number.isSafeInteger(options.leaseMs) || options.leaseMs < 1 || options.leaseMs > CLAIM_MAX_LEASE_MS) {
+    return invalid('invalid-lease');
+  }
+  const repo = options.repo === undefined ? undefined : busWorkFeedRepoKey(options.repo);
+  if (options.repo !== undefined && repo === undefined) return invalid('invalid-repo');
+  if (options.provider !== undefined && !providerSchema.safeParse(options.provider).success) return invalid('invalid-provider');
+  if (options.tier !== undefined && !(WORK_TIERS as readonly string[]).includes(options.tier)) return invalid('invalid-tier');
+  if (options.result !== undefined && !(WORK_RESULT_OUTCOMES as readonly string[]).includes(options.result)) return invalid('invalid-result');
+  for (const [flag, value] of [['job', options.jobId], ['to', options.to], ['announcer', options.announcer],
+    ['id', options.id]] as const) {
+    if (value !== undefined && !JOB_LABEL.test(value)) return invalid(`invalid-${flag}`);
+  }
+  if (options.channel !== undefined && !agentChannelNameSchema.safeParse(options.channel).success) return invalid('invalid-channel');
+  if (options.topic !== undefined && !agentChannelNameSchema.safeParse(options.topic).success) return invalid('invalid-topic');
+  if (options.since !== undefined && (!Number.isSafeInteger(options.since) || options.since < 0)) return invalid('invalid-since');
+  if (options.before !== undefined && (!Number.isSafeInteger(options.before) || options.before < 0)) return invalid('invalid-before');
+  if (options.contains !== undefined &&
+      (options.contains.trim() === '' || options.contains.length > BUS_WORK_FEED_CONTAINS_MAX)) {
+    return invalid('invalid-contains');
+  }
+  const now = options.now ?? Date.now();
+  let feed: BusWorkFeedReadResult;
+  try { feed = readBusWorkFeed({ root: options.root, now: () => now, claims: true }); }
+  catch { feed = { status: 'unavailable', asOf: new Date(now).toISOString() }; }
+  if (feed.status !== 'ok') {
+    return { status: feed.status, reason: `work-feed-${feed.status === 'refused' ? feed.reason : feed.status}`, attempted: 0 };
+  }
+  const view = projectBusWorkFeedView(feed, {
+    jobId: options.jobId, repo, provider: options.provider, tier: options.tier,
+    since: options.since, before: options.before, contains: options.contains,
+    channel: options.channel, topic: options.topic, result: options.result, id: options.id,
+    toMatch: options.to === undefined ? undefined : busWorkFeedPendingToMatcher(options.to, { root: options.root }),
+    ownerMatch: options.announcer === undefined ? undefined : busWorkFeedOwnerMatcher(options.announcer, { root: options.root }),
+  });
+  if (view.status !== 'ok') return { status: 'unavailable', reason: 'work-feed-view', attempted: 0 };
+  // The candidate set is every filtered open job with declared claim keys —
+  // the feed `--open` rule minus its complete-coverage exclusion, so a job
+  // whose every key is provably held still counts as a held candidate the
+  // way `work next`'s drained `empty` reports held work rather than a dry
+  // well. Non-open jobs and keyless jobs can never be claimed, so they are
+  // not candidates at all.
+  const candidates = view.jobs.filter(job => BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0);
+  const opId = newBusClaimOpId();
+  let attempted = 0, held = 0;
+  for (const job of candidates) {
+    // Complete hold coverage already proved every declared key held: the
+    // candidate counts as held with no attempt spent re-learning it.
+    if (job.claimable === false) { held += 1; continue; }
+    let conflicted = false, stale = false;
+    for (const key of nextJobClaimKeys(job)) {
+      attempted += 1;
+      const result = claimBusWorkJob({ job: job.id, owner: options.owner, leaseMs: options.leaseMs,
+        key, root: options.root, now, id: opId });
+      if (result.status === 'acquired') {
+        return { status: 'acquired', job: result.job, scope: result.scope, claim: result.claim, attempted };
+      }
+      if (result.status === 'conflict') { conflicted = true; continue; }
+      if (result.status === 'unavailable' || result.status === 'retryable' || result.status === 'full') {
+        return { status: result.status, reason: result.reason, attempted };
+      }
+      // refused/invalid: the job moved between the scan and this attempt —
+      // unknown-job, job-not-open or a claim-layer refusal. Job-level stale:
+      // its remaining keys cannot rescue it, so the walk moves on.
+      stale = true;
+      break;
+    }
+    if (conflicted && !stale) held += 1;
+  }
+  return { status: 'empty', candidates: candidates.length, held, attempted };
 }

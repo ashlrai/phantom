@@ -12,8 +12,9 @@ import {
 import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
-import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
-  type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
+import { busClaimExitCode, claimBusWorkJob, claimNextBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
+  type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope,
+  type BusWorkJobNextResult } from '../core/agents/bus-claims.js';
 import { COORDINATION_ORIGINS, type CoordinationOrigin } from '../core/agents/claim-store.js';
 import { formatBusWorkMine } from '../core/agents/bus-work-mine.js';
 import { readBusWorkMineWithSeats } from '../core/agents/bus-work-mine-seats.js';
@@ -63,6 +64,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
+ashlr agents bus work claim-next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus status
@@ -724,6 +726,17 @@ function workJobClaimExitCode(result: BusWorkJobClaimResult): number {
   return result.status === 'acquired' ? 0 : result.status === 'invalid' ? 2 : 1;
 }
 
+/** `work claim-next` human lines: the acquired claim reads like `work claim`'s, then the attempt count; empty and failures report the observed totals. */
+function workJobNextHuman(result: BusWorkJobNextResult): string {
+  if (result.status === 'acquired') {
+    return `acquired ${result.claim.claimKey} for ${claimJobLabel(result.job)} owner=${result.claim.owner} ` +
+      `leaseUntil=${new Date(result.claim.leaseUntil).toISOString()} token=${result.claim.token}` +
+      `${claimScopeSuffix(result.scope)} attempted=${result.attempted}`;
+  }
+  if (result.status === 'empty') return `empty candidates=${result.candidates} held=${result.held} attempted=${result.attempted}`;
+  return `${result.status}: ${result.reason} attempted=${result.attempted}`;
+}
+
 /** `work next` human lines: the claimed receipt's id, lease and token, then its routing and scrubbed summary. */
 function workNextHuman(result: BusNextResult, owner: string): string {
   if ('receipt' in result) {
@@ -1255,6 +1268,56 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         ...(key === undefined ? {} : { key }), ...(opId === undefined ? {} : { id: opId }) });
       out(json ? JSON.stringify(result) : workJobClaimHuman(result));
       return workJobClaimExitCode(result);
+    }
+    if (verb === 'work' && sub === 'claim-next') {
+      noExtra(3);
+      const agent = arg ?? self;
+      if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
+      const owner = one('--owner') ?? self ?? agent;
+      const leaseMs = integer(one('--lease-ms'), '--lease-ms');
+      if (leaseMs === undefined) throw new UsageError('--lease-ms is required.');
+      const labelArg = (flag: string): string | undefined => {
+        const value = one(flag);
+        if (value !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(value)) {
+          throw new UsageError(`${flag} must be a printable routing label of 1-128 characters.`);
+        }
+        return value;
+      };
+      const jobId = labelArg('--job'), announcer = labelArg('--announcer'), envelopeId = labelArg('--id');
+      const repoRaw = one('--repo');
+      const repo = repoRaw === undefined ? undefined : busWorkFeedRepoKey(repoRaw);
+      if (repoRaw !== undefined && repo === undefined) {
+        throw new UsageError('--repo must be an owner/name repo slug.');
+      }
+      const providerRaw = one('--provider');
+      if (providerRaw !== undefined && !providerSchema.safeParse(providerRaw).success) {
+        throw new UsageError(`--provider must be one of ${PROVIDERS.join(', ')}.`);
+      }
+      const tierRaw = one('--tier');
+      const tier = tierRaw === undefined ? undefined : WORK_TIERS.find(item => item === tierRaw);
+      if (tierRaw !== undefined && tier === undefined) {
+        throw new UsageError(`--tier must be one of ${WORK_TIERS.join(', ')}.`);
+      }
+      const channel = one('--channel');
+      if (channel !== undefined && !agentChannelNameSchema.safeParse(channel).success) {
+        throw new UsageError('--channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).');
+      }
+      const topic = one('--topic');
+      if (topic !== undefined && !agentChannelNameSchema.safeParse(topic).success) {
+        throw new UsageError('--topic takes a bus channel topic (a-z, 0-9, _ -; 1-32 chars).');
+      }
+      const resultOutcome = resultArg();
+      const contains = one('--contains');
+      if (contains !== undefined && (contains.trim() === '' || contains.length > BUS_WORK_FEED_CONTAINS_MAX)) {
+        throw new UsageError(`--contains takes a non-empty search text of at most ${BUS_WORK_FEED_CONTAINS_MAX} characters.`);
+      }
+      const result = claimNextBusWorkJob({ owner, leaseMs, root: options.root,
+        jobId, repo, provider: providerRaw as WorkJob['provider'] | undefined, tier,
+        channel, topic, result: resultOutcome, id: envelopeId, contains,
+        since: sinceArg(), before: beforeArg(), to: agent, announcer });
+      out(json ? JSON.stringify(result) : workJobNextHuman(result));
+      return result.status === 'acquired' || result.status === 'empty' ? 0 :
+        result.status === 'invalid' ? 2 : 1;
     }
     if (verb === 'work' && sub === 'mine') {
       noExtra(3);
