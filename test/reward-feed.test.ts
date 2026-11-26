@@ -849,12 +849,36 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs[0]).not.toHaveProperty('ciWallMs');
   });
 
+  it.each([
+    { startRepo: 'ashlrai/lexicon', completeRepo: 'ashlrai/lexicon' },
+    { startRepo: 'ashlrai/phantom', completeRepo: 'ashlrai/lexicon' },
+    { startRepo: 'ashlrai/phantom', completeRepo: 'ashlrai/phantom', replayRepo: 'ashlrai/lexicon' },
+    { startRepo: 'AshlrAI/Phantom', completeRepo: 'ashlrai/phantom', ciWallMs: 900_000 },
+  ])('checks CI repository identity across boundaries and replays (%o)', ({
+    startRepo, completeRepo, replayRepo, ciWallMs,
+  }) => {
+    const job = 'RQ-CI-REPO';
+    const start = { event: 'ci_start', job, ts: '2026-10-28T15:10:00.000Z', repo: startRepo };
+    const rows = [
+      launch(job),
+      line(start),
+      line({ event: 'ci_complete', job, ts: '2026-10-28T15:25:00.000Z', repo: completeRepo }),
+      merged(job),
+    ];
+    if (replayRepo !== undefined) rows.push(line({ ...start, repo: replayRepo }));
+
+    const inputs = foldJobsLedgerRewards(rows.join('\n'), NOW_MS);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({ jobId: job, merged: true, repo: 'ashlrai/phantom' });
+    expect(inputs[0]?.ciWallMs).toBe(ciWallMs);
+  });
+
   it('measures CI across equivalent PR URLs and ignores out-of-window claims', () => {
     const job = 'RQ-CI-PR';
     const rows = [
       launch(job),
       line({ event: 'ci_start', job, ts: '2026-10-28T13:10:00.000Z', pr: 'https://github.com/ashlrai/phantom/pull/99' }),
-      line({ event: 'ci_start', job, ts: '2026-10-28T15:10:00.000Z', pr_url: 'https://github.com/AshlrAI/Phantom/pull/10/' }),
+      line({ event: 'ci_start', job, ts: '2026-10-28T15:10:00.000Z', repo: 'ashlrai/lexicon', pr_url: 'https://github.com/AshlrAI/Phantom/pull/10/' }),
       line({ event: 'ci_complete', job, ts: '2026-10-28T15:25:00.000Z', html_url: 'https://github.com/ashlrai/phantom/pull/10' }),
       line({ job, state: 'MERGED', ts: MERGED_ISO, url: 'https://github.com/ashlrai/phantom/pull/10' }),
     ];

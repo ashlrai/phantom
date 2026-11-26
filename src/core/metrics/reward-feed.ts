@@ -210,6 +210,11 @@ function latestResolution(current: ResolutionMark | null, next: ResolutionMark):
   return { ...current, repo, prKeys: [...new Set([...current.prKeys, ...next.prKeys])] };
 }
 
+interface CiBoundaryMark {
+  prKeys: Set<string>;
+  repos: Set<string | null>;
+}
+
 interface RewardJobAccum {
   dispatches: DispatchMark[];
   dispatchUndated: boolean;
@@ -224,8 +229,8 @@ interface RewardJobAccum {
   standingReverted: boolean;
   /** ci_start/ci_complete boundary stamps, deduped like job-latency's boundary lists. */
   ciBoundaryUndated: boolean;
-  ciStarts: Map<number, Set<string>>;
-  ciCompletions: Map<number, Set<string>>;
+  ciStarts: Map<number, CiBoundaryMark>;
+  ciCompletions: Map<number, CiBoundaryMark>;
 }
 
 function newAccum(): RewardJobAccum {
@@ -240,11 +245,13 @@ function newAccum(): RewardJobAccum {
 /** Replayed boundaries share a timestamp but can carry conflicting PR claims. */
 function noteCiBoundary(
   acc: RewardJobAccum, kind: 'start' | 'complete', at: number, prKeys: readonly string[],
+  repo: string | null | undefined,
 ): void {
   const boundaries = kind === 'start' ? acc.ciStarts : acc.ciCompletions;
-  const keys = boundaries.get(at) ?? new Set<string>();
-  for (const key of prKeys) keys.add(key);
-  boundaries.set(at, keys);
+  const mark = boundaries.get(at) ?? { prKeys: new Set<string>(), repos: new Set<string | null>() };
+  for (const key of prKeys) mark.prKeys.add(key);
+  if (repo !== undefined) mark.repos.add(repo);
+  boundaries.set(at, mark);
 }
 
 /**
@@ -253,6 +260,7 @@ function noteCiBoundary(
  */
 function ciWallEvidence(
   acc: RewardJobAccum, dispatchMs: number, outcomeMs: number, outcomePrKeys: readonly string[],
+  outcomeRepo: string | null,
 ): { ciWallMs?: number } {
   if (acc.ciBoundaryUndated) return {};
   const inWindow = (at: number): boolean => at >= dispatchMs && at <= outcomeMs;
@@ -265,10 +273,12 @@ function ciWallEvidence(
   for (const claim of acc.batchClaims) {
     if (claim >= start && claim <= complete) return {};
   }
-  const keys = new Set([
-    ...outcomePrKeys, ...acc.ciStarts.get(start)!, ...acc.ciCompletions.get(complete)!,
-  ]);
-  if (keys.size > 1) return {};
+  const startMark = acc.ciStarts.get(start)!;
+  const completeMark = acc.ciCompletions.get(complete)!;
+  const keys = new Set([...outcomePrKeys, ...startMark.prKeys, ...completeMark.prKeys]);
+  const repos = new Set([...startMark.repos, ...completeMark.repos]);
+  if (outcomeRepo !== null) repos.add(outcomeRepo);
+  if (keys.size > 1 || repos.size > 1 || repos.has(null)) return {};
   return { ciWallMs: complete - start };
 }
 
@@ -343,7 +353,7 @@ export function foldJobsLedgerRewards(
       acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row, prKeys) ?? null });
       if (name === 'batch_claim') acc.batchClaims.add(at);
     } else if (ciBoundary) {
-      noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at, prKeys);
+      noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at, prKeys, repoOf(row, prKeys));
     }
     const revertedAtMs = explicitRevertMs ?? (hasRevertEvidence(row) ? at : null);
     if (revertedAtMs !== null && revertedAtMs <= nowMs) {
@@ -420,12 +430,12 @@ function rewardInput(
     const heldMerge = !acc.standingReverted && merge.resolvedMs > revertedAt;
     const dispatch = dispatchBefore(acc, merge.resolvedMs);
     if (dispatch === null) return null;
+    const repo = merge.repo === undefined ? dispatch.repo : merge.repo;
     return {
-      jobId: id, pool: dispatch.lane,
-      repo: merge.repo === undefined ? dispatch.repo : merge.repo,
+      jobId: id, pool: dispatch.lane, repo,
       merged: heldMerge, dispatchedAt: iso(dispatch.ms), mergedAt: heldMerge ? iso(merge.resolvedMs) : null,
       costUsd: cost,
-      ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs, merge.prKeys),
+      ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs, merge.prKeys, repo),
     };
   }
   // A revert can resolve a job on its own, but it cannot extend the
@@ -437,12 +447,12 @@ function rewardInput(
   if (resolutionMs > 0) {
     const dispatch = dispatchBefore(acc, resolutionMs);
     if (dispatch === null) return null;
+    const repo = acc.close?.repo === undefined ? dispatch.repo : acc.close.repo;
     return {
-      jobId: id, pool: dispatch.lane,
-      repo: acc.close?.repo === undefined ? dispatch.repo : acc.close.repo,
+      jobId: id, pool: dispatch.lane, repo,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
-      ...ciWallEvidence(acc, dispatch.ms, resolutionMs, acc.close?.prKeys ?? []),
+      ...ciWallEvidence(acc, dispatch.ms, resolutionMs, acc.close?.prKeys ?? [], repo),
     };
   }
   return null;
