@@ -108,8 +108,7 @@ export const SKILL_OUTCOME_WINDOW_HOURS = 24 * 7;
 export const SKILL_OUTCOME_RECORD_LIMIT = 500;
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
 const MAX_TITLE_CHARS = 200;
-/** The fleet's own repository label: skill evidence is this repo's machinery. */
-const FLEET_REPO_NAME = 'phantom';
+const FLEET_REPO = 'ashlrai/phantom';
 /** Ledger-recorded names are unbounded text; flatten, scrub and cap before use. */
 const MAX_FIELD_CHARS = 96;
 /** Card statuses that still describe a live revision; deprecated/revoked cards were already handled. */
@@ -136,11 +135,6 @@ export interface SkillOutcomeItemsOptions {
    * Same contract as readSkillCardCorpus.
    */
   corpus?: SkillCardCorpusReadResult;
-}
-
-/** The repository name both vocabularies record: the last path segment, lowercased. */
-function fleetRepoName(repo: string): string {
-  return (repo.split('/').pop() ?? repo).trim().toLowerCase();
 }
 
 /** Ledger-recorded names are unbounded text; flatten, scrub and cap before use. */
@@ -225,7 +219,8 @@ interface LiveRow {
 export async function skillOutcomeBacklogItems(opts: SkillOutcomeItemsOptions): Promise<CloudBacklogItem[]> {
   try {
     const repo = opts.repo.trim();
-    if (repo === '' || fleetRepoName(repo) !== FLEET_REPO_NAME) return [];
+    const repoKey = repo.toLowerCase();
+    if (repoKey !== FLEET_REPO && repoKey !== 'phantom') return [];
     const windowHours = opts.windowHours ?? SKILL_OUTCOME_WINDOW_HOURS;
     const outcomes = opts.outcomes !== undefined
       ? opts.outcomes

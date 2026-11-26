@@ -198,7 +198,10 @@ describe('skillOutcomeBacklogItems', () => {
       card({ skillId: 'skill.c', name: 'Skill C' }),
     ];
     expect(await skillOutcomeBacklogItems({ repo: 'ashlrai/other-repo', outcomes, corpus: corpus(cards) })).toEqual([]);
+    expect(await skillOutcomeBacklogItems({ repo: 'another-owner/phantom', outcomes, corpus: corpus(cards) })).toEqual([]);
     const items = await skillOutcomeBacklogItems({ repo: REPO, outcomes, corpus: corpus(cards) });
+    const mixedCase = await skillOutcomeBacklogItems({ repo: ' AshlrAI/Phantom ', outcomes, corpus: corpus(cards) });
+    expect(mixedCase.map((item) => item.id)).toEqual(items.map((item) => item.id));
     // skill.c: 5 adverse, skill.b: 3, skill.a: 3 (tally tie → selections desc: a 9 > b 4).
     expect(items.map((item) => item.title)).toEqual([
       expect.stringContaining('Skill C'),
