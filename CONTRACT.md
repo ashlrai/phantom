@@ -708,8 +708,9 @@ and never counted, a job whose calls reported no cost stays `null`
 (unknown, never zero), and `cost_estimated` rows still count because
 they report a USD figure. The spend read degrades independently:
 `RouterOutcomeRead.spend_state` reports its health and
-`spend_truncated` marks a cut spend tail (joined costs are lower
-bounds). `work_class` joins the same bound of
+`spend_truncated` marks a cut spend tail. A truncated read withholds
+spend-derived costs. Explicit jobs-ledger costs and the reward-signal
+fallback still apply. `work_class` joins the same bound of
 `metrics/work-market.jsonl`: `foldRouteDecisionWorkClasses` collapses
 `work-market.v1` `route_decision` rows to each job's newest-timestamp
 decision and reads its recorded class. The fold's `workClassFor` option fills only
