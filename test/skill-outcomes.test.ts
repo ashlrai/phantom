@@ -93,7 +93,7 @@ describe('readSkillTrajectoryOutcomes', () => {
 
   it('includes all daily partitions intersecting the discovery window', () => {
     const readEvents = vi.fn(() => skillRead());
-    const listRecords = vi.fn(() => [] as TrajectoryRecord[]);
+    const listRecords = vi.fn((_opts?: TrajectoryRecordListOptions) => [] as TrajectoryRecord[]);
     readSkillTrajectoryOutcomes({ windowHours: 168, limit: 500 }, {
       readSkillUseEvents: readEvents,
       listRecords,
@@ -101,10 +101,11 @@ describe('readSkillTrajectoryOutcomes', () => {
     });
     expect(readEvents).toHaveBeenCalledWith({
       sinceMs: expect.any(Number),
+      asOfMs: listRecords.mock.calls[0]![0]!.asOfMs,
       maxFiles: 8,
       limit: 4000,
     });
-    expect(listRecords).toHaveBeenCalledWith(expect.objectContaining({ windowHours: 168, limit: 500 }));
+    expect(listRecords).toHaveBeenCalledWith(expect.objectContaining({ windowHours: 168, limit: 500, asOfMs: expect.any(Number) }));
   });
 
   it('honours caller window and limit', () => {
