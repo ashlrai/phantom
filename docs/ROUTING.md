@@ -732,7 +732,11 @@ a recorded failure, but a green boundary alone leaves first-pass CI
 unknown because earlier failures may be outside the window. An explicit
 jobs-ledger verdict still takes precedence. If any nonblank journal
 line fails to decode as a JSON object, the reader also withholds inferred
-first-pass success. Valid failure receipts and queue tallies still join.
+first-pass success. Malformed check, retry and recut receipts with a valid
+PR identity withhold inferred success for that PR alone. If a recognized
+receipt of those types has an invalid PR identity, the reader withholds
+inferred success across the journal. Valid failure receipts and queue
+tallies still join.
 Anything but `read`
 leaves every `merge_queue` `null` — unknown, never a guessed queue
 history. `cost_usd`

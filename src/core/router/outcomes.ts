@@ -1714,7 +1714,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
 
 function foldRouterOutcomesWithCiCoverage(
   text: string, opts: RouterOutcomeFoldOptions, ambiguousCiJobs: Set<string>,
-  mergeEventsMalformed = false,
+  mergeEventCoverage?: MergeEventCoverage,
 ): RouterOutcomeFold {
   const rows: Row[] = [];
   let malformed = 0;
@@ -2236,7 +2236,9 @@ function foldRouterOutcomesWithCiCoverage(
           // merge-queue check record resolves what the jobs rows left
           // unknown.
           if (o.ci_first_pass === null) {
-            o.ci_first_pass = mergeQueueCiFirstPass(evidence, opts.mergeEventsTruncated === true || mergeEventsMalformed);
+            const incomplete = opts.mergeEventsTruncated === true ||
+              mergeEventCoverage?.unattributed === true || mergeEventCoverage?.incompletePrs.has(prKey) === true;
+            o.ci_first_pass = mergeQueueCiFirstPass(evidence, incomplete);
           }
         }
       }
@@ -2737,7 +2739,16 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
   return parseMergeEvents(text).evidence;
 }
 
-function parseMergeEvents(text: string): { evidence: Map<string, MergeQueueEvidence>; malformed: boolean } {
+interface MergeEventCoverage {
+  unattributed: boolean;
+  incompletePrs: Set<string>;
+}
+
+const CI_COVERAGE_EVENTS = new Set([
+  'check_observed', 'checks_passed', 'retry_requested', 'retry_failed', 'recut_requested',
+]);
+
+function parseMergeEvents(text: string): { evidence: Map<string, MergeQueueEvidence>; coverage: MergeEventCoverage } {
   interface Acc {
     events: number;
     blocked: string[];
@@ -2753,27 +2764,32 @@ function parseMergeEvents(text: string): { evidence: Map<string, MergeQueueEvide
     autoMerge: 'enabled' | 'disabled' | null;
   }
   const prs = new Map<string, Acc>();
-  let malformed = false;
+  const coverage: MergeEventCoverage = { unattributed: false, incompletePrs: new Set() };
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     let value: unknown;
     try {
       value = JSON.parse(line);
     } catch {
-      malformed = true;
+      coverage.unattributed = true;
       continue;
     }
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-      malformed = true;
+      coverage.unattributed = true;
       continue;
     }
     const row = value as Row;
     const repo = row['repo'];
     const pr = row['pr'];
     const type = row['type'];
+    if (typeof type !== 'string' || !MERGE_EVENT_TYPES.has(type)) continue;
+    const affectsCiCoverage = CI_COVERAGE_EVENTS.has(type);
     if (typeof repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(repo) ||
-        typeof pr !== 'number' || !Number.isSafeInteger(pr) || pr < 1 ||
-        typeof type !== 'string' || !MERGE_EVENT_TYPES.has(type)) continue;
+        typeof pr !== 'number' || !Number.isSafeInteger(pr) || pr < 1) {
+      if (affectsCiCoverage) coverage.unattributed = true;
+      continue;
+    }
+    const key = `${repo.toLowerCase()}#${pr}`;
     let reason: string | null = null;
     if (type === 'blocked') {
       const r = row['reason'];
@@ -2784,16 +2800,21 @@ function parseMergeEvents(text: string): { evidence: Map<string, MergeQueueEvide
     let required = false;
     if (type === 'check_observed') {
       const c = row['conclusion'];
-      if (c !== 'success' && c !== 'failure' && c !== 'pending') continue;
-      conclusion = c;
       const req = row['required'];
-      if (req !== undefined && typeof req !== 'boolean') continue;
+      if ((c !== 'success' && c !== 'failure' && c !== 'pending') ||
+          (req !== undefined && typeof req !== 'boolean')) {
+        coverage.incompletePrs.add(key);
+        continue;
+      }
+      conclusion = c;
       required = req === true;
     }
     const at = row['at'];
     const atOk = typeof at === 'string' && Number.isFinite(Date.parse(at));
-    if (!atOk && !MERGE_UNTIMED_TYPES.has(type)) continue;
-    const key = `${repo.toLowerCase()}#${pr}`;
+    if (!atOk && !MERGE_UNTIMED_TYPES.has(type)) {
+      if (affectsCiCoverage) coverage.incompletePrs.add(key);
+      continue;
+    }
     const acc = prs.get(key) ?? {
       events: 0, blocked: [], blockedSeen: new Set<string>(), conflicts: 0,
       checkFailures: 0, requiredCheckFailures: 0, checkObservations: 0,
@@ -2837,7 +2858,7 @@ function parseMergeEvents(text: string): { evidence: Map<string, MergeQueueEvide
     recuts: a.recuts,
     auto_merge: a.autoMerge,
   }]));
-  return { evidence, malformed };
+  return { evidence, coverage };
 }
 
 /**
@@ -3446,7 +3467,7 @@ export async function readRouterOutcomes(opts: {
     mergeEvents: mergeEvents?.evidence,
     mergeEventsTruncated,
     crossReviews: crossReviewRead.state === 'read' ? foldCrossReviews(crossReviewRead.text) : undefined,
-  }, ambiguousCiJobs, mergeEvents?.malformed);
+  }, ambiguousCiJobs, mergeEvents?.coverage);
   if (spendRead.state === 'read' && !spendTruncated) {
     const costs = foldSpendCosts(spendRead.text);
     for (const o of folded.outcomes) {
