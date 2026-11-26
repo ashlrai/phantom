@@ -1231,6 +1231,11 @@ export function listTrajectoryRecords(opts?: TrajectoryRecordListOptions): Traje
   return listTrajectoryRecordsAt(opts, Date.now());
 }
 
+/** Budget for UTC day partitions, including both ends of the read window. */
+export function trajectoryWindowMaxFiles(windowHours: number): number {
+  return Math.min(31, Math.max(3, Math.ceil(windowHours / 24) + 1));
+}
+
 /** Reconstruct against one caller-owned clock sample so nested snapshots share a cutoff. */
 function listTrajectoryRecordsAt(
   opts: TrajectoryRecordListOptions | undefined,
@@ -1241,10 +1246,11 @@ function listTrajectoryRecordsAt(
   const sinceMs = asOfMs - windowHours * 60 * 60 * 1000;
   const deps = opts?.deps ?? {};
 
+  const maxFiles = trajectoryWindowMaxFiles(windowHours);
   const dispatchReadOptions = {
     sinceMs,
     limit: Math.max(limit * 6, 200),
-    maxFiles: 3,
+    maxFiles,
   };
   let dispatchReadQuality: TrajectoryTraceReadQuality | undefined;
   let dispatchEvents: DispatchProductionEvent[];
@@ -1299,12 +1305,12 @@ function listTrajectoryRecordsAt(
       ? deps.readAgentActions({
         sinceMs,
         limit: Math.max(limit * 4, 200),
-        maxFiles: 3,
+        maxFiles,
       })
       : readAgentActions({
         sinceMs,
         limit: Math.max(limit * 4, 200),
-        maxFiles: 3,
+        maxFiles,
         requireComplete: true,
       });
     actions = Array.isArray(read) ? read : [];
@@ -1325,7 +1331,7 @@ function listTrajectoryRecordsAt(
     (deps.readSkillUseEvents ?? readSkillUseEvents)({
       sinceMs,
       limit: Math.max(limit * 8, 400),
-      maxFiles: 3,
+      maxFiles,
     }),
   );
 
@@ -2008,12 +2014,13 @@ export function listTrajectoryJoinQuality(
   const sinceMs = asOfMs - windowHours * 60 * 60 * 1000;
   const deps = opts.deps ?? {};
 
+  const maxFiles = trajectoryWindowMaxFiles(windowHours);
   let dispatchRead: DispatchProductionEventsReadResult;
   try {
     dispatchRead = (deps.readDispatchProductionEventsDetailed ?? readDispatchProductionEventsDetailed)({
       sinceMs,
       limit: Math.max(limit * 6, 200),
-      maxFiles: 3,
+      maxFiles,
     });
   } catch {
     dispatchRead = failedDispatchJoinRead();
@@ -2033,7 +2040,7 @@ export function listTrajectoryJoinQuality(
     actionRead = (deps.readAgentActionsDetailed ?? readAgentActionsDetailed)({
       sinceMs,
       limit: Math.max(limit * 4, 200),
-      maxFiles: 3,
+      maxFiles,
       inspectionOnly: true,
     });
   } catch {

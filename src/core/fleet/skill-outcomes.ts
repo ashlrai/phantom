@@ -13,6 +13,7 @@
 import {
   listTrajectoryRecords,
   summarizeTrajectoryLearning,
+  trajectoryWindowMaxFiles,
   type TrajectoryRecord,
   type TrajectoryRecordListOptions,
   type TrajectorySkillOutcomeSummary,
@@ -57,7 +58,7 @@ export function readSkillTrajectoryOutcomes(
     const skillRead = readEvents({
       sinceMs,
       limit: Math.max(limit * 8, 400),
-      maxFiles: 3,
+      maxFiles: trajectoryWindowMaxFiles(windowHours),
     });
     if (skillRead.eventState === 'degraded') return null;
     const listRecords = deps.listRecords ?? listTrajectoryRecords;
