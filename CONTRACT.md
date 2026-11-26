@@ -14,6 +14,12 @@ Creation requires `--dry-run` and never calls the writer.
 
 ## Fleet lane ledger
 
+`foldLaneRewardAttempts(text, asOfMs?)` (`src/core/fleet/lane-reward.ts`)
+accepts an inclusive millisecond cutoff for receipts and terminal timestamps.
+The cutoff also applies to PR URL claims before ownership is resolved. Omitting
+it folds the entire supplied text. Receipts without a parseable timestamp
+remain eligible.
+
 `parseJobsJsonl` (`src/core/fleet/lane-console.ts`) adds an optional
 `LaneLedgerEvent.mergedAt` when a merge row carries a readable timestamp
 with a timezone. The lane snapshot uses it for the merge window and falls
