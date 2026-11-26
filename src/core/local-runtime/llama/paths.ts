@@ -81,14 +81,13 @@ export const LAUNCH_AGENT_LABEL = 'ai.ashlr.local-runtime';
 /** launchd job label for the Anthropic normalising proxy. */
 export const ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL = 'ai.ashlr.anthropic-proxy';
 
+function launchAgentPlistPathFor(label: string): string {
+  return join(homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
+}
+
 /** `~/Library/LaunchAgents/ai.ashlr.anthropic-proxy.plist`. */
 export function anthropicProxyPlistPath(): string {
-  return join(
-    homedir(),
-    'Library',
-    'LaunchAgents',
-    `${ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL}.plist`,
-  );
+  return launchAgentPlistPathFor(ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL);
 }
 
 /**
@@ -99,7 +98,7 @@ export function anthropicProxyPlistPath(): string {
  * explicit `--install` and the path is printed to the operator.
  */
 export function launchAgentPlistPath(): string {
-  return join(homedir(), 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`);
+  return launchAgentPlistPathFor(LAUNCH_AGENT_LABEL);
 }
 
 /**

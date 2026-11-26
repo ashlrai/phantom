@@ -35,10 +35,8 @@ export type {
 
 export {
   DEFAULT_ANTHROPIC_PROXY_PORT,
-  DEFAULT_LLAMA_CONTEXT,
   DEFAULT_LLAMA_HOST,
   DEFAULT_LLAMA_PORT,
-  DEFAULT_LLAMA_SLOTS,
   LEGACY_DEFAULT_BASE_URL,
   allowsNonLoopback,
   baseUrlFromRecord,
@@ -48,12 +46,10 @@ export {
   originFor,
   resolveLlamaRuntimeConfig,
   resolveLlamaServerBaseUrl,
-  resolveLlamaServerBin,
   resolveLlamaServerDefaultModel,
   resolveLlamaServerOrigin,
   resolveLocalAnthropicBaseUrl,
 } from './config.js';
-export type { GatedBindHost } from './config.js';
 
 /**
  * The Anthropic lane. `resolveLocalAnthropicBaseUrl` (above) is what a caller
@@ -62,8 +58,6 @@ export type { GatedBindHost } from './config.js';
  * and never passes through here.
  */
 export {
-  ANTHROPIC_MESSAGES_PATH,
-  MAX_NORMALISED_BODY_BYTES,
   anthropicProxyHandle,
   ensureAnthropicProxy,
   isMessagesPost,
@@ -75,10 +69,8 @@ export {
 export type { AnthropicProxyHandle, AnthropicProxyOptions } from './anthropic-proxy.js';
 
 export { anthropicContentText, normaliseAnthropicRequest } from './anthropic-shim.js';
-export type { AnthropicTextBlock } from './anthropic-shim.js';
 
 export {
-  OLLAMA_PARALLEL_REFUSAL,
   composeSnapshot,
   deriveSlotCapacity,
   fleetConcurrencyLimit,
@@ -86,11 +78,9 @@ export {
   interpretHealth,
   probeLlamaRuntime,
 } from './health.js';
-export type { EndpointReading, FetchLike, LlamaProbeReadings, ProbeOptions } from './health.js';
+export type { EndpointReading, FetchLike } from './health.js';
 
 export {
-  DEFAULT_START_TIMEOUT_MS,
-  isPortFree,
   restartLocalRuntime,
   startLocalRuntime,
   statusLocalRuntime,
@@ -108,7 +98,7 @@ export {
   shQuote,
   uninstallLaunchAgent,
 } from './launchd.js';
-export type { LaunchAgentMutation, LaunchAgentSpec } from './launchd.js';
+export type { LaunchAgentMutation } from './launchd.js';
 
 export {
   blobBasenameForDigest,
@@ -117,7 +107,6 @@ export {
   resolveOllamaRefForBlobPath,
   selectModelLayer,
 } from './ollama-blob.js';
-export type { OllamaBlobResolution, OllamaModelRef, ResolvedOllamaBlob } from './ollama-blob.js';
 
 export {
   argvBindsPort,
@@ -163,10 +152,7 @@ export {
   anthropicProxyHostEnvironment,
   anthropicProxyHostInvocation,
 } from './proxy-invocation.js';
-export type { AnthropicProxyHostOptions } from './proxy-invocation.js';
 export {
-  anthropicProxyAgentInstalled,
-  anthropicProxyAgentLoaded,
   anthropicProxyLogPaths,
   buildAnthropicProxyPlist,
   buildAnthropicProxyShim,
