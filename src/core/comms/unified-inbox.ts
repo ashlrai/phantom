@@ -329,6 +329,35 @@
  *               `degraded` a truncated log, `unavailable` an unreadable or
  *               malformed store — never an empty list passed off as fact.
  *               Act: `phm channels`, `phm comms cycle`, `phm comms send-owner`.
+ *   leader-network  the leader network's durable route/digest state
+ *               (`<runsDir>/leader/network-state.json`) through
+ *               `readLeaderNetworkState` — the same bounded anchored read
+ *               `readRouteReplyFacts` applies, never the locking
+ *               `pending()` recovery pass. Verified owner requests fully
+ *               ingested for the leader (inbox append and bus mirror
+ *               proven, no delivered or attempted reply) list as warn
+ *               `leader-request` items — the leader's own pending queue,
+ *               invisible to the owner-thread source because network
+ *               replies record to MASON-OUTBOX.md, never the thread store;
+ *               a reply recorded whose delivery failed non-ambiguously
+ *               stays in that queue (the network retries it) and the item
+ *               says "awaiting retry", never "awaiting reply".
+ *               A leader-bound route missing its inbox append or bus
+ *               mirror — or any route whose bus publish never landed —
+ *               lists as `leader-request-incomplete`: the request
+ *               provably did not reach every store the leader reads. A
+ *               reply or away-digest whose delivery attempt ended
+ *               ambiguous (`attempted` without `delivered`/`sent`) lists
+ *               as `leader-reply-unconfirmed`/`leader-digest-unconfirmed`:
+ *               the network never retries an ambiguous attempt —
+ *               "reconcile before retry" — so the owner may never have
+ *               seen the answer and nothing else reported it. Items name
+ *               channel, routing label, timestamps and job citations
+ *               only — owner recipient ids and channel refs never leave
+ *               the reader; request text is scrubbed like every other
+ *               source. `missing` is a verified-absent store,
+ *               `unavailable` any refusal — never an empty backlog passed
+ *               off as fact. Act: `phm leader inbox`, `phm comms thread`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -391,6 +420,7 @@ import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './
 import { listTeammateTasks } from './imessage-teammate-tasks.js';
 import { imessageStateDir } from '../integrations/imessage.js';
 import { readLeaderThreadUndelivered, type LeaderThreadUndeliveredRead } from '../vision/leader-thread.js';
+import { readLeaderNetworkState, type LeaderNetworkStateRead } from '../agents/leader-network-read.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -404,7 +434,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
-  'slack-sends', 'leader-delivery',
+  'slack-sends', 'leader-delivery', 'leader-network',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -425,6 +455,7 @@ export const UNIFIED_INBOX_KINDS = [
   'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'org-membership', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
   'inbox-proposal', 'slack-request', 'slack-send-unconfirmed', 'leader-message-undelivered',
+  'leader-request', 'leader-request-incomplete', 'leader-reply-unconfirmed', 'leader-digest-unconfirmed',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -646,6 +677,8 @@ export interface UnifiedInboxOptions {
   readSlackSends?: typeof readSlackSendReceipts;
   /** Leader-thread delivery seam; default reads the same thread log and delivery index `drainLeaderThread` drains — the read-only scan, never the memo-syncing list paths. */
   readLeaderUndelivered?: typeof readLeaderThreadUndelivered;
+  /** Leader-network seam; default reads `<runsDir>/leader/network-state.json` through the same bounded anchored read `readRouteReplyFacts` applies — never the locking `pending()` recovery pass. */
+  readLeaderNetwork?: (options: { runsDir?: string }) => LeaderNetworkStateRead;
   /** Optional narrowing of the returned item list by stored source, severity,
    * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
@@ -2514,6 +2547,142 @@ function leaderDeliveryItems(read: NonNullable<UnifiedInboxOptions['readLeaderUn
 }
 
 /**
+ * The leader network's durable route/digest state — `<runsDir>/leader/
+ * network-state.json` — read through `readLeaderNetworkState`, the same
+ * bounded anchored read `readRouteReplyFacts` applies, never the locking
+ * `pending()` recovery pass. Until now the only surface was
+ * `hasPendingLeaderNetwork`'s boolean inside the comms wake: an agent could
+ * not tell WHAT the leader owes, and three recorded states had no read at
+ * all. Each verified owner request fully ingested for the leader (inbox and
+ * bus legs proven, no delivered or attempted reply) lists as a warn
+ * `leader-request` — the leader's own pending queue, which the owner-thread
+ * awaiting mark cannot see because network replies record to
+ * MASON-OUTBOX.md, never the thread store; a reply recorded whose delivery
+ * failed non-ambiguously stays in that same pending queue (the network
+ * retries it), so the item's detail says "awaiting retry", never
+ * "awaiting reply". A leader-bound route missing its
+ * inbox append or bus mirror — or any route whose bus publish never landed —
+ * lists as `leader-request-incomplete`: the request provably did not reach
+ * every store the leader reads, and a non-slack inbox leg is never retried.
+ * A reply whose delivery attempt ended ambiguous (`attempted` without
+ * `delivered`) lists as `leader-reply-unconfirmed`: `pending()` and `reply()`
+ * both exclude it forever — "reconcile before retry" — so the owner may
+ * never have seen the answer and nothing else reports it. A digest in the
+ * same state lists as `leader-digest-unconfirmed`. Items name channel,
+ * routing label, timestamps and job citations only — owner recipient ids
+ * and channel refs never leave the reader; request text is scrubbed by
+ * `oneLine` like every other source. `missing` is a verified-absent store,
+ * `unavailable` any refusal — never an empty backlog passed off as fact.
+ */
+function leaderNetworkItems(read: NonNullable<UnifiedInboxOptions['readLeaderNetwork']>,
+  runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: LeaderNetworkStateRead;
+  try { result = read({ runsDir: dir }); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.status !== 'ok') {
+    return { report: { state: result.status === 'missing' ? 'missing' : 'unavailable',
+      pending: result.status === 'missing' ? 0 : null }, items: [] };
+  }
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const request of result.requests) {
+    const via = `via ${request.channel}`;
+    const jobIds = jobIdsField(request.jobIds);
+    if (request.reply !== null && request.reply.attempted && !request.reply.delivered) {
+      items.push({
+        id: `leader-network:reply-${request.requestId}`,
+        source: 'leader-network',
+        kind: 'leader-reply-unconfirmed',
+        // The reply may never have reached the owner and the network never
+        // retries an ambiguous attempt — agent work to reconcile, never
+        // Mason-blocking.
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(`Leader reply delivery unconfirmed ${via}`, TITLE_MAX),
+        detail: oneLine(`reply recorded ${iso(request.reply.at)} · delivery outcome unknown — reconcile before retry`, DETAIL_MAX) || null,
+        since: iso(request.reply.at),
+        expiresAt: null,
+        ...jobIds,
+        act: ['phm leader inbox --json', 'phm comms thread'],
+      });
+      continue;
+    }
+    if (request.to === 'leader' && request.inbox && request.bus &&
+        !(request.reply?.delivered ?? false) && !(request.reply?.attempted ?? false)) {
+      // `pending()` still offers this route: either no reply was recorded,
+      // or one was recorded whose delivery failed non-ambiguously — the
+      // network retries that on the next reply pass, so it is pending
+      // leader work either way, never an ambiguous send.
+      const replyAt = request.reply?.at;
+      items.push({
+        id: `leader-network:request-${request.requestId}`,
+        source: 'leader-network',
+        kind: 'leader-request',
+        // A verified owner request the leader has not finished answering —
+        // the owner is waiting, same warn band the owner-thread source
+        // applies.
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(request.text ?? '', TITLE_MAX) || `Leader request ${via} awaiting reply`,
+        detail: oneLine(
+          `leader network · ${via} · ` +
+          (replyAt === undefined ? 'awaiting reply' : `reply recorded ${iso(replyAt)} · delivery incomplete — awaiting retry`) +
+          ` · received ${iso(request.receivedAt)}`,
+          DETAIL_MAX) || null,
+        since: iso(request.receivedAt),
+        expiresAt: null,
+        ...jobIds,
+        act: ['phm leader inbox --json', 'phm comms thread'],
+      });
+      continue;
+    }
+    const missingLegs = request.to === 'leader'
+      ? [request.inbox ? null : 'inbox append', request.bus ? null : 'bus mirror'].filter((leg): leg is string => leg !== null)
+      : request.bus ? [] : ['bus publish'];
+    if (missingLegs.length === 0) continue;
+    items.push({
+      id: `leader-network:incomplete-${request.requestId}`,
+      source: 'leader-network',
+      kind: 'leader-request-incomplete',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Leader request delivery incomplete ${via}`, TITLE_MAX),
+      detail: oneLine(
+        `leader network · ${via}` +
+        (request.to === 'leader' ? '' : ` · to ${request.to}`) +
+        ` · unproven: ${missingLegs.join(', ')} · received ${iso(request.receivedAt)}`,
+        DETAIL_MAX) || null,
+      since: iso(request.receivedAt),
+      expiresAt: null,
+      ...jobIds,
+      act: ['phm leader inbox --json', 'phm comms thread'],
+    });
+  }
+  for (const digest of result.digests) {
+    if (!digest.attempted || digest.sent) continue;
+    items.push({
+      id: `leader-network:digest-${digest.key}`,
+      source: 'leader-network',
+      kind: 'leader-digest-unconfirmed',
+      // An away-digest whose delivery attempt ended ambiguous is never
+      // retried — the owner may never have seen it; agent work, never
+      // Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Leader away-digest delivery unconfirmed via ${digest.channel}`, TITLE_MAX),
+      detail: oneLine(
+        `leader network · via ${digest.channel}` +
+        (digest.day === null ? '' : ` · day ${digest.day}`) +
+        ` · recorded ${iso(digest.at)} · delivery outcome unknown — reconcile before retry`,
+        DETAIL_MAX) || null,
+      since: iso(digest.at),
+      expiresAt: null,
+      act: ['phm leader inbox --json'],
+    });
+  }
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+/**
  * The same drop inbox `runEmailDropOnce` scans, resolved at the shared runs
  * dir: saved email-drop config → `inboxDir` → `readEmailDropInbox`. A missing
  * config or inbox dir is 'missing' (the pass treats an absent inbox as an
@@ -2677,6 +2846,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const slack = slackItems(options.readSlackJournal ?? readSlackJournal, options, now);
   const slackSends = slackSendItems(options.readSlackSends ?? readSlackSendReceipts);
   const leaderDelivery = leaderDeliveryItems(options.readLeaderUndelivered ?? readLeaderThreadUndelivered, now);
+  const leaderNetwork = leaderNetworkItems(options.readLeaderNetwork ?? readLeaderNetworkState, options.runsDir);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -2704,8 +2874,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     slack: slack.report,
     'slack-sends': slackSends.report,
     'leader-delivery': leaderDelivery.report,
+    'leader-network': leaderNetwork.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

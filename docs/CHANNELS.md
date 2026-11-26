@@ -469,7 +469,28 @@ messages are proved or out of scope; source state is the read's own —
 `missing` a verified-absent thread, `degraded` a truncated log,
 `unavailable` an unreadable or malformed store — never an empty list passed
 off as fact; deep links `phm channels`, `phm comms cycle` and `phm comms
-send-owner`) — and each item carries `act` deep-link commands (`phm fleet
+send-owner`) — and the leader network's durable route and digest state
+(the same bounded anchored read `readRouteReplyFacts` applies to
+`<runsDir>/leader/network-state.json`, never the locking `pending()`
+recovery pass: a verified owner request fully ingested for the leader —
+inbox append and bus mirror proven, no delivered or attempted reply —
+lists as a warn `leader-request`, the leader's own pending queue the
+owner-thread source cannot see because network replies record to
+MASON-OUTBOX.md, never the thread store — a reply recorded whose delivery
+failed non-ambiguously stays in that queue (the network retries it) and
+the item says "awaiting retry", never "awaiting reply"; a leader-bound route missing its
+inbox append or bus mirror, or any route whose bus publish never landed,
+lists as `leader-request-incomplete` — the request provably did not reach
+every store the leader reads; a reply or away-digest whose delivery
+attempt ended ambiguous (`attempted` without `delivered`/`sent`) lists as
+`leader-reply-unconfirmed`/`leader-digest-unconfirmed` — the network
+never retries an ambiguous attempt, so the owner may never have seen the
+answer; items name channel, routing label, timestamps and job citations
+only — owner recipient ids and channel refs never leave the reader, and
+request text is scrubbed like every other source; source state is the
+read's own — `missing` a verified-absent store, `unavailable` any
+refusal — never an empty backlog passed off as fact; deep links `phm
+leader inbox` and `phm comms thread`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -482,7 +503,7 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 `phm team approve|deny`, `phm inbox approve|reject`,
 `phm fleet slack-trace`, `phm channels slack status`, `phm channels slack
-run`, `phm channels`, `phm comms cycle`). It never claims, replies, or mutates; a source
+run`, `phm channels`, `phm comms cycle`, `phm leader inbox`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
