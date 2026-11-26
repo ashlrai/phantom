@@ -344,7 +344,9 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
   const statusFresh = nowMs === undefined || !Number.isFinite(nowMs) ? null
     : data.schema === 'dispatchd.status.v1' && Number.isFinite(tickMs) && nowMs >= tickMs && nowMs - tickMs <= STATUS_FRESH_MS;
   const published = isRecord(data.unfed_capacity) && isRecord(data.unfed_capacity.lanes) ? data.unfed_capacity : null;
-  const ctx = published === null && readyTsv !== null ? marketContext(market) : null;
+  const ctx = published === null ? marketContext(market) : null;
+  const operatorHolds = published === null && ctx === null
+    ? new Set((market?.hold ?? '').split(/\s+/u).filter(Boolean)) : null;
   const stop = fleetStopVerdict(data);
   // An admission-stopped tick never ran the market: the dispatcher's own
   // _waiting then counts every JID+tier-valid row by its raw lane column.
@@ -361,7 +363,9 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     // The effective target is what the lane may launch against after load shedding.
     const target = count(value.effective_target) ? value.effective_target : value.target;
     if (!count(target)) throw new Error('invalid lane');
-    const held = value.held === true;
+    const statusHeld = value.held === true;
+    const view = ctx === null ? null : marketLaneView(lane, value.running, target, statusHeld, ctx);
+    const held = view?.held ?? (statusHeld || operatorHolds?.has(lane) === true);
     const headroom = Math.max(0, target - value.running);
     const readyHinted = hints === null ? null : hints.byLane.get(lane) ?? 0;
     const entry = publishedLanes[lane];
@@ -379,8 +383,7 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
       // binding constraint for the rows still waiting.
       if (stop !== null) {
         if (waitingElsewhere > 0) blocked[stop] = waitingElsewhere;
-      } else if (ctx !== null) {
-        const view = marketLaneView(lane, value.running, target, held, ctx);
+      } else if (view !== null) {
         for (const row of hints.rows) {
           if (row.hint === lane) continue;
           for (const code of derivedRowCodes(row, lane, view)) blocked[code] = (blocked[code] ?? 0) + 1;
@@ -399,7 +402,7 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     schema: FLEET_UNFED_SCHEMA,
     readOnly: true,
     source: published ? 'dispatcher' : 'derived',
-    derivedReasons: ctx !== null,
+    derivedReasons: ctx !== null && readyTsv !== null,
     statusAsOf,
     statusFresh,
     fleetStop: stop ?? publishedFleetStop(resources),

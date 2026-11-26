@@ -99,6 +99,21 @@ describe('currentUnfed', () => {
     expect(report.resources[0]).toMatchObject({ readyHinted: 1, waitingElsewhere: 0 });
   });
 
+  it.each([
+    { slots: JSON.stringify({ 'codex-cmp': { held: true } }) },
+    { hold: 'codex-cmp', slots: '{}' },
+    { hold: 'codex-cmp', slots: 'unreadable' },
+  ])('excludes configured holds from derived unfed capacity (%j)', market => {
+    const status = JSON.stringify({ lanes: LANES });
+    for (const ready of [READY, null]) {
+      const report = currentUnfed(status, ready, market);
+      expect(report).toMatchObject({ unfedLanes: [], unfedSlots: 0 });
+      expect(report.resources.find(r => r.lane === 'codex-cmp')).toMatchObject({
+        held: true, headroom: 3, unfed: false, waitingElsewhere: 0, blocked: {},
+      });
+    }
+  });
+
   it.each([undefined, { waiting_elsewhere: -1 }])(
     'keeps an idle lane unknown when its published count is unavailable (%j)',
     (entry) => {
@@ -937,10 +952,12 @@ describe('derived market reasons', () => {
       lanes: MLANES,
       unfed_capacity: { waiting: 1, lanes: { 'codex-personal': { waiting_elsewhere: 1, blocked: { saturated: 1 } } } },
     });
-    const report = currentUnfed(status, READY2, { slots: SLOTS });
+    const report = currentUnfed(status, READY2, { slots: SLOTS, hold: 'codex-personal' });
     expect(report.source).toBe('dispatcher');
     expect(report.derivedReasons).toBe(false);
-    expect(report.resources.find(r => r.lane === 'codex-personal')!.blocked).toEqual({ saturated: 1 });
+    expect(report.resources.find(r => r.lane === 'codex-personal')).toMatchObject({
+      held: false, unfed: true, blocked: { saturated: 1 },
+    });
   });
 });
 
