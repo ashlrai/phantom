@@ -1,34 +1,15 @@
 /** Group rooms are a convention over the local durable bus, not an identity boundary. */
 import { appendBusInbox, listBusInboxAfter, type BusInboxOptions } from './bus-inbox.js';
 import type { BusJsonValue, BusPriority } from './bus-envelope.js';
+import { groupAddress } from './group-address.js';
 
-const NAME = /^[a-z0-9](?:[a-z0-9_-]{0,31})$/;
+// The address grammar lives in the pure group-address module so Node-free
+// readers (the web-ui conversation model) share the one parse; re-exported
+// here so every existing `bus-group.js` importer keeps working.
+export { groupAddress, groupAddressTopicOf } from './group-address.js';
+
 const MEMBER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 export const GROUP_PRESENCE_TTL_MS = 5 * 60_000;
-
-/** A room and topic are separate bounded namespace components, not paths. */
-export function groupAddress(room: string, topic: string): string {
-  if (!NAME.test(room) || !NAME.test(topic)) throw new Error('Invalid room or topic');
-  return `group:${room}:${topic}`;
-}
-
-/**
- * The topic component of a well-formed `group:<room>:<topic>` routing label —
- * the two-component grammar `groupAddress` writes, room and topic each under
- * the room rule — or null for any other label. Envelope `to` values carry raw
- * routing labels, so this parse is what the `--topic` read filters match on:
- * a bare `group:<room>`, a deeper label, an agent address and a malformed room
- * or topic all resolve to null and never match. The same rule
- * `phm agents bus work next --topic` and `phm comms bus next --topic` apply.
- */
-export function groupAddressTopicOf(to: string): string | null {
-  if (!to.startsWith('group:')) return null;
-  const sep = to.indexOf(':', 'group:'.length);
-  if (sep < 0) return null;
-  const room = to.slice('group:'.length, sep);
-  const topic = to.slice(sep + 1);
-  return NAME.test(room) && NAME.test(topic) ? topic : null;
-}
 
 export function publishGroupMessage(input: {
   room: string; topic: string; id: string; from: string; body: BusJsonValue;
