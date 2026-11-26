@@ -12,6 +12,13 @@ with master reason codes and posture evidence; no model calls, dispatch or write
 `cli/bots.ts::runBotsCli(argv, out?, home?)` returns 0 on success, 1 on error/refusal.
 Creation requires `--dry-run` and never calls the writer.
 
+## Fleet lane ledger
+
+`parseJobsJsonl` (`src/core/fleet/lane-console.ts`) adds an optional
+`LaneLedgerEvent.mergedAt` when a merge row carries a readable timestamp
+with a timezone. The lane snapshot uses it for the merge window and falls
+back to `at` when absent. `at` continues to carry the event timestamp.
+
 ## Desktop appearance
 
 `UiAppearance` (`src/core/verse/ui-appearance-file.ts`) includes
