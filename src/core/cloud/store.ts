@@ -27,9 +27,19 @@ import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic }
 import {
   CLOUD_BRANCH_PREFIX,
   CLOUD_BUDGET_SCHEMA_VERSION,
+  CLOUD_REPO_PATTERN,
+  CLOUD_REPORT_STATUSES,
+  CLOUD_SHA1_PATTERN,
   CLOUD_TASK_ID_PATTERN,
+  CLOUD_TASK_ORIGINS,
   CLOUD_TASK_SCHEMA_VERSION,
   DEFAULT_CLOUD_BUDGET,
+  isCanonicalCloudPrUrl,
+  isCloudRecord,
+  isValidIsoTimestamp,
+  pad2,
+  roundCents,
+  sameCloudRepo,
   type CloudBudgetUpdate,
   type CloudBudgetV1,
   type CloudLaunchFailureCode,
@@ -42,13 +52,11 @@ import {
   type CloudTaskState,
   type CloudTaskV1,
 } from './types.js';
+export { CLOUD_REPO_PATTERN };
 
-export const CLOUD_DIR = 'cloud';
-export const CLOUD_TASKS_DIR = 'tasks';
-export const CLOUD_BUDGET_FILE = 'budget.json';
-
-/** GitHub `owner/name` — the one repo shape every cloud entry point accepts. */
-export const CLOUD_REPO_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
+const CLOUD_DIR = 'cloud';
+const CLOUD_TASKS_DIR = 'tasks';
+const CLOUD_BUDGET_FILE = 'budget.json';
 
 const DEFAULT_LIST_LIMIT = 500;
 /** A task file is a few KB (the prompt is capped at 20 000 chars); anything past this was not written by us. */
@@ -56,12 +64,10 @@ const MAX_TASK_BYTES = 256 * 1024;
 const MAX_BUDGET_BYTES = 16 * 1024;
 
 const TASK_STATES: readonly CloudTaskState[] = ['queued', 'launching', 'running', 'pr-open', 'merged', 'closed', 'failed', 'expired'];
-const TASK_ORIGINS: readonly CloudTaskOrigin[] = ['chat', 'operator', 'leader', 'self-improve', 'cli'];
 const REQUESTERS: readonly CloudTaskV1['requestedBy'][] = ['mason', 'leader', 'self-improve'];
 const FAILURE_CODES: readonly CloudLaunchFailureCode[] = [
   'seat-unavailable', 'auth', 'not-enabled', 'rate-limited', 'no-remote', 'checkout-failed', 'budget', 'timeout', 'unparsed', 'unknown',
 ];
-const REPORT_STATUSES: readonly CloudTaskReport['status'][] = ['done', 'partial', 'blocked', 'no-change'];
 const PR_STATES: readonly CloudTaskPr['state'][] = ['open', 'closed', 'merged'];
 
 /**
@@ -69,7 +75,7 @@ const PR_STATES: readonly CloudTaskPr['state'][] = ['open', 'closed', 'merged'];
  * zero, a negative) from silently disabling or unbounding the lane, not to
  * second-guess the operator's account.
  */
-export const CLOUD_BUDGET_LIMITS = Object.freeze({
+const CLOUD_BUDGET_LIMITS = Object.freeze({
   maxUsd: 100_000,
   maxCostPerSessionUsd: 1_000,
   maxConcurrent: 20,
@@ -115,7 +121,7 @@ export function ensureCloudDirectory(...sub: string[]): string {
   return dir;
 }
 
-function readJsonFile(path: string, maxBytes: number): unknown {
+export function readCloudJsonFile(path: string, maxBytes: number): unknown {
   const file = readPrivateFileCapped(path, maxBytes);
   if (!file || file.truncated) return undefined;
   try {
@@ -129,15 +135,13 @@ function readJsonFile(path: string, maxBytes: number): unknown {
 // Tasks
 // ---------------------------------------------------------------------------
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 const isString = (value: unknown): value is string => typeof value === 'string';
 const isNullableString = (value: unknown): value is string | null => value === null || typeof value === 'string';
 const isStringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every(isString);
 
 function isReport(value: unknown): value is CloudTaskReport {
-  return isRecord(value)
-    && REPORT_STATUSES.includes(value['status'] as CloudTaskReport['status'])
+  return isCloudRecord(value)
+    && CLOUD_REPORT_STATUSES.includes(value['status'] as CloudTaskReport['status'])
     && isString(value['summary'])
     && isStringArray(value['testsRun'])
     && isStringArray(value['risks'])
@@ -146,7 +150,7 @@ function isReport(value: unknown): value is CloudTaskReport {
 }
 
 function isPr(value: unknown): value is CloudTaskPr {
-  return isRecord(value)
+  return isCloudRecord(value)
     && typeof value['number'] === 'number' && Number.isInteger(value['number'])
     && isString(value['url'])
     && PR_STATES.includes(value['state'] as CloudTaskPr['state'])
@@ -155,26 +159,25 @@ function isPr(value: unknown): value is CloudTaskPr {
 }
 
 function isDeliveryPin(value: unknown, repo: string): value is CloudDeliveryPin {
-  if (!isRecord(value) || !Number.isSafeInteger(value['number']) || (value['number'] as number) < 1 || !isString(value['url'])) return false;
-  return value['url'].toLowerCase() === `https://github.com/${repo}/pull/${value['number']}`.toLowerCase();
+  if (!isCloudRecord(value) || !Number.isSafeInteger(value['number']) || (value['number'] as number) < 1 || !isString(value['url'])) return false;
+  return isCanonicalCloudPrUrl(value['url'], repo, value['number'] as number);
 }
 
 /** 3.13: a fleet App PR in the task's own repo (the intake never supersedes across repos). */
 function isSupersededBy(value: unknown, repo: string): value is CloudSupersededBy {
-  return isRecord(value)
-    && isString(value['repo']) && value['repo'].toLowerCase() === repo.toLowerCase()
+  return isCloudRecord(value)
+    && isString(value['repo']) && sameCloudRepo(value['repo'], repo)
     && Number.isSafeInteger(value['number']) && (value['number'] as number) >= 1;
 }
 
-const SHA1_HEX = /^[0-9a-f]{40}$/;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 /** Inbox proposal ids are filename stems; the fleet merge state keys on the same shape. */
 const PROPOSAL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 /** 3.13: the intake memo — either a filed proposal (id + diff hash) or a refusal code, for one head. */
 function isIntakeMemo(value: unknown): value is CloudIntakeMemo {
-  if (!isRecord(value) || !isString(value['headSha']) || !SHA1_HEX.test(value['headSha'])) return false;
-  if (!isString(value['at']) || !Number.isFinite(Date.parse(value['at']))) return false;
+  if (!isCloudRecord(value) || !isString(value['headSha']) || !CLOUD_SHA1_PATTERN.test(value['headSha'])) return false;
+  if (!isValidIsoTimestamp(value['at'])) return false;
   const proposalId = value['proposalId'];
   const diffHash = value['diffHash'];
   const refused = value['refused'];
@@ -184,8 +187,8 @@ function isIntakeMemo(value: unknown): value is CloudIntakeMemo {
 }
 
 /** Structural check of a persisted task. Hand-edited or foreign files fail it and are skipped by readers. */
-export function isCloudTask(value: unknown): value is CloudTaskV1 {
-  if (!isRecord(value)) return false;
+function isCloudTask(value: unknown): value is CloudTaskV1 {
+  if (!isCloudRecord(value)) return false;
   const id = value['id'];
   return value['v'] === CLOUD_TASK_SCHEMA_VERSION
     && isString(id) && CLOUD_TASK_ID_PATTERN.test(id)
@@ -194,7 +197,7 @@ export function isCloudTask(value: unknown): value is CloudTaskV1 {
     && value['branch'] === `${CLOUD_BRANCH_PREFIX}${id}`
     && isString(value['title'])
     && isString(value['prompt'])
-    && TASK_ORIGINS.includes(value['origin'] as CloudTaskOrigin)
+    && CLOUD_TASK_ORIGINS.includes(value['origin'] as CloudTaskOrigin)
     && REQUESTERS.includes(value['requestedBy'] as CloudTaskV1['requestedBy'])
     && isString(value['seat'])
     && isNullableString(value['sessionId'])
@@ -202,7 +205,7 @@ export function isCloudTask(value: unknown): value is CloudTaskV1 {
     && TASK_STATES.includes(value['state'] as CloudTaskState)
     && isNullableString(value['stateReason'])
     && (value['failure'] === null || FAILURE_CODES.includes(value['failure'] as CloudLaunchFailureCode))
-    && isString(value['createdAt']) && Number.isFinite(Date.parse(value['createdAt']))
+    && isValidIsoTimestamp(value['createdAt'])
     && isNullableString(value['launchedAt'])
     && isString(value['updatedAt'])
     && (value['pr'] === null || isPr(value['pr']))
@@ -220,17 +223,16 @@ export function isCloudTask(value: unknown): value is CloudTaskV1 {
 }
 
 function isLessons(v: unknown): boolean {
-  if (!v || typeof v !== 'object') return false;
-  const l = v as Record<string, unknown>;
-  return (l['arm'] === 'served' || l['arm'] === 'holdout')
-    && (l['family'] === undefined || (typeof l['family'] === 'string' && /^[a-z0-9][a-z0-9_-]{0,79}$/.test(l['family'])))
-    && Array.isArray(l['noteIds']) && l['noteIds'].length <= 64
-    && l['noteIds'].every((id) => typeof id === 'string' && id.length > 0 && id.length <= 80);
+  if (!isCloudRecord(v)) return false;
+  return (v['arm'] === 'served' || v['arm'] === 'holdout')
+    && (v['family'] === undefined || (typeof v['family'] === 'string' && /^[a-z0-9][a-z0-9_-]{0,79}$/.test(v['family'])))
+    && Array.isArray(v['noteIds']) && v['noteIds'].length <= 64
+    && v['noteIds'].every((id) => typeof id === 'string' && id.length > 0 && id.length <= 80);
 }
 
 function isWikiSlice(v: unknown): boolean {
-  if (!v || typeof v !== 'object') return false;
-  const { bytes, nodeIds, freshness } = v as Record<string, unknown>;
+  if (!isCloudRecord(v)) return false;
+  const { bytes, nodeIds, freshness } = v;
   return typeof bytes === 'number' && Number.isSafeInteger(bytes) && bytes >= 0 && bytes <= 3072
     && Array.isArray(nodeIds) && nodeIds.length <= 16
     && nodeIds.every(id => typeof id === 'string' && id.length > 0 && id.length <= 1200)
@@ -238,28 +240,26 @@ function isWikiSlice(v: unknown): boolean {
 }
 
 function isWikiFreshness(v: unknown): boolean {
-  if (!v || typeof v !== 'object') return false;
-  const { commit, defaultCommit, ahead, behind } = v as Record<string, unknown>;
+  if (!isCloudRecord(v)) return false;
+  const { commit, defaultCommit, ahead, behind } = v;
   const isCommit = (value: unknown) => typeof value === 'string' && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(value);
   const isCount = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
   return isCommit(commit) && (defaultCommit === null || isCommit(defaultCommit))
     && ((ahead === null && behind === null) || (isCommit(defaultCommit) && isCount(ahead) && isCount(behind)));
 }
 
-const SHA = /^[0-9a-f]{40}$/;
-const isSha = (v: unknown) => v === null || (typeof v === 'string' && SHA.test(v));
+const isSha = (v: unknown) => v === null || (typeof v === 'string' && CLOUD_SHA1_PATTERN.test(v));
 
 function isOutcome(v: unknown): boolean {
-  if (!v || typeof v !== 'object') return false;
-  const o = v as Record<string, unknown>;
-  return typeof o['observedAt'] === 'string'
-    && isSha(o['headSha']) && isSha(o['mergeSha'])
-    && (o['ci'] === null || ['success', 'failure', 'pending', 'none'].includes(o['ci'] as string))
-    && Array.isArray(o['failedChecks']) && o['failedChecks'].length <= 20
-    && o['failedChecks'].every((n) => typeof n === 'string' && n.length > 0 && n.length <= 120)
-    && (o['reviewDecision'] === null || ['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED'].includes(o['reviewDecision'] as string))
-    && Number.isSafeInteger(o['changesRequested']) && (o['changesRequested'] as number) >= 0
-    && (o['revertedBy'] === undefined || isSha(o['revertedBy']));
+  if (!isCloudRecord(v)) return false;
+  return typeof v['observedAt'] === 'string'
+    && isSha(v['headSha']) && isSha(v['mergeSha'])
+    && (v['ci'] === null || ['success', 'failure', 'pending', 'none'].includes(v['ci'] as string))
+    && Array.isArray(v['failedChecks']) && v['failedChecks'].length <= 20
+    && v['failedChecks'].every((n) => typeof n === 'string' && n.length > 0 && n.length <= 120)
+    && (v['reviewDecision'] === null || ['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED'].includes(v['reviewDecision'] as string))
+    && Number.isSafeInteger(v['changesRequested']) && (v['changesRequested'] as number) >= 0
+    && (v['revertedBy'] === undefined || isSha(v['revertedBy']));
 }
 
 function taskPath(id: string): string {
@@ -310,7 +310,7 @@ export function wikiCloudSliceStats() {
 
 export function readCloudTask(id: string): CloudTaskV1 | null {
   if (typeof id !== 'string' || !CLOUD_TASK_ID_PATTERN.test(id)) return null;
-  const value = readJsonFile(taskPath(id), MAX_TASK_BYTES);
+  const value = readCloudJsonFile(taskPath(id), MAX_TASK_BYTES);
   // A file whose id disagrees with its name was copied or hand-edited: trusting
   // it would let two files claim one task.
   return isCloudTask(value) && value.id === id ? value : null;
@@ -337,8 +337,6 @@ export function writeCloudTask(task: CloudTaskV1): void {
 // Budget
 // ---------------------------------------------------------------------------
 
-const roundCents = (value: number): number => Math.round(value * 100) / 100;
-
 function clampMoney(value: unknown, fallback: number, max: number = CLOUD_BUDGET_LIMITS.maxUsd): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return roundCents(Math.min(max, Math.max(0, value)));
@@ -359,8 +357,8 @@ function defaultBudget(): CloudBudgetV1 {
  * hand-mangled file) and updates (an API body), so both obey the same bounds.
  */
 function mergeBudget(base: CloudBudgetV1, input: unknown): CloudBudgetV1 {
-  const src = isRecord(input) ? input : {};
-  const self = isRecord(src['selfImprove']) ? src['selfImprove'] : {};
+  const src = isCloudRecord(input) ? input : {};
+  const self = isCloudRecord(src['selfImprove']) ? src['selfImprove'] : {};
   const repo = typeof self['repo'] === 'string' && CLOUD_REPO_PATTERN.test(self['repo'].trim())
     ? self['repo'].trim()
     : base.selfImprove.repo;
@@ -380,14 +378,14 @@ function mergeBudget(base: CloudBudgetV1, input: unknown): CloudBudgetV1 {
       reserveUsd: clampMoney(self['reserveUsd'], base.selfImprove.reserveUsd),
       maxOpenPrs: clampCount(self['maxOpenPrs'], base.selfImprove.maxOpenPrs, 1, CLOUD_BUDGET_LIMITS.maxSelfImproveOpenPrs),
     },
-    updatedAt: typeof src['updatedAt'] === 'string' && Number.isFinite(Date.parse(src['updatedAt'])) ? src['updatedAt'] : base.updatedAt,
+    updatedAt: isValidIsoTimestamp(src['updatedAt']) ? src['updatedAt'] : base.updatedAt,
   };
 }
 
 export function readCloudBudget(): CloudBudgetV1 {
-  const value = readJsonFile(cloudBudgetPath(), MAX_BUDGET_BYTES);
+  const value = readCloudJsonFile(cloudBudgetPath(), MAX_BUDGET_BYTES);
   // A file from a future schema is not ours to reinterpret: defaults, untouched on disk.
-  if (!isRecord(value) || value['v'] !== CLOUD_BUDGET_SCHEMA_VERSION) return defaultBudget();
+  if (!isCloudRecord(value) || value['v'] !== CLOUD_BUDGET_SCHEMA_VERSION) return defaultBudget();
   return mergeBudget(defaultBudget(), value);
 }
 
@@ -395,7 +393,7 @@ export function readCloudBudget(): CloudBudgetV1 {
 export function updateCloudBudget(update: CloudBudgetUpdate): CloudBudgetV1 {
   const current = readCloudBudget();
   // `updatedAt` and `v` are never taken from the caller.
-  const { updatedAt: _ignored, v: _version, ...fields } = (isRecord(update) ? update : {}) as Record<string, unknown>;
+  const { updatedAt: _ignored, v: _version, ...fields } = (isCloudRecord(update) ? update : {}) as Record<string, unknown>;
   const next = { ...mergeBudget(current, fields), updatedAt: new Date().toISOString() };
   ensureCloudDirectory();
   writePrivateFileAtomic(cloudBudgetPath(), `${JSON.stringify(next, null, 2)}\n`);
@@ -407,7 +405,6 @@ export function updateCloudBudget(update: CloudBudgetUpdate): CloudBudgetV1 {
 // ---------------------------------------------------------------------------
 
 const BASE36 = '0123456789abcdefghijklmnopqrstuvwxyz';
-const pad2 = (n: number): string => String(n).padStart(2, '0');
 
 /** `ct_<yyyymmdd>T<hhmm>_<6 base36>` from a UTC clock + crypto random. */
 export function newCloudTaskId(now: Date): string {

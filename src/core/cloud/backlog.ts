@@ -11,12 +11,23 @@
 import { join } from 'node:path';
 
 import { kindLeverage, kindOf, readLedger, scoreOutcomes, validateMetricSpec, type MetricSpec } from '../improve/outcomes.js';
-import { readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
+import { writePrivateFileAtomic } from '../verse/preferences.js';
 import { BUILTIN_IMPROVEMENT_BACKLOG } from './improvement-backlog.js';
-import { CLOUD_REPO_PATTERN, cloudHome, ensureCloudDirectory, listCloudTasks } from './store.js';
-import { CLOUD_PROMPT_MAX_CHARS, type CloudBacklogDoneWhen, type CloudBacklogItem, type CloudBacklogView, type CloudTaskState, type CloudTaskV1 } from './types.js';
+import { cloudHome, ensureCloudDirectory, listCloudTasks, readCloudJsonFile } from './store.js';
+import {
+  CLOUD_PROMPT_MAX_CHARS,
+  CLOUD_REPO_PATTERN,
+  isCloudRecord,
+  isValidIsoTimestamp,
+  sameCloudRepo,
+  type CloudBacklogDoneWhen,
+  type CloudBacklogItem,
+  type CloudBacklogView,
+  type CloudTaskState,
+  type CloudTaskV1,
+} from './types.js';
 
-export const CLOUD_BACKLOG_FILE = 'backlog.json';
+const CLOUD_BACKLOG_FILE = 'backlog.json';
 export const CLOUD_BACKLOG_MAX_USER_ITEMS = 200;
 /** A closed/failed/expired item is retried after this long (a merged one never is). */
 export const CLOUD_BACKLOG_RETRY_MS = 3 * 24 * 60 * 60 * 1000;
@@ -36,14 +47,13 @@ export function cloudBacklogPath(): string {
 
 /** A clean copy of a valid item, or null. Titles and areas are trimmed; nothing else is rewritten. */
 export function validBacklogItem(value: unknown): CloudBacklogItem | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const r = value as Record<string, unknown>;
-  const id = r['id'];
-  const title = typeof r['title'] === 'string' ? r['title'].trim() : '';
-  const prompt = typeof r['prompt'] === 'string' ? r['prompt'] : '';
-  const area = typeof r['area'] === 'string' ? r['area'].trim() : '';
-  const priority = r['priority'];
-  const repo = r['repo'];
+  if (!isCloudRecord(value)) return null;
+  const id = value['id'];
+  const title = typeof value['title'] === 'string' ? value['title'].trim() : '';
+  const prompt = typeof value['prompt'] === 'string' ? value['prompt'] : '';
+  const area = typeof value['area'] === 'string' ? value['area'].trim() : '';
+  const priority = value['priority'];
+  const repo = value['repo'];
   if (typeof id !== 'string' || !ID_RE.test(id)) return null;
   if (title === '' || title.length > MAX_TITLE_CHARS) return null;
   if (prompt.trim() === '' || prompt.length > CLOUD_PROMPT_MAX_CHARS) return null;
@@ -51,22 +61,22 @@ export function validBacklogItem(value: unknown): CloudBacklogItem | null {
   if (priority !== 1 && priority !== 2 && priority !== 3) return null;
   if (repo !== undefined && (typeof repo !== 'string' || !CLOUD_REPO_PATTERN.test(repo))) return null;
   let metric: MetricSpec | undefined;
-  if (r['metric'] !== undefined) {
-    try { metric = validateMetricSpec(r['metric']); } catch { return null; }
+  if (value['metric'] !== undefined) {
+    try { metric = validateMetricSpec(value['metric']); } catch { return null; }
   }
   let doneWhen: CloudBacklogDoneWhen | undefined;
-  if (r['doneWhen'] !== undefined) {
-    doneWhen = validDoneWhen(r['doneWhen']) ?? undefined;
+  if (value['doneWhen'] !== undefined) {
+    doneWhen = validDoneWhen(value['doneWhen']) ?? undefined;
     if (!doneWhen) return null;
   }
-  const assertedAt = typeof r['assertedAt'] === 'string' && Number.isFinite(Date.parse(r['assertedAt'])) ? r['assertedAt'] : undefined;
+  const assertedAt = isValidIsoTimestamp(value['assertedAt']) ? value['assertedAt'] : undefined;
   return { id, title, prompt, area, priority, ...(repo !== undefined ? { repo } : {}), ...(metric ? { metric } : {}), ...(doneWhen ? { doneWhen } : {}), ...(assertedAt !== undefined ? { assertedAt } : {}) };
 }
 
 /** A repo-relative path of plain segments (no `..`, no absolute forms) and a short literal, or an issue number. */
 export function validDoneWhen(value: unknown): CloudBacklogDoneWhen | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const { path, contains, issue } = value as Record<string, unknown>;
+  if (!isCloudRecord(value)) return null;
+  const { path, contains, issue } = value;
   if (issue !== undefined) {
     return path === undefined && contains === undefined && Number.isSafeInteger(issue) && (issue as number) > 0 ? { issue: issue as number } : null;
   }
@@ -77,25 +87,17 @@ export function validDoneWhen(value: unknown): CloudBacklogDoneWhen | null {
 }
 
 /** Dedupe key for titles: case, punctuation and spacing do not make an item new. */
-export function normaliseBacklogTitle(title: string): string {
+function normaliseBacklogTitle(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 /** The operator/Leader items on disk, validated, deduped, capped. Total: any bad file reads as empty. */
 export function readUserBacklogItems(): CloudBacklogItem[] {
-  const file = readPrivateFileCapped(cloudBacklogPath(), MAX_FILE_BYTES);
-  if (!file || file.truncated) return [];
-  let value: unknown;
-  try {
-    value = JSON.parse(file.text);
-  } catch {
-    return [];
-  }
+  const value = readCloudJsonFile(cloudBacklogPath(), MAX_FILE_BYTES);
   // A bare array is accepted too: it is what an operator writes by hand.
   const raw = Array.isArray(value) ? value
-    : value !== null && typeof value === 'object' && Array.isArray((value as Record<string, unknown>)['items'])
-      ? (value as Record<string, unknown>)['items'] as unknown[]
-      : [];
+    : isCloudRecord(value) && Array.isArray(value['items']) ? value['items'] as unknown[]
+    : [];
   const ids = new Set(BUILTIN_IMPROVEMENT_BACKLOG.map((item) => item.id));
   const titles = new Set(BUILTIN_IMPROVEMENT_BACKLOG.map((item) => normaliseBacklogTitle(item.title)));
   const items: CloudBacklogItem[] = [];
@@ -208,13 +210,8 @@ export function readCloudBacklog(tasks: readonly BacklogClaimTask[], now: Date):
 
 /** Next unclaimed item for `repo`, highest priority first, then built-in order. */
 export function nextBacklogItem(tasks: readonly BacklogClaimTask[], repo: string, now: Date, exclude: ReadonlySet<string> = new Set()): CloudBacklogItem | null {
-  const newest = newestTaskByItem(tasks);
-  const nowMs = now.getTime();
-  const target = repo.toLowerCase();
   // An item without a repo targets whichever repo self-improvement is pointed at.
-  const match = ordered(allItems()).find((item) => !exclude.has(item.id) &&
-    (item.repo === undefined || item.repo.toLowerCase() === target) && claimOf(item, newest.get(item.id), nowMs).claimedBy === null);
-  return match ?? null;
+  return nextBacklogItemWhere(tasks, now, repo, (item, target) => !exclude.has(item.id) && sameCloudRepo(target, repo))?.item ?? null;
 }
 
 /**
