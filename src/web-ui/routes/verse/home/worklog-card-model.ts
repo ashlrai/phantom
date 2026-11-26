@@ -4,7 +4,7 @@
  * hours. Nothing is estimated: an event with no readable time is listed without a place on the day, a link is only
  * ever a GitHub pull request address, and a source the report could not read is named instead of counted as quiet.
  */
-import { WORKLOG_KINDS, type WorklogKind, type WorklogReport } from '../../../../core/fleet/worklog.js';
+import { WORKLOG_KINDS, type WorklogKind, type WorklogReport } from '../../../../core/fleet/worklog-types.js';
 
 export interface DayEvent {
   key: string;

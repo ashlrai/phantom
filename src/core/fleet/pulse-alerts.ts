@@ -14,26 +14,10 @@ import type { SpendSnapshot } from '../usage/spend.js';
 import type { StarvedRead } from './lane-starved.js';
 import { summarizeSkips, type SkippedJobsV1 } from './skipped-jobs.js';
 import type { ThroughputMark } from './throughput.js';
+import { PULSE_ALERT_KINDS, PULSE_ALERTS_SCHEMA, type PulseAlertV1, type PulseAlertsV1 } from './pulse-alerts-types.js';
 
-export const PULSE_ALERTS_SCHEMA = 'fleet.pulse.alerts.v1' as const;
-export const PULSE_ALERT_KINDS = ['stalled', 'starved', 'wasting', 'pool_waste', 'release_stale', 'build-stale', 'skipped'] as const;
-export type PulseAlertKind = (typeof PULSE_ALERT_KINDS)[number];
-export interface PulseAlertV1 {
-  kind: PulseAlertKind;
-  /** The lane, or the pool for pool_waste, or the repo for release_stale, or the short running commit for build-stale; `fleet` for stalled. */
-  lane: string;
-  /** ISO time the trouble began; null when it is a projection with no start (pool_waste). */
-  since: string | null;
-  detail: string;
-  fix_hint: string;
-}
-export interface PulseAlertsV1 {
-  schema: typeof PULSE_ALERTS_SCHEMA; v: 1; as_of: string;
-  alerts: PulseAlertV1[];
-  /** Plain-words checks that could not be made. An alert may be missing for each of these. */
-  unknown: string[];
-}
-/** Every reader's output as it returned it; null when that reader failed. */
+export { PULSE_ALERTS_SCHEMA, PULSE_ALERT_KINDS, type PulseAlertKind, type PulseAlertV1, type PulseAlertsV1 } from './pulse-alerts-types.js';
+
 export interface PulseAlertInputs { marks: readonly ThroughputMark[] | null; starved: StarvedRead | null; spend: SpendSnapshot | null;
   /** Release cadence; absent means not checked, null means the read failed. */
   releases?: CadenceV1 | null;

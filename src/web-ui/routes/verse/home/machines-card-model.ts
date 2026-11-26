@@ -3,7 +3,7 @@
  * (phantom.nodes-pool.v1): nothing is estimated. A fact the report marks "unknown" stays unknown (never 0),
  * and memory in use is only the report's own free share turned round, so a Mac with no share gets no bar.
  */
-import { seenWords, type NodesPool, type PoolNode, type PoolStatus } from '../../../../core/fleet/nodes-pool.js';
+import { seenWords, type NodesPool, type PoolNode, type PoolStatus } from '../../../../core/fleet/nodes-pool-types.js';
 
 /** Job names shown on one tile; the rest are counted. */
 export const JOB_CHIPS = 6;

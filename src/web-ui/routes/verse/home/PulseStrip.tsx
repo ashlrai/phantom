@@ -4,8 +4,8 @@
  * Built only on `phm fleet pulse --lanes --json` (fleet.pulse.lanes.v1), its `totals`. Read-only. Unknown reads "unknown",
  * never 0; running vs capacity keeps no history, so it says so instead of drawing a line.
  */
-import { PULSE_ALERTS_SCHEMA, type PulseAlertsV1 } from '../../../../core/fleet/pulse-alerts.js';
-import { PULSE_LANES_SCHEMA, type PulseLanesV1 } from '../../../../core/fleet/pulse-lanes.js';
+import { PULSE_ALERTS_SCHEMA, type PulseAlertsV1 } from '../../../../core/fleet/pulse-alerts-types.js';
+import { PULSE_LANES_SCHEMA, type PulseLanesV1 } from '../../../../core/fleet/pulse-lanes-types.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';

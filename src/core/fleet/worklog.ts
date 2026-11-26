@@ -6,31 +6,10 @@ import { readFleetBusFeed, type BusFeedEvent } from './bus-feed.js';
 import { dispatchEventsCandidates } from './dispatch-events-path.js';
 import { readEmptyJobs } from './empty-jobs.js';
 import { readPlanLogReplies, replyTime } from './mason-outbox.js';
+import { WORKLOG_KINDS, type WorklogEntry, type WorklogKind, type WorklogReport, type WorklogRow, type WorklogSources, type WorklogSource } from './worklog-types.js';
 
-/** Feed kinds in display order. A PR opening and a plain finish are both `finished`; a failed exit is an `incident`. */
-export const WORKLOG_KINDS = ['merged', 'launched', 'finished', 'empty', 'leader', 'incident'] as const;
-export type WorklogKind = typeof WORKLOG_KINDS[number];
-/** One line of the feed. `count` is how many consecutive same-kind events of one job it stands for. */
-export interface WorklogRow {
-  at: string; kind: WorklogKind; job: string | null; lane: string | null; repo: string | null;
-  text: string; url: string | null; count: number;
-}
-/** A source that could not be read is `unknown` with a fixed reason; its rows are absent, not zero. */
-export type WorklogSource = { state: 'ok' } | { state: 'unknown'; reason: string };
-export type WorklogSources = Record<'jobs' | 'events' | 'leader', WorklogSource>;
-export interface WorklogEntry {
-  job: string | null; repo: string | null; lane: string | null; model: string | null;
-  kind: 'launch' | 'finished' | 'pr' | 'empty' | 'failed' | 'merged' | 'closed'; at: string;
-  mergedAt: string | null; openToMergeSeconds: number | null; url: string | null;
-  /** The job's one-line goal (its recorded title), when any joined event carries one. */
-  goal: string | null;
-  /** Why a job failed or ended with no change, in plain words; null when not recorded. */
-  detail: string | null;
-}
-export interface WorklogReport {
-  schema: 'worklog.v3'; hours: number | null; rows: WorklogRow[]; sources: WorklogSources;
-  entries: WorklogEntry[]; malformedLines: number;
-}
+export { WORKLOG_KINDS, type WorklogKind, type WorklogEntry, type WorklogRow, type WorklogSources, type WorklogSource, type WorklogReport } from './worklog-types.js';
+
 export interface WorklogExtra { rows?: WorklogRow[]; sources?: Partial<WorklogSources>; emptyReasons?: ReadonlyMap<string, string>; hours?: number }
 const unknown = (reason: string): WorklogSource => ({ state: 'unknown', reason });
 const plain = (text: string, max = 160): string => redactHomePaths(scrubSecrets(text)).replace(/\s+/g, ' ').trim().slice(0, max);
