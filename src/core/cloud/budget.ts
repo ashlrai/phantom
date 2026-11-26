@@ -5,7 +5,17 @@
  *
  * Pure: no clock, no disk — the caller passes the tasks, the budget and now.
  */
-import { CLOUD_BALANCE_URL, DEFAULT_CLOUD_BUDGET, type CloudBudgetV1, type CloudBudgetView, type CloudGate, type CloudTaskV1 } from './types.js';
+import {
+  CLOUD_BALANCE_URL,
+  DEFAULT_CLOUD_BUDGET,
+  pad2,
+  pluralize,
+  roundCents,
+  type CloudBudgetV1,
+  type CloudBudgetView,
+  type CloudGate,
+  type CloudTaskV1,
+} from './types.js';
 
 const OK: CloudGate = Object.freeze({ ok: true, reason: null });
 const refuse = (reason: string): CloudGate => ({ ok: false, reason });
@@ -15,7 +25,7 @@ const refuse = (reason: string): CloudGate => ({ ok: false, reason });
  * cover a task recorded without one. A `closed` task with no session is a
  * dismissed failure, not spend.
  */
-export function taskConsumedSession(task: CloudTaskV1): boolean {
+function taskConsumedSession(task: CloudTaskV1): boolean {
   return task.sessionId !== null || task.state === 'running' || task.state === 'pr-open' || task.state === 'merged' || task.state === 'expired';
 }
 
@@ -24,17 +34,15 @@ const inFlight = (task: CloudTaskV1): boolean => task.state === 'queued' || task
 
 /** `YYYY-MM-DD` of the operator's local calendar day. */
 export function localDayKey(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
 /** `$3`, `$2.50`, `$1,234` — whole dollars without cents. */
 export function formatUsd(value: number): string {
-  const rounded = Math.round(value * 100) / 100;
+  const rounded = roundCents(value);
   const whole = Number.isInteger(rounded);
   return `$${rounded.toLocaleString('en-US', { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 })}`;
 }
-
-const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
 
 export function cloudBudgetView(tasks: readonly CloudTaskV1[], budget: CloudBudgetV1, now: Date): CloudBudgetView {
   const today = localDayKey(now);
@@ -56,19 +64,19 @@ export function cloudBudgetView(tasks: readonly CloudTaskV1[], budget: CloudBudg
     sessionsToday += 1;
     if (task.origin === 'self-improve') selfImproveToday += 1;
   }
-  const estimatedSpentUsd = Math.round(spent * 100) / 100;
-  const estimatedRemainingUsd = Math.max(0, Math.round((budget.creditsTotalUsd - estimatedSpentUsd) * 100) / 100);
+  const estimatedSpentUsd = roundCents(spent);
+  const estimatedRemainingUsd = Math.max(0, roundCents(budget.creditsTotalUsd - estimatedSpentUsd));
   const cost = budget.estimatedCostPerSessionUsd;
 
   let canLaunch: CloudGate = OK;
   if (estimatedRemainingUsd < cost || (cost === 0 && estimatedRemainingUsd <= 0)) {
     canLaunch = refuse(`About ${formatUsd(estimatedRemainingUsd)} of estimated credits is left — not enough for another session at ${formatUsd(cost)} each.`);
   } else if (sessionsToday >= budget.maxSessionsPerDay) {
-    canLaunch = refuse(`${sessionsToday} of ${budget.maxSessionsPerDay} cloud ${plural(budget.maxSessionsPerDay, 'session', 'sessions')} used today.`);
+    canLaunch = refuse(`${sessionsToday} of ${budget.maxSessionsPerDay} cloud ${pluralize(budget.maxSessionsPerDay, 'session', 'sessions')} used today.`);
   } else if (running + queued >= budget.maxConcurrent) {
     // Queued tasks are about to launch, so they hold a slot: otherwise two
     // launches accepted back to back (different repos) could both pass a cap of one.
-    canLaunch = refuse(`${running + queued} of ${budget.maxConcurrent} cloud ${plural(budget.maxConcurrent, 'session is', 'sessions are')} already running.`);
+    canLaunch = refuse(`${running + queued} of ${budget.maxConcurrent} cloud ${pluralize(budget.maxConcurrent, 'session is', 'sessions are')} already running.`);
   }
 
   let canSelfImprove: CloudGate = canLaunch;
@@ -80,9 +88,9 @@ export function cloudBudgetView(tasks: readonly CloudTaskV1[], budget: CloudBudg
     } else if (selfImprovePrsOpen >= maxOpenPrs) {
       // Review backpressure: Verse writes PRs faster than anyone reviews them,
       // so it waits for the queue to drain (Land or Close in Needs-you).
-      canSelfImprove = refuse(`${selfImprovePrsOpen} self-improvement ${plural(selfImprovePrsOpen, 'PR is', 'PRs are')} waiting for review.`);
+      canSelfImprove = refuse(`${selfImprovePrsOpen} self-improvement ${pluralize(selfImprovePrsOpen, 'PR is', 'PRs are')} waiting for review.`);
     } else if (selfImproveToday >= budget.selfImprove.maxPerDay) {
-      canSelfImprove = refuse(`${selfImproveToday} of ${budget.selfImprove.maxPerDay} self-improvement ${plural(budget.selfImprove.maxPerDay, 'launch', 'launches')} used today.`);
+      canSelfImprove = refuse(`${selfImproveToday} of ${budget.selfImprove.maxPerDay} self-improvement ${pluralize(budget.selfImprove.maxPerDay, 'launch', 'launches')} used today.`);
     } else if (estimatedRemainingUsd - cost < budget.selfImprove.reserveUsd) {
       // The reserve is kept for the operator's own tasks: self-improvement
       // stops BEFORE a launch would take the estimate below it.
