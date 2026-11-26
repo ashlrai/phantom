@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { lstat, open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
@@ -995,18 +995,37 @@ export type LedgerTailRead =
   | { state: 'read'; text: string; truncated: boolean }
   | { state: 'missing' | 'unreadable' | 'not-file' };
 
+async function openLedger(path: string) {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    const before = await lstat(path, { bigint: true });
+    if (before.isSymbolicLink()) return { state: 'unreadable' } as const;
+    if (!before.isFile()) return { state: 'not-file' } as const;
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = await handle.stat({ bigint: true });
+    const after = await lstat(path, { bigint: true });
+    if (!opened.isFile() || !after.isFile() ||
+        before.dev !== opened.dev || before.ino !== opened.ino ||
+        after.dev !== opened.dev || after.ino !== opened.ino) return { state: 'unreadable' } as const;
+    const attached = handle;
+    handle = undefined;
+    return { state: 'opened', handle: attached } as const;
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable' } as const;
+  } finally {
+    await handle?.close();
+  }
+}
+
 /**
- * Bounded read of one regular file. O_NOFOLLOW refuses a symlink at the final path
+ * Bounded read of one regular file. Refuses a symlink at the final path
  * component (reported as 'unreadable'); only ENOENT is 'missing'. Anything past `limit`
  * bytes is 'too-large', never truncated and parsed.
  */
 export async function readLedgerFile(path: string, limit = ROUTER_OUTCOME_LEDGER_LIMIT): Promise<LedgerRead> {
-  let handle: Awaited<ReturnType<typeof open>>;
-  try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  } catch (error) {
-    return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable' };
-  }
+  const opened = await openLedger(path);
+  if (opened.state !== 'opened') return opened;
+  const { handle } = opened;
   try {
     const stat = await handle.stat();
     if (!stat.isFile()) return { state: 'not-file' };
@@ -1034,12 +1053,9 @@ export async function readLedgerFile(path: string, limit = ROUTER_OUTCOME_LEDGER
  * bytes were not read.
  */
 export async function readLedgerTail(path: string, maxBytes = ROUTER_OUTCOME_LEDGER_LIMIT): Promise<LedgerTailRead> {
-  let handle: Awaited<ReturnType<typeof open>>;
-  try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  } catch (error) {
-    return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable' };
-  }
+  const opened = await openLedger(path);
+  if (opened.state !== 'opened') return opened;
+  const { handle } = opened;
   try {
     const stat = await handle.stat();
     if (!stat.isFile()) return { state: 'not-file' };
