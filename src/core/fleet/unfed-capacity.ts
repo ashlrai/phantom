@@ -417,7 +417,8 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
 export function foldUnfedHistory(jsonl: string | null, nowMs: number, windowHours: number): UnfedHistory {
   const history: UnfedHistory = { windowHours, available: jsonl !== null, ticks: 0, lanes: [] };
   if (jsonl === null) return history;
-  const since = nowMs / 1000 - windowHours * 3600;
+  const until = nowMs / 1000;
+  const since = until - windowHours * 3600;
   const lanes = new Map<string, UnfedHistoryLane & { last: number }>();
   for (const line of jsonl.split('\n')) {
     // Cheap prefilter: the file is mostly route decisions.
@@ -426,7 +427,7 @@ export function foldUnfedHistory(jsonl: string | null, nowMs: number, windowHour
     try { row = JSON.parse(line); } catch { continue; }
     if (!isRecord(row) || row.schema !== 'work-market.v1' || row.event !== 'unfed_capacity' || !isRecord(row.lanes)) continue;
     const ts = row.ts;
-    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > nowMs / 1000 + 300) continue;
+    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > until) continue;
     let any = false;
     for (const [lane, value] of Object.entries(row.lanes)) {
       if (!LANE.test(lane) || !isRecord(value) || value.unfed !== true || !count(value.headroom) || !count(value.waiting_elsewhere)) continue;
