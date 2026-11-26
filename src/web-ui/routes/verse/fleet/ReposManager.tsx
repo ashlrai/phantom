@@ -44,11 +44,15 @@ export function ReposManager({ grantFlow, readOnly }: { grantFlow: GrantFlow; re
   return <section id="repos-manager" className={styles.card} aria-labelledby="repos-manager-title">
     <header className={styles.heading}>
       <div><div className={styles.eyebrow}>FLEET / WORK MARKET</div><h2 id="repos-manager-title">Repos manager</h2></div>
-      <Button size="sm" onClick={() => { setError(null); setRevision(value => value + 1); }}>Refresh</Button>
+      <div className={styles.buttons}>
+        {data?.prioritySync === 'local-only' ? <span className={styles.badge} title="Priority changes apply only on this Mac.">Not synced</span> : null}
+        <Button size="sm" onClick={() => { setError(null); setRevision(value => value + 1); }}>Refresh</Button>
+      </div>
     </header>
     <p className={styles.description}>Work is allocated by evidence, not repo order. Boost adds at most 25% to a scheduling score; pause stops new queue claims without changing the signed grant.</p>
     {error ? <p role="status">{error}</p> : !data ? <p role="status">Reading repository evidence…</p> : null}
     {data?.enrollmentStatus === 'degraded' ? <p role="status">Enrollment data is unavailable. Authority has not changed.</p> : null}
+    {data?.canManageGrant === false ? <p className={styles.description}>Review signed grant changes on the leader.</p> : null}
     {data ? <div className={styles.scroll}>
       <table className={styles.table}>
         <thead><tr><th>Repository</th><th>Enrollment / grant</th><th>Ready</th><th>Merges / day</th><th>Open PRs</th><th>CI</th><th>Last release</th><th>Allocation</th><th>Priority / scope</th></tr></thead>
@@ -70,12 +74,13 @@ export function ReposManager({ grantFlow, readOnly }: { grantFlow: GrantFlow; re
             <option value="normal">Normal</option><option value="boost">Boost</option><option value="pause">Pause</option>
           </select>
           <div className={styles.buttons}>
-            <Button size="sm" disabled={readOnly || row.enrolled === null} onClick={() => grantFlow.open('grant', row.enrolled
-              ? `Review removing ${row.repo} from standing authority with Touch ID.`
-              : `Review enrolling ${row.repo}. If its checkout is not ready, first prepare and enroll it. Only the signed grant enables standing authority.`, null, { repoChange: { repo: row.repo, intent: row.enrolled ? 'remove' : 'add' } })}>
-              {row.enrolled ? 'Remove' : 'Enroll'}
-            </Button>
-            {row.enrolled ? <Button size="sm" disabled={readOnly} onClick={() => grantFlow.open('grant',
+            {row.enrolled === false ? <Button size="sm" disabled={readOnly || !data.canManageGrant} onClick={() => grantFlow.open('grant',
+              `Review enrolling ${row.repo}. If its checkout is not ready, first prepare and enroll it. Only the signed grant enables standing authority.`, null,
+              { repoChange: { repo: row.repo, intent: 'add' } })}>Enroll</Button> : null}
+            {row.enrolled || row.grantStage ? <Button size="sm" disabled={readOnly || !data.canManageGrant} onClick={() => grantFlow.open('grant',
+              `Review removing ${row.repo} from standing authority with Touch ID.`, null,
+              { repoChange: { repo: row.repo, intent: 'remove' } })}>Remove</Button> : null}
+            {row.enrolled || row.grantStage ? <Button size="sm" disabled={readOnly || !data.canManageGrant} onClick={() => grantFlow.open('grant',
               `Review the signed propose/merge ladder for ${row.repo}. Approval requires Touch ID.`, null,
               { repoChange: { repo: row.repo, intent: row.grantStage === 'merge' ? 'propose' : 'merge' } })}>
               {row.grantStage === 'merge' ? 'Propose only' : 'Review merge'}

@@ -34,6 +34,7 @@ def family_paused(job):
 
 REPO_NAME = r"[a-z0-9][a-z0-9._-]{0,99}"
 REPO_ATTR = re.compile(r"(?:^|[,;\s])repo=([^,;\s)]*)", re.I)
+HOLD_REPO_ATTR = re.compile(r"(?:^|[,;\s(])repo=((?:ashlrai/)?" + REPO_NAME + r")(?=$|[,;:\s)])", re.I | re.ASCII)
 
 
 def signed_repo_names():
@@ -108,7 +109,7 @@ if not gate["allow"]: sys.exit(0)
 DRY = "--dry-run" in sys.argv
 PER = int(sys.argv[sys.argv.index("--per-lane") + 1]) if "--per-lane" in sys.argv else None
 TS = time.strftime("%F %T"); HM = time.strftime("%H:%M")
-CODEX = ["codex-cmp", "codex-personal", "devin", "codex-local", "omlx"]  # restockable lanes (devin unheld 2:25 PM per Mason; codex-local RQ-LOCAL-LANE)
+CODEX = ["codex-personal", "devin", "codex-local", "omlx"]  # restockable lanes (devin unheld 2:25 PM per Mason; codex-local RQ-LOCAL-LANE)
 CODEX.append("claude-api")  # paced by claude-api.py via slots.json target (0 when no credit pool is open)
 CODEX.append("claude")  # shared work can be restocked when only the Claude executor has headroom
 GENERAL = [l for l in CODEX if l not in ("codex-local", "omlx")]  # rev1.1: local models are not a general fallback; only explicitly local pools go there
@@ -165,7 +166,7 @@ st = json.loads(rd(Q + "/status.json", "{}") or "{}"); lanes = st.get("lanes", {
 slots = json.loads(rd(Q + "/slots.json", "{}") or "{}")
 hold = set(rd(R + "/HOLD").split())
 for lane, entry in slots.items():
-    if lane not in CODEX and isinstance(entry, dict) and entry.get("executor_ready") is True and isinstance(entry.get("capabilities"), list):
+    if lane != work_market.RETIRED_LANE and lane not in CODEX and isinstance(entry, dict) and entry.get("executor_ready") is True and isinstance(entry.get("capabilities"), list):
         CODEX.append(lane); GENERAL.append(lane)
 need = {}
 for l in CODEX:
@@ -187,7 +188,7 @@ for i, l in enumerate(lines):
     for j in ids[:1]: status.setdefault(j, m.group(1))
     for j in re.findall(r"\b(?:CLAIMED|DONE|PR-OPEN)[^A-Z]{0,40}?([A-Z][A-Z0-9-]*-[A-Za-z0-9._-]+)", l[:160])[:1]: status[j] = l.split()[1]
     if m.group(1) in ("HOLD", "HOLD-SECURITY"):   # hold-list PRs (amendment #5): (repo|*, pr#) pairs never selectable
-        hr = REPO_ATTR.search(l)
+        hr = HOLD_REPO_ATTR.search(l)
         hold_repo = hr[1].lower().removeprefix("ashlrai/") if hr else "*"
         for n in re.findall(r"(?:pull/|PR=|#)(\d+)", l, re.I): held_pr.add((hold_repo, n))
         for rr, n in re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", l): held_pr.add((rr.lower(), n))
@@ -428,7 +429,7 @@ def ranked_records(records):
         try: spec = work_market.from_envelope(record[2])
         except (ValueError, TypeError): continue
         parsed[record[0]] = (repo, record[1], spec, None)
-    shares = work_market.repo_shares(parsed.values(), H)
+    shares = work_market.repo_shares(parsed.values(), H, work_market.read_repo_freshness(Q), time.time())
     counts = {}
     def rank(record):
         repo, _, spec, _ = parsed.get(record[0], (None, None, {}, None))

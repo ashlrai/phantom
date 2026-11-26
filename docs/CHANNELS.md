@@ -267,7 +267,18 @@ live reply routed recipient -> sender cites the handoff id through
 label of the two identities (or a member of the addressed channel) counts,
 with an unreadable registry keeping literal-label matching —
 the same durable evidence `agents conversations`
-credits when it marks the thread answered), and
+credits when it marks the thread answered), every envelope addressed to
+the transport dead-letter sink (`bus.dead-letter` — the router's
+delivery-failure report, docs/AGENT-BUS.md "Dead letters"): the original
+envelope exhausted every live transport, had no route or outlived its
+TTL, so the mail provably never arrived and lists as pending attention —
+warn at minimum, high when the original was P0 — even though the
+conversations, messages and edges projections deliberately exclude it as
+"not agent mail"; the item names the failure reason, attempt count,
+original parties/kind/id and correlation id when the letter kept them
+(`payloadDropped` says when the original body was too large to keep),
+with `agents bus show <letter-id>` and `comms bus read --to
+bus.dead-letter` acts), and
 open agent-bus v2 work-feed jobs (queued or rescheduled
 `work.post` announcements with at least one claim key not fully held, plus
 jobs the feed shows `blocked` or `failed` — stuck work needs a decision — or
@@ -426,8 +437,8 @@ that cannot be read reports `missing`, `degraded`, or `unavailable` in
 items with the remainder counted in `omitted`. The bare view also narrows:
 `--source <name>` keeps one source's items, `--kind <name>` one item kind —
 the item's own classification, finer than `--source` where one source emits
-several kinds (the `bus` source's `bus-work`/`bus-handoff` split, the
-`board` source's `board-delivery`/`board-task` split) — `--severity
+several kinds (the `bus` source's `bus-work`/`bus-handoff`/`bus-dead-letter`
+split, the `board` source's `board-delivery`/`board-task` split) — `--severity
 <info|warn|high>` one
 severity band, `--blocking` only items that block, `--job <id>` only items
 that provably name that job — a bus or mailbox body's `busBodyJobMatch`

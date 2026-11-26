@@ -78,6 +78,12 @@ existing pacer and refreshes account and evidence before contact. It disables
 MCP for reservation runs and charges the full pacing reservation when usage is
 unknown. The caller must discard rejected workspaces and retain capacity when
 settlement is missing, group exit is unconfirmed, or pacing did not settle.
+Devin Flash requires the pinned Free/window check, host pressure gate, and
+overage stop check. It refreshes native account-bound Free evidence and
+applies its local concurrent and hourly cap under the shared bridge state
+directory. Confirmed exits are scanned by the live overage guard before
+capacity is released; unknown provider quota remains unknown. The live Flash
+gate may reject a model that is otherwise listed as Free, including SWE-2.1.
 
 ## Requires Security review and re-pin before contrib/mac/install.sh
 
@@ -89,10 +95,18 @@ without an explicit matching `--launcher-pin`. That pin is not permission to
 roll back the live guards. Both the historical candidate and the new bridge
 need independent Security review before adoption.
 
-Run a Mac fixture that proves allowed writes succeed, sibling and protected
-writes fail, and cancellation drains the provider group. Linux fixtures only
-inspect generated profiles and exercise the process supervisor. Devin Flash
-remains held until Security supplies and pins `agent.sb` and
-`devin-overage-stop.py`. AGY remains held until Security supplies redacted
+Run the offline verifier from the checkout on the Mac:
+
+```sh
+/bin/bash contrib/mac/host-integration/verify-pool-bridge.sh
+```
+
+It reports one JSON verdict and returns nonzero if either derived profile
+fails to allow scratch workspace writes or to block the outside write, or
+if cancellation does not drain all three dummy process IDs. It does not
+exercise a provider, the live state tree, or real protected host paths.
+Linux fixture results are synthetic; only the Mac run verifies Seatbelt.
+Review and pin the supplied `agent.sb` and `devin-overage-stop.py` before
+adoption. AGY remains held until Security supplies redacted
 `/help` and `/usage` fixtures from the pinned binary, profile and isolated HOME.
 Do not install or dispatch anything live as part of this review.

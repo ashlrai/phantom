@@ -8,7 +8,7 @@ const DETAIL_MAX = 300;
 export const UNIFIED_INBOX_COMMAND = 'phm comms inbox';
 
 const SOURCES = ['needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread', 'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats', 'peer-dispatch', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack'] as const;
-const KINDS = ['needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message', 'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'mailbox-message', 'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'gmail-over-target', 'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval', 'inbox-proposal', 'slack-request'] as const;
+const KINDS = ['needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message', 'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message', 'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'gmail-over-target', 'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval', 'inbox-proposal', 'slack-request'] as const;
 const SEVERITIES = ['info', 'warn', 'high'] as const;
 const STATES = ['healthy', 'missing', 'degraded', 'unavailable'] as const;
 const EXPIRES_SOON_MS = 30 * 60_000;

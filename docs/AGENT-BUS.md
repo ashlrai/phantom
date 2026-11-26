@@ -1567,7 +1567,7 @@ held work, and every other store state keeps its own status. Exit 0 on
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the twelve
+**Status.** `phm agents bus status [--json]` is a read-only probe of the thirteen
 dependencies every verb above touches plus the outbound send gate every
 write verb passes through: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
@@ -1614,7 +1614,17 @@ resolve — `realHome()/.ashlr/fleet` by default — read by the same
 `readPeerLedger` those surfaces use; `source` plus a `liveRows` count of
 unexpired coordination rows the send budget still counts; 0 on a
 verified-missing ledger, null when unreadable, never peer names, claim
-keys, digests, threads or bodies), plus the
+keys, digests, threads or bodies), the session-handoff journal store
+`<runsRoot>/handoffs` that `phm checkpoint handoff list|show` and
+`fleet_session_handoffs` read through the same `listSessionHandoffs`
+bounded scan under the same runs root the wake probe resolves
+(`ASHLR_RUNS_DIR` or `~/.ashlr-runs` by default — `source` plus `journals`
+scanned, `open` journals whose latest signal is not `completed`,
+`awaitingFailover` open journals whose signal requests failover under the
+`handoffPressure` rule, `unreadable` journals that failed `show`'s
+validation and a `truncated` flag for journals beyond the scan cap; 0
+counts on a verified-missing store, null when unreadable, never job ids,
+lanes, models or signal payloads), plus the
 claim-store drift verdict the claim journal and the
 coordination table imply — the same `fleet.claim-drift.v1` read
 `ashlr fleet claim-drift` serves, run over the probe's own two reads so the
@@ -1750,7 +1760,11 @@ no transport serves the role. `createFileDeadLetterSink()` records a `status`
 envelope addressed to `bus.dead-letter` in the same store, holding the
 original envelope (or only its routing metadata when it would not fit) and the
 attempt log; read it with a file transport whose addresses include
-`bus.dead-letter`. The report says `recorded: false` if the sink failed, in
+`bus.dead-letter`, or with `phm comms bus read --to bus.dead-letter`. The
+unified comms inbox (`phm comms inbox`, kind `bus-dead-letter`) lists each
+live letter as pending attention — the mail provably never arrived — naming
+the reason, attempt count and original routing metadata the letter kept. The
+report says `recorded: false` if the sink failed, in
 which case the caller still holds the message.
 
 **Egress is off by default.** Outbound to any human or external service needs

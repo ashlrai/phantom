@@ -135,6 +135,8 @@ it('queues both freshness checks from active signed scope without duplicating ac
   ids().forEach((id) => queueIds.add(id));
   expect(cycle(fake.io, settings).emitted).toBe(0);
   expect(fake.lines.filter((line) => /repo=morphkit/u.test(line))).toHaveLength(2);
+  expect(fake.lines.find((line) => line.includes('RQ-DOCS-FRESHNESS-morphkit'))).toContain('FRESHNESS: drift');
+  expect(fake.lines.find((line) => line.includes('RQ-SITE-FRESHNESS-morphkit'))).toContain('FRESHNESS: unhealthy');
   activeFreshnessIds.add(ids()[0]!);
   fake.setNow(NOW + QUEUEGEN_FRESHNESS_PERIOD_MS);
   expect(cycle(fake.io, settings).emitted).toBe(3);

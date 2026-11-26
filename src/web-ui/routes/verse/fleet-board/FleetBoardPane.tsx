@@ -122,7 +122,7 @@ function BoardBody({ board }: { board: FleetBoardV1 }) {
             <thead>
               <tr>
                 <th scope="col">Lane</th><th scope="col">Ready</th><th scope="col">Parked</th>
-                <th scope="col">Running</th><th scope="col">Merges/h</th><th scope="col">Oldest wait</th>
+                <th scope="col">Running</th><th scope="col">Plan target</th><th scope="col">Merges/h</th><th scope="col">Oldest wait</th>
               </tr>
             </thead>
             <tbody>
@@ -132,6 +132,7 @@ function BoardBody({ board }: { board: FleetBoardV1 }) {
                   <td className={styles.numeric}>{num(lane.ready)}</td>
                   <td className={styles.numeric}>{num(lane.parked)}</td>
                   <td className={styles.numeric}>{num(lane.running)}</td>
+                  <td className={styles.numeric}>{num(board.resourcePlan?.lanes.find(row => row.lane === lane.lane)?.target_concurrency ?? null)}</td>
                   <td className={styles.numeric}>{num(lane.mergesLastHour)}</td>
                   <td className={styles.numeric}>{formatWait(lane.oldestWaitSeconds)}</td>
                 </tr>
@@ -139,6 +140,20 @@ function BoardBody({ board }: { board: FleetBoardV1 }) {
             </tbody>
           </table>
         )}
+      </section>
+
+      <section className={styles.section} aria-labelledby="fb-waste">
+        <h3 id="fb-waste" className={styles.sectionTitle}>Projected waste by deadline</h3>
+        {board.resourcePlan?.deadlines.length ? (
+          <ul className={styles.needs}>
+            {board.resourcePlan.deadlines.map(row => (
+              <li key={row.id} className={styles.need}>
+                <span>{row.label}</span>
+                <span>{row.projected_waste_at_deadline === null ? 'unknown' : `${row.projected_waste_at_deadline} ${row.unit}`} · <time dateTime={row.deadline_at}>{row.deadline_at}</time></span>
+              </li>
+            ))}
+          </ul>
+        ) : <p className={styles.note}>No resource deadlines measured.</p>}
       </section>
 
       <section className={styles.section} aria-labelledby="fb-needs">

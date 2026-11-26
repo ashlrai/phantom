@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'restock.py'
 AUTHORITY_BIN = SCRIPT.parent / 'tests/fixtures/restock-authority'
-LANES = ['codex-cmp', 'codex-personal', 'devin', 'codex-local', 'claude-api']
+LANES = ['codex-personal', 'devin', 'codex-local', 'claude-api']
 
 
 def build(md, repos=('phantom',), running=0, queued=0, slots=None, lanes_status=None):
@@ -295,6 +295,25 @@ class ExclusionTests(unittest.TestCase):
         self.assertEqual(skips(r.stdout).get('hold-list-pr'), 1, r.stdout)
         self.assertEqual(dry_ids(r.stdout), ['RQ-FREE-PR'])
 
+    def test_hold_with_repo_first_does_not_block_same_pr_number_in_another_repo(self):
+        rows = [
+            '- HOLD RQ-OLD (repo=ashlrai/phantom): PR=124 reason=owner hold',
+            line('RQ-HELD-PR', pool='devin', tier='work', repo='phantom', text='LAND PR=124'),
+            line('RQ-FREE-PR', pool='devin', tier='work', repo='binshield', text='LAND PR=124'),
+        ]
+        tmp = build('\n'.join(rows) + '\n', repos=('phantom', 'binshield'))
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        (home / '.fixture-restock-authority.json').write_text(json.dumps({
+            'v': 1, 'kill': False, 'effectiveSwitch': 'propose',
+            'policy': {'repos': [{'nameWithOwner': f'ashlrai/{repo}', 'stage': 'propose'}
+                                 for repo in ('phantom', 'binshield')]},
+        }))
+        r = restock(home, '--dry-run', '--per-lane', '4')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(skips(r.stdout).get('hold-list-pr'), 1, r.stdout)
+        self.assertEqual(dry_ids(r.stdout), ['RQ-FREE-PR'])
+
     def test_security_pinned_line_never_selected(self):
         rows = [
             line('RQ-SEC-DISP', P=1, pool='devin', tier='mid', repo='phantom',
@@ -403,7 +422,7 @@ class DevinDefaultTests(unittest.TestCase):
     def open_slots(self, **over):
         # codex lanes sit above devin's need so a default pick is never
         # confused with the neediest-GENERAL fallback.
-        s = {'codex-cmp': {'target': 10}, 'codex-personal': {'target': 10},
+        s = {'codex-personal': {'target': 10},
              'devin': {'target': 4}, 'claude-api': {'target': 0}, 'codex-local': {'held': True}}
         s.update(over)
         return s
@@ -422,7 +441,7 @@ class DevinDefaultTests(unittest.TestCase):
         ])
         lanes = dry_lanes(out)
         self.assertEqual(lanes['RQ-D-F1'], ('devin', 'frontier'))
-        self.assertEqual(lanes['RQ-D-W1'], ('codex-cmp', 'work'))   # work still goes neediest GENERAL
+        self.assertEqual(lanes['RQ-D-W1'], ('codex-personal', 'work'))   # work still goes neediest GENERAL
         self.assertEqual(need_of(out)['devin'], 12)               # fixture: devin is not the neediest
 
     def test_frontier_without_pool_attr_defaults_to_devin(self):
@@ -440,7 +459,7 @@ class DevinDefaultTests(unittest.TestCase):
         lanes = dry_lanes(out)
         self.assertEqual(lanes['RQ-D-LH1'], ('devin', 'work'))
         self.assertEqual(lanes['RQ-D-LH2'], ('devin', 'work'))
-        self.assertEqual(lanes['RQ-D-SH'], ('codex-cmp', 'work'))   # not long-horizon: no default
+        self.assertEqual(lanes['RQ-D-SH'], ('codex-personal', 'work'))   # not long-horizon: no default
 
     def test_explicit_pool_beats_the_default(self):
         out = self.pick([
@@ -452,7 +471,7 @@ class DevinDefaultTests(unittest.TestCase):
         out = self.pick([
             line('RQ-D-H1', P=1, pool='any', tier='frontier', repo='phantom', text='frontier probe'),
         ], slots=self.open_slots(devin={'target': 4, 'held': True}))
-        self.assertEqual(dry_lanes(out)['RQ-D-H1'], ('codex-cmp', 'frontier'))
+        self.assertEqual(dry_lanes(out)['RQ-D-H1'], ('codex-personal', 'frontier'))
 
     def test_devin_need_exhausted_falls_back(self):
         # per-lane 1 fills devin with the first frontier line; the next open-pool
@@ -464,8 +483,8 @@ class DevinDefaultTests(unittest.TestCase):
         ], '--per-lane', '1')
         lanes = dry_lanes(out)
         self.assertEqual(lanes['RQ-D-O1'], ('devin', 'frontier'))
-        self.assertEqual(lanes['RQ-D-O2'], ('codex-cmp', 'frontier'))
-        self.assertEqual(lanes['RQ-D-O3'], ('codex-personal', 'work'))   # one slot left on the next GENERAL lane
+        self.assertEqual(lanes['RQ-D-O2'], ('codex-personal', 'frontier'))
+        self.assertNotIn('RQ-D-O3', lanes)   # both eligible lanes have reached their producer limit
 
     def test_devin_need_clamped_at_ceiling_16(self):
         # slots target 30 would ask for 3*30=90 slots; the leverage ceiling 16

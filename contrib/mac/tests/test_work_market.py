@@ -336,7 +336,9 @@ class MarketUnit(unittest.TestCase):
         self.assertEqual(view(claude={'repos': 'phantom'})['claude']['repos'], set())
 
     def posture_view(self, running=None, **overrides):
-        slots = {lane: {'target': 2, **overrides.get(lane, {})} for lane in ('codex-cmp', 'codex-personal', 'claude')}
+        slots = {lane: {'target': 2, **overrides.get(lane, {})} for lane in ('burn-seat', 'codex-personal', 'claude')}
+        slots['burn-seat'] = {'capabilities': ['git'], 'tiers': list(market.TIERS), 'cost_class': 'included',
+                              'posture': 'burn', **slots['burn-seat']}
         return market.lane_view(list(slots), slots, {**dict.fromkeys(slots, 0), **(running or {})}, dict.fromkeys(slots, 2), set(), {}, {}, [], None, 10000)
 
     def pick(self, tier, spec, lanes):
@@ -348,55 +350,55 @@ class MarketUnit(unittest.TestCase):
         # Bulk and standard work hinted at a preserved window goes to the burnable one, with the reason recorded.
         for tier in ('mid', 'work'):
             result = self.pick(tier, {'preferred_lane': 'codex-personal'}, lanes)
-            self.assertEqual(result['chosen_lane'], 'codex-cmp')
-            self.assertEqual(result['override'], {'from': 'codex-personal', 'to': 'codex-cmp', 'reason': 'resource_fit', 'preferred_lane_blocked_by': []})
+            self.assertEqual(result['chosen_lane'], 'burn-seat')
+            self.assertEqual(result['override'], {'from': 'codex-personal', 'to': 'burn-seat', 'reason': 'resource_fit', 'preferred_lane_blocked_by': []})
             self.assertIn('resource_fit', result['reason_codes'])
         # Judgment work (frontier tier, P0, or declared) keeps the preserved window, hint first.
         self.assertEqual(self.pick('frontier', {'preferred_lane': 'claude'}, lanes)['chosen_lane'], 'claude')
-        self.assertEqual(self.pick('frontier', {'preferred_lane': 'codex-cmp'}, lanes)['chosen_lane'], 'codex-personal')
+        self.assertEqual(self.pick('frontier', {'preferred_lane': 'burn-seat'}, lanes)['chosen_lane'], 'codex-personal')
         self.assertEqual(self.pick('work', {'priority': 'P0'}, lanes)['chosen_lane'], 'codex-personal')
         self.assertEqual(self.pick('work', {'work_class': 'judgment', 'preferred_lane': 'claude'}, lanes)['work_class'], 'judgment')
-        self.assertEqual(self.pick('frontier', {'work_class': 'bulk'}, lanes)['chosen_lane'], 'codex-cmp')
+        self.assertEqual(self.pick('frontier', {'work_class': 'bulk'}, lanes)['chosen_lane'], 'burn-seat')
 
     def test_idle_preserved_lane_is_fed_when_the_burnable_one_is_full(self):
-        lanes = self.posture_view(running={'codex-cmp': 2})
-        result = self.pick('mid', {'preferred_lane': 'codex-cmp'}, lanes)
+        lanes = self.posture_view(running={'burn-seat': 2})
+        result = self.pick('mid', {'preferred_lane': 'burn-seat'}, lanes)
         self.assertEqual(result['chosen_lane'], 'codex-personal')
         self.assertEqual(result['override']['reason'], 'preferred_lane_fallback')
         self.assertEqual(result['override']['preferred_lane_blocked_by'], ['saturated'])
         self.assertIsNone(self.pick('mid', {}, lanes)['override'])
 
     def test_posture_is_host_owned_and_never_grants_eligibility(self):
-        lanes = self.posture_view(**{'codex-personal': {'posture': 'burn'}, 'codex-cmp': {'posture': 'nonsense'}})
-        self.assertEqual((lanes['codex-personal']['posture'], lanes['codex-cmp']['posture']), ('burn', 'burn'))
+        lanes = self.posture_view(**{'codex-personal': {'posture': 'burn'}, 'burn-seat': {'posture': 'nonsense'}})
+        self.assertEqual((lanes['codex-personal']['posture'], lanes['burn-seat']['posture']), ('burn', 'balanced'))
         # A free window reads as burn until it ends; afterwards the declared or default posture returns.
         for until, expected in (('2099-01-01', 'burn'), (20000, 'burn'), (9999, 'preserve'), ('garbage', 'preserve'), (True, 'preserve')):
             self.assertEqual(self.posture_view(claude={'free_until': until})['claude']['posture'], expected)
         self.assertEqual(market.posture('claude', {'free_until': '2099-01-01'}), 'preserve')
         # Burn posture never overrides cost class, holds or quota.
-        metered = self.posture_view(**{'codex-cmp': {'cost_class': 'metered'}})
+        metered = self.posture_view(**{'burn-seat': {'cost_class': 'metered'}})
         self.assertEqual(self.pick('mid', {'max_cost_class': 'included'}, metered)['chosen_lane'], 'codex-personal')
-        held = self.posture_view(**{'codex-cmp': {'held': True}})
+        held = self.posture_view(**{'burn-seat': {'held': True}})
         self.assertEqual(self.pick('mid', {}, held)['chosen_lane'], 'codex-personal')
 
     def test_unfed_capacity_counts_headroom_while_rows_wait_elsewhere(self):
-        lanes = {'codex-cmp': {'running': 1, 'target': 4, 'held': False}, 'codex-personal': {'running': 2, 'target': 2, 'held': False},
+        lanes = {'burn-seat': {'running': 1, 'target': 4, 'held': False}, 'codex-personal': {'running': 2, 'target': 2, 'held': False},
                  'devin': {'running': 0, 'target': 3, 'held': True}, 'claude': {'running': 0, 'target': 0, 'held': False}}
-        waiting = [('codex-personal', {'codex-cmp': ['missing_capability'], 'codex-personal': ['saturated']}),
-                   ('codex-personal', {}), (None, None), ('codex-cmp', {'codex-cmp': ['provider_backoff']})]
+        waiting = [('codex-personal', {'burn-seat': ['missing_capability'], 'codex-personal': ['saturated']}),
+                   ('codex-personal', {}), (None, None), ('burn-seat', {'burn-seat': ['provider_backoff']})]
         report = market.unfed_capacity(lanes, waiting)
         self.assertEqual((report['schema'], report['event'], report['waiting']), ('work-market.v1', 'unfed_capacity', 4))
-        self.assertEqual(report['unfed_lanes'], ['codex-cmp'])
+        self.assertEqual(report['unfed_lanes'], ['burn-seat'])
         self.assertEqual(report['unfed_slots'], 3)
-        cmp = report['lanes']['codex-cmp']
-        self.assertEqual((cmp['headroom'], cmp['waiting_elsewhere'], cmp['utilization']), (3, 3, 0.25))
-        self.assertEqual(cmp['blocked'], {'missing_capability': 1, 'deferred_after_selection': 1, 'not_evaluated': 1})
+        burn = report['lanes']['burn-seat']
+        self.assertEqual((burn['headroom'], burn['waiting_elsewhere'], burn['utilization']), (3, 3, 0.25))
+        self.assertEqual(burn['blocked'], {'missing_capability': 1, 'deferred_after_selection': 1, 'not_evaluated': 1})
         # Full, held and zero-target lanes are never unfed.
         for lane in ('codex-personal', 'devin', 'claude'):
             self.assertFalse(report['lanes'][lane]['unfed'])
         self.assertIsNone(report['lanes']['claude']['utilization'])
         stopped = market.unfed_capacity(lanes, waiting, 'admission_stopped')
-        self.assertEqual(stopped['lanes']['codex-cmp']['blocked'], {'admission_stopped': 3})
+        self.assertEqual(stopped['lanes']['burn-seat']['blocked'], {'admission_stopped': 3})
         self.assertEqual(market.unfed_capacity(lanes, [])['unfed_lanes'], [])
         self.assertNotIn('RQ-', json.dumps(report))
 
@@ -433,10 +435,11 @@ class MarketTick(unittest.TestCase):
             provenance = market.read_devin_allowance(home)['provenance']
             self.assertEqual(provenance, {k: v for k, v in expected.items() if k not in missing})
 
-    def fixture(self, targets=None):
+    def fixture(self, targets=None, overrides=None):
         slots = held_lanes()
         for lane, target in (targets or {'codex-personal': 1, 'claude': 1}).items():
-            slots[lane] = {'target': target, 'floor': 0, 'ceiling': target, 'hard_cap': target, 'last_change': int(1e15)}
+            slots[lane] = {'target': target, 'floor': 0, 'ceiling': target, 'hard_cap': target, 'last_change': int(1e15),
+                           **(overrides or {}).get(lane, {})}
         tmp = build(slots=slots); self.addCleanup(tmp.cleanup)
         home = Path(tmp.name).resolve(); launch_stubs(home)
         return home, home / '.ashlr-runs/queue'
@@ -634,17 +637,17 @@ class MarketTick(unittest.TestCase):
         return [json.loads(row) for row in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
 
     def test_idle_burnable_lane_claims_a_row_hinted_elsewhere_and_ledgers_why(self):
-        home, q = self.fixture({'codex-cmp': 1, 'codex-personal': 1})
+        home, q = self.fixture({'claude': 1, 'codex-personal': 1}, {'claude': {'posture': 'burn'}})
         self.add(home, 'RQ-HINTED', lane='codex-personal', preferred_lane='codex-personal')
         self.run_tick(home)
         self.assertTrue(dispatched(home, 'RQ-HINTED'))
         claim = next(r for r in self.jobs(home) if r['event'] == 'claim')
         self.assertEqual((claim['lane'], claim['lane_hint'], claim['lane_override'], claim['lane_hint_blocked_by']),
-                         ('codex-cmp', 'codex-personal', 'resource_fit', []))
+                         ('claude', 'codex-personal', 'resource_fit', []))
         self.assertEqual(self.routes(home)[0]['override']['reason'], 'resource_fit')
-        self.assertIn('FLEET_REBALANCE RQ-HINTED codex-personal->codex-cmp (shared market: resource_fit)',
+        self.assertIn('FLEET_REBALANCE RQ-HINTED codex-personal->claude (shared market: resource_fit)',
                       (home / '.ashlr-runs/dispatch-events.log').read_text())
-        self.assertEqual(json.loads((q / 'route-state.json').read_text())['RQ-HINTED']['pool'], 'codex-cmp')
+        self.assertEqual(json.loads((q / 'route-state.json').read_text())['RQ-HINTED']['pool'], 'claude')
 
     def test_claim_on_the_hinted_lane_carries_no_override(self):
         home, q = self.fixture({'claude': 1})
@@ -675,21 +678,21 @@ class MarketTick(unittest.TestCase):
         self.assertEqual(len(claimed), len(set(claimed)))
 
     def test_unfed_capacity_is_reported_with_the_blocking_reason(self):
-        home, q = self.fixture({'codex-cmp': 2, 'claude': 1})
+        home, q = self.fixture({'codex-personal': 2, 'claude': 1})
         self.add(home, 'RQ-NEEDS-CLAUDE-A', lane='claude', needs=['claude-cli'])
         self.add(home, 'RQ-NEEDS-CLAUDE-B', lane='claude', needs=['claude-cli'])
         self.run_tick(home)
         unfed = json.loads((q / 'status.json').read_text())['unfed_capacity']
-        self.assertEqual(unfed['unfed_lanes'], ['codex-cmp'])
-        self.assertEqual(unfed['lanes']['codex-cmp']['blocked'], {'missing_capability': 1})
-        self.assertEqual((unfed['lanes']['codex-cmp']['headroom'], unfed['lanes']['codex-cmp']['waiting_elsewhere']), (2, 1))
+        self.assertEqual(unfed['unfed_lanes'], ['codex-personal'])
+        self.assertEqual(unfed['lanes']['codex-personal']['blocked'], {'missing_capability': 1})
+        self.assertEqual((unfed['lanes']['codex-personal']['headroom'], unfed['lanes']['codex-personal']['waiting_elsewhere']), (2, 1))
         audit = [r for r in self.rows(home) if r['event'] == 'unfed_capacity']
         self.assertEqual(len(audit), 1)
         self.assertEqual(audit[0]['unfed_slots'], 1)
         self.assertNotIn('RQ-NEEDS', json.dumps(audit[0]))
 
     def test_data_class_and_tier_ceiling_bind_at_dispatch(self):
-        home, q = self.fixture({'codex-cmp': 2})
+        home, q = self.fixture({'codex-personal': 2})
         self.add(home, 'RQ-CONFIDENTIAL', data_class='confidential')
         self.add(home, 'RQ-INTERNAL', data_class='internal', max_tier='work')
         self.run_tick(home)

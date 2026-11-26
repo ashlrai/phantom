@@ -36,7 +36,7 @@ export function cmdResourcePersonalUsage(opts: { json: boolean; home?: string; r
     );
   }
   return printPersonalUsage(collectCodexSessionUsages({
-    env: { CODEX_HOME: personalHome, CODEX_HOME_ALT: personalHome },
+    env: { CODEX_HOME: process.env.CODEX_HOME, CODEX_HOME_ALT: personalHome },
     homeDir,
   }), opts.json, null);
 }

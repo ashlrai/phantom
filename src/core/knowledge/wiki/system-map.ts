@@ -58,12 +58,13 @@ async function saveSnapshot(file: string, snapshot: Snapshot): Promise<void> {
 const eligible = (file: string) => sourcePattern.test(file) && safeMapPath(file);
 const factsKey = (file: string, oid: string) => `${oid}:${path.posix.extname(file)}:${mapFactsKey(file)}`;
 
-async function refresh(repo: string): Promise<Refresh> {
+async function refresh(repo: string, revision?: string): Promise<Refresh> {
   const cacheFile = path.join(wikiRoot(), wikiKey(repo), 'system-map-v1.json');
   const previous = await readSnapshot(cacheFile);
   let requestedCommit: string | null = null;
   try {
-    const [prefix, commit] = (await mapGit(repo, ['rev-parse', '--show-prefix', '--verify', 'HEAD^{commit}'])).toString('utf8').split('\n');
+    if (revision && !objectId.test(revision)) throw new Error('Expected a commit ID.');
+    const [prefix, commit] = (await mapGit(repo, ['rev-parse', '--show-prefix', '--verify', (revision ?? 'HEAD') + '^{commit}'])).toString('utf8').split('\n');
     if (prefix !== '' || !commit || !objectId.test(commit)) throw new Error('Expected a committed repository root.');
     requestedCommit = commit;
     const update: Update = { mode: 'cold', blobsRead: 0, filesParsed: 0 };
@@ -111,7 +112,7 @@ async function refresh(repo: string): Promise<Refresh> {
     await mapBlobs(repo, [...needed.keys()], (oid, source) => {
       update.blobsRead++;
       for (const [key, file] of needed.get(oid)!) {
-        const facts = source === null ? { lines: 0, marks: [], imports: [], limited: true } : extractMapFacts(source, file);
+        const facts = source === null ? { lines: 0, marks: [], imports: [], packageImports: [], limited: true } : extractMapFacts(source, file);
         known.set(key, facts);
         if (source !== null) update.filesParsed++;
       }
@@ -273,4 +274,47 @@ export async function querySystemMap(repo: string, focus?: string) {
   const result = await pending;
   if ('snapshot' in result) return project(result.snapshot, result.update, focus);
   return { schema: 'phantom.wiki.map.v1', status: 'unavailable', ...result } as const;
+}
+
+const goalTerms = (text: string) => text.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().match(/[a-z0-9]{3,}/g) ?? [];
+
+export async function rankSystemMap(repo: string, revision: string, goal: string) {
+  const terms = new Set(goalTerms(goal.slice(0, 8192)).slice(0, 128));
+  if (!terms.size) return [];
+  const result = await refresh(repo, revision);
+  if (!('snapshot' in result)) return [];
+  const files = new Map(result.snapshot.files.flatMap(([file, , facts]) => facts?.lines ? [[file, facts] as const] : []));
+  const known = new Set(files.keys());
+  const incoming = new Map<string, number>();
+  for (const [file, facts] of files) {
+    const imports = new Set(facts.imports.map(([specifier]) => resolveSpecifier(file, specifier, known)));
+    for (const target of imports) if (target && target !== file) incoming.set(target, (incoming.get(target) ?? 0) + 1);
+  }
+  const hits = (label: string) => [...new Set(goalTerms(label))].filter(term => terms.has(term)).length;
+  return [...files.entries()].flatMap(([file, facts]) => {
+    const pathHits = hits(file);
+    const mark = [...mapMarks(file, facts)].map(node => ({ ...node, score: hits(node.label) }))
+      .sort((a, b) => b.score - a.score || a.line - b.line)[0];
+    const direct = goal.includes(file) ? 20 : 0;
+    const relevance = 2 * pathHits + 3 * (mark?.score ?? 0) + direct;
+    return relevance ? [{
+      file, nodeId: mark?.score ? mark.id : `file:${file}`, line: mark?.score ? mark.line : 1,
+      score: relevance + Math.log2(1 + (incoming.get(file) ?? 0)),
+    }] : [];
+  }).sort((a, b) => b.score - a.score || a.file.localeCompare(b.file)).slice(0, 12);
+}
+
+export async function systemMapPackageUses(repo: string) {
+  const result = await refresh(repo);
+  if (!('snapshot' in result)) return null;
+  const uses = new Map<string, { file: string; line: number }>();
+  for (const [file, , facts] of result.snapshot.files) {
+    if (!facts) continue;
+    for (const [name, line] of facts.packageImports) {
+      if (!uses.has(name) && checkedCitation({ file, line }, facts.lines)) {
+        uses.set(name, { file, line });
+      }
+    }
+  }
+  return { commit: result.snapshot.commit, update: result.update.mode, uses };
 }

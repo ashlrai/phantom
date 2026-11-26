@@ -398,7 +398,10 @@ exit 1) or `error` (operational failure, exit 1). Without `--json` the same
 failure is `phm org: <message>` on stderr.
 
 The leader reads `phm org plan --json` each planning pass and applies it within each
-member's contributed limits. Private data, mail and messages are never pooled.
+member's contributed limits. Known spare slots from `phm resources plan` cap
+new proposals across all members on the same lane. An unknown target does
+not grant extra capacity or change an existing contributed budget. Private
+data, mail and messages are never pooled.
 
 ### Assign responsibilities without expanding authority
 

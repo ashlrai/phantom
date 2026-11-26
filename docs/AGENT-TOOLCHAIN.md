@@ -116,7 +116,7 @@ No credential, auth file, TCC grant or lane configuration was changed.
 
 | Execution path / lanes | MCP servers supplied by this path | Gaps for task assignment |
 | --- | --- | --- |
-| Mac `codex-cmp`, `codex-personal` | `context7`, guarded `fetch` through per-invocation `-c` flags; pinned lane MCP files checked | No companion injection from the repository `.mcp.json`. Personal also uses a pinned, deny-by-default apps profile; an app being installed does not grant its tools. |
+| Mac `codex-personal` | `context7`, guarded `fetch` through per-invocation `-c` flags; pinned lane MCP files checked | No companion injection from the repository `.mcp.json`. Personal also uses a pinned, deny-by-default apps profile; an app being installed does not grant its tools. |
 | Mac `codex-local` | Same `context7` and guarded `fetch` flags | No companion injection; model inference remains loopback-only and prompt scope stays fast. Remote documentation MCP endpoints are distinct from model inference. |
 | Mac `claude`, `claude-api`, `zai` | Pinned lane `mcp.json` via `--strict-mcp-config`, intended shared `context7` and guarded `fetch` set | Strict configuration excludes the repository's six companions. Do not assume the broader interactive Claude tool set. |
 | Mac `gemini`, `agy`, `grok`, `cursor` | Lane-specific, hash-checked system settings, `mcp_config.json`, `config.toml`, or `mcp.json`; launcher comments identify the shared lane set | Actual contents and tool health are unverified here. Gemini comments conflict about MCP being disabled versus supplied in pinned settings; resolve with host-owned evidence before assigning a required tool. |
