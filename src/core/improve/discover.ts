@@ -1025,6 +1025,30 @@
  *     are stated as lower bounds, and only the fleet's own repository
  *     inherits the items since the journal describes this install's
  *     routing;
+ *   - the community feedback pipeline's recurring adverse submission
+ *     classes: the {at, job, source, ref, kind} admission rows
+ *     recordFeedbackQueued appends to feedback/feedback-queued.jsonl
+ *     for every RQ-PHX-FB drop job `phm fleet feedback scan --apply`
+ *     mints from ingested GitHub issues, PR comments, comms receipts,
+ *     CI failures, master reverts and self-reports, folded by
+ *     feedbackDigest — the same classification `phm fleet feedback
+ *     digest` prints — against metrics/jobs.jsonl into per-submission
+ *     states (feedbackSubmissionsBacklogItems below). Until now the
+ *     digest was a report someone had to run and read, so a community
+ *     report whose job failed, was gate-declined, gave up or closed
+ *     unmerged, and a report admitted but unresolved past the queue
+ *     grace, produced no work — the ARC intake consumed community
+ *     contributions without learning which ones the fleet could not
+ *     resolve. A cell emits only at three distinct submissions across
+ *     two UTC days inside the 7-day window; 'stalled' is the only
+ *     absence claim and requires the submission's own last-activity
+ *     stamp aged past the grace, younger queued rows and in-flight
+ *     states are context, the digest's gh-verified 'shipped' step is
+ *     honestly skipped (empty shipped set — 'merged' stays 'merged',
+ *     non-adverse either way), a withheld jobs ledger suppresses the
+ *     source entirely, truncated tails are stated as lower bounds,
+ *     and only the fleet's own repository inherits the items since
+ *     the journals describe this install's intake machinery;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -1133,6 +1157,7 @@ import { landingsBacklogItems } from './landings-backlog.js';
 import { gitContentionBacklogItems } from './git-contention-backlog.js';
 import { jobReissueBacklogItems } from './job-reissue-backlog.js';
 import { shadowRouteBacklogItems } from './shadow-route-backlog.js';
+import { feedbackSubmissionsBacklogItems } from './feedback-submissions-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2471,6 +2496,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // as lower bounds, and only the fleet's own repository inherits the
   // items since the journal describes this install's routing.
   items.push(...await shadowRouteBacklogItems({ repo }));
+
+  // Community feedback submissions: the admission rows
+  // recordFeedbackQueued appends to feedback/feedback-queued.jsonl for
+  // every RQ-PHX-FB drop job the feedback scan mints, folded by
+  // feedbackDigest — the same classification `phm fleet feedback
+  // digest` prints — against the jobs-ledger tail into per-submission
+  // states. Until now the digest was a manual report, so community
+  // reports whose jobs ended action-required, or that sat queued past
+  // the grace, never became work. A class emits only at three distinct
+  // submissions across two UTC days inside the window; 'stalled'
+  // requires the submission's own last-activity stamp aged past the
+  // grace, the gh-verified 'shipped' step is honestly skipped, a
+  // withheld jobs ledger suppresses the source, truncated tails are
+  // stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the journals describe this install's
+  // intake machinery.
+  items.push(...await feedbackSubmissionsBacklogItems({ repo }));
   return { items, errors };
 }
 
