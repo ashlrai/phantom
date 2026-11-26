@@ -103,6 +103,26 @@ describe('readStarved', () => {
 
 describe('lanes read: starved object', () => {
   it.each([
+    { effectiveTarget: 8, launchTarget: 2 },
+    { effectiveTarget: 1, launchTarget: 1 },
+    { effectiveTarget: 0, launchTarget: 0 },
+  ])('uses the configured target and effective ceiling ($effectiveTarget)', async ({ effectiveTarget, launchTarget }) => {
+    const root = await scratch();
+    const queueDir = join(root, 'queue');
+    await mkdir(queueDir);
+    await writeFile(join(queueDir, 'ready.tsv'), '');
+    await writeFile(join(queueDir, 'status.json'), JSON.stringify({
+      last_tick: new Date(NOW).toISOString(),
+      lanes: { claude: { running: 2, target: 2, effective_target: effectiveTarget, queued: 0, held: false } },
+    }));
+    const snap = await getFleetLaneSnapshot({
+      queueDir, budgetsDir: join(root, 'budgets'), usageLogPaths: [], now: () => new Date(NOW), starvedStateDir: root,
+    });
+    expect(snap.lanes.find(lane => lane.lane === 'claude')).toMatchObject({ slotTarget: launchTarget, health: { state: 'ok' } });
+    expect(snap.starved.lanes.claude).toMatchObject({ free_slots: 0, ready_rows: 0, starved: false });
+  });
+
+  it.each([
     { label: 'parked work', readyTsv: 'RQ-PARKED\tphantom\tPARKED-DEP.claude\twork\tprompts/job.md\n', queued: 1, ready: 0 },
     { label: 'ready work ahead of the dispatcher tick', readyTsv: 'RQ-READY\tphantom\tclaude\twork\tprompts/job.md\n', queued: 0, ready: 1 },
     { label: 'missing evidence', readyTsv: null, queued: 0, ready: null },

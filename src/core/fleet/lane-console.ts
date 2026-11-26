@@ -75,6 +75,7 @@ import { readPoolBudgets, poolBudgetDirectory } from './pool-budget-store.js';
 import type { PoolBudgetSnapshot, PoolBudgetView } from './pool-budget.js';
 import { readLaneTargets } from './runs-lane-targets.js';
 import { laneHealthFor, type LaneHealth } from './lane-badge.js';
+import { laneLaunchTarget } from './lane-launch-target.js';
 import { parseStarvedState, readStarved, STARVED_STATE_FILE, type StarvedRead } from './lane-starved.js';
 import { readySpecCell, resolveReadyMarketRow } from './unfed-market.js';
 import { readLedgerTail } from '../router/outcomes.js';
@@ -1024,10 +1025,12 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     const dispatchCredit: FleetLaneCreditView = { ...UNKNOWN_CREDIT, resetAt, observedAt,
       ...(remainingPct === null ? {} : { remainingPct, state: 'observed', label: `${remainingPct}% weekly`, source: 'dispatcher' }) };
     const startsInWindow = sawLaunch ? startJobs.get(lane)?.size ?? 0 : null;
+    const target = count(dispatch?.target) ?? row?.target ?? null;
+    const effectiveTarget = count(dispatch?.effective_target);
     // Placeholder verdict; replaced once the starved read below has run.
     return { lane, queueDepth, liveJobs, mergesPerHour, startsInWindow, health: { state: 'ok' as const, reason: 'ok', number: null },
       credit: credit.state === 'unknown' && (observedAt !== null || credit.observedAt === null) ? dispatchCredit : credit,
-      slotTarget: count(dispatch?.effective_target) ?? count(dispatch?.target) ?? row?.target ?? null, hold,
+      slotTarget: target === null ? effectiveTarget : laneLaunchTarget(target, effectiveTarget), hold,
       ...(heldByLane.has(lane) ? { held: heldByLane.get(lane)! } : {}) };
   });
 

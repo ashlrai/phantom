@@ -1035,7 +1035,9 @@ may place on any lane. Open supply keeps a free lane from reading as starved.
 Both ready counts come from a healthy `ready.tsv` read. A missing or degraded
 read leaves both counts null and suppresses the starvation verdict. The lane's
 separate queue depth can include parked work from dispatcher totals. A lane
-must be unheld and below its slot target to be starved. The desktop lane
+must be unheld and below its slot target to be starved. When both the configured
+target and the dispatcher's `effective_target` are known, the lane view uses the
+lower value. The desktop lane
 card (Ops, Lanes on this Mac) shows the same line. The Leader posts one chat notice
 when a lane has been starved for 30 minutes, at most once per lane every 6 hours,
 and remembers first sightings in `~/.ashlr/vision/leader/starved-lanes.json`. The
