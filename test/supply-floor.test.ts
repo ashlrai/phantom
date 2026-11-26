@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { readSupplyRank, runSupplyFloor } from '../src/core/fleet/supply-floor.js';
+import type { RunAutofillOptions } from '../src/core/fleet/autofill-run.js';
 import { planAutofill } from '../src/core/fleet/queue-autofill.js';
 import { readGapQueueInputs } from '../src/core/fleet/job-gaps.js';
 import { gapLaneRoom } from '../src/core/fleet/gap-lane-room.js';
@@ -30,6 +31,21 @@ it('feeds the router floor, counts pending rows, and leaves dry runs unchanged',
   expect(await readFile(join(root, 'queue/planner-candidates.json'), 'utf8')).toBe('declared');
   const over = new Map([['claude', { verdict: 'over' } as PaceVerdict]]);
   expect(await runSupplyFloor({ ...options, readPace: async () => over }, { lanes: [{ ...lane, lane: 'claude', queued: 0 }] })).toEqual([]);
+});
+
+it('counts pending router rows by the market lane hint, not only pool=', async () => {
+  await writeFile(join(root, 'queue/router-queue.md'), [
+    '- READY RQ-HINTEDQ8 (P1, pool=any, tier=work, repo=phantom, preferred_lane=claude): hinted',
+    '- READY RQ-LANEQ8 (P1, lane=claude, pool=codex-personal): lane attr',
+    '- READY RQ-OTHERQ8 (P1, preferred_lane=codex-personal, pool=claude): elsewhere',
+    '- READY RQ-OPENQ8 (P1): open',
+  ].join('\n') + '\n');
+  let seen: number | null | undefined;
+  const options = { runsDir: root, root, apply: false, now: () => now, entries: [], readLanes: async () => ({ lanes: [lane] }),
+    readOff: async () => false, readPace: async () => new Map<string, PaceVerdict>(),
+    fill: async (o: RunAutofillOptions) => { seen = o.counts.queued; return planAutofill({ ...lane, min: 8, existing: [], proposed: { proposals: [], droppedGoals: [] }, first: [] }); } };
+  await runSupplyFloor(options, await options.readLanes());
+  expect(seen).toBe(4);
 });
 
 it('ranks measured PR yield, stops weak families, respects stops and retirement, and excludes old launches', async () => {
