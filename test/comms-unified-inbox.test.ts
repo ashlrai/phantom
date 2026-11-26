@@ -12,7 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createDraft } from '../src/core/cos/drafts.js';
-import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/comms-agent/store.js';
+import { appendDraft as appendCommsDraft, writeInbox as writeCommsInbox, type CommsDraft } from '../src/core/comms-agent/store.js';
+import type { InboxMessage } from '../src/core/comms-agent/triage.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
@@ -4031,5 +4032,71 @@ describe('readUnifiedInbox coordination', () => {
     const byKind = await readCoord(pending, { filter: { kind: 'coordination-return-unposted' } });
     expect(byKind.items.map(i => i.id)).toEqual(['coordination:return-claim-1']);
     expect(byKind.sources.coordination).toEqual({ state: 'healthy', pending: 2 });
+  });
+});
+
+describe('readUnifiedInbox comms-agent inbox', () => {
+  const commsMessage = (over: Partial<InboxMessage> = {}): InboxMessage => ({
+    id: 'm-1', transport: 'email', from: 'person@example.com',
+    subject: 'fake subject', body: 'fake body must not appear', ...over,
+  });
+
+  it('lists pending inbox mail as info items with transport, subject and labels — never the sender', async () => {
+    await writeCommsInbox(runsDir, [
+      commsMessage(),
+      commsMessage({ id: 'm-2', transport: 'imessage', from: '+1555fake', subject: '', labels: ['bulk', 'newsletter'] }),
+    ]);
+    const inbox = await read();
+    expect(inbox.sources['comms-inbox']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'comms-inbox');
+    expect(items).toHaveLength(2);
+    const first = items.find(i => i.id === 'comms-inbox:m-1')!;
+    expect(first).toMatchObject({
+      kind: 'comms-inbox-message', severity: 'info', blocking: false,
+      title: 'Comms inbox email: fake subject',
+      detail: null, since: null, expiresAt: null,
+      act: ['phm comms-agent run', 'phm comms-agent status'],
+    });
+    const second = items.find(i => i.id === 'comms-inbox:m-2')!;
+    expect(second.title).toBe('Comms inbox imessage: (no subject)');
+    expect(second.detail).toBe('labels bulk, newsletter');
+    // The sender is a handle and the body is mail content: neither reaches the item.
+    expect(JSON.stringify(items)).not.toContain('person@example.com');
+    expect(JSON.stringify(items)).not.toContain('+1555fake');
+    expect(JSON.stringify(items)).not.toContain('must not appear');
+  });
+
+  it('reports missing, empty and refused inbox reads honestly', async () => {
+    const missing = await read();
+    expect(missing.sources['comms-inbox']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'comms-inbox')).toHaveLength(0);
+
+    await writeCommsInbox(runsDir, []);
+    const empty = await read();
+    expect(empty.sources['comms-inbox']).toEqual({ state: 'healthy', pending: 0 });
+
+    const throwing = await read({
+      readCommsInbox: async () => { throw new Error('inbox boom'); },
+    });
+    expect(throwing.sources['comms-inbox']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'comms-inbox')).toHaveLength(0);
+  });
+
+  it('reports unavailable when the inbox file is not a Comms inbox document', async () => {
+    mkdirSync(join(runsDir, 'comms-agent'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(runsDir, 'comms-agent', 'inbox.json'), '{ not json', { mode: 0o600 });
+    const inbox = await read();
+    expect(inbox.sources['comms-inbox']).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    await writeCommsInbox(runsDir, [commsMessage()]);
+    const bySource = await read({ filter: { source: 'comms-inbox' } });
+    expect(bySource.items.map(i => i.id)).toEqual(['comms-inbox:m-1']);
+    const byKind = await read({ filter: { kind: 'comms-inbox-message' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['comms-inbox:m-1']);
+    expect(byKind.sources['comms-inbox']).toEqual({ state: 'healthy', pending: 1 });
+    const other = await read({ filter: { kind: 'draft-approval' } });
+    expect(other.items.filter(i => i.source === 'comms-inbox')).toHaveLength(0);
   });
 });

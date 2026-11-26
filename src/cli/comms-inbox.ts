@@ -24,8 +24,9 @@ conversation threads waiting on a reply or blocked, pending wake hints grouped b
 results, comms
 questions/approvals awaiting an answer, inbound .eml files awaiting the email
 drop pass, .reply.eml artifacts stuck in the
-email outbox, pending team approvals, inbox proposals awaiting review and
-Slack requests whose bus append failed —
+email outbox, pending team approvals, inbox proposals awaiting review,
+Slack requests whose bus append failed and Comms-agent inbox mail awaiting
+triage —
 one prioritized list whose
 items carry the deep-link commands that act on them. The bare view's --source keeps
 one source's items, --kind one item kind — the item's own classification,
