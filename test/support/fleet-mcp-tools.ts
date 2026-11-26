@@ -100,5 +100,6 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_self_tick_last',
   'fleet_recheck',
   'fleet_recheck_history',
+  'fleet_desktop_update_status',
   'fleet_bridge_check',
 ]);

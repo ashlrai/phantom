@@ -142,6 +142,41 @@ boundary. Unavailable or unparseable readings store null usage and retry in
 five minutes. Unconfigured rows, including custom resources and Workspace,
 are preserved; don't use a separate writer for the same configured keys.
 
+### Banked ChatGPT and Codex resets
+
+The personal App Server reader separates the 300-minute and 10,080-minute
+windows using the provider's duration, not their position or which one is fuller.
+The weekly row can also use a fresh non-estimated
+`queue/budget-overrides.json` weekly reading from the personal App Server
+reader. Five-hour usage is not inferred from the weekly window.
+
+App Server rate limits do not establish ownership or expiry of banked resets.
+Record the count and each separately expiring grant as
+`readings["codex-personal-resets"]` in the private `resource-evidence.v1` file.
+For example, a ChatGPT Settings → Usage observation at 23:45 ET on
+November 25 displayed 55% weekly quota left and two full resets (separate
+from the 0 reloadable credits). The reset evidence for that example is:
+
+```json
+{
+  "observed_at": "2026-11-26T04:45:00Z",
+  "count": 2,
+  "grants": [
+    {"kind":"full","count":1,"expires_at":"2026-12-01T22:31:00Z","source":"chatgpt-settings-usage"},
+    {"kind":"full","count":1,"expires_at":"2026-12-12T22:26:00Z","source":"chatgpt-settings-usage"}
+  ]
+}
+```
+
+A grant kind is `full`, `5h` or `weekly`. Do not reuse example values
+or refresh a timestamp without a new observation. Old evidence is unknown,
+not zero. `phm usage resource-live --json` reports the bank and at most
+one `use-reset-now` proposal. It requires a fresh ready count for the
+personal Codex lane, at least 90% used, and measured burn in that same
+window indicating the grant will expire before projected exhaustion, which
+must itself precede the natural reset. It never issues a provider reset,
+and the assistant setting does not replace the required explicit request.
+
 ### Custom resources
 
 Add or remove entries in `$ASHLR_HOME/custom-resources.json` (default

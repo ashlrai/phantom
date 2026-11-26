@@ -228,7 +228,19 @@ checks passing. The 3.25.2 release fixes those predicates; see the
 The paired release manifest binds one macOS arm64 app archive to its original qualified npm archive. An existing 3.25.1 app has an inert updater and requires a qualified manual installation of 3.25.3 before it can use this flow. The compatibility bridge reads the closed legacy and canonical Phantom profiles; it does not rename the repository or package itself. Feed publication alone does not enable automatic updates or approve changed authority.
 
 In the updated desktop, the top bar shows native update status. Expand it to
-turn **Automatic updates** on or off, see verified download progress, or refresh
+see the details. Agents and operators can read the same last observation with
+`phm desktop update status --json` or the read-only `fleet_desktop_update_status`
+MCP tool. Older apps that do not publish this observation report it as
+unavailable; the read does not start an update. A staged update waiting for
+Stop or idle work is rechecked every 30 seconds.
+
+For a managed install, run `~/.local/bin/phm authority resident start` from
+the managed CLI. That command still requires authority admission and owner
+confirmation. It registers the verified managed release rather than an
+alternate CLI. `phm authority resident status --json` reports registration
+drift and observed Homebrew global copies without modifying them.
+
+The update panel can turn **Automatic updates** on or off, see verified download progress, or refresh
 status. Preparing a download is separate from installing it. After Stop is
 engaged and local work is idle, the updater verifies the handoff and quits and
 relaunches Phantom without an owner click. Unknown activity holds the update

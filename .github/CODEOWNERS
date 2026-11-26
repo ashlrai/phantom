@@ -375,7 +375,9 @@
 /test/desktop-artifact-installer.test.ts @masonwyatt23
 /test/desktop-consumer-install.test.ts @masonwyatt23
 /test/desktop-consumer-upgrade.test.ts @masonwyatt23
+/test/desktop-managed-resident-runtime.test.ts @masonwyatt23
 /test/desktop-metadata-launch-trust.test.ts @masonwyatt23
+/test/desktop-native-update-status.test.ts @masonwyatt23
 /test/desktop-operator-screenshot-mcp.test.ts @masonwyatt23
 /test/desktop-operator.test.ts @masonwyatt23
 /test/desktop-qualified-update.test.ts @masonwyatt23
