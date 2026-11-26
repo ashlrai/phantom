@@ -425,7 +425,9 @@ decision. The dispatcher's `invalid_requirements` receipt records an unrouted
 decision with no `preferred_lane`, because validation failed before the hint
 could be read. It can supersede an earlier decision for the same job. Other
 rows with missing or malformed lane fields are skipped before selecting the
-latest decision.
+latest decision. The dispatcher stamps decisions with the tick timestamp.
+When timestamps match, the last valid decision appended for the job wins
+across overrides, rejections and decision outcomes.
 Decision and claim windows include both endpoints and exclude events
 timestamped after the report time.
 The same collapsed decisions also fold their
