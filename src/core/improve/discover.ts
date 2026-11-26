@@ -1049,6 +1049,24 @@
  *     source entirely, truncated tails are stated as lower bounds,
  *     and only the fleet's own repository inherits the items since
  *     the journals describe this install's intake machinery;
+ *   - the outside-PR outcome journal's recurring reverted merges: the
+ *     fleet.outside-pr-outcome.v1 rows syncOutsidePrOutcomes
+ *     (src/core/fleet/outside-outcome-sync.ts) appends to
+ *     metrics/outside-pr-outcomes.jsonl on the cloud scheduler's
+ *     hourly improve tick — merged non-fleet PRs per fleet repo joined
+ *     to the standing revert set, the only outcome evidence community
+ *     contributions ever produce because the fleet's own ledgers see
+ *     only codex-bridge/* work (outsidePrBacklogItems below). Until now
+ *     even the journal had no reader: a repo whose outside merges keep
+ *     being reverted was visible only in `phm fleet outside-outcomes`,
+ *     a report someone had to run and read. A repo cell emits only at
+ *     three reverted merges inside the 30-day window; 'unknown'
+ *     verdicts (an unreadable revert ledger) count as context and
+ *     never toward the bar, the newest scan row's degraded reads are
+ *     quoted as coverage, truncated tails are stated as lower bounds,
+ *     and — unlike the sibling machinery feeds — items self-target
+ *     each outside PR's own repository since the fix lives where the
+ *     merges land;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -1158,6 +1176,7 @@ import { gitContentionBacklogItems } from './git-contention-backlog.js';
 import { jobReissueBacklogItems } from './job-reissue-backlog.js';
 import { shadowRouteBacklogItems } from './shadow-route-backlog.js';
 import { feedbackSubmissionsBacklogItems } from './feedback-submissions-backlog.js';
+import { outsidePrBacklogItems } from './outside-pr-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2513,6 +2532,20 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the journals describe this install's
   // intake machinery.
   items.push(...await feedbackSubmissionsBacklogItems({ repo }));
+
+  // Outside-PR outcome journal: the fleet.outside-pr-outcome.v1 rows
+  // syncOutsidePrOutcomes appends to metrics/outside-pr-outcomes.jsonl
+  // on the cloud scheduler's hourly improve tick — merged non-fleet PRs
+  // per fleet repo joined to the standing revert set, the only outcome
+  // evidence community contributions ever produce since the fleet's own
+  // ledgers see only codex-bridge/* work. Until now the journal had no
+  // reader, so a repo whose outside merges keep being reverted never
+  // became work. A repo cell emits only at the recurring bar of
+  // reverted merges inside the window ('unknown' verdicts never count),
+  // degraded scan coverage is quoted, truncated tails are stated as
+  // lower bounds, and items self-target the outside PRs' own
+  // repository — the fix lives where the merges land.
+  items.push(...await outsidePrBacklogItems());
   return { items, errors };
 }
 

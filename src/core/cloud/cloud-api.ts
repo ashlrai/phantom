@@ -624,6 +624,17 @@ export function startCloudScheduler(env: NodeJS.ProcessEnv = process.env, deps: 
   const improve = deps.improve ?? (async () => {
     const held = await unattendedHold();
     if (held) { try { log(`cloud improve skipped: ${held}`); } catch { /* never throws */ } return null; }
+    // Journal merged outside-PR outcomes — community contributions the
+    // fleet's own ledgers never see — into
+    // metrics/outside-pr-outcomes.jsonl BEFORE discovery, so this same
+    // tick's autoDiscover can fold recurring reverts into backlog items.
+    // Best-effort like the syncs below; a failure never blocks discovery
+    // and an unchanged pass appends only its scan receipt.
+    try {
+      const { syncOutsidePrOutcomes } = await import('../fleet/outside-outcome-sync.js');
+      const synced = await syncOutsidePrOutcomes();
+      if (synced.appended > 0) try { log(`cloud improve: recorded ${synced.appended} outside-PR outcome(s)`) } catch { /* never throws */ }
+    } catch { /* never throws */ }
     const { autoDiscover } = await import('../improve/discover.js');
     const found = await autoDiscover();
     if (found.added) try { log(`cloud backlog: ${found.added} new item(s) discovered`); } catch { /* never throws */ }
