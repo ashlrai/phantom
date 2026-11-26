@@ -268,7 +268,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         const digest = need(flags, '--task-sha256');
         if (!/^sha256:[0-9a-f]{64}$/.test(digest)) {
           throw new UsageError('bad-task-sha256', 'Invalid embedded node task: --task-sha256 must be sha256: followed by 64 lowercase hex characters.',
-            'Digest the exact --task-part text, for example: printf %s "$TASK" | shasum -a 256. Run: phm node --help');
+            'Digest the exact --task-part text — sha256sum on Linux or shasum -a 256 on macOS — for example: printf %s "$TASK" | sha256sum. Run: phm node --help');
         }
         const sha256 = digest.slice(7);
         if (createHash('sha256').update(text, 'utf8').digest('hex') !== sha256) {
