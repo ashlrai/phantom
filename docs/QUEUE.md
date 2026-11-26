@@ -1237,7 +1237,7 @@ Three actions change one queued job. Each takes `--dry-run`, which prints the
 change and writes nothing, and `--json` (schema `queue.action.v1`):
 
 - `phm queue top <id>` moves the job to the front.
-- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused.
+- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused. The row's lane column and its requirements cell's `preferred_lane` move together — the market prefers the spec hint, so a column-only rewrite would leave the job on its old lane.
 - `phm queue drop <id>` takes it out. The row is copied to `queue/dropped.tsv` and its router line is marked `DROPPED`.
 
 Every write holds `queue/ready.lock`, edits a fresh read of `queue/ready.tsv` and
