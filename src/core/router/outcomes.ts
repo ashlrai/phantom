@@ -1052,9 +1052,9 @@ export async function readLedgerFile(path: string, limit = ROUTER_OUTCOME_LEDGER
 /**
  * Bounded read of the newest `maxBytes` of one regular file, same symlink and
  * file-type refusals as readLedgerFile. When the file exceeds the bound the
- * first (cut) line is dropped so every returned line is whole; a window with no
- * newline at all yields empty text. `truncated` is true exactly when older
- * bytes were not read.
+ * byte before the window distinguishes a complete first line from a cut
+ * line. Only the cut prefix is dropped. `truncated` signals older bytes
+ * outside the returned window.
  */
 export async function readLedgerTail(path: string, maxBytes = ROUTER_OUTCOME_LEDGER_LIMIT): Promise<LedgerTailRead> {
   const opened = await openLedger(path);
@@ -1064,20 +1064,17 @@ export async function readLedgerTail(path: string, maxBytes = ROUTER_OUTCOME_LED
     const stat = await handle.stat();
     if (!stat.isFile()) return { state: 'not-file' };
     const truncated = stat.size > maxBytes;
-    const start = truncated ? stat.size - maxBytes : 0;
+    const start = truncated ? stat.size - maxBytes - 1 : 0;
     const length = stat.size - start;
     const bytes = Buffer.alloc(length);
     let offset = 0;
     while (offset < length) {
       const { bytesRead } = await handle.read(bytes, offset, length - offset, start + offset);
-      if (!bytesRead) break;
+      if (!bytesRead) return { state: 'unreadable' };
       offset += bytesRead;
     }
-    let text = bytes.subarray(0, offset).toString('utf8');
-    if (truncated) {
-      const newline = text.indexOf('\n');
-      text = newline < 0 ? '' : text.slice(newline + 1);
-    }
+    const newline = truncated ? bytes.indexOf(0x0a) : -1;
+    const text = truncated && newline < 0 ? '' : bytes.subarray(newline + 1).toString('utf8');
     return { state: 'read', text, truncated };
   } catch {
     return { state: 'unreadable' };
