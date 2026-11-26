@@ -140,8 +140,13 @@ export function parseUsageHistory(raw: unknown, nowMs: number): UsageReading[] {
   return prune(((raw as { rows: unknown[] }).rows).filter(validRow).map(row), nowMs);
 }
 
+function inHistoryWindow(reading: UsageReading, nowMs: number): boolean {
+  const observedMs = ms(reading.observed_at);
+  return observedMs <= nowMs && observedMs > nowMs - USAGE_HISTORY_MAX_AGE_MS;
+}
+
 function prune(rows: UsageReading[], nowMs: number): UsageReading[] {
-  return rows.filter(r => ms(r.observed_at) <= nowMs && ms(r.observed_at) > nowMs - USAGE_HISTORY_MAX_AGE_MS)
+  return rows.filter(r => inHistoryWindow(r, nowMs))
     .sort((a, b) => ms(a.observed_at) - ms(b.observed_at)).slice(-USAGE_HISTORY_MAX_ROWS);
 }
 
@@ -153,7 +158,7 @@ export function appendUsageReadings(rows: readonly UsageReading[], readings: rea
   const next = prune([...rows], nowMs);
   let changed = next.length !== rows.length;
   for (const reading of readings) {
-    if (!validRow(reading) || ms(reading.observed_at) > nowMs || ms(reading.observed_at) <= nowMs - USAGE_HISTORY_MAX_AGE_MS) continue;
+    if (!validRow(reading) || !inHistoryWindow(reading, nowMs)) continue;
     const last = lastFor(next, reading.pool);
     if (last && (ms(reading.observed_at) <= ms(last.observed_at)
       || (last.used_pct === reading.used_pct && last.reset_at === reading.reset_at))) continue;
@@ -280,8 +285,9 @@ export function projectUsageHistory(rows: readonly UsageReading[], nowMs: number
   const all = appendUsageReadings(rows, current, nowMs).rows;
   // Storage dedupes an unchanged reading; show it as the tail point so a flat run reaches its real reading time.
   for (const reading of current) {
+    if (!validRow(reading) || !inHistoryWindow(reading, nowMs)) continue;
     const last = lastFor(all, reading.pool);
-    if (last && ms(reading.observed_at) > ms(last.observed_at) && validRow(reading)) all.push(row(reading));
+    if (last && ms(reading.observed_at) > ms(last.observed_at)) all.push(row(reading));
   }
   const pools = [...new Set(all.map(r => r.pool))].sort();
   return pools.map(pool => poolUsageSeries(pool, all, nowMs));

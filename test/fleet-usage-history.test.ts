@@ -106,6 +106,14 @@ describe('pool series', () => {
     // 30% used where the line expects 57%: behind, which a stale tail would hide.
     expect(s!.pace).toBe('behind');
   });
+
+  it('excludes future current readings from the live overlay and reset history', () => {
+    const history = [read(20, 10), read(10, 30)];
+    const current = [read(0, 30)];
+    const future = [read(-1, 5, iso(NOW + 7 * D)), read(-1, 99, RESET, 'codex-personal')];
+    expect(projectUsageHistory(history, NOW, [...current, ...future]))
+      .toEqual(projectUsageHistory(history, NOW, current));
+  });
 });
 
 describe('ledger recording, CLI and file', () => {
