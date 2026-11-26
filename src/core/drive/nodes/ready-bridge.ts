@@ -12,12 +12,13 @@
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, constants, existsSync, readFileSync, readdirSync, renameSync, realpathSync, unlinkSync, writeFileSync, writeSync, openSync, fstatSync, readSync } from 'node:fs';
+import { closeSync, constants, existsSync, readFileSync, readdirSync, renameSync, realpathSync, statSync, unlinkSync, writeFileSync, writeSync, openSync, fstatSync, readSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { NODE_TASK_LIMIT, validNodeTask, nodeTaskArgs, type EmbeddedNodeTask } from './task.js';
 import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
 import { validCap } from './state.js';
 import { scrubSecrets } from '../../util/scrub.js';
+import { MARKET_LANE_ID, readyEnvelopeSpec, resolveReadyMarketRow } from '../../fleet/unfed-market.js';
 
 export const NODE_BRIDGE_SCHEMA = 'phantom.node-bridge.v1';
 /** dispatchd keeps a lease only when its owner starts with RQ-BATCH- and has a manifest. */
@@ -46,6 +47,8 @@ const SPEC_KEYS = new Set(['preferred_lane', 'needs', 'min_tier', 'max_tier', 'm
 /** Bounds measured on this host's lanes; a remote node publishes no tier or cost evidence. */
 const UNVERIFIABLE = ['min_tier', 'max_tier', 'max_cost_class'];
 const CLAIM_MARKERS = ['batched', 'dispatched', 'reaping', 'line'];
+/** router-queue.md is append-mostly Markdown history; same bound as the unfed reader. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 export interface NodeBridgeHost { runsRoot: string; wtRoot: string }
 export interface ReadyRow { job: string; lane: string; line: string; spec: Record<string, unknown> | null; invalid: string | null }
@@ -95,7 +98,7 @@ export function remoteLaneCap(lane: string): string | null {
   return null;
 }
 
-export function parseReadyRow(text: string): ReadyRow | null {
+export function parseReadyRow(text: string, routerQueue?: string | null): ReadyRow | null {
   const line = text.replace(/\r$/, '');
   if (!line.trim() || line.startsWith('#')) return null;
   const f = line.split('\t');
@@ -115,6 +118,23 @@ export function parseReadyRow(text: string): ReadyRow | null {
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).some(k => !SPEC_KEYS.has(k))) throw new Error('spec');
       spec = parsed as Record<string, unknown>;
     } catch { return { job, lane: f[2]!, line, spec: null, invalid: 'invalid_requirements' }; }
+  } else {
+    // A spec-less row inherits its requirements from the router-queue.md
+    // envelope, like dispatchd's launch phase — but requirements(f) runs on
+    // the raw row first: the lane column defaults to preferred_lane, so a
+    // non-empty cell that is not a lane id rejects the row before the
+    // envelope is read. The resolved spec is then re-validated against the
+    // row's own fields (market_specs), so a market-dead row is never
+    // offloaded on envelope requirements dispatchd would refuse.
+    if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) {
+      return { job, lane: laneCell, line, spec: null, invalid: 'invalid_requirements' };
+    }
+    const env = readyEnvelopeSpec(routerQueue, job);
+    if (env === 'invalid') return { job, lane: laneCell, line, spec: null, invalid: 'invalid_requirements' };
+    spec = env ?? {};
+    if (resolveReadyMarketRow(f, spec) === null) {
+      return { job, lane: laneCell, line, spec: null, invalid: 'invalid_requirements' };
+    }
   }
   return { job, lane: f[2]!, line, spec, invalid: null };
 }
@@ -194,6 +214,15 @@ function readText(path: string): string | null {
   try { return readFileSync(path, 'utf8'); } catch { return null; }
 }
 
+/** Size-checked read for files that can grow without bound (router-queue.md). */
+function readTextBounded(path: string, maxBytes: number): string | null {
+  try {
+    const info = statSync(path);
+    if (!info.isFile() || info.size > maxBytes) return null;
+    return readFileSync(path, 'utf8');
+  } catch { return null; }
+}
+
 /** Bounded, no-follow read of a ready row's prompt, confined to <queue>/prompts. Errors carry a code, never text. */
 function readBridgeTask(host: NodeBridgeHost, row: ReadyRow): EmbeddedNodeTask {
   let fd: number | undefined;
@@ -227,7 +256,11 @@ function readBridgeTask(host: NodeBridgeHost, row: ReadyRow): EmbeddedNodeTask {
 
 function readRows(host: NodeBridgeHost): { text: string; rows: ReadyRow[] } {
   const text = readText(join(queueDir(host), 'ready.tsv')) ?? '';
-  return { text, rows: text.split('\n').map(parseReadyRow).filter((r): r is ReadyRow => r !== null) };
+  // Spec-less rows resolve their requirements from router-queue.md envelopes,
+  // the same source dispatchd's launch phase reads. Absent or oversize queue
+  // text degrades to the lane column, never to a guess.
+  const routerQueue = readTextBounded(join(queueDir(host), 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES);
+  return { text, rows: text.split('\n').map(line => parseReadyRow(line, routerQueue)).filter((r): r is ReadyRow => r !== null) };
 }
 
 function claimedLocally(host: NodeBridgeHost, job: string): boolean {

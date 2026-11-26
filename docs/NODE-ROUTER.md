@@ -283,6 +283,21 @@ lane cell carries the dispatcher's `PARKED-` hold marker (either ready.tsv
 dialect) stays local with `parked_row`, whatever its requirements spec says —
 held work is never offloaded.
 
+A five-column ready row (no requirements cell) resolves its spec from the
+matching `(attrs)` envelope in `queue/router-queue.md`, like dispatchd's
+launch phase: the lane column is validated as the `preferred_lane` default
+before the envelope is read, a malformed envelope or a spec the work market
+would reject is `invalid_requirements`, and the resolved spec then faces the
+same fences — lane hint, `needs`, `exclusive`, `data_class`, unverifiable
+tiers — as a written requirements column. An envelope with no lane hint is
+lane-open to the market; the bridge then keeps the lane column as the pack
+hint, and an explicit local lane there still stays local. Rows restocked
+between dispatcher ticks reach the bridge before dispatchd appends their
+spec cell, so without this an envelope's `needs`, `data_class` or `exclusive`
+would be invisible and classified work could offload on the lane column
+alone. An absent or oversize (>32 MiB) `router-queue.md` degrades to the lane
+column, never to a guess.
+
 The bridge does nothing and reports `inert` with one of these reason codes:
 `bridge-owner-unset`, `bridge-disabled` (when `--apply` is used without
 config), `bridge-config-invalid`, `stopped` (`KILL`, `PAUSE` or

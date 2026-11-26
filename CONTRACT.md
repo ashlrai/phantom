@@ -2293,6 +2293,13 @@ the constants `NODE_BRIDGE_SCHEMA`, `NODE_BRIDGE_LEASE_PREFIX`,
 `NodeBridgeReport`, `BridgeRowDecision`, `BridgeNodeView`, `BridgeLeaseView`,
 `BridgeRouter`, `ReadyRow`, `NodeBridgeHost`, `NodeBridgeOptions`,
 `DispatcherLock` and `AcquireDispatcherLock`.
+`parseReadyRow(text, routerQueue?)` resolves a five-column row's spec from its
+`queue/router-queue.md` `(attrs)` envelope — the same `from_envelope` port
+`src/core/fleet/unfed-market.ts`'s `readyEnvelopeSpec` shares with the unfed
+market — validating the lane cell as the `preferred_lane` default before the
+envelope is read and rejecting a malformed envelope or market-invalid spec as
+`invalid_requirements`; an absent or oversize queue text leaves the lane
+column as the only hint.
 `BridgeRouter.scope` is a stable, non-secret identity of the canonical router
 store location; `localBridgeRouter(nodes, storeDirectory)` and
 `poolBridgeRouter(call, storeDirectory)` derive it from the real store path.

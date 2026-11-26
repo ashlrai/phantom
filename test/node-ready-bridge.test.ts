@@ -119,6 +119,72 @@ describe('ready.tsv -> node router bridge', () => {
     expect(f.nodes.view(['ashlr']).jobs.map(j => j.id)).toEqual(['ready:RQ-REVIEW-FINE:1']);
   });
 
+  it('resolves spec-less rows from router-queue.md envelopes like the work market', async () => {
+    const f = fixture([
+      row('RQ-REVIEW-ENVLANE'),                                        // envelope pins claude; column says codex-cmp
+      row('RQ-REVIEW-ENVNEEDS'),                                       // envelope adds needs the nodes lack
+      row('RQ-REVIEW-ENVEXCL'),                                        // envelope exclusive
+      row('RQ-REVIEW-ENVMIN'),                                         // envelope min_tier (unverifiable remotely)
+      row('RQ-REVIEW-ENVBAD'),                                         // malformed envelope exclusive
+      row('RQ-REVIEW-ENVDCL'),                                         // envelope data_class above internal
+      row('RQ-REVIEW-ENVLANEBAD', 'Not A Lane'),                       // lane cell rejects before the envelope
+      row('RQ-REVIEW-ENVLANESPEC', 'codex-cmp', { preferred_lane: 'Bad Lane!' }), // spec column, not envelope
+      row('RQ-REVIEW-ENVNONE'),                                        // no matching envelope: lane column rules
+      row('RQ-REVIEW-ENVSPEC', 'codex-cmp', { preferred_lane: 'codex' }), // 6-field spec wins over envelope
+    ]);
+    writeFileSync(join(f.host.runsRoot, 'queue', 'router-queue.md'), [
+      '- READY RQ-REVIEW-ENVLANE (P0, repo=phantom, preferred_lane=claude): review the claude diff',
+      '- READY RQ-REVIEW-ENVNEEDS (needs=git|gh): needs tools',
+      '- READY RQ-REVIEW-ENVEXCL (exclusive=true): solo work',
+      '- READY RQ-REVIEW-ENVMIN (min_tier=frontier): needs frontier',
+      '- READY RQ-REVIEW-ENVBAD (exclusive=yes): malformed',
+      '- READY RQ-REVIEW-ENVDCL (data_class=confidential): secret work',
+      '- READY RQ-REVIEW-ENVLANEBAD (preferred_lane=codex): would-be codex',
+      '- READY RQ-REVIEW-ENVLANESPEC (preferred_lane=claude): spec column must win',
+      '- READY RQ-REVIEW-ENVSPEC (preferred_lane=claude): envelope must lose',
+      '- READY RQ-OTHER-JOB (preferred_lane=claude): unrelated envelope',
+      '- DONE RQ-REVIEW-ENVLANE r2 (preferred_lane=devin): a later revision line',
+    ].join('\n') + '\n');
+    const dry = await f.pass(false);
+    const byJob = Object.fromEntries(dry.rows.map(r => [r.job, r]));
+    // The envelope's preferred_lane beats the codex-cmp column; no node
+    // advertises claude, so the row reports the lane mismatch and stays local.
+    expect(byJob['RQ-REVIEW-ENVLANE']).toMatchObject({ lane: 'claude', cap: 'claude', pack: 'claude-file', offload: false });
+    expect(byJob['RQ-REVIEW-ENVLANE']!.reasons).toEqual(['lane_mismatch']);
+    // Envelope needs become required caps; the fixture nodes advertise neither.
+    expect(byJob['RQ-REVIEW-ENVNEEDS']!.reasons).toEqual(['caps_missing']);
+    expect(byJob['RQ-REVIEW-ENVEXCL']!.reasons).toEqual(['exclusive']);
+    expect(byJob['RQ-REVIEW-ENVMIN']!.reasons).toEqual(['requirement_unverifiable']);
+    expect(byJob['RQ-REVIEW-ENVBAD']!.reasons).toEqual(['invalid_requirements']);
+    expect(byJob['RQ-REVIEW-ENVDCL']!.reasons).toEqual(['data_class_exceeded']);
+    // requirements(f) rejects a non-lane-id lane cell before the envelope is read.
+    expect(byJob['RQ-REVIEW-ENVLANEBAD']!.reasons).toEqual(['invalid_requirements']);
+    // A six-field spec column drives the lane even when the market would reject
+    // it; the envelope is never consulted for spec-carrying rows.
+    expect(byJob['RQ-REVIEW-ENVLANESPEC']).toMatchObject({ lane: 'Bad Lane!', offload: false });
+    expect(byJob['RQ-REVIEW-ENVLANESPEC']!.reasons).toEqual(['lane_not_remote']);
+    // No envelope line: the lane column still drives the decision.
+    expect(byJob['RQ-REVIEW-ENVNONE']).toMatchObject({ offload: true, nodeId: 'air-w4' });
+    // A six-field spec column wins over the envelope, exactly like dispatchd.
+    expect(byJob['RQ-REVIEW-ENVSPEC']).toMatchObject({ lane: 'codex', offload: true });
+    const applied = await f.pass();
+    expect(applied.claimed.sort()).toEqual(['RQ-REVIEW-ENVNONE', 'RQ-REVIEW-ENVSPEC']);
+  });
+
+  it('offloads a spec-less row on its envelope lane and needs', async () => {
+    const f = fixture([row('RQ-REVIEW-ENVX')], [{ id: 'claude-w1', caps: ['claude', 'pack:claude-file', 'git'], slots: 1 }]);
+    writeFileSync(join(f.host.runsRoot, 'queue', 'router-queue.md'),
+      '- READY RQ-REVIEW-ENVX (preferred_lane=claude, needs=git): claude work needing git\n');
+    const dry = await f.pass(false);
+    expect(dry.rows[0]).toMatchObject({ job: 'RQ-REVIEW-ENVX', lane: 'claude', cap: 'claude', pack: 'claude-file',
+      offload: true, nodeId: 'claude-w1', requires: ['claude', 'pack:claude-file', 'git'] });
+    const done = await f.pass();
+    expect(done.claimed).toEqual(['RQ-REVIEW-ENVX']);
+    expect(f.nodes.view(['ashlr']).jobs).toEqual([expect.objectContaining({ pack: 'claude-file',
+      requires: ['claude', 'git', 'pack:claude-file'] })]);
+    expect(f.ready()).toBe('');
+  });
+
   it('rejects inherited and non-string data classes', async () => {
     const f = fixture([
       row('RQ-REVIEW-DC-INHERITED', 'codex-cmp', { data_class: 'constructor' }),

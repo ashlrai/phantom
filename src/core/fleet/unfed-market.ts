@@ -227,6 +227,23 @@ export function readySpecCell(cell: string | undefined): Record<string, unknown>
 }
 
 /**
+ * The requirements spec a spec-less ready row inherits from its router-queue.md
+ * envelope — dispatchd's launch-phase `from_envelope` step for five-column
+ * rows. Returns the spec record, 'invalid' where from_envelope raises before
+ * requirements() runs (a malformed exclusive or impact), or null when no
+ * envelope line matches the job and the row keeps its lane-column hint.
+ * Callers validate the record against the row's own fields
+ * (resolveReadyMarketRow) exactly like dispatchd's market_specs pass.
+ */
+export function readyEnvelopeSpec(routerQueue: string | null | undefined, job: string):
+  Record<string, unknown> | 'invalid' | null {
+  const attrs = envelopeAttrs(routerQueue, job);
+  if (attrs === null) return null;
+  const spec = envelopeSpec(attrs);
+  return spec === null ? 'invalid' : spec;
+}
+
+/**
  * Parse dispatcher ready.tsv rows (job, repo, lane hint, tier, prompt[, requirements]).
  * Parked rows, comments and short rows are skipped exactly like readyHints; rows
  * the dispatcher's ok-check or work_market.requirements would reject are counted
