@@ -30,6 +30,30 @@ function unchangedAfterRefusal(nodes: DriveNodes, attempt: () => unknown) {
 }
 
 describe('original 7399 leader assignment evidence', () => {
+  it('waits for the old claim to expire before assigning the job under a new leader', () => {
+    const { nodes, leader, advance } = fixture();
+    const first = nodes.join('first', { owners: ['team'] })!;
+    const second = nodes.join('second', { owners: ['team'] })!;
+    nodes.enqueue('job', { owner: 'team' });
+    const old = nodes.claim(leader, first, 'job')!;
+
+    advance(20);
+    const nextLeader = nodes.heartbeat(second)!.leader!;
+    expect(nextLeader.token).toBeGreaterThan(leader.token);
+    expect(nodes.renewClaim(old)).toBeNull();
+    expect(nodes.complete(old, 'late')).toBe(false);
+    unchangedAfterRefusal(nodes, () => nodes.claim(nextLeader, second, 'job'));
+    expect(nodes.pull(second)).toBeNull();
+
+    advance(19);
+    const renewedLeader = nodes.heartbeat(second)!.leader!;
+    unchangedAfterRefusal(nodes, () => nodes.claim(renewedLeader, second, 'job'));
+    advance(1);
+    const replacement = nodes.claim(renewedLeader, second, 'job')!;
+    expect(replacement.token).toBeGreaterThan(old.token);
+    expect(nodes.complete(replacement, 'done')).toBe(true);
+  });
+
   it('fences a declining session without changing the job and allows another session', () => {
     const { nodes, leader } = fixture();
     const first = nodes.join('first', { owners: ['team'] })!;
